@@ -1,0 +1,124 @@
+import { afterAll, beforeAll, expect, test } from 'bun:test';
+import { mkdirSync } from 'node:fs';
+import { createServer } from 'node:net';
+import { join } from 'node:path';
+import { fakeProgram, startDaemon, synchronizationFinished, temporaryDirectory, type TestDaemon } from './harness';
+
+let daemon: TestDaemon;
+
+beforeAll(async () => { daemon = await startDaemon(); }, 60_000);
+afterAll(() => daemon?.stop());
+
+/** A WebSocket that records each text packet the daemon sends and whether the daemon closed it. */
+async function rawSocket(url: string) {
+  const socket = new WebSocket(url);
+  const packets: any[] = [];
+  let closed = false;
+  const changed = new Set<() => void>();
+  socket.onmessage = message => { packets.push(JSON.parse(String(message.data))); for (const wake of [...changed]) wake(); };
+  socket.onclose = () => { closed = true; for (const wake of [...changed]) wake(); };
+  await new Promise<void>((resolve, reject) => { socket.onopen = () => resolve(); socket.onerror = () => reject(new Error('Could not connect')); });
+  /** Resolves when the daemon has closed the socket. */
+  const close = () => new Promise<void>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error('The daemon kept the socket open')), 10_000);
+    const check = () => { if (closed) { clearTimeout(timer); changed.delete(check); resolve(); } };
+    changed.add(check); check();
+  });
+  const packet = () => new Promise<any>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error('No packet arrived')), 10_000);
+    const check = () => { if (packets.length) { clearTimeout(timer); changed.delete(check); resolve(packets.shift()); } else if (closed) { clearTimeout(timer); changed.delete(check); reject(new Error('Socket closed')); } };
+    changed.add(check); check();
+  });
+  return { send: (value: unknown) => socket.send(JSON.stringify(value)), packet, close, packets, end: () => socket.close() };
+}
+
+test('a connection authenticates only with the exact token in an authenticate packet', async () => {
+  const { url, token } = daemon.endpoint;
+  for (const first of [{}, { token }, { type: 'command', token }, { type: 'authenticate', token: 'wrong' }, { type: 'authenticate', token: token + 'x' }, { type: 'authenticate', token: token.slice(0, -1) }]) {
+    const socket = await rawSocket(url);
+    socket.send(first);
+    expect(await socket.packet(), JSON.stringify(first)).toEqual({ type: 'error', error: 'Unauthorized' });
+    await socket.close();
+  }
+  const socket = await rawSocket(url);
+  socket.send({ type: 'authenticate', token });
+  expect(await socket.packet()).toMatchObject({ type: 'ready', backend: 'daemon' });
+  socket.end();
+});
+
+test('a command sent before authentication is refused and never runs', async () => {
+  const temporaryChats = async () => {
+    const report = await daemon.invoke('storage_report');
+    return report.hosts.find((host: any) => host.hostId === 'local').categories.find((category: any) => category.id === 'temporary-chats').itemCount;
+  };
+  expect(await temporaryChats()).toBe(0);
+  const socket = await rawSocket(daemon.endpoint.url);
+  socket.send({ id: 1, command: 'create_temporary_chat', args: { hostId: 'local' } });
+  expect(await socket.packet()).toEqual({ type: 'error', error: 'Unauthorized' });
+  await socket.close();
+  expect(socket.packets).toEqual([]);
+  expect(await temporaryChats()).toBe(0);
+});
+
+/**
+ * A unix socket that external programs connect to when they start. arrivals(n) resolves once n programs have
+ * connected, so a test knows that the requests that started them hold their slot.
+ */
+async function arrivalSocket() {
+  const path = join(temporaryDirectory('piop-arrivals-'), 'arrivals.sock');
+  let count = 0;
+  const waiters = new Set<() => void>();
+  const server = createServer(socket => { socket.on('error', () => {}); count += 1; for (const wake of [...waiters]) wake(); });
+  await new Promise<void>(resolve => server.listen(path, resolve));
+  const arrivals = (wanted: number) => new Promise<void>((resolve, reject) => {
+    const timer = setTimeout(() => { waiters.delete(check); reject(new Error('Only ' + count + ' of ' + wanted + ' programs started')); }, 10_000);
+    const check = () => { if (count >= wanted) { clearTimeout(timer); waiters.delete(check); resolve(); } };
+    waiters.add(check); check();
+  });
+  /** An executable that reports its start on the socket and then stays silent until it is killed. */
+  const program = '#!' + process.execPath + '\nrequire("node:net").connect(' + JSON.stringify(path) + ').on("error", () => {});\nsetTimeout(() => {}, 60_000);\n';
+  return { arrivals, program, close: () => server.close() };
+}
+
+test('stop, abort and cancel requests still run when every work slot is busy, within their own small limit', async () => {
+  const codex = await arrivalSocket();
+  const ssh = await arrivalSocket();
+  // Each Codex usage request waits for an answer that never comes, so it holds a work slot until its 8 s timeout.
+  fakeProgram(daemon.bin, 'codex', codex.program);
+  // Provider cancellations for this machine wait for its SSH connection, which never answers, so they hold their slot too.
+  const slow = join(daemon.home, '.test-remotes', 'slow');
+  mkdirSync(slow, { recursive: true }); fakeProgram(slow, '.ssh-hold', ssh.program);
+  const settings = await daemon.invoke('load_app_settings');
+  settings.hosts = [{ enabled: true, id: 'slow', name: 'Slow', target: 'slow', piPath: '~/.bun/bin/piopd' }];
+  await synchronizationFinished(daemon, (await daemon.invoke('save_app_settings', { settings })).revision);
+  const client = await daemon.connect();
+  const settled = (promise: Promise<unknown>) => promise.then(() => 'answered', (error: Error) => error.message);
+  const work = Array.from({ length: 16 }, () => settled(client.invoke('codex_usage')));
+  try {
+    await codex.arrivals(16);
+    expect(await client.failure('codex_usage')).toBe('Host is busy; try again');
+    // Each of these gets a reserved slot and runs; its answer for an unknown runtime or terminal proves it was dispatched.
+    expect(await client.invoke('stop_pi', { runtimeId: 'missing' })).toBe(false);
+    expect(await client.failure('pi_command', { runtimeId: 'missing', command: { type: 'abort' } })).toBe('Pi is not running');
+    expect(await client.invoke('close_terminal', { terminalId: 'missing' })).toBeNull();
+    // Two cancellations that wait for the slow machine take both reserved slots of this connection.
+    const cancel = () => settled(client.invoke('provider_auth', { hostId: 'slow', request: { action: 'cancel' } }));
+    const held = [cancel(), cancel()];
+    await ssh.arrivals(1);
+    expect(await cancel()).toBe('Host is busy; try again');
+    expect(await client.failure('stop_pi', { runtimeId: 'missing' })).toBe('Host is busy; try again');
+    // Another connection has its own reserved slots.
+    const other = await daemon.connect();
+    expect(await other.failure('codex_usage')).toBe('Host is busy; try again');
+    expect(await other.invoke('stop_pi', { runtimeId: 'missing' })).toBe(false);
+    other.close();
+    expect(await Promise.all(work)).toEqual(Array(16).fill('Codex usage request timed out'));
+    client.close();
+    await Promise.all(held);
+  } finally {
+    codex.close(); ssh.close();
+    const current = await daemon.invoke('load_app_settings');
+    current.hosts = [];
+    await synchronizationFinished(daemon, (await daemon.invoke('save_app_settings', { settings: current })).revision);
+  }
+}, 60_000);

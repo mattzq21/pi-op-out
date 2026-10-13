@@ -1,0 +1,36 @@
+import { createSignal, Show } from 'solid-js';
+import { render } from 'solid-js/web';
+import { mockIPC, mockWindows } from '@tauri-apps/api/mocks';
+import { emit } from '@tauri-apps/api/event';
+import '../../clients/ui/styles.css';
+
+globalThis.isTauri = true;
+mockWindows('main');
+mockIPC((command, args) => window.nativeCommand(command, args), { shouldMockEvents: true });
+const invoke = window.__TAURI_INTERNALS__.invoke;
+window.__TAURI_INTERNALS__.invoke = (command, args, options) => invoke(command, command === 'plugin:event|unlisten' ? { ...args, id: args.eventId } : args, options);
+window.deliverFileDrag = (name, payload) => emit(`tauri://drag-${name}`, payload);
+const { Composer } = await import('../../clients/ui/components/Composer');
+const [sent, setSent] = createSignal<unknown[]>([]);
+const [disabled, setDisabled] = createSignal(false);
+const [mounted, setMounted] = createSignal(true);
+const [vision, setVision] = createSignal(false);
+const [failSends, setFailSends] = createSignal(false);
+
+render(() => <>
+  <label><input type="checkbox" checked={disabled()} onChange={event => setDisabled(event.currentTarget.checked)} />Disable controls</label>
+  <label><input type="checkbox" checked={vision()} onChange={event => setVision(event.currentTarget.checked)} />Image-capable model</label>
+  <label><input type="checkbox" checked={failSends()} onChange={event => setFailSends(event.currentTarget.checked)} />Fail sends</label>
+  <button onClick={() => setMounted(false)}>Remove composer</button>
+  <output aria-label="Sent messages">{JSON.stringify(sent())}</output>
+  <div style={{ width: '600px', margin: '80px 150px' }}>
+    <Show when={mounted()}>
+      <Composer controlsDisabled={disabled()} streaming={false} queued={0} commands={[]} agents={[]} models={[]}
+        model={vision() ? { id: 'vision', provider: 'test', input: ['text', 'image'] } : null}
+        thinkingLevel="off" thinkingLevels={['off']}
+        onSend={async (message, behavior, images) => { if (failSends()) throw new Error("offline"); setSent(values => [...values, [message, behavior, images]]); }}
+        onPause={async () => {}} onResume={async () => {}} onAbort={async () => {}}
+        onAgent={() => {}} onModel={() => {}} onThinking={() => {}} onToggleFastMode={async () => {}} />
+    </Show>
+  </div>
+</>, document.getElementById('root')!);

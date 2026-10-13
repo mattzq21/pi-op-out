@@ -1,0 +1,93 @@
+use super::*;
+
+include!("test_directory.rs");
+
+#[test]
+fn dropped_files_preserve_binary_data_and_enforce_file_type_and_size_limits() {
+    let read = |path: &std::path::Path| tauri::async_runtime::block_on(read_dropped_file(path.to_string_lossy().into_owned()));
+    let root = TestDirectory::new();
+    let path = root.0.join("attachment.bin"); fs::write(&path, [0, 255, 128, 10]).unwrap();
+    assert_eq!(read(&path).unwrap(), json!({"name":"attachment.bin","data":[0,255,128,10]}));
+    assert_eq!(read(&root.0).unwrap_err(), "Drop regular files only");
+    assert!(read(&root.0.join("missing")).is_err());
+    let file = fs::OpenOptions::new().write(true).open(&path).unwrap();
+    file.set_len(10 * 1024 * 1024 + 1).unwrap();
+    assert_eq!(read(&path).unwrap_err(), "Attachment is larger than 10 MB");
+    file.set_len(10 * 1024 * 1024).unwrap();
+    assert_eq!(read(&path).unwrap()["data"].as_array().unwrap().len(), 10 * 1024 * 1024);
+}
+
+#[test]
+#[ignore = "Test-only command bridge launched by the UI integration tests"]
+fn attachment_command_bridge() {
+    use std::io::{BufRead, BufReader, Write};
+    use std::os::unix::net::UnixListener;
+    let path = std::env::var("PIOP_TEST_NATIVE_SOCKET").expect("native test socket path");
+    let listener = UnixListener::bind(&path).expect("bind native test socket");
+    let app = if std::env::var_os("PIOP_TEST_NATIVE_APP").is_some() {
+        let mut context = tauri::generate_context!();
+        context.config_mut().app.windows.clear();
+        if let Ok(url) = std::env::var("PIOP_TEST_NATIVE_URL") {
+            let url = tauri::Url::parse(&url).expect("test document URL");
+            assert_eq!(url.host_str(), Some("127.0.0.1"));
+            context.config_mut().build.dev_url = Some(url.clone());
+            context.config_mut().build.frontend_dist = Some(tauri::utils::config::FrontendDist::Url(url));
+        }
+        Some(tauri::Builder::default().any_thread().manage(dictation::Dictation::default()).manage(desktop_daemon::DesktopDaemon::default()).build(context).expect("build native test app"))
+    } else { None };
+    println!("PIOP_TEST_NATIVE_READY");
+    let serve = move |handle: Option<AppHandle>| {
+    let (mut stream, _) = listener.accept().expect("connect native test client");
+    for line in BufReader::new(stream.try_clone().unwrap()).lines() {
+        let request: Value = serde_json::from_str(&line.expect("read native test request")).unwrap();
+        let result = match request["command"].as_str() {
+            Some("daemon_log_statuses") => {
+                let app = handle.as_ref().expect("desktop test app");
+                let window = match app.get_webview_window("status-test") {
+                    Some(window) => Ok(window),
+                    None => tauri::WebviewWindowBuilder::new(app, "status-test", tauri::WebviewUrl::External(tauri::Url::parse("about:blank").unwrap())).visible(false).build(),
+                };
+                window.map_err(|error| error.to_string()).map(|window| json!(tauri::async_runtime::block_on(daemon_log_statuses(app.clone(), window))))
+            },
+            Some("load_client_settings") => tauri::async_runtime::block_on(load_client_settings()),
+            Some("save_client_settings") => tauri::async_runtime::block_on(save_client_settings(
+                handle.as_ref().expect("desktop test app").clone(),
+                serde_json::from_value(request["settings"].clone()).expect("client settings"),
+                serde_json::from_value(request["baseline"].clone()).expect("client settings baseline"),
+                request["initialize"].as_bool(),
+            )),
+            Some("new_window") => new_window(
+                handle.as_ref().expect("desktop test app").clone(), request["target"].clone(),
+            ).map(Value::String),
+            Some("dictation_configuration") => Ok(dictation_configuration(handle.as_ref().expect("desktop test app").clone())),
+            Some("sync_prompt_history") => tauri::async_runtime::block_on(sync_prompt_history(
+                handle.as_ref().expect("desktop test app").clone(),
+                serde_json::from_value(request["entries"].clone()).expect("history entries"),
+                serde_json::from_value(request["legacy"].clone()).expect("legacy prompts"),
+            )).map(|history| json!(history)),
+            Some("read_dropped_file") => tauri::async_runtime::block_on(read_dropped_file(request["path"].as_str().expect("file path").to_owned())),
+            Some("open_external_url") => tauri::async_runtime::block_on(open_external_url(
+                request["url"].as_str().expect("web URL").to_owned(),
+            )).map(|_| Value::Null),
+            Some("open_project_directory") => tauri::async_runtime::block_on(open_project_directory(
+                request["cwd"].as_str().expect("project path").to_owned(),
+                request["hostId"].as_str().map(str::to_owned),
+            )).map(|_| Value::Null),
+            _ => Err("Unsupported native test command".to_owned()),
+        };
+        let response = match result {
+            Ok(value) => json!({ "id": request["id"], "result": value }),
+            Err(error) => json!({ "id": request["id"], "error": error }),
+        };
+        writeln!(stream, "{}", response).expect("write native test response");
+    }
+    std::fs::remove_file(path).expect("remove native test socket");
+    if let Some(handle) = handle { handle.exit(0); }
+    };
+    if let Some(app) = app {
+        let handle = app.handle().clone();
+        let worker = std::thread::spawn(move || serve(Some(handle)));
+        assert_eq!(app.run_return(|_, _| {}), 0);
+        worker.join().expect("native command bridge thread");
+    } else { serve(None); }
+}
