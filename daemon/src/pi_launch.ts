@@ -169,14 +169,13 @@ function configureLocalExtensions(command: LaunchCommand, settings: AppSettings,
   const contextWindowCapExtension = Ext.prepareContextWindowCapExtension(settings);
   const contextBarExtension = Ext.prepareContextBarExtension();
   const sessionCostLimitExtension = Ext.prepareSessionCostLimitExtension(settings);
-  const traceReaderExtension = Ext.prepareTraceReader();
   const openaiCacheForkExtension = Ext.prepareOpenaiCacheForkExtension();
   const codexWebSearchExtension = Ext.prepareCodexWebSearchExtension();
   const definedAgentsExtension = Ext.prepareDefinedAgentsExtension();
   command.args.push('--extension', 'builtin:codemode', '--extension', 'builtin:tool-search');
   command.args.push('--extension', Ext.prepareRtkExtension());
   command.args.push('--extension', Ext.prepareRuntimeSettings(settings), '--session-dir', sessionDir, '--approve', '--no-skills',
-    '--extension', mcpExtension, '--extension', Ext.prepareSessionBroker(), '--extension', traceReaderExtension,
+    '--extension', mcpExtension, '--extension', Ext.prepareSessionBroker(),
     '--extension', contextWindowCapExtension, '--extension', contextBarExtension, '--extension', sessionCostLimitExtension,
     '--extension', Ext.prepareFastModeExtension(), '--extension', openaiCacheForkExtension, '--extension', codexWebSearchExtension,
     '--extension', definedAgentsExtension);
@@ -185,7 +184,6 @@ function configureLocalExtensions(command: LaunchCommand, settings: AppSettings,
     PI_DESKTOP_CODEX_WEB_SEARCH_EXTENSION: codexWebSearchExtension,
     PI_DESKTOP_CONTEXT_WINDOW_CAP_EXTENSION: contextWindowCapExtension,
     PI_DESKTOP_SESSION_COST_LIMIT_EXTENSION: sessionCostLimitExtension,
-    PI_DESKTOP_TRACE_READER_EXTENSION: traceReaderExtension,
     PI_DESKTOP_BROKER_URL: `http://127.0.0.1:${brokerPort}`,
     PI_DESKTOP_BROKER_TOKEN: brokerToken,
     PI_DESKTOP_HOST_ID: hostId,

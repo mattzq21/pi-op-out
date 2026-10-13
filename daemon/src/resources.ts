@@ -11,7 +11,6 @@ import chatgptStream from '../resources/chatgpt-stream.mjs?raw';
 import chatgptStorageRaw from '../resources/chatgpt-storage.mjs?raw';
 import chatgptService from '../resources/chatgpt-service.mjs?raw';
 import reviewPrompt from '../resources/session-broker/review-prompt.txt?raw';
-import traceReader from '../resources/trace-reader.ts?raw';
 import sessionBroker from '../resources/session-broker.ts?raw';
 import sdkSessionList from '../resources/sdk-session-list.mjs?raw';
 import runtimeConfiguration from '../resources/runtime-configuration.cjs?raw';
@@ -121,7 +120,6 @@ export {
   chatgptStorage,
   chatgptService,
   reviewPrompt,
-  traceReader,
   sessionBroker,
   sdkSessionList,
   runtimeConfiguration,

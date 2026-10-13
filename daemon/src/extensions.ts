@@ -87,15 +87,6 @@ function prepareBrokerStorage(dir: string): void {
   atomicWritePrivate(join(dir, 'ask-user.ts'), R.askUser);
 }
 
-export function prepareTraceReader(): string {
-  const dir = generatedExtensionRoot();
-  ensurePrivateDir(dir);
-  atomicWritePrivate(join(dir, 'session-database.cjs'), R.sessionDatabase);
-  const path = join(dir, 'piop-trace-reader.ts');
-  atomicWritePrivate(path, R.traceReader);
-  return path;
-}
-
 export function prepareOpenaiCacheForkExtension(): string {
   const dir = generatedExtensionRoot();
   ensurePrivateDir(dir);

@@ -181,7 +181,6 @@ export function defaultSettings(): AppSettings {
       ...['read', 'bash', 'edit', 'write', 'grep', 'find', 'ls'].map(name => ({ name, description: 'Pi built-in tool', enabled: true, builtin: true })),
       { name: 'list_agents', description: 'List child agents and their status', enabled: true, builtin: false },
       { name: 'send_message', description: 'Deliver an agent mailbox message', enabled: true, builtin: false },
-      { name: 'read_trace', description: 'Extract clean user and final assistant messages from a Pi trace', enabled: true, builtin: false },
       codexWebSearchTool(),
     ],
     skills: [],
