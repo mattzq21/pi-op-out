@@ -18,7 +18,9 @@ import runtimeBridge from '../resources/runtime-bridge.cjs?raw';
 import mcpSchemaBundle from '../resources/mcp-schema.bundle.mjs?raw';
 import mcpBridgeBundle from '../resources/mcp-bridge.bundle.mjs?raw';
 import fastModeBundle from '../resources/fast-mode.bundle.mjs?raw';
-import askUser from '../resources/ask-user.ts?raw';
+import userQuestionsExtension from '../../extensions/piop-user-questions/index.ts?raw';
+import userQuestionsInterface from '../../extensions/piop-user-questions/interface.ts?raw';
+import userQuestionsLogic from '../../extensions/piop-user-questions/questions.ts?raw';
 import sessionCostLimitExtension from '../../extensions/piop-session-cost-limit/index.ts?raw';
 import runtimeSettingsExtension from '../../extensions/piop-runtime-settings/index.ts?raw';
 import rtkExtension from '../../extensions/piop-rtk/rtk.ts?raw';
@@ -128,7 +130,9 @@ export {
   mcpSchemaBundle,
   mcpBridgeBundle,
   fastModeBundle,
-  askUser,
+  userQuestionsExtension,
+  userQuestionsInterface,
+  userQuestionsLogic,
   sessionCostLimitExtension,
   runtimeSettingsExtension,
   rtkExtension,

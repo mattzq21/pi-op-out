@@ -1,4 +1,5 @@
 import { isObject } from './json';
+import { QUESTION_ENTRY } from '../../../extensions/piop-user-questions/interface';
 
 export interface SavedControlState { isPaused: boolean; needsInput: boolean }
 
@@ -9,7 +10,7 @@ export function reduce(entries: any[], leafId: string | undefined | null): Saved
     if (entry?.type !== 'custom') continue;
     const data = entry.data;
     if (entry.customType === 'pi-desktop-pause-state') isPaused = data?.isPaused === true;
-    else if (entry.customType === 'piop-async-question') {
+    else if (entry.customType === QUESTION_ENTRY) {
       const state = requestState(data);
       if (!state) throw new Error('Invalid saved asynchronous question request');
       questions.set(state[0], state[1]);
