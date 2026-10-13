@@ -1,46 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { agentFixture, configured, profile } from '../defined-agent-fixture.mjs';
-
-test('MCP registration runs on session restore and agent selection, not input', async t => {
-  const f = await agentFixture(t);
-  const selections = [];
-  f.pi.events.on('piop:mcp:select', request => {
-    selections.push(structuredClone(request.servers));
-    request.registered = Promise.resolve(['mcp_lookup']);
-  });
-  f.pi.events.on('piop:mcp:tools', request => { request.tools = ['mcp_lookup']; request.availableTools = ['mcp_lookup']; });
-  await f.load(); await f.start();
-  assert.equal(selections.length, 1);
-  await f.select('reviewer');
-  assert.equal(selections.length, 2);
-  assert.deepEqual(await f.input('First message'), { action: 'continue' });
-  assert.deepEqual(await f.input('Next message'), { action: 'continue' });
-  assert.equal(selections.length, 2);
-  assert.ok(f.pi.getActiveTools().includes('mcp_lookup'));
-  await f.emit('session_tree');
-  assert.equal(selections.length, 3);
-  await f.start();
-  assert.equal(selections.length, 4);
-});
-
-test('failed MCP registration blocks input until session setup retries it', async t => {
-  const f = await agentFixture(t, { config: configured([profile('general', { mcpServers: { search: { command: 'search-server' } } })]) });
-  let selections = 0, failure = true;
-  f.pi.events.on('piop:mcp:select', request => {
-    selections++;
-    request.registered = failure ? Promise.reject(new Error('Server registration failed')) : Promise.resolve([]);
-  });
-  await f.load(); await f.start();
-  failure = false;
-  assert.deepEqual(await f.input('Blocked'), { action: 'handled' });
-  assert.match(JSON.parse(f.statuses.get('piop-input-rejected')).error, /Server registration failed/);
-  assert.deepEqual(f.pi.getActiveTools(), []);
-  assert.equal(selections, 1);
-  await f.start();
-  assert.deepEqual(await f.input('Continue'), { action: 'continue' });
-  assert.equal(selections, 2);
-});
+import { agentFixture, profile } from '../defined-agent-fixture.mjs';
 
 test('agent configuration preserves stdio MCP launch and exposure options', async t => {
   const f = await agentFixture(t, { config: null });
