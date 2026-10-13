@@ -17,9 +17,7 @@ export async function installRuntimeSettings({ dir, pi, ctx, settings, settingsP
       builder.onResolve({ filter: /^\.\/app-settings\.cjs$/ }, () => ({ path: storagePath }));
       builder.onResolve({ filter: /^@earendil-works\/pi-coding-agent$/ }, () => ({ path: 'sdk', namespace: 'fixture' }));
       builder.onLoad({ filter: /.*/, namespace: 'fixture' }, () => ({ contents: `
-        export const createReadToolDefinition = () => ({ name: 'read', description: 'Read file content' });
-        const unused = () => { throw new Error('Unexpected Pi SDK image or skill operation'); };
-        export const formatDimensionNote = unused, formatSkillsForPrompt = unused, resizeImage = unused;
+        export const formatSkillsForPrompt = () => { throw new Error('Unexpected Pi SDK skill operation'); };
       ` }));
     } }],
   });
