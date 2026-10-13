@@ -124,24 +124,34 @@ test('a Pi start installs the bundled extensions as private files and refreshes 
   const generated = join(daemon.home, '.piop');
   const bundles: [string, string][] = [
     ['session-broker.ts', 'daemon/resources/session-broker.ts'],
-    ['ask-user.ts', 'daemon/resources/ask-user.ts'],
     ['piop-providers-refresh.ts', 'extensions/piop-providers-refresh/index.ts'],
+    ['piop-codemode-tools-description.ts', 'extensions/piop-codemode-tools-description/index.ts'],
+    ['piop-context-window-cap/defaults.ts', 'extensions/piop-context-window-cap/defaults.ts'],
+    ['piop-user-questions/index.ts', 'extensions/piop-user-questions/index.ts'],
+    ['piop-user-questions/questions.ts', 'extensions/piop-user-questions/questions.ts'],
+    ['piop-user-questions/interface.ts', 'extensions/piop-user-questions/interface.ts'],
+    ['piop-controls/index.ts', 'daemon/resources/piop-controls/index.ts'],
+    ['piop-goals/index.ts', 'daemon/resources/piop-goals/index.ts'],
+    ['piop-reviews/index.ts', 'daemon/resources/piop-reviews/index.ts'],
     ['piop-openai-cache-fork.ts', 'extensions/piop-openai-cache-fork/index.ts'],
     ['piop-codex-web-search.ts', 'extensions/piop-codex-web-search/index.ts'],
-    ['piop-codemode-tools-description.ts', 'extensions/piop-codemode-tools-description/index.ts'],
+    ['piop-html-preview/index.ts', 'extensions/piop-html-preview/index.ts'],
+    ['piop-html-preview/interface.ts', 'extensions/piop-html-preview/interface.ts'],
+    ['piop-html-preview/preview.ts', 'extensions/piop-html-preview/preview.ts'],
   ];
   const extensions = extensionPaths(await launchPublicPi(daemon));
+  for (const name of ['piop-controls/index.ts', 'session-broker.ts', 'piop-html-preview/index.ts', 'piop-user-questions/index.ts', 'piop-goals/index.ts', 'piop-reviews/index.ts', 'piop-openai-cache-fork.ts', 'piop-codex-web-search.ts']) expect(extensions).toContain(join(generated, name));
   for (const removed of ['runtime-settings.ts', 'piop-skills-store/index.ts', 'piop-tool-store/index.ts']) expect(extensions).not.toContain(join(generated, removed));
-  for (const name of ['session-broker.ts', 'piop-providers-refresh.ts', 'piop-codemode-tools-description.ts', 'piop-openai-cache-fork.ts', 'piop-codex-web-search.ts']) expect(extensions).toContain(join(generated, name));
+  for (const name of ['piop-providers-refresh.ts', 'piop-codemode-tools-description.ts']) expect(extensions).toContain(join(generated, name));
   for (const [name, relative] of bundles) {
-    expect(readFileSync(join(generated, name), 'utf8')).toBe(source(relative));
+    expect(readFileSync(join(generated, name), 'utf8')).toBe(name === 'piop-context-window-cap/defaults.ts' ? source(relative).replace('../../daemon/resources/session-broker/app-settings.cjs', './app-settings.cjs') : source(relative));
     expect(mode(join(generated, name))).toBe(0o600);
     writeFileSync(join(generated, name), 'stale bundle');
   }
   expect(mode(generated)).toBe(0o700);
   writeFileSync(join(generated, 'user-file'), 'keep');
   await launchPublicPi(daemon);
-  for (const [name, relative] of bundles) expect(readFileSync(join(generated, name), 'utf8')).toBe(source(relative));
+  for (const [name, relative] of bundles) expect(readFileSync(join(generated, name), 'utf8')).toBe(name === 'piop-context-window-cap/defaults.ts' ? source(relative).replace('../../daemon/resources/session-broker/app-settings.cjs', './app-settings.cjs') : source(relative));
   expect(readFileSync(join(generated, 'user-file'), 'utf8')).toBe('keep');
 }, 60_000);
 

@@ -1,14 +1,15 @@
-import { reserveSessionId } from "./session-file.ts";
-import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { copy as copyGoal, read as readGoal } from "./goal-storage.cjs";
+import { reserveSessionId } from "../session-broker/session-file.ts";
+import type { ExtensionAPI, ExtensionCommandContext, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { copy as copyGoal, read as readGoal } from "../session-broker/goal-storage.cjs";
 import { realpath, mkdir, rmdir } from "node:fs/promises";
 import { basename, dirname, join, resolve } from "node:path";
-import { currentHost } from "./client.ts";
-import { writeSessionFile, publicationRetainsDependencies, type SessionPublication } from "./session-file.ts";
+import { currentHost } from "../session-broker/client.ts";
+import { writeSessionFile, publicationRetainsDependencies, type SessionPublication } from "../session-broker/session-file.ts";
 import { Type } from "typebox";
 import { Check } from "typebox/value";
 import { existsSync } from "node:fs";
-import { releaseHistory, retainHistory, rootForDirectory } from "./goal-assets.cjs";
+import { releaseHistory, retainHistory, rootForDirectory } from "../session-broker/goal-assets.cjs";
+import type { ForkMode, ForkResult } from "./interface.ts";
 
 export type ForkOptions = { cwd?: string; entryId?: string; position?: "before" | "at" };
 
@@ -16,6 +17,38 @@ const fileErrorSchema = Type.Object({ code: Type.String() });
 
 function retainedFork(error: Error | undefined, publication?: SessionPublication) {
   return Boolean(publication) || error !== undefined && publicationRetainsDependencies(error);
+}
+
+function userText(ctx: ExtensionContext, entryId?: string) {
+  const selected = entryId ? ctx.sessionManager.getEntry(entryId) : undefined;
+
+  if (selected?.type !== "message" || selected.message.role !== "user") return;
+  const content = selected.message.content;
+
+  return Array.isArray(content) ? content.filter(part => part.type === "text").map(part => part.text).join("") : content;
+}
+
+/** SessionControls.fork. */
+export async function forkSession(ctx: ExtensionContext, mode: ForkMode, entryId?: string): Promise<ForkResult> {
+  if (mode !== "clone" && !entryId) throw new Error("Select a message to branch from");
+  const selected = mode === "clone" ? ctx.sessionManager.getLeafId() ?? undefined : entryId;
+  const text = mode === "fork" ? userText(ctx, selected) : undefined;
+  const position = mode === "fork" ? "before" : mode === "clone" ? "at" : undefined;
+  const fork = await forkConversation(ctx, { entryId: selected, position });
+
+  return { ...fork, text };
+}
+
+/** SessionControls.forkAndForget. */
+export async function forkAndForget(pi: ExtensionAPI, ctx: ExtensionCommandContext, entryId: string) {
+  const entry = ctx.sessionManager.getEntry(entryId);
+
+  if (!entry || entry.type !== "message" || entry.message.role !== "assistant") throw new Error("Assistant response not found in this conversation");
+  const result = await ctx.navigateTree(entryId);
+
+  if (!result.cancelled) pi.appendEntry("pi-desktop-fork-and-forget", { entryId });
+
+  return result;
 }
 
 export async function forkConversation(ctx: ExtensionContext, options: ForkOptions) {

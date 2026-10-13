@@ -9,10 +9,10 @@ export async function goalCommand(t) {
   const directory = await mkdtemp(join(tmpdir(), 'piop-goal-command-'));
   t.after(() => rm(directory, { recursive: true, force: true }));
   const outfile = join(directory, 'broker.mjs');
-  await build({ entryPoints: ['daemon/resources/session-broker/goals.ts'], outfile, bundle: true, platform: 'node', format: 'esm', target: 'node22', logLevel: 'silent', plugins: [storageSchemaImports(), { name: 'external-pi-sdk', setup(api) { api.onResolve({ filter: /^@earendil-works\/pi-ai$/ }, () => ({ path: 'pi-ai', namespace: 'sdk' })); api.onLoad({ filter: /.*/, namespace: 'sdk' }, () => ({ contents: 'export { Type } from \"@sinclair/typebox\";', resolveDir: process.cwd() })); } }],
+  await build({ entryPoints: ['daemon/resources/piop-goals/index.ts'], outfile, bundle: true, platform: 'node', format: 'esm', target: 'node22', logLevel: 'silent', plugins: [storageSchemaImports(), { name: 'external-pi-sdk', setup(api) { api.onResolve({ filter: /^@earendil-works\/pi-ai$/ }, () => ({ path: 'pi-ai', namespace: 'sdk' })); api.onLoad({ filter: /.*/, namespace: 'sdk' }, () => ({ contents: 'export { Type } from \"@sinclair/typebox\";', resolveDir: process.cwd() })); } }],
     banner: { js: "import { createRequire } from 'node:module'; const require = createRequire(import.meta.url);" },
   });
-  const { registerGoals: broker } = await import(pathToFileURL(outfile));
+  const { default: broker } = await import(pathToFileURL(outfile));
   return async (sessionPath, objective) => {
     const entries = (await readFile(sessionPath, 'utf8')).trim().split('\n').map(JSON.parse);
     const header = entries[0];

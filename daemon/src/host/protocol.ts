@@ -1,6 +1,7 @@
 import { closeSync, openSync, readSync } from 'node:fs';
 import { join } from 'node:path';
 import { kind } from './json';
+import { HTML_PREVIEW_VIEWPORT_COMMAND } from '../../../extensions/piop-html-preview/interface';
 
 export { kind, text, flag, array, messageText } from './json';
 
@@ -102,7 +103,7 @@ function controlAction(command: string): string | undefined {
 
 const APP_REQUESTS = new Set(['queue_prompt', 'prepare_goal_prompt', 'get_goal_preparation', 'orchestration_message', 'recover_subagent_usage', 'activate_usage_recovery', 'answer_question', 'provider_auth_refresh', 'context_cap_settings',
   'fork_and_forget', 'fork_after', 'prepare_fork', 'select_agent', 'configure_agents', 'get_agent_configuration',
-  'review_feedback', 'open_review', 'set_fast_mode', 'html_preview_viewport', 'conversation_client']);
+  'review_feedback', 'open_review', 'set_fast_mode', HTML_PREVIEW_VIEWPORT_COMMAND, 'conversation_client']);
 
 export function wireCommand(command: any, id: string): any {
   const name = kind(command);

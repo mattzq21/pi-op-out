@@ -2,7 +2,7 @@ import { open, type FileHandle } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import { Type, type Static } from "typebox";
 import { Check } from "typebox/value";
-import { goalTokens } from "./goal-state.ts";
+import { goalTokens } from "../piop-goals/interface.ts";
 
 const headerSchema = Type.Object({ type: Type.Literal("session"), id: Type.String() });
 

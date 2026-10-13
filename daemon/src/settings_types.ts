@@ -1,4 +1,4 @@
-import reviewPrompt from '../resources/session-broker/review-prompt.txt?raw';
+import reviewPrompt from '../resources/piop-reviews/review-prompt.txt?raw';
 import { defaultKeybindings } from './keybindings';
 import { capRangeError } from '../../extensions/piop-context-window-cap/interface';
 
@@ -216,7 +216,6 @@ export function sessionOperationTools(): any[] {
   return ([
     ['subagent', 'Delegate parallel tasks to agents with saved transcripts'],
     ['request_user_input', 'Ask the user questions with choices and free-text answers'],
-    ['lookup_terminals', 'Read session terminal activity through terminal-agent'],
     ['render_html', 'Display self-contained HTML previews in chat'],
     ['get_goal', 'Read the current persistent goal'],
     ['create_goal', 'Create a persistent goal with an optional token budget'],

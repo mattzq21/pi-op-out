@@ -12,7 +12,6 @@ import { loadAppSettings } from './settings';
 import { collectSessions, listLocalSessions } from './session_index';
 import * as conversationOwnership from './conversation_ownership';
 import * as peers from './peers';
-import * as terminalLookup from './terminal_lookup';
 import * as providerAuth from './provider_auth';
 import * as daemonRestart from './daemon_restart';
 import * as daemon from './daemon';
@@ -189,21 +188,12 @@ async function enqueueBrokerMessage(app: App, broker: BrokerRuntime, response: S
   }
 }
 
-async function brokerTerminalLookup(app: App, body: Buffer): Promise<any> {
-  const value = parseJson(body, 'Invalid terminal lookup request');
-  const hostId = value?.hostId;
-  if (typeof hostId !== 'string') throw new Error('hostId is required');
-  if (hostId !== 'local') return peers.forwardBroker(app, hostId, '/terminals', value);
-  return terminalLookup.lookup(app.terminals, value, hostId);
-}
-
 async function respondBrokerRequest(app: App, broker: BrokerRuntime, method: string, path: string, body: Buffer): Promise<any> {
   if (method === 'POST' && path === '/fast-models') {
     const value = parseJson(body, 'Invalid fast model request');
     if (typeof value?.hostId !== 'string') throw new Error('hostId is required');
     return providerAuth.forOwner(app, 'fast-models', value.hostId, { action: 'fast_models' });
   }
-  if (method === 'POST' && path === '/terminals') return brokerTerminalLookup(app, body);
   if (method === 'GET' && path === '/agents') return brokerAgents(app, broker);
   if (method === 'POST' && path === '/cancel') {
     const value = parseJson(body, 'Invalid cancellation request');

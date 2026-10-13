@@ -23,7 +23,7 @@ const STATUS_KEY = "pi-define-agents";
 
 const sessionTools = ["subagent"];
 
-export type Config = { revision?: string; agents: Agent[]; webSearchDefaultApplied?: boolean; sessionToolsDefaultApplied?: boolean; subagentsDefaultApplied?: boolean; diagramistDefaultApplied?: boolean; askerAgentDefaultApplied?: boolean; terminalAgentDefaultApplied?: boolean; tokagentDefaultApplied?: boolean; excalidrawAgentDefaultApplied?: boolean };
+export type Config = { revision?: string; agents: Agent[]; webSearchDefaultApplied?: boolean; sessionToolsDefaultApplied?: boolean; subagentsDefaultApplied?: boolean; diagramistDefaultApplied?: boolean; askerAgentDefaultApplied?: boolean; tokagentDefaultApplied?: boolean; excalidrawAgentDefaultApplied?: boolean };
 
 type ConfigRuntime = { enabledTools?: readonly string[] };
 
@@ -129,7 +129,7 @@ function normalize(value: Omit<Partial<Config>, "agents"> & { agents?: StoredAge
   const unique = supplied.filter((agent, index) => supplied.findIndex((candidate) => candidate.name === agent.name) === index);
   const agents = unique.some((agent) => agent.name === "general") ? unique : [defaultAgent(pi), ...unique];
 
-  return { revision: value.revision, agents, webSearchDefaultApplied: value.webSearchDefaultApplied === true, sessionToolsDefaultApplied: value.sessionToolsDefaultApplied === true, subagentsDefaultApplied: value.subagentsDefaultApplied === true, diagramistDefaultApplied: value.diagramistDefaultApplied === true, askerAgentDefaultApplied: value.askerAgentDefaultApplied === true, terminalAgentDefaultApplied: value.terminalAgentDefaultApplied === true, tokagentDefaultApplied: value.tokagentDefaultApplied === true, excalidrawAgentDefaultApplied: value.excalidrawAgentDefaultApplied === true };
+  return { revision: value.revision, agents, webSearchDefaultApplied: value.webSearchDefaultApplied === true, sessionToolsDefaultApplied: value.sessionToolsDefaultApplied === true, subagentsDefaultApplied: value.subagentsDefaultApplied === true, diagramistDefaultApplied: value.diagramistDefaultApplied === true, askerAgentDefaultApplied: value.askerAgentDefaultApplied === true, tokagentDefaultApplied: value.tokagentDefaultApplied === true, excalidrawAgentDefaultApplied: value.excalidrawAgentDefaultApplied === true };
 }
 
 async function readConfig(pi: ConfigRuntime, supplied: StoredConfig | undefined, initialize: boolean, storage: ConfigStorage): Promise<Config> {
@@ -199,22 +199,6 @@ function migrateUserInput(config: Config, pi: ConfigRuntime) {
   return true;
 }
 
-function migrateTerminalAgent(config: Config, pi: ConfigRuntime) {
-  if (config.terminalAgentDefaultApplied || !enabledTools(pi)?.includes("lookup_terminals")) return false;
-
-  if (!config.agents.some(agent => agent.name === "terminal-agent")) {
-    const agent = structuredClone(config.agents.find(agent => agent.name === "general") ?? defaultAgent(pi));
-    agent.name = "terminal-agent";
-    agent.tools = [...new Set([...agent.tools, "lookup_terminals"])];
-    config.agents.push(agent);
-  }
-
-  for (const agent of config.agents) if (agent.name !== "terminal-agent") agent.tools = agent.tools.filter(tool => tool !== "lookup_terminals");
-  config.terminalAgentDefaultApplied = true;
-
-  return true;
-}
-
 function migrateTokagent(config: Config, pi: ConfigRuntime) {
   if (config.tokagentDefaultApplied) return false;
 
@@ -248,7 +232,7 @@ export async function loadConfig(pi: ConfigRuntime, supplied?: StoredConfig, ini
 
 async function loadMigratedConfig(pi: ConfigRuntime, supplied: StoredConfig | undefined, initialize: boolean, storage: ConfigStorage): Promise<Config> {
   const config = await readConfig(pi, supplied, initialize, storage);
-  let changed = [migrateSessionTools(config, pi), migrateSubagents(config, pi), await migrateDiagramist(config, pi, storage), migrateUserInput(config, pi), migrateTerminalAgent(config, pi), await migrateExcalidrawAgent(config, storage)].some(Boolean);
+  let changed = [migrateSessionTools(config, pi), migrateSubagents(config, pi), await migrateDiagramist(config, pi, storage), migrateUserInput(config, pi), await migrateExcalidrawAgent(config, storage)].some(Boolean);
 
   for (const agent of config.agents) {
     if (!agent.tools.some((tool) => tool === "exec_command" || tool === "apply_patch")) continue;
@@ -348,7 +332,7 @@ export default async function defineAgents(pi: ExtensionAPI) {
 
   return (includeInactive ? request.availableTools : request.tools) ?? []; };
 
-  const toolDisabledForAgent = (name: string, agent: Agent | undefined) => name === "codemode" && agent?.codemode === false || name === "lookup_terminals" && agent?.name !== "terminal-agent";
+  const toolDisabledForAgent = (name: string, agent: Agent | undefined) => name === "codemode" && agent?.codemode === false;
 
   pi.on("tool_call", (event, ctx) => {
     const agent = currentAgent();
@@ -582,7 +566,6 @@ export default async function defineAgents(pi: ExtensionAPI) {
 
     if (mcpError) return unloadExtensions(mcpError, ctx);
 
-    if (agent.name !== "terminal-agent") tools.delete("lookup_terminals");
     const required: RequiredToolsRequest = { ctx, tools: [], availableTools: [...tools] }; pi.events.emit("piop:required-tools", required);
 
     for (const tool of required.tools) tools.add(tool);

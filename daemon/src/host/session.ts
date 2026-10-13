@@ -10,6 +10,7 @@ import { SessionQueue, type Execution } from './queue';
 import { QueueStorage, parseIdentity } from './queue_storage';
 import { ToolPayload, type ToolPayloadCache } from './tool_payload';
 import { RuntimeWorker, type Request, type WorkerObserver } from './worker';
+import { PENDING_QUESTIONS_STATUS_KEY, QUESTION_RECOVERY_STATUS_KEY } from '../../../extensions/piop-user-questions/interface';
 
 /** The controller functions that a session calls. */
 export interface SessionHost {
@@ -609,10 +610,10 @@ export class Session {
       catch (error) { return { ok: false, error: errorText(error) }; }
     };
     switch (event.statusKey) {
-      case 'piop-async-questions': case 'piop-async-question-recovery': {
+      case PENDING_QUESTIONS_STATUS_KEY: case QUESTION_RECOVERY_STATUS_KEY: {
         const result = parsed();
         if (!result.ok) { this.host.output({ type: 'diagnostic', line: result.error }); return true; }
-        if (event.statusKey === 'piop-async-question-recovery') await this.queue.recoverQuestionAnswers(result.value);
+        if (event.statusKey === QUESTION_RECOVERY_STATUS_KEY) await this.queue.recoverQuestionAnswers(result.value);
         else this.receiveQuestions(result.value);
         return true;
       }

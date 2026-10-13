@@ -3,7 +3,7 @@ import { Type as Schema, type Static } from "typebox";
 import { Check, Parse } from "typebox/value";
 import { randomUUID } from "node:crypto";
 import { setTimeout as delay } from "node:timers/promises";
-import type { GoalScope, GoalUsage } from "./goals.ts";
+import { goalSession } from "../piop-goals/interface.ts";
 import { listenSubagentUsage, type UsageCheckpoint } from "./subagent-usage.ts";
 import { branchEntries, interruptSession, sendSessionMessage, sessionSnapshot, snapshotStatus } from "./orchestration.ts";
 import { originalRunTask, saveRun, type SubagentRun } from "./subagent-state.ts";
@@ -129,18 +129,14 @@ function sameRun(checkpoint: Static<typeof usageCheckpointSchema>, run: Subagent
 export async function settleAccounting(run: SubagentRun, observation: Observation) {
   const { pi, ctx } = observation;
   observation.signal.throwIfAborted();
-  const replay: GoalUsage = { ctx };
-  pi.events.emit("piop:goal-usage", replay);
-  await replay.ready;
+  const goals = goalSession(pi);
+  await goals?.replaySubagentUsage(ctx);
   const total = accountedTokens(run, ctx);
   const sourceId = usageSourceId(run);
 
   if (run.goalId && total > (run.goalTokens ?? 0)) {
-    const event: GoalUsage = { goalId: run.goalId, tokens: total - (run.goalTokens ?? 0), ctx, sourceId, total: uncredited(run, total) };
-    pi.events.emit("piop:goal-usage", event);
-
-    if (!event.ready) throw new Error("Cumulative subagent goal accounting is unavailable");
-    await event.ready;
+    if (!goals) throw new Error("Cumulative subagent goal accounting is unavailable");
+    await goals.addSubagentUsage(ctx, { goalId: run.goalId, sourceId, total: uncredited(run, total) });
     run.goalTokens = total;
     saveRun(pi, ctx, run);
   }
@@ -326,10 +322,7 @@ class SubagentObserver {
     const metadata = await transcriptMetadata(this.run.sessionPath, this.run.sessionId);
     this.run.offset = metadata.size;
     this.run.offsetHeader = metadata.header;
-    const scope: GoalScope = { ctx };
-    pi.events.emit("piop:goal-scope", scope);
-    await scope.ready;
-    this.run.goalId = scope.goalId;
+    this.run.goalId = await goalSession(pi)?.usageGoalId(ctx);
     this.save();
     await this.channel();
     signal.throwIfAborted();

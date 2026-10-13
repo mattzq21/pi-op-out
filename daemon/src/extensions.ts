@@ -65,16 +65,21 @@ export function prepareRuntimeBridge(): void {
 export const SESSION_BROKER_MODULES = R.SESSION_BROKER_MODULES;
 export const EXCALIDRAW_ASSETS = R.EXCALIDRAW_ASSETS;
 
-export function prepareSessionBroker(): string {
+/** Installs session-broker and the session extensions that share its modules. Returns the entries in load order. */
+export function prepareSessionExtensions(): { controls: string; broker: string; goals: string; reviews: string } {
   const dir = generatedExtensionRoot();
   ensurePrivateDir(dir);
   prepareBrokerStorage(dir);
   const modules = join(dir, 'session-broker');
   ensurePrivateDir(modules);
   for (const [name, content] of SESSION_BROKER_MODULES) atomicWritePrivate(join(modules, name), content);
-  const path = join(dir, 'session-broker.ts');
-  atomicWritePrivate(path, R.sessionBroker);
-  return path;
+  for (const [extension, files] of R.SESSION_EXTENSIONS) {
+    ensurePrivateDir(join(dir, extension));
+    for (const [name, content] of files) atomicWritePrivate(join(dir, extension, name), content);
+  }
+  const broker = join(dir, 'session-broker.ts');
+  atomicWritePrivate(broker, R.sessionBroker);
+  return { controls: join(dir, 'piop-controls/index.ts'), broker, goals: join(dir, 'piop-goals/index.ts'), reviews: join(dir, 'piop-reviews/index.ts') };
 }
 
 function prepareSdkStorage(dir: string): void {
@@ -88,7 +93,16 @@ function prepareBrokerStorage(dir: string): void {
   atomicWritePrivate(join(dir, 'transcript-references.cjs'), R.transcriptReferences);
   atomicWritePrivate(join(dir, 'session-database.cjs'), R.sessionDatabase);
   atomicWritePrivate(join(dir, 'sdk-storage.mjs'), R.sdkStorage);
-  atomicWritePrivate(join(dir, 'ask-user.ts'), R.askUser);
+}
+
+export function prepareUserQuestionsExtension(): string {
+  const dir = join(generatedExtensionRoot(), 'piop-user-questions');
+  ensurePrivateDir(dir);
+  atomicWritePrivate(join(dir, 'interface.ts'), R.userQuestionsInterface);
+  atomicWritePrivate(join(dir, 'questions.ts'), R.userQuestionsLogic);
+  const path = join(dir, 'index.ts');
+  atomicWritePrivate(path, R.userQuestionsExtension);
+  return path;
 }
 
 export function prepareProvidersRefreshExtension(): string {
@@ -139,12 +153,24 @@ export function prepareContextBarExtension(): string {
   return path;
 }
 
+export function prepareHtmlPreviewExtension(): string {
+  const dir = join(generatedExtensionRoot(), 'piop-html-preview');
+  ensurePrivateDir(dir);
+  atomicWritePrivate(join(dir, 'interface.ts'), R.htmlPreviewInterface);
+  atomicWritePrivate(join(dir, 'preview.ts'), R.htmlPreviewFeature);
+  const path = join(dir, 'index.ts');
+  atomicWritePrivate(path, R.htmlPreviewExtension);
+  return path;
+}
+
 export function prepareContextWindowCapExtension(settings: AppSettings): string {
   saveContextCapSettings(settings);
   const dir = join(generatedExtensionRoot(), 'piop-context-window-cap');
   ensurePrivateDir(dir);
   const extensionPath = join(dir, 'index.ts');
   atomicWritePrivate(join(dir, 'interface.ts'), R.contextWindowCapInterface);
+  atomicWritePrivate(join(dir, 'app-settings.cjs'), R.appSettingsCjs);
+  atomicWritePrivate(join(dir, 'defaults.ts'), R.contextWindowCapDefaults.replace('../../daemon/resources/session-broker/app-settings.cjs', './app-settings.cjs'));
   atomicWritePrivate(extensionPath, R.contextWindowCapExtension);
   return extensionPath;
 }

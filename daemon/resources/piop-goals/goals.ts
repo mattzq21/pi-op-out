@@ -1,29 +1,18 @@
-import { restoreGoalAttachments } from "./goal-files.ts";
+import { restoreGoalAttachments } from "./files.ts";
 import type { ExtensionAPI, ExtensionContext, AgentBeforeSettleEvent, AgentBeforeSettleEventResult, InputEventResult, MessageEndEventResult } from "@earendil-works/pi-coding-agent";
-import { GoalState, GOAL_CONTEXT, goalTokens } from "./goal-state.ts";
-import { goalBudgetPrompt, goalChangedPrompt, goalInactivePrompt, goalPrompt } from "./goal-prompts.ts";
-import { registerGoalControls } from "./goal-controls.ts";
-import { GoalCoordination } from "./goal-coordination.ts";
-import { registerPauseControl } from "./pause.ts";
+import { GoalState, GOAL_CONTEXT, validateBudget } from "./state.ts";
+import { goalBudgetPrompt, goalChangedPrompt, goalInactivePrompt, goalPrompt } from "./prompts.ts";
+import { GoalCoordination } from "./coordination.ts";
+import { goalTokens, type GoalSession, type SubagentGoalUsage } from "./interface.ts";
+import type { GoalCore } from "./preparation.ts";
+import { sessionControls } from "../piop-controls/interface.ts";
 
 interface AgentsReady { ctx: ExtensionContext }
-
-interface GoalControl { action: "pause" | "resume"; ctx: ExtensionContext; ready?: Promise<void> }
-
-export interface GoalScope { goalId?: string; ctx: ExtensionContext; ready?: Promise<void> }
-
-export interface GoalUsage { goalId?: string; tokens?: number; ctx: ExtensionContext; sourceId?: string; total?: number; ready?: Promise<void> }
 
 declare module "@earendil-works/pi-coding-agent" {
   interface EventBus {
     on(channel: "piop:agents:ready", handler: (event: AgentsReady) => void): () => void;
     emit(channel: "piop:agents:ready", event: AgentsReady): void;
-    on(channel: "piop:goal-control", handler: (event: GoalControl) => void): () => void;
-    emit(channel: "piop:goal-control", event: GoalControl): void;
-    on(channel: "piop:goal-scope", handler: (event: GoalScope) => void): () => void;
-    emit(channel: "piop:goal-scope", event: GoalScope): void;
-    on(channel: "piop:goal-usage", handler: (event: GoalUsage) => void): () => void;
-    emit(channel: "piop:goal-usage", event: GoalUsage): void;
   }
 }
 
@@ -37,10 +26,18 @@ function providerErrorStatus(message: string | undefined): "usage_limited" | "bl
   return /usage[_\s-]*limit|rate[_\s-]*limit|insufficient[_\s-]*quota|quota[_\s-]*(?:exceeded|exhausted)|too many requests|out of budget|monthly usage limit|available balance|\b429\b/i.test(message ?? "") ? "usage_limited" : "blocked";
 }
 
-export function registerGoals(pi: ExtensionAPI) {
+/** Registers goal tracking for the session and publishes its GoalSession. Returns the goal internals for the goal tools and Piop input. */
+export function registerGoals(pi: ExtensionAPI): { session: GoalSession; core: GoalCore } {
   const state = new GoalState();
-  const pauseController = registerPauseControl(pi);
-  const pause = (ctx: ExtensionContext) => { void pauseController.pause(ctx).catch(error => ctx.ui.notify(String(error), "error")); };
+
+  const pause = (ctx: ExtensionContext) => {
+    const controls = sessionControls(pi);
+
+    if (!controls) { ctx.ui.notify("Session controls are unavailable, so the goal could not pause the run.", "error");
+
+    return; }
+    void controls.pause(ctx).catch(error => ctx.ui.notify(String(error), "error"));
+  };
 
   const coordination = new GoalCoordination();
 
@@ -97,7 +94,7 @@ export function registerGoals(pi: ExtensionAPI) {
     if (!ctx.isIdle()) steering(goalChangedPrompt(state.goal));
   };
 
-  registerGoalControls(pi, { state, coordination, assertAvailable, changed, start });
+  const core: GoalCore = { state, coordination, assertAvailable, changed, start };
 
   const restore = async (ctx: ExtensionContext) => {
     context = ctx; starting = false; pendingStart = false; resetAudit(); runGoalId = undefined;
@@ -261,58 +258,61 @@ export function registerGoals(pi: ExtensionAPI) {
     state.save(ctx);
   }));
 
-  const stopControl = pi.events.on("piop:goal-control", event => {
-    const { action, ctx } = event;
-
-    const operation = () => {
-    if (!state.goal) return;
-
-    if (action === "pause" && state.goal.status === "active") state.setStatus(ctx, "paused");
-
-    if (action !== "resume") return;
-
-    if (state.goal.tokenBudget !== null && state.goal.tokensUsed >= state.goal.tokenBudget && state.goal.status !== "complete") throw new Error("Increase or clear the goal token budget before resuming.");
-
-    if (["paused", "blocked", "usage_limited", "budget_limited"].includes(state.goal.status) && allowed()) { resetAudit(); state.setStatus(ctx, "active"); }
-    };
-
-    if (action === "resume") event.ready = coordination.run(ctx, operation);
-    else schedule(ctx, operation);
-  });
-
-  const scope = pi.events.on("piop:goal-scope", event => {
-    event.ready = coordination.run(event.ctx, () => { event.goalId = state.usageGoalId(); });
-  });
-
-  const cumulativeUsage = (event: GoalUsage, sourceId: string, total: number) => {
-    if (!restored || restoredSessionId !== event.ctx.sessionManager.getSessionId()) restore(event.ctx);
+  const cumulativeUsage = (ctx: ExtensionContext, usage: SubagentGoalUsage) => {
+    if (!restored || restoredSessionId !== ctx.sessionManager.getSessionId()) restore(ctx);
 
     if (!restored) throw new Error("Saved goal state is invalid; cumulative subagent usage remains pending");
 
-    if (!event.goalId || event.goalId !== state.goal?.id) return;
+    if (!usage.goalId || usage.goalId !== state.goal?.id) return;
 
-    if (state.accountSubagent(event.ctx, sourceId, total) && state.goal) {
+    if (state.accountSubagent(ctx, usage.sourceId, usage.total) && state.goal) {
       steering(goalBudgetPrompt(state.goal));
-      pause(event.ctx);
+      pause(ctx);
     }
   };
 
-  const usage = pi.events.on("piop:goal-usage", event => {
-    if (event.sourceId !== undefined && event.total !== undefined) {
-      const { sourceId, total } = event;
-      event.ready = coordination.run(event.ctx, () => cumulativeUsage(event, sourceId, total));
+  /** Runs a user operation, saves, reports the result, then starts work when the goal is active and Pi is idle. */
+  const commit = (ctx: ExtensionContext, operation: () => void, startWork = true) => coordination.run(ctx, () => {
+    operation();
+    const report = state.response();
+    state.save(ctx);
 
-      return;
-    }
+    if (startWork) start(ctx);
 
-    event.ready = coordination.run(event.ctx, () => {
-      if (state.replaySubagentUsage(event.ctx) && state.goal) {
-        steering(goalBudgetPrompt(state.goal));
-        pause(event.ctx);
-      }
-    });
-
+    return report;
   });
+
+  const session: GoalSession = {
+    report: ctx => commit(ctx, () => undefined, false),
+    pause: ctx => commit(ctx, () => { state.setStatus(ctx, "paused"); changed(ctx); }),
+    resume: ctx => commit(ctx, () => { assertAvailable(ctx); state.setStatus(ctx, "active"); changed(ctx); }),
+    clear: ctx => commit(ctx, () => { state.clear(ctx); changed(ctx); }),
+    setBudget: (ctx, budget) => commit(ctx, () => {
+      state.require().tokenBudget = validateBudget(budget);
+      state.enforceBudget();
+      changed(ctx);
+    }),
+    pauseWithSession: ctx => coordination.run(ctx, () => {
+      if (state.goal?.status === "active") state.setStatus(ctx, "paused");
+    }),
+    resumeWithSession: ctx => coordination.run(ctx, () => {
+      if (!state.goal) return;
+
+      if (state.goal.tokenBudget !== null && state.goal.tokensUsed >= state.goal.tokenBudget && state.goal.status !== "complete") throw new Error("Increase or clear the goal token budget before resuming.");
+
+      if (["paused", "blocked", "usage_limited", "budget_limited"].includes(state.goal.status) && allowed()) { resetAudit(); state.setStatus(ctx, "active"); }
+    }),
+    usageGoalId: ctx => coordination.run(ctx, () => state.usageGoalId()),
+    addSubagentUsage: (ctx, usage) => coordination.run(ctx, () => cumulativeUsage(ctx, usage)),
+    replaySubagentUsage: ctx => coordination.run(ctx, () => {
+      if (state.replaySubagentUsage(ctx) && state.goal) {
+        steering(goalBudgetPrompt(state.goal));
+        pause(ctx);
+      }
+    }),
+  };
+
+  const publish = pi.events.on("piop:goals:session", request => { request.session = session; });
 
   pi.on("context", (event, ctx) => coordination.run(ctx, () => {
     if (state.goal?.status === "active" && !allowed()) state.setStatus(ctx, "paused");
@@ -330,8 +330,10 @@ export function registerGoals(pi: ExtensionAPI) {
   pi.on("session_shutdown", (_event, ctx) => coordination.run(ctx, () => {
     if (context) { state.finishRun(); state.save(context); }
 
-    ready(); stopControl(); scope(); usage();
+    ready(); publish();
   }));
+
+  return { session, core };
 }
 
 function currentPrompt(state: GoalState) {

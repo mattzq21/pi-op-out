@@ -550,7 +550,7 @@ export async function cancelMessage(app: App, requestId: string): Promise<void> 
 }
 
 export function localBrokerRequest(app: App, path: string, body: any): Promise<any> {
-  if (!['/message', '/cancel', '/orchestration', '/terminals'].includes(path) || (typeof body?.hostId === 'string' && body.hostId !== 'local')) {
+  if (!['/message', '/cancel', '/orchestration'].includes(path) || (typeof body?.hostId === 'string' && body.hostId !== 'local')) {
     return Promise.reject(new Error('Peer broker requests must target this machine'));
   }
   const [port, token] = brokerEnvironment(app.broker);

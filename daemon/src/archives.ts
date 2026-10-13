@@ -12,7 +12,7 @@ import { requireLocal } from './host_connection';
 import { restoreSessionTree } from './restore';
 import { MutationGuard } from './conversation_ownership';
 import * as sessionGroups from './session_groups';
-import * as terminalLookup from './terminal_lookup';
+import * as terminalSessions from './terminal_sessions';
 import { stopTerminals } from './terminals';
 import type { AppSettings } from './settings_types';
 import type { PiRuntime } from './pi_runtime';
@@ -130,7 +130,7 @@ export async function archiveSession(app: App, runtime: TerminalRuntime, session
       const paths = await archiveSessionPaths(app, client, hostId, sessionPath, clientId, mutations);
       const sessionIds: string[] = [];
       for (const path of paths) sessionIds.push(await sessionIdentity(settings, hostId, path));
-      terminalIds.push(...terminalLookup.sessionTerminals(runtime, hostId, sessionIds));
+      terminalIds.push(...terminalSessions.sessionTerminals(runtime, hostId, sessionIds));
       await stopTerminals(runtime, terminalIds);
       const invalidate = app.sessionIndex.projects.invalidateAfter(hostId);
       try { await storageTransactions.archive(paths); }
@@ -213,7 +213,7 @@ async function deleteStoredSessions(app: App, runtime: PiRuntime, sessionPaths: 
       const targets = await deletionTargets(settings, hostId, paths);
       const sessionIds: string[] = [];
       for (const [path] of paths) sessionIds.push(await sessionIdentity(settings, hostId, path));
-      await stopTerminals(app.terminals, terminalLookup.sessionTerminals(app.terminals, hostId, sessionIds));
+      await stopTerminals(app.terminals, terminalSessions.sessionTerminals(app.terminals, hostId, sessionIds));
       await deleteSessionTargets(runtime, targets, hostId, settings);
       for (let index = 0; index < paths.length; index++) {
         try { await mutations[index]!.finishCommitted(); }

@@ -24,16 +24,6 @@ test('question migration creates an asker and removes questions only from genera
   ]);
 });
 
-test('terminal migration isolates lookup tools', async t => {
-  const config = configured([profile('general', { tools: ['read', 'lookup_terminals'] }), profile('reviewer', { tools: ['lookup_terminals', 'read'] })]);
-  delete config.terminalAgentDefaultApplied;
-  const f = await agentFixture(t, { config, runtime: { enabledTools: ['read', 'lookup_terminals'] } });
-  await f.load();
-  assert.deepEqual((await f.configuration()).agents.map(agent => [agent.name, agent.tools]), [
-    ['general', ['read']], ['reviewer', ['read']], ['terminal-agent', ['read', 'lookup_terminals']],
-  ]);
-});
-
 test('diagramist migration writes its instructions and preserves an existing custom profile', async t => {
   const config = configured([profile()]); delete config.diagramistDefaultApplied;
   const f = await agentFixture(t, { config }); await f.load();
@@ -116,15 +106,6 @@ test('fast mode keeps custom provider identifiers and does not change their requ
   assert.equal(await f.emit('before_provider_request', { payload: { input: 'hello' } }), undefined);
 });
 
-test('terminal lookup remains restricted to the terminal agent even in saved definitions', async t => {
-  const f = await agentFixture(t, { tools: ['read', 'lookup_terminals'], config: null });
-  await f.load();
-  await f.configure(configured([profile('general', { tools: ['read', 'lookup_terminals'] }), profile('terminal-agent', { tools: ['read', 'lookup_terminals'] })]));
-  await f.start(); assert.deepEqual(f.pi.getActiveTools(), ['read']);
-  await f.select('terminal-agent'); assert.deepEqual(f.pi.getActiveTools(), ['read', 'lookup_terminals']);
-  await f.select('general'); assert.deepEqual(f.pi.getActiveTools(), ['read']);
-});
-
 test('explicit agent selection applies fast-mode defaults while input leaves manual choices alone', async t => {
   const model = { provider: 'openai', id: 'gpt-5.4', api: 'openai-responses' };
   const f = await agentFixture(t, {
@@ -182,12 +163,11 @@ test('session tool migration persists independently of the other completed migra
 
 test('helper profiles inherit general regardless of ordering', async t => {
   const config = configured([profile('reviewer', { tools: ['bash'] }), profile('general', { tools: ['read'] })]);
-  config.askerAgentDefaultApplied = false; config.terminalAgentDefaultApplied = false;
-  const f = await agentFixture(t, { config, runtime: { enabledTools: ['read', 'bash', 'request_user_input', 'lookup_terminals'] } });
+  config.askerAgentDefaultApplied = false;
+  const f = await agentFixture(t, { config, runtime: { enabledTools: ['read', 'bash', 'request_user_input'] } });
   await f.load();
   const saved = await f.configuration();
   assert.deepEqual(saved.agents.find(agent => agent.name === 'asker-agent').tools, ['read', 'request_user_input']);
-  assert.deepEqual(saved.agents.find(agent => agent.name === 'terminal-agent').tools, ['read', 'lookup_terminals']);
 });
 
 test('subagents use model overrides even when they differ from cached runtime defaults', async t => {
@@ -289,26 +269,6 @@ test('deleting the migrated asker keeps it absent after reload', async t => {
   const f = await agentFixture(t, { config, runtime: { enabledTools: ['read', 'request_user_input'] } });
   await f.load(); await f.start();
   assert.deepEqual((await f.configuration()).agents.map(agent => agent.name), ['general', 'asker-agent']);
-  await f.configure({ agents: [profile()] });
-  await f.reloadExtensions();
-  assert.deepEqual((await f.configuration()).agents.map(agent => agent.name), ['general']);
-});
-
-test('terminal migration preserves an existing custom terminal profile', async t => {
-  const config = configured([profile(), profile('terminal-agent', { tools: ['lookup_terminals'] })]);
-  delete config.terminalAgentDefaultApplied;
-  const f = await agentFixture(t, { config, runtime: { enabledTools: ['read', 'lookup_terminals'] }, tools: ['read', 'lookup_terminals'] });
-  await f.load(); await f.start();
-  await f.select('terminal-agent');
-  assert.deepEqual(f.pi.getActiveTools(), ['lookup_terminals']);
-  assert.deepEqual((await f.configuration()).agents.find(agent => agent.name === 'terminal-agent').tools, ['lookup_terminals']);
-});
-
-test('deleting the migrated terminal profile keeps it absent after reload', async t => {
-  const config = configured([profile()]); delete config.terminalAgentDefaultApplied;
-  const f = await agentFixture(t, { config, runtime: { enabledTools: ['read', 'lookup_terminals'] } });
-  await f.load(); await f.start();
-  assert.deepEqual((await f.configuration()).agents.map(agent => agent.name), ['general', 'terminal-agent']);
   await f.configure({ agents: [profile()] });
   await f.reloadExtensions();
   assert.deepEqual((await f.configuration()).agents.map(agent => agent.name), ['general']);

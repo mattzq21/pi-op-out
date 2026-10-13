@@ -1,4 +1,5 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { registerContextCapSettings } from "./defaults.ts";
 import { SettingsManager } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { Check } from "typebox/value";
@@ -488,6 +489,8 @@ export default function contextWindowCap(pi: ExtensionAPI) {
       } catch (error) { ctx.ui.notify("Context cap change failed: " + asError(error).message, "error"); }
     },
   });
+
+  registerContextCapSettings(pi, next => session.updateSettings(next));
 
   pi.on("session_start", (_event, ctx) => restore(ctx));
   pi.on("session_tree", (_event, ctx) => restore(ctx));

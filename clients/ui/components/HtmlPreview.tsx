@@ -1,9 +1,10 @@
 import { createMemo, createSignal, onCleanup, onMount, Show } from "solid-js";
 import { z } from "zod";
 import { htmlPreviewSize, isMobile } from "../lib/platform";
+import { MAX_HTML_BYTES, MAX_TITLE_LENGTH } from "../../../extensions/piop-html-preview/interface";
 import "./html-preview.css";
 
-const previewSchema = z.object({ version: z.literal(1), html: z.string().min(1).max(512_000), title: z.string().min(1).max(120) });
+const previewSchema = z.object({ version: z.literal(1), html: z.string().min(1).max(MAX_HTML_BYTES), title: z.string().min(1).max(MAX_TITLE_LENGTH) });
 
 const policy = "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data: blob:; font-src data:; media-src data: blob:; connect-src 'none'; frame-src 'none'; worker-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'";
 

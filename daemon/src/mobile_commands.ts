@@ -4,7 +4,7 @@ import * as daemonRestart from './daemon_restart';
 import * as peers from './peers';
 import * as plugins from './plugins';
 import * as providerAuth from './provider_auth';
-import * as terminalLookup from './terminal_lookup';
+import * as terminalSessions from './terminal_sessions';
 import * as projectFiles from './project_files';
 import * as archives from './archives';
 import * as sessionIndex from './session_index';
@@ -146,8 +146,8 @@ const COMMANDS: Record<string, Handler> = {
   check_daemon_idle: async app => { await daemonRestart.ensureLocalIdle(app); return null; },
   plugin_call: (app, _owner, args) => plugins.dispatch(app, 'plugin_call', args),
   plugin_status: (app, _owner, args) => plugins.dispatch(app, 'plugin_status', args),
-  shared_terminal: (app, owner, args) => terminalLookup.shared(app, owner, args),
-  reassign_terminal: (app, owner, args) => { terminalLookup.reassign(app.terminals, owner, argument(args, 'terminalId', 'string'), argument(args, 'sessionKey', 'string')); return null; },
+  shared_terminal: (app, owner, args) => terminalSessions.shared(app, owner, args),
+  reassign_terminal: (app, owner, args) => { terminalSessions.reassign(app.terminals, owner, argument(args, 'terminalId', 'string'), argument(args, 'sessionKey', 'string')); return null; },
   broker_request: (app, _owner, args) => peers.localBrokerRequest(app, argument(args, 'path', 'string'), argument(args, 'body', 'any')),
   load_host_settings: (app, _owner, args) => loadSettings(app, args),
   load_host_settings_change: app => loadSettingsChange(app),

@@ -17,7 +17,7 @@ async function fixture(t) {
   t.after(() => rm(dir, { recursive: true, force: true }));
 
   const bundle = await build({
-    stdin: { contents: 'export { registerForkAndForget } from "./daemon/resources/session-broker/operations.ts";', resolveDir: process.cwd() },
+    stdin: { contents: 'export { default as controls } from "./daemon/resources/piop-controls/index.ts";', resolveDir: process.cwd() },
     bundle: true, write: false, platform: 'node', format: 'esm', target: 'node22', logLevel: 'silent',
     external: ['@earendil-works/*'],
     banner: { js: "import { createRequire as __fixtureRequire } from 'node:module'; const require = __fixtureRequire(import.meta.url);" },
@@ -42,7 +42,7 @@ async function fixture(t) {
   await writeFile(sourcePath, sourceText);
   const notices = [], operations = [], listeners = [];
   const ctx = { cwd: dir, sessionManager: { getEntries: () => entries, getBranch: () => entries, getEntry: id => entries.find(entry => entry.id === id), getHeader: () => header, getSessionId: () => 'source', getSessionFile: () => sourcePath, getSessionDir: () => sessions }, ui: { notify: (...args) => notices.push(args) } };
-  module.registerForkAndForget({ events: { on: (_name, handler) => listeners.push(handler) }, appendEntry: (customType, data) => operations.push({ customType, data }) });
+  module.controls({ on: () => undefined, events: { on: (name, handler) => { if (name === 'piop:rpc') listeners.push(handler); }, emit: () => undefined }, appendEntry: (customType, data) => operations.push({ customType, data }) });
 
   const rpc = async (command, payload) => {
     const request = { command, payload, ctx };

@@ -1,8 +1,7 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import type { ContextCapSessionRequest } from "../../../extensions/piop-context-window-cap/channel.ts";
-import type { ContextCapSettings } from "../../../extensions/piop-context-window-cap/interface.ts";
-import type { AgentSelectedEvent } from "../../../extensions/piop-define-agents/contracts.ts";
-import { readFile } from "./app-settings.cjs";
+import type { ContextCapSettings } from "./interface.ts";
+import type { AgentSelectedEvent } from "../piop-define-agents/contracts.ts";
+import { readFile } from "../../daemon/resources/session-broker/app-settings.cjs";
 
 declare module "@earendil-works/pi-coding-agent" {
   interface EventBus {
@@ -11,7 +10,7 @@ declare module "@earendil-works/pi-coding-agent" {
   }
 }
 
-export function registerContextCapSettings(pi: ExtensionAPI, load = (): ContextCapSettings => {
+export function registerContextCapSettings(pi: ExtensionAPI, updateSettings: (settings: ContextCapSettings) => Promise<unknown>, load = (): ContextCapSettings => {
   const path = process.env.PIOP_CONTEXT_CAP_SETTINGS_PATH;
   if (!path) throw new Error("Context cap settings path is unavailable");
   return readFile(path);
@@ -19,10 +18,7 @@ export function registerContextCapSettings(pi: ExtensionAPI, load = (): ContextC
   let closed = false;
   const apply = async (ctx: ExtensionContext, settings: () => ContextCapSettings) => {
     try {
-      const request: ContextCapSessionRequest = {};
-      pi.events.emit("piop:context-cap:session", request);
-      if (!request.session) throw new Error("The context cap extension is not loaded");
-      await request.session.updateSettings(settings());
+      await updateSettings(settings());
     } catch (error) {
       if (!closed) ctx.ui.notify("Context cap settings could not be applied: " + (error instanceof Error ? error.message : String(error)), "error");
       throw error;

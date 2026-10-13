@@ -6,10 +6,12 @@ mock.module("@earendil-works/pi-coding-agent", () => ({
   SettingsManager: { inMemory: () => ({ getCompactionSettings: () => ({ enabled: true, ...budgets }) }) },
 }));
 
-const { default: contextWindowCap } = await import("../../../extensions/piop-context-window-cap/index.ts");
-const { registerContextCapSettings } = await import("./context-cap.ts");
+const { default: contextWindowCap } = await import("./index.ts");
+let currentSettings: any;
+process.env.PIOP_CONTEXT_CAP_SETTINGS_PATH = "/test/context-cap-settings.json";
+mock.module("../../daemon/resources/session-broker/app-settings.cjs", () => ({ readFile: () => { if (!currentSettings) throw new Error("Context cap settings are unavailable"); return currentSettings; } }));
 
-/** One fake Pi shared by the context cap extension and the broker. */
+/** A Pi host for the context cap extension. */
 function host() {
   const handlers = new Map<string, Array<(event: any, ctx: any) => any>>();
   const bus = new Map<string, Set<(value: any) => void>>();
@@ -37,14 +39,14 @@ function host() {
       emit,
     },
   };
-  // Production loads the broker before the cap extension, so the broker's model_select handler runs first.
-  registerContextCapSettings(pi as any, () => settings);
+  currentSettings = settings;
   contextWindowCap(pi as any);
   pi.events.on("piop:agents:context-cap", () => undefined);
   pi.events.on("piop:runtime-settings", () => { throw new Error("Context settings must not come from runtime-settings"); });
 
   return {
     ctx, notes, settings, emit,
+    listenerCount: (name: string) => bus.get(name)?.size ?? 0,
     fire: async (name: string, event: any = {}) => { for (const handler of handlers.get(name) ?? []) await handler({ type: name, ...event }, ctx); },
     state: () => { const request: any = {}; emit("piop:context-cap:session", request); return request.session.getState(); },
   };
@@ -75,17 +77,6 @@ describe("context cap settings transport", () => {
     await pi.fire("session_tree");
     pi.emit("piop:agents:ready", { ctx: pi.ctx });
     expect(await pi.state()).toMatchObject({ cap: 400_000 });
-  });
-
-  test("missing context-cap extension rejects a direct settings request", async () => {
-    const pi = await started();
-    await pi.fire("session_shutdown");
-    const event: any = { command: "context_cap_settings", payload: { settings: pi.settings }, ctx: pi.ctx };
-    // A broker with no cap extension must not acknowledge a settings change.
-    const listeners = new Map<string, (event: any) => void>();
-    registerContextCapSettings({ on: () => undefined, events: { on: (name: string, fn: any) => { listeners.set(name, fn); return () => undefined; }, emit: () => undefined } } as any);
-    listeners.get("piop:rpc")!(event);
-    await expect(event.ready).rejects.toThrow("not loaded");
   });
 
   test("a settings change resolves ready after the cap applies", async () => {
@@ -122,4 +113,19 @@ describe("context cap settings transport", () => {
     expect(await pi.state()).toEqual({ cap: 500_000, source: "config", appliedWindow: 500_000 });
     expect(pi.notes.filter(([type]) => type === "error")).toEqual([]);
   });
+});
+
+test("missing settings report a visible error and preserve the current cap", async () => {
+  const pi = await started();
+  currentSettings = undefined;
+  pi.emit("piop:agents:ready", { ctx: pi.ctx });
+  await Promise.resolve();
+  expect(pi.notes.some(([type, message]) => type === "error" && message.includes("Context cap settings are unavailable"))).toBe(true);
+  expect((await pi.state()).cap).toBe(300_000);
+});
+
+test("shutdown removes the settings listeners", async () => {
+  const pi = await started();
+  await pi.fire("session_shutdown");
+  for (const channel of ["piop:agents:ready", "piop:rpc"]) expect(pi.listenerCount(channel)).toBe(0);
 });
