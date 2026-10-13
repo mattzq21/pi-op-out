@@ -36,6 +36,7 @@ function installFakePi(home: string, socket: string): void {
 const fs = require('node:fs');
 const args = process.argv.slice(2);
 if (args.includes('--print')) {
+  fs.writeFileSync(require('node:path').join(process.env.HOME, 'pi-print-args.json'), JSON.stringify(args));
   let message = '';
   process.stdin.on('data', chunk => { message += chunk; });
   const socket = require('node:net').connect(${JSON.stringify(socket)});
@@ -153,6 +154,9 @@ test('a message needs both the machine and the conversation of an existing agent
   await arrivals(arrived + 1);
   release();
   expect(JSON.parse((await sent).body)).toEqual({ data: { reply: 'reply to found' } });
+  const printArgs: string[] = JSON.parse(readFileSync(join(daemon.home, 'pi-print-args.json'), 'utf8'));
+  const extensionPaths = printArgs.filter((_, index) => printArgs[index - 1] === '--extension');
+  expect(extensionPaths).toContain(join(daemon.home, '.piop/piop-providers-refresh.ts'));
 });
 
 test('concurrent messages claim an agent once, other agents stay free, and the claim ends with the reply', async () => {

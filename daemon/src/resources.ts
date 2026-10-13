@@ -21,6 +21,7 @@ import fastModeBundle from '../resources/fast-mode.bundle.mjs?raw';
 import askUser from '../resources/ask-user.ts?raw';
 import sessionCostLimitExtension from '../../extensions/piop-session-cost-limit/index.ts?raw';
 import codemodeToolsDescriptionExtension from '../../extensions/piop-codemode-tools-description/index.ts?raw';
+import providersRefreshExtension from '../../extensions/piop-providers-refresh/index.ts?raw';
 import runtimeSettingsExtension from '../../extensions/piop-runtime-settings/index.ts?raw';
 import rtkExtension from '../../extensions/piop-rtk/rtk.ts?raw';
 import openaiCacheForkExtension from '../../extensions/piop-openai-cache-fork/index.ts?raw';
@@ -133,6 +134,7 @@ export {
   sessionCostLimitExtension,
   runtimeSettingsExtension,
   codemodeToolsDescriptionExtension,
+  providersRefreshExtension,
   rtkExtension,
   openaiCacheForkExtension,
   agentState,

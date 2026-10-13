@@ -283,17 +283,5 @@ export default async function runtimeSettings(pi: ExtensionAPI) {
       }
     })();
   });
-  pi.events.on("piop:rpc", request => {
-    if (request.command !== "provider_auth_refresh") return;
-    const ctx = request.ctx;
-    request.ready = (async () => {
-      try {
-        await ctx.modelRegistry.refresh({ allowNetwork: false });
-        pi.events.emit("piop:models-refreshed", { ctx });
-      } catch (error) {
-        throw new Error(`Could not refresh provider models: ${error instanceof Error ? error.message : String(error)}. Reopen the conversation to retry.`, { cause: error });
-      }
-    })();
-  });
   pi.on("session_shutdown", () => { unsubscribe(); });
 }

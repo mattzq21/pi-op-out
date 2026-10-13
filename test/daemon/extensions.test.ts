@@ -119,12 +119,13 @@ test('a Pi start installs the bundled extensions as private files and refreshes 
   const bundles: [string, string][] = [
     ['session-broker.ts', 'daemon/resources/session-broker.ts'],
     ['ask-user.ts', 'daemon/resources/ask-user.ts'],
+    ['piop-providers-refresh.ts', 'extensions/piop-providers-refresh/index.ts'],
     ['piop-openai-cache-fork.ts', 'extensions/piop-openai-cache-fork/index.ts'],
     ['piop-codex-web-search.ts', 'extensions/piop-codex-web-search/index.ts'],
     ['piop-codemode-tools-description.ts', 'extensions/piop-codemode-tools-description/index.ts'],
   ];
   const extensions = extensionPaths(await launchPublicPi(daemon));
-  for (const name of ['session-broker.ts', 'piop-openai-cache-fork.ts', 'piop-codex-web-search.ts', 'piop-codemode-tools-description.ts']) expect(extensions).toContain(join(generated, name));
+  for (const name of ['session-broker.ts', 'piop-providers-refresh.ts', 'piop-openai-cache-fork.ts', 'piop-codex-web-search.ts', 'piop-codemode-tools-description.ts']) expect(extensions).toContain(join(generated, name));
   expect(extensions.indexOf(join(generated, 'piop-codemode-tools-description.ts'))).toBeLessThan(extensions.indexOf(join(generated, 'runtime-settings.ts')));
   for (const [name, relative] of bundles) {
     expect(readFileSync(join(generated, name), 'utf8')).toBe(source(relative));
@@ -285,6 +286,8 @@ test('development Pi extensions stay inside their daemon directory across two pr
       expect(extensionPaths(launch)).toContain(join(debug.extensionRoot, 'piop-mcp-bridge.ts'));
       expect(extensionPaths(launch)).toContain(join(debug.extensionRoot, 'piop-codemode-tools-description.ts'));
       expect(readFileSync(join(debug.extensionRoot, 'piop-mcp-bridge.ts'), 'utf8')).toBe(source('daemon/resources/mcp-bridge.bundle.mjs'));
+      expect(extensionPaths(launch)).toContain(join(debug.extensionRoot, 'piop-providers-refresh.ts'));
+      expect(readFileSync(join(debug.extensionRoot, 'piop-providers-refresh.ts'), 'utf8')).toBe(source('extensions/piop-providers-refresh/index.ts'));
       roots.push(debug.extensionRoot);
     }
     expect(roots[0]).not.toBe(roots[1]);
