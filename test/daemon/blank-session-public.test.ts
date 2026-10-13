@@ -4,6 +4,7 @@ import { startDaemon } from './harness';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { randomUUID } from 'node:crypto';
+import { join } from 'node:path';
 
 test('closing an unused new conversation removes its header-only transcript', async () => {
   const daemon = await startDaemon();
@@ -101,7 +102,19 @@ test('closing keeps a transcript with an incomplete final line', async () => {
 test('closing keeps a conversation after a prompt was submitted', async () => {
   const daemon = await startDaemon();
   const runtimeId = 'submitted-prompt';
+  const provider = Bun.serve({
+    hostname: '127.0.0.1', port: 0,
+    fetch: () => new Response(new ReadableStream(), { headers: { 'Content-Type': 'text/event-stream' } }),
+  });
   try {
+    writeFileSync(join(daemon.home, '.piop/models.json'), JSON.stringify({ providers: {
+      'blank-session-test': {
+        baseUrl: `http://127.0.0.1:${provider.port}/v1`, api: 'openai-completions', apiKey: 'test',
+        models: [{ id: 'waiting', contextWindow: 200_000, maxTokens: 4096 }],
+      },
+    } }));
+    const settings = await daemon.invoke('load_app_settings');
+    await daemon.invoke('save_app_settings', { settings: { ...settings, defaultModel: 'blank-session-test/waiting' } });
     const chat = JSON.parse(execFileSync('node', [fileURLToPath(new URL('../fixtures/publish-chat.mjs', import.meta.url))], {
       encoding: 'utf8', timeout: 30_000,
       input: JSON.stringify({ home: daemon.home, cwd: daemon.home, content: '' }),
@@ -116,5 +129,8 @@ test('closing keeps a conversation after a prompt was submitted', async () => {
     expect(await daemon.invoke('stop_pi', { runtimeId, discardBlank: true })).toBe(false);
     expect(existsSync(chat.path)).toBe(true);
     expect(readFileSync(chat.path, 'utf8').endsWith('\n')).toBe(true);
-  } finally { await daemon.stop(); }
+  } finally {
+    provider.stop(true);
+    await daemon.stop();
+  }
 }, 30_000);

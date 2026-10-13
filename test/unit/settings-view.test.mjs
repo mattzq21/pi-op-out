@@ -2,13 +2,18 @@ import assert from 'node:assert/strict';
 import { describe, test, beforeEach, afterEach } from 'node:test';
 import { installDom, renderComponent, enterText, act } from '../dom.mjs';
 import { SettingsView } from '../../clients/ui/components/SettingsView.tsx';
+import { mockIPC } from '../mock-ipc.mjs';
 import { defaultKeybindings } from '../../clients/ui/lib/keybindings.ts';
 
 describe('settings editor', () => {
-  let dom, view, props, saves, dirty;
+  let dom, view, props, saves, dirty, supportedModels;
   beforeEach(() => {
-    dom = installDom(); saves = []; dirty = [];
-    props = { settings: { defaultAgent: 'general', defaultModel: 'p/model', hiddenModels: [], defaultThinking: 'off', defaultFastMode: false, contextWindowCap: 10000, contextWindowCapEnabled: true, autoCompaction: true, autoRetry: true, debugMode: false, keybindings: { ...defaultKeybindings }, tools: [], skills: [], hosts: [] }, onSave: async (...args) => saves.push(args), onDirtyChange: value => dirty.push(value) };
+    dom = installDom(); saves = []; dirty = []; supportedModels = ['model'];
+    mockIPC((command, args) => {
+      if (command === 'provider_auth' && args.request.action === 'fast_models') return { ready: true, providers: { p: { supportedModelIds: supportedModels } } };
+      throw new Error('Unexpected command: ' + command);
+    }, { shouldMockEvents: true });
+    props = { providerHostId: 'local', settings: { defaultAgent: 'general', defaultModel: 'p/model', hiddenModels: [], defaultThinking: 'off', defaultFastMode: false, contextWindowCap: 100_000, modelContextWindowCaps: {}, contextWindowCapEnabled: true, autoCompaction: true, autoRetry: true, debugMode: false, keybindings: { ...defaultKeybindings }, tools: [], skills: [], hosts: [] }, onSave: async (...args) => saves.push(args), onDirtyChange: value => dirty.push(value) };
   });
   afterEach(async () => { if (view) await view.unmount(); view = undefined; dom.restore(); });
 
@@ -32,15 +37,15 @@ describe('settings editor', () => {
     return pending.promise; } }); assert.equal(save().disabled, true); assert.equal(dirty.at(-1), false);
     await click(control('Automatic retry')); assert.equal(dirty.at(-1), true);
     await act(async () => { save().click(); save().click(); }); assert.equal(saves.length, 1); assert.equal(saves[0][0].autoRetry, false); assert.equal(save().textContent, 'Saving…');
-    await enterText(control('Context window cap'), '20000');
+    await enterText(control('Context window cap'), '200000');
     await act(async () => pending.resolve()); assert.equal(save().disabled, false); assert.equal(dirty.at(-1), true);
     await render({ onSave: async (...args) => saves.push(args) }); await click(save());
-    assert.equal(saves[1][0].contextWindowCap, 20000); assert.equal(save().textContent, 'Saved'); assert.equal(dirty.at(-1), false);
+    assert.equal(saves[1][0].contextWindowCap, 200000); assert.equal(save().textContent, 'Saved'); assert.equal(dirty.at(-1), false);
   });
 
   test('save failures keep edits available for correction', async () => {
     await render({ onSave: async () => { throw new Error('disk full'); } });
-    await enterText(control('Context window cap'), '2000'); await click(save()); assert.equal(document.querySelector('[role=alert]').textContent, 'disk full'); assert.equal(save().disabled, false);
+    await enterText(control('Context window cap'), '200000'); await click(save()); assert.equal(document.querySelector('[role=alert]').textContent, 'disk full'); assert.equal(save().disabled, false);
     await click(control('Automatic retry')); assert.equal(document.querySelector('[role=alert]'), null);
   });
 
@@ -117,7 +122,7 @@ describe('settings editor', () => {
 
   test('agent edits save defaults, prompts and resource permissions without changing the built-in identity', async () => {
     props.settings.tools = [{ name: 'read', enabled: true }]; props.settings.skills = [{ name: 'Research', path: '/research', enabled: true }];
-    await render({ agentConfig: { agents: [profile('general'), profile('review')], fastModeModels: ['p/model'] }, models: [{ provider: 'p', id: 'model', reasoning: true }] });
+    await render({ agentConfig: { agents: [profile('general'), profile('review')] }, models: [{ provider: 'p', id: 'model', reasoning: true }] });
     await section('Agents'); await selectAgent('review'); assert.equal(control('Agent name').value, 'review');
     await enterText(control('Agent name'), 'code review!'); assert.equal(control('Agent name').value, 'codereview');
     await enterText(control('Agent name'), 'general'); assert.equal(control('Agent name').value, 'codereview');
@@ -138,6 +143,8 @@ describe('settings editor', () => {
   });
 
   test('unavailable agent settings prevent saving until all errors are corrected', async () => {
+    supportedModels = [];
+    props.providerHostId = 'unsupported-models';
     await render({ agentConfig: { agents: [profile('general'), profile('review', { model: 'p/missing', effort: 'extreme', mcpServers: { existing: { command: 'cmd', args: [], enabled: true } } })] }, models: [{ provider: 'p', id: 'model', reasoning: true }], thinkingLevels: ['off', 'high'] });
     await click(control('Automatic retry'));
     await section('Agents'); await selectAgent('review'); assert.match(document.querySelector('[role=alert]').textContent, /model is unavailable/); assert.equal(save().disabled, true);
@@ -194,7 +201,7 @@ describe('settings editor', () => {
   test('a context cap below the minimum cannot be saved', async () => {
     await render();
     await enterText(control('Context window cap'), '999');
-    assert.match(document.querySelector('[role=alert]').textContent, /from 1000 to 10000000/);
+    assert.match(document.querySelector('[role=alert]').textContent, /from 100,000 to 50,000,000/);
     assert.equal(save().disabled, true);
     await click(save());
     assert.deepEqual(saves, []);

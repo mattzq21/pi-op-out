@@ -169,17 +169,17 @@ test('sidebar dragging ignores other pointers and restores text selection on rel
   await page.mouse.move(current.x + current.width / 2 + 50, current.y + current.height / 2);
   assert.equal(Number(await separator.getAttribute('aria-valuenow')), initial + 50);
   await page.mouse.up();
-  assert.notEqual(await page.evaluate(() => getComputedStyle(document.body).cursor), 'col-resize');
+  assert.equal(await page.evaluate(() => getComputedStyle(document.body).cursor), 'default');
   assert.notEqual(await page.evaluate(() => getComputedStyle(document.body).userSelect), 'none');
 });
 
-test('sidebar dragging displays a resize cursor', async t => {
+test('sidebar dragging keeps the application cursor', async t => {
   const page = await openSidebar(t);
   const separator = page.getByRole('separator', { name: 'Sidebar width' });
   await separator.hover();
   await page.mouse.down();
   try {
-    assert.equal(await separator.evaluate(element => getComputedStyle(element).cursor), 'col-resize');
+    assert.equal(await separator.evaluate(element => getComputedStyle(element).cursor), 'default');
   } finally { await page.mouse.up(); }
 });
 

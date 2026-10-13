@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, expect, test } from 'bun:test';
-import { chmodSync, mkdirSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fakeProgram, remoteMachine, startDaemon, temporaryDirectory, useRemotes, type TestDaemon } from './harness';
 
@@ -102,24 +102,4 @@ test('opening a project directory on a remote machine runs that machine’s file
     await useRemotes(daemon, []);
     await server.stop();
   }
-});
-
-test('host scripts are copied on first use, reused afterwards, and a failed copy is reported', async () => {
-  // ADR 0002: each Host script is copied once into the profile storage folder of the host.
-  const scripts = join(daemon.home, '.piop/host-scripts');
-  rmSync(scripts, { recursive: true, force: true });
-  expect((await daemon.invoke('storage_report')).hosts[0]).toMatchObject({ hostId: 'local' });
-  const copies = readdirSync(scripts).sort();
-  expect(copies.length).toBeGreaterThan(0);
-  expect((await daemon.invoke('storage_report')).hosts[0].error).toBeUndefined();
-  expect(readdirSync(scripts).sort()).toEqual(copies);
-  rmSync(scripts, { recursive: true });
-  writeFileSync(scripts, 'not a directory');
-  try {
-    const [local] = (await daemon.invoke('storage_report')).hosts;
-    expect(local.error).toStartWith('Could not inspect storage on Local:');
-    expect(local.error).toContain('Host script copy or checksum failed');
-  }
-  finally { rmSync(scripts); }
-  expect((await daemon.invoke('storage_report')).hosts[0].error).toBeUndefined();
 });

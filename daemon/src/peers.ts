@@ -492,7 +492,6 @@ export async function detachOwner(app: App, owner: string): Promise<void> {
 
 export async function invalidate(app: App): Promise<void> {
   const state = app.peers;
-  state.revision += 1;
   let settings;
   try { settings = await loadAppSettings(app); } catch (error) {
     for (const pending of state.pending.values()) pending.cancel();

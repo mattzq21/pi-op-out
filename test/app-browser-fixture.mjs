@@ -58,7 +58,13 @@ export async function trackBrowserStorage(page) {
       return result;
     };
     window.savedDraft = async () => {
-      window.dispatchEvent(new Event('pagehide'));
+      const visibility = Object.getOwnPropertyDescriptor(document, 'visibilityState');
+      Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'hidden' });
+      try { document.dispatchEvent(new Event('visibilitychange')); }
+      finally {
+        if (visibility) Object.defineProperty(document, 'visibilityState', visibility);
+        else delete document.visibilityState;
+      }
       do {
         await Promise.all([...pending]);
         await new Promise(resolve => requestAnimationFrame(resolve));

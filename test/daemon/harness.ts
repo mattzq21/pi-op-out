@@ -33,6 +33,8 @@ export function daemonExecutable(options: BuildOptions = {}): Promise<string> {
       plugins: [{
         name: 'raw-text',
         setup(context) {
+          context.onResolve({ filter: /^piop-agent-loader$/ }, () => ({ path: join(root, 'extensions/piop-define-agents/daemon-loader.ts') }));
+          context.onResolve({ filter: /^\.\.\/app-settings\.cjs$/ }, args => args.importer.includes('/extensions/piop-define-agents/') ? { path: join(root, 'daemon/resources/session-broker/app-settings.cjs') } : undefined);
           context.onResolve({ filter: /\?raw$/ }, args => ({ path: resolve(args.resolveDir, args.path.slice(0, -4)), namespace: 'raw-text' }));
           context.onLoad({ filter: /.*/, namespace: 'raw-text' }, args => ({ contents: readFileSync(args.path, 'utf8'), loader: 'text' }));
         },
@@ -290,5 +292,15 @@ export async function startDaemon(options: BuildOptions & { home?: string; env?:
   } catch (error: any) {
     await stop().catch(reason => { error.message += '\n' + reason.message; });
     throw new Error(error.message + '\nDaemon log:\n' + logTail(daemonLog));
+  }
+}
+
+export async function waitForSessions(daemon: TestDaemon, match: (rows: any[]) => boolean): Promise<any[]> {
+  const deadline = Date.now() + 10_000;
+  for (;;) {
+    const seen = new Set(daemon.events.map(event => event.payload));
+    const rows = await daemon.invoke('list_sessions');
+    if (match(rows)) return rows;
+    await daemon.waitEvent('pi://sessions-changed', payload => !seen.has(payload), Math.max(1, deadline - Date.now()));
   }
 }

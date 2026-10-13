@@ -192,35 +192,18 @@ test('diagnostics retain the last five matching stderr lines and augment connect
   await assert.rejects(client.command({ type: 'prompt' }), { message: 'Bad input' });
 });
 
-test('fast-mode discovery uses package provenance and refreshes compatibility status', async () => {
+test('fast-mode changes send the session command without command discovery', async () => {
   const client = transport();
-  await assert.rejects(client.toggleFastMode(), /unavailable/);
-  responses.set('pi_command:get_commands', { commands: [
-    { name: 'fast', source: 'extension', sourceInfo: { source: 'npm:unrelated' } },
-    { name: 'fast:2', source: 'extension', sourceInfo: { path: 'C:\\node_modules\\pi-openai-fast-mode\\index.ts' } },
-    { name: 'pi-desktop-fast-status', source: 'extension' },
-  ] });
+  responses.set('pi_command:set_fast_mode', {});
   await client.setFastMode(true);
-  assert.deepEqual(rpc('prompt').map(call => call.args.command.message), ['/fast:2 on']);
-  assert.deepEqual(rpc('fast_mode_status').map(call => call.args.command.reload), [false, true]);
   await client.setFastMode(false);
-  assert.ok(rpc('prompt').some(call => call.args.command.message === '/fast:2 off'));
-  await client.command({ type: 'prompt', message: '/fast:2 toggle' });
-  assert.equal(rpc('fast_mode_status').at(-1).args.command.reload, true);
-  responses.set('pi_command:get_commands', { commands: [{ name: 'fast', source: 'extension', sourceInfo: { source: 'npm:pi-openai-fast-mode-piop' } }] });
-  await client.setFastMode(true);
-  assert.equal(rpc('prompt').at(-1).args.command.message, '/fast on');
+  assert.deepEqual(rpc('set_fast_mode').map(call => call.args.command.enabled), [true, false]);
+  assert.equal(rpc('get_commands').length, 0);
 });
 
-
-
-test('legacy fast-status failures become visible status events without failing command discovery', async () => {
+test('fast-mode command failures are reported to the caller', async () => {
   const client = transport();
-  const events = [];
-  client.subscribe(event => events.push(event));
-  responses.set('pi_command:get_commands', { commands: [{ name: 'fast', source: 'extension', sourceInfo: { source: 'npm:pi-openai-fast-mode' } }, { name: 'pi-desktop-fast-status', source: 'extension' }] });
-  responses.set('pi_command:fast_mode_status', new Error('status failed'));
-  await client.command({ type: 'get_commands' });
-  assert.ok(events.some(event => event.statusKey === 'pi-desktop-fast-mode' && event.statusText === 'Fast mode status unavailable'));
+  responses.set('pi_command:set_fast_mode', new Error('save failed'));
+  await assert.rejects(client.setFastMode(true), { message: 'save failed' });
 });
 });

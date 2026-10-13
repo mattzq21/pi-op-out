@@ -27,7 +27,7 @@ export function writeCorruptConfig(dir, content) {
   try { db.prepare('UPDATE application_settings SET body=? WHERE name=?').run(Buffer.from(content), 'config.json'); } finally { db.close(); }
 }
 
-export const configured = agents => ({ agents: agents, webSearchDefaultApplied: true, sessionToolsDefaultApplied: true, subagentsDefaultApplied: true, diagramistDefaultApplied: true, askerAgentDefaultApplied: true, terminalAgentDefaultApplied: true, excalidrawAgentDefaultApplied: true });
+export const configured = agents => ({ agents: agents, webSearchDefaultApplied: true, sessionToolsDefaultApplied: true, subagentsDefaultApplied: true, diagramistDefaultApplied: true, askerAgentDefaultApplied: true, terminalAgentDefaultApplied: true, tokagentDefaultApplied: true, excalidrawAgentDefaultApplied: true });
 
 export async function agentFixture(t, options = {}) {
   options = { files: {}, effort: 'high', model: { provider: 'test', id: 'default' }, config: configured([profile(), profile('reviewer')]), ...options };
@@ -104,6 +104,12 @@ export async function agentFixture(t, options = {}) {
   };
 
   const define = (await import(pathToFileURL(join(dir, 'index.mjs')))).default;
+  const defineLocal = async () => {
+    const broker = process.env.PI_DESKTOP_BROKER_URL;
+    delete process.env.PI_DESKTOP_BROKER_URL;
+    try { return await define(pi); }
+    finally { if (broker !== undefined) process.env.PI_DESKTOP_BROKER_URL = broker; }
+  };
 
   let registerFastMode, registerRuntime;
   const load = async () => {
@@ -121,16 +127,16 @@ export async function agentFixture(t, options = {}) {
         registerRuntime = await installRuntimeSettings({ dir, pi, ctx, settings: options.runtime, settingsPath: options.runtimeSettingsPath });
       }
     }
-    if (!options.realFastMode) return define(pi);
+    if (!options.realFastMode) return defineLocal();
     const loadFast = async () => {
       if (registerFastMode) registerFastMode();
       else {
         const { installFastMode } = await import('./fast-mode-fixture.mjs');
-        registerFastMode = await installFastMode(t, { dir, pi, ctx, models: options.models, catalog: options.realFastMode.catalog });
+        registerFastMode = await installFastMode(t, { dir, pi, ctx, models: options.models, catalog: options.realFastMode.catalog, fastModels: options.realFastMode.fastModels });
       }
     };
-    if (options.realFastMode.agentFirst) { await define(pi); await loadFast(); }
-    else { await loadFast(); await define(pi); }
+    if (options.realFastMode.agentFirst) { await defineLocal(); await loadFast(); }
+    else { await loadFast(); await defineLocal(); }
   };
 
   const rpc = async (command, payload) => {
@@ -161,6 +167,7 @@ export async function agentFixture(t, options = {}) {
     corruptConfig: content => writeCorruptConfig(dir, content),
     readSnapshot: async path => (await import(pathToFileURL(join(dir, 'prompts.mjs')))).readPrompt(path),
     state: () => JSON.parse(process.env.PIOP_AGENT_DRAFT_STATE || 'null')?.state ?? entries.findLast(entry => entry.customType === 'pi-define-agents-state' && entry.data)?.data,
+    fastEnabled: () => { const request = {}; pi.events.emit('piop:fast-mode:session', request); return request.session.getEnabled(); },
     capability: () => JSON.parse(Buffer.from(statuses.get('pi-define-agents').slice(5), 'base64url')),
     prompt: async (options = {}) => { await emit('before_agent_start', { systemPromptOptions: options });
 

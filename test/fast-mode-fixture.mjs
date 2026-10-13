@@ -4,10 +4,10 @@ import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { storageSchemaImports } from '../scripts/storage-schema-plugin.mjs';
 
-export async function installFastMode(t, { dir, pi, ctx, models, catalog }) {
-  const server = createServer((_request, response) => {
+export async function installFastMode(t, { dir, pi, ctx, models, catalog, fastModels }) {
+  const server = createServer((request, response) => {
     response.setHeader('Content-Type', 'application/json');
-    response.end(JSON.stringify({ models: catalog }));
+    response.end(JSON.stringify(request.url === '/fast-models' ? { data: fastModels ?? { ready: true, providers: Object.fromEntries([...new Set(models.map(model => model.provider))].map(provider => [provider, { supportedModelIds: catalog.filter(model => model.service_tiers?.some(tier => tier.id === 'priority')).map(model => model.slug) }])) } } : { models: catalog }));
   });
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   t.after(() => new Promise(resolve => server.close(resolve)));
@@ -19,7 +19,8 @@ export async function installFastMode(t, { dir, pi, ctx, models, catalog }) {
   ctx.mode = 'rpc';
   const brokerKeys = ['PI_DESKTOP_BROKER_URL', 'PI_DESKTOP_BROKER_TOKEN'];
   const previous = brokerKeys.map(key => process.env[key]);
-  for (const key of brokerKeys) delete process.env[key];
+  process.env.PI_DESKTOP_BROKER_URL = `http://127.0.0.1:${server.address().port}`;
+  process.env.PI_DESKTOP_BROKER_TOKEN = 'fixture-token';
   t.after(() => brokerKeys.forEach((key, index) => {
     if (previous[index] === undefined) delete process.env[key]; else process.env[key] = previous[index];
   }));

@@ -23,7 +23,7 @@ describe('split conversation lifecycle', () => {
     const state = { model: MODEL, thinkingLevel: 'off', isStreaming: false, sessionId: 'session', sessionFile: '/session.jsonl', messageCount: 0, pendingMessageCount: 0 };
     responses = new Map([['get_session_revision', { revision: 'changed' }], ['get_snapshot', { revision: 'snapshot', state, history: { entries: [], leafId: null }, sequence: 0, epoch: 'epoch', liveTools: [], queue: { type: 'queue_state', pendingMessages: [] } }], ['get_state', () => responses.get('get_snapshot').state], ['get_available_models', { models: [MODEL] }], ['get_available_thinking_levels', { levels: ['off', 'high'] }], ['get_commands', { commands: [] }]]);
     const groups = { groups: [], parents: {}, assignments: {}, removedProjects: [] };
-    daemonResponses = new Map([['start_pi', { attached: true }], ['stop_pi', true], ['pi_presence', null], ['load_session_groups', groups], ['change_session_groups', groups],
+    daemonResponses = new Map([['provider_auth', { ready: true, providers: { p: { supportedModelIds: ['base', 'one', 'two'] } } }], ['start_pi', { attached: true }], ['stop_pi', true], ['pi_presence', null], ['load_session_groups', groups], ['change_session_groups', groups],
       ['broker_request', ({ body }) => ({ sessionId: body.sessionId, sessionPath: '/session.jsonl', cwd: '/repo', archived: false, revision: '1' })]]);
     mockIPC((command, args) => {
       if (command === 'pi_command') {
@@ -211,8 +211,8 @@ describe('split conversation lifecycle', () => {
     await click(control('Send message'));
     await received(command => command.type === 'prompt' && command.message === 'Question');
     assert.ok(calls.some(command => command.type === 'set_thinking_level' && command.level === 'high'));
-    assert.ok(calls.some(command => command.type === 'prompt' && command.message === '/fast on'));
-    assert.ok(calls.findIndex(command => command.message === '/fast on') < calls.findIndex(command => command.message === 'Question'));
+    assert.ok(calls.some(command => command.type === 'set_fast_mode' && command.enabled === true));
+    assert.ok(calls.findIndex(command => command.type === 'set_fast_mode' && command.enabled === true) < calls.findIndex(command => command.message === 'Question'));
   });
 
   test('agent capability updates populate the picker and selection sends encoded agent names', async () => {

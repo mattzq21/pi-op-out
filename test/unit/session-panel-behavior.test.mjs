@@ -201,7 +201,7 @@ const dialogButton = text => [...document.querySelectorAll('dialog button')].fin
 async function forgetGroup(name) {
   await click(control(`Group actions for ${name}`));
   await click(menuAction('Forget group'));
-  await click(dialogButton('Remove group'));
+  await click(dialogButton('Forget group'));
   await untilDom(() => !document.querySelector('dialog') && !control(`Group actions for ${name}`));
 }
 

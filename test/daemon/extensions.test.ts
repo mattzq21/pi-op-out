@@ -25,8 +25,6 @@ const launch = { args };
 try {
   const runtimePath = process.env.PIOP_RUNTIME_SETTINGS_PATH;
   launch.runtime = require(path.join(path.dirname(runtimePath), 'app-settings.cjs')).readFile(runtimePath);
-  const capDirectory = path.dirname(process.env.PI_DESKTOP_CONTEXT_WINDOW_CAP_EXTENSION);
-  launch.contextWindowCap = require(path.join(capDirectory, 'app-settings.cjs')).readFile(path.join(capDirectory, 'config.json'));
 } catch (error) { launch.readError = String(error?.message ?? error); }
 fs.appendFileSync(path.join(process.env.HOME, 'launches.jsonl'), JSON.stringify(launch) + '\\n');
 const sessionFile = args.includes('--session') ? args[args.lastIndexOf('--session') + 1] : undefined;
@@ -39,7 +37,7 @@ require('node:readline').createInterface({ input: process.stdin }).on('line', li
 `);
 }
 
-type Launch = { args: string[]; runtime?: any; contextWindowCap?: any; readError?: string };
+type Launch = { args: string[]; runtime?: any; readError?: string };
 const lastLaunch = (home: string): Launch => JSON.parse(readFileSync(join(home, 'launches.jsonl'), 'utf8').trim().split('\n').at(-1)!);
 const extensionPaths = ({ args }: Launch) => args.flatMap((arg, index) => args[index - 1] === '--extension' ? [arg] : []);
 
@@ -121,12 +119,11 @@ test('a Pi start installs the bundled extensions as private files and refreshes 
   const bundles: [string, string][] = [
     ['session-broker.ts', 'daemon/resources/session-broker.ts'],
     ['ask-user.ts', 'daemon/resources/ask-user.ts'],
-    ['piop-trace-reader.ts', 'daemon/resources/trace-reader.ts'],
     ['piop-openai-cache-fork.ts', 'extensions/piop-openai-cache-fork/index.ts'],
     ['piop-codex-web-search.ts', 'extensions/piop-codex-web-search/index.ts'],
   ];
   const extensions = extensionPaths(await launchPublicPi(daemon));
-  for (const name of ['session-broker.ts', 'piop-trace-reader.ts', 'piop-openai-cache-fork.ts', 'piop-codex-web-search.ts']) expect(extensions).toContain(join(generated, name));
+  for (const name of ['session-broker.ts', 'piop-openai-cache-fork.ts', 'piop-codex-web-search.ts']) expect(extensions).toContain(join(generated, name));
   for (const [name, relative] of bundles) {
     expect(readFileSync(join(generated, name), 'utf8')).toBe(source(relative));
     expect(mode(join(generated, name))).toBe(0o600);
@@ -146,7 +143,7 @@ test('a started Pi reads runtime and context window settings that follow the sav
     const settings = await daemon.invoke('load_app_settings');
     for (const tool of settings.tools) tool.enabled = enabled && tool.name === 'read';
     settings.skills = enabled ? [{ name: 'spaced', description: 'Spaced', path: '/skill with spaces/SKILL.md', enabled: true }, { name: 'disabled', description: 'Disabled', path: '/disabled', enabled: false }] : [];
-    settings.contextWindowCap = enabled ? 12345 : 2000;
+    settings.contextWindowCap = enabled ? 123456 : 200000;
     settings.contextWindowCapEnabled = enabled;
     await daemon.invoke('save_app_settings', { settings });
     const launch = await launchPublicPi(daemon);
@@ -163,26 +160,25 @@ test('a started Pi reads runtime and context window settings that follow the sav
       // The goal tools are always on.
       tools: enabled ? ['read', 'get_goal', 'create_goal', 'update_goal'] : ['get_goal', 'create_goal', 'update_goal'],
       skills: enabled ? ['/skill with spaces/SKILL.md'] : [],
-      contextWindowCap: enabled ? 12345 : 2000,
+      contextWindowCap: enabled ? 123456 : 200000,
       contextWindowCapEnabled: enabled,
     });
-    expect(launch.contextWindowCap).toEqual({ contextWindowCap: enabled ? 12345 : 2000, enabled });
   }
 }, 60_000);
 
 test('a Pi start repairs the permissions of unchanged extension files and restores changed files', async () => {
   const generated = join(daemon.home, '.piop');
-  const entry = join(generated, 'piop-trace-reader.ts');
+  const entry = join(generated, 'piop-codex-web-search.ts');
   await launchPublicPi(daemon);
   chmodSync(entry, 0o644);
   chmodSync(generated, 0o755);
   await launchPublicPi(daemon);
-  expect(readFileSync(entry, 'utf8')).toBe(source('daemon/resources/trace-reader.ts'));
+  expect(readFileSync(entry, 'utf8')).toBe(source('extensions/piop-codex-web-search/index.ts'));
   expect(mode(entry)).toBe(0o600);
   expect(mode(generated)).toBe(0o700);
   writeFileSync(entry, 'replacement');
   await launchPublicPi(daemon);
-  expect(readFileSync(entry, 'utf8')).toBe(source('daemon/resources/trace-reader.ts'));
+  expect(readFileSync(entry, 'utf8')).toBe(source('extensions/piop-codex-web-search/index.ts'));
   expect(mode(entry)).toBe(0o600);
   expect(readdirSync(generated).filter(name => name.endsWith('.tmp'))).toEqual([]);
 }, 60_000);

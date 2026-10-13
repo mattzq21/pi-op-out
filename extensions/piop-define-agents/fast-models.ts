@@ -1,18 +1,19 @@
-import { z } from "zod";
+import { Type } from "typebox";
+import { Parse } from "typebox/value";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import type { FastModelSnapshot } from "../../daemon/src/host/fast_models.ts";
 import type { FastModeSession, FastModeSessionRequest } from "../piop-openai-fast-mode/src/types.ts";
 
 export type { FastModelSnapshot };
 
-const snapshotSchema = z.object({
-  ready: z.boolean(),
-  providers: z.record(z.string(), z.object({ supportedModelIds: z.array(z.string()), error: z.string().optional() })),
-  error: z.string().optional(),
+const snapshotSchema = Type.Object({
+  ready: Type.Boolean(),
+  providers: Type.Record(Type.String(), Type.Object({ supportedModelIds: Type.Array(Type.String()), error: Type.Optional(Type.String()) })),
+  error: Type.Optional(Type.String()),
 });
 
 export function parseFastModelSnapshot(value: unknown): FastModelSnapshot | null {
-  return value === null || value === undefined ? null : snapshotSchema.parse(value);
+  return value === null || value === undefined ? null : Parse(snapshotSchema, value);
 }
 
 /**
@@ -41,7 +42,7 @@ export async function hostFastModels(): Promise<FastModelSnapshot | null> {
     method: "POST", headers: { Authorization: "Bearer " + token, "Content-Type": "application/json" },
     body: JSON.stringify({ hostId: process.env.PI_DESKTOP_HOST_ID || "local" }), signal: AbortSignal.timeout(30_000),
   });
-  const body = z.object({ data: z.unknown().optional(), error: z.string().optional() }).parse(await response.json());
+  const body = Parse(Type.Object({ data: Type.Optional(Type.Unknown()), error: Type.Optional(Type.String()) }), await response.json());
 
   if (!response.ok || body.error) throw new Error("Could not read fast models from the host: " + (body.error ?? "HTTP " + response.status));
 

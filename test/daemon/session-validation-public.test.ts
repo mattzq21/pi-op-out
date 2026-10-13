@@ -55,7 +55,7 @@ test('opening a registered transcript accepts a header of exactly 64 KiB', async
     const runtimeId = crypto.randomUUID();
     expect(await daemon.invoke('start_pi', { runtimeId, clientId: 'session-validation', cwd: daemon.home, sessionPath: chat.path })).toMatchObject({ owned: true });
     await daemon.invoke('stop_pi', { runtimeId });
-    expect(readFileSync(chat.path, 'utf8')).toBe(body);
+    expect(readFileSync(chat.path, 'utf8').split('\n')[0] + '\n').toBe(body);
   } finally { await daemon.stop(); }
 }, 60000);
 

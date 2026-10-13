@@ -464,7 +464,7 @@ test('confirmed group removal keeps the directory and does not request chat dele
   const { page, reload } = await panelPage(t, { cwd: directory });
   await page.getByRole('button', { name: 'Group actions for repo', exact: true }).click();
   await page.getByRole('menuitem', { name: 'Forget group', exact: true }).click();
-  await page.getByRole('dialog').getByRole('button', { name: 'Remove group', exact: true }).click();
+  await page.getByRole('dialog').getByRole('button', { name: 'Forget group', exact: true }).click();
   await page.getByRole('dialog').waitFor({ state: 'detached' });
   assert.equal(await page.getByRole('button', { name: 'Group actions for repo', exact: true }).count(), 0);
   assert.deepEqual(JSON.parse(await page.getByLabel('Conversation actions').textContent()), []);
@@ -481,13 +481,13 @@ test('failed group removal keeps the group and can be retried after reconnection
   await page.getByRole('menuitem', { name: 'Forget group', exact: true }).click();
   await service.disconnect();
   const dialog = page.getByRole('dialog');
-  await dialog.getByRole('button', { name: 'Remove group', exact: true }).click();
+  await dialog.getByRole('button', { name: 'Forget group', exact: true }).click();
   await dialog.getByRole('alert').waitFor();
   assert.match(await dialog.getByRole('alert').textContent(), /connection is not open/i);
   assert.equal(await page.getByRole('button', { name: 'Group actions for repo', exact: true }).count(), 1);
   assert.deepEqual(await (await groupContents(page, 'repo')).locator('.session-main strong').allTextContents(), ['Chat 2', 'Chat 10']);
   await service.reconnect();
-  await dialog.getByRole('button', { name: 'Remove group', exact: true }).click();
+  await dialog.getByRole('button', { name: 'Forget group', exact: true }).click();
   await dialog.waitFor({ state: 'detached' });
   assert.equal(await page.getByRole('button', { name: 'Group actions for repo', exact: true }).count(), 0);
   await page.evaluate(() => window.settlePanelStorage());
@@ -592,7 +592,7 @@ test('new recent conversations appear before the saved user order', async t => {
 async function forgetBrowserGroup(page, name) {
   await page.getByRole('button', { name: `Group actions for ${name}`, exact: true }).click();
   await page.getByRole('menuitem', { name: 'Forget group', exact: true }).click();
-  await page.getByRole('dialog').getByRole('button', { name: 'Remove group', exact: true }).click();
+  await page.getByRole('dialog').getByRole('button', { name: 'Forget group', exact: true }).click();
   await page.getByRole('dialog').waitFor({ state: 'detached' });
   assert.equal(await page.getByRole('button', { name: `Group actions for ${name}`, exact: true }).count(), 0);
 }
