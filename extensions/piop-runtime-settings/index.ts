@@ -1,9 +1,9 @@
-import { Type, type Static } from "typebox";
+import { Type } from "typebox";
 import { Check, Parse } from "typebox/value";
 import { readFile as readSettings } from "./app-settings.cjs";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
-import type { BuildSystemPromptOptions, ExtensionAPI, ExtensionContext, ExtensionCommandContext, InputEvent, InputEventResult, ToolResultEvent, ToolResultEventResult } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ExtensionContext, ExtensionCommandContext, InputEvent, InputEventResult, ToolResultEvent, ToolResultEventResult } from "@earendil-works/pi-coding-agent";
 import { createReadToolDefinition, formatDimensionNote, formatSkillsForPrompt, resizeImage } from "@earendil-works/pi-coding-agent";
 
 type Settings = {
@@ -81,93 +81,6 @@ function validate(value: Settings): Settings {
   if (!Check(settingsSchema, value)) throw new Error("Invalid runtime settings");
 
   return structuredClone(value);
-}
-
-function capabilitySummary(description: string) {
-  const summary = description.trim().split(/\n|[.!?](?:\s|$)/, 1)[0].replace(/\s+/g, " ");
-
-  return summary.length > 120 ? `${summary.slice(0, 117).replace(/\s+\S*$/, "")}...` : summary;
-}
-
-const abilitiesEntry = "piop-codemode-abilities";
-
-const abilitiesSchema = Type.Object({
-  tools: Type.Array(Type.String()),
-  batches: Type.Array(Type.Object({ text: Type.String(), timestamp: Type.Number() })),
-});
-
-function availableCodemodeTool(tool: ReturnType<ExtensionAPI["getAllTools"]>[number], active: Set<string>, known: Set<string>) {
-  const exposure = tool.exposure ?? "direct";
-
-  return tool.name !== "codemode" && !known.has(tool.name) && (exposure === "codemode" || exposure === "deferred" || exposure === "direct" && active.has(tool.name));
-}
-
-function restoredCodemodeAbilities(ctx: ExtensionContext) {
-  const entry = [...ctx.sessionManager.getBranch()].reverse().find((item) => item.type === "custom" && item.customType === abilitiesEntry);
-  const saved = entry?.type === "custom" && Check(abilitiesSchema, entry.data) ? entry.data : { tools: [], batches: [] };
-
-  return structuredClone(saved);
-}
-
-function codemodeAbilities(pi: ExtensionAPI, ctx: ExtensionContext) {
-  const active = new Set(pi.getActiveTools());
-
-  if (!active.has("codemode")) return;
-  const state = restoredCodemodeAbilities(ctx);
-  const known = new Set(state.tools);
-  const phrases = new Set<string>();
-
-  for (const tool of pi.getAllTools()) {
-    if (!availableCodemodeTool(tool, active, known)) continue;
-    state.tools.push(tool.name);
-    phrases.add(capabilitySummary(tool.description) || tool.name.replace(/_/g, " "));
-  }
-
-  if (phrases.size || !state.batches.length) {
-    const prefix = state.batches.length ? "Codemode's tools abilities also include: " : "Codemode's tools abilities include: ";
-    state.batches.push({ text: prefix + ([...phrases].join("; ") || "no tools currently available"), timestamp: Date.now() });
-    pi.appendEntry(abilitiesEntry, state);
-  }
-
-  return state.batches;
-}
-
-const promptValueSchema = Type.Cyclic({ Value: Type.Union([Type.String(), Type.Number(), Type.Boolean(), Type.Null(), Type.Undefined(), Type.Array(Type.Ref("Value")), Type.Record(Type.String(), Type.Ref("Value"))]) }, "Value");
-
-type PromptValue = Static<typeof promptValueSchema>;
-
-const providerPayloadSchema = Type.Record(Type.String(), promptValueSchema);
-
-function replacePromptText(value: PromptValue, prompt: string, replacement: string): PromptValue {
-  if (Check(Type.String(), value)) return value === prompt ? replacement : value;
-
-  if (Array.isArray(value)) return value.map((item) => replacePromptText(item, prompt, replacement));
-
-  if (value && Check(Type.Record(Type.String(), Type.Unknown()), value)) return Object.fromEntries(Object.entries(value).map(([name, item]) => [name, replacePromptText(item, prompt, replacement)]));
-
-  return value;
-}
-
-function updateProviderPrompt(payload: Static<typeof providerPayloadSchema>, prompt: string, replacement: string) {
-  const updated = { ...payload };
-
-  for (const key of ["instructions", "system", "systemInstruction"]) {
-    if (key in updated) updated[key] = replacePromptText(updated[key], prompt, replacement);
-  }
-
-  for (const key of ["messages", "input"]) {
-    const messages = updated[key];
-
-    if (!Array.isArray(messages)) continue;
-    updated[key] = messages.map((message) => Check(Type.Object({ role: Type.Union([Type.Literal("system"), Type.Literal("developer")]) }), message)
-      ? replacePromptText(message, prompt, replacement) : message);
-  }
-
-  const config = updated.config;
-
-  if (Check(Type.Record(Type.String(), Type.Unknown()), config) && "systemInstruction" in config) updated.config = { ...config, systemInstruction: replacePromptText(config.systemInstruction, prompt, replacement) };
-
-  return updated;
 }
 
 async function resizeLargeImage(image: NonNullable<InputEvent["images"]>[number], model: NonNullable<ExtensionContext["model"]>) {
@@ -275,7 +188,6 @@ function configureImageLimits(pi: ExtensionAPI) {
 export default async function runtimeSettings(pi: ExtensionAPI) {
   configureImageLimits(pi);
   setGlobal(Symbol.for("piop.runtime-bridge"), (request: AppRequest) => pi.events.emit("piop:rpc", request));
-  let promptOptions: BuildSystemPromptOptions | undefined;
 
   if (!storedSettings()) setGlobal(key, validate(readSettings(process.env.PIOP_RUNTIME_SETTINGS_PATH || join(homedir(), process.env.PIOP_STORAGE_DIRECTORY || ".piop", "runtime-settings.json"))));
 
@@ -305,48 +217,6 @@ export default async function runtimeSettings(pi: ExtensionAPI) {
     applyTools(ctx);
   });
   pi.on("resources_discover", () => process.env.PI_DEFINE_AGENTS_ACTIVE === "1" ? undefined : { skillPaths: current().skills });
-  pi.on("before_agent_start", (event, ctx) => {
-    promptOptions = event.systemPromptOptions;
-    const batches = codemodeAbilities(pi, ctx);
-
-    if (!batches) return;
-    const options = event.systemPromptOptions;
-    const instructions = options.sections?.codemode ?? pi.getAllTools().find((tool) => tool.name === "codemode")?.promptGuidelines?.join("\n");
-    options.sections = { ...options.sections, codemode: [instructions, batches[0].text].filter(Boolean).join("\n\n") };
-    options.toolGuidelines = { ...options.toolGuidelines, codemode: [] };
-
-    for (let index = 1; index < batches.length; index++) options.sections[`codemode_abilities_${index}`] = batches[index].text;
-
-    if (options.forceSystemPrompt !== undefined) options.forceSystemPrompt += `\n\n${Object.entries(options.sections).filter(([name]) => name === "codemode" || name.startsWith("codemode_abilities_")).map(([, value]) => value).join("\n\n")}`;
-  });
-  pi.on("context_with_system", (event, ctx) => {
-    const batches = codemodeAbilities(pi, ctx);
-
-    if (!batches) return;
-    const sections = Object.assign({}, ...event.messages.filter((message) => message.role === "system").map((message) => message.sections));
-    const messages = [...event.messages];
-
-    for (let index = 1; index < batches.length; index++) {
-      const name = `codemode_abilities_${index}`;
-
-      if (sections[name]) continue;
-      const batch = batches[index];
-      const position = messages.findIndex((message) => message.timestamp > batch.timestamp);
-      messages.splice(position < 0 ? messages.length : position, 0, { role: "system", content: "", sections: { [name]: `<${name}>\n${batch.text}\n</${name}>` }, timestamp: batch.timestamp });
-    }
-
-    return { messages };
-  });
-  pi.on("before_provider_request", (event, ctx) => {
-    if (promptOptions?.forceSystemPrompt === undefined) return;
-    const batches = codemodeAbilities(pi, ctx);
-    const prompt = ctx.getSystemPrompt();
-    const additions = batches?.slice(1).filter((batch) => !prompt.includes(batch.text)).map((batch) => batch.text);
-
-    if (!prompt || !additions?.length) return;
-
-    if (Check(providerPayloadSchema, event.payload)) return updateProviderPrompt(event.payload, prompt, `${prompt}\n\n${additions.join("\n\n")}`);
-  });
   pi.on("before_agent_start", (event) => {
     if (process.env.PI_DEFINE_AGENTS_ACTIVE === "1" || !current().explicitOnlySkills?.length) return;
     const normalize = (value: string) => resolve(value.startsWith("~/") ? join(homedir(), value.slice(2)) : value);

@@ -173,7 +173,7 @@ function configureLocalExtensions(command: LaunchCommand, settings: AppSettings,
   const codexWebSearchExtension = Ext.prepareCodexWebSearchExtension();
   const definedAgentsExtension = Ext.prepareDefinedAgentsExtension();
   command.args.push('--extension', 'builtin:codemode', '--extension', 'builtin:tool-search');
-  command.args.push('--extension', Ext.prepareRuntimeSettings(settings), '--session-dir', sessionDir, '--approve', '--no-skills',
+  command.args.push('--extension', Ext.prepareCodemodeToolsDescriptionExtension(), '--extension', Ext.prepareRuntimeSettings(settings), '--session-dir', sessionDir, '--approve', '--no-skills',
     '--extension', mcpExtension, '--extension', Ext.prepareSessionBroker(),
     '--extension', contextWindowCapExtension, '--extension', contextBarExtension, '--extension', sessionCostLimitExtension,
     '--extension', Ext.prepareFastModeExtension(), '--extension', openaiCacheForkExtension, '--extension', codexWebSearchExtension,
