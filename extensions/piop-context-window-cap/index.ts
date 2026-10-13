@@ -28,7 +28,7 @@ type Operation = { kind: "manual"; cap: number | null } | { kind: "reset" } | { 
 
 type Pending = { operation: Operation; resolve: (state: ContextCapState) => void; reject: (error: Error) => void };
 
-type Subscriber = { listener: (state: ContextCapState) => void; onError: (error: Error) => void };
+type Subscriber = { listener: (state: ContextCapState) => void; onError: (error: Error) => void; delivered: boolean };
 
 const entrySchema = Type.Object({
   cap: Type.Union([Type.Null(), Type.Integer({ minimum: 1, maximum: Number.MAX_SAFE_INTEGER })]),
@@ -158,6 +158,7 @@ export default function contextWindowCap(pi: ExtensionAPI) {
   const state = (): ContextCapState | undefined => choice && { cap: choice.cap, source: choice.source, appliedWindow: appliedFor(choice, model) };
 
   const send = (subscriber: Subscriber, value: ContextCapState) => {
+    subscriber.delivered = true;
     try { subscriber.listener(value); } catch (error) { subscriber.onError(asError(error)); }
   };
 
@@ -326,6 +327,9 @@ export default function contextWindowCap(pi: ExtensionAPI) {
 
     if (broken) return Promise.reject(broken);
 
+    // Another handler of the same model_select event can send this request before this extension sees the new model.
+    sync();
+
     try { validate(); } catch (error) { return Promise.reject(asError(error)); }
 
     return new Promise<ContextCapState>((resolve, reject) => {
@@ -347,12 +351,13 @@ export default function contextWindowCap(pi: ExtensionAPI) {
     resetManualCap: () => enqueue({ kind: "reset" }, () => undefined),
     updateDefaults: next => enqueue({ kind: "defaults", defaults: { ...next } }, () => { validateDefaults(next); validateNewDefaults(next); }),
     subscribe(listener, onError) {
-      const subscriber = { listener, onError };
+      const subscriber: Subscriber = { listener, onError, delivered: false };
       subscribers.add(subscriber);
+      // initialize() delivers the first state to subscribers that exist then; this covers later subscribers.
       ready.then(() => {
         const current = state();
 
-        if (subscribers.has(subscriber) && initialized && current) send(subscriber, current);
+        if (subscribers.has(subscriber) && !subscriber.delivered && initialized && current) send(subscriber, current);
       }, error => { if (subscribers.has(subscriber)) onError(asError(error)); });
 
       return () => { subscribers.delete(subscriber); };

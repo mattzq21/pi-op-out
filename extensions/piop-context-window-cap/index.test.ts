@@ -255,6 +255,16 @@ describe("context cap session", () => {
     expect(large.contextWindow).toBe(1_000_000);
   });
 
+  test("a subscriber added before the session starts gets the first state once", async () => {
+    const host = new Host([], model("large", 1_000_000));
+    const received: unknown[] = [];
+    host.session().subscribe((state: unknown) => received.push(state), () => undefined);
+    await host.fire("session_start", { reason: "startup" });
+    await host.session().updateDefaults(general(300_000));
+    await Promise.resolve();
+    expect(received).toEqual([{ cap: 300_000, source: "config", appliedWindow: 300_000 }]);
+  });
+
   test("the /cap command applies at idle and reports parse errors", async () => {
     const host = await start();
     const handler = host.commands.get("cap").handler;

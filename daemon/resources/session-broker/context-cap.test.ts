@@ -1,4 +1,4 @@
-import { describe, expect, mock, test } from "bun:test";
+import { beforeEach, describe, expect, mock, test } from "bun:test";
 
 const budgets = { reserveTokens: 16_384, keepRecentTokens: 20_000 };
 
@@ -37,8 +37,9 @@ function host() {
       emit,
     },
   };
-  contextWindowCap(pi as any);
+  // Production loads the broker before the cap extension, so the broker's model_select handler runs first.
   registerContextCapDefaults(pi as any);
+  contextWindowCap(pi as any);
   pi.events.on("piop:runtime-settings", (request: any) => { request.settings = settings; });
   pi.events.on("piop:agents:context-cap", () => undefined);
 
@@ -59,6 +60,8 @@ async function started() {
 }
 
 describe("context cap defaults", () => {
+  beforeEach(() => { budgets.keepRecentTokens = 20_000; });
+
   test("a settings change resolves ready after the cap applies", async () => {
     const pi = await started();
     pi.settings.contextWindowCap = 400_000;
@@ -78,5 +81,19 @@ describe("context cap defaults", () => {
     expect(pi.notes.some(([type, message]) => type === "error" && message.startsWith("Context cap defaults could not be applied"))).toBe(true);
     expect(await pi.state()).toEqual({ cap: 300_000, source: "config", appliedWindow: 300_000 });
     expect(pi.ctx.model.contextWindow).toBe(300_000);
+  });
+
+  test("a model switch checks the model cap against the new model", async () => {
+    const pi = host();
+    pi.ctx.model = { provider: "test", id: "small", contextWindow: 200_000 };
+    pi.settings.contextWindowCap = 100_000;
+    pi.settings.modelContextWindowCaps = { "test/large": 500_000 };
+    await pi.fire("session_start", { reason: "startup" });
+    pi.emit("piop:agents:ready", { ctx: pi.ctx });
+    expect(await pi.state()).toEqual({ cap: 100_000, source: "config", appliedWindow: 100_000 });
+    pi.ctx.model = { provider: "test", id: "large", contextWindow: 1_000_000 };
+    await pi.fire("model_select", { model: pi.ctx.model });
+    expect(await pi.state()).toEqual({ cap: 500_000, source: "config", appliedWindow: 500_000 });
+    expect(pi.notes.filter(([type]) => type === "error")).toEqual([]);
   });
 });
