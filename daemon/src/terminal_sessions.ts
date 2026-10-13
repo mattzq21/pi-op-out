@@ -14,12 +14,11 @@ function sessionPart(key: string): string {
   return index < 0 ? key : key.slice(index + 1);
 }
 
-/** Saved terminal output. Offsets: end counts UTF-8 bytes, textEnd counts UTF-16 units. */
+/** Saved terminal output. textEnd counts UTF-16 units. */
 export class Transcript {
   chunks: Buffer[] = [];
   length = 0;
   inputDraft = '';
-  end = 0;
   textEnd = 0;
   updated = Date.now();
   running = true;
@@ -46,7 +45,6 @@ export class Transcript {
       this.chunks[this.chunks.length - 1] = this.blockView;
     }
     this.length += bytes.length;
-    this.end += bytes.length;
     this.textEnd += data.length;
     this.updated = Date.now();
     let discard = this.length - RETAINED_BYTES;
@@ -67,11 +65,6 @@ export class Transcript {
   bytes(): Buffer {
     if (this.chunks.length > 1) this.chunks = [Buffer.concat(this.chunks)];
     return this.chunks[0] ?? Buffer.alloc(0);
-  }
-
-  summary(id: string): any {
-    return { terminalId: id, generation: this.generation, initialCwd: this.cwd, running: this.running, updatedAt: this.updated,
-      availableFrom: this.end - this.length, endOffset: this.end };
   }
 }
 
@@ -281,44 +274,4 @@ async function updateShared(context: SharedRequest, id: string, action: string):
   if (action === 'close' || action === 'reassign') changed(app, previousSession);
   if (action === 'reassign' && context.sessionId !== previousSession) changed(app, context.sessionId);
   return null;
-}
-
-export function lookup(runtime: TerminalRuntime, request: any, hostId: string): any {
-  const sessionId = request?.sessionId;
-  if (typeof sessionId !== 'string' || !sessionId) throw new Error('sessionId is required');
-  const belongs = (item: Transcript) => item.sessionId === sessionId && item.hostId === hostId;
-  const id = request.terminalId;
-  if (typeof id !== 'string') {
-    const terminals = [...runtime.history].filter(([, item]) => belongs(item)).sort((a, b) => a[1].creationOrder - b[1].creationOrder);
-    return { terminals: terminals.map(([key, item]) => item.summary(key)),
-      retention: 'Up to 4 MiB per terminal; closed terminals are removed, exited history may be evicted. Select terminalId to read output.' };
-  }
-  const item = runtime.history.get(id);
-  if (!item || !belongs(item)) throw new Error('Terminal not found in this session; list terminals again');
-  if (typeof request.generation === 'string' && request.generation !== item.generation) throw new Error('Terminal restarted; list terminals again before reading output');
-  return readPage(item, id, request);
-}
-
-function readPage(item: Transcript, id: string, request: any): any {
-  let limit = 4096;
-  if (Object.hasOwn(request, 'maxBytes')) {
-    const value = request.maxBytes;
-    if (!Number.isInteger(value) || value < 4 || value > 16384) throw new Error('maxBytes must be an integer from 4 to 16384');
-    limit = value;
-  }
-  const output = item.bytes();
-  const available = item.end - output.length;
-  let requested: number;
-  if (Object.hasOwn(request, 'offset')) {
-    const value = request.offset;
-    if (!Number.isInteger(value) || value < 0) throw new Error('offset must be a nonnegative integer');
-    requested = value;
-  } else requested = Math.max(Math.max(0, item.end - limit), available);
-  if (requested > item.end) throw new Error('Offset is beyond terminal output; list terminals again');
-  let startIndex = Math.max(requested, available) - available;
-  while (startIndex < output.length && (output[startIndex]! & 0xc0) === 0x80) startIndex += 1;
-  let endIndex = Math.min(startIndex + limit, output.length);
-  while (endIndex > startIndex && endIndex < output.length && (output[endIndex]! & 0xc0) === 0x80) endIndex -= 1;
-  return { ...item.summary(id), output: output.subarray(startIndex, endIndex).toString('utf8'), startOffset: available + startIndex, nextOffset: available + endIndex,
-    hasMore: endIndex < output.length, truncated: requested < available };
 }

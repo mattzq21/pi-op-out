@@ -19,7 +19,6 @@ interface BrokerRequest {
   hostId?: string; sessionId?: string; id?: string; cwd?: string; name?: string;
   message?: string; requestId?: string; deadline?: number; deliveryId?: string;
   recoveryDepth?: number;
-  terminalId?: string; generation?: string; offset?: number; maxBytes?: number;
 }
 
 const responseSchema = Type.Object({ error: Type.Optional(Type.String()), data: Type.Optional(Type.Unknown()) });

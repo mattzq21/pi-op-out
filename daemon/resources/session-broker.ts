@@ -6,7 +6,6 @@ import { registerContextCapDefaults } from "./session-broker/context-cap.ts";
 import { registerForkAndForget } from "./session-broker/operations.ts";
 import { registerSubagents } from "./session-broker/subagents.ts";
 import { registerSubagentMailbox } from "./session-broker/subagent-mailbox.ts";
-import { registerBrokerTools } from "./session-broker/tools.ts";
 import { registerGoals } from "./session-broker/goals.ts";
 import { registerReview } from "./session-broker/review.ts";
 import { registerHtmlPreview } from "./session-broker/html-preview.ts";
@@ -40,7 +39,6 @@ export default function sessionBroker(pi: ExtensionAPI) {
   registerOrchestration(pi);
   registerSubagents(pi, mailbox);
   registerRequestUserInput(pi);
-  registerBrokerTools(pi);
   registerGoals(pi);
   registerReview(pi);
   registerHtmlPreview(pi);

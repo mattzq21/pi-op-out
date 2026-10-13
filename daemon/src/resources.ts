@@ -70,7 +70,6 @@ import brokerModule27 from '../resources/session-broker/subagent-results.ts?raw'
 import brokerModule28 from '../resources/session-broker/subagent-recovery.ts?raw';
 import brokerModule29 from '../resources/session-broker/subagent-identity.ts?raw';
 import brokerModule30 from '../resources/session-broker/operations.ts?raw';
-import brokerModule31 from '../resources/session-broker/tools.ts?raw';
 import brokerModule32 from '../resources/session-broker/html-preview.ts?raw';
 import brokerModule33 from '../resources/session-broker/goals.ts?raw';
 import brokerModule34 from '../resources/session-broker/review.ts?raw';
@@ -183,7 +182,6 @@ export const SESSION_BROKER_MODULES: Array<[string, string]> = [
   ['subagent-recovery.ts', brokerModule28],
   ['subagent-identity.ts', brokerModule29],
   ['operations.ts', brokerModule30],
-  ['tools.ts', brokerModule31],
   ['html-preview.ts', brokerModule32],
   ['goals.ts', brokerModule33],
   ['review.ts', brokerModule34],

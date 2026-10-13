@@ -7,7 +7,7 @@ import { isDirectory } from './environment';
 import { loadAppSettings } from './settings';
 import { remoteHost, userSshConfig } from './pi_launch';
 import { shellQuote } from './process_io';
-import * as terminalLookup from './terminal_lookup';
+import * as terminalSessions from './terminal_sessions';
 import type { App } from './app';
 
 const MAX_INPUT_BYTES = 1024 * 1024;
@@ -37,7 +37,7 @@ export interface TerminalProcess {
 /** State for all running shell terminals and their saved output. */
 export class TerminalRuntime {
   processes = new Map<string, TerminalProcess>();
-  history = new Map<string, terminalLookup.Transcript>();
+  history = new Map<string, terminalSessions.Transcript>();
 
   runningCount(): number { return this.processes.size; }
   ensureOwner(id: string, owner: string): void {
@@ -115,8 +115,8 @@ function startTerminalWith(runtime: TerminalRuntime, launch: TerminalLaunch, com
     const data = pendingOutput;
     pendingOutput = '';
     if (!data || !current()) return;
-    terminalLookup.record(runtime.history, terminalId, data);
-    emit(terminalLookup.event(runtime.history, terminalId, { type: 'terminal_output', terminalId, data }));
+    terminalSessions.record(runtime.history, terminalId, data);
+    emit(terminalSessions.event(runtime.history, terminalId, { type: 'terminal_output', terminalId, data }));
   };
   const output = (data: string) => {
     if (!data) return;
@@ -142,10 +142,10 @@ function startTerminalWith(runtime: TerminalRuntime, launch: TerminalLaunch, com
   } catch (error: any) { throw new Error('Could not start terminal shell: ' + (error?.message ?? error)); }
   const started: TerminalProcess = { generation, sessionKey, cwd, hostId, windowLabel, child, processSessionId: child.pid, rows, cols, pendingInput: 0, exited: false };
   terminal = started;
-  terminalLookup.start(runtime, terminalId, sessionKey, cwd, hostId, windowLabel, generation);
+  terminalSessions.start(runtime, terminalId, sessionKey, cwd, hostId, windowLabel, generation);
   const size = '\u001b[8;' + rows + ';' + cols + 't';
-  terminalLookup.record(runtime.history, terminalId, size);
-  emit(terminalLookup.event(runtime.history, terminalId, { type: 'terminal_output', terminalId, data: size }));
+  terminalSessions.record(runtime.history, terminalId, size);
+  emit(terminalSessions.event(runtime.history, terminalId, { type: 'terminal_output', terminalId, data: size }));
   void child.exited.then(async () => {
     // Let the PTY deliver the last output before the terminal closes.
     await Promise.race([ptyClosed, new Promise(resolve => setTimeout(resolve, 1000))]);
@@ -156,8 +156,8 @@ function startTerminalWith(runtime: TerminalRuntime, launch: TerminalLaunch, com
     flush();
     if (!current()) return;
     runtime.processes.delete(terminalId);
-    const packet = terminalLookup.event(runtime.history, terminalId, { type: 'terminal_exit', terminalId });
-    terminalLookup.finish(runtime.history, terminalId);
+    const packet = terminalSessions.event(runtime.history, terminalId, { type: 'terminal_exit', terminalId });
+    terminalSessions.finish(runtime.history, terminalId);
     emit(packet);
   }).catch(error => console.error('Terminal exit cleanup failed for ' + terminalId + ':', error));
   runtime.processes.set(terminalId, started);
@@ -245,10 +245,10 @@ export async function stopTerminals(runtime: TerminalRuntime, terminalIds: strin
 }
 
 export async function detachOwner(runtime: TerminalRuntime, owner: string): Promise<void> {
-  try { await terminalLookup.discardDrafts(runtime, 'shared:' + owner + ':'); } catch (error) { console.error('Could not discard terminal drafts for ' + owner + ':', error); }
+  try { await terminalSessions.discardDrafts(runtime, 'shared:' + owner + ':'); } catch (error) { console.error('Could not discard terminal drafts for ' + owner + ':', error); }
   const ids = [...runtime.processes].filter(([, process]) => process.windowLabel === owner).map(([id]) => id);
   try { await stopTerminals(runtime, ids); } catch (error) { console.error('Could not detach terminals for ' + owner + ':', error); }
-  terminalLookup.detach(runtime, owner);
+  terminalSessions.detach(runtime, owner);
 }
 
 export async function shutdown(runtime: TerminalRuntime): Promise<void> {
