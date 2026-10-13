@@ -271,11 +271,14 @@ test('session restore uses the latest state, ignores unrelated custom records, a
 
   await f.load(); await f.start(); assert.equal(f.capability().active, 'missing'); assert.equal(f.capability().locked, true);
   assert.deepEqual(await f.input('hello'), { action: 'handled' });
-  await f.select('general'); assert.deepEqual(await f.input('hello'), { action: 'continue' });
+  await assert.rejects(f.select('general'), /agent is fixed/);
+  assert.equal(f.capability().unavailable, true);
+  assert.deepEqual(f.pi.getActiveTools(), []);
+  assert.deepEqual(JSON.parse(f.statuses.get('piop-input-rejected')), { text: 'hello', error: 'Agent "missing" is unavailable. This conversation cannot start.' });
   f.entries.length = 0; f.entries.push({ type: 'custom', customType: 'pi-define-agents-state', data: { active: 'missing' } });
   await f.start(); assert.equal(f.capability().unavailable, true); assert.equal(f.capability().saved, false); assert.deepEqual(await f.prompt(), {}); assert.equal(await f.emit('resources_discover'), undefined);
   const request = { ctx: f.ctx }; f.pi.events.emit('piop:agents:refresh', request); await request.ready; assert.deepEqual(f.pi.getActiveTools(), []);
-  assert.deepEqual(f.notices.at(-1), { message: 'Agent unavailable: "missing". Select a replacement or general to continue.', level: 'warning' });
+  assert.deepEqual(f.notices.at(-1), { message: 'Agent "missing" is unavailable. This conversation cannot start.', level: 'warning' });
 });
 
 test('tool validation combines global restrictions and actual availability with deduplicated diagnostics', async t => {

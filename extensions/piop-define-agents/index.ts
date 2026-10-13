@@ -578,7 +578,7 @@ export default async function defineAgents(pi: ExtensionAPI) {
     try {
       restore(ctx);
       const agent = currentAgent();
-      activeToolError = agent ? await activate(agent, ctx, persistSnapshot, applyFastMode) : `Agent unavailable: "${name}". Select a replacement or general to continue.`;
+      activeToolError = agent ? await activate(agent, ctx, persistSnapshot, applyFastMode) : `Agent "${name}" is unavailable. This conversation cannot start.`;
     } catch (error) {
       activeToolError = await unloadExtensions(`Agent "${name}" could not start: ${error instanceof Error ? error.message : String(error)}`, ctx);
     }
@@ -671,7 +671,7 @@ export default async function defineAgents(pi: ExtensionAPI) {
   });
 
   const selectAgent = async (name: string, ctx: ExtensionCommandContext) => {
-    if (locked && currentAgent()) {
+    if (locked) {
       if (name === active) return;
       throw new Error("This conversation's agent is fixed. Start a new conversation to use another agent.");
     }

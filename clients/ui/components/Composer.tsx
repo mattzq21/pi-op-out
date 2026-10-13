@@ -379,7 +379,7 @@ export function Composer(props: Props) {
   };
 
   const pendingDrag = usePendingMessageDrag(() => (composer().pendingMessages), () => (pendingControlsDisabled(composer().controlsDisabled, changingPending(), composer().pausing, composer().onChangePending)), () => (changePending));
-  const controlsBlocked = () => (props.submissionDisabled ?? composer().controlsDisabled) || composer().compacting || composer().pausing || controlActionRef.current || stoppingRef.current;
+  const controlsBlocked = () => composer().agentUnavailable || (props.submissionDisabled ?? composer().controlsDisabled) || composer().compacting || composer().pausing || controlActionRef.current || stoppingRef.current;
 
   const canSubmit = (message: string, images: ImageAttachment[]) => {
     if (!attachments.acceptsImages(images.length)) return false;
@@ -639,6 +639,9 @@ export function Composer(props: Props) {
   };
 
   return <div class="composer-wrap">
+    <Show when={composer().agentUnavailable}>
+      <div role="alert">Agent "{composer().activeAgent}" is unavailable. This conversation cannot start.</div>
+    </Show>
     <Show when={props.capabilityErrors?.length}>
       <div role="alert">
         <Key each={props.capabilityErrors ?? []} by={message => message}>{message => <p>{message()}</p>}</Key>
