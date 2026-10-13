@@ -17,6 +17,11 @@ declare module "@earendil-works/pi-coding-agent" {
 
 type Model = NonNullable<ExtensionContext["model"]>;
 
+/** Set on every model object whose window this extension changed, to the model's true window. A copy of that object keeps it. */
+const NATIVE_WINDOW = Symbol("piop-context-cap-native-window");
+
+type Marked = Model & { [NATIVE_WINDOW]?: number };
+
 type Branch = ReturnType<ExtensionContext["sessionManager"]["getBranch"]>;
 
 type Choice = { cap: number | null; source: ContextCapSource };
@@ -121,20 +126,26 @@ export default function contextWindowCap(pi: ExtensionAPI) {
   const keyOf = (target: Model) => target.provider + "/" + target.id;
 
   /**
-   * Pi builds a replacement model object from the object this extension changed, so a new object can carry the applied window.
-   * Keep the known true window in that case; otherwise the new object's window is the true window.
+   * Pi can build a replacement model object by copying the object this extension changed, so the copy carries the applied window and its mark.
+   * Use the marked true window in that case. A fresh object, such as one from a provider refresh, has no mark: its window is the true window.
    */
   const track = (next: Model | undefined) => {
     if (next && !objects.has(next)) {
       const key = keyOf(next);
+      const carried = (next as Marked)[NATIVE_WINDOW];
 
-      if (!natives.has(key) || written.get(key) !== next.contextWindow) natives.set(key, next.contextWindow);
+      natives.set(key, carried !== undefined && written.get(key) === next.contextWindow ? carried : next.contextWindow);
       objects.add(next);
     }
     model = next;
   };
 
   const nativeWindow = (target: Model) => natives.get(keyOf(target)) ?? target.contextWindow;
+
+  const restoreNative = (target: Model) => {
+    target.contextWindow = nativeWindow(target);
+    delete (target as Marked)[NATIVE_WINDOW];
+  };
 
   const appliedFor = (next: Choice, target: Model | undefined) => {
     if (!target) return null;
@@ -210,7 +221,7 @@ export default function contextWindowCap(pi: ExtensionAPI) {
 
   /** Writes the effective window to the current model and restores every other model this extension changed. */
   const apply = () => {
-    for (const target of objects) if (target !== model && target.contextWindow !== nativeWindow(target)) target.contextWindow = nativeWindow(target);
+    for (const target of objects) if (target !== model && (target.contextWindow !== nativeWindow(target) || NATIVE_WINDOW in target)) restoreNative(target);
 
     for (const key of [...written.keys()]) if (!model || key !== keyOf(model)) written.delete(key);
 
@@ -220,6 +231,7 @@ export default function contextWindowCap(pi: ExtensionAPI) {
     if (window === null) return;
 
     if (model.contextWindow !== window) model.contextWindow = window;
+    (model as Marked)[NATIVE_WINDOW] = nativeWindow(model);
     written.set(keyOf(model), window);
   };
 
@@ -455,7 +467,8 @@ export default function contextWindowCap(pi: ExtensionAPI) {
     const window = choice ? appliedFor(choice, model) : null;
     const error = model && window !== null ? budgetError(window, model) : undefined;
 
-    if (!error || event.text.startsWith("/")) return;
+    // Pi runs extension commands such as /cap before this event, so slash text here is a prompt, skill, or template.
+    if (!error) return;
     ctx.ui.setStatus("piop-input-rejected", JSON.stringify({ text: event.text, error }));
     ctx.ui.notify(error, "error");
 
@@ -472,7 +485,7 @@ export default function contextWindowCap(pi: ExtensionAPI) {
     stopSession();
     stopModels();
 
-    for (const target of objects) target.contextWindow = nativeWindow(target);
+    for (const target of objects) restoreNative(target);
     objects.clear();
     natives.clear();
     written.clear();

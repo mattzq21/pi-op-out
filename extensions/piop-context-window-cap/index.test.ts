@@ -218,6 +218,15 @@ describe("context cap session", () => {
     await host.selectModel(model("tiny", 32_000));
     expect(host.notes.some(([type, message]) => type === "error" && message.includes("compaction budgets"))).toBe(true);
     expect(await host.fire("input", { text: "hello", source: "interactive" })).toEqual({ action: "handled" });
+    expect(await host.fire("input", { text: "/skill:review check this", source: "interactive" })).toEqual({ action: "handled" });
+  });
+
+  test("a provider refresh can lower the true window to the applied cap", async () => {
+    const host = await start([], model("large", 1_000_000));
+    host.model = model("large", 300_000);
+    host.bus.get("piop:models-refreshed")?.forEach(handler => handler({ ctx: host.ctx }));
+    expect(await host.session().setManualCap(null)).toEqual({ cap: null, source: "manual", appliedWindow: 300_000 });
+    expect(host.model.contextWindow).toBe(300_000);
   });
 
   for (const announced of [true, false]) test("keeps the true window when Pi replaces the model object with a capped copy" + (announced ? " and announces it" : ""), async () => {
