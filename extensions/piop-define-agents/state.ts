@@ -1,3 +1,4 @@
+import { agentResourcesSchema } from "./resources.ts";
 import { Type, type Static } from "typebox";
 import { Check } from "typebox/value";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
@@ -46,8 +47,8 @@ const storedAgentSchema = Type.Object({
 });
 
 const snapshotSchema = Type.Union([
-  Type.Object({ version: Type.Literal(2), definition: storedAgentSchema }),
-  Type.Object({ version: Type.Literal(1), definition: storedAgentSchema, systemPrompt: Type.String(), agentPrompt: Type.String() }),
+  Type.Object({ version: Type.Literal(2), resources: Type.Optional(agentResourcesSchema), definition: storedAgentSchema }),
+  Type.Object({ version: Type.Literal(1), resources: Type.Optional(agentResourcesSchema), definition: storedAgentSchema, systemPrompt: Type.String(), agentPrompt: Type.String() }),
 ]);
 
 const stateSchema = Type.Object({

@@ -23,10 +23,10 @@ const args = process.argv.slice(2);
 const path = require('node:path');
 const launch = { args };
 try {
-  const runtimePath = process.env.PIOP_TOOL_STORE_PATH;
-  const read = record => require(path.join(path.dirname(runtimePath), 'app-settings.cjs')).readFile(record);
-  launch.skills = read(process.env.PIOP_SKILLS_STORE_PATH);
-  launch.tools = read(process.env.PIOP_TOOL_STORE_PATH);
+  const resources = JSON.parse(process.env.PIOP_AGENT_RESOURCES);
+  launch.skills = resources.skills;
+  launch.tools = resources.tools;
+  const read = record => require(path.join(path.dirname(record), 'app-settings.cjs')).readFile(record);
   launch.contextSettings = read(process.env.PIOP_CONTEXT_CAP_SETTINGS_PATH);
 } catch (error) { launch.readError = String(error?.message ?? error); }
 fs.appendFileSync(path.join(process.env.HOME, 'launches.jsonl'), JSON.stringify(launch) + '\\n');
@@ -35,7 +35,7 @@ const sessionId = sessionFile ? JSON.parse(fs.readFileSync(sessionFile, 'utf8').
 const state = { sessionFile, sessionId, isStreaming: false, messageCount: 0, pendingMessageCount: 0, model: null, thinkingLevel: 'medium' };
 require('node:readline').createInterface({ input: process.stdin }).on('line', line => {
   const request = JSON.parse(line);
-  if (request.type === 'piop_request' && ['context_cap_settings', 'runtime_settings'].includes(request.command)) {
+  if (request.type === 'piop_request' && ['context_cap_settings', 'refresh_agent_definitions'].includes(request.command)) {
     process.stdout.write(JSON.stringify({ type: 'fixture_settings', command: request.command, settings: request.payload.settings }) + '\\n');
   }
   process.stdout.write(JSON.stringify({ type: 'response', id: request.id, command: request.type, success: true, data: request.type === 'get_state' ? state : null }) + '\\n');
@@ -128,15 +128,11 @@ test('a Pi start installs the bundled extensions as private files and refreshes 
     ['piop-providers-refresh.ts', 'extensions/piop-providers-refresh/index.ts'],
     ['piop-openai-cache-fork.ts', 'extensions/piop-openai-cache-fork/index.ts'],
     ['piop-codex-web-search.ts', 'extensions/piop-codex-web-search/index.ts'],
-    ['piop-skills-store/index.ts', 'extensions/piop-skills-store/index.ts'],
-    ['piop-skills-store/interface.ts', 'extensions/piop-skills-store/interface.ts'],
-    ['piop-tool-store/index.ts', 'extensions/piop-tool-store/index.ts'],
-    ['piop-tool-store/interface.ts', 'extensions/piop-tool-store/interface.ts'],
     ['piop-codemode-tools-description.ts', 'extensions/piop-codemode-tools-description/index.ts'],
   ];
   const extensions = extensionPaths(await launchPublicPi(daemon));
-  for (const name of ['session-broker.ts', 'piop-providers-refresh.ts', 'piop-codemode-tools-description.ts', 'piop-openai-cache-fork.ts', 'piop-codex-web-search.ts', 'piop-skills-store/index.ts', 'piop-tool-store/index.ts']) expect(extensions).toContain(join(generated, name));
-  expect(extensions.indexOf(join(generated, 'piop-codemode-tools-description.ts'))).toBeLessThan(extensions.indexOf(join(generated, 'piop-skills-store/index.ts')));
+  for (const removed of ['runtime-settings.ts', 'piop-skills-store/index.ts', 'piop-tool-store/index.ts']) expect(extensions).not.toContain(join(generated, removed));
+  for (const name of ['session-broker.ts', 'piop-providers-refresh.ts', 'piop-codemode-tools-description.ts', 'piop-openai-cache-fork.ts', 'piop-codex-web-search.ts']) expect(extensions).toContain(join(generated, name));
   for (const [name, relative] of bundles) {
     expect(readFileSync(join(generated, name), 'utf8')).toBe(source(relative));
     expect(mode(join(generated, name))).toBe(0o600);
@@ -150,7 +146,7 @@ test('a Pi start installs the bundled extensions as private files and refreshes 
 }, 60_000);
 
 
-test('a started Pi reads runtime and context window settings that follow the saved settings', async () => {
+test('a started Pi receives resource lists and separate context settings', async () => {
   const generated = join(daemon.home, '.piop');
   const skill = join(daemon.home, '.agents/skills/spaced skill');
   mkdirSync(skill, { recursive: true });
@@ -165,12 +161,11 @@ test('a started Pi reads runtime and context window settings that follow the sav
     await daemon.invoke('save_app_settings', { settings });
     const launch = await launchPublicPi(daemon);
     expect(launch.readError).toBeUndefined();
-    expect(extensionPaths(launch)).toEqual(expect.arrayContaining([join(generated, 'piop-mcp-bridge.ts'), join(generated, 'runtime-settings.ts'), join(generated, 'piop-context-window-cap/index.ts')]));
+    expect(extensionPaths(launch)).toEqual(expect.arrayContaining([join(generated, 'piop-mcp-bridge.ts'), join(generated, 'piop-context-window-cap/index.ts')]));
     expect(readFileSync(join(generated, 'piop-mcp-bridge.ts'), 'utf8')).toBe(source('daemon/resources/mcp-bridge.bundle.mjs'));
     expect(existsSync(join(generated, 'mcp-servers.json'))).toBe(false);
-    expect(readFileSync(join(generated, 'runtime-settings.ts'), 'utf8')).toBe(source('extensions/piop-runtime-settings/index.ts'));
     expect(readFileSync(join(generated, 'piop-context-window-cap/index.ts'), 'utf8')).toBe(source('extensions/piop-context-window-cap/index.ts'));
-    for (const file of ['piop-mcp-bridge.ts', 'runtime-settings.ts', 'piop-context-window-cap/index.ts']) expect(mode(join(generated, file))).toBe(0o600);
+    for (const file of ['piop-mcp-bridge.ts', 'piop-context-window-cap/index.ts']) expect(mode(join(generated, file))).toBe(0o600);
     expect(launch.contextSettings).toEqual({ contextWindowCap: enabled ? 123456 : 200000, contextWindowCapEnabled: enabled, modelContextWindowCaps: {} });
     // The goal tools are always on.
     expect(launch.tools.enabledTools).toEqual(enabled ? ['read', 'get_goal', 'create_goal', 'update_goal'] : ['get_goal', 'create_goal', 'update_goal']);

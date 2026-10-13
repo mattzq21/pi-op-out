@@ -1,3 +1,4 @@
+import { readAgentResources, resourcePath, type AgentResources } from "./resources.ts";
 import { STATE_ENTRY, DEFAULTS_ENV, DRAFT_STATE_ENV, type RuntimeDefaults, agentSchema, agentThinkingLevels, persistedAgentIdentity, storedRuntimeDefaults, sessionIsLocked, readAgentState, subagentLimit, registerSubagentLimits } from "./state.ts";
 import { Type } from "typebox";
 import { Check, Errors, Parse } from "typebox/value";
@@ -8,8 +9,6 @@ import { fallbackConfig, migrateQuestionSnapshot, selectedProfileState } from ".
 import { migrateExcalidrawAgent } from "./excalidraw.ts";
 import { mcpServers, type McpServers, type LegacyMcpServer } from "./mcp-config.ts";
 import type { Agent, AgentSnapshot, RequiredToolsRequest, McpToolsRequest, McpSelection } from "./contracts.ts";
-import type { SkillsStoreRequest } from "../piop-skills-store/interface.ts";
-import type { ToolStoreRequest } from "../piop-tool-store/interface.ts";
 import { fastModeSession, fastModelProblem, hostFastModels } from "./fast-models.ts";
 import { agentExtensions, extensionPaths } from "./extension-loader.ts";
 import { capRangeError } from "../piop-context-window-cap/interface.ts";
@@ -27,7 +26,7 @@ const sessionTools = ["subagent"];
 
 export type Config = { revision?: string; agents: Agent[]; webSearchDefaultApplied?: boolean; sessionToolsDefaultApplied?: boolean; subagentsDefaultApplied?: boolean; diagramistDefaultApplied?: boolean; askerAgentDefaultApplied?: boolean; terminalAgentDefaultApplied?: boolean; tokagentDefaultApplied?: boolean; excalidrawAgentDefaultApplied?: boolean };
 
-type ConfigRuntime = { events: { emit(channel: "piop:tool-store", request: ToolStoreRequest): void } };
+type ConfigRuntime = { enabledTools?: readonly string[] };
 
 export type ConfigStorage = { ensurePromptFile: typeof ensurePromptFile; writeConfig: typeof writeConfig };
 
@@ -281,25 +280,9 @@ function encode<T>(value: T) { return Buffer.from(JSON.stringify(value), "utf8")
 
 function safeName(value: string) { return value.toLowerCase().replace(/[^a-z0-9_]+/g, "_").replace(/^_+|_+$/g, "") || "tool"; }
 
-/** Tools enabled in Piop settings, or undefined when the tool store is not loaded. */
-function enabledTools(pi: ConfigRuntime) { const request: ToolStoreRequest = {}; pi.events.emit("piop:tool-store", request);
+function enabledTools(config: ConfigRuntime) { return config.enabledTools; }
 
-return request.store?.lists().enabledTools; }
-
-function skillsStore(pi: ExtensionAPI) { const request: SkillsStoreRequest = {}; pi.events.emit("piop:skills-store", request);
-
-return request.store; }
-
-function normalizedPath(value: string) { return resolve(value.startsWith("~/") ? join(homedir(), value.slice(2)) : value); }
-
-function agentSkills(pi: ExtensionAPI, agent: Agent) { return skillsStore(pi)?.selectEnabled(agent.skills) ?? agent.skills; }
-
-function agentToolError(pi: ExtensionAPI, agent: Agent, extensionTools: string[] = []) {
-  const globallyAllowed = enabledTools(pi); const available = new Set(pi.getAllTools().map((tool) => tool.name));
-  const denied = [...new Set(agent.tools.filter((tool) => (globallyAllowed && !globallyAllowed.includes(tool) && !extensionTools.includes(tool)) || !available.has(tool)))];
-
-  return denied.length ? `Agent "${agent.name}" cannot run because Pi does not allow its configured tool${denied.length === 1 ? "" : "s"}: ${denied.join(", ")}` : undefined;
-}
+const normalizedPath = resourcePath;
 
 function configureAgentSystemPrompt(prompt: string, agentPrompt: string, options: BuildSystemPromptOptions, invocationPolicy: <T extends { filePath: string; baseDir: string }>(skills: readonly T[]) => T[] = skills => [...skills]) {
   delete options.forceSystemPrompt;
@@ -324,8 +307,10 @@ function configureAgentSystemPrompt(prompt: string, agentPrompt: string, options
 
 export default async function defineAgents(pi: ExtensionAPI) {
   const extensions = agentExtensions(pi, dirname(configPath));
-  const daemonDefinitions = await readDaemonDefinitions();
-  let config = daemonDefinitions ? daemonDefinitions.config : await loadConfig(pi);
+  const initialResources = readAgentResources();
+  const configRuntime = { enabledTools: initialResources.tools.enabledTools };
+  let daemonDefinitions = await readDaemonDefinitions();
+  let config = daemonDefinitions ? daemonDefinitions.config : await loadConfig(configRuntime);
   let active = "general";
   let snapshot: AgentSnapshot | undefined;
   let savedState: string | undefined;
@@ -343,6 +328,22 @@ export default async function defineAgents(pi: ExtensionAPI) {
   process.env.PI_DEFINE_AGENTS_ACTIVE = "1";
   const findAgent = (name: string) => config.agents.find((agent) => agent.name === name);
   const currentAgent = () => snapshot?.definition ?? findAgent(active);
+  const resources = (): AgentResources => snapshot?.resources ?? initialResources;
+  const agentSkills = (_pi: ExtensionAPI, agent: Agent) => {
+    const skills = resources().skills;
+    const allowed = new Set([...skills.userInvokedSkills, ...skills.agentInvokedSkills].map(resourcePath));
+    return agent.skills.filter(path => allowed.has(resourcePath(path)));
+  };
+  const invocationPolicy = <T extends { filePath: string; baseDir: string }>(skills: readonly T[]): T[] => {
+    const user = new Set(resources().skills.userInvokedSkills.map(resourcePath));
+    return skills.map(skill => user.has(resourcePath(skill.filePath)) || user.has(resourcePath(skill.baseDir)) ? { ...skill, disableModelInvocation: true } : { ...skill });
+  };
+  const agentToolError = (api: ExtensionAPI, agent: Agent, extensionTools: string[] = []) => {
+    const allowed = new Set([...resources().tools.enabledTools, ...extensionTools]);
+    const available = new Set(api.getAllTools().map(tool => tool.name));
+    const denied = [...new Set(agent.tools.filter(tool => !allowed.has(tool) || !available.has(tool)))];
+    return denied.length ? `Agent "${agent.name}" cannot run because Pi does not allow its configured tool${denied.length === 1 ? "" : "s"}: ${denied.join(", ")}` : undefined;
+  };
   registerSubagentLimits(pi, currentAgent);
 
   const currentMcpTools = (includeInactive = false) => { const request: McpToolsRequest = {}; pi.events.emit("piop:mcp:tools", request);
@@ -374,7 +375,7 @@ export default async function defineAgents(pi: ExtensionAPI) {
       return;
     }
 
-    request.ready = selectedProfileState(agent, path => readAgentPrompt(path, true))
+    request.ready = selectedProfileState(agent, initialResources, path => readAgentPrompt(path, true))
       .then(state => { request.state = state; })
       .catch(error => { request.error = `Cannot load agent profile ${agent.name}: ${String(error)}`; });
   });
@@ -425,10 +426,6 @@ export default async function defineAgents(pi: ExtensionAPI) {
     try { await ctx.reload(); } finally { reloading = false; }
   };
 
-  const stopReload = pi.events.on("piop:agents:reload", (request) => {
-    request.ready = Promise.resolve().then(() => reload(request.ctx));
-  });
-
   const saveRuntimeDefaults = (value: RuntimeDefaults) => { runtimeDefaults = value; process.env[DEFAULTS_ENV] = JSON.stringify({ ...value, session: runtimeSession }); };
 
   const restore = (ctx: ExtensionContext) => {
@@ -448,6 +445,8 @@ export default async function defineAgents(pi: ExtensionAPI) {
     if (daemonDefinitions && !snapshot) snapshot = { version: 1, definition: snapshotDefinition(agent), systemPrompt: activeSystemPrompt, agentPrompt: activeAgentPrompt };
 
     if (!daemonDefinitions && snapshot?.version !== 2) snapshot = await snapshotPrompts(snapshotDefinition(agent), activeSystemPrompt, activeAgentPrompt);
+
+    if (snapshot && !snapshot.resources) snapshot.resources = structuredClone(initialResources);
 
     if (persist) saveState();
   };
@@ -619,23 +618,7 @@ export default async function defineAgents(pi: ExtensionAPI) {
     return activeToolError;
   };
 
-  const stopRefresh = pi.events.on("piop:agents:refresh", (request) => {
-    request.ready = Promise.resolve().then(() => {
-      const agent = currentAgent();
-
-      if (!agent) { pi.setActiveTools([]); publish(request.ctx);
-
-      return; }
-
-      activeToolError = agentToolError(pi, agent, extensions.tools());
-      const mcpTools = currentMcpTools();
-      const required: RequiredToolsRequest = { ctx: request.ctx, tools: [], availableTools: agent.tools }; pi.events.emit("piop:required-tools", required);
-      pi.setActiveTools(activeToolError ? [] : [...new Set([...agent.tools, ...extensions.tools(), ...mcpTools, ...required.tools])].filter(name => agent.codemode !== false || name !== "codemode"));
-      publish(request.ctx);
-    });
-  });
-
-  pi.on("session_shutdown", async (event, ctx) => { stopSubagentProfiles(); stopProfileCatalog(); stopContextCap(); stopRefresh(); stopReload(); await extensions.deactivate(ctx, event); });
+  pi.on("session_shutdown", async (event, ctx) => { stopSubagentProfiles(); stopProfileCatalog(); stopContextCap(); await extensions.deactivate(ctx, event); });
   pi.on("model_select", (event) => { const model = `${event.model.provider}/${event.model.id}`;
 
   if (applyingAgentModel === model) { applyingAgentModel = undefined;
@@ -649,8 +632,6 @@ export default async function defineAgents(pi: ExtensionAPI) {
 
   effortOverride = event.level; saveState(); saveRuntimeDefaults({ model: runtimeDefaults?.model || "", effort: event.level }); });
 
-  const keepSnapshot = (locked: boolean, ctx: ExtensionContext) => !daemonDefinitions || locked || ctx.sessionManager.getBranch().some(entry => entry.type === "custom" && entry.customType === "piop-subagent-parent");
-
   const restoreSession = async (ctx: ExtensionContext) => {
     restore(ctx);
     const branch = ctx.sessionManager.getBranch();
@@ -662,8 +643,6 @@ export default async function defineAgents(pi: ExtensionAPI) {
     if (active === "voice-orchestrator") { active = "general"; snapshot = undefined; }
 
     locked = sessionIsLocked(states, branch);
-
-    if (!keepSnapshot(locked, ctx)) snapshot = undefined;
 
     modelOverride = stored?.modelOverride;
     effortOverride = stored?.effortOverride;
@@ -680,7 +659,13 @@ export default async function defineAgents(pi: ExtensionAPI) {
   pi.on("session_shutdown", (_event, ctx) => { delete process.env.PI_DEFINE_AGENTS_ACTIVE;
 
   if (!reloading) ctx.ui.setStatus(STATUS_KEY, undefined); });
-  pi.on("resources_discover", () => { const agent = currentAgent(); const skillPaths = agent ? agentSkills(pi, agent) : [];
+  pi.on("resources_discover", (_event, ctx) => {
+    if (!snapshot) {
+      const stored = readAgentState(ctx.sessionManager.getBranch(), ctx.sessionManager.getSessionFile() || "").stored;
+      snapshot = migrateQuestionSnapshot(stored?.snapshot);
+      if (snapshot) active = snapshot.definition.name;
+    }
+    const agent = currentAgent(); const skillPaths = agent ? agentSkills(pi, agent) : [];
 
   return skillPaths.length ? { skillPaths } : undefined; });
   pi.on("input", async (event, ctx) => {
@@ -702,7 +687,7 @@ export default async function defineAgents(pi: ExtensionAPI) {
     if (!agent) return;
 
     if (agent.codemode === false) pi.setActiveTools(pi.getActiveTools().filter(name => name !== "codemode"));
-    configureAgentSystemPrompt(activeSystemPrompt, activeAgentPrompt, event.systemPromptOptions, skillsStore(pi)?.applyInvocationPolicy);
+    configureAgentSystemPrompt(activeSystemPrompt, activeAgentPrompt, event.systemPromptOptions, invocationPolicy);
   });
   pi.events.on("piop:rpc", request => {
     if (request.command !== "select_agent") return;
@@ -748,7 +733,16 @@ export default async function defineAgents(pi: ExtensionAPI) {
   };
 
   pi.events.on("piop:rpc", request => {
-    if (request.command === "get_agent_configuration") { request.ready = loadConfig(pi);
+    if (request.command === "refresh_agent_definitions") {
+      request.ready = (async () => {
+        const definitions = await readDaemonDefinitions();
+        if (definitions) { daemonDefinitions = definitions; config = definitions.config; }
+        else config = await loadConfig(configRuntime);
+        publish(request.ctx);
+      })();
+      return;
+    }
+    if (request.command === "get_agent_configuration") { request.ready = loadConfig(configRuntime);
 
     return; }
 
@@ -760,8 +754,8 @@ export default async function defineAgents(pi: ExtensionAPI) {
 
       if (errors.length) throw new Error(`Invalid agent configuration: ${errors.map(error => `${error.instancePath} ${error.message}`).join('; ')}`);
       const { configuration: supplied } = Parse(schema, request.payload);
-      const stored = await loadConfig(pi);
-      const next = normalize({ ...stored, ...supplied }, pi);
+      const stored = await loadConfig(configRuntime);
+      const next = normalize({ ...stored, ...supplied }, configRuntime);
 
       for (const agent of next.agents) mcpServersSchema.parse(agent.mcpServers);
       const saved = await writeConfig(next);

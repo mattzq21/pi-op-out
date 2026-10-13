@@ -1,3 +1,4 @@
+import type { AgentResources } from "./resources.ts";
 import type { Agent, AgentSnapshot, SessionAgentState } from "./contracts.ts";
 import { DEFAULT_PROMPT_PATH, DEFAULT_AGENT_PROMPT_PATH, resolvePromptPath } from "./prompts.ts";
 import type { Config } from "./index.ts";
@@ -16,11 +17,11 @@ export function migrateQuestionSnapshot(stored: AgentSnapshot | undefined) {
   return snapshot;
 }
 
-export async function selectedProfileState(agent: Agent, readPrompt: (path: string) => Promise<string>): Promise<SessionAgentState> {
+export async function selectedProfileState(agent: Agent, resources: AgentResources, readPrompt: (path: string) => Promise<string>): Promise<SessionAgentState> {
   const definition = structuredClone(agent);
   definition.model = definition.model.trim();
   const agentPromptPath = definition.path_agent_prompt;
   const [systemPrompt, agentPrompt] = await Promise.all([readPrompt(resolvePromptPath(definition.path_systemprompt)), agentPromptPath ? readPrompt(resolvePromptPath(agentPromptPath)) : Promise.resolve("")]);
 
-  return { active: definition.name, locked: false, snapshot: { version: 1, definition, systemPrompt, agentPrompt } };
+  return { active: definition.name, locked: false, snapshot: { version: 1, resources: structuredClone(resources), definition, systemPrompt, agentPrompt } };
 }

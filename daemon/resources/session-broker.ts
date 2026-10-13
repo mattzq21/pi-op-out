@@ -1,3 +1,4 @@
+import type { AppRequest } from "../../extensions/piop-define-agents/contracts.ts";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { registerRequestUserInput } from "./ask-user.ts";
 import { registerPauseControl } from "./session-broker/pause.ts";
@@ -26,6 +27,12 @@ export { writeSessionFile, publicationRetainsDependencies, type PublicationOptio
 export { registerSubagents } from "./session-broker/subagents.ts";
 
 export default function sessionBroker(pi: ExtensionAPI) {
+  const key = Symbol.for("piop.runtime-bridge");
+  const forward = (request: AppRequest) => pi.events.emit("piop:rpc", request);
+  Object.defineProperty(globalThis, key, { value: forward, writable: true, configurable: true });
+  pi.on("session_shutdown", () => {
+    if (Object.getOwnPropertyDescriptor(globalThis, key)?.value === forward) Reflect.deleteProperty(globalThis, key);
+  });
   pi.on("session_start", async (_event, ctx) => {
     const file = ctx.sessionManager.getSessionFile();
 

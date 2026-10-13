@@ -10,6 +10,9 @@ import { agentFixture, profile, configured } from '../defined-agent-fixture.mjs'
 export async function fixture(t) {
   const dir = await mkdtemp(join(tmpdir(), 'piop-extensions-'));
   const home = process.env.HOME; process.env.HOME = dir;
+  const resources = process.env.PIOP_AGENT_RESOURCES;
+  process.env.PIOP_AGENT_RESOURCES = JSON.stringify({ tools: { enabledTools: [], registeredTools: [] }, skills: { userInvokedSkills: [], agentInvokedSkills: [] } });
+  t.after(() => { if (resources === undefined) delete process.env.PIOP_AGENT_RESOURCES; else process.env.PIOP_AGENT_RESOURCES = resources; });
   t.after(() => { process.env.HOME = home; return rm(dir, { recursive: true, force: true }); });
 
   await compileAgentFixture(dir);

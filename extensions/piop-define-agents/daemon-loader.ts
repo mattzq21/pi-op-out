@@ -5,7 +5,7 @@ import { Type } from "typebox";
 import { loadConfig } from "./index.ts";
 import { agentSchema, agentThinkingLevels } from "./state.ts";
 import { configPath, readConfigDocument, readPrompt, resolvePromptPath } from "./prompts.ts";
-import type { ToolLists, ToolStoreRequest } from "../piop-tool-store/interface.ts";
+import { parseAgentResources } from "./resources.ts";
 import { extensionPaths } from "./extension-loader.ts";
 import { extensionValidator } from "./validation-runtime.ts";
 import { modelValidator } from "./model-validation.ts";
@@ -23,10 +23,8 @@ const sourceAgentSchema = Type.Object({
   systemPrompt: Type.Optional(Type.String()), agentsMd: Type.Optional(Type.String()), developerPrompt: Type.Optional(Type.String()),
 });
 
-/** settings holds the runtime settings that the daemon sends to Pi, with tools as the tool store lists. */
+/** settings holds startup tool/skill lists and host model validation results. */
 export interface AgentDefinitionsRequest { settings: any; initial: boolean }
-
-const toolListsSchema = Type.Object({ enabledTools: Type.Array(Type.String()), registeredTools: Type.Array(Type.String()) });
 
 export interface AgentDefinitions { config: any; prompts: Record<string, string>; configPath: string }
 
@@ -56,12 +54,8 @@ export async function loadAgentDefinitions({ settings, initial: initialize }: Ag
     if (!initialize || !(error instanceof Error && "code" in error && error.code === "ENOENT")) throw error;
   }
 
-  if (!Check(toolListsSchema, settings.tools)) throw new Error("Tool lists are unavailable");
-  const toolLists: ToolLists = settings.tools;
-
-  const api = { events: { emit(_name: "piop:tool-store", request: ToolStoreRequest) {
-    request.store = { lists: () => structuredClone(toolLists), replace() { throw new Error("Agent definitions cannot change tool lists"); } };
-  } } };
+  const { tools: toolLists } = parseAgentResources(settings);
+  const api = { enabledTools: toolLists.enabledTools };
 
   const prompts: Record<string, string> = {};
 

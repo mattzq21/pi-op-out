@@ -1,3 +1,4 @@
+import agentResources from "../../extensions/piop-define-agents/resources.ts?raw";
 import fileLockSource from '../resources/file-lock.cjs?raw';
 import sessionDatabase from '../resources/session-database.cjs?raw';
 import appSettingsCjs from '../resources/session-broker/app-settings.cjs?raw';
@@ -22,11 +23,6 @@ import askUser from '../resources/ask-user.ts?raw';
 import sessionCostLimitExtension from '../../extensions/piop-session-cost-limit/index.ts?raw';
 import codemodeToolsDescriptionExtension from '../../extensions/piop-codemode-tools-description/index.ts?raw';
 import providersRefreshExtension from '../../extensions/piop-providers-refresh/index.ts?raw';
-import runtimeSettingsExtension from '../../extensions/piop-runtime-settings/index.ts?raw';
-import skillsStoreExtension from '../../extensions/piop-skills-store/index.ts?raw';
-import skillsStoreInterface from '../../extensions/piop-skills-store/interface.ts?raw';
-import toolStoreExtension from '../../extensions/piop-tool-store/index.ts?raw';
-import toolStoreInterface from '../../extensions/piop-tool-store/interface.ts?raw';
 import rtkExtension from '../../extensions/piop-rtk/rtk.ts?raw';
 import openaiCacheForkExtension from '../../extensions/piop-openai-cache-fork/index.ts?raw';
 import agentState from '../../extensions/piop-define-agents/state.ts?raw';
@@ -136,16 +132,12 @@ export {
   fastModeBundle,
   askUser,
   sessionCostLimitExtension,
-  runtimeSettingsExtension,
   codemodeToolsDescriptionExtension,
   providersRefreshExtension,
-  skillsStoreExtension,
-  skillsStoreInterface,
-  toolStoreExtension,
-  toolStoreInterface,
   rtkExtension,
   openaiCacheForkExtension,
   agentState,
+  agentResources,
   agentPrompts,
   agentProfiles,
   agentMcpConfig,

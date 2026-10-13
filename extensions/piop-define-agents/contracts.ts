@@ -1,6 +1,8 @@
+import type { AgentResources } from "./resources.ts";
 import type { McpServers } from "./mcp-config.ts";
 import type { ExtensionContext, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 
+export interface AppRequest { command: string; payload: unknown; ctx: ExtensionCommandContext; ready?: Promise<unknown> }
 
 export interface RequiredToolsRequest { ctx: ExtensionContext; tools: string[]; availableTools?: string[] }
 
@@ -8,14 +10,11 @@ export interface McpToolsRequest { tools?: string[]; availableTools?: string[] }
 
 export interface McpSelection { codemode?: boolean; servers: McpServers; agentName: string; sessionId: string; registered?: Promise<string[]> }
 
-export interface AgentRefreshRequest { ctx: ExtensionContext; ready?: Promise<void> }
-
-export interface AgentReloadRequest { ctx: ExtensionCommandContext; ready?: Promise<void> }
 
 /** contextWindowCap: undefined inherits; null selects the model default. */
 export type Agent = { name: string; model: string; effort: string; fastMode?: boolean; contextWindowCap?: number | null; codemode?: boolean; extensions?: string[]; max_subagents?: number; max_sub_subagents?: number; path_systemprompt: string; path_agent_prompt: string; tools: string[]; skills: string[]; mcpServers: McpServers };
 
-export type AgentSnapshot = { version: 2; definition: Agent } | { version: 1; definition: Agent; systemPrompt: string; agentPrompt: string };
+export type AgentSnapshot = ({ version: 2; definition: Agent } | { version: 1; definition: Agent; systemPrompt: string; agentPrompt: string }) & { resources?: AgentResources };
 
 export type SessionAgentState = { snapshot?: AgentSnapshot; active?: string; locked?: boolean; modelOverride?: string; effortOverride?: string };
 
@@ -34,6 +33,8 @@ export interface AgentSelectedEvent { ctx: ExtensionContext }
 
 declare module "@earendil-works/pi-coding-agent" {
   interface EventBus {
+    on(channel: "piop:rpc", handler: (request: AppRequest) => void): () => void;
+    emit(channel: "piop:rpc", request: AppRequest): void;
     on(channel: "piop:agents:context-cap", handler: (request: AgentContextCapRequest) => void): () => void;
     emit(channel: "piop:agents:context-cap", request: AgentContextCapRequest): void;
     on(channel: "piop:agents:selected", handler: (event: AgentSelectedEvent) => void): () => void;
@@ -44,9 +45,5 @@ declare module "@earendil-works/pi-coding-agent" {
     emit(channel: "piop:agents:profiles", request: AgentProfilesRequest): void;
     on(channel: "piop:agents:subagent", handler: (request: SubagentProfileRequest) => void): () => void;
     emit(channel: "piop:agents:subagent", request: SubagentProfileRequest): void;
-    on(channel: "piop:agents:refresh", handler: (request: AgentRefreshRequest) => void): () => void;
-    emit(channel: "piop:agents:refresh", request: AgentRefreshRequest): void;
-    on(channel: "piop:agents:reload", handler: (request: AgentReloadRequest) => void): () => void;
-    emit(channel: "piop:agents:reload", request: AgentReloadRequest): void;
   }
 }
