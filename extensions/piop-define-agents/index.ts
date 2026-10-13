@@ -7,7 +7,9 @@ import { readDaemonDefinitions } from "./daemon-definitions.ts";
 import { fallbackConfig, migrateQuestionSnapshot, selectedProfileState } from "./profiles.ts";
 import { migrateExcalidrawAgent } from "./excalidraw.ts";
 import { mcpServers, type McpServers, type LegacyMcpServer } from "./mcp-config.ts";
-import type { Agent, AgentSnapshot, RuntimeSettingsRequest, RequiredToolsRequest, McpToolsRequest, McpSelection } from "./contracts.ts";
+import type { Agent, AgentSnapshot, RequiredToolsRequest, McpToolsRequest, McpSelection } from "./contracts.ts";
+import type { SkillsStoreRequest } from "../piop-skills-store/interface.ts";
+import type { ToolStoreRequest } from "../piop-tool-store/interface.ts";
 import { fastModeSession, fastModelProblem, hostFastModels } from "./fast-models.ts";
 import { agentExtensions, extensionPaths } from "./extension-loader.ts";
 import { capRangeError } from "../piop-context-window-cap/interface.ts";
@@ -25,15 +27,15 @@ const sessionTools = ["subagent"];
 
 export type Config = { revision?: string; agents: Agent[]; webSearchDefaultApplied?: boolean; sessionToolsDefaultApplied?: boolean; subagentsDefaultApplied?: boolean; diagramistDefaultApplied?: boolean; askerAgentDefaultApplied?: boolean; terminalAgentDefaultApplied?: boolean; tokagentDefaultApplied?: boolean; excalidrawAgentDefaultApplied?: boolean };
 
-type ConfigRuntime = { events: { emit(channel: "piop:runtime-settings", request: RuntimeSettingsRequest): void } };
+type ConfigRuntime = { events: { emit(channel: "piop:tool-store", request: ToolStoreRequest): void } };
 
 export type ConfigStorage = { ensurePromptFile: typeof ensurePromptFile; writeConfig: typeof writeConfig };
 
 function defaultAgent(pi: ConfigRuntime): Agent {
   const agent = structuredClone(fallbackConfig.agents[0]);
 
-  if (desktopList(pi, "tools")?.includes("web_search")) agent.tools.push("web_search");
-  agent.tools.push(...sessionTools.filter((tool) => desktopList(pi, "tools")?.includes(tool)));
+  if (enabledTools(pi)?.includes("web_search")) agent.tools.push("web_search");
+  agent.tools.push(...sessionTools.filter((tool) => enabledTools(pi)?.includes(tool)));
 
   return agent;
 }
@@ -154,7 +156,7 @@ async function readConfig(pi: ConfigRuntime, supplied: StoredConfig | undefined,
 }
 
 function migrateSessionTools(config: Config, pi: ConfigRuntime) {
-  const available = sessionTools.filter((tool) => desktopList(pi, "tools")?.includes(tool));
+  const available = sessionTools.filter((tool) => enabledTools(pi)?.includes(tool));
 
   if (config.sessionToolsDefaultApplied || !available.length) return false;
 
@@ -165,7 +167,7 @@ function migrateSessionTools(config: Config, pi: ConfigRuntime) {
 }
 
 function migrateSubagents(config: Config, pi: ConfigRuntime) {
-  if (!config.subagentsDefaultApplied && desktopList(pi, "tools")?.includes("subagent")) {
+  if (!config.subagentsDefaultApplied && enabledTools(pi)?.includes("subagent")) {
     for (const agent of config.agents) if (agent.name !== "excalidraw-agent" && !agent.tools.includes("subagent")) agent.tools.push("subagent");
     config.subagentsDefaultApplied = true;
 
@@ -176,7 +178,7 @@ function migrateSubagents(config: Config, pi: ConfigRuntime) {
 }
 
 function migrateUserInput(config: Config, pi: ConfigRuntime) {
-  if (config.askerAgentDefaultApplied || !desktopList(pi, "tools")?.includes("request_user_input")) return false;
+  if (config.askerAgentDefaultApplied || !enabledTools(pi)?.includes("request_user_input")) return false;
   const general = config.agents.find((agent) => agent.name === "general");
 
   if (general && !config.agents.some(agent => agent.name === "asker-agent")) {
@@ -200,7 +202,7 @@ function migrateUserInput(config: Config, pi: ConfigRuntime) {
 }
 
 function migrateTerminalAgent(config: Config, pi: ConfigRuntime) {
-  if (config.terminalAgentDefaultApplied || !desktopList(pi, "tools")?.includes("lookup_terminals")) return false;
+  if (config.terminalAgentDefaultApplied || !enabledTools(pi)?.includes("lookup_terminals")) return false;
 
   if (!config.agents.some(agent => agent.name === "terminal-agent")) {
     const agent = structuredClone(config.agents.find(agent => agent.name === "general") ?? defaultAgent(pi));
@@ -258,7 +260,7 @@ async function loadMigratedConfig(pi: ConfigRuntime, supplied: StoredConfig | un
     changed = true;
   }
 
-  if (!config.webSearchDefaultApplied && desktopList(pi, "tools")?.includes("web_search")) {
+  if (!config.webSearchDefaultApplied && enabledTools(pi)?.includes("web_search")) {
     for (const agent of config.agents.filter(agent => agent.name !== "excalidraw-agent")) if (!agent.tools.includes("web_search")) agent.tools.push("web_search");
     config.webSearchDefaultApplied = true;
     changed = true;
@@ -279,26 +281,27 @@ function encode<T>(value: T) { return Buffer.from(JSON.stringify(value), "utf8")
 
 function safeName(value: string) { return value.toLowerCase().replace(/[^a-z0-9_]+/g, "_").replace(/^_+|_+$/g, "") || "tool"; }
 
-function desktopList(pi: ConfigRuntime, name: "tools" | "skills" | "explicitOnlySkills") { const request: RuntimeSettingsRequest = {}; pi.events.emit("piop:runtime-settings", request);
+/** Tools enabled in Piop settings, or undefined when the tool store is not loaded. */
+function enabledTools(pi: ConfigRuntime) { const request: ToolStoreRequest = {}; pi.events.emit("piop:tool-store", request);
 
-return request.settings?.[name]; }
+return request.store?.lists().enabledTools; }
+
+function skillsStore(pi: ExtensionAPI) { const request: SkillsStoreRequest = {}; pi.events.emit("piop:skills-store", request);
+
+return request.store; }
 
 function normalizedPath(value: string) { return resolve(value.startsWith("~/") ? join(homedir(), value.slice(2)) : value); }
 
-function agentSkills(pi: ExtensionAPI, agent: Agent) { const global = desktopList(pi, "skills");
-
-if (!global) return agent.skills; const allowed = new Set(global.map(normalizedPath));
-
-return agent.skills.filter((skill) => allowed.has(normalizedPath(skill))); }
+function agentSkills(pi: ExtensionAPI, agent: Agent) { return skillsStore(pi)?.selectEnabled(agent.skills) ?? agent.skills; }
 
 function agentToolError(pi: ExtensionAPI, agent: Agent, extensionTools: string[] = []) {
-  const globallyAllowed = desktopList(pi, "tools"); const available = new Set(pi.getAllTools().map((tool) => tool.name));
+  const globallyAllowed = enabledTools(pi); const available = new Set(pi.getAllTools().map((tool) => tool.name));
   const denied = [...new Set(agent.tools.filter((tool) => (globallyAllowed && !globallyAllowed.includes(tool) && !extensionTools.includes(tool)) || !available.has(tool)))];
 
   return denied.length ? `Agent "${agent.name}" cannot run because Pi does not allow its configured tool${denied.length === 1 ? "" : "s"}: ${denied.join(", ")}` : undefined;
 }
 
-function configureAgentSystemPrompt(prompt: string, agentPrompt: string, options: BuildSystemPromptOptions, explicitOnlySkills: string[] = []) {
+function configureAgentSystemPrompt(prompt: string, agentPrompt: string, options: BuildSystemPromptOptions, invocationPolicy: <T extends { filePath: string; baseDir: string }>(skills: readonly T[]) => T[] = skills => [...skills]) {
   delete options.forceSystemPrompt;
   const instructions = agentPrompt.trim() ? agentPrompt : "";
   options.customPrompt = prompt || " ";
@@ -316,8 +319,7 @@ function configureAgentSystemPrompt(prompt: string, agentPrompt: string, options
   delete options.sections.project_context;
   delete options.sections.addendum;
   options.appendSystemPrompt = "";
-  const explicit = new Set(explicitOnlySkills.map(normalizedPath));
-  options.skills = options.skills?.map((skill) => explicit.has(normalizedPath(skill.filePath)) || explicit.has(normalizedPath(skill.baseDir)) ? { ...skill, disableModelInvocation: true } : skill);
+  options.skills = options.skills && invocationPolicy(options.skills);
 }
 
 export default async function defineAgents(pi: ExtensionAPI) {
@@ -700,7 +702,7 @@ export default async function defineAgents(pi: ExtensionAPI) {
     if (!agent) return;
 
     if (agent.codemode === false) pi.setActiveTools(pi.getActiveTools().filter(name => name !== "codemode"));
-    configureAgentSystemPrompt(activeSystemPrompt, activeAgentPrompt, event.systemPromptOptions, desktopList(pi, "explicitOnlySkills"));
+    configureAgentSystemPrompt(activeSystemPrompt, activeAgentPrompt, event.systemPromptOptions, skillsStore(pi)?.applyInvocationPolicy);
   });
   pi.events.on("piop:rpc", request => {
     if (request.command !== "select_agent") return;

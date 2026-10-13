@@ -23,6 +23,10 @@ import sessionCostLimitExtension from '../../extensions/piop-session-cost-limit/
 import codemodeToolsDescriptionExtension from '../../extensions/piop-codemode-tools-description/index.ts?raw';
 import providersRefreshExtension from '../../extensions/piop-providers-refresh/index.ts?raw';
 import runtimeSettingsExtension from '../../extensions/piop-runtime-settings/index.ts?raw';
+import skillsStoreExtension from '../../extensions/piop-skills-store/index.ts?raw';
+import skillsStoreInterface from '../../extensions/piop-skills-store/interface.ts?raw';
+import toolStoreExtension from '../../extensions/piop-tool-store/index.ts?raw';
+import toolStoreInterface from '../../extensions/piop-tool-store/interface.ts?raw';
 import rtkExtension from '../../extensions/piop-rtk/rtk.ts?raw';
 import openaiCacheForkExtension from '../../extensions/piop-openai-cache-fork/index.ts?raw';
 import agentState from '../../extensions/piop-define-agents/state.ts?raw';
@@ -135,6 +139,10 @@ export {
   runtimeSettingsExtension,
   codemodeToolsDescriptionExtension,
   providersRefreshExtension,
+  skillsStoreExtension,
+  skillsStoreInterface,
+  toolStoreExtension,
+  toolStoreInterface,
   rtkExtension,
   openaiCacheForkExtension,
   agentState,

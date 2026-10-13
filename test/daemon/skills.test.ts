@@ -12,7 +12,7 @@ beforeAll(async () => { daemon = await startDaemon(); root = join(daemon.home, '
 afterAll(() => daemon?.stop());
 
 function write(path: string, content: string): void { mkdirSync(dirname(join(root, path)), { recursive: true }); writeFileSync(join(root, path), content); }
-const discovered = async () => (await daemon.invoke('load_app_settings', { refreshSkills: true })).skills.filter((skill: any) => skill.discovered === true);
+const discovered = async () => (await daemon.invoke('load_app_settings', { refreshSkills: true })).skills;
 
 test('a Codex policy file makes a skill user invoked only when policy.allow_implicit_invocation is false', async () => {
   const cases: Array<[string, boolean]> = [
@@ -50,13 +50,14 @@ test('skill discovery reads metadata, skips hidden and package folders and stops
 });
 
 test('a started Pi gets every named tool as registered but only enabled tools and skills as active', async () => {
-  // A fake Pi whose node side reads the runtime settings file the way Pi's runtime settings extension does.
+  // A fake Pi whose node side reads the startup records the way Pi's runtime settings, skills store and tool store extensions do.
   const bin = join(daemon.home, '.local/bin');
   fakeProgram(bin, 'pi', '#!/bin/sh\nexit 1\n');
   fakeProgram(bin, 'node', `#!${process.execPath}
 const fs = require('node:fs'); const path = require('node:path');
 const file = process.env.PIOP_RUNTIME_SETTINGS_PATH;
-fs.writeFileSync(path.join(process.env.HOME, 'runtime.json'), JSON.stringify(require(path.join(path.dirname(file), 'app-settings.cjs')).readFile(file)));
+const read = record => require(path.join(path.dirname(file), 'app-settings.cjs')).readFile(record);
+fs.writeFileSync(path.join(process.env.HOME, 'runtime.json'), JSON.stringify({ settings: read(file), skills: read(process.env.PIOP_SKILLS_STORE_PATH), tools: read(process.env.PIOP_TOOL_STORE_PATH) }));
 const args = process.argv.slice(2); const sessionFile = args[args.lastIndexOf('--session') + 1];
 const state = { sessionFile, sessionId: JSON.parse(fs.readFileSync(sessionFile, 'utf8').split('\\n')[0]).id, isStreaming: false, messageCount: 0, pendingMessageCount: 0, model: null, thinkingLevel: 'medium' };
 require('node:readline').createInterface({ input: process.stdin }).on('line', line => { const request = JSON.parse(line); process.stdout.write(JSON.stringify({ type: 'response', id: request.id, command: request.type, success: true, data: request.type === 'get_state' ? state : null }) + '\\n'); });
@@ -77,12 +78,10 @@ require('node:readline').createInterface({ input: process.stdin }).on('line', li
     }));
     await daemon.invoke('start_pi', { runtimeId: 'runtime-settings', clientId: 'test-client', cwd: daemon.home, sessionPath: path });
     const runtime = JSON.parse(readFileSync(join(daemon.home, 'runtime.json'), 'utf8'));
-    expect(runtime.registeredTools).toEqual(saved.tools.map((tool: any) => tool.name));
-    expect(runtime.tools.filter((name: string) => !name.endsWith('_goal'))).toEqual(['read']);
-    expect([...runtime.skills].sort()).toEqual([join(root, 'explicit'), join(root, 'plain')]);
-    expect(runtime.explicitOnlySkills).toEqual([join(root, 'explicit')]);
-    expect(runtime).toMatchObject({ defaultModel: saved.defaultModel });
-    expect(runtime).not.toHaveProperty("contextWindowCap");
+    expect(runtime.tools.registeredTools).toEqual(saved.tools.map((tool: any) => tool.name));
+    expect(runtime.tools.enabledTools.filter((name: string) => !name.endsWith('_goal'))).toEqual(['read']);
+    expect(runtime.skills).toEqual({ userInvokedSkills: [join(root, 'explicit')], agentInvokedSkills: [join(root, 'plain')] });
+    expect(runtime.settings).toEqual({ defaultModel: saved.defaultModel });
     // Building the runtime settings does not change the saved settings.
     expect(await daemon.invoke('load_app_settings')).toEqual(saved);
     await daemon.invoke('stop_pi', { runtimeId: 'runtime-settings' });

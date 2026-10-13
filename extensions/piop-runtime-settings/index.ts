@@ -2,15 +2,13 @@ import { Type } from "typebox";
 import { Check, Parse } from "typebox/value";
 import { readFile as readSettings } from "./app-settings.cjs";
 import { homedir } from "node:os";
-import { join, resolve } from "node:path";
+import { join } from "node:path";
 import type { ExtensionAPI, ExtensionContext, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
-import { formatSkillsForPrompt } from "@earendil-works/pi-coding-agent";
+import type { SkillsStoreRequest } from "../piop-skills-store/interface.ts";
+import type { ToolStoreRequest } from "../piop-tool-store/interface.ts";
 
-type Settings = {
-  tools: string[];
-  skills: string[];
-  explicitOnlySkills?: string[];
-};
+/** Settings this extension owns. Skills and tools in a settings update go to the skills store and tool store. */
+type Settings = { defaultModel?: string };
 
 type Update = { ctx: ExtensionCommandContext; ready?: Promise<void> };
 
@@ -27,11 +25,7 @@ const key = Symbol.for("piop.runtime-settings");
 
 const bootKey = Symbol.for("piop.runtime-settings.boot");
 
-const stringListSchema = Type.Array(Type.String());
-
-const settingsSchema = Type.Object({
-  tools: stringListSchema, skills: stringListSchema, explicitOnlySkills: Type.Optional(stringListSchema),
-});
+const settingsSchema = Type.Object({ defaultModel: Type.Optional(Type.String()) });
 
 const requestSchema = Type.Object({ settings: Type.Optional(Type.Unknown()), reloadAgents: Type.Optional(Type.Boolean()) });
 
@@ -49,8 +43,6 @@ type RuntimeSettingsRequest = { settings?: Settings };
 
 type RequiredToolsRequest = { ctx: ExtensionContext; tools: string[] };
 
-const readingTools: Array<"read" | "bash"> = ["read", "bash"];
-
 declare module "@earendil-works/pi-coding-agent" {
   interface EventBus {
     on(channel: "piop:runtime-settings", handler: (request: RuntimeSettingsRequest) => void): () => void;
@@ -60,16 +52,28 @@ declare module "@earendil-works/pi-coding-agent" {
   }
 }
 
-function skillsChanged(previous: Settings, next: Settings) {
-  return JSON.stringify(previous.skills) !== JSON.stringify(next.skills) || JSON.stringify(previous.explicitOnlySkills) !== JSON.stringify(next.explicitOnlySkills);
-}
-
 function validate(value: Settings): Settings {
-  if (value?.explicitOnlySkills !== undefined && !Check(stringListSchema, value.explicitOnlySkills)) throw new Error("Invalid explicit skill policy");
-
   if (!Check(settingsSchema, value)) throw new Error("Invalid runtime settings");
 
   return structuredClone(value);
+}
+
+function skillsStore(pi: ExtensionAPI) {
+  const request: SkillsStoreRequest = {};
+  pi.events.emit("piop:skills-store", request);
+
+  if (!request.store) throw new Error("The skills store extension is not loaded");
+
+  return request.store;
+}
+
+function toolStore(pi: ExtensionAPI) {
+  const request: ToolStoreRequest = {};
+  pi.events.emit("piop:tool-store", request);
+
+  if (!request.store) throw new Error("The tool store extension is not loaded");
+
+  return request.store;
 }
 
 export default async function runtimeSettings(pi: ExtensionAPI) {
@@ -89,7 +93,7 @@ export default async function runtimeSettings(pi: ExtensionAPI) {
   const applyTools = (ctx: ExtensionContext) => {
     const required: RequiredToolsRequest = { ctx, tools: [] }; pi.events.emit("piop:required-tools", required);
 
-    if (process.env.PI_DEFINE_AGENTS_ACTIVE !== "1") pi.setActiveTools([...new Set([...current().tools, ...required.tools])].filter((name) => pi.getAllTools().some((tool) => tool.name === name)));
+    if (process.env.PI_DEFINE_AGENTS_ACTIVE !== "1") pi.setActiveTools([...new Set([...toolStore(pi).lists().enabledTools, ...required.tools])].filter((name) => pi.getAllTools().some((tool) => tool.name === name)));
   };
 
   pi.on("session_start", (_event, ctx) => {
@@ -101,20 +105,6 @@ export default async function runtimeSettings(pi: ExtensionAPI) {
     }
 
     applyTools(ctx);
-  });
-  pi.on("resources_discover", () => process.env.PI_DEFINE_AGENTS_ACTIVE === "1" ? undefined : { skillPaths: current().skills });
-  pi.on("before_agent_start", (event) => {
-    if (process.env.PI_DEFINE_AGENTS_ACTIVE === "1" || !current().explicitOnlySkills?.length) return;
-    const normalize = (value: string) => resolve(value.startsWith("~/") ? join(homedir(), value.slice(2)) : value);
-    const explicit = new Set(current().explicitOnlySkills?.map(normalize));
-    const options = event.systemPromptOptions;
-    const readTool = readingTools.find((tool) => (options.selectedTools ?? ["read", "bash"]).includes(tool));
-
-    if (!readTool || !options.skills?.length) return;
-    const original = formatSkillsForPrompt(options.skills, readTool);
-    const filtered = formatSkillsForPrompt(options.skills.map((skill) => explicit.has(normalize(skill.filePath)) || explicit.has(normalize(skill.baseDir)) ? { ...skill, disableModelInvocation: true } : skill), readTool);
-
-    if (original && original !== filtered) return { systemPrompt: event.systemPrompt.replace(original, filtered) };
   });
 
   const update = async (event: string, ctx: ExtensionCommandContext) => {
@@ -131,6 +121,10 @@ export default async function runtimeSettings(pi: ExtensionAPI) {
     request.ready = (async () => {
       const settingsRequest = Parse(requestSchema, request.payload);
       const previous = current();
+      const skills = skillsStore(pi);
+      const tools = toolStore(pi);
+      const previousSkills = skills.lists();
+      const previousTools = tools.lists();
       let applied = false;
 
       try {
@@ -138,10 +132,13 @@ export default async function runtimeSettings(pi: ExtensionAPI) {
         const patch = settingsRequest.settings ?? {};
 
         if (!Check(settingsPatchSchema, patch)) throw new Error("Invalid runtime settings");
-        const next = validate({ ...previous, ...patch });
+        const { skills: skillLists, tools: toolLists, ...own } = patch;
+        const next = validate({ ...previous, ...own });
         setGlobal(key, next);
+        if (toolLists !== undefined) tools.replace(toolLists);
+        const skillsChanged = skillLists !== undefined && skills.replace(skillLists);
 
-        if (settingsRequest.reloadAgents || skillsChanged(previous, next)) {
+        if (settingsRequest.reloadAgents || skillsChanged) {
           if (process.env.PI_DEFINE_AGENTS_ACTIVE === "1") await update("piop:agents:reload", ctx);
           else await ctx.reload();
         } else {
@@ -152,6 +149,8 @@ export default async function runtimeSettings(pi: ExtensionAPI) {
         }
       } catch (error) {
         setGlobal(key, previous);
+        tools.replace(previousTools);
+        skills.replace(previousSkills);
 
         if (applied) {
           try {

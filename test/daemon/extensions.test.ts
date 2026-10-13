@@ -24,9 +24,11 @@ const path = require('node:path');
 const launch = { args };
 try {
   const runtimePath = process.env.PIOP_RUNTIME_SETTINGS_PATH;
-  const settingsStore = require(path.join(path.dirname(runtimePath), 'app-settings.cjs'));
-  launch.runtime = settingsStore.readFile(runtimePath);
-  launch.contextSettings = settingsStore.readFile(process.env.PIOP_CONTEXT_CAP_SETTINGS_PATH);
+  const read = record => require(path.join(path.dirname(runtimePath), 'app-settings.cjs')).readFile(record);
+  launch.runtime = read(runtimePath);
+  launch.skills = read(process.env.PIOP_SKILLS_STORE_PATH);
+  launch.tools = read(process.env.PIOP_TOOL_STORE_PATH);
+  launch.contextSettings = read(process.env.PIOP_CONTEXT_CAP_SETTINGS_PATH);
 } catch (error) { launch.readError = String(error?.message ?? error); }
 fs.appendFileSync(path.join(process.env.HOME, 'launches.jsonl'), JSON.stringify(launch) + '\\n');
 const sessionFile = args.includes('--session') ? args[args.lastIndexOf('--session') + 1] : undefined;
@@ -42,7 +44,7 @@ require('node:readline').createInterface({ input: process.stdin }).on('line', li
 `);
 }
 
-type Launch = { args: string[]; runtime?: any; contextSettings?: any; readError?: string };
+type Launch = { args: string[]; runtime?: any; contextSettings?: any; skills?: any; tools?: any; readError?: string };
 const lastLaunch = (home: string): Launch => JSON.parse(readFileSync(join(home, 'launches.jsonl'), 'utf8').trim().split('\n').at(-1)!);
 const extensionPaths = ({ args }: Launch) => args.flatMap((arg, index) => args[index - 1] === '--extension' ? [arg] : []);
 
@@ -127,11 +129,15 @@ test('a Pi start installs the bundled extensions as private files and refreshes 
     ['piop-providers-refresh.ts', 'extensions/piop-providers-refresh/index.ts'],
     ['piop-openai-cache-fork.ts', 'extensions/piop-openai-cache-fork/index.ts'],
     ['piop-codex-web-search.ts', 'extensions/piop-codex-web-search/index.ts'],
+    ['piop-skills-store/index.ts', 'extensions/piop-skills-store/index.ts'],
+    ['piop-skills-store/interface.ts', 'extensions/piop-skills-store/interface.ts'],
+    ['piop-tool-store/index.ts', 'extensions/piop-tool-store/index.ts'],
+    ['piop-tool-store/interface.ts', 'extensions/piop-tool-store/interface.ts'],
     ['piop-codemode-tools-description.ts', 'extensions/piop-codemode-tools-description/index.ts'],
   ];
   const extensions = extensionPaths(await launchPublicPi(daemon));
-  for (const name of ['session-broker.ts', 'piop-providers-refresh.ts', 'piop-openai-cache-fork.ts', 'piop-codex-web-search.ts', 'piop-codemode-tools-description.ts']) expect(extensions).toContain(join(generated, name));
-  expect(extensions.indexOf(join(generated, 'piop-codemode-tools-description.ts'))).toBeLessThan(extensions.indexOf(join(generated, 'runtime-settings.ts')));
+  for (const name of ['session-broker.ts', 'piop-providers-refresh.ts', 'piop-codemode-tools-description.ts', 'piop-openai-cache-fork.ts', 'piop-codex-web-search.ts', 'piop-skills-store/index.ts', 'piop-tool-store/index.ts']) expect(extensions).toContain(join(generated, name));
+  expect(extensions.indexOf(join(generated, 'piop-codemode-tools-description.ts'))).toBeLessThan(extensions.indexOf(join(generated, 'piop-skills-store/index.ts')));
   for (const [name, relative] of bundles) {
     expect(readFileSync(join(generated, name), 'utf8')).toBe(source(relative));
     expect(mode(join(generated, name))).toBe(0o600);
@@ -147,10 +153,14 @@ test('a Pi start installs the bundled extensions as private files and refreshes 
 
 test('a started Pi reads runtime and context window settings that follow the saved settings', async () => {
   const generated = join(daemon.home, '.piop');
+  const skill = join(daemon.home, '.agents/skills/spaced skill');
+  mkdirSync(skill, { recursive: true });
+  writeFileSync(join(skill, 'SKILL.md'), '---\nname: spaced\n---\n');
+  await daemon.invoke('load_app_settings', { refreshSkills: true });
   for (const enabled of [true, false]) {
     const settings = await daemon.invoke('load_app_settings');
     for (const tool of settings.tools) tool.enabled = enabled && tool.name === 'read';
-    settings.skills = enabled ? [{ name: 'spaced', description: 'Spaced', path: '/skill with spaces/SKILL.md', enabled: true }, { name: 'disabled', description: 'Disabled', path: '/disabled', enabled: false }] : [];
+    for (const entry of settings.skills) entry.enabled = enabled;
     settings.contextWindowCap = enabled ? 123456 : 200000;
     settings.contextWindowCapEnabled = enabled;
     await daemon.invoke('save_app_settings', { settings });
@@ -166,13 +176,12 @@ test('a started Pi reads runtime and context window settings that follow the sav
     expect(runtime).not.toHaveProperty('mcpServers');
     for (const name of ['contextWindowCap', 'contextWindowCapEnabled', 'modelContextWindowCaps']) expect(runtime).not.toHaveProperty(name);
     expect(launch.contextSettings).toEqual({ contextWindowCap: enabled ? 123456 : 200000, contextWindowCapEnabled: enabled, modelContextWindowCaps: {} });
-    expect(runtime).toMatchObject({
-      // The goal tools are always on.
-      tools: enabled ? ['read', 'get_goal', 'create_goal', 'update_goal'] : ['get_goal', 'create_goal', 'update_goal'],
-      skills: enabled ? ['/skill with spaces/SKILL.md'] : [],
-
-    });
+    // The goal tools are always on.
+    expect(launch.tools.enabledTools).toEqual(enabled ? ['read', 'get_goal', 'create_goal', 'update_goal'] : ['get_goal', 'create_goal', 'update_goal']);
+    expect(launch.skills).toEqual({ userInvokedSkills: [], agentInvokedSkills: enabled ? [skill] : [] });
   }
+  rmSync(skill, { recursive: true, force: true });
+  await daemon.invoke('load_app_settings', { refreshSkills: true });
 }, 60_000);
 
 test('saved context settings reach a running Pi through their own request', async () => {

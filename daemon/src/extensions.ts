@@ -20,15 +20,25 @@ export function prepareMcpBridge(): string {
   return path;
 }
 
-export function runtimeSettings(settings: AppSettings): any {
-  const enabledSkills = settings.skills.filter(skill => skill?.enabled === true);
+/** Enabled skills, split by who may invoke them. The skills store extension owns these lists in Pi. */
+export function skillLists(settings: AppSettings): { userInvokedSkills: string[]; agentInvokedSkills: string[] } {
+  const enabled = settings.skills.filter(skill => skill?.enabled === true && typeof skill.path === 'string');
   return {
-    defaultModel: settings.defaultModel,
-    tools: enabledToolNames(settings),
-    registeredTools: settings.tools.map(tool => tool?.name).filter((name): name is string => typeof name === 'string'),
-    skills: enabledSkills.map(skill => skill.path).filter((path): path is string => typeof path === 'string'),
-    explicitOnlySkills: enabledSkills.filter(skill => skill.userInvokedOnly === true).map(skill => skill.path).filter((path): path is string => typeof path === 'string'),
+    userInvokedSkills: enabled.filter(skill => skill.userInvokedOnly === true).map(skill => skill.path),
+    agentInvokedSkills: enabled.filter(skill => skill.userInvokedOnly !== true).map(skill => skill.path),
   };
+}
+
+/** Tool names from the settings. The tool store extension owns these lists in Pi. */
+export function toolLists(settings: AppSettings): { enabledTools: string[]; registeredTools: string[] } {
+  return {
+    enabledTools: enabledToolNames(settings),
+    registeredTools: settings.tools.map(tool => tool?.name).filter((name): name is string => typeof name === 'string'),
+  };
+}
+
+function ownRuntimeSettings(settings: AppSettings): any {
+  return { defaultModel: settings.defaultModel };
 }
 
 export function contextCapSettings(settings: AppSettings) {
@@ -41,6 +51,10 @@ export function contextCapSettings(settings: AppSettings) {
 
 export function saveContextCapSettings(settings: AppSettings): void {
   publish(join(generatedExtensionRoot(), 'context-cap-settings.json'), JSON.stringify(contextCapSettings(settings)));
+}
+
+export function runtimeSettings(settings: AppSettings): any {
+  return { ...ownRuntimeSettings(settings), skills: skillLists(settings), tools: toolLists(settings) };
 }
 
 export function prepareRuntimeSettings(settings: AppSettings): string {
@@ -57,7 +71,29 @@ export function prepareRuntimeSettings(settings: AppSettings): string {
 
 function saveRuntimeSettings(dir: string, settings: AppSettings): void {
   atomicWritePrivate(join(dir, 'app-settings.cjs'), R.appSettingsCjs);
-  publish(join(dir, 'runtime-settings.json'), JSON.stringify(runtimeSettings(settings)));
+  publish(join(dir, 'runtime-settings.json'), JSON.stringify(ownRuntimeSettings(settings)));
+}
+
+export function prepareSkillsStoreExtension(settings: AppSettings): string {
+  const root = generatedExtensionRoot();
+  const dir = join(root, 'piop-skills-store');
+  ensurePrivateDir(dir);
+  atomicWritePrivate(join(root, 'app-settings.cjs'), R.appSettingsCjs);
+  atomicWritePrivate(join(dir, 'interface.ts'), R.skillsStoreInterface);
+  atomicWritePrivate(join(dir, 'index.ts'), R.skillsStoreExtension);
+  publish(join(root, 'skills-store.json'), JSON.stringify(skillLists(settings)));
+  return join(dir, 'index.ts');
+}
+
+export function prepareToolStoreExtension(settings: AppSettings): string {
+  const root = generatedExtensionRoot();
+  const dir = join(root, 'piop-tool-store');
+  ensurePrivateDir(dir);
+  atomicWritePrivate(join(root, 'app-settings.cjs'), R.appSettingsCjs);
+  atomicWritePrivate(join(dir, 'interface.ts'), R.toolStoreInterface);
+  atomicWritePrivate(join(dir, 'index.ts'), R.toolStoreExtension);
+  publish(join(root, 'tool-store.json'), JSON.stringify(toolLists(settings)));
+  return join(dir, 'index.ts');
 }
 
 export const SESSION_BROKER_MODULES = R.SESSION_BROKER_MODULES;

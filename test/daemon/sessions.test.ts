@@ -79,27 +79,25 @@ test('session commands resolve symbolic links before they check the storage area
 const settings = async (args: any = {}) => daemon.invoke('load_app_settings', args);
 const save = async (next: any) => daemon.invoke('save_app_settings', { settings: next });
 
-test('skill rediscovery keeps choices and manual entries and refreshes metadata', async () => {
+test('skill rediscovery keeps choices, drops skills outside the skills folder and refreshes metadata', async () => {
   const root = join(daemon.home, '.agents/skills');
   mkdirSync(join(root, 'existing'), { recursive: true }); mkdirSync(join(root, 'new'), { recursive: true });
   writeFileSync(join(root, 'existing/SKILL.md'), '---\nname: Alpha\ndescription: Updated metadata\n---\n');
   writeFileSync(join(root, 'new/SKILL.md'), '---\nname: beta\n---\n');
-  const manual = { name: 'Manual', path: '/custom/skill', description: 'Mine', enabled: false };
   const current = await settings({ refreshSkills: true });
   await save({ ...current, skills: [
     { name: 'Old metadata', path: '~/.agents/skills/existing', description: 'Old', enabled: false },
     { name: 'Deleted', path: '~/.agents/skills/deleted', description: 'Gone', enabled: true },
-    manual,
+    { name: 'Manual', path: '/custom/skill', description: 'Mine', enabled: false },
   ] });
   const once = (await settings({ refreshSkills: true })).skills;
-  expect(once.map((skill: any) => skill.name)).toEqual(['Alpha', 'beta', 'Manual']);
+  expect(once.map((skill: any) => skill.name)).toEqual(['Alpha', 'beta']);
   expect(once[0]).toMatchObject({ enabled: false, description: 'Updated metadata' });
   expect(once[1]).toMatchObject({ enabled: true });
-  expect(once[2]).toEqual(manual);
   expect((await settings({ refreshSkills: true })).skills).toEqual(once);
   for (const name of ['existing', 'new']) { unlinkSync(join(root, name, 'SKILL.md')); rmdirSync(join(root, name)); }
   const after = (await settings({ refreshSkills: true })).skills;
-  expect(after.map((skill: any) => skill.name)).toEqual(['Manual']);
+  expect(after).toEqual([]);
 });
 
 test('skills that only users may invoke stay enabled', async () => {
