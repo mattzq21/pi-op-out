@@ -506,7 +506,7 @@ export default async function defineAgents(pi: ExtensionAPI) {
   };
 
   const registerAgentMcp = async (agent: Agent, ctx: ExtensionContext, tools: Set<string>) => {
-    const selection: McpSelection = { codemode: agent.codemode, servers: mcpServers(agent.mcpServers), agentName: agent.name, sessionId: ctx.sessionManager.getSessionId() };
+    const selection: McpSelection = { codemode: agent.codemode, servers: mcpServers(agent.mcpServers), sessionId: ctx.sessionManager.getSessionId() };
     pi.events.emit("piop:mcp:select", selection);
 
     if (!selection.registered && Object.keys(selection.servers).length > 0) return `Agent "${agent.name}" cannot run because the MCP registration adapter is unavailable`;

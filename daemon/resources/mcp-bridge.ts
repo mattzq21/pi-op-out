@@ -4,7 +4,7 @@ import type { TSchema } from "typebox";
 import { createMcpExtension, type ExtensionAPI, type ExtensionContext, type ExtensionEvent, type ExtensionHandler, type McpServerConfig, type SessionStartEvent } from "@earendil-works/pi-coding-agent";
 import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
 
-type Selection = { servers: Record<string, McpServerConfig & { piopInjectAgentId?: boolean }>; codemode?: boolean; agentName: string; sessionId: string; registered?: Promise<string[]> };
+type Selection = { servers: Record<string, McpServerConfig & { piopInjectAgentId?: boolean }>; codemode?: boolean; sessionId: string; registered?: Promise<string[]> };
 
 type ToolRequest = { tools?: string[]; availableTools?: string[] };
 
@@ -105,7 +105,7 @@ export default function agentMcp(pi: ExtensionAPI) {
 
       for (const [name, supplied] of Object.entries(selection.servers)) {
         const { piopInjectAgentId, ...config } = structuredClone(supplied);
-        const instance = `piop-${createHash("sha256").update(JSON.stringify([selection.sessionId, selection.agentName, name])).digest("hex").slice(0, 32)}`;
+        const instance = `piop-${createHash("sha256").update(JSON.stringify([selection.sessionId, name])).digest("hex").slice(0, 32)}`;
         const namespace = `mcp__${name.replaceAll("-", "_")}`;
 
         if (piopInjectAgentId) identities.set(namespace, instance); else identities.delete(namespace);

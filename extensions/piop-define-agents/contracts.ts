@@ -8,7 +8,7 @@ export interface RequiredToolsRequest { ctx: ExtensionContext; tools: string[]; 
 
 export interface McpToolsRequest { tools?: string[]; availableTools?: string[] }
 
-export interface McpSelection { codemode?: boolean; servers: McpServers; agentName: string; sessionId: string; registered?: Promise<string[]> }
+export interface McpSelection { codemode?: boolean; servers: McpServers; sessionId: string; registered?: Promise<string[]> }
 
 
 /** contextWindowCap: undefined inherits; null selects the model default. */

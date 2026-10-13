@@ -51,8 +51,8 @@ async function fixture(run) {
   const ctx = { sessionManager: { getSessionId: () => 'session' } };
   const dispatch = async (name, event = {}) => { for (const handler of handlers.get(name) ?? []) await handler(event, ctx); };
 
-  const select = async (definitions, agentName = 'general', sessionId = 'session', codemode) => {
-    const request = { servers: definitions, agentName, sessionId, codemode }; bus.emit('piop:mcp:select', request);
+  const select = async (definitions, sessionId = 'session', codemode) => {
+    const request = { servers: definitions, sessionId, codemode }; bus.emit('piop:mcp:select', request);
 
     return request.registered;
   };
@@ -111,12 +111,12 @@ test('unchanged MCP definitions retain registrations and replacements remove onl
   assert.equal(f.servers.get('search').command, 'replacement'); assert.equal(f.servers.has('other'), false);
 }));
 
-test('private MCP identities stay stable per agent and session and change between owners', async () => fixture(async f => {
-  const definitions = { search: { command: 'server' } };
+test('private MCP identities stay stable per session and server and change between owners', async () => fixture(async f => {
+  const definitions = { search: { command: 'server' }, other: { command: 'server' } };
   await f.select(definitions); const initial = f.servers.get('search').env.PIOP_CUA_INSTANCE_ID;
   await f.select(definitions); assert.equal(f.servers.get('search').env.PIOP_CUA_INSTANCE_ID, initial);
-  await f.select(definitions, 'review'); const review = f.servers.get('search').env.PIOP_CUA_INSTANCE_ID; assert.notEqual(review, initial);
-  await f.select(definitions, 'review', 'other-session'); assert.notEqual(f.servers.get('search').env.PIOP_CUA_INSTANCE_ID, review);
+  assert.notEqual(f.servers.get('other').env.PIOP_CUA_INSTANCE_ID, initial);
+  await f.select(definitions, 'other-session'); assert.notEqual(f.servers.get('search').env.PIOP_CUA_INSTANCE_ID, initial);
 }));
 
 test('opted-in MCP tools hide private identity fields and override spoofed call arguments', async () => fixture(async f => {
@@ -143,7 +143,7 @@ test('MCP tool listings respect exposure, active selection and codemode settings
   f.tools.set('tool-search', { name: 'tool-search', sourceInfo: { path: 'builtin:tool-search' } }); f.tools.set('read', { name: 'read' });
   f.setActive(['read', 'mcp__search__lookup', 'tool-search', 'codemode']);
   assert.deepEqual(f.available(), { tools: ['codemode', 'mcp__search__lookup', 'tool-search'], availableTools: ['codemode', 'mcp__search__lookup', 'tool-search'] });
-  await f.select({}, 'general', 'session', false); assert.equal(f.getActive().includes('codemode'), false); assert.equal(f.available().tools.includes('codemode'), false);
+  await f.select({}, 'session', false); assert.equal(f.getActive().includes('codemode'), false); assert.equal(f.available().tools.includes('codemode'), false);
 }));
 
 test('failed MCP registration rejects readiness and succeeds on retry', async () => fixture(async f => {
@@ -165,7 +165,7 @@ test('numeric MCP agent identifiers retain their schema and supplied value', asy
 }));
 
 test('the MCP SDK cannot reactivate disabled codemode', async () => fixture(async f => {
-  await f.select({}, 'general', 'session', false);
+  await f.select({}, 'session', false);
   f.adapter.setActiveTools(['read', 'codemode']);
   assert.deepEqual(f.getActive(), ['read']);
 }));
@@ -174,7 +174,7 @@ test('MCP selection and tool listing services stop responding after shutdown', a
   await f.select({ search: { command: 'server' } });
   assert.deepEqual(f.available().tools, ['codemode']);
   await f.dispatch('session_shutdown');
-  const request = { servers: { other: { command: 'other' } }, agentName: 'general', sessionId: 'session' };
+  const request = { servers: { other: { command: 'other' } }, sessionId: 'session' };
   f.bus.emit('piop:mcp:select', request);
   assert.equal(request.registered, undefined);
   assert.equal(f.servers.has('other'), false);
