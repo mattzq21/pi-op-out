@@ -229,6 +229,17 @@ describe("context cap session", () => {
     expect(host.model.contextWindow).toBe(300_000);
   });
 
+  test("an unchanged model cap stays valid after a provider refresh lowers the window", async () => {
+    const defaults = { agentDefinition: undefined, modelConfig: 500_000, generalConfig: 300_000 };
+    const host = await start([], model("large", 1_000_000), defaults);
+    host.model = model("large", 200_000);
+    host.bus.get("piop:models-refreshed")?.forEach(handler => handler({ ctx: host.ctx }));
+    expect(await host.session().updateDefaults(defaults)).toEqual({ cap: 500_000, source: "config", appliedWindow: 200_000 });
+    await expect(host.session().updateDefaults({ ...defaults, modelConfig: 400_000 })).rejects.toThrow("exceeds the 200,000-token context window");
+    await host.selectModel(model("other", 200_000));
+    await expect(host.session().updateDefaults(defaults)).rejects.toThrow("exceeds the 200,000-token context window of test/other");
+  });
+
   for (const announced of [true, false]) test("keeps the true window when Pi replaces the model object with a capped copy" + (announced ? " and announces it" : ""), async () => {
     const host = await start([], model("codex", 272_000));
     await host.session().setManualCap(100_000);

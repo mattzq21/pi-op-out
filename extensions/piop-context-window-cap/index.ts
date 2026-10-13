@@ -112,6 +112,8 @@ export default function contextWindowCap(pi: ExtensionAPI) {
   let model: Model | undefined;
   let choice: Choice | undefined;
   let defaults: ContextCapDefaults | undefined;
+  /** The provider/model key of the model when the current defaults were accepted. Its model cap belongs to that model. */
+  let defaultsModel: string | undefined;
   let logged: Logged = {};
   let restored = false;
   let closed = false;
@@ -270,14 +272,15 @@ export default function contextWindowCap(pi: ExtensionAPI) {
   const sourceLabel = (source: ContextCapSource) => source === "agent_definition" ? "The agent definition context cap" : "The context cap setting";
 
   /**
-   * A default cap is a new choice when its value changed: an edited agent or general cap, or a model cap, which belongs to the current model.
+   * A default cap is a new choice when its value changed: an edited agent, model, or general cap. A model cap also changes when the model changes.
    * New choices must fit the current model. The first defaults of a session are existing settings and are clamped.
    */
   const validateNewDefaults = (next: ContextCapDefaults) => {
     if (!choice || !defaults) return;
     const resolved = resolveDefaults(next);
     const changed = resolved.source === "agent_definition" ? defaults.agentDefinition !== next.agentDefinition
-      : next.modelConfig !== undefined || defaults.generalConfig !== next.generalConfig;
+      : next.modelConfig !== undefined ? defaults.modelConfig !== next.modelConfig || defaultsModel !== (model && keyOf(model))
+        : defaults.generalConfig !== next.generalConfig;
 
     if (changed && resolved.cap !== null) requireFit(resolved.cap, sourceLabel(resolved.source));
   };
@@ -305,6 +308,7 @@ export default function contextWindowCap(pi: ExtensionAPI) {
     if (choice && !sameChoice(choice, next)) requireBudgets(next);
     const first = !choice;
     defaults = operation.defaults;
+    defaultsModel = model && keyOf(model);
     commit(next);
 
     if (!first) return;
