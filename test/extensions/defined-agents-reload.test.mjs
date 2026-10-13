@@ -5,7 +5,7 @@ import { agentFixture, profile, configured } from '../defined-agent-fixture.mjs'
 
 test('session tools migrate once and later per-agent exclusions survive reload', async t => {
   const config = configured([profile('general', { tools: [] })]); config.sessionToolsDefaultApplied = false;
-  const f = await agentFixture(t, { config, tools: ['subagent'], realRuntime: true, runtimeSettingsPath: await runtimeSettingsPath(t), runtime: { tools: ['subagent'], skills: [] } });
+  const f = await agentFixture(t, { config, tools: ['subagent'], realRuntime: true, runtimeSettingsPath: await runtimeSettingsPath(t), runtime: { enabledTools: ['subagent'] } });
   await f.load(); await f.start();
   assert.deepEqual(f.pi.getActiveTools(), ['subagent']);
   await f.configure({ agents: [profile('general', { tools: [] })] });

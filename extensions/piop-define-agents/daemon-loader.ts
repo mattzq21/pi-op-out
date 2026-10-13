@@ -5,7 +5,7 @@ import { Type } from "typebox";
 import { loadConfig } from "./index.ts";
 import { agentSchema, agentThinkingLevels } from "./state.ts";
 import { configPath, readConfigDocument, readPrompt, resolvePromptPath } from "./prompts.ts";
-import type { RuntimeSettingsRequest } from "./contracts.ts";
+import type { ToolLists, ToolStoreRequest } from "../piop-tool-store/interface.ts";
 import { extensionPaths } from "./extension-loader.ts";
 import { extensionValidator } from "./validation-runtime.ts";
 import { modelValidator } from "./model-validation.ts";
@@ -23,7 +23,10 @@ const sourceAgentSchema = Type.Object({
   systemPrompt: Type.Optional(Type.String()), agentsMd: Type.Optional(Type.String()), developerPrompt: Type.Optional(Type.String()),
 });
 
+/** settings holds the runtime settings that the daemon sends to Pi, with tools as the tool store lists. */
 export interface AgentDefinitionsRequest { settings: any; initial: boolean }
+
+const toolListsSchema = Type.Object({ enabledTools: Type.Array(Type.String()), registeredTools: Type.Array(Type.String()) });
 
 export interface AgentDefinitions { config: any; prompts: Record<string, string>; configPath: string }
 
@@ -53,7 +56,12 @@ export async function loadAgentDefinitions({ settings, initial: initialize }: Ag
     if (!initialize || !(error instanceof Error && "code" in error && error.code === "ENOENT")) throw error;
   }
 
-  const api = { events: { emit(_name: string, request: RuntimeSettingsRequest) { request.settings = settings; } } };
+  if (!Check(toolListsSchema, settings.tools)) throw new Error("Tool lists are unavailable");
+  const toolLists: ToolLists = settings.tools;
+
+  const api = { events: { emit(_name: "piop:tool-store", request: ToolStoreRequest) {
+    request.store = { lists: () => structuredClone(toolLists), replace() { throw new Error("Agent definitions cannot change tool lists"); } };
+  } } };
 
   const prompts: Record<string, string> = {};
 
@@ -74,9 +82,7 @@ export async function loadAgentDefinitions({ settings, initial: initialize }: Ag
 
   if (!Check(Type.Array(agentSchema), config.agents)) throw new Error("Invalid agent definitions");
 
-  if (!Check(Type.Array(Type.String()), settings.registeredTools)) throw new Error("Registered tool inventory is unavailable");
-
-  const validateExtensions = config.agents.some(agent => agent.extensions?.length) ? await extensionValidator(settings.registeredTools) : undefined;
+  const validateExtensions = config.agents.some(agent => agent.extensions?.length) ? await extensionValidator([...toolLists.registeredTools]) : undefined;
 
   const validateModel = await modelValidator(parseFastModelSnapshot(settings.fastModels));
 
@@ -91,7 +97,7 @@ export async function loadAgentDefinitions({ settings, initial: initialize }: Ag
       catch (error) { throw new Error(`Agent "${agent.name}" cannot load its extensions: ${error instanceof Error ? error.message : String(error)}`); }
     });
 
-    const allowedTools = new Set([...settings.tools, ...extensionTools]);
+    const allowedTools = new Set([...toolLists.enabledTools, ...extensionTools]);
     const denied = agent.tools.filter(tool => !allowedTools.has(tool));
 
     if (denied.length) throw new Error(`Agent "${agent.name}" cannot run because Pi does not allow its configured tools: ${denied.join(", ")}`);

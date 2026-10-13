@@ -173,5 +173,5 @@ test('a skill disabled by a home-relative path stays disabled after discovery', 
   settings.skills = [{ name: 'home-relative', path: '~/.agents/skills/home-relative', description: 'Pi skill', enabled: false }];
   await save(settings);
   const skills = (await load()).skills.filter((skill: any) => skill.name === 'home-relative');
-  expect(skills).toEqual([expect.objectContaining({ path: root, enabled: false, discovered: true })]);
+  expect(skills).toEqual([expect.objectContaining({ path: root, enabled: false })]);
 });

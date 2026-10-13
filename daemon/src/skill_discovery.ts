@@ -1,5 +1,5 @@
-import { readdirSync, readFileSync, statSync, lstatSync } from 'node:fs';
-import { basename, dirname, extname, join, sep } from 'node:path';
+import { readdirSync, readFileSync, statSync } from 'node:fs';
+import { basename, dirname, join, sep } from 'node:path';
 import { STORAGE_DIRECTORY } from './config';
 import { homeDir } from './environment';
 import { skillInventory } from './settings_records';
@@ -42,8 +42,6 @@ export function pathStartsWith(path: string, root: string): boolean {
   return path === normalizedRoot || path.startsWith(normalizedRoot + sep);
 }
 
-export function skillPathIsWithin(path: string, root: string): boolean { return pathStartsWith(path, root); }
-
 export function expandSkillPath(path: string, home: string): string {
   return path.startsWith('~/') ? join(home, path.slice(2)) : path;
 }
@@ -64,7 +62,7 @@ function walkSkillFiles(root: string): string[] {
 
 function depth(path: string): number { return path.split(sep).filter(Boolean).length; }
 
-function discoverInventory(root: string, includeRootMarkdown: boolean): any[] {
+function discoverInventory(root: string): any[] {
   try { statSync(root); } catch (error: any) { if (error?.code === 'ENOENT') return []; throw error; }
   const skillFiles = walkSkillFiles(root).sort((left, right) => depth(left) - depth(right));
   const skillRoots: string[] = [];
@@ -82,28 +80,7 @@ function discoverInventory(root: string, includeRootMarkdown: boolean): any[] {
       path: directory,
       description: frontmatterValue(content, 'description') ?? 'Pi skill',
       enabled: true,
-      discovered: true,
       userInvokedOnly: claudeUserOnly || codexUserOnly,
-    });
-  }
-  if (includeRootMarkdown) discovered.push(...rootMarkdown(root));
-  return discovered;
-}
-
-function rootMarkdown(root: string): any[] {
-  const discovered: any[] = [];
-  for (const entry of readdirSync(root, { withFileTypes: true })) {
-    const path = join(root, entry.name);
-    if (!entry.isFile() || entry.name === 'SKILL.md' || extname(entry.name) !== '.md') continue;
-    const content = readFileSync(path, 'utf8');
-    const fallback = basename(entry.name, '.md') || 'skill';
-    discovered.push({
-      name: frontmatterValue(content, 'name') ?? fallback,
-      path,
-      description: frontmatterValue(content, 'description') ?? 'Pi skill',
-      enabled: true,
-      discovered: true,
-      userInvokedOnly: frontmatterValue(content, 'disable-model-invocation')?.toLowerCase() === 'true',
     });
   }
   return discovered;
@@ -123,7 +100,7 @@ export function onSkillsChanged(listener: () => void): void { skillListeners.add
 function savedSkills(home: string, refresh: boolean): any[] {
   const root = join(home, '.agents/skills');
   const path = join(home, STORAGE_DIRECTORY, 'settings.json');
-  return skillInventory(path, root, refresh, () => discoverInventory(root, false));
+  return skillInventory(path, root, refresh, () => discoverInventory(root));
 }
 
 export function mergeDiscoveredSkills(settings: AppSettings): void {
@@ -131,24 +108,17 @@ export function mergeDiscoveredSkills(settings: AppSettings): void {
   mergeSkills(settings, home, savedSkills(home, false));
 }
 
+/** Replaces the settings skills with the discovered skills. A user-invoked skill is always enabled; other skills keep their saved state. */
 function mergeSkills(settings: AppSettings, home: string, skills: any[]): void {
-  const root = join(home, '.agents/skills');
   const enabledByPath = new Map<string, boolean>();
   for (const skill of settings.skills) {
-    if (typeof skill?.path !== 'string') continue;
-    enabledByPath.set(expandSkillPath(skill.path, home), typeof skill.enabled === 'boolean' ? skill.enabled : true);
+    if (typeof skill?.path === 'string' && typeof skill.enabled === 'boolean') enabledByPath.set(expandSkillPath(skill.path, home), skill.enabled);
   }
-  settings.skills = settings.skills.filter(skill => typeof skill?.path !== 'string' || !skillPathIsWithin(expandSkillPath(skill.path, home), root));
-  const known = new Set(settings.skills.filter(skill => typeof skill?.path === 'string').map(skill => expandSkillPath(skill.path, home)));
-  for (const skill of skills) {
-    if (typeof skill?.path !== 'string') continue;
-    if (known.has(skill.path)) continue;
-    known.add(skill.path);
-    if (skill.userInvokedOnly !== true && enabledByPath.has(skill.path)) skill.enabled = enabledByPath.get(skill.path);
-    settings.skills.push(skill);
-  }
-  const name = (skill: any) => (typeof skill?.name === 'string' ? skill.name : '').toLowerCase();
+  settings.skills = skills.map(skill => ({
+    name: skill.name, path: skill.path, description: skill.description, userInvokedOnly: skill.userInvokedOnly === true,
+    enabled: skill.userInvokedOnly === true || (enabledByPath.get(skill.path) ?? true),
+  }));
+  const name = (skill: any) => skill.name.toLowerCase();
   settings.skills.sort((left, right) => (name(left) < name(right) ? -1 : name(left) > name(right) ? 1 : 0));
 }
 
-export { lstatSync };
