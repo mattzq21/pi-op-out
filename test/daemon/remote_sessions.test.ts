@@ -3,7 +3,7 @@ import { fileURLToPath } from 'node:url';
 import { afterAll, beforeAll, expect, test } from 'bun:test';
 import { chmodSync, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmdirSync, statSync, symlinkSync, unlinkSync, utimesSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
-import { remoteMachine, startDaemon, synchronizationFinished, useRemotes, type RemoteMachine, type TestDaemon } from './harness';
+import { remoteMachine, startDaemon, waitForSessions, synchronizationFinished, useRemotes, type RemoteMachine, type TestDaemon } from './harness';
 
 let daemon: TestDaemon;
 let server: RemoteMachine;
@@ -246,7 +246,7 @@ test('the session list combines reachable machines, skips failing ones, sorts by
     const serverGroup = groups.groups[0].id;
     await daemon.invoke('change_session_groups', { change: { type: 'assign', key: 'local:' + local.id, group: localGroup } });
     await daemon.invoke('change_session_groups', { change: { type: 'assign', key: 'server:' + recent.id, group: serverGroup } });
-    const rows = (await daemon.invoke('list_sessions')).filter((row: any) => [local.id, recent.id, old.id].includes(row.id));
+    const rows = (await waitForSessions(daemon, rows => [local.id, recent.id, old.id].every(id => rows.some(row => row.id === id)))).filter((row: any) => [local.id, recent.id, old.id].includes(row.id));
     expect(rows.filter((row: any) => row.hostId === 'server').map((row: any) => row.id)).toEqual([recent.id, old.id]);
     expect(rows.map((row: any) => row.hostId).sort()).toEqual(['local', 'server', 'server']);
     const byId = new Map(rows.map((row: any) => [row.id, row]));

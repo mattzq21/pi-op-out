@@ -41,7 +41,7 @@ test('diagramist migration writes its instructions and preserves an existing cus
   const saved = await f.configuration();
   assert.equal(saved.diagramistDefaultApplied, true);
   const diagramist = saved.agents.find(agent => agent.name === 'diagramist');
-  assert.deepEqual(diagramist.extensions, ['../piop-diagrams.ts']);
+  assert.deepEqual(diagramist.extensions, []);
   assert.match(await readFile(join(f.dir, diagramist.path_systemprompt), 'utf8'), /You are diagramist\. Explain systems, code, and data/);
   diagramist.tools = ['read']; diagramist.path_systemprompt = 'prompt.md'; Object.assign(diagramist, { max_subagents: 8, max_sub_subagents: 8 });
   saved.diagramistDefaultApplied = false;
@@ -99,22 +99,22 @@ test('legacy prompt filenames keep interior underscores and strip all boundary s
   assert.equal(await readFile(join(f.dir, agent.path_systemprompt), 'utf8'), 'Legacy');
 });
 
-test('fast-mode support recognizes numbered provider accounts without rewriting model IDs', async t => {
-  const model = { provider: 'openai--piop-account-12', id: 'gpt-5.4', api: 'openai-responses' };
+test('fast mode keeps custom provider identifiers and does not change their requests', async t => {
+  const model = { provider: 'custom-openai', id: 'gpt-5.4', api: 'openai-responses' };
   const f = await agentFixture(t, {
     model, models: [model],
     config: null,
     realFastMode: { catalog: [{ slug: 'gpt-5.4', service_tiers: [{ id: 'priority' }] }] },
   });
   await f.load();
-  await f.configure(configured([profile('general', { model: 'openai--piop-account-12/gpt-5.4', fastMode: true })]));
-  await f.start();
+  await f.configure(configured([profile('general', { model: 'custom-openai/gpt-5.4', fastMode: true })]));
+  await f.start(); await f.select('general');
   assert.deepEqual(f.notices, []);
   assert.deepEqual(f.pi.getActiveTools(), ['read']);
   assert.deepEqual(await f.input('hello'), { action: 'continue' });
-  assert.equal(f.ctx.model.provider, 'openai--piop-account-12');
+  assert.equal(f.ctx.model.provider, 'custom-openai');
   assert.equal(f.ctx.model.id, 'gpt-5.4');
-  assert.deepEqual(await f.emit('before_provider_request', { payload: { input: 'hello' } }), { input: 'hello', service_tier: 'priority' });
+  assert.equal(await f.emit('before_provider_request', { payload: { input: 'hello' } }), undefined);
 });
 
 test('terminal lookup remains restricted to the terminal agent even in saved definitions', async t => {
@@ -136,13 +136,13 @@ test('explicit agent selection applies fast-mode defaults while input leaves man
   await f.load();
   await f.configure(configured([profile('general', { fastMode: false }), profile('reviewer', { fastMode: true })]));
   await f.start();
-  assert.equal(f.statuses.get('pi-desktop-fast-mode'), 'Fast mode off');
+  assert.equal(await f.fastEnabled(), false);
   await f.select('reviewer');
-  assert.equal(f.statuses.get('pi-desktop-fast-mode'), 'Fast mode on');
+  assert.equal(await f.fastEnabled(), true);
   assert.deepEqual(await f.emit('before_provider_request', { payload: { input: 'hello' } }), { input: 'hello', service_tier: 'priority' });
   await f.commands.get('fast').handler('off', f.ctx);
   assert.deepEqual(await f.input('hello'), { action: 'continue' });
-  assert.equal(f.statuses.get('pi-desktop-fast-mode'), 'Fast mode off');
+  assert.equal(await f.fastEnabled(), false);
   assert.equal(await f.emit('before_provider_request', { payload: { input: 'hello' } }), undefined);
 });
 

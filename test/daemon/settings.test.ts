@@ -16,7 +16,7 @@ const remote = (host: Record<string, unknown> = {}) => ({ enabled: false, id: 'r
 test('invalid settings are rejected and the saved settings stay unchanged', async () => {
   const before = await load();
   const cases: Array<[string, (settings: any) => void, string]> = [
-    ['context cap', settings => { settings.contextWindowCap = 999; }, 'at least 1000'],
+    ['context cap', settings => { settings.contextWindowCap = 999; }, 'from 100,000 to 50,000,000'],
     ['reserved search shortcut', settings => { settings.keybindings.newConversation = 'META+g'; }, 'reserved for conversation search'],
     ['duplicate shortcut', settings => { settings.keybindings.newConversation = ' Shift + CTRL + n '; settings.keybindings.toggleTerminal = 'ctrl+shift+N'; }, 'assigned more than once'],
     ['shortcut without modifier', settings => { settings.keybindings.newConversation = 'n'; }, 'needs Ctrl, Alt, or Meta'],
@@ -46,12 +46,12 @@ test('invalid settings are rejected and the saved settings stay unchanged', asyn
 
 test('valid edge-case shortcuts, a minimum context cap and machines are saved', async () => {
   const settings = await load();
-  settings.contextWindowCap = 1000;
+  settings.contextWindowCap = 100_000;
   Object.assign(settings.keybindings, { newConversation: 'Ctrl+F2', toggleTerminal: 'Ctrl++', toggleDebugMode: ' ' });
   settings.hosts = [remote(), remote({ id: 'other', name: 'Other', target: 'user@[::1]:22', piPath: '~/.local/bin/pi' })];
   await save(settings);
   const saved = await load();
-  expect(saved.contextWindowCap).toBe(1000);
+  expect(saved.contextWindowCap).toBe(100_000);
   expect(saved.keybindings).toMatchObject({ newConversation: 'Ctrl+F2', toggleTerminal: 'Ctrl++', toggleDebugMode: ' ' });
   expect(saved.hosts.map((host: any) => host.id)).toEqual(['remote', 'other']);
 });

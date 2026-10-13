@@ -68,7 +68,7 @@ require('node:readline').createInterface({ input: process.stdin }).on('line', li
     const settings = await daemon.invoke('load_app_settings', { refreshSkills: true });
     for (const tool of settings.tools) tool.enabled = tool.name === 'read';
     for (const skill of settings.skills) skill.enabled = skill.name !== 'Off';
-    settings.contextWindowCap = 12345; settings.contextWindowCapEnabled = false;
+    settings.contextWindowCap = 123456; settings.contextWindowCapEnabled = false;
     await daemon.invoke('save_app_settings', { settings });
     const saved = await daemon.invoke('load_app_settings');
     const { path } = JSON.parse(execFileSync('node', [fileURLToPath(new URL('../fixtures/publish-chat.mjs', import.meta.url))], {
@@ -81,7 +81,7 @@ require('node:readline').createInterface({ input: process.stdin }).on('line', li
     expect(runtime.tools.filter((name: string) => !name.endsWith('_goal'))).toEqual(['read']);
     expect([...runtime.skills].sort()).toEqual([join(root, 'explicit'), join(root, 'plain')]);
     expect(runtime.explicitOnlySkills).toEqual([join(root, 'explicit')]);
-    expect(runtime).toMatchObject({ defaultModel: saved.defaultModel, contextWindowCap: 12345, contextWindowCapEnabled: false });
+    expect(runtime).toMatchObject({ defaultModel: saved.defaultModel, contextWindowCap: 123456, contextWindowCapEnabled: false });
     // Building the runtime settings does not change the saved settings.
     expect(await daemon.invoke('load_app_settings')).toEqual(saved);
     await daemon.invoke('stop_pi', { runtimeId: 'runtime-settings' });

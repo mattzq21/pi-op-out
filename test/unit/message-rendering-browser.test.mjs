@@ -18,7 +18,7 @@ test('message copying preserves source text and reports unavailable clipboard ac
   await page.getByRole('button', { name: 'Message copied', exact: true }).waitFor();
   assert.equal(await page.evaluate(() => navigator.clipboard.readText()), '**source**');
   await page.getByRole('button', { name: 'Copy message', exact: true }).waitFor();
-  await page.evaluate(() => Object.defineProperty(navigator, 'clipboard', { configurable: true, value: undefined }));
+  await page.evaluate(() => { Object.defineProperty(navigator, 'clipboard', { configurable: true, value: undefined }); document.execCommand = () => false; });
   await page.getByRole('button', { name: 'Copy message', exact: true }).click();
   const error = page.getByRole('status').filter({ hasText: 'Could not copy message' });
   await error.waitFor();
@@ -31,7 +31,7 @@ test('fenced code copying omits the trailing newline and handles write failures'
   await page.getByRole('button', { name: 'Code copied', exact: true }).waitFor();
   assert.equal(await page.evaluate(() => navigator.clipboard.readText()), 'const answer = 42;');
   await page.getByRole('button', { name: 'Copy code', exact: true }).waitFor();
-  await page.evaluate(() => { navigator.clipboard.writeText = async () => { throw new DOMException('denied', 'NotAllowedError'); }; });
+  await page.evaluate(() => { navigator.clipboard.writeText = async () => { throw new DOMException('denied', 'NotAllowedError'); }; document.execCommand = () => false; });
   await page.getByRole('button', { name: 'Copy code', exact: true }).click();
   await page.getByRole('status').filter({ hasText: 'Could not copy' }).waitFor();
   assert.equal(await page.evaluate(() => navigator.clipboard.readText()), 'const answer = 42;');
@@ -50,7 +50,7 @@ test('link context menus copy the URL, restore focus and report clipboard failur
   assert.equal(await page.getByRole('menu').count(), 0);
   assert.equal(await link.evaluate(node => node === document.activeElement), true);
   await link.click({ button: 'right' });
-  await page.evaluate(() => Object.defineProperty(navigator, 'clipboard', { configurable: true, value: undefined }));
+  await page.evaluate(() => { Object.defineProperty(navigator, 'clipboard', { configurable: true, value: undefined }); document.execCommand = () => false; });
   await page.getByRole('menuitem').click();
   await page.getByRole('alert').filter({ hasText: 'Could not copy link' }).waitFor();
 });

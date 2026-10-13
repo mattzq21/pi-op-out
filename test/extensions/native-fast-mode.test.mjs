@@ -30,23 +30,13 @@ async function connected(t, commands) {
   return { transport, calls };
 }
 
-for (const packageName of ['piop-openai-fast-mode', 'pi-openai-fast-mode-piop', 'pi-openai-fast-mode']) {
-  for (const sourceInfo of [{ path: `/home/test/.piop/${packageName}/index.ts` }, { source: `npm:${packageName}` }]) {
-    test(`applies conversation fast-mode defaults from ${JSON.stringify(sourceInfo)}`, async t => {
-      const { transport, calls } = await connected(t, [
-        { name: 'fast', source: 'extension', sourceInfo: { path: '/unrelated/extension/index.ts' } },
-        { name: 'fast:2', source: 'extension', sourceInfo },
-        { name: 'pi-desktop-fast-status', source: 'extension' },
-      ]);
-      await transport.setFastMode(false);
-      await transport.setFastMode(true);
-      await transport.toggleFastMode();
-      assert.deepEqual(calls.filter(command => command.message?.startsWith('/fast')).map(({ type, message }) => ({ type, message })), [
-        { type: 'prompt', message: '/fast:2 off' },
-        { type: 'prompt', message: '/fast:2 on' },
-        { type: 'prompt', message: '/fast:2 toggle' },
-      ]);
-      assert.equal(calls.some(command => command.type === 'fast_mode_status'), packageName === 'pi-openai-fast-mode');
-    });
-  }
-}
+test('conversation fast-mode changes use the session command', async t => {
+  const { transport, calls } = await connected(t, []);
+  await transport.setFastMode(false);
+  await transport.setFastMode(true);
+  assert.deepEqual(calls.filter(command => command.type === 'set_fast_mode').map(({ type, enabled }) => ({ type, enabled })), [
+    { type: 'set_fast_mode', enabled: false },
+    { type: 'set_fast_mode', enabled: true },
+  ]);
+  assert.equal(calls.some(command => command.type === 'prompt'), false);
+});

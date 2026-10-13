@@ -294,3 +294,13 @@ export async function startDaemon(options: BuildOptions & { home?: string; env?:
     throw new Error(error.message + '\nDaemon log:\n' + logTail(daemonLog));
   }
 }
+
+export async function waitForSessions(daemon: TestDaemon, match: (rows: any[]) => boolean): Promise<any[]> {
+  const deadline = Date.now() + 10_000;
+  for (;;) {
+    const seen = new Set(daemon.events.map(event => event.payload));
+    const rows = await daemon.invoke('list_sessions');
+    if (match(rows)) return rows;
+    await daemon.waitEvent('pi://sessions-changed', payload => !seen.has(payload), Math.max(1, deadline - Date.now()));
+  }
+}

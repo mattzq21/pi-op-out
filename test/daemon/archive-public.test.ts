@@ -3,7 +3,7 @@ import { execFileSync } from 'node:child_process';
 import { readFileSync, writeFileSync, symlinkSync, chmodSync, statSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { startDaemon, remoteMachine, useRemotes, type TestDaemon, type RemoteMachine } from './harness';
+import { startDaemon, waitForSessions, remoteMachine, useRemotes, type TestDaemon, type RemoteMachine } from './harness';
 
 let daemon: TestDaemon;
 let remote: RemoteMachine;
@@ -75,7 +75,7 @@ test('remote archiving preserves the active chat when storage cannot be written'
   try {
     await expect(archive(chat.path)).rejects.toThrow(/EACCES|Permission denied/);
   } finally { chmodSync(archiveDirectory, mode); }
-  const active = await daemon.invoke('list_sessions');
+  const active = await waitForSessions(daemon, rows => rows.some(row => row.id === chat.id));
   expect(active.find((row: any) => row.id === chat.id)).toMatchObject({ hostId: remote.id });
   const after = (await daemon.invoke('storage_report')).hosts.find((host: any) => host.hostId === remote.id);
   expect(after.archives.map((row: any) => row.id).sort()).toEqual(before.archives.map((row: any) => row.id).sort());

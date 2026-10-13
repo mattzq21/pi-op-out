@@ -143,6 +143,7 @@ test('copy shortcut copies selection and reports clipboard failures without inte
   assert.equal(JSON.parse(await page.getByLabel('Previous input').textContent()), '\u001b[1;6R\u0003');
   await page.evaluate(() => {
     navigator.clipboard.writeText = async () => { throw new DOMException('Clipboard access denied', 'NotAllowedError'); };
+    document.execCommand = () => false;
   });
   await page.keyboard.press('Control+Shift+c');
   const status = page.getByRole('status').filter({ hasText: 'Could not copy terminal selection' });

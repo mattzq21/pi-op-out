@@ -11,9 +11,7 @@ describe("Conversation acceptance", () => {
   });
 
   it("opens, adds, deletes, and closes an ephemeral terminal", async () => {
-    await startTemporaryConversation({});
-    await setBridgeValue("E2E calls", "[]");
-    await mockBackend({ "shared_terminal:start": {}, "shared_terminal:resize": {}, "shared_terminal:close": {} });
+    await startTemporaryConversation({ "shared_terminal:start": {}, "shared_terminal:resize": {}, "shared_terminal:close": {} });
 
     try {
       await app.openTerminalButton.click();

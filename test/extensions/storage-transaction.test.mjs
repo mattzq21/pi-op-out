@@ -5,24 +5,45 @@ import { fileURLToPath } from 'node:url';
 import { goalCommand } from '../goal-command-fixture.mjs';
 import { daemonClient } from '../daemon-client.mjs';
 import { build } from 'esbuild';
-import { createRequire } from 'node:module';
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, readdirSync, lstatSync, rmSync, existsSync, openSync, closeSync, renameSync, symlinkSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, readdirSync, lstatSync, rmSync, existsSync, renameSync, symlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { after } from 'node:test';
 import { storageSchemaImports } from '../../scripts/storage-schema-plugin.mjs';
 
-const require = createRequire(import.meta.url);
-const { scriptLoader } = require('../../daemon/resources/host-script.cjs');
 const bun = process.env.PIOP_TEST_BUN || 'bun';
 const maxCrashes = 200;
 const bundleDirectory = mkdtempSync(join(tmpdir(), 'piop-storage-transaction-bundle-'));
 after(() => rmSync(bundleDirectory, { recursive: true, force: true }));
-const entry = join(bundleDirectory, 'storage-transaction.cjs');
+const entry = join(bundleDirectory, 'storage-transaction.mjs');
 
 await build({
-  entryPoints: [join(process.cwd(), 'daemon/resources/storage-transaction-command.cjs')], outfile: entry,
-  bundle: true, platform: 'node', format: 'iife', target: 'node22', charset: 'utf8', logLevel: 'silent', plugins: [storageSchemaImports()],
+  stdin: { contents: `
+import { readFileSync } from 'node:fs';
+import { dirname } from 'node:path';
+import { hostOperation, runHostOperation, shutdownHostOperations } from './daemon/src/host_operations';
+import { isHostOperationWorker, runHostOperationWorker } from './daemon/src/host_operation_worker';
+if (isHostOperationWorker()) runHostOperationWorker();
+else {
+  const request = JSON.parse(readFileSync(0, 'utf8'));
+  const root = request.root ?? dirname(request.targets[0].root);
+  try {
+    const result = await runHostOperation(hostOperation('storage-transaction', 'storage', 30000, value => value), request, { storageRoot: root });
+    console.log(JSON.stringify({ ok: true, result }));
+  } catch (error) {
+    console.log(JSON.stringify({ ok: false, state: error.state, error: error.message }));
+    process.exitCode = 1;
+  } finally { await shutdownHostOperations(); }
+}
+`, resolveDir: process.cwd(), sourcefile: 'storage-test-entry.ts', loader: 'ts' }, outfile: entry,
+  bundle: true, platform: 'node', format: 'esm', target: 'esnext', external: ['bun', 'bun:*'], logLevel: 'silent',
+  banner: { js: "import { createRequire } from 'node:module'; const require = createRequire(import.meta.url);" },
+  define: { __PIOP_BUILD_ID__: '"storage-test"', __PIOP_DEVELOPMENT__: 'false', __PIOP_PROJECT_DIR__: '""' },
+  plugins: [storageSchemaImports(), { name: 'host-imports', setup(builder) {
+    builder.onResolve({ filter: /^piop-agent-loader$/ }, () => ({ path: join(process.cwd(), 'extensions/piop-define-agents/daemon-loader.ts') }));
+    builder.onResolve({ filter: /\?raw$/ }, args => ({ path: join(args.resolveDir, args.path.slice(0, -4)), namespace: 'raw' }));
+    builder.onLoad({ filter: /.*/, namespace: 'raw' }, args => ({ contents: readFileSync(args.path, 'utf8'), loader: 'text' }));
+  } }],
 });
 
 const sessionId = '6f2c1d4e-8a9b-4c3d-9e1f-0a1b2c3d4e5f';
@@ -50,22 +71,14 @@ function tree(directory, prefix = '') {
   });
 }
 
-/** Runs the host script like the daemon: Bun loads the bundle from fd 3 and reads the request from stdin. */
 function run(request, environment = {}) {
-  const script = openSync(entry, 'r');
-
-  try {
-    const result = spawnSync(bun, ['-e', scriptLoader, '--', '/proc/self/fd/3'], {
-      input: JSON.stringify(request), encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe', script], timeout: 30000, killSignal: 'SIGKILL',
-      env: { ...process.env, BUN_BE_BUN: '1', ...environment },
-    });
-
-    if (result.error) throw result.error;
-
-    const reply = result.stdout ? JSON.parse(result.stdout) : undefined;
-
-    return { ...result, reply, outcome: reply && (reply.ok ? reply.result : { state: reply.state, error: reply.error }) };
-  } finally { closeSync(script); }
+  const result = spawnSync(bun, [entry], {
+    input: JSON.stringify(request), encoding: 'utf8', timeout: 30000, killSignal: 'SIGKILL',
+    env: { ...process.env, BUN_BE_BUN: '1', ...environment },
+  });
+  if (result.error) throw result.error;
+  const reply = result.stdout ? JSON.parse(result.stdout) : undefined;
+  return { ...result, reply, outcome: reply && (reply.ok ? reply.result : { state: reply.state, error: reply.error }) };
 }
 
 const deletion = fixture => ({ action: 'delete', targets: [{ path: fixture.target, area: 'sessions', root: fixture.sessions }], activeSessionIds: [] });

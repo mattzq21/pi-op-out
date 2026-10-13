@@ -304,7 +304,7 @@ export const connectedSessionResponses = (sessionId: string) => ({
   "pi_command:prompt": {},
   "pi_command:extension_ui_response": {},
   "pi_command:select_agent": {}, "pi_command:take_ownership": {},
-  "pi_command:set_model": {},
+  "pi_command:set_model": {}, "pi_command:set_fast_mode": {},
   "pi_command:set_auto_compaction": {}, "pi_command:set_auto_retry": {}, "pi_command:set_thinking_level": {},
 });
 
@@ -314,10 +314,11 @@ export const startTemporaryConversation = async (responses: BackendResponses) =>
   const name = `Started test conversation ${sessionId}`;
   await mockBackend({
     create_temporary_chat: { cwd, sessionId },
+    remove_temporary_chat: null,
     list_sessions: [],
     load_app_settings: { ...defaultSettings, defaultModel: "e2e/acceptance", defaultThinking: "high" },
     ...connectedSessionResponses(sessionId),
-    "pi_command:set_model": {},
+    "pi_command:set_model": {}, "pi_command:set_fast_mode": {},
     ...responses,
   });
   await $('button[aria-label="New conversation"]').click();
@@ -339,6 +340,7 @@ export const startTemporaryConversation = async (responses: BackendResponses) =>
     return null;
   }, runtimeId);
   await app.composer.waitForEnabled();
+  await updateBackendResponse("pi_command:get_state", { model: { provider: "e2e", id: "acceptance" }, thinkingLevel: "high", isStreaming: false, sessionId, messageCount: 1, pendingMessageCount: 0 });
   await updateBackendResponse("list_sessions", [{ id: sessionId, path: `${cwd}/session.jsonl`, name, project: "Terminal project", preview: "Start the test conversation", cwd, hostId: "local", messageCount: 1 }]);
   await browser.execute(async () => {
     await window.__TAURI_INTERNALS__.invoke("plugin:event|emit", { event: "pi://sessions-changed", payload: {} });

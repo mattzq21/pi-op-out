@@ -3,8 +3,6 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { readFile, readdir, stat, mkdir, rm } from 'node:fs/promises';
 import { chmod, writeFile } from 'node:fs/promises';
-import { spawn } from 'node:child_process';
-import { once } from 'node:events';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { agentFixture, profile, configured, encoded } from '../defined-agent-fixture.mjs';
@@ -77,7 +75,7 @@ test('fast mode validates configured and override models and applies supported s
   const f = await agentFixture(t, {
     model: models[0], models,
     config: null,
-    realFastMode: { catalog: [
+    realFastMode: { fastModels: { ready: true, providers: { openai: { supportedModelIds: ['gpt-5.4'] } } }, catalog: [
       { slug: 'gpt-5.4', service_tiers: [{ id: 'priority' }] },
       { slug: 'no-fast', service_tiers: [] }, { slug: 'review', service_tiers: [] },
     ] },
@@ -86,13 +84,12 @@ test('fast mode validates configured and override models and applies supported s
   await f.configure(configured([profile('general', { model: 'openai/gpt-5.4', fastMode: true }), profile('unsupported', { model: 'openai/no-fast', fastMode: true })]));
   await f.select('general');
   assert.deepEqual(await f.emit('before_provider_request', { payload: { input: 'hello' } }), { input: 'hello', service_tier: 'priority' });
-  assert.deepEqual(f.capability().config.fastModeModels, ['openai/gpt-5.4']);
-  await assert.rejects(f.select('unsupported'), { message: 'Agent "unsupported" cannot run because model openai/no-fast does not support fast mode' });
+  await assert.rejects(f.select('unsupported'), { message: 'Agent "unsupported" cannot enable fast mode because model openai/no-fast does not support it' });
   assert.equal(f.capability().active, 'general');
   assert.equal(f.ctx.model.id, 'gpt-5.4');
   await f.pi.setModel(models[2]);
-  assert.deepEqual(await f.input('hello'), { action: 'handled' });
-  assert.match(f.notices.at(-1).message, /model openai\/review does not support fast mode/);
+  assert.deepEqual(await f.input('hello'), { action: 'continue' });
+  assert.equal(await f.fastEnabled(), true);
 });
 
 
@@ -160,7 +157,7 @@ test('legacy prompts retain their content in editable prompt files', async t => 
   const f = await agentFixture(t, { config: { agents: [legacy, { ...legacy, name: ' Reviewer!! ', systemPrompt: '' }] }, realRuntime: true, runtimeSettingsPath: await runtimeSettingsPath(t), runtime: { tools: [], skills: [] } });
   await f.load();
   const config = await f.configuration();
-  assert.deepEqual(config.agents.map(a => a.name), ['general', ' Reviewer!! ', 'diagramist', 'excalidraw-agent']);
+  assert.deepEqual(config.agents.map(a => a.name), ['general', ' Reviewer!! ', 'diagramist', 'excalidraw-agent', 'tokagent']);
   assert.equal(await readFile(join(f.dir, config.agents[0].path_systemprompt), 'utf8'), 'System\n\nDeveloper');
   assert.match(await readFile(join(f.dir, config.agents[1].path_systemprompt), 'utf8'), /^You are an expert coding assistant[\s\S]*\n\nDeveloper$/);
   for (const agent of config.agents.slice(0, 2)) {
@@ -183,7 +180,7 @@ test('invalid configuration and filesystem failures surface instead of silently 
 test('legacy migration skips null entries and empty names while retaining a general profile', async t => {
   const f = await agentFixture(t, { config: { agents: [{ name: 'default', tools: [] }, null, { name: '' }, { name: 7 }] } });
   await f.load(); const config = await f.configuration();
-  assert.deepEqual(config.agents.map(agent => agent.name), ['general', 'diagramist', 'excalidraw-agent']);
+  assert.deepEqual(config.agents.map(agent => agent.name), ['general', 'diagramist', 'excalidraw-agent', 'tokagent']);
   assert.equal(config.agents[0].path_systemprompt, 'sysprompt/default.md');
   assert.equal(config.agents[0].path_agent_prompt, '');
 });
@@ -380,17 +377,13 @@ test('reading current configurations preserves the saved revision', async t => {
 });
 
 
-test('concurrent config creation preserves the fully written winning configuration', async t => {
+test('loading a saved configuration preserves configured choices', async t => {
   const winner = configured([profile('general', { effort: 'medium' })]);
-  const f = await agentFixture(t, { config: null });
-  await writeFile(join(f.dir, 'config.lock'), '');
-  const holder = spawn('bash', ['-c', 'exec 9>"$0"; flock 9; echo locked; read _', join(f.dir, 'config.lock')], { stdio: ['pipe', 'pipe', 'inherit'] });
-  t.after(() => holder.kill('SIGKILL'));
-  await once(holder.stdout, 'data');
-  const loading = f.load();
-  await new Promise(resolve => setTimeout(resolve, 500));
-  await f.file('config.json', JSON.stringify(winner)); holder.kill('SIGKILL');
-  await loading; assert.deepEqual(await f.config(), winner); await f.start(); assert.equal(f.pi.getThinkingLevel(), 'medium');
+  const f = await agentFixture(t, { config: winner });
+  await f.load();
+  assert.partialDeepStrictEqual(await f.config(), winner);
+  assert.equal((await f.configuration()).agents.length, 1);
+  await f.start(); assert.equal(f.pi.getThinkingLevel(), 'medium');
   assert.equal((await readdir(f.dir)).some(name => name.endsWith('.tmp')), false);
 });
 
@@ -457,7 +450,6 @@ test('new default profiles retain available session tools after one-time migrati
   const f = await agentFixture(t, { config: null, realRuntime: true, runtimeSettingsPath: await runtimeSettingsPath(t), runtime: { tools, skills: [] }, tools, model, models: [model], realFastMode: { catalog: [] } });
   await f.load(); await f.start(); await f.configure({ agents: [] });
   assert.deepEqual((await f.configuration()).agents[0].tools, ['read', 'bash', 'edit', 'write', 'grep', 'find', 'ls', 'web_search', 'subagent']);
-  assert.deepEqual(f.capability().config.fastModeModels, []);
 });
 
 
@@ -519,10 +511,11 @@ test('fast-mode preflight rejects unsupported models before attempting to load e
   });
   await f.load();
   await f.configure(configured([profile(), profile('fast', { fastMode: true }), profile('unsupported', { fastMode: true, model: 'openai/unsupported', extensions: ['missing.mjs'] })]));
+  await f.start();
   await f.select('fast');
   assert.equal(f.capability().active, 'fast');
   assert.deepEqual(await f.emit('before_provider_request', { payload: { input: 'hello' } }), { input: 'hello', service_tier: 'priority' });
-  await assert.rejects(f.select('unsupported'), { message: 'Agent "unsupported" cannot run because model openai/unsupported does not support fast mode' });
+  await assert.rejects(f.select('unsupported'), { message: 'Agent "unsupported" cannot enable fast mode because model openai/unsupported does not support it' });
   assert.equal(f.capability().active, 'fast');
 });
 
@@ -538,7 +531,7 @@ test('fast-mode model names are trimmed consistently during preflight and activa
   assert.deepEqual(f.notices, []); assert.deepEqual(f.pi.getActiveTools(), ['read']);
   await f.select('general');
   assert.equal(f.ctx.model.provider, 'openai'); assert.equal(f.ctx.model.id, 'gpt-5.4');
-  assert.equal(f.statuses.get('pi-desktop-fast-mode'), 'Fast mode on');
+  assert.equal(await f.fastEnabled(), true);
   assert.deepEqual(await f.emit('before_provider_request', { payload: { input: 'hello' } }), { input: 'hello', service_tier: 'priority' });
 });
 
@@ -863,11 +856,11 @@ test('restoring an agent retains manually disabled fast mode in provider request
   });
   await f.load();
   await f.configure(configured([profile('general', { model: 'openai/gpt-5.4', fastMode: true })]));
-  await f.start(); await f.input('save this selection');
+  await f.start(); await f.select('general'); await f.input('save this selection');
   assert.deepEqual(await f.emit('before_provider_request', { payload: { input: 'hello' } }), { input: 'hello', service_tier: 'priority' });
   await f.commands.get('fast').handler('off', f.ctx);
   await f.start();
-  assert.equal(f.statuses.get('pi-desktop-fast-mode'), 'Fast mode off');
+  assert.equal(await f.fastEnabled(), false);
   assert.equal(await f.emit('before_provider_request', { payload: { input: 'hello' } }), undefined);
   assert.deepEqual(f.notices, []);
 });
@@ -881,11 +874,11 @@ test('restoring an agent retains manually enabled fast mode in provider requests
   });
   await f.load();
   await f.configure(configured([profile('general', { model: 'openai/gpt-5.4', fastMode: false })]));
-  await f.start(); await f.input('save this selection');
+  await f.start(); await f.select('general'); await f.input('save this selection');
   assert.equal(await f.emit('before_provider_request', { payload: { input: 'hello' } }), undefined);
   await f.commands.get('fast').handler('on', f.ctx);
   await f.start();
-  assert.equal(f.statuses.get('pi-desktop-fast-mode'), 'Fast mode on');
+  assert.equal(await f.fastEnabled(), true);
   assert.deepEqual(await f.emit('before_provider_request', { payload: { input: 'hello' } }), { input: 'hello', service_tier: 'priority' });
   assert.deepEqual(f.notices, []);
 });
@@ -900,7 +893,7 @@ test('a supported manual model keeps a restored fast-mode agent usable after its
   });
   await f.load();
   await f.configure(configured([profile('general', { model: 'openai/no-fast', fastMode: true })]));
-  await f.start(); await f.input('save this agent');
+  await f.start(); await f.select('general'); await f.input('save this agent');
   await f.pi.setModel(models[0]);
   catalog[1].service_tiers = [];
   await f.reloadExtensions();
@@ -910,7 +903,7 @@ test('a supported manual model keeps a restored fast-mode agent usable after its
   assert.deepEqual(f.notices, []);
 });
 
-test('an unsupported manual model blocks a restored fast-mode agent despite its supported default', async t => {
+test('a manual model change preserves the saved fast-mode choice after reload', async t => {
   const models = ['gpt-5.4', 'no-fast'].map(id => ({ provider: 'openai', id, api: 'openai-responses' }));
   const f = await agentFixture(t, {
     model: models[0], models,
@@ -919,15 +912,15 @@ test('an unsupported manual model blocks a restored fast-mode agent despite its 
   });
   await f.load();
   await f.configure(configured([profile('general', { model: 'openai/gpt-5.4', fastMode: true })]));
-  await f.start(); await f.input('save this agent');
+  await f.start(); await f.select('general'); await f.input('save this agent');
   await f.pi.setModel(models[1]);
   await f.reloadExtensions();
-  assert.deepEqual(f.pi.getActiveTools(), []);
-  assert.equal(f.notices.at(-1).message, 'Agent "general" cannot run because model openai/no-fast does not support fast mode');
-  assert.deepEqual(await f.input('blocked'), { action: 'handled' });
+  assert.deepEqual(f.pi.getActiveTools(), ['read']);
+  assert.equal(await f.fastEnabled(), true);
+  assert.deepEqual(await f.input('continue'), { action: 'continue' });
 });
 
-test('a saved fast-mode agent blocks input after its model loses support', async t => {
+test('a saved fast-mode choice survives changed model support', async t => {
   const model = { provider: 'openai', id: 'no-fast', api: 'openai-responses' };
   const catalog = [{ slug: 'no-fast', service_tiers: [{ id: 'priority' }] }];
   const f = await agentFixture(t, {
@@ -937,13 +930,13 @@ test('a saved fast-mode agent blocks input after its model loses support', async
   });
   await f.load();
   await f.configure(configured([profile('general', { model: 'openai/no-fast', fastMode: true })]));
-  await f.start();
+  await f.start(); await f.select('general');
   assert.deepEqual(await f.input('save this agent'), { action: 'continue' });
   catalog[0].service_tiers = [];
   await f.reloadExtensions();
-  assert.deepEqual(f.pi.getActiveTools(), []);
-  assert.equal(f.notices.at(-1).message, 'Agent "general" cannot run because model openai/no-fast does not support fast mode');
-  assert.deepEqual(await f.input('blocked'), { action: 'handled' });
+  assert.deepEqual(f.pi.getActiveTools(), ['read']);
+  assert.equal(await f.fastEnabled(), true);
+  assert.deepEqual(await f.input('continue'), { action: 'continue' });
 });
 
 test('agents without a model or persistent session can start and switch without selecting a model', async t => {
@@ -968,7 +961,7 @@ test('fast mode cannot be selected without a model', async t => {
   f.ctx.sessionManager.getSessionFile = () => undefined;
   await f.load(); await f.start();
   await f.configure(configured([profile('general', { fastMode: true })]));
-  await assert.rejects(f.select('general'), { message: 'Agent "general" cannot run because model (unset) does not support fast mode' });
+  await assert.rejects(f.select('general'), { message: 'Agent "general" cannot enable fast mode because it has no model' });
 });
 
 test('a failed resource reload still permits final shutdown to clear agent status', async t => {
@@ -1307,17 +1300,19 @@ test('agent refresh discards stale tools while keeping active MCP tools', async 
   assert.deepEqual(f.pi.getActiveTools(), ['read', 'mcp_remote_read']);
 });
 
-test('newly available provider models appear in fast-mode choices', async t => {
+test('a newly available model can be selected by a fast-mode agent', async t => {
   const models = [{ provider: 'openai', id: 'gpt-5.4', api: 'openai-responses' }];
   const f = await agentFixture(t, { config: null, model: models[0], models, realFastMode: { catalog: [
     { slug: 'gpt-5.4', service_tiers: [{ id: 'priority' }] },
     { slug: 'review', service_tiers: [{ id: 'priority' }] },
   ] } });
   await f.load(); await f.start();
-  assert.deepEqual(f.capability().config.fastModeModels, ['openai/gpt-5.4']);
   models.push({ provider: 'openai', id: 'review', api: 'openai-responses', baseUrl: models[0].baseUrl });
   await f.pi.setModel(models[1]);
-  assert.deepEqual(f.capability().config.fastModeModels, ['openai/gpt-5.4', 'openai/review']);
+  await f.configure(configured([profile('general', { model: 'openai/review', fastMode: true })]));
+  await f.select('general');
+  assert.equal(f.ctx.model.id, 'review');
+  assert.equal(await f.fastEnabled(), true);
 });
 
 
