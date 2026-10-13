@@ -10,6 +10,7 @@ import { DEFINED_AGENTS_STATUS_KEY } from "./agentProtocol";
 import { chatSessionEventSchema, pendingMessagesSchema, type ChatSessionEvent } from "./chatSessionEventSchema";
 import { promptContextSchema, wireMessageSchema, type WireMessage } from "./messageSchemas";
 import { contextUsageAfterCompaction } from "./contextUsage";
+import { CONTEXT_CAP_STATUS_KEY } from "../../../extensions/piop-context-window-cap/interface";
 import { appendQueuedProjectContext, applyAssistantMessageEvent, branchMessages, checkpointLatestUser, isContextInjection, isResumeMessage, normalizeMessage, resumeMarker, type PiEntry } from "./messages";
 import type { NativeTransport } from "./nativeTransport";
 import { useSessionMemory } from "./sessionMemory";
@@ -390,6 +391,12 @@ function createChatSession(transport: Accessor<Pick<NativeTransport, "command" |
     };
 
     const handleExtensionUiRequest = () => {
+      if (event.type === "extension_ui_request" && event.method === "setStatus" && event.statusKey === CONTEXT_CAP_STATUS_KEY && event.statusText) {
+        liveRevision.current += 1;
+        void refreshStats();
+
+        return;
+      }
       if (event.type === "extension_ui_request" && event.method === "setStatus" && event.statusKey === "pi-desktop-prompt-context" && event.statusText?.startsWith("json:")) {
         try {
           const context = promptContextSchema.parse(JSON.parse(event.statusText.slice(5)));

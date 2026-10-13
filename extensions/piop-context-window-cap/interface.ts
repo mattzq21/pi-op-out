@@ -51,6 +51,9 @@ export interface ContextCapSessionRequest { session?: ContextCapSession }
 /** Session log entry type. */
 export const CAP_ENTRY = "piop-context-cap";
 
+/** Status key the extension sets with its JSON state when the applied window may have changed. */
+export const CONTEXT_CAP_STATUS_KEY = "piop-context-cap";
+
 /** Log entry data. modelMax records a clamped window and never replaces the chosen cap. */
 export type ContextCapEntry = { cap: number | null; source: ContextCapSource | "modelMax" };
 

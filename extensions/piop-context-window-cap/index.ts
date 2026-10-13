@@ -4,7 +4,7 @@ import { Type } from "typebox";
 import { Check } from "typebox/value";
 import type { ContextCapSessionRequest } from "./channel.ts";
 import {
-  CAP_ENTRY, capRangeError, formatTokens, parseCapCommand,
+  CAP_ENTRY, CONTEXT_CAP_STATUS_KEY, capRangeError, formatTokens, parseCapCommand,
   type ContextCapDefaults, type ContextCapEntry, type ContextCapSession, type ContextCapSource, type ContextCapState,
 } from "./interface.ts";
 
@@ -166,13 +166,18 @@ export default function contextWindowCap(pi: ExtensionAPI) {
     context?.ui.notify(error.message, "error");
   };
 
+  /** Tells clients that the applied window may have changed, so they can read context usage again. */
+  const announce = (value: ContextCapState) => { context?.ui.setStatus(CONTEXT_CAP_STATUS_KEY, "json:" + JSON.stringify(value)); };
+
   const publish = () => {
     const current = state();
 
     if (!current || sameState(published, current)) return;
     published = current;
 
-    if (initialized) for (const subscriber of [...subscribers]) send(subscriber, current);
+    if (!initialized) return;
+    announce(current);
+    for (const subscriber of [...subscribers]) send(subscriber, current);
   };
 
   const initialize = () => {
@@ -181,6 +186,7 @@ export default function contextWindowCap(pi: ExtensionAPI) {
     published = state();
     settle.resolve();
 
+    if (published) announce(published);
     for (const subscriber of [...subscribers]) if (published) send(subscriber, published);
   };
 
@@ -407,21 +413,24 @@ export default function contextWindowCap(pi: ExtensionAPI) {
   pi.registerCommand("cap", {
     description: "Set this conversation's context cap. Usage: /cap [500k|0.75m|reset|model_default]",
     getArgumentCompletions: prefix => ["reset", "model_default"].filter(value => value.startsWith(prefix.trim())).map(value => ({ value, label: value })),
+    // Report errors to the user here. A thrown error is an extension failure, and the client then treats the command as a failed message.
     handler: async (args, ctx) => {
-      const command = parseCapCommand(args);
+      try {
+        const command = parseCapCommand(args);
 
-      if (command.kind === "show") { ctx.ui.notify(describe(await session.getState()), "info");
+        if (command.kind === "show") { ctx.ui.notify(describe(await session.getState()), "info");
 
-      return; }
+        return; }
 
-      const change = command.kind === "reset" ? session.resetManualCap() : session.setManualCap(command.cap);
+        const change = command.kind === "reset" ? session.resetManualCap() : session.setManualCap(command.cap);
 
-      if (ctx.isIdle()) { ctx.ui.notify(describe(await change), "info");
+        if (ctx.isIdle()) { ctx.ui.notify(describe(await change), "info");
 
-      return; }
+        return; }
 
-      ctx.ui.notify("The context cap change will apply when the current response finishes.", "info");
-      change.then(next => context?.ui.notify(describe(next), "info"), error => context?.ui.notify("Context cap change failed: " + asError(error).message, "error"));
+        ctx.ui.notify("The context cap change will apply when the current response finishes.", "info");
+        change.then(next => context?.ui.notify(describe(next), "info"), error => context?.ui.notify("Context cap change failed: " + asError(error).message, "error"));
+      } catch (error) { ctx.ui.notify("Context cap change failed: " + asError(error).message, "error"); }
     },
   });
 

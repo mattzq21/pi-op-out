@@ -17,6 +17,7 @@ class Host {
   bus = new Map<string, Set<(value: any) => void>>();
   commands = new Map<string, any>();
   notes: Array<[string, string]> = [];
+  statuses: Array<[string, string | undefined]> = [];
   idle = true;
   model: Model | undefined;
   ctx: any;
@@ -28,7 +29,7 @@ class Host {
       get model() { return host.model; },
       isIdle: () => host.idle,
       sessionManager: { getBranch: () => host.branch },
-      ui: { notify: (message: string, type: string) => host.notes.push([type, message]), setStatus: () => undefined },
+      ui: { notify: (message: string, type: string) => host.notes.push([type, message]), setStatus: (key: string, text?: string) => host.statuses.push([key, text]) },
     };
     contextWindowCap(this.api() as any);
   }
@@ -259,6 +260,12 @@ describe("context cap session", () => {
     const handler = host.commands.get("cap").handler;
     await handler("0.75m", host.ctx);
     expect(await host.session().getState()).toEqual({ cap: 750_000, source: "manual", appliedWindow: 750_000 });
-    await expect(handler("lots", host.ctx)).rejects.toThrow("Invalid context cap");
+    expect(host.statuses.at(-1)).toEqual(["piop-context-cap", 'json:{"cap":750000,"source":"manual","appliedWindow":750000}']);
+    await handler("lots", host.ctx);
+    await handler("900m", host.ctx);
+    expect(host.notes.filter(([type]) => type === "error").map(([, message]) => message)).toEqual([
+      expect.stringContaining("Invalid context cap"), expect.stringContaining("from 100,000 to 50,000,000"),
+    ]);
+    expect(await host.session().getState()).toEqual({ cap: 750_000, source: "manual", appliedWindow: 750_000 });
   });
 });
