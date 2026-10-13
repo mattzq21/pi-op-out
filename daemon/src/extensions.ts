@@ -126,6 +126,16 @@ export function prepareContextBarExtension(): string {
   return path;
 }
 
+export function prepareHtmlPreviewExtension(): string {
+  const dir = join(generatedExtensionRoot(), 'piop-html-preview');
+  ensurePrivateDir(dir);
+  atomicWritePrivate(join(dir, 'interface.ts'), R.htmlPreviewInterface);
+  atomicWritePrivate(join(dir, 'preview.ts'), R.htmlPreviewFeature);
+  const path = join(dir, 'index.ts');
+  atomicWritePrivate(path, R.htmlPreviewExtension);
+  return path;
+}
+
 export function prepareContextWindowCapExtension(): string {
   const dir = join(generatedExtensionRoot(), 'piop-context-window-cap');
   ensurePrivateDir(dir);

@@ -2,7 +2,6 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { registerContextCapDefaults } from "./session-broker/context-cap.ts";
 import { registerSubagents } from "./session-broker/subagents.ts";
 import { registerSubagentMailbox } from "./session-broker/subagent-mailbox.ts";
-import { registerHtmlPreview } from "./session-broker/html-preview.ts";
 import { registerConversationClient } from "./session-broker/client.ts";
 import { registerOrchestration } from "./session-broker/orchestration.ts";
 import { existsSync } from "node:fs";
@@ -23,5 +22,4 @@ export default function sessionBroker(pi: ExtensionAPI) {
   const mailbox = registerSubagentMailbox(pi);
   registerOrchestration(pi);
   registerSubagents(pi, mailbox);
-  registerHtmlPreview(pi);
 }

@@ -37,6 +37,9 @@ import agentFastModels from '../../extensions/piop-define-agents/fast-models.ts?
 import contextWindowCapExtension from '../../extensions/piop-context-window-cap/index.ts?raw';
 import contextWindowCapInterface from '../../extensions/piop-context-window-cap/interface.ts?raw';
 import contextBarExtension from '../../extensions/piop-context-bar/index.ts?raw';
+import htmlPreviewExtension from '../../extensions/piop-html-preview/index.ts?raw';
+import htmlPreviewInterface from '../../extensions/piop-html-preview/interface.ts?raw';
+import htmlPreviewFeature from '../../extensions/piop-html-preview/preview.ts?raw';
 import codexWebSearchExtension from '../../extensions/piop-codex-web-search/index.ts?raw';
 import excalidrawSkill from '../../extensions/piop-excalidraw/SKILL.md?raw';
 import excalidrawCheatsheet from '../../extensions/piop-excalidraw/references/cheatsheet.md?raw';
@@ -68,7 +71,6 @@ import brokerModule26 from '../resources/session-broker/subagent-mailbox.ts?raw'
 import brokerModule27 from '../resources/session-broker/subagent-results.ts?raw';
 import brokerModule28 from '../resources/session-broker/subagent-recovery.ts?raw';
 import brokerModule29 from '../resources/session-broker/subagent-identity.ts?raw';
-import brokerModule32 from '../resources/session-broker/html-preview.ts?raw';
 import brokerModule36 from '../resources/session-broker/goal-storage.cjs?raw';
 import brokerModule39Raw from '../resources/session-broker/reference-publication-lock.cjs?raw';
 import brokerModule41 from '../resources/session-broker/goal-dependencies.cjs?raw';
@@ -157,6 +159,9 @@ export {
   contextWindowCapExtension,
   contextWindowCapInterface,
   contextBarExtension,
+  htmlPreviewExtension,
+  htmlPreviewInterface,
+  htmlPreviewFeature,
   codexWebSearchExtension,
   excalidrawSkill,
   excalidrawCheatsheet,
@@ -191,7 +196,6 @@ export const SESSION_BROKER_MODULES: Array<[string, string]> = [
   ['subagent-results.ts', brokerModule27],
   ['subagent-recovery.ts', brokerModule28],
   ['subagent-identity.ts', brokerModule29],
-  ['html-preview.ts', brokerModule32],
   ['goal-storage.cjs', brokerModule36],
   ['reference-publication-lock.cjs', brokerModule39],
   ['goal-dependencies.cjs', brokerModule41],
