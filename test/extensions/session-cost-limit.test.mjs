@@ -1,0 +1,119 @@
+import assert from 'node:assert/strict';
+import { test } from 'node:test';
+import { execFileSync } from 'node:child_process';
+import { existsSync, readFileSync, realpathSync } from 'node:fs';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { dirname, join } from 'node:path';
+import { tmpdir } from 'node:os';
+import { pathToFileURL } from 'node:url';
+import { build } from 'esbuild';
+
+let root = dirname(realpathSync(execFileSync('which', ['pi'], { encoding: 'utf8' }).trim()));
+while (true) {
+  const manifest = join(root, 'package.json');
+  if (existsSync(manifest) && JSON.parse(readFileSync(manifest, 'utf8')).name === '@earendil-works/pi-coding-agent') break;
+  const parent = dirname(root);
+  if (parent === root) throw new Error('Could not locate the installed Pi SDK');
+  root = parent;
+}
+const sdk = name => import(pathToFileURL(join(root, `dist/core/${name}.js`)));
+const { createAgentSession } = await sdk('sdk');
+const { DefaultResourceLoader } = await sdk('resource-loader');
+const { SettingsManager } = await sdk('settings-manager');
+const { SessionManager } = await sdk('session-manager');
+const { ModelRuntime } = await sdk('model-runtime');
+const usage = total => ({ input: 1, output: 1, cacheRead: 0, cacheWrite: 0, totalTokens: 2, cost: { input: 0, output: total, cacheRead: 0, cacheWrite: 0, total } });
+
+async function fixture(t, { toolCost = 0, responseCost = 1, toolCalls = false } = {}) {
+  const dir = await mkdtemp(join(tmpdir(), 'piop-cost-test-'));
+  t.after(() => rm(dir, { recursive: true, force: true }));
+  const outfile = join(dir, 'cost.mjs');
+  await build({ entryPoints: ['extensions/piop-session-cost-limit/index.ts'], outfile, bundle: true, format: 'esm', platform: 'node', logLevel: 'silent' });
+  const { default: costLimit } = await import(pathToFileURL(outfile));
+  const settingsManager = SettingsManager.inMemory({ compaction: { enabled: false }, retry: { enabled: false } });
+  const modelRuntime = await ModelRuntime.create({ authPath: join(dir, 'auth.json'), modelsPath: null, refreshOnCreate: false });
+  await modelRuntime.setRuntimeApiKey('openai', 'unused-test-key');
+  const model = modelRuntime.getModels().find(model => model.provider === 'openai');
+  assert.ok(model);
+  const resourceLoader = new DefaultResourceLoader({ cwd: dir, agentDir: dir, settingsManager, noExtensions: true, noSkills: true, noContextFiles: true, noThemes: true, noPromptTemplates: true, extensionFactories: [costLimit] });
+  await resourceLoader.reload();
+  assert.deepEqual(resourceLoader.getExtensions().errors, []);
+  let executions = 0;
+  const { session } = await createAgentSession({
+    cwd: dir, agentDir: dir, modelRuntime, model, settingsManager, resourceLoader, sessionManager: SessionManager.inMemory(dir), tools: ['cost_test'],
+    customTools: [{ name: 'cost_test', label: 'Cost test', description: 'Test tool', parameters: { type: 'object', properties: {} }, execute: async () => {
+      executions++;
+      return { content: [{ type: 'text', text: 'done' }], details: {}, usage: usage(toolCost) };
+    } }],
+  });
+  t.after(() => session.dispose());
+  const statuses = new Map(), errors = [], notices = [];
+  await session.bindExtensions({ onError: error => errors.push(error), uiContext: { setStatus: (key, value) => statuses.set(key, value), notify: (...args) => notices.push(args) } });
+  let requests = 0, aborted = 0;
+  session.agent.streamFunction = (model, _context, options) => {
+    if (options.signal?.aborted) aborted++;
+    else requests++;
+    const message = {
+      role: 'assistant', api: model.api, provider: model.provider, model: model.id, timestamp: Date.now(),
+      content: toolCalls ? [{ type: 'toolCall', id: `call-${requests}`, name: 'cost_test', arguments: {} }] : [{ type: 'text', text: 'done' }],
+      usage: usage(options.signal?.aborted ? 0 : responseCost), stopReason: options.signal?.aborted ? 'aborted' : toolCalls ? 'toolUse' : 'stop',
+    };
+    assert.ok(requests < 4, 'cost limit must stop the agent loop');
+    return { async *[Symbol.asyncIterator]() { yield { type: 'done', reason: message.stopReason, message }; }, result: async () => message };
+  };
+  t.after(() => assert.deepEqual(errors, []));
+  return { session, statuses, notices, model, get requests() { return requests; }, get executions() { return executions; }, get aborted() { return aborted; } };
+}
+
+test('real session blocks prompts at the limit and accepts raise and clear commands', async t => {
+  const f = await fixture(t);
+  await f.session.prompt('/cost 1');
+  await f.session.prompt('first');
+  assert.equal(f.statuses.get('piop-session-cost'), 'Session cost limit reached ($1.00 / $1.00)');
+  await f.session.prompt('blocked');
+  assert.equal(f.requests, 1);
+  assert.equal(JSON.parse(f.statuses.get('piop-input-rejected')).text, 'blocked');
+  await f.session.prompt('/cost 2');
+  await f.session.prompt('second');
+  assert.equal(f.requests, 2);
+  await f.session.prompt('/cost clear');
+  await f.session.prompt('third');
+  assert.equal(f.requests, 3);
+  assert.equal(f.statuses.get('piop-session-cost'), undefined);
+});
+
+test('real session blocks tools when the response reaches the limit', async t => {
+  const f = await fixture(t, { toolCalls: true });
+  await f.session.prompt('/cost 1');
+  await f.session.prompt('run tool');
+  assert.equal(f.requests, 1);
+  assert.equal(f.executions, 0);
+  assert.ok(f.session.messages.some(message => message.role === 'toolResult' && message.isError));
+});
+
+test('real session stops the next request when a tool charge reaches the limit', async t => {
+  const f = await fixture(t, { toolCalls: true, responseCost: 0.75, toolCost: 0.25 });
+  await f.session.prompt('/cost 1');
+  await f.session.prompt('run tool');
+  assert.equal(f.executions, 1);
+  assert.equal(f.requests, 1);
+  assert.equal(f.aborted, 1);
+  assert.equal(f.statuses.get('piop-session-cost'), 'Session cost limit reached ($1.00 / $1.00)');
+});
+
+for (const kind of ['compaction', 'cache_warm']) test(`${kind} charges added during request preparation stop that request`, async t => {
+  const f = await fixture(t);
+  await f.session.prompt('/cost 1');
+  const prepare = f.session.agent.prepareRequest;
+  f.session.agent.prepareRequest = async (...args) => {
+    const prepared = await prepare(...args);
+    // Model routing can compact after turn_start, before the request context is built.
+    const manager = f.session.sessionManager;
+    if (kind === 'compaction') manager.appendCompaction('Summary', manager.getLeafId(), 100, undefined, false, usage(1));
+    else manager.appendUsage(kind, f.model.provider, f.model.id, usage(1));
+    return prepared;
+  };
+  await f.session.prompt('must not spend after preparation');
+  assert.equal(f.requests, 0);
+  assert.equal(f.aborted, 1);
+});
