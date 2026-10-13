@@ -23,7 +23,6 @@ import sessionCostLimitExtension from '../../extensions/piop-session-cost-limit/
 import runtimeSettingsExtension from '../../extensions/piop-runtime-settings/index.ts?raw';
 import rtkExtension from '../../extensions/piop-rtk/rtk.ts?raw';
 import openaiCacheForkExtension from '../../extensions/piop-openai-cache-fork/index.ts?raw';
-import diagramsExtension from '../../extensions/piop-diagrams/index.ts?raw';
 import agentState from '../../extensions/piop-define-agents/state.ts?raw';
 import agentPromptsRaw from '../../extensions/piop-define-agents/prompts.ts?raw';
 import agentProfiles from '../../extensions/piop-define-agents/profiles.ts?raw';
@@ -132,7 +131,6 @@ export {
   runtimeSettingsExtension,
   rtkExtension,
   openaiCacheForkExtension,
-  diagramsExtension,
   agentState,
   agentPrompts,
   agentProfiles,

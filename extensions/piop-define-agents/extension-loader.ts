@@ -60,10 +60,6 @@ export function extensionPaths(value: string[] | undefined): string[] {
   return [...new Set(value.map(path => path.trim()))];
 }
 
-function bundledPath(path: string, parent: string, base: string) {
-  return path === "../piop-diagrams.ts" && parent === base && process.env.PIOP_GENERATED_EXTENSION_ROOT ? join(process.env.PIOP_GENERATED_EXTENSION_ROOT, "piop-diagrams.ts") : path;
-}
-
 async function directoryEntry(directory: string): Promise<string> {
   for (const name of ["index.ts", "index.js", "index.mjs", "index.cjs"]) {
     try {
@@ -76,8 +72,7 @@ async function directoryEntry(directory: string): Promise<string> {
   throw new Error("Directory has no index.ts, index.js, index.mjs or index.cjs");
 }
 
-export async function resolveExtensionEntry(path: string, parent: string, base: string): Promise<string> {
-  path = bundledPath(path, parent, base);
+export async function resolveExtensionEntry(path: string, parent: string): Promise<string> {
   const absolute = path.startsWith("~/") ? join(homedir(), path.slice(2)) : resolve(parent, path);
   let entry = await realpath(absolute);
 
@@ -527,11 +522,10 @@ export function agentExtensions(pi: ExtensionAPI, baseDirectory: string, importe
     });
 
     async function load(path: string, parent: string) {
-      path = bundledPath(path, parent, baseDirectory);
       const absolute = path.startsWith("~/") ? join(homedir(), path.slice(2)) : resolve(parent, path);
 
       try {
-        const entry = await resolveExtensionEntry(path, parent, baseDirectory);
+        const entry = await resolveExtensionEntry(path, parent);
 
         if (visiting.includes(entry)) throw new Error(`Circular piop extension dependency: ${[...visiting, entry].join(" -> ")}`);
 

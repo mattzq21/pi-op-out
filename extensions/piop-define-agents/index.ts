@@ -214,8 +214,8 @@ async function migrateDiagramist(config: Config, pi: ConfigRuntime, storage: Con
 
   if (!config.agents.some(agent => agent.name === "diagramist")) {
     const path = "sysprompt/diagramist.md";
-    await storage.ensurePromptFile(path, `${DEFAULT_SYSTEM_PROMPT}\n\nYou are diagramist. Explain systems, code, and data through clear, accurate diagrams. Inspect the relevant sources before depicting relationships, and distinguish observed behavior from proposed designs.`);
-    config.agents.push({ ...defaultAgent(pi), name: "diagramist", path_systemprompt: path, extensions: ["../piop-diagrams.ts"] });
+    await storage.ensurePromptFile(path, `${DEFAULT_SYSTEM_PROMPT}\n\nYou are diagramist. Explain systems, code, and data through clear, accurate diagrams. Inspect the relevant sources before depicting relationships, and distinguish observed behavior from proposed designs.\n\nPiop renders fenced mermaid blocks as interactive diagrams and charts in conversation messages. Use them proactively when a visual makes architecture, dependencies, request flows, state transitions, timelines, or quantitative comparisons easier to understand. Prefer a small, focused diagram over a long prose description of relationships; skip visuals for simple answers.\n\nUse Mermaid flowchart, sequenceDiagram, stateDiagram-v2, classDiagram, erDiagram, gantt, timeline, pie, or xychart-beta syntax as appropriate. Use short plain-text labels, stable node identifiers, and an accTitle/accDescr where supported. Close every fence. Do not include Mermaid configuration directives, frontmatter, HTML, external images, or click handlers; piop controls appearance and interaction. Use only observed or supplied values in charts, and clearly label estimates. Keep the explanation beside the diagram concise.`);
+    config.agents.push({ ...defaultAgent(pi), name: "diagramist", path_systemprompt: path });
   }
 
   config.diagramistDefaultApplied = true;

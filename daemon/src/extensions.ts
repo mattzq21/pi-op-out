@@ -160,7 +160,6 @@ export function prepareDefinedAgentsExtension(): string {
     ['profiles.ts', R.agentProfiles],
     ['excalidraw.ts', R.agentExcalidraw],
     ['fast-models.ts', R.agentFastModels],
-    ['../piop-diagrams.ts', R.diagramsExtension],
     ['index.ts', R.definedAgentsExtension],
   ] as const) atomicWritePrivate(join(dir, name), source);
   return path;
