@@ -80,6 +80,14 @@ function prepareBrokerStorage(dir: string): void {
   atomicWritePrivate(join(dir, 'ask-user.ts'), R.askUser);
 }
 
+export function prepareProvidersRefreshExtension(): string {
+  const dir = generatedExtensionRoot();
+  ensurePrivateDir(dir);
+  const path = join(dir, 'piop-providers-refresh.ts');
+  atomicWritePrivate(path, R.providersRefreshExtension);
+  return path;
+}
+
 export function prepareOpenaiCacheForkExtension(): string {
   const dir = generatedExtensionRoot();
   ensurePrivateDir(dir);

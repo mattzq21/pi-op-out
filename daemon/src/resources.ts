@@ -20,6 +20,7 @@ import mcpBridgeBundle from '../resources/mcp-bridge.bundle.mjs?raw';
 import fastModeBundle from '../resources/fast-mode.bundle.mjs?raw';
 import askUser from '../resources/ask-user.ts?raw';
 import sessionCostLimitExtension from '../../extensions/piop-session-cost-limit/index.ts?raw';
+import providersRefreshExtension from '../../extensions/piop-providers-refresh/index.ts?raw';
 import runtimeSettingsExtension from '../../extensions/piop-runtime-settings/index.ts?raw';
 import rtkExtension from '../../extensions/piop-rtk/rtk.ts?raw';
 import openaiCacheForkExtension from '../../extensions/piop-openai-cache-fork/index.ts?raw';
@@ -131,6 +132,7 @@ export {
   askUser,
   sessionCostLimitExtension,
   runtimeSettingsExtension,
+  providersRefreshExtension,
   rtkExtension,
   openaiCacheForkExtension,
   agentState,
