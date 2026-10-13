@@ -113,8 +113,6 @@ test('closing keeps a conversation after a prompt was submitted', async () => {
         models: [{ id: 'waiting', contextWindow: 200_000, maxTokens: 4096 }],
       },
     } }));
-    const settings = await daemon.invoke('load_app_settings');
-    await daemon.invoke('save_app_settings', { settings: { ...settings, defaultModel: 'blank-session-test/waiting' } });
     const chat = JSON.parse(execFileSync('node', [fileURLToPath(new URL('../fixtures/publish-chat.mjs', import.meta.url))], {
       encoding: 'utf8', timeout: 30_000,
       input: JSON.stringify({ home: daemon.home, cwd: daemon.home, content: '' }),
@@ -125,6 +123,7 @@ test('closing keeps a conversation after a prompt was submitted', async () => {
     const state = await daemon.invoke('pi_command', { runtimeId, command: { type: 'get_state' } });
     expect(state.sessionFile).toBe(chat.path);
     expect(state.sessionId).toBe(chat.id);
+    await daemon.invoke('pi_command', { runtimeId, command: { type: 'set_model', provider: 'blank-session-test', modelId: 'waiting' } });
     await daemon.invoke('pi_command', { runtimeId, command: { type: 'prompt', message: 'Keep this' } });
     expect(await daemon.invoke('stop_pi', { runtimeId, discardBlank: true })).toBe(false);
     expect(existsSync(chat.path)).toBe(true);

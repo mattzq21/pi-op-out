@@ -15,7 +15,7 @@ async function modelApp(t, overrides = {}) {
       models: [{ id: 'known', name: 'Known' }, { id: 'other', name: 'Other' }],
     } } }));
     const original = await daemon.invoke('load_app_settings');
-    await daemon.invoke('save_host_settings', { hostId: 'local', agentsChanged: false, settings: { ...original, defaultModel: 'visibility-test/known', hiddenModels: [], ...overrides } });
+    await daemon.invoke('save_host_settings', { hostId: 'local', agentsChanged: false, settings: { ...original, hiddenModels: [], ...overrides } });
   } });
 }
 

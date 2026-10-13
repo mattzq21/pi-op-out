@@ -104,29 +104,20 @@ export async function agentFixture(t, options = {}) {
   };
 
   const define = (await import(pathToFileURL(join(dir, 'index.mjs')))).default;
-  const defineLocal = async () => {
-    const broker = process.env.PI_DESKTOP_BROKER_URL;
-    delete process.env.PI_DESKTOP_BROKER_URL;
-    try { return await define(pi); }
-    finally { if (broker !== undefined) process.env.PI_DESKTOP_BROKER_URL = broker; }
-  };
+  const defineLocal = () => define(pi);
 
-  let registerFastMode, registerRuntime;
+  let registerFastMode;
   const load = async () => {
     if (options.realMcp) {
       const { installAgentMcp } = await import('./mcp-agent-fixture.mjs');
       await installAgentMcp({ dir, pi, tools, ...options.realMcp });
     }
-    if (options.realRuntime) {
-      const models = options.models ?? [options.model];
-      for (const model of models) model.input ??= ['text'];
-      ctx.modelRegistry.getAll = () => models;
-      if (registerRuntime) await registerRuntime();
-      else {
-        const { installRuntimeSettings } = await import('./runtime-settings-fixture.mjs');
-        registerRuntime = await installRuntimeSettings({ dir, pi, ctx, settings: options.runtime, settingsPath: options.runtimeSettingsPath });
-      }
-    }
+    const input = options.runtime ?? {};
+    const enabledTools = input.enabledTools ?? [...tools.keys()];
+    process.env.PIOP_AGENT_RESOURCES = JSON.stringify({
+      tools: input.tools ?? { enabledTools, registeredTools: enabledTools },
+      skills: input.skills ?? { userInvokedSkills: [], agentInvokedSkills: (options.config?.agents ?? []).flatMap(agent => agent?.skills ?? []) },
+    });
     if (!options.realFastMode) return defineLocal();
     const loadFast = async () => {
       if (registerFastMode) registerFastMode();

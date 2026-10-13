@@ -23,11 +23,11 @@ export async function modelValidator(fastModels: FastModelSnapshot | null) {
   const { ModelRegistry: Registry } = await import(pathToFileURL(join(directory, "dist/core/model-registry.js")).href);
   const createRuntime = (): Promise<ModelRuntime> => Runtime.create({ allowModelNetwork: false });
 
-  return async (agent: Agent, defaultModel: string, activate: (registry: ModelRegistry, validate: () => Promise<void>) => Promise<void>) => {
+  return async (agent: Agent, activate: (registry: ModelRegistry, validate: () => Promise<void>) => Promise<void>) => {
     const runtime = await createRuntime();
     const registry: ModelRegistry = new Registry(runtime);
     await activate(registry, async () => {
-      const name = agent.model.trim() || (agent.fastMode ? defaultModel.trim() : "");
+      const name = agent.model.trim();
 
       if (!name && !agent.fastMode) return;
       const model = configuredModel(registry, agent, name);

@@ -1,3 +1,4 @@
+import agentResources from "../../extensions/piop-define-agents/resources.ts?raw";
 import fileLockSource from '../resources/file-lock.cjs?raw';
 import sessionDatabase from '../resources/session-database.cjs?raw';
 import appSettingsCjs from '../resources/session-broker/app-settings.cjs?raw';
@@ -20,7 +21,8 @@ import mcpBridgeBundle from '../resources/mcp-bridge.bundle.mjs?raw';
 import fastModeBundle from '../resources/fast-mode.bundle.mjs?raw';
 import askUser from '../resources/ask-user.ts?raw';
 import sessionCostLimitExtension from '../../extensions/piop-session-cost-limit/index.ts?raw';
-import runtimeSettingsExtension from '../../extensions/piop-runtime-settings/index.ts?raw';
+import codemodeToolsDescriptionExtension from '../../extensions/piop-codemode-tools-description/index.ts?raw';
+import providersRefreshExtension from '../../extensions/piop-providers-refresh/index.ts?raw';
 import rtkExtension from '../../extensions/piop-rtk/rtk.ts?raw';
 import openaiCacheForkExtension from '../../extensions/piop-openai-cache-fork/index.ts?raw';
 import agentState from '../../extensions/piop-define-agents/state.ts?raw';
@@ -30,7 +32,6 @@ import agentMcpConfig from '../../extensions/piop-define-agents/mcp-config.ts?ra
 import definedAgentsExtension from '../../extensions/piop-define-agents/index.ts?raw';
 import agentExtensionLoader from '../../extensions/piop-define-agents/extension-loader.ts?raw';
 import agentExcalidraw from '../../extensions/piop-define-agents/excalidraw.ts?raw';
-import agentDaemonDefinitions from '../../extensions/piop-define-agents/daemon-definitions.ts?raw';
 import agentFastModels from '../../extensions/piop-define-agents/fast-models.ts?raw';
 import contextWindowCapExtension from '../../extensions/piop-context-window-cap/index.ts?raw';
 import contextWindowCapInterface from '../../extensions/piop-context-window-cap/interface.ts?raw';
@@ -130,17 +131,18 @@ export {
   fastModeBundle,
   askUser,
   sessionCostLimitExtension,
-  runtimeSettingsExtension,
+  codemodeToolsDescriptionExtension,
+  providersRefreshExtension,
   rtkExtension,
   openaiCacheForkExtension,
   agentState,
+  agentResources,
   agentPrompts,
   agentProfiles,
   agentMcpConfig,
   definedAgentsExtension,
   agentExtensionLoader,
   agentExcalidraw,
-  agentDaemonDefinitions,
   agentFastModels,
   contextWindowCapExtension,
   contextWindowCapInterface,

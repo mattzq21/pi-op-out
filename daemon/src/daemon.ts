@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { STORAGE_DIRECTORY } from './config';
 import { homeDir, piExecutable } from './environment';
-import { runtimeSettings } from './extensions';
+import { agentResources, contextCapSettings, saveContextCapSettings } from './extensions';
 import { remoteHost } from './pi_launch';
 import * as host from './host/index';
 import { Mutex } from './util/sync';
@@ -39,7 +39,8 @@ export class Daemon {
 
   async configure(runtime: PiRuntime, settings: AppSettings, hostId: string): Promise<void> {
     const agentRevision = runtime.agentConfigRevisions.get(hostId) ?? 0;
-    await this.request({ type: 'configure', configuration: { settings: runtimeSettings(settings), autoCompaction: true, autoRetry: settings.autoRetry, agentRevision } });
+    saveContextCapSettings(settings);
+    await this.request({ type: 'configure', configuration: { contextCapSettings: contextCapSettings(settings), settings: agentResources(settings), autoCompaction: true, autoRetry: settings.autoRetry, agentRevision } });
   }
 
   matchesConnection(settings: AppSettings, hostId: string): boolean {

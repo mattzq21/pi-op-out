@@ -1,4 +1,3 @@
-import { runtimeSettingsPath } from '../runtime-settings-service-fixture.mjs';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { readFile, readdir, stat, mkdir, rm } from 'node:fs/promises';
@@ -9,6 +8,16 @@ import { agentFixture, profile, configured, encoded } from '../defined-agent-fix
 import { installAgentMcp } from '../mcp-agent-fixture.mjs';
 
 const remoteMcp = { command: 'mcp-server', args: [], enabled: true };
+
+test('agent startup reads local definitions even when a broker is configured', async t => {
+  const f = await agentFixture(t, {
+    config: configured([profile()]),
+    env: { PI_DESKTOP_BROKER_URL: 'http://127.0.0.1:1', PI_DESKTOP_BROKER_TOKEN: '' },
+  });
+  await f.load(); await f.start();
+  assert.deepEqual(f.pi.getActiveTools(), ['read']);
+  assert.deepEqual(await f.input('Start'), { action: 'continue' });
+});
 
 test('restoring general preserves explicitly enabled question tools', async t => {
   const f = await agentFixture(t, { tools: ['read', 'request_user_input'], config: null });
@@ -21,7 +30,7 @@ test('restoring general preserves explicitly enabled question tools', async t =>
 });
 
 test('skill switches save before reload and failed activation restores overrides without history writes', async t => {
-  const f = await agentFixture(t, { config: null });
+  const f = await agentFixture(t, { runtime: { skills: { userInvokedSkills: [], agentInvokedSkills: ['/skills/review', '/skills/broken'] } }, config: null });
   await f.load();
   await f.configure(configured([profile(), profile('reviewer', { skills: ['/skills/review'], model: 'test/review/model', effort: 'low' }), profile('broken', { skills: ['/skills/broken'], tools: ['missing'] })]));
   await f.start();
@@ -97,9 +106,9 @@ test('fast mode validates configured and override models and applies supported s
 
 
 test('agent skills include only globally allowed paths after home expansion', async t => {
-  const runtime = { tools: ['read', 'bash'], skills: [] };
-  const f = await agentFixture(t, { realRuntime: true, runtimeSettingsPath: await runtimeSettingsPath(t), runtime, config: null });
-  runtime.skills = [join(f.home, 'allowed')];
+  const runtime = { enabledTools: ['read', 'bash'] };
+  const f = await agentFixture(t, { runtime, config: null });
+  runtime.skills = { userInvokedSkills: [], agentInvokedSkills: [join(f.home, 'allowed')] };
   f.ctx.reload = f.reloadExtensions;
   await f.load(); await f.start();
   await f.configure(configured([profile('general', { skills: ['~/allowed', '/blocked'] })]));
@@ -122,7 +131,7 @@ test('first run creates private defaults and preserves existing prompts (product
   const development = false;
   const env = development ? { PIOP_STORAGE_DIRECTORY: '.piop-dev' } : {};
   const allTools = ['read', 'bash', 'edit', 'write', 'grep', 'find', 'ls', 'web_search', 'subagent'];
-  const f = await agentFixture(t, { config: null, env, realRuntime: true, runtimeSettingsPath: await runtimeSettingsPath(t), runtime: { tools: allTools, skills: [] }, tools: allTools, files: { 'home/.agents/AGENTS.md': 'Personal instructions' } });
+  const f = await agentFixture(t, { config: null, env, runtime: { enabledTools: allTools }, tools: allTools, files: { 'home/.agents/AGENTS.md': 'Personal instructions' } });
   await f.load(); const config = await f.configuration();
   const expected = { name: 'general', model: '', effort: development ? 'medium' : 'high', extensions: [], max_subagents: 8, max_sub_subagents: 8, path_systemprompt: 'sysprompt/default.md', path_agent_prompt: `~/${development ? '.piop-dev' : '.piop'}/agents/default.md`, tools: allTools, skills: [], mcpServers: {} };
 
@@ -139,7 +148,7 @@ test('first run creates private defaults and preserves existing prompts (develop
   const development = true;
   const env = development ? { PIOP_STORAGE_DIRECTORY: '.piop-dev' } : {};
   const allTools = ['read', 'bash', 'edit', 'write', 'grep', 'find', 'ls', 'web_search', 'subagent'];
-  const f = await agentFixture(t, { config: null, env, realRuntime: true, runtimeSettingsPath: await runtimeSettingsPath(t), runtime: { tools: allTools, skills: [] }, tools: allTools, files: { 'home/.agents/AGENTS.md': 'Personal instructions' } });
+  const f = await agentFixture(t, { config: null, env, runtime: { enabledTools: allTools }, tools: allTools, files: { 'home/.agents/AGENTS.md': 'Personal instructions' } });
   await f.load(); const config = await f.configuration();
   const expected = { name: 'general', model: '', effort: development ? 'medium' : 'high', extensions: [], max_subagents: 8, max_sub_subagents: 8, path_systemprompt: 'sysprompt/default.md', path_agent_prompt: `~/${development ? '.piop-dev' : '.piop'}/agents/default.md`, tools: allTools, skills: [], mcpServers: {} };
 
@@ -154,7 +163,7 @@ test('first run creates private defaults and preserves existing prompts (develop
 
 test('legacy prompts retain their content in editable prompt files', async t => {
   const legacy = { name: 'default', description: 'obsolete', systemPrompt: 'System', developerPrompt: 'Developer', agentsMd: 'Agent notes', tools: [], skills: [], mcpServers: {} };
-  const f = await agentFixture(t, { config: { agents: [legacy, { ...legacy, name: ' Reviewer!! ', systemPrompt: '' }] }, realRuntime: true, runtimeSettingsPath: await runtimeSettingsPath(t), runtime: { tools: [], skills: [] } });
+  const f = await agentFixture(t, { config: { agents: [legacy, { ...legacy, name: ' Reviewer!! ', systemPrompt: '' }] }, runtime: { enabledTools: [] } });
   await f.load();
   const config = await f.configuration();
   assert.deepEqual(config.agents.map(a => a.name), ['general', ' Reviewer!! ', 'diagramist', 'excalidraw-agent', 'tokagent']);
@@ -270,7 +279,7 @@ test('session restore uses the latest state, ignores unrelated custom records, a
 });
 
 test('tool validation combines global restrictions and actual availability with deduplicated diagnostics', async t => {
-  const f = await agentFixture(t, { tools: ['read', 'bash'], realRuntime: true, runtimeSettingsPath: await runtimeSettingsPath(t), runtime: { tools: ['read', 'unknown'], skills: [] }, config: null });
+  const f = await agentFixture(t, { tools: ['read', 'bash'], runtime: { enabledTools: ['read', 'unknown'] }, config: null });
   await f.load();
   await f.configure(configured([profile('general', { tools: ['bash', 'unknown', 'bash'] })]));
   await f.start();
@@ -280,7 +289,7 @@ test('tool validation combines global restrictions and actual availability with 
 });
 
 test('extension tools bypass the global builtin allow-list and remain available after refresh', async t => {
-  const f = await agentFixture(t, { realRuntime: true, runtimeSettingsPath: await runtimeSettingsPath(t), runtime: { tools: ['read'], skills: [] }, config: null, files: { 'extra.mjs': 'export default pi => pi.registerTool({ name: "extra", execute: async () => "ok" });' } });
+  const f = await agentFixture(t, { runtime: { enabledTools: ['read'] }, config: null, files: { 'extra.mjs': 'export default pi => pi.registerTool({ name: "extra", execute: async () => "ok" });' } });
   await f.load();
   await f.configure(configured([profile('general', { extensions: ['extra.mjs'], tools: ['read', 'extra'] })]));
   await f.start(); assert.deepEqual(f.pi.getActiveTools(), ['read', 'extra']);
@@ -321,7 +330,7 @@ test('explicit general and default profiles remain distinct', async t => {
 });
 
 test('equivalent skill sets avoid unnecessary reloads after normalization and sorting', async t => {
-  const f = await agentFixture(t, { config: null });
+  const f = await agentFixture(t, { runtime: { skills: { userInvokedSkills: [], agentInvokedSkills: ['/skills/b', '~/skills/a'] } }, config: null });
   await f.load();
   await f.configure(configured([profile('general', { skills: ['/skills/b', '~/skills/a', '/skills/b'] }), profile('reviewer', { skills: ['~/skills/a', '/skills/b'] })]));
   await f.start(); await f.select('reviewer');
@@ -341,8 +350,8 @@ test('fresh sessions recognize conversational history but ignore tool messages a
 });
 
 test('tool migration adds missing defaults without removing explicit builtin choices', async t => {
-  const runtime = { tools: ['web_search', 'subagent'], skills: [] };
-  const f = await agentFixture(t, { realRuntime: true, runtimeSettingsPath: await runtimeSettingsPath(t), runtime, config: { agents: [profile('general', { tools: ['read'] }), profile('reviewer', { tools: ['web_search'] })] } });
+  const runtime = { enabledTools: ['web_search', 'subagent'] };
+  const f = await agentFixture(t, { runtime, config: { agents: [profile('general', { tools: ['read'] }), profile('reviewer', { tools: ['web_search'] })] } });
   await f.load();
   const saved = await f.configuration();
   assert.deepEqual(saved.agents[0].tools, ['read', 'subagent', 'web_search']);
@@ -447,7 +456,7 @@ test('agent RPC uses exact names and rejects encoded or unknown names without ex
 test('new default profiles retain available session tools after one-time migrations are finished', async t => {
   const tools = ['read', 'bash', 'edit', 'write', 'grep', 'find', 'ls', 'web_search', 'subagent'];
   const model = { provider: 'openai', id: 'gpt-5.4', api: 'openai-responses' };
-  const f = await agentFixture(t, { config: null, realRuntime: true, runtimeSettingsPath: await runtimeSettingsPath(t), runtime: { tools, skills: [] }, tools, model, models: [model], realFastMode: { catalog: [] } });
+  const f = await agentFixture(t, { config: null, runtime: { enabledTools: tools }, tools, model, models: [model], realFastMode: { catalog: [] } });
   await f.load(); await f.start(); await f.configure({ agents: [] });
   assert.deepEqual((await f.configuration()).agents[0].tools, ['read', 'bash', 'edit', 'write', 'grep', 'find', 'ls', 'web_search', 'subagent']);
 });
@@ -558,7 +567,7 @@ test('null historical agent state does not hide the latest valid selection', asy
 });
 
 test('initial resource discovery exposes the general agents skills before session startup', async t => {
-  const f = await agentFixture(t, { config: null });
+  const f = await agentFixture(t, { runtime: { skills: { userInvokedSkills: [], agentInvokedSkills: ['/startup-skill'] } }, config: null });
   await f.load();
   await f.configure(configured([profile('general', { skills: ['/startup-skill'] })]));
   assert.deepEqual(await f.emit('resources_discover'), { skillPaths: ['/startup-skill'] });
@@ -965,7 +974,7 @@ test('fast mode cannot be selected without a model', async t => {
 });
 
 test('a failed resource reload still permits final shutdown to clear agent status', async t => {
-  const f = await agentFixture(t, { config: null });
+  const f = await agentFixture(t, { runtime: { skills: { userInvokedSkills: [], agentInvokedSkills: ['/skills/review'] } }, config: null });
   await f.load();
   await f.configure(configured([profile(), profile('reviewer', { skills: ['/skills/review'] })]));
   await f.start();
@@ -981,7 +990,7 @@ test('a failed resource reload still permits final shutdown to clear agent statu
   assert.equal(f.statuses.get('pi-define-agents'), undefined);
 });
 
-test('refreshing a missing saved agent clears externally enabled tools', async t => {
+test('removed agent refresh leaves externally enabled tools unchanged', async t => {
   const f = await agentFixture(t, { config: null, entries: [{ type: 'custom', customType: 'pi-define-agents-state', data: { active: 'missing' } }] });
   await f.load(); await f.start();
   assert.deepEqual(f.pi.getActiveTools(), []);
@@ -989,12 +998,13 @@ test('refreshing a missing saved agent clears externally enabled tools', async t
   const request = { ctx: f.ctx };
   f.pi.events.emit('piop:agents:refresh', request);
   await request.ready;
-  assert.deepEqual(f.pi.getActiveTools(), []);
+  assert.equal(request.ready, undefined);
+  assert.deepEqual(f.pi.getActiveTools(), ['read']);
 });
 
 test('clearing migrated tools remains effective after reload and selection', async t => {
   const tools = ['read', 'web_search', 'subagent'];
-  const f = await agentFixture(t, { realRuntime: true, runtimeSettingsPath: await runtimeSettingsPath(t), runtime: { tools, skills: [] }, tools, config: { agents: [profile()] } });
+  const f = await agentFixture(t, { runtime: { enabledTools: tools }, tools, config: { agents: [profile()] } });
   await f.load(); await f.start();
   assert.deepEqual(f.pi.getActiveTools(), ['read', 'subagent', 'web_search']);
   await f.configure({ agents: [profile('general', { tools: [] })] });
@@ -1007,7 +1017,7 @@ test('legacy command and patch tools migrate to the current builtin tools', asyn
   const tools = ['read', 'bash', 'grep', 'find', 'ls', 'edit', 'write', 'web_search'];
   const f = await agentFixture(t, {
     config: { agents: [profile('default', { tools: ['exec_command', 'apply_patch', 'read', 'web_search'] })] },
-    realRuntime: true, runtimeSettingsPath: await runtimeSettingsPath(t), runtime: { tools: ['web_search', 'fork_session'], skills: [] }, tools,
+    runtime: { enabledTools: ['web_search', 'fork_session'] }, tools,
   });
   await f.load();
   assert.deepEqual((await f.configuration()).agents[0].tools, ['read', 'bash', 'grep', 'find', 'ls', 'edit', 'write', 'web_search']);
@@ -1016,7 +1026,7 @@ test('legacy command and patch tools migrate to the current builtin tools', asyn
 test('editing tools after legacy migration survives reload', async t => {
   const f = await agentFixture(t, {
     config: { agents: [profile('default', { tools: ['exec_command', 'apply_patch', 'read', 'web_search'] })] },
-    realRuntime: true, runtimeSettingsPath: await runtimeSettingsPath(t), runtime: { tools: ['read', 'web_search', 'fork_session'], skills: [] },
+    runtime: { enabledTools: ['read', 'web_search', 'fork_session'] },
   });
   await f.load();
   await f.configure({ agents: [profile('general', { tools: ['read'] })] });
@@ -1025,19 +1035,24 @@ test('editing tools after legacy migration survives reload', async t => {
   assert.deepEqual(f.pi.getActiveTools(), ['read']);
 });
 
-test('removing global skill access removes discovered agent skills', async t => {
-  const runtime = { tools: ['read'], skills: [] };
-  const f = await agentFixture(t, { realRuntime: true, runtimeSettingsPath: await runtimeSettingsPath(t), runtime, config: null });
-  runtime.skills = [join(f.home, 'allowed')];
+test('started agent keeps skill paths and invocation policy across resource changes and resume', async t => {
+  const runtime = { enabledTools: ['read'] };
+  const f = await agentFixture(t, { runtime, config: null });
+  runtime.skills = { userInvokedSkills: [], agentInvokedSkills: [join(f.home, 'allowed')] };
   await f.load();
   await f.configure(configured([profile('general', { skills: ['~/allowed'] })]));
   await f.start();
   assert.deepEqual(await f.emit('resources_discover'), { skillPaths: ['~/allowed'] });
-  f.ctx.mode = 'rpc'; f.ctx.reload = f.reloadExtensions;
-  const request = { command: 'runtime_settings', payload: { settings: { skills: [] } }, ctx: f.ctx };
-  f.pi.events.emit('piop:rpc', request);
-  assert.ok(request.ready); await request.ready;
-  assert.equal(await f.emit('resources_discover'), undefined);
+  await f.input('Start');
+  runtime.skills = { userInvokedSkills: [join(f.home, 'allowed')], agentInvokedSkills: [] };
+  await f.reloadExtensions();
+  assert.deepEqual(await f.emit('resources_discover'), { skillPaths: ['~/allowed'] });
+  const prompt = await f.prompt({ skills: [{ filePath: join(f.home, 'allowed/SKILL.md'), baseDir: join(f.home, 'allowed') }] });
+  assert.notEqual(prompt.skills[0].disableModelInvocation, true);
+  runtime.skills = { userInvokedSkills: [], agentInvokedSkills: [] };
+  await f.reloadExtensions();
+  assert.deepEqual(await f.emit('resources_discover'), { skillPaths: ['~/allowed'] });
+
 });
 
 test('agent instructions replace appended instructions without changing discovered skills', async t => {
@@ -1072,6 +1087,19 @@ test('editing a profile leaves the running agent tools and prompt unchanged', as
   assert.equal(f.capability().active, 'general');
   assert.deepEqual(f.pi.getActiveTools(), ['read']);
   assert.equal((await f.prompt()).customPrompt, 'System instructions');
+});
+
+test('context cap requests use the selected agent definition until another selection', async t => {
+  const f = await agentFixture(t, { config: null });
+  await f.load();
+  await f.configure(configured([profile('general', { contextWindowCap: 300000 })]));
+  await f.start();
+  const cap = () => { const request = {}; f.pi.events.emit('piop:agents:context-cap', request); return request.cap; };
+  assert.equal(cap(), 300000);
+  await f.configure({ agents: [profile('general', { contextWindowCap: null })] });
+  assert.equal(cap(), 300000);
+  await f.select('general');
+  assert.equal(cap(), null);
 });
 
 test('saved profile edits remain selectable after extension reload', async t => {
@@ -1227,7 +1255,7 @@ test('an MCP SDK string failure blocks input and reports its message', async t =
 
 
 test('agent MCP tools remain usable after a normal agent refresh', async t => {
-  const f = await agentFixture(t, { realRuntime: true, runtimeSettingsPath: await runtimeSettingsPath(t), runtime: { tools: ['read'], skills: [] }, tools: ['read', 'mcp_other_query'], config: null });
+  const f = await agentFixture(t, { runtime: { enabledTools: ['read'] }, tools: ['read', 'mcp_other_query'], config: null });
   await installAgentMcp({ dir: f.dir, pi: f.pi, tools: f.tools, servers: { remote: [
     { name: 'mcp_my_server_query', parameters: {}, execute: async () => ({ content: [{ type: 'text', text: 'First result' }] }) },
     { name: 'mcp_tool_query', parameters: {}, execute: async () => ({ content: [{ type: 'text', text: 'Second result' }] }) },
@@ -1241,35 +1269,23 @@ test('agent MCP tools remain usable after a normal agent refresh', async t => {
   assert.deepEqual(await f.tools.get('mcp_tool_query').execute(), { content: [{ type: 'text', text: 'Second result' }] });
 });
 
-test('removing a required global tool blocks an agent with MCP tools', async t => {
-  const f = await agentFixture(t, { realRuntime: true, runtimeSettingsPath: await runtimeSettingsPath(t), runtime: { tools: ['read'], skills: [] }, config: null });
-  await installAgentMcp({ dir: f.dir, pi: f.pi, tools: f.tools, servers: { remote: [{ name: 'mcp_remote_read', parameters: {} }] } });
-  await f.load();
-  await f.configure(configured([profile('general', { mcpServers: { remote: remoteMcp } })]));
-  await f.start();
-  assert.deepEqual(f.pi.getActiveTools(), ['read', 'mcp_remote_read']);
-  f.ctx.mode = 'rpc';
-  const request = { command: 'runtime_settings', payload: { settings: { tools: [] } }, ctx: f.ctx };
-  f.pi.events.emit('piop:rpc', request); await request.ready;
-  assert.deepEqual(f.pi.getActiveTools(), []);
-  assert.deepEqual(await f.input('blocked'), { action: 'handled' });
-  assert.equal(f.notices.at(-1).message, 'Agent "general" cannot run because Pi does not allow its configured tool: read');
-});
-
-test('restoring a required global tool makes an MCP agent usable again', async t => {
-  const f = await agentFixture(t, { realRuntime: true, runtimeSettingsPath: await runtimeSettingsPath(t), runtime: { tools: ['read'], skills: [] }, config: null });
-  await installAgentMcp({ dir: f.dir, pi: f.pi, tools: f.tools, servers: { remote: [{ name: 'mcp_remote_read', parameters: {} }] } });
-  await f.load();
-  await f.configure(configured([profile('general', { mcpServers: { remote: remoteMcp } })]));
-  await f.start();
-  f.ctx.mode = 'rpc';
-  const disable = { command: 'runtime_settings', payload: { settings: { tools: [] } }, ctx: f.ctx };
-  f.pi.events.emit('piop:rpc', disable); await disable.ready;
-  assert.deepEqual(f.pi.getActiveTools(), []);
-  const enable = { command: 'runtime_settings', payload: { settings: { tools: ['read'] } }, ctx: f.ctx };
-  f.pi.events.emit('piop:rpc', enable); await enable.ready;
-  assert.deepEqual(await f.input('continue'), { action: 'continue' });
+test('started agent keeps tool lists across catalog changes and resume', async t => {
+  const runtime = { enabledTools: ['read'] };
+  const f = await agentFixture(t, { runtime, config: configured([profile()]) });
+  await f.load(); await f.start(); await f.input('Start');
+  runtime.enabledTools = [];
+  await f.configure(configured([profile('general', { tools: [] })]));
+  const request = { command: 'refresh_agent_definitions', payload: {}, ctx: f.ctx };
+  f.pi.events.emit('piop:rpc', request);
+  assert.equal(request.ready, undefined);
   assert.deepEqual(f.pi.getActiveTools(), ['read']);
+  await f.reloadExtensions();
+  assert.deepEqual(f.pi.getActiveTools(), ['read']);
+  assert.deepEqual(await f.input('Continue'), { action: 'continue' });
+  const fresh = await agentFixture(t, { runtime, config: configured([profile()]) });
+  await fresh.load(); await fresh.start();
+  assert.deepEqual(fresh.pi.getActiveTools(), []);
+  assert.match(fresh.notices.at(-1).message, /does not allow its configured tool: read/);
 });
 
 test('agent shutdown releases the MCP tool and agent refresh services', async t => {
@@ -1289,7 +1305,7 @@ test('saving agent definitions publishes the new profile choices', async t => {
   assert.deepEqual(f.capability().config.agents.map(agent => agent.name), ['general', 'new-agent']);
 });
 
-test('agent refresh discards stale tools while keeping active MCP tools', async t => {
+test('removed agent refresh preserves extension tool choices', async t => {
   const f = await agentFixture(t, { config: null });
   await installAgentMcp({ dir: f.dir, pi: f.pi, tools: f.tools, servers: { remote: [{ name: 'mcp_remote_read', parameters: {} }] } });
   await f.load();
@@ -1297,7 +1313,8 @@ test('agent refresh discards stale tools while keeping active MCP tools', async 
   await f.start();
   f.pi.setActiveTools(['read', 'stale', 'mcp_remote_read']);
   const request = { ctx: f.ctx }; f.pi.events.emit('piop:agents:refresh', request); await request.ready;
-  assert.deepEqual(f.pi.getActiveTools(), ['read', 'mcp_remote_read']);
+  assert.equal(request.ready, undefined);
+  assert.deepEqual(f.pi.getActiveTools(), ['read', 'stale', 'mcp_remote_read']);
 });
 
 test('a newly available model can be selected by a fast-mode agent', async t => {

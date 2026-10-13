@@ -13,6 +13,14 @@ const load = () => daemon.invoke('load_app_settings');
 const save = (settings: any, agentHostId?: string) => daemon.invoke('save_app_settings', { settings, agentHostId });
 const remote = (host: Record<string, unknown> = {}) => ({ enabled: false, id: 'remote', name: 'Server', target: 'user@host', piPath: 'pi', ...host });
 
+test('retired default model is dropped when settings are saved', async () => {
+  const settings = await load();
+  expect(settings).not.toHaveProperty('defaultModel');
+  const change = await save({ ...settings, defaultModel: 'retired/model' });
+  expect(change.settings).not.toHaveProperty('defaultModel');
+  expect(await load()).not.toHaveProperty('defaultModel');
+});
+
 test('invalid settings are rejected and the saved settings stay unchanged', async () => {
   const before = await load();
   const cases: Array<[string, (settings: any) => void, string]> = [
@@ -76,11 +84,11 @@ test('each save tells clients the new settings and gives each agent machine a ri
   for (const host of ['remote', undefined, 'local', 'remote']) {
     const settings = await load();
     const model = 'model-' + changes.length;
-    settings.defaultModel = model;
+    settings.reviewPrompt = model;
     const change = await save(settings, host);
-    expect(change.settings.defaultModel).toBe(model);
-    expect((await load()).defaultModel).toBe(model);
-    await daemon.waitEvent('pi://settings-changed', payload => payload.settings.defaultModel === model);
+    expect(change.settings.reviewPrompt).toBe(model);
+    expect((await load()).reviewPrompt).toBe(model);
+    await daemon.waitEvent('pi://settings-changed', payload => payload.settings.reviewPrompt === model);
     changes.push(change);
   }
   const [first, none, local, second] = changes;
@@ -100,11 +108,11 @@ test('each save tells clients the new settings and gives each agent machine a ri
 test('a save based on outdated settings is rejected and keeps the newer settings', async () => {
   const stale = await load();
   const fresh = structuredClone(stale);
-  fresh.defaultModel = 'fresh-model';
+  fresh.reviewPrompt = 'fresh-model';
   await save(fresh);
-  stale.defaultModel = 'stale-model';
+  stale.reviewPrompt = 'stale-model';
   expect(await daemon.failure('save_app_settings', { settings: stale })).toContain('Settings changed in another window or client');
-  expect((await load()).defaultModel).toBe('fresh-model');
+  expect((await load()).reviewPrompt).toBe('fresh-model');
 });
 
 test('a save that cannot lock the settings fails, keeps the settings and tells no client', async () => {
@@ -113,7 +121,7 @@ test('a save that cannot lock the settings fails, keeps the settings and tells n
   rmSync(lock, { force: true });
   mkdirSync(lock);
   try {
-    const changed = { ...before, defaultModel: 'unsaved-model' };
+    const changed = { ...before, reviewPrompt: 'unsaved-model' };
     const seen = daemon.events.length;
     expect(await daemon.failure('save_app_settings', { settings: changed })).toStartWith('Could not lock settings');
     expect(daemon.events.slice(seen).filter(event => event.event === 'pi://settings-changed')).toEqual([]);
@@ -129,15 +137,15 @@ test('settings are kept when running agents cannot take them, and the save repor
     const bin = join(local.home, '.local/bin');
     fakeProgram(bin, 'pi', '#!/bin/sh\necho "pi is broken" >&2\nexit 1\n');
     const settings = await local.invoke('load_app_settings');
-    settings.defaultModel = 'saved-model';
+    settings.reviewPrompt = 'saved-model';
     const change = await local.invoke('save_app_settings', { settings, agentHostId: 'local' });
     expect(change).toMatchObject({ synchronizationPending: true, agentConfigChange: { hostId: 'local', revision: change.committedRevision } });
     expect(change.warnings).toEqual([expect.stringMatching(/^Settings were saved, but runtime synchronization failed:/)]);
     expect(await local.waitEvent('pi://daemon-error', payload => payload.line.startsWith('Could not synchronize settings:'))).toMatchObject({ hostId: 'local' });
-    expect((await local.invoke('load_app_settings')).defaultModel).toBe('saved-model');
+    expect((await local.invoke('load_app_settings')).reviewPrompt).toBe('saved-model');
     const snapshot = await local.invoke('load_settings_change');
     expect(snapshot).toMatchObject({
-      settings: { defaultModel: 'saved-model' }, committed: true, revision: change.revision, synchronizationPending: true,
+      settings: { reviewPrompt: 'saved-model' }, committed: true, revision: change.revision, synchronizationPending: true,
       warnings: [`Settings were saved; synchronization of revision ${change.revision} is pending and will retry automatically.`],
     });
     expect(snapshot.phaseRevision).toBeGreaterThanOrEqual(change.phaseRevision);
@@ -149,7 +157,7 @@ test('a save fails and keeps the settings while another process holds the settin
   const other = new Database(join(daemon.home, '.piop/sessions.sqlite'));
   other.exec('BEGIN IMMEDIATE');
   let error: string;
-  try { error = await daemon.failure('save_app_settings', { settings: { ...before, defaultModel: 'unsaved-model' } }); }
+  try { error = await daemon.failure('save_app_settings', { settings: { ...before, reviewPrompt: 'unsaved-model' } }); }
   finally { other.exec('ROLLBACK'); other.close(); }
   expect(error).toBe('database is locked');
   expect(await load()).toEqual(before);
@@ -173,5 +181,5 @@ test('a skill disabled by a home-relative path stays disabled after discovery', 
   settings.skills = [{ name: 'home-relative', path: '~/.agents/skills/home-relative', description: 'Pi skill', enabled: false }];
   await save(settings);
   const skills = (await load()).skills.filter((skill: any) => skill.name === 'home-relative');
-  expect(skills).toEqual([expect.objectContaining({ path: root, enabled: false, discovered: true })]);
+  expect(skills).toEqual([expect.objectContaining({ path: root, enabled: false })]);
 });

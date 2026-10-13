@@ -19,6 +19,7 @@ class Host {
   notes: Array<[string, string]> = [];
   statuses: Array<[string, string | undefined]> = [];
   idle = true;
+  agentCap: number | null | undefined;
   model: Model | undefined;
   ctx: any;
 
@@ -32,6 +33,7 @@ class Host {
       ui: { notify: (message: string, type: string) => host.notes.push([type, message]), setStatus: (key: string, text?: string) => host.statuses.push([key, text]) },
     };
     contextWindowCap(this.api() as any);
+    this.api().events.on("piop:agents:context-cap", request => { request.cap = this.agentCap; });
   }
 
   api() {
@@ -67,6 +69,15 @@ class Host {
     return request.session;
   }
 
+  updateDefaults(defaults: { agentDefinition: number | null | undefined; modelConfig: number | null | undefined; generalConfig: number | null }) {
+    this.agentCap = defaults.agentDefinition;
+    return this.session().updateSettings({
+      contextWindowCap: defaults.generalConfig ?? 300_000,
+      contextWindowCapEnabled: defaults.generalConfig !== null,
+      modelContextWindowCaps: defaults.modelConfig === undefined || !this.model ? {} : { [this.model.provider + "/" + this.model.id]: defaults.modelConfig },
+    });
+  }
+
   async selectModel(model: Model) { this.model = model; await this.fire("model_select", { model }); }
 
   caps() { return this.branch.filter(entry => entry.customType === CAP_ENTRY).map(entry => entry.data); }
@@ -79,7 +90,7 @@ const general = (generalConfig: number | null) => ({ agentDefinition: undefined,
 async function start(branch: Entry[] = [], current: Model | undefined = model("large", 1_000_000), defaults = general(300_000)) {
   const host = new Host(branch, current);
   await host.fire("session_start", { reason: "startup" });
-  await host.session().updateDefaults(defaults);
+  await host.updateDefaults(defaults);
 
   return host;
 }
@@ -111,10 +122,77 @@ describe("context cap session", () => {
     const host = await start();
     expect(await host.session().getState()).toEqual({ cap: 300_000, source: "config", appliedWindow: 300_000 });
     expect(host.model!.contextWindow).toBe(300_000);
-    await host.session().updateDefaults({ agentDefinition: undefined, modelConfig: 400_000, generalConfig: 300_000 });
-    await host.session().updateDefaults({ agentDefinition: null, modelConfig: 400_000, generalConfig: 300_000 });
+    await host.updateDefaults({ agentDefinition: undefined, modelConfig: 400_000, generalConfig: 300_000 });
+    await host.updateDefaults({ agentDefinition: null, modelConfig: 400_000, generalConfig: 300_000 });
     expect(await host.session().getState()).toEqual({ cap: null, source: "agent_definition", appliedWindow: 1_000_000 });
     expect(host.caps()).toEqual([{ cap: 300_000, source: "config" }, { cap: 400_000, source: "config" }, { cap: null, source: "agent_definition" }]);
+  });
+
+  test("owns a copy of all model settings and resolves missing and null entries on model changes", async () => {
+    const host = await start();
+    const settings = { contextWindowCap: 300_000, contextWindowCapEnabled: true, modelContextWindowCaps: { "test/large": 400_000, "test/native": null } };
+    await host.session().updateSettings(settings);
+    settings.modelContextWindowCaps["test/large"] = 900_000;
+    await host.selectModel(model("native", 1_000_000));
+    expect(await host.session().getState()).toMatchObject({ cap: null, appliedWindow: 1_000_000 });
+    await host.selectModel(model("missing", 1_000_000));
+    expect(await host.session().getState()).toMatchObject({ cap: 300_000 });
+    await host.selectModel(model("large", 1_000_000));
+    expect(await host.session().getState()).toMatchObject({ cap: 400_000 });
+    await host.session().updateSettings({ ...settings, contextWindowCapEnabled: false, modelContextWindowCaps: {} });
+    expect(await host.session().getState()).toMatchObject({ cap: null });
+  });
+
+  test("agent changes use the extension's received settings and preserve manual priority", async () => {
+    const host = await start();
+    const selected = () => host.api().events.emit("piop:agents:selected", { ctx: host.ctx });
+    host.agentCap = 500_000;
+    selected();
+    expect(await host.session().getState()).toMatchObject({ cap: 500_000, source: "agent_definition" });
+    await host.session().setManualCap(null);
+    host.agentCap = null;
+    selected();
+    expect(await host.session().getState()).toMatchObject({ cap: null, source: "manual" });
+    await host.session().resetManualCap();
+    expect(await host.session().getState()).toMatchObject({ cap: null, source: "agent_definition" });
+    host.agentCap = undefined;
+    selected();
+    expect(await host.session().getState()).toMatchObject({ cap: 300_000, source: "config" });
+  });
+
+  test("queued settings resolve for the model selected when the session becomes idle", async () => {
+    const host = await start();
+    host.idle = false;
+    const settings = { contextWindowCap: 400_000, contextWindowCapEnabled: true, modelContextWindowCaps: { "test/other": 200_000 } };
+    const change = host.session().updateSettings(settings);
+    settings.modelContextWindowCaps["test/other"] = 700_000;
+    await host.selectModel(model("other", 1_000_000));
+    expect(host.model!.contextWindow).toBe(300_000);
+    host.idle = true;
+    await host.fire("agent_settled");
+    expect(await change).toMatchObject({ cap: 200_000 });
+    expect(await host.session().getState()).toMatchObject({ cap: 200_000 });
+  });
+
+  test("failed settings leave the received settings available for reset and model changes", async () => {
+    const host = await start();
+    budgets.keepRecentTokens = 200_000;
+    await expect(host.session().updateSettings({ contextWindowCap: 100_000, contextWindowCapEnabled: true, modelContextWindowCaps: { "test/other": 100_000 } })).rejects.toThrow("compaction budgets");
+    await host.session().setManualCap(500_000);
+    await host.session().resetManualCap();
+    await host.selectModel(model("other", 1_000_000));
+    expect(await host.session().getState()).toMatchObject({ cap: 300_000 });
+  });
+
+  test("a failed history write does not replace the received settings", async () => {
+    const host = await start();
+    const push = host.branch.push;
+    host.branch.push = () => { throw new Error("disk failure"); };
+    await expect(host.session().updateSettings({ contextWindowCap: 400_000, contextWindowCapEnabled: true, modelContextWindowCaps: {} })).rejects.toThrow("disk failure");
+    host.branch.push = push;
+    await host.session().setManualCap(500_000);
+    await host.session().resetManualCap();
+    expect(await host.session().getState()).toMatchObject({ cap: 300_000 });
   });
 
   test("keeps the manual choice across model switches and logs only effective changes", async () => {
@@ -172,7 +250,7 @@ describe("context cap session", () => {
     await expect(host.session().setManualCap(50_000)).rejects.toThrow("from 100,000");
     budgets.keepRecentTokens = 600_000;
     await expect(host.session().setManualCap(500_000)).rejects.toThrow("compaction budgets");
-    await expect(host.session().updateDefaults(general(10))).rejects.toThrow("General context cap setting");
+    await expect(host.updateDefaults(general(10))).rejects.toThrow("General context cap setting");
     expect(await host.session().getState()).toEqual({ cap: 300_000, source: "config", appliedWindow: 300_000 });
     expect(host.caps().length).toBe(before);
   });
@@ -182,7 +260,7 @@ describe("context cap session", () => {
     host.idle = false;
     const results = [
       host.session().setManualCap(400_000),
-      host.session().updateDefaults(general(250_000)),
+      host.updateDefaults(general(250_000)),
       host.session().resetManualCap(),
       host.session().setManualCap(600_000),
     ];
@@ -209,7 +287,7 @@ describe("context cap session", () => {
     const host = await start();
     await host.session().setManualCap(null);
     expect(await host.session().getState()).toEqual({ cap: null, source: "manual", appliedWindow: 1_000_000 });
-    await host.session().updateDefaults(general(200_000));
+    await host.updateDefaults(general(200_000));
     expect((await host.session().getState()).cap).toBeNull();
   });
 
@@ -234,10 +312,10 @@ describe("context cap session", () => {
     const host = await start([], model("large", 1_000_000), defaults);
     host.model = model("large", 200_000);
     host.bus.get("piop:models-refreshed")?.forEach(handler => handler({ ctx: host.ctx }));
-    expect(await host.session().updateDefaults(defaults)).toEqual({ cap: 500_000, source: "config", appliedWindow: 200_000 });
-    await expect(host.session().updateDefaults({ ...defaults, modelConfig: 400_000 })).rejects.toThrow("exceeds the 200,000-token context window");
+    expect(await host.updateDefaults(defaults)).toEqual({ cap: 500_000, source: "config", appliedWindow: 200_000 });
+    await expect(host.updateDefaults({ ...defaults, modelConfig: 400_000 })).rejects.toThrow("exceeds the 200,000-token context window");
     await host.selectModel(model("other", 200_000));
-    await expect(host.session().updateDefaults(defaults)).rejects.toThrow("exceeds the 200,000-token context window of test/other");
+    await expect(host.updateDefaults(defaults)).rejects.toThrow("exceeds the 200,000-token context window of test/other");
   });
 
   for (const announced of [true, false]) test("keeps the true window when Pi replaces the model object with a capped copy" + (announced ? " and announces it" : ""), async () => {
@@ -256,9 +334,9 @@ describe("context cap session", () => {
     await host.selectModel(model("small", 200_000));
     expect(await host.session().getState()).toEqual({ cap: 300_000, source: "config", appliedWindow: 200_000 });
     const log = host.caps();
-    await expect(host.session().updateDefaults(general(500_000))).rejects.toThrow("exceeds the 200,000-token context window");
-    await expect(host.session().updateDefaults({ agentDefinition: 400_000, modelConfig: undefined, generalConfig: 300_000 })).rejects.toThrow("agent definition");
-    await expect(host.session().updateDefaults({ agentDefinition: undefined, modelConfig: 250_000, generalConfig: 300_000 })).rejects.toThrow("exceeds");
+    await expect(host.updateDefaults(general(500_000))).rejects.toThrow("exceeds the 200,000-token context window");
+    await expect(host.updateDefaults({ agentDefinition: 400_000, modelConfig: undefined, generalConfig: 300_000 })).rejects.toThrow("agent definition");
+    await expect(host.updateDefaults({ agentDefinition: undefined, modelConfig: 250_000, generalConfig: 300_000 })).rejects.toThrow("exceeds");
     expect(await host.session().getState()).toEqual({ cap: 300_000, source: "config", appliedWindow: 200_000 });
     expect(host.caps()).toEqual(log);
     await host.session().resetManualCap();
@@ -280,7 +358,7 @@ describe("context cap session", () => {
     const received: unknown[] = [];
     host.session().subscribe((state: unknown) => received.push(state), () => undefined);
     await host.fire("session_start", { reason: "startup" });
-    await host.session().updateDefaults(general(300_000));
+    await host.updateDefaults(general(300_000));
     await Promise.resolve();
     expect(received).toEqual([{ cap: 300_000, source: "config", appliedWindow: 300_000 }]);
   });

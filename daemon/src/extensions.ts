@@ -20,35 +20,46 @@ export function prepareMcpBridge(): string {
   return path;
 }
 
-export function runtimeSettings(settings: AppSettings): any {
-  const enabledSkills = settings.skills.filter(skill => skill?.enabled === true);
+/** Enabled skill paths supplied when a Pi agent starts. */
+export function skillLists(settings: AppSettings): { userInvokedSkills: string[]; agentInvokedSkills: string[] } {
+  const enabled = settings.skills.filter(skill => skill?.enabled === true && typeof skill.path === 'string');
   return {
-    defaultModel: settings.defaultModel,
-    tools: enabledToolNames(settings),
+    userInvokedSkills: enabled.filter(skill => skill.userInvokedOnly === true).map(skill => skill.path),
+    agentInvokedSkills: enabled.filter(skill => skill.userInvokedOnly !== true).map(skill => skill.path),
+  };
+}
+
+/** Tool names supplied when a Pi agent starts. */
+export function toolLists(settings: AppSettings): { enabledTools: string[]; registeredTools: string[] } {
+  return {
+    enabledTools: enabledToolNames(settings),
     registeredTools: settings.tools.map(tool => tool?.name).filter((name): name is string => typeof name === 'string'),
-    skills: enabledSkills.map(skill => skill.path).filter((path): path is string => typeof path === 'string'),
-    explicitOnlySkills: enabledSkills.filter(skill => skill.userInvokedOnly === true).map(skill => skill.path).filter((path): path is string => typeof path === 'string'),
+  };
+}
+
+export function contextCapSettings(settings: AppSettings) {
+  return {
     contextWindowCap: settings.contextWindowCap,
     contextWindowCapEnabled: settings.contextWindowCapEnabled,
     modelContextWindowCaps: settings.modelContextWindowCaps,
   };
 }
 
-export function prepareRuntimeSettings(settings: AppSettings): string {
-  const dir = generatedExtensionRoot();
-  ensurePrivateDir(dir);
-  const path = join(dir, 'runtime-settings.ts');
-  atomicWritePrivate(join(dir, 'runtime-bridge.cjs'), R.runtimeBridge);
-  atomicWritePrivate(join(dir, 'runtime-configuration.cjs'), R.runtimeConfiguration);
-  prepareSdkStorage(dir);
-  atomicWritePrivate(path, R.runtimeSettingsExtension);
-  saveRuntimeSettings(dir, settings);
-  return path;
+export function saveContextCapSettings(settings: AppSettings): void {
+  publish(join(generatedExtensionRoot(), 'context-cap-settings.json'), JSON.stringify(contextCapSettings(settings)));
 }
 
-function saveRuntimeSettings(dir: string, settings: AppSettings): void {
+export function agentResources(settings: AppSettings): any {
+  return { skills: skillLists(settings), tools: toolLists(settings) };
+}
+
+export function prepareRuntimeBridge(): void {
+  const dir = generatedExtensionRoot();
+  ensurePrivateDir(dir);
+  atomicWritePrivate(join(dir, 'runtime-bridge.cjs'), R.runtimeBridge);
+  atomicWritePrivate(join(dir, 'runtime-configuration.cjs'), R.runtimeConfiguration);
   atomicWritePrivate(join(dir, 'app-settings.cjs'), R.appSettingsCjs);
-  publish(join(dir, 'runtime-settings.json'), JSON.stringify(runtimeSettings(settings)));
+  prepareSdkStorage(dir);
 }
 
 export const SESSION_BROKER_MODULES = R.SESSION_BROKER_MODULES;
@@ -80,6 +91,14 @@ function prepareBrokerStorage(dir: string): void {
   atomicWritePrivate(join(dir, 'ask-user.ts'), R.askUser);
 }
 
+export function prepareProvidersRefreshExtension(): string {
+  const dir = generatedExtensionRoot();
+  ensurePrivateDir(dir);
+  const path = join(dir, 'piop-providers-refresh.ts');
+  atomicWritePrivate(path, R.providersRefreshExtension);
+  return path;
+}
+
 export function prepareOpenaiCacheForkExtension(): string {
   const dir = generatedExtensionRoot();
   ensurePrivateDir(dir);
@@ -93,6 +112,14 @@ export function prepareFastModeExtension(): string {
   ensurePrivateDir(dir);
   const path = join(dir, 'index.ts');
   atomicWritePrivate(path, R.fastModeBundle);
+  return path;
+}
+
+export function prepareCodemodeToolsDescriptionExtension(): string {
+  const dir = generatedExtensionRoot();
+  ensurePrivateDir(dir);
+  const path = join(dir, 'piop-codemode-tools-description.ts');
+  atomicWritePrivate(path, R.codemodeToolsDescriptionExtension);
   return path;
 }
 
@@ -112,7 +139,8 @@ export function prepareContextBarExtension(): string {
   return path;
 }
 
-export function prepareContextWindowCapExtension(): string {
+export function prepareContextWindowCapExtension(settings: AppSettings): string {
+  saveContextCapSettings(settings);
   const dir = join(generatedExtensionRoot(), 'piop-context-window-cap');
   ensurePrivateDir(dir);
   const extensionPath = join(dir, 'index.ts');
@@ -150,7 +178,7 @@ export function prepareDefinedAgentsExtension(): string {
     ['mcp-config.ts', R.agentMcpConfig],
     ['extension-loader.ts', R.agentExtensionLoader],
     ['state.ts', R.agentState],
-    ['daemon-definitions.ts', R.agentDaemonDefinitions],
+    ['resources.ts', R.agentResources],
     ['prompts.ts', R.agentPrompts],
     ['profiles.ts', R.agentProfiles],
     ['excalidraw.ts', R.agentExcalidraw],

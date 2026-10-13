@@ -100,12 +100,10 @@ export class Session {
   inputRejection: any = null;
   commandErrors = new Map<string, string>();
   appliedConfiguration: any | null = null;
-  appliedRuntimeSettings: [any, any] | null = null;
   configurationErrorValue: string | null = null;
   configuring = false;
   autoCompaction: boolean | null = null;
   autoRetry: boolean | null = null;
-  agentRevision: number;
   providerRevision = 0;
 
   private constructor(launch: SessionLaunch, identity: string, pending: any[], storage: QueueStorage | null, private host: SessionHost, private toolPayloads: ToolPayloadCache) {
@@ -116,8 +114,6 @@ export class Session {
     this.timeout = launch.timeout;
     this.key = launch.key;
     this.isTransient = launch.transient;
-    const revision = host.configuration()?.agentRevision;
-    this.agentRevision = typeof revision === 'number' && Number.isInteger(revision) && revision >= 0 ? revision : 0;
     const executor: Execution = {
       execute: command => this.execute(command),
       publish: event => this.publish(event, null),
@@ -481,10 +477,8 @@ export class Session {
         const configuration = clone(this.host.configuration());
         if (configuration === null || configuration === undefined) return;
         const revision = typeof configuration.agentRevision === 'number' ? configuration.agentRevision : 0;
-        const reload = this.agentRevision < revision;
-        await this.executeWorker({ type: 'runtime_settings', settings: configuration.settings ?? null, agentRevision: revision, reloadAgents: reload });
+        await this.executeWorker({ type: 'context_cap_settings', settings: configuration.contextCapSettings });
         await this.applyAutomaticOptions(configuration);
-        this.agentRevision = revision;
         this.appliedConfiguration = configuration;
         this.publish({ type: 'settings_applied', agentRevision: revision }, null);
       }
@@ -713,28 +707,15 @@ export class Session {
   }
 
   async executeWorker(command: any): Promise<any> {
-    const [runtimeKey, cached] = this.prepareWorkerCommand(command);
-    if (cached !== undefined) return cached;
+    if ((kind(command) === 'prompt' || kind(command) === 'queue_prompt') && !text(command, 'message').startsWith('/')) this.isSubmitted = true;
     const result = await this.raw(clone(command));
-    this.rememberWorkerResult(command, runtimeKey, result);
+    this.rememberWorkerResult(command);
     if (kind(command) === 'resume' && typeof result?.resumeMessage === 'string' && result.resumeMessage) await this.raw({ type: 'prompt', message: result.resumeMessage });
-    if (['set_model', 'set_thinking_level', 'set_session_name', 'fork_and_forget', 'runtime_settings'].includes(kind(command))) this.publish({ type: 'session_info_changed' }, null);
+    if (['set_model', 'set_thinking_level', 'set_session_name', 'fork_and_forget'].includes(kind(command))) this.publish({ type: 'session_info_changed' }, null);
     return result;
   }
 
-  private prepareWorkerCommand(command: any): [any, any] {
-    if ((kind(command) === 'prompt' || kind(command) === 'queue_prompt') && !text(command, 'message').startsWith('/')) this.isSubmitted = true;
-    let key: any;
-    if (kind(command) === 'runtime_settings') {
-      const revision = typeof command.agentRevision === 'number' && Number.isInteger(command.agentRevision) && command.agentRevision >= 0 ? command.agentRevision : this.agentRevision;
-      key = { settings: clone(command.settings ?? null), agentRevision: revision };
-      if (this.appliedRuntimeSettings && jsonEqual(key, this.appliedRuntimeSettings[0])) return [key, clone(this.appliedRuntimeSettings[1])];
-    }
-    return [key, undefined];
-  }
-
-  private rememberWorkerResult(command: any, runtimeKey: any, result: any): void {
-    if (runtimeKey !== undefined) this.appliedRuntimeSettings = [runtimeKey, clone(result)];
+  private rememberWorkerResult(command: any): void {
     if (kind(command) === 'set_auto_compaction') this.autoCompaction = typeof command.enabled === 'boolean' ? command.enabled : null;
     if (kind(command) === 'set_auto_retry') this.autoRetry = typeof command.enabled === 'boolean' ? command.enabled : null;
   }

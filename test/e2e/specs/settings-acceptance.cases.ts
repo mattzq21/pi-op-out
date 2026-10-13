@@ -12,8 +12,7 @@ describe("Settings acceptance", () => {
   });
 
   it("saves the current configuration and confirms success", async () => {
-    const [provider, ...modelParts] = defaultSettings.defaultModel.split("/");
-    const model = { provider, id: modelParts.join("/"), name: "Configured model", reasoning: true };
+    const model = { provider: "e2e", id: "acceptance", name: "Configured model", reasoning: true };
     await mockBackend({
       ...connectedSessionResponses("settings-save"),
       load_app_settings: defaultSettings, save_app_settings: { settings: { ...defaultSettings, autoRetry: !defaultSettings.autoRetry } }, start_pi: {}, stop_pi: false,

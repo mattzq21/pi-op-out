@@ -5,7 +5,7 @@ import { Type } from "typebox";
 import { loadConfig } from "./index.ts";
 import { agentSchema, agentThinkingLevels } from "./state.ts";
 import { configPath, readConfigDocument, readPrompt, resolvePromptPath } from "./prompts.ts";
-import type { RuntimeSettingsRequest } from "./contracts.ts";
+import { parseAgentResources } from "./resources.ts";
 import { extensionPaths } from "./extension-loader.ts";
 import { extensionValidator } from "./validation-runtime.ts";
 import { modelValidator } from "./model-validation.ts";
@@ -23,6 +23,7 @@ const sourceAgentSchema = Type.Object({
   systemPrompt: Type.Optional(Type.String()), agentsMd: Type.Optional(Type.String()), developerPrompt: Type.Optional(Type.String()),
 });
 
+/** settings holds startup tool/skill lists and host model validation results. */
 export interface AgentDefinitionsRequest { settings: any; initial: boolean }
 
 export interface AgentDefinitions { config: any; prompts: Record<string, string>; configPath: string }
@@ -53,7 +54,8 @@ export async function loadAgentDefinitions({ settings, initial: initialize }: Ag
     if (!initialize || !(error instanceof Error && "code" in error && error.code === "ENOENT")) throw error;
   }
 
-  const api = { events: { emit(_name: string, request: RuntimeSettingsRequest) { request.settings = settings; } } };
+  const { tools: toolLists } = parseAgentResources(settings);
+  const api = { enabledTools: toolLists.enabledTools };
 
   const prompts: Record<string, string> = {};
 
@@ -74,9 +76,7 @@ export async function loadAgentDefinitions({ settings, initial: initialize }: Ag
 
   if (!Check(Type.Array(agentSchema), config.agents)) throw new Error("Invalid agent definitions");
 
-  if (!Check(Type.Array(Type.String()), settings.registeredTools)) throw new Error("Registered tool inventory is unavailable");
-
-  const validateExtensions = config.agents.some(agent => agent.extensions?.length) ? await extensionValidator(settings.registeredTools) : undefined;
+  const validateExtensions = config.agents.some(agent => agent.extensions?.length) ? await extensionValidator([...toolLists.registeredTools]) : undefined;
 
   const validateModel = await modelValidator(parseFastModelSnapshot(settings.fastModels));
 
@@ -84,14 +84,14 @@ export async function loadAgentDefinitions({ settings, initial: initialize }: Ag
     validateEffort(agent.name, agent.effort);
     let extensionTools: string[] = [];
 
-    await validateModel(agent, settings.defaultModel ?? "", async (registry, validate) => {
+    await validateModel(agent, async (registry, validate) => {
       if (!validateExtensions) return validate();
 
       try { extensionTools = await validateExtensions(extensionPaths(agent.extensions), dirname(configPath), registry, agent, validate); }
       catch (error) { throw new Error(`Agent "${agent.name}" cannot load its extensions: ${error instanceof Error ? error.message : String(error)}`); }
     });
 
-    const allowedTools = new Set([...settings.tools, ...extensionTools]);
+    const allowedTools = new Set([...toolLists.enabledTools, ...extensionTools]);
     const denied = agent.tools.filter(tool => !allowedTools.has(tool));
 
     if (denied.length) throw new Error(`Agent "${agent.name}" cannot run because Pi does not allow its configured tools: ${denied.join(", ")}`);

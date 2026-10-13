@@ -1,13 +1,13 @@
+import { readAgentResources, resourcePath, type AgentResources } from "./resources.ts";
 import { STATE_ENTRY, DEFAULTS_ENV, DRAFT_STATE_ENV, type RuntimeDefaults, agentSchema, agentThinkingLevels, persistedAgentIdentity, storedRuntimeDefaults, sessionIsLocked, readAgentState, subagentLimit, registerSubagentLimits } from "./state.ts";
 import { Type } from "typebox";
 import { Check, Errors, Parse } from "typebox/value";
 import { configPath, DEFAULT_PROMPT_PATH, DEFAULT_SYSTEM_PROMPT, resolvePromptPath, ensurePromptFile, snapshotPrompts, ensureDefaultAgentPrompt, readPrompt, readConfigDocument, writeConfig } from "./prompts.ts";
 import { mcpServersSchema } from "./mcp-schema.ts";
-import { readDaemonDefinitions } from "./daemon-definitions.ts";
 import { fallbackConfig, migrateQuestionSnapshot, selectedProfileState } from "./profiles.ts";
 import { migrateExcalidrawAgent } from "./excalidraw.ts";
 import { mcpServers, type McpServers, type LegacyMcpServer } from "./mcp-config.ts";
-import type { Agent, AgentSnapshot, RuntimeSettingsRequest, RequiredToolsRequest, McpToolsRequest, McpSelection } from "./contracts.ts";
+import type { Agent, AgentSnapshot, RequiredToolsRequest, McpToolsRequest, McpSelection } from "./contracts.ts";
 import { fastModeSession, fastModelProblem, hostFastModels } from "./fast-models.ts";
 import { agentExtensions, extensionPaths } from "./extension-loader.ts";
 import { capRangeError } from "../piop-context-window-cap/interface.ts";
@@ -25,15 +25,15 @@ const sessionTools = ["subagent"];
 
 export type Config = { revision?: string; agents: Agent[]; webSearchDefaultApplied?: boolean; sessionToolsDefaultApplied?: boolean; subagentsDefaultApplied?: boolean; diagramistDefaultApplied?: boolean; askerAgentDefaultApplied?: boolean; terminalAgentDefaultApplied?: boolean; tokagentDefaultApplied?: boolean; excalidrawAgentDefaultApplied?: boolean };
 
-type ConfigRuntime = { events: { emit(channel: "piop:runtime-settings", request: RuntimeSettingsRequest): void } };
+type ConfigRuntime = { enabledTools?: readonly string[] };
 
 export type ConfigStorage = { ensurePromptFile: typeof ensurePromptFile; writeConfig: typeof writeConfig };
 
 function defaultAgent(pi: ConfigRuntime): Agent {
   const agent = structuredClone(fallbackConfig.agents[0]);
 
-  if (desktopList(pi, "tools")?.includes("web_search")) agent.tools.push("web_search");
-  agent.tools.push(...sessionTools.filter((tool) => desktopList(pi, "tools")?.includes(tool)));
+  if (enabledTools(pi)?.includes("web_search")) agent.tools.push("web_search");
+  agent.tools.push(...sessionTools.filter((tool) => enabledTools(pi)?.includes(tool)));
 
   return agent;
 }
@@ -154,7 +154,7 @@ async function readConfig(pi: ConfigRuntime, supplied: StoredConfig | undefined,
 }
 
 function migrateSessionTools(config: Config, pi: ConfigRuntime) {
-  const available = sessionTools.filter((tool) => desktopList(pi, "tools")?.includes(tool));
+  const available = sessionTools.filter((tool) => enabledTools(pi)?.includes(tool));
 
   if (config.sessionToolsDefaultApplied || !available.length) return false;
 
@@ -165,7 +165,7 @@ function migrateSessionTools(config: Config, pi: ConfigRuntime) {
 }
 
 function migrateSubagents(config: Config, pi: ConfigRuntime) {
-  if (!config.subagentsDefaultApplied && desktopList(pi, "tools")?.includes("subagent")) {
+  if (!config.subagentsDefaultApplied && enabledTools(pi)?.includes("subagent")) {
     for (const agent of config.agents) if (agent.name !== "excalidraw-agent" && !agent.tools.includes("subagent")) agent.tools.push("subagent");
     config.subagentsDefaultApplied = true;
 
@@ -176,7 +176,7 @@ function migrateSubagents(config: Config, pi: ConfigRuntime) {
 }
 
 function migrateUserInput(config: Config, pi: ConfigRuntime) {
-  if (config.askerAgentDefaultApplied || !desktopList(pi, "tools")?.includes("request_user_input")) return false;
+  if (config.askerAgentDefaultApplied || !enabledTools(pi)?.includes("request_user_input")) return false;
   const general = config.agents.find((agent) => agent.name === "general");
 
   if (general && !config.agents.some(agent => agent.name === "asker-agent")) {
@@ -200,7 +200,7 @@ function migrateUserInput(config: Config, pi: ConfigRuntime) {
 }
 
 function migrateTerminalAgent(config: Config, pi: ConfigRuntime) {
-  if (config.terminalAgentDefaultApplied || !desktopList(pi, "tools")?.includes("lookup_terminals")) return false;
+  if (config.terminalAgentDefaultApplied || !enabledTools(pi)?.includes("lookup_terminals")) return false;
 
   if (!config.agents.some(agent => agent.name === "terminal-agent")) {
     const agent = structuredClone(config.agents.find(agent => agent.name === "general") ?? defaultAgent(pi));
@@ -258,7 +258,7 @@ async function loadMigratedConfig(pi: ConfigRuntime, supplied: StoredConfig | un
     changed = true;
   }
 
-  if (!config.webSearchDefaultApplied && desktopList(pi, "tools")?.includes("web_search")) {
+  if (!config.webSearchDefaultApplied && enabledTools(pi)?.includes("web_search")) {
     for (const agent of config.agents.filter(agent => agent.name !== "excalidraw-agent")) if (!agent.tools.includes("web_search")) agent.tools.push("web_search");
     config.webSearchDefaultApplied = true;
     changed = true;
@@ -279,26 +279,11 @@ function encode<T>(value: T) { return Buffer.from(JSON.stringify(value), "utf8")
 
 function safeName(value: string) { return value.toLowerCase().replace(/[^a-z0-9_]+/g, "_").replace(/^_+|_+$/g, "") || "tool"; }
 
-function desktopList(pi: ConfigRuntime, name: "tools" | "skills" | "explicitOnlySkills") { const request: RuntimeSettingsRequest = {}; pi.events.emit("piop:runtime-settings", request);
+function enabledTools(config: ConfigRuntime) { return config.enabledTools; }
 
-return request.settings?.[name]; }
+const normalizedPath = resourcePath;
 
-function normalizedPath(value: string) { return resolve(value.startsWith("~/") ? join(homedir(), value.slice(2)) : value); }
-
-function agentSkills(pi: ExtensionAPI, agent: Agent) { const global = desktopList(pi, "skills");
-
-if (!global) return agent.skills; const allowed = new Set(global.map(normalizedPath));
-
-return agent.skills.filter((skill) => allowed.has(normalizedPath(skill))); }
-
-function agentToolError(pi: ExtensionAPI, agent: Agent, extensionTools: string[] = []) {
-  const globallyAllowed = desktopList(pi, "tools"); const available = new Set(pi.getAllTools().map((tool) => tool.name));
-  const denied = [...new Set(agent.tools.filter((tool) => (globallyAllowed && !globallyAllowed.includes(tool) && !extensionTools.includes(tool)) || !available.has(tool)))];
-
-  return denied.length ? `Agent "${agent.name}" cannot run because Pi does not allow its configured tool${denied.length === 1 ? "" : "s"}: ${denied.join(", ")}` : undefined;
-}
-
-function configureAgentSystemPrompt(prompt: string, agentPrompt: string, options: BuildSystemPromptOptions, explicitOnlySkills: string[] = []) {
+function configureAgentSystemPrompt(prompt: string, agentPrompt: string, options: BuildSystemPromptOptions, invocationPolicy: <T extends { filePath: string; baseDir: string }>(skills: readonly T[]) => T[] = skills => [...skills]) {
   delete options.forceSystemPrompt;
   const instructions = agentPrompt.trim() ? agentPrompt : "";
   options.customPrompt = prompt || " ";
@@ -316,14 +301,14 @@ function configureAgentSystemPrompt(prompt: string, agentPrompt: string, options
   delete options.sections.project_context;
   delete options.sections.addendum;
   options.appendSystemPrompt = "";
-  const explicit = new Set(explicitOnlySkills.map(normalizedPath));
-  options.skills = options.skills?.map((skill) => explicit.has(normalizedPath(skill.filePath)) || explicit.has(normalizedPath(skill.baseDir)) ? { ...skill, disableModelInvocation: true } : skill);
+  options.skills = options.skills && invocationPolicy(options.skills);
 }
 
 export default async function defineAgents(pi: ExtensionAPI) {
   const extensions = agentExtensions(pi, dirname(configPath));
-  const daemonDefinitions = await readDaemonDefinitions();
-  let config = daemonDefinitions ? daemonDefinitions.config : await loadConfig(pi);
+  const initialResources = readAgentResources();
+  const configRuntime = { enabledTools: initialResources.tools.enabledTools };
+  let config = await loadConfig(configRuntime);
   let active = "general";
   let snapshot: AgentSnapshot | undefined;
   let savedState: string | undefined;
@@ -341,6 +326,22 @@ export default async function defineAgents(pi: ExtensionAPI) {
   process.env.PI_DEFINE_AGENTS_ACTIVE = "1";
   const findAgent = (name: string) => config.agents.find((agent) => agent.name === name);
   const currentAgent = () => snapshot?.definition ?? findAgent(active);
+  const resources = (): AgentResources => snapshot?.resources ?? initialResources;
+  const agentSkills = (_pi: ExtensionAPI, agent: Agent) => {
+    const skills = resources().skills;
+    const allowed = new Set([...skills.userInvokedSkills, ...skills.agentInvokedSkills].map(resourcePath));
+    return agent.skills.filter(path => allowed.has(resourcePath(path)));
+  };
+  const invocationPolicy = <T extends { filePath: string; baseDir: string }>(skills: readonly T[]): T[] => {
+    const user = new Set(resources().skills.userInvokedSkills.map(resourcePath));
+    return skills.map(skill => user.has(resourcePath(skill.filePath)) || user.has(resourcePath(skill.baseDir)) ? { ...skill, disableModelInvocation: true } : { ...skill });
+  };
+  const agentToolError = (api: ExtensionAPI, agent: Agent, extensionTools: string[] = []) => {
+    const allowed = new Set([...resources().tools.enabledTools, ...extensionTools]);
+    const available = new Set(api.getAllTools().map(tool => tool.name));
+    const denied = [...new Set(agent.tools.filter(tool => !allowed.has(tool) || !available.has(tool)))];
+    return denied.length ? `Agent "${agent.name}" cannot run because Pi does not allow its configured tool${denied.length === 1 ? "" : "s"}: ${denied.join(", ")}` : undefined;
+  };
   registerSubagentLimits(pi, currentAgent);
 
   const currentMcpTools = (includeInactive = false) => { const request: McpToolsRequest = {}; pi.events.emit("piop:mcp:tools", request);
@@ -372,7 +373,7 @@ export default async function defineAgents(pi: ExtensionAPI) {
       return;
     }
 
-    request.ready = selectedProfileState(pi, agent, path => readAgentPrompt(path, true))
+    request.ready = selectedProfileState(agent, initialResources, readPrompt)
       .then(state => { request.state = state; })
       .catch(error => { request.error = `Cannot load agent profile ${agent.name}: ${String(error)}`; });
   });
@@ -382,10 +383,8 @@ export default async function defineAgents(pi: ExtensionAPI) {
     request.profiles = config.agents.map(agent => ({ name: agent.name, model: agent.model, effort: agent.effort, fastMode: agent.fastMode, max_subagents: agent.max_subagents ?? 8, max_sub_subagents: agent.max_sub_subagents ?? 8, tools: [...agent.tools], skills: [...agent.skills], mcpServers: Object.keys(agent.mcpServers), path_systemprompt: agent.path_systemprompt, path_agent_prompt: agent.path_agent_prompt }));
   });
 
-  /** Agent edits apply to existing sessions, so the saved definition wins over the session snapshot. */
   const stopContextCap = pi.events.on("piop:agents:context-cap", request => {
-    const agent = currentAgent();
-    request.cap = (agent && findAgent(agent.name) || agent)?.contextWindowCap;
+    request.cap = currentAgent()?.contextWindowCap;
   });
 
   const restoredAgentName = (name: string | undefined) => !name || (name === "default" && !findAgent("default")) ? "general" : name;
@@ -425,10 +424,6 @@ export default async function defineAgents(pi: ExtensionAPI) {
     try { await ctx.reload(); } finally { reloading = false; }
   };
 
-  const stopReload = pi.events.on("piop:agents:reload", (request) => {
-    request.ready = Promise.resolve().then(() => reload(request.ctx));
-  });
-
   const saveRuntimeDefaults = (value: RuntimeDefaults) => { runtimeDefaults = value; process.env[DEFAULTS_ENV] = JSON.stringify({ ...value, session: runtimeSession }); };
 
   const restore = (ctx: ExtensionContext) => {
@@ -445,9 +440,10 @@ export default async function defineAgents(pi: ExtensionAPI) {
   const snapshotDefinition = (agent: Agent) => structuredClone({ ...agent, model: agent.model.trim() || runtimeDefaults?.model || "", effort: agent.effort.trim() || runtimeDefaults?.effort || "" });
 
   const persistAgentSnapshot = async (agent: Agent, persist: boolean) => {
-    if (daemonDefinitions && !snapshot) snapshot = { version: 1, definition: snapshotDefinition(agent), systemPrompt: activeSystemPrompt, agentPrompt: activeAgentPrompt };
+    const savedResources = resources();
+    if (snapshot?.version !== 2) snapshot = await snapshotPrompts(snapshotDefinition(agent), activeSystemPrompt, activeAgentPrompt);
 
-    if (!daemonDefinitions && snapshot?.version !== 2) snapshot = await snapshotPrompts(snapshotDefinition(agent), activeSystemPrompt, activeAgentPrompt);
+    if (!snapshot.resources) snapshot.resources = structuredClone(savedResources);
 
     if (persist) saveState();
   };
@@ -463,7 +459,7 @@ export default async function defineAgents(pi: ExtensionAPI) {
     } else {
       const path = resolvePromptPath(agent.path_systemprompt);
 
-      try { activeSystemPrompt = await readAgentPrompt(path); }
+      try { activeSystemPrompt = await readPrompt(path); }
       catch (error) { pi.setActiveTools([]);
 
       return `Agent "${agent.name}" cannot read system prompt ${path}: ${error instanceof Error ? error.message : String(error)}`; }
@@ -471,7 +467,7 @@ export default async function defineAgents(pi: ExtensionAPI) {
       if (agentPromptPath) {
         const path = resolvePromptPath(agentPromptPath);
 
-        try { activeAgentPrompt = await readAgentPrompt(path); }
+        try { activeAgentPrompt = await readPrompt(path); }
         catch (error) { pi.setActiveTools([]);
 
         return `Agent "${agent.name}" cannot read agent prompt ${path}: ${error instanceof Error ? error.message : String(error)}`; }
@@ -481,15 +477,6 @@ export default async function defineAgents(pi: ExtensionAPI) {
     await persistAgentSnapshot(agent, persistSnapshot);
 
   };
-
-  async function readAgentPrompt(path: string, fromCatalog = false) {
-    if (!daemonDefinitions || snapshot && !fromCatalog) return readPrompt(path);
-    const prompt = daemonDefinitions?.prompts[path];
-
-    if (prompt === undefined) throw new Error(`Prompt is missing from daemon definitions: ${path}`);
-
-    return prompt;
-  }
 
   const selectAgentModel = async (agent: Agent, ctx: ExtensionContext, modelName: string) => {
     const [provider, ...parts] = modelName.split("/"); const model = ctx.modelRegistry.find(provider, parts.join("/"));
@@ -619,23 +606,7 @@ export default async function defineAgents(pi: ExtensionAPI) {
     return activeToolError;
   };
 
-  const stopRefresh = pi.events.on("piop:agents:refresh", (request) => {
-    request.ready = Promise.resolve().then(() => {
-      const agent = currentAgent();
-
-      if (!agent) { pi.setActiveTools([]); publish(request.ctx);
-
-      return; }
-
-      activeToolError = agentToolError(pi, agent, extensions.tools());
-      const mcpTools = currentMcpTools();
-      const required: RequiredToolsRequest = { ctx: request.ctx, tools: [], availableTools: agent.tools }; pi.events.emit("piop:required-tools", required);
-      pi.setActiveTools(activeToolError ? [] : [...new Set([...agent.tools, ...extensions.tools(), ...mcpTools, ...required.tools])].filter(name => agent.codemode !== false || name !== "codemode"));
-      publish(request.ctx);
-    });
-  });
-
-  pi.on("session_shutdown", async (event, ctx) => { stopSubagentProfiles(); stopProfileCatalog(); stopContextCap(); stopRefresh(); stopReload(); await extensions.deactivate(ctx, event); });
+  pi.on("session_shutdown", async (event, ctx) => { stopSubagentProfiles(); stopProfileCatalog(); stopContextCap(); await extensions.deactivate(ctx, event); });
   pi.on("model_select", (event) => { const model = `${event.model.provider}/${event.model.id}`;
 
   if (applyingAgentModel === model) { applyingAgentModel = undefined;
@@ -649,8 +620,6 @@ export default async function defineAgents(pi: ExtensionAPI) {
 
   effortOverride = event.level; saveState(); saveRuntimeDefaults({ model: runtimeDefaults?.model || "", effort: event.level }); });
 
-  const keepSnapshot = (locked: boolean, ctx: ExtensionContext) => !daemonDefinitions || locked || ctx.sessionManager.getBranch().some(entry => entry.type === "custom" && entry.customType === "piop-subagent-parent");
-
   const restoreSession = async (ctx: ExtensionContext) => {
     restore(ctx);
     const branch = ctx.sessionManager.getBranch();
@@ -662,8 +631,6 @@ export default async function defineAgents(pi: ExtensionAPI) {
     if (active === "voice-orchestrator") { active = "general"; snapshot = undefined; }
 
     locked = sessionIsLocked(states, branch);
-
-    if (!keepSnapshot(locked, ctx)) snapshot = undefined;
 
     modelOverride = stored?.modelOverride;
     effortOverride = stored?.effortOverride;
@@ -680,7 +647,13 @@ export default async function defineAgents(pi: ExtensionAPI) {
   pi.on("session_shutdown", (_event, ctx) => { delete process.env.PI_DEFINE_AGENTS_ACTIVE;
 
   if (!reloading) ctx.ui.setStatus(STATUS_KEY, undefined); });
-  pi.on("resources_discover", () => { const agent = currentAgent(); const skillPaths = agent ? agentSkills(pi, agent) : [];
+  pi.on("resources_discover", (_event, ctx) => {
+    if (!snapshot) {
+      const stored = readAgentState(ctx.sessionManager.getBranch(), ctx.sessionManager.getSessionFile() || "").stored;
+      snapshot = migrateQuestionSnapshot(stored?.snapshot);
+      if (snapshot) active = snapshot.definition.name;
+    }
+    const agent = currentAgent(); const skillPaths = agent ? agentSkills(pi, agent) : [];
 
   return skillPaths.length ? { skillPaths } : undefined; });
   pi.on("input", async (event, ctx) => {
@@ -702,7 +675,7 @@ export default async function defineAgents(pi: ExtensionAPI) {
     if (!agent) return;
 
     if (agent.codemode === false) pi.setActiveTools(pi.getActiveTools().filter(name => name !== "codemode"));
-    configureAgentSystemPrompt(activeSystemPrompt, activeAgentPrompt, event.systemPromptOptions, desktopList(pi, "explicitOnlySkills"));
+    configureAgentSystemPrompt(activeSystemPrompt, activeAgentPrompt, event.systemPromptOptions, invocationPolicy);
   });
   pi.events.on("piop:rpc", request => {
     if (request.command !== "select_agent") return;
@@ -748,7 +721,7 @@ export default async function defineAgents(pi: ExtensionAPI) {
   };
 
   pi.events.on("piop:rpc", request => {
-    if (request.command === "get_agent_configuration") { request.ready = loadConfig(pi);
+    if (request.command === "get_agent_configuration") { request.ready = loadConfig(configRuntime);
 
     return; }
 
@@ -760,13 +733,13 @@ export default async function defineAgents(pi: ExtensionAPI) {
 
       if (errors.length) throw new Error(`Invalid agent configuration: ${errors.map(error => `${error.instancePath} ${error.message}`).join('; ')}`);
       const { configuration: supplied } = Parse(schema, request.payload);
-      const stored = await loadConfig(pi);
-      const next = normalize({ ...stored, ...supplied }, pi);
+      const stored = await loadConfig(configRuntime);
+      const next = normalize({ ...stored, ...supplied }, configRuntime);
 
       for (const agent of next.agents) mcpServersSchema.parse(agent.mcpServers);
       const saved = await writeConfig(next);
 
-      if (!daemonDefinitions) config = next;
+      config = next;
 
       try { publish(ctx); } catch (error) { saved?.warnings.push(`Agent definitions were saved, but their status could not be updated: ${String(error)}`); }
 

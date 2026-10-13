@@ -91,11 +91,11 @@ async function setStartModel(transport: NativeTransport, wanted: string | undefi
   else transport.promptControls.clearModel();
 }
 
-async function applyInherited(transport: NativeTransport, inherited: ProjectControls, defaultModel: string, models: Model[]) {
+async function applyInherited(transport: NativeTransport, inherited: ProjectControls, models: Model[]) {
   if (inherited.agent) await transport.command({ type: "select_agent", agent: inherited.agent });
 
   if (inherited.model && models.some((model) => model.provider === required(inherited.model).provider && model.id === required(inherited.model).id)) transport.promptControls.model(inherited.model);
-  else await setStartModel(transport, inherited.agentModel || defaultModel, models);
+  else await setStartModel(transport, inherited.agentModel, models);
 
   transport.promptControls.thinking(inherited.thinking);
 
@@ -103,8 +103,6 @@ async function applyInherited(transport: NativeTransport, inherited: ProjectCont
 }
 
 async function applyDefaults(transport: NativeTransport, value: AppSettings, models: Model[], agents: DefinedAgentsCapability | undefined, current: () => boolean) {
-  if (models.some(model => modelKey(model) === value.defaultModel)) await setStartModel(transport, value.defaultModel, models);
-
   if (!current()) return;
   await transport.command({ type: "set_thinking_level", level: value.defaultThinking });
 
@@ -119,7 +117,7 @@ async function applyDefaults(transport: NativeTransport, value: AppSettings, mod
   const config = agents?.config ?? await transport.command({ type: "get_agent_configuration" }, agentConfigSchema.nullable());
 
   if (!current()) return;
-  const wanted = config?.agents.find(item => item.name === agent)?.model.trim() || value.defaultModel;
+  const wanted = config?.agents.find(item => item.name === agent)?.model.trim();
 
   if (models.some(model => modelKey(model) === wanted)) {
     const state = await transport.command({ type: "get_state" }, agentStateSchema);
@@ -153,7 +151,7 @@ export async function configureConversationRuntime(value: AppSettings, transport
   if (!current()) return;
 
   if (inherited) {
-    await applyInherited(transport, inherited, value.defaultModel, availableModels);
+    await applyInherited(transport, inherited, availableModels);
     projectControls.delete(transport); transport.defaultsApplied();
 
     return;

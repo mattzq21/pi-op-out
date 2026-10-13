@@ -69,7 +69,7 @@ export class Host implements SessionHost {
 
   static async create(home: string, storage: string, services: HostServices, sink: (packet: any) => void): Promise<Host> {
     const settings = Settings.readSettingsAt(join(home, storage, 'settings.json'));
-    const definitions = await Agents.load(home, storage, Extensions.runtimeSettings(settings), true, null);
+    const definitions = await Agents.load(home, storage, Extensions.agentResources(settings), true, null);
     const host = new Host(home, storage, services, sink);
     host.agentDefinitions = definitions;
     host.ownershipValue = await ConversationOwnership.create(home, storage, { revoke: (id, intent) => host.releaseConversation(id, intent) });

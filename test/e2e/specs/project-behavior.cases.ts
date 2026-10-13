@@ -91,7 +91,7 @@ describe("Project behavior", () => {
   });
 
   it("switches to a project after the backend connects successfully", async () => {
-    const settings = { ...defaultSettings, defaultModel: "e2e/acceptance", defaultThinking: "high" };
+    const settings = { ...defaultSettings, defaultThinking: "high" };
     await mockBackend({
       ...connectedSessionResponses("acceptance-project"),
       "pi_command:set_model": {}, load_app_settings: settings, validate_project_directory: "/tmp",
@@ -126,7 +126,7 @@ describe("Project behavior", () => {
       { provider: "e2e", id: "acceptance", name: "Acceptance model", reasoning: true },
       { provider: "e2e", id: "alternate", name: "Alternate model", reasoning: true },
     ];
-    const settings = { ...defaultSettings, defaultModel: "e2e/acceptance", defaultThinking: "high", knownModels: ["e2e/acceptance", "e2e/alternate"], hiddenModels: [] };
+    const settings = { ...defaultSettings, defaultThinking: "high", knownModels: ["e2e/acceptance", "e2e/alternate"], hiddenModels: [] };
     await mockBackend({
       ...connectedSessionResponses("acceptance-project"),
       "pi_command:get_available_models": { models },
