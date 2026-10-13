@@ -1,11 +1,9 @@
 export type ContextCapSource = "manual" | "config" | "agent_definition";
 
-/** Complete defaults for the current agent and provider/model pair. */
-export type ContextCapDefaults = Readonly<{
-  /** undefined inherits; null selects the model default and stops fallback. */
-  agentDefinition: number | null | undefined;
-  modelConfig: number | null | undefined;
-  generalConfig: number | null | undefined;
+export type ContextCapSettings = Readonly<{
+  contextWindowCap: number;
+  contextWindowCapEnabled: boolean;
+  modelContextWindowCaps: Readonly<Record<string, number | null>>;
 }>;
 
 export type ContextCapState = Readonly<{
@@ -31,11 +29,7 @@ export interface ContextCapSession {
   /** Implement /cap reset: resolve agent definition, model config, general config, then model default. */
   resetManualCap(): Promise<ContextCapState>;
 
-  /**
-   * Replace defaults supplied by the session broker after settings, agent, or model changes.
-   * A manual choice keeps priority. A resolved default above the model window is clamped.
-   */
-  updateDefaults(defaults: ContextCapDefaults): Promise<ContextCapState>;
+  updateSettings(settings: ContextCapSettings): Promise<ContextCapState>;
 
   /** Receive initial state and later effective changes. Returns unsubscribe; listeners must not throw. */
   subscribe(listener: (state: ContextCapState) => void, onError: (error: Error) => void): () => void;

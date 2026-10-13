@@ -163,10 +163,11 @@ function configureLocalLaunch(command: LaunchCommand, launch: PiLaunch, piPath: 
 function configureLocalExtensions(command: LaunchCommand, settings: AppSettings, hostId: string, brokerPort: number, brokerToken: string, sessionDir: string): void {
   const root = Ext.generatedExtensionRoot();
   command.env.PIOP_AGENT_CONFIG_PATH = join(homeDir(), STORAGE_DIRECTORY, 'piop-define-agents/config.json');
+  command.env.PIOP_CONTEXT_CAP_SETTINGS_PATH = join(root, 'context-cap-settings.json');
   command.env.PIOP_RUNTIME_SETTINGS_PATH = join(root, 'runtime-settings.json');
   command.env.PIOP_GENERATED_EXTENSION_ROOT = root;
   const mcpExtension = Ext.prepareMcpBridge();
-  const contextWindowCapExtension = Ext.prepareContextWindowCapExtension();
+  const contextWindowCapExtension = Ext.prepareContextWindowCapExtension(settings);
   const contextBarExtension = Ext.prepareContextBarExtension();
   const sessionCostLimitExtension = Ext.prepareSessionCostLimitExtension(settings);
   const openaiCacheForkExtension = Ext.prepareOpenaiCacheForkExtension();

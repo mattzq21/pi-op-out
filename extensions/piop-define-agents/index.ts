@@ -382,10 +382,8 @@ export default async function defineAgents(pi: ExtensionAPI) {
     request.profiles = config.agents.map(agent => ({ name: agent.name, model: agent.model, effort: agent.effort, fastMode: agent.fastMode, max_subagents: agent.max_subagents ?? 8, max_sub_subagents: agent.max_sub_subagents ?? 8, tools: [...agent.tools], skills: [...agent.skills], mcpServers: Object.keys(agent.mcpServers), path_systemprompt: agent.path_systemprompt, path_agent_prompt: agent.path_agent_prompt }));
   });
 
-  /** Agent edits apply to existing sessions, so the saved definition wins over the session snapshot. */
   const stopContextCap = pi.events.on("piop:agents:context-cap", request => {
-    const agent = currentAgent();
-    request.cap = (agent && findAgent(agent.name) || agent)?.contextWindowCap;
+    request.cap = currentAgent()?.contextWindowCap;
   });
 
   const restoredAgentName = (name: string | undefined) => !name || (name === "default" && !findAgent("default")) ? "general" : name;

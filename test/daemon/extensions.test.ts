@@ -24,7 +24,9 @@ const path = require('node:path');
 const launch = { args };
 try {
   const runtimePath = process.env.PIOP_RUNTIME_SETTINGS_PATH;
-  launch.runtime = require(path.join(path.dirname(runtimePath), 'app-settings.cjs')).readFile(runtimePath);
+  const settingsStore = require(path.join(path.dirname(runtimePath), 'app-settings.cjs'));
+  launch.runtime = settingsStore.readFile(runtimePath);
+  launch.contextSettings = settingsStore.readFile(process.env.PIOP_CONTEXT_CAP_SETTINGS_PATH);
 } catch (error) { launch.readError = String(error?.message ?? error); }
 fs.appendFileSync(path.join(process.env.HOME, 'launches.jsonl'), JSON.stringify(launch) + '\\n');
 const sessionFile = args.includes('--session') ? args[args.lastIndexOf('--session') + 1] : undefined;
@@ -32,12 +34,15 @@ const sessionId = sessionFile ? JSON.parse(fs.readFileSync(sessionFile, 'utf8').
 const state = { sessionFile, sessionId, isStreaming: false, messageCount: 0, pendingMessageCount: 0, model: null, thinkingLevel: 'medium' };
 require('node:readline').createInterface({ input: process.stdin }).on('line', line => {
   const request = JSON.parse(line);
+  if (request.type === 'piop_request' && ['context_cap_settings', 'runtime_settings'].includes(request.command)) {
+    process.stdout.write(JSON.stringify({ type: 'fixture_settings', command: request.command, settings: request.payload.settings }) + '\\n');
+  }
   process.stdout.write(JSON.stringify({ type: 'response', id: request.id, command: request.type, success: true, data: request.type === 'get_state' ? state : null }) + '\\n');
 });
 `);
 }
 
-type Launch = { args: string[]; runtime?: any; readError?: string };
+type Launch = { args: string[]; runtime?: any; contextSettings?: any; readError?: string };
 const lastLaunch = (home: string): Launch => JSON.parse(readFileSync(join(home, 'launches.jsonl'), 'utf8').trim().split('\n').at(-1)!);
 const extensionPaths = ({ args }: Launch) => args.flatMap((arg, index) => args[index - 1] === '--extension' ? [arg] : []);
 
@@ -159,14 +164,30 @@ test('a started Pi reads runtime and context window settings that follow the sav
     for (const file of ['piop-mcp-bridge.ts', 'runtime-settings.ts', 'piop-context-window-cap/index.ts']) expect(mode(join(generated, file))).toBe(0o600);
     const runtime = launch.runtime;
     expect(runtime).not.toHaveProperty('mcpServers');
+    for (const name of ['contextWindowCap', 'contextWindowCapEnabled', 'modelContextWindowCaps']) expect(runtime).not.toHaveProperty(name);
+    expect(launch.contextSettings).toEqual({ contextWindowCap: enabled ? 123456 : 200000, contextWindowCapEnabled: enabled, modelContextWindowCaps: {} });
     expect(runtime).toMatchObject({
       // The goal tools are always on.
       tools: enabled ? ['read', 'get_goal', 'create_goal', 'update_goal'] : ['get_goal', 'create_goal', 'update_goal'],
       skills: enabled ? ['/skill with spaces/SKILL.md'] : [],
-      contextWindowCap: enabled ? 123456 : 200000,
-      contextWindowCapEnabled: enabled,
+
     });
   }
+}, 60_000);
+
+test('saved context settings reach a running Pi through their own request', async () => {
+  await launchPublicPi(daemon);
+  const runtimeId = 'runtime-' + launches;
+  const settings = await daemon.invoke('load_app_settings');
+  settings.contextWindowCap = 456789;
+  settings.modelContextWindowCaps = { 'test/model': null };
+  const received = daemon.waitEvent('pi://event', packet => packet.runtimeId === runtimeId
+    && packet.event?.type === 'fixture_settings' && packet.event.command === 'context_cap_settings'
+    && packet.event.settings?.contextWindowCap === 456789);
+  await daemon.invoke('save_app_settings', { settings });
+  const packet = await received;
+  expect(packet.event.settings).toEqual({ contextWindowCap: 456789, contextWindowCapEnabled: settings.contextWindowCapEnabled, modelContextWindowCaps: { 'test/model': null } });
+  await daemon.invoke('stop_pi', { runtimeId });
 }, 60_000);
 
 test('a Pi start repairs the permissions of unchanged extension files and restores changed files', async () => {
