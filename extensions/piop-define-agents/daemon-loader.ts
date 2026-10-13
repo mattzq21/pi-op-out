@@ -90,7 +90,7 @@ export async function loadAgentDefinitions({ settings, initial: initialize }: Ag
     validateEffort(agent.name, agent.effort);
     let extensionTools: string[] = [];
 
-    await validateModel(agent, settings.defaultModel ?? "", async (registry, validate) => {
+    await validateModel(agent, async (registry, validate) => {
       if (!validateExtensions) return validate();
 
       try { extensionTools = await validateExtensions(extensionPaths(agent.extensions), dirname(configPath), registry, agent, validate); }

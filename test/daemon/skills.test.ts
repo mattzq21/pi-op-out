@@ -55,9 +55,9 @@ test('a started Pi gets every named tool as registered but only enabled tools an
   fakeProgram(bin, 'pi', '#!/bin/sh\nexit 1\n');
   fakeProgram(bin, 'node', `#!${process.execPath}
 const fs = require('node:fs'); const path = require('node:path');
-const file = process.env.PIOP_RUNTIME_SETTINGS_PATH;
+const file = process.env.PIOP_TOOL_STORE_PATH;
 const read = record => require(path.join(path.dirname(file), 'app-settings.cjs')).readFile(record);
-fs.writeFileSync(path.join(process.env.HOME, 'runtime.json'), JSON.stringify({ settings: read(file), skills: read(process.env.PIOP_SKILLS_STORE_PATH), tools: read(process.env.PIOP_TOOL_STORE_PATH) }));
+fs.writeFileSync(path.join(process.env.HOME, 'runtime.json'), JSON.stringify({ skills: read(process.env.PIOP_SKILLS_STORE_PATH), tools: read(process.env.PIOP_TOOL_STORE_PATH) }));
 const args = process.argv.slice(2); const sessionFile = args[args.lastIndexOf('--session') + 1];
 const state = { sessionFile, sessionId: JSON.parse(fs.readFileSync(sessionFile, 'utf8').split('\\n')[0]).id, isStreaming: false, messageCount: 0, pendingMessageCount: 0, model: null, thinkingLevel: 'medium' };
 require('node:readline').createInterface({ input: process.stdin }).on('line', line => { const request = JSON.parse(line); process.stdout.write(JSON.stringify({ type: 'response', id: request.id, command: request.type, success: true, data: request.type === 'get_state' ? state : null }) + '\\n'); });
@@ -81,7 +81,6 @@ require('node:readline').createInterface({ input: process.stdin }).on('line', li
     expect(runtime.tools.registeredTools).toEqual(saved.tools.map((tool: any) => tool.name));
     expect(runtime.tools.enabledTools.filter((name: string) => !name.endsWith('_goal'))).toEqual(['read']);
     expect(runtime.skills).toEqual({ userInvokedSkills: [join(root, 'explicit')], agentInvokedSkills: [join(root, 'plain')] });
-    expect(runtime.settings).toEqual({ defaultModel: saved.defaultModel });
     // Building the runtime settings does not change the saved settings.
     expect(await daemon.invoke('load_app_settings')).toEqual(saved);
     await daemon.invoke('stop_pi', { runtimeId: 'runtime-settings' });

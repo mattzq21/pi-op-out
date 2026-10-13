@@ -1,7 +1,6 @@
 import type { McpServers } from "./mcp-config.ts";
 import type { ExtensionContext, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 
-export interface RuntimeSettingsRequest { settings?: { defaultModel?: string } }
 
 export interface RequiredToolsRequest { ctx: ExtensionContext; tools: string[]; availableTools?: string[] }
 

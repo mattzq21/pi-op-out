@@ -83,9 +83,9 @@ test('reset times are read only from UTC ISO 8601 timestamps, with or without fr
 
 test('settings saved before the newer options load with automatic retry kept on', async () => {
   const current = await daemon.invoke('load_app_settings');
-  const older = { defaultModel: 'openai-codex/gpt-5.6-sol', defaultThinking: 'medium', contextWindowCap: 200000, contextWindowCapEnabled: true, autoRetry: true, tools: [], skills: [], mcpServers: [] };
+  const older = { defaultThinking: 'medium', contextWindowCap: 200000, contextWindowCapEnabled: true, autoRetry: true, tools: [], skills: [], mcpServers: [] };
   const saved = await daemon.invoke('save_app_settings', { settings: { ...older, settingsRevision: current.settingsRevision } });
   expect(saved).toBeDefined();
   const loaded = await daemon.invoke('load_app_settings');
-  expect(loaded).toMatchObject({ autoRetry: true, defaultModel: 'openai-codex/gpt-5.6-sol', contextWindowCap: 200000 });
+  expect(loaded).toMatchObject({ autoRetry: true, contextWindowCap: 200000 });
 });

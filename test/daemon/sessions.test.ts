@@ -132,7 +132,6 @@ test('settings default when absent and reject too many remote machines', async (
   try {
     const loaded = await fresh.invoke('load_app_settings');
     expect(loaded.hosts).toEqual([]);
-    expect(typeof loaded.defaultModel).toBe('string');
     const hosts = Array.from({ length: 17 }, (_, index) => ({ enabled: true, id: 'remote-' + index, name: 'Remote ' + index, target: 'host' + index, piPath: 'pi' }));
     expect(await fresh.failure('save_app_settings', { settings: { ...loaded, hosts } })).toContain('remote machines');
     expect((await fresh.invoke('load_app_settings')).hosts).toEqual([]);

@@ -316,7 +316,7 @@ export const startTemporaryConversation = async (responses: BackendResponses) =>
     create_temporary_chat: { cwd, sessionId },
     remove_temporary_chat: null,
     list_sessions: [],
-    load_app_settings: { ...defaultSettings, defaultModel: "e2e/acceptance", defaultThinking: "high" },
+    load_app_settings: { ...defaultSettings, defaultThinking: "high" },
     ...connectedSessionResponses(sessionId),
     "pi_command:set_model": {}, "pi_command:set_fast_mode": {},
     ...responses,

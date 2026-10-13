@@ -374,7 +374,7 @@ export default async function defineAgents(pi: ExtensionAPI) {
       return;
     }
 
-    request.ready = selectedProfileState(pi, agent, path => readAgentPrompt(path, true))
+    request.ready = selectedProfileState(agent, path => readAgentPrompt(path, true))
       .then(state => { request.state = state; })
       .catch(error => { request.error = `Cannot load agent profile ${agent.name}: ${String(error)}`; });
   });

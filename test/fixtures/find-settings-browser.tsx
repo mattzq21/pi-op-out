@@ -10,7 +10,7 @@ mockIPC((command, args) => {
 }, { shouldMockEvents: true });
 
 render(() => <SettingsView scope="client" settings={{
-  defaultAgent: 'general', defaultModel: '', hiddenModels: [], defaultThinking: 'off', defaultFastMode: false,
+  defaultAgent: 'general', hiddenModels: [], defaultThinking: 'off', defaultFastMode: false,
   contextWindowCap: 100_000, modelContextWindowCaps: {}, contextWindowCapEnabled: false, autoCompaction: true, autoRetry: true,
   debugMode: false, tools: [], skills: [], hosts: [],
   keybindings: { newConversation: 'Ctrl+N', toggleConversations: 'Ctrl+B', toggleTerminal: 'Ctrl+J', toggleDebugMode: 'Ctrl+D', focusComposer: 'Ctrl+E', openSettings: 'Ctrl+,' },

@@ -52,17 +52,17 @@ test('settings can be saved again without reconnecting an unavailable remote con
   assert.equal(client.currentHostId(), 'remote');
 });
 
-test('saving client preferences preserves newer daemon model settings', async t => {
+test('saving client preferences preserves newer daemon review settings', async t => {
   const { client, daemon } = await settingsClient(t);
   const initial = await daemon.invoke('load_app_settings');
-  await daemon.invoke('save_host_settings', { hostId: 'local', agentsChanged: false, settings: { ...initial, defaultModel: 'new/model' } });
+  await daemon.invoke('save_host_settings', { hostId: 'local', agentsChanged: false, settings: { ...initial, reviewPrompt: 'new/model' } });
   const current = (await client.loadSettingsChange()).settings;
-  const result = await client.saveSettings({ ...current, defaultModel: 'old/model', debugMode: true }, false, undefined, 'client', current);
-  assert.equal(result.settings.defaultModel, 'new/model');
+  const result = await client.saveSettings({ ...current, reviewPrompt: 'old/model', debugMode: true }, false, undefined, 'client', current);
+  assert.equal(result.settings.reviewPrompt, 'new/model');
   assert.equal(result.settings.debugMode, true);
-  assert.equal((await daemon.invoke('load_app_settings')).defaultModel, 'new/model');
+  assert.equal((await daemon.invoke('load_app_settings')).reviewPrompt, 'new/model');
   const reloaded = (await client.loadSettingsChange()).settings;
-  assert.equal(reloaded.defaultModel, 'new/model');
+  assert.equal(reloaded.reviewPrompt, 'new/model');
   assert.equal(reloaded.debugMode, true);
 });
 

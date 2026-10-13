@@ -16,7 +16,6 @@ export interface AppSettings {
   reviewPrompt: string;
   localEnabled: boolean;
   defaultAgent: string;
-  defaultModel: string;
   hiddenModels: string[];
   knownModels?: string[];
   defaultThinking: string;
@@ -142,7 +141,6 @@ export function parseAppSettings(value: any): AppSettings {
     reviewPrompt: stringField(value.reviewPrompt, 'reviewPrompt', defaultReviewPrompt),
     localEnabled: boolField(value.localEnabled, 'localEnabled', true),
     defaultAgent: stringField(value.defaultAgent, 'defaultAgent', defaultAgent),
-    defaultModel: stringField(value.defaultModel, 'defaultModel'),
     hiddenModels: value.hiddenModels === undefined ? [] : stringArray(value.hiddenModels, 'hiddenModels'),
     knownModels: value.knownModels === undefined || value.knownModels === null ? undefined : stringArray(value.knownModels, 'knownModels'),
     defaultThinking: stringField(value.defaultThinking, 'defaultThinking'),
@@ -168,7 +166,6 @@ export function serializeAppSettings(settings: AppSettings): Record<string, unkn
   result.reviewPrompt = settings.reviewPrompt;
   result.localEnabled = settings.localEnabled;
   result.defaultAgent = settings.defaultAgent;
-  result.defaultModel = settings.defaultModel;
   result.hiddenModels = settings.hiddenModels;
   if (settings.knownModels !== undefined) result.knownModels = settings.knownModels;
   result.defaultThinking = settings.defaultThinking;
@@ -196,7 +193,6 @@ export function defaultSettings(): AppSettings {
     localEnabled: true,
     defaultAgent: defaultAgent(),
     defaultFastMode: false,
-    defaultModel: '',
     hiddenModels: [],
     defaultThinking: 'medium',
     contextWindowCap: 300_000,

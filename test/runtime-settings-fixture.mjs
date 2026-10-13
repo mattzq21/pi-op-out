@@ -31,7 +31,6 @@ export async function installRuntimeSettings({ dir, pi, ctx, settings, settingsP
     skills: { userInvokedSkills: [], agentInvokedSkills: [] }, tools: { enabledTools, registeredTools: enabledTools }, ...rest,
   };
   if (!settingsPath) throw new Error('A daemon-created runtime settings path is required');
-  process.env.PIOP_RUNTIME_SETTINGS_PATH = settingsPath;
   process.env.PIOP_SKILLS_STORE_PATH = join(dirname(settingsPath), 'skills-store.json');
   process.env.PIOP_TOOL_STORE_PATH = join(dirname(settingsPath), 'tool-store.json');
   const extensions = [

@@ -114,7 +114,7 @@ test('closing keeps a conversation after a prompt was submitted', async () => {
       },
     } }));
     const settings = await daemon.invoke('load_app_settings');
-    await daemon.invoke('save_app_settings', { settings: { ...settings, defaultModel: 'blank-session-test/waiting' } });
+    await daemon.invoke('save_app_settings', { settings: { ...settings, } });
     const chat = JSON.parse(execFileSync('node', [fileURLToPath(new URL('../fixtures/publish-chat.mjs', import.meta.url))], {
       encoding: 'utf8', timeout: 30_000,
       input: JSON.stringify({ home: daemon.home, cwd: daemon.home, content: '' }),

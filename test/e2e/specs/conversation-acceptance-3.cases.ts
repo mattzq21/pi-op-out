@@ -11,7 +11,7 @@ describe("Conversation acceptance", () => {
   });
 
   it("renders a failed tool with its diagnostic output", async () => {
-    await startTemporaryConversation({ load_app_settings: { ...defaultSettings, defaultModel: "e2e/acceptance", defaultThinking: "high", debugMode: true } });
+    await startTemporaryConversation({ load_app_settings: { ...defaultSettings, defaultThinking: "high", debugMode: true } });
     await emitPiEvent({ type: "session_switched" });
     const enableDebug = $('button[aria-label="Enable debug mode"]');
 
@@ -85,7 +85,7 @@ describe("Conversation acceptance", () => {
   });
 
   it("shows cache reuse for both a response and the whole session", async () => {
-    const settings = { ...defaultSettings, defaultModel: "e2e/acceptance", defaultThinking: "high", debugMode: true };
+    const settings = { ...defaultSettings, defaultThinking: "high", debugMode: true };
 
     const history = {
       entries: [

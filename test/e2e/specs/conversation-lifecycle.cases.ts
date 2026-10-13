@@ -12,7 +12,7 @@ describe("Conversation lifecycle", () => {
     const current = { id: "ae9071ac-0954-4e01-bf92-bd969ed50c47", path: "/tmp/draft-current.jsonl", name: "Draft current conversation", project: "Draft project", cwd: "/tmp", preview: "Current draft", messageCount: 0, hostId: "local" };
     const target = { id: "1d26ae02-2dfe-48df-a5d3-b8c77fd764b4", path: "/tmp/draft-target.jsonl", name: "Draft target conversation", project: "Draft project", cwd: "/tmp", preview: "Target draft", messageCount: 0, hostId: "local" };
     const state = (sessionId: string) => ({ model: { provider: "e2e", id: "acceptance" }, thinkingLevel: "high", isStreaming: false, sessionId, sessionFile: sessionId === current.id ? current.path : target.path, messageCount: 0, pendingMessageCount: 0 });
-    await mockBackend({ list_sessions: [current, target], load_app_settings: { ...defaultSettings, defaultModel: "e2e/acceptance", defaultThinking: "high" }, ...connectedSessionResponses(""), "pi_command:set_model": {} });
+    await mockBackend({ list_sessions: [current, target], load_app_settings: { ...defaultSettings, defaultThinking: "high" }, ...connectedSessionResponses(""), "pi_command:set_model": {} });
 
     try {
       await emitPiEvent({ type: "session_switched" });
@@ -50,7 +50,7 @@ describe("Conversation lifecycle", () => {
   it("keeps split-pane drafts separate from the main conversation", async () => {
     const indexed = { id: "draft-split", path: "/tmp/draft-split.jsonl", name: "Draft split conversation", project: "Draft project", cwd: "/tmp", preview: "Split draft", messageCount: 1, hostId: "local" };
     const main = { ...indexed, id: "draft-main", path: "/tmp/draft-main.jsonl", name: "Draft main conversation" };
-    await mockBackend({ list_sessions: [main, indexed], load_app_settings: { ...defaultSettings, defaultModel: "e2e/acceptance", defaultThinking: "high" }, ...connectedSessionResponses(""), "pi_command:set_model": {} });
+    await mockBackend({ list_sessions: [main, indexed], load_app_settings: { ...defaultSettings, defaultThinking: "high" }, ...connectedSessionResponses(""), "pi_command:set_model": {} });
 
     let mainRuntimeId: string;
     let requestNumber = 0;
@@ -104,7 +104,7 @@ describe("Conversation lifecycle", () => {
     const current = { id: "terminal-current", path: "/tmp/terminal-current.jsonl", name: "Terminal current conversation", project: "Terminal project", cwd: "/tmp", preview: "Current terminal", messageCount: 1, hostId: "local" };
     const target = { id: "terminal-target", path: "/tmp/terminal-target.jsonl", name: "Terminal target conversation", project: "Terminal project", cwd: "/tmp", preview: "Target terminal", messageCount: 1, hostId: "local" };
     const state = (sessionId: string) => ({ model: { provider: "e2e", id: "acceptance" }, thinkingLevel: "high", isStreaming: false, sessionId, sessionFile: `/tmp/${sessionId}.jsonl`, messageCount: 1, pendingMessageCount: 0 });
-    const settings = { ...defaultSettings, defaultModel: "e2e/acceptance", defaultThinking: "high" };
+    const settings = { ...defaultSettings, defaultThinking: "high" };
     await mockBackend({ list_sessions: [current, target], ...connectedSessionResponses("terminal-bootstrap"), "pi_command:set_model": {}, load_app_settings: settings, "shared_terminal:start": {}, "shared_terminal:resize": {}, "shared_terminal:close": {} });
 
     try {
@@ -146,7 +146,7 @@ describe("Conversation lifecycle", () => {
   it("starts a replacement session and closes the archived conversation's terminal", async () => {
     const indexed = { id: "archive-active", path: "/tmp/archive-active.jsonl", name: "Active archive conversation", project: "Archive project", cwd: "/tmp", preview: "Active archive", messageCount: 2, hostId: "local" };
     const replacementState = { model: { provider: "e2e", id: "acceptance" }, thinkingLevel: "high", isStreaming: false, sessionId: "archive-replacement", messageCount: 0, pendingMessageCount: 0 };
-    await mockBackend({ list_sessions: [indexed], load_app_settings: { ...defaultSettings, defaultModel: "e2e/acceptance", defaultThinking: "high" }, ...connectedSessionResponses(""), "pi_command:set_model": {}, create_temporary_chat: { cwd: "/tmp/archive-replacement", sessionId: "archive-replacement" }, archive_session: {}, "shared_terminal:start": {}, "shared_terminal:resize": {}, "shared_terminal:close": {} });
+    await mockBackend({ list_sessions: [indexed], load_app_settings: { ...defaultSettings, defaultThinking: "high" }, ...connectedSessionResponses(""), "pi_command:set_model": {}, create_temporary_chat: { cwd: "/tmp/archive-replacement", sessionId: "archive-replacement" }, archive_session: {}, "shared_terminal:start": {}, "shared_terminal:resize": {}, "shared_terminal:close": {} });
 
     try {
       await emitPiEvent({ type: "session_switched" });

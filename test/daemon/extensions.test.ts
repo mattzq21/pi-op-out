@@ -23,9 +23,8 @@ const args = process.argv.slice(2);
 const path = require('node:path');
 const launch = { args };
 try {
-  const runtimePath = process.env.PIOP_RUNTIME_SETTINGS_PATH;
+  const runtimePath = process.env.PIOP_TOOL_STORE_PATH;
   const read = record => require(path.join(path.dirname(runtimePath), 'app-settings.cjs')).readFile(record);
-  launch.runtime = read(runtimePath);
   launch.skills = read(process.env.PIOP_SKILLS_STORE_PATH);
   launch.tools = read(process.env.PIOP_TOOL_STORE_PATH);
   launch.contextSettings = read(process.env.PIOP_CONTEXT_CAP_SETTINGS_PATH);
@@ -44,7 +43,7 @@ require('node:readline').createInterface({ input: process.stdin }).on('line', li
 `);
 }
 
-type Launch = { args: string[]; runtime?: any; contextSettings?: any; skills?: any; tools?: any; readError?: string };
+type Launch = { args: string[]; contextSettings?: any; skills?: any; tools?: any; readError?: string };
 const lastLaunch = (home: string): Launch => JSON.parse(readFileSync(join(home, 'launches.jsonl'), 'utf8').trim().split('\n').at(-1)!);
 const extensionPaths = ({ args }: Launch) => args.flatMap((arg, index) => args[index - 1] === '--extension' ? [arg] : []);
 
@@ -172,9 +171,6 @@ test('a started Pi reads runtime and context window settings that follow the sav
     expect(readFileSync(join(generated, 'runtime-settings.ts'), 'utf8')).toBe(source('extensions/piop-runtime-settings/index.ts'));
     expect(readFileSync(join(generated, 'piop-context-window-cap/index.ts'), 'utf8')).toBe(source('extensions/piop-context-window-cap/index.ts'));
     for (const file of ['piop-mcp-bridge.ts', 'runtime-settings.ts', 'piop-context-window-cap/index.ts']) expect(mode(join(generated, file))).toBe(0o600);
-    const runtime = launch.runtime;
-    expect(runtime).not.toHaveProperty('mcpServers');
-    for (const name of ['contextWindowCap', 'contextWindowCapEnabled', 'modelContextWindowCaps']) expect(runtime).not.toHaveProperty(name);
     expect(launch.contextSettings).toEqual({ contextWindowCap: enabled ? 123456 : 200000, contextWindowCapEnabled: enabled, modelContextWindowCaps: {} });
     // The goal tools are always on.
     expect(launch.tools.enabledTools).toEqual(enabled ? ['read', 'get_goal', 'create_goal', 'update_goal'] : ['get_goal', 'create_goal', 'update_goal']);

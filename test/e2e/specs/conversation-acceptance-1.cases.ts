@@ -304,7 +304,7 @@ describe("Conversation acceptance", () => {
     const indexed = { id: "acceptance-split", path: "/tmp/acceptance-split.jsonl", name: "Acceptance split target", project: "Acceptance project", cwd: "/tmp", preview: "Split preview", messageCount: 1, hostId: "local" };
     await mockBackend({
       list_sessions: [indexed], ...connectedSessionResponses(indexed.id),
-      load_app_settings: { ...defaultSettings, defaultModel: "e2e/acceptance", defaultThinking: "high" },
+      load_app_settings: { ...defaultSettings, defaultThinking: "high" },
       "pi_command:get_state": { ...connectedSessionResponses(indexed.id)["pi_command:get_state"], sessionFile: indexed.path, messageCount: indexed.messageCount },
     });
 

@@ -44,8 +44,6 @@ export function debugRuntime(): any {
     daemonDirectory: directory(),
     daemonLog: join(directory(), 'daemon.log'),
     extensionRoot,
-    runtimeSettingsDatabase: join(extensionRoot, 'sessions.sqlite'),
-    runtimeSettingsRecord: 'runtime-settings.json',
   };
   return runtime;
 }

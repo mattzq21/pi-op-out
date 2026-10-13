@@ -1,5 +1,4 @@
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import type { Agent, AgentSnapshot, RuntimeSettingsRequest, SessionAgentState } from "./contracts.ts";
+import type { Agent, AgentSnapshot, SessionAgentState } from "./contracts.ts";
 import { DEFAULT_PROMPT_PATH, DEFAULT_AGENT_PROMPT_PATH, resolvePromptPath } from "./prompts.ts";
 import type { Config } from "./index.ts";
 
@@ -17,11 +16,9 @@ export function migrateQuestionSnapshot(stored: AgentSnapshot | undefined) {
   return snapshot;
 }
 
-export async function selectedProfileState(pi: ExtensionAPI, agent: Agent, readPrompt: (path: string) => Promise<string>): Promise<SessionAgentState> {
+export async function selectedProfileState(agent: Agent, readPrompt: (path: string) => Promise<string>): Promise<SessionAgentState> {
   const definition = structuredClone(agent);
-  const defaults: RuntimeSettingsRequest = {};
-  pi.events.emit("piop:runtime-settings", defaults);
-  definition.model = definition.model.trim() || defaults.settings?.defaultModel || "";
+  definition.model = definition.model.trim();
   const agentPromptPath = definition.path_agent_prompt;
   const [systemPrompt, agentPrompt] = await Promise.all([readPrompt(resolvePromptPath(definition.path_systemprompt)), agentPromptPath ? readPrompt(resolvePromptPath(agentPromptPath)) : Promise.resolve("")]);
 

@@ -37,10 +37,6 @@ export function toolLists(settings: AppSettings): { enabledTools: string[]; regi
   };
 }
 
-function ownRuntimeSettings(settings: AppSettings): any {
-  return { defaultModel: settings.defaultModel };
-}
-
 export function contextCapSettings(settings: AppSettings) {
   return {
     contextWindowCap: settings.contextWindowCap,
@@ -54,10 +50,10 @@ export function saveContextCapSettings(settings: AppSettings): void {
 }
 
 export function runtimeSettings(settings: AppSettings): any {
-  return { ...ownRuntimeSettings(settings), skills: skillLists(settings), tools: toolLists(settings) };
+  return { skills: skillLists(settings), tools: toolLists(settings) };
 }
 
-export function prepareRuntimeSettings(settings: AppSettings): string {
+export function prepareRuntimeSettings(): string {
   const dir = generatedExtensionRoot();
   ensurePrivateDir(dir);
   const path = join(dir, 'runtime-settings.ts');
@@ -65,13 +61,8 @@ export function prepareRuntimeSettings(settings: AppSettings): string {
   atomicWritePrivate(join(dir, 'runtime-configuration.cjs'), R.runtimeConfiguration);
   prepareSdkStorage(dir);
   atomicWritePrivate(path, R.runtimeSettingsExtension);
-  saveRuntimeSettings(dir, settings);
-  return path;
-}
-
-function saveRuntimeSettings(dir: string, settings: AppSettings): void {
   atomicWritePrivate(join(dir, 'app-settings.cjs'), R.appSettingsCjs);
-  publish(join(dir, 'runtime-settings.json'), JSON.stringify(ownRuntimeSettings(settings)));
+  return path;
 }
 
 export function prepareSkillsStoreExtension(settings: AppSettings): string {

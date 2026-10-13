@@ -142,7 +142,6 @@ function localPiCommand(settings: AppSettings, hostId: string, launch: PiLaunch,
   const path = pathWithNode(node);
   if (path !== undefined) command.env.PATH = path;
   configureLocalLaunch(command, launch, piPath);
-  if (!isRpc && settings.defaultModel.trim()) command.args.push('--model', settings.defaultModel.trim());
   if (settings.defaultThinking.trim()) command.args.push('--thinking', settings.defaultThinking.trim());
   return command;
 }
@@ -164,7 +163,6 @@ function configureLocalExtensions(command: LaunchCommand, settings: AppSettings,
   const root = Ext.generatedExtensionRoot();
   command.env.PIOP_AGENT_CONFIG_PATH = join(homeDir(), STORAGE_DIRECTORY, 'piop-define-agents/config.json');
   command.env.PIOP_CONTEXT_CAP_SETTINGS_PATH = join(root, 'context-cap-settings.json');
-  command.env.PIOP_RUNTIME_SETTINGS_PATH = join(root, 'runtime-settings.json');
   command.env.PIOP_SKILLS_STORE_PATH = join(root, 'skills-store.json');
   command.env.PIOP_TOOL_STORE_PATH = join(root, 'tool-store.json');
   command.env.PIOP_GENERATED_EXTENSION_ROOT = root;
@@ -176,7 +174,7 @@ function configureLocalExtensions(command: LaunchCommand, settings: AppSettings,
   const codexWebSearchExtension = Ext.prepareCodexWebSearchExtension();
   const definedAgentsExtension = Ext.prepareDefinedAgentsExtension();
   command.args.push('--extension', 'builtin:codemode', '--extension', 'builtin:tool-search');
-  command.args.push('--extension', Ext.prepareCodemodeToolsDescriptionExtension(), '--extension', Ext.prepareSkillsStoreExtension(settings), '--extension', Ext.prepareToolStoreExtension(settings), '--extension', Ext.prepareRuntimeSettings(settings), '--session-dir', sessionDir, '--approve', '--no-skills',
+  command.args.push('--extension', Ext.prepareCodemodeToolsDescriptionExtension(), '--extension', Ext.prepareSkillsStoreExtension(settings), '--extension', Ext.prepareToolStoreExtension(settings), '--extension', Ext.prepareRuntimeSettings(), '--session-dir', sessionDir, '--approve', '--no-skills',
     '--extension', Ext.prepareProvidersRefreshExtension(), '--extension', mcpExtension, '--extension', Ext.prepareSessionBroker(),
     '--extension', contextWindowCapExtension, '--extension', contextBarExtension, '--extension', sessionCostLimitExtension,
     '--extension', Ext.prepareFastModeExtension(), '--extension', openaiCacheForkExtension, '--extension', codexWebSearchExtension,

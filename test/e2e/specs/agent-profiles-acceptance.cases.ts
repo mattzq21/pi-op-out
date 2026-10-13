@@ -105,7 +105,7 @@ describe("Agent profiles acceptance", () => {
   });
 
   it("sends agent configuration and its revision through the settings writer", async () => {
-    const settings = { ...defaultSettings, defaultModel: "e2e/acceptance", defaultThinking: "high" };
+    const settings = { ...defaultSettings, defaultThinking: "high" };
     await mockBackend({
       ...connectedSessionResponses("agents-save"),
       "pi_command:get_agent_configuration": agentCapability().config,
@@ -178,7 +178,7 @@ describe("Agent profiles acceptance", () => {
   });
 
   it("preserves desktop settings when agent configuration is rejected", async () => {
-    const settings = { ...defaultSettings, defaultModel: "e2e/acceptance", defaultThinking: "high" };
+    const settings = { ...defaultSettings, defaultThinking: "high" };
     const capability = agentCapability();
     await mockBackend({
       ...connectedSessionResponses("agents-rollback"),

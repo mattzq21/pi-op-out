@@ -13,5 +13,5 @@ export async function runtimeSettingsPath(t) {
   const runtimeId = 'settings-bootstrap';
   await daemon.invoke('start_pi', { runtimeId, clientId: 'settings-bootstrap', cwd: home, sessionPath: chat.path, presence: { readOnly: true } });
   await daemon.invoke('stop_pi', { runtimeId });
-  return join(home, '.piop', 'runtime-settings.json');
+  return join(home, '.piop', 'tool-store.json');
 }
