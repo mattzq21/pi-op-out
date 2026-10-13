@@ -15,7 +15,7 @@ Resolve in this order: manual session choice → active agent definition → pro
 - `/cap model_default` sets a manual `null` choice, bypassing all cap settings.
 - In defaults, an omitted value inherits; `null` selects the model default and stops fallback.
 
-A manual choice survives model and agent changes. When switching to a smaller model, retain that choice and apply the smaller window. Switching back restores the chosen cap. A new numeric choice above the current model's original window is rejected; this differs from clamping an existing manual choice after a model switch.
+A manual choice survives model changes. When switching to a smaller model, retain that choice and apply the smaller window. Switching back restores the chosen cap. A new numeric choice above the current model's original window is rejected; this differs from clamping an existing manual choice after a model switch.
 
 ## Validation and timing
 
@@ -25,11 +25,11 @@ Errors must be clear and leave the previous choice unchanged. Validate on receip
 
 Apply changes only at idle: before a task starts or after the agent settles, with no answer generation, tool execution, or history compaction in progress. Follow-ups and goals can remain queued. Apply cap changes before starting that queued work.
 
-All change operations share one queue per session, ordered by receipt at the extension. Process each separately; do not collapse them into the last change. A failed operation reports its error and leaves state unchanged; later operations continue. A reset uses defaults from earlier successful operations. Agent/config edits update existing sessions at idle when no manual choice overrides them.
+All change operations share one queue per session, ordered by receipt at the extension. Process each separately; do not collapse them into the last change. A failed operation reports its error and leaves state unchanged; later operations continue. A reset uses defaults from earlier successful operations. Provider/model and general config edits update existing sessions at idle when no manual choice overrides them. The agent definition is loaded once at agent start and stays fixed for the session, including on resume; later definition edits apply only to new agents.
 
 ## Application and history
 
-Apply on cap changes and `model_select`. Changes also include session/branch restoration, relevant agent/config updates, and a model refresh replacing the current model object. Write the model field only when needed. These paths replace repeated application on input and before agent start. Retain `session_shutdown` to restore original model values and remove listeners, including during extension reload.
+Apply on cap changes and `model_select`. Changes also include session/branch restoration, relevant provider/model and general config updates, and a model refresh replacing the current model object. Write the model field only when needed. These paths replace repeated application on input and before agent start. Retain `session_shutdown` to restore original model values and remove listeners, including during extension reload.
 
 Append one custom entry for each effective cap or source change in the session JSONL. Sources are `manual`, `agent_definition`, `config`, and `modelMax`. Model and general settings both use `config`.
 
