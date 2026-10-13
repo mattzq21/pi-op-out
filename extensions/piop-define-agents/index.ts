@@ -22,7 +22,7 @@ const STATUS_KEY = "pi-define-agents";
 
 const sessionTools = ["subagent"];
 
-export type Config = { revision?: string; agents: Agent[]; webSearchDefaultApplied?: boolean; sessionToolsDefaultApplied?: boolean; subagentsDefaultApplied?: boolean; diagramistDefaultApplied?: boolean; askerAgentDefaultApplied?: boolean; terminalAgentDefaultApplied?: boolean; excalidrawAgentDefaultApplied?: boolean };
+export type Config = { revision?: string; agents: Agent[]; webSearchDefaultApplied?: boolean; sessionToolsDefaultApplied?: boolean; subagentsDefaultApplied?: boolean; diagramistDefaultApplied?: boolean; askerAgentDefaultApplied?: boolean; terminalAgentDefaultApplied?: boolean; tokagentDefaultApplied?: boolean; excalidrawAgentDefaultApplied?: boolean };
 
 type ConfigRuntime = { events: { emit(channel: "piop:runtime-settings", request: RuntimeSettingsRequest): void } };
 
@@ -123,7 +123,7 @@ function normalize(value: Omit<Partial<Config>, "agents"> & { agents?: StoredAge
   const unique = supplied.filter((agent, index) => supplied.findIndex((candidate) => candidate.name === agent.name) === index);
   const agents = unique.some((agent) => agent.name === "general") ? unique : [defaultAgent(pi), ...unique];
 
-  return { revision: value.revision, agents, webSearchDefaultApplied: value.webSearchDefaultApplied === true, sessionToolsDefaultApplied: value.sessionToolsDefaultApplied === true, subagentsDefaultApplied: value.subagentsDefaultApplied === true, diagramistDefaultApplied: value.diagramistDefaultApplied === true, askerAgentDefaultApplied: value.askerAgentDefaultApplied === true, terminalAgentDefaultApplied: value.terminalAgentDefaultApplied === true, excalidrawAgentDefaultApplied: value.excalidrawAgentDefaultApplied === true };
+  return { revision: value.revision, agents, webSearchDefaultApplied: value.webSearchDefaultApplied === true, sessionToolsDefaultApplied: value.sessionToolsDefaultApplied === true, subagentsDefaultApplied: value.subagentsDefaultApplied === true, diagramistDefaultApplied: value.diagramistDefaultApplied === true, askerAgentDefaultApplied: value.askerAgentDefaultApplied === true, terminalAgentDefaultApplied: value.terminalAgentDefaultApplied === true, tokagentDefaultApplied: value.tokagentDefaultApplied === true, excalidrawAgentDefaultApplied: value.excalidrawAgentDefaultApplied === true };
 }
 
 async function readConfig(pi: ConfigRuntime, supplied: StoredConfig | undefined, initialize: boolean, storage: ConfigStorage): Promise<Config> {
@@ -209,6 +209,21 @@ function migrateTerminalAgent(config: Config, pi: ConfigRuntime) {
   return true;
 }
 
+function migrateTokagent(config: Config, pi: ConfigRuntime) {
+  if (config.tokagentDefaultApplied) return false;
+
+  if (!config.agents.some(agent => agent.name === "tokagent")) {
+    const agent = structuredClone(config.agents.find(agent => agent.name === "general") ?? defaultAgent(pi));
+    agent.name = "tokagent";
+    agent.extensions = [...new Set([...(agent.extensions ?? []), "../piop-rtk/rtk.ts"])];
+    config.agents.push(agent);
+  }
+
+  config.tokagentDefaultApplied = true;
+
+  return true;
+}
+
 async function migrateDiagramist(config: Config, pi: ConfigRuntime, storage: ConfigStorage) {
   if (config.diagramistDefaultApplied) return false;
 
@@ -246,6 +261,8 @@ async function loadMigratedConfig(pi: ConfigRuntime, supplied: StoredConfig | un
   const retainedAgents = config.agents.filter(agent => agent.name !== "voice-orchestrator");
 
   if (retainedAgents.length !== config.agents.length) { config.agents = retainedAgents; changed = true; }
+
+  changed = migrateTokagent(config, pi) || changed;
 
   if (changed) await storage.writeConfig(config);
 

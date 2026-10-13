@@ -33,14 +33,6 @@ export function runtimeSettings(settings: AppSettings): any {
   };
 }
 
-export function prepareRtkExtension(): string {
-  const dir = generatedExtensionRoot();
-  ensurePrivateDir(dir);
-  const path = join(dir, 'rtk.ts');
-  atomicWritePrivate(path, R.rtkExtension);
-  return path;
-}
-
 export function prepareRuntimeSettings(settings: AppSettings): string {
   const dir = generatedExtensionRoot();
   ensurePrivateDir(dir);
@@ -140,6 +132,9 @@ export function prepareSessionCostLimitExtension(_settings: AppSettings): string
 function prepareAgentDirectories(dir: string): void {
   ensurePrivateDir(dir);
   atomicWritePrivate(join(dir, '../app-settings.cjs'), R.appSettingsCjs);
+  const rtk = join(homeDir(), STORAGE_DIRECTORY, 'piop-rtk');
+  ensurePrivateDir(rtk);
+  atomicWritePrivate(join(rtk, 'rtk.ts'), R.rtkExtension);
   const excalidraw = join(homeDir(), STORAGE_DIRECTORY, 'piop-excalidraw');
   ensurePrivateDir(excalidraw);
   ensurePrivateDir(join(excalidraw, 'references'));
