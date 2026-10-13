@@ -111,12 +111,15 @@ test('unchanged MCP definitions retain registrations and replacements remove onl
   assert.equal(f.servers.get('search').command, 'replacement'); assert.equal(f.servers.has('other'), false);
 }));
 
-test('private MCP identities stay stable per session and server and change between owners', async () => fixture(async f => {
+test('MCP identities use the session ID directly across servers', async () => fixture(async f => {
   const definitions = { search: { command: 'server' }, other: { command: 'server' } };
-  await f.select(definitions); const initial = f.servers.get('search').env.PIOP_CUA_INSTANCE_ID;
-  await f.select(definitions); assert.equal(f.servers.get('search').env.PIOP_CUA_INSTANCE_ID, initial);
-  assert.notEqual(f.servers.get('other').env.PIOP_CUA_INSTANCE_ID, initial);
-  await f.select(definitions, 'other-session'); assert.notEqual(f.servers.get('search').env.PIOP_CUA_INSTANCE_ID, initial);
+  await f.select(definitions);
+  assert.equal(f.servers.get('search').env.PIOP_CUA_INSTANCE_ID, 'session');
+  assert.equal(f.servers.get('other').env.PIOP_CUA_INSTANCE_ID, 'session');
+  await f.select(definitions); assert.equal(f.registrations.length, 2);
+  await f.select(definitions, 'other-session');
+  assert.equal(f.servers.get('search').env.PIOP_CUA_INSTANCE_ID, 'other-session');
+  assert.equal(f.servers.get('other').env.PIOP_CUA_INSTANCE_ID, 'other-session');
 }));
 
 test('opted-in MCP tools hide private identity fields and override spoofed call arguments', async () => fixture(async f => {
@@ -126,7 +129,7 @@ test('opted-in MCP tools hide private identity fields and override spoofed call 
   const signal = new AbortController().signal, update = () => {};
 
   await tool.execute('call', { query: 'q', agent_id: 'spoofed' }, signal, update, f.ctx);
-  assert.deepEqual(f.executions[0], ['call', { query: 'q', agent_id: f.servers.get('search').env.PIOP_CUA_INSTANCE_ID }, signal, update, f.ctx]);
+  assert.deepEqual(f.executions[0], ['call', { query: 'q', agent_id: 'session' }, signal, update, f.ctx]);
 }));
 
 test('ordinary MCP tools retain their schemas and supplied arguments', async () => fixture(async f => {

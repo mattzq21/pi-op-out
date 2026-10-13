@@ -1,4 +1,3 @@
-import { createHash } from "node:crypto";
 import { z } from "zod";
 import type { TSchema } from "typebox";
 import { createMcpExtension, type ExtensionAPI, type ExtensionContext, type ExtensionEvent, type ExtensionHandler, type McpServerConfig, type SessionStartEvent } from "@earendil-works/pi-coding-agent";
@@ -105,7 +104,7 @@ export default function agentMcp(pi: ExtensionAPI) {
 
       for (const [name, supplied] of Object.entries(selection.servers)) {
         const { piopInjectAgentId, ...config } = structuredClone(supplied);
-        const instance = `piop-${createHash("sha256").update(JSON.stringify([selection.sessionId, name])).digest("hex").slice(0, 32)}`;
+        const instance = selection.sessionId;
         const namespace = `mcp__${name.replaceAll("-", "_")}`;
 
         if (piopInjectAgentId) identities.set(namespace, instance); else identities.delete(namespace);
