@@ -57,17 +57,22 @@ export function registerContextCapDefaults(pi: ExtensionAPI) {
     try { return request.session.updateDefaults(contextCapDefaults(pi, model)); } catch (error) { return Promise.reject(error); }
   };
 
-  const send = (ctx: ExtensionContext, model?: Model) => update(ctx, model).then(() => undefined, error => {
+  /** Reports a failure to the user and rejects, so that a settings request does not succeed with the old cap. */
+  const apply = (ctx: ExtensionContext, model?: Model) => update(ctx, model).then(() => undefined, error => {
     if (!closed) ctx.ui.notify("Context cap defaults could not be applied: " + (error instanceof Error ? error.message : String(error)), "error");
+
+    throw error;
   });
 
+  const send = (ctx: ExtensionContext, model?: Model) => { apply(ctx, model).catch(() => undefined); };
+
   const stops = [
-    pi.events.on("piop:agents:ready", ({ ctx }) => { agentsReady = true; void send(ctx); }),
-    pi.events.on("piop:agents:selected", ({ ctx }) => { void send(ctx); }),
-    pi.events.on("piop:runtime-settings:changed", event => { if (agentsReady) event.ready = send(event.ctx); }),
+    pi.events.on("piop:agents:ready", ({ ctx }) => { agentsReady = true; send(ctx); }),
+    pi.events.on("piop:agents:selected", ({ ctx }) => { send(ctx); }),
+    pi.events.on("piop:runtime-settings:changed", event => { if (agentsReady) event.ready = apply(event.ctx); }),
   ];
 
-  pi.on("model_select", (event, ctx) => { if (agentsReady) void send(ctx, event.model); });
+  pi.on("model_select", (event, ctx) => { if (agentsReady) send(ctx, event.model); });
   pi.on("session_shutdown", () => {
     closed = true;
 

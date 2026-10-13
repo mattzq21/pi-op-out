@@ -375,6 +375,7 @@ export default async function runtimeSettings(pi: ExtensionAPI) {
     request.ready = (async () => {
       const settingsRequest = Parse(requestSchema, request.payload);
       const previous = current();
+      let applied = false;
 
       try {
         if (ctx.mode !== "rpc" || !ctx.isIdle()) throw new Error("Runtime settings require an idle RPC session");
@@ -388,6 +389,7 @@ export default async function runtimeSettings(pi: ExtensionAPI) {
           if (process.env.PI_DEFINE_AGENTS_ACTIVE === "1") await update("piop:agents:reload", ctx);
           else await ctx.reload();
         } else {
+          applied = true;
           applyTools(ctx);
 
           if (process.env.PI_DEFINE_AGENTS_ACTIVE === "1") await update("piop:agents:refresh", ctx);
@@ -397,6 +399,16 @@ export default async function runtimeSettings(pi: ExtensionAPI) {
         }
       } catch (error) {
         setGlobal(key, previous);
+
+        if (applied) {
+          try {
+            applyTools(ctx);
+
+            if (process.env.PI_DEFINE_AGENTS_ACTIVE === "1") await update("piop:agents:refresh", ctx);
+          } catch (restoreError) {
+            throw new Error(`${error instanceof Error ? error.message : String(error)}. Restoring the previous settings also failed: ${restoreError instanceof Error ? restoreError.message : String(restoreError)}`, { cause: error });
+          }
+        }
         throw error;
       }
     })();

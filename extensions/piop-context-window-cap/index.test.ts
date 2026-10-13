@@ -219,6 +219,31 @@ describe("context cap session", () => {
     expect(await host.fire("input", { text: "hello", source: "interactive" })).toEqual({ action: "handled" });
   });
 
+  for (const announced of [true, false]) test("keeps the true window when Pi replaces the model object with a capped copy" + (announced ? " and announces it" : ""), async () => {
+    const host = await start([], model("codex", 272_000));
+    await host.session().setManualCap(100_000);
+    host.model = { ...host.model! };
+    expect(host.model.contextWindow).toBe(100_000);
+
+    if (announced) host.bus.get("piop:models-refreshed")?.forEach(handler => handler({ ctx: host.ctx }));
+    expect(await host.session().setManualCap(null)).toEqual({ cap: null, source: "manual", appliedWindow: 272_000 });
+    expect(host.model.contextWindow).toBe(272_000);
+  });
+
+  test("rejects new default caps above the current model window and clamps existing ones after a model switch", async () => {
+    const host = await start([], model("large", 1_000_000));
+    await host.selectModel(model("small", 200_000));
+    expect(await host.session().getState()).toEqual({ cap: 300_000, source: "config", appliedWindow: 200_000 });
+    const log = host.caps();
+    await expect(host.session().updateDefaults(general(500_000))).rejects.toThrow("exceeds the 200,000-token context window");
+    await expect(host.session().updateDefaults({ agentDefinition: 400_000, modelConfig: undefined, generalConfig: 300_000 })).rejects.toThrow("agent definition");
+    await expect(host.session().updateDefaults({ agentDefinition: undefined, modelConfig: 250_000, generalConfig: 300_000 })).rejects.toThrow("exceeds");
+    expect(await host.session().getState()).toEqual({ cap: 300_000, source: "config", appliedWindow: 200_000 });
+    expect(host.caps()).toEqual(log);
+    await host.session().resetManualCap();
+    expect(await host.session().getState()).toEqual({ cap: 300_000, source: "config", appliedWindow: 200_000 });
+  });
+
   test("shutdown rejects unfinished changes and restores original windows", async () => {
     const large = model("large", 1_000_000);
     const host = await start([], large);

@@ -95,7 +95,12 @@ function describe(state: ContextCapState) {
 }
 
 export default function contextWindowCap(pi: ExtensionAPI) {
-  const originals = new Map<Model, number>();
+  /** True model windows by provider/model key. */
+  const natives = new Map<string, number>();
+  /** The window this extension last wrote, by provider/model key. */
+  const written = new Map<string, number>();
+  /** Every model object this extension has seen. */
+  const objects = new Set<Model>();
   const pending: Pending[] = [];
   const subscribers = new Set<Subscriber>();
   let context: ExtensionContext | undefined;
@@ -113,12 +118,23 @@ export default function contextWindowCap(pi: ExtensionAPI) {
   const ready = new Promise<void>((resolve, reject) => { settle = { resolve, reject }; });
   ready.catch(() => undefined);
 
+  const keyOf = (target: Model) => target.provider + "/" + target.id;
+
+  /**
+   * Pi builds a replacement model object from the object this extension changed, so a new object can carry the applied window.
+   * Keep the known true window in that case; otherwise the new object's window is the true window.
+   */
   const track = (next: Model | undefined) => {
-    if (next && !originals.has(next)) originals.set(next, next.contextWindow);
+    if (next && !objects.has(next)) {
+      const key = keyOf(next);
+
+      if (!natives.has(key) || written.get(key) !== next.contextWindow) natives.set(key, next.contextWindow);
+      objects.add(next);
+    }
     model = next;
   };
 
-  const nativeWindow = (target: Model) => originals.get(target) ?? target.contextWindow;
+  const nativeWindow = (target: Model) => natives.get(keyOf(target)) ?? target.contextWindow;
 
   const appliedFor = (next: Choice, target: Model | undefined) => {
     if (!target) return null;
@@ -187,12 +203,17 @@ export default function contextWindowCap(pi: ExtensionAPI) {
 
   /** Writes the effective window to the current model and restores every other model this extension changed. */
   const apply = () => {
-    for (const [target, original] of originals) if (target !== model && target.contextWindow !== original) target.contextWindow = original;
+    for (const target of objects) if (target !== model && target.contextWindow !== nativeWindow(target)) target.contextWindow = nativeWindow(target);
+
+    for (const key of [...written.keys()]) if (!model || key !== keyOf(model)) written.delete(key);
 
     if (!model || !choice) return;
     const window = appliedFor(choice, model);
 
-    if (window !== null && model.contextWindow !== window) model.contextWindow = window;
+    if (window === null) return;
+
+    if (model.contextWindow !== window) model.contextWindow = window;
+    written.set(keyOf(model), window);
   };
 
   const commit = (next: Choice) => {
@@ -209,18 +230,37 @@ export default function contextWindowCap(pi: ExtensionAPI) {
     if (error) throw new Error(error);
   };
 
+  /** A new numeric choice must fit the true window of the current model. An existing choice is clamped after a model change instead. */
+  const requireFit = (cap: number, label: string) => {
+    if (!model) throw new Error("Select a model before setting a numeric context cap");
+
+    if (cap > nativeWindow(model)) throw new Error(label + " of " + formatTokens(cap) + " tokens exceeds the " + formatTokens(nativeWindow(model)) + "-token context window of " + model.provider + "/" + model.id);
+  };
+
   const validateManual = (cap: number | null) => {
     if (cap !== null) {
       const error = capRangeError(cap);
 
       if (error) throw new Error(error);
-
-      if (!model) throw new Error("Select a model before setting a numeric context cap");
-
-      if (cap > nativeWindow(model)) throw new Error(formatTokens(cap) + " tokens exceeds the " + formatTokens(nativeWindow(model)) + "-token context window of " + model.provider + "/" + model.id);
+      requireFit(cap, "The context cap");
     }
 
     requireBudgets({ cap, source: "manual" });
+  };
+
+  const sourceLabel = (source: ContextCapSource) => source === "agent_definition" ? "The agent definition context cap" : "The context cap setting";
+
+  /**
+   * A default cap is a new choice when its value changed: an edited agent or general cap, or a model cap, which belongs to the current model.
+   * New choices must fit the current model. The first defaults of a session are existing settings and are clamped.
+   */
+  const validateNewDefaults = (next: ContextCapDefaults) => {
+    if (!choice || !defaults) return;
+    const resolved = resolveDefaults(next);
+    const changed = resolved.source === "agent_definition" ? defaults.agentDefinition !== next.agentDefinition
+      : next.modelConfig !== undefined || defaults.generalConfig !== next.generalConfig;
+
+    if (changed && resolved.cap !== null) requireFit(resolved.cap, sourceLabel(resolved.source));
   };
 
   const run = (operation: Operation) => {
@@ -241,6 +281,7 @@ export default function contextWindowCap(pi: ExtensionAPI) {
     }
 
     const next = choice?.source === "manual" ? choice : resolveDefaults(operation.defaults);
+    validateNewDefaults(operation.defaults);
 
     if (choice && !sameChoice(choice, next)) requireBudgets(next);
     const first = !choice;
@@ -256,6 +297,7 @@ export default function contextWindowCap(pi: ExtensionAPI) {
 
   const drain = () => {
     if (draining || closed || !restored || !context?.isIdle()) return;
+    sync();
     draining = true;
 
     try {
@@ -291,12 +333,13 @@ export default function contextWindowCap(pi: ExtensionAPI) {
       await ready;
 
       if (broken) throw broken;
+      sync();
 
       return state()!;
     },
     setManualCap: cap => enqueue({ kind: "manual", cap }, () => validateManual(cap)),
     resetManualCap: () => enqueue({ kind: "reset" }, () => undefined),
-    updateDefaults: next => enqueue({ kind: "defaults", defaults: { ...next } }, () => validateDefaults(next)),
+    updateDefaults: next => enqueue({ kind: "defaults", defaults: { ...next } }, () => { validateDefaults(next); validateNewDefaults(next); }),
     subscribe(listener, onError) {
       const subscriber = { listener, onError };
       subscribers.add(subscriber);
@@ -353,8 +396,13 @@ export default function contextWindowCap(pi: ExtensionAPI) {
     if (error) report(new Error(error));
   };
 
+  /** Pi replaces the session model object after provider changes without an event. Apply to the new object before Pi reads its window. */
+  function sync() {
+    if (!closed && context && context.model !== model) modelChanged(context.model);
+  }
+
   const stopSession = pi.events.on("piop:context-cap:session", (request: ContextCapSessionRequest) => { request.session = session; });
-  const stopModels = pi.events.on("piop:models-refreshed", ({ ctx }) => modelChanged(ctx.model));
+  const stopModels = pi.events.on("piop:models-refreshed", ({ ctx }) => { if (!closed) modelChanged(ctx.model); });
 
   pi.registerCommand("cap", {
     description: "Set this conversation's context cap. Usage: /cap [500k|0.75m|reset|model_default]",
@@ -380,6 +428,10 @@ export default function contextWindowCap(pi: ExtensionAPI) {
   pi.on("session_start", (_event, ctx) => restore(ctx));
   pi.on("session_tree", (_event, ctx) => restore(ctx));
   pi.on("model_select", event => modelChanged(event.model));
+  pi.on("before_agent_start", () => sync());
+  pi.on("turn_start", () => sync());
+  pi.on("turn_end", () => sync());
+  pi.on("session_before_compact", () => sync());
   pi.on("agent_settled", () => drain());
   pi.on("session_compact", () => { setTimeout(drain, 0); });
   pi.on("session_compact_failed", () => drain());
@@ -406,7 +458,9 @@ export default function contextWindowCap(pi: ExtensionAPI) {
     stopSession();
     stopModels();
 
-    for (const [target, original] of originals) target.contextWindow = original;
-    originals.clear();
+    for (const target of objects) target.contextWindow = nativeWindow(target);
+    objects.clear();
+    natives.clear();
+    written.clear();
   });
 }
