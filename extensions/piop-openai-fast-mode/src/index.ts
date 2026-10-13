@@ -51,7 +51,7 @@ export function createPiFastModeExtension(options: FastModeExtensionOptions = {}
 
     pi.events.on("piop:fast-mode:session", request => { request.session = session; });
 
-    /** A saved choice wins; a session without one starts from the --fast flag or the config file. */
+    /** A saved choice wins; a session without one starts from the config file. */
     async function load(ctx: ExtensionContext): Promise<void> {
       session.reset();
       statusContext = ctx;
@@ -59,7 +59,7 @@ export function createPiFastModeExtension(options: FastModeExtensionOptions = {}
 
       try {
         const saved = savedChoice(ctx);
-        const initial = saved ?? (pi.getFlag("fast") === true || (await loadConfigForScope({ cwd: ctx.cwd, extensionDir, agentDir })).config.enabled);
+        const initial = saved ?? (await loadConfigForScope({ cwd: ctx.cwd, extensionDir, agentDir })).config.enabled;
         session.load(initial);
         updateFastStatus(ctx, initial, currentModel);
       } catch (error) {
@@ -67,8 +67,6 @@ export function createPiFastModeExtension(options: FastModeExtensionOptions = {}
         notifyError(ctx, error);
       }
     }
-
-    pi.registerFlag("fast", { description: "Start with Fast Mode enabled", type: "boolean", default: false });
 
     pi.registerCommand("fast", {
       description: "Toggle Fast Mode. Usage: /fast [on|off|toggle]",
