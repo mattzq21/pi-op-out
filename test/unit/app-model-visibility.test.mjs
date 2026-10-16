@@ -56,3 +56,21 @@ test('reporting known models preserves the users visible model list', async t =>
   assert.ok(before.settingsRevision.length > 0);
   assert.equal(after.settingsRevision, before.settingsRevision);
 });
+
+test('saved aliases update an open model picker and can be cleared without changing model IDs', async t => {
+  const { root, daemon, settle } = await modelApp(t);
+  await act(() => root.querySelector('[aria-label="Model"]').click());
+  const options = () => [...root.querySelectorAll('[role="listbox"][aria-label="Model options"] [role="option"]')];
+  const saveAlias = async alias => {
+    const settings = await daemon.invoke('load_app_settings');
+    await act(async () => {
+      await daemon.invoke('save_host_settings', { hostId: 'local', agentsChanged: false, settings: { ...settings, modelAliases: { 'visibility-test/known': alias } } });
+      await settle();
+    });
+  };
+  await saveAlias('  My model  ');
+  assert.deepEqual(options().map(node => node.textContent), ['My modelvisibility-test', 'Othervisibility-test']);
+  assert.deepEqual((await daemon.invoke('load_app_settings')).modelAliases, { 'visibility-test/known': 'My model' });
+  await saveAlias('');
+  assert.deepEqual(options().map(node => node.textContent), ['Knownvisibility-test', 'Othervisibility-test']);
+});

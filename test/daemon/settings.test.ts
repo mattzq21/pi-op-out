@@ -44,6 +44,7 @@ test('invalid settings are rejected and the saved settings stay unchanged', asyn
     ['duplicate machine name', settings => { settings.hosts = [remote(), remote({ id: 'other', name: ' SERVER ' })]; }, 'already in use'],
     ['too many machines', settings => { settings.hosts = Array.from({ length: 17 }, (_, index) => remote({ id: 'remote-' + index, name: 'Server ' + index })); }, 'At most 16'],
   ];
+  cases.push(['invalid model alias', settings => { settings.modelAliases = { 'p/model': 42 } as any; }, 'modelAliases']);
   for (const [name, change, expected] of cases) {
     const settings = structuredClone(before);
     change(settings);

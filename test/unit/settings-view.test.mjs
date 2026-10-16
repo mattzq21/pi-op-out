@@ -30,6 +30,19 @@ describe('settings editor', () => {
   const selectAgent = async name => click([...document.querySelectorAll('.agent-list button')].find(item => item.textContent === name));
   const profile = (name, extra = {}) => ({ name, model: '', effort: '', path_systemprompt: 'system.md', path_agent_prompt: '', tools: [], skills: [], mcpServers: {}, ...extra });
 
+  test('model aliases save with stable model IDs and appear in agent choices', async () => {
+    await render({ models: [{ provider: 'p', id: 'model', name: 'Original' }], agentConfig: { agents: [profile('general', { model: 'p/model' })] } });
+    await section('Inference');
+    const input = control('Alias for p/model');
+    await enterText(input, 'My model');
+    assert.equal(control('Alias for p/model'), input);
+    await click(save());
+    assert.deepEqual(saves[0][0].modelAliases, { 'p/model': 'My model' });
+    await section('Agents');
+    assert.equal(control('Agent default model').value, 'p/model');
+    assert.equal(control('Agent default model').selectedOptions[0].textContent, 'My model');
+  });
+
   test('save tracks dirty state, deduplicates requests and preserves edits made while saving', async () => {
     const pending = Promise.withResolvers();
     await render({ onSave: (...args) => { saves.push(args);

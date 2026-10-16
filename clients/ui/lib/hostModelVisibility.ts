@@ -9,7 +9,7 @@ import { NativeTransport } from "./nativeTransport";
 import { listen } from "./platform";
 import { settingsChangeSchema } from "./responseSchemas";
 
-type Visibility = Pick<AppSettings, "hiddenModels" | "knownModels">;
+type Visibility = Pick<AppSettings, "hiddenModels" | "knownModels" | "modelAliases">;
 type Notice = (notice: { title: string; message: string }) => void;
 
 const message = (reason: unknown) => reason instanceof Error ? reason.message : String(reason);
@@ -33,7 +33,7 @@ export function createHostModelVisibility(localSettings: Accessor<AppSettings | 
     versions.set(hostId, version(hostId) + 1);
     snapshots.set(hostId, settings);
     failed.delete(hostId);
-    setRemote(hostId, reconcile({ hiddenModels: settings.hiddenModels, knownModels: settings.knownModels }));
+    setRemote(hostId, reconcile({ modelAliases: settings.modelAliases ?? {}, hiddenModels: settings.hiddenModels, knownModels: settings.knownModels }));
   };
 
   const load = (hostId: string) => {
@@ -142,7 +142,13 @@ export function createHostModelVisibility(localSettings: Accessor<AppSettings | 
     }) : [];
   };
 
-  return { hidden, visibleModels, recordSeen };
+  const aliases = (hostId: string) => {
+    if (hostId === "local") return localSettings()?.modelAliases;
+    if (!remote[hostId]) load(hostId);
+    return remote[hostId]?.modelAliases;
+  };
+
+  return { hidden, visibleModels, recordSeen, aliases };
 }
 
 export type HostModelVisibility = ReturnType<typeof createHostModelVisibility>;
