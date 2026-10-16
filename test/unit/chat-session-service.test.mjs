@@ -3,7 +3,7 @@ import { test } from 'node:test';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { mockIPC, mockWindows, clearMocks } from '@tauri-apps/api/mocks';
-import { installDom, renderHook, act } from '../dom.mjs';
+import { installDom, renderHook, act, whenReactive } from '../dom.mjs';
 import { daemonClient } from '../daemon-client.mjs';
 import { NativeTransport } from '../../clients/ui/lib/nativeTransport.ts';
 import { useChatSession } from '../../clients/ui/lib/useChatSession.ts';
@@ -247,4 +247,18 @@ test('refresh coalesces requests and replays only newer events', async t => {
   assert.equal(snapshots, 1);
   assert.equal(hook.current.state.thinkingLevel, 'high');
   assert.equal(hook.current.state.viewers, 2);
+});
+
+test('a chat refresh failure does not report a choices failure after lists load', async t => {
+  const { hook, client } = await sessionView(t);
+  await act(() => hook.current.refresh());
+  await whenReactive(() => !hook.current.capabilitiesLoading);
+  assert.deepEqual(hook.current.capabilityErrors, []);
+  const command = client.command.bind(client);
+  client.command = (request, schema) => request.type === 'get_session_revision'
+    ? Promise.reject(new Error('offline')) : command(request, schema);
+  await act(() => hook.current.retryCapabilities());
+  await whenReactive(() => hook.current.error);
+  assert.match(hook.current.error, /offline/);
+  assert.deepEqual(hook.current.capabilityErrors, [], 'successful choices must not show the choices retry button');
 });

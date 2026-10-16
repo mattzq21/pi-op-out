@@ -49,6 +49,21 @@ describe('composer interactions', () => {
     return { event, transfer };
   };
 
+  test('choices retry appears only for a settled failure and clears after recovery', async () => {
+    const retry = () => [...document.querySelectorAll('button')].find(button => button.textContent === 'Retry loading choices');
+    await render({ refreshError: 'Could not refresh conversation: offline', capabilityErrors: [], capabilitiesLoading: false });
+    assert.equal(retry(), undefined);
+    assert.match(document.body.textContent, /Retry loading chat/);
+    await render({ refreshError: undefined, capabilityErrors: [], capabilitiesLoading: true });
+    assert.equal(retry(), undefined);
+    await render({ capabilityErrors: ['Could not load models: offline'], capabilitiesLoading: false });
+    assert.ok(retry());
+    await render({ capabilitiesLoading: true });
+    assert.equal(retry(), undefined);
+    await render({ capabilityErrors: [], capabilitiesLoading: false });
+    assert.equal(retry(), undefined);
+  });
+
   test('a streaming draft has a clickable follow-up send action', async () => {
     await render({ streaming: true });
     await enterText(editor(), 'After this turn');
