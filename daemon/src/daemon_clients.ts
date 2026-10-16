@@ -4,6 +4,8 @@ import type { App } from './app';
 
 /** Counts connected clients and decides when an unattended daemon may stop. */
 export class DaemonClients {
+  constructor(private readonly onStop: () => void) {}
+
   private count = 0;
   private closingFlag = false;
   private automaticFlag = process.argv.includes('--exit-on-disconnect') || process.env.PIOP_RESTART_AUTOMATIC !== undefined;
@@ -47,7 +49,12 @@ export class DaemonClients {
     this.automaticFlag = false;
   }
 
-  stop(): void { this.closingFlag = true; this.stopped.notifyOne(); }
+  stop(): void {
+    if (this.closingFlag) return;
+    this.onStop();
+    this.closingFlag = true;
+    this.stopped.notifyOne();
+  }
 
   connect(): { release(): void } {
     if (this.closingFlag) throw new Error('Piop daemon is shutting down');

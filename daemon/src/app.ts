@@ -10,7 +10,7 @@ type Listener = (payload: any) => void;
 
 /** Holds all daemon state and sends named events to listeners. */
 export class App {
-  clients = new DaemonClients();
+  clients = new DaemonClients(() => this.emit('pi://daemon-restarting', { hostId: 'local' }));
   restart = new daemonRestart.Runtime();
   pi = new PiRuntime();
   terminals = new TerminalRuntime();

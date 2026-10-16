@@ -211,15 +211,20 @@ export function createAppConversations(preloadChat: () => void) {
   }, () => [activeHostId(), chatSession().state.sessionId, chatSession().state.sessionFile, chatSession().state.messageCount, connected(), transport()]);
 
   const archiveCount = createRef(0);
+  let daemonRestarting = false;
+  let daemonConnectionGeneration = 0;
   const syncSessionIndex = () => {
+    if (daemonRestarting) { sessionIndexDirty.current = true; return Promise.resolve(); }
     if (sessionIndexRequest.current) { sessionIndexDirty.current = true;
 
       return sessionIndexRequest.current; }
 
     sessionIndexDirty.current = false;
     const listedAfter = archiveCount.current;
+    const connectionGeneration = daemonConnectionGeneration;
 
     if (!sessionIndexRequest.current) sessionIndexRequest.current = transport().listSessions().then((nextSessions) => {
+      if (daemonRestarting || connectionGeneration !== daemonConnectionGeneration) { sessionIndexDirty.current = true; return; }
       for (const session of nextSessions) {
         if (archives.isPending(session)) continue;
         const hostId = session.hostId ?? "local";
@@ -234,9 +239,9 @@ export function createAppConversations(preloadChat: () => void) {
 
         return activeSession && activeSession.name !== current.sessionName ? { ...current, sessionName: activeSession.name } : current;
       });
-    }).catch((reason) => { addNotice({ title: "Could not load chats", message: reason instanceof Error ? reason.message : String(reason) }); }).finally(() => { sessionIndexRequest.current = undefined;
+    }).catch((reason) => { if (daemonRestarting || connectionGeneration !== daemonConnectionGeneration) { sessionIndexDirty.current = true; return; } addNotice({ title: "Could not load chats", message: reason instanceof Error ? reason.message : String(reason) }); }).finally(() => { sessionIndexRequest.current = undefined;
 
-      if (sessionIndexDirty.current) void syncSessionIndex(); });
+      if (sessionIndexDirty.current && !daemonRestarting) void syncSessionIndex(); });
 
     return sessionIndexRequest.current;
   };
@@ -247,6 +252,16 @@ export function createAppConversations(preloadChat: () => void) {
 
   createDependencyEffect(() => {
     const unsubscribes = [
+      listen("pi://daemon-restarting", ({ payload }) => {
+        if (payload.hostId !== "local") return;
+        daemonRestarting = true;
+        daemonConnectionGeneration++;
+      }, z.object({ hostId: z.string() })),
+      listen("pi://event", ({ payload }) => {
+        if (payload.type !== "connection_restored") return;
+        daemonRestarting = false;
+        void syncSessionIndex();
+      }, z.object({ type: z.string().optional() })),
       listen("pi://sessions-changed", () => { void syncSessionIndex(); }, z.unknown()),
       listen("pi://session-restored", ({ payload }) => {
         archives.restored(payload.hostId, payload.sessionId);
@@ -276,7 +291,7 @@ export function createAppConversations(preloadChat: () => void) {
           return [...current, createMutable({ id, title: `Logging · ${payload.hostId}`, message: payload.failure })];
         });
       }, z.object({ hostId: z.string(), failure: z.string().nullable() })),
-      listen("pi://daemon-error", ({ payload }) => addNotice({ title: `Connection · ${payload.hostId}`, message: payload.line }), z.object({ hostId: z.string(), line: z.string() })),
+      listen("pi://daemon-error", ({ payload }) => { if (payload.hostId === "local") daemonRestarting = false; addNotice({ title: `Connection · ${payload.hostId}`, message: payload.line }); }, z.object({ hostId: z.string(), line: z.string() })),
     ];
 
     return () => { for (const pending of unsubscribes) void pending.then((unlisten) => unlisten()); };

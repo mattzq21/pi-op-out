@@ -3,7 +3,7 @@ import { fileURLToPath } from 'node:url';
 import { afterAll, beforeAll, expect, test } from 'bun:test';
 import { mkdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { fakeProgram, startDaemon, synchronizationFinished, temporaryDirectory, type TestDaemon } from './harness';
+import { daemonExecutable, fakeProgram, startDaemon, synchronizationFinished, temporaryDirectory, type TestDaemon } from './harness';
 import { runLimited } from '../../daemon/src/process_io';
 import { startHost } from './host-fixture';
 
@@ -169,4 +169,14 @@ test('a shutdown packet gets no reply, later packets are ignored, and the host f
     expect(await Promise.all(unanswered)).toEqual(['Host stopped', 'Host stopped', 'Host stopped']);
     expect(host.events.filter(packet => packet.type === 'response')).toEqual([]);
   } finally { await host.stop(); }
+}, 60_000);
+
+test('stopping the daemon warns connected clients before the connection closes', async () => {
+  const local = await startDaemon();
+  try {
+    const child = Bun.spawn([process.execPath, await daemonExecutable(), 'stop'], { env: { ...process.env, HOME: local.home }, stdout: 'pipe', stderr: 'pipe' });
+    await child.exited;
+    await local.waitEvent('pi://daemon-restarting');
+  } finally { await local.stop(); }
+  expect(local.events.some(event => event.event === 'pi://daemon-restarting' && event.payload.hostId === 'local')).toBe(true);
 }, 60_000);
