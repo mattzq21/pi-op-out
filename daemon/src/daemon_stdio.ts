@@ -96,7 +96,7 @@ async function startDaemon(mode: string): Promise<[string, ChildProcess]> {
 
 /**
  * Starts a daemon and opens a socket to it. When the new daemon exits because another daemon still holds
- * the lock, waits for that daemon to release it and starts again once.
+ * the lock, attaches to that daemon or starts again once after its lock is released.
  */
 async function startAndOpen(mode: string, scope: string): Promise<[Socket, any]> {
   const deadline = Date.now() + endpoint.STARTUP_TIMEOUT;
@@ -111,8 +111,7 @@ async function startAndOpen(mode: string, scope: string): Promise<[Socket, any]>
     try { return await openSocket(scope); } catch (error: any) { lastError = error?.message ?? String(error); }
     if (exit !== undefined) {
       if (exit !== endpoint.ALREADY_RUNNING_EXIT_CODE || relaunched) throw new Error('Piop daemon exited with code ' + exit + '. See ' + logPath!);
-      while (Date.now() < deadline && !claimed()) await sleep(100);
-      if (Date.now() >= deadline) break;
+      if (!claimed()) { await sleep(100); continue; }
       relaunched = true;
       await launch();
       continue;

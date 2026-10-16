@@ -127,8 +127,11 @@ export async function start(app: App): Promise<void> {
   daemonLog.listenStatus(failure => app.setLogStatus('local', failure));
   let token = process.env.PIOP_MOBILE_TOKEN;
   if (token === undefined && DEVELOPMENT) {
-    // Debug phones keep the token from debug-mobile.json between daemon restarts.
-    try { token = endpoint.read().token; }
+    // Debug phones retain their connection token between daemon restarts.
+    try {
+      const saved = records.read(join(endpoint.directory(), 'debug-mobile-identity.json'));
+      if (saved) token = JSON.parse(saved.toString('utf8')).token;
+    }
     catch (error) { if (errorText(error) !== 'Daemon connection is not available') console.error('Could not read the saved daemon endpoint; using a new token: ' + errorText(error)); }
   }
   // Production clients read daemon.json before every connection, so each daemon gets its own token.
@@ -173,8 +176,12 @@ async function startDebug(shared: Shared, token: string): Promise<() => void> {
     if (!ws) return;
     connection(shared, ws, token, isLoopback(request.socket.remoteAddress), socket).catch(error => console.error('Debug connection from ' + request.socket.remoteAddress + ' ended: ' + errorText(error))).finally(() => ws.terminate());
   });
-  const address = await listen(server, process.env.PIOP_DEBUG_MOBILE_BIND ?? '127.0.0.1:0');
+  const identityPath = join(endpoint.directory(), 'debug-mobile-identity.json');
+  const saved = records.read(identityPath);
+  const previous = saved ? JSON.parse(saved.toString('utf8')) : undefined;
+  const address = await listen(server, process.env.PIOP_DEBUG_MOBILE_BIND ?? previous?.bind ?? '127.0.0.1:0');
   const host = address.address.includes(':') ? '[' + address.address + ']' : address.address;
+  records.publish(identityPath, JSON.stringify({ bind: host + ':' + address.port, token }));
   const path = join(endpoint.directory(), 'debug-mobile.json');
   const record = JSON.stringify({ url: 'ws://' + host + ':' + address.port, token, protocol: PROTOCOL_VERSION });
   records.publish(path, record);

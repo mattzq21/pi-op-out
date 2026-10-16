@@ -494,11 +494,14 @@ def parse_args():
 
 def connection(args, env, log, deadline):
     for attempt in range(2):
-        result = subprocess.run(["node", "scripts/mobile-debug-connection.mjs"], cwd=args.project,
-                                env=env, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=log,
-                                text=True, timeout=min(60, deadline - time.monotonic()))
-        if result.returncode == 0:
-            return json.loads(result.stdout)
+        try:
+            result = subprocess.run(["node", "scripts/mobile-debug-connection.mjs"], cwd=args.project,
+                                    env=env, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=log,
+                                    text=True, timeout=remaining(deadline, 60))
+            if result.returncode == 0:
+                return json.loads(result.stdout)
+        except subprocess.TimeoutExpired:
+            print("Worktree daemon connection timed out; retrying once after stopping it.", file=sys.stderr, flush=True)
         if attempt == 0:
             print("Restarting this worktree's debug daemon to use its rebuilt binary.", file=sys.stderr, flush=True)
             daemon = next((path for path in (args.project / "target/debug/piopd", args.project / "src-tauri/target/debug/piopd") if path.is_file()), None)
@@ -559,9 +562,11 @@ def prepare_apk(args, env, directory, log, children, deadline):
     return directory / "app.apk", app_id
 
 
-def wait_for_workspace(client, children, broker_errors, deadline, log):
-    deadline = min(deadline, time.monotonic() + 60)
+def wait_for_workspace(client, children, broker_errors, deadline, log, endpoint, app_id):
+    deadline = min(deadline, time.monotonic() + 180)
     last_observation = "No workspace UI observed"
+    recovered_dependency = False
+    ready_since = None
 
     def labels(nodes):
         for node in nodes:
@@ -586,12 +591,28 @@ def wait_for_workspace(client, children, broker_errors, deadline, log):
             visible = set(labels(json.loads(observation["stdout"])))
             last_observation = json.dumps(sorted(visible))
             if {"Conversation workspace ready", "Send message"}.issubset(visible) and not visible.intersection({"Conversation workspace connecting", "Connect to workspace", "Connecting…", "Reconnect", "Retry disconnect", "piop could not connect"}):
-                return
+                if ready_since is None:
+                    ready_since = time.monotonic()
+                elif time.monotonic() - ready_since >= 60:
+                    return
+            else:
+                ready_since = None
         except TimeoutError as error:
             last_observation = str(error)
             break
         except (RuntimeError, ValueError, KeyError, TypeError) as error:
+            ready_since = None
             last_observation = str(error)
+        state = json.loads(app_stater(client, app_id)("app_state", {})["content"][0]["text"])
+        if state["state"] == "not_running":
+            reason = (state.get("lastExit") or {}).get("reason", "unknown")
+            if reason == "12 (DEPENDENCY DIED)" and not recovered_dependency:
+                recovered_dependency = True
+                ready_since = None
+                print("Android stopped Piop after a system dependency died; relaunching once.", file=sys.stderr, flush=True)
+                call(client, "exec", launch_arguments(endpoint, app_id), deadline)
+            else:
+                raise RuntimeError(f"Piop stopped during startup: {json.dumps(state)}; see {log.name}")
         log.write(("Waiting for connected workspace: " + last_observation[:2048] + "\n").encode())
         time.sleep(min(0.5, max(0, deadline - time.monotonic())))
     raise RuntimeError(f"Piop did not show a connected workspace within the startup readiness deadline. Last observation: {last_observation[:2048]}. See {log.name}")
@@ -658,6 +679,7 @@ def reinstaller(args, directory, client, app_id, shared_env, build_env, log):
             print("Installing the new build and launching it in the same VM.", file=sys.stderr, flush=True)
             call(client, "install_app", {"apks": [str(apk)]}, deadline)
             call(client, "exec", launch_arguments(endpoint, app_id), deadline)
+            wait_for_workspace(client, [], [], deadline, log, endpoint, app_id)
             return {"content": [{"type": "text", "text": json.dumps({"apk": str(apk), "appId": app_id, "url": endpoint["url"]})}]}
         finally:
             lock.release()
@@ -734,7 +756,7 @@ def launch(args, directory):
             call(client, "install_app", {"apks": [str(apk)]}, deadline)
             call(client, "exec", launch_arguments(endpoint, app_id), deadline)
             print("Waiting for Piop's connected workspace UI.", file=sys.stderr, flush=True)
-            wait_for_workspace(client, children, broker_errors, deadline, log)
+            wait_for_workspace(client, children, broker_errors, deadline, log, endpoint, app_id)
             server = ToolServer(directory / "mcp.sock", initialized, INSTRUCTIONS, [
                 (native_tools, forward(client)),
                 ([APP_STATE_TOOL], app_stater(client, app_id)),

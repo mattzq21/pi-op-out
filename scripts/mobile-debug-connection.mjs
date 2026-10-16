@@ -21,7 +21,7 @@ const daemon = join(project, "target", "debug", "piopd");
 
 const builtIdentity = createHash("sha256").update(readFileSync(daemon)).digest("hex");
 
-const result = spawnSync(daemon, ["start"], { cwd: project, stdio: ["ignore", "ignore", "inherit"] });
+const result = spawnSync(daemon, ["start"], { cwd: project, stdio: ["ignore", "ignore", "inherit"], timeout: 45000 });
 
 if (result.error || result.status !== 0) {
   throw new Error("Could not start the worktree daemon. Build it first with bun run daemon:dev.", { cause: result.error });
