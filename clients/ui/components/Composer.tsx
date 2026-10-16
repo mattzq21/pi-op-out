@@ -27,6 +27,7 @@ const pastedImageSchema = z.object({ data: z.string().optional(), mimeType: z.st
 const pendingMessageIdentitySchema = z.object({ id: z.string() });
 
 interface Props {
+  refreshError?: string;
   capabilityErrors?: string[];
   capabilitiesLoading?: boolean;
   onRetryCapabilities?: () => void;
@@ -642,7 +643,13 @@ export function Composer(props: Props) {
     <Show when={composer().agentUnavailable}>
       <div role="alert">Agent "{composer().activeAgent}" is unavailable. This conversation cannot start.</div>
     </Show>
-    <Show when={props.capabilityErrors?.length}>
+    <Show when={props.refreshError}>
+      <div role="alert">
+        <p>{props.refreshError}</p>
+        <button type="button" onClick={() => props.onRetryCapabilities?.()}>Retry loading chat</button>
+      </div>
+    </Show>
+    <Show when={!props.capabilitiesLoading && props.capabilityErrors?.length}>
       <div role="alert">
         <Key each={props.capabilityErrors ?? []} by={message => message}>{message => <p>{message()}</p>}</Key>
         <button type="button" disabled={props.capabilitiesLoading} onClick={() => props.onRetryCapabilities?.()}>Retry loading choices</button>
