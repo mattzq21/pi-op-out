@@ -8,6 +8,46 @@ afterAll(async () => { await agents?.close(); });
 
 const uiRequests = (runtimeId: string, method: string) => agents.daemon.events.filter(event => event.payload?.runtimeId === runtimeId && event.payload.event?.type === 'extension_ui_request' && event.payload.event.method === method).map(event => event.payload.event);
 
+/** Starts a review from chat and returns what the side pane receives. */
+async function openReview(chat: Awaited<ReturnType<typeof agents.rootChat>>, command: string) {
+  const before = uiRequests(chat.runtimeId, 'input').length;
+  await chat.command({ type: 'follow_up', message: command });
+  for (let tries = 0; tries < 100; tries++, await Bun.sleep(100)) {
+    const open = uiRequests(chat.runtimeId, 'input').slice(before).find(request => request.title === '__pi_desktop_review__');
+    if (open) return JSON.parse(open.placeholder);
+  }
+  throw new Error('The review never opened');
+}
+
+test('review findings sent to the main chat start a turn there, and only that chat\'s own reviews may send them', async () => {
+  agents.scripts.set('Write the lexer', messages => ({ text: text(messages.at(-1)).includes('Missing EOF token') ? 'Fixed the EOF token.' : 'Lexer done.' }));
+  const chat = await agents.rootChat({ visible: true });
+  await chat.command({ type: 'prompt', message: 'Write the lexer' });
+  await chat.until(history => text(history.at(-1)) === 'Lexer done.');
+  const review = await openReview(chat, '/review src/lexer.ts');
+
+  const failure = (command: any) => chat.command(command).then(() => 'sent', (error: Error) => error.message);
+  expect(await failure({ type: 'review_feedback', sessionId: crypto.randomUUID(), message: 'Missing EOF token' })).toBe('Feedback requires a review belonging to this conversation');
+  expect(await failure({ type: 'review_feedback', sessionId: review.sessionId, message: '  ' })).toContain('Feedback requires a review');
+  await chat.command({ type: 'review_feedback', sessionId: review.sessionId, message: 'Missing EOF token' });
+  await chat.until(history => text(history.at(-1)) === 'Fixed the EOF token.');
+  const feedback = (await chat.command({ type: 'get_entries' })).entries.filter((entry: any) => entry.customType === 'piop-review-feedback');
+  expect(feedback.map((entry: any) => [entry.content, entry.details.sessionId])).toEqual([['Missing EOF token', review.sessionId]]);
+}, 60000);
+
+test('/rs asks the reviewer for the given number of subagents, or a fitting number; any other count only shows how to use it', async () => {
+  const chat = await agents.rootChat({ visible: true });
+  for (const command of ['/rs 0', '/rs two', '/rs -1']) await chat.command({ type: 'follow_up', message: command });
+  const notices = () => agents.daemon.events.filter(event => event.payload?.runtimeId === chat.runtimeId && event.payload.event?.method === 'notify').map(event => event.payload.event.message);
+  for (let tries = 0; notices().length < 3 && tries < 100; tries++) await Bun.sleep(100);
+  const warnings = notices();
+  expect(warnings).toEqual(Array(3).fill('Usage: /rs [n] — omit n for proportionate delegation, or supply a positive integer'));
+  expect(uiRequests(chat.runtimeId, 'input').filter(request => request.title === '__pi_desktop_review__')).toEqual([]);
+  const review = await openReview(chat, '/rs 2');
+  expect(review.task).toContain('You must spawn exactly 2 review subagents.');
+  expect((await openReview(chat, '/rs')).task).toContain('choose a proportionate number of review subagents');
+}, 60000);
+
 test('a review opens a separate code review chat in the side pane, linked to the conversation and kept out of the chat list', async () => {
   agents.scripts.set('Implement the parser', () => ({ text: 'Parser done.' }));
   const chat = await agents.rootChat({ visible: true });

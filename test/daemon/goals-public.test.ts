@@ -1,4 +1,5 @@
 import { afterAll, beforeAll, expect, test } from 'bun:test';
+import { existsSync, readFileSync } from 'node:fs';
 import { agentDaemon, called, text } from './agent-chats';
 
 let agents: Awaited<ReturnType<typeof agentDaemon>>;
@@ -112,4 +113,30 @@ test('a goal whose tool calls keep failing is marked blocked after five turns', 
   let summary = '';
   for (let tries = 0; !summary && tries < 50; tries++, await Bun.sleep(100)) summary = (await chat.command({ type: 'get_entries' })).entries.filter((entry: any) => entry.customType === 'piop-goal-summary').map((entry: any) => text(entry)).at(-1) ?? '';
   expect(summary).toStartWith('Goal blocked\n\nRead the missing file');
+}, 120000);
+
+test('a long goal is saved to a file the agent reads, which stays while any chat still uses it', async () => {
+  await agents.enableAgentTools('get_goal', 'create_goal', 'update_goal');
+  const objective = 'Translate the long brief. ' + 'Every line matters. '.repeat(300);
+  let file = '';
+  agents.scripts.set('Read the goal objective file at', messages => {
+    file ||= JSON.stringify(messages).match(/Read the goal objective file at ([^ ]+?\.md)/)?.[1] ?? '';
+    return called(messages, 'update_goal') ? { text: 'Brief done.' } : { tool: 'update_goal', arguments: { status: 'complete' } };
+  });
+  const chat = await agents.rootChat();
+  await send(chat, '/goal ' + objective);
+  await chat.until(history => text(history.at(-1)) === 'Brief done.');
+  expect(readFileSync(file, 'utf8').trim()).toBe(objective.trim());
+
+  const original = await chat.command({ type: 'get_state' });
+  const answer = (await chat.command({ type: 'get_entries' })).entries.find((entry: any) => entry.type === 'message' && text(entry.message) === 'Brief done.');
+  await chat.command({ type: 'fork_after', entryId: answer.id });
+  const fork = await chat.command({ type: 'get_state' });
+  const remove = (sessionPath: string) => agents.daemon.invoke('delete_session', { sessionPath, hostId: 'local', clientId: 'laptop' });
+  await remove(original.sessionFile);
+  // The fork's history still tells its agent to read this file.
+  expect(JSON.stringify(await chat.command({ type: 'get_entries' }))).toContain(file);
+  expect(readFileSync(file, 'utf8').trim()).toBe(objective.trim());
+  await remove(fork.sessionFile);
+  expect(existsSync(file)).toBe(false);
 }, 120000);
