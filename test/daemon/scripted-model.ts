@@ -7,9 +7,10 @@ export type Reply = { text: string } | { tool: string; arguments?: Record<string
 
 /**
  * An OpenAI-compatible model server that answers with scripted replies, registered for Pi as provider "scripted"
- * in the daemon's agent folder (~/.piop/models.json). reply() decides each answer from the request it gets.
+ * in the daemon's agent folder (~/.piop/models.json). reply() decides each answer from the request it gets; a promise
+ * keeps the agent busy until it settles.
  */
-export async function scriptedModel(home: string, reply: (request: any) => Reply) {
+export async function scriptedModel(home: string, reply: (request: any) => Reply | Promise<Reply>) {
   const requests: any[] = [];
   let calls = 0;
   const server = createServer(async (request: IncomingMessage, response) => {
@@ -18,7 +19,8 @@ export async function scriptedModel(home: string, reply: (request: any) => Reply
     const parsed = JSON.parse(body);
     requests.push(parsed);
     let answer: Reply;
-    try { answer = reply(parsed); } catch (error: any) { response.writeHead(500).end(error.message); return; }
+    try { answer = await reply(parsed); } catch (error: any) { response.writeHead(500).end(error.message); return; }
+    if (response.destroyed) return;
     const chunk = (delta: unknown, finish: string | null) => 'data: ' + JSON.stringify({ id: 'scripted', object: 'chat.completion.chunk', created: 0, model: 'scripted', choices: [{ index: 0, delta, finish_reason: finish }] }) + '\n\n';
     response.writeHead(200, { 'content-type': 'text/event-stream' });
     if ('text' in answer) response.write(chunk({ role: 'assistant', content: answer.text }, null) + chunk({}, 'stop'));

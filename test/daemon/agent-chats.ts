@@ -16,7 +16,7 @@ export const called = (messages: any[], tool: string) => messages.some(message =
  */
 export async function agentDaemon() {
   const daemon = await startDaemon();
-  const scripts = new Map<string, (messages: any[]) => Reply>();
+  const scripts = new Map<string, (messages: any[]) => Reply | Promise<Reply>>();
   const model = await scriptedModel(daemon.home, request => {
     const first = text(request.messages.find((message: any) => message.role !== 'system' && text(message)));
     const script = [...scripts].find(([start]) => first.includes(start))?.[1];

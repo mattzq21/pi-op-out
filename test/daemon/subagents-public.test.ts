@@ -87,3 +87,28 @@ test('a child paused by a model failure is reported to its parent at once and ca
   const rootRequests = agents.model.requests.filter(request => JSON.stringify(request.messages).includes('Ask a flaky helper'));
   expect(rootRequests.some(request => /failed[\s\S]*model overloaded/.test(JSON.stringify(request.messages.at(-1))))).toBe(true);
 }, 120000);
+
+test('interrupting a busy child cancels its work, tells the parent, and the child takes a follow-up', async () => {
+  let releaseSlow!: (reply: { text: string }) => void;
+  const slowReply = new Promise<{ text: string }>(resolve => { releaseSlow = resolve; });
+  agents.scripts.set('Start a slow helper', messages => {
+    const last = text(messages.at(-1));
+    if (!called(messages, 'spawn_agent')) return { tool: 'spawn_agent', arguments: { task_name: 'slow', message: 'Slow task' } };
+    if (last.includes('Stop the slow helper')) return { tool: 'interrupt_agent', arguments: { target: 'slow' } };
+    if (last.includes('stopped by interrupt_agent')) return { tool: 'followup_task', arguments: { target: 'slow', message: 'Quick task' } };
+    const answer = last.match(/Relay: \w+/);
+    return { text: answer ? answer[0] : 'Waiting.' };
+  });
+  agents.scripts.set('Slow task', () => slowReply);
+  agents.scripts.set('Quick task', () => ({ text: 'Relay: quick' }));
+  const root = await agents.rootChat();
+  try {
+    await root.command({ type: 'prompt', message: 'Start a slow helper' });
+    await root.until(() => agents.model.requests.some(request => JSON.stringify(request.messages).includes('Slow task')));
+    await root.command({ type: 'prompt', message: 'Stop the slow helper' });
+    await root.until(history => text(history.at(-1)) === 'Relay: quick');
+  } finally { releaseSlow({ text: 'Relay: late' }); }
+  const rootRequests = agents.model.requests.filter(request => JSON.stringify(request.messages).includes('Start a slow helper'));
+  expect(rootRequests.some(request => /slow: cancelled[\s\S]*Subagent stopped by interrupt_agent/.test(text(request.messages.at(-1))))).toBe(true);
+  expect((await agents.daemon.invoke('list_sessions')).filter((session: any) => session.subagentParentId === root.sessionId).length).toBe(1);
+}, 120000);

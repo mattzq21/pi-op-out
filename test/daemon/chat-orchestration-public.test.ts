@@ -85,3 +85,53 @@ test('a chat can start a new independent chat that works on its prompt', async (
   expect(session).toMatchObject({ name: 'Release notes' });
   expect(session.subagentParentId).toBeUndefined();
 }, 120000);
+
+/** A promise that the test settles later, to keep an agent's model reply waiting. */
+const held = <T>() => { let release!: (value: T) => void; const promise = new Promise<T>(resolve => { release = resolve; }); return { promise, release }; };
+
+test('a chat can stop another chat\'s running work, which keeps its history and stays usable', async () => {
+  const setup = await agents.rootChat();
+  await allowChatMessaging(setup);
+  const worker = await agents.rootChat();
+  const longReply = held<{ text: string }>();
+  agents.scripts.set('Long job', messages => text(messages.at(-1)).includes('Are you still there?') ? { text: 'Still here.' } : longReply.promise);
+  await worker.command({ type: 'prompt', message: 'Long job' });
+  await worker.until(() => agents.model.requests.some(request => JSON.stringify(request.messages).includes('Long job')));
+  const coordinator = await agents.rootChat();
+  agents.scripts.set('Stop the worker', messages => {
+    if (!called(messages, 'stop_thread')) return { tool: 'stop_thread', arguments: { threadId: worker.sessionId } };
+    if (!called(messages, 'send_message_to_thread')) return { tool: 'send_message_to_thread', arguments: { threadId: worker.sessionId, prompt: 'Are you still there?' } };
+    return { text: 'Relay: done' };
+  });
+  try {
+    await coordinator.command({ type: 'prompt', message: 'Stop the worker' });
+    await coordinator.until(history => text(history.at(-1)) === 'Relay: done');
+    const history = await worker.until(messages => text(messages.at(-1)) === 'Still here.');
+    expect(text(history.find(message => message.role === 'user'))).toBe('Long job');
+    expect(history.some(message => message.role === 'assistant' && message.stopReason === 'aborted')).toBe(true);
+  } finally { longReply.release({ text: 'too late' }); }
+  expect(text((await worker.history()).at(-1))).toBe('Still here.');
+}, 120000);
+
+test('a message to a busy chat waits until its current work finishes, then starts a new turn', async () => {
+  const setup = await agents.rootChat();
+  await allowChatMessaging(setup);
+  const worker = await agents.rootChat();
+  const longReply = held<{ text: string }>();
+  agents.scripts.set('Busy job', messages => text(messages.at(-1)).includes('Queued question') ? { text: 'Answer to the queued question.' } : longReply.promise);
+  await worker.command({ type: 'prompt', message: 'Busy job' });
+  await worker.until(() => agents.model.requests.some(request => JSON.stringify(request.messages).includes('Busy job')));
+  const coordinator = await agents.rootChat();
+  agents.scripts.set('Ask the busy worker', messages => called(messages, 'send_message_to_thread')
+    ? { text: 'Relay: ' + JSON.stringify(toolResult(messages, 'send_message_to_thread')) }
+    : { tool: 'send_message_to_thread', arguments: { threadId: worker.sessionId, prompt: 'Queued question' } });
+  try {
+    await coordinator.command({ type: 'prompt', message: 'Ask the busy worker' });
+    const receipt = JSON.parse(text((await coordinator.until(history => text(history.at(-1)).startsWith('Relay: '))).at(-1)).slice('Relay: '.length));
+    expect(receipt).toMatchObject({ sessionId: worker.sessionId, accepted: true });
+    const workerRequests = agents.model.requests.filter(request => JSON.stringify(request.messages).includes('Busy job'));
+    expect(workerRequests.some(request => JSON.stringify(request.messages).includes('Queued question'))).toBe(false);
+  } finally { longReply.release({ text: 'Busy job done.' }); }
+  const answers = (await worker.until(messages => text(messages.at(-1)) === 'Answer to the queued question.')).filter(message => message.role === 'assistant').map(message => [text(message), message.stopReason]);
+  expect(answers).toEqual([['Busy job done.', 'stop'], ['Answer to the queued question.', 'stop']]);
+}, 120000);
