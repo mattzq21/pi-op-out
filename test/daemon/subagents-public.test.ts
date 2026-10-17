@@ -112,3 +112,50 @@ test('interrupting a busy child cancels its work, tells the parent, and the chil
   expect(rootRequests.some(request => /slow: cancelled[\s\S]*Subagent stopped by interrupt_agent/.test(text(request.messages.at(-1))))).toBe(true);
   expect((await agents.daemon.invoke('list_sessions')).filter((session: any) => session.subagentParentId === root.sessionId).length).toBe(1);
 }, 120000);
+
+test('a parent sees its busy child in its agent list and can send the child an update it acts on', async () => {
+  let releaseFirst!: (reply: { text: string }) => void;
+  const firstReply = new Promise<{ text: string }>(resolve => { releaseFirst = resolve; });
+  const toolResult = (messages: any[], tool: string) => {
+    const call = messages.findLast(message => message.tool_calls?.some((item: any) => item.function.name === tool))?.tool_calls.find((item: any) => item.function.name === tool);
+    return call && text(messages.find(message => message.role === 'tool' && message.tool_call_id === call.id));
+  };
+  agents.scripts.set('Delegate to a worker', messages => {
+    const last = messages.at(-1);
+    if (!called(messages, 'spawn_agent')) return { tool: 'spawn_agent', arguments: { task_name: 'worker', message: 'Build the feature' } };
+    if (text(last).includes('Check on the worker') && !called(messages, 'list_agents')) return { tool: 'list_agents' };
+    if (last.role === 'tool' && called(messages, 'list_agents') && !called(messages, 'send_message')) return { tool: 'send_message', arguments: { target: 'worker', message: 'Also check the tests' } };
+    return { text: 'Waiting.' };
+  });
+  agents.scripts.set('Build the feature', messages => JSON.stringify(messages).includes('Also check the tests') ? { text: 'Tests checked.' } : firstReply);
+  const root = await agents.rootChat();
+  try {
+    await root.command({ type: 'prompt', message: 'Delegate to a worker' });
+    await root.until(() => agents.model.requests.some(request => JSON.stringify(request.messages).includes('Build the feature') && !JSON.stringify(request.messages).includes('Delegate to a worker')));
+    await root.command({ type: 'prompt', message: 'Check on the worker' });
+    await root.until(history => history.some(message => message.role === 'toolResult' && message.toolName === 'send_message'));
+  } finally { releaseFirst({ text: 'Feature built.' }); }
+  const rootSeen = agents.model.requests.findLast(request => JSON.stringify(request.messages).includes('Delegate to a worker') && called(request.messages, 'send_message')).messages;
+  const listed = JSON.parse(toolResult(rootSeen, 'list_agents'));
+  expect(listed).toEqual([expect.objectContaining({ task_name: expect.stringMatching(/worker$/), status: 'running' })]);
+  expect(JSON.parse(toolResult(rootSeen, 'send_message'))).toMatchObject({ accepted: true });
+  for (let tries = 0; tries < 100 && !agents.model.requests.some(request => JSON.stringify(request.messages).includes('Also check the tests') && !JSON.stringify(request.messages).includes('Delegate to a worker')); tries++) await Bun.sleep(100);
+  const childSaw = agents.model.requests.filter(request => JSON.stringify(request.messages).includes('Build the feature') && !JSON.stringify(request.messages).includes('Delegate to a worker'));
+  expect(JSON.stringify(childSaw.at(-1).messages)).toContain('Also check the tests');
+  expect(JSON.stringify(childSaw.at(-1).messages)).toContain('Feature built.');
+}, 120000);
+
+test('a child can send its parent a progress update before its final answer', async () => {
+  agents.scripts.set('Run a long survey', messages => {
+    const last = text(messages.at(-1));
+    if (!called(messages, 'spawn_agent')) return { tool: 'spawn_agent', arguments: { task_name: 'surveyor', message: 'Survey the modules' } };
+    if (last.includes('Halfway through the modules')) return { text: 'Noted the progress.' };
+    const answer = last.match(/Relay: \w+/);
+    return { text: answer ? answer[0] : 'Waiting.' };
+  });
+  agents.scripts.set('Survey the modules', messages => called(messages, 'send_message') ? { text: 'Relay: surveyed' } : { tool: 'send_message', arguments: { target: 'parent', message: 'Halfway through the modules' } });
+  const root = await agents.rootChat();
+  await root.command({ type: 'prompt', message: 'Run a long survey' });
+  const messages = await root.until(history => text(history.at(-1)) === 'Relay: surveyed');
+  expect(messages.filter(message => message.role === 'assistant').map(text).filter(Boolean)).toEqual(['Waiting.', 'Noted the progress.', 'Relay: surveyed']);
+}, 120000);
