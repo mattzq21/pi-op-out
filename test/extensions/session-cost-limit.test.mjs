@@ -24,9 +24,11 @@ const { SessionManager } = await sdk('session-manager');
 const { ModelRuntime } = await sdk('model-runtime');
 const usage = total => ({ input: 1, output: 1, cacheRead: 0, cacheWrite: 0, totalTokens: 2, cost: { input: 0, output: total, cacheRead: 0, cacheWrite: 0, total } });
 
-async function fixture(t, { toolCost = 0, responseCost = 1, toolCalls = false } = {}) {
-  const dir = await mkdtemp(join(tmpdir(), 'piop-cost-test-'));
-  t.after(() => rm(dir, { recursive: true, force: true }));
+async function fixture(t, { toolCost = 0, responseCost = 1, toolCalls = false, dir, sessionManager } = {}) {
+  if (!dir) {
+    dir = await mkdtemp(join(tmpdir(), 'piop-cost-test-'));
+    t.after(() => rm(dir, { recursive: true, force: true }));
+  }
   const outfile = join(dir, 'cost.mjs');
   await build({ entryPoints: ['extensions/piop-session-cost-limit/index.ts'], outfile, bundle: true, format: 'esm', platform: 'node', logLevel: 'silent' });
   const { default: costLimit } = await import(pathToFileURL(outfile));
@@ -40,7 +42,7 @@ async function fixture(t, { toolCost = 0, responseCost = 1, toolCalls = false } 
   assert.deepEqual(resourceLoader.getExtensions().errors, []);
   let executions = 0;
   const { session } = await createAgentSession({
-    cwd: dir, agentDir: dir, modelRuntime, model, settingsManager, resourceLoader, sessionManager: SessionManager.inMemory(dir), tools: ['cost_test'],
+    cwd: dir, agentDir: dir, modelRuntime, model, settingsManager, resourceLoader, sessionManager: sessionManager?.(dir) ?? SessionManager.inMemory(dir), tools: ['cost_test'],
     customTools: [{ name: 'cost_test', label: 'Cost test', description: 'Test tool', parameters: { type: 'object', properties: {} }, execute: async () => {
       executions++;
       return { content: [{ type: 'text', text: 'done' }], details: {}, usage: usage(toolCost) };
@@ -64,6 +66,23 @@ async function fixture(t, { toolCost = 0, responseCost = 1, toolCalls = false } 
   t.after(() => assert.deepEqual(errors, []));
   return { session, statuses, notices, model, get requests() { return requests; }, get executions() { return executions; }, get aborted() { return aborted; } };
 }
+
+test('a reopened saved session keeps its reached limit and refuses new prompts', async t => {
+  const dir = await mkdtemp(join(tmpdir(), 'piop-cost-test-'));
+  const first = await fixture(t, { dir, sessionManager: cwd => SessionManager.create(cwd, join(cwd, 'sessions')) });
+  await first.session.prompt('/cost 1');
+  await first.session.prompt('spend the limit');
+  const path = first.session.sessionManager.getSessionFile();
+  assert.ok(path && existsSync(path));
+  first.session.dispose();
+  const reopened = await fixture(t, { dir, sessionManager: cwd => SessionManager.open(path, join(cwd, 'sessions')) });
+  // After hooks run in registration order; remove the shared directory after both sessions are disposed.
+  t.after(() => rm(dir, { recursive: true, force: true }));
+  assert.equal(reopened.statuses.get('piop-session-cost'), 'Session cost limit reached ($1.00 / $1.00)');
+  await reopened.session.prompt('after reopening');
+  assert.equal(reopened.requests, 0);
+  assert.equal(JSON.parse(reopened.statuses.get('piop-input-rejected')).text, 'after reopening');
+});
 
 test('real session blocks prompts at the limit and accepts raise and clear commands', async t => {
   const f = await fixture(t);

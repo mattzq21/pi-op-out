@@ -41,6 +41,31 @@ test('invalid previews fail without a message', async () => {
   assert.equal(preview.messages.length, 0);
 });
 
+test('inline HTML or a file of exactly 512,000 UTF-8 bytes is displayed', async () => {
+  const preview = load();
+  const html = 'é'.repeat(256_000);
+  await writeFile(join(dir, 'limit.html'), html);
+  await preview.run({ html });
+  await preview.run({ path: join(dir, 'limit.html') });
+  assert.deepEqual(preview.messages.map(({ message }) => message.details.html === html), [true, true]);
+});
+
+test('a file that is not valid UTF-8 fails without a message, and the next preview still works', async () => {
+  const preview = load();
+  await writeFile(join(dir, 'binary.html'), Buffer.from([0x3c, 0x70, 0x3e, 0xff, 0xfe, 0x3c, 0x2f, 0x70, 0x3e]));
+  await assert.rejects(preview.run({ path: 'binary.html' }), /valid UTF-8/);
+  assert.equal(preview.messages.length, 0);
+  await preview.run({ html: '<p>ok</p>' });
+  assert.equal(preview.messages[0].message.details.html, '<p>ok</p>');
+});
+
+test('a file that starts with a UTF-8 byte order mark is displayed with the mark kept', async () => {
+  const preview = load();
+  await writeFile(join(dir, 'bom.html'), '\uFEFF<p>bom</p>');
+  await preview.run({ path: 'bom.html' });
+  assert.equal(preview.messages[0].message.details.html, '\uFEFF<p>bom</p>');
+});
+
 test('the client viewport size changes the tool description and is kept across reloads', async () => {
   const preview = load();
   assert.deepEqual(await preview.viewport(750), { width: 750, height: 750 });

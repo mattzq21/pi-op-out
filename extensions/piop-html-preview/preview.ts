@@ -7,6 +7,8 @@ export type HtmlPreviewSource = { html?: string; path?: string; title?: string }
 
 const tooLarge = () => new Error("HTML must be at most 512,000 bytes.");
 
+const utf8 = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
+
 async function readHtml(path: string, cwd: string, signal?: AbortSignal) {
   const file = await open(resolve(cwd, path), "r");
 
@@ -29,7 +31,7 @@ async function readHtml(path: string, cwd: string, signal?: AbortSignal) {
 
     if (length > MAX_HTML_BYTES) throw tooLarge();
 
-    return buffer.subarray(0, length).toString("utf8");
+    try { return utf8.decode(buffer.subarray(0, length)); } catch { throw new Error("HTML file must be valid UTF-8."); }
   } finally { await file.close(); }
 }
 
