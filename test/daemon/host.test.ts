@@ -162,6 +162,29 @@ test('a pending message protects its referenced temporary folder from cleanup', 
   } finally { await daemon.invoke('stop_pi', { runtimeId: runtime.runtimeId }); }
 }, 60_000);
 
+test('an explicitly read-only view cannot take ownership or change the pending queue', async () => {
+  const session = publicSession(daemon.home, 'explicit-readonly');
+  const owner = await open(session.path, 'explicit-owner');
+  const readerId = randomUUID();
+  try {
+    await command(owner.runtimeId, { type: 'follow_up', message: 'Protected work' });
+    const before = (await command(owner.runtimeId, { type: 'get_state' })).pendingMessages;
+    expect(await daemon.invoke('start_pi', {
+      runtimeId: readerId, clientId: 'explicit-reader', cwd: daemon.home, sessionPath: session.path, presence: { readOnly: true },
+    })).toMatchObject({ owned: false });
+    expect((await command(readerId, { type: 'get_state' })).pendingMessages).toEqual(before);
+    expect(await daemon.failure('pi_command', { runtimeId: readerId, command: { type: 'take_ownership' } }))
+      .toBe('This view is read-only');
+    expect(await daemon.failure('pi_command', { runtimeId: readerId, command: { type: 'clear_queue' } })).toContain('ownership');
+    expect((await command(owner.runtimeId, { type: 'get_state' })).pendingMessages).toEqual(before);
+    await command(owner.runtimeId, { type: 'clear_queue' });
+    expect((await command(owner.runtimeId, { type: 'get_state' })).pendingMessages).toEqual([]);
+  } finally {
+    await daemon.invoke('stop_pi', { runtimeId: readerId });
+    await daemon.invoke('stop_pi', { runtimeId: owner.runtimeId });
+  }
+}, 60_000);
+
 test('a read-only client cannot clear pending messages until it takes ownership', async () => {
   const session = publicSession(daemon.home, 'queue-ownership');
   const owner = await open(session.path, 'queue-owner');
