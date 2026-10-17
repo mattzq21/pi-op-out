@@ -14,19 +14,20 @@ export function ArchivedSessionPanel() {
   const [query, setQuery] = createSignal("");
   const [restoring, setRestoring] = createSignal<string>();
   const searchRef = createRef<HTMLInputElement>(null);
+  const refreshGeneration = createRef(0);
 
   const refresh = async () => {
-    if (loading()) return;
+    const generation = ++refreshGeneration.current;
     setLoading(true); setError(undefined);
     let complete = false;
     // Other machines can answer slowly, so show the archive of this machine first.
     const local = loadStorageReport("local").then(next => {
-      if (!complete) setReport(current => ({ hosts: [...next.hosts, ...(current?.hosts.filter(host => host.hostId !== "local") ?? [])] }));
+      if (!complete && generation === refreshGeneration.current) setReport(current => ({ hosts: [...next.hosts, ...(current?.hosts.filter(host => host.hostId !== "local") ?? [])] }));
     });
 
-    try { const next = await loadStorageReport(); complete = true; setReport(next); }
-    catch (reason) { setError(String(reason)); }
-    finally { complete = true; await local.catch(() => undefined); setLoading(false); }
+    try { const next = await loadStorageReport(); complete = true; if (generation === refreshGeneration.current) setReport(next); }
+    catch (reason) { if (generation === refreshGeneration.current) setError(String(reason)); }
+    finally { complete = true; await local.catch(() => undefined); if (generation === refreshGeneration.current) setLoading(false); }
   };
 
   createDependencyEffect(() => { void refresh(); }, () => []);
