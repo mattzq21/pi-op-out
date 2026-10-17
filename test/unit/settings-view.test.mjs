@@ -249,6 +249,18 @@ describe('settings editor', () => {
     assert.deepEqual(saves[0][1], { revision: 'latest-agent-revision', agents: [profile('general'), profile('review', { path_systemprompt: 'review.md', path_agent_prompt: 'theirs.md' })] });
   });
 
+  test('an agent revision change without content changes keeps agent edits and saves them with the new revision', async () => {
+    await render({ agentConfig: { revision: 'original-agent-revision', agents: [profile('general'), profile('review', { path_agent_prompt: 'old.md' })] } });
+    await section('Agents'); await selectAgent('review');
+    await enterText(control('Agent prompt file'), 'mine.md');
+    await render({ agentConfig: { revision: 'fresh-agent-revision', agents: [profile('general'), profile('review', { path_agent_prompt: 'old.md' })] } });
+    assert.equal(document.querySelector('[role=alert]'), null);
+    assert.equal(control('Agent prompt file').value, 'mine.md');
+    await click(save());
+    assert.equal(saves.length, 1);
+    assert.deepEqual(saves[0][1], { revision: 'fresh-agent-revision', agents: [profile('general'), profile('review', { path_agent_prompt: 'mine.md' })] });
+  });
+
   test('unconfirmed disk durability offers a retry without edits and clears once confirmed', async () => {
     await render({ settings: { ...props.settings, settingsDurabilityError: 'fsync failed' } });
     assert.match(document.querySelector('[role=alert]').textContent, /durability is unconfirmed: fsync failed/);

@@ -1176,6 +1176,18 @@ test('selecting an unknown profile keeps the current agent usable', async t => {
   assert.equal((await f.prompt()).customPrompt, 'System instructions');
 });
 
+test('a target with an unreadable agent prompt keeps the selected agent prompts and input usable', async t => {
+  const f = await agentFixture(t, { config: null, files: { 'review-system.md': 'Review system', 'review-agent.md': 'Review agent', 'broken-system.md': 'Broken system' } });
+  await f.load();
+  await f.configure(configured([profile(), profile('reviewer', { path_systemprompt: 'review-system.md', path_agent_prompt: 'review-agent.md' }), profile('broken', { path_systemprompt: 'broken-system.md', path_agent_prompt: 'absent-agent.md' })]));
+  await f.start(); await f.select('reviewer');
+  await assert.rejects(f.select('broken'), error => error.message.startsWith(`Agent "broken" cannot read agent prompt ${join(f.dir, 'absent-agent.md')}: ENOENT`));
+  assert.equal(f.capability().active, 'reviewer');
+  const prompt = await f.prompt();
+  assert.deepEqual([prompt.customPrompt, prompt.sections.instructions], ['Review system', 'Review agent']);
+  assert.deepEqual(await f.input('hello'), { action: 'continue' });
+});
+
 test('first run reports a read-only settings directory and succeeds after access is restored', async t => {
   const f = await agentFixture(t, { config: null });
   await f.file('sysprompt/default.md', 'Existing instructions');
