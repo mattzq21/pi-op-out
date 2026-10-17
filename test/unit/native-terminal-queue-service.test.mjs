@@ -97,6 +97,55 @@ test('Enter queued before a connection change is cancelled, keeps the saved draf
   }
 });
 
+test('a connection change on one remote machine cancels only its queued Enter, and local queued Enter is sent once', async t => {
+  const dom = installDom();
+  t.after(() => { clearMocks(); dom.restore(); });
+  const localTerminal = crypto.randomUUID(), remoteTerminal = crypto.randomUUID();
+  const response = Promise.withResolvers();
+  let output = '';
+  const daemon = await daemonClient(t, (event, payload) => {
+    if (event !== 'pi://event' || payload.type !== 'terminal_output' || payload.terminalId !== localTerminal) return;
+    output += payload.data;
+    if (output.includes('local-sent')) response.resolve();
+  }, { remotes: [{ id: 'remote', name: 'Remote', target: 'remote' }] });
+  mockWindows('main');
+  mockIPC((command, args) => {
+    assert.equal(command, 'daemon_invoke');
+    return daemon.invoke(args.command, args.args);
+  });
+  const localChat = await daemon.invoke('create_temporary_chat', { hostId: 'local' });
+  const remoteChat = await daemon.invoke('create_temporary_chat', { hostId: 'remote' });
+  const localSession = `local:draft-${crypto.randomUUID()}`, remoteSession = `remote:draft-${crypto.randomUUID()}`;
+  const localTyped = "printf '%s%s\\n' 'local-' 'sent'", remoteTyped = "printf '%s%s\\n' 'remote-' 'sent'";
+  await nativeTerminals.start(localTerminal, localSession, localChat.cwd, 80, 24, 'local');
+  await nativeTerminals.start(remoteTerminal, remoteSession, remoteChat.cwd, 80, 24, 'remote');
+  await nativeTerminals.write(localTerminal, localTyped, 'draft');
+  await nativeTerminals.write(remoteTerminal, remoteTyped, 'draft');
+  const finish = beginBranching();
+  const work = [];
+  try {
+    work.push(nativeTerminals.write(remoteTerminal, '\r', 'write_with_draft'));
+    work.push(nativeTerminals.write(localTerminal, '\r', 'write_with_draft'));
+    nativeTerminals.invalidateWrites('remote');
+    finish();
+    const [remoteSent, localSent] = await Promise.allSettled(work);
+    assert.equal(remoteSent.status, 'rejected');
+    assert.match(String(remoteSent.reason), /Terminal connection changed\. Enter the input again\./);
+    assert.equal(localSent.status, 'fulfilled');
+    await response.promise;
+    const [remote] = await nativeTerminals.list(remoteSession, 'remote');
+    assert.equal(remote.inputDraft, remoteTyped);
+    assert.equal(remote.output.includes('remote-sent'), false);
+    const [local] = await nativeTerminals.list(localSession, 'local');
+    assert.equal(local.inputDraft, '');
+    assert.equal(local.output.split('local-sent').length - 1, 1);
+  } finally {
+    finish();
+    await Promise.allSettled(work);
+    await Promise.all([nativeTerminals.close(localTerminal), nativeTerminals.close(remoteTerminal)]);
+  }
+});
+
 test('Enter queued behind a failed draft save is rejected, and a retry sends only the corrected input', async t => {
   const dom = installDom();
   t.after(() => { clearMocks(); dom.restore(); });
