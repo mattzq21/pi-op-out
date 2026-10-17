@@ -14,7 +14,8 @@ const within = (promise, label, timeout = 5000) => {
   return Promise.race([promise, new Promise((_, reject) => { timer = setTimeout(() => reject(new Error(`Timed out: ${label}`)), timeout); })]).finally(() => clearTimeout(timer));
 };
 
-async function archivedPanel(t, names) {
+// `archives` are chat names on this machine, or { name, hostId } for a configured remote. `initial` registers gates before mount, so it can hold the first refresh.
+async function archivedPanel(t, archives, { remotes, initial } = {}) {
   const dom = installDom();
   const storage = trackStorage(indexedDB);
   const calls = new Set();
@@ -32,16 +33,18 @@ async function archivedPanel(t, names) {
     };
   };
   t.after(async () => { for (const entry of gates) entry.open.resolve(); await settle(); await view?.unmount(); await settle(); storage.restore(); clearMocks(); dom.restore(); });
-  daemon = await daemonClient(t);
-  const home = await daemon.invoke('home_directory', { hostId: 'local' });
+  daemon = await daemonClient(t, undefined, { remotes });
   const chats = {};
-  for (const name of names) {
+  for (const archive of archives) {
+    const { name, hostId } = typeof archive === 'string' ? { name: archive, hostId: 'local' } : archive;
+    const home = await daemon.invoke('home_directory', { hostId });
     chats[name] = JSON.parse(execFileSync('node', [fileURLToPath(new URL('../fixtures/publish-chat.mjs', import.meta.url))], {
       encoding: 'utf8', timeout: 30000,
       input: JSON.stringify({ home, content: JSON.stringify({ type: 'message', id: 'question', parentId: null, message: { role: 'user', content: name } }) + '\n' }),
     }));
-    await daemon.invoke('archive_session', { hostId: 'local', sessionPath: chats[name].path, terminalIds: [], clientId: 'archived-panel-test' });
+    await daemon.invoke('archive_session', { hostId, sessionPath: chats[name].path, terminalIds: [], clientId: 'archived-panel-test' });
   }
+  const held = initial?.(gate);
   mockWindows('main');
   mockIPC((command, args) => {
     assert.equal(command, 'daemon_invoke');
@@ -60,7 +63,8 @@ async function archivedPanel(t, names) {
   view = await renderComponent(ArchivedSessionPanel);
   const button = name => view.container.querySelector(`[aria-label="Restore ${name} to active sessions"]`);
   const refreshButton = () => view.container.querySelector('[aria-label="Refresh archived sessions"]');
-  return { daemon, view, chats, settle, gate, button, refreshButton };
+  const buttons = name => view.container.querySelectorAll(`[aria-label="Restore ${name} to active sessions"]`);
+  return { daemon, view, chats, settle, gate, held, button, buttons, refreshButton };
 }
 
 // Holds both archive report replies of one refresh after the daemon computed them, so they still list every archived chat.
@@ -120,6 +124,26 @@ test('restoring a chat while a refresh is loading still removes it once the olde
   reports.release();
   await settle();
   await assertRestoredOnce(panel, 'Restore me');
+});
+
+test('the archive of this machine shows while the full archive report is loading, then the remote archive is added with each chat listed once', { timeout: 90000 }, async t => {
+  const { view, settle, held: fullReport, button, buttons, refreshButton } = await archivedPanel(t, ['Local archive', { name: 'Remote archive', hostId: 'remote' }], {
+    remotes: [{ id: 'remote', name: 'Remote machine', target: 'archive-remote' }],
+    initial: gate => gate('storage_report'),
+  });
+  await fullReport.reached();
+
+  await untilDom(() => button('Local archive'));
+  assert.equal(button('Remote archive'), null);
+  assert.equal(view.container.querySelector('.session-scroll').getAttribute('aria-busy'), 'true');
+
+  fullReport.release();
+  await settle();
+  assert.equal(buttons('Local archive').length, 1);
+  assert.equal(buttons('Remote archive').length, 1);
+  assert.equal(view.container.querySelector('.session-scroll').getAttribute('aria-busy'), 'false');
+  assert.equal(refreshButton().disabled, false);
+  assert.equal(view.container.querySelector('[role="alert"]'), null);
 });
 
 test('a restore blocked by an occupied destination shows the error and keeps the chat archived, then a retry after the destination is freed restores it once', { timeout: 60000 }, async t => {
