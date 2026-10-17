@@ -1,4 +1,4 @@
-import { installDom, renderComponent, act, untilDom, enterText } from '../dom.mjs';
+import { installDom, renderComponent, act, untilDom, enterText, attributeBecomes } from '../dom.mjs';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { createComponent, mergeProps } from 'solid-js';
@@ -379,3 +379,26 @@ test('local and remote conversations with the same id stay separate', { timeout:
   assert.equal(row('shared', 'remote').getAttribute('aria-current'), 'page');
   assert.equal(row('shared').hasAttribute('aria-current'), false);
 });
+
+test('a failed group rename keeps the typed name and saves it when retried after reconnection', async t => {
+  const panel = await fixture(t, { sessions: [session('a', 'Chat 2')] });
+  await createGroup(panel, 'Research');
+  await click(control('Group actions for Research'));
+  await click(menuAction('Rename group'));
+  const input = await untilDom(() => control('Rename session group'));
+  await enterText(input, 'Notes');
+  await panel.service.disconnect();
+  await key(input, 'Enter');
+  await attributeBecomes(input, 'aria-invalid', 'true');
+  assert.equal(control('Rename session group'), input);
+  assert.equal(input.value, 'Notes');
+  assert.match(document.getElementById(input.getAttribute('aria-describedby')).textContent, /connection is not open/i);
+  await panel.service.reconnect();
+  await key(input, 'Enter');
+  await untilDom(() => control('Group actions for Notes') && !control('Rename session group'));
+  await panel.reopen({}, 'Notes');
+  assert.ok(control('Group actions for Notes'));
+  assert.equal(control('Group actions for Research'), null);
+  assert.doesNotMatch(document.body.textContent, /connection is not open/i);
+});
+
