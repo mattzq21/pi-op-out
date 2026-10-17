@@ -43,6 +43,30 @@ async function startTerminal(client: Client, clientId: string, sessionId: string
 const entry = async (client: Client, clientId: string, sessionId: string, terminalId: string) =>
   (await shared(client, clientId, 'list', sessionId)).find((item: any) => item.id === terminalId);
 
+test('connected clients receive terminal draft edits and clearing after send', async () => {
+  const owner = await daemon.connect();
+  const observer = await daemon.connect();
+  const sessionId = 'draft-notifications';
+  const terminalId = 'draft-notifications-terminal';
+  try {
+    const generation = await startTerminal(owner, 'notification-owner', sessionId, terminalId);
+    await shared(owner, 'notification-owner', 'draft', sessionId, { sharedTerminalId: terminalId, data: 'Unsent text' });
+    const edited = await observer.waitEvent('pi://event', event =>
+      event.type === 'terminal_draft' && event.terminalId === terminalId && event.data === 'Unsent text');
+    expect(edited).toMatchObject({ sessionId, hostId: 'local', generation, data: 'Unsent text' });
+
+    await shared(owner, 'notification-owner', 'write_and_clear_draft', sessionId, {
+      sharedTerminalId: terminalId, data: 'Unsent text\n', expectedDraft: 'Unsent text',
+    });
+    const cleared = await observer.waitEvent('pi://event', event =>
+      event.type === 'terminal_draft' && event.terminalId === terminalId && event.data === '');
+    expect(cleared).toMatchObject({ sessionId, hostId: 'local', generation, data: '' });
+  } finally {
+    await shared(owner, 'notification-owner', 'close', sessionId, { sharedTerminalId: terminalId });
+    owner.close(); observer.close();
+  }
+}, 30_000);
+
 test('starting another chat with an existing terminal ID preserves the original terminal', async () => {
   const client = await daemon.connect();
   const sessionId = 'draft-original-terminal';
