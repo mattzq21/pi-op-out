@@ -20,6 +20,13 @@ The September 25 notes interactions also used synthetic `KeyboardEvent` dispatch
 
 ## Current implementation cross-check
 
+- `.agents/skills/piop-wdio/scripts/tauri-webdriver.py`: uses WebKitWebDriver, starts the app, attaches WDIO MCP, and prints `sessionFile`. `--isolated-profile` sets a temporary child-process `HOME`, agent directory, and XDG directories; the default shares the inherited profile.
+- `clients/desktop/Cargo.toml` has no `webdriver` feature. `daemon/src/environment.ts` reads `HOME`, not `PIOP_TEST_HOME`. Use the current procedure in `launch.md`.
+
+## Historical implementation cross-check
+
+The checks below describe the removed embedded-driver setup, not current requirements.
+
 Checked in `/home/matt/.codex/worktrees/7fda/piop` when authoring; resolve these paths against the active checkout on later runs:
 
 - `scripts/wdio-manual.mjs`: embedded provider, ephemeral loopback port, `PI_E2E_BINARY`, printed attachment data, signal-driven cleanup; no fixture setup.

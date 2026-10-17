@@ -2,7 +2,23 @@
 
 Read this before starting a new session. Paths below are relative to the **active Piop checkout**. Recheck the named implementation files if the branch has changed; old traces contain superseded commands and binary names.
 
-## Select a matching build
+## Current launch procedure
+
+From the active checkout, start a session with separate test data:
+
+```bash
+python3 .agents/skills/piop-wdio/scripts/tauri-webdriver.py --project "$PWD" --isolated-profile
+```
+
+This uses WebKitWebDriver and starts `npm run tauri dev`; no Cargo `webdriver` or `test-home` feature is required. The launcher sets a temporary `HOME`, agent directory, and XDG directories for its child processes, while preserving the build tool directories. It clears `PIOP_TEST_HOME`, which the current daemon does not use. No separate daemon or environment setup is needed. For a requested check of existing user data, use `--shared-profile` instead; that is also the launcher's default.
+
+Keep the launcher running in a persistent terminal. Wait for its final JSON and record `sessionFile` and `profileHome`. WDIO MCP is already attached. Use the script's `tools --session FILE` and `call --session FILE TOOL '[JSON]'` commands with that `sessionFile`; Ctrl+C stops the owned instance. Prepare any needed test credentials only inside `profileHome`, keeping their contents out of reports.
+
+## Historical procedure — reference only
+
+The remaining sections record the removed embedded-driver setup. Their commands, Cargo features, environment setup, and direct-attachment method do not apply to the current launcher. Use the current procedure above.
+
+### Select a matching build
 
 The current manual launcher is `npm run test:e2e:manual`, equivalent to `node scripts/wdio-manual.mjs`. It starts the app, creates an embedded WebDriver session, prints attachment JSON, and waits for SIGINT/SIGTERM. It does not run the E2E suite.
 
@@ -14,7 +30,7 @@ E2E-mode assets expose `E2E responses` and `E2E calls` controls and can change t
 
 For an existing debug binary, use `PI_E2E_BINARY` with its absolute path. Debug builds use `.piop-dev` and can depend on a Vite server at the URL compiled into the binary. `npm run tauri -- dev` currently chooses a dynamic Vite port and can rebuild/stop the development daemon; it is not a harmless substitute for the manual launcher. Recheck `scripts/tauri.mjs` before using it. For an isolated debug run, explicitly start a matching daemon built with `test-home` before the client, avoiding its automatic daemon rebuild without that feature.
 
-## Isolate new exploratory runs
+### Isolate new exploratory runs
 
 `wdio.conf.ts` prepares an isolated fixture, authentication copies, a daemon, and cleanup for automated runs. **The manual launcher does none of that.** Supply the environment yourself when the requested interactions create or change state.
 
@@ -53,7 +69,7 @@ For a debug app use the matching debug daemon. Wait for startup and publication 
 
 An “already running” message requires checking the existing daemon's identity, build, and environment. Do not kill another task's daemon or reuse it solely because a port is open.
 
-## Start the launcher and retain ownership
+### Start the launcher and retain ownership
 
 In another persistent terminal, repeat the same fixture environment and run:
 
@@ -77,7 +93,7 @@ The current launcher allocates a free loopback port. On Linux it selects X11 and
 
 Attach through WDIO as shown in `SKILL.md`, inspect the app, and leave the launcher alive until finished. The MCP configuration may point at the main checkout even while this task uses a worktree; that does not select the application binary for you.
 
-## Direct launch: only when the helper is unsuitable
+### Direct launch: only when the helper is unsuitable
 
 The traces also show a webdriver-enabled app launched directly with `TAURI_WEBDRIVER_PORT` set to a verified free port, followed by:
 
