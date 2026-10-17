@@ -43,6 +43,26 @@ async function startTerminal(client: Client, clientId: string, sessionId: string
 const entry = async (client: Client, clientId: string, sessionId: string, terminalId: string) =>
   (await shared(client, clientId, 'list', sessionId)).find((item: any) => item.id === terminalId);
 
+test('sending with a draft delivers the saved text before the new input to the shell', async () => {
+  const client = await daemon.connect();
+  const sessionId = 'draft-shell-input';
+  const terminalId = 'shell-input';
+  const directory = temporaryDirectory('piop-terminal-input-');
+  writeFileSync(join(directory, '.terminal-script'), "IFS= read -r line\nprintf 'RECEIVED:<%s>\\n' \"$line\"\n");
+  try {
+    await shared(client, 'shell-owner', 'start', sessionId, { sharedTerminalId: terminalId, cwd: directory, cols: 80, rows: 24 });
+    await shared(client, 'shell-owner', 'draft', sessionId, { sharedTerminalId: terminalId, data: 'saved ' });
+    await shared(client, 'shell-owner', 'write_with_draft', sessionId, { sharedTerminalId: terminalId, data: 'text\n' });
+    await client.waitEvent('pi://event', event => event.type === 'terminal_exit' && event.terminalId === terminalId);
+    const result = await entry(client, 'shell-owner', sessionId, terminalId);
+    expect(result.output).toContain('RECEIVED:<saved text>');
+    expect(result.inputDraft).toBe('');
+  } finally {
+    await shared(client, 'shell-owner', 'close', sessionId, { sharedTerminalId: terminalId });
+    client.close();
+  }
+}, 30_000);
+
 test('discarding one terminal view keeps another view on the same connection', async () => {
   const client = await daemon.connect();
   const sessionId = 'draft-two-views';
