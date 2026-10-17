@@ -43,6 +43,28 @@ async function startTerminal(client: Client, clientId: string, sessionId: string
 const entry = async (client: Client, clientId: string, sessionId: string, terminalId: string) =>
   (await shared(client, clientId, 'list', sessionId)).find((item: any) => item.id === terminalId);
 
+test('oversized Unicode terminal drafts are rejected without losing the saved draft', async () => {
+  const client = await daemon.connect();
+  const sessionId = 'draft-size-limit';
+  const terminalId = 'size-limit';
+  try {
+    await startTerminal(client, 'size-owner', sessionId, terminalId);
+    await shared(client, 'size-owner', 'draft', sessionId, { sharedTerminalId: terminalId, data: 'Keep this command' });
+    expect(await client.failure('shared_terminal', {
+      action: 'draft', clientId: 'size-owner', hostId: 'local', sessionKey: 'local:' + sessionId,
+      sharedTerminalId: terminalId, data: '🦆'.repeat(262145),
+    })).toBe('Terminal draft exceeds 1 MiB');
+    expect((await entry(client, 'size-owner', sessionId, terminalId)).inputDraft).toBe('Keep this command');
+
+    const limit = '🦆'.repeat(262144);
+    await shared(client, 'size-owner', 'draft', sessionId, { sharedTerminalId: terminalId, data: limit });
+    expect((await entry(client, 'size-owner', sessionId, terminalId)).inputDraft).toBe(limit);
+  } finally {
+    await shared(client, 'size-owner', 'close', sessionId, { sharedTerminalId: terminalId });
+    client.close();
+  }
+}, 30_000);
+
 test('discarding drafts closes only the requesting connection terminals', async () => {
   const first = await daemon.connect();
   const second = await daemon.connect();
