@@ -133,6 +133,22 @@ test('real session blocks prompts at the limit and accepts raise and clear comma
   assert.equal(f.statuses.get('piop-session-cost'), undefined);
 });
 
+test('navigating the session tree back before a lowered limit restores the earlier limit', async t => {
+  const f = await fixture(t);
+  await f.session.prompt('/cost 2');
+  await f.session.prompt('spend one dollar');
+  const response = f.session.sessionManager.getLeafId();
+  await f.session.prompt('/cost 1');
+  await f.session.prompt('blocked at lowered limit');
+  assert.equal(f.requests, 1);
+  const result = await f.session.navigateTree(response);
+  assert.equal(result.cancelled, false);
+  assert.equal(f.statuses.get('piop-session-cost'), 'Session $1.00 / $2.00');
+  await f.session.prompt('allowed on earlier branch');
+  assert.equal(f.requests, 2);
+  assert.equal(f.statuses.get('piop-session-cost'), 'Session cost limit reached ($2.00 / $2.00)');
+});
+
 test('real session blocks tools when the response reaches the limit', async t => {
   const f = await fixture(t, { toolCalls: true });
   await f.session.prompt('/cost 1');
