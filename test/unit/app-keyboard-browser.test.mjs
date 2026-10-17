@@ -93,3 +93,20 @@ test('holding the conversations shortcut toggles the conversation panel once', a
   assert.equal(await search.isVisible(), !wasOpen);
   assert.equal(await editor.inputValue(), 'Keep this draft');
 });
+
+test('a shortcut field captures an assigned app shortcut without running it', async t => {
+  const page = await appBrowser(t, { keybindings: { newConversation: 'Alt+N' } });
+  const editor = page.getByRole('textbox', { name: 'Message piop', exact: true });
+  await editor.fill('Keep this draft');
+  await page.getByRole('button', { name: 'Settings', exact: true }).click();
+  const binding = page.getByRole('textbox', { name: 'Toggle conversations shortcut', exact: true });
+  if (!await binding.isVisible()) await page.getByRole('button', { name: 'Keybinds' }).click();
+  await binding.focus();
+  await page.keyboard.press('Alt+n');
+  assert.equal(await binding.inputValue(), 'Alt+N');
+  assert.equal(await page.getByRole('button', { name: 'Go back', exact: true }).isVisible(), true);
+  page.once('dialog', dialog => dialog.accept());
+  await page.getByRole('button', { name: 'Go back', exact: true }).click();
+  await editor.waitFor();
+  assert.equal(await editor.inputValue(), 'Keep this draft');
+});
