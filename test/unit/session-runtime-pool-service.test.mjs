@@ -103,3 +103,24 @@ test('a conversation released while viewed stays usable until its last viewer cl
   assert.notEqual(pool.forSession(session), client);
   assert.deepEqual(errors, []);
 });
+
+test('a conversation reopened as active before its deferred release runs stays usable', async t => {
+  const { pool, daemon, errors } = await runtimePool(t);
+  const chat = await daemon.invoke('create_temporary_chat', { hostId: 'local' });
+  const session = { id: chat.sessionId, cwd: chat.cwd, hostId: 'local' };
+  const client = pool.forSession(session);
+  await client.connect();
+  await client.startDraft();
+  const closeViewer = pool.observe(client);
+  await pool.release(client);
+  closeViewer();
+  pool.activate(client);
+  assert.equal((await client.command({ type: 'get_state' })).sessionId, chat.sessionId);
+  assert.equal(pool.forSession(session), client);
+  pool.activate(undefined);
+  const disposed = new Promise(resolve => client.onDispose(resolve));
+  await pool.release(client);
+  await disposed;
+  assert.notEqual(pool.forSession(session), client);
+  assert.deepEqual(errors, []);
+});
