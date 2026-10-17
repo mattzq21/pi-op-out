@@ -132,6 +132,42 @@ test('explicit disconnect does not report connection loss', async () => {
   assert.deepEqual(losses, []);
 });
 
+test('failed authentication reports the host reason and leaves the client unusable', async () => {
+  const client = new RemoteClient(); const losses = [];
+  client.onDisconnect = message => losses.push(message);
+  try {
+    const promise = client.connect(host);
+    const rejection = assert.rejects(promise, { message: 'Device is not allowed on this tailnet' });
+    const socket = FakeSocket.instances.at(-1);
+    socket.onopen(); socket.receive({ type: 'error', error: 'Device is not allowed on this tailnet' });
+    await rejection;
+    assert.equal(socket.readyState, 3);
+    assert.equal(client.isConnected(), false);
+    await assert.rejects(client.invoke('list_sessions'), /Connect/);
+    assert.deepEqual(losses, []);
+  } finally { client.close(); }
+});
+
+test('late events from a replaced connection do not affect the new connection', async () => {
+  const { client, socket: replaced } = await connected(); const losses = [];
+  client.onDisconnect = message => losses.push(message);
+  try {
+    const reconnect = client.connect(host);
+    const current = FakeSocket.instances.at(-1);
+    current.onopen(); current.receive({ type: 'ready', protocol: 1, backend: 'daemon' });
+    await reconnect;
+    const pending = client.invoke('home_directory', { hostId: 'local' });
+    const request = current.sent.find(packet => packet.command === 'home_directory');
+    replaced.receive({ id: request.id, result: '/stale' });
+    replaced.receive({ type: 'not a packet', id: 'bad' });
+    replaced.onclose();
+    assert.equal(client.isConnected(), true);
+    assert.deepEqual(losses, []);
+    current.receive({ id: request.id, result: '/home/me' });
+    assert.equal(await pending, '/home/me');
+  } finally { client.close(); }
+});
+
 test('rejects older desktop endpoints without leaving a pending handshake', async () => {
   const client = new RemoteClient(); const promise = client.connect(host);
   const rejection = assert.rejects(promise, /older desktop endpoint/);

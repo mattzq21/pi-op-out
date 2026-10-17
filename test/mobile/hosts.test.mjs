@@ -5,7 +5,7 @@ import { IDBFactory } from 'fake-indexeddb';
 
 const compiled = await build({ entryPoints: ['clients/ui/lib/mobileHosts.ts'], bundle: true, write: false, format: 'esm', platform: 'node', define: { 'import.meta.env.MODE': '"mobile"' } });
 
-const { readMobileAnchor, saveMobileAnchor, forgetMobileAnchor, validateMobileAnchor, cachedMobileHost } = await import(`data:text/javascript;base64,${Buffer.from(compiled.outputFiles[0].text).toString('base64')}`);
+const { readMobileAnchor, saveMobileAnchor, forgetMobileAnchor, validateMobileAnchor, cachedMobileHost, localHostLabel, useDevelopmentAnchor } = await import(`data:text/javascript;base64,${Buffer.from(compiled.outputFiles[0].text).toString('base64')}`);
 
 let previousStorage;
 beforeEach(async () => {
@@ -44,4 +44,13 @@ test('forgetting the anchor clears saved and cached connection details', async (
   assert.equal(cachedMobileHost(), '');
   await forgetMobileAnchor();
   assert.equal(await readMobileAnchor(), undefined);
+});
+
+test('a development connection is used for this run without replacing the saved anchor', async () => {
+  await saveMobileAnchor('wss://home.test', 'Home');
+  assert.equal(localHostLabel(), 'Home');
+  useDevelopmentAnchor('ws://10.0.2.2:4100');
+  assert.equal(cachedMobileHost(), 'ws://10.0.2.2:4100');
+  assert.equal(localHostLabel(), 'Development');
+  assert.deepEqual(await readMobileAnchor(), { name: 'Home', url: 'wss://home.test/' });
 });
