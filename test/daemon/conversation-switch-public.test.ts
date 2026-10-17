@@ -88,3 +88,22 @@ test('branching after an answer opens a new conversation with the history up to 
   expect(sessions.find((session: any) => session.id === original.sessionId)).toMatchObject({ preview: 'Answer to Second question' });
   expect(sessions.find((session: any) => session.id === branch.sessionId)).toMatchObject({ preview: 'Answer to Different second question' });
 }, 60000);
+
+test('fork and forget goes back to an earlier answer in the same conversation, and the model no longer sees what came after', async () => {
+  agents.scripts.set('Pick a color', messages => ({ text: 'Reply to ' + text(messages.at(-1)) }));
+  const chat = await agents.rootChat();
+  await chat.command({ type: 'prompt', message: 'Pick a color' });
+  await chat.until(history => text(history.at(-1)) === 'Reply to Pick a color');
+  await chat.command({ type: 'prompt', message: 'Forgotten detour' });
+  await chat.until(history => text(history.at(-1)) === 'Reply to Forgotten detour');
+  const before = (await chat.command({ type: 'get_state' })).sessionId;
+  const firstAnswer = (await chat.command({ type: 'get_entries' })).entries.find((entry: any) => entry.type === 'message' && text(entry.message) === 'Reply to Pick a color');
+  expect(await chat.command({ type: 'fork_and_forget', entryId: firstAnswer.id })).toMatchObject({ cancelled: false });
+  expect((await chat.command({ type: 'get_state' })).sessionId).toBe(before);
+  expect((await chat.history()).filter(message => message.role !== 'system').map(text)).toEqual(['Pick a color', 'Reply to Pick a color']);
+  await chat.command({ type: 'prompt', message: 'Pick a shade' });
+  await chat.until(history => text(history.at(-1)) === 'Reply to Pick a shade');
+  const sent = JSON.stringify(agents.model.requests.at(-1).messages);
+  expect(sent).toContain('Reply to Pick a color');
+  expect(sent).not.toContain('Forgotten detour');
+}, 60000);
