@@ -1,43 +1,26 @@
-import { randomUUID } from 'node:crypto';
 import { join } from 'node:path';
 import * as Registry from '../session_registry';
 import * as Settings from '../settings';
 import * as Extensions from '../extensions';
 import * as DaemonRestart from '../daemon_restart';
-import * as storageTransactions from '../storage_transactions';
-import { Mutex, errorText, sleep } from '../util/sync';
+import { Mutex, errorText } from '../util/sync';
 import { flag, kind, text, jsonEqual } from './json';
 import * as Agents from './agents';
-import { ConversationOwnership, Guard, ownershipError } from './ownership';
-import { clientPayload, savedToolPayload } from './payload';
-import { HTML_PREVIEW_VIEWPORT_COMMAND } from '../../../extensions/piop-html-preview/interface';
-import { argument, expandHome, parseLaunchSpec, serializeSpec, sessionSpec, specIdentity, type LaunchSpec, type SessionLaunch } from './protocol';
-import { clearSaved } from './queue';
+import { attach } from './attachment';
+import { lockGate } from './lock_gate';
+import { MutationGuards } from './mutation_guards';
+import { Orchestration } from './orchestration';
+import { ConversationOwnership, ownershipError } from './ownership';
+import { clientPayload } from './payload';
+import { sessionSpec, serializeSpec, type SessionLaunch } from './protocol';
 import { drainSaves } from './queue_storage';
-import { recoverMissingTranscripts, type Recovery } from './queue_recovery';
+import { readonlyCommand, type ReadonlyView } from './readonly_views';
 import { Session, type SessionHost } from './session';
-import { ToolPayload, ToolPayloadCache } from './tool_payload';
-import * as Branching from './branching';
-import { ANSWER_QUESTION_COMMAND } from '../../../extensions/piop-user-questions/interface';
+import { sessionCommand } from './session_commands';
+import { recoverQueuedInput, watchRetention } from './storage_upkeep';
+import { ToolPayloadCache } from './tool_payload';
+import { HTML_PREVIEW_VIEWPORT_COMMAND } from '../../../extensions/piop-html-preview/interface';
 import type { HostServices } from './services';
-
-export interface ReadonlyView { id: string; path: string | null }
-
-const UUID = /^[0-9a-fA-F]{8}-?[0-9a-fA-F]{4}-?[0-9a-fA-F]{4}-?[0-9a-fA-F]{4}-?[0-9a-fA-F]{12}$/;
-const CANCELLED_DELIVERY_TTL_MS = 10 * 60_000;
-function isUuid(value: string): boolean { return UUID.test(value.replace(/^urn:uuid:/, '').replace(/^\{(.*)\}$/, '$1')); }
-
-/** Locks the mutex for key and drops it from the map once no one holds or waits for it. */
-export async function lockGate(map: Map<string, Mutex>, key: string): Promise<() => void> {
-  let found = map.get(key);
-  if (!found) { found = new Mutex(); map.set(key, found); }
-  const mutex = found;
-  const release = await mutex.lock();
-  return () => {
-    release();
-    if (!mutex.isLocked && map.get(key) === mutex) map.delete(key);
-  };
-}
 
 export class Host implements SessionHost {
   sessions = new Map<string, Session>();
@@ -51,7 +34,6 @@ export class Host implements SessionHost {
   agentDefinitions: any = null;
   agentRevision = 0;
   requestedAgentRevision = 0;
-  guards = new Map<string, [Guard, string]>();
   maintenanceSet = new Set<string>();
   releaseGates = new Map<string, Mutex>();
   dialogGates = new Map<string, Mutex>();
@@ -60,11 +42,11 @@ export class Host implements SessionHost {
   private shuttingDown = false;
   private starts = new Set<Promise<Session>>();
   private finishes = new Map<Session, Promise<void>>();
-  deliveries = new Map<string, Set<string>>();
-  private cancelledDeliveries = new Map<string, number>();
   private configurationGate = new Mutex();
   private ownershipValue: ConversationOwnership | undefined;
   readonly toolPayloads = new ToolPayloadCache();
+  readonly orchestration = new Orchestration(this);
+  private mutations = new MutationGuards(this);
   private timers: NodeJS.Timeout[] = [];
 
   private constructor(readonly home: string, readonly storage: string, readonly services: HostServices, private sink: (packet: any) => void) {}
@@ -75,10 +57,11 @@ export class Host implements SessionHost {
     const host = new Host(home, storage, services, sink);
     host.agentDefinitions = definitions;
     host.ownershipValue = await ConversationOwnership.create(home, storage, { revoke: (id, intent) => host.releaseConversation(id, intent) });
-    host.recoverQueuedInput();
+    const output = (packet: any) => host.output(packet);
+    recoverQueuedInput(host.storageRoot(), host.ownership(), output);
     services.bind(host);
     await services.initialize();
-    host.watchRetention();
+    host.timers.push(watchRetention(host.storageRoot(), host.ownership(), output));
     return host;
   }
 
@@ -127,14 +110,6 @@ export class Host implements SessionHost {
   }
   maintenance(key: string): void { this.maintain(key); }
   refreshProviders(): Promise<number> { return this.services.refreshProviders(); }
-
-  /** Tells read-only viewers of a conversation that it was deleted or archived. */
-  private announceRemoved(id: string): void {
-    let path: string | null | undefined;
-    for (const view of this.readonlyMap.values()) if (view.id === id) { path = view.path; break; }
-    if (path === undefined) return;
-    this.output({ type: 'session_removed', sessionId: id, sessionPath: path });
-  }
 
   findSession(identity: string): Session | undefined {
     for (const session of this.sessions.values()) if (session.identity === identity && !session.closed()) return session;
@@ -212,7 +187,7 @@ export class Host implements SessionHost {
     if (!session || this.maintenanceSet.has(session.epoch)) return;
     this.maintenanceSet.add(session.epoch);
     void (async () => {
-      await session.reconcile(false);
+      await session.settings.reconcile(false);
       try { await this.releaseUnused(session); } catch (error) {
         this.output({ type: 'diagnostic', line: 'Could not release unused ownership for ' + session.key + ': ' + errorText(error) });
       }
@@ -221,12 +196,12 @@ export class Host implements SessionHost {
   }
 
   async releaseUnused(session: Session): Promise<void> {
-    session.scheduleIdleStop();
+    session.idleStop.schedule();
     if (session.unused()) await this.ownership().releaseClient(session.identity, session.clientId(), () => session.unused());
   }
 
   canStopIdle(session: Session): boolean {
-    if (this.shuttingDown || this.sessions.get(session.key) !== session || this.deliveries.get(session.identity)?.size
+    if (this.shuttingDown || this.sessions.get(session.key) !== session || this.orchestration.delivering(session.identity)
       || this.readonlyViews(session.identity).length
       || [...this.attachments.values()].some(packet => packet.sessionKey === session.identity)) return false;
     const database = Registry.open(this.storageRoot());
@@ -244,7 +219,7 @@ export class Host implements SessionHost {
 
   reconcile(session: Session): void {
     void (async () => {
-      await session.reconcile(true);
+      await session.settings.reconcile(true);
       try { await this.releaseUnused(session); } catch {}
     })();
   }
@@ -291,7 +266,7 @@ export class Host implements SessionHost {
       sessions = [...this.sessions.values()];
     } finally { release(); }
     for (const session of sessions) {
-      session.publish({ type: 'settings_pending', pending: session.settingsPending() }, null);
+      session.publish({ type: 'settings_pending', pending: session.settings.pending() }, null);
       this.reconcile(session);
     }
   }
@@ -326,122 +301,6 @@ export class Host implements SessionHost {
     return session;
   }
 
-  private async detachReadonly(runtime: string, target: ReadonlyView): Promise<any> {
-    this.readonlyMap.delete(runtime);
-    this.attachments.delete(runtime);
-    const session = this.subscriptions.get(runtime) ?? this.findSession(target.id);
-    this.subscriptions.delete(runtime);
-    if (session) {
-      session.detachView(runtime);
-      await session.finishDetach(false, true);
-      await this.releaseUnused(session);
-    }
-    return { stopped: false };
-  }
-
-  private async readonlyCommand(packet: any, target: ReadonlyView): Promise<any> {
-    const runtime = text(packet, 'runtimeId');
-    if (kind(packet) === 'detach') return this.detachReadonly(runtime, target);
-    if (kind(packet) === 'presence') {
-      this.findSession(target.id)?.presence(runtime, structuredClone(packet.presence ?? null));
-      return null;
-    }
-    const command = packet.command ?? null;
-    if (!['get_snapshot', 'get_entries', 'get_state', 'get_session_revision', 'get_tool_payload', 'get_session_stats'].includes(kind(command))) throw new Error(ownershipError());
-    const session = this.findSession(target.id);
-    if (session && !session.transient()) return session.execute(structuredClone(command));
-    if (this.ownership().lookupSaved(target.id, true) === null) {
-      if (this.ownership().removed(target.id)) {
-        this.output({ type: 'session_removed', sessionId: target.id, sessionPath: target.path });
-        throw new Error('This conversation has been deleted or archived');
-      }
-      throw new Error('Conversation storage is temporarily unavailable; try again');
-    }
-    return this.readSavedConversation(target, command);
-  }
-
-  private readSavedConversation(target: ReadonlyView, command: any): any {
-    if (kind(command) === 'get_session_revision') return this.ownership().revision(target.id, target.path);
-    if (kind(command) === 'get_tool_payload') return this.readSavedToolPayload(target, command);
-    const snapshot = this.ownership().snapshot(target.id, target.path);
-    switch (kind(command)) {
-      case 'get_snapshot': return snapshot;
-      case 'get_entries': return snapshot.history ?? null;
-      case 'get_state': return snapshot.state ?? null;
-      case 'get_session_stats': return { contextUsage: snapshot.state?.contextUsage ?? null };
-      default: throw new Error('Unsupported saved conversation command');
-    }
-  }
-
-  private readSavedToolPayload(target: ReadonlyView, command: any): any {
-    const scope = 'saved:' + target.id;
-    const id = text(command, 'toolCallId');
-    const revision = this.ownership().revision(target.id, target.path);
-    const cached = this.toolPayloads.get(scope, text(revision, 'revision'), id);
-    if (cached) return cached.page(command);
-    const snapshot = this.ownership().snapshot(target.id, target.path);
-    const entries = Array.isArray(snapshot.history?.entries) ? snapshot.history.entries : [];
-    const payload = new ToolPayload(savedToolPayload(entries, id) ?? null);
-    const page = payload.page(command);
-    this.toolPayloads.insert(scope, text(snapshot, 'revision'), id, payload);
-    return page;
-  }
-
-  private async sessionCommand(session: Session, runtime: string, command: any): Promise<any> {
-    const client = text(this.attachments.get(runtime), 'clientId');
-    const assertOwner = () => {
-      if (this.readonlyMap.has(runtime) || this.subscriptions.get(runtime) !== session || !this.ownership().owns(session.identity, client, false)) {
-        throw new Error('Session ownership changed; take ownership before changing it');
-      }
-    };
-    if (!kind(command).startsWith('get_')) assertOwner();
-    if (kind(command) === 'abort') return queueCommand(session, command, assertOwner);
-    if (kind(command) === 'extension_ui_response') return this.answerDialog(session, runtime, command, assertOwner);
-    if (!kind(command).startsWith('get_') || kind(command) === 'get_snapshot') await session.reconcile(false);
-    if (!kind(command).startsWith('get_')) {
-      assertOwner();
-      const error = session.configurationError();
-      if (error !== null) throw new Error(error);
-    }
-    if (['fork', 'fork_after', 'clone', 'new_session', 'switch_session'].includes(kind(command))) return Branching.switchSession(this, session, runtime, command);
-    if (typeof command?.clientHtmlPreviewSize === 'number') await session.raw({ type: HTML_PREVIEW_VIEWPORT_COMMAND, size: command.clientHtmlPreviewSize });
-    return queueCommand(session, command, kind(command).startsWith('get_') ? undefined : assertOwner);
-  }
-
-  private async answerDialog(session: Session, runtime: string, command: any, assertOwner: () => void): Promise<any> {
-    const id = text(command, 'id');
-    const release = await lockGate(this.dialogGates, session.epoch + ':' + id);
-    try {
-      assertOwner();
-      const dialog = session.dialog(id);
-      if (!dialog || dialog.owner !== runtime) throw new Error('This question is no longer owned by this view. Reopen the conversation to refresh it.');
-      if (typeof dialog.event?.asyncQuestion !== 'string') {
-        await session.send(command);
-        session.resolveDialog(id);
-        return null;
-      }
-      const response = dialog.queuedResponse ?? session.queue.questionResponse(text(dialog.event, 'asyncQuestion'))
-        ?? { type: ANSWER_QUESTION_COMMAND, requestId: dialog.event.asyncQuestion, value: command.value ?? null, cancelled: flag(command, 'cancelled') };
-      session.changeDialog(id, item => { item.answering = true; });
-      try {
-        const prepare = structuredClone(response);
-        prepare.action = 'prepare';
-        const prepared = await session.raw(prepare);
-        assertOwner();
-        if (typeof prepared?.message === 'string' && prepared.message && !dialog.answerQueued) {
-          await session.queue.command({ type: session.working() ? 'steer' : 'follow_up', message: prepared.message, questionResponse: structuredClone(response) }, assertOwner);
-          session.changeDialog(id, item => { item.answerQueued = true; item.queuedResponse = structuredClone(response); });
-        }
-        const resolve = structuredClone(response);
-        resolve.action = 'resolve';
-        resolve.queueId = prepared?.queueId ?? null;
-        assertOwner();
-        await session.raw(resolve);
-        return null;
-      } finally { session.changeDialog(id, item => { item.answering = false; }); }
-    } finally { release(); }
-  }
-
   async shutdown(): Promise<void> {
     this.shuttingDown = true;
     for (const timer of this.timers) clearInterval(timer);
@@ -453,31 +312,7 @@ export class Host implements SessionHost {
     while (this.finishes.size) await Promise.allSettled([...this.finishes.values()]);
     await drainSaves(this.storageRoot());
     this.ownership().shutdown();
-    for (const [guard] of this.guards.values()) guard.drop();
-    this.guards.clear();
-  }
-
-  // Attachment.
-
-  async attach(packet: any): Promise<any> {
-    const attachment = new Attachment(this, packet);
-    if (flag(attachment.packet.presence, 'readOnly')) return attachment.readonly();
-    let guard: Guard;
-    try { guard = await attachment.ownership(); } catch (error) {
-      await attachment.cleanup(undefined, false, true);
-      throw error;
-    }
-    const owned = guard.owned;
-    const opened: { session?: Session } = {};
-    let result: any;
-    let failure: unknown;
-    try { result = await attachment.open(guard, opened); } catch (error) { failure = error ?? new Error('Attach failed'); }
-    let releaseError: unknown;
-    try { guard.release(this.ownership(), false); } catch (error) { releaseError = error; }
-    await attachment.cleanup(opened.session, owned, failure !== undefined || releaseError !== undefined);
-    if (releaseError !== undefined) throw releaseError;
-    if (failure !== undefined) throw failure;
-    return result;
+    this.mutations.dropAll();
   }
 
   // Requests.
@@ -493,224 +328,25 @@ export class Host implements SessionHost {
       case 'check_daemon_idle': case 'prepare_daemon_restart': return this.restartRequest(packet);
       case 'agent_definitions': return structuredClone(this.agentDefinitions);
       case 'conversation_owner': return this.ownership().owns(text(packet, 'sessionId'), text(packet, 'clientId'), flag(packet, 'allowReleased'));
-      case 'conversation_mutation': return this.beginMutation(packet);
-      case 'conversation_mutation_end': return this.endMutation(packet);
+      case 'conversation_mutation': return this.mutations.begin(packet);
+      case 'conversation_mutation_end': return this.mutations.end(packet);
       case 'provider_auth': case 'provider_auth_cancel_owner': case 'plugin_call': case 'plugin_status': return this.services.handle(packet);
       case 'configure': await this.configure(packet.configuration); return null;
-      case 'attach': return this.attach(packet);
+      case 'attach': return attach(this, packet);
       case 'shutdown': await this.shutdown(); return null;
       case 'retire': return this.retire(packet);
       case 'session_command': return this.directSessionCommand(packet);
-      case 'orchestration': return this.orchestration(packet);
+      case 'orchestration': return this.orchestration.handle(packet);
     }
     return this.runtimeCommand(packet, runtime);
   }
 
   private async restartRequest(packet: any): Promise<any> {
     const sessions = [...this.sessions.values()];
-    if (sessions.some(session => session.busy(null) || session.transient()) || this.deliveries.size || this.guards.size) {
+    if (sessions.some(session => session.busy(null) || session.transient()) || this.orchestration.busy() || this.mutations.active()) {
       throw new Error('Wait for active agents to finish before restarting the daemon');
     }
     return this.services.handle(kind(packet) === 'check_daemon_idle' ? { type: 'plugin_idle' } : packet);
-  }
-
-  private async orchestration(packet: any): Promise<any> {
-    const id = text(packet, 'sessionKey');
-    const action = text(packet, 'action');
-    if (action === 'locate') return this.ownership().lookup(id);
-    if (action === 'interrupt') {
-      if (this.cancelDeliveries(id, typeof packet.deliveryId === 'string' ? packet.deliveryId : undefined)) return { sessionId: id, completed: false };
-      return this.orchestrationCancel(id);
-    }
-    const location = this.ownership().lookup(id);
-    if (location.archived === true && action === 'send') throw new Error('This conversation has been deleted or archived');
-    const session = this.findSession(id);
-    switch (action) {
-      case 'read': return session ? session.execute({ type: 'get_snapshot' }) : this.ownership().snapshot(id, packet.sessionPath);
-      case 'send': return this.orchestrationSend(packet, session);
-      case 'recover_usage': return this.orchestrationRecoverUsage(packet, session);
-      default: throw new Error('Unknown orchestration action');
-    }
-  }
-
-  private cancelDeliveries(id: string, delivery: string | undefined): boolean {
-    const now = Date.now();
-    for (const [item, cancelledAt] of this.cancelledDeliveries) if (now - cancelledAt >= CANCELLED_DELIVERY_TTL_MS) this.cancelledDeliveries.delete(item);
-    if (delivery !== undefined) this.cancelledDeliveries.set(delivery, now);
-    const pending = [...(this.deliveries.get(id) ?? [])];
-    for (const item of pending) this.cancelledDeliveries.set(item, now);
-    return pending.length > 0;
-  }
-
-  private deliveryCancelled(delivery: string): boolean {
-    const cancelledAt = this.cancelledDeliveries.get(delivery);
-    return cancelledAt !== undefined && Date.now() - cancelledAt < CANCELLED_DELIVERY_TTL_MS;
-  }
-
-  private async orchestrationCancel(id: string): Promise<any> {
-    const session = this.findSession(id);
-    if (session) return this.orchestrationInterrupt(id, session);
-    if (this.ownership().locate(id, null, false, true)) return this.orchestrationInterrupt(id, undefined);
-    if (this.ownership().removed(id) || this.ownership().locate(id, null, true, true)) return { sessionId: id, completed: true, retired: true };
-    throw new Error('Cannot confirm that this conversation has stopped or been retired');
-  }
-
-  private async orchestrationInterrupt(id: string, session: Session | undefined): Promise<any> {
-    if (!session) return { sessionId: id, completed: true };
-    const release = await session.orchestrationInterrupt.lock();
-    try {
-      const task = session.orchestrationTask;
-      if (task?.finished) {
-        session.orchestrationTask = null;
-        await task.promise;
-        return { sessionId: id, completed: true };
-      }
-      if (!task) {
-        const entry = { finished: false, promise: Promise.resolve() as Promise<any> };
-        entry.promise = session.queue.interruptDelegation().finally(() => { entry.finished = true; this.maintenance(session.key); });
-        entry.promise.catch(() => {});
-        session.orchestrationTask = entry;
-      }
-      return { sessionId: id, completed: false };
-    } finally { release(); }
-  }
-
-  private reserveDelivery(id: string, delivery: string): void {
-    if (!isUuid(delivery)) throw new Error('A valid deliveryId is required');
-    if (this.deliveryCancelled(delivery)) throw new Error('Agent delivery was cancelled');
-    let set = this.deliveries.get(id);
-    if (!set) { set = new Set(); this.deliveries.set(id, set); }
-    if (set.has(delivery)) throw new Error('Agent delivery is already pending');
-    set.add(delivery);
-    this.findSession(id)?.cancelIdleStop();
-  }
-
-  private releaseDelivery(id: string, delivery: string): void {
-    const set = this.deliveries.get(id);
-    if (!set) return;
-    set.delete(delivery);
-    if (!set.size) this.deliveries.delete(id);
-    const session = this.findSession(id);
-    if (session) this.maintenance(session.key);
-  }
-
-  private async attachHidden(packet: any, runtime: string, id: string): Promise<void> {
-    const result = await this.attach({ type: 'attach', runtimeId: runtime, clientId: packet.clientId ?? null, sessionKey: id, spec: packet.spec ?? null, cwd: packet.cwd ?? null, presence: { visible: false } });
-    if (!flag(result, 'owned')) {
-      this.attachments.delete(runtime);
-      this.readonlyMap.delete(runtime);
-      throw new Error(ownershipError());
-    }
-  }
-
-  private async orchestrationSend(packet: any, existing: Session | undefined): Promise<any> {
-    const id = text(packet, 'sessionKey');
-    const source = text(packet, 'sourceSessionId');
-    if (!source || source === id) throw new Error('Choose another conversation as the recipient');
-    const message = text(packet, 'message');
-    if (!message.trim() || Buffer.byteLength(message) > 100_000) throw new Error('Message must contain 1–100000 bytes');
-    const delivery = text(packet, 'deliveryId');
-    this.reserveDelivery(id, delivery);
-    try {
-      const runtime = 'orchestration-' + randomUUID();
-      const attached = !existing || existing.stopping();
-      if (attached) await this.attachHidden(packet, runtime, id);
-      let result: any;
-      let failure: unknown;
-      try { result = await this.orchestrationDeliver(packet); } catch (error) { failure = error ?? new Error('Delivery failed'); }
-      if (attached) {
-        try { await this.orchestrationDetach(runtime); } catch (error) { if (failure === undefined) throw error; }
-      }
-      if (failure !== undefined) throw failure;
-      return result;
-    } finally { this.releaseDelivery(id, delivery); }
-  }
-
-  private async orchestrationDeliver(packet: any): Promise<any> {
-    const session = this.findSession(text(packet, 'sessionKey'));
-    if (!session) throw new Error('Conversation is no longer running');
-    if (session.transient() || session.compacting()) throw new Error('Wait for conversation preparation or compaction to finish');
-    await session.reconcile(false);
-    const error = session.configurationError();
-    if (error !== null) throw new Error(error);
-    if (this.deliveryCancelled(text(packet, 'deliveryId'))) throw new Error('Agent delivery was cancelled');
-    if (flag(packet, 'wake')) await session.activateUsageRecovery();
-    return queueCommand(session, { type: 'orchestration_message', deliveryId: packet.deliveryId ?? null, sourceSessionId: packet.sourceSessionId ?? null,
-      sourceHostId: packet.sourceHostId ?? null, message: packet.message ?? null, wake: packet.wake ?? null });
-  }
-
-  private async orchestrationRecoverUsage(packet: any, existing: Session | undefined): Promise<any> {
-    const id = text(packet, 'sessionKey');
-    const runtime = 'usage-recovery-' + randomUUID();
-    const attached = !existing || existing.stopping();
-    if (attached) await this.attachHidden(packet, runtime, id);
-    let result: any;
-    let failure: unknown;
-    const session = this.findSession(id);
-    try {
-      if (!session) throw new Error('Conversation is no longer running');
-      result = await session.execute({ type: 'recover_subagent_usage', sourceSessionId: packet.sourceSessionId ?? null, recoveryDepth: packet.recoveryDepth ?? null, deadline: packet.deadline ?? null });
-    } catch (error) { failure = error ?? new Error('Usage recovery failed'); }
-    if (attached) {
-      try { await this.orchestrationRecoveryDetach(runtime, id); } catch (error) { if (failure === undefined) throw error; }
-    }
-    if (failure !== undefined) throw failure;
-    return result;
-  }
-
-  private async orchestrationRecoveryDetach(runtime: string, id: string): Promise<any> {
-    const release = await lockGate(this.sessionGates, id);
-    let session: Session | undefined;
-    try {
-      this.attachments.delete(runtime);
-      session = this.subscriptions.get(runtime);
-      this.subscriptions.delete(runtime);
-      if (session) {
-        session.detachView(runtime);
-        try { await session.retire(); } catch {}
-      }
-    } finally { release(); }
-    // Attach takes the ownership lock before the session lock, so ownership is released only after the session lock is free.
-    if (session) await this.releaseUnused(session);
-    return null;
-  }
-
-  private async orchestrationDetach(runtime: string): Promise<any> {
-    this.attachments.delete(runtime);
-    const session = this.subscriptions.get(runtime);
-    return session ? this.detach({ preserveRunning: true }, runtime, session) : null;
-  }
-
-  private async beginMutation(packet: any): Promise<any> {
-    const operation = text(packet, 'operation');
-    const guard = await this.ownership().begin(text(packet, 'sessionId'), text(packet, 'clientId'), {
-      mutation: true, message: operation === 'message', archive: operation === 'archive', path: packet.sessionPath ?? null, archived: packet.archived ?? null,
-    });
-    if (!guard.owned) { guard.drop(); throw new Error(ownershipError()); }
-    const token = randomUUID();
-    this.guards.set(token, [guard, operation]);
-    return { token };
-  }
-
-  private async endMutation(packet: any): Promise<any> {
-    const token = text(packet, 'token');
-    const entry = this.guards.get(token);
-    this.guards.delete(token);
-    if (!entry) return null;
-    const [guard, operation] = entry;
-    if (operation === 'restore') {
-      await guard.restoreFinished(this.ownership(), typeof packet.restoredPath === 'string' ? packet.restoredPath : null);
-      return null;
-    }
-    const deletedId = operation === 'delete' && flag(packet, 'success') && typeof guard.saved?.header?.id === 'string' ? guard.saved.header.id : undefined;
-    const removed = flag(packet, 'success') && (operation === 'delete' || operation === 'archive');
-    guard.release(this.ownership(), removed);
-    if (deletedId !== undefined) {
-      await clearSaved(this.storageRoot(), deletedId);
-      this.pending.delete(deletedId);
-    }
-    if (removed) this.announceRemoved(guard.id);
-    return null;
   }
 
   private async retire(packet: any): Promise<any> {
@@ -737,7 +373,7 @@ export class Host implements SessionHost {
     const name = kind(packet);
     if (name === 'command' && packet.command?.type === 'take_ownership') return this.takeOwnership(runtime);
     const readonly = this.readonlyMap.get(runtime);
-    if (readonly) return this.readonlyCommand(packet, { ...readonly });
+    if (readonly) return readonlyCommand(this, packet, { ...readonly });
     const session = this.subscriptions.get(runtime);
     if (!session) {
       if (name === 'detach') return { stopped: false };
@@ -753,7 +389,7 @@ export class Host implements SessionHost {
       return null;
     }
     if (name === 'command' && packet.command?.type === 'reload_agents') return this.reloadAgents(runtime, text(packet.command, 'sessionId'));
-    return this.sessionCommand(session, runtime, structuredClone(packet.command ?? null));
+    return sessionCommand(this, session, runtime, structuredClone(packet.command ?? null));
   }
 
   private async takeOwnership(runtime: string): Promise<any> {
@@ -762,7 +398,7 @@ export class Host implements SessionHost {
     const target = structuredClone(current);
     if (flag(target.presence, 'readOnly')) throw new Error('This view is read-only');
     target.takeOwnership = true;
-    return this.attach(target);
+    return attach(this, target);
   }
 
   async detach(packet: any, runtime: string, session: Session): Promise<any> {
@@ -772,207 +408,4 @@ export class Host implements SessionHost {
     await this.releaseUnused(session);
     return result;
   }
-
-  // Queued-input recovery.
-
-  private recoverQueuedInput(): void {
-    const root = this.storageRoot();
-    let recovery = recoverMissingTranscripts(root, this.ownership());
-    const reported = new Set<string>();
-    this.report(recovery, reported);
-    if (!recovery.retry) return;
-    const ownership = this.ownership();
-    void (async () => {
-      let delay = 1000;
-      while (recovery.retry && !ownership.stopped) {
-        const pending = recovery.transactionsPending;
-        try {
-          if (recovery.waiting) await recovery.waiting;
-          else { await sleep(delay); delay = Math.min(delay * 2, 60_000); }
-          if (ownership.stopped) break;
-          if (pending) await collectRetention(root);
-          recovery = recoverMissingTranscripts(root, ownership);
-        } catch (error) {
-          recovery = { errors: [errorText(error)], recovered: false, retry: true, transactionsPending: pending };
-        }
-        if (ownership.stopped) break;
-        this.report(recovery, reported);
-      }
-    })();
-  }
-
-  private report(recovery: Recovery, reported: Set<string>): void {
-    for (const error of recovery.errors) {
-      if (reported.has(error)) continue;
-      reported.add(error);
-      this.output({ type: 'diagnostic', line: 'Queued input retained for recovery: ' + error });
-    }
-    if (recovery.recovered) this.output({ type: 'sessions_changed' });
-  }
-
-  // Retention.
-
-  private watchRetention(): void {
-    const root = this.storageRoot();
-    let reported: string | null = null;
-    let initialized = false;
-    let running = false;
-    const pass = async () => {
-      if (running || this.ownership().stopped) return;
-      running = true;
-      try {
-        await retentionPass(root, !initialized);
-        initialized = true;
-        reported = null;
-      } catch (error) {
-        const message = errorText(error);
-        if (reported !== message) this.output({ type: 'diagnostic', line: 'Deferred retention cleanup is pending: ' + message });
-        reported = message;
-      } finally { running = false; }
-    };
-    void pass();
-    const timer = setInterval(() => { void pass(); }, 30_000);
-    timer.unref();
-    this.timers.push(timer);
-  }
-}
-
-class Attachment {
-  readonly runtime: string;
-  readonly spec: LaunchSpec;
-  readonly identity: string;
-  readonly path: string | null;
-  /** The record this attachment keeps in host.attachments; remember() replaces the original packet with a copy. */
-  private stored: any;
-
-  constructor(private host: Host, readonly packet: any) {
-    this.runtime = text(packet, 'runtimeId');
-    this.spec = parseLaunchSpec(packet.spec);
-    const key = text(packet, 'sessionKey');
-    this.identity = specIdentity(this.spec, key);
-    if (isUuid(key) && this.identity !== key) throw new Error('The saved path belongs to another conversation; resolve its identity again');
-    this.path = argument(this.spec, '--session') ?? null;
-    this.stored = packet;
-    host.attachments.set(this.runtime, packet);
-    this.assertCurrent();
-  }
-
-  private assertCurrent(): void {
-    if (this.host.attachments.get(this.runtime) !== this.stored) throw new Error('The conversation was closed while attaching');
-  }
-
-  readonly(): any {
-    this.host.ownership().lookup(this.identity);
-    this.assertCurrent();
-    return this.attachReadonly();
-  }
-
-  private attachReadonly(): any {
-    this.host.readonlyMap.set(this.runtime, { id: this.identity, path: this.path });
-    return { attached: true, owned: false };
-  }
-
-  ownership(): Promise<Guard> {
-    return this.host.ownership().begin(this.identity, text(this.packet, 'clientId'), { take: this.packet.takeOwnership ?? null, path: this.path, create: this.path === null });
-  }
-
-  async open(guard: Guard, opened: { session?: Session }): Promise<any> {
-    this.assertCurrent();
-    if (!guard.owned) return this.attachReadonly();
-    const release = await lockGate(this.host.sessionGates, this.identity);
-    try {
-      const session = await this.session(guard);
-      opened.session = session;
-      await session.setClientId(text(this.packet, 'clientId'));
-      await session.execute({ type: 'get_state' });
-      if (typeof this.packet.presence?.htmlPreviewSize === 'number') await session.raw({ type: HTML_PREVIEW_VIEWPORT_COMMAND, size: this.packet.presence.htmlPreviewSize });
-      this.assertCurrent();
-      this.host.readonlyMap.delete(this.runtime);
-      this.host.attachView(this.runtime, session, structuredClone(this.packet.presence ?? null));
-      this.host.remember(this.runtime, session);
-      this.stored = this.host.attachments.get(this.runtime);
-      if (this.spec.env.PIOP_USAGE_RECOVERY !== '1') await session.activateUsageRecovery();
-      this.host.reconcile(session);
-      return { attached: session.views().length > 1 || session.submitted(), owned: true };
-    } finally { release(); }
-  }
-
-  private async session(guard: Guard): Promise<Session> {
-    let session = this.host.findSession(this.identity);
-    if (session?.transient()) throw new Error('This conversation branch is still being prepared');
-    if (session?.stopping()) {
-      await session.stop();
-      session = this.host.findSession(this.identity);
-    }
-    return session ?? await this.host.spawnSession(this.launch(guard));
-  }
-
-  private launch(guard: Guard): SessionLaunch {
-    const savedCwd = guard.saved?.header?.cwd;
-    const raw = typeof savedCwd === 'string' ? savedCwd : (typeof this.packet.cwd === 'string' ? this.packet.cwd : null);
-    const cwd = raw === null ? null : expandHome(raw, this.host.home);
-    const spec: LaunchSpec = { program: this.spec.program, args: [...this.spec.args], env: { ...this.spec.env }, cwd: this.spec.cwd };
-    if (spec.env.PIOP_REMOTE_SESSION_CLAIMS !== undefined) spec.env.PIOP_SESSION_CWD = cwd ?? '~';
-    else if (cwd !== null) spec.cwd = cwd;
-    const timeout = this.packet.timeout;
-    return {
-      key: this.identity, spec,
-      timeout: typeof timeout === 'number' && Number.isInteger(timeout) && timeout >= 0 ? timeout : 630000,
-      transient: false, clientId: text(this.packet, 'clientId'), cwd,
-    };
-  }
-
-  private stillAttached(opened: Session | undefined): boolean {
-    const current = this.host.subscriptions.get(this.runtime);
-    return (current !== undefined && opened !== undefined && current === opened) || this.host.attachments.get(this.runtime) === this.stored;
-  }
-
-  async cleanup(opened: Session | undefined, owned: boolean, failed = false): Promise<void> {
-    if (failed && this.host.attachments.get(this.runtime) === this.stored) {
-      this.host.attachments.delete(this.runtime);
-      this.host.readonlyMap.delete(this.runtime);
-      if (opened && this.host.subscriptions.get(this.runtime) === opened) {
-        this.host.subscriptions.delete(this.runtime);
-        opened.detachView(this.runtime);
-      }
-    }
-    if (this.stillAttached(opened)) return;
-    if (opened) {
-      if (!opened.views().length) {
-        if (!opened.submitted() && opened.idle() && this.host.canStopIdle(opened)) await opened.stop();
-        else await this.host.releaseUnused(opened);
-      }
-    } else if (owned) {
-      await this.host.ownership().releaseClient(this.identity, text(this.packet, 'clientId'), () =>
-        ![...this.host.attachments.values()].some(value => jsonEqual(value?.clientId, this.packet.clientId) && jsonEqual(value?.sessionKey, this.packet.sessionKey)));
-    }
-  }
-}
-
-export async function queueCommand(session: Session, original: any, assertOwner?: () => void): Promise<any> {
-  assertOwner?.();
-  const command = original;
-  if (kind(command) === 'change_pending') return session.queue.changePending(text(command, 'id'), command.action ?? null, assertOwner);
-  const message = text(command, 'message');
-  const first = message.split(/\s+/).find(part => part) ?? '';
-  if (first === '/goal' && Array.isArray(command.images) && command.images.length) throw new Error('Goals do not accept attachments. Remove the files and images before sending.');
-  const review = first === '/review' || first === '/rs';
-  if (kind(command) === 'prompt' && (!message.startsWith('/') || review) && !session.queue.held()) {
-    command.type = !review && command.streamingBehavior === 'steer' ? 'steer' : 'follow_up';
-  }
-  return session.queue.command(command, assertOwner);
-}
-
-async function retentionPass(root: string, initialize: boolean): Promise<void> {
-  if (initialize) Registry.requestCleanup(root, 'goal');
-  if (!Registry.pending(root, 'retention')) return;
-  let timer: NodeJS.Timeout | undefined;
-  const timeout = new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new Error('Deferred retention cleanup timed out; candidates remain available for retry')), 30_000); });
-  const controller = new AbortController();
-  try { await Promise.race([collectRetention(root, controller.signal), timeout]); }
-  finally { clearTimeout(timer); controller.abort(); }
-}
-
-export function collectRetention(root: string, signal?: AbortSignal): Promise<void> {
-  return storageTransactions.recover({ root, signal, busyIsOk: true });
 }

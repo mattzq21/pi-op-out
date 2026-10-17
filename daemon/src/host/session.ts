@@ -1,13 +1,18 @@
 import { randomUUID } from 'node:crypto';
-import { closeSync, constants, fstatSync, fsyncSync, openSync, readFileSync } from 'node:fs';
-import { dirname } from 'node:path';
 import * as Registry from '../session_registry';
 import { Mutex, errorText } from '../util/sync';
-import { array, flag, kind, setEntry, text, jsonEqual } from './json';
-import { assistantDelta, savedToolPayload } from './payload';
+import { array, clone, flag, kind, merge, setEntry, text, jsonEqual } from './json';
+import { savedToolPayload } from './payload';
 import { argument, prepareSpec, specIdentity, type LaunchSpec, type SessionLaunch } from './protocol';
-import { SessionQueue, type Execution } from './queue';
-import { QueueStorage, parseIdentity } from './queue_storage';
+import { SessionQueue } from './queue';
+import type { Execution } from './queue_delivery';
+import { QueueStorage } from './queue_storage';
+import { savedUserMessages } from './queue_transcript';
+import { SessionDialogs, interactive } from './session_dialogs';
+import { IdleStop } from './session_idle';
+import { LiveOutput } from './session_live';
+import { SessionSettings } from './session_settings';
+import { PromptErrors } from './prompt_errors';
 import { ToolPayload, type ToolPayloadCache } from './tool_payload';
 import { RuntimeWorker, type Request, type WorkerObserver } from './worker';
 import { PENDING_QUESTIONS_STATUS_KEY, QUESTION_RECOVERY_STATUS_KEY } from '../../../extensions/piop-user-questions/interface';
@@ -26,32 +31,10 @@ export interface SessionHost {
   refreshProviders(): Promise<number>;
 }
 
-export interface Dialog {
-  event: any;
-  owner: string | null;
-  generation: string;
-  answering: boolean;
-  answerQueued: boolean;
-  queuedResponse: any | null;
-}
-
-export function interactive(event: any): boolean {
-  return ['input', 'editor', 'select', 'confirm'].includes(event?.method);
-}
-
 const STATE_CHANGES = new Set(['session_info_changed', 'session_switched', 'model_select', 'thinking_level_changed', 'agent_start', 'agent_end', 'agent_settled',
   'message_start', 'message_end', 'entry_appended', 'pause_state', 'compaction_start', 'compaction_end', 'auto_compaction_start', 'auto_compaction_end']);
 
-export function stateChange(name: string): boolean { return STATE_CHANGES.has(name); }
-
-function clone<T>(value: T): T { return value === undefined ? value : structuredClone(value); }
-function merge(target: any, source: any): void {
-  if (target && typeof target === 'object' && !Array.isArray(target) && source && typeof source === 'object' && !Array.isArray(source)) Object.assign(target, source);
-}
-
-function newDialog(event: any): Dialog {
-  return { event, owner: null, generation: randomUUID(), answering: false, answerQueued: false, queuedResponse: null };
-}
+function stateChange(name: string): boolean { return STATE_CHANGES.has(name); }
 
 /** Stops other work on the session until the promise settles; it is like an abortable task handle. */
 export interface InterruptTask { finished: boolean; promise: Promise<any> }
@@ -63,26 +46,22 @@ export class Session {
   readonly cwd: string | null;
   readonly timeout: number;
   readonly queue: SessionQueue;
+  readonly dialogs: SessionDialogs;
+  readonly settings: SessionSettings;
+  readonly idleStop: IdleStop;
   readonly orchestrationInterrupt = new Mutex();
   orchestrationTask: InterruptTask | null = null;
   readonly epoch = randomUUID();
   private worker: RuntimeWorker | undefined;
-  private configurationGate = new Mutex();
   private events: Promise<void> = Promise.resolve();
-  private idleTimer: ReturnType<typeof setTimeout> | undefined;
-  private dialogTimers = new Map<string, ReturnType<typeof setTimeout>>();
   private pendingRequests = 0;
-  private checkingIdle = false;
-  private idleRevision = 0;
+  private live = new LiveOutput();
+  private promptErrors = new PromptErrors();
 
   key: string;
   state: any = null;
   viewsList: Array<[string, any]> = [];
   statuses: Array<[string, any]> = [];
-  dialogs: Array<[string, Dialog]> = [];
-  liveMessages: Array<[string, any]> = [];
-  tools: Array<[string, any]> = [];
-  toolCalls = new Map<string, any>();
   sequence = 0;
   stateRevision = 0;
   contentRevision = 0;
@@ -98,13 +77,6 @@ export class Session {
   startupError: string | null = null;
   /** Last stderr lines from Pi, kept for error reports. */
   stderrTail: string[] = [];
-  inputRejection: any = null;
-  commandErrors = new Map<string, string>();
-  appliedConfiguration: any | null = null;
-  configurationErrorValue: string | null = null;
-  configuring = false;
-  autoCompaction: boolean | null = null;
-  autoRetry: boolean | null = null;
   providerRevision = 0;
 
   private constructor(launch: SessionLaunch, identity: string, pending: any[], storage: QueueStorage | null, private host: SessionHost, private toolPayloads: ToolPayloadCache) {
@@ -121,6 +93,16 @@ export class Session {
       savedUserMessages: () => this.savedUserMessages(),
     };
     this.queue = new SessionQueue(executor, pending, storage);
+    this.dialogs = new SessionDialogs({
+      views: () => this.viewsList,
+      readonly: runtime => this.host.readonly(runtime),
+      accepting: () => !this.closed() && !this.stopping(),
+      publish: (event, target) => this.publish(event, target),
+      publishState: () => this.publishState(),
+      resolved: () => this.host.maintenance(this.key),
+    });
+    this.settings = new SessionSettings(this, host);
+    this.idleStop = new IdleStop(this, host);
   }
 
   static async spawn(launch: SessionLaunch, pending: any[], host: SessionHost, home: string, toolPayloads: ToolPayloadCache, assertRunning: () => void): Promise<Session> {
@@ -198,19 +180,7 @@ export class Session {
   compacting(): boolean { return this.isCompacting; }
   submitted(): boolean { return this.isSubmitted; }
   views(): Array<[string, any]> { return this.viewsList.map(([id, view]) => [id, clone(view)]); }
-  dialog(id: string): Dialog | undefined { const found = this.dialogs.find(([key]) => key === id); return found ? { ...found[1] } : undefined; }
-  changeDialog(id: string, change: (dialog: Dialog) => void): void { const found = this.dialogs.find(([key]) => key === id); if (found) change(found[1]); }
   revision(): string { return this.epoch + ':' + this.contentRevision; }
-
-  settingsPending(): boolean {
-    const configuration = this.host.configuration();
-    return configuration !== null && configuration !== undefined && !(this.appliedConfiguration !== null && jsonEqual(this.appliedConfiguration, configuration));
-  }
-
-  configurationError(): string | null {
-    const error = this.configurationErrorValue;
-    return error !== null && this.settingsPending() ? error : null;
-  }
 
   private visibleViewers(): number { return this.viewsList.filter(([, view]) => flag(view, 'visible')).length; }
 
@@ -224,54 +194,13 @@ export class Session {
 
   unused(): boolean {
     if (this.busy(null)) return false;
-    return this.viewsList.length === 0 && !this.configuring && !flag(this.pauseState, 'isPausing')
-      && !this.dialogs.some(([, dialog]) => typeof dialog.event?.asyncQuestion !== 'string' || dialog.answering);
-  }
-
-  cancelIdleStop(): void {
-    this.idleRevision += 1;
-    clearTimeout(this.idleTimer);
-    this.idleTimer = undefined;
+    return this.viewsList.length === 0 && !this.settings.applying() && !flag(this.pauseState, 'isPausing') && !this.dialogs.blocking();
   }
 
   idle(): boolean {
     return !this.closed() && !this.stopping() && !this.transient() && this.unused()
-      && this.pendingRequests === 0 && this.dialogs.length === 0 && this.queue.pending().length === 0
+      && this.pendingRequests === 0 && this.dialogs.empty() && this.queue.pending().length === 0
       && this.queue.heldCount() === 0 && (!this.orchestrationTask || this.orchestrationTask.finished);
-  }
-
-  scheduleIdleStop(): void {
-    if (this.checkingIdle) return;
-    if (!this.idle()) { this.cancelIdleStop(); return; }
-    if (this.idleTimer !== undefined) return;
-    this.idleTimer = setTimeout(() => {
-      this.idleTimer = undefined;
-      void this.stopIdle().catch(error => {
-        this.host.output({ type: 'diagnostic', line: 'Could not stop idle session ' + this.key + ': ' + errorText(error) });
-      });
-    }, 120_000);
-  }
-
-  private async stopIdle(): Promise<void> {
-    this.checkingIdle = true;
-    const revision = this.idleRevision;
-    const release = await this.queue.gate.lock();
-    try {
-      if (!this.idle() || !this.host.canStopIdle(this)) return;
-      const state = await this.execute({ type: 'get_state' });
-      if (revision !== this.idleRevision) return;
-      if (!this.idle() || this.busy(state) || flag(state, 'isPausing') || !this.host.canStopIdle(this)) return;
-      await this.stop();
-    } finally {
-      this.checkingIdle = false;
-      release();
-      if (revision !== this.idleRevision) this.scheduleIdleStop();
-    }
-  }
-
-  private clearDialogTimers(): void {
-    for (const timer of this.dialogTimers.values()) clearTimeout(timer);
-    this.dialogTimers.clear();
   }
 
   publish(event: any, target: string | null): void {
@@ -329,27 +258,27 @@ export class Session {
   }
 
   attach(runtime: string, presence: any): void {
-    this.cancelIdleStop();
+    this.idleStop.cancel();
     setEntry(this.viewsList, runtime, presence);
     for (const [, event] of [...this.statuses]) this.publish(event, runtime);
     this.publish(this.queue.view(), runtime);
-    this.publish({ type: 'settings_pending', pending: this.settingsPending() }, runtime);
-    const error = this.configurationErrorValue;
+    this.publish({ type: 'settings_pending', pending: this.settings.pending() }, runtime);
+    const error = this.settings.lastError();
     if (error !== null) this.publish({ type: 'extension_error', error }, runtime);
-    this.routeDialogs();
+    this.dialogs.route();
     this.publishPresence();
   }
 
   presence(runtime: string, presence: any): void {
-    this.cancelIdleStop();
+    this.idleStop.cancel();
     setEntry(this.viewsList, runtime, presence);
-    this.routeDialogs();
+    this.dialogs.route();
     this.publishPresence();
   }
 
   detachView(runtime: string): void {
     this.viewsList = this.viewsList.filter(([id]) => id !== runtime);
-    this.routeDialogs();
+    this.dialogs.route();
     this.publishPresence();
   }
 
@@ -363,8 +292,8 @@ export class Session {
 
   async stop(): Promise<void> {
     this.isStopping = true;
-    this.cancelIdleStop();
-    this.clearDialogTimers();
+    this.idleStop.cancel();
+    this.dialogs.stopTimers();
     if (this.worker) await this.worker.stop();
     await this.events;
     await this.queue.flush();
@@ -403,15 +332,14 @@ export class Session {
   private finish(): void {
     if (this.isClosed) return;
     this.isClosed = true;
-    this.cancelIdleStop();
-    this.clearDialogTimers();
+    this.idleStop.cancel();
+    this.dialogs.stopTimers();
     this.queue.close();
     void this.inOrder(() => this.finishQueue());
   }
 
   private async finishQueue(): Promise<void> {
-    this.clearDialogTimers();
-    this.dialogs = [];
+    this.dialogs.clear();
     const key = this.key;
     const transient = this.isTransient;
     try {
@@ -426,17 +354,14 @@ export class Session {
 
   private async rawAs(command: any, requestType: string, snapshot: any): Promise<any> {
     if (this.closed()) throw new Error(this.startupError ?? 'Pi is not running');
-    if (requestType === 'prompt' || requestType === 'queue_prompt') {
-      this.inputRejection = null;
-      this.commandErrors.clear();
-    }
+    if (requestType === 'prompt' || requestType === 'queue_prompt') this.promptErrors.reset();
     if (!this.worker) throw new Error('Pi is not running');
-    if (!this.checkingIdle || !requestType.startsWith('get_')) this.cancelIdleStop();
+    if (!this.idleStop.checking() || !requestType.startsWith('get_')) this.idleStop.cancel();
     this.pendingRequests += 1;
     try { return await this.worker.request(command, requestType, snapshot); }
     finally {
       this.pendingRequests -= 1;
-      this.scheduleIdleStop();
+      this.idleStop.schedule();
     }
   }
 
@@ -445,60 +370,12 @@ export class Session {
     await this.worker.send(command);
   }
 
-  // Settings reconciliation.
-
-  async reconcile(retry: boolean): Promise<void> {
-    if (retry) this.configurationErrorValue = null;
-    if (this.transient() || this.closed() || this.stopping() || !this.settingsPending()) return;
-    const release = await this.configurationGate.lock();
-    try {
-      if (this.configurationErrorValue !== null || this.busy(null) || !this.settingsPending()) return;
-      this.configuring = true;
-      try { await this.applyConfiguration(); } catch (error) { this.configurationFailed(errorText(error)); }
-      this.configuring = false;
-      this.publish({ type: 'settings_pending', pending: this.settingsPending() }, null);
-    } finally { release(); }
-  }
-
-  private configurationFailed(error: string): void {
-    if (this.closed() || this.stopping() || this.busy(null)) return;
-    const message = 'Saved settings could not be applied: ' + error + '. Save again or reopen the conversation to retry.';
-    this.configurationErrorValue = message;
-    const revision = this.host.configuration()?.agentRevision;
-    this.publish({ type: 'extension_error', error: message, agentRevision: typeof revision === 'number' ? revision : 0 }, null);
-    if (!this.viewsList.length) this.host.output({ type: 'diagnostic', line: 'Could not apply settings to ' + this.key + ': ' + error });
-  }
-
-  private async applyConfiguration(): Promise<void> {
-    const release = await this.queue.gate.lock();
-    try {
-      while (!this.closed() && !this.stopping() && this.settingsPending()) {
-        const observed = await this.raw({ type: 'get_state' });
-        if (this.busy(observed)) return;
-        const configuration = clone(this.host.configuration());
-        if (configuration === null || configuration === undefined) return;
-        const revision = typeof configuration.agentRevision === 'number' ? configuration.agentRevision : 0;
-        await this.executeWorker({ type: 'context_cap_settings', settings: configuration.contextCapSettings });
-        await this.applyAutomaticOptions(configuration);
-        this.appliedConfiguration = configuration;
-        this.publish({ type: 'settings_applied', agentRevision: revision }, null);
-      }
-    } finally { release(); }
-  }
-
-  private async applyAutomaticOptions(configuration: any): Promise<void> {
-    const compaction = typeof configuration.autoCompaction === 'boolean' ? configuration.autoCompaction : null;
-    const retry = typeof configuration.autoRetry === 'boolean' ? configuration.autoRetry : null;
-    if (this.autoCompaction !== compaction) await this.executeWorker({ type: 'set_auto_compaction', enabled: configuration.autoCompaction ?? null });
-    if (this.autoRetry !== retry) await this.executeWorker({ type: 'set_auto_retry', enabled: configuration.autoRetry ?? null });
-  }
-
   // Events from Pi.
 
   private async receive(event: any): Promise<void> {
-    this.cancelIdleStop();
+    this.idleStop.cancel();
     try { await this.receiveEvent(event); }
-    finally { this.scheduleIdleStop(); }
+    finally { this.idleStop.schedule(); }
   }
 
   private async receiveEvent(event: any): Promise<void> {
@@ -513,11 +390,7 @@ export class Session {
       if (next === undefined) return;
       event = next;
     }
-    if (kind(event) === 'extension_error' && event.event === 'command') {
-      const path = typeof event.extensionPath === 'string' ? event.extensionPath : '';
-      const command = path.startsWith('command:') ? path.slice(8) : '';
-      this.commandErrors.set(command, typeof event.error === 'string' ? event.error : 'Extension command failed');
-    }
+    if (kind(event) === 'extension_error' && event.event === 'command') this.promptErrors.commandFailed(event);
     await this.queue.receive(event);
   }
 
@@ -526,82 +399,25 @@ export class Session {
     if (stateChange(name) || name.startsWith('tool_execution_')) this.toolPayloadRevision += 1;
     switch (name) {
       case 'agent_start': this.isWorking = true; this.isSubmitted = true; break;
-      case 'agent_settled': this.isWorking = false; this.liveMessages = []; this.tools = []; this.toolCalls.clear(); break;
+      case 'agent_settled': this.isWorking = false; this.live.clear(); break;
       case 'compaction_start': case 'auto_compaction_start': this.isCompacting = true; break;
       case 'compaction_end': case 'auto_compaction_end': this.isCompacting = false; break;
       case 'pause_state': this.pauseState = { isPaused: event.isPaused ?? null, isPausing: event.isPausing ?? null }; break;
     }
-    this.retainMessage(event);
+    this.live.receive(event);
     if (['agent_start', 'agent_settled', 'compaction_start', 'compaction_end', 'auto_compaction_start', 'auto_compaction_end', 'pause_state'].includes(name)) this.publishState();
-  }
-
-  private retainMessage(event: any): void {
-    switch (kind(event)) {
-      case 'message_start': setEntry(this.liveMessages, text(event.message, 'role'), clone(event.message ?? null)); break;
-      case 'message_update': {
-        const update = event.assistantMessageEvent;
-        let next: any;
-        if (update?.partial !== undefined && update.partial !== null) next = clone(update.partial);
-        else if (event.message !== undefined && event.message !== null) next = clone(event.message);
-        else {
-          const live = this.liveMessages.find(([role]) => role === 'assistant');
-          if (live) { const message = live[1]; live[1] = null; next = assistantDelta(message, update ?? null); }
-        }
-        if (next !== undefined) {
-          if (event.usage !== undefined) next.usage = clone(event.usage);
-          const role = typeof next?.role === 'string' ? next.role : 'assistant';
-          setEntry(this.liveMessages, role, next);
-        }
-        break;
-      }
-      case 'message_end': {
-        const message = event.message;
-        if (message?.role === 'assistant') {
-          for (const call of Array.isArray(message.content) ? message.content : []) if (kind(call) === 'toolCall' && typeof call.id === 'string') this.toolCalls.set(call.id, clone(call));
-        } else if (message?.role === 'toolResult' && typeof message.toolCallId === 'string') this.toolCalls.delete(message.toolCallId);
-        this.liveMessages = this.liveMessages.filter(([role]) => message?.role !== role);
-        break;
-      }
-      case 'tool_execution_start': case 'tool_execution_update': {
-        const id = text(event, 'toolCallId');
-        const found = this.tools.find(([key]) => key === id);
-        const tool = found ? clone(found[1]) : {};
-        merge(tool, clone(event));
-        tool.type = 'tool_execution_start';
-        setEntry(this.tools, id, tool);
-        break;
-      }
-      case 'tool_execution_end': this.tools = this.tools.filter(([id]) => event.toolCallId !== id); break;
-    }
   }
 
   private async receiveExtension(event: any): Promise<any | undefined> {
     if (event.method === 'setStatus' && await this.receiveStatus(event)) return undefined;
-    if (event.method === 'notify' && event.notifyType === 'error' && jsonEqual(event.message, this.inputRejection?.error)) event.inputRejected = true;
+    this.promptErrors.markNotice(event);
     if (['setStatus', 'setWidget', 'setTitle'].includes(event.method)) {
       const key = text(event, 'method') + ':' + (typeof event.statusKey === 'string' ? event.statusKey : typeof event.widgetKey === 'string' ? event.widgetKey : '');
       setEntry(this.statuses, key, clone(event));
     }
     if (!interactive(event)) return event;
-    this.receiveDialog(event);
+    this.dialogs.receive(event);
     return undefined;
-  }
-
-  private receiveDialog(event: any): void {
-    if (this.closed() || this.stopping()) return;
-    const id = text(event, 'id');
-    clearTimeout(this.dialogTimers.get(id));
-    this.dialogTimers.delete(id);
-    const dialog = newDialog(clone(event));
-    setEntry(this.dialogs, id, dialog);
-    const timeout = event.timeout;
-    if (typeof timeout === 'number' && Number.isFinite(timeout) && timeout >= 0) {
-      const generation = dialog.generation;
-      this.dialogTimers.set(id, setTimeout(() => {
-        if (this.dialog(id)?.generation === generation) this.resolveDialog(id);
-      }, Math.min(timeout, 2147483647)));
-    }
-    this.routeDialogs();
   }
 
   private async receiveStatus(event: any): Promise<boolean> {
@@ -614,61 +430,16 @@ export class Session {
         const result = parsed();
         if (!result.ok) { this.host.output({ type: 'diagnostic', line: result.error }); return true; }
         if (event.statusKey === QUESTION_RECOVERY_STATUS_KEY) await this.queue.recoverQuestionAnswers(result.value);
-        else this.receiveQuestions(result.value);
+        else this.dialogs.receiveQuestions(result.value);
         return true;
       }
       case 'piop-input-rejected': {
         const result = parsed();
-        if (result.ok) this.inputRejection = result.value;
+        if (result.ok) this.promptErrors.rejectInput(result.value);
         return true;
       }
       default: return false;
     }
-  }
-
-  private receiveQuestions(requests: any): void {
-    if (!Array.isArray(requests)) return;
-    const ids = requests.map(request => 'question:' + text(request, 'id'));
-    const removed = this.dialogs.filter(([id, dialog]) => typeof dialog.event?.asyncQuestion === 'string' && !ids.includes(id)).map(([id]) => id);
-    for (const id of removed) this.resolveDialog(id);
-    for (const request of requests) {
-      const id = 'question:' + text(request, 'id');
-      if (this.dialog(id)) continue;
-      const questions = array(request, 'questions').map((question, index) => ({
-        id: 'question_' + index, header: 'Question', question: question?.title ?? null,
-        options: array(question, 'options').map(label => ({ label, description: '' })),
-      }));
-      const event = { type: 'extension_ui_request', id, method: 'input', title: '__piop_request_user_input__', asyncQuestion: request?.id ?? null, placeholder: JSON.stringify({ questions }) };
-      setEntry(this.dialogs, id, newDialog(event));
-    }
-    this.routeDialogs();
-  }
-
-  routeDialogs(): void {
-    const views = this.viewsList.filter(([runtime]) => !this.host.readonly(runtime));
-    const events: Array<[string, any]> = [];
-    const owner = (views.find(([, view]) => flag(view, 'visible') && flag(view, 'focused')) ?? views.find(([, view]) => flag(view, 'visible')))?.[0] ?? null;
-    for (const [id, dialog] of this.dialogs) {
-      if (dialog.owner !== null && views.some(([view, presence]) => view === dialog.owner && flag(presence, 'visible'))) continue;
-      const previous = dialog.owner;
-      dialog.owner = null;
-      if (previous !== null) events.push([previous, { type: 'extension_ui_resolved', id }]);
-      dialog.owner = owner;
-      if (owner !== null) events.push([owner, clone(dialog.event)]);
-    }
-    for (const [runtime, event] of events) this.publish(event, runtime);
-    this.publishState();
-  }
-
-  resolveDialog(id: string): void {
-    clearTimeout(this.dialogTimers.get(id));
-    this.dialogTimers.delete(id);
-    const count = this.dialogs.length;
-    this.dialogs = this.dialogs.filter(([key]) => key !== id);
-    if (count === this.dialogs.length) return;
-    this.publish({ type: 'extension_ui_resolved', id }, null);
-    this.publishState();
-    this.host.maintenance(this.key);
   }
 
   // Requests.
@@ -710,15 +481,10 @@ export class Session {
   async executeWorker(command: any): Promise<any> {
     if ((kind(command) === 'prompt' || kind(command) === 'queue_prompt') && !text(command, 'message').startsWith('/')) this.isSubmitted = true;
     const result = await this.raw(clone(command));
-    this.rememberWorkerResult(command);
+    this.settings.remember(command);
     if (kind(command) === 'resume' && typeof result?.resumeMessage === 'string' && result.resumeMessage) await this.raw({ type: 'prompt', message: result.resumeMessage });
     if (['set_model', 'set_thinking_level', 'set_session_name', 'fork_and_forget'].includes(kind(command))) this.publish({ type: 'session_info_changed' }, null);
     return result;
-  }
-
-  private rememberWorkerResult(command: any): void {
-    if (kind(command) === 'set_auto_compaction') this.autoCompaction = typeof command.enabled === 'boolean' ? command.enabled : null;
-    if (kind(command) === 'set_auto_retry') this.autoRetry = typeof command.enabled === 'boolean' ? command.enabled : null;
   }
 
   private async collectToolPayload(command: any): Promise<any> {
@@ -733,13 +499,8 @@ export class Session {
   }
 
   private async toolPayloadMessage(id: string): Promise<any> {
-    const live = this.tools.find(([key]) => key === id)?.[1];
-    if (live !== undefined) {
-      const partial = live?.partialResult;
-      const result = partial && typeof partial === 'object' && !Array.isArray(partial) ? clone(partial) : {};
-      if (live?.args !== undefined) result.toolInput = clone(live.args);
-      return result;
-    }
+    const live = this.live.toolPayload(id);
+    if (live !== undefined) return live;
     const history = await this.raw({ type: 'get_entries' });
     return savedToolPayload(Array.isArray(history?.entries) ? history.entries : [], id) ?? null;
   }
@@ -758,6 +519,8 @@ export class Session {
     }
   }
 
+  // Responses from Pi.
+
   private async response(event: any, request: Request): Promise<any> {
     const goal = await this.rejectGoalPreparation(event, request);
     if (goal) { if ('error' in goal) throw new Error(goal.error); return goal.value; }
@@ -773,7 +536,7 @@ export class Session {
   }
 
   private responseError(event: any, request: Request): void {
-    if (request.requestType === 'prompt' || request.requestType === 'queue_prompt') this.checkPromptError(request.command, event?.data?.submittedText);
+    if (request.requestType === 'prompt' || request.requestType === 'queue_prompt') this.promptErrors.check(request.command, event?.data?.submittedText);
     if (!flag(event, 'success')) throw new Error(typeof event?.error === 'string' ? event.error : 'Pi command failed');
   }
 
@@ -784,17 +547,6 @@ export class Session {
     }
     if (flag(request.command, 'discardOnRejection')) await this.queue.rejected(text(request.command, 'queueId'));
     return { value: false };
-  }
-
-  private checkPromptError(command: any, submittedText: any): void {
-    const message = text(command, 'message');
-    const commandName = message.startsWith('/') ? (message.slice(1).split(/\s+/).find(part => part) ?? '') : '';
-    const error = this.commandErrors.get(commandName) ?? this.commandErrors.get('');
-    if (error !== undefined) throw new Error(error);
-    const rejected = this.inputRejection?.text;
-    if (jsonEqual(rejected, message) || (typeof submittedText === 'string' && jsonEqual(rejected, submittedText))) {
-      if (typeof this.inputRejection?.error === 'string') throw new Error(this.inputRejection.error);
-    }
   }
 
   private async receiveState(data: any): Promise<void> {
@@ -813,27 +565,17 @@ export class Session {
 
   private snapshotResponse(data: any, request: Request): any {
     const queue = this.queue.view();
-    for (const [, live] of this.liveMessages) {
-      const entries = Array.isArray(data?.entries) ? data.entries : [];
-      if (!entries.some((entry: any) => jsonEqual(entry?.message?.role, live?.role) && jsonEqual(entry?.message?.timestamp, live?.timestamp))) {
-        const id = 'live-' + text(live, 'role') + '-' + JSON.stringify(live?.timestamp ?? null);
-        const message = clone(live);
-        if (message && typeof message === 'object') message.streaming = live?.role === 'assistant';
-        const entry = { type: 'message', id, parentId: data?.leafId ?? null, message };
-        if (Array.isArray(data?.entries)) data.entries.push(entry);
-        if (data && typeof data === 'object' && !Array.isArray(data)) data.leafId = id;
-      }
-    }
+    this.live.addTo(data);
     const snapshotState = clone(request.snapshotState) ?? null;
     if (snapshotState && typeof snapshotState === 'object' && !Array.isArray(snapshotState)) {
       snapshotState.isStreaming = this.isWorking;
       snapshotState.viewers = this.visibleViewers();
-      snapshotState.needsInput = this.dialogs.some(([, dialog]) => !dialog.answering);
+      snapshotState.needsInput = this.dialogs.waiting();
       snapshotState.pendingMessageCount = array(queue, 'steering').length + array(queue, 'followUp').length;
     }
     return {
       history: data, revision: this.epoch + ':' + this.contentRevision, sequence: this.sequence, stateRevision: this.stateRevision,
-      epoch: this.epoch, liveTools: this.tools.map(([, value]) => clone(value)), extensionState: this.statuses.map(([, value]) => clone(value)),
+      epoch: this.epoch, liveTools: this.live.runningTools(), extensionState: this.statuses.map(([, value]) => clone(value)),
       queue, state: snapshotState,
     };
   }
@@ -844,49 +586,4 @@ function queueStorage(host: SessionHost, spec: LaunchSpec, cwd: string | null, h
   if (root === null) return null;
   const directory = cwd ?? spec.cwd ?? spec.env.PIOP_SESSION_CWD ?? home;
   return new QueueStorage(root, specIdentity(spec, key)).withOrigin(directory, argument(spec, '--session'));
-}
-
-/** Reads user messages from a saved transcript, so the queue can tell which items Pi already took. */
-export function savedUserMessages(path: string, sessionId: string): any[] {
-  let fd: number;
-  try { fd = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW); } catch (error: any) {
-    if (error?.code === 'ENOENT') return [];
-    throw new Error('Cannot verify saved queued input: ' + (error?.message ?? error));
-  }
-  try {
-    if (!fstatSync(fd).isFile()) throw new Error('Queued-input transcript must be a regular file');
-    const content = readFileSync(fd);
-    const messages = readUserMessages(content, sessionId);
-    if (messages.length) {
-      try { fsyncSync(fd); } catch (error) { throw new Error('Cannot sync saved queued input: ' + errorText(error)); }
-      try {
-        const directory = openSync(dirname(path), 'r');
-        try { fsyncSync(directory); } finally { closeSync(directory); }
-      } catch (error) { throw new Error('Cannot sync queued-input transcript directory: ' + errorText(error)); }
-    }
-    return messages;
-  } finally { closeSync(fd); }
-}
-
-function readUserMessages(content: Buffer, sessionId: string): any[] {
-  let offset = 0;
-  const next = (): any | undefined => {
-    const end = content.indexOf(10, offset);
-    if (end < 0) return undefined;
-    const line = content.subarray(offset, end + 1).toString('utf8');
-    offset = end + 1;
-    try { return JSON.parse(line); } catch (error) { throw new Error('Cannot verify queued-input transcript: ' + errorText(error)); }
-  };
-  const header = next();
-  if (header === undefined) return [];
-  let expected: string;
-  try { expected = parseIdentity(sessionId); } catch { throw new Error('Invalid queued-input session identity'); }
-  let identity: string | undefined;
-  try { identity = typeof header?.id === 'string' ? parseIdentity(header.id) : undefined; } catch {}
-  if (header?.type !== 'session' || identity !== expected) throw new Error('Queued-input transcript belongs to a different conversation');
-  const messages: any[] = [];
-  for (let entry = next(); entry !== undefined; entry = next()) {
-    if (entry?.type === 'message' && entry?.message?.role === 'user') messages.push(entry.message);
-  }
-  return messages;
 }
