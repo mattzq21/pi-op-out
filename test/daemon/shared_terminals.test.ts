@@ -43,6 +43,27 @@ async function startTerminal(client: Client, clientId: string, sessionId: string
 const entry = async (client: Client, clientId: string, sessionId: string, terminalId: string) =>
   (await shared(client, clientId, 'list', sessionId)).find((item: any) => item.id === terminalId);
 
+test('a restarted terminal sends its output even when the previous terminal had the same output length', async () => {
+  const client = await daemon.connect();
+  const sessionId = 'draft-output-restart';
+  const terminalId = 'output-restart';
+  try {
+    await startTerminal(client, 'output-owner', sessionId, terminalId);
+    const previous = await entry(client, 'output-owner', sessionId, terminalId);
+    await shared(client, 'output-owner', 'close', sessionId, { sharedTerminalId: terminalId });
+    await startTerminal(client, 'output-owner', sessionId, terminalId);
+    const [current] = await shared(client, 'output-owner', 'list', sessionId, {
+      known: { [terminalId]: { generation: previous.generation, outputEnd: previous.outputEnd } },
+    });
+    expect(current.outputEnd).toBe(previous.outputEnd);
+    expect(current.generation).not.toBe(previous.generation);
+    expect(current.output).toContain('$ preserved');
+  } finally {
+    await shared(client, 'output-owner', 'close', sessionId, { sharedTerminalId: terminalId });
+    client.close();
+  }
+}, 30_000);
+
 test('sending an outdated terminal draft fails and preserves the current draft for retry', async () => {
   const client = await daemon.connect();
   const sessionId = 'draft-stale-input';
@@ -62,6 +83,24 @@ test('sending an outdated terminal draft fails and preserves the current draft f
     expect((await entry(client, 'draft-owner', sessionId, terminalId)).inputDraft).toBe('');
   } finally {
     await shared(client, 'draft-owner', 'close', sessionId, { sharedTerminalId: terminalId });
+    client.close();
+  }
+}, 30_000);
+
+test('listing unchanged terminal output still returns the latest input draft', async () => {
+  const client = await daemon.connect();
+  const sessionId = 'draft-output-cache';
+  const terminalId = 'output-cache';
+  try {
+    await startTerminal(client, 'cache-owner', sessionId, terminalId);
+    const previous = await entry(client, 'cache-owner', sessionId, terminalId);
+    await shared(client, 'cache-owner', 'draft', sessionId, { sharedTerminalId: terminalId, data: 'unsent command' });
+    const [current] = await shared(client, 'cache-owner', 'list', sessionId, {
+      known: { [terminalId]: { generation: previous.generation, outputEnd: previous.outputEnd } },
+    });
+    expect(current).toMatchObject({ output: null, inputDraft: 'unsent command', generation: previous.generation, outputEnd: previous.outputEnd });
+  } finally {
+    await shared(client, 'cache-owner', 'close', sessionId, { sharedTerminalId: terminalId });
     client.close();
   }
 }, 30_000);
