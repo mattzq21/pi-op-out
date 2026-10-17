@@ -42,7 +42,7 @@ async function storagePanel(t, offline = false, archiveNames = [], options = {})
     try { const result = await request; await replyGate; if (held) await heldReply.promise; return result; } finally { requests.delete(request); }
   });
   view = await renderComponent(StorageSettings, options.props);
-  return { daemon, view, settle, temporary, releaseHeldReply: () => heldReply.resolve(), releaseReplies: () => releaseReply?.(), pauseReplies() {
+  return { daemon, view, settle, temporary, releaseHeldReply: () => heldReply.resolve(), failHeldReply: error => heldReply.reject(error), releaseReplies: () => releaseReply?.(), pauseReplies() {
     const gate = Promise.withResolvers();
     replyGate = gate.promise;
     releaseReply = () => gate.resolve();
@@ -287,4 +287,21 @@ test('a storage report for the previous machine does not replace the report for 
   await settle();
   assert.ok(view.container.querySelector('[aria-label="Permanently delete Remote chat"]'));
   assert.equal(view.container.querySelector('[aria-label="Permanently delete Local chat"]'), null);
+});
+
+test('a failed storage report for the previous machine does not replace the report for the selected machine', { timeout: 60000 }, async t => {
+  const { view, settle, failHeldReply } = await storagePanel(t, false, ['Local chat', { name: 'Remote chat', hostId: 'remote' }], {
+    remotes: [{ id: 'remote', name: 'Remote machine', target: 'storage-remote' }],
+    props: { hostId: 'local' },
+    holdReply: (command, args) => command === 'host_storage_report' && args.hostId === 'local',
+  });
+  await view.rerender({ hostId: 'remote' });
+  await untilDom(() => view.container.querySelector('[aria-label="Permanently delete Remote chat"]'), 30000);
+  failHeldReply(new Error('Local storage scan failed'));
+  await settle();
+  assert.equal(view.container.querySelector('[role="alert"]'), null);
+  assert.ok(view.container.querySelector('[aria-label="Permanently delete Remote chat"]'));
+  assert.equal(view.container.querySelector('[aria-label="Permanently delete Local chat"]'), null);
+  assert.equal(view.container.querySelector('[role="status"]'), null);
+  assert.equal([...view.container.querySelectorAll('button')].find(button => button.textContent === 'Refresh').disabled, false);
 });
