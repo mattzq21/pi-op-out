@@ -43,6 +43,29 @@ async function startTerminal(client: Client, clientId: string, sessionId: string
 const entry = async (client: Client, clientId: string, sessionId: string, terminalId: string) =>
   (await shared(client, clientId, 'list', sessionId)).find((item: any) => item.id === terminalId);
 
+test('sending an outdated terminal draft fails and preserves the current draft for retry', async () => {
+  const client = await daemon.connect();
+  const sessionId = 'draft-stale-input';
+  const terminalId = 'stale-input';
+  try {
+    await startTerminal(client, 'draft-owner', sessionId, terminalId);
+    await shared(client, 'draft-owner', 'draft', sessionId, { sharedTerminalId: terminalId, data: 'new input' });
+    expect(await client.failure('shared_terminal', {
+      action: 'write_and_clear_draft', clientId: 'draft-owner', hostId: 'local',
+      sessionKey: 'local:' + sessionId, sharedTerminalId: terminalId, data: 'old input\n', expectedDraft: 'old input',
+    })).toBe('Terminal draft changed; review the input before sending again');
+    expect((await entry(client, 'draft-owner', sessionId, terminalId)).inputDraft).toBe('new input');
+
+    await shared(client, 'draft-owner', 'write_and_clear_draft', sessionId, {
+      sharedTerminalId: terminalId, data: 'new input\n', expectedDraft: 'new input',
+    });
+    expect((await entry(client, 'draft-owner', sessionId, terminalId)).inputDraft).toBe('');
+  } finally {
+    await shared(client, 'draft-owner', 'close', sessionId, { sharedTerminalId: terminalId });
+    client.close();
+  }
+}, 30_000);
+
 test('a reconnected owner takes over the listed terminals of its conversation and only it may move them', async () => {
   const old = await daemon.connect();
   const session = await ownedSession(old, 'owner');
