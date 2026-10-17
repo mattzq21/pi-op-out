@@ -4,7 +4,7 @@ import { readFileSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { startDaemon } from './harness';
 
-test('temporary folder cleanup keeps an empty directory used by another saved chat', async () => {
+test('temporary folder cleanup keeps a referenced directory until the saved chat moves away', async () => {
   const daemon = await startDaemon();
   try {
     const temporary = await daemon.invoke('create_temporary_chat', { hostId: 'local' });
@@ -19,6 +19,13 @@ test('temporary folder cleanup keeps an empty directory used by another saved ch
       .toBe(temporary.cwd);
     expect((await daemon.invoke('list_sessions')).find((row: any) => row.id === saved.id))
       .toMatchObject({ cwd: temporary.cwd, cwdExists: true, preview: 'Keep this working folder' });
+
+    await daemon.invoke('relocate_session', { sessionPath: saved.path, cwd: daemon.home, hostId: 'local', clientId: 'folder-reference-test' });
+    await daemon.invoke('remove_temporary_chat', { hostId: 'local', path: temporary.cwd });
+    expect(await daemon.failure('validate_project_directory', { hostId: 'local', path: temporary.cwd, allowStorage: true }))
+      .toContain('is unavailable');
+    expect((await daemon.invoke('list_sessions')).find((row: any) => row.id === saved.id))
+      .toMatchObject({ cwd: daemon.home, cwdExists: true, preview: 'Keep this working folder' });
   } finally { await daemon.stop(); }
 }, 60_000);
 
