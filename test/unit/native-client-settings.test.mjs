@@ -33,3 +33,16 @@ test('a conflicting shortcut save from an older window is rejected and keeps the
   assert.equal(settings.debugMode, false);
 });
 
+test('older windows that each pick the same effective shortcut for different actions cannot save the combined clash', async t => {
+  const native = await storedPreferences(t);
+  const stale = (await native.invoke('load_client_settings')).settings;
+  await native.invoke('save_client_settings', { settings: { ...stale, keybindings: { ...stale.keybindings, newConversation: 'Mod+Shift+K' } }, baseline: stale });
+
+  await assert.rejects(native.invoke('save_client_settings', { settings: { ...stale, debugMode: true, keybindings: { ...stale.keybindings, openSettings: ' ctrl + SHIFT + k' } }, baseline: stale }),
+    /^Error: Client preference conflict at keybindings\.(newConversation|openSettings): shortcut .+ is assigned more than once\./);
+  assert.deepEqual((await native.invoke('load_client_settings')).settings, { keybindings: { newConversation: 'Mod+Shift+K', openSettings: 'Mod+,' }, debugMode: false });
+
+  await native.invoke('save_client_settings', { settings: { ...stale, debugMode: true, keybindings: { ...stale.keybindings, openSettings: 'Ctrl+Shift+L' } }, baseline: stale });
+  assert.deepEqual((await native.invoke('load_client_settings')).settings, { keybindings: { newConversation: 'Mod+Shift+K', openSettings: 'Ctrl+Shift+L' }, debugMode: true });
+});
+
