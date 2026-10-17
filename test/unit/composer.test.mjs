@@ -96,6 +96,30 @@ describe('composer interactions', () => {
     assert.ok(control('Remove queued message: Later task'));
   });
 
+  test('removing one of two queued messages with the same text targets the selected message after reordering and a failed attempt', async () => {
+    const requests = []; let attempt;
+    const onChangePending = (id, action) => { requests.push([id, action]); attempt = Promise.withResolvers(); return attempt.promise; };
+    const first = { id: 'first', message: 'Same text', behavior: 'followUp' }, second = { id: 'second', message: 'Same text', behavior: 'followUp' };
+    const removeButtons = () => [...document.querySelectorAll('[aria-label="Remove queued message: Same text"]')];
+    await render({ pendingMessages: [first, second], onChangePending });
+    await render({ pendingMessages: [second, first] });
+
+    await click(removeButtons()[0]);
+    assert.deepEqual(removeButtons().map(button => button.disabled), [true, true]);
+    await act(async () => attempt.reject(new Error('queue changed')));
+    assert.equal(document.querySelector('[role=alert]').textContent, 'queue changed');
+    assert.deepEqual(removeButtons().map(button => button.disabled), [false, false]);
+
+    await click(removeButtons()[0]);
+    assert.equal(document.querySelector('[role=alert]'), null);
+    await act(async () => attempt.resolve());
+    await render({ pendingMessages: [first] });
+    assert.equal(removeButtons().length, 1);
+    await click(removeButtons()[0]);
+    assert.deepEqual(requests, [['second', 'remove'], ['second', 'remove'], ['first', 'remove']]);
+    await act(async () => attempt.resolve());
+  });
+
   test('disabled controls preserve typed drafts and prevent submission', async () => {
     await render({ controlsDisabled: true, paused: true });
     assert.equal(control('Resume piop').disabled, true);
