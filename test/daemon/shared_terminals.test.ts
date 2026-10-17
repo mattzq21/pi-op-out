@@ -43,6 +43,26 @@ async function startTerminal(client: Client, clientId: string, sessionId: string
 const entry = async (client: Client, clientId: string, sessionId: string, terminalId: string) =>
   (await shared(client, clientId, 'list', sessionId)).find((item: any) => item.id === terminalId);
 
+test('starting another chat with an existing terminal ID preserves the original terminal', async () => {
+  const client = await daemon.connect();
+  const sessionId = 'draft-original-terminal';
+  const terminalId = 'duplicate-terminal-id';
+  try {
+    const generation = await startTerminal(client, 'unique-owner', sessionId, terminalId);
+    await shared(client, 'unique-owner', 'draft', sessionId, { sharedTerminalId: terminalId, data: 'Original draft' });
+    expect(await client.failure('shared_terminal', {
+      action: 'start', clientId: 'unique-owner', hostId: 'local', sessionKey: 'local:draft-other-terminal',
+      sharedTerminalId: terminalId, cwd, cols: 80, rows: 24,
+    })).toBe('Terminal belongs to another session');
+    expect(await entry(client, 'unique-owner', sessionId, terminalId))
+      .toMatchObject({ generation, owned: true, exited: false, inputDraft: 'Original draft', output: expect.stringContaining('$ preserved') });
+    expect(await shared(client, 'unique-owner', 'list', 'draft-other-terminal')).toEqual([]);
+  } finally {
+    await shared(client, 'unique-owner', 'close', sessionId, { sharedTerminalId: terminalId });
+    client.close();
+  }
+}, 30_000);
+
 test('an exited terminal keeps its final output and preserves a draft when sending fails', async () => {
   const client = await daemon.connect();
   const sessionId = 'draft-exited-output';
