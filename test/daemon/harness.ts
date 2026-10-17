@@ -279,11 +279,14 @@ export async function startDaemon(options: BuildOptions & { home?: string; env?:
   atTestExit(stopCommand(executable, home));
   try {
     await control(executable, 'start', env, options.launcher);
-    const database = new Database(join(directory, 'sessions.sqlite'), { readonly: true });
-    let endpoint: any;
-    try { endpoint = JSON.parse(Buffer.from((database.query("SELECT body FROM application_settings WHERE name='daemon.json'").get() as any).body).toString('utf8')); }
-    finally { database.close(); }
-    const connect = async () => { const client = await openClient(endpoint.url, endpoint.token); clients.push(client); return client; };
+    /** The current endpoint; a restarted daemon publishes a new token. */
+    const readEndpoint = () => {
+      const database = new Database(join(directory, 'sessions.sqlite'), { readonly: true });
+      try { return JSON.parse(Buffer.from((database.query("SELECT body FROM application_settings WHERE name='daemon.json'").get() as any).body).toString('utf8')); }
+      finally { database.close(); }
+    };
+    const endpoint = readEndpoint();
+    const connect = async () => { const current = readEndpoint(); const client = await openClient(current.url, current.token); clients.push(client); return client; };
     const main = await connect();
     return {
       ...main, home, bin, endpoint, connect, log: () => logTail(daemonLog),

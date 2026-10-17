@@ -147,7 +147,6 @@ const COMMANDS: Record<string, Handler> = {
   plugin_call: (app, _owner, args) => plugins.dispatch(app, 'plugin_call', args),
   plugin_status: (app, _owner, args) => plugins.dispatch(app, 'plugin_status', args),
   shared_terminal: (app, owner, args) => terminalSessions.shared(app, owner, args),
-  reassign_terminal: (app, owner, args) => { terminalSessions.reassign(app.terminals, owner, argument(args, 'terminalId', 'string'), argument(args, 'sessionKey', 'string')); return null; },
   broker_request: (app, _owner, args) => peers.localBrokerRequest(app, argument(args, 'path', 'string'), argument(args, 'body', 'any')),
   load_host_settings: (app, _owner, args) => loadSettings(app, args),
   load_host_settings_change: app => loadSettingsChange(app),

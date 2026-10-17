@@ -95,15 +95,6 @@ export function finish(history: Map<string, Transcript>, id: string): void {
   for (const [key] of exited.slice(0, Math.max(0, exited.length - EXITED_LIMIT))) history.delete(key);
 }
 
-export function reassign(runtime: TerminalRuntime, owner: string, id: string, sessionKey: string): void {
-  const item = runtime.history.get(id);
-  if (!item) throw new Error('Terminal history is unavailable');
-  if (item.owner !== owner) throw new Error('Terminal belongs to another connection');
-  item.sessionId = sessionPart(sessionKey);
-  const process = runtime.processes.get(id);
-  if (process) process.sessionKey = sessionKey;
-}
-
 export function detach(runtime: TerminalRuntime, owner: string): void {
   for (const [id, item] of [...runtime.history]) if (item.owner === owner) runtime.history.delete(id);
 }
