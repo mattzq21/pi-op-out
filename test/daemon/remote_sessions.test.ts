@@ -125,6 +125,14 @@ test('a project link that loses its folder or points at a file is rejected', asy
   expect(readFileSync(project, 'utf8')).toBe('now a file');
 });
 
+test('Piop storage cannot be a project, even reached through a link', async () => {
+  mkdirSync(join(daemon.home, '.piop/notes'), { recursive: true });
+  const shortcut = join(daemon.home, 'storage-shortcut'); symlinkSync(join(daemon.home, '.piop/notes'), shortcut);
+  for (const path of [join(daemon.home, '.piop'), join(daemon.home, '.piop/notes'), shortcut]) {
+    expect(await daemon.failure('validate_project_directory', { hostId: 'local', path })).toBe('Piop storage directories cannot be selected as projects');
+  }
+});
+
 test('commands for an unreachable machine report the connection failure and change nothing', async () => {
   await useRemotes(daemon, [server, { id: 'offline', name: 'Offline', target: 'offline', unreachable: true }]);
   try {
