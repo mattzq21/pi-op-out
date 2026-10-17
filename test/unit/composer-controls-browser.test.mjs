@@ -308,6 +308,35 @@ test('prompt history recalls only from a collapsed caret on the first line of a 
   assert.deepEqual(await sent(page), [['Prior prompt', null, []]]);
 });
 
+test('modified arrow keys edit the selection instead of replacing the draft with prompt history', { timeout: 30000 }, async t => {
+  const page = await controlsPage(t);
+  const editor = page.getByRole('textbox', { name: 'Message piop' });
+  await editor.fill('Prior prompt');
+  await page.keyboard.press('Enter');
+  await page.waitForFunction(() => document.querySelector('[aria-label="Message piop"]').value === '');
+  const draft = 'Draft top\nDraft bottom';
+  await editor.fill(draft);
+  const select = (start, end) => editor.evaluate((node, [start, end]) => node.setSelectionRange(start, end), [start, end]);
+  const caret = () => editor.evaluate(node => [node.selectionStart, node.selectionEnd]);
+  await select(5, 5);
+  await page.keyboard.press('Shift+ArrowUp');
+  assert.equal(await editor.inputValue(), draft);
+  assert.deepEqual(await caret(), [0, 5]);
+  for (const key of ['Control+ArrowUp', 'Alt+ArrowUp']) {
+    await select(5, 5);
+    await page.keyboard.press(key);
+    assert.equal(await editor.inputValue(), draft, key);
+  }
+  await select(5, 5);
+  await page.keyboard.press('ArrowUp');
+  assert.equal(await editor.inputValue(), 'Prior prompt');
+  await page.keyboard.press('Shift+ArrowDown');
+  assert.equal(await editor.inputValue(), 'Prior prompt');
+  await page.keyboard.press('ArrowDown');
+  assert.equal(await editor.inputValue(), draft);
+  assert.deepEqual(await sent(page), [['Prior prompt', null, []]]);
+});
+
 
 test('fast mode prevents repeated requests and reports failures while preserving server state', async t => {
   const page = await controlsPage(t);
