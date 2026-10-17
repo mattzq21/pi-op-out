@@ -106,3 +106,63 @@ test('listing again with no new terminal output keeps the earlier text and retur
     await nativeTerminals.close(terminal);
   }
 });
+
+test('a source conversation list answered before its terminal moves away returns nothing, and the destination keeps the terminal output and draft', async t => {
+  const dom = installDom();
+  t.after(() => { clearMocks(); dom.restore(); });
+  const terminal = crypto.randomUUID();
+  const before = Promise.withResolvers(), after = Promise.withResolvers(), held = Promise.withResolvers(), release = Promise.withResolvers();
+  let output = '', holding = false;
+  const daemon = await daemonClient(t, (event, payload) => {
+    if (event !== 'pi://event' || payload.type !== 'terminal_output' || payload.terminalId !== terminal) return;
+    output += payload.data;
+    if (output.includes('before-move')) before.resolve();
+    if (output.includes('after-move')) after.resolve();
+  });
+  mockWindows('main');
+  mockIPC(async (command, args) => {
+    assert.equal(command, 'daemon_invoke');
+    const result = await daemon.invoke(args.command, args.args);
+    if (holding && args.command === 'shared_terminal' && args.args.action === 'list') {
+      holding = false;
+      held.resolve();
+      await release.promise;
+    }
+    return result;
+  });
+  const chat = await daemon.invoke('create_temporary_chat');
+  const source = `local:draft-${crypto.randomUUID()}`;
+  const destination = `local:draft-${crypto.randomUUID()}`;
+  let listing;
+  try {
+    await nativeTerminals.start(terminal, source, chat.cwd, 80, 24, 'local');
+    await nativeTerminals.write(terminal, "printf '%s%s\\n' 'before-' 'move'\r", 'write');
+    await before.promise;
+    await nativeTerminals.write(terminal, 'kept draft', 'draft');
+    const [listed] = await nativeTerminals.list(source, 'local');
+    assert.equal(listed.output.includes('before-move'), true);
+    assert.equal(listed.inputDraft, 'kept draft');
+    holding = true;
+    listing = nativeTerminals.list(source, 'local');
+    await held.promise;
+    await nativeTerminals.reassign(terminal, destination);
+    release.resolve();
+    assert.deepEqual(await listing, []);
+    const moved = await nativeTerminals.list(destination, 'local');
+    assert.equal(moved.length, 1);
+    assert.equal(moved[0].id, terminal);
+    assert.equal(moved[0].generation, listed.generation);
+    assert.equal(moved[0].output.split('before-move').length - 1, 1);
+    assert.equal(moved[0].inputDraft, 'kept draft');
+    assert.deepEqual(await nativeTerminals.list(source, 'local'), []);
+    await nativeTerminals.write(terminal, "printf '%s%s\\n' 'after-' 'move'\r", 'write');
+    await after.promise;
+    const [later] = await nativeTerminals.list(destination, 'local');
+    assert.equal(later.output.split('before-move').length - 1, 1);
+    assert.equal(later.output.split('after-move').length - 1, 1);
+  } finally {
+    release.resolve();
+    await listing?.catch(() => undefined);
+    await nativeTerminals.close(terminal);
+  }
+});
