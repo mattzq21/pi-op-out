@@ -84,6 +84,38 @@ test('a reopened saved session keeps its reached limit and refuses new prompts',
   assert.equal(JSON.parse(reopened.statuses.get('piop-input-rejected')).text, 'after reopening');
 });
 
+test('an invalid cost value is reported and the prior limit still applies after reopening', async t => {
+  const dir = await mkdtemp(join(tmpdir(), 'piop-cost-test-'));
+  const first = await fixture(t, { dir, sessionManager: cwd => SessionManager.create(cwd, join(cwd, 'sessions')) });
+  await first.session.prompt('/cost 1');
+  await first.session.prompt('/cost 0');
+  assert.deepEqual(first.notices.at(-1), ['Invalid amount "0". Usage: /cost <amount in USD> or /cost clear (between $0.01 and $100,000)', 'error']);
+  await first.session.prompt('spend the limit');
+  assert.equal(first.statuses.get('piop-session-cost'), 'Session cost limit reached ($1.00 / $1.00)');
+  const path = first.session.sessionManager.getSessionFile();
+  first.session.dispose();
+  const reopened = await fixture(t, { dir, sessionManager: cwd => SessionManager.open(path, join(cwd, 'sessions')) });
+  t.after(() => rm(dir, { recursive: true, force: true }));
+  await reopened.session.prompt('after reopening');
+  assert.equal(reopened.requests, 0);
+  assert.equal(JSON.parse(reopened.statuses.get('piop-input-rejected')).text, 'after reopening');
+});
+
+test('a cleared limit stays cleared after reopening the saved session', async t => {
+  const dir = await mkdtemp(join(tmpdir(), 'piop-cost-test-'));
+  const first = await fixture(t, { dir, sessionManager: cwd => SessionManager.create(cwd, join(cwd, 'sessions')) });
+  await first.session.prompt('/cost 1');
+  await first.session.prompt('spend the limit');
+  await first.session.prompt('/cost clear');
+  const path = first.session.sessionManager.getSessionFile();
+  first.session.dispose();
+  const reopened = await fixture(t, { dir, sessionManager: cwd => SessionManager.open(path, join(cwd, 'sessions')) });
+  t.after(() => rm(dir, { recursive: true, force: true }));
+  assert.equal(reopened.statuses.get('piop-session-cost'), undefined);
+  await reopened.session.prompt('after reopening');
+  assert.equal(reopened.requests, 1);
+});
+
 test('real session blocks prompts at the limit and accepts raise and clear commands', async t => {
   const f = await fixture(t);
   await f.session.prompt('/cost 1');

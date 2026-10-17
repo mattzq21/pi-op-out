@@ -241,3 +241,43 @@ test('disconnect cancels a busy retry and never replays it on the next connectio
   assert.equal(next.sent.filter(packet => packet.command).length, 0);
   client.close();
 });
+
+function returnToForeground() {
+  document.hidden = true; document.dispatchEvent(new Event('visibilitychange'));
+  document.hidden = false; document.dispatchEvent(new Event('visibilitychange'));
+}
+
+test('a silent host after returning to the foreground ends the connection and fails pending requests', async context => {
+  context.mock.timers.enable({ apis: ['setTimeout', 'setInterval', 'Date'] });
+  const { client, socket } = await connected(); const losses = [];
+  client.onDisconnect = message => losses.push(message);
+  try {
+    const pending = client.invoke('list_sessions');
+    const rejection = assert.rejects(pending, /Disconnected.*may have completed/);
+    returnToForeground();
+    assert.ok(socket.sent.some(packet => packet.type === 'ping'));
+    context.mock.timers.tick(10000);
+    assert.deepEqual(losses, ['Connection stopped responding. Reconnecting…']);
+    assert.equal(client.isConnected(), false);
+    await rejection;
+    await assert.rejects(client.invoke('list_sessions'), /Connect/);
+  } finally { client.close(); }
+});
+
+test('a timely pong after returning to the foreground keeps the connection usable', async context => {
+  context.mock.timers.enable({ apis: ['setTimeout', 'setInterval', 'Date'] });
+  const { client, socket } = await connected(); const losses = [];
+  client.onDisconnect = message => losses.push(message);
+  try {
+    returnToForeground();
+    context.mock.timers.tick(2000);
+    socket.receive({ type: 'pong' });
+    context.mock.timers.tick(10000);
+    assert.deepEqual(losses, []);
+    assert.equal(client.isConnected(), true);
+    const next = client.invoke('home_directory', { hostId: 'local' });
+    const request = socket.sent.find(packet => packet.command === 'home_directory');
+    socket.receive({ id: request.id, result: '/home/me' });
+    assert.equal(await next, '/home/me');
+  } finally { client.close(); }
+});
