@@ -166,6 +166,29 @@ test('a tool payload read from the previous conversation never fills the current
   assert.deepEqual(tool().details, { diff: 'new patch' });
 });
 
+test('a failed tool payload read leaves the tool unloaded and a retry loads the saved payload', { timeout: 30000 }, async t => {
+  let reads = 0;
+  const { hook } = await sessionView(t, [
+    { type: 'message', id: 'request', parentId: null, message: { role: 'assistant', content: [{ type: 'toolCall', id: 'call', name: 'edit', arguments: { path: 'a' } }], timestamp: 99 } },
+    { type: 'message', id: 'result', parentId: 'request', message: { role: 'toolResult', toolCallId: 'call', toolName: 'edit', content: 'persisted', details: { diff: 'patch' }, isError: false, timestamp: 100 } },
+  ], {
+    async afterReply(command, args) {
+      if (command === 'pi_command' && args.command.type === 'get_tool_payload' && ++reads === 1) throw new Error('connection lost');
+    },
+  });
+  const tool = () => hook.current.messages.find(message => message.role === 'tool');
+  await act(() => hook.current.refresh());
+  let failed;
+  await act(async () => { failed = tool().loadToolPayload(); await assert.rejects(failed, /connection lost/); });
+  assert.equal(tool().toolPayloadLoaded, false);
+  assert.equal(tool().toolInput, undefined);
+  await act(() => tool().loadToolPayload());
+  assert.equal(tool().toolPayloadLoaded, true);
+  assert.deepEqual(tool().toolInput, { path: 'a' });
+  assert.deepEqual(tool().details, { diff: 'patch' });
+  assert.equal(tool().content, 'persisted');
+});
+
 test('failed refresh replays buffered live events and allows a later retry', async t => {
   const received = Promise.withResolvers(), release = Promise.withResolvers();
   t.after(() => release.resolve());
