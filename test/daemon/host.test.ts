@@ -89,6 +89,10 @@ test('identical queued messages keep distinct stable identities', async () => {
     expect(both[1].id).not.toBe('');
     expect(both[1].id).not.toBe(both[0].id);
     expect((await command(runtime.runtimeId, { type: 'get_state' })).pendingMessages).toEqual(both);
+    expect(await daemon.failure('pi_command', {
+      runtimeId: runtime.runtimeId, command: { type: 'change_pending', id: both[0].id, action: 'remove' },
+    })).toContain('This queue contains messages that cannot be safely switched');
+    expect((await command(runtime.runtimeId, { type: 'get_state' })).pendingMessages).toEqual(both);
   } finally { await daemon.invoke('stop_pi', { runtimeId: runtime.runtimeId }); }
 }, 60_000);
 
