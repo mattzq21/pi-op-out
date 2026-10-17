@@ -74,6 +74,23 @@ const command = (runtimeId: string, value: any) => daemon.invoke('pi_command', {
 const open = (path: string, clientId: string, runtimeId = randomUUID()) =>
   daemon.invoke('start_pi', { runtimeId, clientId, cwd: daemon.home, sessionPath: path }).then(result => ({ runtimeId, ...result }));
 
+test('moving a queued message changes order without replacing message identities', async () => {
+  const session = publicSession(daemon.home, 'reorder-queued-messages');
+  const runtime = await open(session.path, 'reorder-queue-client');
+  try {
+    for (const message of ['First task', 'Second task', 'Third task']) {
+      await command(runtime.runtimeId, { type: 'follow_up', message });
+    }
+    const before = (await command(runtime.runtimeId, { type: 'get_state' })).pendingMessages;
+    expect(before.map((item: any) => item.message)).toEqual(['First task', 'Second task', 'Third task']);
+    await command(runtime.runtimeId, { type: 'change_pending', id: before[2].id, action: 'moveUp' });
+    expect((await command(runtime.runtimeId, { type: 'get_state' })).pendingMessages)
+      .toEqual([before[0], before[2], before[1]]);
+    await command(runtime.runtimeId, { type: 'change_pending', id: before[2].id, action: 'moveDown' });
+    expect((await command(runtime.runtimeId, { type: 'get_state' })).pendingMessages).toEqual(before);
+  } finally { await daemon.invoke('stop_pi', { runtimeId: runtime.runtimeId }); }
+}, 60_000);
+
 test('removing one queued message preserves the other message identity and attachment', async () => {
   const session = publicSession(daemon.home, 'remove-queued-message');
   const runtime = await open(session.path, 'remove-queue-client');
