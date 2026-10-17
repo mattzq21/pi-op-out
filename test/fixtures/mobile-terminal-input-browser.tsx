@@ -11,6 +11,7 @@ const pending: Array<(accepted: boolean) => void> = [];
 
 render(() => <>
   <button onClick={() => pending.shift()?.(true)}>Accept oldest input</button>
+  <button onClick={() => pending.shift()?.(false)}>Reject oldest input</button>
   <output aria-label="Sent input">{JSON.stringify(sent())}</output>
   <div style={{ height: '600px', display: 'flex', 'flex-direction': 'column' }}>
     <MobileTerminalView cwd="/tmp" activeId={activeId()} terminals={[{ id: 'shell', label: 'Shell' }, { id: 'second', label: 'Second' }]}

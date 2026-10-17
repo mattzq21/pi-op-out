@@ -36,3 +36,27 @@ test('a late accepted mobile command does not touch the terminal the user switch
   await command.press('ArrowUp');
   assert.equal(await command.textContent(), 'draft two');
 });
+
+test('a rejected mobile command stays editable and stays out of history', { timeout: 15000 }, async t => {
+  const page = await startupPage(t, 'development', {
+    entryPoint: 'test/fixtures/mobile-terminal-input-browser.tsx',
+    ready: '[aria-label="Terminal command"]', holdStorage: false,
+  });
+  const command = page.getByRole('textbox', { name: 'Terminal command' });
+  const send = page.getByRole('button', { name: 'Send', exact: true });
+  await command.fill('ehco typo');
+  await command.press('Enter');
+  assert.equal(await page.getByLabel('Sent input').textContent(), '["ehco typo\\r"]');
+  await page.getByRole('button', { name: 'Reject oldest input' }).click();
+  await page.waitForFunction(() => !document.querySelector('.terminal-controls button').disabled);
+  assert.equal(await command.textContent(), 'ehco typo');
+  await command.fill('echo fixed');
+  await send.click();
+  assert.equal(await page.getByLabel('Sent input').textContent(), '["ehco typo\\r","echo fixed\\r"]');
+  await page.getByRole('button', { name: 'Accept oldest input' }).click();
+  await page.waitForFunction(() => document.querySelector('[aria-label="Terminal command"]').textContent === '');
+  await command.press('ArrowUp');
+  assert.equal(await command.textContent(), 'echo fixed');
+  await command.press('ArrowUp');
+  assert.equal(await command.textContent(), 'echo fixed');
+});
