@@ -19,6 +19,7 @@ function answerHost(ws) {
       result = responses[message.args.command.type] ?? {};
     }
     if (message.command === 'save_app_settings') result = { settings: message.args.settings };
+    if (message.command === 'list_directories') result = { path: message.args.path ?? '/home/test', parent: '/home', directories: [] };
     ws.send(JSON.stringify(result === undefined ? { id: message.id, error: 'Command is not available on the daemon: ' + message.command } : { id: message.id, result }));
   });
 }
@@ -119,5 +120,31 @@ test('Android Back closes the open conversation panel first and minimizes the ap
   assert.equal(await page.evaluate(() => window.androidMinimized), 1);
   assert.equal(await closePanel.count(), 0);
   assert.equal(await editor.inputValue(), 'Keep this draft');
+});
+
+test('Android Back over the project folder dialog cancels only the dialog, then closes the conversation panel under it', async t => {
+  const { page, editor } = await connectedChat(t);
+  await editor.fill('Keep this draft');
+  const closePanel = page.getByRole('button', { name: 'Close conversations', exact: true });
+  await page.getByRole('button', { name: 'Toggle conversations' }).click();
+  await closePanel.waitFor();
+  await page.getByRole('button', { name: 'Group', exact: true }).click();
+  await page.locator('section').filter({ has: page.getByRole('textbox', { name: 'Group name', exact: true }) }).getByRole('button', { name: 'Choose project', exact: true }).click();
+  const folderDialog = page.getByRole('dialog', { name: 'Jump to a folder', exact: true });
+  await folderDialog.waitFor();
+  await page.getByRole('button', { name: /Open current folder/ }).and(page.locator(':enabled')).waitFor();
+
+  await page.evaluate(() => window.pressAndroidBack());
+  await folderDialog.waitFor({ state: 'detached' });
+  await settle(page);
+  assert.equal(await closePanel.isVisible(), true);
+  assert.equal(await editor.inputValue(), 'Keep this draft');
+  assert.equal(await page.evaluate(() => window.androidMinimized), 0);
+
+  await page.evaluate(() => window.pressAndroidBack());
+  await closePanel.waitFor({ state: 'detached' });
+  await settle(page);
+  assert.equal(await editor.inputValue(), 'Keep this draft');
+  assert.equal(await page.evaluate(() => window.androidMinimized), 0);
 });
 
