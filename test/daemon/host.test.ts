@@ -40,7 +40,7 @@ require('node:readline').createInterface({ input: process.stdin }).on('line', li
   }
   if (request.type === 'piop_request' && request.command === 'queue_prompt') {
     followUp.push(request.payload.message);
-    send({ type: 'queue_update', steering: [], followUp: [request.payload.message] });
+    send({ type: 'queue_update', steering: [], followUp });
   }
   if (request.type === 'clear_queue') {
     send({ type: 'response', id: request.id, command: request.type, success: true, data: { steering: [], followUp } });
@@ -73,6 +73,24 @@ afterAll(() => daemon?.stop());
 const command = (runtimeId: string, value: any) => daemon.invoke('pi_command', { runtimeId, command: value });
 const open = (path: string, clientId: string, runtimeId = randomUUID()) =>
   daemon.invoke('start_pi', { runtimeId, clientId, cwd: daemon.home, sessionPath: path }).then(result => ({ runtimeId, ...result }));
+
+test('identical queued messages keep distinct stable identities', async () => {
+  const session = publicSession(daemon.home, 'duplicate-queue-text');
+  const runtime = await open(session.path, 'duplicate-queue-client');
+  try {
+    await command(runtime.runtimeId, { type: 'follow_up', message: 'Check again' });
+    const first = (await command(runtime.runtimeId, { type: 'get_state' })).pendingMessages;
+    expect(first).toHaveLength(1);
+    await command(runtime.runtimeId, { type: 'follow_up', message: 'Check again' });
+    const both = (await command(runtime.runtimeId, { type: 'get_state' })).pendingMessages;
+    expect(both.map((item: any) => item.message)).toEqual(['Check again', 'Check again']);
+    expect(both[0].id).toBe(first[0].id);
+    expect(both[1].id).toBeString();
+    expect(both[1].id).not.toBe('');
+    expect(both[1].id).not.toBe(both[0].id);
+    expect((await command(runtime.runtimeId, { type: 'get_state' })).pendingMessages).toEqual(both);
+  } finally { await daemon.invoke('stop_pi', { runtimeId: runtime.runtimeId }); }
+}, 60_000);
 
 test('a pending message protects its referenced temporary folder from cleanup', async () => {
   const temporary = await daemon.invoke('create_temporary_chat', { hostId: 'local' });
