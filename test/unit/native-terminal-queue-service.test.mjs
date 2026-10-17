@@ -199,3 +199,54 @@ test('Enter queued behind a failed draft save is rejected, and a retry sends onl
     await nativeTerminals.close(terminal);
   }
 });
+
+test('Ctrl+C reaches the shell while a draft save is held, and the old draft does not come back', async t => {
+  const dom = installDom();
+  t.after(() => { clearMocks(); dom.restore(); });
+  const terminal = crypto.randomUUID();
+  const held = Promise.withResolvers(), release = Promise.withResolvers(), waiting = Promise.withResolvers(), interrupted = Promise.withResolvers();
+  let output = '', holding = false;
+  const daemon = await daemonClient(t, (event, payload) => {
+    if (event !== 'pi://event' || payload.type !== 'terminal_output' || payload.terminalId !== terminal) return;
+    output += payload.data;
+    if (output.includes('waiting-interrupt')) waiting.resolve();
+    if (output.includes('interrupt-seen')) interrupted.resolve();
+  });
+  mockWindows('main');
+  mockIPC(async (command, args) => {
+    assert.equal(command, 'daemon_invoke');
+    if (holding && args.command === 'shared_terminal' && args.args.action === 'draft') {
+      holding = false;
+      held.resolve();
+      await release.promise;
+    }
+    return daemon.invoke(args.command, args.args);
+  });
+  const within = (promise, label) => {
+    let timer;
+    return Promise.race([promise, new Promise((_, reject) => { timer = setTimeout(() => reject(new Error('Timed out: ' + label)), 5000); })]).finally(() => clearTimeout(timer));
+  };
+  const chat = await daemon.invoke('create_temporary_chat');
+  const session = `local:draft-${crypto.randomUUID()}`;
+  const program = "sh -c 'trap \"printf %s%s\\\\n interrupt- seen; exit 0\" INT; printf %s%s\\\\n waiting- interrupt; while :; do sleep 1; done'";
+  await nativeTerminals.start(terminal, session, chat.cwd, 80, 24, 'local');
+  const work = [];
+  try {
+    await nativeTerminals.write(terminal, program + '\r', 'write');
+    await within(waiting.promise, 'program start');
+    holding = true;
+    work.push(nativeTerminals.write(terminal, 'old draft', 'draft'));
+    await within(held.promise, 'held draft save');
+    work.push(nativeTerminals.interrupt(terminal));
+    await within(interrupted.promise, 'Ctrl+C while the draft save is held');
+    release.resolve();
+    const results = await within(Promise.allSettled(work), 'queued work');
+    assert.deepEqual(results.map(result => result.status === 'rejected' ? String(result.reason) : result.status), ['fulfilled', 'fulfilled']);
+    const [listed] = await nativeTerminals.list(session, 'local');
+    assert.equal(listed.inputDraft, '');
+  } finally {
+    release.resolve();
+    await Promise.allSettled(work);
+    await nativeTerminals.close(terminal);
+  }
+});
