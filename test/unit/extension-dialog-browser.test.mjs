@@ -102,3 +102,33 @@ test('extension input waits for composition, prevents duplicate submission and s
   assert.equal(await input.isEnabled(), true);
   assert.equal(await input.inputValue(), 'edited文字');
 });
+
+test('a failed extension selection blocks other choices while pending and accepts one retry with a different option', { timeout: 15000 }, async t => {
+  const replies = [Promise.withResolvers(), Promise.withResolvers()];
+  const received = [Promise.withResolvers(), Promise.withResolvers()];
+  const responses = [];
+  const page = await startupPage(t, 'production', {
+    entryPoint: 'test/fixtures/extension-dialog-browser.tsx', ready: '[aria-label="Dialog response"]',
+    prepare: page => page.exposeFunction('respondToExampleSelection', response => {
+      const index = responses.push(response) - 1; received[index].resolve(); return replies[index].promise;
+    }),
+  });
+  await page.getByRole('button', { name: 'Open selection' }).click();
+  const dialog = page.getByRole('dialog', { name: 'Pick a branch' });
+  const option = name => dialog.getByRole('button', { name, exact: true });
+  await option('release').click();
+  await received[0].promise;
+  for (const name of ['main', 'release', 'hotfix']) assert.equal(await option(name).isDisabled(), true);
+  const bounds = await dialog.boundingBox();
+  await page.mouse.click(bounds.x - 5, bounds.y - 5);
+  assert.equal(await dialog.isVisible(), true);
+  replies[0].resolve({ error: 'branch locked' });
+  await dialog.getByRole('alert').waitFor();
+  assert.equal(await dialog.getByRole('alert').textContent(), 'branch locked');
+  await option('hotfix').click();
+  await received[1].promise;
+  replies[1].resolve({});
+  await dialog.waitFor({ state: 'detached' });
+  assert.deepEqual(responses, [{ value: 'release' }, { value: 'hotfix' }]);
+  assert.equal(await page.getByLabel('Dialog response').textContent(), '{"value":"hotfix"}');
+});

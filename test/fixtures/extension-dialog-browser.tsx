@@ -5,7 +5,10 @@ import type { ExtensionUiRequest, ExtensionUiResponse } from '../../clients/ui/t
 import '../../clients/ui/styles.css';
 
 declare global {
-  interface Window { respondToExampleInput(response: ExtensionUiResponse): Promise<{ error?: string }> }
+  interface Window {
+    respondToExampleInput(response: ExtensionUiResponse): Promise<{ error?: string }>;
+    respondToExampleSelection?(response: ExtensionUiResponse): Promise<{ error?: string }>;
+  }
 }
 
 function Example() {
@@ -18,8 +21,9 @@ function Example() {
     <button onClick={() => setRequest({ id: 'selection', method: 'select', title: 'Pick a branch', options: ['main', 'release', 'hotfix'] })}>Open selection</button>
     <output aria-label="Dialog response">{result()}</output>
     <Show when={request()}>{value => <ExtensionDialog request={value()} onRespond={async response => {
-      if (value().method === 'input') {
-        const result = await window.respondToExampleInput(response);
+      const boundary = value().method === 'input' ? window.respondToExampleInput : value().method === 'select' ? window.respondToExampleSelection : undefined;
+      if (boundary) {
+        const result = await boundary(response);
         if (result.error) throw new Error(result.error);
       }
       setResult(JSON.stringify(response)); setRequest(undefined);

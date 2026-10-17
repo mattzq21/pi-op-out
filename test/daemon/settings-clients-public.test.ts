@@ -176,3 +176,27 @@ test('a daemon restarts after a save turns off a tool the default agent uses, an
     expect((await daemon.invoke('load_app_settings')).tools.find((tool: any) => tool.name === 'web_search').enabled).toBe(true);
   } finally { await daemon.stop(); }
 }, 60_000);
+
+test('a rejected settings save preserves the revision and permits a corrected retry', async () => {
+  const daemon = await startDaemon();
+  try {
+    const other = await daemon.connect();
+    const baseline = await daemon.invoke('load_settings_change');
+    const machine = { enabled: false, id: 'build', name: 'Build server', target: 'user@build;id', piPath: 'pi' };
+    const invalid = { ...structuredClone(baseline.settings), reviewPrompt: 'Rejected review prompt', hosts: [machine] };
+    expect(await daemon.failure('save_app_settings', { settings: invalid }))
+      .toContain('SSH target may only contain a host, user, and port-safe characters');
+
+    const after = await other.invoke('load_settings_change');
+    expect(after.revision).toBe(baseline.revision);
+    expect(after.settings).toEqual(baseline.settings);
+
+    const corrected = { ...structuredClone(baseline.settings), reviewPrompt: 'Corrected review prompt', hosts: [{ ...machine, target: 'user@build' }] };
+    const saved = await daemon.invoke('save_app_settings', { settings: corrected });
+    expect(saved.committedRevision).toBe(baseline.revision + 1);
+    const received = await other.waitEvent('pi://settings-changed', change => change.settings.reviewPrompt === 'Corrected review prompt');
+    expect(received.revision).toBe(saved.committedRevision);
+    expect(received.settings.hosts).toEqual([{ ...machine, target: 'user@build' }]);
+    expect(other.events.some(event => event.payload?.settings?.reviewPrompt === 'Rejected review prompt')).toBe(false);
+  } finally { await daemon.stop(); }
+}, 60_000);
