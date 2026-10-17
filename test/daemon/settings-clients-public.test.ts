@@ -101,3 +101,78 @@ test('another connected client receives saved settings and can edit that receive
       .toBe('Check recovery and data preservation');
   } finally { await daemon.stop(); }
 }, 60_000);
+
+test('a save that edits one setting keeps every other saved setting across a daemon restart', async () => {
+  let daemon = await startDaemon();
+  try {
+    const settings = await daemon.invoke('load_app_settings');
+    Object.assign(settings, {
+      reviewAgent: 'reviewer', localEnabled: false, defaultAgent: 'builder', defaultThinking: 'high', defaultFastMode: true,
+      modelAliases: { 'openai/gpt': 'Daily model' }, hiddenModels: ['openai/old'],
+      contextWindowCap: 200_000, contextWindowCapEnabled: false,
+      modelContextWindowCaps: { 'openai/gpt': 400_000, 'anthropic/claude': null },
+      autoRetry: false, debugMode: true,
+      hosts: [{ enabled: false, id: 'build', name: 'Build server', target: 'user@build', piPath: '~/bin/pi' }],
+    });
+    settings.keybindings.newConversation = 'Alt+N';
+    const first = await daemon.invoke('save_app_settings', { settings });
+    await daemon.invoke('save_app_settings', { settings: { ...first.settings, reviewPrompt: 'Only the review prompt changes' } });
+    const home = daemon.home;
+    await daemon.stop();
+    daemon = await startDaemon({ home });
+
+    const restored = await daemon.invoke('load_app_settings');
+    expect(restored).toMatchObject({
+      reviewPrompt: 'Only the review prompt changes',
+      reviewAgent: 'reviewer', localEnabled: false, defaultAgent: 'builder', defaultThinking: 'high', defaultFastMode: true,
+      modelAliases: { 'openai/gpt': 'Daily model' }, hiddenModels: ['openai/old'],
+      contextWindowCap: 200_000, contextWindowCapEnabled: false,
+      modelContextWindowCaps: { 'openai/gpt': 400_000, 'anthropic/claude': null },
+      autoRetry: false, debugMode: true,
+      hosts: [{ enabled: false, id: 'build', name: 'Build server', target: 'user@build', piPath: '~/bin/pi' }],
+    });
+    expect(restored.keybindings.newConversation).toBe('Alt+N');
+  } finally { await daemon.stop(); }
+}, 60_000);
+
+test('invalid per-model context caps are rejected and the saved settings stay unchanged after a restart', async () => {
+  let daemon = await startDaemon();
+  try {
+    const settings = await daemon.invoke('load_app_settings');
+    settings.modelContextWindowCaps = { 'openai/gpt': 400_000 };
+    await daemon.invoke('save_app_settings', { settings });
+    const before = await daemon.invoke('load_app_settings');
+    const cases: Array<[Record<string, unknown>, string]> = [
+      [{ gpt: 400_000 }, 'Context cap model "gpt" must be written as provider/model'],
+      [{ 'openai/gpt': 99_999 }, 'Context cap for openai/gpt must be from 100,000 to 50,000,000 tokens'],
+      [{ 'openai/gpt': 50_000_001 }, 'Context cap for openai/gpt must be from 100,000 to 50,000,000 tokens'],
+      [{ 'openai/gpt': 150_000.5 }, 'modelContextWindowCaps'],
+    ];
+    for (const [caps, expected] of cases) {
+      const invalid = { ...structuredClone(before), modelContextWindowCaps: caps };
+      expect(await daemon.failure('save_app_settings', { settings: invalid }), expected).toContain(expected);
+    }
+    const home = daemon.home;
+    await daemon.stop();
+    daemon = await startDaemon({ home });
+    expect(await daemon.invoke('load_app_settings')).toEqual(before);
+  } finally { await daemon.stop(); }
+}, 60_000);
+
+test('a daemon restarts after a save turns off a tool the default agent uses, and settings stay editable', async () => {
+  let daemon = await startDaemon();
+  try {
+    const settings = await daemon.invoke('load_app_settings');
+    settings.tools.find((tool: any) => tool.name === 'web_search').enabled = false;
+    await daemon.invoke('save_app_settings', { settings });
+    const home = daemon.home;
+    await daemon.stop();
+    daemon = await startDaemon({ home });
+
+    const restored = await daemon.invoke('load_app_settings');
+    expect(restored.tools.find((tool: any) => tool.name === 'web_search').enabled).toBe(false);
+    restored.tools.find((tool: any) => tool.name === 'web_search').enabled = true;
+    await daemon.invoke('save_app_settings', { settings: restored });
+    expect((await daemon.invoke('load_app_settings')).tools.find((tool: any) => tool.name === 'web_search').enabled).toBe(true);
+  } finally { await daemon.stop(); }
+}, 60_000);

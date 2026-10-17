@@ -27,6 +27,7 @@ const sessionId = JSON.parse(fs.readFileSync(sessionFile, 'utf8').split('\\n')[0
 const state = { sessionFile, sessionId, isStreaming: false, messageCount: 1, pendingMessageCount: 0, model: null, thinkingLevel: 'medium' };
 const send = packet => process.stdout.write(JSON.stringify(packet) + '\\n');
 let followUp = [];
+let rejectClear = sessionFile.includes('/reject-clear-once/');
 require('node:readline').createInterface({ input: process.stdin }).on('line', line => {
   const request = JSON.parse(line);
   if ((sessionFile.includes('/abort-preparation/') || sessionFile.includes('/abort-gate/')) && request.type === 'piop_request'
@@ -43,6 +44,11 @@ require('node:readline').createInterface({ input: process.stdin }).on('line', li
     send({ type: 'queue_update', steering: [], followUp });
   }
   if (request.type === 'clear_queue') {
+    if (rejectClear) {
+      rejectClear = false;
+      send({ type: 'response', id: request.id, command: request.type, success: false, error: 'Queue is temporarily unavailable' });
+      return;
+    }
     send({ type: 'response', id: request.id, command: request.type, success: true, data: { steering: [], followUp } });
     followUp = [];
     return;
@@ -73,6 +79,21 @@ afterAll(() => daemon?.stop());
 const command = (runtimeId: string, value: any) => daemon.invoke('pi_command', { runtimeId, command: value });
 const open = (path: string, clientId: string, runtimeId = randomUUID()) =>
   daemon.invoke('start_pi', { runtimeId, clientId, cwd: daemon.home, sessionPath: path }).then(result => ({ runtimeId, ...result }));
+
+test('a failed queue clear preserves pending messages and allows retry', async () => {
+  const session = publicSession(daemon.home, 'reject-clear-once');
+  const runtime = await open(session.path, 'clear-retry-client');
+  try {
+    await command(runtime.runtimeId, { type: 'follow_up', message: 'Keep until clearing succeeds' });
+    const before = (await command(runtime.runtimeId, { type: 'get_state' })).pendingMessages;
+    expect(before).toHaveLength(1);
+    expect(await daemon.failure('pi_command', { runtimeId: runtime.runtimeId, command: { type: 'clear_queue' } }))
+      .toContain('Queue is temporarily unavailable');
+    expect((await command(runtime.runtimeId, { type: 'get_state' })).pendingMessages).toEqual(before);
+    await command(runtime.runtimeId, { type: 'clear_queue' });
+    expect((await command(runtime.runtimeId, { type: 'get_state' })).pendingMessages).toEqual([]);
+  } finally { await daemon.invoke('stop_pi', { runtimeId: runtime.runtimeId }); }
+}, 60_000);
 
 test('moving a queued message changes order without replacing message identities', async () => {
   const session = publicSession(daemon.home, 'reorder-queued-messages');

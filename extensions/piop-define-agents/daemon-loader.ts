@@ -82,19 +82,13 @@ export async function loadAgentDefinitions({ settings, initial: initialize }: Ag
 
   for (const agent of config.agents) {
     validateEffort(agent.name, agent.effort);
-    let extensionTools: string[] = [];
 
     await validateModel(agent, async (registry, validate) => {
       if (!validateExtensions) return validate();
 
-      try { extensionTools = await validateExtensions(extensionPaths(agent.extensions), dirname(configPath), registry, agent, validate); }
+      try { await validateExtensions(extensionPaths(agent.extensions), dirname(configPath), registry, agent, validate); }
       catch (error) { throw new Error(`Agent "${agent.name}" cannot load its extensions: ${error instanceof Error ? error.message : String(error)}`); }
     });
-
-    const allowedTools = new Set([...toolLists.enabledTools, ...extensionTools]);
-    const denied = agent.tools.filter(tool => !allowedTools.has(tool));
-
-    if (denied.length) throw new Error(`Agent "${agent.name}" cannot run because Pi does not allow its configured tools: ${denied.join(", ")}`);
 
     for (const path of [agent.path_systemprompt, agent.path_agent_prompt].filter(Boolean)) {
       const resolved = resolvePromptPath(path);

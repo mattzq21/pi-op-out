@@ -150,3 +150,25 @@ test('retrying recovery after restart reuses the directory and keeps work saved 
     })]);
   } finally { await daemon.stop(); }
 }, 60_000);
+
+test('concurrent recovery from another client is refused while the first recovery gives the chat one directory', async () => {
+  const daemon = await startDaemon();
+  try {
+    const chat = missingChat(daemon);
+    const other = await daemon.connect();
+    const request = (clientId: string) => ({ sessionPath: chat.path, hostId: 'local', action: 'empty', clientId });
+
+    const results = await Promise.allSettled([
+      daemon.invoke('recover_missing_session', request('desktop')),
+      other.invoke('recover_missing_session', request('phone')),
+    ]);
+
+    const rows = await daemon.invoke('list_sessions');
+    expect(rows).toEqual([expect.objectContaining({ id: chat.id, cwdExists: true, messageCount: 1 })]);
+    expect(readdirSync(rows[0].cwd)).toEqual([]);
+    const accepted = results.filter(result => result.status === 'fulfilled');
+    const refused = results.filter(result => result.status === 'rejected');
+    expect(accepted.map(result => result.value.cwd)).toEqual([rows[0].cwd]);
+    expect(refused.map(result => String(result.reason))).toEqual([expect.stringContaining('Take ownership of this conversation before changing it')]);
+  } finally { await daemon.stop(); }
+}, 60_000);

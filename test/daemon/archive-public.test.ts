@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, expect, test } from 'bun:test';
 import { execFileSync } from 'node:child_process';
-import { readFileSync, writeFileSync, symlinkSync, chmodSync, statSync } from 'node:fs';
+import { readFileSync, writeFileSync, symlinkSync, chmodSync, statSync, unlinkSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { startDaemon, waitForSessions, remoteMachine, useRemotes, type TestDaemon, type RemoteMachine } from './harness';
@@ -82,4 +82,39 @@ test('remote archiving preserves the active chat when storage cannot be written'
   await archive(chat.path);
   const retried = (await daemon.invoke('storage_report')).hosts.find((host: any) => host.hostId === remote.id);
   expect(retried.archives.find((row: any) => row.id === chat.id)).toMatchObject({ name: 'Keep until storage is writable', restorable: true });
+}, 60000);
+
+const restore = (path: string) => daemon.invoke('restore_archived_session', { hostId: remote.id, sessionPath: path, clientId: 'archive-test' });
+const remoteArchives = async () => (await daemon.invoke('storage_report')).hosts.find((host: any) => host.hostId === remote.id).archives;
+
+test('remote restore blocked by an occupied destination keeps the archive and the occupant, then succeeds when retried', async () => {
+  const chat = publish('Restore after conflict');
+  await archive(chat.path);
+  const archived = (await remoteArchives()).find((row: any) => row.id === chat.id);
+  writeFileSync(chat.path, 'occupant');
+  await expect(restore(archived.path)).rejects.toThrow('Restoration destination already exists');
+  expect(readFileSync(chat.path, 'utf8')).toBe('occupant');
+  expect((await remoteArchives()).find((row: any) => row.id === chat.id)).toMatchObject({ name: 'Restore after conflict', restorable: true });
+  unlinkSync(chat.path);
+  await restore(archived.path);
+  const active = await waitForSessions(daemon, rows => rows.some(row => row.id === chat.id));
+  expect(active.find((row: any) => row.id === chat.id)).toMatchObject({ hostId: remote.id, name: 'Restore after conflict' });
+  expect((await remoteArchives()).some((row: any) => row.id === chat.id)).toBe(false);
+  const runtimeId = crypto.randomUUID();
+  await daemon.invoke('start_pi', { runtimeId, clientId: 'archive-reader', hostId: remote.id, sessionPath: chat.path, cwd: remote.home, presence: { readOnly: true } });
+  try {
+    const history = await daemon.invoke('pi_command', { runtimeId, command: { type: 'get_entries' } });
+    expect(history.entries).toMatchObject([{ id: 'question', message: { role: 'user', content: 'Restore after conflict' } }]);
+  } finally { await daemon.invoke('stop_pi', { runtimeId }); }
+}, 60000);
+
+test('repeating a finished remote restore succeeds and keeps one active chat', async () => {
+  const chat = publish('Restore twice');
+  await archive(chat.path);
+  const archived = (await remoteArchives()).find((row: any) => row.id === chat.id);
+  await restore(archived.path);
+  await restore(archived.path);
+  const active = await waitForSessions(daemon, rows => rows.some(row => row.id === chat.id));
+  expect(active.filter((row: any) => row.id === chat.id)).toMatchObject([{ hostId: remote.id, name: 'Restore twice' }]);
+  expect((await remoteArchives()).some((row: any) => row.id === chat.id)).toBe(false);
 }, 60000);
