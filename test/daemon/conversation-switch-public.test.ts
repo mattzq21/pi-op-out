@@ -1,0 +1,70 @@
+import { afterAll, beforeAll, expect, test } from 'bun:test';
+import { agentDaemon, text } from './agent-chats';
+
+let agents: Awaited<ReturnType<typeof agentDaemon>>;
+beforeAll(async () => { agents = await agentDaemon(); }, 60000);
+afterAll(async () => { await agents?.close(); });
+
+const held = <T>() => { let release!: (value: T) => void; const promise = new Promise<T>(resolve => { release = resolve; }); return { promise, release }; };
+
+test('a new conversation cannot start while the agent works, and afterwards starts empty while the old one keeps its history', async () => {
+  const busy = held<{ text: string }>();
+  agents.scripts.set('Draft the plan', messages => text(messages.at(-1)) === 'Draft the plan' ? busy.promise : { text: 'Fresh start.' });
+  agents.scripts.set('Start fresh', () => ({ text: 'Fresh start.' }));
+  const chat = await agents.rootChat();
+  await chat.command({ type: 'prompt', message: 'Draft the plan' });
+  await chat.until(() => agents.model.requests.some(request => text(request.messages.at(-1)) === 'Draft the plan'));
+  try {
+    expect(await chat.command({ type: 'new_session' }).then(() => 'switched', (error: Error) => error.message)).toBe('Stop or pause the response and finish queued messages before switching');
+  } finally { busy.release({ text: 'Plan drafted.' }); }
+  await chat.until(history => text(history.at(-1)) === 'Plan drafted.');
+  const before = (await chat.command({ type: 'get_state' })).sessionId;
+  await chat.command({ type: 'new_session' });
+  const state = await chat.command({ type: 'get_state' });
+  expect(state.sessionId).not.toBe(before);
+  expect(await chat.history()).toEqual([]);
+  await chat.command({ type: 'set_model', provider: 'scripted', modelId: 'scripted-model' });
+  await chat.command({ type: 'prompt', message: 'Start fresh' });
+  await chat.until(history => text(history.at(-1)) === 'Fresh start.');
+  const old = (await agents.daemon.invoke('list_sessions')).find((session: any) => session.id === before);
+  expect(old).toMatchObject({ name: 'Draft the plan', preview: 'Plan drafted.', isRunning: false });
+}, 60000);
+
+test('switching back to an earlier conversation shows its history and continues it', async () => {
+  agents.scripts.set('Name the project', messages => ({ text: text(messages.at(-1)) === 'Name the project' ? 'Call it Comet.' : 'We called it Comet.' }));
+  agents.scripts.set('Unrelated question', () => ({ text: 'Unrelated answer.' }));
+  const chat = await agents.rootChat();
+  await chat.command({ type: 'prompt', message: 'Name the project' });
+  await chat.until(history => text(history.at(-1)) === 'Call it Comet.');
+  const earlier = await chat.command({ type: 'get_state' });
+  await chat.command({ type: 'new_session' });
+  await chat.command({ type: 'set_model', provider: 'scripted', modelId: 'scripted-model' });
+  await chat.command({ type: 'prompt', message: 'Unrelated question' });
+  await chat.until(history => text(history.at(-1)) === 'Unrelated answer.');
+  await chat.command({ type: 'switch_session', sessionPath: earlier.sessionFile });
+  expect((await chat.command({ type: 'get_state' })).sessionId).toBe(earlier.sessionId);
+  expect((await chat.history()).filter(message => message.role !== 'system').map(text)).toEqual(['Name the project', 'Call it Comet.']);
+  await chat.command({ type: 'prompt', message: 'What did we call it?' });
+  const messages = await chat.until(history => text(history.at(-1)) === 'We called it Comet.');
+  expect(messages.filter(message => message.role === 'user').map(text)).toEqual(['Name the project', 'What did we call it?']);
+}, 60000);
+
+test('switching to a conversation another device has open only watches it, and cannot send to it', async () => {
+  agents.scripts.set('Phone conversation', () => ({ text: 'Phone answer.' }));
+  const phone = await agents.daemon.connect();
+  try {
+    const owned = await phone.invoke('create_temporary_chat', { hostId: 'local' });
+    await phone.invoke('start_pi', { runtimeId: 'phone-runtime', clientId: 'phone', cwd: owned.cwd, sessionId: owned.sessionId });
+    const phoneCommand = (value: any) => phone.invoke('pi_command', { runtimeId: 'phone-runtime', command: value });
+    await phoneCommand({ type: 'set_model', provider: 'scripted', modelId: 'scripted-model' });
+    await phoneCommand({ type: 'prompt', message: 'Phone conversation' });
+    for (let tries = 0; tries < 50 && text((await phoneCommand({ type: 'get_entries' })).entries.filter((entry: any) => entry.type === 'message').at(-1)?.message) !== 'Phone answer.'; tries++) await Bun.sleep(100);
+    const path = (await phoneCommand({ type: 'get_state' })).sessionFile;
+    const laptop = await agents.rootChat();
+    await laptop.command({ type: 'switch_session', sessionPath: path });
+    const lost = agents.daemon.events.some(event => event.payload?.runtimeId === laptop.runtimeId && event.payload.event?.type === 'ownership_lost');
+    expect(lost).toBe(true);
+    expect(await laptop.command({ type: 'prompt', message: 'Taking over?' }).then(() => 'sent', (error: Error) => error.message)).toBe('Take ownership of this conversation before changing it');
+    expect(text((await phoneCommand({ type: 'get_entries' })).entries.filter((entry: any) => entry.type === 'message').at(-1).message)).toBe('Phone answer.');
+  } finally { phone.close(); }
+}, 60000);
