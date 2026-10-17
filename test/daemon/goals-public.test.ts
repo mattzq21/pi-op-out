@@ -72,3 +72,40 @@ test('a goal that uses up its token budget stops and reports the budget as reach
   for (let tries = 0; !summary.startsWith('Goal budget limited') && tries < 50; tries++, await Bun.sleep(100)) summary = (await entries()).filter((entry: any) => entry.customType === 'piop-goal-summary').map((entry: any) => text(entry)).at(-1) ?? '';
   expect(summary).toStartWith('Goal budget limited\n\nSpend the budget\n\nTokens: 1,200 / 1,000 (0 remaining)');
 }, 120000);
+
+test('a goal whose agent keeps answering with nothing is marked blocked and stops', async () => {
+  await agents.enableAgentTools('get_goal', 'create_goal', 'update_goal');
+  agents.scripts.set('Find the impossible', async () => { await Bun.sleep(100); return { text: '' }; });
+  const chat = await agents.rootChat();
+  const entries = async () => (await chat.command({ type: 'get_entries' })).entries;
+  const answers = async () => (await chat.history()).filter(message => message.role === 'assistant').length;
+  await send(chat, '/goal Find the impossible');
+  for (let tries = 0; (await answers()) < 4 && tries < 100; tries++) await Bun.sleep(100);
+  await Bun.sleep(2000);
+  const settled = await answers();
+  expect(settled).toBe(4);
+  await send(chat, '/goal');
+  let summary = '';
+  for (let tries = 0; !summary && tries < 50; tries++, await Bun.sleep(100)) summary = (await entries()).filter((entry: any) => entry.customType === 'piop-goal-summary').map((entry: any) => text(entry)).at(-1) ?? '';
+  expect(summary).toStartWith('Goal blocked\n\nFind the impossible');
+  expect(await answers()).toBe(settled);
+}, 120000);
+
+test('a goal whose tool calls keep failing is marked blocked after five turns', async () => {
+  await agents.enableAgentTools('get_goal', 'create_goal', 'update_goal');
+  agents.scripts.set('Read the missing file', async messages => {
+    await Bun.sleep(100);
+    const previous = messages.findLast((message: any) => message.role === 'assistant');
+    return previous?.tool_calls?.length ? { text: 'Could not read it.' } : { tool: 'read', arguments: { path: '/nonexistent/piop-test-file' } };
+  });
+  const chat = await agents.rootChat();
+  const failedReads = async () => (await chat.history()).filter(message => message.role === 'toolResult' && message.toolName === 'read' && message.isError).length;
+  await send(chat, '/goal Read the missing file');
+  for (let tries = 0; (await failedReads()) < 5 && tries < 150; tries++) await Bun.sleep(100);
+  await Bun.sleep(2000);
+  expect(await failedReads()).toBe(5);
+  await send(chat, '/goal');
+  let summary = '';
+  for (let tries = 0; !summary && tries < 50; tries++, await Bun.sleep(100)) summary = (await chat.command({ type: 'get_entries' })).entries.filter((entry: any) => entry.customType === 'piop-goal-summary').map((entry: any) => text(entry)).at(-1) ?? '';
+  expect(summary).toStartWith('Goal blocked\n\nRead the missing file');
+}, 120000);
