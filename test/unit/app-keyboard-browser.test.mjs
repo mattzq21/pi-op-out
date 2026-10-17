@@ -113,6 +113,34 @@ test('a shortcut field captures an assigned app shortcut without running it', as
   assert.equal(await editor.inputValue(), 'Keep this draft');
 });
 
+test('Ctrl G asks before discarding unsaved settings and focuses conversation search only after discard', async t => {
+  const page = await appBrowser(t);
+  const editor = page.getByRole('textbox', { name: 'Message piop', exact: true });
+  const goBack = page.getByRole('button', { name: 'Go back', exact: true });
+  const search = page.getByRole('textbox', { name: 'Search conversations', exact: true });
+  await editor.fill('Keep this draft');
+  await page.getByRole('button', { name: 'Settings', exact: true }).click();
+  const retry = page.getByRole('switch', { name: 'Automatic retry', exact: true });
+  await page.getByRole('navigation', { name: 'Settings', exact: true }).getByRole('button', { name: 'Local', exact: true }).click();
+  const edited = String(await retry.getAttribute('aria-checked') !== 'true');
+  await retry.click();
+  assert.equal(await retry.getAttribute('aria-checked'), edited);
+  const messages = [];
+  page.once('dialog', dialog => { messages.push(dialog.message()); return dialog.dismiss(); });
+  await page.keyboard.press('Control+g');
+  await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+  assert.deepEqual(messages, ['Discard unsaved settings changes?']);
+  assert.equal(await goBack.isVisible(), true);
+  assert.equal(await retry.getAttribute('aria-checked'), edited);
+  page.once('dialog', dialog => { messages.push(dialog.message()); return dialog.accept(); });
+  await page.keyboard.press('Control+g');
+  await search.waitFor();
+  await page.waitForFunction(() => document.activeElement?.getAttribute('aria-label') === 'Search conversations');
+  assert.deepEqual(messages, ['Discard unsaved settings changes?', 'Discard unsaved settings changes?']);
+  assert.equal(await goBack.count(), 0);
+  assert.equal(await editor.inputValue(), 'Keep this draft');
+});
+
 test('an open project dialog blocks the settings shortcut until the dialog is closed', async t => {
   const page = await appBrowser(t, { keybindings: { openSettings: 'Alt+J' } });
   const editor = page.getByRole('textbox', { name: 'Message piop', exact: true });
