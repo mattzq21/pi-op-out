@@ -30,6 +30,16 @@ test('history keeps only the 100 most recent submissions', async t => {
   assert.deepEqual([history.length, history[0], history.at(-1)], [100, 'Prompt 2', 'Prompt 101']);
 });
 
+test('blank submissions are left out while a multiline prompt keeps its exact spacing', async t => {
+  const native = await nativeFileCommand(t, { desktop: true });
+  await sync(native, [
+    { id: 'spaces-only', prompt: '   ' },
+    { id: 'multiline-explain', prompt: '  Explain this code\n\tthen run the tests  \n' },
+    { id: 'newlines-and-tabs', prompt: '\n\t\n' },
+  ]);
+  assert.deepEqual(await sync(native, []), ['  Explain this code\n\tthen run the tests  \n']);
+});
+
 test('browser history is imported once, before the first new submission', async t => {
   const native = await nativeFileCommand(t, { desktop: true });
   await native.invoke('sync_prompt_history', { entries: [{ id: 'new-window-tests', prompt: 'Run the tests' }], legacy: ['Explain this code', 'Fix the build'] });
