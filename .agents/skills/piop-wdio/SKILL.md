@@ -11,6 +11,7 @@ Use the agent's shell tool to run this:
 python3 ~/.agents/skills/mine/piop-wdio/scripts/tauri-webdriver.py --project "$PWD"
 ```
 
+Read [references/launch.md](references/launch.md) for profiles, calls and cleanup.
 
 
 WDIO MCP lets you:
