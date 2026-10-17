@@ -16,11 +16,15 @@ const [disabled, setDisabled] = createSignal(false);
 const [mounted, setMounted] = createSignal(true);
 const [vision, setVision] = createSignal(false);
 const [failSends, setFailSends] = createSignal(false);
+const [holdSends, setHoldSends] = createSignal(false);
+const heldSends: (() => void)[] = [];
 
 render(() => <>
   <label><input type="checkbox" checked={disabled()} onChange={event => setDisabled(event.currentTarget.checked)} />Disable controls</label>
   <label><input type="checkbox" checked={vision()} onChange={event => setVision(event.currentTarget.checked)} />Image-capable model</label>
   <label><input type="checkbox" checked={failSends()} onChange={event => setFailSends(event.currentTarget.checked)} />Fail sends</label>
+  <label><input type="checkbox" checked={holdSends()} onChange={event => setHoldSends(event.currentTarget.checked)} />Hold sends</label>
+  <button onClick={() => heldSends.shift()?.()}>Complete send</button>
   <button onClick={() => setMounted(false)}>Remove composer</button>
   <output aria-label="Sent messages">{JSON.stringify(sent())}</output>
   <div style={{ width: '600px', margin: '80px 150px' }}>
@@ -28,7 +32,11 @@ render(() => <>
       <Composer controlsDisabled={disabled()} streaming={false} queued={0} commands={[]} agents={[]} models={[]}
         model={vision() ? { id: 'vision', provider: 'test', input: ['text', 'image'] } : null}
         thinkingLevel="off" thinkingLevels={['off']}
-        onSend={async (message, behavior, images) => { if (failSends()) throw new Error("offline"); setSent(values => [...values, [message, behavior, images]]); }}
+        onSend={async (message, behavior, images) => {
+          if (holdSends()) await new Promise<void>(resolve => heldSends.push(resolve));
+          if (failSends()) throw new Error("offline");
+          setSent(values => [...values, [message, behavior, images]]);
+        }}
         onPause={async () => {}} onResume={async () => {}} onAbort={async () => {}}
         onAgent={() => {}} onModel={() => {}} onThinking={() => {}} onToggleFastMode={async () => {}} />
     </Show>

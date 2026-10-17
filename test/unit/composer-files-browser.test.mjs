@@ -564,6 +564,36 @@ test('failed submission preserves an attachment for a later retry', async t => {
   assert.equal(await page.getByRole('alert').count(), 0);
 });
 
+test('an attachment added while a send is pending survives that send and is sent next', { timeout: 15000 }, async t => {
+  const { page, directory } = await fileComposer(t);
+  const path = join(directory, 'note.txt');
+  const remove = page.getByRole('button', { name: 'Remove note.txt', exact: true });
+  const sent = async () => JSON.parse(await page.getByLabel('Sent messages').textContent());
+  await writeFile(path, 'first');
+  await browserFileDrop(page, [path]);
+  await remove.waitFor();
+  await page.getByRole('checkbox', { name: 'Hold sends' }).check();
+  await page.getByRole('textbox', { name: 'Message piop' }).focus();
+  await page.keyboard.press('Enter');
+  await page.getByRole('button', { name: 'Send message', exact: true }).and(page.locator(':disabled')).waitFor();
+  await writeFile(path, 'second');
+  await browserFileDrop(page, [path]);
+  await page.waitForFunction(() => document.querySelectorAll('[aria-label="Remove note.txt"]').length === 2);
+  await page.getByRole('button', { name: 'Complete send' }).click();
+  await page.getByLabel('Sent messages').filter({ hasText: 'first' }).waitFor();
+  assert.deepEqual(await sent(), [['<file name="note.txt">\nfirst\n</file>', null, []]]);
+  assert.equal(await remove.count(), 1);
+  await page.getByRole('checkbox', { name: 'Hold sends' }).uncheck();
+  await page.getByRole('textbox', { name: 'Message piop' }).focus();
+  await page.keyboard.press('Enter');
+  await page.getByLabel('Sent messages').filter({ hasText: 'second' }).waitFor();
+  assert.deepEqual(await sent(), [
+    ['<file name="note.txt">\nfirst\n</file>', null, []],
+    ['<file name="note.txt">\nsecond\n</file>', null, []],
+  ]);
+  assert.equal(await remove.count(), 0);
+});
+
 test('removing an attachment excludes it from the sent message', async t => {
   const { page, directory } = await fileComposer(t);
   const keep = join(directory, 'keep.txt'), discard = join(directory, 'remove.txt');
