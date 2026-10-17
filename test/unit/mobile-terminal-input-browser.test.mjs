@@ -61,6 +61,31 @@ test('a rejected mobile command stays editable and stays out of history', { time
   assert.equal(await command.textContent(), 'echo fixed');
 });
 
+test('repeated Enter while a mobile command is pending sends it once and one corrected retry after rejection', { timeout: 15000 }, async t => {
+  const page = await startupPage(t, 'development', {
+    entryPoint: 'test/fixtures/mobile-terminal-input-browser.tsx',
+    ready: '[aria-label="Terminal command"]', holdStorage: false,
+  });
+  const command = page.getByRole('textbox', { name: 'Terminal command' });
+  const send = page.getByRole('button', { name: 'Send', exact: true });
+  const sentInput = page.getByLabel('Sent input');
+  await command.fill('ehco typo');
+  await command.press('Enter');
+  await command.press('Enter');
+  await command.press('Enter');
+  assert.equal(await sentInput.textContent(), '["ehco typo\\r"]');
+  assert.equal(await send.isDisabled(), true);
+  await command.fill('echo fixed');
+  await command.press('Enter');
+  assert.equal(await sentInput.textContent(), '["ehco typo\\r"]');
+  await page.getByRole('button', { name: 'Reject oldest input' }).click();
+  await page.waitForFunction(() => !document.querySelector('.terminal-controls button').disabled);
+  assert.equal(await command.textContent(), 'echo fixed');
+  await command.press('Enter');
+  await command.press('Enter');
+  assert.equal(await sentInput.textContent(), '["ehco typo\\r","echo fixed\\r"]');
+});
+
 test('a late accepted mobile interrupt keeps the newer draft and stays out of history', { timeout: 15000 }, async t => {
   const page = await startupPage(t, 'development', {
     entryPoint: 'test/fixtures/mobile-terminal-input-browser.tsx',
