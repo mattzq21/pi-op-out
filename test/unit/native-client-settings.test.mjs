@@ -3,12 +3,29 @@ import { test } from 'node:test';
 import { nativeFileCommand } from '../native-file-command.mjs';
 
 const initial = { keybindings: { newConversation: 'Mod+N', openSettings: 'Mod+,' }, debugMode: false };
+// Fake program paths only. No dictationEngine or dictationModelPath, so no engine is in use and reload loads nothing.
+const engines = { ...initial, dictationEngines: [{ engine: 'transcribe.cpp', path: '/fake/transcribe', models: [] }, { engine: 'needle', path: '/fake/needle', models: [] }] };
 
 async function storedPreferences(t) {
   const native = await nativeFileCommand(t, { desktop: true });
   await native.invoke('save_client_settings', { settings: initial, baseline: initial });
   return native;
 }
+
+async function storedEngines(t) {
+  const native = await nativeFileCommand(t, { desktop: true });
+  await native.invoke('save_client_settings', { settings: engines, baseline: engines });
+  return native;
+}
+
+test('a save from an older window keeps an engine removed by another window removed and keeps its own engine edit', async t => {
+  const native = await storedEngines(t);
+  const stale = (await native.invoke('load_client_settings')).settings;
+  await native.invoke('save_client_settings', { settings: { ...stale, dictationEngines: [stale.dictationEngines[0]] }, baseline: stale });
+
+  await native.invoke('save_client_settings', { settings: { ...stale, dictationEngines: [{ ...stale.dictationEngines[0], path: '/fake/transcribe-2' }, stale.dictationEngines[1]] }, baseline: stale });
+  assert.deepEqual((await native.invoke('load_client_settings')).settings.dictationEngines, [{ engine: 'transcribe.cpp', path: '/fake/transcribe-2', models: [] }]);
+});
 
 test('a save from an older window keeps the shortcut another window saved', async t => {
   const native = await storedPreferences(t);
