@@ -53,15 +53,16 @@ test('pausing a goal stops the extra turns, and resuming starts them again', asy
   await chat.until(history => text(history.at(-1)) === 'Polished.');
 }, 120000);
 
-test('a goal that uses up its token budget stops and reports the budget as reached', async () => {
+test('a goal that uses up its token budget stops at once without adding any message, and reports the budget as reached', async () => {
   await agents.enableAgentTools('get_goal', 'create_goal', 'update_goal');
   agents.scripts.set('Spend the budget', async () => { await Bun.sleep(150); return { text: 'Working.', tokens: 400 }; });
   const chat = await agents.rootChat();
   const entries = async () => (await chat.command({ type: 'get_entries' })).entries;
+  const goalSummary = async () => (await entries()).filter((entry: any) => entry.customType === 'piop-goal-summary').map((entry: any) => text(entry)).at(-1) ?? '';
   await send(chat, '/goal Spend the budget');
   await chat.until(history => history.some(message => text(message) === 'Working.'));
   await send(chat, '/goal budget 1000');
-  for (let tries = 0; !(await entries()).some((entry: any) => text(entry).includes('has reached its token budget')) && tries < 100; tries++) await Bun.sleep(100);
+  await chat.until(history => history.filter(message => text(message) === 'Working.').length >= 3);
   await Bun.sleep(1500);
   const turns = (await chat.history()).filter(message => text(message) === 'Working.').length;
   expect(turns).toBe(3);
@@ -69,8 +70,11 @@ test('a goal that uses up its token budget stops and reports the budget as reach
   expect((await chat.history()).filter(message => text(message) === 'Working.').length).toBe(turns);
   await send(chat, '/goal');
   let summary = '';
-  for (let tries = 0; !summary.startsWith('Goal budget limited') && tries < 50; tries++, await Bun.sleep(100)) summary = (await entries()).filter((entry: any) => entry.customType === 'piop-goal-summary').map((entry: any) => text(entry)).at(-1) ?? '';
+  for (let tries = 0; !summary.startsWith('Goal budget limited') && tries < 50; tries++, await Bun.sleep(100)) summary = await goalSummary();
   expect(summary).toStartWith('Goal budget limited\n\nSpend the budget\n\nTokens: 1,200 / 1,000 (0 remaining)');
+  expect((await entries()).some((entry: any) => text(entry).includes('reached its token budget'))).toBe(false);
+  const requests = agents.model.requests.filter(request => JSON.stringify(request.messages).includes('Spend the budget'));
+  expect(requests.some(request => JSON.stringify(request.messages).includes('reached its token budget'))).toBe(false);
 }, 120000);
 
 test('a goal whose agent keeps answering with nothing is marked blocked and stops', async () => {

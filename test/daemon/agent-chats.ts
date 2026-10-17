@@ -25,11 +25,11 @@ export async function agentDaemon() {
   });
   let runtimes = 0;
 
-  /** A new root chat that uses the scripted model. */
-  const rootChat = async () => {
+  /** A new root chat that uses the scripted model. visible opens it in a shown, focused window, which receives its dialogs. */
+  const rootChat = async ({ visible = false } = {}) => {
     const chat = await daemon.invoke('create_temporary_chat', { hostId: 'local' });
     const runtimeId = 'root-' + ++runtimes;
-    await daemon.invoke('start_pi', { runtimeId, clientId: 'laptop', cwd: chat.cwd, sessionId: chat.sessionId });
+    await daemon.invoke('start_pi', { runtimeId, clientId: 'laptop', cwd: chat.cwd, sessionId: chat.sessionId, ...(visible ? { presence: { visible: true, focused: true } } : {}) });
     const command = (value: any) => daemon.invoke('pi_command', { runtimeId, command: value });
     await command({ type: 'set_model', provider: 'scripted', modelId: 'scripted-model' });
     const history = async () => (await command({ type: 'get_entries' })).entries.filter((entry: any) => entry.type === 'message').map((entry: any) => entry.message);

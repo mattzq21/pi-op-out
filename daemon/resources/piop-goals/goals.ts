@@ -1,7 +1,7 @@
 import { restoreGoalAttachments } from "./files.ts";
 import type { ExtensionAPI, ExtensionContext, AgentBeforeSettleEvent, AgentBeforeSettleEventResult, InputEventResult, MessageEndEventResult } from "@earendil-works/pi-coding-agent";
 import { GoalState, GOAL_CONTEXT, validateBudget } from "./state.ts";
-import { goalBudgetPrompt, goalChangedPrompt, goalInactivePrompt, goalPrompt } from "./prompts.ts";
+import { goalChangedPrompt, goalPrompt } from "./prompts.ts";
 import { GoalCoordination } from "./coordination.ts";
 import { goalTokens, type GoalSession, type SubagentGoalUsage } from "./interface.ts";
 import type { GoalCore } from "./preparation.ts";
@@ -75,7 +75,6 @@ export function registerGoals(pi: ExtensionAPI): { session: GoalSession; core: G
 
   const account = (ctx: ExtensionContext, tokens: number, includeStopped = false) => {
     if (state.account(ctx, tokens, includeStopped) && state.goal) {
-      steering(goalBudgetPrompt(state.goal));
       pause(ctx);
     }
   };
@@ -266,7 +265,6 @@ export function registerGoals(pi: ExtensionAPI): { session: GoalSession; core: G
     if (!usage.goalId || usage.goalId !== state.goal?.id) return;
 
     if (state.accountSubagent(ctx, usage.sourceId, usage.total) && state.goal) {
-      steering(goalBudgetPrompt(state.goal));
       pause(ctx);
     }
   };
@@ -306,7 +304,6 @@ export function registerGoals(pi: ExtensionAPI): { session: GoalSession; core: G
     addSubagentUsage: (ctx, usage) => coordination.run(ctx, () => cumulativeUsage(ctx, usage)),
     replaySubagentUsage: ctx => coordination.run(ctx, () => {
       if (state.replaySubagentUsage(ctx) && state.goal) {
-        steering(goalBudgetPrompt(state.goal));
         pause(ctx);
       }
     }),
@@ -340,8 +337,6 @@ function currentPrompt(state: GoalState) {
   const goal = state.require();
 
   if (goal.status === "active") return goalPrompt(goal);
-
-  if (goal.status === "budget_limited") return state.usageGoalId() === goal.id ? goalBudgetPrompt(goal) : goalInactivePrompt(goal);
 
   return goalChangedPrompt(goal);
 }
