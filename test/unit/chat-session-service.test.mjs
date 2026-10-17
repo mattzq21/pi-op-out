@@ -28,21 +28,21 @@ async function sessionView(t, entries, { afterReply = async () => {} } = {}) {
   const invoke = window.__TAURI_INTERNALS__.invoke;
   window.__TAURI_INTERNALS__.invoke = (command, args, options) => invoke(command,
     command === 'plugin:event|unlisten' ? { ...args, id: args.eventId } : args, options);
-  let target = {};
-  if (entries) {
+  const publishChat = async entries => {
     const home = await daemon.invoke('home_directory', { hostId: 'local' });
     const chat = JSON.parse(execFileSync('node', [fileURLToPath(new URL('../fixtures/publish-chat.mjs', import.meta.url))], {
       encoding: 'utf8', timeout: 30_000,
       input: JSON.stringify({ home, cwd: home, content: entries.map(entry => JSON.stringify(entry) + '\n').join('') }),
     }));
-    target = { cwd: home, sessionPath: chat.path, readOnly: true };
-  }
+    return { cwd: home, sessionPath: chat.path };
+  };
+  const target = entries ? { ...await publishChat(entries), readOnly: true } : {};
   client = new NativeTransport(target);
   clients.push(client);
   await client.connect();
   hook = await renderHook(value => useChatSession(value, undefined, { poll: !entries }), client);
   const send = async (...events) => act(() => { for (const event of events) hook.current.handleEvent(event); });
-  return { dom, hook, send, client, daemon, async createDraft() {
+  return { dom, hook, send, client, daemon, publishChat, async createDraft() {
     const next = new NativeTransport({});
     clients.push(next);
     await next.connect();
@@ -136,6 +136,35 @@ test('streaming batches deltas and finalizes a stable assistant message without 
     assert.equal(hook.current.messages.length, 1); assert.equal(hook.current.messages[0].toolStatus, 'error');
     assert.equal(hook.current.messages[0].content, ''); assert.equal(hook.current.messages[0].toolInput, undefined);
   });
+
+test('a tool payload read from the previous conversation never fills the current conversation', { timeout: 30000 }, async t => {
+  const held = Promise.withResolvers(), release = Promise.withResolvers();
+  t.after(() => release.resolve());
+  let reads = 0;
+  const toolChat = (path, diff) => [
+    { type: 'message', id: 'request', parentId: null, message: { role: 'assistant', content: [{ type: 'toolCall', id: 'call', name: 'edit', arguments: { path } }], timestamp: 99 } },
+    { type: 'message', id: 'result', parentId: 'request', message: { role: 'toolResult', toolCallId: 'call', toolName: 'edit', content: diff, details: { diff }, isError: false, timestamp: 100 } },
+  ];
+  const { hook, client, publishChat } = await sessionView(t, toolChat('old', 'old patch'), {
+    async afterReply(command, args) {
+      if (command !== 'pi_command' || args.command.type !== 'get_tool_payload' || ++reads !== 1) return;
+      held.resolve();
+      await release.promise;
+    },
+  });
+  const tool = () => hook.current.messages.find(message => message.role === 'tool');
+  await act(() => hook.current.refresh());
+  let oldRead;
+  await act(() => { oldRead = tool().loadToolPayload(); });
+  await held.promise;
+  await client.restoreConnection(await publishChat(toolChat('new', 'new patch')));
+  await act(() => hook.current.refresh());
+  await act(async () => { release.resolve(); await oldRead; });
+  assert.equal(tool().toolPayloadLoaded, false, 'the old payload must not load into the current conversation');
+  await act(() => tool().loadToolPayload());
+  assert.deepEqual(tool().toolInput, { path: 'new' });
+  assert.deepEqual(tool().details, { diff: 'new patch' });
+});
 
 test('failed refresh replays buffered live events and allows a later retry', async t => {
   const received = Promise.withResolvers(), release = Promise.withResolvers();
