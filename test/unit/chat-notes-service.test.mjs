@@ -2,21 +2,24 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { installDom, renderHook, act, whenReactive } from '../dom.mjs';
+import { installDom, renderHook, renderComponent, act, whenReactive, untilDom } from '../dom.mjs';
 import { mockIPC, mockWindows, clearMocks } from '@tauri-apps/api/mocks';
+import { emit } from '@tauri-apps/api/event';
 import { daemonClient } from '../daemon-client.mjs';
 import { trackStorage } from '../storage-idle.mjs';
 import { useChatNote } from '../../clients/ui/plugins/markdown/useNotes.ts';
+import { useNoteSession } from '../../clients/ui/plugins/markdown/noteSessions.ts';
+import { RetainedNoteDrafts } from '../../clients/ui/plugins/markdown/RetainedNoteDrafts.tsx';
 
-/** A saved chat on a real test daemon, and a way to open its note the way the notes panel does. */
-async function noteHost(t) {
+/** A saved chat on a real test daemon, and a way to open its note the way the notes panel does. Without events, change notices never reach the app. */
+async function noteHost(t, { events = true } = {}) {
   const dom = installDom();
   const storage = trackStorage(indexedDB);
   const requests = new Set();
   const views = [];
   const settle = async () => { do { await storage.settled(); await act(() => Promise.allSettled([...requests])); } while (requests.size); };
   t.after(async () => { for (const view of views) await view.unmount(); await settle(); storage.restore(); clearMocks(); dom.restore(); });
-  const daemon = await daemonClient(t);
+  const daemon = await daemonClient(t, (event, payload) => { if (events) void emit(event, payload); });
   const home = await daemon.invoke('home_directory', { hostId: 'local' });
   const chat = JSON.parse(execFileSync('node', [fileURLToPath(new URL('../fixtures/publish-chat.mjs', import.meta.url))], { encoding: 'utf8', timeout: 30000, input: JSON.stringify({ home, content: '' }) }));
   mockWindows('main');
@@ -24,9 +27,9 @@ async function noteHost(t) {
     assert.equal(command, 'daemon_invoke');
     const request = daemon.invoke(args.command, args.args); requests.add(request);
     try { return await request; } finally { requests.delete(request); }
-  });
-  const open = async ({ owned = true } = {}) => {
-    const view = await renderHook(() => useChatNote({ sessionId: chat.id, hostId: 'local' }, () => true));
+  }, { shouldMockEvents: true });
+  const open = async ({ owned = true, hook = useChatNote } = {}) => {
+    const view = await renderHook(() => hook({ sessionId: chat.id, hostId: 'local' }, () => true));
     views.push(view);
     await whenReactive(() => view.current.ready() && (!owned || view.current.owned()));
     return view.current;
@@ -55,8 +58,18 @@ test('typing in a note saves it to the host', async t => {
   assert.equal(note.content(), '# Plan\n- write tests');
 });
 
-test('an edit refused because another client changed the note is kept until the user chooses', async t => {
+test('another client\'s change reaches an open note at once and makes it read-only', async t => {
   const host = await noteHost(t);
+  const note = await host.open();
+  await host.otherClientWrites('theirs');
+  await whenReactive(() => note.content() === 'theirs');
+  assert.deepEqual([note.owned(), note.editable()], [false, false]);
+  await act(() => note.edit('ignored'));
+  assert.deepEqual([note.dirty(), await host.hostCopy()], [false, 'theirs']);
+});
+
+test('an edit typed before another client\'s change arrives is kept until the user chooses', async t => {
+  const host = await noteHost(t, { events: false });
   const note = await host.open();
   await host.otherClientWrites('theirs');
   await act(() => note.edit('mine'));
@@ -70,7 +83,7 @@ test('an edit refused because another client changed the note is kept until the 
 });
 
 test('choosing the saved note drops the conflicting edit', async t => {
-  const host = await noteHost(t);
+  const host = await noteHost(t, { events: false });
   const note = await host.open();
   await host.otherClientWrites('theirs');
   await act(() => note.edit('mine'));
@@ -94,4 +107,23 @@ test('an edit made while the host is unreachable survives closing the window and
   await act(() => reopened.takeControl());
   await host.settle();
   assert.deepEqual([reopened.content(), reopened.dirty(), await host.hostCopy()], ['written offline', false, 'written offline']);
+});
+
+test('an unsaved note of a deleted chat stays available in plugin settings until the user discards it', async t => {
+  const host = await noteHost(t);
+  const note = await host.open({ hook: useNoteSession });
+  await host.daemon.disconnect();
+  await act(() => note.edit('draft worth keeping'));
+  await host.settle();
+  await host.daemon.reconnect();
+  await host.daemon.invoke('delete_session', { sessionPath: host.chat.path, hostId: 'local', clientId: 'other-client' });
+  await whenReactive(() => note.deleted());
+  await host.closeAll();
+  const settings = await renderComponent(RetainedNoteDrafts, { hostId: 'local', busy: false });
+  const draft = await untilDom(() => settings.container.querySelector('[aria-label="Unsaved note draft"]'));
+  assert.match(draft.textContent, /This conversation was deleted\..*draft worth keeping/s);
+  await act(() => [...draft.querySelectorAll('button')].find(button => button.textContent === 'Discard unsaved edits').click());
+  await host.settle();
+  await untilDom(() => !settings.container.querySelector('[aria-label="Unsaved note draft"]'));
+  await settings.unmount();
 });
