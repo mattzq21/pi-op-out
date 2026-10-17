@@ -159,3 +159,54 @@ test('a child can send its parent a progress update before its final answer', as
   const messages = await root.until(history => text(history.at(-1)) === 'Relay: surveyed');
   expect(messages.filter(message => message.role === 'assistant').map(text).filter(Boolean)).toEqual(['Waiting.', 'Noted the progress.', 'Relay: surveyed']);
 }, 120000);
+
+test('a batch of children runs at once, waiting for all ends only after each answered, and every answer reaches the parent', async () => {
+  const answered = new Map<string, number>();
+  agents.scripts.set('Count the fruit', messages => {
+    const last = messages.at(-1);
+    if (!called(messages, 'subagent')) return { tool: 'subagent', arguments: { tasks: [{ name: 'apples', task: 'Count apples' }, { name: 'pears', task: 'Count pears' }] } };
+    if (!called(messages, 'await_subagents')) return { tool: 'await_subagents' };
+    if (last.role === 'tool' && !answered.has('awaited')) answered.set('awaited', Date.now());
+    const counts = JSON.stringify(messages).match(/Relay: \d+ \w+/g) ?? [];
+    return { text: counts.length ? 'Counts: ' + [...new Set(counts)].sort().join(', ') : 'Waiting.' };
+  });
+  for (const [task, answer] of [['Count apples', 'Relay: 3 apples'], ['Count pears', 'Relay: 5 pears']]) {
+    agents.scripts.set(task, async () => { await Bun.sleep(300); answered.set(task, Date.now()); return { text: answer }; });
+  }
+  const root = await agents.rootChat();
+  await root.command({ type: 'prompt', message: 'Count the fruit' });
+  await root.until(history => text(history.at(-1)) === 'Counts: Relay: 3 apples, Relay: 5 pears');
+  expect(answered.get('awaited')).toBeGreaterThan(Math.max(answered.get('Count apples')!, answered.get('Count pears')!));
+  const children = (await agents.daemon.invoke('list_sessions')).filter((session: any) => session.subagentParentId === root.sessionId).map((session: any) => session.name).sort();
+  expect(children).toEqual(['Subagent: apples', 'Subagent: pears']);
+}, 120000);
+
+test('an agent limited to one subagent cannot start a second while the first is still working', async () => {
+  const setup = await agents.rootChat();
+  const original = await setup.command({ type: 'get_agent_configuration' });
+  const setLimit = async (limit?: number) => {
+    const current = await setup.command({ type: 'get_agent_configuration' });
+    await setup.command({ type: 'configure_agents', configuration: { revision: current.revision, agents: original.agents.map((agent: any) => limit === undefined ? agent : { ...agent, max_subagents: limit }) } });
+  };
+  let releaseFirst!: (reply: { text: string }) => void;
+  const firstReply = new Promise<{ text: string }>(resolve => { releaseFirst = resolve; });
+  agents.scripts.set('Use one helper', messages => {
+    const last = messages.at(-1);
+    if (!called(messages, 'subagent')) return { tool: 'subagent', arguments: { tasks: [{ name: 'one', task: 'Limited first task' }, { name: 'two', task: 'Limited second task' }] } };
+    if (!called(messages, 'spawn_agent')) return { tool: 'spawn_agent', arguments: { task_name: 'first', message: 'Limited first task' } };
+    if (called(messages, 'spawn_agent') && messages.filter((message: any) => message.tool_calls?.some((call: any) => call.function.name === 'spawn_agent')).length < 2 && last.role === 'tool') return { tool: 'spawn_agent', arguments: { task_name: 'second', message: 'Limited second task' } };
+    return { text: 'Done trying.' };
+  });
+  agents.scripts.set('Limited first task', () => firstReply);
+  await setLimit(1);
+  try {
+    const root = await agents.rootChat();
+    await root.command({ type: 'prompt', message: 'Use one helper' });
+    const messages = await root.until(history => text(history.at(-1)) === 'Done trying.');
+    const results = messages.filter(message => message.role === 'toolResult').map(message => [message.toolName, message.isError]);
+    expect(results).toEqual([['subagent', true], ['spawn_agent', false], ['spawn_agent', true]]);
+    const seen = agents.model.requests.findLast(request => JSON.stringify(request.messages).includes('Use one helper')).messages.filter((message: any) => message.role === 'tool').map(text);
+    expect(seen[0]).toBe('This agent allows at most 1 concurrent subagents; 0 slots are occupied');
+    expect(seen[2]).toBe('This agent allows at most 1 concurrent subagents; 1 slots are occupied');
+  } finally { releaseFirst({ text: 'First done.' }); await setLimit(); }
+}, 120000);
