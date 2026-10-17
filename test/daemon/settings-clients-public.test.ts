@@ -1,5 +1,59 @@
 import { expect, test } from 'bun:test';
-import { startDaemon } from './harness';
+import { startDaemon, synchronizationFinished, temporaryDirectory, type TestDaemon } from './harness';
+
+test('separate development daemons notify their clients when shared settings change', async () => {
+  const home = temporaryDirectory('piop-settings-shared-');
+  const running: TestDaemon[] = [];
+  try {
+    for (let index = 0; index < 2; index++) {
+      const daemon = await startDaemon({ home, development: true, projectRoot: temporaryDirectory('piop-settings-project-') });
+      running.push(daemon);
+      const initial = await daemon.invoke('load_app_settings');
+      initial.reviewPrompt = 'Initial settings for project ' + index;
+      const baseline = await daemon.invoke('save_app_settings', { settings: initial });
+      await synchronizationFinished(daemon, baseline.revision);
+    }
+    const [first, second] = running as [TestDaemon, TestDaemon];
+    const settings = await first.invoke('load_app_settings');
+    settings.reviewPrompt = 'Review changes from the first project';
+    const saved = await first.invoke('save_app_settings', { settings });
+    const received = await second.waitEvent('pi://settings-changed', change =>
+      change.settings.reviewPrompt === 'Review changes from the first project');
+    expect(received.revision).toBe(saved.committedRevision);
+
+    const next = await second.invoke('save_app_settings', {
+      settings: { ...received.settings, reviewPrompt: 'Review changes from the second project' },
+    });
+    const returned = await first.waitEvent('pi://settings-changed', change =>
+      change.settings.reviewPrompt === 'Review changes from the second project');
+    expect(returned.revision).toBe(next.committedRevision);
+    expect((await first.invoke('load_app_settings')).reviewPrompt)
+      .toBe('Review changes from the second project');
+  } finally { await Promise.all(running.map(daemon => daemon.stop())); }
+}, 60_000);
+
+test('saved settings survive a daemon restart and the saved version remains editable', async () => {
+  let daemon = await startDaemon();
+  try {
+    const settings = await daemon.invoke('load_app_settings');
+    settings.reviewPrompt = 'Check that user data survives failures';
+    const saved = await daemon.invoke('save_app_settings', { settings });
+    const home = daemon.home;
+    await daemon.stop();
+    daemon = await startDaemon({ home });
+
+    const restored = await daemon.invoke('load_settings_change');
+    expect(restored.settings.reviewPrompt).toBe('Check that user data survives failures');
+    expect(restored.revision).toBe(saved.committedRevision);
+    expect(restored.settings.settingsRevision).toBe(saved.settings.settingsRevision);
+    const next = await daemon.invoke('save_app_settings', {
+      settings: { ...saved.settings, reviewPrompt: 'Check recovery after a second save' },
+    });
+    expect(next.committedRevision).toBe(saved.committedRevision + 1);
+    expect((await daemon.invoke('load_app_settings')).reviewPrompt)
+      .toBe('Check recovery after a second save');
+  } finally { await daemon.stop(); }
+}, 60_000);
 
 test('simultaneous settings saves accept one client and let the other retry after reloading', async () => {
   const daemon = await startDaemon();
