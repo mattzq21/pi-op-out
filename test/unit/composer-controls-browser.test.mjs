@@ -17,6 +17,10 @@ test('an explicit focus request focuses the message editor', async t => {
   await button.focus();
   assert.equal(await button.evaluate(node => node === document.activeElement), true);
   await page.keyboard.press('Enter');
+  await page.getByRole('textbox', { name: 'Message piop' }).evaluate(node => new Promise(resolve => {
+    if (node === document.activeElement) resolve();
+    else node.addEventListener('focus', resolve, { once: true });
+  }));
   assert.equal(await page.getByRole('textbox', { name: 'Message piop' }).evaluate(node => node === document.activeElement), true);
 });
 
@@ -232,6 +236,24 @@ test('in-flight submission is deduplicated and failed sends preserve newer typin
   await page.keyboard.press('Enter');
   await page.getByRole('button', { name: 'Complete send', exact: true }).click();
   assert.equal(await editor.inputValue(), '');
+});
+
+test('prompt history recalls sent prompts and restores the unsent draft', { timeout: 30000 }, async t => {
+  const page = await controlsPage(t);
+  const editor = page.getByRole('textbox', { name: 'Message piop' });
+  for (const prompt of ['First prompt', 'Second prompt']) {
+    await editor.fill(prompt);
+    await page.keyboard.press('Enter');
+    await page.waitForFunction(() => document.querySelector('[aria-label="Message piop"]').value === '');
+  }
+  assert.deepEqual(await sent(page), [['First prompt', null, []], ['Second prompt', null, []]]);
+  await editor.fill('  Unsent draft ');
+  const walk = async keys => { const values = []; for (const key of keys) { await page.keyboard.press(key); values.push(await editor.inputValue()); } return values; };
+  assert.deepEqual(await walk(['ArrowUp', 'ArrowUp', 'ArrowDown', 'ArrowDown']), ['Second prompt', 'First prompt', 'Second prompt', '  Unsent draft ']);
+  await page.keyboard.press('ArrowUp');
+  await page.keyboard.type(' edited');
+  assert.deepEqual(await walk(['ArrowUp', 'ArrowDown']), ['Second prompt', 'Second prompt edited']);
+  assert.deepEqual(await sent(page), [['First prompt', null, []], ['Second prompt', null, []]]);
 });
 
 
