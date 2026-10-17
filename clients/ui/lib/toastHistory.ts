@@ -1,27 +1,14 @@
 import { createEffect, createSignal, untrack, type Accessor } from "solid-js";
-import { mergeToastHistory, syncToastHistory, toastEntriesSchema, type ToastHistoryEntry } from "./toastHistoryStorage";
+import { mergeToastHistory, syncToastHistory, type ToastHistoryEntry } from "./toastHistoryStorage";
 
 export type { ToastHistoryEntry } from "./toastHistoryStorage";
-
-const storageKey = "piop.toast-history";
 
 type Notice = { id: string; title: string; message: string };
 
 /** The history keeps the newest 10 notices, so unsaved notices are limited the same way. */
 const HISTORY_LIMIT = 10;
 
-let legacyBody: string | null = null;
-
-function readHistory(): ToastHistoryEntry[] {
-  try { legacyBody = localStorage.getItem(storageKey);
-
-  return toastEntriesSchema.parse(JSON.parse(legacyBody ?? "[]")).slice(-HISTORY_LIMIT); }
-  catch { return []; }
-}
-
-const legacy = readHistory();
-
-const [toastHistory, setToastHistory] = createSignal(legacy);
+const [toastHistory, setToastHistory] = createSignal<ToastHistoryEntry[]>([]);
 /** Why the last history save failed, until a save succeeds. */
 const [toastHistoryError, setToastHistoryError] = createSignal<string>();
 
@@ -43,13 +30,11 @@ function refreshHistory() {
   saving = true; refreshPending = false;
   const sent = [...pending.values()];
   let succeeded = false;
-  void syncToastHistory(legacy, sent).then(saved => {
+  void syncToastHistory(sent).then(saved => {
     sent.forEach(entry => pending.delete(entry.id));
     setToastHistory(mergeToastHistory(saved, [...pending.values()]));
     succeeded = true;
     setToastHistoryError(undefined);
-
-    try { if (localStorage.getItem(storageKey) === legacyBody) localStorage.removeItem(storageKey); } catch { }
 
     if (sent.length) channel?.postMessage(null);
   }).catch(error => {

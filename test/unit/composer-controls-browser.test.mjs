@@ -17,7 +17,12 @@ test('an explicit focus request focuses the message editor', async t => {
   await button.focus();
   assert.equal(await button.evaluate(node => node === document.activeElement), true);
   await page.keyboard.press('Enter');
-  assert.equal(await page.getByRole('textbox', { name: 'Message piop' }).evaluate(node => node === document.activeElement), true);
+  // The editor takes focus on a later frame.
+  await page.getByRole('textbox', { name: 'Message piop' }).evaluate(node => new Promise((resolve, reject) => {
+    const deadline = performance.now() + 2000;
+    const check = () => node === document.activeElement ? resolve() : performance.now() > deadline ? reject(new Error('The message editor never took focus')) : requestAnimationFrame(check);
+    check();
+  }));
 });
 
 const choices = async page => JSON.parse(await page.getByLabel('Selected values').textContent());
