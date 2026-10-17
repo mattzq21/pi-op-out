@@ -20,12 +20,15 @@ The September 25 notes interactions also used synthetic `KeyboardEvent` dispatch
 
 ## Current implementation cross-check
 
-Resolve these paths against the active checkout on later runs:
+Checked in `/home/matt/.codex/worktrees/7fda/piop` when authoring; resolve these paths against the active checkout on later runs:
 
-- `scripts/tauri-webdriver.py` (this skill): WebKitWebDriver plus `WEBKIT_INSPECTOR_SERVER`, port leases, daemon launch lock, shared or isolated profile, MCP attachment, restricted tool calls and owned-process cleanup.
-- `scripts/tests/test_tauri_webdriver_mcp.py` (this skill): exercises the MCP transport against a minimal WebDriver endpoint.
-- `package.json` and `scripts/tauri.mjs`: the default `npm run tauri dev` command, dynamic Vite URL and window bounds.
-- `scripts/build-daemon.mjs` and `scripts/window-placement.mjs`: daemon build side effects and monitor-specific placement.
-- `clients/desktop/src/daemon_endpoint.rs` and `clients/desktop/src/desktop_daemon.rs`: release/debug endpoint location, companion executable, automatic development daemon build and connection behavior.
+- `scripts/wdio-manual.mjs`: embedded provider, ephemeral loopback port, `PI_E2E_BINARY`, printed attachment data, signal-driven cleanup; no fixture setup.
+- `.codex/start-wdio-mcp.sh`: launches WDIO MCP; explicitly requires attachment to the session printed by the manual launcher.
+- `package.json`: separate build/manual/test-run commands; the build uses an E2E frontend and builds `piopd` with `daemon,test-home`.
+- `clients/desktop/Cargo.toml` and `clients/desktop/src/desktop.rs`: `webdriver` feature enables the embedded plugin and app home override.
+- `wdio.conf.ts`, `test/isolated-node-home.mjs`, and `daemon/src/environment.ts`: fixture environment, Node home override, and daemon's feature-gated `PIOP_TEST_HOME` support.
+- `clients/desktop/src/daemon_endpoint.rs` and `clients/desktop/src/desktop_daemon.rs`: release/debug endpoint location, companion executable, automatic development daemon build, and connection behavior.
+- `scripts/tauri.mjs`, `scripts/build-daemon.mjs`, and `scripts/window-placement.mjs`: dynamic dev URL, daemon build/startup side effects, and monitor-specific placement.
+- `clients/ui/App.tsx` and `clients/ui/lib/nativeTransport.ts`: E2E controls and mode-dependent temporary-chat behavior.
 
-The traces above used an older launcher (`scripts/wdio-manual.mjs`, a Cargo `webdriver` feature and `PIOP_TEST_HOME`). These no longer exist. Their lessons about selectors, attachment, ownership and cleanup still apply.
+Live WDIO tool schemas were also inspected for attachment, session creation/closure, DOM execution, element discovery, text input, and screenshot behavior. No app sessions, builds, or test suites were run to create this skill.

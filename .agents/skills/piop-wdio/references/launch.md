@@ -2,52 +2,94 @@
 
 Read this before starting a new session. Paths below are relative to the **active Piop checkout**. Recheck the named implementation files if the branch has changed; old traces contain superseded commands and binary names.
 
-## What the launcher does
+## Select a matching build
 
-`scripts/tauri-webdriver.py` in this skill is the only supported launcher. It needs Linux, `WebKitWebDriver` and `npx`. It:
+The current manual launcher is `npm run test:e2e:manual`, equivalent to `node scripts/wdio-manual.mjs`. It starts the app, creates an embedded WebDriver session, prints attachment JSON, and waits for SIGINT/SIGTERM. It does not run the E2E suite.
 
-1. Reserves two free loopback ports and starts `WebKitWebDriver --target=127.0.0.1:<inspector port>`.
-2. Runs the app command in `--project` with `WEBKIT_INSPECTOR_SERVER` set to that port. The default command is `npm run tauri dev` (`scripts/tauri.mjs`): a debug build, a Vite server and the worktree's development daemon. Pass another command after `--` to replace it.
-3. Creates a WebDriver session, starts `@wdio/mcp`, attaches it to that session, and prints the attachment JSON.
+Its default app is `target/e2e/release/piop` (`piop.exe` on Windows). `PI_E2E_BINARY` overrides that path. The app must have been built with the Cargo `webdriver` feature. For isolated state, its companion daemon must have `daemon,test-home`; the current binary name is `piopd`, not the historical `piop-daemon`.
 
-No Cargo feature or special build is needed: the WebKit inspector server is part of WebKitGTK. Do not run `npm test` or `npm run test:e2e` to get a manual session; `test:e2e` builds a separate E2E app for the automated suite only.
+Reuse a suitable existing binary when its revision and build mode match the requested check. If a build is necessary and permitted by the current task/instructions, the repository's `npm run test:e2e:build` builds both binaries and frontend assets. Inspect its definition first: it includes TypeScript checking and an E2E-mode frontend, but does not execute the test suite. Do not run `npm test`, `npm run test:e2e`, or `test:e2e:run` merely to obtain a manual session. Respect instructions restricting builds or checks.
 
-`npm run tauri dev` builds the frontend and Rust app and can rebuild or restart the worktree's development daemon. The launcher holds `target/.piop-daemon-launch.lock` during startup so that parallel launchers on the same worktree wait for each other. The default `--timeout` is 600 seconds; increase it for a cold build.
+E2E-mode assets expose `E2E responses` and `E2E calls` controls and can change temporary-chat behavior. State the build mode in your result. Injected responses do not establish a live model/backend round trip. Choose a normal frontend when that distinction matters.
 
-## Profiles
+For an existing debug binary, use `PI_E2E_BINARY` with its absolute path. Debug builds use `.piop-dev` and can depend on a Vite server at the URL compiled into the binary. `npm run tauri -- dev` currently chooses a dynamic Vite port and can rebuild/stop the development daemon; it is not a harmless substitute for the manual launcher. Recheck `scripts/tauri.mjs` before using it. For an isolated debug run, explicitly start a matching daemon built with `test-home` before the client, avoiding its automatic daemon rebuild without that feature.
 
-- `--shared-profile` (default): uses your normal home, provider credentials and development daemon. Use it to check existing user state.
-- `--isolated-profile`: sets `HOME`, `PI_CODING_AGENT_DIR` and the XDG folders to `<instance>/home`, clears `PIOP_TEST_HOME`, `PIOP_DAEMON_URL`, `PIOP_DAEMON_TOKEN` and `PI_CODING_AGENT_SESSION_DIR`, and binds the mobile server to `127.0.0.1:0`. `CARGO_HOME` and `RUSTUP_HOME` keep their real values. There are no provider credentials, so model calls fail. Use it for checks that create or change state.
+## Isolate new exploratory runs
 
-For checks that need credentials in an isolated profile, copy only the needed agent files into `<instance>/home/.pi/agent`, honoring file-edit rules. Keep their contents out of tool output and reports. Use a disposable project inside the instance folder for worktree, rename, trash or branching experiments. Do not reinterpret a requested check of existing user state as an empty profile check.
+`wdio.conf.ts` prepares an isolated fixture, authentication copies, a daemon, and cleanup for automated runs. **The manual launcher does none of that.** Supply the environment yourself when the requested interactions create or change state.
 
-Debug daemon endpoints live under `~/.piop-dev/daemons/<worktree-hash>` of the selected home. Inspect `clients/desktop/src/daemon_endpoint.rs` if discovery differs. The endpoint JSON contains a token: check readiness without dumping credentials. An "already running" message requires checking the existing daemon's identity and build. Do not kill another task's daemon.
+Use a unique fixture directory, and record its absolute path so separate terminal calls can use the same value:
+
+```bash
+piop_fixture=$(mktemp -d /tmp/piop-wdio.XXXXXX)
+printf '%s\n' "$piop_fixture"
+```
+
+Apply this environment to **both** the separately launched daemon and manual launcher. Repeat it in each shell call, substituting the recorded path; shell exports do not automatically carry between tool calls:
+
+```bash
+piop_fixture=/absolute/path/printed/above
+export PIOP_TEST_HOME="$piop_fixture"
+export PI_CODING_AGENT_DIR="$piop_fixture/.pi/agent"
+export XDG_CONFIG_HOME="$piop_fixture/config"
+export XDG_DATA_HOME="$piop_fixture/data"
+export XDG_CACHE_HOME="$piop_fixture/cache"
+export NODE_OPTIONS="${NODE_OPTIONS:+$NODE_OPTIONS }--import=$PWD/test/isolated-node-home.mjs"
+export PIOP_MOBILE_BIND=127.0.0.1:0
+unset PIOP_DAEMON_URL PIOP_DAEMON_TOKEN
+```
+
+`PIOP_TEST_HOME` redirects the Rust app/daemon only in builds with the appropriate features. The Node preload redirects `os.homedir()` for child processes. The XDG paths cover client preferences and caches; `PI_CODING_AGENT_DIR` covers agent configuration. Do not replace `HOME`, `CARGO_HOME`, or `RUSTUP_HOME` with a scratch path.
+
+For checks needing authentication, follow the current fixture setup in `wdio.conf.ts` to prepare only the needed agent files within the fixture, honoring file-edit rules. Keep their contents out of tool output and reports. Checks of UI validation and navigation may not need credentials. Use a disposable project inside the fixture for worktree, rename, trash, or branching experiments. Do not reinterpret a requested check of existing user state as an empty fixture check.
+
+Start the matching fixture daemon in a persistent terminal with the environment above:
+
+```bash
+target/release/piopd --serve
+```
+
+For a debug app use the matching debug daemon. Wait for startup and publication of its fixture endpoint before starting the app. Release endpoints live under `$PIOP_TEST_HOME/.piop`; current debug endpoints live under `$PIOP_TEST_HOME/.piop-dev/daemons/<worktree-hash>`. Inspect `clients/desktop/src/daemon_endpoint.rs` if discovery differs. The endpoint JSON contains a token: check readiness without dumping credentials.
+
+An “already running” message requires checking the existing daemon's identity, build, and environment. Do not kill another task's daemon or reuse it solely because a port is open.
 
 ## Start the launcher and retain ownership
 
-```bash
-python3 <skill>/scripts/tauri-webdriver.py --project "$PWD" [--isolated-profile]
-```
-
-Use `exec_command` with a PTY and a short initial yield (for example `tty: true`, `yield_time_ms: 3000`), then `write_stdin` to collect output. Retain the terminal session ID for cleanup. Stderr first prints the instance folder (`/tmp/tauri-webdriver-<uid>/instance-*`). Wait for the **attachment JSON** on stdout and the `Ready:` line. Record:
-
-- The launcher terminal ID and `launcherPid`.
-- The `sessionFile`, `profileHome`, `logs` paths (`app.log`, `driver.log`, `mcp.log`, `webdriver.log`) and `runtime.daemonLog`.
-- The printed `webdriverSessionId` and `webdriverConfig`.
-
-On failure, read `app.log` first: build errors and daemon errors appear there.
-
-On Linux, `scripts/tauri.mjs` selects window bounds through `scripts/window-placement.mjs` and passes `PI_WINDOW_BOUNDS`; these bounds are specific to the user's monitor arrangement. A screenshot can reveal an unexpected size or location. Do not rewrite production window configuration to drive a manual check.
-
-## Use the attached session
-
-The launcher owns the WDIO MCP process. Call it through the same script:
+In another persistent terminal, repeat the same fixture environment and run:
 
 ```bash
-python3 <skill>/scripts/tauri-webdriver.py tools --session <sessionFile> [TOOL]
-python3 <skill>/scripts/tauri-webdriver.py call --session <sessionFile> get_elements '{}'
+npm run test:e2e:manual
 ```
 
-Only these tools are allowed: `click_element`, `scroll`, `set_value`, `tap_element`, `swipe`, `drag_and_drop`, `execute_script`, `get_elements`, `get_screenshot`. Session tools (`start_session`, `attach_session`, `close_session`, `launch_chrome`) are blocked, so do not create a second session. Screenshots are saved to files; the output gives their paths. `connect --session <sessionFile>` exposes the same MCP over stdio for an MCP client.
+Or select a verified debug binary:
 
-After an app restart, the session and ports may change. Use the current launcher output. When finished, send Ctrl+C (SIGINT) to the owned launcher. It detaches MCP, deletes the WebDriver session, stops only processes marked with its instance ID, and keeps the instance folder for logs and reproduction artifacts.
+```bash
+PI_E2E_BINARY="$PWD/target/debug/piop" node scripts/wdio-manual.mjs
+```
+
+Use `exec_command` with a PTY and a short initial yield (for example `tty: true`, `yield_time_ms: 1000`), then `write_stdin` to collect startup output. Retain the terminal session ID for cleanup. Wait for the **final attachment JSON**, not just “WebDriver server ready.” Record separately:
+
+- The daemon and launcher terminal IDs/PIDs this task owns.
+- The selected binary, fixture directory, and frontend server if any.
+- The printed WebDriver `sessionId` and `webdriverConfig`.
+
+The current launcher allocates a free loopback port. On Linux it selects X11 and window bounds through `scripts/window-placement.mjs`; these bounds are specific to the user's monitor arrangement. A screenshot can reveal an unexpected size or location. The launcher supplies its own `PI_WINDOW_BOUNDS`, so setting that variable outside it does not necessarily override placement. Do not rewrite production window configuration to drive a manual check.
+
+Attach through WDIO as shown in `SKILL.md`, inspect the app, and leave the launcher alive until finished. The MCP configuration may point at the main checkout even while this task uses a worktree; that does not select the application binary for you.
+
+## Direct launch: only when the helper is unsuitable
+
+The traces also show a webdriver-enabled app launched directly with `TAURI_WEBDRIVER_PORT` set to a verified free port, followed by:
+
+```js
+text(await tools.mcp__wdio__start_session({
+  platform: "browser",
+  provider: "external",
+  webdriverConfig: { hostname: "127.0.0.1", port: 12345, path: "/" },
+  capabilities: { browserName: "tauri" }
+}));
+```
+
+Replace the example port with the chosen live port. This creates the WebDriver session on an app that is already running; it does not launch Piop. Recheck the installed embedded driver's environment contract before using this route. Keep the same fixture, daemon, and ownership rules. Prefer the existing helper unless direct launch solves an actual need such as custom initial window bounds. Never call `start_session` on top of the session already created by `wdio-manual.mjs`.
+
+After an app restart, both session identity and endpoint may change. Reattach with current output. After detaching the MCP, stop only the task's recorded launcher/daemon/server processes, preserving any reproduction artifacts the user needs.
