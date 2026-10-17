@@ -43,6 +43,24 @@ async function startTerminal(client: Client, clientId: string, sessionId: string
 const entry = async (client: Client, clientId: string, sessionId: string, terminalId: string) =>
   (await shared(client, clientId, 'list', sessionId)).find((item: any) => item.id === terminalId);
 
+test('resizing a shared terminal changes the dimensions seen by its shell', async () => {
+  const client = await daemon.connect();
+  const sessionId = 'draft-shell-size';
+  const terminalId = 'shell-size';
+  const directory = temporaryDirectory('piop-shell-size-');
+  writeFileSync(join(directory, '.terminal-script'), "IFS= read -r line\nprintf 'SIZE:'\nstty size\n");
+  try {
+    await shared(client, 'size-reader', 'start', sessionId, { sharedTerminalId: terminalId, cwd: directory, cols: 80, rows: 24 });
+    await shared(client, 'size-reader', 'resize', sessionId, { sharedTerminalId: terminalId, cols: 113, rows: 37 });
+    await shared(client, 'size-reader', 'write', sessionId, { sharedTerminalId: terminalId, data: '\n' });
+    await client.waitEvent('pi://event', event => event.type === 'terminal_exit' && event.terminalId === terminalId);
+    expect((await entry(client, 'size-reader', sessionId, terminalId)).output).toContain('SIZE:37 113');
+  } finally {
+    await shared(client, 'size-reader', 'close', sessionId, { sharedTerminalId: terminalId });
+    client.close();
+  }
+}, 30_000);
+
 test('sending reviewed terminal text delivers it once and clears its matching draft', async () => {
   const client = await daemon.connect();
   const sessionId = 'draft-reviewed-input';
