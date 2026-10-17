@@ -2,7 +2,7 @@ import { expect, test } from 'bun:test';
 import { readFileSync, writeFileSync, utimesSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { startDaemon } from './harness';
+import { startDaemon, waitForSessions, type TestDaemon } from './harness';
 
 function publicChat(home: string, content: string): { id: string; path: string } {
   return JSON.parse(execFileSync('node', [fileURLToPath(new URL('../fixtures/publish-chat.mjs', import.meta.url))], {
@@ -64,4 +64,25 @@ test('session ordering uses file change times instead of transcript fields', asy
     }
     expect((await fresh.invoke('list_sessions')).map((row: any) => row.id)).toEqual([newer.id, older.id]);
   } finally { await fresh.stop(); }
+}, 60000);
+
+test('a chat renamed in a running agent keeps one row with the new name for other clients and after restart, and leaves the list when archived', async () => {
+  let daemon = await startDaemon();
+  try {
+    const chat = publicChat(daemon.home, JSON.stringify({ type: 'message', id: 'question', parentId: null, message: { role: 'user', content: 'Original question' } }) + '\n');
+    const other = await daemon.connect();
+    expect((await other.invoke('list_sessions')).filter((row: any) => row.id === chat.id)).toMatchObject([{ path: chat.path, name: 'Original question', messageCount: 1 }]);
+    const runtimeId = crypto.randomUUID();
+    await daemon.invoke('start_pi', { runtimeId, clientId: 'rename-owner', cwd: daemon.home, sessionPath: chat.path });
+    await daemon.invoke('pi_command', { runtimeId, command: { type: 'set_session_name', name: 'Renamed chat' } });
+    const seen = await waitForSessions(other as TestDaemon, rows => rows.some(row => row.id === chat.id && row.name === 'Renamed chat'));
+    expect(seen.filter((row: any) => row.id === chat.id)).toMatchObject([{ path: chat.path, name: 'Renamed chat', messageCount: 1 }]);
+    await daemon.invoke('stop_pi', { runtimeId });
+    const home = daemon.home;
+    await daemon.stop();
+    daemon = await startDaemon({ home });
+    expect((await daemon.invoke('list_sessions')).filter((row: any) => row.id === chat.id)).toMatchObject([{ path: chat.path, name: 'Renamed chat', messageCount: 1 }]);
+    await daemon.invoke('archive_session', { hostId: 'local', sessionPath: chat.path, terminalIds: [], clientId: 'rename-owner' });
+    expect((await daemon.invoke('list_sessions')).filter((row: any) => row.id === chat.id)).toEqual([]);
+  } finally { await daemon.stop(); }
 }, 60000);
