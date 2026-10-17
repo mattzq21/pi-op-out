@@ -241,11 +241,14 @@ test('a reconnected owner takes over the listed terminals of its conversation an
   const listed = await entry(reconnected, 'owner', session, 'restored');
   expect(listed).toMatchObject({ generation, owned: true, exited: false });
   expect(listed.output).toContain('$ preserved');
+  await shared(reconnected, 'owner', 'draft', session, { sharedTerminalId: 'restored', data: 'Continue after moving' });
   await shared(reconnected, 'owner', 'reassign', 'draft-child', { sharedTerminalId: 'restored' });
   expect(await old.failure('shared_terminal', { action: 'reassign', clientId: 'owner', sessionKey: 'local:draft-wrong', hostId: 'local', sharedTerminalId: 'restored' }))
     .toBe('Take ownership of this session before changing its terminals');
   expect(await entry(reconnected, 'owner', session, 'restored')).toBeUndefined();
-  expect(await entry(reconnected, 'owner', 'draft-child', 'restored')).toMatchObject({ owned: true, generation });
+  expect(await entry(reconnected, 'owner', 'draft-child', 'restored')).toMatchObject({
+    owned: true, generation, exited: false, inputDraft: 'Continue after moving', output: expect.stringContaining('$ preserved'),
+  });
   expect(await entry(old, 'owner', 'draft-wrong', 'restored')).toBeUndefined();
   // The terminal of the other conversation still belongs to the old connection.
   expect(await entry(old, 'owner', 'draft-other', 'unrelated')).toMatchObject({ owned: true });
