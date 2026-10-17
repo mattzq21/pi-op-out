@@ -38,6 +38,22 @@ test('recovering a missing project gives the chat an empty directory and keeps i
   } finally { await daemon.stop(); }
 }, 60_000);
 
+test('another client learns about a recovered directory through the session change event', async () => {
+  const daemon = await startDaemon();
+  try {
+    const chat = missingChat(daemon);
+    const other = await daemon.connect();
+    expect((await other.invoke('list_sessions')).find((row: any) => row.id === chat.id))
+      .toMatchObject({ cwd: chat.cwd, cwdExists: false });
+    other.events.length = 0;
+
+    const recovered = await recover(daemon, chat.path);
+    await other.waitEvent('pi://sessions-changed');
+    expect((await other.invoke('list_sessions')).find((row: any) => row.id === chat.id))
+      .toMatchObject({ cwd: recovered.cwd, cwdExists: true, preview: 'Keep my research notes' });
+  } finally { await daemon.stop(); }
+}, 60_000);
+
 test('failed recovery preserves the chat and permits retry after the storage obstruction is removed', async () => {
   const daemon = await startDaemon();
   try {
