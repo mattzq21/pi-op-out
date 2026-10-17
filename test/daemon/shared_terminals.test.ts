@@ -43,6 +43,32 @@ async function startTerminal(client: Client, clientId: string, sessionId: string
 const entry = async (client: Client, clientId: string, sessionId: string, terminalId: string) =>
   (await shared(client, clientId, 'list', sessionId)).find((item: any) => item.id === terminalId);
 
+test('an exited terminal keeps its final output and preserves a draft when sending fails', async () => {
+  const client = await daemon.connect();
+  const sessionId = 'draft-exited-output';
+  const terminalId = 'exited-output';
+  const directory = temporaryDirectory('piop-terminal-exit-');
+  writeFileSync(join(directory, '.terminal-script'), "printf 'Finished successfully\\n'\n");
+  try {
+    await shared(client, 'exit-owner', 'start', sessionId, {
+      sharedTerminalId: terminalId, cwd: directory, cols: 80, rows: 24,
+    });
+    await client.waitEvent('pi://event', event => event.type === 'terminal_exit' && event.terminalId === terminalId);
+    expect(await entry(client, 'exit-owner', sessionId, terminalId))
+      .toMatchObject({ exited: true, output: expect.stringContaining('Finished successfully') });
+    await shared(client, 'exit-owner', 'draft', sessionId, { sharedTerminalId: terminalId, data: 'Keep for next shell' });
+    expect(await client.failure('shared_terminal', {
+      action: 'write_and_clear_draft', clientId: 'exit-owner', hostId: 'local',
+      sessionKey: 'local:' + sessionId, sharedTerminalId: terminalId,
+      data: 'Keep for next shell\n', expectedDraft: 'Keep for next shell',
+    })).toBe('Terminal is not running');
+    expect((await entry(client, 'exit-owner', sessionId, terminalId)).inputDraft).toBe('Keep for next shell');
+  } finally {
+    await shared(client, 'exit-owner', 'close', sessionId, { sharedTerminalId: terminalId });
+    client.close();
+  }
+}, 30_000);
+
 test('another connection cannot send and clear the owner terminal draft', async () => {
   const owner = await daemon.connect();
   const other = await daemon.connect();
