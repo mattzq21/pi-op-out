@@ -14,6 +14,21 @@ const pending = (runtimeId: string): Array<{ id: string; message: string; behavi
 
 const userTexts = (messages: any[]) => messages.filter(message => message.role === 'user').map(text);
 
+test('the chat list shows a chat as running while its agent works, and tells clients when it finishes', async () => {
+  const busy = held<{ text: string }>();
+  agents.scripts.set('Index the repository', () => busy.promise);
+  const chat = await agents.rootChat();
+  const listed = async () => (await agents.daemon.invoke('list_sessions')).find((session: any) => session.id === chat.sessionId)?.isRunning;
+  await chat.command({ type: 'prompt', message: 'Index the repository' });
+  await chat.until(() => agents.model.requests.some(request => text(request.messages.at(-1)) === 'Index the repository'));
+  let mark = 0;
+  try { expect(await listed()).toBe(true); mark = agents.daemon.events.length; } finally { busy.release({ text: 'Indexed.' }); }
+  await chat.until(history => text(history.at(-1)) === 'Indexed.');
+  for (let tries = 0; !agents.daemon.events.slice(mark).some(event => event.event === 'pi://sessions-changed') && tries < 50; tries++) await Bun.sleep(100);
+  expect(agents.daemon.events.slice(mark).some(event => event.event === 'pi://sessions-changed')).toBe(true);
+  expect(await listed()).toBe(false);
+}, 60000);
+
 test('messages sent while the agent works wait their turn, and a removed one never reaches the agent', async () => {
   const busy = held<{ text: string }>();
   agents.scripts.set('Long build', messages => {
