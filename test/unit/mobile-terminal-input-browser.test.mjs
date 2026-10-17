@@ -60,3 +60,28 @@ test('a rejected mobile command stays editable and stays out of history', { time
   await command.press('ArrowUp');
   assert.equal(await command.textContent(), 'echo fixed');
 });
+
+test('a late accepted mobile interrupt keeps the newer draft and stays out of history', { timeout: 15000 }, async t => {
+  const page = await startupPage(t, 'development', {
+    entryPoint: 'test/fixtures/mobile-terminal-input-browser.tsx',
+    ready: '[aria-label="Terminal command"]', holdStorage: false,
+  });
+  const command = page.getByRole('textbox', { name: 'Terminal command' });
+  const send = page.getByRole('button', { name: 'Send', exact: true });
+  const accept = page.getByRole('button', { name: 'Accept oldest input' });
+  await command.fill('sleep 100');
+  await page.getByRole('button', { name: 'Ctrl+C', exact: true }).click();
+  assert.equal(await page.getByLabel('Sent input').textContent(), '["\\u0003"]');
+  await command.fill('echo after');
+  await accept.click();
+  await page.waitForFunction(() => !document.querySelector('.terminal-controls button').disabled);
+  assert.equal(await command.textContent(), 'echo after');
+  await send.click();
+  assert.equal(await page.getByLabel('Sent input').textContent(), '["\\u0003","echo after\\r"]');
+  await accept.click();
+  await page.waitForFunction(() => document.querySelector('[aria-label="Terminal command"]').textContent === '');
+  await command.press('ArrowUp');
+  assert.equal(await command.textContent(), 'echo after');
+  await command.press('ArrowUp');
+  assert.equal(await command.textContent(), 'echo after');
+});
