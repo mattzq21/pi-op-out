@@ -2,8 +2,8 @@ import { createServer, type IncomingMessage } from 'node:http';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
-/** One model reply: plain text, or a call of one tool. */
-export type Reply = { text: string } | { tool: string; arguments?: Record<string, unknown> };
+/** One model reply: plain text, or a call of one tool. tokens is the input token count the model reports for it. */
+export type Reply = ({ text: string } | { tool: string; arguments?: Record<string, unknown> }) & { tokens?: number };
 
 /**
  * An OpenAI-compatible model server that answers with scripted replies, registered for Pi as provider "scripted"
@@ -25,6 +25,7 @@ export async function scriptedModel(home: string, reply: (request: any) => Reply
     response.writeHead(200, { 'content-type': 'text/event-stream' });
     if ('text' in answer) response.write(chunk({ role: 'assistant', content: answer.text }, null) + chunk({}, 'stop'));
     else response.write(chunk({ role: 'assistant', tool_calls: [{ index: 0, id: 'call_' + ++calls, type: 'function', function: { name: answer.tool, arguments: JSON.stringify(answer.arguments ?? {}) } }] }, null) + chunk({}, 'tool_calls'));
+    if (answer.tokens) response.write('data: ' + JSON.stringify({ id: 'scripted', object: 'chat.completion.chunk', created: 0, model: 'scripted', choices: [], usage: { prompt_tokens: answer.tokens, completion_tokens: 0, total_tokens: answer.tokens } }) + '\n\n');
     response.end('data: [DONE]\n\n');
   });
   await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
