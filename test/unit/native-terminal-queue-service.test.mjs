@@ -4,6 +4,7 @@ import { mockIPC, mockWindows, clearMocks } from '@tauri-apps/api/mocks';
 import { installDom } from '../dom.mjs';
 import { daemonClient } from '../daemon-client.mjs';
 import { nativeTerminals } from '../../clients/ui/lib/nativeTerminals.ts';
+import { beginBranching } from '../../clients/ui/lib/branchActivity.ts';
 
 test('typing that waits behind a slow draft save is sent once and the next draft stays', async t => {
   const dom = installDom();
@@ -49,6 +50,49 @@ test('typing that waits behind a slow draft save is sent once and the next draft
   } finally {
     release.resolve();
     await Promise.allSettled(work);
+    await nativeTerminals.close(terminal);
+  }
+});
+
+test('Enter queued before a connection change is cancelled, keeps the saved draft, and a retry sends it once', async t => {
+  const dom = installDom();
+  t.after(() => { clearMocks(); dom.restore(); });
+  const terminal = crypto.randomUUID();
+  const response = Promise.withResolvers();
+  let output = '';
+  const daemon = await daemonClient(t, (event, payload) => {
+    if (event !== 'pi://event' || payload.type !== 'terminal_output' || payload.terminalId !== terminal) return;
+    output += payload.data;
+    if (output.includes('after-reconnect')) response.resolve();
+  });
+  mockWindows('main');
+  mockIPC((command, args) => {
+    assert.equal(command, 'daemon_invoke');
+    return daemon.invoke(args.command, args.args);
+  });
+  const chat = await daemon.invoke('create_temporary_chat');
+  const session = `local:draft-${crypto.randomUUID()}`;
+  const typed = "printf '%s%s\\n' 'after-' 'reconnect'";
+  await nativeTerminals.start(terminal, session, chat.cwd, 80, 24, 'local');
+  await nativeTerminals.write(terminal, typed, 'draft');
+  const finish = beginBranching();
+  let cancelled;
+  try {
+    cancelled = nativeTerminals.write(terminal, '\r', 'write_with_draft');
+    nativeTerminals.invalidateWrites('local');
+    finish();
+    await assert.rejects(cancelled, /Terminal connection changed\. Enter the input again\./);
+    const [waiting] = await nativeTerminals.list(session, 'local');
+    assert.equal(waiting.inputDraft, typed);
+    assert.equal(waiting.output.includes('after-reconnect'), false);
+    await nativeTerminals.write(terminal, '\r', 'write_with_draft');
+    await response.promise;
+    const [listed] = await nativeTerminals.list(session, 'local');
+    assert.equal(listed.inputDraft, '');
+    assert.equal(listed.output.split('after-reconnect').length - 1, 1);
+  } finally {
+    finish();
+    await cancelled?.catch(() => undefined);
     await nativeTerminals.close(terminal);
   }
 });
