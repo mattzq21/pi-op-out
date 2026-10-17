@@ -43,6 +43,29 @@ async function startTerminal(client: Client, clientId: string, sessionId: string
 const entry = async (client: Client, clientId: string, sessionId: string, terminalId: string) =>
   (await shared(client, clientId, 'list', sessionId)).find((item: any) => item.id === terminalId);
 
+test('discarding one terminal view keeps another view on the same connection', async () => {
+  const client = await daemon.connect();
+  const sessionId = 'draft-two-views';
+  const request = (view: string, action: string, args: Record<string, unknown> = {}) =>
+    shared(client, 'view-owner', action, sessionId, { terminalConnectionId: view, ...args });
+  try {
+    for (const view of ['main', 'split']) {
+      await request(view, 'start', { sharedTerminalId: 'view-' + view, cwd, cols: 80, rows: 24 });
+      await request(view, 'draft', { sharedTerminalId: 'view-' + view, data: view + ' command' });
+    }
+    await request('main', 'discard_drafts');
+    const remaining = await request('split', 'list');
+    expect(remaining).toHaveLength(1);
+    expect(remaining[0]).toMatchObject({ id: 'view-split', owned: true, exited: false, inputDraft: 'split command' });
+    await request('split', 'draft', { sharedTerminalId: 'view-split', data: 'Still editable' });
+    expect((await request('split', 'list'))[0].inputDraft).toBe('Still editable');
+  } finally {
+    await request('main', 'close', { sharedTerminalId: 'view-main' });
+    await request('split', 'close', { sharedTerminalId: 'view-split' });
+    client.close();
+  }
+}, 30_000);
+
 test('connected clients receive terminal draft edits and clearing after send', async () => {
   const owner = await daemon.connect();
   const observer = await daemon.connect();
