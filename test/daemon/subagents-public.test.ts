@@ -210,3 +210,21 @@ test('an agent limited to one subagent cannot start a second while the first is 
     expect(seen[2]).toBe('This agent allows at most 1 concurrent subagents; 1 slots are occupied');
   } finally { releaseFirst({ text: 'First done.' }); await setLimit(); }
 }, 120000);
+
+test('waiting for subagents ends early when the user sends a new message, which is handled next', async () => {
+  agents.scripts.set('Wait for news', messages => {
+    const last = messages.at(-1);
+    if (!called(messages, 'wait_agent')) return { tool: 'wait_agent', arguments: { timeout_ms: 60000 } };
+    if (last.role === 'tool') return { text: 'Wait ended: ' + text(last) };
+    return { text: 'Handled: ' + text(last) };
+  });
+  const root = await agents.rootChat();
+  await root.command({ type: 'prompt', message: 'Wait for news' });
+  await root.until(history => history.some(message => message.role === 'assistant' && message.content?.some((part: any) => part.name === 'wait_agent')));
+  await Bun.sleep(2000);
+  const sent = Date.now();
+  await root.command({ type: 'follow_up', message: 'Here is the news' });
+  const messages = await root.until(history => text(history.at(-1)) === 'Handled: Here is the news');
+  expect(messages.filter(message => message.role === 'assistant').map(text).filter(Boolean)).toEqual(['Wait ended: Wait interrupted by new input.', 'Handled: Here is the news']);
+  expect(Date.now() - sent).toBeLessThan(8000);
+}, 120000);
