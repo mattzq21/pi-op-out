@@ -72,6 +72,16 @@ describe('settings editor', () => {
     await click(save()); assert.deepEqual(saves[1][0].hiddenModels, ['old/missing']);
   });
 
+  test('hiding a model keeps model visibility changes that arrive from another window', async () => {
+    props.settings.hiddenModels = ['p/b'];
+    await render({ models: ['a', 'b', 'c'].map(id => ({ provider: 'p', id, name: id })) });
+    await section('Inference');
+    await click(control('Show p/a'));
+    await render({ settings: { ...props.settings, hiddenModels: ['p/c'] } });
+    assert.equal(control('Show p/b').getAttribute('aria-checked'), 'true');
+    await click(save());
+    assert.deepEqual(saves[0][0].hiddenModels.toSorted(), ['p/a', 'p/c']);
+  });
 
   test('remote-only hidden models stay hidden when all listed models are disabled and enabled again', async () => {
     props.settings.hiddenModels = ['remote/model'];
