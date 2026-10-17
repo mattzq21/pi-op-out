@@ -14,7 +14,7 @@ const within = (promise, label, timeout = 5000) => {
   return Promise.race([promise, new Promise((_, reject) => { timer = setTimeout(() => reject(new Error(`Timed out: ${label}`)), timeout); })]).finally(() => clearTimeout(timer));
 };
 
-// `archives` are chat names on this machine, or { name, hostId } for a configured remote. `initial` registers gates before mount, so it can hold the first refresh.
+// `archives` are chat names on this machine, or { name, hostId, key } for a configured remote. `chats` is keyed by `key`, else by name. `initial` registers gates before mount, so it can hold the first refresh.
 async function archivedPanel(t, archives, { remotes, initial } = {}) {
   const dom = installDom();
   const storage = trackStorage(indexedDB);
@@ -33,16 +33,27 @@ async function archivedPanel(t, archives, { remotes, initial } = {}) {
     };
   };
   t.after(async () => { for (const entry of gates) entry.open.resolve(); await settle(); await view?.unmount(); await settle(); storage.restore(); clearMocks(); dom.restore(); });
-  daemon = await daemonClient(t, undefined, { remotes });
+  let sessionsChanged = Promise.withResolvers();
+  daemon = await daemonClient(t, event => { if (event === 'pi://sessions-changed') { sessionsChanged.resolve(); sessionsChanged = Promise.withResolvers(); } }, { remotes });
+  // Remote session lists are read again in the background, so list again after each change until `match` holds.
+  const sessionsWhere = async (match, label) => {
+    for (;;) {
+      const changed = sessionsChanged.promise;
+      const sessions = await daemon.invoke('list_sessions');
+      if (match(sessions)) return sessions;
+      await within(changed, label);
+    }
+  };
   const chats = {};
   for (const archive of archives) {
-    const { name, hostId } = typeof archive === 'string' ? { name: archive, hostId: 'local' } : archive;
+    const { name, hostId, key = name } = typeof archive === 'string' ? { name: archive, hostId: 'local' } : archive;
+    assert.equal(Object.hasOwn(chats, key), false, `Archive fixture key ${key} is used twice`);
     const home = await daemon.invoke('home_directory', { hostId });
-    chats[name] = JSON.parse(execFileSync('node', [fileURLToPath(new URL('../fixtures/publish-chat.mjs', import.meta.url))], {
+    chats[key] = JSON.parse(execFileSync('node', [fileURLToPath(new URL('../fixtures/publish-chat.mjs', import.meta.url))], {
       encoding: 'utf8', timeout: 30000,
       input: JSON.stringify({ home, content: JSON.stringify({ type: 'message', id: 'question', parentId: null, message: { role: 'user', content: name } }) + '\n' }),
     }));
-    await daemon.invoke('archive_session', { hostId, sessionPath: chats[name].path, terminalIds: [], clientId: 'archived-panel-test' });
+    await daemon.invoke('archive_session', { hostId, sessionPath: chats[key].path, terminalIds: [], clientId: 'archived-panel-test' });
   }
   const held = initial?.(gate);
   mockWindows('main');
@@ -64,7 +75,7 @@ async function archivedPanel(t, archives, { remotes, initial } = {}) {
   const button = name => view.container.querySelector(`[aria-label="Restore ${name} to active sessions"]`);
   const refreshButton = () => view.container.querySelector('[aria-label="Refresh archived sessions"]');
   const buttons = name => view.container.querySelectorAll(`[aria-label="Restore ${name} to active sessions"]`);
-  return { daemon, view, chats, settle, gate, held, button, buttons, refreshButton };
+  return { daemon, view, chats, settle, gate, held, button, buttons, refreshButton, sessionsWhere };
 }
 
 // Holds both archive report replies of one refresh after the daemon computed them, so they still list every archived chat.
@@ -124,6 +135,34 @@ test('restoring a chat while a refresh is loading still removes it once the olde
   reports.release();
   await settle();
   await assertRestoredOnce(panel, 'Restore me');
+});
+
+test('restoring a remote archive that has the same name as a local archive restores only the remote chat, once, on the remote machine', { timeout: 90000 }, async t => {
+  const name = 'Same name';
+  const { daemon, view, chats, settle, sessionsWhere } = await archivedPanel(t, [{ name, hostId: 'local', key: 'local' }, { name, hostId: 'remote', key: 'remote' }], {
+    remotes: [{ id: 'remote', name: 'Remote machine', target: 'archive-remote' }],
+  });
+  await settle();
+  const hostNames = Object.fromEntries((await daemon.invoke('storage_report')).hosts.map(host => [host.hostId, host.hostName]));
+  assert.notEqual(hostNames.local, hostNames.remote);
+  const restoreIn = hostId => [...view.container.querySelectorAll('section')]
+    .filter(section => section.querySelector('.project-label')?.textContent === hostNames[hostId])
+    .flatMap(section => [...section.querySelectorAll(`[aria-label="Restore ${name} to active sessions"]`)]);
+  assert.equal(restoreIn('local').length, 1);
+  assert.equal(restoreIn('remote').length, 1);
+
+  await act(() => restoreIn('remote')[0].click());
+  await settle();
+
+  assert.equal(view.container.querySelector('[role="alert"]'), null);
+  assert.equal(restoreIn('remote').length, 0, 'remote archive is still listed');
+  assert.equal(restoreIn('local').length, 1, 'local archive is no longer listed once');
+  const sessions = await sessionsWhere(rows => rows.some(row => row.id === chats.remote.id), 'remote chat listed in active sessions');
+  assert.deepEqual(sessions.filter(session => session.id === chats.remote.id).map(session => session.hostId), ['remote']);
+  assert.equal(sessions.some(session => session.id === chats.local.id), false, 'local archive was restored');
+  const archived = Object.fromEntries((await daemon.invoke('storage_report')).hosts.map(host => [host.hostId, host.archives.map(archive => archive.id)]));
+  assert.equal(archived.remote.includes(chats.remote.id), false, 'remote archive is still in remote storage');
+  assert.deepEqual(archived.local.filter(id => id === chats.local.id), [chats.local.id]);
 });
 
 test('the archive of this machine shows while the full archive report is loading, then the remote archive is added with each chat listed once', { timeout: 90000 }, async t => {
