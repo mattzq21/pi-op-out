@@ -28,6 +28,9 @@ function answerHost(ws) {
 function androidBridge(initialSettings) {
   const listeners = new Map();
   window.androidMinimized = 0;
+  window.androidMinimizeAttempts = 0;
+  // Test control: the next minimize request fails with this native error message.
+  window.failNextAndroidMinimize = undefined;
   window.pressAndroidBack = () => { for (const callback of listeners.get('backButton') ?? []) callback({ canGoBack: false }); };
   window.Capacitor = {
     PluginHeaders: [
@@ -43,7 +46,13 @@ function androidBridge(initialSettings) {
     nativePromise: async (plugin, method, options) => {
       if (plugin === 'Dictation' && method === 'configuration') return { enabled: false, loading: false };
       if (method === 'removeListener') return;
-      if (plugin === 'App' && method === 'minimizeApp') { window.androidMinimized++; return; }
+      if (plugin === 'App' && method === 'minimizeApp') {
+        window.androidMinimizeAttempts++;
+        const failure = window.failNextAndroidMinimize;
+        window.failNextAndroidMinimize = undefined;
+        if (failure) throw new Error(failure);
+        window.androidMinimized++; return;
+      }
       if (plugin === 'ClientPreferences' && method === 'load') return { settings: window.clientPreferences ?? initialSettings, revision: '0' };
       if (plugin === 'ClientPreferences' && method === 'save') { window.clientPreferences = options.settings; return { settings: options.settings, revision: '1', publication: { committed: true, durable: true } }; }
       throw new Error('Unexpected native method: ' + plugin + '.' + method);
@@ -99,6 +108,27 @@ test('Android Back on unsaved settings asks first and returns to the chat draft 
   assert.equal(await retry.count(), 0);
   assert.equal(await editor.inputValue(), 'Keep this draft');
   assert.equal(await page.evaluate(() => window.androidMinimized), 0);
+});
+
+test('Android Back shows the native minimize failure, and the next Back after recovery minimizes the app', async t => {
+  const { page, editor } = await connectedChat(t);
+  await editor.fill('Keep this draft');
+  await page.evaluate(() => { window.failNextAndroidMinimize = 'Activity is not available'; });
+  const failure = page.getByRole('status').filter({ hasText: 'Activity is not available' });
+
+  await page.evaluate(() => window.pressAndroidBack());
+  await failure.waitFor();
+  await settle(page);
+  assert.equal(await page.evaluate(() => window.androidMinimizeAttempts), 1);
+  assert.equal(await page.evaluate(() => window.androidMinimized), 0);
+  assert.equal(await editor.inputValue(), 'Keep this draft');
+
+  await page.evaluate(() => window.pressAndroidBack());
+  await page.waitForFunction(() => window.androidMinimized > 0);
+  await settle(page);
+  assert.equal(await page.evaluate(() => window.androidMinimizeAttempts), 2);
+  assert.equal(await page.evaluate(() => window.androidMinimized), 1);
+  assert.equal(await editor.inputValue(), 'Keep this draft');
 });
 
 test('Android Back closes the open conversation panel first and minimizes the app only on the next press', async t => {
