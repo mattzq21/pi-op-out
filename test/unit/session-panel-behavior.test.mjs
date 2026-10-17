@@ -339,3 +339,23 @@ test('local and remote conversations display their project and machine names', a
   assert.ok(groupContents('Local').contains(row('a')));
   assert.ok(groupContents('Remote / folder').contains(row('b', 'remote')));
 });
+
+test('local and remote conversations with the same id stay separate', { timeout: 30_000 }, async t => {
+  const local = session('shared', 'Local conversation', { project: 'Local' });
+  const remote = session('shared', 'Remote conversation', { hostId: 'remote', hostName: 'Remote', project: 'folder', cwd: process.cwd() + '/test' });
+  const selected = [], actions = [];
+  const panel = await fixture(t, { sessions: [local, remote], activeId: 'shared', activeHostId: 'local', onSelect: value => selected.push(value), onAction: (...args) => actions.push(args) }, 'Local', undefined, undefined, { remotes: [{ id: 'remote', name: 'Remote', target: 'remote' }] });
+  const sharedId = sessionIds.get('shared');
+  assert.equal(remote.id, sharedId);
+  assert.equal(local.id, sharedId);
+  assert.equal(row('shared').getAttribute('aria-current'), 'page');
+  assert.equal(row('shared', 'remote').hasAttribute('aria-current'), false);
+  await click(row('shared', 'remote'));
+  await click(control('Archive Local conversation'));
+  await click(control('Archive Remote conversation'));
+  assert.deepEqual(selected, [remote]);
+  assert.deepEqual(actions, [[local, 'archive'], [remote, 'archive']]);
+  await panel.render({ activeHostId: 'remote' });
+  assert.equal(row('shared', 'remote').getAttribute('aria-current'), 'page');
+  assert.equal(row('shared').hasAttribute('aria-current'), false);
+});
