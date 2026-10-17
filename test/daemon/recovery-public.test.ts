@@ -1,6 +1,6 @@
 import { expect, test } from 'bun:test';
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, readdirSync, readFileSync, rmdirSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readdirSync, readFileSync, readlinkSync, rmdirSync, symlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { startDaemon, type TestDaemon } from './harness';
@@ -35,6 +35,44 @@ test('recovering a missing project gives the chat an empty directory and keeps i
       id: chat.id, path: chat.path, cwd: result.cwd, cwdExists: true,
       preview: 'Keep my research notes', messageCount: 1,
     })]);
+  } finally { await daemon.stop(); }
+}, 60_000);
+
+test('recovery refuses a broken symbolic link at the original project path', async () => {
+  const daemon = await startDaemon();
+  try {
+    const chat = missingChat(daemon);
+    const target = join(daemon.home, 'unavailable-project');
+    symlinkSync(target, chat.cwd);
+    const before = await daemon.invoke('list_sessions');
+
+    expect(await daemon.failure('recover_missing_session', {
+      sessionPath: chat.path, hostId: 'local', action: 'empty', clientId: 'recovery-test',
+    })).toContain('The session directory exists again');
+    expect(await daemon.invoke('list_sessions')).toEqual(before);
+    expect(readlinkSync(chat.cwd)).toBe(target);
+  } finally { await daemon.stop(); }
+}, 60_000);
+
+test('chats from the same missing project recover into separate directories', async () => {
+  const daemon = await startDaemon();
+  try {
+    const first = missingChat(daemon);
+    const second = missingChat(daemon);
+    expect(first.cwd).toBe(second.cwd);
+    const recoveredFirst = await recover(daemon, first.path);
+    writeFileSync(join(recoveredFirst.cwd, 'notes.txt'), 'First chat notes');
+
+    const recoveredSecond = await recover(daemon, second.path);
+    expect(recoveredSecond.cwd).not.toBe(recoveredFirst.cwd);
+    expect(readdirSync(recoveredSecond.cwd)).toEqual([]);
+    writeFileSync(join(recoveredSecond.cwd, 'notes.txt'), 'Second chat notes');
+    expect(readFileSync(join(recoveredFirst.cwd, 'notes.txt'), 'utf8')).toBe('First chat notes');
+
+    const rows = await daemon.invoke('list_sessions');
+    expect(rows).toHaveLength(2);
+    expect(rows.find((row: any) => row.id === first.id)).toMatchObject({ cwd: recoveredFirst.cwd, cwdExists: true });
+    expect(rows.find((row: any) => row.id === second.id)).toMatchObject({ cwd: recoveredSecond.cwd, cwdExists: true });
   } finally { await daemon.stop(); }
 }, 60_000);
 
