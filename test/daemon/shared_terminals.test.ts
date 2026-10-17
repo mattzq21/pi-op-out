@@ -43,6 +43,30 @@ async function startTerminal(client: Client, clientId: string, sessionId: string
 const entry = async (client: Client, clientId: string, sessionId: string, terminalId: string) =>
   (await shared(client, clientId, 'list', sessionId)).find((item: any) => item.id === terminalId);
 
+test('another connection cannot send and clear the owner terminal draft', async () => {
+  const owner = await daemon.connect();
+  const other = await daemon.connect();
+  const sessionId = 'draft-protected-input';
+  const terminalId = 'protected-input';
+  try {
+    await startTerminal(owner, 'shared-client-id', sessionId, terminalId);
+    await shared(owner, 'shared-client-id', 'draft', sessionId, { sharedTerminalId: terminalId, data: 'Owner command' });
+    expect(await other.failure('shared_terminal', {
+      action: 'write_and_clear_draft', clientId: 'shared-client-id', hostId: 'local',
+      sessionKey: 'local:' + sessionId, sharedTerminalId: terminalId, data: 'Owner command\n', expectedDraft: 'Owner command',
+    })).toBe('Take ownership of this session before changing its terminals');
+    expect(await entry(owner, 'shared-client-id', sessionId, terminalId))
+      .toMatchObject({ owned: true, exited: false, inputDraft: 'Owner command' });
+    await shared(owner, 'shared-client-id', 'write_and_clear_draft', sessionId, {
+      sharedTerminalId: terminalId, data: 'Owner command\n', expectedDraft: 'Owner command',
+    });
+    expect((await entry(owner, 'shared-client-id', sessionId, terminalId)).inputDraft).toBe('');
+  } finally {
+    await shared(owner, 'shared-client-id', 'close', sessionId, { sharedTerminalId: terminalId });
+    owner.close(); other.close();
+  }
+}, 30_000);
+
 test('oversized Unicode terminal drafts are rejected without losing the saved draft', async () => {
   const client = await daemon.connect();
   const sessionId = 'draft-size-limit';
