@@ -1,7 +1,7 @@
 use super::*;
 use crate::settings_concurrency::{lock_settings, settings_revision};
 
-#[path = "../../../shared/rust/settings_records.rs"]
+#[path = "settings_records.rs"]
 pub(crate) mod records;
 
 /// A model added to an engine, with its arguments. The path and the arguments together identify it.

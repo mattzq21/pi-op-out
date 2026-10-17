@@ -3,9 +3,9 @@ mod daemon_endpoint;
 mod desktop_daemon;
 mod client_settings;
 mod dictation;
-#[path = "../../../shared/rust/settings_concurrency.rs"]
+#[path = "settings_concurrency.rs"]
 mod settings_concurrency;
-#[path = "../../../shared/rust/private_fs.rs"]
+#[path = "private_fs.rs"]
 mod private_fs;
 use private_fs::ensure_private_dir;
 mod clipboard_image;

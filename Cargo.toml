@@ -1,5 +1,5 @@
 [workspace]
-members = ["clients/desktop", "crates/protocol"]
+members = ["clients/desktop", "clients/desktop/protocol"]
 default-members = ["clients/desktop"]
 resolver = "2"
 

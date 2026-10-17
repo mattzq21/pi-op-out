@@ -19,7 +19,7 @@ tauri-build = { version = "2", features = [] }
 
 [dependencies]
 rusqlite = { version = "0.37", features = ["bundled"] }
-piop-protocol = { path = "../../crates/protocol" }
+piop-protocol = { path = "protocol" }
 libc = "0.2"
 tauri = { version = "2", features = [] }
 serde = { version = "1", features = ["derive"] }
