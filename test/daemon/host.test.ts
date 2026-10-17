@@ -67,6 +67,24 @@ const command = (runtimeId: string, value: any) => daemon.invoke('pi_command', {
 const open = (path: string, clientId: string, runtimeId = randomUUID()) =>
   daemon.invoke('start_pi', { runtimeId, clientId, cwd: daemon.home, sessionPath: path }).then(result => ({ runtimeId, ...result }));
 
+test('a pending message protects its referenced temporary folder from cleanup', async () => {
+  const temporary = await daemon.invoke('create_temporary_chat', { hostId: 'local' });
+  const session = publicSession(daemon.home, 'queue-folder-reference');
+  const runtime = await open(session.path, 'queue-folder-client');
+  try {
+    const message = 'Read the files in ' + temporary.cwd;
+    await command(runtime.runtimeId, { type: 'follow_up', message });
+    const state = await command(runtime.runtimeId, { type: 'get_state' });
+    expect(state.pendingMessages).toContainEqual(expect.objectContaining({ message }));
+
+    await daemon.invoke('remove_temporary_chat', { hostId: 'local', path: temporary.cwd });
+    expect(await daemon.invoke('validate_project_directory', { hostId: 'local', path: temporary.cwd, allowStorage: true }))
+      .toBe(temporary.cwd);
+    expect((await command(runtime.runtimeId, { type: 'get_state' })).pendingMessages)
+      .toContainEqual(expect.objectContaining({ message }));
+  } finally { await daemon.invoke('stop_pi', { runtimeId: runtime.runtimeId }); }
+}, 60_000);
+
 test('a second client stays read-only until it takes ownership of the live conversation', async () => {
   const session = publicSession(daemon.home);
   const first = await open(session.path, 'first');
