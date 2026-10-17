@@ -5,7 +5,7 @@ import { Marked } from "marked";
 import { createEffect, createSignal, onCleanup, Show } from "solid-js";
 import { Portal } from "solid-js/web";
 import { openExternalUrl } from "../lib/nativeTransport";
-import { fileReference, type FileProject, type FileReference } from "../lib/projectFiles";
+import { fileReference, type FileProject } from "../lib/projectFiles";
 import { detectFileLinks } from "../lib/fileLinks";
 import { webUrl } from "../lib/webLinks";
 import { diagramFenceClosed } from "../lib/diagrams";
@@ -23,7 +23,12 @@ const parser = new Marked({
   hooks: markdownHooks,
   renderer: {
     html: ({ text }) => escapeHtml(text),
-    image: ({ href, text }) => `<span class="message-image-placeholder" role="img"${fileReference(href) ? ` data-file-reference="${escapeHtml(href)}"` : ""} aria-label="${escapeHtml(text || "Blocked remote image")}">[Image: ${escapeHtml(text || "blocked")}]</span>`,
+    image: ({ href, text }) => {
+      if (!fileReference(href)) return `<span class="message-image-placeholder" role="img" aria-label="${escapeHtml(text || "Blocked remote image")}">[Image: ${escapeHtml(text || "blocked")}]</span>`;
+      const label = escapeHtml(text || href);
+
+      return `<span class="message-image-placeholder" role="img" data-file-reference="${escapeHtml(href)}" data-image-label="${label}" aria-label="${label}">[Image: ${label}]</span>`;
+    },
     link({ href, tokens }) {
       const text = this.parser.parseInline(tokens);
       const url = webUrl(href);
@@ -63,8 +68,8 @@ function sanitizeMarkdown(html: string, streaming: boolean, detectFiles: boolean
 
 type LinkMenu = { href: string; x: number; y: number; returnFocus?: HTMLElement };
 
-export function Markdown(props: { children: string; streaming?: boolean; imageProject?: FileProject; onOpenFile?: (file: FileReference) => void }) {
-  const renderMarkdown = streamingMarkdown(parser, (html, streaming, detectFiles) => sanitizeMarkdown(html, streaming, detectFiles, props.onOpenFile ? undefined : value => Boolean(imageFileReference(value))));
+export function Markdown(props: { children: string; streaming?: boolean; imageProject?: FileProject }) {
+  const renderMarkdown = streamingMarkdown(parser, (html, streaming, detectFiles) => sanitizeMarkdown(html, streaming, detectFiles, value => Boolean(imageFileReference(value))));
   const [error, setError] = createSignal<string>();
   const [menu, setMenu] = createSignal<LinkMenu>();
   const timers = new Set<ReturnType<typeof setTimeout>>();
@@ -78,7 +83,7 @@ export function Markdown(props: { children: string; streaming?: boolean; imagePr
   createEffect(() => {
     let html: string[];
 
-    try { html = renderMarkdown(props.children, Boolean(props.streaming), Boolean(props.onOpenFile || props.imageProject)); }
+    try { html = renderMarkdown(props.children, Boolean(props.streaming), Boolean(props.imageProject)); }
     catch (error) {
       if (!(error instanceof RangeError)) throw error;
       html = [`<pre>${escapeHtml(props.children)}</pre>`];
@@ -172,9 +177,7 @@ export function Markdown(props: { children: string; streaming?: boolean; imagePr
   const openFileLink = (link: HTMLButtonElement) => {
     const reference = fileReference(link.dataset.fileReference ?? "");
 
-    if (reference && images.open(reference.path)) return;
-
-    if (reference) props.onOpenFile?.(reference);
+    if (reference) images.open(reference.path);
   };
 
   const click = (event: MouseEvent) => {

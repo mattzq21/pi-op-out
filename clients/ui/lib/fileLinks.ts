@@ -58,6 +58,7 @@ function linkExplicitPaths(root: DocumentFragment, allowFile: (value: string) =>
 
     if (!fileReference(path) || !allowFile(path)) continue;
     const button = fileButton(path, "");
+    if (link.dataset.imageLabel !== undefined) button.dataset.imageLabel = link.dataset.imageLabel;
     button.append(...link.childNodes);
     link.replaceWith(button);
   }

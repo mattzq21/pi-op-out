@@ -1,4 +1,6 @@
 import { afterAll, beforeAll, expect, test } from 'bun:test';
+import { execFileSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 import { agentDaemon, text } from './agent-chats';
 import { startDaemon, temporaryDirectory, type TestDaemon } from './harness';
 
@@ -21,6 +23,8 @@ test('a plugin change waits for an open terminal and the current setup, then res
   expect(before).toMatchObject({ enabled: ['chatgpt', 'markdown'], error: null });
 
   expect(await daemon.failure('restart_daemon', { hostId: 'local', enabled: ['markdown'], revision: 'stale', closeTerminals: false })).toContain('Plugin setup changed in another client');
+  expect(await daemon.failure('restart_daemon', { hostId: 'local', enabled: ['markdown', 'unknown'], revision: before.revision, closeTerminals: true })).toBe('Unknown bundled plugin: unknown');
+  expect(await daemon.failure('restart_daemon', { hostId: 'local', enabled: ['markdown', 'markdown'], revision: before.revision, closeTerminals: true })).toBe('Duplicate plugin: markdown');
   await daemon.invoke('start_terminal', { terminalId: 'open-terminal', sessionKey: 'local:restart', cwd: temporaryDirectory('piop-restart-'), cols: 80, rows: 24 });
   expect(await daemon.invoke('restart_daemon', { hostId: 'local', enabled: ['markdown'], revision: before.revision, closeTerminals: false })).toEqual({ confirmationRequired: 'terminals', terminalCount: 1 });
   expect(await daemon.invoke('plugin_status', { hostId: 'local' })).toEqual(before);
@@ -57,4 +61,37 @@ test('a restart waits for a reply in progress, and the finished chat is still th
     const messages = entries.filter((entry: any) => entry.type === 'message' && ['user', 'assistant'].includes(entry.message.role));
     expect(messages.map((entry: any) => text(entry.message))).toEqual(['Think slowly', 'Slow answer']);
   } finally { await agents.close(); }
+}, 180_000);
+
+test('the client editing a chat note keeps it for longer than a normal lock after a daemon restart, so it can reconnect and save', async () => {
+  const { id: sessionId } = JSON.parse(execFileSync('node', [fileURLToPath(new URL('../fixtures/publish-chat.mjs', import.meta.url))], {
+    encoding: 'utf8', timeout: 30000, input: JSON.stringify({ home: daemon.home, content: '' }),
+  }));
+  const leaseId = crypto.randomUUID();
+  let leaseToken: string | undefined;
+  /** A note request from the laptop's editor, over a new connection, as a reconnected app would send it. */
+  const laptop = async (action: string, fields: Record<string, string> = {}) => {
+    const client = await daemon.connect();
+    try {
+      const result = await client.invoke('plugin_call', { clientId: 'laptop', pluginId: 'markdown', request: { sessionId, leaseId, action, ...(leaseToken ? { leaseToken } : {}), ...fields } });
+      if (result.ownership?.token) leaseToken = result.ownership.token;
+      return result;
+    } finally { client.close(); }
+  };
+  const claimed = await laptop('claim');
+  await laptop('save', { content: 'before restart', version: claimed.version });
+
+  const status = await (await daemon.connect()).invoke('plugin_status', { hostId: 'local' });
+  const { restartId } = await (await daemon.connect()).invoke('restart_daemon', { hostId: 'local', enabled: status.enabled, revision: status.revision, closeTerminals: true });
+  expect(await restartResult(restartId)).toMatchObject({ phase: 'complete', error: null });
+
+  // A normal lock ends 30 seconds after the last save; the laptop is slower than that to come back.
+  await Bun.sleep(31_000);
+  const phoneEditor = crypto.randomUUID();
+  const phone = () => daemon.connect().then(client => client.invoke('plugin_call', { clientId: 'phone', pluginId: 'markdown', request: { sessionId, leaseId: phoneEditor, action: 'claim' } }));
+  expect(await phone()).toMatchObject({ content: 'before restart', ownership: { owned: false, available: false } });
+  const reopened = await laptop('claim');
+  expect(reopened.ownership.owned).toBe(true);
+  await laptop('save', { content: 'after restart', version: reopened.version });
+  expect((await phone()).content).toBe('after restart');
 }, 180_000);

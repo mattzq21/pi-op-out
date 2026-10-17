@@ -43,7 +43,7 @@ export function markdownImages() {
         const reference = imageReference(slot);
 
         if (!reference) continue;
-        const label = slot.textContent || reference.path;
+        const label = slot.dataset.imageLabel || slot.textContent || reference.path;
         const key = JSON.stringify(project);
         const previous = mounts[next.length];
 

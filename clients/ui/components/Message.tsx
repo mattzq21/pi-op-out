@@ -19,10 +19,9 @@ import { Markdown } from "./Markdown";
 import { WorkingIndicator } from "./WorkingIndicator";
 import { ZoomableImage } from "./ZoomableImage";
 import { SubagentResults, subagentRuns } from "./SubagentResults";
-import type { FileReference } from "../lib/projectFiles";
 import { copyText } from "../lib/clipboard";
 
-interface Props { message: ChatMessage; onOpenFile?: (file: FileReference) => void; turnCacheUsage?: { input: number; cacheRead: number }; expanded?: boolean; showActions?: boolean; toolCount?: number; debug?: boolean; paused?: boolean; onBranch?: (message: ChatMessage) => void | Promise<void>; onForkAndForget?: (message: ChatMessage) => void | Promise<void>; onRetry?: () => void; retrying?: boolean; }
+interface Props { message: ChatMessage; turnCacheUsage?: { input: number; cacheRead: number }; expanded?: boolean; showActions?: boolean; toolCount?: number; debug?: boolean; paused?: boolean; onBranch?: (message: ChatMessage) => void | Promise<void>; onForkAndForget?: (message: ChatMessage) => void | Promise<void>; onRetry?: () => void; retrying?: boolean; }
 
 function cacheTokenDigits(tokens: number) {
   const groups = String(tokens).match(/\d{1,3}(?=(?:\d{3})*$)/g) ?? [];
@@ -274,7 +273,7 @@ export function Message(componentProps: Props) {
     };
 
     const renderMessageBody = () => {
-      const renderResponse = () => <Markdown imageProject={imageProject()} onOpenFile={componentProps.onOpenFile} streaming={streaming()}>{output()}</Markdown>;
+      const renderResponse = () => <Markdown imageProject={imageProject()} streaming={streaming()}>{output()}</Markdown>;
       const renderMessageFailure = () => (failureState().failure && <div class="message-failure" role="status"><CircleAlert size={14} /><span>{(failureState().failure)}</span>{componentProps.onRetry && <button disabled={(componentProps.retrying === undefined ? false : componentProps.retrying)} onClick={(componentProps.onRetry)}>{(componentProps.retrying === undefined ? false : componentProps.retrying) ? "Retrying…" : "Retry"}</button>}</div>);
       const renderStreamCaret = () => (streaming() && !componentProps.paused && <WorkingIndicator />);
 
