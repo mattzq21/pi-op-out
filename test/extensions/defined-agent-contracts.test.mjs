@@ -388,6 +388,21 @@ test('reading current configurations preserves the saved revision', async t => {
   assert.deepEqual(reloaded.agents.map(agent => agent.name), ['general', 'default']);
 });
 
+test('saving with a stale revision is rejected until the latest configuration is reloaded', async t => {
+  const f = await agentFixture(t, { config: null }); await f.load();
+  const stale = (await f.configuration()).revision;
+  await f.configure(configured([profile(), profile('writer')]));
+  const newer = await f.configuration();
+
+  await assert.rejects(f.configure({ ...configured([profile(), profile('stale-writer')]), revision: stale }), { message: 'Agent definitions changed in another window or client. Reload them before saving.' });
+  assert.deepEqual(await f.configuration(), newer);
+
+  const latest = await f.configuration();
+  const saved = await f.configure({ ...configured([profile(), profile('writer'), profile('editor')]), revision: latest.revision });
+  assert.notEqual(saved.revision, latest.revision);
+  assert.deepEqual((await f.configuration()).agents.map(agent => agent.name), ['general', 'writer', 'editor']);
+});
+
 
 test('loading a saved configuration preserves configured choices', async t => {
   const winner = configured([profile('general', { effort: 'medium' })]);

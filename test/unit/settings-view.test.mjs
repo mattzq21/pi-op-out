@@ -230,6 +230,25 @@ describe('settings editor', () => {
     assert.equal(saves[0][0].autoRetry, false);
   });
 
+  test('an agent change from another window blocks saving agent edits until the latest agents are reloaded', async () => {
+    await render({ agentConfig: { revision: 'original-agent-revision', agents: [profile('general'), profile('review', { path_agent_prompt: 'old.md' })] } });
+    await section('Agents'); await selectAgent('review');
+    await enterText(control('Agent prompt file'), 'mine.md');
+    await render({ agentConfig: { revision: 'latest-agent-revision', agents: [profile('general'), profile('review', { path_agent_prompt: 'theirs.md' })] } });
+    assert.match(document.querySelector('[role=alert]').textContent, /changed in another window/);
+    assert.equal(save().disabled, true);
+    await click(save());
+    assert.equal(saves.length, 0);
+    await click(button('Reload latest settings and discard local edits'));
+    assert.equal(document.querySelector('[role=alert]'), null);
+    assert.equal(control('Agent name').value, 'review');
+    assert.equal(control('Agent prompt file').value, 'theirs.md');
+    await enterText(control('System prompt file'), 'review.md');
+    await click(save());
+    assert.equal(saves.length, 1);
+    assert.deepEqual(saves[0][1], { revision: 'latest-agent-revision', agents: [profile('general'), profile('review', { path_systemprompt: 'review.md', path_agent_prompt: 'theirs.md' })] });
+  });
+
   test('unconfirmed disk durability offers a retry without edits and clears once confirmed', async () => {
     await render({ settings: { ...props.settings, settingsDurabilityError: 'fsync failed' } });
     assert.match(document.querySelector('[role=alert]').textContent, /durability is unconfirmed: fsync failed/);
