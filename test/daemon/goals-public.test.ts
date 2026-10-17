@@ -28,6 +28,11 @@ test('a goal keeps the agent working turn after turn until the agent marks it co
   await send(chat, '/goal Write the report');
   const messages = await chat.until(history => text(history.at(-1)) === 'Report finished.');
   expect(messages.filter(message => message.role === 'assistant').map(text).filter(Boolean)).toEqual(['Still writing.', 'Still writing.', 'Report finished.']);
+  // The goal bar in the app reads these fields from the published goal status.
+  const published = agents.daemon.events.filter(event => event.payload?.runtimeId === chat.runtimeId && event.payload.event?.method === 'setStatus' && event.payload.event.statusKey === 'piop-goal' && event.payload.event.statusText)
+    .map(event => JSON.parse(event.payload.event.statusText));
+  expect(published.at(0)).toMatchObject({ objective: 'Write the report', status: 'active', tokenBudget: null, tokensUsed: expect.any(Number), elapsedMs: expect.any(Number) });
+  expect(published.at(-1)).toMatchObject({ objective: 'Write the report', status: 'complete' });
   await Bun.sleep(1500);
   expect(text((await chat.history()).at(-1))).toBe('Report finished.');
 }, 120000);
