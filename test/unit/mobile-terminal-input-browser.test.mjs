@@ -85,3 +85,30 @@ test('a late accepted mobile interrupt keeps the newer draft and stays out of hi
   await command.press('ArrowUp');
   assert.equal(await command.textContent(), 'echo after');
 });
+
+test('switching mobile terminal tabs isolates command history and restores each unsent draft', { timeout: 15000 }, async t => {
+  const page = await startupPage(t, 'development', {
+    entryPoint: 'test/fixtures/mobile-terminal-input-browser.tsx',
+    ready: '[aria-label="Terminal command"]', holdStorage: false,
+  });
+  const command = page.getByRole('textbox', { name: 'Terminal command' });
+  const commandIs = value => page.waitForFunction(text => document.querySelector('[aria-label="Terminal command"]').textContent === text, value);
+  await command.fill('echo first');
+  await command.press('Enter');
+  await page.getByRole('button', { name: 'Accept oldest input' }).click();
+  await commandIs('');
+  await command.press('ArrowUp');
+  assert.equal(await command.textContent(), 'echo first');
+  await command.press('ArrowDown');
+  assert.equal(await command.textContent(), '');
+  await command.fill('draft one');
+  await page.getByRole('button', { name: 'Second' }).click();
+  await commandIs('draft two');
+  await command.press('ArrowUp');
+  assert.equal(await command.textContent(), 'draft two');
+  await page.getByRole('button', { name: 'Shell' }).click();
+  await commandIs('draft one');
+  await page.getByRole('button', { name: 'Second' }).click();
+  await commandIs('draft two');
+  assert.equal(await page.getByLabel('Sent input').textContent(), '["echo first\\r"]');
+});
