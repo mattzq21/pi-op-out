@@ -162,6 +162,27 @@ test('a pending message protects its referenced temporary folder from cleanup', 
   } finally { await daemon.invoke('stop_pi', { runtimeId: runtime.runtimeId }); }
 }, 60_000);
 
+test('a read-only client cannot clear pending messages until it takes ownership', async () => {
+  const session = publicSession(daemon.home, 'queue-ownership');
+  const owner = await open(session.path, 'queue-owner');
+  const reader = await open(session.path, 'queue-reader');
+  try {
+    expect(reader.owned).toBe(false);
+    await command(owner.runtimeId, { type: 'follow_up', message: 'Keep pending work' });
+    const pending = (await command(owner.runtimeId, { type: 'get_state' })).pendingMessages;
+    expect(pending).toHaveLength(1);
+    expect(await daemon.failure('pi_command', { runtimeId: reader.runtimeId, command: { type: 'clear_queue' } }))
+      .toContain('ownership');
+    expect((await command(owner.runtimeId, { type: 'get_state' })).pendingMessages).toEqual(pending);
+    expect(await command(reader.runtimeId, { type: 'take_ownership' })).toMatchObject({ owned: true });
+    await command(reader.runtimeId, { type: 'clear_queue' });
+    expect((await command(reader.runtimeId, { type: 'get_state' })).pendingMessages).toEqual([]);
+  } finally {
+    await daemon.invoke('stop_pi', { runtimeId: owner.runtimeId });
+    await daemon.invoke('stop_pi', { runtimeId: reader.runtimeId });
+  }
+}, 60_000);
+
 test('a second client stays read-only until it takes ownership of the live conversation', async () => {
   const session = publicSession(daemon.home);
   const first = await open(session.path, 'first');
