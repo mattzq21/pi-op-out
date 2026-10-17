@@ -74,6 +74,23 @@ const command = (runtimeId: string, value: any) => daemon.invoke('pi_command', {
 const open = (path: string, clientId: string, runtimeId = randomUUID()) =>
   daemon.invoke('start_pi', { runtimeId, clientId, cwd: daemon.home, sessionPath: path }).then(result => ({ runtimeId, ...result }));
 
+test('removing one queued message preserves the other message identity and attachment', async () => {
+  const session = publicSession(daemon.home, 'remove-queued-message');
+  const runtime = await open(session.path, 'remove-queue-client');
+  try {
+    await command(runtime.runtimeId, { type: 'follow_up', message: 'Remove this' });
+    await command(runtime.runtimeId, { type: 'follow_up', message: 'Keep the image', images: [
+      { type: 'image', mimeType: 'image/png', data: Buffer.from('queued-image').toString('base64') },
+    ] });
+    const before = (await command(runtime.runtimeId, { type: 'get_state' })).pendingMessages;
+    expect(before).toHaveLength(2);
+    const kept = before.find((item: any) => item.message === 'Keep the image');
+    expect(kept.images).toEqual([{ type: 'image', mimeType: 'image/png' }]);
+    await command(runtime.runtimeId, { type: 'change_pending', id: before.find((item: any) => item.message === 'Remove this').id, action: 'remove' });
+    expect((await command(runtime.runtimeId, { type: 'get_state' })).pendingMessages).toEqual([kept]);
+  } finally { await daemon.invoke('stop_pi', { runtimeId: runtime.runtimeId }); }
+}, 60_000);
+
 test('identical queued messages keep distinct stable identities', async () => {
   const session = publicSession(daemon.home, 'duplicate-queue-text');
   const runtime = await open(session.path, 'duplicate-queue-client');
