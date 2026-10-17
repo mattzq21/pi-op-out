@@ -27,6 +27,22 @@ test('a save from an older window keeps an engine removed by another window remo
   assert.deepEqual((await native.invoke('load_client_settings')).settings.dictationEngines, [{ engine: 'transcribe.cpp', path: '/fake/transcribe-2', models: [] }]);
 });
 
+test('a save from an older window that edits an engine another window removed is rejected, and the engine can be added again after reload', async t => {
+  const native = await storedEngines(t);
+  const stale = (await native.invoke('load_client_settings')).settings;
+  await native.invoke('save_client_settings', { settings: { ...stale, dictationEngines: [stale.dictationEngines[0]] }, baseline: stale });
+  const stored = await native.invoke('load_client_settings');
+
+  await assert.rejects(native.invoke('save_client_settings', { settings: { ...stale, debugMode: true, dictationEngines: [{ ...stale.dictationEngines[0], path: '/fake/transcribe-2' }, { ...stale.dictationEngines[1], path: '/fake/needle-2' }] }, baseline: stale }),
+    /^Error: Client preference conflict at dictationEngines\.needle: another window changed this engine\./);
+  assert.deepEqual(await native.invoke('load_client_settings'), stored);
+
+  const latest = stored.settings;
+  await native.invoke('save_client_settings', { settings: { ...latest, dictationEngines: [...latest.dictationEngines, { engine: 'needle', path: '/fake/needle-2', models: [] }] }, baseline: latest });
+  assert.deepEqual((await native.invoke('load_client_settings')).settings, { keybindings: { newConversation: 'Mod+N', openSettings: 'Mod+,' }, debugMode: false,
+    dictationEngines: [{ engine: 'transcribe.cpp', path: '/fake/transcribe', models: [] }, { engine: 'needle', path: '/fake/needle-2', models: [] }] });
+});
+
 test('a save from an older window keeps the shortcut another window saved', async t => {
   const native = await storedPreferences(t);
   const stale = (await native.invoke('load_client_settings')).settings;
