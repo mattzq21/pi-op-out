@@ -23,6 +23,20 @@ test('project selection rejects links into app storage but accepts similarly nam
   } finally { await daemon.stop(); }
 }, 60_000);
 
+test('project selection rejects folders reached through the real location of a linked app storage folder', async () => {
+  const daemon = await startDaemon();
+  try {
+    const relocated = join(daemon.home, 'relocated-storage');
+    const project = join(relocated, 'project');
+    mkdirSync(project, { recursive: true });
+    symlinkSync(relocated, join(daemon.home, '.piop-dev'));
+    for (const path of [relocated, project]) {
+      expect(await daemon.failure('validate_project_directory', { hostId: 'local', path }))
+        .toBe('Piop storage directories cannot be selected as projects');
+    }
+  } finally { await daemon.stop(); }
+}, 60_000);
+
 test('allowing app storage accepts a temporary chat folder but still rejects files and missing paths', async () => {
   const daemon = await startDaemon();
   try {
