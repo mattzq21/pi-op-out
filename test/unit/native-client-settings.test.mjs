@@ -18,6 +18,25 @@ async function storedEngines(t) {
   return native;
 }
 
+test('a window that initializes preferences from a stale empty read keeps the preferences another window saved, and can still save an edit after', async t => {
+  const native = await nativeFileCommand(t, { desktop: true });
+  assert.equal((await native.invoke('load_client_settings')).settings, null);
+  assert.equal((await native.invoke('load_client_settings')).settings, null);
+  // Both windows read the same old local preference (debug mode on) on top of the defaults before either window saved.
+  const local = { ...initial, debugMode: true };
+
+  await native.invoke('save_client_settings', { settings: local, baseline: initial, initialize: true });
+  await native.invoke('save_client_settings', { settings: { ...local, debugMode: false, keybindings: { ...local.keybindings, newConversation: 'Mod+Shift+N' } }, baseline: local });
+  const latest = { keybindings: { newConversation: 'Mod+Shift+N', openSettings: 'Mod+,' }, debugMode: false };
+
+  const late = await native.invoke('save_client_settings', { settings: local, baseline: initial, initialize: true });
+  assert.deepEqual(late.settings, latest);
+  assert.deepEqual(await native.invoke('load_client_settings'), { settings: latest, revision: late.revision });
+
+  await native.invoke('save_client_settings', { settings: { ...late.settings, keybindings: { ...late.settings.keybindings, openSettings: 'Mod+;' } }, baseline: late.settings });
+  assert.deepEqual((await native.invoke('load_client_settings')).settings, { keybindings: { newConversation: 'Mod+Shift+N', openSettings: 'Mod+;' }, debugMode: false });
+});
+
 test('a save from an older window keeps an engine removed by another window removed and keeps its own engine edit', async t => {
   const native = await storedEngines(t);
   const stale = (await native.invoke('load_client_settings')).settings;
