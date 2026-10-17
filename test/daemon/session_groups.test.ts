@@ -167,6 +167,60 @@ test('invalid group changes leave the saved groups unchanged', async () => {
   }
 });
 
+test('moving project assignments keeps the old project until its last session moves', async () => {
+  await reset();
+  const first = publicSession();
+  const second = publicSession();
+  const oldProject = project('local:/old-project', 'Old project', '/old-project');
+  const newProject = project('local:/new-project', 'New project', '/new-project');
+  await change({ type: 'project', project: oldProject, key: 'local:' + first.id });
+  await change({ type: 'project', project: oldProject, key: 'local:' + second.id });
+
+  await change({ type: 'relocate', project: newProject, key: 'local:' + first.id });
+  const partial = await load();
+  expect(partial.assignments).toMatchObject({
+    ['local:' + first.id]: newProject.id,
+    ['local:' + second.id]: oldProject.id,
+  });
+  expect(names(partial).sort()).toEqual(['New project', 'Old project']);
+
+  await change({ type: 'relocate', project: newProject, key: 'local:' + second.id });
+  const finished = await load();
+  expect(finished.groups).toEqual([newProject]);
+  expect(finished.assignments).toMatchObject({
+    ['local:' + first.id]: newProject.id,
+    ['local:' + second.id]: newProject.id,
+  });
+});
+
+test('changing a chat project preserves its user-chosen group', async () => {
+  await reset();
+  const chat = publicSession();
+  const custom = (await change({ type: 'create', name: 'Important' })).groups[0];
+  const key = 'local:' + chat.id;
+  await change({ type: 'assign', key, group: custom.id });
+  const before = await load();
+  const destination = project('local:' + daemon.home, 'Home project', daemon.home);
+
+  await change({ type: 'relocate', project: destination, key });
+  const reloaded = await load([{ sessionKey: key, project: destination }]);
+  expect(reloaded).toEqual(before);
+  expect(reloaded.assignments[key]).toBe(custom.id);
+});
+
+test('changing a chat project keeps an explicitly ungrouped chat ungrouped', async () => {
+  await reset();
+  const chat = publicSession();
+  const key = 'local:' + chat.id;
+  await change({ type: 'assign', key, group: null });
+  const destination = project('local:' + daemon.home, 'Home project', daemon.home);
+
+  await change({ type: 'relocate', project: destination, key });
+  const reloaded = await load([{ sessionKey: key, project: destination }]);
+  expect(reloaded.assignments).toHaveProperty(key, null);
+  expect(reloaded.groups).toEqual([]);
+});
+
 test('saved groups keep project metadata, machine names and explicit ungrouping', async () => {
   await reset();
   const one = publicSession(); const two = publicSession();
