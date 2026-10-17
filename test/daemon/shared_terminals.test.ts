@@ -43,6 +43,28 @@ async function startTerminal(client: Client, clientId: string, sessionId: string
 const entry = async (client: Client, clientId: string, sessionId: string, terminalId: string) =>
   (await shared(client, clientId, 'list', sessionId)).find((item: any) => item.id === terminalId);
 
+test('sending reviewed terminal text delivers it once and clears its matching draft', async () => {
+  const client = await daemon.connect();
+  const sessionId = 'draft-reviewed-input';
+  const terminalId = 'reviewed-input';
+  const directory = temporaryDirectory('piop-reviewed-input-');
+  writeFileSync(join(directory, '.terminal-script'), "IFS= read -r line\nprintf 'RECEIVED:<%s>\\n' \"$line\"\n");
+  try {
+    await shared(client, 'reviewed-owner', 'start', sessionId, { sharedTerminalId: terminalId, cwd: directory, cols: 80, rows: 24 });
+    await shared(client, 'reviewed-owner', 'draft', sessionId, { sharedTerminalId: terminalId, data: 'reviewed text' });
+    await shared(client, 'reviewed-owner', 'write_and_clear_draft', sessionId, {
+      sharedTerminalId: terminalId, data: 'reviewed text\n', expectedDraft: 'reviewed text',
+    });
+    await client.waitEvent('pi://event', event => event.type === 'terminal_exit' && event.terminalId === terminalId);
+    const result = await entry(client, 'reviewed-owner', sessionId, terminalId);
+    expect(result.output).toContain('RECEIVED:<reviewed text>');
+    expect(result.inputDraft).toBe('');
+  } finally {
+    await shared(client, 'reviewed-owner', 'close', sessionId, { sharedTerminalId: terminalId });
+    client.close();
+  }
+}, 30_000);
+
 test('direct terminal input sends only the supplied text and keeps the saved draft', async () => {
   const client = await daemon.connect();
   const sessionId = 'draft-direct-shell-input';
