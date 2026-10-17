@@ -105,3 +105,66 @@ test('terminal input and resize wait for a fork and its terminal transfer', asyn
     await nativeTerminals.close(terminal);
   }
 });
+
+test('input queued behind a failed terminal transfer is rejected and a retry runs in the original session', async t => {
+  const dom = installDom();
+  t.after(() => { clearMocks(); dom.restore(); });
+  const terminal = crypto.randomUUID();
+  const response = Promise.withResolvers();
+  let output = '';
+  const daemon = await daemonClient(t, (event, payload) => {
+    if (event !== 'pi://event' || payload.type !== 'terminal_output' || payload.terminalId !== terminal) return;
+    output += payload.data;
+    if (output.includes('retry-works')) response.resolve();
+  });
+  mockWindows('main');
+  mockIPC((command, args) => {
+    assert.equal(command, 'daemon_invoke');
+    return daemon.invoke(args.command, args.args);
+  });
+  const chat = await daemon.invoke('create_temporary_chat');
+  const source = `local:draft-${crypto.randomUUID()}`;
+  const unowned = `local:${crypto.randomUUID()}`;
+  await nativeTerminals.start(terminal, source, chat.cwd, 80, 24, 'local');
+  try {
+    const transfer = nativeTerminals.reassign(terminal, unowned);
+    const writing = nativeTerminals.write(terminal, "printf '%s%s\\n' 'first-' 'attempt'\r");
+    const [moved, written] = await Promise.allSettled([transfer, writing]);
+    assert.equal(moved.status, 'rejected');
+    assert.match(String(moved.reason), /Take ownership of the destination session first/);
+    assert.equal(written.status, 'rejected');
+    assert.match(String(written.reason), /Take ownership of the destination session first/);
+    await nativeTerminals.write(terminal, "printf '%s%s\\n' 'retry-' 'works'\r");
+    await response.promise;
+    assert.equal(output.includes('first-attempt'), false);
+    assert.deepEqual((await nativeTerminals.list(source, 'local')).map(item => item.id), [terminal]);
+  } finally {
+    await nativeTerminals.close(terminal);
+  }
+});
+
+test('a failed transfer into a session does not hide the terminals already in that session', async t => {
+  const dom = installDom();
+  t.after(() => { clearMocks(); dom.restore(); });
+  const resident = crypto.randomUUID(), closed = crypto.randomUUID();
+  const daemon = await daemonClient(t);
+  mockWindows('main');
+  mockIPC((command, args) => {
+    assert.equal(command, 'daemon_invoke');
+    return daemon.invoke(args.command, args.args);
+  });
+  const chat = await daemon.invoke('create_temporary_chat');
+  const source = `local:draft-${crypto.randomUUID()}`, destination = `local:draft-${crypto.randomUUID()}`;
+  await nativeTerminals.start(resident, destination, chat.cwd, 80, 24, 'local');
+  await nativeTerminals.start(closed, source, chat.cwd, 80, 24, 'local');
+  await nativeTerminals.close(closed);
+  try {
+    const [moved, listed] = await Promise.allSettled([nativeTerminals.reassign(closed, destination), nativeTerminals.list(destination, 'local')]);
+    assert.equal(moved.status, 'rejected');
+    assert.match(String(moved.reason), /Terminal is unavailable/);
+    assert.equal(listed.status, 'fulfilled', String(listed.reason));
+    assert.deepEqual(listed.value.map(item => [item.id, item.exited]), [[resident, false]]);
+  } finally {
+    await nativeTerminals.close(resident);
+  }
+});

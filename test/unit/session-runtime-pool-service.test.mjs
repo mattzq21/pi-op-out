@@ -83,3 +83,23 @@ test('settings reconnect only transports whose remote connection changed', async
   assert.ok(Array.isArray((await local.command({ type: 'get_commands' })).commands));
   assert.deepEqual(errors, []);
 });
+
+test('a conversation released while viewed stays usable until its last viewer closes', async t => {
+  const { pool, daemon, errors } = await runtimePool(t);
+  const chat = await daemon.invoke('create_temporary_chat', { hostId: 'local' });
+  const session = { id: chat.sessionId, cwd: chat.cwd, hostId: 'local' };
+  const client = pool.forSession(session);
+  await client.connect();
+  await client.startDraft();
+  const closeFirst = pool.observe(client), closeSecond = pool.observe(client);
+  await pool.release(client);
+  closeFirst();
+  closeFirst();
+  assert.equal((await client.command({ type: 'get_state' })).sessionId, chat.sessionId);
+  assert.equal(pool.forSession(session), client);
+  const disposed = new Promise(resolve => client.onDispose(resolve));
+  closeSecond();
+  await disposed;
+  assert.notEqual(pool.forSession(session), client);
+  assert.deepEqual(errors, []);
+});

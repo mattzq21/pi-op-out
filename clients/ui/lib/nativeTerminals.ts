@@ -83,7 +83,7 @@ class NativeTerminals {
   }
 
   private async loadList(sessionKey: string, hostId: string, lastUsed: number): Promise<SharedTerminal[]> {
-    await this.reassignments.get(sessionKey);
+    await this.reassignments.get(sessionKey)?.catch(() => undefined);
     const revision = this.cacheRevision;
     const cached = new Map([...this.transcripts].filter(([, value]) => value.sessionKey === sessionKey && value.hostId === hostId));
     const known = Object.fromEntries([...cached].map(([id, value]) => [id, { generation: value.generation, outputEnd: value.outputEnd }]));
