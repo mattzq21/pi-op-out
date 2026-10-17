@@ -15,8 +15,9 @@ export async function scriptedModel(home: string, reply: (request: any) => Reply
   let calls = 0;
   const server = createServer(async (request: IncomingMessage, response) => {
     let body = '';
-    for await (const chunk of request) body += chunk;
-    const parsed = JSON.parse(body);
+    let parsed: any;
+    // A request cut off by a stopped agent has no complete body and gets no answer.
+    try { for await (const chunk of request) body += chunk; parsed = JSON.parse(body); } catch { response.destroy(); return; }
     requests.push(parsed);
     let answer: Reply;
     try { answer = await reply(parsed); } catch (error: any) { response.writeHead(500).end(error.message); return; }
