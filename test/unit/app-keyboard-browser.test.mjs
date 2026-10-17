@@ -78,3 +78,18 @@ test('a shifted binding requires Shift', async t => {
 test('a configured shortcut requires its assigned key', async t => {
   await ignoreSettingsShortcut(t, 'Ctrl+U', 'Control+k');
 });
+
+test('holding the conversations shortcut toggles the conversation panel once', async t => {
+  const page = await appBrowser(t, { keybindings: { toggleConversations: 'Ctrl+B' } });
+  const editor = page.getByRole('textbox', { name: 'Message piop', exact: true });
+  const search = page.getByRole('textbox', { name: 'Search conversations', exact: true });
+  await editor.fill('Keep this draft');
+  const wasOpen = await search.isVisible();
+  await page.keyboard.down('Control');
+  for (let press = 0; press < 4; press++) await page.keyboard.down('b');
+  await page.keyboard.up('b');
+  await page.keyboard.up('Control');
+  await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+  assert.equal(await search.isVisible(), !wasOpen);
+  assert.equal(await editor.inputValue(), 'Keep this draft');
+});
