@@ -256,6 +256,33 @@ test('prompt history recalls sent prompts and restores the unsent draft', { time
   assert.deepEqual(await sent(page), [['First prompt', null, []], ['Second prompt', null, []]]);
 });
 
+test('prompt history recalls only from a collapsed caret on the first line of a multiline draft', { timeout: 30000 }, async t => {
+  const page = await controlsPage(t);
+  const editor = page.getByRole('textbox', { name: 'Message piop' });
+  await editor.fill('Prior prompt');
+  await page.keyboard.press('Enter');
+  await page.waitForFunction(() => document.querySelector('[aria-label="Message piop"]').value === '');
+  assert.deepEqual(await sent(page), [['Prior prompt', null, []]]);
+  const draft = 'Line one\nLine two ';
+  await editor.fill(draft);
+  const select = (start, end) => editor.evaluate((node, [start, end]) => node.setSelectionRange(start, end), [start, end]);
+  const caret = () => editor.evaluate(node => [node.selectionStart, node.selectionEnd]);
+  await select(13, 13);
+  await page.keyboard.press('ArrowUp');
+  assert.equal(await editor.inputValue(), draft);
+  const [start, end] = await caret();
+  assert.equal(start === end && start <= 8, true);
+  await select(0, 4);
+  await page.keyboard.press('ArrowUp');
+  assert.equal(await editor.inputValue(), draft);
+  await select(3, 3);
+  await page.keyboard.press('ArrowUp');
+  assert.equal(await editor.inputValue(), 'Prior prompt');
+  await page.keyboard.press('ArrowDown');
+  assert.equal(await editor.inputValue(), draft);
+  assert.deepEqual(await sent(page), [['Prior prompt', null, []]]);
+});
+
 
 test('fast mode prevents repeated requests and reports failures while preserving server state', async t => {
   const page = await controlsPage(t);
