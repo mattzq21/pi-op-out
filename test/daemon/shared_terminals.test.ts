@@ -43,6 +43,41 @@ async function startTerminal(client: Client, clientId: string, sessionId: string
 const entry = async (client: Client, clientId: string, sessionId: string, terminalId: string) =>
   (await shared(client, clientId, 'list', sessionId)).find((item: any) => item.id === terminalId);
 
+test('discarding drafts closes only the requesting connection terminals', async () => {
+  const first = await daemon.connect();
+  const second = await daemon.connect();
+  try {
+    await startTerminal(first, 'same-client', 'draft-cleanup', 'cleanup-first');
+    const generation = await startTerminal(second, 'same-client', 'draft-other-cleanup', 'cleanup-second');
+    await shared(first, 'same-client', 'discard_drafts', 'draft-cleanup');
+    expect(await shared(first, 'same-client', 'list', 'draft-cleanup')).toEqual([]);
+    expect(await entry(second, 'same-client', 'draft-other-cleanup', 'cleanup-second'))
+      .toMatchObject({ owned: true, exited: false, generation, output: expect.stringContaining('$ preserved') });
+  } finally {
+    await shared(first, 'same-client', 'close', 'draft-cleanup', { sharedTerminalId: 'cleanup-first' });
+    await shared(second, 'same-client', 'close', 'draft-other-cleanup', { sharedTerminalId: 'cleanup-second' });
+    first.close(); second.close();
+  }
+}, 30_000);
+
+test('discarding drafts keeps terminals attached to saved chats on the same connection', async () => {
+  const client = await daemon.connect();
+  const clientId = 'saved-cleanup-owner';
+  const sessionId = await ownedSession(client, clientId);
+  try {
+    const generation = await startTerminal(client, clientId, sessionId, 'saved-cleanup-terminal');
+    await startTerminal(client, clientId, 'draft-saved-cleanup', 'saved-cleanup-draft');
+    await shared(client, clientId, 'discard_drafts', 'draft-saved-cleanup');
+    expect(await shared(client, clientId, 'list', 'draft-saved-cleanup')).toEqual([]);
+    expect(await entry(client, clientId, sessionId, 'saved-cleanup-terminal'))
+      .toMatchObject({ owned: true, exited: false, generation, output: expect.stringContaining('$ preserved') });
+  } finally {
+    await shared(client, clientId, 'close', sessionId, { sharedTerminalId: 'saved-cleanup-terminal' });
+    await shared(client, clientId, 'close', 'draft-saved-cleanup', { sharedTerminalId: 'saved-cleanup-draft' });
+    client.close();
+  }
+}, 30_000);
+
 test('a restarted terminal sends its output even when the previous terminal had the same output length', async () => {
   const client = await daemon.connect();
   const sessionId = 'draft-output-restart';
