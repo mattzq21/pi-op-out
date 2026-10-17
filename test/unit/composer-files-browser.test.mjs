@@ -8,16 +8,31 @@ import { nativeFileCommand } from '../native-file-command.mjs';
 
 async function fileComposer(t) {
   const native = await nativeFileCommand(t, { desktop: true });
-  const reads = [], pending = new Set();
+  const reads = [], pending = new Set(), gates = new Map();
   const page = await startupPage(t, 'development', {
     entryPoint: 'test/fixtures/composer-files-browser.tsx', ready: '[aria-label="Message piop"]', holdStorage: false,
     prepare: page => page.exposeFunction('nativeCommand', async (command, args) => {
       if (command === 'read_dropped_file') reads.push(args.path);
-      const request = native.invoke(command, args);
+      const gate = command === 'read_dropped_file' ? gates.get(args.path) : undefined;
+      const request = native.invoke(command, args).finally(async () => {
+        if (!gate) return;
+        gate.held.resolve();
+        await gate.release.promise;
+      });
       pending.add(request);
       try { return await request; } finally { pending.delete(request); }
     }),
   });
+  const holdRead = path => {
+    const gate = { held: Promise.withResolvers(), release: Promise.withResolvers() };
+    gates.set(path, gate);
+    let timer;
+    const held = Promise.race([gate.held.promise, new Promise((_, reject) => {
+      timer = setTimeout(() => reject(new Error(`Native read of ${path} was not requested`)), 5000);
+    })]).finally(() => clearTimeout(timer));
+    t.after(() => gate.release.resolve());
+    return { held, release: () => gate.release.resolve() };
+  };
   const settle = async () => {
     do {
       await page.evaluate(() => new Promise(resolve => requestAnimationFrame(resolve)));
@@ -26,7 +41,7 @@ async function fileComposer(t) {
   };
   const directory = await mkdtemp(join(homedir(), 'piop-composer-files-'));
   t.after(() => rm(directory, { recursive: true, force: true }));
-  return { page, directory, reads, settle };
+  return { page, directory, reads, settle, holdRead };
 }
 
 test('valid images are sent with their bytes and media type', async t => {
@@ -154,6 +169,25 @@ test('unmounted composers stop receiving native file drops', async t => {
   await settle();
   assert.deepEqual(reads, []);
   assert.equal(await page.getByRole('button', { name: 'Remove ignored.txt', exact: true }).count(), 0);
+});
+
+test('unmounting a composer during a native drop stops the remaining reads and upload changes', { timeout: 15000 }, async t => {
+  const { page, directory, reads, settle, holdRead } = await fileComposer(t);
+  await page.getByRole('checkbox', { name: 'Controlled uploads' }).check();
+  const first = join(directory, 'first.txt'), second = join(directory, 'second.txt');
+  await writeFile(first, 'First');
+  await writeFile(second, 'Second');
+  const read = holdRead(first);
+  const box = await page.locator('.composer').boundingBox();
+  await page.evaluate(({ paths, position }) => window.deliverFileDrag('drop', { paths, position }), {
+    paths: [first, second], position: { x: box.x + box.width / 2, y: box.y + box.height / 2 },
+  });
+  await read.held;
+  await page.getByRole('button', { name: 'Remove composer' }).click();
+  read.release();
+  await settle();
+  assert.deepEqual(reads, [first]);
+  assert.equal(await page.getByLabel('Uploaded files').textContent(), '[]');
 });
 
 
