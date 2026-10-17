@@ -1,6 +1,6 @@
 import { expect, test } from 'bun:test';
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, readdirSync, readFileSync, readlinkSync, rmdirSync, symlinkSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readdirSync, readFileSync, readlinkSync, rmdirSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { startDaemon, type TestDaemon } from './harness';
@@ -34,6 +34,29 @@ test('recovering a missing project gives the chat an empty directory and keeps i
     expect(await daemon.invoke('list_sessions')).toEqual([expect.objectContaining({
       id: chat.id, path: chat.path, cwd: result.cwd, cwdExists: true,
       preview: 'Keep my research notes', messageCount: 1,
+    })]);
+  } finally { await daemon.stop(); }
+}, 60_000);
+
+test('failed recovery preserves the chat and permits retry after the storage obstruction is removed', async () => {
+  const daemon = await startDaemon();
+  try {
+    const chat = missingChat(daemon);
+    const before = await daemon.invoke('list_sessions');
+    const obstruction = join(daemon.home, '.piop', 'recovery');
+    writeFileSync(obstruction, 'Keep this file');
+
+    expect(await daemon.failure('recover_missing_session', {
+      sessionPath: chat.path, hostId: 'local', action: 'empty', clientId: 'recovery-test',
+    })).toContain('Recovery directory is not a regular directory');
+    expect(await daemon.invoke('list_sessions')).toEqual(before);
+    expect(readFileSync(obstruction, 'utf8')).toBe('Keep this file');
+
+    unlinkSync(obstruction);
+    const result = await recover(daemon, chat.path);
+    expect(result.warnings).toEqual([]);
+    expect(await daemon.invoke('list_sessions')).toEqual([expect.objectContaining({
+      id: chat.id, cwd: result.cwd, cwdExists: true, messageCount: 1, preview: 'Keep my research notes',
     })]);
   } finally { await daemon.stop(); }
 }, 60_000);
