@@ -1,4 +1,4 @@
-import { installDom, renderComponent, act } from '../dom.mjs';
+import { installDom, renderComponent, act, untilDom } from '../dom.mjs';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { readFile } from 'node:fs/promises';
@@ -198,4 +198,28 @@ test('empty response content adds no text or copy action', async t => {
   await renderMessage(t, { role: 'assistant', content: [] });
   assert.equal(document.body.textContent.trim(), '');
   assert.equal(copyResponse(), null);
+});
+
+test('a failed tool payload load shows its error and retry loads the input and output', async t => {
+  const firstLoad = Promise.withResolvers(), secondLoad = Promise.withResolvers(), secondCall = Promise.withResolvers();
+  const pendingLoads = [firstLoad, secondLoad];
+  let calls = 0;
+  const message = { id: 'tool-id', role: 'tool', toolName: 'read', content: '', deferredToolPayload: 'payload-ref', toolPayloadVersion: 1,
+    loadToolPayload: () => { calls++; if (calls === 2) secondCall.resolve(); return pendingLoads.shift().promise; } };
+  const view = await renderMessage(t, message, { debug: true });
+  await click(document.querySelector('summary'));
+  await untilDom(() => /Loading tool input and output/.test(document.querySelector('[role=status]')?.textContent));
+  await act(() => firstLoad.reject(new Error('payload unavailable')));
+  const alert = await untilDom(() => document.querySelector('[role=alert]'));
+  assert.match(alert.textContent, /payload unavailable/);
+  await click(button('Retry'));
+  let timer;
+  await Promise.race([secondCall.promise, new Promise((_, reject) => { timer = setTimeout(() => reject(new Error('Retry did not load the tool payload again')), 2000); })]).finally(() => clearTimeout(timer));
+  await view.rerender({ debug: true, message: { ...message, content: 'file contents', toolInput: { path: '/repo/a' }, toolPayloadLoaded: true, loadedToolPayloadVersion: 1 } });
+  await act(() => secondLoad.resolve());
+  assert.equal(calls, 2);
+  assert.equal(document.querySelector('[role=alert]'), null);
+  assert.equal(document.querySelector('[role=status]'), null);
+  assert.match(control('Tool arguments').textContent, /\/repo\/a/);
+  assert.equal(control('Tool output').textContent, 'file contents');
 });
