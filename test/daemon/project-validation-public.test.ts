@@ -1,5 +1,5 @@
 import { expect, test } from 'bun:test';
-import { mkdirSync, symlinkSync } from 'node:fs';
+import { mkdirSync, symlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { startDaemon } from './harness';
 
@@ -20,5 +20,24 @@ test('project selection rejects links into app storage but accepts similarly nam
       }
       expect(await daemon.invoke('validate_project_directory', { hostId: 'local', path: sibling })).toBe(sibling);
     }
+  } finally { await daemon.stop(); }
+}, 60_000);
+
+test('allowing app storage accepts a temporary chat folder but still rejects files and missing paths', async () => {
+  const daemon = await startDaemon();
+  try {
+    const chat = await daemon.invoke('create_temporary_chat', { hostId: 'local' });
+    const args = { hostId: 'local', allowStorage: true };
+    expect(await daemon.invoke('validate_project_directory', { ...args, path: chat.cwd })).toBe(chat.cwd);
+    expect(await daemon.failure('validate_project_directory', { path: chat.cwd, hostId: 'local' }))
+      .toBe('Piop storage directories cannot be selected as projects');
+
+    const file = join(chat.cwd, 'notes.txt');
+    writeFileSync(file, 'Project notes');
+    expect(await daemon.failure('validate_project_directory', { ...args, path: file }))
+      .toContain('is not a directory');
+    expect(await daemon.failure('validate_project_directory', { ...args, path: join(chat.cwd, 'missing') }))
+      .toContain('is unavailable');
+    expect(await daemon.invoke('validate_project_directory', { ...args, path: chat.cwd })).toBe(chat.cwd);
   } finally { await daemon.stop(); }
 }, 60_000);
