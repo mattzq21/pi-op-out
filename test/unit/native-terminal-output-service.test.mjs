@@ -59,3 +59,50 @@ test('a terminal list answered before the terminal restarts shows only the new t
     await nativeTerminals.close(terminal);
   }
 });
+
+test('listing again with no new terminal output keeps the earlier text and returns the latest draft, then adds new output once', async t => {
+  const dom = installDom();
+  t.after(() => { clearMocks(); dom.restore(); });
+  const terminal = crypto.randomUUID();
+  const first = Promise.withResolvers(), second = Promise.withResolvers();
+  let output = '';
+  const daemon = await daemonClient(t, (event, payload) => {
+    if (event !== 'pi://event' || payload.type !== 'terminal_output' || payload.terminalId !== terminal) return;
+    output += payload.data;
+    if (output.includes('first-output')) first.resolve();
+    if (output.includes('second-output')) second.resolve();
+  });
+  const listReplies = [];
+  mockWindows('main');
+  mockIPC(async (command, args) => {
+    assert.equal(command, 'daemon_invoke');
+    const result = await daemon.invoke(args.command, args.args);
+    if (args.command === 'shared_terminal' && args.args.action === 'list') listReplies.push(result);
+    return result;
+  });
+  const chat = await daemon.invoke('create_temporary_chat');
+  const session = `local:draft-${crypto.randomUUID()}`;
+  const program = "sh -c 'printf %s%s\\\\n first- output; read line; printf %s%s\\\\n second- output; read line'";
+  await nativeTerminals.start(terminal, session, chat.cwd, 80, 24, 'local');
+  try {
+    await nativeTerminals.write(terminal, program + '\r', 'write');
+    await first.promise;
+    const [before] = await nativeTerminals.list(session, 'local');
+    assert.equal(before.output.split('first-output').length - 1, 1);
+    await nativeTerminals.write(terminal, 'first draft', 'draft');
+    const [drafted] = await nativeTerminals.list(session, 'local');
+    await nativeTerminals.write(terminal, 'second draft', 'draft');
+    const [redrafted] = await nativeTerminals.list(session, 'local');
+    assert.deepEqual(listReplies.slice(-2).map(([reply]) => reply.output), [null, null]);
+    assert.deepEqual([drafted.output, drafted.inputDraft], [before.output, 'first draft']);
+    assert.deepEqual([redrafted.output, redrafted.inputDraft], [before.output, 'second draft']);
+    await nativeTerminals.write(terminal, 'go\r', 'write');
+    await second.promise;
+    const [after] = await nativeTerminals.list(session, 'local');
+    assert.equal(after.output.split('first-output').length - 1, 1);
+    assert.equal(after.output.split('second-output').length - 1, 1);
+    assert.equal(after.inputDraft, 'second draft');
+  } finally {
+    await nativeTerminals.close(terminal);
+  }
+});
