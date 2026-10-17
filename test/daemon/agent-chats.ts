@@ -41,5 +41,12 @@ export async function agentDaemon() {
     return { ...chat, runtimeId, command, history, until };
   };
 
-  return { daemon, model, scripts, rootChat, close: async () => { await model.close(); await daemon.stop(); } };
+  /** Adds tools to every agent profile, as Settings → Agents → Tools does. Only chats started afterwards use them. */
+  const enableAgentTools = async (...tools: string[]) => {
+    const chat = await rootChat();
+    const configuration = await chat.command({ type: 'get_agent_configuration' });
+    await chat.command({ type: 'configure_agents', configuration: { revision: configuration.revision, agents: configuration.agents.map((agent: any) => ({ ...agent, tools: [...new Set([...(agent.tools ?? []), ...tools])] })) } });
+  };
+
+  return { daemon, model, scripts, rootChat, enableAgentTools, close: async () => { await model.close(); await daemon.stop(); } };
 }

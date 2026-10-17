@@ -5,12 +5,6 @@ let agents: Awaited<ReturnType<typeof agentDaemon>>;
 beforeAll(async () => { agents = await agentDaemon(); }, 60000);
 afterAll(async () => { await agents?.close(); });
 
-/** Lets agent profiles message other chats, as enabling send_message in Settings → Agents does. Chats started afterwards use it. */
-async function allowChatMessaging(chat: Awaited<ReturnType<typeof agents.rootChat>>) {
-  const configuration = await chat.command({ type: 'get_agent_configuration' });
-  await chat.command({ type: 'configure_agents', configuration: { revision: configuration.revision, agents: configuration.agents.map((agent: any) => ({ ...agent, tools: [...new Set([...(agent.tools ?? []), 'send_message'])] })) } });
-}
-
 const toolResult = (messages: any[], tool: string) => {
   const call = messages.findLast(message => message.role === 'assistant' && message.tool_calls?.some((item: any) => item.function.name === tool))?.tool_calls.find((item: any) => item.function.name === tool);
   return call && JSON.parse(text(messages.find(message => message.role === 'tool' && message.tool_call_id === call.id)));
@@ -22,7 +16,7 @@ test('a chat can message another chat, wait for its answer and read it', async (
   await worker.command({ type: 'prompt', message: 'You are the worker' });
   await worker.until(history => text(history.at(-1)) === 'Ready.');
 
-  await allowChatMessaging(worker);
+  await agents.enableAgentTools('send_message');
   const coordinator = await agents.rootChat();
   agents.scripts.set('Check on the worker', messages => {
     if (!called(messages, 'send_message_to_thread')) return { tool: 'send_message_to_thread', arguments: { threadId: worker.sessionId, prompt: 'What is the build status?' } };
@@ -41,8 +35,7 @@ test('a chat can message another chat, wait for its answer and read it', async (
 }, 120000);
 
 test('chat tools list and read only root chats, never subagent chats', async () => {
-  const setup = await agents.rootChat();
-  await allowChatMessaging(setup);
+  await agents.enableAgentTools('send_message');
   const coordinator = await agents.rootChat();
   let childId = '';
   agents.scripts.set('Delegate, then look around', messages => {
@@ -65,8 +58,7 @@ test('chat tools list and read only root chats, never subagent chats', async () 
 }, 120000);
 
 test('a chat can start a new independent chat that works on its prompt', async () => {
-  const setup = await agents.rootChat();
-  await allowChatMessaging(setup);
+  await agents.enableAgentTools('send_message');
   const coordinator = await agents.rootChat();
   agents.scripts.set('Open a release chat', messages => {
     if (!called(messages, 'create_thread')) return { tool: 'create_thread', arguments: { title: 'Release notes', prompt: 'Draft the release notes' } };
@@ -90,8 +82,7 @@ test('a chat can start a new independent chat that works on its prompt', async (
 const held = <T>() => { let release!: (value: T) => void; const promise = new Promise<T>(resolve => { release = resolve; }); return { promise, release }; };
 
 test('a chat can stop another chat\'s running work, which keeps its history and stays usable', async () => {
-  const setup = await agents.rootChat();
-  await allowChatMessaging(setup);
+  await agents.enableAgentTools('send_message');
   const worker = await agents.rootChat();
   const longReply = held<{ text: string }>();
   agents.scripts.set('Long job', messages => text(messages.at(-1)).includes('Are you still there?') ? { text: 'Still here.' } : longReply.promise);
@@ -114,8 +105,7 @@ test('a chat can stop another chat\'s running work, which keeps its history and 
 }, 120000);
 
 test('a message to a busy chat waits until its current work finishes, then starts a new turn', async () => {
-  const setup = await agents.rootChat();
-  await allowChatMessaging(setup);
+  await agents.enableAgentTools('send_message');
   const worker = await agents.rootChat();
   const longReply = held<{ text: string }>();
   agents.scripts.set('Busy job', messages => text(messages.at(-1)).includes('Queued question') ? { text: 'Answer to the queued question.' } : longReply.promise);
