@@ -143,6 +143,23 @@ test('the current folder opens with Ctrl+Enter and duplicate open requests are s
   } finally { pending.resolve(); }
 });
 
+test('after a folder fails to open, choosing another folder opens it and clears the error', { timeout: 15000 }, async t => {
+  let attempts = 0;
+  const { page, home } = await projectPage(t, { open: async () => { attempts += 1; if (attempts === 1) throw new Error('home cannot open'); } });
+  const input = page.getByRole('combobox', { name: 'Folder path relative to home' });
+  const error = page.getByRole('alert');
+  await page.getByRole('listbox', { name: 'Matching folders' }).getByRole('option', { name: 'alpha', exact: true }).waitFor();
+  await page.keyboard.press('Control+Enter');
+  await error.filter({ hasText: 'home cannot open' }).waitFor();
+  await input.fill('alpha/');
+  await page.getByText('No child folders. Press Enter to open this folder.', { exact: true }).waitFor();
+  await page.keyboard.press('Control+Enter');
+  await page.getByRole('button', { name: /Open current folder/ }).waitFor();
+  assert.equal(await error.count(), 0);
+  assert.equal(attempts, 2);
+  assert.deepEqual(JSON.parse(await page.getByLabel('Opened folders').textContent()), [[home + '/', 'local'], [join(home, 'alpha') + '/', 'local']]);
+});
+
 test('stale directory responses cannot replace the newly selected host', async t => {
   const pending = Promise.withResolvers(), started = Promise.withResolvers();
   const { page, remoteHome } = await projectPage(t, {
