@@ -256,6 +256,31 @@ test('prompt history recalls sent prompts and restores the unsent draft', { time
   assert.deepEqual(await sent(page), [['First prompt', null, []], ['Second prompt', null, []]]);
 });
 
+test('refused sends stay out of prompt history until a corrected send is accepted', { timeout: 30000 }, async t => {
+  const page = await controlsPage(t);
+  const editor = page.getByRole('textbox', { name: 'Message piop' });
+  const mode = page.getByRole('combobox', { name: 'Send result', exact: true });
+  const cleared = () => page.waitForFunction(() => document.querySelector('[aria-label="Message piop"]').value === '');
+  const walk = async keys => { const values = []; for (const key of keys) { await page.keyboard.press(key); values.push(await editor.inputValue()); } return values; };
+  await editor.fill('Accepted baseline');
+  await page.keyboard.press('Enter');
+  await cleared();
+  await mode.selectOption('refuse');
+  await editor.fill('Rejected draft');
+  await page.keyboard.press('Enter');
+  await page.getByRole('alert').filter({ hasText: 'Message was not submitted' }).waitFor();
+  assert.equal(await editor.inputValue(), 'Rejected draft');
+  await editor.fill('Replacement draft');
+  assert.deepEqual(await walk(['ArrowUp', 'ArrowUp', 'ArrowDown']), ['Accepted baseline', 'Accepted baseline', 'Replacement draft']);
+  await mode.selectOption('accept');
+  await editor.fill('Corrected draft');
+  await page.keyboard.press('Enter');
+  await cleared();
+  assert.equal(await page.getByRole('alert').count(), 0);
+  assert.deepEqual(await walk(['ArrowUp', 'ArrowUp', 'ArrowDown', 'ArrowDown']), ['Corrected draft', 'Accepted baseline', 'Corrected draft', '']);
+  assert.deepEqual(await sent(page), [['Accepted baseline', null, []], ['Rejected draft', null, []], ['Corrected draft', null, []]]);
+});
+
 test('prompt history recalls only from a collapsed caret on the first line of a multiline draft', { timeout: 30000 }, async t => {
   const page = await controlsPage(t);
   const editor = page.getByRole('textbox', { name: 'Message piop' });
