@@ -50,7 +50,8 @@ function androidBridge(initialSettings) {
   };
 }
 
-test('Android Back on unsaved settings asks first and returns to the chat draft only after discard', async t => {
+// Connects the mobile app to the test host and returns the chat with an enabled message box.
+async function connectedChat(t) {
   const page = await startupPage(t, 'mobile', {
     entryPoint: fileURLToPath(new URL('../../clients/ui/main.tsx', import.meta.url)), ready: 'input[type="url"]', holdStorage: false,
     async prepare(value) {
@@ -64,6 +65,13 @@ test('Android Back on unsaved settings asks first and returns to the chat draft 
   await page.getByRole('button', { name: 'Connect', exact: true }).click();
   const editor = page.getByRole('textbox', { name: 'Message piop', exact: true });
   await page.waitForFunction(() => document.querySelector('textarea[aria-label="Message piop"]')?.disabled === false);
+  return { page, editor };
+}
+
+const settle = page => page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+
+test('Android Back on unsaved settings asks first and returns to the chat draft only after discard', async t => {
+  const { page, editor } = await connectedChat(t);
   await editor.fill('Keep this draft');
   await page.getByRole('button', { name: 'Toggle conversations' }).click();
   await page.getByRole('button', { name: 'Settings', exact: true }).click();
@@ -73,11 +81,10 @@ test('Android Back on unsaved settings asks first and returns to the chat draft 
   await retry.click();
   assert.equal(await retry.getAttribute('aria-checked'), 'false');
   const prompts = [];
-  const settle = () => page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
 
   page.once('dialog', dialog => { prompts.push(dialog.message()); return dialog.dismiss(); });
   await page.evaluate(() => window.pressAndroidBack());
-  await settle();
+  await settle(page);
   assert.deepEqual(prompts, ['Discard unsaved settings changes?']);
   assert.equal(await retry.isVisible(), true);
   assert.equal(await retry.getAttribute('aria-checked'), 'false');
@@ -86,10 +93,31 @@ test('Android Back on unsaved settings asks first and returns to the chat draft 
   page.once('dialog', dialog => { prompts.push(dialog.message()); return dialog.accept(); });
   await page.evaluate(() => window.pressAndroidBack());
   await editor.waitFor();
-  await settle();
+  await settle(page);
   assert.deepEqual(prompts, ['Discard unsaved settings changes?', 'Discard unsaved settings changes?']);
   assert.equal(await retry.count(), 0);
   assert.equal(await editor.inputValue(), 'Keep this draft');
   assert.equal(await page.evaluate(() => window.androidMinimized), 0);
+});
+
+test('Android Back closes the open conversation panel first and minimizes the app only on the next press', async t => {
+  const { page, editor } = await connectedChat(t);
+  await editor.fill('Keep this draft');
+  const closePanel = page.getByRole('button', { name: 'Close conversations', exact: true });
+  await page.getByRole('button', { name: 'Toggle conversations' }).click();
+  await closePanel.waitFor();
+
+  await page.evaluate(() => window.pressAndroidBack());
+  await closePanel.waitFor({ state: 'detached' });
+  await settle(page);
+  assert.equal(await editor.inputValue(), 'Keep this draft');
+  assert.equal(await page.evaluate(() => window.androidMinimized), 0);
+
+  await page.evaluate(() => window.pressAndroidBack());
+  await page.waitForFunction(() => window.androidMinimized > 0);
+  await settle(page);
+  assert.equal(await page.evaluate(() => window.androidMinimized), 1);
+  assert.equal(await closePanel.count(), 0);
+  assert.equal(await editor.inputValue(), 'Keep this draft');
 });
 
