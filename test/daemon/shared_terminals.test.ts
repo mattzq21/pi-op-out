@@ -43,6 +43,26 @@ async function startTerminal(client: Client, clientId: string, sessionId: string
 const entry = async (client: Client, clientId: string, sessionId: string, terminalId: string) =>
   (await shared(client, clientId, 'list', sessionId)).find((item: any) => item.id === terminalId);
 
+test('direct terminal input sends only the supplied text and keeps the saved draft', async () => {
+  const client = await daemon.connect();
+  const sessionId = 'draft-direct-shell-input';
+  const terminalId = 'direct-shell-input';
+  const directory = temporaryDirectory('piop-direct-input-');
+  writeFileSync(join(directory, '.terminal-script'), "IFS= read -r line\nprintf 'RECEIVED:<%s>\\n' \"$line\"\n");
+  try {
+    await shared(client, 'direct-owner', 'start', sessionId, { sharedTerminalId: terminalId, cwd: directory, cols: 80, rows: 24 });
+    await shared(client, 'direct-owner', 'draft', sessionId, { sharedTerminalId: terminalId, data: 'Keep for later' });
+    await shared(client, 'direct-owner', 'write', sessionId, { sharedTerminalId: terminalId, data: 'direct text\n' });
+    await client.waitEvent('pi://event', event => event.type === 'terminal_exit' && event.terminalId === terminalId);
+    const result = await entry(client, 'direct-owner', sessionId, terminalId);
+    expect(result.output).toContain('RECEIVED:<direct text>');
+    expect(result.inputDraft).toBe('Keep for later');
+  } finally {
+    await shared(client, 'direct-owner', 'close', sessionId, { sharedTerminalId: terminalId });
+    client.close();
+  }
+}, 30_000);
+
 test('sending with a draft delivers the saved text before the new input to the shell', async () => {
   const client = await daemon.connect();
   const sessionId = 'draft-shell-input';
