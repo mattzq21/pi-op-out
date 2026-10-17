@@ -223,3 +223,19 @@ test('a failed tool payload load shows its error and retry loads the input and o
   assert.match(control('Tool arguments').textContent, /\/repo\/a/);
   assert.equal(control('Tool output').textContent, 'file contents');
 });
+
+test('a stale tool payload failure does not replace the newer loaded input and output', async t => {
+  const oldLoad = Promise.withResolvers();
+  const message = { id: 'tool-id', role: 'tool', toolName: 'read', content: '', deferredToolPayload: 'payload-ref', toolPayloadVersion: 1, loadToolPayload: () => oldLoad.promise };
+  const view = await renderMessage(t, message, { debug: true });
+  await click(document.querySelector('summary'));
+  await untilDom(() => /Loading tool input and output/.test(document.querySelector('[role=status]')?.textContent));
+  await view.rerender({ debug: true, message: { ...message, content: 'new contents', toolInput: { path: '/repo/new' }, toolPayloadVersion: 2, toolPayloadLoaded: true, loadedToolPayloadVersion: 2 } });
+  await act(() => oldLoad.reject(new Error('old payload unavailable')));
+  await act(() => new Promise(resolve => setTimeout(resolve, 0)));
+  assert.equal(document.querySelector('[role=alert]'), null);
+  assert.equal(button('Retry'), undefined);
+  assert.equal(document.querySelector('[role=status]'), null);
+  assert.match(control('Tool arguments').textContent, /\/repo\/new/);
+  assert.equal(control('Tool output').textContent, 'new contents');
+});
