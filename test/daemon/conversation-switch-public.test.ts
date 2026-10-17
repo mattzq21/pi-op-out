@@ -68,3 +68,23 @@ test('switching to a conversation another device has open only watches it, and c
     expect(text((await phoneCommand({ type: 'get_entries' })).entries.filter((entry: any) => entry.type === 'message').at(-1).message)).toBe('Phone answer.');
   } finally { phone.close(); }
 }, 60000);
+
+test('branching after an answer opens a new conversation with the history up to that answer and leaves the original intact', async () => {
+  agents.scripts.set('First question', messages => ({ text: 'Answer to ' + text(messages.at(-1)) }));
+  const chat = await agents.rootChat();
+  await chat.command({ type: 'prompt', message: 'First question' });
+  await chat.until(history => text(history.at(-1)) === 'Answer to First question');
+  await chat.command({ type: 'prompt', message: 'Second question' });
+  await chat.until(history => text(history.at(-1)) === 'Answer to Second question');
+  const original = await chat.command({ type: 'get_state' });
+  const firstAnswer = (await chat.command({ type: 'get_entries' })).entries.find((entry: any) => entry.type === 'message' && text(entry.message) === 'Answer to First question');
+  await chat.command({ type: 'fork_after', entryId: firstAnswer.id });
+  const branch = await chat.command({ type: 'get_state' });
+  expect(branch.sessionId).not.toBe(original.sessionId);
+  expect((await chat.history()).filter(message => message.role !== 'system').map(text)).toEqual(['First question', 'Answer to First question']);
+  await chat.command({ type: 'prompt', message: 'Different second question' });
+  await chat.until(history => text(history.at(-1)) === 'Answer to Different second question');
+  const sessions = await agents.daemon.invoke('list_sessions');
+  expect(sessions.find((session: any) => session.id === original.sessionId)).toMatchObject({ preview: 'Answer to Second question' });
+  expect(sessions.find((session: any) => session.id === branch.sessionId)).toMatchObject({ preview: 'Answer to Different second question' });
+}, 60000);
