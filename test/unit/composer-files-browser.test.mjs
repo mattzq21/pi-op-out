@@ -68,6 +68,21 @@ test('native file drops convert physical coordinates before attaching files', as
   } finally { await display.detach(); }
 });
 
+test('native drops keep non-ASCII text and filenames intact', async t => {
+  const { page, directory } = await fileComposer(t);
+  const path = join(directory, 'résumé.md');
+  await writeFile(path, 'Café — 漢字 😀');
+  const box = await page.locator('.composer').boundingBox();
+  await page.evaluate(({ path, position }) => window.deliverFileDrag('drop', { paths: [path], position }), {
+    path, position: { x: box.x + box.width / 2, y: box.y + box.height / 2 },
+  });
+  await page.getByRole('button', { name: 'Remove résumé.md', exact: true }).waitFor();
+  await page.keyboard.press('Enter');
+  assert.deepEqual(JSON.parse(await page.getByLabel('Sent messages').textContent()), [
+    ['<file name="résumé.md">\nCafé — 漢字 😀\n</file>', null, []],
+  ]);
+});
+
 test('native drag entry and leave update the visible attachment hint', async t => {
   const { page, directory, reads, settle } = await fileComposer(t);
   const path = join(directory, 'preview.txt');
@@ -614,4 +629,25 @@ test('concurrent file reads respect the attachment count after earlier reads fin
     'Remove fast8.txt', 'Remove fast9.txt', 'Remove fast10.txt', 'Remove fast11.txt',
   ]);
   assert.equal(await page.getByRole('button', { name: 'Remove slow.txt', exact: true }).count(), 0);
+});
+
+test('dropping a file again after a failed native read attaches it and clears the error', async t => {
+  const { page, directory } = await fileComposer(t);
+  const path = join(directory, 'later.txt');
+  const box = await page.locator('.composer').boundingBox();
+  const drop = () => page.evaluate(({ path, position }) => window.deliverFileDrag('drop', { paths: [path], position }), {
+    path, position: { x: box.x + box.width / 2, y: box.y + box.height / 2 },
+  });
+  await drop();
+  const error = page.getByRole('alert').filter({ hasText: 'No such file or directory' });
+  await error.waitFor();
+  assert.equal(await page.locator('.attachments button').count(), 0);
+  await writeFile(path, 'Ready now');
+  await drop();
+  await page.getByRole('button', { name: 'Remove later.txt', exact: true }).waitFor();
+  assert.equal(await page.getByRole('alert').count(), 0);
+  await page.keyboard.press('Enter');
+  assert.deepEqual(JSON.parse(await page.getByLabel('Sent messages').textContent()), [
+    ['<file name="later.txt">\nReady now\n</file>', null, []],
+  ]);
 });

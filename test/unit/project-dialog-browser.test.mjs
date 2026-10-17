@@ -5,7 +5,7 @@ import { join, dirname } from 'node:path';
 import { tmpdir } from 'node:os';
 import { startupPage } from '../startup-browser-fixture.mjs';
 
-async function projectPage(t, { open = async () => {}, beforeList = async () => {}, homePath, list } = {}) {
+async function projectPage(t, { open = async () => {}, beforeList = async () => {}, beforeHome = async () => {}, homePath, list } = {}) {
   const home = await mkdtemp(join(tmpdir(), 'piop-project-dialog-'));
   t.after(() => rm(home, { recursive: true, force: true }));
   const remoteHome = await mkdtemp(join(tmpdir(), 'piop-project-remote-'));
@@ -15,7 +15,7 @@ async function projectPage(t, { open = async () => {}, beforeList = async () => 
   const page = await startupPage(t, 'development', {
     entryPoint: 'test/fixtures/project-dialog-browser.tsx', ready: '[role="combobox"]', holdStorage: false,
     prepare: async page => {
-      await page.exposeFunction('projectHome', host => homePath ?? (host === 'remote' ? remoteHome : home));
+      await page.exposeFunction('projectHome', async host => { await beforeHome(host); return homePath ?? (host === 'remote' ? remoteHome : home); });
       await page.exposeFunction('openProject', open);
       await page.exposeFunction('listProjectFolders', async (path, host) => {
         if (list) return list(path, host);
@@ -207,4 +207,46 @@ test('Windows home paths expand separators and folders outside home open without
   await page.getByRole('combobox', { name: 'Search or type a folder path', exact: true }).focus();
   await page.keyboard.press('Enter');
   assert.deepEqual(JSON.parse(await page.getByLabel('Opened folders').textContent()), [['D:\\repo\\', 'local']]);
+});
+
+test('a late home folder from the previous machine cannot replace the newly selected machine', async t => {
+  const pending = Promise.withResolvers(), started = Promise.withResolvers();
+  const { page, remoteHome } = await projectPage(t, {
+    beforeHome: async host => { if (host === 'local') { started.resolve(); await pending.promise; } },
+  });
+  try {
+    await started.promise;
+    await page.getByRole('combobox', { name: 'Machine' }).selectOption('remote');
+    await page.getByRole('listbox', { name: 'Matching folders' }).getByRole('option', { name: 'new', exact: true }).waitFor();
+    pending.resolve();
+    await page.getByLabel('Settled home requests').evaluate(node => new Promise(resolve => {
+      const observer = new MutationObserver(check);
+      function check() { if (node.textContent === '2') { observer.disconnect(); resolve(); } }
+      observer.observe(node, { childList: true, characterData: true, subtree: true });
+      check();
+    }));
+    const input = page.getByRole('combobox', { name: 'Folder path relative to home' });
+    assert.equal(await input.inputValue(), '');
+    assert.deepEqual(await page.getByRole('listbox').getByRole('option').allTextContents(), ['new']);
+    await input.focus();
+    await page.keyboard.press('Control+Enter');
+    assert.deepEqual(JSON.parse(await page.getByLabel('Opened folders').textContent()), [[remoteHome + '/', 'remote']]);
+  } finally { pending.resolve(); }
+});
+
+test('after a home folder failure, choosing another machine clears the error and allows opening', async t => {
+  const { page, remoteHome } = await projectPage(t, {
+    beforeHome: async host => { if (host === 'local') throw new Error('local home unavailable'); },
+  });
+  const error = page.getByRole('alert');
+  await error.waitFor();
+  assert.match(await error.textContent(), /local home unavailable/);
+  const open = page.getByRole('button', { name: /Open current folder/ });
+  assert.equal(await open.isDisabled(), true);
+  await page.getByRole('combobox', { name: 'Machine' }).selectOption('remote');
+  await page.getByRole('listbox', { name: 'Matching folders' }).getByRole('option', { name: 'new', exact: true }).waitFor();
+  assert.equal(await error.count(), 0);
+  assert.equal(await open.isDisabled(), false);
+  await open.click();
+  assert.deepEqual(JSON.parse(await page.getByLabel('Opened folders').textContent()), [[remoteHome + '/', 'remote']]);
 });
