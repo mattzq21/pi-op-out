@@ -154,6 +154,19 @@ test('copy shortcut copies selection and reports clipboard failures without inte
   assert.equal(await status.count(), 0);
 });
 
+test('multiline paste retains shell paste markers and normalizes line endings', { timeout: 15000 }, async t => {
+  const page = await startupPage(t, 'development', {
+    entryPoint: 'test/fixtures/terminal-view-browser.tsx', ready: '.xterm-screen', holdStorage: false,
+  });
+  await page.context().grantPermissions(['clipboard-read', 'clipboard-write']);
+  await page.evaluate(() => navigator.clipboard.writeText('echo one\necho two\r\n'));
+  await page.getByRole('button', { name: 'Enable bracketed paste', exact: true }).click();
+  assert.equal(await terminalReply(page), '\u001b[1;1R');
+  await page.locator('.xterm-helper-textarea').focus();
+  await page.keyboard.press('Control+Shift+v');
+  assert.equal(await terminalReply(page, '\u001b[1;1R'), '\u001b[1;1R\u001b[200~echo one\recho two\r\u001b[201~');
+});
+
 test('restores snapshots before replaying new output and preserves unparsed snapshots when switching tabs', async t => {
   const page = await startupPage(t, 'development', {
     entryPoint: 'test/fixtures/terminal-restore-browser.tsx', ready: '.xterm-screen', holdStorage: false,
