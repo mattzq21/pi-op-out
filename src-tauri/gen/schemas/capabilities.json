@@ -1,1 +1,0 @@
-{"default":{"identifier":"default","description":"Core piop capability","local":true,"windows":["main","chat-*"],"permissions":["core:default","dialog:allow-open"]}}
