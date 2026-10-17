@@ -118,3 +118,18 @@ test('repeating a finished remote restore succeeds and keeps one active chat', a
   expect(active.filter((row: any) => row.id === chat.id)).toMatchObject([{ hostId: remote.id, name: 'Restore twice' }]);
   expect((await remoteArchives()).some((row: any) => row.id === chat.id)).toBe(false);
 }, 60000);
+
+test('repeating a finished remote restore after both daemons restart succeeds and keeps one active chat', async () => {
+  const chat = publish('Restore across restart');
+  await archive(chat.path);
+  const archived = (await remoteArchives()).find((row: any) => row.id === chat.id);
+  await restore(archived.path);
+  const home = daemon.home;
+  await remote.stop();
+  await daemon.stop();
+  daemon = await startDaemon({ home });
+  await restore(archived.path);
+  const active = await waitForSessions(daemon, rows => rows.some(row => row.id === chat.id));
+  expect(active.filter((row: any) => row.id === chat.id)).toMatchObject([{ hostId: remote.id, name: 'Restore across restart' }]);
+  expect((await remoteArchives()).some((row: any) => row.id === chat.id)).toBe(false);
+}, 90000);
