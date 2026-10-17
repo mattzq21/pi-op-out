@@ -15,6 +15,7 @@ function Example() {
     <button onClick={() => setRequest({ id: 'confirmation', method: 'confirm', title: 'Continue?', message: 'Confirm this action' })}>Open confirmation</button>
     <button onClick={() => setRequest({ id: 'editor', method: 'editor', title: 'Instructions', prefill: 'draft' })}>Open editor</button>
     <button onClick={() => setRequest({ id: 'input', method: 'input', title: 'Name', prefill: 'initial' })}>Open input</button>
+    <button onClick={() => setRequest({ id: 'selection', method: 'select', title: 'Pick a branch', options: ['main', 'release', 'hotfix'] })}>Open selection</button>
     <output aria-label="Dialog response">{result()}</output>
     <Show when={request()}>{value => <ExtensionDialog request={value()} onRespond={async response => {
       if (value().method === 'input') {

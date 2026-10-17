@@ -37,6 +37,39 @@ test('Escape cancels an extension editor without submitting the edited text', as
   assert.equal(await page.getByLabel('Dialog response').textContent(), '{"cancelled":true}');
 });
 
+test('choosing an option in an extension selection sends that option', async t => {
+  const page = await startupPage(t, 'production', { entryPoint: 'test/fixtures/extension-dialog-browser.tsx', ready: '[aria-label="Dialog response"]' });
+  await page.getByRole('button', { name: 'Open selection' }).click();
+  await page.getByRole('dialog', { name: 'Pick a branch' }).getByRole('button', { name: 'release', exact: true }).click();
+  await page.getByRole('dialog').waitFor({ state: 'detached' });
+  assert.equal(await page.getByLabel('Dialog response').textContent(), '{"value":"release"}');
+});
+
+test('Escape during a pending extension input keeps the dialog open to show the response failure', async t => {
+  const pending = Promise.withResolvers();
+  const received = Promise.withResolvers();
+  const responses = [];
+  const page = await startupPage(t, 'production', {
+    entryPoint: 'test/fixtures/extension-dialog-browser.tsx', ready: '[aria-label="Dialog response"]',
+    prepare: page => page.exposeFunction('respondToExampleInput', response => {
+      responses.push(response); received.resolve(); return pending.promise;
+    }),
+  });
+  await page.getByRole('button', { name: 'Open input' }).click();
+  const input = page.getByRole('textbox', { name: 'Name', exact: true });
+  await input.press('Enter');
+  await received.promise;
+  await page.evaluate(() => new Promise(resolve => requestAnimationFrame(resolve)));
+  assert.equal(await input.evaluate(element => element.disabled && document.activeElement !== element), true);
+  await page.keyboard.press('Escape');
+  assert.equal(await page.getByRole('dialog', { name: 'Name' }).isVisible(), true);
+  pending.resolve({ error: 'offline' });
+  await page.getByRole('dialog', { name: 'Name' }).getByRole('alert').waitFor();
+  assert.equal(await page.getByRole('alert').textContent(), 'offline');
+  assert.deepEqual(responses, [{ value: 'initial' }]);
+  assert.equal(await page.getByLabel('Dialog response').textContent(), 'No response');
+});
+
 test('extension input waits for composition, prevents duplicate submission and shows response failures', async t => {
   const pending = Promise.withResolvers();
   const received = Promise.withResolvers();
