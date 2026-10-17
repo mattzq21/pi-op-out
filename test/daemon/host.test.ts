@@ -26,6 +26,7 @@ const sessionFile = at('--session');
 const sessionId = JSON.parse(fs.readFileSync(sessionFile, 'utf8').split('\\n')[0]).id;
 const state = { sessionFile, sessionId, isStreaming: false, messageCount: 1, pendingMessageCount: 0, model: null, thinkingLevel: 'medium' };
 const send = packet => process.stdout.write(JSON.stringify(packet) + '\\n');
+let followUp = [];
 require('node:readline').createInterface({ input: process.stdin }).on('line', line => {
   const request = JSON.parse(line);
   if ((sessionFile.includes('/abort-preparation/') || sessionFile.includes('/abort-gate/')) && request.type === 'piop_request'
@@ -38,7 +39,13 @@ require('node:readline').createInterface({ input: process.stdin }).on('line', li
     return;
   }
   if (request.type === 'piop_request' && request.command === 'queue_prompt') {
+    followUp.push(request.payload.message);
     send({ type: 'queue_update', steering: [], followUp: [request.payload.message] });
+  }
+  if (request.type === 'clear_queue') {
+    send({ type: 'response', id: request.id, command: request.type, success: true, data: { steering: [], followUp } });
+    followUp = [];
+    return;
   }
   const data = request.type === 'get_state' ? state : null;
   process.stdout.write(JSON.stringify({ type: 'response', id: request.id, command: request.type, success: true, data }) + '\\n');
@@ -82,6 +89,11 @@ test('a pending message protects its referenced temporary folder from cleanup', 
       .toBe(temporary.cwd);
     expect((await command(runtime.runtimeId, { type: 'get_state' })).pendingMessages)
       .toContainEqual(expect.objectContaining({ message }));
+    await command(runtime.runtimeId, { type: 'clear_queue' });
+    expect((await command(runtime.runtimeId, { type: 'get_state' })).pendingMessages).toEqual([]);
+    await daemon.invoke('remove_temporary_chat', { hostId: 'local', path: temporary.cwd });
+    expect(await daemon.failure('validate_project_directory', { hostId: 'local', path: temporary.cwd, allowStorage: true }))
+      .toContain('is unavailable');
   } finally { await daemon.invoke('stop_pi', { runtimeId: runtime.runtimeId }); }
 }, 60_000);
 
