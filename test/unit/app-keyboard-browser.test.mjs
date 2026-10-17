@@ -110,3 +110,25 @@ test('a shortcut field captures an assigned app shortcut without running it', as
   await editor.waitFor();
   assert.equal(await editor.inputValue(), 'Keep this draft');
 });
+
+test('an open project dialog blocks the settings shortcut until the dialog is closed', async t => {
+  const page = await appBrowser(t, { keybindings: { openSettings: 'Alt+J' } });
+  const editor = page.getByRole('textbox', { name: 'Message piop', exact: true });
+  const goBack = page.getByRole('button', { name: 'Go back', exact: true });
+  await editor.fill('Keep this draft');
+  await page.getByRole('button', { name: 'Choose project', exact: true }).click();
+  const dialog = page.getByRole('dialog', { name: 'Jump to a folder', exact: true });
+  await dialog.waitFor();
+  await page.keyboard.press('Alt+j');
+  await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+  assert.equal(await goBack.count(), 0);
+  assert.equal(await dialog.isVisible(), true);
+  await dialog.getByRole('button', { name: 'esc', exact: true }).click();
+  await dialog.waitFor({ state: 'detached' });
+  assert.equal(await editor.inputValue(), 'Keep this draft');
+  await page.keyboard.press('Alt+j');
+  await page.getByRole('textbox', { name: 'Open settings shortcut', exact: true }).waitFor();
+  await goBack.click();
+  await editor.waitFor();
+  assert.equal(await editor.inputValue(), 'Keep this draft');
+});
