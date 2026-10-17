@@ -204,6 +204,37 @@ describe('settings editor', () => {
     assert.equal(document.querySelector('[role=status]').textContent, 'Saved · waiting for 2 sessions to apply changes');
   });
 
+  test('a colliding change from another window blocks saving until the latest settings are reloaded', async () => {
+    await render();
+    await enterText(control('Context window cap'), '200000');
+    await render({ settings: { ...props.settings, contextWindowCap: 300_000, settingsRevision: 2 } });
+    assert.match(document.querySelector('[role=alert]').textContent, /changed in another window/);
+    assert.equal(save().disabled, true);
+    await click(button('Reload latest settings and discard local edits'));
+    assert.equal(control('Context window cap').value, '300000');
+    assert.equal(document.querySelector('[role=alert]'), null);
+    await click(control('Automatic retry'));
+    await click(save());
+    assert.equal(saves.length, 1);
+    assert.equal(saves[0][0].contextWindowCap, 300_000);
+    assert.equal(saves[0][0].autoRetry, false);
+  });
+
+  test('unconfirmed disk durability offers a retry without edits and clears once confirmed', async () => {
+    await render({ settings: { ...props.settings, settingsDurabilityError: 'fsync failed' } });
+    assert.match(document.querySelector('[role=alert]').textContent, /durability is unconfirmed: fsync failed/);
+    assert.equal(save().textContent, 'Retry save');
+    assert.equal(dirty.at(-1), true);
+    await click(save());
+    assert.equal(saves.length, 1);
+    assert.equal(saves[0][0].contextWindowCap, 100_000);
+    const { settingsDurabilityError: _error, ...confirmed } = saves[0][0];
+    await render({ settings: { ...confirmed, settingsRevision: 2 } });
+    assert.equal(document.querySelector('[role=alert]'), null);
+    assert.equal(save().disabled, true);
+    assert.equal(dirty.at(-1), false);
+  });
+
   test('turning off the context cap disables its value input', async () => {
     await render();
     assert.equal(control('Context window cap').disabled, false);

@@ -29,7 +29,7 @@ async function rawSocket(url: string) {
     const check = () => { if (packets.length) { clearTimeout(timer); changed.delete(check); resolve(packets.shift()); } else if (closed) { clearTimeout(timer); changed.delete(check); reject(new Error('Socket closed')); } };
     changed.add(check); check();
   });
-  return { send: (value: unknown) => socket.send(JSON.stringify(value)), packet, close, packets, end: () => socket.close() };
+  return { send: (value: unknown) => socket.send(JSON.stringify(value)), sendRaw: (data: string | Uint8Array) => socket.send(data), packet, close, packets, end: () => socket.close() };
 }
 
 test('a connection authenticates only with the exact token in an authenticate packet', async () => {
@@ -44,6 +44,15 @@ test('a connection authenticates only with the exact token in an authenticate pa
   socket.send({ type: 'authenticate', token });
   expect(await socket.packet()).toMatchObject({ type: 'ready', backend: 'daemon' });
   socket.end();
+});
+
+test('a first packet that is not a JSON authentication packet is refused with a reason', async () => {
+  for (const [first, error] of [['{"type":"authenticate","token":', 'Invalid authentication'], [new Uint8Array([123, 125]), 'Expected authentication']] as const) {
+    const socket = await rawSocket(daemon.endpoint.url);
+    socket.sendRaw(first);
+    expect(await socket.packet(), String(first)).toEqual({ type: 'error', error });
+    await socket.close();
+  }
 });
 
 test('a command sent before authentication is refused and never runs', async () => {
