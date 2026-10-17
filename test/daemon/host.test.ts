@@ -88,6 +88,15 @@ test('moving a queued message changes order without replacing message identities
       .toEqual([before[0], before[2], before[1]]);
     await command(runtime.runtimeId, { type: 'change_pending', id: before[2].id, action: 'moveDown' });
     expect((await command(runtime.runtimeId, { type: 'get_state' })).pendingMessages).toEqual(before);
+    await command(runtime.runtimeId, {
+      type: 'change_pending', id: before[0].id, action: { type: 'move', targetId: before[2].id, edge: 'after' },
+    });
+    expect((await command(runtime.runtimeId, { type: 'get_state' })).pendingMessages)
+      .toEqual([before[1], before[2], before[0]]);
+    await command(runtime.runtimeId, {
+      type: 'change_pending', id: before[0].id, action: { type: 'move', targetId: before[1].id, edge: 'before' },
+    });
+    expect((await command(runtime.runtimeId, { type: 'get_state' })).pendingMessages).toEqual(before);
   } finally { await daemon.invoke('stop_pi', { runtimeId: runtime.runtimeId }); }
 }, 60_000);
 
