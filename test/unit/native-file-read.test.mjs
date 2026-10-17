@@ -44,3 +44,11 @@ test('reading a text file does not label it as an image', async t => {
   assert.equal(file.type, '');
   assert.equal(await file.text(), 'AB');
 });
+
+test('reading a binary image returns a file with its exact original bytes', async t => {
+  const directory = await reader(t);
+  const path = join(directory, 'scan.webp');
+  await writeFile(path, Buffer.from([0x52, 0x49, 0x46, 0x46, 0x00, 0xff, 0x80, 0x0a, 0xc3]));
+  const file = await readDroppedFile(path);
+  assert.deepEqual([...new Uint8Array(await file.arrayBuffer())], [0x52, 0x49, 0x46, 0x46, 0x00, 0xff, 0x80, 0x0a, 0xc3]);
+});
