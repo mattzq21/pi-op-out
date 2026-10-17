@@ -29,3 +29,10 @@ test('history keeps only the 100 most recent submissions', async t => {
   const history = await sync(native, []);
   assert.deepEqual([history.length, history[0], history.at(-1)], [100, 'Prompt 2', 'Prompt 101']);
 });
+
+test('browser history is imported once, before the first new submission', async t => {
+  const native = await nativeFileCommand(t, { desktop: true });
+  await native.invoke('sync_prompt_history', { entries: [{ id: 'new-window-tests', prompt: 'Run the tests' }], legacy: ['Explain this code', 'Fix the build'] });
+  const history = await native.invoke('sync_prompt_history', { entries: [{ id: 'stale-window-lint', prompt: 'Run the linter' }], legacy: ['Stale first', 'Stale second', 'Stale third'] });
+  assert.deepEqual(history, ['Explain this code', 'Fix the build', 'Run the tests', 'Run the linter']);
+});
