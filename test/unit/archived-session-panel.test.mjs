@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { execFileSync } from 'node:child_process';
+import { readFileSync, writeFileSync, unlinkSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { installDom, renderComponent, act, attributeBecomes, untilDom } from '../dom.mjs';
 import { mockIPC, mockWindows, clearMocks } from '@tauri-apps/api/mocks';
@@ -119,6 +120,27 @@ test('restoring a chat while a refresh is loading still removes it once the olde
   reports.release();
   await settle();
   await assertRestoredOnce(panel, 'Restore me');
+});
+
+test('a restore blocked by an occupied destination shows the error and keeps the chat archived, then a retry after the destination is freed restores it once', { timeout: 60000 }, async t => {
+  const panel = await archivedPanel(t, ['Restore after conflict']);
+  const { view, chats, settle, button } = panel;
+  await settle();
+  writeFileSync(chats['Restore after conflict'].path, 'occupant');
+  let occupied = true;
+  t.after(() => { if (occupied) unlinkSync(chats['Restore after conflict'].path); });
+
+  await act(() => button('Restore after conflict').click());
+  await settle();
+  assert.match(view.container.querySelector('[role="alert"]')?.textContent ?? '', /Restoration destination already exists/);
+  assert.equal(button('Restore after conflict')?.disabled, false);
+  assert.equal(readFileSync(chats['Restore after conflict'].path, 'utf8'), 'occupant');
+
+  unlinkSync(chats['Restore after conflict'].path);
+  occupied = false;
+  await act(() => button('Restore after conflict').click());
+  await settle();
+  await assertRestoredOnce(panel, 'Restore after conflict');
 });
 
 test('refreshing while a restore is pending still removes the chat once the archive report computed before the restore arrives', { timeout: 60000 }, async t => {
