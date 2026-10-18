@@ -6,10 +6,12 @@ import { startupPage } from '../startup-browser-fixture.mjs';
 const settings = { defaultAgent: 'default', hiddenModels: [], defaultThinking: 'high', defaultFastMode: false, contextWindowCap: 200000, contextWindowCapEnabled: true, modelContextWindowCaps: {}, autoRetry: true, debugMode: false, keybindings: { newConversation: 'Ctrl+N', toggleConversations: 'Ctrl+B', toggleTerminal: 'Ctrl+J', toggleDebugMode: 'Ctrl+D', focusComposer: 'Ctrl+E', openSettings: 'Ctrl+,' }, tools: [], skills: [], hosts: [] };
 const state = { model: { id: 'model', provider: 'test', name: 'Test model' }, thinkingLevel: 'high', isStreaming: false, sessionId: 'mobile-test', sessionFile: '/tmp/mobile-test.jsonl', messageCount: 0, pendingMessageCount: 0 };
 
-// Test control: `host.stopFailure` makes the host refuse to stop agent runs with this error.
+// Test controls: `host.stopFailure` makes the host refuse to stop agent runs with this error; `host.received` collects every request the host gets, and `host.onRequest` sees each one.
 function answerHost(ws, host) {
   ws.onMessage(raw => {
     const message = JSON.parse(raw);
+    host.received?.push(message);
+    host.onRequest?.(message);
     if (message.type === 'authenticate') { ws.send(JSON.stringify({ type: 'ready', protocol: 1, backend: 'daemon' })); return; }
     if (message.type === 'ping') return;
     if (message.command === 'stop_pi' && host.stopFailure) { ws.send(JSON.stringify({ id: message.id, error: host.stopFailure })); return; }
@@ -200,6 +202,37 @@ test('Retry disconnect after the host recovers from a refused stop shows the con
   assert.equal(await address.inputValue(), 'wss://piop.example.test/');
   assert.equal(await page.getByLabel('Host name').inputValue(), 'Test workspace');
   assert.equal(await page.getByRole('button', { name: 'Connect', exact: true }).isEnabled(), true);
+});
+
+test('cancelling Disconnect from the Host button keeps the draft and a working chat without stopping the agent', async t => {
+  const host = { received: [] };
+  const { page, editor } = await connectedChat(t, host);
+  await editor.fill('Keep this draft');
+  const prompts = [];
+  page.once('dialog', dialog => { prompts.push(dialog.message()); return dialog.dismiss(); });
+  const stops = () => host.received.filter(message => message.command === 'stop_pi');
+
+  await page.getByRole('button', { name: 'Toggle conversations' }).click();
+  const stopsBeforeHost = stops().length;
+  await page.getByRole('button', { name: 'Host', exact: true }).click();
+  await settle(page);
+  assert.deepEqual(prompts, ['Disconnect? Draft messages, interrupted messages, attachments, and unsaved settings will be discarded.']);
+  assert.equal(stops().length, stopsBeforeHost);
+  assert.equal(await page.getByLabel('Anchor host address').count(), 0);
+  assert.equal(await editor.inputValue(), 'Keep this draft');
+
+  await page.evaluate(() => window.pressAndroidBack());
+  await page.getByRole('button', { name: 'Close conversations', exact: true }).waitFor({ state: 'detached' });
+  await editor.click();
+  await editor.press('End');
+  await page.keyboard.type(' and send it');
+  assert.equal(await editor.inputValue(), 'Keep this draft and send it');
+  const received = new Promise(resolve => { host.onRequest = message => { if (message.command === 'pi_command' && message.args.command.type === 'prompt') resolve(message); }; });
+  await page.getByRole('button', { name: 'Send message', exact: true }).click();
+  const sent = await received;
+  assert.equal(sent.args.command.message, 'Keep this draft and send it');
+  assert.equal(stops().some(message => message.args.runtimeId === sent.args.runtimeId), false);
+  assert.equal(await page.getByLabel('Anchor host address').count(), 0);
 });
 
 test('Android Back closes the open conversation panel first and minimizes the app only on the next press', async t => {
