@@ -1,4 +1,8 @@
-import { beforeEach, describe, expect, mock, test } from "bun:test";
+import { afterAll, beforeEach, describe, expect, mock, test } from "bun:test";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { write } from "../../daemon/resources/session-broker/app-settings.cjs";
 
 const budgets = { reserveTokens: 16_384, keepRecentTokens: 20_000 };
 
@@ -7,9 +11,22 @@ mock.module("@earendil-works/pi-coding-agent", () => ({
 }));
 
 const { default: contextWindowCap } = await import("./index.ts");
-let currentSettings: any;
-process.env.PIOP_CONTEXT_CAP_SETTINGS_PATH = "/test/context-cap-settings.json";
-mock.module("../../daemon/resources/session-broker/app-settings.cjs", () => ({ readFile: () => { if (!currentSettings) throw new Error("Context cap settings are unavailable"); return currentSettings; } }));
+
+const originalSettingsPath = process.env.PIOP_CONTEXT_CAP_SETTINGS_PATH;
+const fixtureRoot = mkdtempSync(join(tmpdir(), "piop-context-cap-defaults-"));
+const settingsPath = join(fixtureRoot, "present", "context-cap-settings.json");
+const absentSettingsPath = join(fixtureRoot, "absent", "context-cap-settings.json");
+
+/** Persists app settings through the app settings store before an event reads them. */
+function save(settings: unknown, path = settingsPath) { write(path, JSON.stringify(settings)); }
+
+beforeEach(() => { process.env.PIOP_CONTEXT_CAP_SETTINGS_PATH = settingsPath; });
+
+afterAll(() => {
+  if (originalSettingsPath === undefined) delete process.env.PIOP_CONTEXT_CAP_SETTINGS_PATH;
+  else process.env.PIOP_CONTEXT_CAP_SETTINGS_PATH = originalSettingsPath;
+  rmSync(fixtureRoot, { recursive: true, force: true });
+});
 
 /** A Pi host for the context cap extension. */
 function host() {
@@ -39,7 +56,7 @@ function host() {
       emit,
     },
   };
-  currentSettings = settings;
+  save(settings);
   contextWindowCap(pi as any);
   pi.events.on("piop:agents:context-cap", () => undefined);
   pi.events.on("piop:runtime-settings", () => { throw new Error("Context settings must not come from runtime-settings"); });
@@ -74,6 +91,7 @@ describe("context cap settings transport", () => {
   test("restoration receives current app settings without runtime-settings", async () => {
     const pi = await started();
     pi.settings.contextWindowCap = 400_000;
+    save(pi.settings);
     await pi.fire("session_tree");
     pi.emit("piop:agents:ready", { ctx: pi.ctx });
     expect(await pi.state()).toMatchObject({ cap: 400_000 });
@@ -105,6 +123,7 @@ describe("context cap settings transport", () => {
     pi.ctx.model = { provider: "test", id: "small", contextWindow: 200_000 };
     pi.settings.contextWindowCap = 100_000;
     pi.settings.modelContextWindowCaps = { "test/large": 500_000 };
+    save(pi.settings);
     await pi.fire("session_start", { reason: "startup" });
     pi.emit("piop:agents:ready", { ctx: pi.ctx });
     expect(await pi.state()).toEqual({ cap: 100_000, source: "config", appliedWindow: 100_000 });
@@ -115,13 +134,18 @@ describe("context cap settings transport", () => {
   });
 });
 
-test("missing settings report a visible error and preserve the current cap", async () => {
+test("missing settings report a visible error, preserve the current cap, and recover when saved", async () => {
   const pi = await started();
-  currentSettings = undefined;
+  process.env.PIOP_CONTEXT_CAP_SETTINGS_PATH = absentSettingsPath;
   pi.emit("piop:agents:ready", { ctx: pi.ctx });
   await Promise.resolve();
-  expect(pi.notes.some(([type, message]) => type === "error" && message.includes("Context cap settings are unavailable"))).toBe(true);
+  expect(pi.notes.some(([type, message]) => type === "error" && message.includes("Invalid context cap settings"))).toBe(true);
   expect((await pi.state()).cap).toBe(300_000);
+
+  save({ ...pi.settings, contextWindowCap: 400_000 }, absentSettingsPath);
+  pi.emit("piop:agents:ready", { ctx: pi.ctx });
+  await Promise.resolve();
+  expect(await pi.state()).toEqual({ cap: 400_000, source: "config", appliedWindow: 400_000 });
 });
 
 test("shutdown removes the settings listeners", async () => {
