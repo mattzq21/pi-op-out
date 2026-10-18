@@ -302,6 +302,23 @@ describe("context cap session", () => {
     expect(host.model!.contextWindow).toBe(500_000);
   });
 
+  test("a corrupt branch reports and refuses changes until tree navigation reaches a valid branch", async () => {
+    const host = await start();
+    await host.session().setManualCap(500_000);
+    const valid = [...host.branch];
+    const failure = "Saved context cap entry corrupt-cap is invalid";
+    host.branch = [...valid, { type: "custom", customType: CAP_ENTRY, data: { cap: -1, source: "manual" }, id: "corrupt-cap" }];
+    await host.fire("session_tree");
+    await expect(host.session().getState()).rejects.toThrow(failure);
+    await expect(host.session().setManualCap(400_000)).rejects.toThrow(failure);
+    await expect(host.session().updateSettings({ contextWindowCap: 400_000, contextWindowCapEnabled: true, modelContextWindowCaps: {} })).rejects.toThrow(failure);
+    expect(host.notes).toContainEqual(["error", expect.stringContaining(failure)]);
+    host.branch = valid;
+    await host.fire("session_tree");
+    expect(await host.session().getState()).toEqual({ cap: 500_000, source: "manual", appliedWindow: 500_000 });
+    expect(await host.session().setManualCap(400_000)).toEqual({ cap: 400_000, source: "manual", appliedWindow: 400_000 });
+  });
+
   test("rejects invalid choices without changing state or the log", async () => {
     const host = await start();
     const before = host.caps().length;
