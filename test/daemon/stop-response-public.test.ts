@@ -45,3 +45,25 @@ test('pausing while a command runs ends the command, and resuming tells the agen
     ['user', 'Continue the previous task using the completed turns and tool results already in context. The last run was paused by the user. Check the current state of any interrupted work before continuing, and finish the remaining task without repeating completed work.'],
   ]);
 }, 60000);
+
+test('archiving a chat while its agent runs a command ends the command, and the restored chat goes on from where it stopped', async () => {
+  agents.scripts.set('Archived job', messages => called(messages, 'bash')
+    ? { text: 'Seen: ' + JSON.stringify(messages.slice(1).map((message: any) => [message.role, text(message)])) }
+    : { tool: 'bash', arguments: { command: 'sleep 3; echo done > late.txt' } });
+  const chat = await agents.rootChat();
+  await chat.command({ type: 'prompt', message: 'Archived job' });
+  await chat.until(history => history.some(message => message.stopReason === 'toolUse'));
+  const { sessionFile } = await chat.command({ type: 'get_state' });
+  await agents.daemon.invoke('archive_session', { hostId: 'local', sessionPath: sessionFile, terminalIds: [], clientId: 'laptop' });
+  await Bun.sleep(4000);
+  expect(existsSync(join(chat.cwd, 'late.txt'))).toBe(false);
+  expect(agents.model.requests.filter(request => text(request.messages[1]) === 'Archived job')).toHaveLength(1);
+  const archive = (await agents.daemon.invoke('storage_report')).hosts[0].archives.find((item: any) => item.id === chat.sessionId);
+  await agents.daemon.invoke('restore_archived_session', { hostId: 'local', sessionPath: archive.path, clientId: 'laptop' });
+  const restored = (await agents.daemon.invoke('list_sessions')).find((session: any) => session.id === chat.sessionId);
+  await agents.daemon.invoke('start_pi', { runtimeId: 'restored-job', clientId: 'laptop', cwd: restored.cwd, sessionPath: restored.path });
+  await agents.daemon.invoke('pi_command', { runtimeId: 'restored-job', command: { type: 'prompt', message: 'Carry on after the restore' } });
+  for (let tries = 0; !agents.model.requests.some(request => text(request.messages.at(-1)) === 'Carry on after the restore') && tries < 100; tries++) await Bun.sleep(100);
+  const seen = agents.model.requests.find(request => text(request.messages.at(-1)) === 'Carry on after the restore').messages.slice(1).map((message: any) => [message.role, text(message)]);
+  expect(seen).toEqual([['user', 'Archived job'], ['assistant', ''], ['tool', 'No result provided'], ['user', 'Carry on after the restore']]);
+}, 60000);
