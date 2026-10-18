@@ -1,7 +1,7 @@
 import { build } from 'esbuild';
 import { createHash, randomBytes } from 'node:crypto';
-import { execFile, spawn, type ChildProcess } from 'node:child_process';
-import { chmodSync, mkdirSync, mkdtempSync, openSync, readFileSync, symlinkSync, writeFileSync } from 'node:fs';
+import { execFile } from 'node:child_process';
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, symlinkSync, writeFileSync } from 'node:fs';
 import { Database } from 'bun:sqlite';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -58,38 +58,12 @@ export function daemonDirectory(home: string, options: BuildOptions = {}): strin
 }
 
 export function temporaryDirectory(prefix = 'piop-test-'): string {
-  const directory = mkdtempSync(join(tmpdir(), prefix));
-  atTestExit('rm -rf -- ' + shellQuote(directory));
-  return directory;
-}
-
-const shellQuote = (value: string) => "'" + value.replaceAll("'", "'\\''") + "'";
-
-let janitor: ChildProcess | undefined;
-
-/**
- * Runs a shell command when the test process ends in any way, last registered first. Bun's test runner does not
- * run process exit handlers, so a separate process waits for its input pipe to close and then runs the commands.
- * This is only a fallback for runs that end without their teardown. Its output goes to janitorLog, which is kept
- * only when a command fails. It needs no temporary file, so it still cleans up when the temporary folder is full.
- */
-export const janitorLog = join(tmpdir(), 'piop-test-janitor-' + process.pid + '.log');
-
-export function atTestExit(command: string): void {
-  if (!janitor) {
-    const script = 'commands=$(cat); printf "%s\\n" "$commands" | tac | { failed=0; '
-      + 'while IFS= read -r command; do [ -n "$command" ] || continue; sh -xc "$command" || failed=1; done; '
-      + '[ "$failed" = 0 ] && unlink "$PIOP_JANITOR_LOG"; }';
-    janitor = spawn('sh', ['-c', script], { stdio: ['pipe', 'ignore', openSync(janitorLog, 'a')], detached: true, env: { ...process.env, PIOP_JANITOR_LOG: janitorLog } });
-    janitor.unref();
-    (janitor.stdin as any).unref?.();
+  const unit = process.env.PIOP_TEST_UNIT;
+  if (!unit || !readFileSync('/proc/self/cgroup', 'utf8').trim().endsWith('/' + unit)
+    || tmpdir() !== process.env.RUNTIME_DIRECTORY) {
+    throw new Error('Run daemon tests with bun run test:daemon, or python3 scripts/test-run.py bun test <test file>');
   }
-  janitor.stdin!.write(command.replaceAll('\n', ' ') + '\n');
-}
-
-function stopCommand(executable: string, home: string): string {
-  // A bounded stop, so one stuck daemon does not hold back the later cleanup.
-  return 'HOME=' + shellQuote(home) + ' PIOP_MOBILE_BIND=127.0.0.1:0 timeout -k 5 30 ' + shellQuote(executable) + ' stop';
+  return mkdtempSync(join(tmpdir(), prefix));
 }
 
 /** Writes an executable script into a directory that tests put first on PATH. */
@@ -128,7 +102,6 @@ export async function remoteMachine(daemon: TestDaemon, id: string, name = id, t
   mkdirSync(join(home, '.bun/bin'), { recursive: true });
   symlinkSync(executable, join(home, '.bun/bin/piopd'));
   const env = { ...process.env, HOME: home, PIOP_MOBILE_BIND: '127.0.0.1:0' };
-  atTestExit(stopCommand(executable, home));
   return {
     id, name, target, home,
     stop: () => control(executable, 'stop', env).then(() => {}),
@@ -279,8 +252,6 @@ export async function startDaemon(options: BuildOptions & { home?: string; env?:
     for (const client of clients) client.close();
     await control(executable, 'stop', env);
   })();
-  // A test process that ends without its teardown still stops the daemon.
-  atTestExit(stopCommand(executable, home));
   try {
     await control(executable, 'start', env, options.launcher);
     /** The current endpoint; a restarted daemon publishes a new token. */
