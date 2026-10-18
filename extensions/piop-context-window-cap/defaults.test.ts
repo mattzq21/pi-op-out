@@ -227,3 +227,28 @@ test("shutdown removes the settings listeners", async () => {
   expect(pi.ctx.model.contextWindow).toBe(1_000_000);
   expect(pi.notes).toEqual(notesAtShutdown);
 });
+
+test("shutdown rejects a settings change received while busy, without an error report, and idle does not apply it later", async () => {
+  const pi = await started();
+  pi.setIdle(false);
+  const request: any = { command: "context_cap_settings", payload: { settings: { ...pi.settings, contextWindowCap: 400_000 } }, ctx: pi.ctx };
+  pi.emit("piop:rpc", request);
+  const outcome = Promise.allSettled([request.ready]);
+  let settled = false;
+  outcome.then(() => { settled = true; });
+  expect(await pi.state()).toEqual({ cap: 300_000, source: "config", appliedWindow: 300_000 });
+  expect(settled).toBe(false);
+  const notesBeforeShutdown = [...pi.notes];
+
+  await pi.fire("session_shutdown");
+  const [result] = await outcome;
+  expect(result.status).toBe("rejected");
+  expect(((result as PromiseRejectedResult).reason as Error).message).toContain("session ended");
+  expect(pi.ctx.model.contextWindow).toBe(1_000_000);
+  expect(pi.notes).toEqual(notesBeforeShutdown);
+
+  pi.setIdle(true);
+  await pi.fire("agent_settled");
+  expect(pi.ctx.model.contextWindow).toBe(1_000_000);
+  expect(pi.notes).toEqual(notesBeforeShutdown);
+}, 1000);
