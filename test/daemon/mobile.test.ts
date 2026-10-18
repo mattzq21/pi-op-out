@@ -30,7 +30,7 @@ async function rawSocket(url: string) {
     const check = () => { if (packets.length) { clearTimeout(timer); changed.delete(check); resolve(packets.shift()); } else if (closed) { clearTimeout(timer); changed.delete(check); reject(new Error('Socket closed')); } };
     changed.add(check); check();
   });
-  return { send: (value: unknown) => socket.send(JSON.stringify(value)), packet, close, packets, end: () => socket.close(), closeCode: () => closeCode };
+  return { send: (value: unknown) => socket.send(JSON.stringify(value)), sendRaw: (data: string | Uint8Array) => socket.send(data), packet, close, packets, end: () => socket.close(), closeCode: () => closeCode };
 }
 
 test('a connection that sends more than 4 KB before logging in is closed as too big, without a reply', async () => {
@@ -67,6 +67,15 @@ test('a connection authenticates only with the exact token in an authenticate pa
   socket.end();
 });
 
+test('a first packet that is not a JSON authentication packet is refused with a reason', async () => {
+  for (const [first, error] of [['{"type":"authenticate","token":', 'Invalid authentication'], [new Uint8Array([123, 125]), 'Expected authentication']] as const) {
+    const socket = await rawSocket(daemon.endpoint.url);
+    socket.sendRaw(first);
+    expect(await socket.packet(), String(first)).toEqual({ type: 'error', error });
+    await socket.close();
+  }
+});
+
 test('a command sent before authentication is refused and never runs', async () => {
   const temporaryChats = async () => {
     const report = await daemon.invoke('storage_report');
@@ -79,6 +88,49 @@ test('a command sent before authentication is refused and never runs', async () 
   await socket.close();
   expect(socket.packets).toEqual([]);
   expect(await temporaryChats()).toBe(0);
+});
+
+test('a malformed request after authentication closes only that connection with a reason, and later requests on it never run', async () => {
+  const { url, token } = daemon.endpoint;
+  const other = await daemon.connect();
+  const sockets: Awaited<ReturnType<typeof rawSocket>>[] = [];
+  const open = async () => { const socket = await rawSocket(url); sockets.push(socket); return socket; };
+  try {
+    const temporaryChats = async () => {
+      const report = await other.invoke('storage_report');
+      return report.hosts.find((host: any) => host.hostId === 'local').categories.find((category: any) => category.id === 'temporary-chats').itemCount;
+    };
+    expect(await temporaryChats()).toBe(0);
+    const shape = 'Invalid request: expected {id, command, args}';
+    for (const [malformed, error] of [
+      ['{"id":1,"command":', expect.stringMatching(/^Invalid request: \S/)],
+      ['null', shape], ['[1]', shape], ['{"id":-1,"command":"storage_report"}', shape], ['{"id":1.5,"command":"storage_report"}', shape], ['{"id":1}', shape],
+    ] as const) {
+      const socket = await open();
+      socket.send({ type: 'authenticate', token });
+      expect(await socket.packet()).toMatchObject({ type: 'ready', backend: 'daemon' });
+      socket.sendRaw(malformed);
+      socket.send({ id: 7, command: 'create_temporary_chat', args: { hostId: 'local' } });
+      await socket.close();
+      expect(socket.packets.filter(packet => !('event' in packet)), malformed).toEqual([{ error }]);
+    }
+    expect(await temporaryChats()).toBe(0);
+    // The other connection still runs commands and receives events.
+    const settings = await other.invoke('load_app_settings');
+    const saved = await other.invoke('save_app_settings', { settings });
+    await other.waitEvent('pi://settings-changed', payload => payload.revision === saved.revision);
+    // A new client still connects and runs commands.
+    const fresh = await open();
+    fresh.send({ type: 'authenticate', token });
+    expect(await fresh.packet()).toMatchObject({ type: 'ready', backend: 'daemon' });
+    fresh.send({ id: 3, command: 'load_app_settings' });
+    let reply;
+    do reply = await fresh.packet(); while ('event' in reply);
+    expect(reply).toEqual({ id: 3, result: await other.invoke('load_app_settings') });
+  } finally {
+    for (const socket of sockets) socket.end();
+    other.close();
+  }
 });
 
 /**

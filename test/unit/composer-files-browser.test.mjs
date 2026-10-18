@@ -8,16 +8,31 @@ import { nativeFileCommand } from '../native-file-command.mjs';
 
 async function fileComposer(t) {
   const native = await nativeFileCommand(t, { desktop: true });
-  const reads = [], pending = new Set();
+  const reads = [], pending = new Set(), gates = new Map();
   const page = await startupPage(t, 'development', {
     entryPoint: 'test/fixtures/composer-files-browser.tsx', ready: '[aria-label="Message piop"]', holdStorage: false,
     prepare: page => page.exposeFunction('nativeCommand', async (command, args) => {
       if (command === 'read_dropped_file') reads.push(args.path);
-      const request = native.invoke(command, args);
+      const gate = command === 'read_dropped_file' ? gates.get(args.path) : undefined;
+      const request = native.invoke(command, args).finally(async () => {
+        if (!gate) return;
+        gate.held.resolve();
+        await gate.release.promise;
+      });
       pending.add(request);
       try { return await request; } finally { pending.delete(request); }
     }),
   });
+  const holdRead = path => {
+    const gate = { held: Promise.withResolvers(), release: Promise.withResolvers() };
+    gates.set(path, gate);
+    let timer;
+    const held = Promise.race([gate.held.promise, new Promise((_, reject) => {
+      timer = setTimeout(() => reject(new Error(`Native read of ${path} was not requested`)), 5000);
+    })]).finally(() => clearTimeout(timer));
+    t.after(() => gate.release.resolve());
+    return { held, release: () => gate.release.resolve() };
+  };
   const settle = async () => {
     do {
       await page.evaluate(() => new Promise(resolve => requestAnimationFrame(resolve)));
@@ -26,7 +41,7 @@ async function fileComposer(t) {
   };
   const directory = await mkdtemp(join(homedir(), 'piop-composer-files-'));
   t.after(() => rm(directory, { recursive: true, force: true }));
-  return { page, directory, reads, settle };
+  return { page, directory, reads, settle, holdRead };
 }
 
 test('valid images are sent with their bytes and media type', async t => {
@@ -66,6 +81,21 @@ test('native file drops convert physical coordinates before attaching files', as
       ['<file name="native.txt">\nNative content\n</file>', null, []],
     ]);
   } finally { await display.detach(); }
+});
+
+test('native drops keep non-ASCII text and filenames intact', async t => {
+  const { page, directory } = await fileComposer(t);
+  const path = join(directory, 'résumé.md');
+  await writeFile(path, 'Café — 漢字 😀');
+  const box = await page.locator('.composer').boundingBox();
+  await page.evaluate(({ path, position }) => window.deliverFileDrag('drop', { paths: [path], position }), {
+    path, position: { x: box.x + box.width / 2, y: box.y + box.height / 2 },
+  });
+  await page.getByRole('button', { name: 'Remove résumé.md', exact: true }).waitFor();
+  await page.keyboard.press('Enter');
+  assert.deepEqual(JSON.parse(await page.getByLabel('Sent messages').textContent()), [
+    ['<file name="résumé.md">\nCafé — 漢字 😀\n</file>', null, []],
+  ]);
 });
 
 test('native drag entry and leave update the visible attachment hint', async t => {
@@ -139,6 +169,25 @@ test('unmounted composers stop receiving native file drops', async t => {
   await settle();
   assert.deepEqual(reads, []);
   assert.equal(await page.getByRole('button', { name: 'Remove ignored.txt', exact: true }).count(), 0);
+});
+
+test('unmounting a composer during a native drop stops the remaining reads and upload changes', { timeout: 15000 }, async t => {
+  const { page, directory, reads, settle, holdRead } = await fileComposer(t);
+  await page.getByRole('checkbox', { name: 'Controlled uploads' }).check();
+  const first = join(directory, 'first.txt'), second = join(directory, 'second.txt');
+  await writeFile(first, 'First');
+  await writeFile(second, 'Second');
+  const read = holdRead(first);
+  const box = await page.locator('.composer').boundingBox();
+  await page.evaluate(({ paths, position }) => window.deliverFileDrag('drop', { paths, position }), {
+    paths: [first, second], position: { x: box.x + box.width / 2, y: box.y + box.height / 2 },
+  });
+  await read.held;
+  await page.getByRole('button', { name: 'Remove composer' }).click();
+  read.release();
+  await settle();
+  assert.deepEqual(reads, [first]);
+  assert.equal(await page.getByLabel('Uploaded files').textContent(), '[]');
 });
 
 
@@ -549,6 +598,36 @@ test('failed submission preserves an attachment for a later retry', async t => {
   assert.equal(await page.getByRole('alert').count(), 0);
 });
 
+test('an attachment added while a send is pending survives that send and is sent next', { timeout: 15000 }, async t => {
+  const { page, directory } = await fileComposer(t);
+  const path = join(directory, 'note.txt');
+  const remove = page.getByRole('button', { name: 'Remove note.txt', exact: true });
+  const sent = async () => JSON.parse(await page.getByLabel('Sent messages').textContent());
+  await writeFile(path, 'first');
+  await browserFileDrop(page, [path]);
+  await remove.waitFor();
+  await page.getByRole('checkbox', { name: 'Hold sends' }).check();
+  await page.getByRole('textbox', { name: 'Message piop' }).focus();
+  await page.keyboard.press('Enter');
+  await page.getByRole('button', { name: 'Send message', exact: true }).and(page.locator(':disabled')).waitFor();
+  await writeFile(path, 'second');
+  await browserFileDrop(page, [path]);
+  await page.waitForFunction(() => document.querySelectorAll('[aria-label="Remove note.txt"]').length === 2);
+  await page.getByRole('button', { name: 'Complete send' }).click();
+  await page.getByLabel('Sent messages').filter({ hasText: 'first' }).waitFor();
+  assert.deepEqual(await sent(), [['<file name="note.txt">\nfirst\n</file>', null, []]]);
+  assert.equal(await remove.count(), 1);
+  await page.getByRole('checkbox', { name: 'Hold sends' }).uncheck();
+  await page.getByRole('textbox', { name: 'Message piop' }).focus();
+  await page.keyboard.press('Enter');
+  await page.getByLabel('Sent messages').filter({ hasText: 'second' }).waitFor();
+  assert.deepEqual(await sent(), [
+    ['<file name="note.txt">\nfirst\n</file>', null, []],
+    ['<file name="note.txt">\nsecond\n</file>', null, []],
+  ]);
+  assert.equal(await remove.count(), 0);
+});
+
 test('removing an attachment excludes it from the sent message', async t => {
   const { page, directory } = await fileComposer(t);
   const keep = join(directory, 'keep.txt'), discard = join(directory, 'remove.txt');
@@ -614,4 +693,25 @@ test('concurrent file reads respect the attachment count after earlier reads fin
     'Remove fast8.txt', 'Remove fast9.txt', 'Remove fast10.txt', 'Remove fast11.txt',
   ]);
   assert.equal(await page.getByRole('button', { name: 'Remove slow.txt', exact: true }).count(), 0);
+});
+
+test('dropping a file again after a failed native read attaches it and clears the error', async t => {
+  const { page, directory } = await fileComposer(t);
+  const path = join(directory, 'later.txt');
+  const box = await page.locator('.composer').boundingBox();
+  const drop = () => page.evaluate(({ path, position }) => window.deliverFileDrag('drop', { paths: [path], position }), {
+    path, position: { x: box.x + box.width / 2, y: box.y + box.height / 2 },
+  });
+  await drop();
+  const error = page.getByRole('alert').filter({ hasText: 'No such file or directory' });
+  await error.waitFor();
+  assert.equal(await page.locator('.attachments button').count(), 0);
+  await writeFile(path, 'Ready now');
+  await drop();
+  await page.getByRole('button', { name: 'Remove later.txt', exact: true }).waitFor();
+  assert.equal(await page.getByRole('alert').count(), 0);
+  await page.keyboard.press('Enter');
+  assert.deepEqual(JSON.parse(await page.getByLabel('Sent messages').textContent()), [
+    ['<file name="later.txt">\nReady now\n</file>', null, []],
+  ]);
 });

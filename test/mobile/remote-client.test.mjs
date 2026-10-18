@@ -132,12 +132,127 @@ test('explicit disconnect does not report connection loss', async () => {
   assert.deepEqual(losses, []);
 });
 
+test('failed authentication reports the host reason and leaves the client unusable', async () => {
+  const client = new RemoteClient(); const losses = [];
+  client.onDisconnect = message => losses.push(message);
+  try {
+    const promise = client.connect(host);
+    const rejection = assert.rejects(promise, { message: 'Device is not allowed on this tailnet' });
+    const socket = FakeSocket.instances.at(-1);
+    socket.onopen(); socket.receive({ type: 'error', error: 'Device is not allowed on this tailnet' });
+    await rejection;
+    assert.equal(socket.readyState, 3);
+    assert.equal(client.isConnected(), false);
+    await assert.rejects(client.invoke('list_sessions'), /Connect/);
+    assert.deepEqual(losses, []);
+  } finally { client.close(); }
+});
+
+test('late events from a replaced connection do not affect the new connection', async () => {
+  const { client, socket: replaced } = await connected(); const losses = [];
+  client.onDisconnect = message => losses.push(message);
+  try {
+    const reconnect = client.connect(host);
+    const current = FakeSocket.instances.at(-1);
+    current.onopen(); current.receive({ type: 'ready', protocol: 1, backend: 'daemon' });
+    await reconnect;
+    const pending = client.invoke('home_directory', { hostId: 'local' });
+    const request = current.sent.find(packet => packet.command === 'home_directory');
+    replaced.receive({ id: request.id, result: '/stale' });
+    replaced.receive({ type: 'not a packet', id: 'bad' });
+    replaced.onclose();
+    assert.equal(client.isConnected(), true);
+    assert.deepEqual(losses, []);
+    current.receive({ id: request.id, result: '/home/me' });
+    assert.equal(await pending, '/home/me');
+  } finally { client.close(); }
+});
+
+test('a log failure reported before connection loss is not replayed to listeners after reconnecting', async () => {
+  const { client, socket: lost } = await connected();
+  const status = z.object({ hostId: z.string(), failure: z.string().nullable() });
+  try {
+    lost.receive({ event: 'pi://daemon-log-status', payload: { hostId: 'ves', failure: 'Disk full' } });
+    lost.close();
+    const reconnect = client.connect(host);
+    const current = FakeSocket.instances.at(-1);
+    current.onopen(); current.receive({ type: 'ready', protocol: 1, backend: 'daemon' });
+    await reconnect;
+    current.receive({ event: 'pi://daemon-log-status', payload: { hostId: 'zqvps', failure: 'Log unreadable' } });
+    const received = [];
+    await client.listen('pi://daemon-log-status', ({ payload }) => received.push(payload), status);
+    assert.deepEqual(received, [{ hostId: 'zqvps', failure: 'Log unreadable' }]);
+  } finally { client.close(); }
+});
+
+test('connection loss ends only terminals still running and a later connection does not end them again', async () => {
+  const { client, socket: lost } = await connected();
+  const exits = [];
+  const event = z.object({ type: z.string(), terminalId: z.string().optional() });
+  try {
+    await client.listen('pi://event', ({ payload }) => { if (payload.type === 'terminal_exit') exits.push(payload.terminalId); }, event);
+    for (const terminalId of ['lifecycle-exited-terminal', 'lifecycle-running-terminal']) {
+      const started = client.invoke('start_terminal', { terminalId, sessionKey: 'local:lifecycle-session', cwd: '/home/me', cols: 80, rows: 24 });
+      const request = lost.sent.find(packet => packet.command === 'start_terminal' && packet.args.terminalId === terminalId);
+      lost.receive({ id: request.id, result: null });
+      await started;
+    }
+    lost.receive({ event: 'pi://event', payload: { type: 'terminal_exit', terminalId: 'lifecycle-exited-terminal' } });
+    lost.close();
+    assert.deepEqual(exits, ['lifecycle-exited-terminal', 'lifecycle-running-terminal']);
+
+    const reconnect = client.connect(host);
+    const current = FakeSocket.instances.at(-1);
+    current.onopen(); current.receive({ type: 'ready', protocol: 1, backend: 'daemon' });
+    await reconnect;
+    client.close();
+    assert.deepEqual(exits, ['lifecycle-exited-terminal', 'lifecycle-running-terminal']);
+  } finally { client.close(); }
+});
+
 test('rejects older desktop endpoints without leaving a pending handshake', async () => {
   const client = new RemoteClient(); const promise = client.connect(host);
   const rejection = assert.rejects(promise, /older desktop endpoint/);
   const socket = FakeSocket.instances.at(-1);
   socket.onopen(); socket.receive({ type: 'ready', protocol: 1 });
   await rejection; assert.equal(socket.readyState, 3); client.close();
+});
+
+test('a host that never accepts times out after fifteen seconds and a later connection works undisturbed', async context => {
+  context.mock.timers.enable({ apis: ['setTimeout', 'setInterval', 'Date'] });
+  const client = new RemoteClient(); const losses = [];
+  client.onDisconnect = message => losses.push(message);
+  try {
+    let outcome;
+    void client.connect(host).then(() => { outcome = 'unexpected success'; }, error => { outcome = error; });
+    const silent = FakeSocket.instances.at(-1);
+    let deliverClose;
+    silent.close = () => { silent.readyState = 2; deliverClose = () => { silent.readyState = 3; silent.onclose?.(); }; };
+    silent.onopen();
+    context.mock.timers.tick(14999);
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(outcome, undefined, 'The handshake must wait the full fifteen seconds');
+    context.mock.timers.tick(1);
+    await new Promise(resolve => setImmediate(resolve));
+    assert.ok(outcome instanceof Error, 'The handshake must fail after fifteen seconds');
+    assert.match(outcome.message, /Connection timed out/);
+    assert.equal(silent.readyState, 2, 'The timed out socket must be closed');
+    assert.equal(client.isConnected(), false);
+    await assert.rejects(client.invoke('list_sessions'), /Connect/);
+
+    const retry = client.connect(host);
+    const current = FakeSocket.instances.at(-1);
+    current.onopen(); current.receive({ type: 'ready', protocol: 1, backend: 'daemon' });
+    await retry;
+    deliverClose();
+    context.mock.timers.tick(15000);
+    assert.equal(client.isConnected(), true);
+    assert.deepEqual(losses, []);
+    const next = client.invoke('home_directory', { hostId: 'local' });
+    const request = current.sent.find(packet => packet.command === 'home_directory');
+    current.receive({ id: request.id, result: '/home/me' });
+    assert.equal(await next, '/home/me');
+  } finally { client.close(); }
 });
 
 test('busy responses retry a rejected mutation without duplicating its accepted execution', async context => {
@@ -187,6 +302,41 @@ test('persistent saturation reports failure within ten seconds and stops retryin
   } finally { client.close(); }
 });
 
+test('a send failure during a busy retry reaches the caller, is never replayed, and the connection stays usable', async context => {
+  context.mock.timers.enable({ apis: ['setTimeout'] });
+  const { client, socket } = await connected(); const losses = [];
+  client.onDisconnect = message => losses.push(message);
+  const sendFailure = new Error('WebSocket send failed: buffer full');
+  let attempts = 0;
+  const deliver = socket.send.bind(socket);
+  socket.send = data => {
+    const packet = JSON.parse(data);
+    if (packet.command === 'pi_command' && ++attempts === 2) throw sendFailure;
+    deliver(data);
+    if (packet.command === 'pi_command') socket.receive({ id: packet.id, error: 'Host is busy; try again' });
+  };
+  try {
+    let outcome;
+    void client.invoke('pi_command', { command: { type: 'prompt', message: 'one message' } })
+      .then(() => { outcome = 'unexpected success'; }, error => { outcome = error; });
+    context.mock.timers.tick(1000);
+    await new Promise(resolve => setImmediate(resolve));
+    assert.ok(outcome instanceof Error, 'The caller must receive a failure as soon as the retry send fails');
+    assert.equal(outcome.message, 'WebSocket send failed: buffer full');
+    assert.equal(client.isConnected(), true);
+    assert.deepEqual(losses, []);
+
+    const next = client.invoke('home_directory', { hostId: 'local' });
+    const homeRequest = socket.sent.find(packet => packet.command === 'home_directory');
+    socket.receive({ id: homeRequest.id, result: '/home/me' });
+    assert.equal(await next, '/home/me');
+
+    context.mock.timers.tick(700000);
+    assert.equal(attempts, 2, 'The failed request is never sent again');
+    assert.equal(client.isConnected(), true);
+  } finally { client.close(); }
+});
+
 test('disconnect cancels a busy retry and never replays it on the next connection', async context => {
   context.mock.timers.enable({ apis: ['setTimeout'] });
   const { client, socket } = await connected();
@@ -204,4 +354,44 @@ test('disconnect cancels a busy retry and never replays it on the next connectio
   assert.equal(socket.sent.filter(packet => packet.command).length, 1);
   assert.equal(next.sent.filter(packet => packet.command).length, 0);
   client.close();
+});
+
+function returnToForeground() {
+  document.hidden = true; document.dispatchEvent(new Event('visibilitychange'));
+  document.hidden = false; document.dispatchEvent(new Event('visibilitychange'));
+}
+
+test('a silent host after returning to the foreground ends the connection and fails pending requests', async context => {
+  context.mock.timers.enable({ apis: ['setTimeout', 'setInterval', 'Date'] });
+  const { client, socket } = await connected(); const losses = [];
+  client.onDisconnect = message => losses.push(message);
+  try {
+    const pending = client.invoke('list_sessions');
+    const rejection = assert.rejects(pending, /Disconnected.*may have completed/);
+    returnToForeground();
+    assert.ok(socket.sent.some(packet => packet.type === 'ping'));
+    context.mock.timers.tick(10000);
+    assert.deepEqual(losses, ['Connection stopped responding. Reconnecting…']);
+    assert.equal(client.isConnected(), false);
+    await rejection;
+    await assert.rejects(client.invoke('list_sessions'), /Connect/);
+  } finally { client.close(); }
+});
+
+test('a timely pong after returning to the foreground keeps the connection usable', async context => {
+  context.mock.timers.enable({ apis: ['setTimeout', 'setInterval', 'Date'] });
+  const { client, socket } = await connected(); const losses = [];
+  client.onDisconnect = message => losses.push(message);
+  try {
+    returnToForeground();
+    context.mock.timers.tick(2000);
+    socket.receive({ type: 'pong' });
+    context.mock.timers.tick(10000);
+    assert.deepEqual(losses, []);
+    assert.equal(client.isConnected(), true);
+    const next = client.invoke('home_directory', { hostId: 'local' });
+    const request = socket.sent.find(packet => packet.command === 'home_directory');
+    socket.receive({ id: request.id, result: '/home/me' });
+    assert.equal(await next, '/home/me');
+  } finally { client.close(); }
 });

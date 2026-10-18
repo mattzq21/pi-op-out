@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, expect, test } from 'bun:test';
 import { Database } from 'bun:sqlite';
-import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fakeProgram, startDaemon, type TestDaemon } from './harness';
 
@@ -136,25 +136,86 @@ test('settings are kept when running agents cannot take them, and the save repor
     const chat = await local.invoke('create_temporary_chat', { hostId: 'local' });
     await local.invoke('start_pi', { runtimeId: 'runtime', clientId: 'client', cwd: chat.cwd, sessionId: chat.sessionId });
     const bin = join(local.home, '.local/bin');
-    fakeProgram(bin, 'pi', '#!/bin/sh\necho "pi is broken" >&2\nexit 1\n');
-    const settings = await local.invoke('load_app_settings');
-    settings.reviewPrompt = 'saved-model';
-    const change = await local.invoke('save_app_settings', { settings, agentHostId: 'local' });
-    expect(change).toMatchObject({ synchronizationPending: true, agentConfigChange: { hostId: 'local', revision: change.committedRevision } });
-    expect(change.warnings).toEqual([expect.stringMatching(/^Settings were saved, but runtime synchronization failed:/)]);
-    expect(await local.waitEvent('pi://daemon-error', payload => payload.line.startsWith('Could not synchronize settings:'))).toMatchObject({ hostId: 'local' });
-    expect((await local.invoke('load_app_settings')).reviewPrompt).toBe('saved-model');
-    const snapshot = await local.invoke('load_settings_change');
-    expect(snapshot).toMatchObject({
-      settings: { reviewPrompt: 'saved-model' }, committed: true, revision: change.revision, synchronizationPending: true,
-      warnings: [`Settings were saved; synchronization of revision ${change.revision} is pending and will retry automatically.`],
-    });
-    expect(snapshot.phaseRevision).toBeGreaterThanOrEqual(change.phaseRevision);
+    const piPath = join(bin, 'pi');
+    // Before the fault, Pi is either this file or, when it is absent, the Pi found on PATH.
+    const original = existsSync(piPath) ? { bytes: readFileSync(piPath), mode: statSync(piPath).mode & 0o7777 } : undefined;
+    let restored = false;
+    const restore = () => {
+      if (restored) return;
+      restored = true;
+      if (!original) { rmSync(piPath, { force: true }); return; }
+      writeFileSync(piPath, original.bytes);
+      chmodSync(piPath, original.mode);
+    };
+    try {
+      fakeProgram(bin, 'pi', '#!/bin/sh\necho "pi is broken" >&2\nexit 1\n');
+      const settings = await local.invoke('load_app_settings');
+      settings.reviewPrompt = 'saved-model';
+      const change = await local.invoke('save_app_settings', { settings, agentHostId: 'local' });
+      expect(change).toMatchObject({ synchronizationPending: true, agentConfigChange: { hostId: 'local', revision: change.committedRevision } });
+      expect(change.warnings).toEqual([expect.stringMatching(/^Settings were saved, but runtime synchronization failed:/)]);
+      expect(await local.waitEvent('pi://daemon-error', payload => payload.line.startsWith('Could not synchronize settings:'))).toMatchObject({ hostId: 'local' });
+      expect((await local.invoke('load_app_settings')).reviewPrompt).toBe('saved-model');
+      const snapshot = await local.invoke('load_settings_change');
+      expect(snapshot).toMatchObject({
+        settings: { reviewPrompt: 'saved-model' }, committed: true, revision: change.revision, synchronizationPending: true,
+        warnings: [`Settings were saved; synchronization of revision ${change.revision} is pending and will retry automatically.`],
+      });
+      expect(snapshot.phaseRevision).toBeGreaterThanOrEqual(change.phaseRevision);
+      // With Pi working again, the automatic retry must finish the same saved revision without another save.
+      restore();
+      const recovered = await local.waitEvent('pi://settings-changed', payload =>
+        payload.revision === change.revision && payload.synchronizationPending === false, 20_000);
+      expect(recovered.settings.reviewPrompt).toBe('saved-model');
+      const settled = await local.invoke('load_settings_change');
+      expect(settled).toMatchObject({ settings: { reviewPrompt: 'saved-model' }, committed: true, revision: change.revision, synchronizationPending: false, warnings: [] });
+    } finally { restore(); }
+  } finally { await local.stop(); }
+}, 60_000);
+
+test('a newer save while synchronization is pending replaces the older pending revision', async () => {
+  const local = await startDaemon();
+  try {
+    const chat = await local.invoke('create_temporary_chat', { hostId: 'local' });
+    await local.invoke('start_pi', { runtimeId: 'runtime', clientId: 'client', cwd: chat.cwd, sessionId: chat.sessionId });
+    const bin = join(local.home, '.local/bin');
+    const piPath = join(bin, 'pi');
+    // Before the fault, Pi is either this file or, when it is absent, the Pi found on PATH.
+    const original = existsSync(piPath) ? { bytes: readFileSync(piPath), mode: statSync(piPath).mode & 0o7777 } : undefined;
+    let restored = false;
+    const restore = () => {
+      if (restored) return;
+      restored = true;
+      if (!original) { rmSync(piPath, { force: true }); return; }
+      writeFileSync(piPath, original.bytes);
+      chmodSync(piPath, original.mode);
+    };
+    try {
+      fakeProgram(bin, 'pi', '#!/bin/sh\necho "pi is broken" >&2\nexit 1\n');
+      const settings = await local.invoke('load_app_settings');
+      settings.reviewPrompt = 'prompt-a';
+      const first = await local.invoke('save_app_settings', { settings, agentHostId: 'local' });
+      expect(first).toMatchObject({ synchronizationPending: true, agentConfigChange: { hostId: 'local', revision: first.committedRevision } });
+      const second = await local.invoke('save_app_settings', { settings: { ...first.settings, reviewPrompt: 'prompt-b' }, agentHostId: 'local' });
+      expect(second).toMatchObject({ synchronizationPending: true, agentConfigChange: { hostId: 'local', revision: second.committedRevision } });
+      expect(second.committedRevision).toBeGreaterThan(first.committedRevision);
+      // With Pi working again, only the newest saved revision may be synchronized.
+      restore();
+      const recovered = await local.waitEvent('pi://settings-changed', payload =>
+        payload.revision === second.revision && payload.synchronizationPending === false, 20_000);
+      expect(recovered.settings.reviewPrompt).toBe('prompt-b');
+      const settled = await local.invoke('load_settings_change');
+      expect(settled).toMatchObject({ settings: { reviewPrompt: 'prompt-b' }, committed: true, revision: second.revision, synchronizationPending: false, warnings: [] });
+      // The older revision must not come back: its settings are now outdated.
+      expect(await local.failure('save_app_settings', { settings: first.settings, agentHostId: 'local' })).toContain('Settings changed in another window or client');
+      expect((await local.invoke('load_app_settings')).reviewPrompt).toBe('prompt-b');
+    } finally { restore(); }
   } finally { await local.stop(); }
 }, 60_000);
 
 test('a save fails and keeps the settings while another process holds the settings database', async () => {
   const before = await load();
+  const baseline = await daemon.invoke('load_settings_change');
   const other = new Database(join(daemon.home, '.piop/sessions.sqlite'));
   other.exec('BEGIN IMMEDIATE');
   let error: string;
@@ -162,6 +223,16 @@ test('a save fails and keeps the settings while another process holds the settin
   finally { other.exec('ROLLBACK'); other.close(); }
   expect(error).toBe('database is locked');
   expect(await load()).toEqual(before);
+  const failed = await daemon.invoke('load_settings_change');
+  expect(failed.revision).toBe(baseline.revision);
+  expect(failed.settings).toEqual(baseline.settings);
+  // The retry uses the original baseline, so it succeeds only if the failed save released its locks and kept the revision.
+  const retried = await save({ ...before, reviewPrompt: 'retried-model' });
+  expect(retried.committedRevision).toBe(baseline.revision + 1);
+  const after = await daemon.invoke('load_settings_change');
+  expect(after.revision).toBe(baseline.revision + 1);
+  expect(after.settings.reviewPrompt).toBe('retried-model');
+  expect((await load()).reviewPrompt).toBe('retried-model');
 }, 30_000);
 
 test('skill front matter is read only inside its header and keeps quoted values', async () => {

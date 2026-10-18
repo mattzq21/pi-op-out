@@ -1,4 +1,4 @@
-import { installDom, renderComponent, act, untilDom, enterText } from '../dom.mjs';
+import { installDom, renderComponent, act, untilDom, enterText, attributeBecomes } from '../dom.mjs';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { createComponent, mergeProps } from 'solid-js';
@@ -119,6 +119,26 @@ test('child conversations remain manageable after their parent is archived', asy
   assert.equal(row('child'), null);
   await panel.render({ sessions: [child] });
   assert.ok(row('child'));
+  await click(control('Archive Delegated task'));
+  assert.deepEqual(actions, [[child, 'archive']]);
+});
+
+test('a remote child is hidden only by its parent on the same machine', { timeout: 30_000 }, async t => {
+  const remoteHost = { hostId: 'remote', hostName: 'Remote', project: 'folder', cwd: process.cwd() + '/test' };
+  const localParent = session('parent', 'Local parent', { project: 'Local' });
+  const remoteParent = session('parent', 'Remote parent', remoteHost);
+  const child = session('child', 'Delegated task', { ...remoteHost, subagentParentId: 'parent' });
+  const selected = [], actions = [];
+  const panel = await fixture(t, { sessions: [localParent, child], onSelect: value => selected.push(value), onAction: (...args) => actions.push(args) }, 'Local', undefined, undefined, { remotes: [{ id: 'remote', name: 'Remote', target: 'remote' }] });
+  assert.equal(child.subagentParentId, localParent.id);
+  await click(row('child', 'remote'));
+  assert.deepEqual(selected, [child]);
+  await panel.render({ sessions: [localParent, remoteParent, child] });
+  assert.equal(remoteParent.id, localParent.id);
+  assert.ok(row('parent', 'remote'));
+  assert.equal(row('child', 'remote'), null);
+  await panel.render({ sessions: [localParent, child] });
+  assert.ok(row('parent'));
   await click(control('Archive Delegated task'));
   assert.deepEqual(actions, [[child, 'archive']]);
 });
@@ -338,4 +358,46 @@ test('local and remote conversations display their project and machine names', a
   assert.ok(control('Group actions for Remote / folder'));
   assert.ok(groupContents('Local').contains(row('a')));
   assert.ok(groupContents('Remote / folder').contains(row('b', 'remote')));
+});
+
+test('local and remote conversations with the same id stay separate', { timeout: 30_000 }, async t => {
+  const local = session('shared', 'Local conversation', { project: 'Local' });
+  const remote = session('shared', 'Remote conversation', { hostId: 'remote', hostName: 'Remote', project: 'folder', cwd: process.cwd() + '/test' });
+  const selected = [], actions = [];
+  const panel = await fixture(t, { sessions: [local, remote], activeId: 'shared', activeHostId: 'local', onSelect: value => selected.push(value), onAction: (...args) => actions.push(args) }, 'Local', undefined, undefined, { remotes: [{ id: 'remote', name: 'Remote', target: 'remote' }] });
+  const sharedId = sessionIds.get('shared');
+  assert.equal(remote.id, sharedId);
+  assert.equal(local.id, sharedId);
+  assert.equal(row('shared').getAttribute('aria-current'), 'page');
+  assert.equal(row('shared', 'remote').hasAttribute('aria-current'), false);
+  await click(row('shared', 'remote'));
+  await click(control('Archive Local conversation'));
+  await click(control('Archive Remote conversation'));
+  assert.deepEqual(selected, [remote]);
+  assert.deepEqual(actions, [[local, 'archive'], [remote, 'archive']]);
+  await panel.render({ activeHostId: 'remote' });
+  assert.equal(row('shared', 'remote').getAttribute('aria-current'), 'page');
+  assert.equal(row('shared').hasAttribute('aria-current'), false);
+});
+
+test('a failed group rename keeps the typed name and saves it when retried after reconnection', async t => {
+  const panel = await fixture(t, { sessions: [session('a', 'Chat 2')] });
+  await createGroup(panel, 'Research');
+  await click(control('Group actions for Research'));
+  await click(menuAction('Rename group'));
+  const input = await untilDom(() => control('Rename session group'));
+  await enterText(input, 'Notes');
+  await panel.service.disconnect();
+  await key(input, 'Enter');
+  await attributeBecomes(input, 'aria-invalid', 'true');
+  assert.equal(control('Rename session group'), input);
+  assert.equal(input.value, 'Notes');
+  assert.match(document.getElementById(input.getAttribute('aria-describedby')).textContent, /connection is not open/i);
+  await panel.service.reconnect();
+  await key(input, 'Enter');
+  await untilDom(() => control('Group actions for Notes') && !control('Rename session group'));
+  await panel.reopen({}, 'Notes');
+  assert.ok(control('Group actions for Notes'));
+  assert.equal(control('Group actions for Research'), null);
+  assert.doesNotMatch(document.body.textContent, /connection is not open/i);
 });

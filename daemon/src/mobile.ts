@@ -205,7 +205,9 @@ async function firstText(ws: WebSocketConnection, timeoutMessage: string, invali
 }
 
 async function connection(shared: Shared, ws: WebSocketConnection, token: string, local: boolean, socket: Duplex): Promise<void> {
-  const value = await firstText(ws, 'Authentication timeout', 'authentication');
+  let value: any;
+  try { value = await firstText(ws, 'Authentication timeout', 'authentication'); }
+  catch (error) { await sendError(ws, errorText(error)); await ws.close(); throw error; }
   if (!authenticated(value, token)) { await sendError(ws, 'Unauthorized'); await ws.close(); throw new Error('Unauthorized'); }
   ws.markAuthenticated();
   const release = shared.connections.tryAcquire();

@@ -72,6 +72,16 @@ describe('settings editor', () => {
     await click(save()); assert.deepEqual(saves[1][0].hiddenModels, ['old/missing']);
   });
 
+  test('hiding a model keeps model visibility changes that arrive from another window', async () => {
+    props.settings.hiddenModels = ['p/b'];
+    await render({ models: ['a', 'b', 'c'].map(id => ({ provider: 'p', id, name: id })) });
+    await section('Inference');
+    await click(control('Show p/a'));
+    await render({ settings: { ...props.settings, hiddenModels: ['p/c'] } });
+    assert.equal(control('Show p/b').getAttribute('aria-checked'), 'true');
+    await click(save());
+    assert.deepEqual(saves[0][0].hiddenModels.toSorted(), ['p/a', 'p/c']);
+  });
 
   test('remote-only hidden models stay hidden when all listed models are disabled and enabled again', async () => {
     props.settings.hiddenModels = ['remote/model'];
@@ -232,6 +242,68 @@ describe('settings editor', () => {
   test('saved settings show how many sessions still need to apply changes', async () => {
     await render({ pendingSettingsCount: 2 });
     assert.equal(document.querySelector('[role=status]').textContent, 'Saved · waiting for 2 sessions to apply changes');
+  });
+
+  test('a colliding change from another window blocks saving until the latest settings are reloaded', async () => {
+    await render();
+    await enterText(control('Context window cap'), '200000');
+    await render({ settings: { ...props.settings, contextWindowCap: 300_000, settingsRevision: 2 } });
+    assert.match(document.querySelector('[role=alert]').textContent, /changed in another window/);
+    assert.equal(save().disabled, true);
+    await click(button('Reload latest settings and discard local edits'));
+    assert.equal(control('Context window cap').value, '300000');
+    assert.equal(document.querySelector('[role=alert]'), null);
+    await click(control('Automatic retry'));
+    await click(save());
+    assert.equal(saves.length, 1);
+    assert.equal(saves[0][0].contextWindowCap, 300_000);
+    assert.equal(saves[0][0].autoRetry, false);
+  });
+
+  test('an agent change from another window blocks saving agent edits until the latest agents are reloaded', async () => {
+    await render({ agentConfig: { revision: 'original-agent-revision', agents: [profile('general'), profile('review', { path_agent_prompt: 'old.md' })] } });
+    await section('Agents'); await selectAgent('review');
+    await enterText(control('Agent prompt file'), 'mine.md');
+    await render({ agentConfig: { revision: 'latest-agent-revision', agents: [profile('general'), profile('review', { path_agent_prompt: 'theirs.md' })] } });
+    assert.match(document.querySelector('[role=alert]').textContent, /changed in another window/);
+    assert.equal(save().disabled, true);
+    await click(save());
+    assert.equal(saves.length, 0);
+    await click(button('Reload latest settings and discard local edits'));
+    assert.equal(document.querySelector('[role=alert]'), null);
+    assert.equal(control('Agent name').value, 'review');
+    assert.equal(control('Agent prompt file').value, 'theirs.md');
+    await enterText(control('System prompt file'), 'review.md');
+    await click(save());
+    assert.equal(saves.length, 1);
+    assert.deepEqual(saves[0][1], { revision: 'latest-agent-revision', agents: [profile('general'), profile('review', { path_systemprompt: 'review.md', path_agent_prompt: 'theirs.md' })] });
+  });
+
+  test('an agent revision change without content changes keeps agent edits and saves them with the new revision', async () => {
+    await render({ agentConfig: { revision: 'original-agent-revision', agents: [profile('general'), profile('review', { path_agent_prompt: 'old.md' })] } });
+    await section('Agents'); await selectAgent('review');
+    await enterText(control('Agent prompt file'), 'mine.md');
+    await render({ agentConfig: { revision: 'fresh-agent-revision', agents: [profile('general'), profile('review', { path_agent_prompt: 'old.md' })] } });
+    assert.equal(document.querySelector('[role=alert]'), null);
+    assert.equal(control('Agent prompt file').value, 'mine.md');
+    await click(save());
+    assert.equal(saves.length, 1);
+    assert.deepEqual(saves[0][1], { revision: 'fresh-agent-revision', agents: [profile('general'), profile('review', { path_agent_prompt: 'mine.md' })] });
+  });
+
+  test('unconfirmed disk durability offers a retry without edits and clears once confirmed', async () => {
+    await render({ settings: { ...props.settings, settingsDurabilityError: 'fsync failed' } });
+    assert.match(document.querySelector('[role=alert]').textContent, /durability is unconfirmed: fsync failed/);
+    assert.equal(save().textContent, 'Retry save');
+    assert.equal(dirty.at(-1), true);
+    await click(save());
+    assert.equal(saves.length, 1);
+    assert.equal(saves[0][0].contextWindowCap, 100_000);
+    const { settingsDurabilityError: _error, ...confirmed } = saves[0][0];
+    await render({ settings: { ...confirmed, settingsRevision: 2 } });
+    assert.equal(document.querySelector('[role=alert]'), null);
+    assert.equal(save().disabled, true);
+    assert.equal(dirty.at(-1), false);
   });
 
   test('turning off the context cap disables its value input', async () => {

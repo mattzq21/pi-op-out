@@ -24,6 +24,7 @@ render(() => <>
   <button onClick={() => setOutput(text => text + '\u001b[8;20;70t\u001b[6n')}>Send smaller size</button>
   <button onClick={() => setOutput(text => text + ' world\u001b[6n')}>Append output</button>
   <button onClick={() => setOutput(text => text + '\u001b[999;999H\u001b[6n')}>Report screen bounds</button>
+  <button onClick={() => setOutput(text => text + '\u001b[?2004h\u001b[6n')}>Enable bracketed paste</button>
   <button onClick={() => batch(() => { setOutputEnd(40); setOutput('xyz\u001b[6n'); })}>Show output after gap</button>
   <button onClick={() => setOpen(false)}>Close view</button>
   <button onClick={() => setExited(true)}>Report shell exited</button>

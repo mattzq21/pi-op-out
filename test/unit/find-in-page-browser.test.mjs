@@ -14,6 +14,10 @@ async function openSearch(page, text) {
   await page.keyboard.press('Control+f');
   const input = page.getByRole('textbox', { name: 'Find in page' });
   await input.waitFor();
+  await input.evaluate(element => new Promise(resolve => {
+    if (document.activeElement === element) { resolve(); return; }
+    element.addEventListener('focus', () => resolve(), { once: true });
+  }));
   if (text !== undefined) await input.fill(text);
   return input;
 }
@@ -45,12 +49,17 @@ test('recording Ctrl+F in Settings does not open conversation search', async t =
   assert.equal(await recorder.evaluate(node => node === document.activeElement), true);
 });
 
-const waitForCount = (page, expected) => page.evaluate(expected => new Promise(resolve => {
+const waitForCount = (page, expected) => page.evaluate(expected => new Promise((resolve, reject) => {
   const status = document.querySelector('[role="search"] [role="status"]');
   const observer = new MutationObserver(check);
+  const timer = setTimeout(() => {
+    observer.disconnect();
+    reject(new Error(`Count stayed "${status.textContent}", expected "${expected}"`));
+  }, 15000);
   function check() {
     if (status.textContent !== expected) return;
     observer.disconnect();
+    clearTimeout(timer);
     resolve();
   }
   observer.observe(status, { subtree: true, childList: true, characterData: true });
@@ -71,6 +80,17 @@ test('live DOM changes rescan matches and retain the current match when its text
   await page.evaluate(() => { document.querySelector('#chat .messages').innerHTML = '<p>gone</p>'; });
   await waitForCount(page, 'No matches');
   assert.equal(await page.getByRole('button', { name: 'Next match', exact: true }).isDisabled(), true);
+});
+
+test('toggling hidden text during a search updates matches and keeps the current match', async t => {
+  const page = await searchPage(t);
+  await openSearch(page, 'alpha');
+  await page.keyboard.press('Enter');
+  assert.equal(await count(page), '2 / 2');
+  await page.evaluate(() => { document.querySelector('#chat p[hidden]').hidden = false; });
+  await waitForCount(page, '2 / 3');
+  await page.evaluate(() => { document.querySelectorAll('#chat .messages > p')[2].hidden = true; });
+  await waitForCount(page, '2 / 2');
 });
 
 test('search matches query whitespace across normal and preformatted text', async t => {

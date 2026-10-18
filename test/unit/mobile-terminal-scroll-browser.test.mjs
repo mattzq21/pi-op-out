@@ -70,8 +70,11 @@ test('history scrolls without taking ownership and a tap claims the terminal', a
 
   await transcript.tap({position:{x:25,y:25}});
   await page.waitForFunction(()=>window.claims===1);
-  // The view focuses the input one frame after taking ownership.
-  await page.waitForFunction(()=>document.activeElement===document.querySelector('[aria-label="Terminal command"]'),undefined,{timeout:2000}).catch(()=>{});
+  await page.evaluate(() => new Promise(resolve => {
+    const input = document.querySelector('[aria-label="Terminal command"]');
+    if (document.activeElement === input) { resolve(); return; }
+    input.addEventListener('focus', () => resolve(), { once: true });
+  }));
   assert.equal(await page.locator('[aria-label="Terminal command"]').evaluate(el=>document.activeElement===el),true,'a tap must take ownership and focus input');
   console.log('PASS: history scrolls with or without ownership; tapping still claims and focuses input');
  });
