@@ -340,3 +340,21 @@ test('a remote machine with the plain pi executable starts piopd found on its PA
     await server.stop();
   }
 });
+
+/** The number of running processes whose command line contains marker. */
+const running = (marker: string) => readdirSync('/proc').filter(name => /^\d+$/.test(name)).filter(pid => {
+  try { return readFileSync(`/proc/${pid}/cmdline`, 'utf8').split('\0').join(' ').includes(marker); } catch { return false; }
+}).length;
+
+test('closing a terminal also stops the programs started from it, even ones that left its process group', async () => {
+  const background = '6300.' + ++counter, detached = '6400.' + counter;
+  const directory = terminalDirectory(`sleep ${background} & setsid sleep ${detached} > /dev/null 2>&1 & printf READY; exec sleep 600\n`);
+  const from = daemon.events.length;
+  const terminal = await start(daemon, directory);
+  await waitOutput(daemon, terminal, 'READY', from);
+  for (let tries = 0; tries < 50 && (!running('sleep ' + background) || !running('sleep ' + detached)); tries++) await Bun.sleep(50);
+  expect([running('sleep ' + background), running('sleep ' + detached)]).toEqual([1, 1]);
+  await daemon.invoke('close_terminal', { terminalId: terminal });
+  for (let tries = 0; tries < 60 && (running('sleep ' + background) || running('sleep ' + detached)); tries++) await Bun.sleep(50);
+  expect([running('sleep ' + background), running('sleep ' + detached)]).toEqual([0, 0]);
+});
