@@ -112,6 +112,35 @@ test('a goal that uses up its token budget stops at once without adding any mess
   expect(requests.some(request => JSON.stringify(request.messages).includes('reached its token budget'))).toBe(false);
 }, 120000);
 
+test('tokens a goal\'s child agent uses count against the goal\'s budget, and reaching it stops the goal', async () => {
+  await agents.enableAgentTools('get_goal', 'create_goal', 'update_goal');
+  let parentTurns = 0;
+  agents.scripts.set('Goal with a costly helper', async messages => {
+    await Bun.sleep(300);
+    if (!called(messages, 'spawn_agent')) return { tool: 'spawn_agent', arguments: { task_name: 'costly', message: 'Costly child task' }, tokens: 10 };
+    if (!called(messages, 'wait_agent')) return { tool: 'wait_agent', arguments: { targets: ['costly'] }, tokens: 10 };
+    parentTurns++;
+    return { text: 'Parent turn.', tokens: 10 };
+  });
+  agents.scripts.set('Costly child task', () => ({ text: 'Child answer.', tokens: 1500 }));
+  const chat = await agents.rootChat();
+  const entries = async () => (await chat.command({ type: 'get_entries' })).entries;
+  await send(chat, '/goal Goal with a costly helper');
+  for (let tries = 0; parentTurns < 1 && tries < 200; tries++) await Bun.sleep(100);
+  // The parent's own calls use 10 tokens each, far below the budget; the child's 1500 tokens reach it.
+  await send(chat, '/goal budget 1000');
+  await Bun.sleep(2000);
+  const stoppedAt = parentTurns;
+  await Bun.sleep(2000);
+  expect(parentTurns).toBe(stoppedAt);
+  await send(chat, '/goal');
+  let summary = '';
+  for (let tries = 0; !summary.startsWith('Goal budget limited') && tries < 50; tries++, await Bun.sleep(100)) summary = (await entries()).filter((entry: any) => entry.customType === 'piop-goal-summary').map((entry: any) => text(entry)).at(-1) ?? '';
+  expect(summary).toStartWith('Goal budget limited\n\nGoal with a costly helper');
+  expect(Number(summary.match(/Tokens: ([\d,]+) \//)?.[1].replace(/,/g, ''))).toBeGreaterThan(1500);
+}, 120000);
+
+
 test('a goal whose agent keeps answering with nothing is marked blocked and stops', async () => {
   await agents.enableAgentTools('get_goal', 'create_goal', 'update_goal');
   agents.scripts.set('Find the impossible', async () => { await Bun.sleep(100); return { text: '' }; });
