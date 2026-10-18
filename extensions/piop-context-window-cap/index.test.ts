@@ -381,6 +381,14 @@ describe("context cap session", () => {
     expect(host.notes.some(([type, message]) => type === "error" && message.includes("compaction budgets"))).toBe(true);
     expect(await host.fire("input", { text: "hello", source: "interactive" })).toEqual({ action: "handled" });
     expect(await host.fire("input", { text: "/skill:review check this", source: "interactive" })).toEqual({ action: "handled" });
+
+    const errors = host.notes.filter(([type]) => type === "error").length;
+    await host.selectModel(model("large", 1_000_000));
+    expect(await host.session().getState()).toEqual({ cap: 300_000, source: "config", appliedWindow: 300_000 });
+    expect(host.model?.contextWindow).toBe(300_000);
+    expect(await host.fire("input", { text: "hello", source: "interactive" })).toBeUndefined();
+    expect(await host.fire("input", { text: "/skill:review check this", source: "interactive" })).toBeUndefined();
+    expect(host.notes.filter(([type]) => type === "error")).toHaveLength(errors);
   });
 
   test("a provider refresh can lower the true window to the applied cap", async () => {
