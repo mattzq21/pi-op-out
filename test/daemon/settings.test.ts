@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, expect, test } from 'bun:test';
 import { Database } from 'bun:sqlite';
-import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fakeProgram, startDaemon, type TestDaemon } from './harness';
 
@@ -136,20 +136,40 @@ test('settings are kept when running agents cannot take them, and the save repor
     const chat = await local.invoke('create_temporary_chat', { hostId: 'local' });
     await local.invoke('start_pi', { runtimeId: 'runtime', clientId: 'client', cwd: chat.cwd, sessionId: chat.sessionId });
     const bin = join(local.home, '.local/bin');
-    fakeProgram(bin, 'pi', '#!/bin/sh\necho "pi is broken" >&2\nexit 1\n');
-    const settings = await local.invoke('load_app_settings');
-    settings.reviewPrompt = 'saved-model';
-    const change = await local.invoke('save_app_settings', { settings, agentHostId: 'local' });
-    expect(change).toMatchObject({ synchronizationPending: true, agentConfigChange: { hostId: 'local', revision: change.committedRevision } });
-    expect(change.warnings).toEqual([expect.stringMatching(/^Settings were saved, but runtime synchronization failed:/)]);
-    expect(await local.waitEvent('pi://daemon-error', payload => payload.line.startsWith('Could not synchronize settings:'))).toMatchObject({ hostId: 'local' });
-    expect((await local.invoke('load_app_settings')).reviewPrompt).toBe('saved-model');
-    const snapshot = await local.invoke('load_settings_change');
-    expect(snapshot).toMatchObject({
-      settings: { reviewPrompt: 'saved-model' }, committed: true, revision: change.revision, synchronizationPending: true,
-      warnings: [`Settings were saved; synchronization of revision ${change.revision} is pending and will retry automatically.`],
-    });
-    expect(snapshot.phaseRevision).toBeGreaterThanOrEqual(change.phaseRevision);
+    const piPath = join(bin, 'pi');
+    // Before the fault, Pi is either this file or, when it is absent, the Pi found on PATH.
+    const original = existsSync(piPath) ? { bytes: readFileSync(piPath), mode: statSync(piPath).mode & 0o7777 } : undefined;
+    let restored = false;
+    const restore = () => {
+      if (restored) return;
+      restored = true;
+      if (!original) { rmSync(piPath, { force: true }); return; }
+      writeFileSync(piPath, original.bytes);
+      chmodSync(piPath, original.mode);
+    };
+    try {
+      fakeProgram(bin, 'pi', '#!/bin/sh\necho "pi is broken" >&2\nexit 1\n');
+      const settings = await local.invoke('load_app_settings');
+      settings.reviewPrompt = 'saved-model';
+      const change = await local.invoke('save_app_settings', { settings, agentHostId: 'local' });
+      expect(change).toMatchObject({ synchronizationPending: true, agentConfigChange: { hostId: 'local', revision: change.committedRevision } });
+      expect(change.warnings).toEqual([expect.stringMatching(/^Settings were saved, but runtime synchronization failed:/)]);
+      expect(await local.waitEvent('pi://daemon-error', payload => payload.line.startsWith('Could not synchronize settings:'))).toMatchObject({ hostId: 'local' });
+      expect((await local.invoke('load_app_settings')).reviewPrompt).toBe('saved-model');
+      const snapshot = await local.invoke('load_settings_change');
+      expect(snapshot).toMatchObject({
+        settings: { reviewPrompt: 'saved-model' }, committed: true, revision: change.revision, synchronizationPending: true,
+        warnings: [`Settings were saved; synchronization of revision ${change.revision} is pending and will retry automatically.`],
+      });
+      expect(snapshot.phaseRevision).toBeGreaterThanOrEqual(change.phaseRevision);
+      // With Pi working again, the automatic retry must finish the same saved revision without another save.
+      restore();
+      const recovered = await local.waitEvent('pi://settings-changed', payload =>
+        payload.revision === change.revision && payload.synchronizationPending === false, 20_000);
+      expect(recovered.settings.reviewPrompt).toBe('saved-model');
+      const settled = await local.invoke('load_settings_change');
+      expect(settled).toMatchObject({ settings: { reviewPrompt: 'saved-model' }, committed: true, revision: change.revision, synchronizationPending: false, warnings: [] });
+    } finally { restore(); }
   } finally { await local.stop(); }
 }, 60_000);
 
