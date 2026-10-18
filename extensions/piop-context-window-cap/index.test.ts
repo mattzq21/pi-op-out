@@ -365,6 +365,14 @@ describe("context cap session", () => {
     expect(await host.session().getState()).toEqual({ cap: null, source: "manual", appliedWindow: 1_000_000 });
     await host.updateDefaults(general(200_000));
     expect((await host.session().getState()).cap).toBeNull();
+    const savedCaps = host.caps();
+    await host.fire("session_shutdown");
+    const reopened = await start(host.branch, model("small", 64_000), general(400_000));
+    expect(await reopened.session().getState()).toEqual({ cap: null, source: "manual", appliedWindow: 64_000 });
+    expect(reopened.notes.filter(([type]) => type === "error")).toEqual([]);
+    expect(reopened.caps()).toEqual(savedCaps);
+    await reopened.session().resetManualCap();
+    expect(await reopened.session().getState()).toEqual({ cap: 400_000, source: "config", appliedWindow: 64_000 });
   });
 
   test("reports and blocks prompts when a model switch cannot fit the compaction budgets", async () => {
