@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, expect, test } from 'bun:test';
-import { existsSync, mkdirSync, readFileSync, rmdirSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, rmdirSync, rmSync, writeFileSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { join } from 'node:path';
@@ -182,19 +182,29 @@ test('Codex usage times out when Codex stays silent', async () => {
   expect(Date.now() - started).toBeGreaterThanOrEqual(7_500);
 }, 30_000);
 
-test('another client cannot delete a conversation that is open in a running Pi', async () => {
+test('deletion refused for another client keeps the open conversation readable and succeeds after its owner closes it', async () => {
   const local = await startDaemon();
   try {
-    const running = publicSession(local.home, local.home, 'running');
-    const idle = publicSession(local.home, local.home, 'running');
-    expect(await local.invoke('start_pi', { runtimeId: 'running-runtime', clientId: 'test-client', cwd: local.home, sessionPath: running.path })).toMatchObject({ owned: true });
-    const remove = (path: string) => ({ sessionPath: path, hostId: 'local', clientId: 'other-client' });
-    expect(await local.failure('delete_session', remove(running.path))).toBe('Take ownership of this conversation before changing it');
-    expect(existsSync(running.path)).toBe(true);
-    expect(await local.invoke('delete_session', remove(idle.path))).toEqual([idle.path]);
-    // The client that owns the running conversation may still delete it.
-    expect(await local.invoke('delete_session', { sessionPath: running.path, hostId: 'local', clientId: 'test-client' })).toEqual([running.path]);
-    expect(existsSync(running.path)).toBe(false);
+    const question = JSON.stringify({ type: 'message', id: 'question', parentId: null, message: { role: 'user', content: 'Keep while open' } }) + '\n';
+    const blocked = publicSession(local.home, local.home, 'running', question);
+    const ownDelete = publicSession(local.home, local.home, 'running');
+    const open = (runtimeId: string, sessionPath: string, presence?: any) => local.invoke('start_pi', { runtimeId, clientId: 'test-client', cwd: local.home, sessionPath, presence });
+    expect(await open('blocked-runtime', blocked.path)).toMatchObject({ owned: true });
+    expect(await open('own-delete-runtime', ownDelete.path)).toMatchObject({ owned: true });
+    const remove = (path: string, clientId = 'other-client') => ({ sessionPath: path, hostId: 'local', clientId });
+    const listedIds = async () => (await local.invoke('list_sessions')).map((row: any) => row.id).filter((id: string) => [blocked.id, ownDelete.id].includes(id));
+    expect(await local.failure('delete_session', remove(blocked.path))).toBe('Take ownership of this conversation before changing it');
+    // The client that owns a running conversation may still delete it.
+    expect(await local.invoke('delete_session', remove(ownDelete.path, 'test-client'))).toEqual([ownDelete.path]);
+    expect(await listedIds()).toEqual([blocked.id]);
+    await local.invoke('stop_pi', { runtimeId: 'blocked-runtime' });
+    await open('reader-runtime', blocked.path, { readOnly: true });
+    try {
+      const history = await local.invoke('pi_command', { runtimeId: 'reader-runtime', command: { type: 'get_entries' } });
+      expect(history.entries.filter((entry: any) => entry.type === 'message')).toMatchObject([{ id: 'question', message: { role: 'user', content: 'Keep while open' } }]);
+    } finally { await local.invoke('stop_pi', { runtimeId: 'reader-runtime' }); }
+    expect(await local.invoke('delete_session', remove(blocked.path))).toEqual([blocked.path]);
+    expect(await listedIds()).toEqual([]);
   } finally { await local.stop(); }
 }, 60_000);
 
