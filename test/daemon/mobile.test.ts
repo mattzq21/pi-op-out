@@ -14,9 +14,10 @@ async function rawSocket(url: string) {
   const socket = new WebSocket(url);
   const packets: any[] = [];
   let closed = false;
+  let closeCode: number | undefined;
   const changed = new Set<() => void>();
   socket.onmessage = message => { packets.push(JSON.parse(String(message.data))); for (const wake of [...changed]) wake(); };
-  socket.onclose = () => { closed = true; for (const wake of [...changed]) wake(); };
+  socket.onclose = event => { closed = true; closeCode = event.code; for (const wake of [...changed]) wake(); };
   await new Promise<void>((resolve, reject) => { socket.onopen = () => resolve(); socket.onerror = () => reject(new Error('Could not connect')); });
   /** Resolves when the daemon has closed the socket. */
   const close = () => new Promise<void>((resolve, reject) => {
@@ -29,8 +30,28 @@ async function rawSocket(url: string) {
     const check = () => { if (packets.length) { clearTimeout(timer); changed.delete(check); resolve(packets.shift()); } else if (closed) { clearTimeout(timer); changed.delete(check); reject(new Error('Socket closed')); } };
     changed.add(check); check();
   });
-  return { send: (value: unknown) => socket.send(JSON.stringify(value)), packet, close, packets, end: () => socket.close() };
+  return { send: (value: unknown) => socket.send(JSON.stringify(value)), packet, close, packets, end: () => socket.close(), closeCode: () => closeCode };
 }
+
+test('a connection that sends more than 4 KB before logging in is closed as too big, without a reply', async () => {
+  const socket = await rawSocket(daemon.endpoint.url);
+  socket.send({ type: 'authenticate', token: daemon.endpoint.token, padding: 'x'.repeat(5000) });
+  await socket.close();
+  expect(socket.closeCode()).toBe(1009);
+  expect(socket.packets).toEqual([]);
+});
+
+test('after logging in, a request of a megabyte is accepted', async () => {
+  const socket = await rawSocket(daemon.endpoint.url);
+  socket.send({ type: 'authenticate', token: daemon.endpoint.token });
+  expect(await socket.packet()).toMatchObject({ type: 'ready' });
+  socket.send({ id: 1, command: 'load_app_settings', args: { padding: 'x'.repeat(1024 * 1024) } });
+  let reply = await socket.packet();
+  // Events such as the daemon log status can arrive first.
+  while (reply.event) reply = await socket.packet();
+  expect(reply).toMatchObject({ id: 1, result: expect.objectContaining({ keybindings: expect.any(Object) }) });
+  socket.end();
+});
 
 test('a connection authenticates only with the exact token in an authenticate packet', async () => {
   const { url, token } = daemon.endpoint;
