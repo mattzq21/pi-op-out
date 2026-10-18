@@ -1,7 +1,7 @@
 import { expect, test } from 'bun:test';
 import { mkdirSync, symlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { startDaemon } from './harness';
+import { remoteMachine, startDaemon, useRemotes } from './harness';
 
 test('project selection rejects links into app storage but accepts similarly named folders', async () => {
   const daemon = await startDaemon();
@@ -21,6 +21,33 @@ test('project selection rejects links into app storage but accepts similarly nam
       expect(await daemon.invoke('validate_project_directory', { hostId: 'local', path: sibling })).toBe(sibling);
     }
   } finally { await daemon.stop(); }
+}, 60_000);
+
+test('a remote machine rejects its own app storage as a project even where the local machine accepts the same path', async () => {
+  const daemon = await startDaemon();
+  const server = await remoteMachine(daemon, 'server', 'Server');
+  try {
+    await useRemotes(daemon, [server]);
+    const child = join(server.home, '.piop', 'project');
+    const alias = join(server.home, 'storage-link');
+    const sibling = join(server.home, '.piop-project');
+    mkdirSync(child, { recursive: true });
+    mkdirSync(sibling);
+    symlinkSync(child, alias);
+    for (const path of [child, alias]) {
+      expect(await daemon.failure('validate_project_directory', { hostId: 'server', path }))
+        .toBe('Piop storage directories cannot be selected as projects');
+    }
+    expect(await daemon.invoke('validate_project_directory', { hostId: 'server', path: sibling })).toBe(sibling);
+    // The local machine has its own storage, so the remote storage folder is an ordinary folder there.
+    expect(await daemon.invoke('validate_project_directory', { hostId: 'local', path: child })).toBe(child);
+
+    const chat = await daemon.invoke('create_temporary_chat', { hostId: 'server' });
+    expect(chat.cwd.startsWith(join(server.home, '.piop', 'tmp') + '/')).toBe(true);
+    expect(await daemon.invoke('validate_project_directory', { hostId: 'server', path: chat.cwd, allowStorage: true })).toBe(chat.cwd);
+    expect(await daemon.failure('validate_project_directory', { hostId: 'server', path: chat.cwd }))
+      .toBe('Piop storage directories cannot be selected as projects');
+  } finally { await server.stop(); await daemon.stop(); }
 }, 60_000);
 
 test('project selection rejects folders reached through the real location of a linked app storage folder', async () => {
