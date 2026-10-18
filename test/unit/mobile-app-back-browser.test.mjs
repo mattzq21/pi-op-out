@@ -6,26 +6,31 @@ import { startupPage } from '../startup-browser-fixture.mjs';
 const settings = { defaultAgent: 'default', hiddenModels: [], defaultThinking: 'high', defaultFastMode: false, contextWindowCap: 200000, contextWindowCapEnabled: true, modelContextWindowCaps: {}, autoRetry: true, debugMode: false, keybindings: { newConversation: 'Ctrl+N', toggleConversations: 'Ctrl+B', toggleTerminal: 'Ctrl+J', toggleDebugMode: 'Ctrl+D', focusComposer: 'Ctrl+E', openSettings: 'Ctrl+,' }, tools: [], skills: [], hosts: [] };
 const state = { model: { id: 'model', provider: 'test', name: 'Test model' }, thinkingLevel: 'high', isStreaming: false, sessionId: 'mobile-test', sessionFile: '/tmp/mobile-test.jsonl', messageCount: 0, pendingMessageCount: 0 };
 
-// Test controls: `host.stopFailure` makes the host refuse to stop agent runs with this error; `host.received` collects every request the host gets, and `host.onRequest` sees each one.
+// Test controls: `host.stopFailure` makes the host refuse to stop agent runs with this error; `host.stopHeld` is a promise that delays every stop reply until it resolves; `host.received` collects every request the host gets, and `host.onRequest` sees each one.
 function answerHost(ws, host) {
   ws.onMessage(raw => {
     const message = JSON.parse(raw);
     host.received?.push(message);
     host.onRequest?.(message);
-    if (message.type === 'authenticate') { ws.send(JSON.stringify({ type: 'ready', protocol: 1, backend: 'daemon' })); return; }
-    if (message.type === 'ping') return;
-    if (message.command === 'stop_pi' && host.stopFailure) { ws.send(JSON.stringify({ id: message.id, error: host.stopFailure })); return; }
-    const data = { stop_pi: true, load_app_settings: settings, load_settings_change: { settings }, plugin_status: { enabled: [], configured: [], revision: 'plugins', error: null }, create_temporary_chat: { cwd: '/tmp/project', sessionId: 'mobile-test' }, list_sessions: [], load_session_groups: { version: 1, groups: [], assignments: {} }, codex_usage: { remainingPercent: 80 }, opencode_go_usage: { rolling: { status: 'ok', remainingPercent: 70 }, weekly: { status: 'ok', remainingPercent: 45 }, monthly: { status: 'ok', remainingPercent: 30 } }, start_pi: { attached: true }, home_directory: '/home/test', is_git_repository: false };
-    let result = Object.hasOwn(data, message.command) ? data[message.command] : undefined;
-    if (message.command === 'provider_auth' && message.args.request.action === 'draft_catalog') result = { config: { agents: [{ name: 'default', model: 'test/model', effort: 'high', path_systemprompt: '', path_agent_prompt: '', tools: [], skills: [], mcpServers: {} }] }, models: [state.model], commands: [] };
-    if (message.command === 'pi_command') {
-      const responses = { get_session_revision: { revision: 'changed' }, get_snapshot: { revision: 'snapshot', state, history: { entries: [], leafId: null }, queue: { type: 'queue_state', pendingMessages: [] }, liveTools: [], sequence: 0, epoch: 'mobile-test' }, get_state: state, get_available_models: { models: [state.model] }, get_available_thinking_levels: { levels: ['high'] }, get_commands: { commands: [] }, get_session_stats: {} };
-      result = responses[message.args.command.type] ?? {};
-    }
-    if (message.command === 'save_app_settings') result = { settings: message.args.settings };
-    if (message.command === 'list_directories') result = { path: message.args.path ?? '/home/test', parent: '/home', directories: [] };
-    ws.send(JSON.stringify(result === undefined ? { id: message.id, error: 'Command is not available on the daemon: ' + message.command } : { id: message.id, result }));
+    if (message.command === 'stop_pi' && host.stopHeld) { void host.stopHeld.then(() => reply(ws, host, message)); return; }
+    reply(ws, host, message);
   });
+}
+
+function reply(ws, host, message) {
+  if (message.type === 'authenticate') { ws.send(JSON.stringify({ type: 'ready', protocol: 1, backend: 'daemon' })); return; }
+  if (message.type === 'ping') return;
+  if (message.command === 'stop_pi' && host.stopFailure) { ws.send(JSON.stringify({ id: message.id, error: host.stopFailure })); return; }
+  const data = { stop_pi: true, load_app_settings: settings, load_settings_change: { settings }, plugin_status: { enabled: [], configured: [], revision: 'plugins', error: null }, create_temporary_chat: { cwd: '/tmp/project', sessionId: 'mobile-test' }, list_sessions: [], load_session_groups: { version: 1, groups: [], assignments: {} }, codex_usage: { remainingPercent: 80 }, opencode_go_usage: { rolling: { status: 'ok', remainingPercent: 70 }, weekly: { status: 'ok', remainingPercent: 45 }, monthly: { status: 'ok', remainingPercent: 30 } }, start_pi: { attached: true }, home_directory: '/home/test', is_git_repository: false };
+  let result = Object.hasOwn(data, message.command) ? data[message.command] : undefined;
+  if (message.command === 'provider_auth' && message.args.request.action === 'draft_catalog') result = { config: { agents: [{ name: 'default', model: 'test/model', effort: 'high', path_systemprompt: '', path_agent_prompt: '', tools: [], skills: [], mcpServers: {} }] }, models: [state.model], commands: [] };
+  if (message.command === 'pi_command') {
+    const responses = { get_session_revision: { revision: 'changed' }, get_snapshot: { revision: 'snapshot', state, history: { entries: [], leafId: null }, queue: { type: 'queue_state', pendingMessages: [] }, liveTools: [], sequence: 0, epoch: 'mobile-test' }, get_state: state, get_available_models: { models: [state.model] }, get_available_thinking_levels: { levels: ['high'] }, get_commands: { commands: [] }, get_session_stats: {} };
+    result = responses[message.args.command.type] ?? {};
+  }
+  if (message.command === 'save_app_settings') result = { settings: message.args.settings };
+  if (message.command === 'list_directories') result = { path: message.args.path ?? '/home/test', parent: '/home', directories: [] };
+  ws.send(JSON.stringify(result === undefined ? { id: message.id, error: 'Command is not available on the daemon: ' + message.command } : { id: message.id, result }));
 }
 
 // The Android side of the Capacitor bridge: the back button callback and the minimize request.
@@ -282,3 +287,71 @@ test('Android Back over the project folder dialog cancels only the dialog, then 
   assert.equal(await page.evaluate(() => window.androidMinimized), 0);
 });
 
+test('a held disconnect stop locks the chat and Host, and a refused stop gives back the draft', async t => {
+  let settingsStopAsked;
+  const settingsStop = new Promise(resolve => { settingsStopAsked = resolve; });
+  const host = { received: [], onRequest: message => { if (message.command === 'stop_pi') settingsStopAsked(); } };
+  const { page, editor } = await connectedChat(t, host);
+  await editor.fill('Keep this draft');
+  await settingsStop;
+  let releaseStop;
+  Object.assign(host, { stopHeld: new Promise(resolve => { releaseStop = resolve; }), stopFailure: 'Agent run could not stop' });
+  const prompts = [];
+  page.on('dialog', dialog => { prompts.push(dialog.message()); return dialog.accept(); });
+  const stops = () => host.received.filter(message => message.command === 'stop_pi');
+  const sent = () => host.received.filter(message => message.command === 'pi_command' && message.args.command.type === 'prompt');
+  const editorFocused = () => page.evaluate(() => document.activeElement === document.querySelector('textarea[aria-label="Message piop"]'));
+  const clickCenter = box => page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
+  const hostDisabled = () => page.evaluate(() => document.querySelector('button[aria-label="Disconnect from anchor host"]').disabled);
+  const [editorBox, sendBox] = [await editor.boundingBox(), await page.getByRole('button', { name: 'Send message', exact: true }).boundingBox()];
+  const stopAsked = new Promise(resolve => { host.onRequest = message => { if (message.command === 'stop_pi') resolve(); }; });
+
+  await page.getByRole('button', { name: 'Toggle conversations' }).click();
+  const hostButton = page.getByRole('button', { name: 'Host', exact: true });
+  const hostBox = await hostButton.boundingBox();
+  await hostButton.click();
+  await stopAsked;
+  await settle(page);
+  const heldStops = stops().length;
+  assert.equal(prompts.length, 1);
+  assert.equal(await hostDisabled(), true);
+
+  await clickCenter(hostBox);
+  await page.keyboard.press('Enter');
+  await settle(page);
+  assert.equal(prompts.length, 1);
+  assert.equal(stops().length, heldStops);
+  await page.evaluate(() => window.pressAndroidBack());
+  await page.getByRole('button', { name: 'Close conversations', exact: true }).waitFor({ state: 'detached' });
+  await clickCenter(editorBox);
+  assert.equal(await editorFocused(), false);
+  await page.keyboard.press('End');
+  await page.keyboard.type(' lost');
+  await page.keyboard.press('Enter');
+  for (let press = 0; press < 3; press++) await page.keyboard.press('Tab');
+  assert.equal(await editorFocused(), false);
+  await page.keyboard.type(' lost');
+  await clickCenter(sendBox);
+  await settle(page);
+  assert.equal(await editorFocused(), false);
+  assert.equal(await editor.inputValue(), 'Keep this draft');
+  assert.equal(sent().length, 0);
+  assert.equal(stops().length, heldStops);
+
+  releaseStop();
+  const retryDisconnect = page.locator('.mobile-reconnect-banner').filter({ hasText: 'Agent run could not stop' }).getByRole('button', { name: 'Retry disconnect', exact: true });
+  await retryDisconnect.waitFor();
+  await settle(page);
+  assert.equal(await hostDisabled(), false);
+  await clickCenter(editorBox);
+  assert.equal(await editorFocused(), true);
+  await page.keyboard.press('End');
+  await page.keyboard.type(' and send it');
+  assert.equal(await editor.inputValue(), 'Keep this draft and send it');
+  const received = new Promise(resolve => { host.onRequest = message => { if (message.command === 'pi_command' && message.args.command.type === 'prompt') resolve(message); }; });
+  await clickCenter(sendBox);
+  assert.equal((await received).args.command.message, 'Keep this draft and send it');
+  assert.equal(await retryDisconnect.isEnabled(), true);
+  assert.equal(await page.getByLabel('Anchor host address').count(), 0);
+  assert.equal(prompts.length, 1);
+});
