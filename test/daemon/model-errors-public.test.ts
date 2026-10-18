@@ -15,9 +15,9 @@ test('a short model outage is retried on its own, and the chat answers and is no
   expect((await chat.command({ type: 'get_state' })).isPaused).toBe(false);
 }, 60000);
 
-test('with automatic retry turned off in Settings, also for a chat already open, a model outage is not tried again and the chat is paused', async () => {
+test('with automatic retry turned off in Settings, also for a chat already open, a model outage pauses the chat, and resuming tries again', async () => {
   let calls = 0;
-  agents.scripts.set('Answer without retries', () => { calls++; throw new Error('503 Service Unavailable'); });
+  agents.scripts.set('Answer without retries', () => { if (++calls === 1) throw new Error('503 Service Unavailable'); return { text: 'Recovered.' }; });
   const chat = await agents.rootChat();
   const settings = await agents.daemon.invoke('load_app_settings');
   await agents.daemon.invoke('save_app_settings', { settings: { ...settings, autoRetry: false } });
@@ -27,6 +27,10 @@ test('with automatic retry turned off in Settings, also for a chat already open,
     await Bun.sleep(3000);
     expect(calls).toBe(1);
     expect((await chat.command({ type: 'get_state' })).isPaused).toBe(true);
+    await chat.command({ type: 'resume' });
+    await chat.until(history => text(history.at(-1)) === 'Recovered.');
+    expect(agents.model.requests.at(-1).messages.slice(1).map((message: any) => message.role)).toEqual(['user', 'user']);
+    expect((await chat.command({ type: 'get_state' })).isPaused).toBe(false);
   } finally { await agents.daemon.invoke('save_app_settings', { settings: { ...(await agents.daemon.invoke('load_app_settings')), autoRetry: true } }); }
 }, 60000);
 
