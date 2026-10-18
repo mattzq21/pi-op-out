@@ -3,8 +3,8 @@ import { daemonClient } from './daemon-client.mjs';
 import { nativeFileCommand } from './native-file-command.mjs';
 import assert from 'node:assert/strict';
 
-/** The app on a real daemon. nativeFailures maps a native command to the error message it fails with. */
-export async function appBrowser(t, { remotes = [], keybindings = {}, nativeFailures = {} } = {}) {
+/** The app on a real daemon. nativeFailures maps a native command to the error message it fails with. model 'echo' gives the daemon a model that echoes each message. */
+export async function appBrowser(t, { remotes = [], keybindings = {}, nativeFailures = {}, model } = {}) {
   let page;
   const deliveries = new Set(), requests = new Set(), errors = [];
   const daemon = await daemonClient(t, (event, payload) => {
@@ -12,7 +12,7 @@ export async function appBrowser(t, { remotes = [], keybindings = {}, nativeFail
     const delivery = Promise.all(page.context().pages().map(target => target.evaluate(({ event, payload }) => window.deliverNativeEvent?.(event, payload), { event, payload })));
     deliveries.add(delivery);
     delivery.catch(error => errors.push(error.message)).finally(() => deliveries.delete(delivery));
-  }, { remotes });
+  }, { remotes, model });
   const native = await nativeFileCommand(t, { desktop: true });
   const preferences = (await native.invoke('load_client_settings')).settings ?? { keybindings: (await daemon.invoke('load_app_settings')).keybindings, debugMode: false };
   await native.invoke('save_client_settings', { settings: { ...preferences, keybindings: { ...preferences.keybindings, ...keybindings } }, baseline: preferences });
