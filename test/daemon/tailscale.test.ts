@@ -1,17 +1,10 @@
 import { afterAll, beforeAll, expect, test } from 'bun:test';
 import { spawnSync } from 'node:child_process';
-import { existsSync, lstatSync, mkdirSync, readFileSync, symlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, lstatSync, mkdirSync, readFileSync, symlinkSync, watch, writeFileSync } from 'node:fs';
 import { connect, type Socket } from 'node:net';
 import { join } from 'node:path';
-import { fakeProgram, startDaemon, temporaryDirectory, type TestDaemon } from './harness';
+import { startDaemon, temporaryDirectory, type TestDaemon } from './harness';
 
-/*
- * The daemon trusts a Tailscale connection only from the root-owned tailscaled service. The test daemon runs in a
- * user and mount namespace: there this test process counts as root, and fake /usr/bin/tailscale and
- * /usr/bin/systemctl programs are mounted over the real ones. The fakes read their answers from the daemon HOME.
- */
-const FAKE_TAILSCALE = '#!/bin/sh\ncat "$HOME/.fake-tailscale-status"\n';
-const FAKE_SYSTEMCTL = '#!/bin/sh\ncat "$HOME/.fake-tailscaled-pid"\n';
 const OWNER = 'owner@example.com';
 const status = (login: string, extra: Record<string, unknown> = {}) => JSON.stringify({ BackendState: 'Running', Self: { UserID: 7, ...extra }, User: { '7': { LoginName: login } } });
 
@@ -19,17 +12,29 @@ let daemon: TestDaemon;
 let socketPath: string;
 
 beforeAll(async () => {
-  const fakes = temporaryDirectory('piop-tailscale-fakes-');
-  const tailscale = fakeProgram(fakes, 'tailscale', FAKE_TAILSCALE);
-  const systemctl = fakeProgram(fakes, 'systemctl', FAKE_SYSTEMCTL);
   const home = temporaryDirectory('piop-home-');
   writeFileSync(join(home, '.fake-tailscale-status'), status(OWNER));
-  // This process plays the tailscaled proxy, so the service lookup reports its PID.
   writeFileSync(join(home, '.fake-tailscaled-pid'), process.pid + '\n');
-  daemon = await startDaemon({ home, launcher: ['unshare', '-rm', 'sh', '-c', 'mount --bind "$1" /usr/bin/tailscale && mount --bind "$2" /usr/bin/systemctl && shift 2 && exec "$@"', 'sh', tailscale, systemctl] });
+  writeFileSync(join(home, '.fake-peer-credentials'), JSON.stringify({ uid: 0, pid: process.pid }));
+  daemon = await startDaemon({ home, fakeTailscale: true });
   socketPath = join(home, '.piop/tailscale.sock');
 }, 60_000);
 afterAll(() => daemon?.stop());
+
+function expectLog(text: string): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const watcher = watch(join(daemon.home, '.piop'), () => check());
+    const finish = (error?: Error) => {
+      clearTimeout(timer);
+      watcher.close();
+      if (error) reject(error); else resolve();
+    };
+    const timer = setTimeout(() => finish(new Error('Missing daemon log message: ' + text + '\n' + daemon.log())), 5000);
+    const check = () => { if (daemon.log().includes(text)) finish(); };
+    watcher.on('error', finish);
+    check();
+  });
+}
 
 type Upgrade = { status: number; packets: any[]; send(value: unknown): void; next(): Promise<any>; closed(): Promise<void>; end(): void };
 
@@ -90,7 +95,7 @@ function upgrade(headers: Record<string, string>): Promise<Upgrade> {
     // Status 0: the daemon dropped the connection before any HTTP answer, with a close or a reset.
     const refused = () => { if (!result) resolve({ status: 0, packets, send() {}, next: () => Promise.reject(new Error('Socket closed')), closed: () => Promise.resolve(), end() {} }); };
     socket.on('close', () => { ended = true; wake(); refused(); });
-    socket.on('error', error => { if ((error as any).code === 'ECONNRESET') refused(); else if (!result) reject(error); });
+    socket.on('error', error => { if (['ECONNRESET', 'EPIPE'].includes((error as any).code)) refused(); else if (!result) reject(error); });
     const lines = ['GET / HTTP/1.1', 'Host: localhost', 'Upgrade: websocket', 'Connection: Upgrade', 'Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==', 'Sec-WebSocket-Version: 13'];
     for (const [name, value] of Object.entries(headers)) lines.push(name + ': ' + value);
     socket.write(lines.join('\r\n') + '\r\n\r\n');
@@ -151,18 +156,48 @@ test('a Tailscale connection must choose Tailscale authentication in an authenti
   }
 });
 
-test('a connection from a process other than tailscaled, or a host signed in with a tagged key, is refused', async () => {
+test('a proxy must be root and match the running tailscaled process', async () => {
+  const peerFile = join(daemon.home, '.fake-peer-credentials');
   const pidFile = join(daemon.home, '.fake-tailscaled-pid');
-  writeFileSync(pidFile, '1\n');
-  try { expect((await upgrade({ 'Tailscale-User-Login': OWNER })).status).toBe(0); }
-  finally { writeFileSync(pidFile, process.pid + '\n'); }
-  expect(daemon.log()).toContain('Tailscale connection rejected: Untrusted Tailscale proxy peer');
+  for (const [peer, service] of [
+    [{ uid: 1000, pid: process.pid }, String(process.pid)],
+    [{ uid: 0, pid: process.pid }, '1'],
+    [{ uid: 0, pid: 0 }, '0'],
+    [{ uid: 0, pid: -1 }, '-1'],
+    [{ uid: 0, pid: process.pid }, 'invalid'],
+  ] as const) {
+    writeFileSync(peerFile, JSON.stringify(peer));
+    writeFileSync(pidFile, service);
+    try { expect((await upgrade({ 'Tailscale-User-Login': OWNER })).status, JSON.stringify({ peer, service })).toBe(0); }
+    finally {
+      writeFileSync(peerFile, JSON.stringify({ uid: 0, pid: process.pid }));
+      writeFileSync(pidFile, process.pid + '\n');
+    }
+  }
+  await expectLog('Tailscale connection rejected: Untrusted Tailscale proxy peer');
+  const accepted = await upgrade({ 'Tailscale-User-Login': OWNER });
+  try { expect(accepted.status).toBe(101); } finally { accepted.end(); }
+});
+
+test('a host must have a valid personal Tailscale identity', async () => {
   const statusFile = join(daemon.home, '.fake-tailscale-status');
-  writeFileSync(statusFile, status(OWNER, { Tags: ['tag:server'] }));
-  try { expect((await upgrade({ 'Tailscale-User-Login': OWNER })).status).toBe(0); }
-  finally { writeFileSync(statusFile, status(OWNER)); }
-  expect(daemon.log()).toContain('Tailscale connection rejected: Sign the host into a personal Tailscale account to enable mobile access');
-  expect((await upgrade({ 'Tailscale-User-Login': OWNER })).status).toBe(101);
+  for (const [value, error] of [
+    [status(OWNER, { Tags: ['tag:server'] }), 'Sign the host into a personal Tailscale account'],
+    [JSON.stringify({ ...JSON.parse(status(OWNER)), BackendState: 'Stopped' }), 'Sign the host into a personal Tailscale account'],
+    ['not json', 'Invalid Tailscale status'],
+    [status(OWNER, { UserID: -1 }), 'Missing Tailscale host user'],
+    [status(OWNER, { UserID: '7' }), 'Missing Tailscale host user'],
+    [status(''), 'Missing Tailscale host login'],
+    [status('non-ascii-\u00e9@example.com'), 'Missing Tailscale host login'],
+    [JSON.stringify({ BackendState: 'Running', Self: { UserID: 7 }, User: {} }), 'Missing Tailscale host login'],
+  ]) {
+    writeFileSync(statusFile, value!);
+    try { expect((await upgrade({ 'Tailscale-User-Login': OWNER })).status, value).toBe(0); }
+    finally { writeFileSync(statusFile, status(OWNER)); }
+    await expectLog('Tailscale connection rejected: ' + error);
+  }
+  const accepted = await upgrade({ 'Tailscale-User-Login': OWNER });
+  try { expect(accepted.status).toBe(101); } finally { accepted.end(); }
 });
 
 test('startup replaces a stale Tailscale socket but refuses to remove a file or a link in its place', async () => {

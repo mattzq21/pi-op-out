@@ -11,13 +11,13 @@ const root = resolve(import.meta.dir, '../..');
 const bundles = new Map<string, Promise<string>>();
 
 /** A development build runs like "scripts/build-daemon.mjs --debug": it is scoped to a project directory. */
-export interface BuildOptions { development?: boolean; projectRoot?: string }
+export interface BuildOptions { development?: boolean; projectRoot?: string; fakeTailscale?: boolean }
 
 /** Bundles the daemon the same way scripts/build-daemon.mjs does, without compiling a release build to a binary. */
 export function daemonExecutable(options: BuildOptions = {}): Promise<string> {
   const development = options.development === true;
   const project = development ? (options.projectRoot ?? root).replace(/[\\/]+$/, '') : '';
-  const key = development + '\0' + project;
+  const key = development + '\0' + project + '\0' + Boolean(options.fakeTailscale);
   let bundled = bundles.get(key);
   if (bundled) return bundled;
   bundled = (async () => {
@@ -33,6 +33,7 @@ export function daemonExecutable(options: BuildOptions = {}): Promise<string> {
       plugins: [{
         name: 'raw-text',
         setup(context) {
+          if (options.fakeTailscale) context.onResolve({ filter: /^\.\/tailscale_system$/ }, () => ({ path: join(root, 'test/daemon/tailscale-system-fake.ts') }));
           context.onResolve({ filter: /^piop-agent-loader$/ }, () => ({ path: join(root, 'extensions/piop-define-agents/daemon-loader.ts') }));
           context.onResolve({ filter: /^\.\.\/app-settings\.cjs$/ }, args => args.importer.includes('/extensions/piop-define-agents/') ? { path: join(root, 'daemon/resources/session-broker/app-settings.cjs') } : undefined);
           context.onResolve({ filter: /\?raw$/ }, args => ({ path: resolve(args.resolveDir, args.path.slice(0, -4)), namespace: 'raw-text' }));
@@ -223,10 +224,9 @@ async function openClient(url: string, token: string, scope = 'client'): Promise
   };
 }
 
-function control(executable: string, action: 'start' | 'stop', env: Record<string, string | undefined>, launcher: string[] = []): Promise<string> {
+function control(executable: string, action: 'start' | 'stop', env: Record<string, string | undefined>): Promise<string> {
   return new Promise((done, fail) => {
-    const [program, ...args] = [...launcher, executable, action];
-    execFile(program!, args, { env, timeout: 120_000 }, (error, stdout, stderr) => {
+    execFile(executable, [action], { env, timeout: 120_000 }, (error, stdout, stderr) => {
       if (error) fail(new Error('piopd ' + action + ' failed: ' + (stderr || error.message).slice(0, 2000)));
       else done(stdout);
     });
@@ -237,7 +237,7 @@ function control(executable: string, action: 'start' | 'stop', env: Record<strin
  * Starts a real daemon with its own HOME, its own mobile port and a fake-program directory first on PATH.
  * It uses the same public launch path as users: "piopd start" returns once the daemon answers on its control socket.
  */
-export async function startDaemon(options: BuildOptions & { home?: string; env?: Record<string, string>; launcher?: string[] } = {}): Promise<TestDaemon> {
+export async function startDaemon(options: BuildOptions & { home?: string; env?: Record<string, string> } = {}): Promise<TestDaemon> {
   const executable = await daemonExecutable(options);
   const home = options.home ?? temporaryDirectory('piop-home-');
   const bin = join(home, '.test-bin');
@@ -253,7 +253,7 @@ export async function startDaemon(options: BuildOptions & { home?: string; env?:
     await control(executable, 'stop', env);
   })();
   try {
-    await control(executable, 'start', env, options.launcher);
+    await control(executable, 'start', env);
     /** The current endpoint; a restarted daemon publishes a new token. */
     const readEndpoint = () => {
       const database = new Database(join(directory, 'sessions.sqlite'), { readonly: true });
