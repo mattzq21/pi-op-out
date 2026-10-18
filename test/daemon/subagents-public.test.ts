@@ -250,3 +250,21 @@ test('archiving a parent while its child runs a command ends the child\'s comman
   expect(agents.model.requests.length).toBe(calls);
 }, 60000);
 
+test('stopping a parent that waits for its child stops both at once, and the parent makes no more model calls', async () => {
+  agents.scripts.set('Wait for a slow child', messages => called(messages, 'wait_agent') ? { text: 'Kept going after stop.' }
+    : called(messages, 'spawn_agent') ? { tool: 'wait_agent', arguments: { targets: ['patient'] } } : { tool: 'spawn_agent', arguments: { task_name: 'patient', message: 'Patient child job' } });
+  agents.scripts.set('Patient child job', messages => called(messages, 'bash') ? { text: 'Child done.' } : { tool: 'bash', arguments: { command: 'sleep 3; echo done > patient-late.txt' } });
+  const root = await agents.rootChat();
+  await root.command({ type: 'prompt', message: 'Wait for a slow child' });
+  const parentWaits = () => agents.model.requests.some(request => text(request.messages[1]) === 'Wait for a slow child' && called(request.messages, 'spawn_agent'));
+  const childCalls = () => agents.model.requests.filter(request => JSON.stringify(request.messages).includes('Patient child job') && text(request.messages.at(-1)).startsWith('Untrusted agent content'));
+  for (let tries = 0; !(parentWaits() && childCalls().length) && tries < 200; tries++) await Bun.sleep(100);
+  await Bun.sleep(800);
+  const calls = agents.model.requests.length;
+  await root.command({ type: 'abort' });
+  await Bun.sleep(4500);
+  expect(existsSync(join(root.cwd, 'patient-late.txt'))).toBe(false);
+  expect(agents.model.requests.length).toBe(calls);
+  expect((await root.history()).some(message => text(message) === 'Kept going after stop.')).toBe(false);
+}, 60000);
+

@@ -500,7 +500,8 @@ export class SessionQueue {
   private async abort(command: any, assertOwner: () => void): Promise<{ ok: true; value: any } | { ok: false; error: unknown }> {
     const scope = new CancelScope();
     const operation = (async () => {
-      const [cancelled, gate] = await Promise.allSettled([this.execute({ type: 'cancel_preparation' }), this.gate.lock()]);
+      // The first stop cancels preparation and the running response together, so a wait it ends cannot start another model call.
+      const [cancelled, gate] = await Promise.allSettled([this.execute({ type: 'abort' }), this.gate.lock()]);
       const release = gate.status === 'fulfilled' ? gate.value : undefined;
       if (release) scope.add(release);
       try {

@@ -29,8 +29,8 @@ const send = packet => process.stdout.write(JSON.stringify(packet) + '\\n');
 require('node:readline').createInterface({ input: process.stdin }).on('line', line => {
   const request = JSON.parse(line);
   if ((sessionFile.includes('/abort-preparation/') || sessionFile.includes('/abort-gate/')) && request.type === 'piop_request'
-      && request.command === 'control' && request.payload.action === 'cancel-preparation') {
-    send({ type: 'fixture_waiting', command: 'cancel-preparation' });
+      && request.command === 'control' && request.payload.action === 'stop') {
+    send({ type: 'fixture_waiting', command: 'stop' });
     return;
   }
   if (sessionFile.includes('/abort-gate/') && request.type === 'piop_request' && request.command === 'prepare_goal_prompt') {
@@ -127,7 +127,7 @@ test('only the last released client can reassign its terminal, until another cli
 
 
 
-test('abort stops an external Pi that never answers preparation cancellation', async () => {
+test('abort stops an external Pi that never answers the stop request', async () => {
   const session = publicSession(daemon.home, 'abort-preparation');
   const runtime = await open(session.path, 'abort-client');
   const started = Date.now();
@@ -172,7 +172,7 @@ test('a replacement host rejects the previous host’s released ownership until 
 
 
 
-test('abort stops Pi while both a goal preparation and its cancellation are stuck', async () => {
+test('abort stops Pi while both a goal preparation and the stop request are stuck', async () => {
   const session = publicSession(daemon.home, 'abort-gate');
   const runtime = await open(session.path, 'abort-gate-client');
   const preparation = command(runtime.runtimeId, { type: 'follow_up', message: '/goal inspect the project' })
@@ -182,7 +182,7 @@ test('abort stops Pi while both a goal preparation and its cancellation are stuc
   const started = Date.now();
   const abort = command(runtime.runtimeId, { type: 'abort' });
   await daemon.waitEvent('pi://event', packet => packet.runtimeId === runtime.runtimeId
-    && packet.event?.type === 'fixture_waiting' && packet.event.command === 'cancel-preparation');
+    && packet.event?.type === 'fixture_waiting' && packet.event.command === 'stop');
   await abort;
   expect(Date.now() - started).toBeLessThan(6000);
   await daemon.waitEvent('pi://event', packet => packet.runtimeId === runtime.runtimeId && packet.event?.type === 'disconnected', 1000);
