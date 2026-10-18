@@ -1,3 +1,4 @@
+import { reportBackgroundError } from "./backgroundErrors";
 import { registerModelSession, reportModels } from "./modelReports";
 import { z } from "zod";
 import { sessionSnapshotSchema, modelSchema, slashCommandSchema, agentStateSchema } from "./responseSchemas";
@@ -122,7 +123,7 @@ function createChatSession(transport: Accessor<Pick<NativeTransport, "command" |
     ]).then(([modelResult, thinkingResult, commandResult]) => {
       if (owner.current !== transport() || capabilityRequest.current !== request) return;
       session.memory.batch(() => {
-        if (modelResult) { session.setModels(modelResult.models); void reportModels(transport().currentHostId?.() ?? "local", modelResult.models).catch(reason => console.error("Could not record available models", reason)); }
+        if (modelResult) { session.setModels(modelResult.models); void reportModels(transport().currentHostId?.() ?? "local", modelResult.models).catch(reason => reportBackgroundError("Could not record available models", reason)); }
 
         if (thinkingResult) session.setThinkingLevels(thinkingResult.levels);
 
