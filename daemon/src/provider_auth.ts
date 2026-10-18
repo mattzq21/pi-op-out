@@ -12,8 +12,8 @@ export async function forOwner(app: App, owner: string, hostId: string | undefin
   const settings = await loadAppSettings(app);
   const connection = await daemon.connect(app, app.pi, app.broker, settings, hostId ?? 'local');
   if (request.action === 'draft_catalog') {
-    const definitions = await connection.request({ type: 'agent_definitions' });
-    const catalog = await connection.request({ type: 'provider_auth', owner, request });
+    const definitions = await connection.request({ type: 'agent_definitions', reload: request.reload === true });
+    const catalog = await connection.request({ type: 'provider_auth', owner, request: { action: 'draft_catalog' } });
     return { config: definitions?.config ?? null, models: catalog?.models ?? null, commands: JSON.parse(agentCommands) };
   }
   return connection.request({ type: 'provider_auth', owner, request });

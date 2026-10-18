@@ -40,6 +40,24 @@ return value; };
 const commands = name => calls.filter(call => call.command === name);
 const rpc = type => commands('pi_command').filter(call => call.args.command.type === type);
 
+test('a draft agent reload that finishes after the first message does not replace the session agent list', async () => {
+  const client = transport({});
+  await client.connect();
+  let finishReload;
+  responses.set('provider_auth', args => args.request.reload ? new Promise(resolve => { finishReload = () => resolve({ config: { agents: [{ name: 'general', model: '', effort: 'high', path_systemprompt: 'p.md', path_agent_prompt: '', tools: [], skills: [], mcpServers: {} }] }, models: [], commands: [] }); }) : { config: { agents: [] }, models: [], commands: [] });
+  responses.set('pi_command:get_state', { sessionId: 'temporary', sessionFile: '/tmp/chat/session.jsonl' });
+  responses.set('pi_command:set_fast_mode', {});
+  const statuses = [];
+  client.subscribe(event => { if (event.statusKey === 'pi-define-agents') statuses.push(event); });
+  const reload = client.reloadAgentDefinitions('');
+  await new Promise(resolve => setTimeout(resolve, 0));
+  assert.ok(finishReload, 'the reload request must be pending');
+  await client.startDraft();
+  assert.equal(commands('start_pi').length, 1);
+  finishReload();
+  await assert.rejects(reload, /conversation started before agent definitions finished reloading/);
+  assert.deepEqual(statuses, []);
+});
 
 test('a rejected stop can reconnect and receive conversation events', async () => {
   const client = transport();

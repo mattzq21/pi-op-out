@@ -209,3 +209,24 @@ describe("Agent profiles acceptance", () => {
     expect(configurations[0].agents.find((agent) => agent.name === "reviewer")?.path_agent_prompt).toBe("rejected-change.md");
   });
 });
+
+describe("Agent selection after app start", () => {
+  beforeEach(async () => { await resetApp(); });
+  afterEach(async () => {
+    await browser.keys("Escape");
+    await resetBackend();
+  });
+
+  it("lists and reloads the agents of a new conversation", async () => {
+    await app.agentPicker.click();
+    const reviewer = () => $('[role="listbox"][aria-label="Agent options"] [role="option"][data-value="reviewer"]');
+    const menu = () => browser.execute(() => document.querySelector(".composer-picker-menu")?.textContent ?? "no menu");
+    try { await reviewer().waitForDisplayed({ timeout: 5_000 }); }
+    catch (cause) { throw new Error("Agent options are missing: " + await menu(), { cause }); }
+
+    await $('button[aria-label="Reload agent definitions"]').click();
+    await $('button[aria-label="Reload agent definitions"]').waitForEnabled();
+    if (await $('.composer-picker-footer [role="alert"]').isExisting()) throw new Error("Agent reload failed: " + await menu());
+    await expect(reviewer()).toBeDisplayed();
+  });
+});
