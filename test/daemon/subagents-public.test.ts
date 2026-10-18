@@ -268,3 +268,27 @@ test('stopping a parent that waits for its child stops both at once, and the par
   expect((await root.history()).some(message => text(message) === 'Kept going after stop.')).toBe(false);
 }, 60000);
 
+test('pausing a parent cancels its busy child, and after resume the parent hears of it and the child takes the task again', async () => {
+  agents.scripts.set('Pause while a child works', messages => {
+    const last = text(messages.at(-1));
+    const relay = last.match(/Relay: \w+/);
+    if (relay) return { text: relay[0] };
+    if (/patience: cancelled/.test(last) && !called(messages, 'followup_task')) return { tool: 'followup_task', arguments: { target: 'patience', message: 'Try the slow job again' } };
+    if (called(messages, 'spawn_agent') && !called(messages, 'wait_agent')) return { tool: 'wait_agent', arguments: { targets: ['patience'] } };
+    return called(messages, 'spawn_agent') ? { text: 'Waiting.' } : { tool: 'spawn_agent', arguments: { task_name: 'patience', message: 'Paused child job' } };
+  });
+  agents.scripts.set('Paused child job', messages => JSON.stringify(messages).includes('Try the slow job again') ? { text: 'Relay: retried' }
+    : called(messages, 'bash') ? { text: 'Relay: first' } : { tool: 'bash', arguments: { command: 'sleep 3' } });
+  const root = await agents.rootChat();
+  await root.command({ type: 'prompt', message: 'Pause while a child works' });
+  const childStarted = () => agents.model.requests.some(request => JSON.stringify(request.messages).includes('Paused child job') && text(request.messages.at(-1)).startsWith('Untrusted agent content'));
+  for (let tries = 0; !childStarted() && tries < 200; tries++) await Bun.sleep(100);
+  await Bun.sleep(800);
+  await root.command({ type: 'pause' });
+  await root.until(history => history.at(-1)?.stopReason === 'aborted');
+  await root.command({ type: 'resume' });
+  const messages = await root.until(history => text(history.at(-1)) === 'Relay: retried');
+  expect(messages.some(message => text(message) === 'Relay: first')).toBe(false);
+  expect(messages.some(message => message.role === 'assistant' && message.content?.some((part: any) => part.name === 'followup_task'))).toBe(true);
+}, 90000);
+
