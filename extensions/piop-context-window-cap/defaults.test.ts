@@ -147,6 +147,38 @@ describe("context cap settings transport", () => {
     expect(pi.notes.filter(([type]) => type === "error")).toEqual(notesBeforeRetry);
   });
 
+  test("a queued settings change rejects ready if compaction budgets increase before idle, and a valid retry succeeds", async () => {
+    const pi = await started();
+    pi.setIdle(false);
+    const event: any = { command: "context_cap_settings", payload: { settings: { ...pi.settings, contextWindowCap: 400_000 } }, ctx: pi.ctx };
+    pi.emit("piop:rpc", event);
+    let outcome: unknown = "pending";
+    const settled = event.ready.then(() => { outcome = "resolved"; }, (error: unknown) => { outcome = error; });
+    expect(await pi.state()).toEqual({ cap: 300_000, source: "config", appliedWindow: 300_000 });
+    expect(outcome).toBe("pending");
+    expect(pi.notes.filter(([type]) => type === "error")).toEqual([]);
+
+    budgets.keepRecentTokens = 450_000;
+    pi.setIdle(true);
+    await pi.fire("agent_settled");
+    await settled;
+    expect(outcome).toBeInstanceOf(Error);
+    expect((outcome as Error).message).toContain("compaction budgets");
+    const errors = pi.notes.filter(([type]) => type === "error");
+    expect(errors).toHaveLength(1);
+    expect(errors[0][1]).toStartWith("Context cap settings could not be applied: ");
+    expect(errors[0][1]).toContain("compaction budgets");
+    expect(await pi.state()).toEqual({ cap: 300_000, source: "config", appliedWindow: 300_000 });
+    expect(pi.ctx.model.contextWindow).toBe(300_000);
+
+    const retry: any = { command: "context_cap_settings", payload: { settings: { ...pi.settings, contextWindowCap: 600_000 } }, ctx: pi.ctx };
+    pi.emit("piop:rpc", retry);
+    await retry.ready;
+    expect(await pi.state()).toEqual({ cap: 600_000, source: "config", appliedWindow: 600_000 });
+    expect(pi.ctx.model.contextWindow).toBe(600_000);
+    expect(pi.notes.filter(([type]) => type === "error")).toEqual(errors);
+  });
+
   test("a model switch checks the model cap against the new model", async () => {
     const pi = host();
     pi.ctx.model = { provider: "test", id: "small", contextWindow: 200_000 };
