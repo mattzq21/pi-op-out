@@ -410,6 +410,27 @@ describe("context cap session", () => {
     await expect(host.updateDefaults(defaults)).rejects.toThrow("exceeds the 200,000-token context window of test/other");
   });
 
+  test("subscribers see provider refreshes that change only the applied window", async () => {
+    const host = await start([], model("large", 1_000_000));
+    await host.session().setManualCap(500_000);
+    const received: unknown[] = [];
+    host.session().subscribe((state: unknown) => received.push(state), () => undefined);
+    await host.session().getState();
+    await Promise.resolve();
+    host.model = model("large", 200_000);
+    host.bus.get("piop:models-refreshed")?.forEach(handler => handler({ ctx: host.ctx }));
+    expect(await host.session().getState()).toEqual({ cap: 500_000, source: "manual", appliedWindow: 200_000 });
+    host.model = model("large", 1_000_000);
+    host.bus.get("piop:models-refreshed")?.forEach(handler => handler({ ctx: host.ctx }));
+    expect(await host.session().getState()).toEqual({ cap: 500_000, source: "manual", appliedWindow: 500_000 });
+    await Promise.resolve();
+    expect(received).toEqual([
+      { cap: 500_000, source: "manual", appliedWindow: 500_000 },
+      { cap: 500_000, source: "manual", appliedWindow: 200_000 },
+      { cap: 500_000, source: "manual", appliedWindow: 500_000 },
+    ]);
+  });
+
   for (const announced of [true, false]) test("keeps the true window when Pi replaces the model object with a capped copy" + (announced ? " and announces it" : ""), async () => {
     const host = await start([], model("codex", 272_000));
     await host.session().setManualCap(100_000);
