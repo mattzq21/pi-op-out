@@ -30,6 +30,27 @@ time.sleep(300)
 '''
 
 class Cleanup(unittest.TestCase):
+    def test_disk_storage_and_shared_cache(self):
+        script = '''
+import json, os, pathlib, tempfile
+folder = pathlib.Path(tempfile.mkdtemp())
+assert not str(folder).startswith(('/tmp/', '/run/')), folder
+assert folder.parent == pathlib.Path(os.environ['CACHE_DIRECTORY'])
+cache = pathlib.Path(os.environ['BUN_INSTALL_CACHE_DIR'])
+transpiler = pathlib.Path(os.environ['BUN_RUNTIME_TRANSPILER_CACHE_PATH'])
+assert not cache.is_relative_to(folder.parent)
+assert not transpiler.is_relative_to(folder.parent)
+print(json.dumps([str(folder), str(cache), str(transpiler)]))
+'''
+        paths = []
+        for _ in range(2):
+            result = subprocess.run([sys.executable, str(RUNNER), sys.executable, '-c', script], capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            paths.append(json.loads(result.stdout))
+            self.assertFalse(Path(paths[-1][0]).parent.exists())
+        self.assertNotEqual(paths[0][0], paths[1][0])
+        self.assertEqual(paths[0][1:], paths[1][1:])
+
     def run_case(self, mode, expected=None):
         command = [sys.executable, str(RUNNER), sys.executable, '-c', FIXTURE, '-', mode, CHILD]
         package = tempfile.TemporaryDirectory(prefix='piop-runner-package-')
