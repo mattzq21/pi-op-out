@@ -524,6 +524,23 @@ describe("context cap session", () => {
     expect(host.caps()).toEqual(log);
   }, 1_000);
 
+  test("shutdown before initialization rejects the waiting state and later changes without touching the model or history", async () => {
+    const large = model("large", 1_000_000);
+    const host = new Host([], large);
+    const session = host.session();
+    const received: unknown[] = [];
+    const state = Promise.allSettled([session.getState()]);
+    session.subscribe((value: unknown) => received.push(value), () => undefined);
+    await host.fire("session_shutdown");
+    expect(await state).toEqual([{ status: "rejected", reason: expect.objectContaining({ message: "The session ended before the context cap was initialized" }) }]);
+    await expect(session.setManualCap(500_000)).rejects.toThrow("The session has ended");
+    await Promise.resolve();
+    expect(received).toEqual([]);
+    expect(host.statuses).toEqual([]);
+    expect(large.contextWindow).toBe(1_000_000);
+    expect(host.branch).toEqual([]);
+  }, 1_000);
+
   test("a subscriber added before the session starts gets the first state once", async () => {
     const host = new Host([], model("large", 1_000_000));
     const received: unknown[] = [];
