@@ -311,7 +311,7 @@ export class DurableMailbox {
     } catch (error) {
       this.queued.delete(key);
       this.consumed.delete(key);
-      ctx.ui.notify(`Agent mail was saved and will be retried: ${String(error)}`, "error");
+      ctx.ui.notify(`Agent mail was saved and will be retried: ${(error instanceof Error ? error.message : String(error))}`, "error");
 
       return false;
     }

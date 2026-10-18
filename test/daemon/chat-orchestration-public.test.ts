@@ -137,3 +137,17 @@ test('a chat that tries to message itself is told to choose another chat, and no
   await Bun.sleep(1500);
   expect((await chat.history()).filter(message => message.role === 'user').map(text)).toEqual(['Message myself']);
 }, 60000);
+
+test('messaging or waiting for a chat that does not exist tells the agent so in plain words', async () => {
+  await agents.enableAgentTools('send_message');
+  const missing = '11111111-2222-3333-4444-555555555555';
+  agents.scripts.set('Message a missing chat', messages => called(messages, 'send_message_to_thread') ? { text: 'Told: ' + text(messages.at(-1)) } : { tool: 'send_message_to_thread', arguments: { threadId: missing, prompt: 'Hello?' } });
+  agents.scripts.set('Wait for a missing chat', messages => called(messages, 'wait_threads') ? { text: 'Told: ' + text(messages.at(-1)) } : { tool: 'wait_threads', arguments: { targets: [{ threadId: missing }], timeoutMs: 2000 } });
+  const sender = await agents.rootChat();
+  await sender.command({ type: 'prompt', message: 'Message a missing chat' });
+  expect(text((await sender.until(messages => text(messages.at(-1)).startsWith('Told: '))).at(-1))).toBe('Told: Conversation was not found in active or archived storage');
+  const waiter = await agents.rootChat();
+  await waiter.command({ type: 'prompt', message: 'Wait for a missing chat' });
+  const told = JSON.parse(text((await waiter.until(messages => text(messages.at(-1)).startsWith('Told: '))).at(-1)).slice('Told: '.length));
+  expect(told.errors).toEqual([{ threadId: missing, error: 'Conversation was not found in active or archived storage' }]);
+}, 60000);

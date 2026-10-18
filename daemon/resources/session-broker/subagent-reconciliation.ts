@@ -310,7 +310,7 @@ class SubagentObserver {
     await this.closeUsage?.();
     this.closeUsage = undefined;
     this.channelPath = undefined;
-    this.closeUsage = await listenSubagentUsage(this.run.sessionPath, this.run.sessionId, (total, sourceId) => this.account(false, sourceId ? { sourceId, total } : undefined), error => this.interrupted(String(error)), this.run);
+    this.closeUsage = await listenSubagentUsage(this.run.sessionPath, this.run.sessionId, (total, sourceId) => this.account(false, sourceId ? { sourceId, total } : undefined), error => this.interrupted((error instanceof Error ? error.message : String(error))), this.run);
     this.channelPath = this.run.sessionPath;
   }
 
@@ -333,7 +333,7 @@ class SubagentObserver {
     this.save();
 
     try { await this.deliver(); }
-    catch (error) { this.interrupted(String(error)); }
+    catch (error) { this.interrupted((error instanceof Error ? error.message : String(error))); }
   }
 
   private async deliver() {
@@ -365,14 +365,14 @@ class SubagentObserver {
         try { await confirmCancellation(this.run, signal); }
         catch (error) {
           signal.throwIfAborted();
-          this.interrupted(String(error));
+          this.interrupted((error instanceof Error ? error.message : String(error)));
           await delay(2000, undefined, { signal });
         }
       }
     } catch (error) {
       this.run.observation = "interrupted";
       this.save();
-      this.observation.ctx.ui.notify(`Cancellation of ${this.run.name} remains pending; the saved stop will be retried on reconciliation: ${String(error)}`, "error");
+      this.observation.ctx.ui.notify(`Cancellation of ${this.run.name} remains pending; the saved stop will be retried on reconciliation: ${(error instanceof Error ? error.message : String(error))}`, "error");
       throw error;
     }
   }
@@ -427,7 +427,7 @@ class SubagentObserver {
         if (this.run.submission === "submitted" && !this.lifecycle.pendingDeliveries) await this.deliver();
         await this.poll();
       }
-      catch (error) { this.interrupted(String(error)); this.failures++; }
+      catch (error) { this.interrupted((error instanceof Error ? error.message : String(error))); this.failures++; }
 
       this.polled = true;
 
@@ -512,6 +512,6 @@ export async function observeSubagent(run: SubagentRun, observation: Observation
   try {
     if (dispatch) await observer.submit();
     await observer.watch();
-  } catch (error) { observer.failed(dispatch, String(error)); }
+  } catch (error) { observer.failed(dispatch, (error instanceof Error ? error.message : String(error))); }
   finally { await observer.close(); }
 }

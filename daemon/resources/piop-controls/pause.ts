@@ -65,7 +65,7 @@ function wasAborted(message: AssistantMessage) {
 
 /** Pauses an active goal. Goal failures are reported and do not stop the session pause. */
 function pauseGoal(pi: ExtensionAPI, ctx: ExtensionContext) {
-  void goalSession(pi)?.pauseWithSession(ctx).catch(error => ctx.ui.notify(String(error), "error"));
+  void goalSession(pi)?.pauseWithSession(ctx).catch(error => ctx.ui.notify((error instanceof Error ? error.message : String(error)), "error"));
 }
 
 /**

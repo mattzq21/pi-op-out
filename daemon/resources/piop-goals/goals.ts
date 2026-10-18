@@ -36,13 +36,13 @@ export function registerGoals(pi: ExtensionAPI): { session: GoalSession; core: G
     if (!controls) { ctx.ui.notify("Session controls are unavailable, so the goal could not pause the run.", "error");
 
     return; }
-    void controls.pause(ctx).catch(error => ctx.ui.notify(String(error), "error"));
+    void controls.pause(ctx).catch(error => ctx.ui.notify((error instanceof Error ? error.message : String(error)), "error"));
   };
 
   const coordination = new GoalCoordination();
 
   const schedule = (ctx: ExtensionContext, operation: () => void) => {
-    void coordination.run(ctx, operation).catch(error => ctx.ui.notify(String(error), "error"));
+    void coordination.run(ctx, operation).catch(error => ctx.ui.notify((error instanceof Error ? error.message : String(error)), "error"));
   };
 
   let context: ExtensionContext | undefined;
@@ -112,7 +112,7 @@ export function registerGoals(pi: ExtensionAPI): { session: GoalSession; core: G
     } catch (error) {
       state.goal = null; state.publish(ctx); restored = false;
       restoredSessionId = undefined;
-      ctx.ui.notify(`Could not restore goal: ${String(error)}`, "error");
+      ctx.ui.notify(`Could not restore goal: ${(error instanceof Error ? error.message : String(error))}`, "error");
     }
   };
 
