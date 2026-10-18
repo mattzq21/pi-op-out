@@ -419,15 +419,34 @@ describe("context cap session", () => {
     expect(await host.session().getState()).toEqual({ cap: 300_000, source: "config", appliedWindow: 200_000 });
   });
 
-  test("shutdown rejects unfinished changes and restores original windows", async () => {
+  test("shutdown rejects every unfinished change, a later idle cannot apply them, and new changes are refused", async () => {
     const large = model("large", 1_000_000);
     const host = await start([], large);
+    const session = host.session();
+    const received: unknown[] = [];
+    session.subscribe((state: unknown) => received.push(state), () => undefined);
+    await session.getState();
+    await Promise.resolve();
+    const log = host.caps();
     host.idle = false;
-    const change = host.session().setManualCap(500_000);
+    const changes = Promise.allSettled([
+      session.setManualCap(500_000),
+      session.updateSettings({ contextWindowCap: 400_000, contextWindowCapEnabled: true, modelContextWindowCaps: {} }),
+      session.resetManualCap(),
+    ]);
     await host.fire("session_shutdown");
-    await expect(change).rejects.toThrow("session ended");
+    const settled = await changes;
+    expect(settled.map(result => result.status)).toEqual(["rejected", "rejected", "rejected"]);
+    for (const result of settled) expect((result as PromiseRejectedResult).reason.message).toBe("The session ended before the context cap change was applied");
     expect(large.contextWindow).toBe(1_000_000);
-  });
+    host.idle = true;
+    await host.fire("agent_settled", { aborted: false });
+    expect(large.contextWindow).toBe(1_000_000);
+    expect(host.caps()).toEqual(log);
+    expect(received).toEqual([{ cap: 300_000, source: "config", appliedWindow: 300_000 }]);
+    await expect(session.setManualCap(600_000)).rejects.toThrow("The session has ended");
+    expect(host.caps()).toEqual(log);
+  }, 1_000);
 
   test("a subscriber added before the session starts gets the first state once", async () => {
     const host = new Host([], model("large", 1_000_000));
