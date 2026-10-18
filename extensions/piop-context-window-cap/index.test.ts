@@ -186,13 +186,25 @@ describe("context cap session", () => {
 
   test("a failed history write does not replace the received settings", async () => {
     const host = await start();
+    const received: unknown[] = [];
+    host.session().subscribe((state: unknown) => received.push(state), () => undefined);
+    await host.session().getState();
+    await Promise.resolve();
+    const settings = { contextWindowCap: 400_000, contextWindowCapEnabled: true, modelContextWindowCaps: {} };
     const push = host.branch.push;
     host.branch.push = () => { throw new Error("disk failure"); };
-    await expect(host.session().updateSettings({ contextWindowCap: 400_000, contextWindowCapEnabled: true, modelContextWindowCaps: {} })).rejects.toThrow("disk failure");
-    host.branch.push = push;
+
+    try {
+      await expect(host.session().updateSettings(settings)).rejects.toThrow("disk failure");
+    } finally { host.branch.push = push; }
+    expect(await host.session().getState()).toEqual({ cap: 300_000, source: "config", appliedWindow: 300_000 });
+    expect(host.model!.contextWindow).toBe(300_000);
+    expect(received).toEqual([{ cap: 300_000, source: "config", appliedWindow: 300_000 }]);
     await host.session().setManualCap(500_000);
     await host.session().resetManualCap();
     expect(await host.session().getState()).toMatchObject({ cap: 300_000 });
+    await host.session().updateSettings(settings);
+    expect(received.at(-1)).toEqual({ cap: 400_000, source: "config", appliedWindow: 400_000 });
   });
 
   test("keeps the manual choice across model switches and logs only effective changes", async () => {
