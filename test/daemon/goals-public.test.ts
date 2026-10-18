@@ -59,6 +59,35 @@ test('pausing a goal stops the extra turns, and resuming starts them again', asy
   await chat.until(history => text(history.at(-1)) === 'Polished.');
 }, 120000);
 
+test('Stop during a goal ends its turns at once and marks it paused, and resuming the goal starts them again', async () => {
+  await agents.enableAgentTools('get_goal', 'create_goal', 'update_goal');
+  let calls = 0;
+  agents.scripts.set('Never-ending goal', async () => { calls++; await Bun.sleep(300); return { text: 'Working.' }; });
+  const chat = await agents.rootChat();
+  const entries = async () => (await chat.command({ type: 'get_entries' })).entries;
+  const summary = async () => {
+    const before = (await entries()).filter((entry: any) => entry.customType === 'piop-goal-summary').length;
+    await send(chat, '/goal');
+    let latest: any[] = [];
+    for (let tries = 0; latest.length <= before && tries < 50; tries++, await Bun.sleep(100)) latest = (await entries()).filter((entry: any) => entry.customType === 'piop-goal-summary');
+    return text(latest.at(-1));
+  };
+  const working = (history: any[]) => history.filter(message => text(message) === 'Working.').length;
+  await send(chat, '/goal Never-ending goal');
+  await chat.until(history => working(history) >= 2);
+  await chat.command({ type: 'abort' });
+  const stoppedAt = calls;
+  await Bun.sleep(2000);
+  expect(calls).toBe(stoppedAt);
+  expect(await summary()).toStartWith('Goal paused\n\nNever-ending goal');
+  const done = working(await chat.history());
+  await send(chat, '/goal resume');
+  await chat.until(history => working(history) >= done + 2);
+  await send(chat, '/goal pause');
+  expect(await summary()).toStartWith('Goal paused');
+}, 120000);
+
+
 test('a goal that uses up its token budget stops at once without adding any message, and reports the budget as reached', async () => {
   await agents.enableAgentTools('get_goal', 'create_goal', 'update_goal');
   agents.scripts.set('Spend the budget', async () => { await Bun.sleep(150); return { text: 'Working.', tokens: 400 }; });
