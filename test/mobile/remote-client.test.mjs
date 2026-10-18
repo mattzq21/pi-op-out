@@ -193,6 +193,43 @@ test('rejects older desktop endpoints without leaving a pending handshake', asyn
   await rejection; assert.equal(socket.readyState, 3); client.close();
 });
 
+test('a host that never accepts times out after fifteen seconds and a later connection works undisturbed', async context => {
+  context.mock.timers.enable({ apis: ['setTimeout', 'setInterval', 'Date'] });
+  const client = new RemoteClient(); const losses = [];
+  client.onDisconnect = message => losses.push(message);
+  try {
+    let outcome;
+    void client.connect(host).then(() => { outcome = 'unexpected success'; }, error => { outcome = error; });
+    const silent = FakeSocket.instances.at(-1);
+    let deliverClose;
+    silent.close = () => { silent.readyState = 2; deliverClose = () => { silent.readyState = 3; silent.onclose?.(); }; };
+    silent.onopen();
+    context.mock.timers.tick(14999);
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(outcome, undefined, 'The handshake must wait the full fifteen seconds');
+    context.mock.timers.tick(1);
+    await new Promise(resolve => setImmediate(resolve));
+    assert.ok(outcome instanceof Error, 'The handshake must fail after fifteen seconds');
+    assert.match(outcome.message, /Connection timed out/);
+    assert.equal(silent.readyState, 2, 'The timed out socket must be closed');
+    assert.equal(client.isConnected(), false);
+    await assert.rejects(client.invoke('list_sessions'), /Connect/);
+
+    const retry = client.connect(host);
+    const current = FakeSocket.instances.at(-1);
+    current.onopen(); current.receive({ type: 'ready', protocol: 1, backend: 'daemon' });
+    await retry;
+    deliverClose();
+    context.mock.timers.tick(15000);
+    assert.equal(client.isConnected(), true);
+    assert.deepEqual(losses, []);
+    const next = client.invoke('home_directory', { hostId: 'local' });
+    const request = current.sent.find(packet => packet.command === 'home_directory');
+    current.receive({ id: request.id, result: '/home/me' });
+    assert.equal(await next, '/home/me');
+  } finally { client.close(); }
+});
+
 test('busy responses retry a rejected mutation without duplicating its accepted execution', async context => {
   context.mock.timers.enable({ apis: ['setTimeout'] });
   const { client, socket } = await connected();
