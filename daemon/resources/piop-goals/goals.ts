@@ -249,7 +249,9 @@ export function registerGoals(pi: ExtensionAPI): { session: GoalSession; core: G
       return;
     }
 
-    if (ctx.hasPendingMessages() || event.context.pendingMessages.length) return;
+    // Waiting messages run first. Pi runs them only when asked to continue: a message that does not start a turn by itself,
+    // such as the goal prompt sent after a compaction, would otherwise wait and the goal would stop.
+    if (ctx.hasPendingMessages() || event.context.pendingMessages.length) return { continue: true };
     automatic = true;
 
     return { continue: true, entries: [{ type: "custom_message", customType: GOAL_CONTEXT, content: goalPrompt(state.goal), display: false, details: { goalId: state.goal.id } }] };

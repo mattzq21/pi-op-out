@@ -91,3 +91,28 @@ test('compacting while the agent works is refused with how to do it, and the run
     expect(history.some(message => message.stopReason === 'aborted')).toBe(false);
   } finally { await agents.close(); }
 }, 60000);
+
+test('a goal goes on working after its chat is compacted by itself between two turns', async () => {
+  const agents = await agentDaemon();
+  try {
+    await agents.enableAgentTools('get_goal', 'create_goal', 'update_goal');
+    const settings = await agents.daemon.invoke('load_app_settings');
+    await agents.daemon.invoke('save_app_settings', { settings: { ...settings, contextWindowCap: 100_000, contextWindowCapEnabled: true, autoCompaction: true } });
+    let turns = 0;
+    agents.scripts.set('Long goal', async messages => {
+      if (/context summarization assistant/.test(text(messages[0]))) return { text: 'Summary of Long goal: earlier turns are done.' };
+      await Bun.sleep(200);
+      return { text: 'Turn ' + ++turns + ' ' + 'filler '.repeat(4000), tokens: turns === 3 ? 95_000 : 1000 };
+    });
+    const chat = await agents.rootChat();
+    await chat.command({ type: 'set_auto_compaction', enabled: true });
+    await chat.command({ type: 'follow_up', message: '/goal Long goal', goalSubmissionId: crypto.randomUUID() });
+    const compacted = () => agents.daemon.events.some(event => event.payload?.runtimeId === chat.runtimeId && event.payload.event?.type === 'compaction_end');
+    for (let tries = 0; !compacted() && tries < 300; tries++) await Bun.sleep(100);
+    expect(compacted()).toBe(true);
+    const atCompaction = turns;
+    for (let tries = 0; turns < atCompaction + 2 && tries < 100; tries++) await Bun.sleep(100);
+    expect(turns).toBeGreaterThanOrEqual(atCompaction + 2);
+    await chat.command({ type: 'follow_up', message: '/goal pause', goalSubmissionId: crypto.randomUUID() });
+  } finally { await agents.close(); }
+}, 120000);
