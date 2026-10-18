@@ -126,3 +126,14 @@ test('a message to a busy chat waits until its current work finishes, then start
   const answers = (await worker.until(messages => text(messages.at(-1)) === 'Answer to the queued question.')).filter(message => message.role === 'assistant').map(message => [text(message), message.stopReason]);
   expect(answers).toEqual([['Busy job done.', 'stop'], ['Answer to the queued question.', 'stop']]);
 }, 120000);
+
+test('a chat that tries to message itself is told to choose another chat, and nothing is delivered', async () => {
+  await agents.enableAgentTools('send_message');
+  const chat = await agents.rootChat();
+  agents.scripts.set('Message myself', messages => called(messages, 'send_message_to_thread') ? { text: 'Told: ' + text(messages.at(-1)) } : { tool: 'send_message_to_thread', arguments: { threadId: chat.sessionId, prompt: 'Hello me' } });
+  await chat.command({ type: 'prompt', message: 'Message myself' });
+  const history = await chat.until(messages => text(messages.at(-1)).startsWith('Told: '));
+  expect(text(history.at(-1))).toBe('Told: Choose another conversation as the recipient');
+  await Bun.sleep(1500);
+  expect((await chat.history()).filter(message => message.role === 'user').map(text)).toEqual(['Message myself']);
+}, 60000);
