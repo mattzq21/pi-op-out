@@ -280,15 +280,21 @@ describe("context cap session", () => {
       host.updateDefaults(general(250_000)),
       host.session().resetManualCap(),
       host.session().setManualCap(600_000),
+      host.session().setManualCap(450_000),
     ];
     await host.selectModel(model("medium", 500_000));
     expect(host.caps().at(-1)).toEqual({ cap: 300_000, source: "config" });
     host.idle = true;
     await host.fire("agent_settled", { aborted: false });
+    expect(await results[2]).toEqual({ cap: 250_000, source: "config", appliedWindow: 250_000 });
     const settled = await Promise.allSettled(results);
-    expect(settled.map(result => result.status)).toEqual(["fulfilled", "fulfilled", "fulfilled", "rejected"]);
-    expect(await host.session().getState()).toEqual({ cap: 250_000, source: "config", appliedWindow: 250_000 });
-    expect(host.caps()).toEqual([{ cap: 300_000, source: "config" }, { cap: 400_000, source: "manual" }, { cap: 250_000, source: "config" }]);
+    expect(settled.map(result => result.status)).toEqual(["fulfilled", "fulfilled", "fulfilled", "rejected", "fulfilled"]);
+    expect(await results[4]).toEqual({ cap: 450_000, source: "manual", appliedWindow: 450_000 });
+    expect(await host.session().getState()).toEqual({ cap: 450_000, source: "manual", appliedWindow: 450_000 });
+    expect(host.caps()).toEqual([
+      { cap: 300_000, source: "config" }, { cap: 400_000, source: "manual" },
+      { cap: 250_000, source: "config" }, { cap: 450_000, source: "manual" },
+    ]);
   });
 
   test("applies pending changes before a prompt starts", async () => {
