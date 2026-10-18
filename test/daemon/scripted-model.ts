@@ -8,7 +8,8 @@ export type Reply = ({ text: string } | { tool: string; arguments?: Record<strin
 /**
  * An OpenAI-compatible model server that answers with scripted replies, registered for Pi as provider "scripted"
  * in the daemon's agent folder (~/.piop/models.json). reply() decides each answer from the request it gets; a promise
- * keeps the agent busy until it settles.
+ * keeps the agent busy until it settles. Model scripted-model has no thinking; scripted-thinker has thinking levels,
+ * and its requests carry the chosen level as reasoning_effort.
  */
 export async function scriptedModel(home: string, reply: (request: any) => Reply | Promise<Reply>) {
   const requests: any[] = [];
@@ -34,7 +35,7 @@ export async function scriptedModel(home: string, reply: (request: any) => Reply
   mkdirSync(join(home, '.piop'), { recursive: true });
   writeFileSync(join(home, '.piop', 'models.json'), JSON.stringify({ providers: { scripted: {
     baseUrl: `http://127.0.0.1:${port}/v1`, api: 'openai-completions', apiKey: 'scripted',
-    models: [{ id: 'scripted-model', contextWindow: 200000, maxTokens: 8192 }],
+    models: [{ id: 'scripted-model', contextWindow: 200000, maxTokens: 8192 }, { id: 'scripted-thinker', reasoning: true, contextWindow: 200000, maxTokens: 8192 }],
   } } }));
   // Open requests (a script that never answers) would hold the close forever.
   return { requests, close: () => new Promise<void>(resolve => { server.close(() => resolve()); server.closeAllConnections(); }) };
