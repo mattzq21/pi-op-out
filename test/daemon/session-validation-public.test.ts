@@ -59,16 +59,25 @@ test('opening a registered transcript accepts a header of exactly 64 KiB', async
   } finally { await daemon.stop(); }
 }, 60000);
 
-test('opening a registered transcript with a damaged body reports the bad line and preserves the file', async () => {
+test('opening a registered transcript with a damaged body reports the bad line, preserves the file and leaves the runtime free for a retry', async () => {
   const daemon = await startDaemon();
   try {
     const chat = JSON.parse(execFileSync('node', [fileURLToPath(new URL('../fixtures/publish-chat.mjs', import.meta.url))], {
       encoding: 'utf8', input: JSON.stringify({ home: daemon.home, content: '' }), timeout: 30000,
     }));
-    const body = readFileSync(chat.path, 'utf8') + 'invalid body\r\n{"id":"wrong-message-id"}\n';
+    const original = readFileSync(chat.path, 'utf8');
+    const body = original + 'invalid body\r\n{"id":"wrong-message-id"}\n';
     writeFileSync(chat.path, body);
     const runtimeId = crypto.randomUUID();
-    expect(await daemon.failure('start_pi', { runtimeId, clientId: 'session-validation', cwd: daemon.home, sessionPath: chat.path })).toContain('Damaged chat record at line 2: ' + chat.path);
+    const start = { runtimeId, clientId: 'session-validation', cwd: daemon.home, sessionPath: chat.path };
+    expect(await daemon.failure('start_pi', start)).toContain('Damaged chat record at line 2: ' + chat.path);
     expect(readFileSync(chat.path, 'utf8')).toBe(body);
+
+    writeFileSync(chat.path, original);
+    expect(await daemon.invoke('start_pi', start)).toMatchObject({ owned: true });
+    await daemon.invoke('pi_command', { runtimeId, command: { type: 'set_session_name', name: 'Repaired transcript' } });
+    const state = await daemon.invoke('pi_command', { runtimeId, command: { type: 'get_state' } });
+    expect(state).toMatchObject({ sessionFile: chat.path, sessionId: chat.id, sessionName: 'Repaired transcript' });
+    await daemon.invoke('stop_pi', { runtimeId });
   } finally { await daemon.stop(); }
 }, 60000);
