@@ -214,7 +214,12 @@ export class NativeTransport {
   currentHostId() { return this.hostId; }
   currentDaemonId() { return this.daemonId; }
   reloadAgentDefinitions(sessionId: string) {
-    if (this.draftOnly()) return this.settings.runCommand(() => this.draftRuntime.reload());
+    if (this.draftOnly()) {
+      const version = this.connectionVersion;
+      const hostId = this.hostId;
+
+      return this.settings.runCommand(() => this.draftRuntime.reload(() => this.draftOnly() && version === this.connectionVersion && hostId === this.hostId));
+    }
     const version = this.connectionVersion;
     const hostId = this.hostId;
 

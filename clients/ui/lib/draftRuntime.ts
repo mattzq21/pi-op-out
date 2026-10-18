@@ -46,9 +46,12 @@ export class DraftRuntime {
     this.catalog = await loadCatalog(this.hostId());
   }
 
-  /** Reads the agent definitions on the host again and publishes the new list. */
-  async reload() {
-    this.catalog = await loadCatalog(this.hostId(), true);
+  /** Reads the agent definitions on the host again and publishes the new list while `current` still returns true. */
+  async reload(current: () => boolean) {
+    const catalog = await loadCatalog(this.hostId(), true);
+
+    if (!current()) throw new Error("The conversation started before agent definitions finished reloading. Reload them again.");
+    this.catalog = catalog;
     this.publishAgents();
   }
 
