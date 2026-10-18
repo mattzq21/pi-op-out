@@ -374,19 +374,31 @@ test('a read-only client cannot clear pending messages until it takes ownership'
   const session = publicSession(daemon.home, 'queue-ownership');
   const owner = await open(session.path, 'queue-owner');
   const reader = await open(session.path, 'queue-reader');
+  let ownerStopped = false;
   try {
     expect(reader.owned).toBe(false);
     await command(owner.runtimeId, { type: 'follow_up', message: 'Keep pending work' });
+    await command(owner.runtimeId, { type: 'follow_up', message: 'Keep the attachment', images: [
+      { type: 'image', mimeType: 'image/png', data: Buffer.from('owned-image').toString('base64') },
+    ] });
     const pending = (await command(owner.runtimeId, { type: 'get_state' })).pendingMessages;
-    expect(pending).toHaveLength(1);
+    expect(pending.map(({ message, images }: any) => ({ message, images }))).toEqual([
+      { message: 'Keep pending work', images: undefined },
+      { message: 'Keep the attachment', images: [{ type: 'image', mimeType: 'image/png' }] },
+    ]);
+    expect(new Set(pending.map((item: any) => item.id)).size).toBe(2);
     expect(await daemon.failure('pi_command', { runtimeId: reader.runtimeId, command: { type: 'clear_queue' } }))
       .toContain('ownership');
     expect((await command(owner.runtimeId, { type: 'get_state' })).pendingMessages).toEqual(pending);
     expect(await command(reader.runtimeId, { type: 'take_ownership' })).toMatchObject({ owned: true });
+    // Closing the former owner must keep the shared worker and its queued work alive.
+    await daemon.invoke('stop_pi', { runtimeId: owner.runtimeId });
+    ownerStopped = true;
+    expect((await command(reader.runtimeId, { type: 'get_state' })).pendingMessages).toEqual(pending);
     await command(reader.runtimeId, { type: 'clear_queue' });
     expect((await command(reader.runtimeId, { type: 'get_state' })).pendingMessages).toEqual([]);
   } finally {
-    await daemon.invoke('stop_pi', { runtimeId: owner.runtimeId });
+    if (!ownerStopped) await daemon.invoke('stop_pi', { runtimeId: owner.runtimeId });
     await daemon.invoke('stop_pi', { runtimeId: reader.runtimeId });
   }
 }, 60_000);
