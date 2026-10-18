@@ -220,6 +220,23 @@ describe("context cap session", () => {
     expect(reopened.caps().length).toBe(first.caps().length);
   });
 
+  test("restores a manual choice clamped below the numeric cap range and returns to it on a larger model", async () => {
+    const first = await start();
+    await first.session().setManualCap(300_000);
+    await first.selectModel(model("small", 64_000));
+    expect(await first.session().getState()).toEqual({ cap: 300_000, source: "manual", appliedWindow: 64_000 });
+    await first.fire("session_shutdown");
+    const reopened = await start(first.branch, model("small", 64_000));
+    expect(await reopened.session().getState()).toEqual({ cap: 300_000, source: "manual", appliedWindow: 64_000 });
+    await reopened.selectModel(model("large", 1_000_000));
+    expect(await reopened.session().getState()).toEqual({ cap: 300_000, source: "manual", appliedWindow: 300_000 });
+    expect(reopened.notes.filter(([type]) => type === "error")).toEqual([]);
+    expect(reopened.caps()).toEqual([
+      { cap: 300_000, source: "config" }, { cap: 300_000, source: "manual" },
+      { cap: 64_000, source: "modelMax" }, { cap: 300_000, source: "manual" },
+    ]);
+  });
+
   test("records reset and source changes that keep the same window, and restores them", async () => {
     const host = await start();
     await host.session().setManualCap(300_000);
