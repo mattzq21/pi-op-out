@@ -20,6 +20,9 @@ test('a child agent\'s final answer reaches its parent, which continues with it'
   const sessions = await agents.daemon.invoke('list_sessions');
   const child = sessions.find((session: any) => session.subagentParentId === root.sessionId);
   expect(child).toMatchObject({ name: 'Subagent: reader' });
+  // The chat view lists delegated work from this message; it needs these fields for each run.
+  const delivered = (await root.command({ type: 'get_entries' })).entries.find((entry: any) => entry.customType === 'piop-subagent-result');
+  expect(delivered.details.runs).toEqual([expect.objectContaining({ name: 'reader', task: 'Summarize the README', status: 'completed', sessionId: child.id, sessionPath: child.path, hostId: 'local' })]);
 }, 120000);
 
 /** An agent that delegates task to a child named name, then answers with what the child delivered. */
