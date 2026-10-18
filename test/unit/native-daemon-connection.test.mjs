@@ -1,24 +1,23 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { existsSync, symlinkSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { existsSync } from 'node:fs';
+import { join } from 'node:path';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { WebSocketServer } from 'ws';
-import { nativeFileCommand, nativeTestExecutable } from '../native-file-command.mjs';
+import { nativeFileCommand } from '../native-file-command.mjs';
 
 const REPOSITORY = fileURLToPath(new URL('../..', import.meta.url));
+const BUNDLED_DAEMON = join(REPOSITORY, 'target/debug/piopd');
 const TOKEN = 'test-token-0123456789abcdef0123456789';
 
 /**
  * The desktop app reads the build of the daemon it ships with from piopd beside its own executable,
- * and connects to the daemon named by PIOP_DAEMON_URL. This links the repository daemon beside the test executable.
+ * and connects to the daemon named by PIOP_DAEMON_URL.
  */
 async function bundledBuild() {
-  const daemon = join(REPOSITORY, 'target/debug/piopd');
+  const daemon = BUNDLED_DAEMON;
   assert.ok(existsSync(daemon), 'Build the development daemon first: bun scripts/build-daemon.mjs --debug');
-  const beside = join(dirname(await nativeTestExecutable()), 'piopd');
-  if (!existsSync(beside)) symlinkSync(daemon, beside);
   return execFileSync(daemon, ['--build-id'], { encoding: 'utf8' }).trim();
 }
 
@@ -47,7 +46,7 @@ async function fakeDaemon(t, { buildId, answer = () => null }) {
 }
 
 async function desktop(t, url, env = {}) {
-  const native = await nativeFileCommand(t, { desktop: true, env: { PIOP_DAEMON_URL: url, PIOP_DAEMON_TOKEN: TOKEN, PIOP_PREBUILT_DAEMON_FOR: REPOSITORY.replace(/\/$/, ''), ...env } });
+  const native = await nativeFileCommand(t, { desktop: true, bundledDaemon: BUNDLED_DAEMON, env: { PIOP_DAEMON_URL: url, PIOP_DAEMON_TOKEN: TOKEN, PIOP_PREBUILT_DAEMON_FOR: REPOSITORY.replace(/\/$/, ''), ...env } });
   return {
     invoke: (command, args = {}) => native.invoke('daemon_invoke', { daemonCommand: command, args }),
     failure: (command, args = {}) => native.invoke('daemon_invoke', { daemonCommand: command, args }).then(() => 'succeeded', error => error.message),

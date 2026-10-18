@@ -1,5 +1,5 @@
 import { execFile, spawn } from 'node:child_process';
-import { mkdtemp, rm, writeFile, readFile } from 'node:fs/promises';
+import { copyFile, mkdtemp, rm, writeFile, readFile } from 'node:fs/promises';
 import { createConnection } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -19,9 +19,20 @@ export function nativeTestExecutable() {
   });
 }
 
-export async function nativeFileCommand(t, { launcher, desktop = false, desktopUrl, env = {} } = {}) {
-  const binary = await nativeTestExecutable();
+export async function nativeFileCommand(t, { launcher, desktop = false, desktopUrl, env = {}, bundledDaemon } = {}) {
+  let binary = await nativeTestExecutable();
   const directory = await mkdtemp(join(tmpdir(), 'piop-native-file-'));
+  if (bundledDaemon) {
+    try {
+      const isolatedBinary = join(directory, 'piop-test');
+      await copyFile(binary, isolatedBinary);
+      await copyFile(bundledDaemon, join(directory, 'piopd'));
+      binary = isolatedBinary;
+    } catch (error) {
+      await rm(directory, { recursive: true, force: true });
+      throw error;
+    }
+  }
   const launchLog = join(directory, 'launches.txt');
   const launcherEnv = {};
   if (launcher) {
