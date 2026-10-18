@@ -34,9 +34,10 @@ function host() {
   const bus = new Map<string, Set<(value: any) => void>>();
   const notes: Array<[string, string]> = [];
   const settings = { contextWindowCap: 300_000, contextWindowCapEnabled: true, modelContextWindowCaps: {} as Record<string, number | null> };
+  let idle = true;
   const ctx = {
     model: { provider: "test", id: "large", contextWindow: 1_000_000 },
-    isIdle: () => true,
+    isIdle: () => idle,
     sessionManager: { getBranch: () => [] },
     ui: { notify: (message: string, type: string) => notes.push([type, message]), setStatus: () => undefined },
   };
@@ -63,6 +64,7 @@ function host() {
 
   return {
     ctx, notes, settings, emit,
+    setIdle: (value: boolean) => { idle = value; },
     fire: async (name: string, event: any = {}) => { for (const handler of handlers.get(name) ?? []) await handler({ type: name, ...event }, ctx); },
     state: () => { const request: any = {}; emit("piop:context-cap:session", request); return request.session.getState(); },
   };
@@ -103,6 +105,25 @@ describe("context cap settings transport", () => {
     pi.emit("piop:rpc", event);
     await event.ready;
     expect(await pi.state()).toEqual({ cap: 400_000, source: "config", appliedWindow: 400_000 });
+  });
+
+  test("a settings change received while busy resolves ready only after it applies at idle", async () => {
+    const pi = await started();
+    pi.setIdle(false);
+    pi.settings.contextWindowCap = 400_000;
+    const event: any = { command: "context_cap_settings", payload: { settings: pi.settings }, ctx: pi.ctx };
+    pi.emit("piop:rpc", event);
+    let settled = false;
+    event.ready.then(() => { settled = true; }, () => { settled = true; });
+    expect(await pi.state()).toEqual({ cap: 300_000, source: "config", appliedWindow: 300_000 });
+    expect(settled).toBe(false);
+    expect(pi.ctx.model.contextWindow).toBe(300_000);
+
+    pi.setIdle(true);
+    await pi.fire("agent_settled");
+    await event.ready;
+    expect(await pi.state()).toEqual({ cap: 400_000, source: "config", appliedWindow: 400_000 });
+    expect(pi.ctx.model.contextWindow).toBe(400_000);
   });
 
   test("a failed settings change rejects ready, reports the error, and keeps the old cap", async () => {
