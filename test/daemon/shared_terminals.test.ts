@@ -50,6 +50,7 @@ test('closing an unused terminal stops it, but preserves terminals with input ev
   try {
     for (const id of ids) await startTerminal(client, 'unused-owner', sessionId, id);
     await shared(client, 'unused-owner', 'resize', sessionId, { sharedTerminalId: ids[0], cols: 100, rows: 30 });
+    await shared(client, 'unused-owner', 'reply', sessionId, { sharedTerminalId: ids[0], data: '\u001b[1;1R' });
     await shared(client, 'unused-owner', 'draft', sessionId, { sharedTerminalId: ids[1], data: 'hello' });
     await shared(client, 'unused-owner', 'draft', sessionId, { sharedTerminalId: ids[1], data: '' });
     await shared(client, 'unused-owner', 'write', sessionId, { sharedTerminalId: ids[2], data: 'x' });
@@ -103,7 +104,7 @@ test('sending reviewed terminal text delivers it once and clears its matching dr
   }
 }, 30_000);
 
-test('direct terminal input sends only the supplied text and keeps the saved draft', async () => {
+for (const action of ['write', 'reply']) test(`${action} sends only the supplied text and keeps the saved draft`, async () => {
   const client = await daemon.connect();
   const sessionId = 'draft-direct-shell-input';
   const terminalId = 'direct-shell-input';
@@ -112,7 +113,7 @@ test('direct terminal input sends only the supplied text and keeps the saved dra
   try {
     await shared(client, 'direct-owner', 'start', sessionId, { sharedTerminalId: terminalId, cwd: directory, cols: 80, rows: 24 });
     await shared(client, 'direct-owner', 'draft', sessionId, { sharedTerminalId: terminalId, data: 'Keep for later' });
-    await shared(client, 'direct-owner', 'write', sessionId, { sharedTerminalId: terminalId, data: 'direct text\n' });
+    await shared(client, 'direct-owner', action, sessionId, { sharedTerminalId: terminalId, data: 'direct text\n' });
     await client.waitEvent('pi://event', event => event.type === 'terminal_exit' && event.terminalId === terminalId);
     const result = await entry(client, 'direct-owner', sessionId, terminalId);
     expect(result.output).toContain('RECEIVED:<direct text>');

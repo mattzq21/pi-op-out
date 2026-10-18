@@ -239,7 +239,7 @@ async function updateShared(context: SharedRequest, id: string, action: string):
       emitDraft(app, item, id, data);
       break;
     }
-    case 'write': case 'write_with_draft': case 'adopt_draft': case 'write_and_clear_draft': {
+    case 'reply': case 'write': case 'write_with_draft': case 'adopt_draft': case 'write_and_clear_draft': {
       const data = request.data;
       if (typeof data !== 'string') throw new Error('Missing terminal input');
       if (Buffer.byteLength(data) > MAX_INPUT_BYTES) throw new Error('Terminal input exceeds 1 MiB');
@@ -248,10 +248,10 @@ async function updateShared(context: SharedRequest, id: string, action: string):
         if (item.inputDraft !== request.expectedDraft) throw new Error('Terminal draft changed; review the input before sending again');
       }
       if (!process) throw new Error('Terminal is not running');
-      const input = (action === 'write' || action === 'write_and_clear_draft' ? '' : item.inputDraft) + data;
+      const input = (action === 'reply' || action === 'write' || action === 'write_and_clear_draft' ? '' : item.inputDraft) + data;
       queueInput(process, input, 'Terminal input is busy');
-      if (input) item.used = true;
-      if (action !== 'write' && item.inputDraft) { item.inputDraft = ''; emitDraft(app, item, id, ''); }
+      if (input && action !== 'reply') item.used = true;
+      if (action !== 'reply' && action !== 'write' && item.inputDraft) { item.inputDraft = ''; emitDraft(app, item, id, ''); }
       break;
     }
     case 'resize': {

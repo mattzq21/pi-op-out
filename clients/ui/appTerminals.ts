@@ -457,14 +457,15 @@ export function createTerminalController({ transport, sessionTransport, conversa
     if (revision === draftRevisions.get(id)) draftRevisions.delete(id);
   };
 
-  const write = async (data: string, clearDraft = false) => {
+  const write = async (data: string, clearDraft = false, userInput = true) => {
     if (!ready() || !owned()) return false;
     const { id, generation } = state.activeTerminal;
     const key = terminalSessionId();
     const revision = draftRevisions.get(id);
 
     try {
-      if (clearDraft && data === "\u0003") await nativeTerminals.interrupt(id);
+      if (!userInput) await nativeTerminals.write(id, data, "reply");
+      else if (clearDraft && data === "\u0003") await nativeTerminals.interrupt(id);
       else if (clearDraft) await nativeTerminals.writeAndClearDraft(id, data, revision?.data ?? state.activeTerminal.inputDraft ?? "");
       else await transport().writeTerminal(id, data);
     }

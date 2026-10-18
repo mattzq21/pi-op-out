@@ -230,7 +230,7 @@ class NativeTerminals {
   }
 
   closeUnused(terminalId: string) {
-    return this.enqueue("close_unused", terminalId);
+    return this.enqueue("close_unused", terminalId, {});
   }
 }
 

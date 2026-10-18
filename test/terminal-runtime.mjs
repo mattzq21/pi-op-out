@@ -2,6 +2,7 @@ export const terminals = [];
 
 export class Terminal {
   constructor(options) { this.options = options; this.cols = 100; this.rows = 30; this.writes = []; this.completions = []; this.addons = []; this.selection = ''; this.resets = 0;
+    this.modes = { mouseTrackingMode: 'none' };
     this.parser = { registerCsiHandler: (_identifier, handler) => { this.csiHandler = handler;
 
       return { dispose: () => { this.csiDisposed = true; } }; } };
@@ -17,7 +18,9 @@ export class Terminal {
   write(value, callback) { this.writes.push(value); this.completions.push(callback); }
   flush() { for (const callback of this.completions.splice(0)) callback?.(); }
   reset() { this.resets++; }
-  onData(handler) { this.data = handler;
+  onKey(handler) { this.keyInput = handler;
+    return { dispose: () => { this.keyInput = undefined; } }; }
+  onData(handler) { this.data = value => { this.keyInput?.(); handler(value); };
 
   return { dispose: () => { this.dataDisposed = true; } }; }
   onResize(handler) { this.resizeHandler = handler;
