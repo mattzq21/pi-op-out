@@ -70,13 +70,17 @@ let janitor: ChildProcess | undefined;
 /**
  * Runs a shell command when the test process ends in any way, last registered first. Bun's test runner does not
  * run process exit handlers, so a separate process waits for its input pipe to close and then runs the commands.
- * This is only a fallback for runs that end without their teardown. Its output goes to janitorLog.
+ * This is only a fallback for runs that end without their teardown. Its output goes to janitorLog, which is kept
+ * only when a command fails. It needs no temporary file, so it still cleans up when the temporary folder is full.
  */
 export const janitorLog = join(tmpdir(), 'piop-test-janitor-' + process.pid + '.log');
 
 export function atTestExit(command: string): void {
   if (!janitor) {
-    janitor = spawn('sh', ['-c', 'f=$(mktemp) && cat > "$f"; tac "$f" | sh -x; unlink "$f"'], { stdio: ['pipe', 'ignore', openSync(janitorLog, 'a')], detached: true });
+    const script = 'commands=$(cat); printf "%s\\n" "$commands" | tac | { failed=0; '
+      + 'while IFS= read -r command; do [ -n "$command" ] || continue; sh -xc "$command" || failed=1; done; '
+      + '[ "$failed" = 0 ] && unlink "$PIOP_JANITOR_LOG"; }';
+    janitor = spawn('sh', ['-c', script], { stdio: ['pipe', 'ignore', openSync(janitorLog, 'a')], detached: true, env: { ...process.env, PIOP_JANITOR_LOG: janitorLog } });
     janitor.unref();
     (janitor.stdin as any).unref?.();
   }
