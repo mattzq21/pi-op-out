@@ -65,7 +65,8 @@ test('a review opens a separate code review chat in the side pane, linked to the
   expect(saved.find(entry => entry.type === 'session_info')?.name).toBe('Code review');
   expect((await agents.daemon.invoke('list_sessions')).some((session: any) => session.id === review.sessionId)).toBe(false);
   const entries = (await chat.command({ type: 'get_entries' })).entries;
-  expect(entries.some((entry: any) => entry.customType === 'piop-review-link' && entry.details?.sessionId === review.sessionId)).toBe(true);
+  // The chat view opens the review from sessionId and hides it in forks by comparing parentSessionId.
+  expect(entries.find((entry: any) => entry.customType === 'piop-review-link')?.details).toMatchObject({ sessionId: review.sessionId, parentSessionId: chat.sessionId });
 }, 60000);
 
 test('a dialog waits until a window shows the chat, then goes to that window', async () => {

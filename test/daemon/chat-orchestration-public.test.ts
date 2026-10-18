@@ -31,7 +31,8 @@ test('a chat can message another chat, wait for its answer and read it', async (
   expect(toolResult(seen, 'send_message_to_thread')).toMatchObject({ sessionId: worker.sessionId, accepted: true });
   expect(toolResult(seen, 'wait_threads')).toMatchObject({ timedOut: false, wake: { id: worker.sessionId, status: 'idle' }, polls: [{ latestAssistantMessage: { text: 'Worker status: green' } }] });
   const delivered = JSON.parse(toolResult(seen, 'read_thread').items[0].text);
-  expect(delivered).toMatchObject({ sourceSessionId: coordinator.sessionId, message: 'What is the build status?' });
+  // The chat view shows the sender from sourceHostId and sourceSessionId.
+  expect(delivered).toMatchObject({ sourceSessionId: coordinator.sessionId, sourceHostId: 'local', message: 'What is the build status?' });
 }, 120000);
 
 test('chat tools list and read only root chats, never subagent chats', async () => {
