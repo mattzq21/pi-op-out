@@ -15,13 +15,13 @@ test('a short model outage is retried on its own, and the chat answers and is no
   expect((await chat.command({ type: 'get_state' })).isPaused).toBe(false);
 }, 60000);
 
-test('with automatic retry turned off in Settings, a model outage is not tried again and the chat is paused for the user', async () => {
+test('with automatic retry turned off in Settings, also for a chat already open, a model outage is not tried again and the chat is paused', async () => {
+  let calls = 0;
+  agents.scripts.set('Answer without retries', () => { calls++; throw new Error('503 Service Unavailable'); });
+  const chat = await agents.rootChat();
   const settings = await agents.daemon.invoke('load_app_settings');
   await agents.daemon.invoke('save_app_settings', { settings: { ...settings, autoRetry: false } });
   try {
-    let calls = 0;
-    agents.scripts.set('Answer without retries', () => { calls++; throw new Error('503 Service Unavailable'); });
-    const chat = await agents.rootChat();
     await chat.command({ type: 'prompt', message: 'Answer without retries' });
     await chat.until(history => history.at(-1)?.stopReason === 'error');
     await Bun.sleep(3000);
