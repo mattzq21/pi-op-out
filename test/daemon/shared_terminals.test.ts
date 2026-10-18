@@ -400,3 +400,50 @@ test('listing a conversation another client owns, or a draft of another connecti
   }
   original.close();
 }, 30_000);
+
+test('a saved chat terminal outlives its closed connection and returns to the same client after it takes the chat again', async () => {
+  // A separate daemon, so that this test alone holds its 8 connection slots.
+  const isolated = await startDaemon();
+  const fillers: Client[] = [];
+  let reconnected: Client | undefined;
+  const full = 'Daemon rejected the connection: Too many connections';
+  const connectUnlessFull = () => isolated.connect().catch((error: Error) => { if (error.message === full) return undefined; throw error; });
+  try {
+    writeFileSync(join(isolated.home, '.bashrc'), '[ -f ./.terminal-script ] && exec sh ./.terminal-script\n');
+    const original = await isolated.connect();
+    const chat = await original.invoke('create_temporary_chat', { hostId: 'local' });
+    const start = (client: Client, runtimeId: string) =>
+      client.invoke('start_pi', { runtimeId, clientId: 'returning-owner', cwd: chat.cwd, sessionId: chat.sessionId });
+    expect(await start(original, 'before-disconnect')).toMatchObject({ owned: true });
+    const generation = await startTerminal(original, 'returning-owner', chat.sessionId, 'outlives-connection');
+    await shared(original, 'returning-owner', 'draft', chat.sessionId, { sharedTerminalId: 'outlives-connection', data: 'Unsent after disconnect' });
+
+    // The daemon frees a connection slot only after it has cleaned up that connection, and it sends no event for it.
+    for (let attempt = 0; ; attempt++) {
+      if (attempt === 10) throw new Error('The daemon accepted 10 more connections without becoming full');
+      const filler = await connectUnlessFull();
+      if (!filler) break;
+      fillers.push(filler);
+    }
+    original.close();
+    for (const deadline = Date.now() + 15_000; !reconnected && Date.now() < deadline;) {
+      reconnected = await connectUnlessFull();
+      if (!reconnected) await Bun.sleep(50);
+    }
+    if (!reconnected) throw new Error('No connection slot was freed after the original connection closed');
+
+    expect(await entry(reconnected, 'returning-owner', chat.sessionId, 'outlives-connection')).toMatchObject({
+      generation, owned: false, exited: false, inputDraft: 'Unsent after disconnect', output: expect.stringContaining('$ preserved'),
+    });
+    expect(await start(reconnected, 'after-disconnect')).toMatchObject({ owned: true });
+    expect(await entry(reconnected, 'returning-owner', chat.sessionId, 'outlives-connection')).toMatchObject({
+      generation, owned: true, exited: false, inputDraft: 'Unsent after disconnect',
+    });
+    await shared(reconnected, 'returning-owner', 'draft', chat.sessionId, { sharedTerminalId: 'outlives-connection', data: 'Edited after taking over' });
+    expect((await entry(reconnected, 'returning-owner', chat.sessionId, 'outlives-connection')).inputDraft).toBe('Edited after taking over');
+  } finally {
+    reconnected?.close();
+    for (const filler of fillers) filler.close();
+    await isolated.stop();
+  }
+}, 60_000);
