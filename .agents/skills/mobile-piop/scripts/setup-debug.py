@@ -504,7 +504,7 @@ def connection(args, env, log, deadline):
             print("Worktree daemon connection timed out; retrying once after stopping it.", file=sys.stderr, flush=True)
         if attempt == 0:
             print("Restarting this worktree's debug daemon to use its rebuilt binary.", file=sys.stderr, flush=True)
-            daemon = next((path for path in (args.project / "target/debug/piopd", args.project / "src-tauri/target/debug/piopd") if path.is_file()), None)
+            daemon = next((path for path in (args.project / "target/debug/piopd",) if path.is_file()), None)
             if daemon is None:
                 raise RuntimeError("Could not find this worktree's debug daemon to restart it.")
             subprocess.run([str(daemon), "stop"], cwd=args.project,

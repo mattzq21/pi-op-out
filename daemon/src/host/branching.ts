@@ -3,7 +3,8 @@ import * as Registry from '../session_registry';
 import { kind, text } from './json';
 import { Guard, ownershipError } from './ownership';
 import { argument, expandHome, readHeaderLine, sessionSpec, specIdentity, type LaunchSpec } from './protocol';
-import { lockGate, type Host } from './controller';
+import type { Host } from './controller';
+import { lockGate } from './lock_gate';
 import type { Session } from './session';
 
 const UUID = /^[0-9a-fA-F]{8}-?[0-9a-fA-F]{4}-?[0-9a-fA-F]{4}-?[0-9a-fA-F]{4}-?[0-9a-fA-F]{12}$/;

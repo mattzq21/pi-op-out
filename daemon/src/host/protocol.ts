@@ -84,6 +84,10 @@ export function specIdentity(spec: LaunchSpec, fallback: string): string {
   return id;
 }
 
+const UUID = /^[0-9a-fA-F]{8}-?[0-9a-fA-F]{4}-?[0-9a-fA-F]{4}-?[0-9a-fA-F]{4}-?[0-9a-fA-F]{12}$/;
+
+export function isUuid(value: string): boolean { return UUID.test(value.replace(/^urn:uuid:/, '').replace(/^\{(.*)\}$/, '$1')); }
+
 export function expandHome(path: string, home: string): string {
   if (path === '~') return home;
   if (path.startsWith('~/')) return join(home, path.slice(2));

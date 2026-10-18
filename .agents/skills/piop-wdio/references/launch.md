@@ -6,7 +6,7 @@ Read this before starting a new session. Paths below are relative to the **activ
 
 The current manual launcher is `npm run test:e2e:manual`, equivalent to `node scripts/wdio-manual.mjs`. It starts the app, creates an embedded WebDriver session, prints attachment JSON, and waits for SIGINT/SIGTERM. It does not run the E2E suite.
 
-Its default app is `src-tauri/target/release/piop` (`piop.exe` on Windows). `PI_E2E_BINARY` overrides that path. The app must have been built with the Cargo `webdriver` feature. For isolated state, its companion daemon must have `daemon,test-home`; the current binary name is `piopd`, not the historical `piop-daemon`.
+Its default app is `target/e2e/release/piop` (`piop.exe` on Windows). `PI_E2E_BINARY` overrides that path. The app must have been built with the Cargo `webdriver` feature. For isolated state, its companion daemon must have `daemon,test-home`; the current binary name is `piopd`, not the historical `piop-daemon`.
 
 Reuse a suitable existing binary when its revision and build mode match the requested check. If a build is necessary and permitted by the current task/instructions, the repository's `npm run test:e2e:build` builds both binaries and frontend assets. Inspect its definition first: it includes TypeScript checking and an E2E-mode frontend, but does not execute the test suite. Do not run `npm test`, `npm run test:e2e`, or `test:e2e:run` merely to obtain a manual session. Respect instructions restricting builds or checks.
 
@@ -46,10 +46,10 @@ For checks needing authentication, follow the current fixture setup in `wdio.con
 Start the matching fixture daemon in a persistent terminal with the environment above:
 
 ```bash
-src-tauri/target/release/piopd --serve
+target/release/piopd --serve
 ```
 
-For a debug app use the matching debug daemon. Wait for startup and publication of its fixture endpoint before starting the app. Release endpoints live under `$PIOP_TEST_HOME/.piop`; current debug endpoints live under `$PIOP_TEST_HOME/.piop-dev/daemons/<worktree-hash>`. Inspect `src-tauri/src/daemon_endpoint.rs` if discovery differs. The endpoint JSON contains a token: check readiness without dumping credentials.
+For a debug app use the matching debug daemon. Wait for startup and publication of its fixture endpoint before starting the app. Release endpoints live under `$PIOP_TEST_HOME/.piop`; current debug endpoints live under `$PIOP_TEST_HOME/.piop-dev/daemons/<worktree-hash>`. Inspect `clients/desktop/src/daemon_endpoint.rs` if discovery differs. The endpoint JSON contains a token: check readiness without dumping credentials.
 
 An “already running” message requires checking the existing daemon's identity, build, and environment. Do not kill another task's daemon or reuse it solely because a port is open.
 
@@ -64,7 +64,7 @@ npm run test:e2e:manual
 Or select a verified debug binary:
 
 ```bash
-PI_E2E_BINARY="$PWD/src-tauri/target/debug/piop" node scripts/wdio-manual.mjs
+PI_E2E_BINARY="$PWD/target/debug/piop" node scripts/wdio-manual.mjs
 ```
 
 Use `exec_command` with a PTY and a short initial yield (for example `tty: true`, `yield_time_ms: 1000`), then `write_stdin` to collect startup output. Retain the terminal session ID for cleanup. Wait for the **final attachment JSON**, not just “WebDriver server ready.” Record separately:

@@ -25,10 +25,10 @@ Checked in `/home/matt/.codex/worktrees/7fda/piop` when authoring; resolve these
 - `scripts/wdio-manual.mjs`: embedded provider, ephemeral loopback port, `PI_E2E_BINARY`, printed attachment data, signal-driven cleanup; no fixture setup.
 - `.codex/start-wdio-mcp.sh`: launches WDIO MCP; explicitly requires attachment to the session printed by the manual launcher.
 - `package.json`: separate build/manual/test-run commands; the build uses an E2E frontend and builds `piopd` with `daemon,test-home`.
-- `src-tauri/Cargo.toml` and `src-tauri/src/desktop.rs`: `webdriver` feature enables the embedded plugin and app home override.
-- `wdio.conf.ts`, `test/isolated-node-home.mjs`, and `src-tauri/src/backend/environment.rs`: fixture environment, Node home override, and daemon's feature-gated `PIOP_TEST_HOME` support.
-- `src-tauri/src/daemon_endpoint.rs` and `src-tauri/src/desktop_daemon.rs`: release/debug endpoint location, companion executable, automatic development daemon build, and connection behavior.
+- `clients/desktop/Cargo.toml` and `clients/desktop/src/desktop.rs`: `webdriver` feature enables the embedded plugin and app home override.
+- `wdio.conf.ts`, `test/isolated-node-home.mjs`, and `daemon/src/environment.ts`: fixture environment, Node home override, and daemon's feature-gated `PIOP_TEST_HOME` support.
+- `clients/desktop/src/daemon_endpoint.rs` and `clients/desktop/src/desktop_daemon.rs`: release/debug endpoint location, companion executable, automatic development daemon build, and connection behavior.
 - `scripts/tauri.mjs`, `scripts/build-daemon.mjs`, and `scripts/window-placement.mjs`: dynamic dev URL, daemon build/startup side effects, and monitor-specific placement.
-- `src/App.tsx` and `src/lib/nativeTransport.ts`: E2E controls and mode-dependent temporary-chat behavior.
+- `clients/ui/App.tsx` and `clients/ui/lib/nativeTransport.ts`: E2E controls and mode-dependent temporary-chat behavior.
 
 Live WDIO tool schemas were also inspected for attachment, session creation/closure, DOM execution, element discovery, text input, and screenshot behavior. No app sessions, builds, or test suites were run to create this skill.
