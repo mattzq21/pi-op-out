@@ -222,7 +222,11 @@ export class NativeTransport {
       const version = this.connectionVersion;
       const hostId = this.hostId;
 
-      return this.settings.runCommand(() => this.draftRuntime.reload(() => this.draftOnly() && version === this.connectionVersion && hostId === this.hostId));
+      return this.settings.runCommand(async () => {
+        await this.draftRuntime.reload(() => this.draftOnly() && version === this.connectionVersion && hostId === this.hostId);
+        // The reload can show a new default agent, so the composer's fallback model follows the draft. A model the user picked still wins.
+        this.promptControls.useEffectiveModel(agentStateSchema.parse(await this.draftRuntime.command({ type: "get_state" })).model);
+      });
     }
     const version = this.connectionVersion;
     const hostId = this.hostId;
@@ -510,7 +514,7 @@ export class NativeTransport {
   }
   setDefaultFastMode(enabled: boolean) { this.draftRuntime.defaultFastMode = enabled; }
   async setFastMode(enabled: boolean) {
-    if (this.draftOnly()) { this.draftRuntime.fastMode = enabled;
+    if (this.draftOnly()) { this.draftRuntime.setFastMode(enabled);
       this.emit({ type: "extension_ui_request", id: crypto.randomUUID(), method: "setStatus", statusKey: "pi-desktop-fast-mode", statusText: enabled ? "Fast mode on" : "Fast mode off" });
 
       return; }

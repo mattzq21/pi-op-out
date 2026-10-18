@@ -37,22 +37,33 @@ export class DraftRuntime {
   private agent = "general";
   private revision = 0;
   readonly changes = new Map<string, RpcCommand>();
-  fastMode = false;
+  private fast = false;
   defaultFastMode = false;
+  /** The settings fallbacks for the default agent. Set once the draft shows the host's default agent. */
+  private defaults?: { thinking: string; fastMode: boolean };
+  /** True after the user changes the agent, model, thinking level or fast mode. A changed draft keeps its choices when the host's default agent changes. */
+  private chosen = false;
 
   constructor(private hostId: () => string, private emit: (event: RpcEvent) => void) {}
+
+  get fastMode() { return this.fast; }
+
+  /** The user's fast mode choice for this draft. */
+  setFastMode(enabled: boolean) { this.fast = enabled; this.chosen = true; }
 
   async load() {
     this.catalog = await loadCatalog(this.hostId());
   }
 
-  /** Reads the agent definitions on the host again and publishes the new list while `current` still returns true. */
+  /** Reads the agent definitions on the host again and publishes the new list while `current` still returns true. A draft the user has not changed shows the new default agent. */
   async reload(current: () => boolean) {
     const catalog = await loadCatalog(this.hostId(), true);
 
     if (!current()) throw new Error("The conversation started before agent definitions finished reloading. Reload them again.");
     this.catalog = catalog;
-    this.publishAgents();
+
+    if (this.defaults && !this.chosen) this.showDefault(this.defaults);
+    else this.publishAgents();
   }
 
   async command(command: RpcCommand) {
@@ -78,18 +89,25 @@ export class DraftRuntime {
 
   private levels() { return this.state.model ? modelLevels(this.state.model) : ["off"]; }
 
-  /** Shows the host's default agent with its own model, effort, and fast mode. The real session starts with this agent by itself, so nothing is recorded to replay. */
+  /** Shows the host's default agent with its own model, effort, and fast mode. */
   async applyDefaults(thinking: string, fastMode: boolean) {
     await this.load();
+    this.defaults = { thinking, fastMode }; this.chosen = false;
+    this.showDefault(this.defaults);
+  }
+
+  /** Records the shown default agent, so the session starts as this agent even if the host's default changes before sending. */
+  private showDefault({ thinking, fastMode }: { thinking: string; fastMode: boolean }) {
     const agent = this.catalog?.config.agents.find(agent => agent.isDefault);
 
     if (!agent) throw new Error("This machine has no default agent");
     this.agent = agent.name;
     const model = this.catalog?.models.find(model => `${model.provider}/${model.id}` === agent.model) ?? null;
     this.state = { ...this.state, model, thinkingLevel: agent.effort || thinking };
-    this.fastMode = agent.fastMode ?? fastMode;
-    this.changes.delete("select_agent"); this.changes.delete("set_model"); this.changes.delete("set_thinking_level"); this.revision++;
-    this.emit({ type: "extension_ui_request", id: crypto.randomUUID(), method: "setStatus", statusKey: "pi-desktop-fast-mode", statusText: this.fastMode ? "Fast mode on" : "Fast mode off" });
+    this.fast = agent.fastMode ?? fastMode;
+    this.changes.delete("set_model"); this.changes.delete("set_thinking_level");
+    this.changes.set("select_agent", { type: "select_agent", agent: agent.name }); this.revision++;
+    this.emit({ type: "extension_ui_request", id: crypto.randomUUID(), method: "setStatus", statusKey: "pi-desktop-fast-mode", statusText: this.fast ? "Fast mode on" : "Fast mode off" });
     this.publishAgents();
   }
 
@@ -105,6 +123,8 @@ export class DraftRuntime {
       this.state = { ...this.state, model };
     } else if (command.type === "set_thinking_level") this.state = { ...this.state, thinkingLevel: z.string().parse(command.level) };
     else if (!["set_auto_compaction", "set_auto_retry"].includes(command.type)) throw new Error("Send the first message before using this action");
+
+    if (command.type === "set_model" || command.type === "set_thinking_level") this.chosen = true;
     this.changes.set(command.type, command); this.revision++;
 
     return {};
@@ -114,10 +134,10 @@ export class DraftRuntime {
     const agent = this.catalog?.config.agents.find(agent => agent.name === name);
 
     if (!agent) throw new Error("The selected agent is unavailable");
-    this.agent = name;
+    this.agent = name; this.chosen = true;
     const model = this.catalog?.models.find(model => `${model.provider}/${model.id}` === agent.model);
     this.state = { ...this.state, model: model ?? this.state.model, thinkingLevel: agent.effort || this.state.thinkingLevel };
-    this.fastMode = agent.fastMode ?? this.defaultFastMode;
+    this.fast = agent.fastMode ?? this.defaultFastMode;
     this.changes.delete("set_model"); this.changes.delete("set_thinking_level");
     this.changes.set("select_agent", { type: "select_agent", agent: name }); this.revision++;
     this.emit({ type: "extension_ui_request", id: crypto.randomUUID(), method: "setStatus", statusKey: "pi-desktop-fast-mode", statusText: this.fastMode ? "Fast mode on" : "Fast mode off" });
