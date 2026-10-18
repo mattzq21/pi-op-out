@@ -277,15 +277,29 @@ describe("context cap session", () => {
 
   test("restores each branch on tree navigation", async () => {
     const host = await start();
+    const received: unknown[] = [];
+    host.session().subscribe((state: unknown) => received.push(state), error => { throw error; });
+    await host.session().getState();
+    await Promise.resolve();
+    const config = { cap: 300_000, source: "config", appliedWindow: 300_000 };
+    const manual = { cap: 500_000, source: "manual", appliedWindow: 500_000 };
+    expect(received).toEqual([config]);
+    expect(host.model!.contextWindow).toBe(300_000);
     const root = [...host.branch];
     await host.session().setManualCap(500_000);
+    expect(received).toEqual([config, manual]);
+    expect(host.model!.contextWindow).toBe(500_000);
     const manualBranch = [...host.branch];
     host.branch = root;
     await host.fire("session_tree");
     expect(await host.session().getState()).toEqual({ cap: 300_000, source: "config", appliedWindow: 300_000 });
+    expect(received).toEqual([config, manual, config]);
+    expect(host.model!.contextWindow).toBe(300_000);
     host.branch = manualBranch;
     await host.fire("session_tree");
     expect(await host.session().getState()).toEqual({ cap: 500_000, source: "manual", appliedWindow: 500_000 });
+    expect(received).toEqual([config, manual, config, manual]);
+    expect(host.model!.contextWindow).toBe(500_000);
   });
 
   test("rejects invalid choices without changing state or the log", async () => {
