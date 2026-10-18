@@ -48,7 +48,7 @@ export class NativeSettings {
 
     try { change = await this.call("load_settings_change", undefined, settingsChangeSchema); }
     catch (reason) {
-      if (!String(reason).includes("Command is not available on the daemon: load_settings_change")) throw reason;
+      if (!(reason instanceof Error ? reason.message : String(reason)).includes("Command is not available on the daemon: load_settings_change")) throw reason;
       change = { settings: await this.call("load_app_settings", undefined, appSettingsSchema) };
     }
 
@@ -68,7 +68,7 @@ export class NativeSettings {
 
     try { return await this.call(hostId === "local" ? "load_settings_change" : "load_host_settings_change", { hostId }, settingsChangeSchema); }
     catch (reason) {
-      if (!String(reason).includes("Command is not available on the daemon: load_")) throw reason;
+      if (!(reason instanceof Error ? reason.message : String(reason)).includes("Command is not available on the daemon: load_")) throw reason;
 
       return { settings: await this.loadHost() };
     }
@@ -81,7 +81,7 @@ export class NativeSettings {
 
     try { return await this.call("load_host_settings", { hostId }, appSettingsSchema); }
     catch (reason) {
-      if (String(reason).includes("Command is not available on the daemon: load_host_settings")) throw new Error("The connected or selected remote Piop daemon is older than this client. Update the daemon to access remote settings.");
+      if ((reason instanceof Error ? reason.message : String(reason)).includes("Command is not available on the daemon: load_host_settings")) throw new Error("The connected or selected remote Piop daemon is older than this client. Update the daemon to access remote settings.");
       throw reason;
     }
   }
@@ -91,7 +91,7 @@ export class NativeSettings {
 
     try { return await this.call("save_host_settings", { hostId, settings, agentsChanged }, settingsChangeSchema); }
     catch (reason) {
-      if (String(reason).includes("Command is not available on the daemon: save_host_settings")) throw new Error("The connected or selected remote Piop daemon needs updating before it can save remote settings.");
+      if ((reason instanceof Error ? reason.message : String(reason)).includes("Command is not available on the daemon: save_host_settings")) throw new Error("The connected or selected remote Piop daemon needs updating before it can save remote settings.");
       throw reason;
     }
   }
@@ -140,7 +140,7 @@ export class NativeSettings {
       const committedRevision = change.committedRevision;
       Object.assign(change, current);
       change.committedRevision = committedRevision;
-    } catch (reason) { throw new SettingsSaveError(`Settings were saved, but their current state could not be reloaded: ${String(reason)}`, change, "reconnect"); }
+    } catch (reason) { throw new SettingsSaveError(`Settings were saved, but their current state could not be reloaded: ${(reason instanceof Error ? reason.message : String(reason))}`, change, "reconnect"); }
   }
 
   private async savePreferences(settings: AppSettings, baseline: AppSettings, change: SettingsChange, daemonChanged: boolean, scope: string) {

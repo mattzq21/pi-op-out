@@ -48,3 +48,18 @@ test('restarting with an open terminal asks first; cancel keeps the terminal, co
   assert.equal(control('Enable ChatGPT plugin').getAttribute('aria-checked'), 'false');
   assert.equal(control('Enable Notes plugin').getAttribute('aria-checked'), 'true');
 });
+
+test('a plugin setup that cannot load shows the daemon message, and Reload tries again', async () => {
+  let fail = true;
+  clearMocks();
+  mockIPC(command => {
+    if (command === 'plugin_status') { if (fail) throw new Error('Plugins are unavailable'); return status; }
+    throw new Error('Unexpected command: ' + command);
+  }, { shouldMockEvents: true });
+  view = await renderComponent(PluginSettings, { hostId: 'local' });
+  const alert = await untilDom(() => document.querySelector('[role="alert"]'));
+  assert.equal(alert.textContent, 'Plugins are unavailable');
+  fail = false;
+  await click(button('Reload plugin setup'));
+  await untilDom(() => !document.querySelector('[role="alert"]') && control('Enable Notes plugin'));
+});

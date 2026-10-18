@@ -246,7 +246,7 @@ export function SettingsView(props: SettingsViewProps) {
  try { await capturedSettingsProps.onSave(capturedDraft, capturedAgentConfigDirty ? capturedCurrentAgentConfig : undefined, capturedBaseline); setBaselineValue(structuredClone(capturedDraft));
 
  if (capturedAgentConfigDirty) setBaselineAgentConfig(agentEditsSnapshot(capturedCurrentAgentConfig)); setSaved(currentSnapshotRef.current === capturedCurrentSnapshot); window.setTimeout(() => setSaved(false), 1600); } catch (reason) {
-   recordSaveFailure(reason instanceof Error ? reason : new Error(String(reason)), capturedAgentConfigDirty, capturedCurrentAgentConfig);
+   recordSaveFailure(reason instanceof Error ? reason : new Error((reason instanceof Error ? reason.message : String(reason))), capturedAgentConfigDirty, capturedCurrentAgentConfig);
  } finally { if (capturedAgentConfigDirty) setBaselineAgentRevision(capturedCurrentAgentConfig?.revision); savingRef.current = false; setSaving(false); } };
 
   const recordSaveFailure = (reason: Error, agentsChanged: boolean, configuration?: AgentConfig) => {

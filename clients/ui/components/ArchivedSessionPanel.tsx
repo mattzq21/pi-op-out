@@ -25,7 +25,7 @@ export function ArchivedSessionPanel() {
     });
 
     try { const next = await loadStorageReport(); complete = true; setReport(next); }
-    catch (reason) { setError(String(reason)); }
+    catch (reason) { setError((reason instanceof Error ? reason.message : String(reason))); }
     finally { complete = true; await local.catch(() => undefined); setLoading(false); }
   };
 

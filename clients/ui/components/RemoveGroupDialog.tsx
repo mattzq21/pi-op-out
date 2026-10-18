@@ -22,7 +22,7 @@ export function RemoveGroupDialog(componentProps: { name: string; onRemove: () =
     pendingRef.current = true; setPending(true); setError(undefined);
 
     try { await capturedOnRemove0(); }
-    catch (reason) { setError(String(reason)); }
+    catch (reason) { setError((reason instanceof Error ? reason.message : String(reason))); }
     finally { pendingRef.current = false; setPending(false); }
   };
 

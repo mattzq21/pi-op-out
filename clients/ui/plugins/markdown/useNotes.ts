@@ -70,7 +70,7 @@ export function useChatNote(target: ChatNoteTarget, visible: Accessor<boolean>, 
     const result = storageOperations.then(operation);
     storageOperations = result.then(() => {
       if (durable() && !pendingRemovals.size) setRecoveryError("");
-    }, reason => { setRecoveryError("Could not preserve the note recovery copy. " + String(reason)); }).finally(() => setStoragePending(value => value - 1));
+    }, reason => { setRecoveryError("Could not preserve the note recovery copy. " + (reason instanceof Error ? reason.message : String(reason))); }).finally(() => setStoragePending(value => value - 1));
 
     return storageOperations;
   };
@@ -149,7 +149,7 @@ export function useChatNote(target: ChatNoteTarget, visible: Accessor<boolean>, 
 
       if (values[0]) restore(values[0]);
 
-    } catch (reason) { setRecoveryReadError("Could not restore saved note edits. " + String(reason)); }
+    } catch (reason) { setRecoveryReadError("Could not restore saved note edits. " + (reason instanceof Error ? reason.message : String(reason))); }
   };
 
   const call = (action: string, fields: Record<string, string> = {}) => {
@@ -494,7 +494,7 @@ export function useChatNote(target: ChatNoteTarget, visible: Accessor<boolean>, 
       }
 
       setSubscriptionError("");
-    } catch (reason) { setSubscriptionError("Could not listen for note changes. " + String(reason)); }
+    } catch (reason) { setSubscriptionError("Could not listen for note changes. " + (reason instanceof Error ? reason.message : String(reason))); }
   };
 
   const subscribe = () => {

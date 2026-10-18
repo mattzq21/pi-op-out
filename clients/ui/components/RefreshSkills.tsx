@@ -19,7 +19,7 @@ export function RefreshSkills(props: { hostId: string; skills: AppSettings["skil
       if (disposed || hostId !== props.hostId) return;
       const enabled = new Map(props.skills.map(skill => [skill.path, skill.enabled]));
       props.onChange(settings.skills.map(skill => ({ ...skill, enabled: enabled.get(skill.path) ?? skill.enabled })));
-    } catch (reason) { if (!disposed) setError(String(reason)); }
+    } catch (reason) { if (!disposed) setError(reason instanceof Error ? reason.message : String(reason)); }
     finally { if (!disposed) setBusy(false); }
   };
 

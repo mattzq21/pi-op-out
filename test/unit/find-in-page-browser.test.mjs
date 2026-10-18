@@ -154,6 +154,8 @@ test('an open modal dialog leaves the Find shortcut unhandled', async t => {
   assert.equal(await page.evaluate(() => window.findShortcutPrevented), false);
   assert.equal(await page.getByRole('search').count(), 0);
   await page.keyboard.press('Escape');
+  // Closing the dialog gives focus back to the earlier element; wait for that before opening Find.
+  await page.waitForFunction(() => !document.querySelector('dialog[open]'));
   const input = await openSearch(page);
   assert.equal(await input.evaluate(node => node === document.activeElement), true);
 });

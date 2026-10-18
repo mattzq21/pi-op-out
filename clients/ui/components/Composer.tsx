@@ -363,10 +363,10 @@ export function Composer(props: Props) {
       setDraggingFiles(payload.type !== "drop" && enabled);
 
       if (payload.type !== "drop" || !enabled) return;
-      void nativeDropRef.current.addPaths(payload.paths, () => disposed).catch((reason) => { if (!disposed) setUploadError(String(reason)); });
+      void nativeDropRef.current.addPaths(payload.paths, () => disposed).catch((reason) => { if (!disposed) setUploadError((reason instanceof Error ? reason.message : String(reason))); });
       focusOwnedEditor();
     }).then((cleanup) => { if (disposed) cleanup(); else unlisten = cleanup; })
-      .catch((reason) => { if (!disposed) setUploadError(`Could not enable file drops: ${String(reason)}`); });
+      .catch((reason) => { if (!disposed) setUploadError(`Could not enable file drops: ${(reason instanceof Error ? reason.message : String(reason))}`); });
 
     return () => { disposed = true; unlisten?.(); };
   }, () => []);
@@ -487,7 +487,7 @@ export function Composer(props: Props) {
     const commit = attachments.captureUploadWriter();
     setTimeout(() => {
       if (revision !== pasteRevision || !editor?.isConnected || document.activeElement !== editor) return;
-      void readClipboardImages().then(files => addFiles(files, [], commit)).catch(reason => setUploadError(String(reason)));
+      void readClipboardImages().then(files => addFiles(files, [], commit)).catch(reason => setUploadError((reason instanceof Error ? reason.message : String(reason))));
     }, 0);
   };
 
@@ -503,7 +503,7 @@ export function Composer(props: Props) {
 
       return; }
 
-      if (detail.data) void addFiles([clipboardImageFile(detail.data, detail.mimeType)]).catch(reason => setUploadError(String(reason)));
+      if (detail.data) void addFiles([clipboardImageFile(detail.data, detail.mimeType)]).catch(reason => setUploadError((reason instanceof Error ? reason.message : String(reason))));
     };
 
     document.addEventListener("piop-native-image-paste", handle);

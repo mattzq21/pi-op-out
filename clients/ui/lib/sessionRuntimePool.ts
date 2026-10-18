@@ -238,7 +238,7 @@ export class SessionRuntimePool {
     return; }
 
     this.deferredDetaches.delete(transport);
-    const pending = transport.disconnect().then(() => { this.retainIdle(transport, canDetach); }).catch(reason => this.reportError(`Could not detach conversation: ${String(reason)}`)).finally(() => this.detaching.delete(transport));
+    const pending = transport.disconnect().then(() => { this.retainIdle(transport, canDetach); }).catch(reason => this.reportError(`Could not detach conversation: ${(reason instanceof Error ? reason.message : String(reason))}`)).finally(() => this.detaching.delete(transport));
     this.detaching.set(transport, pending);
   }
 
@@ -252,7 +252,7 @@ export class SessionRuntimePool {
       // A conversation with an unread result or unsent work stays in memory. A released one keeps its list summary.
       if (this.busy(candidate) || this.observers.has(candidate) || this.unseenTransports.has(candidate) || !idle()) continue;
       this.idleTransports.delete(candidate);
-      void this.release(candidate, true).catch(reason => this.reportError(`Could not release idle conversation: ${String(reason)}`));
+      void this.release(candidate, true).catch(reason => this.reportError(`Could not release idle conversation: ${(reason instanceof Error ? reason.message : String(reason))}`));
     }
   }
   setInteractive(transport: NativeTransport, interactive: boolean) {
@@ -314,7 +314,7 @@ export class SessionRuntimePool {
       if (canDetach) queueMicrotask(() => this.detachIdle(transport, canDetach));
 
       if (this.deferredReleases.delete(transport)) queueMicrotask(() => {
-        if (transport !== this.activeTransport) void this.release(transport).catch(reason => this.reportError(`Could not release viewed conversation: ${String(reason)}`));
+        if (transport !== this.activeTransport) void this.release(transport).catch(reason => this.reportError(`Could not release viewed conversation: ${(reason instanceof Error ? reason.message : String(reason))}`));
       });
     };
   }

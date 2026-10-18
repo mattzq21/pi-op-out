@@ -180,7 +180,7 @@ export function createTerminalController({ transport, sessionTransport, conversa
           setReadySession(undefined);
 
           if (!reportedError && !restarting) {
-            const dismiss = addNotice({ title: "Could not sync terminals", message: String(reason) });
+            const dismiss = addNotice({ title: "Could not sync terminals", message: reason instanceof Error ? reason.message : String(reason) });
 
             if (dismiss) dismissError = dismiss;
           }
@@ -254,7 +254,7 @@ export function createTerminalController({ transport, sessionTransport, conversa
 
       unlisten = stop;
       void refresh();
-    }).catch(reason => { if (!cancelled) addNotice({ title: "Could not subscribe to terminals", message: String(reason) }); });
+    }).catch(reason => { if (!cancelled) addNotice({ title: "Could not subscribe to terminals", message: reason instanceof Error ? reason.message : String(reason) }); });
     onCleanup(() => { cancelled = true; unlisten?.(); dismissError?.(); buffered = []; setReadySession(undefined); });
   });
 
@@ -262,7 +262,7 @@ export function createTerminalController({ transport, sessionTransport, conversa
     try { const owner = sessionTransport(terminalSessionId());
 
       if (!owner) throw new Error("Session is unavailable"); await owner.takeOwnership(); setOwned(owner.hasConfirmedOwnership() && owner.hasSentMessage()); await refreshShared(); }
-    catch (reason) { addNotice({ title: "Could not take session ownership", message: String(reason) }); }
+    catch (reason) { addNotice({ title: "Could not take session ownership", message: reason instanceof Error ? reason.message : String(reason) }); }
   };
 
   const queuedTerminalOutput = createRef(new Map<string, QueuedTerminalOutput>());
@@ -314,7 +314,7 @@ export function createTerminalController({ transport, sessionTransport, conversa
 
     try { await capturedTransport.startTerminal(terminalId, sessionKey, cwd, cols, rows, capturedTerminalLocationState.terminalHostId, preparation); await refreshShared(); } catch (reason) { setTerminalsBySession((current) => { const session = current[sessionKey];
 
-    return session ? { ...current, [sessionKey]: { ...session, tabs: session.tabs.map((terminal) => terminal.id === terminalId ? { ...terminal, started: false, exited: true } : terminal) } } : current; }); addNotice({ title: "Could not start terminal", message: String(reason) }); queueTerminalOutput(terminalId, `\r\nCould not start terminal: ${String(reason)}\r\n`); } finally { startingTerminals.current.delete(terminalId); }
+    return session ? { ...current, [sessionKey]: { ...session, tabs: session.tabs.map((terminal) => terminal.id === terminalId ? { ...terminal, started: false, exited: true } : terminal) } } : current; }); addNotice({ title: "Could not start terminal", message: reason instanceof Error ? reason.message : String(reason) }); queueTerminalOutput(terminalId, `\r\nCould not start terminal: ${(reason instanceof Error ? reason.message : String(reason))}\r\n`); } finally { startingTerminals.current.delete(terminalId); }
   };
 
   const addTerminal = () => { if (!owned()) return; const sessionKey = terminalSessionId(); setTerminalsBySession((current) => { const session = current[sessionKey] ?? initialTerminals(sessionKey);
@@ -387,7 +387,7 @@ export function createTerminalController({ transport, sessionTransport, conversa
 
   const rekeyConversation = (previousKey: string, nextKey: string, owner: NativeTransport) => {
     if (previousKey === nextKey) return;
-    reassignTerminals(owner, terminalsBySession()[previousKey]?.tabs ?? [], nextKey, reason => addNotice({ title: "Could not move terminal history", message: String(reason) }));
+    reassignTerminals(owner, terminalsBySession()[previousKey]?.tabs ?? [], nextKey, reason => addNotice({ title: "Could not move terminal history", message: reason instanceof Error ? reason.message : String(reason) }));
     setTerminalsBySession(current => {
       if (!(previousKey in current)) return current;
       const next = { ...current, [nextKey]: current[previousKey] }; delete next[previousKey];
@@ -439,7 +439,7 @@ export function createTerminalController({ transport, sessionTransport, conversa
     void nativeTerminals.write(id, data, "draft").catch(reason => {
       // The host kept its older draft. Send must expect that draft; the unsent text stays in the input.
       if (draftRevisions.get(id) === revision) draftRevisions.delete(id);
-      addNotice({ title: "Could not sync terminal input", message: String(reason) });
+      addNotice({ title: "Could not sync terminal input", message: reason instanceof Error ? reason.message : String(reason) });
     });
   };
 
@@ -462,7 +462,7 @@ export function createTerminalController({ transport, sessionTransport, conversa
       else if (clearDraft) await nativeTerminals.writeAndClearDraft(id, data, revision?.data ?? state.activeTerminal.inputDraft ?? "");
       else await transport().writeTerminal(id, data);
     }
-    catch (reason) { addNotice({ title: "Terminal input failed", message: String(reason) }); void refreshShared();
+    catch (reason) { addNotice({ title: "Terminal input failed", message: reason instanceof Error ? reason.message : String(reason) }); void refreshShared();
 
       return false; }
 
@@ -481,14 +481,14 @@ export function createTerminalController({ transport, sessionTransport, conversa
 
     try { await transport().resizeTerminal(state.activeTerminal.id, cols, rows); }
     catch (reason) {
-      addNotice({ title: "Could not resize terminal", message: String(reason) });
+      addNotice({ title: "Could not resize terminal", message: reason instanceof Error ? reason.message : String(reason) });
       throw reason;
     }
   };
 
   createDependencyEffect(() => {
     if (isMobile || !terminalOpen() || !ready() || !owned() || !state.activeTerminal.inputDraft) return;
-    void nativeTerminals.write(state.activeTerminal.id, "", "adopt_draft").catch(reason => addNotice({ title: "Could not restore terminal input", message: String(reason) }));
+    void nativeTerminals.write(state.activeTerminal.id, "", "adopt_draft").catch(reason => addNotice({ title: "Could not restore terminal input", message: reason instanceof Error ? reason.message : String(reason) }));
   }, () => [terminalOpen(), ready(), owned(), state.activeTerminal.id, state.activeTerminal.inputDraft]);
 
   return {

@@ -48,7 +48,7 @@ export function watchChatGptCatalog(provider: Accessor<string>, open: Accessor<b
       if (failures.delete(name)) { report(); schedule(true); }
     }, reason => {
       if (disposed) return;
-      failures.set(name, String(reason)); report();
+      failures.set(name, (reason instanceof Error ? reason.message : String(reason))); report();
       const timer = setTimeout(() => { retryTimers.delete(timer); subscribe(register, name, Math.min(delay * 2, 30000)); }, delay);
       retryTimers.add(timer);
     });

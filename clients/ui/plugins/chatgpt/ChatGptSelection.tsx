@@ -70,7 +70,7 @@ export function ChatGptSelection(props: { messages: Accessor<HTMLElement | null>
       await start(captureChatGptContext(() => ({ ...props.source(), selected: selection })), controller.signal);
       window.getSelection()?.removeAllRanges();
       setSelected(undefined);
-    } catch (reason) { if (!controller.signal.aborted) setError(String(reason)); }
+    } catch (reason) { if (!controller.signal.aborted) setError((reason instanceof Error ? reason.message : String(reason))); }
     finally { setPreparing(false); preparation = undefined; }
   };
 
