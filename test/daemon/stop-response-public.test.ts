@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, expect, test } from 'bun:test';
-import { existsSync } from 'node:fs';
+import { existsSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { agentDaemon, called, text } from './agent-chats';
 
@@ -66,4 +66,21 @@ test('archiving a chat while its agent runs a command ends the command, and the 
   for (let tries = 0; !agents.model.requests.some(request => text(request.messages.at(-1)) === 'Carry on after the restore') && tries < 100; tries++) await Bun.sleep(100);
   const seen = agents.model.requests.find(request => text(request.messages.at(-1)) === 'Carry on after the restore').messages.slice(1).map((message: any) => [message.role, text(message)]);
   expect(seen).toEqual([['user', 'Archived job'], ['assistant', ''], ['tool', 'No result provided'], ['user', 'Carry on after the restore']]);
+}, 60000);
+
+test('moving a chat to another folder while its agent works is refused with what to do, and the response goes on', async () => {
+  let release!: (reply: { text: string }) => void;
+  const busy = new Promise<{ text: string }>(resolve => { release = resolve; });
+  agents.scripts.set('Busy before the move', () => busy);
+  const chat = await agents.rootChat();
+  await chat.command({ type: 'prompt', message: 'Busy before the move' });
+  await chat.until(() => agents.model.requests.some(request => text(request.messages.at(-1)) === 'Busy before the move'));
+  const { sessionFile } = await chat.command({ type: 'get_state' });
+  const target = join(agents.daemon.home, 'move-target');
+  mkdirSync(target);
+  const refusal = await agents.daemon.invoke('relocate_session', { hostId: 'local', sessionPath: sessionFile, cwd: target, clientId: 'laptop' }).then(() => 'moved', (error: Error) => error.message);
+  expect(refusal).toBe('Stop the response before moving this chat to another folder.');
+  release({ text: 'Finished where it was.' });
+  const history = await chat.until(messages => text(messages.at(-1)) === 'Finished where it was.');
+  expect(history.some(message => message.stopReason === 'aborted')).toBe(false);
 }, 60000);

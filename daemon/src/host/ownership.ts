@@ -371,6 +371,7 @@ function claimIntent(options: any): string {
   if (flag(options, 'message')) return 'message';
   if (flag(options, 'archive')) return 'archive';
   if (flag(options, 'delete')) return 'delete';
+  if (flag(options, 'relocate')) return 'relocate';
   return 'transfer';
 }
 
