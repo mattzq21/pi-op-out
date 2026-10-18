@@ -412,6 +412,11 @@ test('a read-only client cannot clear pending messages until it takes ownership'
       .toContain('ownership');
     expect((await command(owner.runtimeId, { type: 'get_state' })).pendingMessages).toEqual(pending);
     expect(await command(reader.runtimeId, { type: 'take_ownership' })).toMatchObject({ owned: true });
+    // The former owner loses the right to edit the queue as soon as ownership moves.
+    expect(await daemon.failure('pi_command', {
+      runtimeId: owner.runtimeId, command: { type: 'change_pending', id: pending[0].id, action: 'remove' },
+    })).toContain('ownership');
+    expect((await command(reader.runtimeId, { type: 'get_state' })).pendingMessages).toEqual(pending);
     // Closing the former owner must keep the shared worker and its queued work alive.
     await daemon.invoke('stop_pi', { runtimeId: owner.runtimeId });
     ownerStopped = true;
