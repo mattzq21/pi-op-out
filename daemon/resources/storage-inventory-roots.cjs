@@ -190,7 +190,8 @@ async function chatGptRoots(profile, discovery, piPath) {
     await fs.stat(directory);
     await fs.lstat(root);
   } catch (error) {
-    if (error.code === 'ENOENT' && error.path === root) {
+    // No Pi auth directory, or none for ChatGPT inside it, means nothing is stored for ChatGPT yet.
+    if (error.code === 'ENOENT' && (error.path === root || error.path === directory)) {
       discovery.chatgpt.delete(root);
 
       return;
