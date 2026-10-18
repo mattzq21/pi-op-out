@@ -1,3 +1,4 @@
+import { reportBackgroundError } from "./backgroundErrors";
 import { createSignal, type Accessor, type Setter } from "solid-js";
 import { z } from "zod";
 import { invoke, listen } from "./platform";
@@ -21,7 +22,7 @@ function load(hostId: string) {
   if (!entry) return;
   void invoke("provider_auth", { hostId, request: { action: "fast_models" } }, snapshotSchema)
     .then(snapshot => entry.set(snapshot))
-    .catch(reason => console.error("Could not load fast models for host " + hostId + ":", reason));
+    .catch(reason => reportBackgroundError("Could not load fast models for host " + hostId, reason));
 }
 
 /** The host's fast model results, kept current by the host's change events. undefined until the first load. */

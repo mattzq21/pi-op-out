@@ -1,3 +1,4 @@
+import { reportBackgroundError } from "./backgroundErrors";
 import { cachedMobileHost } from "./mobileHosts";
 import type { Accessor } from "solid-js";
 import type { NativeConnectionTarget } from "./nativeTransport";
@@ -95,7 +96,7 @@ function refreshTargetCache() {
 
   if (!cacheReady || refreshing) return;
   refreshing = true; refreshAgain = false;
-  void readTargetCache().catch(error => { console.error("Could not refresh saved conversations", error); }).finally(() => {
+  void readTargetCache().catch(error => { reportBackgroundError("Could not refresh saved conversations", error); }).finally(() => {
     refreshing = false;
 
     if (refreshAgain) refreshTargetCache();
@@ -128,7 +129,7 @@ function flushTargets() {
     succeeded = true;
     channel?.postMessage(null);
     refreshTargetCache();
-  }).catch(error => { console.error("Could not save the last conversation", error); }).finally(() => {
+  }).catch(error => { reportBackgroundError("Could not save the last conversation", error); }).finally(() => {
     saving = false;
 
     if (succeeded) flushTargets();

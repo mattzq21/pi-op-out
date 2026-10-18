@@ -3,7 +3,8 @@ import { daemonClient } from './daemon-client.mjs';
 import { nativeFileCommand } from './native-file-command.mjs';
 import assert from 'node:assert/strict';
 
-export async function appBrowser(t, { remotes = [], keybindings = {} } = {}) {
+/** The app on a real daemon. nativeFailures maps a native command to the error message it fails with. */
+export async function appBrowser(t, { remotes = [], keybindings = {}, nativeFailures = {} } = {}) {
   let page;
   const deliveries = new Set(), requests = new Set(), errors = [];
   const daemon = await daemonClient(t, (event, payload) => {
@@ -21,6 +22,7 @@ export async function appBrowser(t, { remotes = [], keybindings = {} } = {}) {
       page = value;
       page.context().on('page', next => next.on('pageerror', error => errors.push(error.message)));
       await page.context().exposeFunction('nativeCommand', async (command, args) => {
+        if (Object.hasOwn(nativeFailures, command)) throw new Error(nativeFailures[command]);
         const request = command === 'daemon_invoke' ? daemon.invoke(args.command, args.args) : native.invoke(command, args);
         requests.add(request);
         try { return await request; } finally { requests.delete(request); }

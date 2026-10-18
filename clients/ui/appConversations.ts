@@ -2,7 +2,8 @@ import { z } from "zod";
 import { createMutable } from "solid-js/store";
 import { required } from "./lib/required";
 import { fastModelNames, hostFastModels } from "./lib/fastModels";
-import { batch,createComputed,createMemo,createSignal } from "solid-js";
+import { batch,createComputed,createMemo,createSignal,onCleanup } from "solid-js";
+import { showBackgroundErrors } from "./lib/backgroundErrors";
 import { createConversationArchive } from "./appArchive";
 import { createConversationDrafts } from "./appDrafts";
 import { createAppExtensions } from "./appExtensions";
@@ -111,6 +112,7 @@ export function createAppConversations(preloadChat: () => void) {
 
     return () => setNotices(current => current.filter(item => item.id !== id));
   };
+  onCleanup(showBackgroundErrors(addNotice));
 
   const hasRetainedDraft = (ownerTransport: NativeTransport) => {
     const key = transportConversationKeys.current.get(ownerTransport);
