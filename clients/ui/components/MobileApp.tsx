@@ -20,6 +20,7 @@ export function MobileApp() {
   const [workspaceOpen, setWorkspaceOpen] = createSignal(false);
   const [connecting, setConnecting] = createSignal(false);
   const [error, setError] = createSignal("");
+  const [minimizeError, setMinimizeError] = createSignal("");
   const [restartGrace, setRestartGrace] = createSignal(false);
   const restartGraceTimer = createRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const generation = createRef(0);
@@ -160,7 +161,7 @@ export function MobileApp() {
 
       return; }
 
-      if (window.dispatchEvent(new Event("piop-mobile-back", { cancelable: true }))) void AndroidApp.minimizeApp().catch((reason) => setError(String(reason)));
+      if (window.dispatchEvent(new Event("piop-mobile-back", { cancelable: true }))) void AndroidApp.minimizeApp().then(() => setMinimizeError(""), (reason) => setMinimizeError(String(reason)));
     });
 
     const viewport = () => document.documentElement.style.setProperty("--mobile-height", `${window.visualViewport?.height ?? window.innerHeight}px`);
@@ -198,5 +199,5 @@ export function MobileApp() {
     <button class="primary-button" disabled={connectDisabled()}>{connecting() ? "Connecting…" : "Connect"}</button>
     {connecting() && <button type="button" onClick={disconnect}>Cancel</button>}
     {(anchor() || anchorReadFailed()) && !connecting() && <button type="button" disabled={forgetting()} onClick={() => void forgetAnchor()}>Forget anchor host</button>}
-  </form></main>)}</>;
+  </form></main>)}{minimizeError() && <div class="mobile-reconnect-banner"><div role="status">{minimizeError()}</div></div>}</>;
 }

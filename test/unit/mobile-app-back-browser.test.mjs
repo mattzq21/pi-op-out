@@ -110,7 +110,7 @@ test('Android Back on unsaved settings asks first and returns to the chat draft 
   assert.equal(await page.evaluate(() => window.androidMinimized), 0);
 });
 
-test('Android Back shows the native minimize failure, and the next Back after recovery minimizes the app', async t => {
+test('Android Back shows the native minimize failure, and the next Back after recovery minimizes the app and clears the failure', async t => {
   const { page, editor } = await connectedChat(t);
   await editor.fill('Keep this draft');
   await page.evaluate(() => { window.failNextAndroidMinimize = 'Activity is not available'; });
@@ -129,6 +129,7 @@ test('Android Back shows the native minimize failure, and the next Back after re
   assert.equal(await page.evaluate(() => window.androidMinimizeAttempts), 2);
   assert.equal(await page.evaluate(() => window.androidMinimized), 1);
   assert.equal(await editor.inputValue(), 'Keep this draft');
+  assert.equal(await page.getByText('Activity is not available').count(), 0);
 });
 
 test('Android Back closes the open conversation panel first and minimizes the app only on the next press', async t => {
