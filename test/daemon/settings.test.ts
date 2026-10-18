@@ -155,6 +155,7 @@ test('settings are kept when running agents cannot take them, and the save repor
 
 test('a save fails and keeps the settings while another process holds the settings database', async () => {
   const before = await load();
+  const baseline = await daemon.invoke('load_settings_change');
   const other = new Database(join(daemon.home, '.piop/sessions.sqlite'));
   other.exec('BEGIN IMMEDIATE');
   let error: string;
@@ -162,6 +163,16 @@ test('a save fails and keeps the settings while another process holds the settin
   finally { other.exec('ROLLBACK'); other.close(); }
   expect(error).toBe('database is locked');
   expect(await load()).toEqual(before);
+  const failed = await daemon.invoke('load_settings_change');
+  expect(failed.revision).toBe(baseline.revision);
+  expect(failed.settings).toEqual(baseline.settings);
+  // The retry uses the original baseline, so it succeeds only if the failed save released its locks and kept the revision.
+  const retried = await save({ ...before, reviewPrompt: 'retried-model' });
+  expect(retried.committedRevision).toBe(baseline.revision + 1);
+  const after = await daemon.invoke('load_settings_change');
+  expect(after.revision).toBe(baseline.revision + 1);
+  expect(after.settings.reviewPrompt).toBe('retried-model');
+  expect((await load()).reviewPrompt).toBe('retried-model');
 }, 30_000);
 
 test('skill front matter is read only inside its header and keeps quoted values', async () => {
