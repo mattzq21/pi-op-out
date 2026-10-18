@@ -277,6 +277,41 @@ test('persistent saturation reports failure within ten seconds and stops retryin
   } finally { client.close(); }
 });
 
+test('a send failure during a busy retry reaches the caller, is never replayed, and the connection stays usable', async context => {
+  context.mock.timers.enable({ apis: ['setTimeout'] });
+  const { client, socket } = await connected(); const losses = [];
+  client.onDisconnect = message => losses.push(message);
+  const sendFailure = new Error('WebSocket send failed: buffer full');
+  let attempts = 0;
+  const deliver = socket.send.bind(socket);
+  socket.send = data => {
+    const packet = JSON.parse(data);
+    if (packet.command === 'pi_command' && ++attempts === 2) throw sendFailure;
+    deliver(data);
+    if (packet.command === 'pi_command') socket.receive({ id: packet.id, error: 'Host is busy; try again' });
+  };
+  try {
+    let outcome;
+    void client.invoke('pi_command', { command: { type: 'prompt', message: 'one message' } })
+      .then(() => { outcome = 'unexpected success'; }, error => { outcome = error; });
+    context.mock.timers.tick(1000);
+    await new Promise(resolve => setImmediate(resolve));
+    assert.ok(outcome instanceof Error, 'The caller must receive a failure as soon as the retry send fails');
+    assert.equal(outcome.message, 'WebSocket send failed: buffer full');
+    assert.equal(client.isConnected(), true);
+    assert.deepEqual(losses, []);
+
+    const next = client.invoke('home_directory', { hostId: 'local' });
+    const homeRequest = socket.sent.find(packet => packet.command === 'home_directory');
+    socket.receive({ id: homeRequest.id, result: '/home/me' });
+    assert.equal(await next, '/home/me');
+
+    context.mock.timers.tick(700000);
+    assert.equal(attempts, 2, 'The failed request is never sent again');
+    assert.equal(client.isConnected(), true);
+  } finally { client.close(); }
+});
+
 test('disconnect cancels a busy retry and never replays it on the next connection', async context => {
   context.mock.timers.enable({ apis: ['setTimeout'] });
   const { client, socket } = await connected();
