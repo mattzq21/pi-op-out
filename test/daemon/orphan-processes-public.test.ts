@@ -53,3 +53,17 @@ test('programs an agent left running are stopped when the next daemon starts aft
     await running.close().catch(() => {});
   }
 }, 120000);
+
+test('a clean daemon stop also stops the programs its agents left running', async () => {
+  const agents = await agentDaemon();
+  const marker = '6200.' + Math.floor(Math.random() * 1e6);
+  try {
+    expect(await backgroundSleep(agents, marker)).toHaveLength(1);
+    await agents.close();
+    for (let tries = 0; tries < 100 && processes('sleep ' + marker).length; tries++) await Bun.sleep(50);
+    expect(processes('sleep ' + marker)).toEqual([]);
+  } finally {
+    for (const { pid } of processes('sleep ' + marker)) process.kill(pid, 'SIGKILL');
+    await agents.close().catch(() => {});
+  }
+}, 120000);
