@@ -56,7 +56,7 @@ export interface ExtensionUiResponse { cancelled?: boolean; confirmed?: boolean;
 
 export interface Model { provider: string; id: string; name?: string; reasoning?: boolean; thinkingLevelMap?: Record<string, JSONType>; contextWindow?: number; input?: ("text" | "image")[]; }
 
-export interface AgentProfile { name: string; model: string; effort: string; fastMode?: boolean; contextWindowCap?: number | null; codemode?: boolean; extensions?: string[]; max_subagents?: number; max_sub_subagents?: number; path_systemprompt: string; path_agent_prompt: string; tools: string[]; skills: string[]; mcpServers: McpServers; }
+export interface AgentProfile { name: string; isDefault?: boolean; model: string; effort: string; fastMode?: boolean; contextWindowCap?: number | null; codemode?: boolean; extensions?: string[]; max_subagents?: number; max_sub_subagents?: number; path_systemprompt: string; path_agent_prompt: string; tools: string[]; skills: string[]; mcpServers: McpServers; }
 
 export interface AgentConfig { revision?: string; agents: AgentProfile[]; }
 
@@ -93,7 +93,7 @@ export interface ComposerUpload { id: string; name: string; kind: "image" | "tex
  /** A saved dictation setup: the model file, the engine program ("" finds it automatically) and the arguments. All three identify it. */
  export interface DictationModelEntry { name?: string; path: string; args?: string; }
  export interface DictationEngineSettings { engine: DictationEngine; path?: string; models: DictationModelEntry[]; }
- export interface AppSettings { settingsRevision?: string; clientSettingsRevision?: string; settingsDurabilityError?: string; clientSettingsDurabilityError?: string; dictationEngine?: DictationEngine; dictationEngines?: DictationEngineSettings[]; dictationModelPath?: string; dictationArgs?: string; localEnabled?: boolean; defaultAgent?: string; reviewAgent?: string; reviewPrompt?: string; modelAliases?: Record<string, string>; hiddenModels: string[]; knownModels?: string[]; defaultThinking: string; defaultFastMode: boolean; contextWindowCap: number; contextWindowCapEnabled: boolean; modelContextWindowCaps: Record<string, number | null>; autoRetry: boolean; debugMode: boolean; keybindings: import("./lib/keybindings").Keybindings; tools: ToolConfig[]; skills: SkillConfig[]; hosts: RemoteHost[]; }
+ export interface AppSettings { settingsRevision?: string; clientSettingsRevision?: string; settingsDurabilityError?: string; clientSettingsDurabilityError?: string; dictationEngine?: DictationEngine; dictationEngines?: DictationEngineSettings[]; dictationModelPath?: string; dictationArgs?: string; localEnabled?: boolean; reviewAgent?: string; reviewPrompt?: string; modelAliases?: Record<string, string>; hiddenModels: string[]; knownModels?: string[]; defaultThinking: string; defaultFastMode: boolean; contextWindowCap: number; contextWindowCapEnabled: boolean; modelContextWindowCaps: Record<string, number | null>; autoRetry: boolean; debugMode: boolean; keybindings: import("./lib/keybindings").Keybindings; tools: ToolConfig[]; skills: SkillConfig[]; hosts: RemoteHost[]; }
 
 export interface CodexUsage { remainingPercent: number; resetAt?: number; }
 

@@ -97,6 +97,10 @@ export class NativeTransport {
   private fresh = true;
   needsDefaults() { return this.fresh; }
   defaultsApplied() { this.fresh = false; }
+  /** A draft shows the host's default agent. A started session already runs it, because the agents extension picks it when the session starts. */
+  async applyNewChatDefaults(thinking: string, fastMode: boolean) {
+    if (this.draftOnly()) await this.settings.runCommand(() => this.draftRuntime.applyDefaults(thinking, fastMode));
+  }
   connectionTarget(): NativeConnectionTarget {
     const target: NativeConnectionTarget = { cwd: this.cwd, sessionPath: this.sessionPath, sessionId: this.sessionId, hostId: this.hostId };
 

@@ -78,6 +78,21 @@ export class DraftRuntime {
 
   private levels() { return this.state.model ? modelLevels(this.state.model) : ["off"]; }
 
+  /** Shows the host's default agent with its own model, effort, and fast mode. The real session starts with this agent by itself, so nothing is recorded to replay. */
+  async applyDefaults(thinking: string, fastMode: boolean) {
+    await this.load();
+    const agent = this.catalog?.config.agents.find(agent => agent.isDefault);
+
+    if (!agent) throw new Error("This machine has no default agent");
+    this.agent = agent.name;
+    const model = this.catalog?.models.find(model => `${model.provider}/${model.id}` === agent.model) ?? null;
+    this.state = { ...this.state, model, thinkingLevel: agent.effort || thinking };
+    this.fastMode = agent.fastMode ?? fastMode;
+    this.changes.delete("select_agent"); this.changes.delete("set_model"); this.changes.delete("set_thinking_level"); this.revision++;
+    this.emit({ type: "extension_ui_request", id: crypto.randomUUID(), method: "setStatus", statusKey: "pi-desktop-fast-mode", statusText: this.fastMode ? "Fast mode on" : "Fast mode off" });
+    this.publishAgents();
+  }
+
   private change(command: RpcCommand) {
     if (command.type === "get_agent_configuration") return this.catalog?.config;
 

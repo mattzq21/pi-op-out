@@ -15,7 +15,6 @@ export interface AppSettings {
   reviewAgent: string;
   reviewPrompt: string;
   localEnabled: boolean;
-  defaultAgent: string;
   modelAliases?: Record<string, string>;
   hiddenModels: string[];
   knownModels?: string[];
@@ -38,7 +37,7 @@ export interface SkillConfig { name: string; path: string; description: string; 
 
 export const MAX_REMOTE_HOSTS = 16;
 
-export function defaultAgent(): string { return 'general'; }
+export function generalAgent(): string { return 'general'; }
 export function defaultReviewPrompt(): string { return reviewPrompt.trim(); }
 
 function fail(field: string, expected: string): never { throw new Error(`invalid type for ${field}: expected ${expected}`); }
@@ -147,10 +146,9 @@ export function parseAppSettings(value: any): AppSettings {
   }
   const settings: AppSettings = {
     settingsRevision: optionalString(value.settingsRevision, 'settingsRevision'),
-    reviewAgent: stringField(value.reviewAgent, 'reviewAgent', defaultAgent),
+    reviewAgent: stringField(value.reviewAgent, 'reviewAgent', generalAgent),
     reviewPrompt: stringField(value.reviewPrompt, 'reviewPrompt', defaultReviewPrompt),
     localEnabled: boolField(value.localEnabled, 'localEnabled', true),
-    defaultAgent: stringField(value.defaultAgent, 'defaultAgent', defaultAgent),
     modelAliases: modelAliases(value.modelAliases),
     hiddenModels: value.hiddenModels === undefined ? [] : stringArray(value.hiddenModels, 'hiddenModels'),
     knownModels: value.knownModels === undefined || value.knownModels === null ? undefined : stringArray(value.knownModels, 'knownModels'),
@@ -176,7 +174,6 @@ export function serializeAppSettings(settings: AppSettings): Record<string, unkn
   result.reviewAgent = settings.reviewAgent;
   result.reviewPrompt = settings.reviewPrompt;
   result.localEnabled = settings.localEnabled;
-  result.defaultAgent = settings.defaultAgent;
   result.modelAliases = settings.modelAliases ?? {};
   result.hiddenModels = settings.hiddenModels;
   if (settings.knownModels !== undefined) result.knownModels = settings.knownModels;
@@ -200,10 +197,9 @@ export function cloneSettings(settings: AppSettings): AppSettings {
 
 export function defaultSettings(): AppSettings {
   return {
-    reviewAgent: defaultAgent(),
+    reviewAgent: generalAgent(),
     reviewPrompt: defaultReviewPrompt(),
     localEnabled: true,
-    defaultAgent: defaultAgent(),
     defaultFastMode: false,
     modelAliases: {},
     hiddenModels: [],

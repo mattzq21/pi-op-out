@@ -244,6 +244,27 @@ for (const state of ['not JSON', { model: 7, effort: 'low' }, { model: 'test/rev
   assert.equal(f.pi.getThinkingLevel(), 'high');
 });
 
+test('a new root session starts as the flagged agent, and a session with a stored agent keeps it', async t => {
+  const config = configured([profile(), profile('reviewer', { isDefault: true })]);
+  const f = await agentFixture(t, { config });
+  await f.load(); await f.start();
+  assert.equal(f.capability().active, 'reviewer');
+
+  const g = await agentFixture(t, { config, entries: [{ type: 'custom', customType: 'pi-define-agents-state', data: { active: 'general' } }] });
+  await g.load(); await g.start();
+  assert.equal(g.capability().active, 'general');
+});
+
+test('general becomes the default when no agent has the flag, and two flags are rejected', async t => {
+  const f = await agentFixture(t, { config: configured([profile(), profile('reviewer')]) });
+  await f.load(); await f.start();
+  assert.equal(f.capability().active, 'general');
+  assert.deepEqual(f.capability().config.agents.map(agent => agent.isDefault), [true, undefined]);
+
+  const g = await agentFixture(t, { config: configured([profile('general', { isDefault: true }), profile('reviewer', { isDefault: true })]) });
+  await assert.rejects(g.load(), /Only one agent can be the default/);
+});
+
 test('manual model and effort defaults survive extension reload', async t => {
   const f = await agentFixture(t, { config: null });
   await f.load(); await f.start();

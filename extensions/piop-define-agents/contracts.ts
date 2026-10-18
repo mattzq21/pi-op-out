@@ -11,8 +11,8 @@ export interface McpToolsRequest { tools?: string[]; availableTools?: string[] }
 export interface McpSelection { codemode?: boolean; servers: McpServers; sessionId: string; registered?: Promise<string[]> }
 
 
-/** contextWindowCap: undefined inherits; null selects the model default. */
-export type Agent = { name: string; model: string; effort: string; fastMode?: boolean; contextWindowCap?: number | null; codemode?: boolean; extensions?: string[]; max_subagents?: number; max_sub_subagents?: number; path_systemprompt: string; path_agent_prompt: string; tools: string[]; skills: string[]; mcpServers: McpServers };
+/** contextWindowCap: undefined inherits; null selects the model default. isDefault marks the one agent that new root sessions start with. */
+export type Agent = { name: string; isDefault?: boolean; model: string; effort: string; fastMode?: boolean; contextWindowCap?: number | null; codemode?: boolean; extensions?: string[]; max_subagents?: number; max_sub_subagents?: number; path_systemprompt: string; path_agent_prompt: string; tools: string[]; skills: string[]; mcpServers: McpServers };
 
 export type AgentSnapshot = ({ version: 2; definition: Agent } | { version: 1; definition: Agent; systemPrompt: string; agentPrompt: string }) & { resources?: AgentResources };
 

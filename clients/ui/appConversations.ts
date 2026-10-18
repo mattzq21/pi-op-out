@@ -7,7 +7,7 @@ import { showBackgroundErrors } from "./lib/backgroundErrors";
 import { createConversationArchive } from "./appArchive";
 import { createConversationDrafts } from "./appDrafts";
 import { createAppExtensions } from "./appExtensions";
-import { configureConversationRuntime,createComposerControls,inheritGroupControls,type ProjectControls } from "./appRuntime";
+import { configureConversationRuntime,createComposerControls } from "./appRuntime";
 import { createAppSettings } from "./appSettings";
 import { selectedProjectCwd,splitConversationKey,type RenameTarget,type SplitPaneState,type TerminalTarget } from "./appSupport";
 import { createTerminalController } from "./appTerminals";
@@ -321,9 +321,8 @@ export function createAppConversations(preloadChat: () => void) {
     return nextSettings;
   };
 
-  const projectControls = new WeakMap<NativeTransport, ProjectControls>();
-  const composerControls = createComposerControls(transport, connected, projectControls, () => fastModelNames(hostFastModels(activeHostId())()));
-  const configureRuntime = (value: AppSettings) => configureConversationRuntime(value, transport(), () => activeTransportRef.current, projectControls, definedAgents);
+  const composerControls = createComposerControls(transport, () => fastModelNames(hostFastModels(activeHostId())()));
+  const configureRuntime = (value: AppSettings) => configureConversationRuntime(value, transport(), () => activeTransportRef.current);
   const reviewImages = new WeakMap<NativeTransport, ImageAttachment[]>();
   const resolveHomeDirectory = (hostId: string) => transport().homeDirectory(hostId);
 
@@ -511,7 +510,6 @@ export function createAppConversations(preloadChat: () => void) {
     try {
       const owner = createSessionTransport(projectCwd, hostId);
       nextTransport = owner;
-      inheritGroupControls(projectControls, owner, hostId === activeHostIdRef.current, composerControls.state(capturedSession.state), definedAgents(), composerControls.statuses(statuses(), composerControls.state(capturedSession.state).model), settings());
       const cwd = await prepareNewSession(owner, hostId, projectCwd);
 
       if (!isCurrent()) return;
@@ -748,9 +746,9 @@ export function createAppConversations(preloadChat: () => void) {
     return [...summaries.values()].filter(session => !archives.isArchived(session) && (!session.isDraft || drafts.hasDraft(`${session.hostId ?? "local"}:${session.id}`)));
   }, query);
 
-  const chatAgentProps = () => { if (!extensionStateIsCurrent()) return { agents: [], activeAgent: composerControls.agent(), agentLocked: false, agentSaved: false, agentUnavailable: false };
+  const chatAgentProps = () => { if (!extensionStateIsCurrent()) return { agents: [], activeAgent: undefined, agentLocked: false, agentSaved: false, agentUnavailable: false };
 
-    return { agents: (definedAgents()?.config.agents ?? []), activeAgent: composerControls.agent(definedAgents()?.active), agentLocked: definedAgents()?.locked, agentSaved: definedAgents()?.saved, agentUnavailable: definedAgents()?.unavailable }; };
+    return { agents: (definedAgents()?.config.agents ?? []), activeAgent: definedAgents()?.active, agentLocked: definedAgents()?.locked, agentSaved: definedAgents()?.saved, agentUnavailable: definedAgents()?.unavailable }; };
 
   const chatModels = createMemo(() => modelVisibility.visibleModels(activeHostId(), chatSession().models));
   const chatCommands = createMemo<SlashCommand[]>(() => chatSession().commands);

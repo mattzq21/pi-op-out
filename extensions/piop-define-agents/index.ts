@@ -29,7 +29,7 @@ type ConfigRuntime = { enabledTools?: readonly string[] };
 
 export type ConfigStorage = { ensurePromptFile: typeof ensurePromptFile; writeConfig: typeof writeConfig };
 
-function defaultAgent(pi: ConfigRuntime): Agent {
+function generalAgent(pi: ConfigRuntime): Agent {
   const agent = structuredClone(fallbackConfig.agents[0]);
 
   if (enabledTools(pi)?.includes("web_search")) agent.tools.push("web_search");
@@ -107,17 +107,19 @@ function promptPath(agent: StoredAgent): string {
 function normalize(value: Omit<Partial<Config>, "agents"> & { agents?: StoredAgent[] }, pi: ConfigRuntime): Config {
   for (const agent of Array.isArray(value.agents) ? value.agents : []) {
     if (agent && agent.fastMode !== undefined && !Check(Type.Boolean(), agent.fastMode)) throw new Error(`Agent "${agent.name}" fastMode must be a boolean`);
+
+    if (agent && agent.isDefault !== undefined && !Check(Type.Boolean(), agent.isDefault)) throw new Error(`Agent "${agent.name}" isDefault must be a boolean`);
     const capError = agent?.contextWindowCap === undefined || agent.contextWindowCap === null ? undefined : typeof agent.contextWindowCap === "number" ? capRangeError(agent.contextWindowCap, `Agent "${agent.name}" context cap`) : `Agent "${agent.name}" context cap must be a number or null`;
 
     if (capError) throw new Error(capError);
   }
 
   const supplied = Array.isArray(value.agents) ? value.agents.filter((agent) => Check(Type.Object({ name: Type.String({ minLength: 1 }) }), agent)).map((agent) => ({
-    name: agent.name, model: Check(Type.String(), agent.model) ? agent.model : "", effort: Check(Type.String(), agent.effort) ? agent.effort : fallbackConfig.agents[0].effort,
+    name: agent.name, ...(agent.isDefault === true ? { isDefault: true } : {}), model: Check(Type.String(), agent.model) ? agent.model : "", effort: Check(Type.String(), agent.effort) ? agent.effort : fallbackConfig.agents[0].effort,
     fastMode: agent.fastMode, contextWindowCap: agent.contextWindowCap, codemode: agent.codemode, extensions: extensionPaths(agent.extensions),
     max_subagents: subagentLimit(agent.max_subagents, agent.name, "max_subagents"), max_sub_subagents: subagentLimit(agent.max_sub_subagents, agent.name, "max_sub_subagents"),
     path_systemprompt: promptPath(agent), path_agent_prompt: Check(Type.String(), agent.path_agent_prompt) ? agent.path_agent_prompt.trim() : "",
-    tools: Array.isArray(agent.tools) ? agent.tools.filter((item): item is string => Check(Type.String(), item)).flatMap(item => item === "goal" ? ["get_goal", "create_goal", "update_goal"] : [item]) : defaultAgent(pi).tools, skills: Array.isArray(agent.skills) ? agent.skills.filter((item): item is string => Check(Type.String(), item)) : [], mcpServers: mcpServers(agent.mcpServers),
+    tools: Array.isArray(agent.tools) ? agent.tools.filter((item): item is string => Check(Type.String(), item)).flatMap(item => item === "goal" ? ["get_goal", "create_goal", "update_goal"] : [item]) : generalAgent(pi).tools, skills: Array.isArray(agent.skills) ? agent.skills.filter((item): item is string => Check(Type.String(), item)) : [], mcpServers: mcpServers(agent.mcpServers),
   })) : [];
 
   if (!supplied.some((agent) => agent.name === "general")) {
@@ -127,7 +129,12 @@ function normalize(value: Omit<Partial<Config>, "agents"> & { agents?: StoredAge
   }
 
   const unique = supplied.filter((agent, index) => supplied.findIndex((candidate) => candidate.name === agent.name) === index);
-  const agents = unique.some((agent) => agent.name === "general") ? unique : [defaultAgent(pi), ...unique];
+  const agents = unique.some((agent) => agent.name === "general") ? unique : [generalAgent(pi), ...unique];
+  const defaults = agents.filter(agent => agent.isDefault);
+
+  if (defaults.length > 1) throw new Error(`Only one agent can be the default. Default agents: ${defaults.map(agent => agent.name).join(", ")}`);
+
+  if (!defaults.length) required(agents.find(agent => agent.name === "general")).isDefault = true;
 
   return { revision: value.revision, agents, webSearchDefaultApplied: value.webSearchDefaultApplied === true, sessionToolsDefaultApplied: value.sessionToolsDefaultApplied === true, subagentsDefaultApplied: value.subagentsDefaultApplied === true, diagramistDefaultApplied: value.diagramistDefaultApplied === true, askerAgentDefaultApplied: value.askerAgentDefaultApplied === true, tokagentDefaultApplied: value.tokagentDefaultApplied === true, excalidrawAgentDefaultApplied: value.excalidrawAgentDefaultApplied === true };
 }
@@ -182,6 +189,7 @@ function migrateUserInput(config: Config, pi: ConfigRuntime) {
   if (general && !config.agents.some(agent => agent.name === "asker-agent")) {
     const asker = structuredClone(general);
     asker.name = "asker-agent";
+    delete asker.isDefault;
     asker.tools = [...new Set([...asker.tools, "request_user_input"])];
     config.agents.push(asker);
   }
@@ -203,8 +211,9 @@ function migrateTokagent(config: Config, pi: ConfigRuntime) {
   if (config.tokagentDefaultApplied) return false;
 
   if (!config.agents.some(agent => agent.name === "tokagent")) {
-    const agent = structuredClone(config.agents.find(agent => agent.name === "general") ?? defaultAgent(pi));
+    const agent = structuredClone(config.agents.find(agent => agent.name === "general") ?? generalAgent(pi));
     agent.name = "tokagent";
+    delete agent.isDefault;
     agent.extensions = [...new Set([...(agent.extensions ?? []), "../piop-rtk/rtk.ts"])];
     config.agents.push(agent);
   }
@@ -220,7 +229,7 @@ async function migrateDiagramist(config: Config, pi: ConfigRuntime, storage: Con
   if (!config.agents.some(agent => agent.name === "diagramist")) {
     const path = "sysprompt/diagramist.md";
     await storage.ensurePromptFile(path, `${DEFAULT_SYSTEM_PROMPT}\n\nYou are diagramist. Explain systems, code, and data through clear, accurate diagrams. Inspect the relevant sources before depicting relationships, and distinguish observed behavior from proposed designs.\n\nPiop renders fenced mermaid blocks as interactive diagrams and charts in conversation messages. Use them proactively when a visual makes architecture, dependencies, request flows, state transitions, timelines, or quantitative comparisons easier to understand. Prefer a small, focused diagram over a long prose description of relationships; skip visuals for simple answers.\n\nUse Mermaid flowchart, sequenceDiagram, stateDiagram-v2, classDiagram, erDiagram, gantt, timeline, pie, or xychart-beta syntax as appropriate. Use short plain-text labels, stable node identifiers, and an accTitle/accDescr where supported. Close every fence. Do not include Mermaid configuration directives, frontmatter, HTML, external images, or click handlers; piop controls appearance and interaction. Use only observed or supplied values in charts, and clearly label estimates. Keep the explanation beside the diagram concise.`);
-    config.agents.push({ ...defaultAgent(pi), name: "diagramist", path_systemprompt: path });
+    config.agents.push({ ...generalAgent(pi), name: "diagramist", path_systemprompt: path });
   }
 
   config.diagramistDefaultApplied = true;
@@ -264,6 +273,12 @@ function encode<T>(value: T) { return Buffer.from(JSON.stringify(value), "utf8")
 function safeName(value: string) { return value.toLowerCase().replace(/[^a-z0-9_]+/g, "_").replace(/^_+|_+$/g, "") || "tool"; }
 
 function enabledTools(config: ConfigRuntime) { return config.enabledTools; }
+
+function required<T>(value: T | undefined): T {
+  if (value === undefined) throw new Error("A required agent is missing");
+
+  return value;
+}
 
 const normalizedPath = resourcePath;
 
@@ -310,6 +325,7 @@ export default async function defineAgents(pi: ExtensionAPI) {
   let reloading = false;
   process.env.PI_DEFINE_AGENTS_ACTIVE = "1";
   const findAgent = (name: string) => config.agents.find((agent) => agent.name === name);
+  const defaultAgentName = () => required(config.agents.find(agent => agent.isDefault)).name;
   const currentAgent = () => snapshot?.definition ?? findAgent(active);
   const resources = (): AgentResources => snapshot?.resources ?? initialResources;
   const agentSkills = (_pi: ExtensionAPI, agent: Agent) => {
@@ -422,7 +438,7 @@ export default async function defineAgents(pi: ExtensionAPI) {
     if (!runtimeDefaults) saveRuntimeDefaults({ model: ctx.model ? `${ctx.model.provider}/${ctx.model.id}` : "", effort: pi.getThinkingLevel() });
   };
 
-  const snapshotDefinition = (agent: Agent) => structuredClone({ ...agent, model: agent.model.trim() || runtimeDefaults?.model || "", effort: agent.effort.trim() || runtimeDefaults?.effort || "" });
+  const snapshotDefinition = ({ isDefault: _isDefault, ...agent }: Agent) => structuredClone({ ...agent, model: agent.model.trim() || runtimeDefaults?.model || "", effort: agent.effort.trim() || runtimeDefaults?.effort || "" });
 
   const persistAgentSnapshot = async (agent: Agent, persist: boolean) => {
     const savedResources = resources();
@@ -612,7 +628,8 @@ export default async function defineAgents(pi: ExtensionAPI) {
     const { states, stored, identity } = readAgentState(branch, runtimeSession);
     savedState = identity;
     snapshot = migrateQuestionSnapshot(stored?.snapshot);
-    active = snapshot?.definition.name ?? restoredAgentName(stored?.active);
+    // Subagent and review sessions store their agent before they start, so only a new root session has no stored state.
+    active = snapshot?.definition.name ?? (stored ? restoredAgentName(stored.active) : defaultAgentName());
 
     if (active === "voice-orchestrator") { active = "general"; snapshot = undefined; }
 
