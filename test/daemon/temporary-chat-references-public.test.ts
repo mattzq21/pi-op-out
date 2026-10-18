@@ -1,6 +1,7 @@
 import { expect, test } from 'bun:test';
 import { execFileSync } from 'node:child_process';
-import { readFileSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { startDaemon } from './harness';
 
@@ -26,6 +27,29 @@ test('temporary folder cleanup keeps a referenced directory until the saved chat
       .toContain('is unavailable');
     expect((await daemon.invoke('list_sessions')).find((row: any) => row.id === saved.id))
       .toMatchObject({ cwd: daemon.home, cwdExists: true, preview: 'Keep this working folder' });
+  } finally { await daemon.stop(); }
+}, 60_000);
+
+test('closing an unused temporary chat keeps files of a saved chat working in its subfolder', async () => {
+  const daemon = await startDaemon();
+  const runtimeId = 'unused-temporary';
+  try {
+    const temporary = await daemon.invoke('create_temporary_chat', { hostId: 'local' });
+    const project = join(temporary.cwd, 'project');
+    mkdirSync(project);
+    writeFileSync(join(project, 'notes.txt'), 'saved work');
+    const saved = JSON.parse(execFileSync('node', [fileURLToPath(new URL('../fixtures/publish-chat.mjs', import.meta.url))], {
+      encoding: 'utf8', timeout: 30_000,
+      input: JSON.stringify({ home: daemon.home, cwd: project, content: '' }),
+    }));
+    await daemon.invoke('start_pi', { runtimeId, clientId: 'temporary-client', cwd: temporary.cwd, sessionId: temporary.sessionId });
+    await daemon.waitEvent('pi://event', packet => packet.runtimeId === runtimeId
+      && packet.event?.type === 'settings_pending' && packet.event.pending === false);
+    expect(await daemon.invoke('stop_pi', { runtimeId, discardBlank: true })).toBe(true);
+    await daemon.invoke('remove_temporary_chat', { hostId: 'local', path: temporary.cwd });
+    expect(readFileSync(join(project, 'notes.txt'), 'utf8')).toBe('saved work');
+    expect((await daemon.invoke('list_sessions')).find((row: any) => row.id === saved.id))
+      .toMatchObject({ cwd: project, cwdExists: true });
   } finally { await daemon.stop(); }
 }, 60_000);
 
