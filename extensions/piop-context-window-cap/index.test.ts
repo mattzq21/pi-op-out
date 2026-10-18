@@ -386,6 +386,26 @@ describe("context cap session", () => {
     expect(received).toEqual([{ cap: 300_000, source: "config", appliedWindow: 300_000 }]);
   });
 
+  test("a failing subscriber reports its error without stopping changes or other subscribers", async () => {
+    const host = await start();
+    const errors: Error[] = [];
+    const healthy: unknown[] = [];
+    const stopFailing = host.session().subscribe((state: any) => { if (state.source === "manual") throw new Error("view failed"); }, (error: Error) => errors.push(error));
+    host.session().subscribe((state: unknown) => healthy.push(state), () => undefined);
+    await host.session().getState();
+    await Promise.resolve();
+    await expect(host.session().setManualCap(500_000)).resolves.toEqual({ cap: 500_000, source: "manual", appliedWindow: 500_000 });
+    expect(errors.map(error => error.message)).toEqual(["view failed"]);
+    stopFailing();
+    await host.session().setManualCap(400_000);
+    expect(errors).toHaveLength(1);
+    expect(healthy).toEqual([
+      { cap: 300_000, source: "config", appliedWindow: 300_000 },
+      { cap: 500_000, source: "manual", appliedWindow: 500_000 },
+      { cap: 400_000, source: "manual", appliedWindow: 400_000 },
+    ]);
+  });
+
   test("the /cap command applies at idle and reports parse errors", async () => {
     const host = await start();
     const handler = host.commands.get("cap").handler;
