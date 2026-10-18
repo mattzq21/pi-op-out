@@ -32,6 +32,54 @@ test('separate development daemons notify their clients when shared settings cha
   } finally { await Promise.all(running.map(daemon => daemon.stop())); }
 }, 60_000);
 
+test('separate development daemons sharing settings accept one simultaneous save and let the other retry after reloading', async () => {
+  const home = temporaryDirectory('piop-settings-race-');
+  const running: TestDaemon[] = [];
+  try {
+    for (let index = 0; index < 2; index++) {
+      const daemon = await startDaemon({ home, development: true, projectRoot: temporaryDirectory('piop-settings-race-project-') });
+      running.push(daemon);
+      const initial = await daemon.invoke('load_app_settings');
+      initial.reviewPrompt = 'Initial settings for project ' + index;
+      const baseline = await daemon.invoke('save_app_settings', { settings: initial });
+      await synchronizationFinished(daemon, baseline.revision);
+    }
+    const daemons = running as [TestDaemon, TestDaemon];
+    const latest = await daemons[1].invoke('load_settings_change');
+    await daemons[0].waitEvent('pi://settings-changed', change => change.revision === latest.revision);
+    const baselines = await Promise.all(daemons.map(daemon => daemon.invoke('load_settings_change')));
+    expect(baselines[0].revision).toBe(baselines[1].revision);
+    expect(baselines[0].settings).toEqual(baselines[1].settings);
+
+    const prompts = ['Review correctness from the first project', 'Review reliability from the second project'];
+    const results = await Promise.allSettled(daemons.map((daemon, index) =>
+      daemon.invoke('save_app_settings', { settings: { ...structuredClone(baselines[index].settings), reviewPrompt: prompts[index] } })));
+    expect(results.filter(result => result.status === 'fulfilled')).toHaveLength(1);
+    expect(results.filter(result => result.status === 'rejected')).toHaveLength(1);
+    const loser = results.findIndex(result => result.status === 'rejected');
+    const winner = 1 - loser;
+    expect((results[loser] as PromiseRejectedResult).reason.message).toContain('Settings changed in another window or client');
+    const accepted = (results[winner] as PromiseFulfilledResult<any>).value;
+    await daemons[loser]!.waitEvent('pi://settings-changed', change => change.revision === accepted.committedRevision);
+    for (const daemon of daemons) {
+      const visible = await daemon.invoke('load_settings_change');
+      expect(visible.revision).toBe(accepted.committedRevision);
+      expect(visible.settings.reviewPrompt).toBe(prompts[winner]);
+    }
+
+    const reloaded = await daemons[loser]!.invoke('load_app_settings');
+    reloaded.reviewPrompt = 'Review correctness and reliability from both projects';
+    const retried = await daemons[loser]!.invoke('save_app_settings', { settings: reloaded });
+    expect(retried.committedRevision).toBe(accepted.committedRevision + 1);
+    await daemons[winner]!.waitEvent('pi://settings-changed', change => change.revision === retried.committedRevision);
+    for (const daemon of daemons) {
+      const visible = await daemon.invoke('load_settings_change');
+      expect(visible.revision).toBe(retried.committedRevision);
+      expect(visible.settings.reviewPrompt).toBe('Review correctness and reliability from both projects');
+    }
+  } finally { await Promise.all(running.map(daemon => daemon.stop())); }
+}, 60_000);
+
 test('saved settings survive a daemon restart and the saved version remains editable', async () => {
   let daemon = await startDaemon();
   try {
