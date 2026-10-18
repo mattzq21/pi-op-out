@@ -1,7 +1,7 @@
 import { expect, test } from 'bun:test';
 import { mkdirSync, symlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { startDaemon } from './harness';
+import { remoteMachine, startDaemon, useRemotes } from './harness';
 
 // A real 1x1 PNG image.
 const PNG = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==';
@@ -89,5 +89,30 @@ test('after the project folder is gone, an image read still gives goal attachmen
     expect(await daemon.invoke('read_image_file', read(join(archived, 'attachment-2.png')))).toBe('data:image/png;base64,' + image(2).toString('base64'));
     expect(await daemon.failure('read_image_file', read(join(lookalike, 'attachment-1.png')))).toBe('Image is outside the project');
     expect(await daemon.failure('read_image_file', read(join(storage, 'sessions', folder, 'photo.png')))).toBe('Image is outside the project');
+  } finally { await daemon.stop(); }
+}, 60_000);
+
+test('an image read for a remote machine whose project folder is gone gives a goal attachment image from the storage of that machine, which the local machine rejects', async () => {
+  const daemon = await startDaemon();
+  try {
+    const server = await remoteMachine(daemon, 'server', 'Server');
+    try {
+      await useRemotes(daemon, [server]);
+      const cwd = join(server.home, 'deleted-project');
+      const folder = '--' + cwd.slice(1).replaceAll('/', '-') + '--';
+      const sessions = join(server.home, '.piop', 'sessions', folder);
+      const attachments = join(sessions, 'attachments', 'goal-a1b2c3');
+      mkdirSync(attachments, { recursive: true });
+      // Different bytes in each file, so a read of the wrong file shows.
+      const image = (marker: number) => Buffer.concat([Buffer.from(PNG, 'base64'), Buffer.from([marker])]);
+      writeFileSync(join(attachments, 'attachment-1.png'), image(1));
+      writeFileSync(join(sessions, 'photo.png'), image(2));
+      const read = (hostId: string, path: string) => ({ hostId, cwd, path });
+
+      expect(await daemon.invoke('read_image_file', read('server', join(attachments, 'attachment-1.png')))).toBe('data:image/png;base64,' + image(1).toString('base64'));
+      expect(await daemon.failure('read_image_file', read('server', join(sessions, 'photo.png')))).toBe('Image is outside the project');
+      // The same file is outside the storage of the local machine.
+      expect(await daemon.failure('read_image_file', read('local', join(attachments, 'attachment-1.png')))).toBe('Image is outside the project');
+    } finally { await useRemotes(daemon, []); await server.stop(); }
   } finally { await daemon.stop(); }
 }, 60_000);
