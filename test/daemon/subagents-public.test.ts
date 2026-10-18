@@ -292,3 +292,22 @@ test('pausing a parent cancels its busy child, and after resume the parent hears
   expect(messages.some(message => message.role === 'assistant' && message.content?.some((part: any) => part.name === 'followup_task'))).toBe(true);
 }, 90000);
 
+test('deleting a parent while its child runs a command stops the child and deletes both chats', async () => {
+  agents.scripts.set('Delegate a doomed job', messages => called(messages, 'spawn_agent') ? { text: 'Waiting.' } : { tool: 'spawn_agent', arguments: { task_name: 'doomed', message: 'Doomed child job' } });
+  agents.scripts.set('Doomed child job', messages => called(messages, 'bash') ? { text: 'Child done.' } : { tool: 'bash', arguments: { command: 'sleep 3; echo done > doomed-late.txt' } });
+  const root = await agents.rootChat();
+  await root.command({ type: 'prompt', message: 'Delegate a doomed job' });
+  const childCalls = () => agents.model.requests.filter(request => JSON.stringify(request.messages).includes('Doomed child job') && text(request.messages.at(-1)).startsWith('Untrusted agent content'));
+  for (let tries = 0; !childCalls().length && tries < 200; tries++) await Bun.sleep(100);
+  await Bun.sleep(800);
+  const { sessionFile } = await root.command({ type: 'get_state' });
+  const deleted = await agents.daemon.invoke('delete_session', { hostId: 'local', sessionPath: sessionFile, clientId: 'laptop' });
+  expect(deleted).toHaveLength(2);
+  const calls = agents.model.requests.length;
+  await Bun.sleep(4500);
+  expect(existsSync(join(root.cwd, 'doomed-late.txt'))).toBe(false);
+  expect(agents.model.requests.length).toBe(calls);
+  const listed = (await agents.daemon.invoke('list_sessions')).map((session: any) => session.path);
+  expect(deleted.some((path: string) => listed.includes(path))).toBe(false);
+}, 60000);
+
