@@ -7,7 +7,7 @@ import { mcpServersSchema } from "./mcp-schema.ts";
 import { fallbackConfig, migrateQuestionSnapshot, selectedProfileState } from "./profiles.ts";
 import { migrateExcalidrawAgent } from "./excalidraw.ts";
 import { mcpServers, type McpServers, type LegacyMcpServer } from "./mcp-config.ts";
-import type { Agent, AgentSnapshot, RequiredToolsRequest, McpToolsRequest, McpSelection } from "./contracts.ts";
+import type { Agent, AgentSnapshot, RequiredToolsRequest, McpToolsRequest, McpSelection, SessionAgentState } from "./contracts.ts";
 import { fastModeSession, fastModelProblem, hostFastModels } from "./fast-models.ts";
 import { agentExtensions, extensionPaths } from "./extension-loader.ts";
 import { capRangeError } from "../piop-context-window-cap/interface.ts";
@@ -323,6 +323,8 @@ export default async function defineAgents(pi: ExtensionAPI) {
   let modelOverride: string | undefined;
   let effortOverride: string | undefined;
   let reloading = false;
+  /** The default agent's fast mode for a new session. The fast mode extension loads its state in its own session_start, so startup cannot wait for it; the first message does. */
+  let startingFastMode: Promise<string | undefined> | undefined;
   process.env.PI_DEFINE_AGENTS_ACTIVE = "1";
   const findAgent = (name: string) => config.agents.find((agent) => agent.name === name);
   const defaultAgentName = () => required(config.agents.find(agent => agent.isDefault)).name;
@@ -389,6 +391,17 @@ export default async function defineAgents(pi: ExtensionAPI) {
   });
 
   const restoredAgentName = (name: string | undefined) => !name || (name === "default" && !findAgent("default")) ? "general" : name;
+
+  /** The agent a session starts as. Subagent and review sessions store their agent before they start, so only a new root session has no stored state and starts as the default agent. */
+  const startingAgentName = (stored: SessionAgentState | undefined) => {
+    const name = snapshot?.definition.name ?? (stored ? restoredAgentName(stored.active) : defaultAgentName());
+
+    if (name === "voice-orchestrator") { snapshot = undefined;
+
+      return "general"; }
+
+    return name;
+  };
 
   const currentSkillPaths = () => {
     const agent = currentAgent();
@@ -628,17 +641,23 @@ export default async function defineAgents(pi: ExtensionAPI) {
     const { states, stored, identity } = readAgentState(branch, runtimeSession);
     savedState = identity;
     snapshot = migrateQuestionSnapshot(stored?.snapshot);
-    // Subagent and review sessions store their agent before they start, so only a new root session has no stored state.
-    active = snapshot?.definition.name ?? (stored ? restoredAgentName(stored.active) : defaultAgentName());
-
-    if (active === "voice-orchestrator") { active = "general"; snapshot = undefined; }
+    active = startingAgentName(stored);
 
     locked = sessionIsLocked(states, branch);
 
     modelOverride = stored?.modelOverride;
     effortOverride = stored?.effortOverride;
     publish(ctx);
+    startingFastMode = undefined;
     const error = await useAgent(active, ctx, { applyMcp: true });
+    const agent = currentAgent();
+
+    // A new session applies its agent's fast mode. A stored session keeps the fast mode choice that the fast mode extension saved.
+    if (!stored && !error && agent) {
+      const pending = applyAgentFastMode(agent);
+      startingFastMode = pending;
+      void pending.then(failure => { if (failure && startingFastMode === pending) { pi.setActiveTools([]); ctx.ui.notify(failure, "warning"); } });
+    }
 
     if (error) ctx.ui.notify(error, "warning");
     publish(ctx);
@@ -653,15 +672,16 @@ export default async function defineAgents(pi: ExtensionAPI) {
     if (!snapshot) {
       const stored = readAgentState(ctx.sessionManager.getBranch(), ctx.sessionManager.getSessionFile() || "").stored;
       snapshot = migrateQuestionSnapshot(stored?.snapshot);
-      if (snapshot) active = snapshot.definition.name;
+      active = startingAgentName(stored);
     }
     const agent = currentAgent(); const skillPaths = agent ? agentSkills(pi, agent) : [];
 
   return skillPaths.length ? { skillPaths } : undefined; });
   pi.on("input", async (event, ctx) => {
-    const error = await useAgent(active, ctx);
+    const error = await useAgent(active, ctx) ?? await startingFastMode;
 
-    if (error) { ctx.ui.setStatus("piop-input-rejected", JSON.stringify({ text: event.text, error })); ctx.ui.notify(error, "error");
+    // useAgent turns the tools on again, so a fast mode failure must turn them off here.
+    if (error) { pi.setActiveTools([]); ctx.ui.setStatus("piop-input-rejected", JSON.stringify({ text: event.text, error })); ctx.ui.notify(error, "error");
 
     return { action: "handled" }; }
 
@@ -711,10 +731,12 @@ export default async function defineAgents(pi: ExtensionAPI) {
     const previousSkills = currentSkillPaths();
     const previousTools = pi.getActiveTools();
     active = name; snapshot = undefined; modelOverride = undefined; effortOverride = undefined;
+    const previousFastMode = startingFastMode;
+    startingFastMode = undefined;
     const skillsChanged = JSON.stringify(previousSkills) !== JSON.stringify(currentSkillPaths());
     const activationError = await useAgent(active, ctx, { persistSnapshot: false, applyFastMode: true, applyMcp: true });
 
-    if (activationError) { active = previousActive; snapshot = previousSnapshot; modelOverride = previousModel; effortOverride = previousEffort; pi.setActiveTools(previousTools); await useAgent(active, ctx, { persistSnapshot: false, applyMcp: true }); throw new Error(activationError); }
+    if (activationError) { startingFastMode = previousFastMode; active = previousActive; snapshot = previousSnapshot; modelOverride = previousModel; effortOverride = previousEffort; pi.setActiveTools(previousTools); await useAgent(active, ctx, { persistSnapshot: false, applyMcp: true }); throw new Error(activationError); }
 
     saveState();
 

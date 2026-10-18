@@ -265,6 +265,41 @@ test('general becomes the default when no agent has the flag, and two flags are 
   await assert.rejects(g.load(), /Only one agent can be the default/);
 });
 
+const chosenConfig = () => configured([profile('general', { skills: ['/general-skill'] }), profile('chosen', { isDefault: true, skills: ['/chosen-skill'], model: 'openai/gpt-5.4', fastMode: true })]);
+const fastModel = { provider: 'openai', id: 'gpt-5.4', api: 'openai-responses' };
+const fastCatalog = [{ slug: 'gpt-5.4', service_tiers: [{ id: 'priority' }] }];
+
+for (const agentFirst of [false, true]) {
+  test(`a new session loads the default agent's skills and fast mode on its first turn (${agentFirst ? 'agents' : 'fast mode'} loads first)`, async t => {
+    const f = await agentFixture(t, { config: chosenConfig(), model: fastModel, models: [fastModel], realFastMode: { agentFirst, catalog: fastCatalog } });
+    await f.load();
+    assert.deepEqual(await f.emit('resources_discover', {}), { skillPaths: ['/chosen-skill'] });
+    await f.start();
+    assert.equal(f.capability().active, 'chosen');
+    assert.equal(await f.fastEnabled(), true);
+    assert.deepEqual(await f.emit('resources_discover', {}), { skillPaths: ['/chosen-skill'] });
+    assert.deepEqual(f.notices, []);
+  });
+}
+
+test('a resumed session keeps its saved agent, skills and fast mode choice instead of the default agent', async t => {
+  const f = await agentFixture(t, {
+    config: chosenConfig(), model: fastModel, models: [fastModel], realFastMode: { agentFirst: false, catalog: fastCatalog },
+    entries: [{ type: 'custom', customType: 'pi-define-agents-state', data: { active: 'chosen', locked: true } }, { type: 'custom', customType: 'piop-fast-mode-state', data: { enabled: false } }],
+  });
+  await f.load();
+  assert.deepEqual(await f.emit('resources_discover', {}), { skillPaths: ['/chosen-skill'] });
+  await f.start();
+  assert.equal(f.capability().active, 'chosen');
+  assert.equal(await f.fastEnabled(), false);
+
+  const g = await agentFixture(t, { config: chosenConfig(), entries: [{ type: 'custom', customType: 'pi-define-agents-state', data: { active: 'general' } }] });
+  await g.load();
+  assert.deepEqual(await g.emit('resources_discover', {}), { skillPaths: ['/general-skill'] });
+  await g.start();
+  assert.equal(g.capability().active, 'general');
+});
+
 test('manual model and effort defaults survive extension reload', async t => {
   const f = await agentFixture(t, { config: null });
   await f.load(); await f.start();
