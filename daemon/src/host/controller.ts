@@ -273,15 +273,21 @@ export class Host implements SessionHost {
   }
 
   private async reloadAgents(runtime: string, sessionId: string): Promise<any> {
+    const revision = await this.reloadAgentDefinitions(() => this.agentReloadTarget(runtime, sessionId));
+    return { success: true, sessionId, agentRevision: revision };
+  }
+
+  /** Reads the agent definitions again and applies them to every session. `target` must stay the same while they load. */
+  private async reloadAgentDefinitions(target: () => unknown = () => undefined): Promise<number> {
     const release = await this.configurationGate.lock();
     let revision: number;
     let sessions: Session[];
     try {
-      const target = this.agentReloadTarget(runtime, sessionId);
+      const before = target();
       if (this.configurationValue === null) throw new Error('Daemon is not configured');
       const settings = structuredClone(this.configurationValue.settings ?? null);
       const definitions = await Agents.load(this.home, this.storage, settings, false, this.services.fastModels());
-      if (target !== this.agentReloadTarget(runtime, sessionId)) throw new Error('The session changed while loading agent definitions. Reload from its current host.');
+      if (before !== target()) throw new Error('The session changed while loading agent definitions. Reload from its current host.');
       this.agentRevision += 1;
       revision = this.agentRevision;
       this.agentDefinitions = definitions;
@@ -292,7 +298,7 @@ export class Host implements SessionHost {
       session.publish({ type: 'settings_pending', pending: true }, null);
       this.reconcile(session);
     }
-    return { success: true, sessionId, agentRevision: revision };
+    return revision;
   }
 
   private agentReloadTarget(runtime: string, sessionId: string): Session {
@@ -327,7 +333,7 @@ export class Host implements SessionHost {
     if (name === 'detach') this.attachments.delete(runtime);
     switch (name) {
       case 'check_daemon_idle': case 'prepare_daemon_restart': return this.restartRequest(packet);
-      case 'agent_definitions': return structuredClone(this.agentDefinitions);
+      case 'agent_definitions': if (flag(packet, 'reload')) await this.reloadAgentDefinitions(); return structuredClone(this.agentDefinitions);
       case 'conversation_owner': return this.ownership().owns(text(packet, 'sessionId'), text(packet, 'clientId'), flag(packet, 'allowReleased'));
       case 'conversation_mutation': return this.mutations.begin(packet);
       case 'conversation_mutation_end': return this.mutations.end(packet);

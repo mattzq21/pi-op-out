@@ -214,6 +214,7 @@ export class NativeTransport {
   currentHostId() { return this.hostId; }
   currentDaemonId() { return this.daemonId; }
   reloadAgentDefinitions(sessionId: string) {
+    if (this.draftOnly()) return this.settings.runCommand(() => this.draftRuntime.reload());
     const version = this.connectionVersion;
     const hostId = this.hostId;
 

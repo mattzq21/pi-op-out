@@ -13,14 +13,14 @@ const catalogs = new Map<string, Promise<z.infer<typeof catalogSchema>>>();
 
 export function clearDraftCatalogs() { catalogs.clear(); }
 
-function loadCatalog(hostId: string) {
+function loadCatalog(hostId: string, reload = false) {
   const connection = captureDaemonTransport();
   const key = JSON.stringify([connection.identity, hostId]);
   const cached = catalogs.get(key);
 
-  if (cached) return cached;
+  if (cached && !reload) return cached;
 
-  const pending = nativeCall("provider_auth", { hostId, request: { action: "draft_catalog" } }, catalogSchema).catch(reason => {
+  const pending = nativeCall("provider_auth", { hostId, request: { action: "draft_catalog", reload } }, catalogSchema).catch(reason => {
     if (catalogs.get(key) === pending) catalogs.delete(key);
 
     throw reason;
@@ -44,6 +44,12 @@ export class DraftRuntime {
 
   async load() {
     this.catalog = await loadCatalog(this.hostId());
+  }
+
+  /** Reads the agent definitions on the host again and publishes the new list. */
+  async reload() {
+    this.catalog = await loadCatalog(this.hostId(), true);
+    this.publishAgents();
   }
 
   async command(command: RpcCommand) {
@@ -97,8 +103,14 @@ export class DraftRuntime {
     this.changes.delete("set_model"); this.changes.delete("set_thinking_level");
     this.changes.set("select_agent", { type: "select_agent", agent: name }); this.revision++;
     this.emit({ type: "extension_ui_request", id: crypto.randomUUID(), method: "setStatus", statusKey: "pi-desktop-fast-mode", statusText: this.fastMode ? "Fast mode on" : "Fast mode off" });
-    this.emit({ type: "extension_ui_request", id: crypto.randomUUID(), method: "setStatus", statusKey: DEFINED_AGENTS_STATUS_KEY, statusText: encodeAgentValue({ version: 1, active: this.agent, locked: false, saved: false, config: this.catalog?.config ?? { agents: [] } }) });
+    this.publishAgents();
 
     return {};
+  }
+
+  private publishAgents() {
+    const config = this.catalog?.config ?? { agents: [] };
+    const capability = { version: 1, active: this.agent, locked: false, saved: false, unavailable: !config.agents.some(agent => agent.name === this.agent), config };
+    this.emit({ type: "extension_ui_request", id: crypto.randomUUID(), method: "setStatus", statusKey: DEFINED_AGENTS_STATUS_KEY, statusText: `json:${encodeAgentValue(capability)}` });
   }
 }
