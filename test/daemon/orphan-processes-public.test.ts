@@ -67,3 +67,26 @@ test('a clean daemon stop also stops the programs its agents left running', asyn
     await agents.close().catch(() => {});
   }
 }, 120000);
+
+test('stopping an agent while its command runs ends that command and the turn, without asking the model again', async () => {
+  const agents = await agentDaemon();
+  const marker = '6500.' + Math.floor(Math.random() * 1e6);
+  try {
+    agents.scripts.set('Run a slow build', messages => called(messages, 'bash') ? { text: 'Build done.' } : { tool: 'bash', arguments: { command: 'sleep ' + marker } });
+    const chat = await agents.rootChat();
+    await chat.command({ type: 'prompt', message: 'Run a slow build' });
+    for (let tries = 0; tries < 100 && !processes('sleep ' + marker).length; tries++) await Bun.sleep(50);
+    expect(processes('sleep ' + marker)).toHaveLength(1);
+    const asked = agents.model.requests.length;
+    await chat.command({ type: 'abort' });
+    for (let tries = 0; tries < 60 && processes('sleep ' + marker).length; tries++) await Bun.sleep(50);
+    expect(processes('sleep ' + marker)).toEqual([]);
+    const history = await chat.until(messages => messages.at(-1)?.role === 'assistant' && messages.at(-1).stopReason === 'aborted');
+    expect(history.some(message => text(message) === 'Build done.')).toBe(false);
+    await Bun.sleep(500);
+    expect(agents.model.requests.length).toBe(asked);
+  } finally {
+    for (const { pid } of processes('sleep ' + marker)) process.kill(pid, 'SIGKILL');
+    await agents.close().catch(() => {});
+  }
+}, 120000);
