@@ -3,7 +3,7 @@ import { spawn } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { createInterface } from 'node:readline';
-import { atTestExit, daemonExecutable, startDaemon, temporaryDirectory } from './harness';
+import { daemonExecutable, startDaemon, temporaryDirectory } from './harness';
 
 let bundle: Promise<string> | undefined;
 function hostExecutable(): Promise<string> {
@@ -61,17 +61,6 @@ export async function startHost(options: { home?: string; env?: Record<string, s
   const child = spawn(process.execPath, [await hostExecutable(), await daemonExecutable()], {
     env: { ...process.env, ...options.env, HOME: home }, stdio: ['pipe', 'pipe', 'pipe'],
   });
-  if (child.pid !== undefined) {
-    const pid = child.pid;
-    const stat = readFileSync('/proc/' + pid + '/stat', 'utf8');
-    const started = stat.slice(stat.lastIndexOf(')') + 1).trim().split(/\s+/)[19];
-    // PID reuse must never let a late janitor signal a different process.
-    const cleanup = `const fs = require('node:fs');
-const same = () => { try { const stat = fs.readFileSync('/proc/${pid}/stat', 'utf8'); return stat.slice(stat.lastIndexOf(')') + 1).trim().split(/\\s+/)[19] === ${JSON.stringify(started)}; } catch (error) { if (error.code === 'ENOENT') return false; throw error; } };
-if (same()) { process.kill(${pid}, 'SIGTERM'); setTimeout(() => { if (same()) process.kill(${pid}, 'SIGKILL'); }, 15000); }`;
-    const quote = (text: string) => "'" + text.replaceAll("'", "'\\''") + "'";
-    atTestExit(quote(process.execPath) + ' -e ' + quote(cleanup.replaceAll('\n', ' ')));
-  }
   const events: any[] = [];
   const pending = new Map<number, { resolve(value: any): void; reject(error: Error): void }>();
   const listeners = new Set<() => void>();
