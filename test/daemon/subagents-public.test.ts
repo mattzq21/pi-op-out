@@ -1,4 +1,6 @@
 import { afterAll, beforeAll, expect, test } from 'bun:test';
+import { existsSync } from 'node:fs';
+import { join } from 'node:path';
 import { agentDaemon, called, text } from './agent-chats';
 
 let agents: Awaited<ReturnType<typeof agentDaemon>>;
@@ -231,3 +233,20 @@ test('waiting for subagents ends early when the user sends a new message, which 
   expect(messages.filter(message => message.role === 'assistant').map(text).filter(Boolean)).toEqual(['Wait ended: Wait interrupted by new input.', 'Handled: Here is the news']);
   expect(Date.now() - sent).toBeLessThan(8000);
 }, 120000);
+
+test('archiving a parent while its child runs a command ends the child\'s command and the child makes no more model calls', async () => {
+  agents.scripts.set('Delegate a slow job', messages => called(messages, 'spawn_agent') ? { text: 'Waiting.' } : { tool: 'spawn_agent', arguments: { task_name: 'slow', message: 'Slow child job' } });
+  agents.scripts.set('Slow child job', messages => called(messages, 'bash') ? { text: 'Child done.' } : { tool: 'bash', arguments: { command: 'sleep 3; echo done > child-late.txt' } });
+  const root = await agents.rootChat();
+  await root.command({ type: 'prompt', message: 'Delegate a slow job' });
+  const childCalls = () => agents.model.requests.filter(request => JSON.stringify(request.messages).includes('Slow child job') && text(request.messages.at(-1)).startsWith('Untrusted agent content'));
+  for (let tries = 0; !childCalls().length && tries < 200; tries++) await Bun.sleep(100);
+  await Bun.sleep(800);
+  const { sessionFile } = await root.command({ type: 'get_state' });
+  await agents.daemon.invoke('archive_session', { hostId: 'local', sessionPath: sessionFile, terminalIds: [], clientId: 'laptop' });
+  const calls = agents.model.requests.length;
+  await Bun.sleep(4500);
+  expect(existsSync(join(root.cwd, 'child-late.txt'))).toBe(false);
+  expect(agents.model.requests.length).toBe(calls);
+}, 60000);
+
