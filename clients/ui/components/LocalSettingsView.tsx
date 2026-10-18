@@ -193,7 +193,7 @@ function DaemonSettingsEditor(componentProps: Props & { target: string; label: s
         throw reason;
       }
 
-      await restoreAgentConfiguration(restoreAgents, String(reason));
+      await restoreAgentConfiguration(restoreAgents, (reason instanceof Error ? reason.message : String(reason)));
       throw reason;
     } finally { await writer.dispose().catch(() => undefined); }
   };

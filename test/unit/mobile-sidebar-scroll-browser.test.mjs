@@ -8,7 +8,7 @@ import solid from 'babel-preset-solid';
 import typescript from '@babel/preset-typescript';
 import { chromium } from 'playwright-core';
 import assert from 'node:assert/strict';
-import { daemonClient } from './daemon-client.mjs';
+import { daemonClient } from '../daemon-client.mjs';
 
 let browser, server, url;
 before(async () => {

@@ -86,6 +86,36 @@ describe('settings editor', () => {
     await click(save()); assert.deepEqual(saves[1][0].hiddenModels, ['remote/model']); assert.deepEqual(saves[1][0].knownModels, ['remote/model']);
   });
 
+  test('the review settings mark a review agent that no longer exists, and restore the default prompt', async () => {
+    await render({ settings: { ...props.settings, reviewAgent: 'gone', reviewPrompt: 'Only spelling.' }, agentConfig: { agents: [profile('general')] } });
+    await section('Review');
+    const agent = control('Review agent');
+    assert.equal(agent.value, 'gone');
+    assert.equal(agent.selectedOptions[0].textContent, 'Unavailable: gone');
+    assert.equal(control('Review prompt').value, 'Only spelling.');
+    await click(button('Restore default prompt'));
+    assert.match(control('Review prompt').value, /\S/);
+    assert.notEqual(control('Review prompt').value, 'Only spelling.');
+    await click(save());
+    assert.equal(saves[0][0].reviewPrompt, control('Review prompt').value);
+  });
+
+  test('subagent limits are saved as whole numbers, and a cleared or invalid limit cannot be saved', async () => {
+    await render({ settings: { ...props.settings, tools: [{ name: 'subagent', description: 'Delegate', enabled: true }] }, agentConfig: { agents: [profile('general', { tools: ['subagent'] })] } });
+    await section('Agents');
+    const limit = control('Maximum concurrent subagents');
+    assert.equal(limit.value, '8');
+    await enterText(limit, '3');
+    await click(save());
+    assert.equal(saves[0][1].agents[0].max_subagents, 3);
+    for (const text of ['', '2.5', '-1']) {
+      await enterText(control('Maximum concurrent subagents'), text);
+      assert.equal(save().disabled, true, JSON.stringify(text) + ' cannot be saved');
+      assert.match(document.querySelector('[role=alert]')?.textContent ?? '', /Every agent needs a unique name and valid resources/);
+    }
+    assert.equal(saves.length, 1);
+  });
+
   test('MCP JSON validation rejects bad URLs, headers, arguments and timeouts before saving', async () => {
     await render({ agentConfig: { agents: [profile('general')] } }); await section('Agents');
     const editor = () => control('MCP server configuration');

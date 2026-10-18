@@ -173,7 +173,7 @@ export function SessionPanel(props: Props) {
     try {
       await saveGroup(name, capturedEditingGroupId, groupProject());
       groupDraftActive.current = false; setGroupDraftError(undefined); setNewGroupName(undefined); setEditingGroupId(undefined);
-    } catch (reason) { setGroupDraftError(String(reason)); }
+    } catch (reason) { setGroupDraftError((reason instanceof Error ? reason.message : String(reason))); }
     finally { groupSavePending.current = false; setGroupSaving(false); }
   };
 
@@ -530,7 +530,7 @@ export function SessionPanel(props: Props) {
 
     const menuItems = groupMenu() ? [
       ...(customGroup ? [{ label: "Rename group", Icon: Pencil, disabled: false, run: () => { closeMenu(); editGroup(customGroup); } }] : []),
-      ...(groupDirectory?.cwd ? [{ label: "Open directory", Icon: FolderOpen, disabled: false, run: () => { setGroupActionError(undefined); void openGroupDirectory(required(groupDirectory.cwd), groupDirectory.hostId ?? "local").catch((reason) => setGroupActionError(String(reason))); } }] : []),
+      ...(groupDirectory?.cwd ? [{ label: "Open directory", Icon: FolderOpen, disabled: false, run: () => { setGroupActionError(undefined); void openGroupDirectory(required(groupDirectory.cwd), groupDirectory.hostId ?? "local").catch((reason) => setGroupActionError((reason instanceof Error ? reason.message : String(reason)))); } }] : []),
       { label: "Forget group", Icon: Trash2, disabled: false, run: () => setRemovingGroup({ id: required((groupMenu())).projectKey, name: required((groupMenu())).label }) },
     ] : menu() ? actions.flatMap(([action, Icon, label]) => (!isMobile || action !== "new-window") && (!["copy-id", "open-rollout"].includes(action) || panel().debug) ? [{ label, Icon, disabled: props.isArchiving(required(menu()).session) || (required(menu()).session.isDraft === true && action !== "open-directory") || (action === "open-rollout" && !required(menu()).session.path), run: () => panel().onAction(required((menu())).session, action) }] : []) : [];
 

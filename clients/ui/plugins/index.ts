@@ -63,9 +63,9 @@ export async function restartPlugins(host: string, enabled: string[], revision: 
 
   try { await waitForClientPlugins(host); }
   catch (reason) {
-    if (result.phase !== "complete") throw new Error(`Client plugins could not load after daemon recovery: ${String(reason)}`);
+    if (result.phase !== "complete") throw new Error(`Client plugins could not load after daemon recovery: ${(reason instanceof Error ? reason.message : String(reason))}`);
 
-    return restorePlugins(host, previous.configured, status.revision, String(reason));
+    return restorePlugins(host, previous.configured, status.revision, (reason instanceof Error ? reason.message : String(reason)));
   }
 
   const error = result.error ?? status.error;
@@ -88,7 +88,7 @@ async function restorePlugins(host: string, enabled: string[], revision: string,
 
     return { ...restored.status, error };
   } catch (recoveryError) {
-    const error = `Client plugins could not load: ${reason}. Could not restore the previous setup: ${String(recoveryError)}`;
+    const error = `Client plugins could not load: ${reason}. Could not restore the previous setup: ${(recoveryError instanceof Error ? recoveryError.message : String(recoveryError))}`;
     setPluginError(host, error);
     throw new Error(error);
   }

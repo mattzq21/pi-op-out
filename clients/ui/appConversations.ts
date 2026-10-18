@@ -2,7 +2,8 @@ import { z } from "zod";
 import { createMutable } from "solid-js/store";
 import { required } from "./lib/required";
 import { fastModelNames, hostFastModels } from "./lib/fastModels";
-import { batch,createComputed,createMemo,createSignal } from "solid-js";
+import { batch,createComputed,createMemo,createSignal,onCleanup } from "solid-js";
+import { showBackgroundErrors } from "./lib/backgroundErrors";
 import { createConversationArchive } from "./appArchive";
 import { createConversationDrafts } from "./appDrafts";
 import { createAppExtensions } from "./appExtensions";
@@ -111,6 +112,7 @@ export function createAppConversations(preloadChat: () => void) {
 
     return () => setNotices(current => current.filter(item => item.id !== id));
   };
+  onCleanup(showBackgroundErrors(addNotice));
 
   const hasRetainedDraft = (ownerTransport: NativeTransport) => {
     const key = transportConversationKeys.current.get(ownerTransport);
@@ -305,7 +307,7 @@ export function createAppConversations(preloadChat: () => void) {
       try {
         const key = `${hostId ?? capturedTransport.currentHostId()}:${nextState.sessionId}`; await updateSessionGroups(group.cwd ? { type: "project", key, project: group } : { type: "assign", key, group: group.id });
         pendingSessionGroups.current.delete(capturedTransport);
-      } catch (reason) { addNotice({ title: "Could not add chat to group", message: String(reason) }); }
+      } catch (reason) { addNotice({ title: "Could not add chat to group", message: reason instanceof Error ? reason.message : String(reason) }); }
     }
 
     return nextState;
@@ -503,7 +505,7 @@ export function createAppConversations(preloadChat: () => void) {
     const releaseUnusedTransport = () => {
       if (activated || !nextTransport) return;
       transportConversationKeys.current.delete(nextTransport); pendingSessionGroups.current.delete(nextTransport);
-      void pool.release(nextTransport).catch((reason) => addNotice({ title: "Could not clean up the new conversation", message: String(reason) }));
+      void pool.release(nextTransport).catch((reason) => addNotice({ title: "Could not clean up the new conversation", message: reason instanceof Error ? reason.message : String(reason) }));
     };
 
     try {
@@ -558,7 +560,7 @@ export function createAppConversations(preloadChat: () => void) {
       }
 
       return await createNewSessionDraft(clearProject, group, project, host);
-    } catch (reason) { addNotice({ title: "Could not open the draft", message: String(reason) }); }
+    } catch (reason) { addNotice({ title: "Could not open the draft", message: reason instanceof Error ? reason.message : String(reason) }); }
     finally { newSessionPending.current = false; setMainComposerFocusRequest(request => request + 1); }
   };
 
@@ -675,7 +677,7 @@ export function createAppConversations(preloadChat: () => void) {
 
       return; }
 
-    try { await openSessionWindow({ cwd: session.cwd, sessionPath: session.path, sessionId: session.id, hostId: session.hostId }); } catch (reason) { addNotice({ title: "Could not open window", message: String(reason) }); } };
+    try { await openSessionWindow({ cwd: session.cwd, sessionPath: session.path, sessionId: session.id, hostId: session.hostId }); } catch (reason) { addNotice({ title: "Could not open window", message: reason instanceof Error ? reason.message : String(reason) }); } };
 
   const sessionAction = async (session: SessionSummary, action: SessionAction) => archives.isPending(session) || (session.isDraft && action !== "open-directory") ? undefined : performSessionAction(session, action);
 

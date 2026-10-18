@@ -9,6 +9,6 @@ export async function sessionDebugAction(session: SessionSummary, action: string
     if (opening) await openRolloutFile(session.path, session.hostId ?? "local");
     else await copyText(session.id);
   } catch (reason) {
-    notify({ title: opening ? "Could not open rollout file" : "Could not copy session ID", message: String(reason) });
+    notify({ title: opening ? "Could not open rollout file" : "Could not copy session ID", message: reason instanceof Error ? reason.message : String(reason) });
   }
 }

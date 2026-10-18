@@ -1,3 +1,4 @@
+import { reportBackgroundError } from "./backgroundErrors";
 import { createSignal, onCleanup, onMount, type Accessor } from "solid-js";
 import { z } from "zod";
 
@@ -65,7 +66,7 @@ function flushSizes() {
   void saveSizes(entries).then(() => {
     for (const [key, value] of entries) if (pending.get(key) === value) pending.delete(key);
     succeeded = true;
-  }).catch(error => { console.error("Could not save panel sizes", error); }).finally(() => {
+  }).catch(error => { reportBackgroundError("Could not save panel sizes", error); }).finally(() => {
     saving = false;
 
     if (succeeded) flushSizes();
@@ -74,7 +75,7 @@ function flushSizes() {
 
 window.addEventListener("focus", flushSizes);
 
-export function createPanelSize(key: string, fallback: number, minimum: number, _olderKeys: string[] = []): readonly [Accessor<number>, (value: number) => void] {
+export function createPanelSize(key: string, fallback: number, minimum: number): readonly [Accessor<number>, (value: number) => void] {
   const [size, setSize] = createSignal(cache.get(key) ?? fallback);
   const revision = revisions.get(key);
   const pendingAtStart = pending.has(key);
@@ -89,7 +90,7 @@ export function createPanelSize(key: string, fallback: number, minimum: number, 
       cache.set(key, value);
 
       if (!disposed) setSize(value);
-    }).catch(error => { console.error("Could not restore panel size", error); });
+    }).catch(error => { reportBackgroundError("Could not restore panel size", error); });
   });
 
   const update = (value: number) => {

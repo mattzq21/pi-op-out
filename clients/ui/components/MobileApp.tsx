@@ -136,7 +136,7 @@ export function MobileApp() {
 
       return debugUrl;
     });
-    debugAddressLoaded.current = debugConnection.then(() => undefined, (reason) => { if (!disposed) setError(String(reason)); });
+    debugAddressLoaded.current = debugConnection.then(() => undefined, (reason) => { if (!disposed) setError((reason instanceof Error ? reason.message : String(reason))); });
     void Promise.all([debugConnection, readMobileAnchor().catch((reason) => {
       if (!disposed && generation.current === startupGeneration) setAnchorReadFailed(true);
       throw reason;
@@ -150,7 +150,7 @@ export function MobileApp() {
         setUrl(debugUrl);
         void connectRef.current(debugUrl);
       } else if (saved) void connectRef.current(saved.url);
-    }).catch((reason) => { if (!disposed && generation.current === startupGeneration) setError(String(reason)); });
+    }).catch((reason) => { if (!disposed && generation.current === startupGeneration) setError((reason instanceof Error ? reason.message : String(reason))); });
     window.addEventListener("piop-mobile-disconnect", disconnect);
 
     const back = AndroidApp.addListener("backButton", () => {
@@ -160,7 +160,7 @@ export function MobileApp() {
 
       return; }
 
-      if (window.dispatchEvent(new Event("piop-mobile-back", { cancelable: true }))) void AndroidApp.minimizeApp().catch((reason) => setError(String(reason)));
+      if (window.dispatchEvent(new Event("piop-mobile-back", { cancelable: true }))) void AndroidApp.minimizeApp().catch((reason) => setError((reason instanceof Error ? reason.message : String(reason))));
     });
 
     const viewport = () => document.documentElement.style.setProperty("--mobile-height", `${window.visualViewport?.height ?? window.innerHeight}px`);

@@ -363,10 +363,10 @@ export function Composer(props: Props) {
       setDraggingFiles(payload.type !== "drop" && enabled);
 
       if (payload.type !== "drop" || !enabled) return;
-      void nativeDropRef.current.addPaths(payload.paths, () => disposed).catch((reason) => { if (!disposed) setUploadError(String(reason)); });
+      void nativeDropRef.current.addPaths(payload.paths, () => disposed).catch((reason) => { if (!disposed) setUploadError((reason instanceof Error ? reason.message : String(reason))); });
       focusOwnedEditor();
     }).then((cleanup) => { if (disposed) cleanup(); else unlisten = cleanup; })
-      .catch((reason) => { if (!disposed) setUploadError(`Could not enable file drops: ${String(reason)}`); });
+      .catch((reason) => { if (!disposed) setUploadError(`Could not enable file drops: ${(reason instanceof Error ? reason.message : String(reason))}`); });
 
     return () => { disposed = true; unlisten?.(); };
   }, () => []);
@@ -487,7 +487,7 @@ export function Composer(props: Props) {
     const commit = attachments.captureUploadWriter();
     setTimeout(() => {
       if (revision !== pasteRevision || !editor?.isConnected || document.activeElement !== editor) return;
-      void readClipboardImages().then(files => addFiles(files, [], commit)).catch(reason => setUploadError(String(reason)));
+      void readClipboardImages().then(files => addFiles(files, [], commit)).catch(reason => setUploadError((reason instanceof Error ? reason.message : String(reason))));
     }, 0);
   };
 
@@ -503,7 +503,7 @@ export function Composer(props: Props) {
 
       return; }
 
-      if (detail.data) void addFiles([clipboardImageFile(detail.data, detail.mimeType)]).catch(reason => setUploadError(String(reason)));
+      if (detail.data) void addFiles([clipboardImageFile(detail.data, detail.mimeType)]).catch(reason => setUploadError((reason instanceof Error ? reason.message : String(reason))));
     };
 
     document.addEventListener("piop-native-image-paste", handle);
@@ -767,7 +767,7 @@ export function ContainedPicker(props: { label: string; selectedLabel?: string; 
     setActiveIndex(next); optionRefs.current[next]?.focus();
   };
 
-  return <div ref={element => { root.current = element; }} class="composer-picker" onBlur={(event) => { if (!(event.relatedTarget instanceof Node) || !event.currentTarget.contains(event.relatedTarget)) close(); }} onKeyDown={(event) => { if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); close(); trigger.current?.focus(); } else if (menuStyle() && (event.key === "ArrowDown" || event.key === "ArrowUp")) { event.preventDefault(); move(event.key === "ArrowDown" ? 1 : -1); } }}>
+  return <div ref={element => { root.current = element; }} class="composer-picker" onBlur={(event) => { if (!(event.relatedTarget instanceof Node) || !event.currentTarget.contains(event.relatedTarget)) close(); }} onKeyDown={(event) => { if (event.key === "Escape" && menuStyle()) { event.preventDefault(); event.stopPropagation(); close(); trigger.current?.focus(); } else if (menuStyle() && (event.key === "ArrowDown" || event.key === "ArrowUp")) { event.preventDefault(); move(event.key === "ArrowDown" ? 1 : -1); } }}>
     <button ref={element => { trigger.current = element; }} type="button" class="select-control composer-picker-trigger" aria-label={props.icon ? `${picker().label}: ${picker().selectedLabel ?? selectedOption()?.label ?? ""}` : picker().label} aria-haspopup="listbox" aria-expanded={Boolean(menuStyle())} data-value={picker().value} data-options={picker().options.map((option) => option.value).join(" ")} disabled={picker().disabled} onClick={toggle}>{props.icon ?? (picker().selectedLabel ?? selectedOption()?.label ?? picker().label)}</button>
     {menuStyle() && <div class={`composer-picker-menu${picker().centered ? " centered" : ""}${picker().compact ? " compact" : ""}`} aria-label={`${picker().label} options`} style={(menuStyle())}><div role="listbox" aria-label={`${picker().label} options`}>{picker().options.length === 0 && <div class="empty-small">No options available</div>}{<Key each={picker().options} by={(option) => `${option.detail ?? picker().label}:${option.value}`}>{(option, index) => <button ref={(element) => { optionRefs.current[index()] = element; }}  type="button" role="option" aria-selected={option().value === picker().value} tabIndex={isActive(index()) ? 0 : -1} data-value={option().value} disabled={picker().disabled || option().disabled} onFocus={() => setActiveIndex(index())} onClick={() => { if (picker().disabled || optionChosenRef.current) return; optionChosenRef.current = true; picker().onChange(option().value); close(); trigger.current?.focus(); }}><span>{option().label}</span>{option().detail && <small>{option().detail}</small>}</button>}</Key>}</div>{props.footer && <div class="composer-picker-footer">{props.footer}</div>}</div>}
   </div>;

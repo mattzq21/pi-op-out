@@ -1,7 +1,7 @@
 import { restoreGoalAttachments } from "./files.ts";
 import type { ExtensionAPI, ExtensionContext, AgentBeforeSettleEvent, AgentBeforeSettleEventResult, InputEventResult, MessageEndEventResult } from "@earendil-works/pi-coding-agent";
 import { GoalState, GOAL_CONTEXT, validateBudget } from "./state.ts";
-import { goalBudgetPrompt, goalChangedPrompt, goalInactivePrompt, goalPrompt } from "./prompts.ts";
+import { goalChangedPrompt, goalPrompt } from "./prompts.ts";
 import { GoalCoordination } from "./coordination.ts";
 import { goalTokens, type GoalSession, type SubagentGoalUsage } from "./interface.ts";
 import type { GoalCore } from "./preparation.ts";
@@ -36,13 +36,13 @@ export function registerGoals(pi: ExtensionAPI): { session: GoalSession; core: G
     if (!controls) { ctx.ui.notify("Session controls are unavailable, so the goal could not pause the run.", "error");
 
     return; }
-    void controls.pause(ctx).catch(error => ctx.ui.notify(String(error), "error"));
+    void controls.pause(ctx).catch(error => ctx.ui.notify((error instanceof Error ? error.message : String(error)), "error"));
   };
 
   const coordination = new GoalCoordination();
 
   const schedule = (ctx: ExtensionContext, operation: () => void) => {
-    void coordination.run(ctx, operation).catch(error => ctx.ui.notify(String(error), "error"));
+    void coordination.run(ctx, operation).catch(error => ctx.ui.notify((error instanceof Error ? error.message : String(error)), "error"));
   };
 
   let context: ExtensionContext | undefined;
@@ -61,6 +61,7 @@ export function registerGoals(pi: ExtensionAPI): { session: GoalSession; core: G
   let responseGoalId: string | undefined;
   let runSignal: AbortSignal | undefined;
   let rateLimited = false;
+  let failure: "usage_limited" | "blocked" | undefined;
   const resetAudit = () => { emptyTurns = 0; failedTurns = 0; automatic = false; };
 
   const allowed = () => ["get_goal", "create_goal", "update_goal"].every(name => pi.getActiveTools().includes(name));
@@ -75,7 +76,6 @@ export function registerGoals(pi: ExtensionAPI): { session: GoalSession; core: G
 
   const account = (ctx: ExtensionContext, tokens: number, includeStopped = false) => {
     if (state.account(ctx, tokens, includeStopped) && state.goal) {
-      steering(goalBudgetPrompt(state.goal));
       pause(ctx);
     }
   };
@@ -112,7 +112,7 @@ export function registerGoals(pi: ExtensionAPI): { session: GoalSession; core: G
     } catch (error) {
       state.goal = null; state.publish(ctx); restored = false;
       restoredSessionId = undefined;
-      ctx.ui.notify(`Could not restore goal: ${String(error)}`, "error");
+      ctx.ui.notify(`Could not restore goal: ${(error instanceof Error ? error.message : String(error))}`, "error");
     }
   };
 
@@ -146,7 +146,7 @@ export function registerGoals(pi: ExtensionAPI): { session: GoalSession; core: G
   pi.on("agent_start", (_event, ctx) => coordination.run(ctx, () => {
     context = ctx; starting = false;
     runSignal = ctx.signal;
-    rateLimited = false;
+    rateLimited = false; failure = undefined;
     activity = false; emptyFinal = false; successfulTool = false; failedTool = false;
     runGoalId = state.goal?.status === "active" ? state.goal.id : undefined;
 
@@ -173,14 +173,14 @@ export function registerGoals(pi: ExtensionAPI): { session: GoalSession; core: G
     const wasRateLimited = rateLimited;
     rateLimited = false;
 
-    if (event.message.stopReason !== "error" && !wasRateLimited) return;
+    if (event.message.stopReason !== "error" && !wasRateLimited) { failure = undefined;
+
+    return; }
     const message = wasRateLimited && event.message.stopReason !== "error"
       ? { ...event.message, stopReason: "error" as const, errorMessage: "HTTP 429: Too many requests. The model provider limited this request. Try again later." }
       : event.message;
 
-    try {
-      if (state.usageGoalId()) state.setStatus(ctx, wasRateLimited ? "usage_limited" : providerErrorStatus(message.errorMessage));
-    } finally { pause(ctx); }
+    failure = wasRateLimited ? "usage_limited" : providerErrorStatus(message.errorMessage);
 
     return { message };
   }));
@@ -200,21 +200,24 @@ export function registerGoals(pi: ExtensionAPI): { session: GoalSession; core: G
   }));
   pi.on("agent_end", (_event, ctx) => coordination.run(ctx, () => { state.flushClock(); state.save(ctx); }));
   pi.on("after_provider_response", (event, ctx) => coordination.run(ctx, () => {
-    if (event.status !== 429) return;
-    rateLimited = true;
-
-    try {
-      if (state.usageGoalId()) state.setStatus(ctx, "usage_limited");
-    } finally { pause(ctx); }
+    if (event.status === 429) rateLimited = true;
   }));
 
+  /** A failed run pauses the chat, so a resume continues it. Pi retries a failed response first, so this runs only on its last failure. */
   const stopForOutcome = (event: AgentBeforeSettleEvent, ctx: ExtensionContext) => {
+    if (event.outcome === "error" || failure) {
+      try {
+        if (state.usageGoalId()) state.setStatus(ctx, failure ?? "blocked");
+      } finally { pause(ctx); }
+
+      return true;
+    }
+
     if (event.outcome === "completed") return false;
 
     if (!state.usageGoalId()) return false;
 
-    if (event.outcome === "aborted") state.setStatus(ctx, "paused");
-    else state.setStatus(ctx, "blocked");
+    state.setStatus(ctx, "paused");
 
     return true;
   };
@@ -246,7 +249,9 @@ export function registerGoals(pi: ExtensionAPI): { session: GoalSession; core: G
       return;
     }
 
-    if (ctx.hasPendingMessages() || event.context.pendingMessages.length) return;
+    // Waiting messages run first. Pi runs them only when asked to continue: a message that does not start a turn by itself,
+    // such as the goal prompt sent after a compaction, would otherwise wait and the goal would stop.
+    if (ctx.hasPendingMessages() || event.context.pendingMessages.length) return { continue: true };
     automatic = true;
 
     return { continue: true, entries: [{ type: "custom_message", customType: GOAL_CONTEXT, content: goalPrompt(state.goal), display: false, details: { goalId: state.goal.id } }] };
@@ -266,7 +271,6 @@ export function registerGoals(pi: ExtensionAPI): { session: GoalSession; core: G
     if (!usage.goalId || usage.goalId !== state.goal?.id) return;
 
     if (state.accountSubagent(ctx, usage.sourceId, usage.total) && state.goal) {
-      steering(goalBudgetPrompt(state.goal));
       pause(ctx);
     }
   };
@@ -306,7 +310,6 @@ export function registerGoals(pi: ExtensionAPI): { session: GoalSession; core: G
     addSubagentUsage: (ctx, usage) => coordination.run(ctx, () => cumulativeUsage(ctx, usage)),
     replaySubagentUsage: ctx => coordination.run(ctx, () => {
       if (state.replaySubagentUsage(ctx) && state.goal) {
-        steering(goalBudgetPrompt(state.goal));
         pause(ctx);
       }
     }),
@@ -340,8 +343,6 @@ function currentPrompt(state: GoalState) {
   const goal = state.require();
 
   if (goal.status === "active") return goalPrompt(goal);
-
-  if (goal.status === "budget_limited") return state.usageGoalId() === goal.id ? goalBudgetPrompt(goal) : goalInactivePrompt(goal);
 
   return goalChangedPrompt(goal);
 }

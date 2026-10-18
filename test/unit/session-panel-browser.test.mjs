@@ -697,3 +697,23 @@ test('opening a deleted project directory shows the native error and leaves grou
   await page.getByRole('button', { name: 'Group actions for repo', exact: true }).click();
   assert.equal(await page.getByRole('menuitem', { name: 'Forget group', exact: true }).isVisible(), true);
 });
+
+test('a new group can be made from a project folder, is named after the folder, and survives reopening', async t => {
+  const projects = await mkdtemp(join(tmpdir(), 'piop-group-project-'));
+  t.after(() => rm(projects, { recursive: true, force: true }));
+  const folder = join(projects, 'billing-service');
+  await mkdir(folder);
+  const { page, reload, service } = await panelPage(t);
+  await page.getByRole('button', { name: 'Request new group', exact: true }).click();
+  await page.getByRole('button', { name: 'Choose project', exact: true }).click();
+  const path = page.getByRole('combobox', { name: /^(Search or type a folder path|Folder path relative to home)$/ });
+  await path.fill(folder + '/');
+  await page.getByRole('button', { name: /^Open current folder/ }).click();
+  await page.getByRole('button', { name: 'Group actions for billing-service', exact: true }).waitFor();
+  assert.equal(await page.getByRole('textbox', { name: 'Group name', exact: true }).count(), 0);
+  const saved = (await service.invoke('load_session_groups', { seeds: [] })).groups.find(group => group.name === 'billing-service');
+  assert.deepEqual([saved.cwd, saved.hostId ?? 'local'], [folder, 'local'], 'the group belongs to the chosen folder');
+  await page.evaluate(() => window.settlePanelStorage());
+  await reload();
+  assert.equal(await page.getByRole('button', { name: 'Group actions for billing-service', exact: true }).count(), 1);
+});

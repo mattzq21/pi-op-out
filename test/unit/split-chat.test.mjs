@@ -190,6 +190,43 @@ describe('split conversation lifecycle', () => {
     responses.set('fork_after', new Error('fork failed')); await click(control('Fork')); await untilDom(() => /fork failed/.test(document.querySelector('.split-control-error')?.textContent ?? ''));
     await click(control('Dismiss split pane error')); assert.equal(document.querySelector('.split-control-error'), null); assert.deepEqual(changes, []);
   });
++  test('review feedback waits for the reviewer when asked, sends its finished answer to the main chat once, and can be cancelled', async () => {
+    const sent = [];
+    await render({ onMessageMain: async message => { sent.push(message); } });
+    const button = () => document.querySelector('.review-feedback-button');
+    const state = () => [button().textContent, button().disabled];
+    assert.deepEqual(state(), ['Send feedback', true]);
+
+    await event({ type: 'agent_start' });
+    assert.deepEqual(state(), ['Send when done', false]);
+    await click(button()); assert.equal(button().textContent, 'Cancel auto-send'); assert.equal(button().getAttribute('aria-pressed'), 'true');
+    const answer = { role: 'assistant', content: [{ type: 'text', text: 'Found 2 bugs' }], stopReason: 'stop', timestamp: 2 };
+    await event({ type: 'message_start', message: answer }); await event({ type: 'message_end', message: answer }); await event({ type: 'agent_settled' });
+    await untilDom(() => button().textContent === 'Feedback sent');
+    assert.deepEqual(sent, ['Found 2 bugs']); assert.equal(button().disabled, true);
+
+    await event({ type: 'agent_start' }); await click(button()); await click(button());
+    assert.equal(button().textContent, 'Send when done');
+    const second = { ...answer, content: [{ type: 'text', text: 'One more bug' }], timestamp: 3 };
+    await event({ type: 'message_start', message: second }); await event({ type: 'message_end', message: second }); await event({ type: 'agent_settled' });
+    await untilDom(() => button().textContent === 'Send feedback');
+    assert.deepEqual(sent, ['Found 2 bugs'], 'a cancelled auto-send sends nothing');
+    await click(button()); await untilDom(() => button().textContent === 'Feedback sent');
+    assert.deepEqual(sent, ['Found 2 bugs', 'One more bug']);
+  });
+
+  test('review feedback queued while the reviewer works reports a review that stops without an answer', async () => {
+    const sent = [];
+    await render({ onMessageMain: async message => { sent.push(message); } });
+    const button = () => document.querySelector('.review-feedback-button');
+    await event({ type: 'agent_start' }); await click(button());
+    const stopped = { role: 'assistant', content: [], stopReason: 'aborted', timestamp: 4 };
+    await event({ type: 'message_start', message: stopped }); await event({ type: 'message_end', message: stopped }); await event({ type: 'agent_settled' });
+    await untilDom(() => /The review stopped without completed feedback/.test(document.querySelector('.split-control-error')?.textContent ?? ''));
+    assert.deepEqual(sent, []);
+    await click(control('Dismiss split pane error'));
+  });
+
 
   test('model controls serialize changes and recover after a rejected command', async () => {
     responses.set('get_available_models', { models: [MODEL, { provider: 'p', id: 'one', reasoning: true }, { provider: 'p', id: 'two', reasoning: true }] });

@@ -1,3 +1,4 @@
+import { reportBackgroundError } from "../lib/backgroundErrors";
 import { Key } from "@solid-primitives/keyed";
 import { createComputed, createMemo, createSignal } from "solid-js";
 import { createDependencyEffect, createRef, type CSSProperties } from "../lib/solid";
@@ -100,7 +101,7 @@ export function DesktopTerminalView(componentProps: TerminalViewProps) {
         pendingBytes = 0;
         writing = false;
         queuedOutputEnd.current = lastOutputEnd.current;
-        console.error("Could not render terminal output", reason);
+        reportBackgroundError("Could not render terminal output", reason);
       }
     };
 

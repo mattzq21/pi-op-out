@@ -40,7 +40,7 @@ function transactLayout(database: IDBDatabase, key: string, fallback: Layout, ch
         result = change ? { revision: current.revision + 1, layout: layoutSchema.parse(change(current.layout)) } : current;
 
         if (change) store.put(result, key);
-      } catch (reason) { failure = reason instanceof Error ? reason : new Error(String(reason)); transaction.abort(); }
+      } catch (reason) { failure = reason instanceof Error ? reason : new Error((reason instanceof Error ? reason.message : String(reason))); transaction.abort(); }
     };
 
     transaction.oncomplete = () => resolve(result);
@@ -61,7 +61,7 @@ export function createSidebarPersistence() {
   let queue = Promise.resolve();
   const database = Promise.resolve().then(openLayouts);
 
-  const failure = (reason: Error | string) => { if (!disposed) setError(`Sidebar preferences: ${String(reason)}`); };
+  const failure = (reason: Error | string) => { if (!disposed) setError(`Sidebar preferences: ${(reason instanceof Error ? reason.message : String(reason))}`); };
 
   const publish = (record: LayoutRecord) => {
     if (disposed || record.revision < revision) return;
@@ -76,14 +76,14 @@ export function createSidebarPersistence() {
     publish(await transactLayout(await database, endpoint, initial));
   };
 
-  const refresh = () => { void read().catch(reason => failure(String(reason))); };
+  const refresh = () => { void read().catch(reason => failure((reason instanceof Error ? reason.message : String(reason)))); };
 
   const changed = (event: StorageEvent) => { if (event.key === notificationKey) refresh(); };
 
   if (channel) channel.onmessage = refresh;
 
   window.addEventListener("storage", changed);
-  void read().catch(reason => failure(String(reason)));
+  void read().catch(reason => failure((reason instanceof Error ? reason.message : String(reason))));
   onCleanup(() => { disposed = true; channel?.close(); window.removeEventListener("storage", changed); void queue.catch(() => undefined).then(() => database).then(value => value.close()).catch(() => undefined); });
 
   const mutate = (update: (current: Layout) => Layout) => {
@@ -100,7 +100,7 @@ export function createSidebarPersistence() {
       if (!disposed) setError(undefined);
     });
 
-    void queue.catch(reason => failure(String(reason)));
+    void queue.catch(reason => failure((reason instanceof Error ? reason.message : String(reason))));
   };
 
   const change = <K extends keyof Layout>(key: K, update: StateUpdate<Layout[K]>) => mutate(current => {

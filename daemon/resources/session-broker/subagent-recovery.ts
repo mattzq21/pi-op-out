@@ -84,7 +84,7 @@ async function retryAccountingPass(ctx: ExtensionContext, runtime: RecoveryRunti
     } catch (error) {
       signal.throwIfAborted();
 
-      if (!reported.has(resultNotificationId(run))) ctx.ui.notify(`Token usage recovery will retry for ${run.name}: ${String(error)}`, "error");
+      if (!reported.has(resultNotificationId(run))) ctx.ui.notify(`Token usage recovery will retry for ${run.name}: ${(error instanceof Error ? error.message : String(error))}`, "error");
       reported.add(resultNotificationId(run));
     }
   }
@@ -102,7 +102,7 @@ async function retryPendingAccounting(ctx: ExtensionContext, runtime: RecoveryRu
     catch (error) {
       signal.throwIfAborted();
 
-      if (!reported.has("inventory")) ctx.ui.notify(`Token usage recovery will retry reading saved runs: ${String(error)}`, "error");
+      if (!reported.has("inventory")) ctx.ui.notify(`Token usage recovery will retry reading saved runs: ${(error instanceof Error ? error.message : String(error))}`, "error");
       reported.add("inventory");
     }
   }
@@ -123,7 +123,7 @@ export function registerSubagentRecovery(pi: ExtensionAPI, runtime: RecoveryRunt
     if (process.env.PIOP_USAGE_RECOVERY === "1") return;
     retryController = new AbortController();
     const signal = retryController.signal;
-    retrying = retryPendingAccounting(ctx, runtime, signal).catch(error => { if (!signal.aborted) ctx.ui.notify(`Token usage recovery remains pending: ${String(error)}`, "error"); });
+    retrying = retryPendingAccounting(ctx, runtime, signal).catch(error => { if (!signal.aborted) ctx.ui.notify(`Token usage recovery remains pending: ${(error instanceof Error ? error.message : String(error))}`, "error"); });
   };
 
   const unsubscribe = pi.events.on("piop:rpc", event => {

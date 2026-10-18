@@ -37,10 +37,33 @@ fn attachment_command_bridge() {
     } else { None };
     println!("PIOP_TEST_NATIVE_READY");
     let serve = move |handle: Option<AppHandle>| {
+    // Events the app sends to its windows, for tests of the daemon connection.
+    let events = std::sync::Arc::new(std::sync::Mutex::new(Vec::<Value>::new()));
+    if let Some(app) = handle.as_ref() {
+        use tauri::Listener;
+        for name in ["pi://event", "pi://daemon-error", "pi://daemon-restarting", "pi://daemon-log-status"] {
+            let events = events.clone();
+            app.listen_any(name, move |event| {
+                let payload: Value = serde_json::from_str(event.payload()).unwrap_or(Value::Null);
+                events.lock().unwrap().push(json!({ "event": name, "payload": payload }));
+            });
+        }
+    }
+    let daemon_window = |app: &AppHandle| match app.get_webview_window("daemon-test") {
+        Some(window) => Ok(window),
+        None => tauri::WebviewWindowBuilder::new(app, "daemon-test", tauri::WebviewUrl::External(tauri::Url::parse("about:blank").unwrap())).visible(false).build(),
+    }.map_err(|error| error.to_string());
     let (mut stream, _) = listener.accept().expect("connect native test client");
     for line in BufReader::new(stream.try_clone().unwrap()).lines() {
         let request: Value = serde_json::from_str(&line.expect("read native test request")).unwrap();
         let result = match request["command"].as_str() {
+            Some("daemon_invoke") => {
+                let app = handle.as_ref().expect("desktop test app");
+                daemon_window(app).and_then(|window| tauri::async_runtime::block_on(desktop_daemon::daemon_invoke(
+                    app.clone(), window, request["daemonCommand"].as_str().expect("daemon command").to_owned(), request["args"].clone(),
+                )))
+            },
+            Some("daemon_events") => Ok(Value::Array(events.lock().unwrap().clone())),
             Some("daemon_log_statuses") => {
                 let app = handle.as_ref().expect("desktop test app");
                 let window = match app.get_webview_window("status-test") {

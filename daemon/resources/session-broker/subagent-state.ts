@@ -144,7 +144,7 @@ export function registerSubagentResults(pi: ExtensionAPI) {
 
     void sendAgentMailbox(pi, ctx, { customType: "piop-subagent-result", ...payload, details: { ...payload.details, notificationId: id }, display: true }, id)
       .then(() => { if (delivered(ctx, id)) acknowledge(ctx, id); })
-      .catch(error => { outstanding.delete(id); ctx.ui.notify(`Subagent result delivery remains pending: ${String(error)}`, "error"); });
+      .catch(error => { outstanding.delete(id); ctx.ui.notify(`Subagent result delivery remains pending: ${(error instanceof Error ? error.message : String(error))}`, "error"); });
   };
 
   return {

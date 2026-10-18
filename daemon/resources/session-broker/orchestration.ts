@@ -202,7 +202,7 @@ async function waitSnapshot(targets: Target[], signal: AbortSignal | undefined, 
   signal?.throwIfAborted();
   const polls = settled.flatMap(item => item.status === "fulfilled" ? [item.value] : []);
   const stopped = (reason: unknown) => stop.aborted && reason === stop.reason;
-  const errors = settled.flatMap((item, index) => item.status === "rejected" && !stopped(item.reason) ? [{ ...targets[index], error: String(item.reason) }] : []);
+  const errors = settled.flatMap((item, index) => item.status === "rejected" && !stopped(item.reason) ? [{ ...targets[index], error: item.reason instanceof Error ? item.reason.message : String(item.reason) }] : []);
 
   return { polls, errors, wake: polls.find(item => item.thread.status !== "running" && item.changed)?.thread };
 }
@@ -239,7 +239,7 @@ function registerDelivery(pi: ExtensionAPI) {
         if (version === generation) queueAgentMailbox(pi, ctx, message, message.details.notificationId, defer);
       });
       await mailbox.reconcile(ctx);
-    } catch (error) { ctx.ui.notify(`Agent mailbox recovery failed: ${String(error)}`, "error"); }
+    } catch (error) { ctx.ui.notify(`Agent mailbox recovery failed: ${(error instanceof Error ? error.message : String(error))}`, "error"); }
   };
 
   const flush = (ctx: ExtensionContext) => {
@@ -324,7 +324,7 @@ function registerDelivery(pi: ExtensionAPI) {
   });
   pi.on("agent_end", async (_event, ctx) => {
     try { await mailbox.reconcile(ctx); }
-    catch (error) { ctx.ui.notify(`Agent mailbox acknowledgement failed: ${String(error)}`, "error"); }
+    catch (error) { ctx.ui.notify(`Agent mailbox acknowledgement failed: ${(error instanceof Error ? error.message : String(error))}`, "error"); }
   });
   pi.on("context", (event, ctx) => {
     if (!ctx.model) return;
@@ -373,7 +373,7 @@ export function registerOrchestration(pi: ExtensionAPI) {
 
         return result({ ...created, submitted: true });
       } catch (error) {
-        return { ...result({ ...created, submitted: false, error: String(error), message: "Chat was created. Inspect it before retrying delivery; do not create another chat." }), isError: true };
+        return { ...result({ ...created, submitted: false, error: error instanceof Error ? error.message : String(error), message: "Chat was created. Inspect it before retrying delivery; do not create another chat." }), isError: true };
       }
     },
   });

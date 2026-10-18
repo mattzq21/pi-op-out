@@ -12,12 +12,12 @@ const goalSchema = z.object({
 
 type Goal = z.infer<typeof goalSchema>;
 
-function readGoal(value?: string): Goal | undefined {
-  if (!value) return;
+function readGoal(value?: string): { goal?: Goal; error?: string } {
+  if (!value) return {};
 
   try {
-    return goalSchema.parse(JSON.parse(value));
-  } catch { return; }
+    return { goal: goalSchema.parse(JSON.parse(value)) };
+  } catch (reason) { return { error: `Could not show the goal: ${reason instanceof Error ? reason.message : String(reason)}` }; }
 }
 
 function duration(ms: number) {
@@ -31,8 +31,9 @@ function duration(ms: number) {
 }
 
 export function GoalBar<T>(props: { value?: string; disabled: boolean; onCommand: (action: string) => Promise<T> }) {
+  const read = createMemo(() => readGoal(props.value));
   const goal = createMemo(() => {
-    const current = readGoal(props.value);
+    const current = read().goal;
 
     return current?.status === "complete" ? undefined : current;
   });
@@ -49,7 +50,8 @@ export function GoalBar<T>(props: { value?: string; disabled: boolean; onCommand
     finally { setBusy(false); }
   };
 
-  return <Show when={goal()}>{current => <section class="goal-bar" aria-label="Conversation goal">
+  return <><Show when={read().error}>{message => <section class="goal-bar" aria-label="Conversation goal"><div class="goal-bar-error" role="alert">{message()}</div></section>}</Show>
+  <Show when={goal()}>{current => <section class="goal-bar" aria-label="Conversation goal">
     <div class="goal-bar-row">
       <span class="goal-bar-status" data-tooltip={labels[current().status]}>/goal</span>
       <span class="goal-bar-objective" data-tooltip={current().objective}>{current().objective}</span>
@@ -65,5 +67,5 @@ export function GoalBar<T>(props: { value?: string; disabled: boolean; onCommand
       </button>
     </div>
     <Show when={error()}><div class="goal-bar-error" role="alert">{error()}</div></Show>
-  </section>}</Show>;
+  </section>}</Show></>;
 }

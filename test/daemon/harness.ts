@@ -70,13 +70,17 @@ let janitor: ChildProcess | undefined;
 /**
  * Runs a shell command when the test process ends in any way, last registered first. Bun's test runner does not
  * run process exit handlers, so a separate process waits for its input pipe to close and then runs the commands.
- * This is only a fallback for runs that end without their teardown. Its output goes to janitorLog.
+ * This is only a fallback for runs that end without their teardown. Its output goes to janitorLog, which is kept
+ * only when a command fails. It needs no temporary file, so it still cleans up when the temporary folder is full.
  */
 export const janitorLog = join(tmpdir(), 'piop-test-janitor-' + process.pid + '.log');
 
 export function atTestExit(command: string): void {
   if (!janitor) {
-    janitor = spawn('sh', ['-c', 'f=$(mktemp) && cat > "$f"; tac "$f" | sh -x; unlink "$f"'], { stdio: ['pipe', 'ignore', openSync(janitorLog, 'a')], detached: true });
+    const script = 'commands=$(cat); printf "%s\\n" "$commands" | tac | { failed=0; '
+      + 'while IFS= read -r command; do [ -n "$command" ] || continue; sh -xc "$command" || failed=1; done; '
+      + '[ "$failed" = 0 ] && unlink "$PIOP_JANITOR_LOG"; }';
+    janitor = spawn('sh', ['-c', script], { stdio: ['pipe', 'ignore', openSync(janitorLog, 'a')], detached: true, env: { ...process.env, PIOP_JANITOR_LOG: janitorLog } });
     janitor.unref();
     (janitor.stdin as any).unref?.();
   }
@@ -279,11 +283,14 @@ export async function startDaemon(options: BuildOptions & { home?: string; env?:
   atTestExit(stopCommand(executable, home));
   try {
     await control(executable, 'start', env, options.launcher);
-    const database = new Database(join(directory, 'sessions.sqlite'), { readonly: true });
-    let endpoint: any;
-    try { endpoint = JSON.parse(Buffer.from((database.query("SELECT body FROM application_settings WHERE name='daemon.json'").get() as any).body).toString('utf8')); }
-    finally { database.close(); }
-    const connect = async () => { const client = await openClient(endpoint.url, endpoint.token); clients.push(client); return client; };
+    /** The current endpoint; a restarted daemon publishes a new token. */
+    const readEndpoint = () => {
+      const database = new Database(join(directory, 'sessions.sqlite'), { readonly: true });
+      try { return JSON.parse(Buffer.from((database.query("SELECT body FROM application_settings WHERE name='daemon.json'").get() as any).body).toString('utf8')); }
+      finally { database.close(); }
+    };
+    const endpoint = readEndpoint();
+    const connect = async () => { const current = readEndpoint(); const client = await openClient(current.url, current.token); clients.push(client); return client; };
     const main = await connect();
     return {
       ...main, home, bin, endpoint, connect, log: () => logTail(daemonLog),

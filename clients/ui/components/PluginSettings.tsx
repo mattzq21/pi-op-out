@@ -21,7 +21,7 @@ export function PluginSettings(props: { hostId: string; onBusyChange?: (busy: bo
     try { const current = await refreshPlugins(props.hostId);
 
     if (!disposed) { setStatus(current); setEnabled(current.configured); } }
-    catch (reason) { if (!disposed) setError(String(reason)); }
+    catch (reason) { if (!disposed) setError((reason instanceof Error ? reason.message : String(reason))); }
     finally { if (!disposed) setBusy(false); }
   };
 
@@ -71,7 +71,7 @@ export function PluginSettings(props: { hostId: string; onBusyChange?: (busy: bo
         successTimer = setTimeout(() => setRestarted(false), 10000);
       }
     } catch (reason) {
-      if (!disposed) { setError(String(reason)); setMessage(undefined); }
+      if (!disposed) { setError((reason instanceof Error ? reason.message : String(reason))); setMessage(undefined); }
     } finally { if (!disposed) setBusy(false); }
   };
 

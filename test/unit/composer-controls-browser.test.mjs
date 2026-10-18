@@ -17,7 +17,12 @@ test('an explicit focus request focuses the message editor', async t => {
   await button.focus();
   assert.equal(await button.evaluate(node => node === document.activeElement), true);
   await page.keyboard.press('Enter');
-  assert.equal(await page.getByRole('textbox', { name: 'Message piop' }).evaluate(node => node === document.activeElement), true);
+  // The editor takes focus on a later frame.
+  await page.getByRole('textbox', { name: 'Message piop' }).evaluate(node => new Promise((resolve, reject) => {
+    const deadline = performance.now() + 2000;
+    const check = () => node === document.activeElement ? resolve() : performance.now() > deadline ? reject(new Error('The message editor never took focus')) : requestAnimationFrame(check);
+    check();
+  }));
 });
 
 const choices = async page => JSON.parse(await page.getByLabel('Selected values').textContent());
@@ -282,4 +287,48 @@ test('pause, stop and resume serialize pending actions and expose failures', asy
   await page.getByRole('button', { name: 'Complete resume request', exact: true }).click();
   assert.equal(await resume.isDisabled(), false);
   assert.equal(await page.getByRole('alert').count(), 0);
+});
+
+test('on a narrow screen the chat settings sit behind one button that opens and closes like a menu', async t => {
+  const page = await controlsPage(t);
+  await page.setViewportSize({ width: 600, height: 800 });
+  const trigger = page.getByRole('button', { name: /^Chat settings: / });
+  const effort = page.getByRole('group', { name: 'Chat settings' }).getByRole('button', { name: /^Thinking level/ });
+  assert.equal(await effort.isVisible(), false);
+
+  // With the effort list open, the first Escape closes only that list.
+  await trigger.click();
+  await effort.click();
+  await page.getByRole('listbox').waitFor();
+  await page.keyboard.press('Escape');
+  await page.getByRole('listbox').waitFor({ state: 'detached' });
+  assert.equal(await trigger.getAttribute('aria-expanded'), 'true');
+  await page.keyboard.press('Escape');
+  assert.equal(await trigger.getAttribute('aria-expanded'), 'false');
+
+  await trigger.click();
+  assert.equal(await trigger.getAttribute('aria-expanded'), 'true');
+  await effort.waitFor();
+  await effort.focus();
+  await page.keyboard.press('Escape');
+  assert.equal(await trigger.getAttribute('aria-expanded'), 'false');
+  assert.equal(await trigger.evaluate(node => node === document.activeElement), true, 'Escape gives focus back to the button');
+  assert.equal(await effort.isVisible(), false);
+
+  await trigger.click();
+  await effort.waitFor();
+  await page.getByRole('textbox', { name: 'Message piop' }).click();
+  assert.equal(await trigger.getAttribute('aria-expanded'), 'false', 'a click outside closes it');
+  // A click on an empty spot moves no focus, so only the outside click closes the menu.
+  await trigger.click();
+  await effort.waitFor();
+  await page.mouse.click(590, 790);
+  assert.equal(await trigger.getAttribute('aria-expanded'), 'false', 'a click on an empty spot closes it');
+});
+
+test('on a wide screen the chat settings show in the message bar without a menu button', async t => {
+  const page = await controlsPage(t);
+  await page.setViewportSize({ width: 1200, height: 800 });
+  assert.equal(await page.getByRole('button', { name: /^Chat settings: / }).isVisible(), false);
+  assert.equal(await page.getByRole('group', { name: 'Chat settings' }).getByRole('button', { name: /^Thinking level/ }).isVisible(), true);
 });

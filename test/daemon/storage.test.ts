@@ -28,6 +28,11 @@ function allocatedBytes(path: string): number {
   return Number(result.stdout.toString().split('\t')[0]);
 }
 
+// Placed first: no test has stored anything in this home yet, as on a new machine.
+test('a new machine, where Pi has stored nothing yet, has a storage report without warnings', async () => {
+  expect((await daemon.invoke('storage_report')).hosts[0].warnings).toEqual([]);
+});
+
 test('storage report counts real conversation files and marks malformed archives undeletable', async () => {
   publicSession(daemon.home, daemon.home, 'project');
   writeFileSync(join(profile, 'sessions/project/ignored.txt'), 'not counted');

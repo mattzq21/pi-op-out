@@ -100,7 +100,7 @@ export function createConversationArchive(context: ArchiveContext) {
 
         await capturedRuntimePool.release(ownerTransport)
           .then(() => transportConversationKeys.current.delete(ownerTransport))
-          .catch(reason => addNotice({ title: "Could not close archived conversation", message: String(reason) }));
+          .catch(reason => addNotice({ title: "Could not close archived conversation", message: reason instanceof Error ? reason.message : String(reason) }));
       } catch (reason) {
         transportConversationKeys.current.delete(nextTransport);
         void capturedRuntimePool.release(nextTransport);
@@ -200,7 +200,7 @@ export function createConversationArchive(context: ArchiveContext) {
       setActiveCwd(undefined); updateConnected(false);
       activateConversationKey(key); activateTransport(replacement);
     });
-    void pool.release(previous).catch(reason => addNotice({ title: "Could not close archived conversation", message: String(reason) })).finally(() => transportConversationKeys.current.delete(previous));
+    void pool.release(previous).catch(reason => addNotice({ title: "Could not close archived conversation", message: reason instanceof Error ? reason.message : String(reason) })).finally(() => transportConversationKeys.current.delete(previous));
   };
 
   const finishRemovedConversation = (pool: SessionRuntimePool, hostId: string, sessionPath: string | undefined, sessionId: string | undefined, summaries: SessionSummary[], id: string | undefined) => {
@@ -215,7 +215,7 @@ export function createConversationArchive(context: ArchiveContext) {
 
     if (selectedRemovedSession(hostId, sessionPath, sessionId)) replaceRemovedConversation(pool, hostId);
 
-    for (const session of summaries) void pool.remove(session).catch(reason => addNotice({ title: "Could not close archived conversation", message: String(reason) }));
+    for (const session of summaries) void pool.remove(session).catch(reason => addNotice({ title: "Could not close archived conversation", message: reason instanceof Error ? reason.message : String(reason) }));
   };
 
   return {

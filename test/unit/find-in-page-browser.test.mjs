@@ -154,8 +154,14 @@ test('an open modal dialog leaves the Find shortcut unhandled', async t => {
   assert.equal(await page.evaluate(() => window.findShortcutPrevented), false);
   assert.equal(await page.getByRole('search').count(), 0);
   await page.keyboard.press('Escape');
+  // Closing the dialog gives focus back to the earlier element a moment later, so Find may need a moment to take it.
+  await page.waitForFunction(() => !document.querySelector('dialog[open]'));
   const input = await openSearch(page);
-  assert.equal(await input.evaluate(node => node === document.activeElement), true);
+  await input.evaluate(node => new Promise((resolve, reject) => {
+    const deadline = performance.now() + 2000;
+    const check = () => node === document.activeElement ? resolve() : performance.now() > deadline ? reject(new Error('The search box never took focus')) : requestAnimationFrame(check);
+    check();
+  }));
 });
 
 test('Find focuses the search input when it opens', async t => {

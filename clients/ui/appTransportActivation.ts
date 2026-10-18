@@ -99,7 +99,7 @@ export function createTransportActivation(context: ActivationContext) {
         if (failed?.status === "rejected") throw failed.reason;
         if (previousKey) forgetTerminals(previousKey);
         await pool.release(previousTransport);
-      }).catch(reason => { stopTracking(); pool.reportError(`Could not release conversation: ${String(reason)}`); });
+      }).catch(reason => { stopTracking(); pool.reportError(`Could not release conversation: ${(reason instanceof Error ? reason.message : String(reason))}`); });
   };
 
   const hasDraftWork = (owner: NativeTransport, key: string | undefined) => transportHasDraft(owner, key) || owner.hasTerminalActivity() || Boolean(key && conversationTerminalIds(key).some(id => !owner.isPreparedTerminal(id)));

@@ -682,6 +682,8 @@ export class Session {
       case 'get_state': return this.collectState(command);
       case 'force_stop': await this.stop(); return null;
       case 'get_available_models': await this.refreshProviders(); break;
+      // Pi stops the running response before it compacts, even when there is nothing to compact.
+      case 'compact': if (this.working()) throw new Error('Stop or pause piop before running /compact.'); break;
     }
     return this.executeWorker(command);
   }
@@ -713,6 +715,8 @@ export class Session {
     this.rememberWorkerResult(command);
     if (kind(command) === 'resume' && typeof result?.resumeMessage === 'string' && result.resumeMessage) await this.raw({ type: 'prompt', message: result.resumeMessage });
     if (['set_model', 'set_thinking_level', 'set_session_name', 'fork_and_forget'].includes(kind(command))) this.publish({ type: 'session_info_changed' }, null);
+    // The chat list shows the name, so every client reloads it.
+    if (kind(command) === 'set_session_name') this.host.output({ type: 'sessions_changed' });
     return result;
   }
 

@@ -261,6 +261,7 @@ export class Host implements SessionHost {
     if (intent === 'transfer' && (session.working() || session.compacting())) {
       throw new Error('The agent is running on another daemon. Wait for it to finish before transferring ownership.');
     }
+    if (intent === 'relocate' && (session.working() || session.compacting())) throw new Error('Stop the response before moving this chat to another folder.');
     if (intent === 'message') await session.retire();
     const saved = session.savedState();
     for (const [runtime] of session.views()) this.readonlyMap.set(runtime, { id, path: typeof saved?.sessionFile === 'string' ? saved.sessionFile : null });
@@ -421,7 +422,7 @@ export class Host implements SessionHost {
         return null;
       }
       const response = dialog.queuedResponse ?? session.queue.questionResponse(text(dialog.event, 'asyncQuestion'))
-        ?? { type: ANSWER_QUESTION_COMMAND, requestId: dialog.event.asyncQuestion, value: command.value ?? null, cancelled: flag(command, 'cancelled') };
+        ?? { type: ANSWER_QUESTION_COMMAND, requestId: dialog.event.asyncQuestion, ...(typeof command.value === 'string' ? { value: command.value } : {}), cancelled: flag(command, 'cancelled') };
       session.changeDialog(id, item => { item.answering = true; });
       try {
         const prepare = structuredClone(response);
@@ -434,7 +435,7 @@ export class Host implements SessionHost {
         }
         const resolve = structuredClone(response);
         resolve.action = 'resolve';
-        resolve.queueId = prepared?.queueId ?? null;
+        if (typeof prepared?.queueId === 'string') resolve.queueId = prepared.queueId;
         assertOwner();
         await session.raw(resolve);
         return null;
@@ -684,7 +685,7 @@ export class Host implements SessionHost {
   private async beginMutation(packet: any): Promise<any> {
     const operation = text(packet, 'operation');
     const guard = await this.ownership().begin(text(packet, 'sessionId'), text(packet, 'clientId'), {
-      mutation: true, message: operation === 'message', archive: operation === 'archive', path: packet.sessionPath ?? null, archived: packet.archived ?? null,
+      mutation: true, message: operation === 'message', archive: operation === 'archive', delete: operation === 'delete', relocate: operation === 'relocate', path: packet.sessionPath ?? null, archived: packet.archived ?? null,
     });
     if (!guard.owned) { guard.drop(); throw new Error(ownershipError()); }
     const token = randomUUID();

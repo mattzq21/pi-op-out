@@ -110,7 +110,7 @@ async function reconcileReviews(pi: ExtensionAPI, ctx: ExtensionContext) {
       }
     }
     finally { for (const item of pending) release(item.publication); }
-  } catch (error) { if (current()) ctx.ui.notify(`Review publication recovery is pending: ${String(error)}`, "warning"); }
+  } catch (error) { if (current()) ctx.ui.notify(`Review publication recovery is pending: ${(error instanceof Error ? error.message : String(error))}`, "warning"); }
 }
 
 async function openReview(ctx: ExtensionContext, record: ReviewRecord, task?: string, inherited = false, images?: ReviewImage[]) {

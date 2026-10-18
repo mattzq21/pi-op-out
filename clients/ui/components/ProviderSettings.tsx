@@ -1,7 +1,7 @@
 import { localHostLabel } from "../lib/mobileHosts";
 import { required } from "../lib/required";
 import { Key, Rerun } from "@solid-primitives/keyed";
-import { createMemo, createSignal, Index } from "solid-js";
+import { createMemo, createSignal, Index, Show } from "solid-js";
 import { createDependencyEffect } from "../lib/solid";
 
 import { ExternalLink, RefreshCw, Search } from "lucide-solid";
@@ -80,7 +80,7 @@ export function ProviderSettings(componentProps: { hosts: RemoteHost[]; initialH
     </div>
     {auth.error && <p class="provider-error" role="alert">{auth.error}</p>}
     {adding() && <Rerun on={() => hostId()}>{(_key) => <CustomProviderForm  working={!!disabled()} save={auth.createProvider} close={() => setAdding(false)} />}</Rerun>}
-    {auth.flow && <LoginPanel flow={auth.flow} auth={auth} />}
+    <Show when={auth.flow}>{flow => <LoginPanel flow={flow()} auth={auth} />}</Show>
     {loadingProviders() && <div class="empty-small" role="status">Loading providers on {hostName()}…</div>}
     <ProviderList providers={providers()} auth={auth} disabled={disabled()} />
     <p class="provider-login-help">Removing a saved login leaves credentials from environment variables or other host configuration in place.</p>
