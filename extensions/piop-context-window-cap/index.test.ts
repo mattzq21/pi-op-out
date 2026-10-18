@@ -247,6 +247,22 @@ describe("context cap session", () => {
     expect(await reloaded.session().getState()).toEqual({ cap: 400_000, source: "config", appliedWindow: 400_000 });
   });
 
+  test("subscribers see source changes that keep the same window, but not a repeated choice", async () => {
+    const host = await start();
+    const received: unknown[] = [];
+    host.session().subscribe((state: unknown) => received.push(state), () => undefined);
+    await host.session().getState();
+    await Promise.resolve();
+    await host.session().setManualCap(300_000);
+    await host.session().setManualCap(300_000);
+    await host.session().resetManualCap();
+    expect(received).toEqual([
+      { cap: 300_000, source: "config", appliedWindow: 300_000 },
+      { cap: 300_000, source: "manual", appliedWindow: 300_000 },
+      { cap: 300_000, source: "config", appliedWindow: 300_000 },
+    ]);
+  });
+
   test("restores each branch on tree navigation", async () => {
     const host = await start();
     const root = [...host.branch];
