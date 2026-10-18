@@ -28,6 +28,8 @@ const state = { sessionFile, sessionId, isStreaming: false, messageCount: 1, pen
 const send = packet => process.stdout.write(JSON.stringify(packet) + '\\n');
 let followUp = [];
 let rejectClear = sessionFile.includes('/reject-clear-once/');
+let rejectRedelivery = sessionFile.includes('/reject-redelivery-once/');
+let cleared = false;
 require('node:readline').createInterface({ input: process.stdin }).on('line', line => {
   const request = JSON.parse(line);
   if ((sessionFile.includes('/abort-preparation/') || sessionFile.includes('/abort-gate/')) && request.type === 'piop_request'
@@ -40,6 +42,11 @@ require('node:readline').createInterface({ input: process.stdin }).on('line', li
     return;
   }
   if (request.type === 'piop_request' && request.command === 'queue_prompt') {
+    if (rejectRedelivery && cleared) {
+      rejectRedelivery = false;
+      send({ type: 'response', id: request.id, command: request.type, success: false, error: 'Pi is temporarily busy' });
+      return;
+    }
     followUp.push(request.payload.message);
     send({ type: 'queue_update', steering: [], followUp });
   }
@@ -51,6 +58,7 @@ require('node:readline').createInterface({ input: process.stdin }).on('line', li
     }
     send({ type: 'response', id: request.id, command: request.type, success: true, data: { steering: [], followUp } });
     followUp = [];
+    cleared = true;
     return;
   }
   const data = request.type === 'get_state' ? state : null;
@@ -118,6 +126,29 @@ test('moving a queued message changes order without replacing message identities
       type: 'change_pending', id: before[0].id, action: { type: 'move', targetId: before[1].id, edge: 'before' },
     });
     expect((await command(runtime.runtimeId, { type: 'get_state' })).pendingMessages).toEqual(before);
+  } finally { await daemon.invoke('stop_pi', { runtimeId: runtime.runtimeId }); }
+}, 60_000);
+
+test('a reorder that Pi rejects keeps both messages for retry, and retrying sends them in the chosen order', async () => {
+  const session = publicSession(daemon.home, 'reject-redelivery-once');
+  const runtime = await open(session.path, 'reject-redelivery-client');
+  try {
+    await command(runtime.runtimeId, { type: 'follow_up', message: 'First task' });
+    await command(runtime.runtimeId, { type: 'follow_up', message: 'Second task' });
+    const [first, second] = (await command(runtime.runtimeId, { type: 'get_state' })).pendingMessages;
+    expect(await daemon.failure('pi_command', {
+      runtimeId: runtime.runtimeId, command: { type: 'change_pending', id: second.id, action: 'moveUp' },
+    })).toContain('Pi is temporarily busy');
+    expect((await command(runtime.runtimeId, { type: 'get_state' })).pendingMessages).toEqual([
+      { ...second, retry: true }, { ...first, retry: true },
+    ]);
+    await command(runtime.runtimeId, { type: 'change_pending', id: second.id, action: 'followUp' });
+    await command(runtime.runtimeId, { type: 'change_pending', id: first.id, action: 'followUp' });
+    const state = await command(runtime.runtimeId, { type: 'get_state' });
+    expect(state.pendingMessages.map(({ id, message, behavior, retry }: any) => ({ id, message, behavior, retry: retry === true })))
+      .toEqual([{ ...second, retry: false }, { ...first, retry: false }]);
+    await daemon.waitEvent('pi://event', packet => packet.runtimeId === runtime.runtimeId && packet.event?.type === 'queue_update'
+      && JSON.stringify(packet.event.followUp) === JSON.stringify(['Second task', 'First task']));
   } finally { await daemon.invoke('stop_pi', { runtimeId: runtime.runtimeId }); }
 }, 60_000);
 
