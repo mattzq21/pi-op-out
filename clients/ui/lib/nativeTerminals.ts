@@ -228,6 +228,10 @@ class NativeTerminals {
     this.hosts.delete(terminalId);
     this.generations.delete(terminalId);
   }
+
+  closeUnused(terminalId: string) {
+    return this.enqueue("close_unused", terminalId);
+  }
 }
 
 export const nativeTerminals = new NativeTerminals(nativeCall);

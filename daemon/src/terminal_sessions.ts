@@ -22,6 +22,7 @@ export class Transcript {
   textEnd = 0;
   updated = Date.now();
   running = true;
+  used = false;
   /** The block that small appends are copied into, and the view of it that is the last chunk. */
   private block: Buffer | undefined;
   private blockView: Buffer | undefined;
@@ -196,7 +197,7 @@ function sharedStart(context: SharedRequest, id: string): Promise<any> {
 
 async function sharedAccess(context: SharedRequest, item: Transcript, action: string): Promise<void> {
   const sameOwner = item.owner === context.owner;
-  if (action === 'close' && sameOwner) return;
+  if ((action === 'close' || action === 'close_unused') && sameOwner) return;
   const allowReleased = action === 'reassign' && sameOwner;
   if (!(await sessionOwned(context.app, item.sessionId, context.client, sameOwner, allowReleased))) throw new Error('Take ownership of this session before changing its terminals');
   if (action === 'reassign' && !(await sessionOwned(context.app, context.sessionId, context.client, true, false))) throw new Error('Take ownership of the destination session first');
@@ -208,19 +209,20 @@ function emitDraft(app: App, item: Transcript, id: string, data: string): void {
 
 async function updateShared(context: SharedRequest, id: string, action: string): Promise<any> {
   const { runtime, request, app } = context;
-  if (action === 'close' && !runtime.history.has(id) && !runtime.processes.has(id)) return null;
+  if ((action === 'close' || action === 'close_unused') && !runtime.history.has(id) && !runtime.processes.has(id)) return null;
   const item = runtime.history.get(id);
   if (!item) throw new Error('Terminal is unavailable');
   const previousSession = item.sessionId;
   await sharedAccess(context, item, action);
   if (runtime.history.get(id) !== item) throw new Error('Terminal is unavailable');
+  if (action === 'close_unused' && item.used) return null;
   const process = runtime.processes.get(id);
   switch (action) {
     case 'reassign':
       item.sessionId = context.sessionId;
       if (process) process.sessionKey = 'local:' + context.sessionId;
       break;
-    case 'close':
+    case 'close': case 'close_unused':
       try { if (process) await stopTerminalProcess(process); }
       catch (error: any) { throw new Error('Could not close terminal ' + id + ': ' + (error?.message ?? error)); }
       finally {
@@ -233,6 +235,7 @@ async function updateShared(context: SharedRequest, id: string, action: string):
       if (typeof data !== 'string') throw new Error('Missing terminal draft');
       if (Buffer.byteLength(data) > MAX_INPUT_BYTES) throw new Error('Terminal draft exceeds 1 MiB');
       item.inputDraft = data;
+      if (data) item.used = true;
       emitDraft(app, item, id, data);
       break;
     }
@@ -245,7 +248,9 @@ async function updateShared(context: SharedRequest, id: string, action: string):
         if (item.inputDraft !== request.expectedDraft) throw new Error('Terminal draft changed; review the input before sending again');
       }
       if (!process) throw new Error('Terminal is not running');
-      queueInput(process, (action === 'write' || action === 'write_and_clear_draft' ? '' : item.inputDraft) + data, 'Terminal input is busy');
+      const input = (action === 'write' || action === 'write_and_clear_draft' ? '' : item.inputDraft) + data;
+      queueInput(process, input, 'Terminal input is busy');
+      if (input) item.used = true;
       if (action !== 'write' && item.inputDraft) { item.inputDraft = ''; emitDraft(app, item, id, ''); }
       break;
     }
@@ -262,7 +267,7 @@ async function updateShared(context: SharedRequest, id: string, action: string):
     }
     default: throw new Error('Unknown terminal action');
   }
-  if (action === 'close' || action === 'reassign') changed(app, previousSession);
+  if (action === 'close' || action === 'close_unused' || action === 'reassign') changed(app, previousSession);
   if (action === 'reassign' && context.sessionId !== previousSession) changed(app, context.sessionId);
   return null;
 }

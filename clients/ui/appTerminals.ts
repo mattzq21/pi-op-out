@@ -295,7 +295,7 @@ export function createTerminalController({ transport, sessionTransport, conversa
     if (!owned() || !capturedTransport.hasConfirmedOwnership() || startingTerminals.current.has(terminalId)) return; startingTerminals.current.add(terminalId);
     const sessionKey = capturedTerminalSessionId;
 
-    if (!await preparePlaceholder(terminalId, sessionKey, capturedTransport)) {
+    if (!await preparePlaceholder(terminalId, sessionKey, capturedTransport) || !terminalOpen()) {
       startingTerminals.current.delete(terminalId);
 
       return;
@@ -413,25 +413,31 @@ export function createTerminalController({ transport, sessionTransport, conversa
 
   const toggleFor = (target: TerminalTarget) => {
     if (!chatStartedFor(target.sessionKey)) return;
-    const close = terminalOpen() && terminalSessionId() === target.sessionKey;
+    const closing = terminalOpen() && terminalSessionId() === target.sessionKey;
+    if (terminalOpen()) void close();
     terminalPanelRevision.current += 1;
-    setTerminalTarget(target); setTerminalOpen(!close);
+    setTerminalTarget(target); setTerminalOpen(!closing);
   };
 
   const toggle = (target: () => TerminalTarget) => {
+    if (terminalOpen()) { void close(); return; }
+    const next = target();
+    if (!chatStartedFor(next.sessionKey)) return;
     terminalPanelRevision.current += 1;
-
-    if (!terminalOpen()) {
-      const next = target();
-
-      if (!chatStartedFor(next.sessionKey)) return;
-      setTerminalTarget(next);
-    }
-
-    setTerminalOpen(open => !open);
+    setTerminalTarget(next);
+    setTerminalOpen(true);
   };
 
-  const close = () => { terminalPanelRevision.current += 1; setTerminalOpen(false); };
+  const close = async () => {
+    const tabs = owned() ? state.sessionTerminals.tabs.filter(tab => tab.started || startingTerminals.current.has(tab.id)) : [];
+    terminalPanelRevision.current += 1;
+    setTerminalOpen(false);
+    await Promise.all(tabs.map(async tab => {
+      try { await nativeTerminals.closeUnused(tab.id); }
+      catch (reason) { addNotice({ title: "Could not close unused terminal", message: reason instanceof Error ? reason.message : String(reason) }); }
+    }));
+    await refreshShared();
+  };
 
   const syncDraft = (id: string, data: string) => {
     const revision = { data };

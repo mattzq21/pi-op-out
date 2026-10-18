@@ -13,7 +13,7 @@ test('opening an empty terminal then taking ownership starts the shell before in
   HTMLElement.prototype.scrollIntoView = () => {};
 
   terminals.length = 0;
-  const history = new Map(), notices = [], writes = [], calls = [];
+  const history = new Map(), notices = [], writes = [], calls = [], used = new Set();
   mockIPC((command, args) => {
     if (command === 'start_pi') return { attached: true, owned: false };
 
@@ -26,10 +26,12 @@ test('opening an empty terminal then taking ownership starts the shell before in
     if (args.action === 'list') return [...history.values()];
 
     if (args.action === 'start') history.set(id, { id, output: '$ ', outputEnd: 2, generation: '1', owned: true, started: true, exited: false });
+    if (args.action === 'close_unused' && !used.has(id)) history.delete(id);
 
     if (args.action === 'write_with_draft') {
       if (!history.has(id)) throw 'Terminal is unavailable';
       writes.push(args.data);
+      used.add(id);
     }
   }, { shouldMockEvents: true });
   let controller, view;
@@ -69,5 +71,10 @@ test('opening an empty terminal then taking ownership starts the shell before in
     assert.deepEqual(firstNotices, [], JSON.stringify({ notices: firstNotices, calls: firstCalls }));
     assert.deepEqual(writes, ['pwd\r', 'pwd\r']);
     assert.equal(history.size, 2);
+    await act(controller.close);
+    assert.equal(controller.terminalOpen(), false);
+    assert.deepEqual([...history.keys()], [originalId]);
+    assert.equal(calls.filter(action => action === 'close_unused').length, 2);
+    assert.deepEqual(notices, []);
   } finally { await view?.unmount(); await transport.dispose(); dom.restore(); }
 });
