@@ -7,7 +7,7 @@
     "predev": "bun run setup:dependencies",
     "dev": "bun --bun vite",
     "prebuild": "bun run setup:dependencies",
-    "build": "bun scripts/tauri.mjs build",
+    "build": "bun scripts/build-app.mjs",
     "prebuild:icons": "bun run setup:dependencies",
     "build:icons": "bun scripts/build-icons.mjs",
     "prebuild:extensions": "bun run setup:dependencies",
