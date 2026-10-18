@@ -216,6 +216,39 @@ test('an exited terminal keeps its final output and preserves a draft when sendi
   }
 }, 30_000);
 
+test('a failed restart of an exited terminal keeps its output and draft, and a valid retry accepts input', async () => {
+  const client = await daemon.connect();
+  const sessionId = 'draft-failed-restart';
+  const terminalId = 'failed-restart';
+  const directory = temporaryDirectory('piop-failed-restart-');
+  writeFileSync(join(directory, '.terminal-script'),
+    "if [ -f ./.first-run ]; then IFS= read -r line; printf 'RECEIVED:<%s>\\n' \"$line\"; else : > ./.first-run; printf 'First run finished\\n'; fi\n");
+  const restart = (args: Record<string, unknown>) => client.failure('shared_terminal', {
+    action: 'start', clientId: 'restart-owner', hostId: 'local', sessionKey: 'local:' + sessionId, sharedTerminalId: terminalId, ...args,
+  });
+  try {
+    await shared(client, 'restart-owner', 'start', sessionId, { sharedTerminalId: terminalId, cwd: directory, cols: 80, rows: 24 });
+    const first = await client.waitEvent('pi://event', event => event.type === 'terminal_exit' && event.terminalId === terminalId);
+    await shared(client, 'restart-owner', 'draft', sessionId, { sharedTerminalId: terminalId, data: 'Keep for next shell' });
+
+    const missing = join(directory, 'missing');
+    expect(await restart({ cwd: missing, cols: 80, rows: 24 })).toBe('Terminal working directory does not exist: ' + missing);
+    expect(await restart({ cwd: directory, cols: 70000, rows: 24 })).toBe('Invalid cols');
+    expect(await entry(client, 'restart-owner', sessionId, terminalId)).toMatchObject({
+      generation: first.generation, exited: true, inputDraft: 'Keep for next shell', output: expect.stringContaining('First run finished'),
+    });
+
+    await shared(client, 'restart-owner', 'start', sessionId, { sharedTerminalId: terminalId, cwd: directory, cols: 80, rows: 24 });
+    await shared(client, 'restart-owner', 'write', sessionId, { sharedTerminalId: terminalId, data: 'after restart\n' });
+    await client.waitEvent('pi://event', event =>
+      event.type === 'terminal_exit' && event.terminalId === terminalId && event.generation !== first.generation);
+    expect((await entry(client, 'restart-owner', sessionId, terminalId)).output).toContain('RECEIVED:<after restart>');
+  } finally {
+    await shared(client, 'restart-owner', 'close', sessionId, { sharedTerminalId: terminalId });
+    client.close();
+  }
+}, 30_000);
+
 test('another connection cannot send and clear the owner terminal draft', async () => {
   const owner = await daemon.connect();
   const other = await daemon.connect();
