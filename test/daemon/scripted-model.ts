@@ -36,5 +36,6 @@ export async function scriptedModel(home: string, reply: (request: any) => Reply
     baseUrl: `http://127.0.0.1:${port}/v1`, api: 'openai-completions', apiKey: 'scripted',
     models: [{ id: 'scripted-model', contextWindow: 200000, maxTokens: 8192 }],
   } } }));
-  return { requests, close: () => new Promise<void>(resolve => server.close(() => resolve())) };
+  // Open requests (a script that never answers) would hold the close forever.
+  return { requests, close: () => new Promise<void>(resolve => { server.close(() => resolve()); server.closeAllConnections(); }) };
 }
