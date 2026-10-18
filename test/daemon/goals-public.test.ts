@@ -101,6 +101,24 @@ test('a goal whose agent keeps answering with nothing is marked blocked and stop
   expect(await answers()).toBe(settled);
 }, 120000);
 
+test('a goal whose model keeps refusing for a rate limit is retried, then marked usage limited, and its chat is paused', async () => {
+  await agents.enableAgentTools('get_goal', 'create_goal', 'update_goal');
+  let calls = 0;
+  agents.scripts.set('Beat the rate limit', () => { calls++; throw new Error('Rate limit exceeded'); });
+  const chat = await agents.rootChat();
+  const entries = async () => (await chat.command({ type: 'get_entries' })).entries;
+  await send(chat, '/goal Beat the rate limit');
+  for (let tries = 0; calls < 4 && tries < 300; tries++) await Bun.sleep(100);
+  await Bun.sleep(3000);
+  expect(calls).toBe(4);
+  expect((await chat.command({ type: 'get_state' })).isPaused).toBe(true);
+  await send(chat, '/goal');
+  let summary = '';
+  for (let tries = 0; !summary && tries < 50; tries++, await Bun.sleep(100)) summary = (await entries()).filter((entry: any) => entry.customType === 'piop-goal-summary').map((entry: any) => text(entry)).at(-1) ?? '';
+  expect(summary).toStartWith('Goal usage limited\n\nBeat the rate limit');
+  expect(calls).toBe(4);
+}, 120000);
+
 test('a goal whose tool calls keep failing is marked blocked after five turns', async () => {
   await agents.enableAgentTools('get_goal', 'create_goal', 'update_goal');
   agents.scripts.set('Read the missing file', async messages => {

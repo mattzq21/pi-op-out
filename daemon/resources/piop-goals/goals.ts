@@ -61,6 +61,7 @@ export function registerGoals(pi: ExtensionAPI): { session: GoalSession; core: G
   let responseGoalId: string | undefined;
   let runSignal: AbortSignal | undefined;
   let rateLimited = false;
+  let failure: "usage_limited" | "blocked" | undefined;
   const resetAudit = () => { emptyTurns = 0; failedTurns = 0; automatic = false; };
 
   const allowed = () => ["get_goal", "create_goal", "update_goal"].every(name => pi.getActiveTools().includes(name));
@@ -145,7 +146,7 @@ export function registerGoals(pi: ExtensionAPI): { session: GoalSession; core: G
   pi.on("agent_start", (_event, ctx) => coordination.run(ctx, () => {
     context = ctx; starting = false;
     runSignal = ctx.signal;
-    rateLimited = false;
+    rateLimited = false; failure = undefined;
     activity = false; emptyFinal = false; successfulTool = false; failedTool = false;
     runGoalId = state.goal?.status === "active" ? state.goal.id : undefined;
 
@@ -172,14 +173,14 @@ export function registerGoals(pi: ExtensionAPI): { session: GoalSession; core: G
     const wasRateLimited = rateLimited;
     rateLimited = false;
 
-    if (event.message.stopReason !== "error" && !wasRateLimited) return;
+    if (event.message.stopReason !== "error" && !wasRateLimited) { failure = undefined;
+
+    return; }
     const message = wasRateLimited && event.message.stopReason !== "error"
       ? { ...event.message, stopReason: "error" as const, errorMessage: "HTTP 429: Too many requests. The model provider limited this request. Try again later." }
       : event.message;
 
-    try {
-      if (state.usageGoalId()) state.setStatus(ctx, wasRateLimited ? "usage_limited" : providerErrorStatus(message.errorMessage));
-    } finally { pause(ctx); }
+    failure = wasRateLimited ? "usage_limited" : providerErrorStatus(message.errorMessage);
 
     return { message };
   }));
@@ -199,21 +200,24 @@ export function registerGoals(pi: ExtensionAPI): { session: GoalSession; core: G
   }));
   pi.on("agent_end", (_event, ctx) => coordination.run(ctx, () => { state.flushClock(); state.save(ctx); }));
   pi.on("after_provider_response", (event, ctx) => coordination.run(ctx, () => {
-    if (event.status !== 429) return;
-    rateLimited = true;
-
-    try {
-      if (state.usageGoalId()) state.setStatus(ctx, "usage_limited");
-    } finally { pause(ctx); }
+    if (event.status === 429) rateLimited = true;
   }));
 
+  /** A failed run pauses the chat, so a resume continues it. Pi retries a failed response first, so this runs only on its last failure. */
   const stopForOutcome = (event: AgentBeforeSettleEvent, ctx: ExtensionContext) => {
+    if (event.outcome === "error" || failure) {
+      try {
+        if (state.usageGoalId()) state.setStatus(ctx, failure ?? "blocked");
+      } finally { pause(ctx); }
+
+      return true;
+    }
+
     if (event.outcome === "completed") return false;
 
     if (!state.usageGoalId()) return false;
 
-    if (event.outcome === "aborted") state.setStatus(ctx, "paused");
-    else state.setStatus(ctx, "blocked");
+    state.setStatus(ctx, "paused");
 
     return true;
   };
