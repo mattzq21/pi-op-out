@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test, beforeEach, afterEach } from 'node:test';
 import { build } from 'esbuild';
-import { IDBFactory } from 'fake-indexeddb';
+import { IDBFactory, IDBObjectStore } from 'fake-indexeddb';
 
 const compiled = await build({ entryPoints: ['clients/ui/lib/mobileHosts.ts'], bundle: true, write: false, format: 'esm', platform: 'node', define: { 'import.meta.env.MODE': '"mobile"' } });
 
@@ -70,4 +70,24 @@ test('a failed host save keeps the saved address and label, and a later save can
   assert.deepEqual(await readMobileAnchor(), { name: 'Office', url: 'wss://office.test/' });
   assert.equal(cachedMobileHost(), 'wss://office.test/');
   assert.equal(localHostLabel(), 'Office');
+});
+
+test('an aborted forget keeps the saved host, and a later forget can recover', async t => {
+  await saveMobileAnchor('wss://home.test', 'Home');
+  const deleteRecord = IDBObjectStore.prototype.delete;
+  const failure = t.mock.method(IDBObjectStore.prototype, 'delete', function (...args) {
+    const request = deleteRecord.apply(this, args);
+    request.addEventListener('success', () => this.transaction.abort(), { once: true });
+    return request;
+  });
+
+  await assert.rejects(forgetMobileAnchor());
+  assert.equal(cachedMobileHost(), 'wss://home.test/');
+  assert.equal(localHostLabel(), 'Home');
+  assert.deepEqual(await readMobileAnchor(), { name: 'Home', url: 'wss://home.test/' });
+
+  failure.mock.restore();
+  await forgetMobileAnchor();
+  assert.equal(await readMobileAnchor(), undefined);
+  assert.equal(cachedMobileHost(), '');
 });
