@@ -9,13 +9,13 @@
 **Subagents** - root agent and (grand/)children agents.  
 **Turn** - what's commonly known as agent turn: a reasoning, tool call etc.  
 **Task** - from agent prompted to agent settled.  
-**Idle** - the session state before a task starts or after the agent settles, with no answer generation, tool execution, or history compaction in progress. Work can still be queued, and a goal can remain active.
-
+**Idle** - the session state before a task starts or after the agent settles, with no answer generation, tool execution, or history compaction in progress. Work can still be queued, and a goal can remain active.  
 **Ready** - an idle session with nothing queued, including no follow-up messages, and no active goal.
 
 **Session tree** - a root session and all its subagent sessions. Avoid: conversation.  
 **Storage transaction** - an archive, delete or restore of one or more sessions that fully happens or fully rolls back, also after a crash.  
 **Host** - a machine that stores sessions and runs agents: the local machine or a remote machine over SSH. "Machine" is the UI word for it.  
 **Anchor host** - the one Host that the mobile app connects to. The phone uses the anchor's added machines through it.  
-**Host script** - a piop script that runs on a Host to read or change its stored data.
-**Restore receipt** - the saved result of a committed restore, used to answer a repeated restore of the same archived session tree.
+**Host script** - a piop script that runs on a Host to read or change its stored data.  
+**Restore receipt** - the saved result of a committed restore, used to answer a repeated restore of the same archived session tree.  
+**Project tooling** - bun, cargo, uv, jest. Don't confuse with agent tools.
