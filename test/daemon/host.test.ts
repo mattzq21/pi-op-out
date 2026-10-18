@@ -297,8 +297,29 @@ test('removing one queued message preserves the other message identity and attac
     expect(before).toHaveLength(2);
     const kept = before.find((item: any) => item.message === 'Keep the image');
     expect(kept.images).toEqual([{ type: 'image', mimeType: 'image/png' }]);
-    await command(runtime.runtimeId, { type: 'change_pending', id: before.find((item: any) => item.message === 'Remove this').id, action: 'remove' });
+    const oldId = before.find((item: any) => item.message === 'Remove this').id;
+    await command(runtime.runtimeId, { type: 'change_pending', id: oldId, action: 'remove' });
     expect((await command(runtime.runtimeId, { type: 'get_state' })).pendingMessages).toEqual([kept]);
+
+    await command(runtime.runtimeId, { type: 'follow_up', message: 'Remove this' });
+    const withReplacement = (await command(runtime.runtimeId, { type: 'get_state' })).pendingMessages;
+    expect(withReplacement).toHaveLength(2);
+    const newId = withReplacement[1].id;
+    expect(newId).toBeString();
+    expect(newId).not.toBe('');
+    expect(newId).not.toBe(oldId);
+    expect(newId).not.toBe(kept.id);
+    const expected = [
+      { id: kept.id, behavior: 'followUp', message: 'Keep the image', images: [{ type: 'image', mimeType: 'image/png' }] },
+      { id: newId, behavior: 'followUp', message: 'Remove this' },
+    ];
+    expect(withReplacement).toEqual(expected);
+
+    await command(runtime.runtimeId, { type: 'change_pending', id: oldId, action: 'remove' });
+    expect((await command(runtime.runtimeId, { type: 'get_state' })).pendingMessages).toEqual(expected);
+
+    await command(runtime.runtimeId, { type: 'change_pending', id: newId, action: 'remove' });
+    expect((await command(runtime.runtimeId, { type: 'get_state' })).pendingMessages).toEqual([expected[0]]);
   } finally { await daemon.invoke('stop_pi', { runtimeId: runtime.runtimeId }); }
 }, 60_000);
 
