@@ -40,3 +40,38 @@ test('compacting a chat replaces its oldest part with a summary, tells the app, 
     expect(again.some(([, content]: string[]) => content === 'My favourite animal is the otter')).toBe(false);
   } finally { await agents.close(); }
 }, 120000);
+
+/** Runs three long turns that each report 95,000 input tokens, in a chat started with the given context cap settings. */
+async function longChat(cap: { contextWindowCap: number; contextWindowCapEnabled: boolean }) {
+  const agents = await agentDaemon();
+  const settings = await agents.daemon.invoke('load_app_settings');
+  await agents.daemon.invoke('save_app_settings', { settings: { ...settings, ...cap, autoCompaction: true } });
+  let step = 0;
+  agents.scripts.set('Long project', messages => /context summarization assistant/.test(text(messages[0]))
+    ? { text: 'Summary of Long project: earlier steps are done.' }
+    : { text: 'Step ' + ++step, tokens: 95_000 });
+  const chat = await agents.rootChat();
+  // The app turns automatic compaction on for each chat it opens.
+  await chat.command({ type: 'set_auto_compaction', enabled: true });
+  // Compaction keeps the most recent part, so the turns carry enough text to leave an older part to summarize.
+  for (const turn of [1, 2, 3]) {
+    await chat.command({ type: 'prompt', message: turn === 1 ? 'Long project' : `Continue ${turn} ` + 'filler '.repeat(12000) });
+    await chat.until(history => history.filter(message => message.role === 'assistant' && text(message).startsWith('Step')).length >= turn);
+    await Bun.sleep(1000);
+  }
+  const entries = (await chat.command({ type: 'get_entries' })).entries;
+  const reasons = agents.daemon.events.filter(event => event.payload?.runtimeId === chat.runtimeId && event.payload.event?.type === 'compaction_end').map(event => event.payload.event.reason);
+  await agents.close();
+  return { summaries: entries.filter((entry: any) => entry.type === 'compaction').map((entry: any) => entry.summary), reasons };
+}
+
+test('a chat that reaches the context cap from Settings is compacted by itself, and without the cap the same chat is not', async () => {
+  const capped = await longChat({ contextWindowCap: 100_000, contextWindowCapEnabled: true });
+  expect(capped.summaries.length).toBeGreaterThan(0);
+  expect(capped.summaries.every((summary: string) => summary === 'Summary of Long project: earlier steps are done.')).toBe(true);
+  expect(new Set(capped.reasons)).toEqual(new Set(['threshold']));
+
+  // The scripted model allows 200,000 tokens, so 95,000 leaves plenty of room.
+  const uncapped = await longChat({ contextWindowCap: 100_000, contextWindowCapEnabled: false });
+  expect(uncapped.summaries).toEqual([]);
+}, 240000);
