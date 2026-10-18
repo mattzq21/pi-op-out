@@ -96,3 +96,23 @@ test('pausing stops the running response and holds waiting messages until the ch
   const messages = await chat.until(history => text(history.at(-1)) === 'Next task done.');
   expect(messages.filter(message => message.role === 'assistant').map(text).filter(Boolean)).toEqual(['Resumed work.', 'Next task done.']);
 }, 60000);
+
+test('stopping a response keeps waiting messages back, and the next message the user sends goes first, then the waiting ones', async () => {
+  const busy = held<{ text: string }>();
+  agents.scripts.set('Stopped job', messages => text(messages.at(-1)) === 'Stopped job' ? busy.promise : { text: 'Answer to ' + text(messages.at(-1)) });
+  const chat = await agents.rootChat();
+  await chat.command({ type: 'prompt', message: 'Stopped job' });
+  await chat.until(() => agents.model.requests.some(request => text(request.messages.at(-1)) === 'Stopped job'));
+  await chat.command({ type: 'follow_up', message: 'Waiting task' });
+  await chat.command({ type: 'abort' });
+  busy.release({ text: 'too late' });
+  await chat.until(history => history.at(-1)?.role === 'assistant' && history.at(-1).stopReason === 'aborted');
+  await Bun.sleep(1500);
+  expect(userTexts(await chat.history())).toEqual(['Stopped job']);
+  expect((await chat.command({ type: 'get_state' })).pendingMessages.map((item: any) => item.message)).toEqual(['Waiting task']);
+  await chat.command({ type: 'prompt', message: 'New request' });
+  const messages = await chat.until(history => text(history.at(-1)) === 'Answer to Waiting task');
+  expect(userTexts(messages)).toEqual(['Stopped job', 'New request', 'Waiting task']);
+  expect((await chat.command({ type: 'get_state' })).pendingMessages).toEqual([]);
+}, 60000);
+
