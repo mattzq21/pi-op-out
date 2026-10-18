@@ -298,6 +298,17 @@ test('remote directory listing rejects a regular file without changing it', asyn
   expect(readFileSync(path, 'utf8')).toBe('unchanged');
 });
 
+test('remote directory listing reports an unreadable folder and lists it again once readable', async () => {
+  const locked = join(realpathSync(server.home), 'unreadable-listing'); mkdirSync(join(locked, 'child'), { recursive: true });
+  chmodSync(locked, 0o300);
+  let failure: string;
+  try { failure = await daemon.failure('list_directories', { hostId: 'server', path: locked }); } finally { chmodSync(locked, 0o700); }
+  expect(failure).toStartWith('Could not browse ' + locked + ':');
+  expect(failure).toContain('EACCES');
+  expect(await daemon.invoke('list_directories', { hostId: 'server', path: locked }))
+    .toEqual({ path: locked, parent: realpathSync(server.home), directories: [join(locked, 'child')] });
+});
+
 test('local cleanup preserves files in an unallocated neighboring directory', async () => {
   const allocated = await daemon.invoke('create_temporary_chat', { hostId: 'local' });
   const unallocated = join(dirname(allocated.cwd), crypto.randomUUID());
