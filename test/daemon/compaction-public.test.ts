@@ -75,3 +75,19 @@ test('a chat that reaches the context cap from Settings is compacted by itself, 
   const uncapped = await longChat({ contextWindowCap: 100_000, contextWindowCapEnabled: false });
   expect(uncapped.summaries).toEqual([]);
 }, 240000);
+
+test('compacting while the agent works is refused with how to do it, and the running response goes on', async () => {
+  const agents = await agentDaemon();
+  try {
+    let release!: (reply: { text: string }) => void;
+    const busy = new Promise<{ text: string }>(resolve => { release = resolve; });
+    agents.scripts.set('Busy chat', () => busy);
+    const chat = await agents.rootChat();
+    await chat.command({ type: 'prompt', message: 'Busy chat' });
+    await chat.until(() => agents.model.requests.length > 0);
+    expect(await chat.command({ type: 'compact' }).then(() => 'compacted', (error: Error) => error.message)).toBe('Stop or pause piop before running /compact.');
+    release({ text: 'Finished anyway.' });
+    const history = await chat.until(messages => text(messages.at(-1)) === 'Finished anyway.');
+    expect(history.some(message => message.stopReason === 'aborted')).toBe(false);
+  } finally { await agents.close(); }
+}, 60000);

@@ -682,6 +682,8 @@ export class Session {
       case 'get_state': return this.collectState(command);
       case 'force_stop': await this.stop(); return null;
       case 'get_available_models': await this.refreshProviders(); break;
+      // Pi stops the running response before it compacts, even when there is nothing to compact.
+      case 'compact': if (this.working()) throw new Error('Stop or pause piop before running /compact.'); break;
     }
     return this.executeWorker(command);
   }
