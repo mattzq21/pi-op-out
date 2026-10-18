@@ -555,6 +555,21 @@ describe("context cap session", () => {
     expect(staleErrors).toEqual([]);
   });
 
+  test("a corrupt saved entry at session start rejects the waiting first state and reports to subscribers", async () => {
+    const failure = "Saved context cap entry corrupt-cap is invalid";
+    const host = new Host([{ type: "custom", customType: CAP_ENTRY, data: { cap: -1, source: "manual" }, id: "corrupt-cap" }], model("large", 1_000_000));
+    const session = host.session();
+    const received: unknown[] = [];
+    const errors: Error[] = [];
+    const first = Promise.allSettled([session.getState()]);
+    session.subscribe((state: unknown) => received.push(state), (error: Error) => errors.push(error));
+    await host.fire("session_start", { reason: "startup" });
+    expect(await first).toEqual([{ status: "rejected", reason: expect.objectContaining({ message: expect.stringContaining(failure) }) }]);
+    expect(received).toEqual([]);
+    expect(errors.length).toBeGreaterThan(0);
+    for (const error of errors) expect(error.message).toContain(failure);
+  });
+
   test("a failing subscriber reports its error without stopping changes or other subscribers", async () => {
     const host = await start();
     const errors: Error[] = [];
