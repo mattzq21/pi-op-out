@@ -5,16 +5,21 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { startDaemon, type TestDaemon } from './harness';
 
-function missingChat(daemon: TestDaemon): { id: string; path: string; cwd: string } {
+function projectChat(daemon: TestDaemon): { id: string; path: string; cwd: string } {
   const cwd = join(daemon.home, 'removed-project');
-  mkdirSync(cwd);
+  mkdirSync(cwd, { recursive: true });
   const chat = JSON.parse(execFileSync('node', [fileURLToPath(new URL('../fixtures/publish-chat.mjs', import.meta.url))], {
     encoding: 'utf8', timeout: 30_000,
     input: JSON.stringify({ home: daemon.home, cwd, content: JSON.stringify({ type: 'message', id: 'question', parentId: null,
       message: { role: 'user', content: 'Keep my research notes', timestamp: 1 } }) + '\n' }),
   }));
-  rmdirSync(cwd);
   return { ...chat, cwd };
+}
+
+function missingChat(daemon: TestDaemon): { id: string; path: string; cwd: string } {
+  const chat = projectChat(daemon);
+  rmdirSync(chat.cwd);
+  return chat;
 }
 
 const recover = (daemon: TestDaemon, path: string) => daemon.invoke('recover_missing_session', {
@@ -170,5 +175,30 @@ test('concurrent recovery from another client is refused while the first recover
     const refused = results.filter(result => result.status === 'rejected');
     expect(accepted.map(result => result.value.cwd)).toEqual([rows[0].cwd]);
     expect(refused.map(result => String(result.reason))).toEqual([expect.stringContaining('Take ownership of this conversation before changing it')]);
+  } finally { await daemon.stop(); }
+}, 60_000);
+
+test('recovery is refused while another client has the chat open and succeeds after that client closes it', async () => {
+  const daemon = await startDaemon();
+  try {
+    const chat = projectChat(daemon);
+    expect(await daemon.invoke('start_pi', { runtimeId: 'owner-runtime', clientId: 'owner-client', cwd: chat.cwd, sessionPath: chat.path }))
+      .toMatchObject({ owned: true });
+    rmdirSync(chat.cwd);
+    const before = await daemon.invoke('list_sessions');
+    expect(before).toEqual([expect.objectContaining({ id: chat.id, cwd: chat.cwd, cwdExists: false })]);
+
+    expect(await daemon.failure('recover_missing_session', {
+      sessionPath: chat.path, hostId: 'local', action: 'empty', clientId: 'recovery-test',
+    })).toContain('Take ownership of this conversation before changing it');
+    expect(await daemon.invoke('list_sessions')).toEqual(before);
+
+    await daemon.invoke('stop_pi', { runtimeId: 'owner-runtime' });
+    const result = await recover(daemon, chat.path);
+    expect(result.warnings).toEqual([]);
+    expect(readdirSync(result.cwd)).toEqual([]);
+    expect(await daemon.invoke('list_sessions')).toEqual([expect.objectContaining({
+      id: chat.id, cwd: result.cwd, cwdExists: true, preview: 'Keep my research notes', messageCount: 1,
+    })]);
   } finally { await daemon.stop(); }
 }, 60_000);
