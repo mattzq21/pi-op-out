@@ -223,6 +223,32 @@ test('when a reorder resend fails partway, only the failed and unsent messages n
   } finally { await daemon.invoke('stop_pi', { runtimeId: runtime.runtimeId }); }
 }, 60_000);
 
+test('after a reorder resend fails partway, removing one retry message keeps the sent message and the other retry message', async () => {
+  const session = publicSession(daemon.home, 'reject-second-redelivery');
+  const runtime = await open(session.path, 'remove-retry-client');
+  try {
+    for (const message of ['First task', 'Second task', 'Third task']) {
+      await command(runtime.runtimeId, { type: 'follow_up', message });
+    }
+    const [first, second, third] = (await command(runtime.runtimeId, { type: 'get_state' })).pendingMessages;
+    // Moving the first message to the end resends Second (accepted), Third (rejected), then First (never sent).
+    expect(await daemon.failure('pi_command', { runtimeId: runtime.runtimeId, command: {
+      type: 'change_pending', id: first.id, action: { type: 'move', targetId: third.id, edge: 'after' },
+    } })).toContain('Pi rejected the second resend');
+    await command(runtime.runtimeId, { type: 'change_pending', id: third.id, action: 'remove' });
+    expect((await command(runtime.runtimeId, { type: 'get_state' })).pendingMessages).toEqual([second, { ...first, retry: true }]);
+    await command(runtime.runtimeId, { type: 'change_pending', id: first.id, action: 'followUp' });
+    const state = await command(runtime.runtimeId, { type: 'get_state' });
+    expect(state.pendingMessages.map(({ id, message, retry }: any) => ({ id, message, retry: retry === true }))).toEqual([
+      { id: second.id, message: 'Second task', retry: false },
+      { id: first.id, message: 'First task', retry: false },
+    ]);
+    // The order differs from the setup queue, so no setup event can match.
+    await daemon.waitEvent('pi://event', packet => packet.runtimeId === runtime.runtimeId && packet.event?.type === 'queue_update'
+      && JSON.stringify(packet.event.followUp) === JSON.stringify(['Second task', 'First task']));
+  } finally { await daemon.invoke('stop_pi', { runtimeId: runtime.runtimeId }); }
+}, 60_000);
+
 test('a retry that Pi rejects keeps the same pending message for another retry, which then sends it once', async () => {
   const session = publicSession(daemon.home, 'reject-resend-and-retry');
   const runtime = await open(session.path, 'reject-retry-client');
