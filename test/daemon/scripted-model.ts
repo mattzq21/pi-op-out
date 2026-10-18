@@ -4,8 +4,8 @@ import { join } from 'node:path';
 
 /**
  * One model reply: plain text, or a call of one tool. tokens is the input token count the model reports for it.
- * stall sends the text, then starts a call of tool stall and never finishes the response. drop sends the text, then
- * cuts the connection, as a network failure does.
+ * stall sends the text, then starts a call of tool stall and never finishes the response. drop cuts the connection after
+ * the text, or after the started tool call, as a network failure does.
  */
 export type Reply = ({ text: string; stall?: string; drop?: true } | { tool: string; arguments?: Record<string, unknown> }) & { tokens?: number };
 
@@ -31,6 +31,7 @@ export async function scriptedModel(home: string, reply: (request: any) => Reply
     response.writeHead(200, { 'content-type': 'text/event-stream' });
     if ('text' in answer && answer.stall) {
       response.write(chunk({ role: 'assistant', content: answer.text }, null) + chunk({ tool_calls: [{ index: 0, id: 'call_' + ++calls, type: 'function', function: { name: answer.stall, arguments: '{"comm' } }] }, null));
+      if (answer.drop) setTimeout(() => response.destroy(), 100);
       return;
     }
     if ('text' in answer && answer.drop) {

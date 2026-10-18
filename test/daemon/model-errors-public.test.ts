@@ -27,3 +27,15 @@ test('a response cut off by a dropped connection is tried again, and the new try
   expect(retry).toEqual([['user', 'Answer over a weak network']]);
   expect((await chat.command({ type: 'get_state' })).isPaused).toBe(false);
 }, 60000);
+
+test('a tool call cut off by a dropped connection never runs, and the new try does not see it', async () => {
+  let calls = 0;
+  agents.scripts.set('Run a command over a weak network', () => ++calls === 1 ? { text: 'Running it', stall: 'bash', drop: true } : { text: 'Done without it.' });
+  const chat = await agents.rootChat();
+  await chat.command({ type: 'prompt', message: 'Run a command over a weak network' });
+  const history = await chat.until(messages => text(messages.at(-1)) === 'Done without it.');
+  expect(calls).toBe(2);
+  expect(history.some(message => message.role === 'toolResult')).toBe(false);
+  const retry = agents.model.requests.at(-1).messages.slice(1).map((message: any) => [message.role, text(message), message.tool_calls]);
+  expect(retry).toEqual([['user', 'Run a command over a weak network', undefined]]);
+}, 60000);
