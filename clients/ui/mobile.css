@@ -121,3 +121,7 @@ html[data-mobile] .app:has(.icon-rail:not(.compact)) ~ .mobile-reconnect-banner 
 }
 
 .app-loading + .mobile-host-button { display: block; }
+
+.mobile-notices { position: fixed; z-index: 25; top: calc(56px + env(safe-area-inset-top)); left: 8px; right: 8px; display: grid; gap: 12px; max-height: calc(var(--mobile-height, 100dvh) - 100px); overflow-y: auto; }
+.mobile-notices > .mobile-reconnect-banner { position: static; max-height: none; }
+html[data-mobile] .app:has(.icon-rail:not(.compact)) ~ .mobile-notices { z-index: 17; }

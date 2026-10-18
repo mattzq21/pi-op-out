@@ -6,11 +6,13 @@ import { startupPage } from '../startup-browser-fixture.mjs';
 const settings = { defaultAgent: 'default', hiddenModels: [], defaultThinking: 'high', defaultFastMode: false, contextWindowCap: 200000, contextWindowCapEnabled: true, modelContextWindowCaps: {}, autoRetry: true, debugMode: false, keybindings: { newConversation: 'Ctrl+N', toggleConversations: 'Ctrl+B', toggleTerminal: 'Ctrl+J', toggleDebugMode: 'Ctrl+D', focusComposer: 'Ctrl+E', openSettings: 'Ctrl+,' }, tools: [], skills: [], hosts: [] };
 const state = { model: { id: 'model', provider: 'test', name: 'Test model' }, thinkingLevel: 'high', isStreaming: false, sessionId: 'mobile-test', sessionFile: '/tmp/mobile-test.jsonl', messageCount: 0, pendingMessageCount: 0 };
 
-function answerHost(ws) {
+// Test control: `host.stopFailure` makes the host refuse to stop agent runs with this error.
+function answerHost(ws, host) {
   ws.onMessage(raw => {
     const message = JSON.parse(raw);
     if (message.type === 'authenticate') { ws.send(JSON.stringify({ type: 'ready', protocol: 1, backend: 'daemon' })); return; }
     if (message.type === 'ping') return;
+    if (message.command === 'stop_pi' && host.stopFailure) { ws.send(JSON.stringify({ id: message.id, error: host.stopFailure })); return; }
     const data = { stop_pi: true, load_app_settings: settings, load_settings_change: { settings }, plugin_status: { enabled: [], configured: [], revision: 'plugins', error: null }, create_temporary_chat: { cwd: '/tmp/project', sessionId: 'mobile-test' }, list_sessions: [], load_session_groups: { version: 1, groups: [], assignments: {} }, codex_usage: { remainingPercent: 80 }, opencode_go_usage: { rolling: { status: 'ok', remainingPercent: 70 }, weekly: { status: 'ok', remainingPercent: 45 }, monthly: { status: 'ok', remainingPercent: 30 } }, start_pi: { attached: true }, home_directory: '/home/test', is_git_repository: false };
     let result = Object.hasOwn(data, message.command) ? data[message.command] : undefined;
     if (message.command === 'provider_auth' && message.args.request.action === 'draft_catalog') result = { config: { agents: [{ name: 'default', model: 'test/model', effort: 'high', path_systemprompt: '', path_agent_prompt: '', tools: [], skills: [], mcpServers: {} }] }, models: [state.model], commands: [] };
@@ -61,13 +63,13 @@ function androidBridge(initialSettings) {
 }
 
 // Connects the mobile app to the test host and returns the chat with an enabled message box.
-async function connectedChat(t) {
+async function connectedChat(t, host = {}) {
   const page = await startupPage(t, 'mobile', {
     entryPoint: fileURLToPath(new URL('../../clients/ui/main.tsx', import.meta.url)), ready: 'input[type="url"]', holdStorage: false,
     async prepare(value) {
       await value.setViewportSize({ width: 390, height: 844 });
       await value.addInitScript(androidBridge, settings);
-      await value.routeWebSocket('wss://piop.example.test/', answerHost);
+      await value.routeWebSocket('wss://piop.example.test/', ws => answerHost(ws, host));
     },
   });
   await page.getByLabel('Anchor host address').fill('wss://piop.example.test');
@@ -130,6 +132,44 @@ test('Android Back shows the native minimize failure, and the next Back after re
   assert.equal(await page.evaluate(() => window.androidMinimized), 1);
   assert.equal(await editor.inputValue(), 'Keep this draft');
   assert.equal(await page.getByText('Activity is not available').count(), 0);
+});
+
+test('a successful Android minimize clears only its own failure and keeps the refused disconnect error', async t => {
+  const host = {};
+  const { page, editor } = await connectedChat(t, host);
+  await editor.fill('Keep this draft');
+  const minimizeFailure = page.locator('.mobile-reconnect-banner').filter({ hasText: 'Activity is not available' });
+  const connectionNotice = page.locator('.mobile-reconnect-banner').filter({ hasText: 'Agent run could not stop' });
+  const retryDisconnect = connectionNotice.getByRole('button', { name: 'Retry disconnect', exact: true });
+
+  await page.evaluate(() => { window.failNextAndroidMinimize = 'Activity is not available'; });
+  await page.evaluate(() => window.pressAndroidBack());
+  await minimizeFailure.waitFor();
+
+  host.stopFailure = 'Agent run could not stop';
+  const closePanel = page.getByRole('button', { name: 'Close conversations', exact: true });
+  await page.getByRole('button', { name: 'Toggle conversations' }).click();
+  page.once('dialog', dialog => dialog.accept());
+  await page.getByRole('button', { name: 'Host', exact: true }).click();
+  await retryDisconnect.waitFor();
+  await page.evaluate(() => window.pressAndroidBack());
+  await closePanel.waitFor({ state: 'detached' });
+  await settle(page);
+  assert.equal(await page.evaluate(() => window.androidMinimizeAttempts), 1);
+  assert.equal(await minimizeFailure.isVisible(), true);
+  assert.equal(await connectionNotice.isVisible(), true);
+  const [minimizeBox, connectionBox] = [await minimizeFailure.boundingBox(), await connectionNotice.boundingBox()];
+  const overlap = minimizeBox.x < connectionBox.x + connectionBox.width && connectionBox.x < minimizeBox.x + minimizeBox.width && minimizeBox.y < connectionBox.y + connectionBox.height && connectionBox.y < minimizeBox.y + minimizeBox.height;
+  assert.equal(overlap, false, 'The minimize failure covers the connection notice: ' + JSON.stringify({ minimizeBox, connectionBox }));
+
+  await page.evaluate(() => window.pressAndroidBack());
+  await page.waitForFunction(() => window.androidMinimized > 0);
+  await settle(page);
+  assert.equal(await page.evaluate(() => window.androidMinimizeAttempts), 2);
+  assert.equal(await minimizeFailure.count(), 0);
+  assert.equal(await connectionNotice.isVisible(), true);
+  assert.equal(await retryDisconnect.isEnabled(), true);
+  assert.equal(await editor.isVisible(), true);
 });
 
 test('Android Back closes the open conversation panel first and minimizes the app only on the next press', async t => {
