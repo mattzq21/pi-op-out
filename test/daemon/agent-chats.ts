@@ -48,5 +48,5 @@ export async function agentDaemon() {
     await chat.command({ type: 'configure_agents', configuration: { revision: configuration.revision, agents: configuration.agents.map((agent: any) => ({ ...agent, tools: [...new Set([...(agent.tools ?? []), ...tools])] })) } });
   };
 
-  return { daemon, model, scripts, rootChat, enableAgentTools, close: async () => { await model.close(); await daemon.stop(); } };
+  return { daemon, model, scripts, rootChat, enableAgentTools, close: async () => { await model.close(); await daemon.dispose(); } };
 }
