@@ -13,6 +13,7 @@ beforeEach(async () => {
   await useRemotes(daemon, [remote]);
   publish('Active chat');
 }, 60000);
+
 afterEach(async () => { await remote?.stop(); await daemon?.stop(); }, 60000);
 
 function publish(content: string, folder = "nested ' 日本語"): { id: string; path: string } {
@@ -41,6 +42,28 @@ test('remote archiving preserves each chat and earlier archives', async () => {
   expect(active.filter((row: any) => chats.some(chat => chat.id === row.id))).toEqual([]);
 }, 60000);
 
+
+test('repeating a finished remote archive fails and keeps earlier archives, other chats and the restorable original', async () => {
+  const earlier = publish('Archived before');
+  await archive(earlier.path);
+  const other = publish('Unrelated active chat');
+  const chat = publish('Archive twice');
+  await archive(chat.path);
+  await expect(archive(chat.path)).rejects.toThrow('Could not locate session file');
+  const archives = await remoteArchives();
+  expect(archives.filter((row: any) => [earlier.id, chat.id].includes(row.id)).map((row: any) => [row.name, row.restorable]).sort())
+    .toEqual([['Archive twice', true], ['Archived before', true]]);
+  const active = await waitForSessions(daemon, rows => rows.some(row => row.id === other.id));
+  expect(active.filter((row: any) => [other.id, chat.id].includes(row.id))).toMatchObject([{ hostId: remote.id, name: 'Unrelated active chat' }]);
+  await restore(archives.find((row: any) => row.id === chat.id).path);
+  await waitForSessions(daemon, rows => rows.some(row => row.id === chat.id));
+  const runtimeId = crypto.randomUUID();
+  await daemon.invoke('start_pi', { runtimeId, clientId: 'archive-reader', hostId: remote.id, sessionPath: chat.path, cwd: remote.home, presence: { readOnly: true } });
+  try {
+    const history = await daemon.invoke('pi_command', { runtimeId, command: { type: 'get_entries' } });
+    expect(history.entries).toMatchObject([{ id: 'question', message: { role: 'user', content: 'Archive twice' } }]);
+  } finally { await daemon.invoke('stop_pi', { runtimeId }); }
+}, 60000);
 
 test('remote archiving refuses a file outside the chat storage', async () => {
   const outside = join(remote.home, 'outside-archive.jsonl');
