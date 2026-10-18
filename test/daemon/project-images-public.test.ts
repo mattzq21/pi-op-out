@@ -41,3 +41,28 @@ test('an image read rejects a sibling folder that shares the project name prefix
     expect(await daemon.invoke('read_image_file', read('alias.png'))).toBe('data:image/png;base64,' + PNG);
   } finally { await daemon.stop(); }
 }, 60_000);
+
+test('an image read accepts a PNG of exactly 10 MiB with all its bytes, rejects one byte more, and then reads a small image at the same path', async () => {
+  const daemon = await startDaemon();
+  try {
+    const cwd = join(daemon.home, 'project');
+    mkdirSync(cwd, { recursive: true });
+    const read = { hostId: 'local', cwd, path: 'large.png' };
+    // A PNG signature, then a repeating pattern so a lost, added or moved byte changes the content.
+    const large = Buffer.alloc(10_485_760, Buffer.from(Array.from({ length: 251 }, (_, index) => index)));
+    Buffer.from(PNG, 'base64').copy(large, 0, 0, 8);
+    writeFileSync(join(cwd, 'large.png'), large);
+
+    const url: string = await daemon.invoke('read_image_file', read);
+    expect(url.slice(0, 41)).toBe('data:image/png;base64,iVBORw0KGgoICQoLDA0');
+    const bytes = Buffer.from(url.slice('data:image/png;base64,'.length), 'base64');
+    expect(bytes.length).toBe(10_485_760);
+    expect(bytes.equals(large)).toBe(true);
+
+    writeFileSync(join(cwd, 'large.png'), Buffer.concat([large, Buffer.from([0])]));
+    expect(await daemon.failure('read_image_file', read)).toBe('Image is larger than 10 MB');
+
+    writeFileSync(join(cwd, 'large.png'), Buffer.from(PNG, 'base64'));
+    expect(await daemon.invoke('read_image_file', read)).toBe('data:image/png;base64,' + PNG);
+  } finally { await daemon.stop(); }
+}, 60_000);
