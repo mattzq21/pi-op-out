@@ -30,6 +30,8 @@ let followUp = [];
 let rejectClear = sessionFile.includes('/reject-clear-once/');
 let rejectRedelivery = sessionFile.includes('/reject-redelivery-once/');
 const rejectSecondRedelivery = sessionFile.includes('/reject-second-redelivery/');
+const rejectResendAndRetry = sessionFile.includes('/reject-resend-and-retry/');
+const rejections = ['Pi rejected the resend', 'Pi rejected the retry'];
 let redeliveries = 0;
 let cleared = false;
 require('node:readline').createInterface({ input: process.stdin }).on('line', line => {
@@ -51,6 +53,10 @@ require('node:readline').createInterface({ input: process.stdin }).on('line', li
     }
     if (rejectSecondRedelivery && cleared && ++redeliveries === 2) {
       send({ type: 'response', id: request.id, command: request.type, success: false, error: 'Pi rejected the second resend' });
+      return;
+    }
+    if (rejectResendAndRetry && cleared && rejections.length) {
+      send({ type: 'response', id: request.id, command: request.type, success: false, error: rejections.shift() });
       return;
     }
     followUp.push(request.payload.message);
@@ -214,6 +220,37 @@ test('when a reorder resend fails partway, only the failed and unsent messages n
     // The order differs from the setup queue, so no setup event can match.
     await daemon.waitEvent('pi://event', packet => packet.runtimeId === runtime.runtimeId && packet.event?.type === 'queue_update'
       && JSON.stringify(packet.event.followUp) === JSON.stringify(['Second task', 'Third task', 'First task']));
+  } finally { await daemon.invoke('stop_pi', { runtimeId: runtime.runtimeId }); }
+}, 60_000);
+
+test('a retry that Pi rejects keeps the same pending message for another retry, which then sends it once', async () => {
+  const session = publicSession(daemon.home, 'reject-resend-and-retry');
+  const runtime = await open(session.path, 'reject-retry-client');
+  try {
+    await command(runtime.runtimeId, { type: 'follow_up', message: 'Remove this' });
+    await command(runtime.runtimeId, { type: 'follow_up', message: 'Keep the image', images: [
+      { type: 'image', mimeType: 'image/png', data: Buffer.from('retried-image').toString('base64') },
+    ] });
+    const [removed, image] = (await command(runtime.runtimeId, { type: 'get_state' })).pendingMessages;
+    expect(await daemon.failure('pi_command', {
+      runtimeId: runtime.runtimeId, command: { type: 'change_pending', id: removed.id, action: 'remove' },
+    })).toContain('Pi rejected the resend');
+    const waiting = (await command(runtime.runtimeId, { type: 'get_state' })).pendingMessages;
+    expect(waiting).toEqual([{ ...image, retry: true }]);
+    expect(waiting[0].images).toEqual([{ type: 'image', mimeType: 'image/png' }]);
+    expect(await daemon.failure('pi_command', {
+      runtimeId: runtime.runtimeId, command: { type: 'change_pending', id: image.id, action: 'followUp' },
+    })).toContain('Pi rejected the retry');
+    expect((await command(runtime.runtimeId, { type: 'get_state' })).pendingMessages).toEqual(waiting);
+    // Only events after this point can show the successful retry.
+    const boundary = daemon.events.length;
+    await command(runtime.runtimeId, { type: 'change_pending', id: image.id, action: 'followUp' });
+    await daemon.waitEvent('pi://event', packet => daemon.events.slice(boundary).some(event => event.payload === packet)
+      && packet.runtimeId === runtime.runtimeId && packet.event?.type === 'queue_update'
+      && JSON.stringify(packet.event.followUp) === JSON.stringify(['Keep the image']));
+    const state = await command(runtime.runtimeId, { type: 'get_state' });
+    expect(state.pendingMessages.map(({ id, message, images, retry }: any) => ({ id, message, images, retry: retry === true })))
+      .toEqual([{ id: image.id, message: 'Keep the image', images: [{ type: 'image', mimeType: 'image/png' }], retry: false }]);
   } finally { await daemon.invoke('stop_pi', { runtimeId: runtime.runtimeId }); }
 }, 60_000);
 
