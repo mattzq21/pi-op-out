@@ -60,6 +60,7 @@ require('node:readline').createInterface({ input: process.stdin }).on('line', li
       return;
     }
     followUp.push(request.payload.message);
+    if (rejectResendAndRetry) send({ type: 'fixture_prompt_received', queueId: request.payload.queueId, images: request.payload.images });
     send({ type: 'queue_update', steering: [], followUp });
   }
   if (request.type === 'clear_queue') {
@@ -274,6 +275,10 @@ test('a retry that Pi rejects keeps the same pending message for another retry, 
     await daemon.waitEvent('pi://event', packet => daemon.events.slice(boundary).some(event => event.payload === packet)
       && packet.runtimeId === runtime.runtimeId && packet.event?.type === 'queue_update'
       && JSON.stringify(packet.event.followUp) === JSON.stringify(['Keep the image']));
+    const received = await daemon.waitEvent('pi://event', packet => daemon.events.slice(boundary).some(event => event.payload === packet)
+      && packet.runtimeId === runtime.runtimeId && packet.event?.type === 'fixture_prompt_received');
+    expect(received.event.queueId).toBe(image.id);
+    expect(received.event.images).toEqual([{ type: 'image', mimeType: 'image/png', data: 'cmV0cmllZC1pbWFnZQ==' }]);
     const state = await command(runtime.runtimeId, { type: 'get_state' });
     expect(state.pendingMessages.map(({ id, message, images, retry }: any) => ({ id, message, images, retry: retry === true })))
       .toEqual([{ id: image.id, message: 'Keep the image', images: [{ type: 'image', mimeType: 'image/png' }], retry: false }]);
