@@ -200,3 +200,46 @@ test('a rejected settings save preserves the revision and permits a corrected re
     expect(other.events.some(event => event.payload?.settings?.reviewPrompt === 'Rejected review prompt')).toBe(false);
   } finally { await daemon.stop(); }
 }, 60_000);
+
+test('removed settings entries stay removed when a client with older settings reloads and saves', async () => {
+  let daemon = await startDaemon();
+  try {
+    const other = await daemon.connect();
+    const initial = await daemon.invoke('load_app_settings');
+    Object.assign(initial, {
+      modelAliases: { 'openai/gpt': 'Daily model', 'openai/old': 'Old model' },
+      hosts: [
+        { enabled: false, id: 'build', name: 'Build server', target: 'user@build', piPath: 'pi' },
+        { enabled: false, id: 'retired', name: 'Retired server', target: 'user@retired', piPath: 'pi' },
+      ],
+    });
+    await daemon.invoke('save_app_settings', { settings: initial });
+    const stale = await other.invoke('load_app_settings');
+
+    const current = await daemon.invoke('load_app_settings');
+    current.modelAliases = { 'openai/gpt': 'Daily model' };
+    current.hosts = current.hosts.filter((host: any) => host.id !== 'retired');
+    const removal = await daemon.invoke('save_app_settings', { settings: current });
+    const received = await other.waitEvent('pi://settings-changed', change => change.revision === removal.revision);
+    const remaining = {
+      modelAliases: { 'openai/gpt': 'Daily model' },
+      hosts: [{ enabled: false, id: 'build', name: 'Build server', target: 'user@build', piPath: 'pi' }],
+    };
+    expect(received.settings.modelAliases).toEqual(remaining.modelAliases);
+    expect(received.settings.hosts).toEqual(remaining.hosts);
+    expect(await other.failure('save_app_settings', { settings: { ...stale, reviewPrompt: 'Edit from older settings' } }))
+      .toContain('Settings changed in another window or client');
+
+    const edit = await other.invoke('save_app_settings', { settings: { ...received.settings, reviewPrompt: 'Edit after reload' } });
+    const returned = await daemon.waitEvent('pi://settings-changed', change => change.revision === edit.revision);
+    const expected = { ...remaining, reviewPrompt: 'Edit after reload' };
+    expect(returned.settings).toMatchObject(expected);
+    expect(returned.settings.modelAliases).toEqual(remaining.modelAliases);
+    const home = daemon.home;
+    await daemon.stop();
+    daemon = await startDaemon({ home });
+    const restored = await daemon.invoke('load_app_settings');
+    expect(restored).toMatchObject(expected);
+    expect(restored.modelAliases).toEqual(remaining.modelAliases);
+  } finally { await daemon.stop(); }
+}, 60_000);
