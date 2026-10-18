@@ -2,8 +2,11 @@ import { createServer, type IncomingMessage } from 'node:http';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
-/** One model reply: plain text, or a call of one tool. tokens is the input token count the model reports for it. */
-export type Reply = ({ text: string } | { tool: string; arguments?: Record<string, unknown> }) & { tokens?: number };
+/**
+ * One model reply: plain text, or a call of one tool. tokens is the input token count the model reports for it.
+ * stall sends the text, then starts a call of tool stall and never finishes the response.
+ */
+export type Reply = ({ text: string; stall?: string } | { tool: string; arguments?: Record<string, unknown> }) & { tokens?: number };
 
 /**
  * An OpenAI-compatible model server that answers with scripted replies, registered for Pi as provider "scripted"
@@ -25,6 +28,10 @@ export async function scriptedModel(home: string, reply: (request: any) => Reply
     if (response.destroyed) return;
     const chunk = (delta: unknown, finish: string | null) => 'data: ' + JSON.stringify({ id: 'scripted', object: 'chat.completion.chunk', created: 0, model: 'scripted', choices: [{ index: 0, delta, finish_reason: finish }] }) + '\n\n';
     response.writeHead(200, { 'content-type': 'text/event-stream' });
+    if ('text' in answer && answer.stall) {
+      response.write(chunk({ role: 'assistant', content: answer.text }, null) + chunk({ tool_calls: [{ index: 0, id: 'call_' + ++calls, type: 'function', function: { name: answer.stall, arguments: '{"comm' } }] }, null));
+      return;
+    }
     if ('text' in answer) response.write(chunk({ role: 'assistant', content: answer.text }, null) + chunk({}, 'stop'));
     else response.write(chunk({ role: 'assistant', tool_calls: [{ index: 0, id: 'call_' + ++calls, type: 'function', function: { name: answer.tool, arguments: JSON.stringify(answer.arguments ?? {}) } }] }, null) + chunk({}, 'tool_calls'));
     if (answer.tokens) response.write('data: ' + JSON.stringify({ id: 'scripted', object: 'chat.completion.chunk', created: 0, model: 'scripted', choices: [], usage: { prompt_tokens: answer.tokens, completion_tokens: 0, total_tokens: answer.tokens } }) + '\n\n');

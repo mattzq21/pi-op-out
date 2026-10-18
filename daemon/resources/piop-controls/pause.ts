@@ -119,10 +119,13 @@ export function registerPauseControl(pi: ExtensionAPI, publish: (ctx: ExtensionC
   pi.on("message_start", (event) => {
     if (event.message.role === "assistant") completedBlocks.clear();
   });
-  pi.on("message_update", (event) => {
+  pi.on("message_update", (event, ctx) => {
     const update = event.assistantMessageEvent;
 
     if (update.type !== "text_end" && update.type !== "thinking_end" && update.type !== "toolcall_end") return;
+
+    // Some providers end every open block when the response is stopped. A tool call ended that way is cut off.
+    if (update.type === "toolcall_end" && ctx.signal?.aborted) return;
     const block = update.partial.content[update.contentIndex];
 
     if (block) completedBlocks.set(update.contentIndex, structuredClone(block));
