@@ -116,6 +116,15 @@ describe("context cap settings transport", () => {
     expect(pi.notes.some(([type, message]) => type === "error" && message.startsWith("Context cap settings could not be applied"))).toBe(true);
     expect(await pi.state()).toEqual({ cap: 300_000, source: "config", appliedWindow: 300_000 });
     expect(pi.ctx.model.contextWindow).toBe(300_000);
+
+    const notesBeforeRetry = pi.notes.filter(([type]) => type === "error");
+    pi.settings.contextWindowCap = 400_000;
+    const retry: any = { command: "context_cap_settings", payload: { settings: pi.settings }, ctx: pi.ctx };
+    pi.emit("piop:rpc", retry);
+    await retry.ready;
+    expect(await pi.state()).toEqual({ cap: 400_000, source: "config", appliedWindow: 400_000 });
+    expect(pi.ctx.model.contextWindow).toBe(400_000);
+    expect(pi.notes.filter(([type]) => type === "error")).toEqual(notesBeforeRetry);
   });
 
   test("a model switch checks the model cap against the new model", async () => {
