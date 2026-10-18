@@ -334,6 +334,31 @@ describe("context cap session", () => {
     expect(await change).toEqual({ cap: 500_000, source: "manual", appliedWindow: 500_000 });
   });
 
+  test("a queued choice is validated again against compaction budgets that changed while it waited", async () => {
+    const host = await start([], model("large", 1_000_000), general(500_000));
+    const received: unknown[] = [];
+    host.session().subscribe((state: unknown) => received.push(state), () => undefined);
+    await host.session().getState();
+    await Promise.resolve();
+    const log = host.caps();
+    host.idle = false;
+    const outcome = host.session().setManualCap(400_000).catch((error: Error) => error);
+
+    try {
+      budgets.keepRecentTokens = 450_000;
+      host.idle = true;
+      await host.fire("agent_settled", { aborted: false });
+      const result = await outcome;
+      expect(result).toBeInstanceOf(Error);
+      expect((result as Error).message).toContain("compaction budgets");
+      expect(await host.session().getState()).toEqual({ cap: 500_000, source: "config", appliedWindow: 500_000 });
+      expect(host.model!.contextWindow).toBe(500_000);
+      expect(host.caps()).toEqual(log);
+      expect(received).toEqual([{ cap: 500_000, source: "config", appliedWindow: 500_000 }]);
+    } finally { budgets.keepRecentTokens = 20_000; }
+    expect(await host.session().setManualCap(400_000)).toEqual({ cap: 400_000, source: "manual", appliedWindow: 400_000 });
+  });
+
   test("model default bypasses defaults and the numeric range", async () => {
     const host = await start();
     await host.session().setManualCap(null);
