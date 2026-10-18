@@ -107,3 +107,18 @@ test('fork and forget goes back to an earlier answer in the same conversation, a
   expect(sent).toContain('Reply to Pick a color');
   expect(sent).not.toContain('Forgotten detour');
 }, 60000);
+
+test('after fork and forget, the chat list shows the chat as it is now, without what came after the earlier answer', async () => {
+  agents.scripts.set('Choose a fruit', messages => ({ text: 'Reply to ' + text(messages.at(-1)) }));
+  const chat = await agents.rootChat();
+  await chat.command({ type: 'prompt', message: 'Choose a fruit' });
+  await chat.until(history => text(history.at(-1)) === 'Reply to Choose a fruit');
+  await chat.command({ type: 'prompt', message: 'Discarded detour' });
+  await chat.until(history => text(history.at(-1)) === 'Reply to Discarded detour');
+  const listed = async () => (await agents.daemon.invoke('list_sessions')).find((session: any) => session.id === chat.sessionId);
+  for (let tries = 0; (await listed())?.preview !== 'Reply to Discarded detour' && tries < 50; tries++) await Bun.sleep(100);
+  const firstAnswer = (await chat.command({ type: 'get_entries' })).entries.find((entry: any) => entry.type === 'message' && text(entry.message) === 'Reply to Choose a fruit');
+  await chat.command({ type: 'fork_and_forget', entryId: firstAnswer.id });
+  for (let tries = 0; (await listed())?.preview !== 'Reply to Choose a fruit' && tries < 50; tries++) await Bun.sleep(100);
+  expect(await listed()).toMatchObject({ preview: 'Reply to Choose a fruit', messageCount: 3, name: 'Choose a fruit' });
+}, 60000);
