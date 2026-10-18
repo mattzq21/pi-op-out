@@ -97,7 +97,7 @@ test('pausing stops the running response and holds waiting messages until the ch
   expect(messages.filter(message => message.role === 'assistant').map(text).filter(Boolean)).toEqual(['Resumed work.', 'Next task done.']);
 }, 60000);
 
-test('stopping a response keeps waiting messages back, and the next message the user sends goes first, then the waiting ones', async () => {
+test('stopping a response keeps waiting messages back, and the next message the user sends from the composer goes first, then the waiting ones', async () => {
   const busy = held<{ text: string }>();
   agents.scripts.set('Stopped job', messages => text(messages.at(-1)) === 'Stopped job' ? busy.promise : { text: 'Answer to ' + text(messages.at(-1)) });
   const chat = await agents.rootChat();
@@ -110,9 +110,27 @@ test('stopping a response keeps waiting messages back, and the next message the 
   await Bun.sleep(1500);
   expect(userTexts(await chat.history())).toEqual(['Stopped job']);
   expect((await chat.command({ type: 'get_state' })).pendingMessages.map((item: any) => item.message)).toEqual(['Waiting task']);
-  await chat.command({ type: 'prompt', message: 'New request' });
+  await chat.command({ type: 'follow_up', message: 'New request' });
   const messages = await chat.until(history => text(history.at(-1)) === 'Answer to Waiting task');
   expect(userTexts(messages)).toEqual(['Stopped job', 'New request', 'Waiting task']);
   expect((await chat.command({ type: 'get_state' })).pendingMessages).toEqual([]);
+}, 60000);
+
+test('stopping a paused chat ends the pause: a new message is answered, and messages the pause held wait for the user to send them again', async () => {
+  const busy = held<{ text: string }>();
+  agents.scripts.set('Paused then stopped', messages => text(messages.at(-1)) === 'Paused then stopped' ? busy.promise : { text: 'Answer to ' + text(messages.at(-1)) });
+  const chat = await agents.rootChat();
+  await chat.command({ type: 'follow_up', message: 'Paused then stopped' });
+  await chat.until(() => agents.model.requests.some(request => text(request.messages.at(-1)) === 'Paused then stopped'));
+  await chat.command({ type: 'pause' });
+  await chat.command({ type: 'follow_up', message: 'Held by the pause' });
+  await chat.command({ type: 'abort' });
+  busy.release({ text: 'too late' });
+  expect((await chat.command({ type: 'get_state' })).isPaused).toBe(false);
+  await chat.command({ type: 'follow_up', message: 'After the stop' });
+  await chat.until(history => text(history.at(-1)) === 'Answer to After the stop');
+  await Bun.sleep(1500);
+  expect(userTexts(await chat.history())).toEqual(['Paused then stopped', 'After the stop']);
+  expect((await chat.command({ type: 'get_state' })).pendingMessages).toMatchObject([{ message: 'Held by the pause', retry: true }]);
 }, 60000);
 

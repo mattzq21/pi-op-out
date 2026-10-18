@@ -509,10 +509,10 @@ export class SessionQueue {
         if (gate.status === 'rejected') throw gate.reason;
         if (scope.cancelled) throw new Error(TIMEOUT);
         assertOwner();
-        await this.hold(scope);
-        if (scope.cancelled) throw new Error(TIMEOUT);
-        assertOwner();
-        return await this.execute(command, scope);
+        const result = await this.execute(command, scope);
+        // Stop ends a pause. Messages the pause held are not sent by themselves; they wait for the user to send them again.
+        if (this.held()) await this.heldFailed();
+        return result;
       } finally {
         if (release) { scope.remove(release); release(); }
       }
