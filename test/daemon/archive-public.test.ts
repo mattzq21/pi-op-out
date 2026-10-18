@@ -131,6 +131,36 @@ test('remote restore blocked by an occupied destination keeps the archive and th
   } finally { await daemon.invoke('stop_pi', { runtimeId }); }
 }, 60000);
 
+async function historyOf(path: string) {
+  const runtimeId = crypto.randomUUID();
+  await daemon.invoke('start_pi', { runtimeId, clientId: 'archive-reader', hostId: remote.id, sessionPath: path, cwd: remote.home, presence: { readOnly: true } });
+  try { return (await daemon.invoke('pi_command', { runtimeId, command: { type: 'get_entries' } })).entries; }
+  finally { await daemon.invoke('stop_pi', { runtimeId }); }
+}
+
+test('remote restore blocked by a read-only destination folder keeps the archive and the other chat, then succeeds when retried', async () => {
+  const folder = 'restore-blocked';
+  const other = publish('Neighbour stays active', folder);
+  const chat = publish('Restore after permission fix', folder);
+  await archive(chat.path);
+  const archived = (await remoteArchives()).find((row: any) => row.id === chat.id);
+  const parent = dirname(chat.path);
+  const mode = statSync(parent).mode & 0o777;
+  chmodSync(parent, 0o500);
+  try {
+    await expect(restore(archived.path)).rejects.toThrow(/EACCES|Permission denied/);
+    expect((await remoteArchives()).find((row: any) => row.id === chat.id)).toMatchObject({ name: 'Restore after permission fix', restorable: true });
+    const active = await waitForSessions(daemon, rows => rows.some(row => row.id === other.id));
+    expect(active.filter((row: any) => [other.id, chat.id].includes(row.id))).toMatchObject([{ hostId: remote.id, name: 'Neighbour stays active' }]);
+    expect(await historyOf(other.path)).toMatchObject([{ id: 'question', message: { role: 'user', content: 'Neighbour stays active' } }]);
+  } finally { chmodSync(parent, mode); }
+  await restore(archived.path);
+  const active = await waitForSessions(daemon, rows => rows.some(row => row.id === chat.id));
+  expect(active.find((row: any) => row.id === chat.id)).toMatchObject({ hostId: remote.id, name: 'Restore after permission fix' });
+  expect((await remoteArchives()).some((row: any) => row.id === chat.id)).toBe(false);
+  expect(await historyOf(chat.path)).toMatchObject([{ id: 'question', message: { role: 'user', content: 'Restore after permission fix' } }]);
+}, 60000);
+
 test('repeating a finished remote restore succeeds and keeps one active chat', async () => {
   const chat = publish('Restore twice');
   await archive(chat.path);
