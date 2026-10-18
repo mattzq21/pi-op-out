@@ -167,6 +167,32 @@ test('invalid group changes leave the saved groups unchanged', async () => {
   }
 });
 
+test('a rename that reuses another group name keeps sessions grouped, tells no client, and a corrected rename keeps them in place', async () => {
+  await reset();
+  const alphaChat = publicSession(); const betaChat = publicSession();
+  const alpha = (await change({ type: 'create', name: 'Alpha' })).groups[0].id;
+  const beta = (await change({ type: 'create', name: 'Beta' })).groups[0].id;
+  await change({ type: 'assign', key: 'local:' + alphaChat.id, group: alpha });
+  await change({ type: 'assign', key: 'local:' + betaChat.id, group: beta });
+  const listedGroups = async () => Object.fromEntries((await daemon.invoke('list_sessions'))
+    .filter((row: any) => [alphaChat.id, betaChat.id].includes(row.id)).map((row: any) => [row.id, row.groupId]));
+  const before = await load();
+  const start = daemon.events.length;
+
+  expect(await daemon.failure('change_session_groups', { change: { type: 'rename', id: beta, name: ' alpha ' } })).toBe('A group already uses that name');
+  expect(await load()).toEqual(before);
+  expect(await listedGroups()).toEqual({ [alphaChat.id]: alpha, [betaChat.id]: beta });
+  expect(daemon.events.slice(start).filter(event => event.event === 'pi://groups-changed')).toEqual([]);
+
+  const renamed = await change({ type: 'rename', id: beta, name: 'Gamma' });
+  expect(renamed.groups).toEqual([{ id: beta, name: 'Gamma', cwd: null, hostId: null, hostName: null }, { id: alpha, name: 'Alpha', cwd: null, hostId: null, hostName: null }]);
+  expect(renamed.assignments).toEqual(before.assignments);
+  const notified = await daemon.waitEvent('pi://groups-changed', payload => payload.groups.some((group: any) => group.name === 'Gamma'));
+  expect(notified).toEqual(renamed);
+  expect(daemon.events.slice(start).filter(event => event.event === 'pi://groups-changed').map(event => event.payload)).toEqual([renamed]);
+  expect(await listedGroups()).toEqual({ [alphaChat.id]: alpha, [betaChat.id]: beta });
+});
+
 test('moving project assignments keeps the old project until its last session moves', async () => {
   await reset();
   const first = publicSession();
