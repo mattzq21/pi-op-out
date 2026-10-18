@@ -63,7 +63,6 @@ function host() {
 
   return {
     ctx, notes, settings, emit,
-    listenerCount: (name: string) => bus.get(name)?.size ?? 0,
     fire: async (name: string, event: any = {}) => { for (const handler of handlers.get(name) ?? []) await handler({ type: name, ...event }, ctx); },
     state: () => { const request: any = {}; emit("piop:context-cap:session", request); return request.session.getState(); },
   };
@@ -160,5 +159,18 @@ test("missing settings report a visible error, preserve the current cap, and rec
 test("shutdown removes the settings listeners", async () => {
   const pi = await started();
   await pi.fire("session_shutdown");
-  for (const channel of ["piop:agents:ready", "piop:rpc"]) expect(pi.listenerCount(channel)).toBe(0);
+  expect(pi.ctx.model.contextWindow).toBe(1_000_000);
+  const notesAtShutdown = [...pi.notes];
+
+  pi.settings.contextWindowCap = 400_000;
+  save(pi.settings);
+  pi.emit("piop:agents:ready", { ctx: pi.ctx });
+  const request: any = { command: "context_cap_settings", payload: { settings: pi.settings }, ctx: pi.ctx };
+  pi.emit("piop:rpc", request);
+  request.ready?.catch(() => undefined);
+  await new Promise(resolve => setTimeout(resolve, 0));
+
+  expect(request.ready).toBeUndefined();
+  expect(pi.ctx.model.contextWindow).toBe(1_000_000);
+  expect(pi.notes).toEqual(notesAtShutdown);
 });
