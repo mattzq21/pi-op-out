@@ -34,6 +34,23 @@ test('with automatic retry turned off in Settings, also for a chat already open,
   } finally { await agents.daemon.invoke('save_app_settings', { settings: { ...(await agents.daemon.invoke('load_app_settings')), autoRetry: true } }); }
 }, 60000);
 
+test('a chat paused by a model outage takes a new message from the composer at once, which ends the pause', async () => {
+  const settings = await agents.daemon.invoke('load_app_settings');
+  await agents.daemon.invoke('save_app_settings', { settings: { ...settings, autoRetry: false } });
+  try {
+    let calls = 0;
+    agents.scripts.set('Outage, then a new message', messages => { if (++calls === 1) throw new Error('503 Service Unavailable'); return { text: 'Answer to ' + text(messages.at(-1)) }; });
+    const chat = await agents.rootChat();
+    await chat.command({ type: 'follow_up', message: 'Outage, then a new message' });
+    await chat.until(history => history.at(-1)?.stopReason === 'error');
+    for (let tries = 0; !(await chat.command({ type: 'get_state' })).isPaused && tries < 50; tries++) await Bun.sleep(100);
+    await chat.command({ type: 'follow_up', message: 'Please try again' });
+    await chat.until(history => text(history.at(-1)) === 'Answer to Please try again');
+    const state = await chat.command({ type: 'get_state' });
+    expect([state.isPaused, state.pendingMessages]).toEqual([false, []]);
+  } finally { await agents.daemon.invoke('save_app_settings', { settings: { ...(await agents.daemon.invoke('load_app_settings')), autoRetry: true } }); }
+}, 60000);
+
 test('a response cut off by a dropped connection is tried again, and the new try does not see the cut-off text', async () => {
   let calls = 0;
   agents.scripts.set('Answer over a weak network', () => ++calls === 1 ? { text: 'Half an ans', drop: true } : { text: 'Whole answer.' });
