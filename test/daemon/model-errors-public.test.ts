@@ -15,6 +15,21 @@ test('a short model outage is retried on its own, and the chat answers and is no
   expect((await chat.command({ type: 'get_state' })).isPaused).toBe(false);
 }, 60000);
 
+test('with automatic retry turned off in Settings, a model outage is not tried again and the chat is paused for the user', async () => {
+  const settings = await agents.daemon.invoke('load_app_settings');
+  await agents.daemon.invoke('save_app_settings', { settings: { ...settings, autoRetry: false } });
+  try {
+    let calls = 0;
+    agents.scripts.set('Answer without retries', () => { calls++; throw new Error('503 Service Unavailable'); });
+    const chat = await agents.rootChat();
+    await chat.command({ type: 'prompt', message: 'Answer without retries' });
+    await chat.until(history => history.at(-1)?.stopReason === 'error');
+    await Bun.sleep(3000);
+    expect(calls).toBe(1);
+    expect((await chat.command({ type: 'get_state' })).isPaused).toBe(true);
+  } finally { await agents.daemon.invoke('save_app_settings', { settings: { ...(await agents.daemon.invoke('load_app_settings')), autoRetry: true } }); }
+}, 60000);
+
 test('a response cut off by a dropped connection is tried again, and the new try does not see the cut-off text', async () => {
   let calls = 0;
   agents.scripts.set('Answer over a weak network', () => ++calls === 1 ? { text: 'Half an ans', drop: true } : { text: 'Whole answer.' });
