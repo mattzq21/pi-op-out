@@ -335,6 +335,40 @@ test('oversized Unicode terminal drafts are rejected without losing the saved dr
   }
 }, 30_000);
 
+test('sending oversized Unicode terminal input is rejected, keeps the draft, and a corrected send reaches the shell once', async () => {
+  const client = await daemon.connect();
+  const sessionId = 'draft-input-size-limit';
+  const terminalId = 'input-size-limit';
+  const directory = temporaryDirectory('piop-input-size-limit-');
+  writeFileSync(join(directory, '.terminal-script'), "while IFS= read -r line; do printf 'RECEIVED:<%s>\\n' \"$line\"; done\n");
+  const from = client.events.length;
+  const output = () => client.events.slice(from)
+    .filter(event => event.event === 'pi://event' && event.payload?.type === 'terminal_output' && event.payload.terminalId === terminalId)
+    .map(event => event.payload.data).join('');
+  try {
+    await shared(client, 'input-size-owner', 'start', sessionId, { sharedTerminalId: terminalId, cwd: directory, cols: 80, rows: 24 });
+    await shared(client, 'input-size-owner', 'draft', sessionId, { sharedTerminalId: terminalId, data: 'Keep this command' });
+    // 262145 ducks are 524290 UTF-16 characters but 1048580 bytes.
+    expect(await client.failure('shared_terminal', {
+      action: 'write_and_clear_draft', clientId: 'input-size-owner', hostId: 'local', sessionKey: 'local:' + sessionId,
+      sharedTerminalId: terminalId, data: '🦆'.repeat(262145) + '\n', expectedDraft: 'Keep this command',
+    })).toBe('Terminal input exceeds 1 MiB');
+    expect((await entry(client, 'input-size-owner', sessionId, terminalId)).inputDraft).toBe('Keep this command');
+
+    await shared(client, 'input-size-owner', 'write_and_clear_draft', sessionId, {
+      sharedTerminalId: terminalId, data: 'Keep this command\n', expectedDraft: 'Keep this command',
+    });
+    await client.waitEvent('pi://event', () => output().includes('RECEIVED:<Keep this command>'));
+    const result = await entry(client, 'input-size-owner', sessionId, terminalId);
+    expect(result.output.match(/RECEIVED:<[^>]*>/g)).toEqual(['RECEIVED:<Keep this command>']);
+    expect(result.output).not.toContain('🦆');
+    expect(result.inputDraft).toBe('');
+  } finally {
+    await shared(client, 'input-size-owner', 'close', sessionId, { sharedTerminalId: terminalId });
+    client.close();
+  }
+}, 30_000);
+
 test('discarding drafts closes only the requesting connection terminals', async () => {
   const first = await daemon.connect();
   const second = await daemon.connect();
