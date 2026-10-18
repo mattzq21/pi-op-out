@@ -66,3 +66,28 @@ test('an image read accepts a PNG of exactly 10 MiB with all its bytes, rejects 
     expect(await daemon.invoke('read_image_file', read)).toBe('data:image/png;base64,' + PNG);
   } finally { await daemon.stop(); }
 }, 60_000);
+
+test('after the project folder is gone, an image read still gives goal attachment images from active and archived storage, and rejects other stored images', async () => {
+  const daemon = await startDaemon();
+  try {
+    const cwd = join(daemon.home, 'deleted-project');
+    const folder = '--' + cwd.slice(1).replaceAll('/', '-') + '--';
+    const storage = join(daemon.home, '.piop');
+    const active = join(storage, 'sessions', folder, 'attachments', 'goal-a1b2c3');
+    const archived = join(storage, 'archived', folder, 'attachments', 'goal-' + 'd4'.repeat(32));
+    const lookalike = join(storage, 'sessions', folder, 'attachments', 'goal-a1b2c');
+    for (const directory of [active, archived, lookalike]) mkdirSync(directory, { recursive: true });
+    // Different bytes in each file, so a read of the wrong file shows.
+    const image = (marker: number) => Buffer.concat([Buffer.from(PNG, 'base64'), Buffer.from([marker])]);
+    writeFileSync(join(active, 'attachment-1.png'), image(1));
+    writeFileSync(join(archived, 'attachment-2.png'), image(2));
+    writeFileSync(join(lookalike, 'attachment-1.png'), image(3));
+    writeFileSync(join(storage, 'sessions', folder, 'photo.png'), image(4));
+    const read = (path: string) => ({ hostId: 'local', cwd, path });
+
+    expect(await daemon.invoke('read_image_file', read(join(active, 'attachment-1.png')))).toBe('data:image/png;base64,' + image(1).toString('base64'));
+    expect(await daemon.invoke('read_image_file', read(join(archived, 'attachment-2.png')))).toBe('data:image/png;base64,' + image(2).toString('base64'));
+    expect(await daemon.failure('read_image_file', read(join(lookalike, 'attachment-1.png')))).toBe('Image is outside the project');
+    expect(await daemon.failure('read_image_file', read(join(storage, 'sessions', folder, 'photo.png')))).toBe('Image is outside the project');
+  } finally { await daemon.stop(); }
+}, 60_000);
