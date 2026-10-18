@@ -208,6 +208,27 @@ test('deletion refused for another client keeps the open conversation readable a
   } finally { await local.stop(); }
 }, 60_000);
 
+test('another client can archive a chat open by its owner, which stops the owner changing it, and restore it unchanged', async () => {
+  const local = await startDaemon();
+  try {
+    const question = JSON.stringify({ type: 'message', id: 'question', parentId: null, message: { role: 'user', content: 'Archived by another client' } }) + '\n';
+    const chat = publicSession(local.home, local.home, 'cross-client-archive', question);
+    const open = (runtimeId: string, clientId: string, sessionPath: string, presence?: any) => local.invoke('start_pi', { runtimeId, clientId, cwd: local.home, sessionPath, presence });
+    expect(await open('owner-runtime', 'owner-client', chat.path)).toMatchObject({ owned: true });
+    await local.invoke('archive_session', { sessionPath: chat.path, hostId: 'local', terminalIds: [], clientId: 'other-client' });
+    expect(await local.failure('pi_command', { runtimeId: 'owner-runtime', command: { type: 'prompt', message: 'after archive' } })).toBe('Take ownership of this conversation before changing it');
+    const archives = (await local.invoke('storage_report')).hosts.find((host: any) => host.hostId === 'local').archives.filter((row: any) => row.id === chat.id);
+    expect(archives).toEqual([expect.objectContaining({ id: chat.id, restorable: true })]);
+    expect((await local.invoke('list_sessions')).some((row: any) => row.id === chat.id)).toBe(false);
+    await local.invoke('restore_archived_session', { sessionPath: archives[0].path, hostId: 'local', clientId: 'other-client' });
+    await open('reader-runtime', 'other-client', chat.path, { readOnly: true });
+    try {
+      const history = await local.invoke('pi_command', { runtimeId: 'reader-runtime', command: { type: 'get_entries' } });
+      expect(history.entries.filter((entry: any) => entry.type === 'message')).toMatchObject([{ id: 'question', message: { role: 'user', content: 'Archived by another client' } }]);
+    } finally { await local.invoke('stop_pi', { runtimeId: 'reader-runtime' }); }
+  } finally { await local.stop(); }
+}, 60_000);
+
 
 
 function publishedChat(content: string): { id: string; path: string } {
