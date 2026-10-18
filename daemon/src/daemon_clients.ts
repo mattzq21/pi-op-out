@@ -4,7 +4,7 @@ import type { App } from './app';
 
 /** Counts connected clients and decides when an unattended daemon may stop. */
 export class DaemonClients {
-  constructor(private readonly onStop: () => void) {}
+  constructor(private readonly onStop: () => void, private readonly onLastDisconnect: () => void) {}
 
   private count = 0;
   private closingFlag = false;
@@ -65,7 +65,10 @@ export class DaemonClients {
         if (released) return;
         released = true;
         this.count -= 1;
-        if (this.automaticFlag && this.count === 0) this.stopped.notifyOne();
+        if (this.count === 0) {
+          try { this.onLastDisconnect(); }
+          finally { if (this.automaticFlag) this.stopped.notifyOne(); }
+        }
       },
     };
   }

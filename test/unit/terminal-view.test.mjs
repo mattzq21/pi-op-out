@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { describe, test, beforeEach, afterEach } from 'node:test';
 import { installDom, renderComponent, act } from '../dom.mjs';
 import { TerminalView } from '../../clients/ui/components/TerminalView.tsx';
+import { MobileTerminalView } from '../../clients/ui/components/MobileTerminalView.tsx';
 import { terminals } from '../terminal-runtime.mjs';
 
 describe('terminal view', () => {
@@ -20,6 +21,21 @@ describe('terminal view', () => {
 
   const control = label => document.querySelector(`[aria-label="${label}"]`);
   const click = async element => act(async () => element.click());
+
+  for (const [name, component] of [['desktop', TerminalView], ['mobile', MobileTerminalView]]) {
+    test(`${name} starts a shell only after its hidden panel is opened`, async () => {
+      props = { ...props, visible: false };
+      view = await renderComponent(component, props);
+      assert.deepEqual(starts, []);
+      props = { ...props, visible: true };
+      await view.rerender(props);
+      assert.equal(starts.length, 1);
+      props = { ...props, started: true, visible: false };
+      await view.rerender(props);
+      await view.rerender({ ...props, visible: true });
+      assert.equal(starts.length, 1);
+    });
+  }
 
   test('closing the view releases the terminal and its event subscriptions', async () => {
     await render();

@@ -25,6 +25,7 @@ export function DesktopTerminalView(componentProps: TerminalViewProps) {
   const [copyError, setCopyError] = createSignal(false);
   const [draftStyle, setDraftStyle] = createSignal<CSSProperties>({ display: "none" });
   const terminalMount = createRef<HTMLDivElement>(null);
+  const userInput = createRef(false);
   const queueOutput = createRef<((data: string, end: number, reset: boolean, transcript: string) => void) | undefined>(undefined);
   const resizeToHost = createRef<(() => void) | undefined>(undefined);
   const host = createRef<HTMLDivElement>(null); const terminal = createRef<Terminal | undefined>(undefined); const lastOutputEnd = createRef(0); const queuedOutputEnd = createRef(0); const tabRefs = createRef(new Map<string, HTMLButtonElement>());
@@ -34,6 +35,7 @@ export function DesktopTerminalView(componentProps: TerminalViewProps) {
     const saveSnapshot = componentProps.onSnapshot;
 
     if (!capturedCwd0 || !host.current || !terminalMount.current) return;
+    userInput.current = false;
     const accent = getComputedStyle(document.documentElement).getPropertyValue("--accent").trim();
     const instance = new Terminal({ windowOptions: { setWinSizeChars: true }, cursorBlink: true, convertEol: false, fontFamily: "ui-monospace, SFMono-Regular, Consolas, monospace", fontSize: 12, lineHeight: 1.25, scrollback: 5000, theme: { ...terminalTheme, cursor: accent } });
     const fit = new FitAddon(); const serializer = new SerializeAddon(); instance.loadAddon(fit); instance.loadAddon(serializer); instance.open(terminalMount.current); terminal.current = instance;
@@ -122,7 +124,15 @@ export function DesktopTerminalView(componentProps: TerminalViewProps) {
     if (capturedSnapshot1) queueOutput.current(capturedSnapshot1, capturedSnapshotEnd2 ?? 0, false, capturedSnapshot1);
 
     instance.options.disableStdin = Boolean(componentProps.ownershipRequired);
-    const data = instance.onData((value) => { if (!componentProps.ownershipRequired) callbacks.current.onData(value); });
+    const markUserInput = () => { if (!componentProps.ownershipRequired) userInput.current = true; };
+    const keyInput = instance.onKey(markUserInput);
+    const inputHost = terminalMount.current;
+    const inputEvents = ['input', 'paste', 'compositionend'] as const;
+    for (const event of inputEvents) inputHost.addEventListener(event, markUserInput, true);
+    const mouseInput = () => { if (instance.modes.mouseTrackingMode !== 'none') markUserInput(); };
+    const mouseEvents = ['mousedown', 'mouseup', 'mousemove', 'wheel'] as const;
+    for (const event of mouseEvents) inputHost.addEventListener(event, mouseInput, true);
+    const data = instance.onData((value) => { if (!componentProps.ownershipRequired) callbacks.current.onData(value, false, userInput.current); });
     let cursorFrame: number | undefined;
 
     const positionDraft = () => {
@@ -195,6 +205,9 @@ export function DesktopTerminalView(componentProps: TerminalViewProps) {
     return () => { saveSnapshot(restored ? `\u001b[8;${instance.rows};${instance.cols}t${serializer.serialize()}` : capturedSnapshot1 || "", restored ? lastOutputEnd.current : capturedSnapshotEnd2 ?? 0); observer?.disconnect();
     window.clearTimeout(resizeTimer); resizeToHost.current = undefined; queueOutput.current = undefined; pending = [];
 
+    for (const event of inputEvents) inputHost.removeEventListener(event, markUserInput, true);
+    for (const event of mouseEvents) inputHost.removeEventListener(event, mouseInput, true);
+    keyInput.dispose();
     if (cursorFrame !== undefined) cancelAnimationFrame(cursorFrame); cursor.dispose(); draftRender.dispose(); draftScroll.dispose(); data.dispose(); sizeHandler.dispose(); instance.dispose(); terminal.current = undefined; lastOutputEnd.current = 0; queuedOutputEnd.current = 0; };
   }, () => [componentProps.activeId, componentProps.cwd]);
 
@@ -205,9 +218,9 @@ export function DesktopTerminalView(componentProps: TerminalViewProps) {
     instance.options.disableStdin = Boolean(componentProps.ownershipRequired);
 
     if (componentProps.ownershipRequired) instance.blur();
-    else if (!componentProps.started && !componentProps.exited) callbacks.current.onStart(componentProps.activeId, instance.cols, instance.rows);
+    else if (componentProps.visible !== false && !componentProps.started && !componentProps.exited) { userInput.current = false; callbacks.current.onStart(componentProps.activeId, instance.cols, instance.rows); }
     resizeToHost.current?.();
-  }, () => [componentProps.activeId, componentProps.cwd, componentProps.ownershipRequired, componentProps.started, componentProps.exited]);
+  }, () => [componentProps.activeId, componentProps.cwd, componentProps.ownershipRequired, componentProps.started, componentProps.exited, componentProps.visible]);
 
   createDependencyEffect(() => {
     const instance = terminal.current;

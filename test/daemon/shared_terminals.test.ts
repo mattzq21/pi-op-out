@@ -43,6 +43,27 @@ async function startTerminal(client: Client, clientId: string, sessionId: string
 const entry = async (client: Client, clientId: string, sessionId: string, terminalId: string) =>
   (await shared(client, clientId, 'list', sessionId)).find((item: any) => item.id === terminalId);
 
+test('closing an unused terminal stops it, but preserves terminals with input even after the draft is erased', async () => {
+  const client = await daemon.connect();
+  const sessionId = 'draft-unused-shell';
+  const ids = ['unused-shell', 'typed-shell', 'written-shell'];
+  try {
+    for (const id of ids) await startTerminal(client, 'unused-owner', sessionId, id);
+    await shared(client, 'unused-owner', 'resize', sessionId, { sharedTerminalId: ids[0], cols: 100, rows: 30 });
+    await shared(client, 'unused-owner', 'reply', sessionId, { sharedTerminalId: ids[0], data: '\u001b[1;1R' });
+    await shared(client, 'unused-owner', 'draft', sessionId, { sharedTerminalId: ids[1], data: 'hello' });
+    await shared(client, 'unused-owner', 'draft', sessionId, { sharedTerminalId: ids[1], data: '' });
+    await shared(client, 'unused-owner', 'write', sessionId, { sharedTerminalId: ids[2], data: 'x' });
+    for (const id of ids) await shared(client, 'unused-owner', 'close_unused', sessionId, { sharedTerminalId: id });
+    expect(await entry(client, 'unused-owner', sessionId, ids[0]!)).toBeUndefined();
+    expect(await client.failure('write_terminal', { terminalId: ids[0], data: 'x' })).toBe('Terminal is not running');
+    for (const id of ids.slice(1)) expect(await entry(client, 'unused-owner', sessionId, id)).toMatchObject({ exited: false });
+  } finally {
+    for (const id of ids) await shared(client, 'unused-owner', 'close', sessionId, { sharedTerminalId: id });
+    client.close();
+  }
+});
+
 test('resizing a shared terminal changes the dimensions seen by its shell', async () => {
   const client = await daemon.connect();
   const sessionId = 'draft-shell-size';
@@ -83,7 +104,7 @@ test('sending reviewed terminal text delivers it once and clears its matching dr
   }
 }, 30_000);
 
-test('direct terminal input sends only the supplied text and keeps the saved draft', async () => {
+for (const action of ['write', 'reply']) test(`${action} sends only the supplied text and keeps the saved draft`, async () => {
   const client = await daemon.connect();
   const sessionId = 'draft-direct-shell-input';
   const terminalId = 'direct-shell-input';
@@ -92,7 +113,7 @@ test('direct terminal input sends only the supplied text and keeps the saved dra
   try {
     await shared(client, 'direct-owner', 'start', sessionId, { sharedTerminalId: terminalId, cwd: directory, cols: 80, rows: 24 });
     await shared(client, 'direct-owner', 'draft', sessionId, { sharedTerminalId: terminalId, data: 'Keep for later' });
-    await shared(client, 'direct-owner', 'write', sessionId, { sharedTerminalId: terminalId, data: 'direct text\n' });
+    await shared(client, 'direct-owner', action, sessionId, { sharedTerminalId: terminalId, data: 'direct text\n' });
     await client.waitEvent('pi://event', event => event.type === 'terminal_exit' && event.terminalId === terminalId);
     const result = await entry(client, 'direct-owner', sessionId, terminalId);
     expect(result.output).toContain('RECEIVED:<direct text>');
