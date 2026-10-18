@@ -152,6 +152,36 @@ test('a reorder that Pi rejects keeps both messages for retry, and retrying send
   } finally { await daemon.invoke('stop_pi', { runtimeId: runtime.runtimeId }); }
 }, 60_000);
 
+test('a failed resend keeps a removed message gone and preserves the remaining messages for retry', async () => {
+  const session = publicSession(daemon.home, 'reject-redelivery-once');
+  const runtime = await open(session.path, 'reject-removal-resend-client');
+  try {
+    await command(runtime.runtimeId, { type: 'follow_up', message: 'Remove this' });
+    await command(runtime.runtimeId, { type: 'follow_up', message: 'Keep the image', images: [
+      { type: 'image', mimeType: 'image/png', data: Buffer.from('survivor-image').toString('base64') },
+    ] });
+    await command(runtime.runtimeId, { type: 'follow_up', message: 'Keep the text' });
+    const [removed, image, plain] = (await command(runtime.runtimeId, { type: 'get_state' })).pendingMessages;
+    expect(image.images).toEqual([{ type: 'image', mimeType: 'image/png' }]);
+    expect(await daemon.failure('pi_command', {
+      runtimeId: runtime.runtimeId, command: { type: 'change_pending', id: removed.id, action: 'remove' },
+    })).toContain('Pi is temporarily busy');
+    expect((await command(runtime.runtimeId, { type: 'get_state' })).pendingMessages).toEqual([
+      { ...image, retry: true }, { ...plain, retry: true },
+    ]);
+    await command(runtime.runtimeId, { type: 'change_pending', id: image.id, action: 'followUp' });
+    await command(runtime.runtimeId, { type: 'change_pending', id: plain.id, action: 'followUp' });
+    const state = await command(runtime.runtimeId, { type: 'get_state' });
+    expect(state.pendingMessages.map(({ id, message, images, retry }: any) => ({ id, message, images, retry: retry === true })))
+      .toEqual([
+        { id: image.id, message: 'Keep the image', images: [{ type: 'image', mimeType: 'image/png' }], retry: false },
+        { id: plain.id, message: 'Keep the text', images: undefined, retry: false },
+      ]);
+    await daemon.waitEvent('pi://event', packet => packet.runtimeId === runtime.runtimeId && packet.event?.type === 'queue_update'
+      && JSON.stringify(packet.event.followUp) === JSON.stringify(['Keep the image', 'Keep the text']));
+  } finally { await daemon.invoke('stop_pi', { runtimeId: runtime.runtimeId }); }
+}, 60_000);
+
 test('removing one queued message preserves the other message identity and attachment', async () => {
   const session = publicSession(daemon.home, 'remove-queued-message');
   const runtime = await open(session.path, 'remove-queue-client');
