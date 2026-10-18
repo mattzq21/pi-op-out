@@ -163,7 +163,10 @@ export default function contextWindowCap(pi: ExtensionAPI) {
     return next.cap === null ? native : Math.min(native, next.cap);
   };
 
-  const clampFor = (next: Choice) => model && next.cap !== null && nativeWindow(model) < next.cap ? nativeWindow(model) : undefined;
+  const clampFor = (next: Choice) => {
+    const native = model && nativeWindow(model);
+    return native !== undefined && Number.isSafeInteger(native) && native > 0 && next.cap !== null && native < next.cap ? native : undefined;
+  };
 
   const budgetError = (window: number, target: Model) => {
     const budgets = SettingsManager.inMemory(pi.getSettings()).getCompactionSettings(target);
