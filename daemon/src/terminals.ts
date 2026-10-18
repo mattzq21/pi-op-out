@@ -180,6 +180,14 @@ export function writeTerminal(runtime: TerminalRuntime, terminalId: string, data
   queueInput(process, data, 'Terminal input is busy; wait or close the terminal');
 }
 
+export function interruptTerminals(runtime: TerminalRuntime): void {
+  for (const [id, process] of runtime.processes) {
+    if (process.exited || process.stopping || process.child.exitCode !== null || process.child.signalCode !== null) continue;
+    try { queueInput(process, '\u0003', 'Terminal input is busy'); }
+    catch (error) { console.error('Could not interrupt terminal ' + id + ' after the last client disconnected:', error); }
+  }
+}
+
 export function resizeProcess(process: TerminalProcess, cols: number, rows: number): void {
   process.cols = cols; process.rows = rows;
   const pty = process.child.terminal;

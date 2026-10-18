@@ -1,7 +1,7 @@
 import { DaemonClients } from './daemon_clients';
 import * as daemonRestart from './daemon_restart';
 import { PiRuntime } from './pi_runtime';
-import { TerminalRuntime } from './terminals';
+import { interruptTerminals, TerminalRuntime } from './terminals';
 import { SessionIndexRuntime } from './session_index';
 import { BrokerRuntime } from './broker';
 import { PeerRuntime } from './peers';
@@ -10,7 +10,7 @@ type Listener = (payload: any) => void;
 
 /** Holds all daemon state and sends named events to listeners. */
 export class App {
-  clients = new DaemonClients(() => this.emit('pi://daemon-restarting', { hostId: 'local' }));
+  clients = new DaemonClients(() => this.emit('pi://daemon-restarting', { hostId: 'local' }), () => interruptTerminals(this.terminals));
   restart = new daemonRestart.Runtime();
   pi = new PiRuntime();
   terminals = new TerminalRuntime();

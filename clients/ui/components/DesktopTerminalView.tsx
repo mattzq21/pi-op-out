@@ -205,9 +205,9 @@ export function DesktopTerminalView(componentProps: TerminalViewProps) {
     instance.options.disableStdin = Boolean(componentProps.ownershipRequired);
 
     if (componentProps.ownershipRequired) instance.blur();
-    else if (!componentProps.started && !componentProps.exited) callbacks.current.onStart(componentProps.activeId, instance.cols, instance.rows);
+    else if (componentProps.visible !== false && !componentProps.started && !componentProps.exited) callbacks.current.onStart(componentProps.activeId, instance.cols, instance.rows);
     resizeToHost.current?.();
-  }, () => [componentProps.activeId, componentProps.cwd, componentProps.ownershipRequired, componentProps.started, componentProps.exited]);
+  }, () => [componentProps.activeId, componentProps.cwd, componentProps.ownershipRequired, componentProps.started, componentProps.exited, componentProps.visible]);
 
   createDependencyEffect(() => {
     const instance = terminal.current;

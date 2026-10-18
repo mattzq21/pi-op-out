@@ -49,8 +49,8 @@ export function MobileTerminalView(componentProps: TerminalViewProps) {
   }, () => [command(), componentProps.ownershipRequired]);
 
   createDependencyEffect(() => {
-    if (componentProps.cwd && !componentProps.ownershipRequired && !componentProps.started && !componentProps.exited) componentProps.onStart(componentProps.activeId, 80, 24);
-  }, () => [componentProps.activeId, componentProps.cwd, componentProps.ownershipRequired]);
+    if (componentProps.visible !== false && componentProps.cwd && !componentProps.ownershipRequired && !componentProps.started && !componentProps.exited) componentProps.onStart(componentProps.activeId, 80, 24);
+  }, () => [componentProps.activeId, componentProps.cwd, componentProps.ownershipRequired, componentProps.visible]);
 
   createDependencyEffect(() => {
     if (followOutput && host.current) host.current.scrollTop = host.current.scrollHeight;
