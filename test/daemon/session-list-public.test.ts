@@ -86,3 +86,27 @@ test('a chat renamed in a running agent keeps one row with the new name for othe
     expect((await daemon.invoke('list_sessions')).filter((row: any) => row.id === chat.id)).toEqual([]);
   } finally { await daemon.stop(); }
 }, 60000);
+
+test('a blank rename in a running agent is rejected, keeps the custom name for other clients, and a valid retry shows for other clients and after restart', async () => {
+  let daemon = await startDaemon();
+  try {
+    const chat = publicChat(daemon.home, [
+      { type: 'session_info', id: 'name', parentId: null, name: 'Kept name' },
+      { type: 'message', id: 'question', parentId: 'name', message: { role: 'user', content: 'Original question' } },
+    ].map(entry => JSON.stringify(entry)).join('\n') + '\n');
+    const other = await daemon.connect();
+    expect((await other.invoke('list_sessions')).filter((row: any) => row.id === chat.id)).toMatchObject([{ path: chat.path, name: 'Kept name', messageCount: 1 }]);
+    const runtimeId = crypto.randomUUID();
+    await daemon.invoke('start_pi', { runtimeId, clientId: 'rename-owner', cwd: daemon.home, sessionPath: chat.path });
+    expect(await daemon.failure('pi_command', { runtimeId, command: { type: 'set_session_name', name: ' \t ' } })).toContain('Session name cannot be empty');
+    expect((await other.invoke('list_sessions')).filter((row: any) => row.id === chat.id)).toMatchObject([{ path: chat.path, name: 'Kept name', messageCount: 1 }]);
+    await daemon.invoke('pi_command', { runtimeId, command: { type: 'set_session_name', name: 'Retried name' } });
+    const seen = await waitForSessions(other as TestDaemon, rows => rows.some(row => row.id === chat.id && row.name === 'Retried name'));
+    expect(seen.filter((row: any) => row.id === chat.id)).toMatchObject([{ path: chat.path, name: 'Retried name', messageCount: 1 }]);
+    await daemon.invoke('stop_pi', { runtimeId });
+    const home = daemon.home;
+    await daemon.stop();
+    daemon = await startDaemon({ home });
+    expect((await daemon.invoke('list_sessions')).filter((row: any) => row.id === chat.id)).toMatchObject([{ path: chat.path, name: 'Retried name', messageCount: 1 }]);
+  } finally { await daemon.stop(); }
+}, 60000);
