@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { invoke, isMobile, listen } from "./platform";
+import { reportBackgroundError } from "./backgroundErrors";
 import type { KeyboardEvent } from "./solid";
 
 const storageKey = "piop.prompt-history";
@@ -35,7 +36,7 @@ function syncHistory() {
     succeeded = true;
 
     try { localStorage.removeItem(storageKey); } catch { }
-  }).catch(error => { console.error("Could not save prompt history", error); }).finally(() => {
+  }).catch(error => { reportBackgroundError("Could not save prompt history", error); }).finally(() => {
     saving = undefined;
 
     if (succeeded && (pending.length || refreshPending)) syncHistory();
@@ -51,7 +52,7 @@ function startHistorySync() {
     void listen("pi://prompt-history-changed", syncHistory, z.null()).then(() => syncHistory()).catch(error => {
       subscribed = false;
       window.removeEventListener("focus", syncHistory);
-      console.error("Could not watch prompt history", error);
+      reportBackgroundError("Could not watch prompt history", error);
     });
   }
 

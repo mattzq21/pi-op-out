@@ -105,6 +105,18 @@ test('local directory listing defaults to home, lists folders by name and resolv
   expect(await daemon.failure('list_directories', { path: join(home, 'not-a-directory') })).toEndWith('is not a directory');
 });
 
+test('local directory listing reports an unreadable folder and lists it again once readable', async () => {
+  const locked = join(realpathSync(daemon.home), 'unreadable-listing'); mkdirSync(join(locked, 'child'), { recursive: true });
+  chmodSync(locked, 0o300);
+  try {
+    const failure = await daemon.failure('list_directories', { hostId: 'local', path: locked });
+    expect(failure).toStartWith('Could not browse ' + locked + ':');
+    expect(failure).toContain('EACCES');
+  } finally { chmodSync(locked, 0o700); }
+  expect(await daemon.invoke('list_directories', { hostId: 'local', path: locked }))
+    .toEqual({ path: locked, parent: realpathSync(daemon.home), directories: [join(locked, 'child')] });
+});
+
 test('listing the root folder has no parent on each machine', async () => {
   for (const hostId of ['local', 'server']) {
     const listing = await daemon.invoke('list_directories', { hostId, path: '/' });
@@ -123,6 +135,14 @@ test('a project link that loses its folder or points at a file is rejected', asy
   writeFileSync(project, 'now a file');
   expect(await daemon.failure('validate_project_directory', { path: alias })).toBe('Project path is not a directory');
   expect(readFileSync(project, 'utf8')).toBe('now a file');
+});
+
+test('Piop storage cannot be a project, even reached through a link', async () => {
+  mkdirSync(join(daemon.home, '.piop/notes'), { recursive: true });
+  const shortcut = join(daemon.home, 'storage-shortcut'); symlinkSync(join(daemon.home, '.piop/notes'), shortcut);
+  for (const path of [join(daemon.home, '.piop'), join(daemon.home, '.piop/notes'), shortcut]) {
+    expect(await daemon.failure('validate_project_directory', { hostId: 'local', path })).toBe('Piop storage directories cannot be selected as projects');
+  }
 });
 
 test('commands for an unreachable machine report the connection failure and change nothing', async () => {
@@ -284,6 +304,17 @@ test('remote directory listing rejects a regular file without changing it', asyn
   writeFileSync(path, 'unchanged');
   await expect(daemon.invoke('list_directories', { hostId: 'server', path })).rejects.toThrow('is not a directory');
   expect(readFileSync(path, 'utf8')).toBe('unchanged');
+});
+
+test('remote directory listing reports an unreadable folder and lists it again once readable', async () => {
+  const locked = join(realpathSync(server.home), 'unreadable-listing'); mkdirSync(join(locked, 'child'), { recursive: true });
+  chmodSync(locked, 0o300);
+  let failure: string;
+  try { failure = await daemon.failure('list_directories', { hostId: 'server', path: locked }); } finally { chmodSync(locked, 0o700); }
+  expect(failure).toStartWith('Could not browse ' + locked + ':');
+  expect(failure).toContain('EACCES');
+  expect(await daemon.invoke('list_directories', { hostId: 'server', path: locked }))
+    .toEqual({ path: locked, parent: realpathSync(server.home), directories: [join(locked, 'child')] });
 });
 
 test('local cleanup preserves files in an unallocated neighboring directory', async () => {

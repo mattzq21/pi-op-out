@@ -15,5 +15,5 @@ export async function restoreAgentConfiguration(restore: (() => Promise<void>) |
   if (!restore) return;
 
   try { await restore(); }
-  catch (rollback) { throw new Error(`Settings save failed: ${reason}. Agent definitions could not be restored: ${String(rollback)}. Reload settings before retrying.`); }
+  catch (rollback) { throw new Error(`Settings save failed: ${reason}. Agent definitions could not be restored: ${(rollback instanceof Error ? rollback.message : String(rollback))}. Reload settings before retrying.`); }
 }

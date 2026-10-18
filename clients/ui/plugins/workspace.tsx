@@ -48,18 +48,18 @@ export function createPluginWorkspace(source: Accessor<PluginConversation>, visi
   };
 
   createEffect(() => {
-    for (const target of hosts()) void refreshPlugins(target).catch(reason => setPluginError(target, String(reason)));
+    for (const target of hosts()) void refreshPlugins(target).catch(reason => setPluginError(target, (reason instanceof Error ? reason.message : String(reason))));
   });
 
   const listener = listen("pi://plugins-changed", ({ payload }) => {
     const target = payload.hostId ?? "local";
-    void refreshPlugins(target).catch(reason => setPluginError(target, String(reason)));
+    void refreshPlugins(target).catch(reason => setPluginError(target, (reason instanceof Error ? reason.message : String(reason))));
   }, z.object({ hostId: z.string().optional() }));
 
   const reconnected = listen("pi://event", ({ payload }) => {
     if (payload.type !== "connection_restored") return;
 
-    for (const target of hosts()) void refreshPlugins(target).catch(reason => setPluginError(target, String(reason)));
+    for (const target of hosts()) void refreshPlugins(target).catch(reason => setPluginError(target, (reason instanceof Error ? reason.message : String(reason))));
   }, z.object({ type: z.string().optional() }).passthrough());
 
   onCleanup(() => { void reconnected.then(stop => stop()); });
@@ -110,7 +110,7 @@ export function createPluginWorkspace(source: Accessor<PluginConversation>, visi
           setRunning([...next]);
         } catch (reason) {
           const affected = new Set([configurationHost, runtimeHost(definition.scope)]);
-          failures.push(...[...affected].map(target => ({ host: target, message: `${definition.name}: ${String(reason)}` })));
+          failures.push(...[...affected].map(target => ({ host: target, message: `${definition.name}: ${(reason instanceof Error ? reason.message : String(reason))}` })));
         }
       }
 
@@ -121,8 +121,8 @@ export function createPluginWorkspace(source: Accessor<PluginConversation>, visi
       if (!next.length) setOpen(false);
       setLoadError(failures.length ? `Plugins could not load: ${[...new Set(failures.map(failure => failure.message))].join("\n")}` : undefined);
     })().catch(reason => { if (current === generation) {
-      loadingFailures = hosts().map(target => ({ host: target, message: String(reason) }));
-      setLoadError(`Plugins could not load: ${String(reason)}`);
+      loadingFailures = hosts().map(target => ({ host: target, message: reason instanceof Error ? reason.message : String(reason) }));
+      setLoadError(`Plugins could not load: ${(reason instanceof Error ? reason.message : String(reason))}`);
     } }).finally(() => { if (!stale()) setReloading(false); });
   });
   createEffect(() => { if (!reloading() && !tabs().some(item => item.id === active())) setActive(tabs()[0]?.id ?? ""); });

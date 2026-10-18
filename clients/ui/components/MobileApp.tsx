@@ -20,6 +20,7 @@ export function MobileApp() {
   const [workspaceOpen, setWorkspaceOpen] = createSignal(false);
   const [connecting, setConnecting] = createSignal(false);
   const [error, setError] = createSignal("");
+  const [minimizeError, setMinimizeError] = createSignal("");
   const [restartGrace, setRestartGrace] = createSignal(false);
   const restartGraceTimer = createRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const generation = createRef(0);
@@ -136,7 +137,7 @@ export function MobileApp() {
 
       return debugUrl;
     });
-    debugAddressLoaded.current = debugConnection.then(() => undefined, (reason) => { if (!disposed) setError(String(reason)); });
+    debugAddressLoaded.current = debugConnection.then(() => undefined, (reason) => { if (!disposed) setError((reason instanceof Error ? reason.message : String(reason))); });
     void Promise.all([debugConnection, readMobileAnchor().catch((reason) => {
       if (!disposed && generation.current === startupGeneration) setAnchorReadFailed(true);
       throw reason;
@@ -150,7 +151,7 @@ export function MobileApp() {
         setUrl(debugUrl);
         void connectRef.current(debugUrl);
       } else if (saved) void connectRef.current(saved.url);
-    }).catch((reason) => { if (!disposed && generation.current === startupGeneration) setError(String(reason)); });
+    }).catch((reason) => { if (!disposed && generation.current === startupGeneration) setError((reason instanceof Error ? reason.message : String(reason))); });
     window.addEventListener("piop-mobile-disconnect", disconnect);
 
     const back = AndroidApp.addListener("backButton", () => {
@@ -160,7 +161,7 @@ export function MobileApp() {
 
       return; }
 
-      if (window.dispatchEvent(new Event("piop-mobile-back", { cancelable: true }))) void AndroidApp.minimizeApp().catch((reason) => setError(String(reason)));
+      if (window.dispatchEvent(new Event("piop-mobile-back", { cancelable: true }))) void AndroidApp.minimizeApp().then(() => setMinimizeError(""), (reason) => setMinimizeError((reason instanceof Error ? reason.message : String(reason))));
     });
 
     const viewport = () => document.documentElement.style.setProperty("--mobile-height", `${window.visualViewport?.height ?? window.innerHeight}px`);
@@ -189,7 +190,7 @@ export function MobileApp() {
   const showConnectionNotice = () => !restartGrace() && (!connected() || Boolean(error()));
   const renderConnectionNotice = () => showConnectionNotice() && <div class="mobile-reconnect-banner"><div role="status">{error() || "Reconnecting…"}<button disabled={connecting() || disconnecting()} onClick={() => { if (connected()) void disconnect(); else void connect(url()); }}>{connected() ? "Retry disconnect" : connecting() ? "Connecting…" : "Reconnect"}</button></div>{!connected() && <MobileTailscaleStatus />}</div>;
 
-  return <>{workspaceOpen() ? (<><div style={{ display: "contents" }} inert={disconnecting()}><App suppressConnectionNotices={restartGrace()} /></div>{renderConnectionNotice()}<button class="mobile-host-button" aria-label="Disconnect from anchor host" disabled={disconnecting()} onClick={() => void disconnect()}>Host</button></>) : (<main class="mobile-connect dark"><form onSubmit={(event) => { event.preventDefault(); if (forgetting()) return; intentionalDisconnect.current = false; retryDelay.current = 2000; void connect(url(), name()); }}>
+  return <>{workspaceOpen() ? (<><div style={{ display: "contents" }} inert={disconnecting()}><App suppressConnectionNotices={restartGrace()} /></div><button class="mobile-host-button" aria-label="Disconnect from anchor host" disabled={disconnecting()} onClick={() => void disconnect()}>Host</button></>) : (<main class="mobile-connect dark"><form onSubmit={(event) => { event.preventDefault(); if (forgetting()) return; intentionalDisconnect.current = false; retryDelay.current = 2000; void connect(url(), name()); }}>
     <label>Anchor host address<input type="url" required disabled={connecting() || forgetting()} placeholder="wss://your-host.your-tailnet.ts.net" autoCapitalize="none" autocorrect="off" spellcheck={false} value={url()} onInput={(event) => { generation.current++; clearTimeout(retry.current); intentionalDisconnect.current = true; acceptedAddress.current = undefined; setUrl(event.target.value); }} /></label>
     <label>Host name<input required disabled={connecting() || forgetting()} value={name()} placeholder="My PC" onInput={(event) => setName(event.target.value)} /></label>
     <p class="mobile-connect-hint">Piop connects to this host. You can also use the machines that this host has added. Connect this device and the host to the same Tailscale account, then enter the host’s Tailscale Serve wss:// address.</p>
@@ -198,5 +199,5 @@ export function MobileApp() {
     <button class="primary-button" disabled={connectDisabled()}>{connecting() ? "Connecting…" : "Connect"}</button>
     {connecting() && <button type="button" onClick={disconnect}>Cancel</button>}
     {(anchor() || anchorReadFailed()) && !connecting() && <button type="button" disabled={forgetting()} onClick={() => void forgetAnchor()}>Forget anchor host</button>}
-  </form></main>)}</>;
+  </form></main>)}{((workspaceOpen() && showConnectionNotice()) || minimizeError()) && <div class="mobile-notices">{workspaceOpen() && renderConnectionNotice()}{minimizeError() && <div class="mobile-reconnect-banner"><div role="status">{minimizeError()}</div></div>}</div>}</>;
 }

@@ -2,16 +2,18 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { startupPage } from '../startup-browser-fixture.mjs';
 
-async function completedConversation(t) {
+const readTurn = [
+  { id: 'question', role: 'user', content: 'Question', timestamp: 0 },
+  { id: 'call', role: 'assistant', content: [{ type: 'toolCall', name: 'read' }] },
+  { id: 'read-one', role: 'tool', toolName: 'read', content: 'First file contents' },
+  { id: 'read-two', role: 'tool', toolName: 'read', content: 'Second file contents' },
+  { id: 'answer', role: 'assistant', content: [{ type: 'thinking', thinking: 'Consider the evidence' }, { type: 'text', text: 'Final answer' }], completedAt: 61000 },
+];
+
+async function completedConversation(t, messages = readTurn) {
   return startupPage(t, 'development', {
     entryPoint: 'test/fixtures/conversation-display-browser.tsx', ready: 'summary', holdStorage: false,
-    prepare: page => page.exposeFunction('conversationMessages', () => [
-      { id: 'question', role: 'user', content: 'Question', timestamp: 0 },
-      { id: 'call', role: 'assistant', content: [{ type: 'toolCall', name: 'read' }] },
-      { id: 'read-one', role: 'tool', toolName: 'read', content: 'First file contents' },
-      { id: 'read-two', role: 'tool', toolName: 'read', content: 'Second file contents' },
-      { id: 'answer', role: 'assistant', content: [{ type: 'thinking', thinking: 'Consider the evidence' }, { type: 'text', text: 'Final answer' }], completedAt: 61000 },
-    ]),
+    prepare: page => page.exposeFunction('conversationMessages', () => messages),
   });
 }
 
@@ -45,4 +47,28 @@ test('debug view exposes each repeated tool result separately', async t => {
   await group.getByText('Second file contents', { exact: true }).waitFor();
   assert.deepEqual((await group.getByLabel('Tool output', { exact: true }).allTextContents()).sort(), ['First file contents', 'Second file contents']);
   assert.doesNotMatch(await group.textContent(), /read x2/);
+});
+
+test('a failed call between repeated tool calls stays visible as a failure', async t => {
+  const page = await completedConversation(t, [
+    ...readTurn.slice(0, 3),
+    { id: 'read-denied', role: 'tool', toolName: 'read', toolStatus: 'error', content: 'Permission denied' },
+    ...readTurn.slice(3),
+  ]);
+  const summary = page.locator('summary').filter({ hasText: /^Worked for 1min 1s$/ });
+  await summary.click();
+  const group = summary.locator('..');
+  await group.getByText('Consider the evidence', { exact: true }).waitFor();
+  const failed = group.getByText('Failed', { exact: true });
+  assert.equal(await failed.count(), 1);
+  assert.equal(await failed.isVisible(), true);
+  assert.equal(await group.getByText('Completed', { exact: true }).count(), 2);
+  assert.doesNotMatch(await group.textContent(), /read x\d/);
+  await page.getByLabel('Debug view', { exact: true }).check();
+  if (!await group.evaluate(node => node.open)) await summary.click();
+  const failedTool = group.locator('summary').filter({ hasText: 'Failed' });
+  await failedTool.click();
+  const reason = group.getByLabel('Tool output', { exact: true }).getByText('Permission denied', { exact: true });
+  await reason.waitFor();
+  assert.equal(await reason.isVisible(), true);
 });

@@ -140,7 +140,7 @@ async function createSubagent(pi: ExtensionAPI, ctx: ExtensionContext, task: Sub
     entry({ type: "custom", customType: "pi-define-agents-state", data: profile }),
     ...fastMode ? [entry(fastMode)] : [],
   ], { dependencies: { workspace: { path: workspace.cwd, kind: "existing" } } }); }
-  catch (error) { throw new Error(`Subagent session creation failed in ${workspace.cwd}; chat assets are retained: ${String(error)}`, { cause: error }); }
+  catch (error) { throw new Error(`Subagent session creation failed in ${workspace.cwd}; chat assets are retained: ${(error instanceof Error ? error.message : String(error))}`, { cause: error }); }
 
   return run;
 }
@@ -204,8 +204,8 @@ async function executeSubagent(task: SubagentTask, execution: SubagentExecution)
     execution.ready();
     await observeSubagent(run, { ...execution, signal }, lifecycle, true);
   } catch (error) {
-    if (!claimed) { failedCreation(run, signal.aborted, String(error)); }
-    else { run.observation = "interrupted"; ctx.ui.notify(`Subagent supervision interrupted: ${String(error)}`, "error"); }
+    if (!claimed) { failedCreation(run, signal.aborted, (error instanceof Error ? error.message : String(error))); }
+    else { run.observation = "interrupted"; ctx.ui.notify(`Subagent supervision interrupted: ${(error instanceof Error ? error.message : String(error))}`, "error"); }
   }
 
   lifecycle.closing = true;
@@ -241,7 +241,7 @@ async function launchSubagent(task: SubagentTask, execution: Omit<SubagentExecut
     })()
       .catch(error => {
         reject(error);
-        execution.ctx.ui.notify(`Subagent failed: ${String(error)}`, "error");
+        execution.ctx.ui.notify(`Subagent failed: ${(error instanceof Error ? error.message : String(error))}`, "error");
       })
       .finally(() => { ready(); pending.delete(completion); });
 
@@ -333,7 +333,7 @@ export function registerSubagents(pi: ExtensionAPI, mailbox = registerSubagentMa
         const status = snapshotStatus(snapshot);
 
         return { sessionId: run.sessionId, task_name: taskPath(ctx, run), agent: run.agent, cwd: run.cwd, status: latest.status === "running" && status === "idle" ? "observing" : status, lastRunStatus: latest.status }; }
-        catch (error) { return { sessionId: run.sessionId, task_name: taskPath(ctx, run), cwd: run.cwd, status: "unavailable", error: String(error) }; }
+        catch (error) { return { sessionId: run.sessionId, task_name: taskPath(ctx, run), cwd: run.cwd, status: "unavailable", error: error instanceof Error ? error.message : String(error) }; }
       }));
 
       return { content: [{ type: "text", text: JSON.stringify(agents) }], details: { agents } };
@@ -470,7 +470,7 @@ export function registerSubagents(pi: ExtensionAPI, mailbox = registerSubagentMa
           if (run.status !== "running") { finishRun(pi, ctx, run); resultsDelivery.publish(ctx, run); }
           else { run.observation = "interrupted"; saveRun(pi, ctx, run); }
         })
-        .catch(error => ctx.ui.notify(`Subagent supervision interrupted: ${String(error)}`, "error"))
+        .catch(error => ctx.ui.notify(`Subagent supervision interrupted: ${(error instanceof Error ? error.message : String(error))}`, "error"))
         .finally(() => { lifecycle.closing = true; started(); active.delete(run.sessionId); pending.delete(completion); finished(); });
 
       pending.add(completion);
@@ -486,7 +486,7 @@ export function registerSubagents(pi: ExtensionAPI, mailbox = registerSubagentMa
       if (accountingJobs.has(key)) continue;
 
       const job = recoverSubagentAccounting(structuredClone(saved), { pi, ctx, reportDescendants, ...boundedRecovery({ signal: controller.signal }) })
-        .catch(error => ctx.ui.notify(`Saved subagent usage is awaiting reconciliation: ${String(error)}`, "error"))
+        .catch(error => ctx.ui.notify(`Saved subagent usage is awaiting reconciliation: ${(error instanceof Error ? error.message : String(error))}`, "error"))
         .finally(() => { accountingJobs.delete(key); pending.delete(job); });
 
       accountingJobs.set(key, job); pending.add(job);
@@ -502,7 +502,7 @@ export function registerSubagents(pi: ExtensionAPI, mailbox = registerSubagentMa
     reconcile(ctx);
   };
 
-  pi.on("session_start", (_event, ctx) => restoring = restoreSubagents(ctx).catch(error => ctx.ui.notify(`Subagent restoration remains pending: ${String(error)}`, "error")));
+  pi.on("session_start", (_event, ctx) => restoring = restoreSubagents(ctx).catch(error => ctx.ui.notify(`Subagent restoration remains pending: ${(error instanceof Error ? error.message : String(error))}`, "error")));
 
   pi.on("agent_start", async (_event, ctx) => {
     await stopping;

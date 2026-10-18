@@ -84,3 +84,44 @@ test('local and remote drafts remain separate across full browser reloads', asyn
   assert.equal(await editor.inputValue(), 'Remote unsent draft');
   assert.equal(await page.getByRole('button', { name: 'Host: Remote', exact: true }).count(), 1);
 });
+
+test('an older edit saved last in another window does not replace a newer edit to the same draft', async t => {
+  const older = await appBrowser(t);
+  await trackBrowserStorage(older);
+  const editor = page => page.getByRole('textbox', { name: 'Message piop' });
+  await editor(older).fill('Shared draft');
+  await older.evaluate(() => window.savedDraft());
+  const newer = await appWindow(older);
+  await trackBrowserStorage(newer);
+  await newer.getByRole('button', { name: /^Shared draft,/ }).click();
+  assert.equal(await editor(newer).inputValue(), 'Shared draft');
+  await holdBrowserClock(older, Date.UTC(2030, 0, 1, 12, 0));
+  await holdBrowserClock(newer, Date.UTC(2030, 0, 1, 12, 1));
+  await editor(older).fill('Older edit');
+  await editor(newer).fill('Newer edit');
+  await newer.evaluate(() => window.savedDraft());
+  await older.evaluate(() => window.savedDraft());
+  await older.evaluate(() => window.releaseBrowserClock());
+  await newer.evaluate(() => window.releaseBrowserClock());
+  assert.equal(await editor(older).inputValue(), 'Newer edit');
+  const fresh = await appWindow(older);
+  await fresh.getByRole('button', { name: /^Newer edit,/ }).click();
+  assert.equal(await editor(fresh).inputValue(), 'Newer edit');
+  assert.equal(await fresh.getByRole('button', { name: /^Older edit,/ }).count(), 0);
+});
+
+// Fixes the page clock and holds its timers, so the page saves only when the test makes it hidden.
+async function holdBrowserClock(page, now) {
+  await page.evaluate(now => {
+    const { setTimeout, clearTimeout } = window, realNow = Date.now, held = new Map();
+    let next = -1;
+    Date.now = () => now;
+    window.setTimeout = (run, delay, ...args) => { held.set(next, () => run(...args)); return next--; };
+    window.clearTimeout = id => { if (!held.delete(id)) clearTimeout(id); };
+    window.releaseBrowserClock = () => {
+      Object.assign(window, { setTimeout, clearTimeout });
+      Date.now = realNow;
+      for (const run of held.values()) setTimeout(run);
+    };
+  }, now);
+}

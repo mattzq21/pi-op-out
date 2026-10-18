@@ -210,7 +210,7 @@ export class RemoteClient {
     try { socket.send(packet); }
     catch (reason) {
       clearTimeout(request.timer); clearTimeout(request.retryTimer); this.pending.delete(id);
-      request.reject(reason instanceof Error ? reason : new Error(String(reason)));
+      request.reject(reason instanceof Error ? reason : new Error((reason instanceof Error ? reason.message : String(reason))));
     }
   }
 

@@ -2,7 +2,9 @@ import { createSignal } from 'solid-js';
 import { render } from 'solid-js/web';
 import { Composer } from '../../clients/ui/components/Composer';
 import '../../clients/ui/styles.css';
+import '../../clients/ui/mobile.css';
 
+document.documentElement.dataset.mobile = 'true';
 const [sent, setSent] = createSignal<unknown[]>([]);
 render(() => <main style={{ width: '100%' }}>
   <output aria-label="Sent messages">{JSON.stringify(sent())}</output>

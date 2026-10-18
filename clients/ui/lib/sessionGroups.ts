@@ -108,7 +108,7 @@ export function useSessionGroups(sessions: Accessor<SessionSummary[]>) {
     const seeds: SessionGroupSeed[] = JSON.parse(capturedSeedsJson);
     void enqueue(async () => { const revision = eventRevision; const state = await loadSessionGroups(seeds);
 
-    if (revision === eventRevision) publish(state); }).catch((reason) => { if (mounted.current) setError(String(reason)); });
+    if (revision === eventRevision) publish(state); }).catch((reason) => { if (mounted.current) setError((reason instanceof Error ? reason.message : String(reason))); });
   };
   createDependencyEffect(() => { reload(seedsJson()); }, () => [seedsJson()]);
   // Group events sent while the phone was offline are lost, so a restored connection loads the groups again.
@@ -122,7 +122,7 @@ export function useSessionGroups(sessions: Accessor<SessionSummary[]>) {
     try {
       await updateSessionGroups(update);
     } catch (reason) {
-      if (mounted.current) setError(String(reason));
+      if (mounted.current) setError((reason instanceof Error ? reason.message : String(reason)));
       throw reason;
     }
   };

@@ -17,6 +17,10 @@ test('an explicit focus request focuses the message editor', async t => {
   await button.focus();
   assert.equal(await button.evaluate(node => node === document.activeElement), true);
   await page.keyboard.press('Enter');
+  await page.getByRole('textbox', { name: 'Message piop' }).evaluate(node => new Promise(resolve => {
+    if (node === document.activeElement) resolve();
+    else node.addEventListener('focus', resolve, { once: true });
+  }));
   assert.equal(await page.getByRole('textbox', { name: 'Message piop' }).evaluate(node => node === document.activeElement), true);
 });
 
@@ -234,6 +238,105 @@ test('in-flight submission is deduplicated and failed sends preserve newer typin
   assert.equal(await editor.inputValue(), '');
 });
 
+test('prompt history recalls sent prompts and restores the unsent draft', { timeout: 30000 }, async t => {
+  const page = await controlsPage(t);
+  const editor = page.getByRole('textbox', { name: 'Message piop' });
+  for (const prompt of ['First prompt', 'Second prompt']) {
+    await editor.fill(prompt);
+    await page.keyboard.press('Enter');
+    await page.waitForFunction(() => document.querySelector('[aria-label="Message piop"]').value === '');
+  }
+  assert.deepEqual(await sent(page), [['First prompt', null, []], ['Second prompt', null, []]]);
+  await editor.fill('  Unsent draft ');
+  const walk = async keys => { const values = []; for (const key of keys) { await page.keyboard.press(key); values.push(await editor.inputValue()); } return values; };
+  assert.deepEqual(await walk(['ArrowUp', 'ArrowUp', 'ArrowDown', 'ArrowDown']), ['Second prompt', 'First prompt', 'Second prompt', '  Unsent draft ']);
+  await page.keyboard.press('ArrowUp');
+  await page.keyboard.type(' edited');
+  assert.deepEqual(await walk(['ArrowUp', 'ArrowDown']), ['Second prompt', 'Second prompt edited']);
+  assert.deepEqual(await sent(page), [['First prompt', null, []], ['Second prompt', null, []]]);
+});
+
+test('refused sends stay out of prompt history until a corrected send is accepted', { timeout: 30000 }, async t => {
+  const page = await controlsPage(t);
+  const editor = page.getByRole('textbox', { name: 'Message piop' });
+  const mode = page.getByRole('combobox', { name: 'Send result', exact: true });
+  const cleared = () => page.waitForFunction(() => document.querySelector('[aria-label="Message piop"]').value === '');
+  const walk = async keys => { const values = []; for (const key of keys) { await page.keyboard.press(key); values.push(await editor.inputValue()); } return values; };
+  await editor.fill('Accepted baseline');
+  await page.keyboard.press('Enter');
+  await cleared();
+  await mode.selectOption('refuse');
+  await editor.fill('Rejected draft');
+  await page.keyboard.press('Enter');
+  await page.getByRole('alert').filter({ hasText: 'Message was not submitted' }).waitFor();
+  assert.equal(await editor.inputValue(), 'Rejected draft');
+  await editor.fill('Replacement draft');
+  assert.deepEqual(await walk(['ArrowUp', 'ArrowUp', 'ArrowDown']), ['Accepted baseline', 'Accepted baseline', 'Replacement draft']);
+  await mode.selectOption('accept');
+  await editor.fill('Corrected draft');
+  await page.keyboard.press('Enter');
+  await cleared();
+  assert.equal(await page.getByRole('alert').count(), 0);
+  assert.deepEqual(await walk(['ArrowUp', 'ArrowUp', 'ArrowDown', 'ArrowDown']), ['Corrected draft', 'Accepted baseline', 'Corrected draft', '']);
+  assert.deepEqual(await sent(page), [['Accepted baseline', null, []], ['Rejected draft', null, []], ['Corrected draft', null, []]]);
+});
+
+test('prompt history recalls only from a collapsed caret on the first line of a multiline draft', { timeout: 30000 }, async t => {
+  const page = await controlsPage(t);
+  const editor = page.getByRole('textbox', { name: 'Message piop' });
+  await editor.fill('Prior prompt');
+  await page.keyboard.press('Enter');
+  await page.waitForFunction(() => document.querySelector('[aria-label="Message piop"]').value === '');
+  assert.deepEqual(await sent(page), [['Prior prompt', null, []]]);
+  const draft = 'Line one\nLine two ';
+  await editor.fill(draft);
+  const select = (start, end) => editor.evaluate((node, [start, end]) => node.setSelectionRange(start, end), [start, end]);
+  const caret = () => editor.evaluate(node => [node.selectionStart, node.selectionEnd]);
+  await select(13, 13);
+  await page.keyboard.press('ArrowUp');
+  assert.equal(await editor.inputValue(), draft);
+  const [start, end] = await caret();
+  assert.equal(start === end && start <= 8, true);
+  await select(0, 4);
+  await page.keyboard.press('ArrowUp');
+  assert.equal(await editor.inputValue(), draft);
+  await select(3, 3);
+  await page.keyboard.press('ArrowUp');
+  assert.equal(await editor.inputValue(), 'Prior prompt');
+  await page.keyboard.press('ArrowDown');
+  assert.equal(await editor.inputValue(), draft);
+  assert.deepEqual(await sent(page), [['Prior prompt', null, []]]);
+});
+
+test('modified arrow keys edit the selection instead of replacing the draft with prompt history', { timeout: 30000 }, async t => {
+  const page = await controlsPage(t);
+  const editor = page.getByRole('textbox', { name: 'Message piop' });
+  await editor.fill('Prior prompt');
+  await page.keyboard.press('Enter');
+  await page.waitForFunction(() => document.querySelector('[aria-label="Message piop"]').value === '');
+  const draft = 'Draft top\nDraft bottom';
+  await editor.fill(draft);
+  const select = (start, end) => editor.evaluate((node, [start, end]) => node.setSelectionRange(start, end), [start, end]);
+  const caret = () => editor.evaluate(node => [node.selectionStart, node.selectionEnd]);
+  await select(5, 5);
+  await page.keyboard.press('Shift+ArrowUp');
+  assert.equal(await editor.inputValue(), draft);
+  assert.deepEqual(await caret(), [0, 5]);
+  for (const key of ['Control+ArrowUp', 'Alt+ArrowUp']) {
+    await select(5, 5);
+    await page.keyboard.press(key);
+    assert.equal(await editor.inputValue(), draft, key);
+  }
+  await select(5, 5);
+  await page.keyboard.press('ArrowUp');
+  assert.equal(await editor.inputValue(), 'Prior prompt');
+  await page.keyboard.press('Shift+ArrowDown');
+  assert.equal(await editor.inputValue(), 'Prior prompt');
+  await page.keyboard.press('ArrowDown');
+  assert.equal(await editor.inputValue(), draft);
+  assert.deepEqual(await sent(page), [['Prior prompt', null, []]]);
+});
+
 
 test('fast mode prevents repeated requests and reports failures while preserving server state', async t => {
   const page = await controlsPage(t);
@@ -282,4 +385,48 @@ test('pause, stop and resume serialize pending actions and expose failures', asy
   await page.getByRole('button', { name: 'Complete resume request', exact: true }).click();
   assert.equal(await resume.isDisabled(), false);
   assert.equal(await page.getByRole('alert').count(), 0);
+});
+
+test('on a narrow screen the chat settings sit behind one button that opens and closes like a menu', async t => {
+  const page = await controlsPage(t);
+  await page.setViewportSize({ width: 600, height: 800 });
+  const trigger = page.getByRole('button', { name: /^Chat settings: / });
+  const effort = page.getByRole('group', { name: 'Chat settings' }).getByRole('button', { name: /^Thinking level/ });
+  assert.equal(await effort.isVisible(), false);
+
+  // With the effort list open, the first Escape closes only that list.
+  await trigger.click();
+  await effort.click();
+  await page.getByRole('listbox').waitFor();
+  await page.keyboard.press('Escape');
+  await page.getByRole('listbox').waitFor({ state: 'detached' });
+  assert.equal(await trigger.getAttribute('aria-expanded'), 'true');
+  await page.keyboard.press('Escape');
+  assert.equal(await trigger.getAttribute('aria-expanded'), 'false');
+
+  await trigger.click();
+  assert.equal(await trigger.getAttribute('aria-expanded'), 'true');
+  await effort.waitFor();
+  await effort.focus();
+  await page.keyboard.press('Escape');
+  assert.equal(await trigger.getAttribute('aria-expanded'), 'false');
+  assert.equal(await trigger.evaluate(node => node === document.activeElement), true, 'Escape gives focus back to the button');
+  assert.equal(await effort.isVisible(), false);
+
+  await trigger.click();
+  await effort.waitFor();
+  await page.getByRole('textbox', { name: 'Message piop' }).click();
+  assert.equal(await trigger.getAttribute('aria-expanded'), 'false', 'a click outside closes it');
+  // A click on an empty spot moves no focus, so only the outside click closes the menu.
+  await trigger.click();
+  await effort.waitFor();
+  await page.mouse.click(590, 790);
+  assert.equal(await trigger.getAttribute('aria-expanded'), 'false', 'a click on an empty spot closes it');
+});
+
+test('on a wide screen the chat settings show in the message bar without a menu button', async t => {
+  const page = await controlsPage(t);
+  await page.setViewportSize({ width: 1200, height: 800 });
+  assert.equal(await page.getByRole('button', { name: /^Chat settings: / }).isVisible(), false);
+  assert.equal(await page.getByRole('group', { name: 'Chat settings' }).getByRole('button', { name: /^Thinking level/ }).isVisible(), true);
 });

@@ -228,7 +228,7 @@ export function useAppEvents(options: Accessor<AppEventsContext>) {
           capturedOptions.setTerminalOpen(false); capturedOptions.setTerminalTarget(undefined);
         }
 
-        if (!initializing) void capturedOptions.refresh().then((value) => current() ? capturedOptions.configureRuntime(value) : undefined).then(() => { if (current()) { capturedOptions.setError(undefined); capturedOptions.updateConnected(true); } }).catch((reason) => { if (current() && !isConversationChanged(reason)) capturedOptions.setError(String(reason)); });
+        if (!initializing) void capturedOptions.refresh().then((value) => current() ? capturedOptions.configureRuntime(value) : undefined).then(() => { if (current()) { capturedOptions.setError(undefined); capturedOptions.updateConnected(true); } }).catch((reason) => { if (current() && !isConversationChanged(reason)) capturedOptions.setError((reason instanceof Error ? reason.message : String(reason))); });
       };
 
       const handleSessionInfoChanged = () => {

@@ -23,7 +23,7 @@ function expandInlineCommand(value: string, commands: SlashCommand[]) {
     const command = available.get(match[1]);
 
     if (!command) continue;
-    const rest = `${value.slice(0, match.index)} ${value.slice(match.index + match[0].length)}`.trim();
+    const rest = `${value.slice(0, match.index)}${value.slice(match.index + match[0].length)}`.trim();
 
     return `/${command.name}${rest ? ` ${rest}` : ""}`;
   }
@@ -54,7 +54,9 @@ function expandSkillReference(value: string, commands: SlashCommand[]) {
     if (!primary) primary = name;
     const token = match[0].slice(match[1].length);
     const at = match.index + match[1].length;
-    rest = rest.slice(0, at) + rest.slice(at + token.length);
+    const before = rest.slice(0, at);
+    const after = rest.slice(at + token.length);
+    rest = before + (/\s$/.test(before) && /^[ \t]/.test(after) ? after.slice(1) : after);
     break;
   }
 

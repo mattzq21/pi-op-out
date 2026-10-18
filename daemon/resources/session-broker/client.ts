@@ -70,7 +70,7 @@ export async function request(path: string, body?: BrokerRequest, signal?: Abort
 
     return await brokerResponse(response);
   } catch (error) {
-    requestError(String(error), controller.signal.aborted || error instanceof TypeError, signal);
+    requestError((error instanceof Error ? error.message : String(error)), controller.signal.aborted || error instanceof TypeError, signal);
     throw error;
   }
   finally { clearTimeout(timeout); signal?.removeEventListener("abort", abort); }

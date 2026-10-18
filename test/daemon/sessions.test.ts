@@ -158,10 +158,10 @@ test('relocating a session changes only the header working directory', async () 
   expect(statSync(session.path).mode & 0o777).toBe(0o640);
 });
 
-test('invalid relocations leave the original session untouched', async () => {
+test('invalid relocations leave the original session untouched and a corrected retry relocates it', async () => {
   const previousProject = join(daemon.home, 'old-relocate-invalid');
   mkdirSync(previousProject);
-  const session = publicSession(daemon.home, { cwd: previousProject, folder: 'relocate-invalid' });
+  const session = publicSession(daemon.home, { cwd: previousProject, folder: 'relocate-invalid', entries: [{ type: 'message', message: { role: 'user', content: 'Kept question' } }] });
   rmdirSync(previousProject);
   const original = readFileSync(session.path, 'utf8');
   for (const content of [Buffer.from('invalid json'), Buffer.from('{"type":"message"}'), Buffer.from('[]'), Buffer.from([0xff])]) {
@@ -174,7 +174,11 @@ test('invalid relocations leave the original session untouched', async () => {
   for (const replacement of [join(daemon.home, 'missing'), session.path]) {
     await expect(relocate(session.path, replacement)).rejects.toThrow('Project directory does not exist');
     expect(readFileSync(session.path, 'utf8')).toBe(original);
+    expect(await listed(session.path)).toMatchObject([{ id: session.id, cwd: previousProject, cwdExists: false, name: 'Kept question', messageCount: 1 }]);
   }
+  const corrected = join(daemon.home, 'corrected-relocate'); mkdirSync(corrected);
+  await relocate(session.path, corrected);
+  expect(await listed(session.path)).toMatchObject([{ id: session.id, cwd: corrected, cwdExists: true, name: 'Kept question', messageCount: 1 }]);
   const outside = join(daemon.home, 'outside-relocate.jsonl'); writeFileSync(outside, '{"type":"session"}');
   await expect(relocate(outside, daemon.home)).rejects.toThrow();
   expect(readFileSync(outside, 'utf8')).toBe('{"type":"session"}');

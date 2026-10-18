@@ -316,6 +316,21 @@ test('Escape closes a conversation menu and returns focus to its conversation', 
   assert.deepEqual(JSON.parse(await page.getByLabel('Conversation actions').textContent()), []);
 });
 
+test('a conversation menu closes without an action when its conversation leaves the list', { timeout: 30_000 }, async t => {
+  const { page, sessions } = await panelPage(t);
+  const [, remaining] = sessions;
+  await conversation(page, 'Chat 2').click({ button: 'right' });
+  await page.getByRole('menu', { name: 'Chat 2 actions', exact: true }).waitFor();
+  sessions.splice(0, 1);
+  await page.evaluate(() => window.refreshPanelSessions());
+  await conversation(page, 'Chat 2').waitFor({ state: 'detached' });
+  assert.equal(await page.getByRole('menu').count(), 0);
+  assert.deepEqual(JSON.parse(await page.getByLabel('Conversation actions').textContent()), []);
+  await conversation(page, 'Chat 10').click({ button: 'right' });
+  await page.getByRole('menuitem', { name: 'Rename conversation', exact: true }).click();
+  assert.deepEqual(JSON.parse(await page.getByLabel('Conversation actions').textContent()), [[remaining, 'rename']]);
+});
+
 test('Ctrl G focuses conversation search', async t => {
   const { page } = await panelPage(t);
   const search = page.getByRole('textbox', { name: 'Search conversations', exact: true });
@@ -696,4 +711,24 @@ test('opening a deleted project directory shows the native error and leaves grou
   assert.ok((await alert.textContent()).includes(directory));
   await page.getByRole('button', { name: 'Group actions for repo', exact: true }).click();
   assert.equal(await page.getByRole('menuitem', { name: 'Forget group', exact: true }).isVisible(), true);
+});
+
+test('a new group can be made from a project folder, is named after the folder, and survives reopening', async t => {
+  const projects = await mkdtemp(join(tmpdir(), 'piop-group-project-'));
+  t.after(() => rm(projects, { recursive: true, force: true }));
+  const folder = join(projects, 'billing-service');
+  await mkdir(folder);
+  const { page, reload, service } = await panelPage(t);
+  await page.getByRole('button', { name: 'Request new group', exact: true }).click();
+  await page.getByRole('button', { name: 'Choose project', exact: true }).click();
+  const path = page.getByRole('combobox', { name: /^(Search or type a folder path|Folder path relative to home)$/ });
+  await path.fill(folder + '/');
+  await page.getByRole('button', { name: /^Open current folder/ }).click();
+  await page.getByRole('button', { name: 'Group actions for billing-service', exact: true }).waitFor();
+  assert.equal(await page.getByRole('textbox', { name: 'Group name', exact: true }).count(), 0);
+  const saved = (await service.invoke('load_session_groups', { seeds: [] })).groups.find(group => group.name === 'billing-service');
+  assert.deepEqual([saved.cwd, saved.hostId ?? 'local'], [folder, 'local'], 'the group belongs to the chosen folder');
+  await page.evaluate(() => window.settlePanelStorage());
+  await reload();
+  assert.equal(await page.getByRole('button', { name: 'Group actions for billing-service', exact: true }).count(), 1);
 });

@@ -1,3 +1,4 @@
+import { reportBackgroundError } from "../lib/backgroundErrors";
 import { createRoot, getOwner, onCleanup, type Accessor } from "solid-js";
 import type { NativeTransport } from "../lib/nativeTransport";
 import { useSessionMemory } from "../lib/sessionMemory";
@@ -21,7 +22,7 @@ export function followConversation(pool: SessionRuntimePool, transport: NativeTr
   let retryDelay = 2000;
   const following = () => !stopped && !pool.isInteractive(transport) && !pool.isActive(transport);
   const ownsSession = (current: ReturnType<typeof useChatSession>) => following() && session === current;
-  const refresh = () => { void session?.refresh().catch((reason: unknown) => console.error("Could not refresh the followed conversation:", reason)); };
+  const refresh = () => { void session?.refresh().catch((reason: unknown) => reportBackgroundError("Could not refresh the followed conversation", reason)); };
 
   const scheduleReconnect = (delay: number) => {
     clearTimeout(retryTimer);

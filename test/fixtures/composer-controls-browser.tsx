@@ -2,6 +2,7 @@ import { createSignal } from 'solid-js';
 import { render } from 'solid-js/web';
 import { mockIPC, mockWindows } from '@tauri-apps/api/mocks';
 import '../../clients/ui/styles.css';
+import '../../clients/ui/mobile.css';
 
 mockWindows('main');
 mockIPC((command, args) => window.nativeCommand(command, args), { shouldMockEvents: true });

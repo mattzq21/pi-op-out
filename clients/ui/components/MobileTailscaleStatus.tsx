@@ -46,7 +46,7 @@ export function MobileTailscaleStatus() {
     const handles: PluginListenerHandle[] = [];
     const keep = async (pending: Promise<PluginListenerHandle>) => {
       try { const handle = await pending; if (disposed) await handle.remove(); else handles.push(handle); }
-      catch (reason) { setListenerError(String(reason)); }
+      catch (reason) { setListenerError((reason instanceof Error ? reason.message : String(reason))); }
     };
     void (async () => {
       await keep(tailscale.addListener("statusChanged", status => {
@@ -57,7 +57,7 @@ export function MobileTailscaleStatus() {
     })();
     void keep(AndroidApp.addListener("appStateChange", ({ isActive }) => { if (isActive) void check(); }));
 
-    return () => { disposed = true; for (const handle of handles) void handle.remove().catch(reason => setListenerError(String(reason))); };
+    return () => { disposed = true; for (const handle of handles) void handle.remove().catch(reason => setListenerError((reason instanceof Error ? reason.message : String(reason)))); };
   }, () => []);
 
   return Capacitor.getPlatform() === "android" && <div class="mobile-tailscale-status" data-state={state()}>

@@ -56,7 +56,7 @@ async function answerDialog(host: Host, session: Session, runtime: string, comma
       return null;
     }
     const response = dialog.queuedResponse ?? session.queue.questionResponse(text(dialog.event, 'asyncQuestion'))
-      ?? { type: ANSWER_QUESTION_COMMAND, requestId: dialog.event.asyncQuestion, value: command.value ?? null, cancelled: flag(command, 'cancelled') };
+      ?? { type: ANSWER_QUESTION_COMMAND, requestId: dialog.event.asyncQuestion, ...(typeof command.value === 'string' ? { value: command.value } : {}), cancelled: flag(command, 'cancelled') };
     session.dialogs.change(id, item => { item.answering = true; });
     try {
       const prepare = structuredClone(response);
@@ -69,7 +69,7 @@ async function answerDialog(host: Host, session: Session, runtime: string, comma
       }
       const resolve = structuredClone(response);
       resolve.action = 'resolve';
-      resolve.queueId = prepared?.queueId ?? null;
+      if (typeof prepared?.queueId === 'string') resolve.queueId = prepared.queueId;
       assertOwner();
       await session.raw(resolve);
       return null;

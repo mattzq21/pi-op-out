@@ -1,5 +1,5 @@
 import { execFile, spawn } from 'node:child_process';
-import { mkdtemp, rm, writeFile, readFile } from 'node:fs/promises';
+import { copyFile, mkdtemp, rm, writeFile, readFile } from 'node:fs/promises';
 import { createConnection } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -8,7 +8,7 @@ import { promisify } from 'node:util';
 import { fileURLToPath } from 'node:url';
 
 let executable;
-function nativeTestExecutable() {
+export function nativeTestExecutable() {
   return executable ??= promisify(execFile)('cargo', ['test', '--locked', '-p', 'piop-desktop', '--lib', '--no-run', '--message-format=json'], {
     cwd: fileURLToPath(new URL('..', import.meta.url)),
     env: { ...process.env, TAURI_CONFIG: '{"bundle":{"externalBin":[]}}' }, maxBuffer: 32 * 1024 * 1024,
@@ -19,9 +19,20 @@ function nativeTestExecutable() {
   });
 }
 
-export async function nativeFileCommand(t, { launcher, desktop = false, desktopUrl } = {}) {
-  const binary = await nativeTestExecutable();
+export async function nativeFileCommand(t, { launcher, desktop = false, desktopUrl, env = {}, bundledDaemon } = {}) {
+  let binary = await nativeTestExecutable();
   const directory = await mkdtemp(join(tmpdir(), 'piop-native-file-'));
+  if (bundledDaemon) {
+    try {
+      const isolatedBinary = join(directory, 'piop-test');
+      await copyFile(binary, isolatedBinary);
+      await copyFile(bundledDaemon, join(directory, 'piopd'));
+      binary = isolatedBinary;
+    } catch (error) {
+      await rm(directory, { recursive: true, force: true });
+      throw error;
+    }
+  }
   const launchLog = join(directory, 'launches.txt');
   const launcherEnv = {};
   if (launcher) {
@@ -30,7 +41,7 @@ export async function nativeFileCommand(t, { launcher, desktop = false, desktopU
   }
   const path = join(directory, 'command.sock');
   const child = spawn(binary, ['tests::attachment_command_bridge', '--exact', '--ignored', '--nocapture'], {
-    env: { ...process.env, ...launcherEnv, ...(desktop ? { HOME: directory, XDG_CONFIG_HOME: directory, XDG_CACHE_HOME: directory, XDG_DATA_HOME: directory, PIOP_TEST_NATIVE_APP: '1', ...(desktopUrl ? { PIOP_TEST_NATIVE_URL: desktopUrl } : {}) } : {}), PIOP_TEST_NATIVE_SOCKET: path }, stdio: ['ignore', 'pipe', 'pipe'],
+    env: { ...process.env, ...launcherEnv, ...(desktop ? { HOME: directory, XDG_CONFIG_HOME: directory, XDG_CACHE_HOME: directory, XDG_DATA_HOME: directory, PIOP_TEST_NATIVE_APP: '1', ...(desktopUrl ? { PIOP_TEST_NATIVE_URL: desktopUrl } : {}) } : {}), ...env, PIOP_TEST_NATIVE_SOCKET: path }, stdio: ['ignore', 'pipe', 'pipe'],
   });
   let diagnostics = '', socket;
   child.stderr.on('data', data => { diagnostics += data; });

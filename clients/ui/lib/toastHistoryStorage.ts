@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-export const toastEntriesSchema = z.array(z.object({
+const toastEntriesSchema = z.array(z.object({
   id: z.string(), timestamp: z.number().min(0).max(8.64e15), source: z.string(), title: z.string(), message: z.string(),
 }));
 
@@ -21,14 +21,14 @@ function openHistory(): Promise<IDBDatabase> {
   });
 }
 
-export async function syncToastHistory(legacy: ToastHistoryEntry[], additions: ToastHistoryEntry[]) {
+export async function syncToastHistory(additions: ToastHistoryEntry[]) {
   const database = await openHistory();
 
-  try { return await updateHistory(database, legacy, additions); }
+  try { return await updateHistory(database, additions); }
   finally { database.close(); }
 }
 
-function updateHistory(database: IDBDatabase, legacy: ToastHistoryEntry[], additions: ToastHistoryEntry[]): Promise<ToastHistoryEntry[]> {
+function updateHistory(database: IDBDatabase, additions: ToastHistoryEntry[]): Promise<ToastHistoryEntry[]> {
   return new Promise((resolve, reject) => {
     const transaction = database.transaction("history", "readwrite", { durability: "strict" });
     const store = transaction.objectStore("history");
@@ -36,7 +36,7 @@ function updateHistory(database: IDBDatabase, legacy: ToastHistoryEntry[], addit
     let result: ToastHistoryEntry[] = [];
     request.onsuccess = () => {
       try {
-        const saved = request.result === undefined ? legacy : toastEntriesSchema.parse(request.result);
+        const saved = request.result === undefined ? [] : toastEntriesSchema.parse(request.result);
         result = mergeToastHistory(saved, additions);
         store.put(result, "recent");
       } catch (error) { transaction.abort(); reject(error); }

@@ -129,7 +129,8 @@ export class SessionQueue {
   private async abort(command: any, assertOwner: () => void): Promise<{ ok: true; value: any } | { ok: false; error: unknown }> {
     const scope = new CancelScope();
     const operation = (async () => {
-      const [cancelled, gate] = await Promise.allSettled([this.delivery.execute({ type: 'cancel_preparation' }), this.gate.lock()]);
+      // The first stop cancels preparation and the running response together, so a wait it ends cannot start another model call.
+      const [cancelled, gate] = await Promise.allSettled([this.delivery.execute({ type: 'abort' }), this.gate.lock()]);
       const release = gate.status === 'fulfilled' ? gate.value : undefined;
       if (release) scope.add(release);
       try {
@@ -137,10 +138,10 @@ export class SessionQueue {
         if (gate.status === 'rejected') throw gate.reason;
         if (scope.cancelled) throw new Error(TIMEOUT);
         assertOwner();
-        await this.hold(scope);
-        if (scope.cancelled) throw new Error(TIMEOUT);
-        assertOwner();
-        return await this.delivery.execute(command, scope);
+        const result = await this.delivery.execute(command, scope);
+        // Stop ends a pause. Messages the pause held are not sent by themselves; they wait for the user to send them again.
+        if (this.held()) await this.delivery.heldFailed();
+        return result;
       } finally {
         if (release) { scope.remove(release); release(); }
       }

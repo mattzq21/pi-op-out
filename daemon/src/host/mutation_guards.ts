@@ -17,7 +17,7 @@ export class MutationGuards {
   async begin(packet: any): Promise<any> {
     const operation = text(packet, 'operation');
     const guard = await this.host.ownership().begin(text(packet, 'sessionId'), text(packet, 'clientId'), {
-      mutation: true, message: operation === 'message', archive: operation === 'archive', path: packet.sessionPath ?? null, archived: packet.archived ?? null,
+      mutation: true, message: operation === 'message', archive: operation === 'archive', delete: operation === 'delete', relocate: operation === 'relocate', path: packet.sessionPath ?? null, archived: packet.archived ?? null,
     });
     if (!guard.owned) { guard.drop(); throw new Error(ownershipError()); }
     const token = randomUUID();

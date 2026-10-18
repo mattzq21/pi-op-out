@@ -95,7 +95,7 @@ export function createAppSettings({ transport, runtimePool, chatSession, addNoti
         if (current !== revision || publication !== publications.generation()) return;
         pendingSettings = undefined; applyRuntimeSettings(next); setSettings(next);
         reportWarnings(change);
-      }).catch(reason => addNotice({ title: "Could not load client preferences", message: String(reason) }));
+      }).catch(reason => addNotice({ title: "Could not load client preferences", message: reason instanceof Error ? reason.message : String(reason) }));
     };
 
     const pending = listen("pi://settings-changed", ({ payload }) => {
@@ -107,7 +107,7 @@ export function createAppSettings({ transport, runtimePool, chatSession, addNoti
 
     const authPending = listen("pi://provider-auth-changed", ({ payload }) => {
       clearDraftCatalogs();
-      void refreshHostModels(payload.hostId).catch(reason => addNotice({ title: "Could not refresh model list", message: String(reason) }));
+      void refreshHostModels(payload.hostId).catch(reason => addNotice({ title: "Could not refresh model list", message: reason instanceof Error ? reason.message : String(reason) }));
     }, z.object({ hostId: z.string() }));
 
     const clientPending = listen("pi://client-settings-changed", () => { const current = pendingSettings ?? settings();
@@ -190,7 +190,7 @@ export function createAppSettings({ transport, runtimePool, chatSession, addNoti
         throw reason;
       }
 
-      await restoreAgentConfiguration(restoreAgents, String(reason));
+      await restoreAgentConfiguration(restoreAgents, (reason instanceof Error ? reason.message : String(reason)));
 
       throw reason;
     }

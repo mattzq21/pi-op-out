@@ -76,7 +76,7 @@ export async function forkConversation(ctx: ExtensionContext, options: ForkOptio
   } catch (error) {
     if (retainedFork(error instanceof Error ? error : undefined, publication)) {
       ctx.ui.notify(`Fork publication and its goal and directory dependencies are retained for recovery: ${sessionPath}`, "warning");
-      throw new Error(`Fork recovery is pending at ${sessionPath}: ${String(error)}`, { cause: error });
+      throw new Error(`Fork recovery is pending at ${sessionPath}: ${(error instanceof Error ? error.message : String(error))}`, { cause: error });
     }
 
     releaseForkAssets(ctx, goalAssets, sessionId, sessionPath);
@@ -92,7 +92,7 @@ function releaseForkAssets(ctx: ExtensionContext, goalAssets: ReturnType<typeof 
   if (!goalAssets || existsSync(sessionPath)) return;
 
   try { releaseHistory(rootForDirectory(ctx.sessionManager.getSessionDir()), goalAssets, sessionId); }
-  catch (error) { ctx.ui.notify(`Fork goal asset ownership was retained for recovery: ${String(error)}`, "warning"); }
+  catch (error) { ctx.ui.notify(`Fork goal asset ownership was retained for recovery: ${(error instanceof Error ? error.message : String(error))}`, "warning"); }
 }
 
 async function cleanupForkDirectory(cwd: string, options: ForkOptions) {

@@ -388,6 +388,21 @@ test('reading current configurations preserves the saved revision', async t => {
   assert.deepEqual(reloaded.agents.map(agent => agent.name), ['general', 'default']);
 });
 
+test('saving with a stale revision is rejected until the latest configuration is reloaded', async t => {
+  const f = await agentFixture(t, { config: null }); await f.load();
+  const stale = (await f.configuration()).revision;
+  await f.configure(configured([profile(), profile('writer')]));
+  const newer = await f.configuration();
+
+  await assert.rejects(f.configure({ ...configured([profile(), profile('stale-writer')]), revision: stale }), { message: 'Agent definitions changed in another window or client. Reload them before saving.' });
+  assert.deepEqual(await f.configuration(), newer);
+
+  const latest = await f.configuration();
+  const saved = await f.configure({ ...configured([profile(), profile('writer'), profile('editor')]), revision: latest.revision });
+  assert.notEqual(saved.revision, latest.revision);
+  assert.deepEqual((await f.configuration()).agents.map(agent => agent.name), ['general', 'writer', 'editor']);
+});
+
 
 test('loading a saved configuration preserves configured choices', async t => {
   const winner = configured([profile('general', { effort: 'medium' })]);
@@ -1159,6 +1174,18 @@ test('selecting an unknown profile keeps the current agent usable', async t => {
   assert.equal(f.capability().active, 'general');
   assert.deepEqual(f.pi.getActiveTools(), ['read']);
   assert.equal((await f.prompt()).customPrompt, 'System instructions');
+});
+
+test('a target with an unreadable agent prompt keeps the selected agent prompts and input usable', async t => {
+  const f = await agentFixture(t, { config: null, files: { 'review-system.md': 'Review system', 'review-agent.md': 'Review agent', 'broken-system.md': 'Broken system' } });
+  await f.load();
+  await f.configure(configured([profile(), profile('reviewer', { path_systemprompt: 'review-system.md', path_agent_prompt: 'review-agent.md' }), profile('broken', { path_systemprompt: 'broken-system.md', path_agent_prompt: 'absent-agent.md' })]));
+  await f.start(); await f.select('reviewer');
+  await assert.rejects(f.select('broken'), error => error.message.startsWith(`Agent "broken" cannot read agent prompt ${join(f.dir, 'absent-agent.md')}: ENOENT`));
+  assert.equal(f.capability().active, 'reviewer');
+  const prompt = await f.prompt();
+  assert.deepEqual([prompt.customPrompt, prompt.sections.instructions], ['Review system', 'Review agent']);
+  assert.deepEqual(await f.input('hello'), { action: 'continue' });
 });
 
 test('first run reports a read-only settings directory and succeeds after access is restored', async t => {

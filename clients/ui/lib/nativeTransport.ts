@@ -104,7 +104,13 @@ export class NativeTransport {
 
     return target;
   }
-  async restoreConnection(target: NativeConnectionTarget) { await this.disconnect(); this.cwd = target.cwd; this.sessionPath = target.sessionPath; this.sessionId = target.sessionId; this.hostId = target.hostId || "local"; this.daemonId = undefined; await this.connect(); }
+  async restoreConnection(target: NativeConnectionTarget) {
+    await this.disconnect();
+    const hostId = target.hostId || "local";
+    if (this.hostId !== hostId || this.sessionPath !== target.sessionPath || this.cwd !== target.cwd || (target.sessionId !== undefined && this.sessionId !== target.sessionId)) forgetSession(this);
+    this.cwd = target.cwd; this.sessionPath = target.sessionPath; this.sessionId = target.sessionId; this.hostId = hostId; this.daemonId = undefined;
+    await this.connect();
+  }
   async restoreRecoveryConnection(cwd: string, sessionPath: string, hostId = "local") {
     await this.restoreConnection({ cwd, sessionPath, hostId });
     this.emit({ type: "connection_restored" });

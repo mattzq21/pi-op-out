@@ -17,27 +17,32 @@ async function storagePanel(t, offline = false, archiveNames = [], options = {})
   let view, daemon, releaseReply;
   let replyGate = Promise.resolve();
   if (options.pauseReplies) replyGate = new Promise(resolve => { releaseReply = resolve; });
+  const heldReply = Promise.withResolvers();
+  let holdReply = options.holdReply;
   const temporary = [];
   const settle = async () => { do { await storage.settled(); await act(() => Promise.allSettled([...requests])); } while (requests.size); };
-  t.after(async () => { releaseReply?.(); await settle(); await view?.unmount(); await settle(); for (const path of temporary) await daemon.invoke('remove_temporary_chat', { path, hostId: 'local' }); storage.restore(); clearMocks(); dom.restore(); });
-  daemon = await daemonClient(t);
-  for (const name of archiveNames) {
-    const home = await daemon.invoke('home_directory', { hostId: 'local' });
+  t.after(async () => { releaseReply?.(); heldReply.resolve(); await settle(); await view?.unmount(); await settle(); for (const path of temporary) await daemon.invoke('remove_temporary_chat', { path, hostId: 'local' }); storage.restore(); clearMocks(); dom.restore(); });
+  daemon = await daemonClient(t, undefined, { remotes: options.remotes });
+  for (const archive of archiveNames) {
+    const { name, hostId } = typeof archive === 'string' ? { name: archive, hostId: 'local' } : archive;
+    const home = await daemon.invoke('home_directory', { hostId });
     const chat = JSON.parse(execFileSync('node', [fileURLToPath(new URL('../fixtures/publish-chat.mjs', import.meta.url))], {
       encoding: 'utf8', timeout: 30000,
       input: JSON.stringify({ home, content: JSON.stringify({ type: 'message', id: 'question', parentId: null, message: { role: 'user', content: name } }) + '\n' }),
     }));
-    await daemon.invoke('archive_session', { hostId: 'local', sessionPath: chat.path, terminalIds: [], clientId: 'storage-ui-test' });
+    await daemon.invoke('archive_session', { hostId, sessionPath: chat.path, terminalIds: [], clientId: 'storage-ui-test' });
   }
   if (offline) await daemon.disconnect();
   mockWindows('main');
   mockIPC(async (command, args) => {
     assert.equal(command, 'daemon_invoke');
+    const held = holdReply?.(args.command, args.args);
+    if (held) holdReply = undefined;
     const request = daemon.invoke(args.command, args.args); requests.add(request);
-    try { const result = await request; await replyGate; return result; } finally { requests.delete(request); }
+    try { const result = await request; await replyGate; if (held) await heldReply.promise; return result; } finally { requests.delete(request); }
   });
-  view = await renderComponent(StorageSettings);
-  return { daemon, view, settle, temporary, releaseReplies: () => releaseReply?.(), pauseReplies() {
+  view = await renderComponent(StorageSettings, options.props);
+  return { daemon, view, settle, temporary, releaseHeldReply: () => heldReply.resolve(), failHeldReply: error => heldReply.reject(error), releaseReplies: () => releaseReply?.(), pauseReplies() {
     const gate = Promise.withResolvers();
     replyGate = gate.promise;
     releaseReply = () => gate.resolve();
@@ -268,4 +273,35 @@ test('storage shows a large archive size in mebibytes', async t => {
   await settle();
   const row = view.container.querySelector('[aria-label="Permanently delete Large chat"]').parentElement;
   assert.ok(row.textContent.includes('2.00 MiB'));
+});
+
+test('a storage report for the previous machine does not replace the report for the selected machine', { timeout: 60000 }, async t => {
+  const { view, settle, releaseHeldReply } = await storagePanel(t, false, ['Local chat', { name: 'Remote chat', hostId: 'remote' }], {
+    remotes: [{ id: 'remote', name: 'Remote machine', target: 'storage-remote' }],
+    props: { hostId: 'local' },
+    holdReply: (command, args) => command === 'host_storage_report' && args.hostId === 'local',
+  });
+  await view.rerender({ hostId: 'remote' });
+  await untilDom(() => view.container.querySelector('[aria-label="Permanently delete Remote chat"]'), 30000);
+  releaseHeldReply();
+  await settle();
+  assert.ok(view.container.querySelector('[aria-label="Permanently delete Remote chat"]'));
+  assert.equal(view.container.querySelector('[aria-label="Permanently delete Local chat"]'), null);
+});
+
+test('a failed storage report for the previous machine does not replace the report for the selected machine', { timeout: 60000 }, async t => {
+  const { view, settle, failHeldReply } = await storagePanel(t, false, ['Local chat', { name: 'Remote chat', hostId: 'remote' }], {
+    remotes: [{ id: 'remote', name: 'Remote machine', target: 'storage-remote' }],
+    props: { hostId: 'local' },
+    holdReply: (command, args) => command === 'host_storage_report' && args.hostId === 'local',
+  });
+  await view.rerender({ hostId: 'remote' });
+  await untilDom(() => view.container.querySelector('[aria-label="Permanently delete Remote chat"]'), 30000);
+  failHeldReply(new Error('Local storage scan failed'));
+  await settle();
+  assert.equal(view.container.querySelector('[role="alert"]'), null);
+  assert.ok(view.container.querySelector('[aria-label="Permanently delete Remote chat"]'));
+  assert.equal(view.container.querySelector('[aria-label="Permanently delete Local chat"]'), null);
+  assert.equal(view.container.querySelector('[role="status"]'), null);
+  assert.equal([...view.container.querySelectorAll('button')].find(button => button.textContent === 'Refresh').disabled, false);
 });

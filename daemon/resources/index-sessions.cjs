@@ -46,6 +46,10 @@ class SessionIndex {
   damagedLines = [];
   interruptedBytes = 0;
   resumes = new Set();
+  /** Each entry's parent and, for a message, what the chat list shows of it. The chat list follows the branch that ends at the last entry. */
+  nodes = new Map();
+  leaf = null;
+  unnamed = 0;
 
   metadata(entry) {
     if (entry.type === 'custom') {
@@ -73,30 +77,44 @@ class SessionIndex {
     else this.subagentParentId = data.parentSessionId;
   }
 
-  message(entry) {
-    if (entry.type !== 'message') return;
+  /** What the chat list needs of a message entry, or undefined for other entries and resume prompts. */
+  messageRecord(entry) {
+    if (entry.type !== 'message') return undefined;
     const message = entry.message || {};
-    const content = text(message);
+    let content = text(message);
 
-    if (message.role === 'user' && this.resumes.has(content)) return;
-    this.recordMessage(message, content, entry);
+    if (message.role === 'user' && this.resumes.has(content)) return undefined;
+
+    if (message.role === 'user') content = userPrompt(content);
+
+    return { role: message.role, content: content.slice(0, 2000), timestamp: message.role === 'user' ? timestamp(message.timestamp ?? entry.timestamp) : 0 };
   }
 
-  recordMessage(message, content, entry) {
-    if (message.role === 'user') {
+  recordMessage(record) {
+    if (record.role === 'user') {
       this.hasUserMessage = true;
-      this.lastMessageAt = Math.max(this.lastMessageAt, timestamp(message.timestamp ?? entry.timestamp));
-      content = userPrompt(content);
+      this.lastMessageAt = Math.max(this.lastMessageAt, record.timestamp);
     }
 
     this.count++;
 
-    if (content) {
-      if (!this.first && message.role === 'user') this.first = content.slice(0, 2000);
-      this.preview = [...content.slice(0, PREVIEW_CODE_POINTS * 2)].slice(0, PREVIEW_CODE_POINTS).join('');
+    if (record.content) {
+      if (!this.first && record.role === 'user') this.first = record.content;
+      this.preview = [...record.content.slice(0, PREVIEW_CODE_POINTS * 2)].slice(0, PREVIEW_CODE_POINTS).join('');
+    }
+  }
+
+  /** Records the messages on the branch that ends at the last entry, oldest first. */
+  recordBranch() {
+    const branch = [];
+    const seen = new Set();
+
+    for (let id = this.leaf; id !== null && this.nodes.has(id) && !seen.has(id); id = this.nodes.get(id).parentId) {
+      seen.add(id);
+      branch.push(this.nodes.get(id).record);
     }
 
-    if (message.role === 'assistant' || message.role === 'toolResult') this.recordCost(message);
+    for (const record of branch.reverse()) if (record) this.recordMessage(record);
   }
 
   recordCost(message) {
@@ -125,7 +143,13 @@ class SessionIndex {
     this.metadata(entry);
 
     if (entry.type === 'usage') this.recordCost(entry);
-    this.message(entry);
+
+    // Cost counts every response, also on branches the chat later left.
+    if (entry.type === 'message' && ['assistant', 'toolResult'].includes(entry.message?.role)) this.recordCost(entry.message);
+    const id = typeof entry.id === 'string' ? entry.id : `#${++this.unnamed}`;
+    const parentId = typeof entry.id !== 'string' ? this.leaf : typeof entry.parentId === 'string' ? entry.parentId : null;
+    this.nodes.set(id, { parentId, record: this.messageRecord(entry) });
+    this.leaf = id;
   }
 
   visible(path) {
@@ -138,6 +162,7 @@ class SessionIndex {
   }
 
   summary(path) {
+    this.recordBranch();
     if (this.interruptedBytes) console.warn(`${path}: last write was interrupted; ignored ${this.interruptedBytes} bytes`);
     if (this.damagedLines.length) {
       const notice = `Incomplete chat history; damaged record lines: ${this.damagedLines.join(', ')}`;

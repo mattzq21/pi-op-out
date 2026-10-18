@@ -236,6 +236,7 @@ export class Host implements SessionHost {
     if (intent === 'transfer' && (session.working() || session.compacting())) {
       throw new Error('The agent is running on another daemon. Wait for it to finish before transferring ownership.');
     }
+    if (intent === 'relocate' && (session.working() || session.compacting())) throw new Error('Stop the response before moving this chat to another folder.');
     if (intent === 'message') await session.retire();
     const saved = session.savedState();
     for (const [runtime] of session.views()) this.readonlyMap.set(runtime, { id, path: typeof saved?.sessionFile === 'string' ? saved.sessionFile : null });
