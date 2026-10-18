@@ -54,3 +54,20 @@ test('a development connection is used for this run without replacing the saved 
   assert.equal(localHostLabel(), 'Development');
   assert.deepEqual(await readMobileAnchor(), { name: 'Home', url: 'wss://home.test/' });
 });
+
+test('a failed host save keeps the saved address and label, and a later save can recover', async t => {
+  await saveMobileAnchor('wss://home.test', 'Home');
+  const storage = indexedDB;
+  const failure = t.mock.method(storage, 'open', () => { throw new Error('Host storage is unavailable'); });
+
+  await assert.rejects(saveMobileAnchor('wss://office.test', 'Office'), /Host storage is unavailable/);
+  assert.equal(cachedMobileHost(), 'wss://home.test/');
+  assert.equal(localHostLabel(), 'Home');
+
+  failure.mock.restore();
+  assert.deepEqual(await readMobileAnchor(), { name: 'Home', url: 'wss://home.test/' });
+  await saveMobileAnchor('wss://office.test', 'Office');
+  assert.deepEqual(await readMobileAnchor(), { name: 'Office', url: 'wss://office.test/' });
+  assert.equal(cachedMobileHost(), 'wss://office.test/');
+  assert.equal(localHostLabel(), 'Office');
+});

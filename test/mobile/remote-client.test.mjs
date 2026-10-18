@@ -168,6 +168,23 @@ test('late events from a replaced connection do not affect the new connection', 
   } finally { client.close(); }
 });
 
+test('a log failure reported before connection loss is not replayed to listeners after reconnecting', async () => {
+  const { client, socket: lost } = await connected();
+  const status = z.object({ hostId: z.string(), failure: z.string().nullable() });
+  try {
+    lost.receive({ event: 'pi://daemon-log-status', payload: { hostId: 'ves', failure: 'Disk full' } });
+    lost.close();
+    const reconnect = client.connect(host);
+    const current = FakeSocket.instances.at(-1);
+    current.onopen(); current.receive({ type: 'ready', protocol: 1, backend: 'daemon' });
+    await reconnect;
+    current.receive({ event: 'pi://daemon-log-status', payload: { hostId: 'zqvps', failure: 'Log unreadable' } });
+    const received = [];
+    await client.listen('pi://daemon-log-status', ({ payload }) => received.push(payload), status);
+    assert.deepEqual(received, [{ hostId: 'zqvps', failure: 'Log unreadable' }]);
+  } finally { client.close(); }
+});
+
 test('rejects older desktop endpoints without leaving a pending handshake', async () => {
   const client = new RemoteClient(); const promise = client.connect(host);
   const rejection = assert.rejects(promise, /older desktop endpoint/);
