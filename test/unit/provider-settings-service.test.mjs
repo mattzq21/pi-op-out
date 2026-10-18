@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { createServer } from 'node:http';
 import { test } from 'node:test';
 import { installDom, renderComponent, act, enterText, untilDom } from '../dom.mjs';
 import { mockIPC, mockWindows, clearMocks } from '@tauri-apps/api/mocks';
@@ -52,4 +53,50 @@ test('a login can be cancelled, and the filter finds providers by name', async t
   assert.deepEqual(shown(), ['Moonshot AI CN'], 'by provider ID');
   await enterText(document.querySelector('[aria-label="Filter providers"]'), 'no such provider');
   await untilDom(() => /No providers match/.test(document.querySelector('.provider-settings').textContent), 15000);
+});
+
+/** An OpenAI-compatible server on this machine that lists one model and records the keys it receives. */
+async function modelServer(t) {
+  const keys = [];
+  const server = createServer((request, response) => {
+    keys.push(request.headers.authorization);
+    if (request.url === '/v1/models') { response.setHeader('content-type', 'application/json'); response.end(JSON.stringify({ object: 'list', data: [{ id: 'llama-test', object: 'model' }] })); return; }
+    response.statusCode = 404; response.end();
+  });
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => new Promise(resolve => server.close(resolve)));
+  return { url: `http://127.0.0.1:${server.address().port}/v1`, keys };
+}
+
+const field = label => [...document.querySelectorAll('.custom-provider-form label')].find(item => item.querySelector('span')?.textContent === label).querySelector('input');
+
+test('a custom provider added in settings finds its models with its key and shows as configured', async t => {
+  const { daemon, section } = await providers(t);
+  const server = await modelServer(t);
+  await act(async () => document.querySelector('.provider-add-custom').click());
+  await enterText(field('Provider ID'), 'local-llm');
+  await enterText(field('Display name'), 'Local LLM');
+  await enterText(field('API base URL'), server.url);
+  await enterText(field('API key'), 'local-key');
+  await act(async () => document.querySelector('.custom-provider-form button[type="submit"]').click());
+  const added = await untilDom(() => [...document.querySelectorAll('[role="status"]')].find(item => /Custom provider added/.test(item.textContent)), 15000);
+  assert.ok(server.keys.includes('Bearer local-key'));
+  await act(async () => [...added.querySelectorAll('button')].find(item => item.textContent === 'Done').click());
+  await untilDom(() => section('Local LLM') && /Configured/.test(section('Local LLM').textContent), 10000);
+  const listed = (await daemon.invoke('provider_auth', { hostId: 'local', request: { action: 'list', refreshModels: false } })).providers.find(provider => provider.id === 'local-llm');
+  assert.equal(listed.name, 'Local LLM');
+});
+
+test('a custom provider that cannot be reached is not added, and the form keeps what was typed', async t => {
+  const { section } = await providers(t);
+  await act(async () => document.querySelector('.provider-add-custom').click());
+  await enterText(field('Provider ID'), 'gone-llm');
+  await enterText(field('API base URL'), 'http://127.0.0.1:9/v1');
+  await act(async () => document.querySelector('.custom-provider-form input[type="checkbox"]').click());
+  await act(async () => document.querySelector('.custom-provider-form button[type="submit"]').click());
+  const error = await untilDom(() => document.querySelector('.provider-settings > [role="alert"]'), 15000);
+  assert.equal(error.textContent, 'Could not discover models. Check the API URL and connectivity from the selected host.');
+  assert.equal(field('Provider ID').value, 'gone-llm');
+  assert.equal(field('API base URL').value, 'http://127.0.0.1:9/v1');
+  assert.equal(section('gone-llm'), null);
 });
