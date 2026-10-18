@@ -2,7 +2,7 @@ import { createPanelSize } from "../lib/panelSize";
 import { createSignal, onCleanup, onMount, Show, type JSX } from "solid-js";
 
 export function Sidepane(props: { open: boolean; children: JSX.Element }) {
-  const [width, setWidth] = createPanelSize("piop-sidepane-width", 420, 300, ["piop-notes:width"]);
+  const [width, setWidth] = createPanelSize("piop-sidepane-width", 420, 300);
   const [available, setAvailable] = createSignal(window.innerWidth);
   const [dragging, setDragging] = createSignal(false);
   const maximum = () => Math.max(0, Math.floor(available() * .6));

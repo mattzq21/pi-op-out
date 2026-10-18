@@ -74,7 +74,7 @@ function flushSizes() {
 
 window.addEventListener("focus", flushSizes);
 
-export function createPanelSize(key: string, fallback: number, minimum: number, _olderKeys: string[] = []): readonly [Accessor<number>, (value: number) => void] {
+export function createPanelSize(key: string, fallback: number, minimum: number): readonly [Accessor<number>, (value: number) => void] {
   const [size, setSize] = createSignal(cache.get(key) ?? fallback);
   const revision = revisions.get(key);
   const pendingAtStart = pending.has(key);
