@@ -172,6 +172,36 @@ test('a successful Android minimize clears only its own failure and keeps the re
   assert.equal(await editor.isVisible(), true);
 });
 
+test('Retry disconnect after the host recovers from a refused stop shows the connection form with the saved host', async t => {
+  const host = { stopFailure: 'Agent run could not stop' };
+  const { page, editor } = await connectedChat(t, host);
+  await editor.fill('Keep this draft');
+  const connectionNotice = page.locator('.mobile-reconnect-banner').filter({ hasText: 'Agent run could not stop' });
+  const retryDisconnect = connectionNotice.getByRole('button', { name: 'Retry disconnect', exact: true });
+  const prompts = [];
+  page.on('dialog', dialog => { prompts.push(dialog.message()); return dialog.accept(); });
+
+  await page.getByRole('button', { name: 'Toggle conversations' }).click();
+  await page.getByRole('button', { name: 'Host', exact: true }).click();
+  await retryDisconnect.waitFor();
+  await settle(page);
+  assert.equal(await editor.isVisible(), true);
+  assert.equal(await retryDisconnect.isEnabled(), true);
+  assert.equal(prompts.length, 1);
+
+  host.stopFailure = undefined;
+  await retryDisconnect.click();
+  const address = page.getByLabel('Anchor host address');
+  await address.waitFor();
+  await settle(page);
+  assert.equal(prompts.length, 2);
+  assert.equal(await editor.count(), 0);
+  assert.equal(await page.getByText('Agent run could not stop').count(), 0);
+  assert.equal(await address.inputValue(), 'wss://piop.example.test/');
+  assert.equal(await page.getByLabel('Host name').inputValue(), 'Test workspace');
+  assert.equal(await page.getByRole('button', { name: 'Connect', exact: true }).isEnabled(), true);
+});
+
 test('Android Back closes the open conversation panel first and minimizes the app only on the next press', async t => {
   const { page, editor } = await connectedChat(t);
   await editor.fill('Keep this draft');
