@@ -273,6 +273,46 @@ test('another connection cannot send and clear the owner terminal draft', async 
   }
 }, 30_000);
 
+test('after another client takes the chat, the connection that opened its terminal cannot send its draft', async () => {
+  const former = await daemon.connect();
+  const taker = await daemon.connect();
+  const chat = await former.invoke('create_temporary_chat', { hostId: 'local' });
+  const terminalId = 'taken-over';
+  const directory = temporaryDirectory('piop-taken-over-');
+  writeFileSync(join(directory, '.terminal-script'), "IFS= read -r line\nprintf 'RECEIVED:<%s>\\n' \"$line\"\n");
+  const start = (client: Client, runtimeId: string, clientId: string) =>
+    client.invoke('start_pi', { runtimeId, clientId, cwd: chat.cwd, sessionId: chat.sessionId });
+  try {
+    expect(await start(former, 'taken-over-former', 'former-owner')).toMatchObject({ owned: true });
+    await shared(former, 'former-owner', 'start', chat.sessionId, { sharedTerminalId: terminalId, cwd: directory, cols: 80, rows: 24 });
+    await shared(former, 'former-owner', 'draft', chat.sessionId, { sharedTerminalId: terminalId, data: 'Former owner command' });
+    expect(await start(taker, 'taken-over-taker', 'new-owner')).toMatchObject({ owned: false });
+    expect(await taker.invoke('pi_command', { runtimeId: 'taken-over-taker', command: { type: 'take_ownership' } })).toMatchObject({ owned: true });
+
+    expect(await former.failure('shared_terminal', {
+      action: 'write_and_clear_draft', clientId: 'former-owner', hostId: 'local', sessionKey: 'local:' + chat.sessionId,
+      sharedTerminalId: terminalId, data: 'Former owner command\n', expectedDraft: 'Former owner command',
+    })).toBe('Take ownership of this session before changing its terminals');
+    expect(await entry(taker, 'new-owner', chat.sessionId, terminalId))
+      .toMatchObject({ owned: true, exited: false, inputDraft: 'Former owner command' });
+
+    await shared(taker, 'new-owner', 'draft', chat.sessionId, { sharedTerminalId: terminalId, data: 'Reviewed by new owner' });
+    await shared(taker, 'new-owner', 'write_and_clear_draft', chat.sessionId, {
+      sharedTerminalId: terminalId, data: 'Reviewed by new owner\n', expectedDraft: 'Reviewed by new owner',
+    });
+    await taker.waitEvent('pi://event', event => event.type === 'terminal_exit' && event.terminalId === terminalId);
+    const result = await entry(taker, 'new-owner', chat.sessionId, terminalId);
+    expect(result.output).toContain('RECEIVED:<Reviewed by new owner>');
+    expect(result.output).not.toContain('Former owner command');
+    expect(result.inputDraft).toBe('');
+  } finally {
+    await shared(taker, 'new-owner', 'close', chat.sessionId, { sharedTerminalId: terminalId });
+    await taker.invoke('stop_pi', { runtimeId: 'taken-over-taker' });
+    await former.invoke('stop_pi', { runtimeId: 'taken-over-former' });
+    former.close(); taker.close();
+  }
+}, 60_000);
+
 test('oversized Unicode terminal drafts are rejected without losing the saved draft', async () => {
   const client = await daemon.connect();
   const sessionId = 'draft-size-limit';
