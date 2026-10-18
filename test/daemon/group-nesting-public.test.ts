@@ -1,3 +1,5 @@
+import { execFileSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 import { expect, test } from 'bun:test';
 import { startDaemon, type TestDaemon } from './harness';
 
@@ -73,5 +75,36 @@ test('moving a group checks the depth of its children before saving', async () =
 
     await change(daemon, { type: 'move', id: child, parent: destination });
     expect((await load(daemon)).parents).toEqual({ [child]: destination, [leaf]: child });
+  } finally { await daemon.stop(); }
+}, 60_000);
+
+function publicSession(daemon: TestDaemon): string {
+  return JSON.parse(execFileSync('node', [fileURLToPath(new URL('../fixtures/publish-chat.mjs', import.meta.url))], {
+    encoding: 'utf8', timeout: 30000, input: JSON.stringify({ home: daemon.home, cwd: daemon.home, folder: 'nesting', content: '' }),
+  })).id;
+}
+
+test('removing a nested parent ungroups only its own chats and tells other clients', async () => {
+  const daemon = await startDaemon();
+  try {
+    const other = await daemon.connect();
+    await load(daemon);
+    const root = await create(daemon, 'Work');
+    const child = await create(daemon, 'Research');
+    const leaf = await create(daemon, 'Experiments');
+    await change(daemon, { type: 'move', id: child, parent: root });
+    await change(daemon, { type: 'move', id: leaf, parent: child });
+    const [rootChat, childChat, leafChat] = [publicSession(daemon), publicSession(daemon), publicSession(daemon)];
+    await change(daemon, { type: 'assign', key: 'local:' + rootChat, group: root });
+    await change(daemon, { type: 'assign', key: 'local:' + childChat, group: child });
+    await change(daemon, { type: 'assign', key: 'local:' + leafChat, group: leaf });
+
+    const removed = await change(daemon, { type: 'remove', id: child });
+    expect(removed.assignments).toEqual({ ['local:' + rootChat]: root, ['local:' + childChat]: null, ['local:' + leafChat]: leaf });
+    expect(removed.parents).toEqual({});
+    expect(await other.waitEvent('pi://groups-changed', payload => payload.assignments['local:' + childChat] === null)).toEqual(removed);
+    const listed = Object.fromEntries((await other.invoke('list_sessions'))
+      .filter((row: { id: string }) => [rootChat, childChat, leafChat].includes(row.id)).map((row: { id: string; groupId: string | null }) => [row.id, row.groupId]));
+    expect(listed).toEqual({ [rootChat]: root, [childChat]: null, [leafChat]: leaf });
   } finally { await daemon.stop(); }
 }, 60_000);
