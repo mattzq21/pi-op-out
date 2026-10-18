@@ -458,6 +458,27 @@ describe("context cap session", () => {
     expect(received).toEqual([{ cap: 300_000, source: "config", appliedWindow: 300_000 }]);
   });
 
+  test("a subscriber that unsubscribes before the session starts gets no state or error", async () => {
+    const host = new Host([], model("large", 1_000_000));
+    const session = host.session();
+    const stale: unknown[] = [];
+    const staleErrors: Error[] = [];
+    const healthy: unknown[] = [];
+    const stopStale = session.subscribe((state: unknown) => stale.push(state), (error: Error) => staleErrors.push(error));
+    session.subscribe((state: unknown) => healthy.push(state), () => undefined);
+    stopStale();
+    await host.fire("session_start", { reason: "startup" });
+    await host.updateDefaults(general(300_000));
+    await Promise.resolve();
+    await session.setManualCap(500_000);
+    expect(healthy).toEqual([
+      { cap: 300_000, source: "config", appliedWindow: 300_000 },
+      { cap: 500_000, source: "manual", appliedWindow: 500_000 },
+    ]);
+    expect(stale).toEqual([]);
+    expect(staleErrors).toEqual([]);
+  });
+
   test("a failing subscriber reports its error without stopping changes or other subscribers", async () => {
     const host = await start();
     const errors: Error[] = [];
