@@ -1,5 +1,6 @@
 import { afterAll, beforeAll, expect, test } from 'bun:test';
 import { agentDaemon, called, text } from './agent-chats';
+import { startDaemon } from './harness';
 
 let agents: Awaited<ReturnType<typeof agentDaemon>>;
 beforeAll(async () => { agents = await agentDaemon(); await agents.enableAgentTools('request_user_input'); }, 60000);
@@ -41,3 +42,26 @@ test('cancelling a question sends nothing to the agent', async () => {
   expect((await chat.history()).length).toBe(before);
   expect((await chat.command({ type: 'get_state' })).needsInput).toBeFalsy();
 }, 60000);
+
+test('a question still waiting when the daemon restarts comes back when the chat is opened again, and the answer reaches the agent', async () => {
+  const { chat } = await chatWithQuestion('Set up search');
+  const first = agents.daemon;
+  await first.stop();
+  const second = await startDaemon({ home: first.home });
+  try {
+    const path = (await second.invoke('list_sessions')).find((session: any) => session.id === chat.sessionId).path;
+    await second.invoke('start_pi', { runtimeId: 'reopened', clientId: 'laptop', cwd: chat.cwd, sessionPath: path, presence: { visible: true, focused: true } });
+    const command = (value: any) => second.invoke('pi_command', { runtimeId: 'reopened', command: value });
+    await command({ type: 'set_model', provider: 'scripted', modelId: 'scripted-model' });
+    let dialog: any;
+    for (let tries = 0; !dialog && tries < 100; tries++, await Bun.sleep(100)) {
+      dialog = second.events.filter(event => event.payload?.runtimeId === 'reopened' && event.payload.event?.method === 'input' && event.payload.event.title === '__piop_request_user_input__').map(event => event.payload.event)[0];
+    }
+    expect(JSON.parse(dialog.placeholder).questions[0].question).toBe('Which database?');
+    await command({ type: 'extension_ui_response', id: dialog.id, value: JSON.stringify({ answers: { question_0: { answers: ['SQLite'] } } }) });
+    let last = '';
+    for (let tries = 0; last !== 'Using SQLite.' && tries < 100; tries++, await Bun.sleep(100)) last = text((await command({ type: 'get_entries' })).entries.filter((entry: any) => entry.type === 'message').at(-1)?.message);
+    expect(last).toBe('Using SQLite.');
+  } finally { await second.stop(); }
+}, 60000);
+
