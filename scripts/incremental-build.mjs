@@ -7,6 +7,12 @@ import { build, version } from "esbuild";
 const cacheDirectory = ".trace/extension-builds";
 
 const helper = fileURLToPath(import.meta.url);
+let totalArtifacts = 0;
+let unchangedArtifacts = 0;
+
+export function reportUnchanged() {
+  if (unchangedArtifacts) console.log(`Unchanged: ${unchangedArtifacts}/${totalArtifacts}`);
+}
 
 export async function buildInParallel(builds) {
   const results = await Promise.allSettled(builds);
@@ -53,13 +59,14 @@ async function cachedDependencies(cachePath) {
 }
 
 export async function buildArtifact({ output, inputs, key }, generate) {
+  totalArtifacts += 1;
   const configuration = (await readdir(".")).filter(path => path === "package.json" || path === "bun.lock" || /^tsconfig.*\.json$/.test(path));
   const fixedInputs = [...inputs, helper, ...configuration];
   const signature = JSON.stringify([version, process.version, key, [...fixedInputs].sort()]);
   const cachePath = `${cacheDirectory}/${hash(output)}.json`;
 
   if (await isCurrent(cachePath, signature, fixedInputs, output)) {
-    console.log(`Unchanged: ${output}`);
+    unchangedArtifacts += 1;
 
     return;
   }

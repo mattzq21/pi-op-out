@@ -2,7 +2,7 @@ import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { gzipSync } from "node:zlib";
 import { parseArgs } from "node:util";
-import { buildArtifact, buildBundle, buildInParallel } from "./incremental-build.mjs";
+import { buildArtifact, buildBundle, buildInParallel, reportUnchanged } from "./incremental-build.mjs";
 import { agentCommandInputs, agentCommandInventory } from "./agent-command-inventory.mjs";
 import { storageSchemaImports } from "./storage-schema-plugin.mjs";
 
@@ -83,3 +83,5 @@ const builders = { "fast-mode": fastMode, "mcp-bridge": mcpBridge, "backend-scri
 if (values.only && !Object.hasOwn(builders, values.only)) throw new Error(`Unknown extension build: ${values.only}`);
 
 await buildInParallel((values.only ? [builders[values.only]] : Object.values(builders)).map(build => build()));
+
+reportUnchanged();
