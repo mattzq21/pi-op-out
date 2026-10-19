@@ -228,19 +228,9 @@ function historySnapshots(root, entries, sessionId) {
   return claimSnapshots(root, dependencyClosure(root, referencesToKeep));
 }
 
-function claimHistory(root, entries, sessionId, sessionPath, remember) {
-  return locked(root, () => {
-    const snapshots = historySnapshots(root, entries, sessionId);
-    remember(snapshots);
-
-    return publishClaims(root, snapshots, sessionId, sessionPath);
-  });
-}
-
-function undoHistory(root, snapshots, sessionId, sessionPath) {
-  return locked(root, () => {
-    for (const snapshot of [...snapshots].reverse()) undoClaim(root, snapshot, sessionId, sessionPath);
-  });
+function historyContract(root, entries, sessionId) {
+  const snapshots = historySnapshots(root, entries, sessionId);
+  return { version: 1, policy: 'shared-profile', directories: snapshots.filter(snapshot => snapshot.record.owners.some(owner => owner.sessionId === sessionId)).map(snapshot => ({ path: snapshot.directory, identity: snapshot.identity })) };
 }
 
 function publishClaims(root, snapshots, sessionId, sessionPath) {
@@ -386,4 +376,4 @@ function endReclamation(root, directory, expected) {
   updateReclamation(root, directory, expected, true);
 }
 
-module.exports = { rootForDirectory, acquire, locked, exists, identity, validPath, readOwners, directReferences, references, claim, retainHistory, claimHistory, undoHistory, ownedDirectories, verifyContract, releaseHistory, discardPreparation, beginReclamation, endReclamation };
+module.exports = { rootForDirectory, acquire, locked, exists, identity, validPath, readOwners, directReferences, references, claim, retainHistory, historyContract, ownedDirectories, verifyContract, releaseHistory, discardPreparation, beginReclamation, endReclamation };

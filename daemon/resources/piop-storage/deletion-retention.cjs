@@ -1,11 +1,11 @@
-const { lockSync } = require('./file-lock.cjs');
+const { lockSync } = require('../file-lock.cjs');
 const fs = require('node:fs');
 const path = require('node:path');
 const { Type } = require('typebox');
 const { Check } = require('typebox/value');
-const { validSessionHeader } = require('./session-header.cjs');
+const { validSessionHeader } = require('../session-header.cjs');
 const { describeCandidates } = require('./retention-candidates.cjs');
-const transcriptRecords = require('./transcript-references.cjs');
+const transcriptRecords = require('../transcript-references.cjs');
 
 const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -15,7 +15,7 @@ function metadata(file) {
 }
 
 function registeredGoals(root, inventory) {
-  for (const directory of require('./piop-storage/goal-ownership.cjs').directories(root)) {
+  for (const directory of require('./goal-ownership.cjs').directories(root)) {
     const area = path.relative(root, directory).split(path.sep)[0];
 
     if (!['sessions', 'archived'].includes(area)
@@ -31,7 +31,7 @@ function registeredGoals(root, inventory) {
 }
 
 function registeredTranscripts(root, inventory) {
-  for (const file of require('./session-database.cjs').paths(root)) {
+  for (const file of require('../session-database.cjs').paths(root)) {
     const info = metadata(file);
 
     if (!info?.isFile() || fs.realpathSync(file) !== file) { inventory.uncertain = true; continue; }
@@ -56,9 +56,9 @@ function retainActiveGoals(root, goals, retained) {
   let pending = false;
 
   for (const directory of goals) {
-    const managed = require('./piop-storage/goal-ownership.cjs').read(root, directory) !== undefined
-      || require('./piop-storage/goal-preparations.cjs').read(root, directory) !== undefined
-      || require('./piop-storage/goal-dependencies.cjs').read(root, directory) !== undefined;
+    const managed = require('./goal-ownership.cjs').read(root, directory) !== undefined
+      || require('./goal-preparations.cjs').read(root, directory) !== undefined
+      || require('./goal-dependencies.cjs').read(root, directory) !== undefined;
 
     if (retained.has(directory)) continue;
 
@@ -73,7 +73,7 @@ function retainActiveGoals(root, goals, retained) {
 }
 
 function externalTranscripts(root, inventory) {
-  const records = require('./external-transcripts.cjs');
+  const records = require('../external-transcripts.cjs');
 
   for (const row of records.list(root)) {
     let file;
@@ -149,7 +149,7 @@ function retainGoalReferences(result, candidates, found, inventory) {
 }
 
 function queuedReferences(root, excluded, candidates, found, inventory) {
-  for (const row of require('./session-database.cjs').queuedInputs(root)) {
+  for (const row of require('../session-database.cjs').queuedInputs(root)) {
     const file = path.join(root, 'queued-input', `${row.session_id}.json`);
 
     if (excluded.has(file)) continue;
@@ -180,7 +180,7 @@ function survivingSession(root, file, id, excluded, connection) {
 }
 
 function collectRetention(root, sources, savedFiles, deferred = { directories: [], sessionIds: [] }, unpublishedGoals = false) {
-  const inventory = { warnings: [], goals: new Set(), transcripts: [], sessionIds: new Set(), uncertain: require('./storage-transaction.cjs').pending(root) };
+  const inventory = { warnings: [], goals: new Set(), transcripts: [], sessionIds: new Set(), uncertain: require('../storage-transaction.cjs').pending(root) };
 
   registeredGoals(root, inventory);
   registeredTranscripts(root, inventory);
@@ -215,7 +215,7 @@ function collectRetention(root, sources, savedFiles, deferred = { directories: [
 }
 
 function retainPublications(root, candidates, retained, inventory) {
-  const publications = require('./piop-storage/session-publication.cjs').retainedDependencies(root);
+  const publications = require('./session-publication.cjs').retainedDependencies(root);
 
   for (const publication of publications) {
     references(publication.dependencies, candidates, retained);
@@ -238,7 +238,7 @@ function cleanupRegistry(root, sessionIds) {
   const db = new DatabaseSync(database);
 
   try {
-    require('./session-database.cjs').initialize(db);
+    require('../session-database.cjs').initialize(db);
     db.exec('BEGIN IMMEDIATE');
     const completed = removeRegistryRows(db, sessionIds);
     db.exec('COMMIT');

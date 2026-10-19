@@ -1,10 +1,10 @@
-const database = require('./session-database.cjs');
+const database = require('../session-database.cjs');
 const { randomUUID } = require('node:crypto');
 const { collectRetention, cleanupRegistry } = require('./deletion-retention.cjs');
 const { pendingRetentions, cleanupStages, matches, removeCandidate, finishRecord, describeCandidates, recordRetention } = require('./retention-candidates.cjs');
 
 function collectDeferredRetention(root) {
-  return require('./piop-storage/goal-assets.cjs').locked(root, () => collectDeferredLocked(root));
+  return require('./goal-assets.cjs').locked(root, () => collectDeferredLocked(root));
 }
 
 function collectDeferredLocked(root) {

@@ -3,7 +3,7 @@ const path = require('node:path');
 const { createHash } = require('node:crypto');
 const { Type } = require('typebox');
 const { Check } = require('typebox/value');
-const tables = require('./session-database.cjs');
+const tables = require('../session-database.cjs');
 
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -164,16 +164,16 @@ function goalStorageProtected(record, candidate, file) {
   if (['owners.json', 'prepared.json', 'dependencies.json'].some(name => metadata(path.join(file, name)))) return true;
   const root = path.dirname(path.dirname(record.file));
 
-  if (require('./piop-storage/goal-dependencies.cjs').retained(root, candidate.path, candidate.identity)) return true;
+  if (require('./goal-dependencies.cjs').retained(root, candidate.path, candidate.identity)) return true;
 
-  if (require('./piop-storage/goal-preparations.cjs').retained(root, candidate.path, candidate.identity)) return true;
+  if (require('./goal-preparations.cjs').retained(root, candidate.path, candidate.identity)) return true;
 
-  if (require('./piop-storage/goal-ownership.cjs').retained(root, candidate.path, candidate.identity)) return true;
+  if (require('./goal-ownership.cjs').retained(root, candidate.path, candidate.identity)) return true;
 
-  const publications = require('./piop-storage/session-publication.cjs').retainedDependencies(root);
+  const publications = require('./session-publication.cjs').retainedDependencies(root);
 
   return publications.some(publication => JSON.stringify(publication.dependencies ?? null).includes(candidate.path)
-    || publication.transcriptPaths.some(transcript => JSON.stringify(require('./transcript-references.cjs').read(root, transcript)).includes(JSON.stringify(candidate.path).slice(1, -1))));
+    || publication.transcriptPaths.some(transcript => JSON.stringify(require('../transcript-references.cjs').read(root, transcript)).includes(JSON.stringify(candidate.path).slice(1, -1))));
 }
 
 function finishRecord(record, done) {

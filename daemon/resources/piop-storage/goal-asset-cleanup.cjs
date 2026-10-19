@@ -2,10 +2,10 @@ const path = require('node:path');
 const { DatabaseSync } = require('node:sqlite');
 const { Type } = require('typebox');
 const { Check } = require('typebox/value');
-const assets = require('./piop-storage/goal-assets.cjs');
-const { retainedDependencies } = require('./piop-storage/session-publication.cjs');
-const io = require('./session-transactions.cjs');
-const { validSessionHeader } = require('./session-header.cjs');
+const assets = require('./goal-assets.cjs');
+const { retainedDependencies } = require('./session-publication.cjs');
+const io = require('../session-transactions.cjs');
+const { validSessionHeader } = require('../session-header.cjs');
 const goalReferences = require('./goal-cleanup-references.cjs');
 
 const registrySchema = Type.Object({ session_id: Type.String(), session_path: Type.Union([Type.String(), Type.Null()]) });
@@ -19,7 +19,7 @@ function managedPath(root, directory) {
 }
 
 function readTranscript(root, file) {
-  const entries = require('./transcript-references.cjs').read(root, file);
+  const entries = require('../transcript-references.cjs').read(root, file);
 
   if (!validSessionHeader(entries[0])) throw new Error(`Damaged surviving conversation retained: ${file}`);
 
@@ -47,7 +47,7 @@ function observeReferences(root, entries, observation) {
 }
 
 function registered(root, observation, deleted) {
-  const database = require('./session-database.cjs').open(root);
+  const database = require('../session-database.cjs').open(root);
 
   try {
     for (const record of database.prepare('SELECT session_id, session_path FROM sessions').all()) observeRegistered(root, record, observation, deleted);
@@ -65,7 +65,7 @@ function observeRegistered(root, record, observation, deleted) {
 }
 
 function stagedFiles(root, observation) {
-  for (const staged of require('./storage-transaction.cjs').stagedTranscripts(root)) {
+  for (const staged of require('../storage-transaction.cjs').stagedTranscripts(root)) {
     if (staged.state !== 'prepared') continue;
 
     if (path.dirname(staged.file) !== staged.staging) throw new Error('Ambiguous goal asset transaction references retained');
@@ -86,7 +86,7 @@ function surviving(root, deleted) {
 }
 
 function queued(root, observation, deleted) {
-  for (const row of require('./session-database.cjs').queuedInputs(root)) {
+  for (const row of require('../session-database.cjs').queuedInputs(root)) {
     if (deleted.has(row.session_id)) continue;
     const record = JSON.parse(row.record_json);
 
@@ -107,7 +107,7 @@ function publicationDiagnostics(root, observation) {
 }
 
 function external(root, observation) {
-  const records = require('./external-transcripts.cjs');
+  const records = require('../external-transcripts.cjs');
 
   for (const row of records.list(root)) {
     const file = records.transcript(row);
@@ -117,7 +117,7 @@ function external(root, observation) {
 }
 
 function preparedOwner(root, directory) {
-  const receipt = require('./piop-storage/goal-preparations.cjs').read(root, directory);
+  const receipt = require('./goal-preparations.cjs').read(root, directory);
 
   if (receipt === undefined) return;
 
@@ -133,7 +133,7 @@ function candidate(root, directory, candidates, ownerIds) {
     return;
   }
 
-  const identity = assets.exists(directory) ? assets.identity(directory) : require('./piop-storage/goal-ownership.cjs').savedIdentity(root, directory);
+  const identity = assets.exists(directory) ? assets.identity(directory) : require('./goal-ownership.cjs').savedIdentity(root, directory);
 
   if (identity === undefined) return;
   const previous = candidates.get(directory);
@@ -160,7 +160,7 @@ function plan(root, targets) {
 
     for (const target of targets) goalReferences.collect(root, readTranscript(root, target.path)).directories.forEach(directory => candidate(root, directory, candidates, [target.sessionId]));
 
-    for (const directory of require('./piop-storage/goal-ownership.cjs').directories(root)) ownedCandidate(root, directory, deleted, candidates);
+    for (const directory of require('./goal-ownership.cjs').directories(root)) ownedCandidate(root, directory, deleted, candidates);
 
     return [...candidates.values()];
   });
@@ -173,7 +173,7 @@ function confirmedDeletions(root) {
   try {
     const current = database.prepare('SELECT 1 FROM sessions WHERE session_id=?');
 
-    for (const directory of require('./piop-storage/goal-ownership.cjs').directories(root)) {
+    for (const directory of require('./goal-ownership.cjs').directories(root)) {
       try {
         const record = assets.readOwners(root, directory);
         const ids = [...record.owners.map(owner => owner.sessionId), ...record.retiredOwners ?? [], preparedOwner(root, directory)];
@@ -200,7 +200,7 @@ function retireOwners(root, directory, deleted, observation, origins) {
   const retiredOwners = new Set(record.retiredOwners ?? []);
   origins.filter(id => deleted.has(id) && !observation.sessions.has(id)).forEach(id => retiredOwners.add(id));
 
-  if (owners.length !== record.owners.length || retiredOwners.size !== (record.retiredOwners?.length ?? 0)) require('./piop-storage/goal-ownership.cjs').save(root, directory, { ...record, owners, retiredOwners: [...retiredOwners] });
+  if (owners.length !== record.owners.length || retiredOwners.size !== (record.retiredOwners?.length ?? 0)) require('./goal-ownership.cjs').save(root, directory, { ...record, owners, retiredOwners: [...retiredOwners] });
 
   return owners;
 }
@@ -241,7 +241,7 @@ function finishCandidate(transaction, candidate, observation, deleted, save) {
 }
 
 function finishMissingCandidate(transaction, candidate, observation, deleted, save) {
-  const identity = require('./piop-storage/goal-ownership.cjs').savedIdentity(transaction.root, candidate.path);
+  const identity = require('./goal-ownership.cjs').savedIdentity(transaction.root, candidate.path);
 
   if (identity !== undefined && identity !== candidate.identity) throw new Error(`Saved goal ownership changed; retained: ${candidate.path}`);
   const record = assets.readOwners(transaction.root, candidate.path);

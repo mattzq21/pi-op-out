@@ -99,7 +99,7 @@ function ownedReceipt(root, id) {
 }
 
 function sessionsSurvive(root, receipt) {
-  const { survivingSession } = require('./deletion-retention.cjs');
+  const { survivingSession } = require('./piop-storage/maintenance.cjs');
 
   return receipt.result.sessions.every(session => survivingSession(root, session.sessionPath, session.sessionId, new Set()));
 }

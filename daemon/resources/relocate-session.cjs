@@ -2,7 +2,7 @@ const fs = require('node:fs');
 const { dirname, join } = require('node:path');
 const { randomUUID } = require('node:crypto');
 const io = require('./session-transactions.cjs');
-const { acquireReferencePublicationLock } = require('./storage-lock.cjs');
+const { acquireReferencePublicationLock } = require('./piop-storage/reference-publication-lock.cjs');
 
 /** Points the session header at another working directory. */
 function relocateSession(profile, sessionPath, requestedReplacement) {
