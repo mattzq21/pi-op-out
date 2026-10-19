@@ -11,7 +11,7 @@ const maximumWidth = () => Math.max(MIN_WIDTH, Math.floor(window.innerWidth / 2)
 export function ResizableSidebar(componentProps: { compact: boolean; children: JSXElement }) {
   const [maxWidth, setMaxWidth] = createSignal((maximumWidth)());
 
-  const [width, setWidth] = createPanelSize(WIDTH_KEY, window.innerWidth <= 1050 ? 232 : 260, MIN_WIDTH);
+  const [width, setWidth] = createPanelSize(WIDTH_KEY, window.innerWidth <= 1050 ? 280 : 320, MIN_WIDTH);
 
   const [dragging, setDragging] = createSignal(false);
   const drag = createRef<{ pointerId: number; x: number; width: number } | null>(null);
@@ -65,7 +65,7 @@ export function ResizableSidebar(componentProps: { compact: boolean; children: J
       onPointerCancel={() => { drag.current = null; setDragging(false); }}
       onLostPointerCapture={() => { drag.current = null; setDragging(false); }}
       onDblClick={(event) => {
-        resize(window.innerWidth <= 1050 ? 232 : 260);
+        resize(window.innerWidth <= 1050 ? 280 : 320);
         event.currentTarget.blur();
       }}
       onKeyDown={(event) => {

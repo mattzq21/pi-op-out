@@ -47,7 +47,7 @@ test('a compact sidebar has no resize handle, and a double click sets the defaul
   await handle(page).focus();
   await page.keyboard.press('Home');
   await handle(page).dblclick();
-  assert.equal(await width(page), 260, 'the default width on a wide window');
+  assert.equal(await width(page), 320, 'the default width on a wide window');
   await page.getByLabel('Compact').check();
   assert.equal(await handle(page).count(), 0);
 });
