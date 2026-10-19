@@ -65,7 +65,7 @@ type Branch = ReturnType<ExtensionContext["sessionManager"]["getBranch"]>;
 export function persistedAgentIdentity(state: SessionAgentState) {
   const agent = state.snapshot?.definition;
 
-  return JSON.stringify([state.active, state.modelOverride || agent?.model, state.effortOverride || agent?.effort]);
+  return JSON.stringify([state.active, state.modelOverride || agent?.model, state.effortOverride || agent?.effort, state.locked === true]);
 }
 
 function draftAgentState(session: string, identity: string | undefined) {

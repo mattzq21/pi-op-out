@@ -22,14 +22,16 @@ class Host {
   agentCap: number | null | undefined;
   model: Model | undefined;
   ctx: any;
+  savedCap: Entry | undefined;
 
   constructor(public branch: Entry[], model?: Model) {
     this.model = model;
+    this.savedCap = branch.findLast(entry => entry.customType === CAP_ENTRY);
     const host = this;
     this.ctx = {
       get model() { return host.model; },
       isIdle: () => host.idle,
-      sessionManager: { getBranch: () => host.branch },
+      sessionManager: { getBranch: () => host.savedCap ? [host.savedCap] : [] },
       ui: { notify: (message: string, type: string) => host.notes.push([type, message]), setStatus: (key: string, text?: string) => host.statuses.push([key, text]) },
     };
     contextWindowCap(this.api() as any);
@@ -40,7 +42,7 @@ class Host {
     return {
       on: (name: string, handler: any) => { this.handlers.set(name, [...this.handlers.get(name) ?? [], handler]); },
       registerCommand: (name: string, options: any) => { this.commands.set(name, options); },
-      appendEntry: (customType: string, data: unknown) => { this.branch.push({ type: "custom", customType, data: structuredClone(data), id: crypto.randomUUID() }); },
+      appendEntry: (customType: string, data: unknown) => { const entry: Entry = { type: "custom", customType, data: structuredClone(data), id: crypto.randomUUID() }; this.branch.push(entry); this.savedCap = entry; },
       getSettings: () => ({}),
       events: {
         on: (channel: string, handler: (value: any) => void) => {
@@ -218,11 +220,11 @@ describe("context cap session", () => {
     expect(large.contextWindow).toBe(500_000);
     expect(host.caps()).toEqual([
       { cap: 300_000, source: "config" }, { cap: 500_000, source: "manual" },
-      { cap: 200_000, source: "modelMax" }, { cap: 500_000, source: "manual" },
+      { cap: 500_000, source: "manual", clamp: 200_000 }, { cap: 500_000, source: "manual" },
     ]);
   });
 
-  test("restores the choice before a trailing modelMax entry on reopen", async () => {
+  test("restores the chosen cap and its clamp from one current record on reopen", async () => {
     const first = await start();
     await first.session().setManualCap(500_000);
     await first.selectModel(model("small", 200_000));
@@ -245,7 +247,7 @@ describe("context cap session", () => {
     expect(reopened.notes.filter(([type]) => type === "error")).toEqual([]);
     expect(reopened.caps()).toEqual([
       { cap: 300_000, source: "config" }, { cap: 300_000, source: "manual" },
-      { cap: 64_000, source: "modelMax" }, { cap: 300_000, source: "manual" },
+      { cap: 300_000, source: "manual", clamp: 64_000 }, { cap: 300_000, source: "manual" },
     ]);
   });
 
@@ -275,7 +277,7 @@ describe("context cap session", () => {
     ]);
   });
 
-  test("restores each branch on tree navigation", async () => {
+  test("keeps the current setting on tree navigation", async () => {
     const host = await start();
     const received: unknown[] = [];
     host.session().subscribe((state: unknown) => received.push(state), error => { throw error; });
@@ -292,26 +294,28 @@ describe("context cap session", () => {
     const manualBranch = [...host.branch];
     host.branch = root;
     await host.fire("session_tree");
-    expect(await host.session().getState()).toEqual({ cap: 300_000, source: "config", appliedWindow: 300_000 });
-    expect(received).toEqual([config, manual, config]);
-    expect(host.model!.contextWindow).toBe(300_000);
+    expect(await host.session().getState()).toEqual(manual);
+    expect(received.at(-1)).toEqual(manual);
+    expect(host.model!.contextWindow).toBe(500_000);
     host.branch = manualBranch;
     await host.fire("session_tree");
     expect(await host.session().getState()).toEqual({ cap: 500_000, source: "manual", appliedWindow: 500_000 });
-    expect(received).toEqual([config, manual, config, manual]);
+    expect(received.at(-1)).toEqual(manual);
+    expect(received.slice(1).every(value => JSON.stringify(value) === JSON.stringify(manual))).toBe(true);
     expect(host.model!.contextWindow).toBe(500_000);
   });
 
-  test("a corrupt branch rejects pending changes, reports, and refuses changes until tree navigation reaches a valid branch", async () => {
+  test("corrupt current settings reject pending changes and report the error", async () => {
     const host = await start();
     await host.session().setManualCap(500_000);
     const valid = [...host.branch];
-    const failure = "Saved context cap entry corrupt-cap is invalid";
+    const failure = "Saved context cap is invalid";
     host.idle = false;
     const pending = Promise.allSettled([host.session().setManualCap(400_000), host.session().resetManualCap()]);
     const corrupt: Entry[] = [...valid, { type: "custom", customType: CAP_ENTRY, data: { cap: -1, source: "manual" }, id: "corrupt-cap" }];
     const corruptHistory = structuredClone(corrupt);
     host.branch = corrupt;
+    host.savedCap = corrupt.at(-1);
     await host.fire("session_tree");
     const rejected = { status: "rejected", reason: expect.objectContaining({ message: failure }) };
     expect(await pending).toEqual([rejected, rejected]);
@@ -322,6 +326,7 @@ describe("context cap session", () => {
     expect(host.notes).toContainEqual(["error", expect.stringContaining(failure)]);
     host.idle = true;
     host.branch = valid;
+    host.savedCap = valid.at(-1);
     await host.fire("session_tree");
     expect(await host.session().getState()).toEqual({ cap: 500_000, source: "manual", appliedWindow: 500_000 });
     expect(await host.session().setManualCap(400_000)).toEqual({ cap: 400_000, source: "manual", appliedWindow: 400_000 });
@@ -573,7 +578,7 @@ describe("context cap session", () => {
   });
 
   test("a corrupt saved entry at session start rejects the waiting first state and reports to subscribers", async () => {
-    const failure = "Saved context cap entry corrupt-cap is invalid";
+    const failure = "Saved context cap is invalid";
     const host = new Host([{ type: "custom", customType: CAP_ENTRY, data: { cap: -1, source: "manual" }, id: "corrupt-cap" }], model("large", 1_000_000));
     const session = host.session();
     const received: unknown[] = [];

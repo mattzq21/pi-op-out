@@ -89,7 +89,7 @@ export function registerPauseControl(pi: ExtensionAPI, publish: (ctx: ExtensionC
     if (controlContext) publish(controlContext, { isPaused, isPausing });
   };
 
-  const persistPause = (paused: boolean) => { isPaused = paused; sessionStorage(pi).append(pauseEntry, { isPaused: paused }); };
+  const persistPause = (paused: boolean) => { sessionStorage(pi).append(pauseEntry, { isPaused: paused }); isPaused = paused; };
 
   const restorePause = (ctx: ExtensionContext) => {
     generation += 1; controlContext = ctx;

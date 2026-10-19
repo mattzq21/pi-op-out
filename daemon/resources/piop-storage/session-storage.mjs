@@ -11,6 +11,15 @@ import { homedir as storageHome } from "node:os";
 import { storagePublish, storageTarget, requireStorageMethods } from "../storage-file.mjs";
 
 const installedStorageClasses = new WeakSet();
+const currentSessionState = new WeakMap();
+
+function takeCurrentState(manager, entries) {
+  currentSessionState.set(manager, new Map(entries.filter(stateRecords.isCurrent).map(entry => [entry.customType, { ...entry, parentId: null }])));
+  return stateRecords.history(entries);
+}
+
+function currentEntries(manager) { return [...(currentSessionState.get(manager)?.values() ?? [])].sort((a, b) => a.customType.localeCompare(b.customType)); }
+
 const failedSessionStorage = new WeakSet();
 
 const sessionStorageFiles = new WeakMap();
@@ -68,8 +77,9 @@ function installSessionCreation(SessionManager) {
   };
 
   prototype.newSession = function (options) {
-    if (!this.persist) return create.call(this, options);
+    if (!this.persist) { currentSessionState.set(this, new Map()); return create.call(this, options); }
     const id = options?.id ?? takeSessionId();
+    currentSessionState.set(this, new Map());
     const result = create.call(this, { ...options, id });
     bindNewSession(this);
     sessionStoragePublish(this, this.fileEntries, true);
@@ -86,16 +96,18 @@ function installSessionCreation(SessionManager) {
       registry.requireSession(sessionReferenceRoot(), header.id, this.sessionFile);
     }
 
-    return load.call(this, entries, options);
+    return load.call(this, takeCurrentState(this, entries), options);
   };
 
   SessionManager.forkFrom = function (sourcePath, targetCwd, sessionDir, options) {
     const source = this.open(sourcePath);
     const session = this.create(targetCwd, sessionDir, { ...options, parentSession: sourcePath });
-    session.fileEntries = [session.fileEntries[0], ...structuredClone(source.fileEntries.filter(entry => entry.type !== "session"))];
+    session.fileEntries = [session.fileEntries[0], ...structuredClone(source.getEntries())];
     session._buildIndex();
     copyGoal(sourcePath, session.sessionFile, session.getSessionId());
     sessionStoragePublish(session, session.fileEntries, false);
+    session.fileEntries = takeCurrentState(session, session.fileEntries);
+    session._buildIndex();
     session.flushed = true;
 
     return session;
@@ -125,6 +137,8 @@ function installSessionBranching(prototype) {
     bindNewSession(this);
     copyGoal(parent, this.sessionFile, id);
     sessionStoragePublish(this, this.fileEntries, true);
+    this.fileEntries = takeCurrentState(this, this.fileEntries);
+    this._buildIndex();
     this.flushed = true;
 
     return this.sessionFile;
@@ -410,6 +424,13 @@ export function installSessionStorage(SessionManager, recordReferences) {
 
   if (recordReferences) sessionReferenceRecorders.set(prototype, recordReferences);
 
+  const getEntries = prototype.getEntries;
+  const getBranch = prototype.getBranch;
+  const getEntry = prototype.getEntry;
+  prototype.getEntry = function (id) { return currentEntries(this).find(entry => entry.id === id) ?? getEntry.call(this, id); };
+  prototype.getEntries = function () { return [...currentEntries(this), ...getEntries.call(this)]; };
+  prototype.getBranch = function (...args) { return [...currentEntries(this), ...getBranch.apply(this, args)]; };
+
   prototype.appendCustomEntry = function (type, data) {
     const entry = stateRecords.create(type, data, this.leafId);
     this._appendEntry(entry);
@@ -418,6 +439,14 @@ export function installSessionStorage(SessionManager, recordReferences) {
 
   prototype._appendEntry = function (entry) {
     sessionStorageState(this);
+    if (stateRecords.isCurrent(entry)) {
+      entry = { ...entry, parentId: null };
+      if (this.persist && this.sessionFile) sessionStorageAppend(this, entry);
+      const current = currentSessionState.get(this) ?? new Map();
+      current.set(entry.customType, entry);
+      currentSessionState.set(this, current);
+      return;
+    }
     persistSessionEntry(this, entry);
     this.fileEntries.push(entry);
     this.byId.set(entry.id, entry);
@@ -427,7 +456,7 @@ export function installSessionStorage(SessionManager, recordReferences) {
   prototype._rewriteFile = function () {
     sessionStorageState(this);
 
-    if (this.persist && this.sessionFile) sessionStoragePublish(this, this.fileEntries, false);
+    if (this.persist && this.sessionFile) sessionStoragePublish(this, [this.fileEntries[0], ...this.getEntries()], false);
   };
 
   installedStorageClasses.add(SessionManager);

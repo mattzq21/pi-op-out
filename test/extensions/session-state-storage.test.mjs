@@ -16,6 +16,8 @@ while (!existsSync(join(sdk, 'package.json')) || JSON.parse(readFileSync(join(sd
   sdk = parent;
 }
 
+let installSessionStorage;
+
 async function fixture(t) {
   const home = mkdtempSync(join(tmpdir(), 'piop-session-state-'));
   const root = join(home, '.piop');
@@ -29,8 +31,8 @@ async function fixture(t) {
     rmSync(home, { recursive: true, force: true });
   });
   const bundle = join(home, 'storage.mjs');
-  await build({ entryPoints: ['daemon/resources/piop-storage/session-storage.mjs'], outfile: bundle, bundle: true, platform: 'node', format: 'esm', target: 'node22', logLevel: 'silent', plugins: [storageSchemaImports()], banner: { js: "import { createRequire } from 'node:module'; const require = createRequire(import.meta.url);" } });
-  const { installSessionStorage } = await import(pathToFileURL(bundle));
+  if (!installSessionStorage) await build({ entryPoints: ['daemon/resources/piop-storage/session-storage.mjs'], outfile: bundle, bundle: true, platform: 'node', format: 'esm', target: 'node22', logLevel: 'silent', plugins: [storageSchemaImports()], banner: { js: "import { createRequire } from 'node:module'; const require = createRequire(import.meta.url);" } });
+  installSessionStorage ??= (await import(pathToFileURL(bundle))).installSessionStorage;
   const { SessionManager } = await import(pathToFileURL(join(sdk, 'dist/core/session-manager.js')));
   installSessionStorage(SessionManager);
   const id = database.reserve(root);
@@ -42,21 +44,29 @@ async function fixture(t) {
   return { home, root, id, file, SessionManager, manager: SessionManager.open(file), physical: () => readFileSync(file, 'utf8').trim().split('\n').map(JSON.parse) };
 }
 
-test('extension state stays in SQL and restores the exact branches after restart', async t => {
+test('settings keep only their current value across navigation and restart', async t => {
   const f = await fixture(t);
-  const initial = f.manager.appendCustomEntry('piop-fast-mode-state', { enabled: false });
+  f.manager.appendCustomEntry('piop-fast-mode-state', { enabled: false });
   const user = f.manager.appendMessage({ role: 'user', content: 'Start', timestamp: 1 });
-  const left = f.manager.appendCustomEntry('piop-fast-mode-state', { enabled: true });
-  f.manager.appendMessage({ role: 'user', content: 'Left', timestamp: 2 });
+  f.manager.appendCustomEntry('piop-fast-mode-state', { enabled: true });
+  const left = f.manager.appendMessage({ role: 'user', content: 'Left', timestamp: 2 });
   f.manager.branch(user);
-  const right = f.manager.appendCustomEntry('piop-fast-mode-state', { enabled: false });
+  assert.equal(f.manager.getBranch().find(entry => entry.customType === 'piop-fast-mode-state').data.enabled, true);
+  f.manager.appendCustomEntry('piop-fast-mode-state', { enabled: false });
+  assert.equal(f.manager.getLeafId(), user);
   f.manager.appendMessage({ role: 'user', content: 'Right', timestamp: 3 });
   assert.equal(f.physical().some(entry => entry.type === 'custom'), false);
   const reopened = f.SessionManager.open(f.file);
-  const stateIds = id => reopened.getBranch(id).filter(entry => entry.type === 'custom').map(entry => entry.id);
-  assert.deepEqual(stateIds(left), [initial, left]);
-  assert.deepEqual(stateIds(right), [initial, right]);
+  for (const id of [user, left]) {
+    const states = reopened.getBranch(id).filter(entry => entry.customType === 'piop-fast-mode-state');
+    assert.equal(states.length, 1);
+    assert.equal(states[0].data.enabled, false);
+  }
   assert.deepEqual(reopened.getEntries(), f.manager.getEntries());
+  const db = database.open(f.root);
+  assert.equal(db.prepare('SELECT count(*) AS n FROM session_extension_state').get().n, 1);
+  assert.equal(db.prepare('SELECT count(*) AS n FROM session_extension_records').get().n, 0);
+  db.close();
 });
 
 test('failed SQL state writes do not advance the branch or change the transcript', async t => {
@@ -65,7 +75,7 @@ test('failed SQL state writes do not advance the branch or change the transcript
   const before = readFileSync(f.file, 'utf8');
   const leaf = f.manager.getLeafId();
   const db = database.open(f.root);
-  db.exec("CREATE TRIGGER reject_state BEFORE INSERT ON session_extension_records BEGIN SELECT RAISE(ABORT, 'Write failed'); END");
+  db.exec("CREATE TRIGGER reject_state BEFORE INSERT ON session_extension_state BEGIN SELECT RAISE(ABORT, 'Write failed'); END");
   db.close();
   assert.throws(() => f.manager.appendCustomEntry('pi-desktop-pause-state', { isPaused: true }), /Write failed/);
   assert.equal(f.manager.getLeafId(), leaf);
@@ -87,16 +97,16 @@ test('SQL state follows archive and restore and is removed with the session', as
   assert.deepEqual(f.SessionManager.open(f.file).getEntries(), saved);
   const db = database.open(f.root);
   db.prepare('DELETE FROM sessions WHERE session_id=?').run(f.id);
-  assert.equal(db.prepare('SELECT count(*) AS n FROM session_extension_records').get().n, 0);
+  assert.equal(db.prepare('SELECT count(*) AS n FROM session_extension_state').get().n, 0);
   db.close();
 });
 
-test('fork publication copies only the selected branch state into SQL', async t => {
+test('fork publication copies current settings once, independent of the selected message', async t => {
   const f = await fixture(t);
-  const initial = f.manager.appendCustomEntry('piop-fast-mode-state', { enabled: false });
+  f.manager.appendCustomEntry('piop-fast-mode-state', { enabled: false });
   const user = f.manager.appendMessage({ role: 'user', content: 'Start', timestamp: 1 });
-  const left = f.manager.appendCustomEntry('piop-fast-mode-state', { enabled: true });
-  f.manager.appendMessage({ role: 'user', content: 'Left', timestamp: 2 });
+  f.manager.appendCustomEntry('piop-fast-mode-state', { enabled: true });
+  const left = f.manager.appendMessage({ role: 'user', content: 'Left', timestamp: 2 });
   f.manager.branch(user);
   f.manager.appendCustomEntry('piop-fast-mode-state', { enabled: false });
   f.manager.appendMessage({ role: 'user', content: 'Right', timestamp: 3 });
@@ -107,8 +117,11 @@ test('fork publication copies only the selected branch state into SQL', async t 
   const target = join(f.root, 'sessions', `2026-10-19T01-00-00-000Z_${id}.jsonl`);
   await writeSessionFile(target, [{ ...f.manager.getHeader(), id, parentSession: f.file }, ...f.manager.getBranch(left)]);
   assert.equal(readFileSync(target, 'utf8').split('\n').filter(Boolean).map(JSON.parse).some(entry => entry.type === 'custom'), false);
-  assert.deepEqual(f.SessionManager.open(target).getBranch().filter(entry => entry.type === 'custom').map(entry => entry.id), [initial, left]);
+  const fork = f.SessionManager.open(target);
+  assert.deepEqual(fork.getBranch().filter(entry => entry.customType === 'piop-fast-mode-state').map(entry => entry.data), [{ enabled: false }]);
+  f.manager.appendCustomEntry('piop-fast-mode-state', { enabled: true });
+  assert.equal(f.SessionManager.open(target).getBranch().find(entry => entry.customType === 'piop-fast-mode-state').data.enabled, false);
   const db = database.open(f.root);
-  assert.equal(db.prepare('SELECT count(*) AS n FROM session_extension_records WHERE session_id=?').get(id).n, 2);
+  assert.equal(db.prepare('SELECT count(*) AS n FROM session_extension_state WHERE session_id=?').get(id).n, 1);
   db.close();
 });

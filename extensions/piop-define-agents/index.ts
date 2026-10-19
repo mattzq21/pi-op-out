@@ -362,7 +362,7 @@ export default async function defineAgents(pi: ExtensionAPI) {
   const publish = (ctx: ExtensionContext) => ctx.ui.setStatus(STATUS_KEY, `json:${encode({ version: 1, active: currentAgent()?.name ?? active, locked, saved: !!snapshot, unavailable: !currentAgent(), config })}`);
 
   const saveState = (submit = false) => {
-    const state = { active, modelOverride, effortOverride, snapshot };
+    const state = { active, modelOverride, effortOverride, snapshot, locked };
 
     if (!submit && !locked) {
       process.env[DRAFT_STATE_ENV] = JSON.stringify({ session: runtimeSession, identity: savedState, state });

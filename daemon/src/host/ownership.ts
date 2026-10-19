@@ -269,7 +269,7 @@ export class ConversationOwnership {
     if (damagedLines.length) console.error(`Incomplete chat history: ${saved!.path}; damaged record lines: ${damagedLines.join(', ')}`);
     if (saved) entries = SessionRecords.merge(saved.path, [saved.header, ...entries]).slice(1);
     const revision = saved ? saved.revision : 'missing:' + id;
-    const leaf = [...entries].reverse().find(entry => entry?.type !== 'session');
+    const leaf = [...entries].reverse().find(entry => entry?.type !== 'session' && !SessionRecords.isCurrent(entry));
     const leafId = typeof leaf?.id === 'string' ? leaf.id : null;
     const control = ControlState.reduce(entries, leafId);
     const snapshot: any = {

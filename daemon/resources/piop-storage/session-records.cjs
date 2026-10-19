@@ -1,7 +1,24 @@
 const database = require('../session-database.cjs');
-const { randomUUID } = require('node:crypto');
+const { randomUUID, createHash } = require('node:crypto');
 
-function stored(entries) { return entries.filter(entry => entry.type !== 'custom'); }
+const currentTypes = new Set(['pi-desktop-pause-state', 'pi-define-agents-state', 'piop-fast-mode-state', 'piop-context-cap', 'piop-session-cost-limit', 'piop-openai-cache-fork', 'piop-codemode-abilities']);
+const isCurrent = entry => entry.type === 'custom' && currentTypes.has(entry.customType);
+
+function history(entries) {
+  const settings = new Map(entries.filter(isCurrent).map(entry => [entry.id, entry.parentId]));
+  return entries.filter(entry => !isCurrent(entry)).map(entry => {
+    let parentId = entry.parentId;
+    const seen = new Set();
+    while (settings.has(parentId)) {
+      if (seen.has(parentId)) throw new Error('Cycle in session settings');
+      seen.add(parentId);
+      parentId = settings.get(parentId);
+    }
+    return parentId === entry.parentId ? entry : { ...entry, parentId };
+  });
+}
+
+function stored(entries) { return history(entries).filter(entry => entry.type !== 'custom'); }
 
 function transaction(file, sessionId, operation) {
   const db = database.open(database.storageRoot(file));
@@ -17,8 +34,9 @@ function transaction(file, sessionId, operation) {
 
 function capture(entries) {
   let after = null;
-  const records = [];
-  for (const entry of entries.slice(1)) {
+  const current = new Map(entries.filter(isCurrent).map(entry => [entry.customType, { after: null, entry: { ...entry, parentId: null } }]));
+  const records = [...current.values()];
+  for (const entry of history(entries).slice(1)) {
     if (entry.type === 'custom') records.push({ after, entry });
     else after = entry.id;
   }
@@ -31,6 +49,7 @@ function seed(file, sessionId, records) {
     const previous = db.prepare('SELECT after_id, entry_json FROM session_extension_records WHERE session_id=? AND entry_id=?');
     for (const { after, entry } of records) {
       if (entry.type !== 'custom' || typeof entry.id !== 'string' || !entry.customType?.trim()) throw new Error('Invalid session state record');
+      if (isCurrent(entry)) { setCurrent(db, sessionId, entry); continue; }
       const json = JSON.stringify(entry);
       const saved = previous.get(sessionId, entry.id);
       if (saved && (saved.entry_json !== json || saved.after_id !== after)) throw new Error('Session state record identity was reused');
@@ -48,6 +67,7 @@ function save(file, entries) {
 function append(file, sessionId, after, entry) {
   if (entry.type !== 'custom' || !entry.customType?.trim()) throw new Error('Invalid session state record');
   transaction(file, sessionId, db => {
+    if (isCurrent(entry)) { setCurrent(db, sessionId, entry); return; }
     db.prepare('INSERT INTO session_extension_records (session_id, entry_id, after_id, entry_json) VALUES (?, ?, ?, ?)').run(sessionId, entry.id, after, JSON.stringify(entry));
   });
 }
@@ -55,9 +75,18 @@ function append(file, sessionId, after, entry) {
 function records(file, sessionId, connection) {
   const db = connection ?? database.open(database.storageRoot(file));
   try {
-    return db.prepare('SELECT after_id, entry_json FROM session_extension_records WHERE session_id=? ORDER BY sequence').all(sessionId)
+    const history = db.prepare('SELECT after_id, entry_json FROM session_extension_records WHERE session_id=? ORDER BY sequence').all(sessionId)
       .map(row => ({ after: row.after_id, entry: JSON.parse(row.entry_json) }));
+    const current = db.prepare('SELECT entry_json FROM session_extension_state WHERE session_id=? ORDER BY state_key').all(sessionId)
+      .map(row => ({ after: null, entry: JSON.parse(row.entry_json) }));
+    return [...current, ...history];
   } finally { if (!connection) db.close(); }
+}
+
+function setCurrent(db, sessionId, entry) {
+  const saved = { ...entry, parentId: null };
+  db.prepare(`INSERT INTO session_extension_state (session_id, state_key, entry_json) VALUES (?, ?, ?)
+    ON CONFLICT(session_id, state_key) DO UPDATE SET entry_json=excluded.entry_json`).run(sessionId, entry.customType, JSON.stringify(saved));
 }
 
 function merge(file, entries, connection) {
@@ -77,7 +106,11 @@ function merge(file, entries, connection) {
 
 function revision(file, sessionId) {
   const db = database.open(database.storageRoot(file));
-  try { return db.prepare('SELECT coalesce(max(sequence), 0) AS revision FROM session_extension_records WHERE session_id=?').get(sessionId).revision; }
+  try {
+    const sequence = db.prepare('SELECT coalesce(max(sequence), 0) AS revision FROM session_extension_records WHERE session_id=?').get(sessionId).revision;
+    const current = db.prepare('SELECT state_key, entry_json FROM session_extension_state WHERE session_id=? ORDER BY state_key').all(sessionId);
+    return sequence + ':' + createHash('sha256').update(JSON.stringify(current)).digest('hex');
+  }
   finally { db.close(); }
 }
 
@@ -85,4 +118,4 @@ function create(type, data, parentId) {
   return { type: 'custom', customType: type, data: structuredClone(data), id: randomUUID(), parentId, timestamp: new Date().toISOString() };
 }
 
-module.exports = { stored, save, seed, capture, append, records, merge, revision, create };
+module.exports = { isCurrent, history, stored, save, seed, capture, append, records, merge, revision, create };
