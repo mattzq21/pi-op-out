@@ -79,7 +79,7 @@ html[data-mobile] .app:has(.icon-rail:not(.compact)) ~ .mobile-reconnect-banner 
   .message { padding-inline: 12px; }
   .message-content { min-width: 0; overflow-wrap: anywhere; }
   .message-content pre, .message-content table { max-width: 100%; overflow-x: auto; }
-  .conversation, .composer-wrap, .composer-questions, .extension-widget, .runtime-activity { width: calc(100% - 16px); }
+  .conversation, .composer-wrap, .extension-widget, .runtime-activity { width: calc(100% - 16px); }
   .composer { margin-inline: 0; }
   .conversation-unowned .composer-interaction { opacity: 1; }
   .composer-bar { flex-wrap: wrap; gap: 4px; }

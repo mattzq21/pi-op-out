@@ -1,13 +1,10 @@
 import { randomUUID } from 'node:crypto';
-import { array, clone, flag, setEntry, text } from './json';
+import { clone, flag, setEntry, text } from './json';
 
 export interface Dialog {
   event: any;
   owner: string | null;
   generation: string;
-  answering: boolean;
-  answerQueued: boolean;
-  queuedResponse: any | null;
 }
 
 export function interactive(event: any): boolean {
@@ -15,7 +12,7 @@ export function interactive(event: any): boolean {
 }
 
 function newDialog(event: any): Dialog {
-  return { event, owner: null, generation: randomUUID(), answering: false, answerQueued: false, queuedResponse: null };
+  return { event, owner: null, generation: randomUUID() };
 }
 
 /** What the dialogs need from their session. */
@@ -39,12 +36,7 @@ export class SessionDialogs {
   constructor(private session: DialogSession) {}
 
   get(id: string): Dialog | undefined { const found = this.items.find(([key]) => key === id); return found ? { ...found[1] } : undefined; }
-  change(id: string, change: (dialog: Dialog) => void): void { const found = this.items.find(([key]) => key === id); if (found) change(found[1]); }
   empty(): boolean { return this.items.length === 0; }
-  /** True when a dialog needs an answer now, or an answer to a question is being sent. */
-  blocking(): boolean { return this.items.some(([, dialog]) => typeof dialog.event?.asyncQuestion !== 'string' || dialog.answering); }
-  /** True when a dialog waits for an answer. */
-  waiting(): boolean { return this.items.some(([, dialog]) => !dialog.answering); }
 
   receive(event: any): void {
     if (!this.session.accepting()) return;
@@ -59,25 +51,6 @@ export class SessionDialogs {
       this.timers.set(id, setTimeout(() => {
         if (this.get(id)?.generation === generation) this.resolve(id);
       }, Math.min(timeout, 2147483647)));
-    }
-    this.route();
-  }
-
-  /** Replaces the question dialogs with the questions that Pi still waits for. */
-  receiveQuestions(requests: any): void {
-    if (!Array.isArray(requests)) return;
-    const ids = requests.map(request => 'question:' + text(request, 'id'));
-    const removed = this.items.filter(([id, dialog]) => typeof dialog.event?.asyncQuestion === 'string' && !ids.includes(id)).map(([id]) => id);
-    for (const id of removed) this.resolve(id);
-    for (const request of requests) {
-      const id = 'question:' + text(request, 'id');
-      if (this.get(id)) continue;
-      const questions = array(request, 'questions').map((question, index) => ({
-        id: 'question_' + index, header: 'Question', question: question?.title ?? null,
-        options: array(question, 'options').map(label => ({ label, description: '' })),
-      }));
-      const event = { type: 'extension_ui_request', id, method: 'input', title: '__piop_request_user_input__', asyncQuestion: request?.id ?? null, placeholder: JSON.stringify({ questions }) };
-      setEntry(this.items, id, newDialog(event));
     }
     this.route();
   }

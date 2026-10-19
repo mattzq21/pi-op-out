@@ -7,14 +7,11 @@ const development = process.env.PIOP_STORAGE_DIRECTORY === ".piop-dev";
 
 export const fallbackConfig: Config = { agents: [{ name: "general", model: "", effort: development ? "medium" : "high", fastMode: development ? false : undefined, path_systemprompt: DEFAULT_PROMPT_PATH, path_agent_prompt: DEFAULT_AGENT_PROMPT_PATH, tools: ["read", "bash", "edit", "write", "grep", "find", "ls"], skills: [], mcpServers: {} }] };
 
-export function migrateQuestionSnapshot(stored: AgentSnapshot | undefined) {
+export function copySnapshot(stored: AgentSnapshot | undefined) {
   if (stored?.version !== 1 && stored?.version !== 2) return undefined;
 
   if (!stored.definition || !Array.isArray(stored.definition.tools)) return undefined;
-  const snapshot = structuredClone(stored);
-  snapshot.definition.tools = [...new Set(snapshot.definition.tools.map((tool) => tool === "request_user_input_async" ? "request_user_input" : tool))];
-
-  return snapshot;
+  return structuredClone(stored);
 }
 
 export async function selectedProfileState(agent: Agent, resources: AgentResources, readPrompt: (path: string) => Promise<string>): Promise<SessionAgentState> {

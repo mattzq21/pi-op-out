@@ -95,16 +95,6 @@ function prepareBrokerStorage(dir: string): void {
   atomicWritePrivate(join(dir, 'sdk-storage.mjs'), R.sdkStorage);
 }
 
-export function prepareUserQuestionsExtension(): string {
-  const dir = join(generatedExtensionRoot(), 'piop-user-questions');
-  ensurePrivateDir(dir);
-  atomicWritePrivate(join(dir, 'interface.ts'), R.userQuestionsInterface);
-  atomicWritePrivate(join(dir, 'questions.ts'), R.userQuestionsLogic);
-  const path = join(dir, 'index.ts');
-  atomicWritePrivate(path, R.userQuestionsExtension);
-  return path;
-}
-
 export function prepareProvidersRefreshExtension(): string {
   const dir = generatedExtensionRoot();
   ensurePrivateDir(dir);
