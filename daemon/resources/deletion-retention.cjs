@@ -15,7 +15,7 @@ function metadata(file) {
 }
 
 function registeredGoals(root, inventory) {
-  for (const directory of require('./session-broker/goal-ownership.cjs').directories(root)) {
+  for (const directory of require('./piop-storage/goal-ownership.cjs').directories(root)) {
     const area = path.relative(root, directory).split(path.sep)[0];
 
     if (!['sessions', 'archived'].includes(area)
@@ -56,9 +56,9 @@ function retainActiveGoals(root, goals, retained) {
   let pending = false;
 
   for (const directory of goals) {
-    const managed = require('./session-broker/goal-ownership.cjs').read(root, directory) !== undefined
-      || require('./session-broker/goal-preparations.cjs').read(root, directory) !== undefined
-      || require('./session-broker/goal-dependencies.cjs').read(root, directory) !== undefined;
+    const managed = require('./piop-storage/goal-ownership.cjs').read(root, directory) !== undefined
+      || require('./piop-storage/goal-preparations.cjs').read(root, directory) !== undefined
+      || require('./piop-storage/goal-dependencies.cjs').read(root, directory) !== undefined;
 
     if (retained.has(directory)) continue;
 
@@ -215,7 +215,7 @@ function collectRetention(root, sources, savedFiles, deferred = { directories: [
 }
 
 function retainPublications(root, candidates, retained, inventory) {
-  const publications = require('./session-broker/session-publication.cjs').retainedDependencies(root);
+  const publications = require('./piop-storage/session-publication.cjs').retainedDependencies(root);
 
   for (const publication of publications) {
     references(publication.dependencies, candidates, retained);

@@ -2,7 +2,7 @@ const fs = require('node:fs/promises');
 const path = require('node:path');
 const { Type } = require('typebox');
 const { Check } = require('typebox/value');
-const { retainedDependencies } = require('./session-broker/session-publication.cjs');
+const { retainedDependencies } = require('./piop-storage/session-publication.cjs');
 const { addRoot } = require('./storage-inventory-roots.cjs');
 const { createObservation, observeEntry, recordGoals } = require('./storage-inventory-owners.cjs');
 

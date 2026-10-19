@@ -1,7 +1,7 @@
 const fs = require('node:fs');
 const { Type } = require('typebox');
 const { Check } = require('typebox/value');
-const { reviewVisibility } = require('./session-broker/session-publication.cjs');
+const { reviewVisibility } = require('./piop-storage/session-publication.cjs');
 
 const parentSchema = Type.Object({ parentSessionId: Type.String(), sessionId: Type.Optional(Type.String()) });
 

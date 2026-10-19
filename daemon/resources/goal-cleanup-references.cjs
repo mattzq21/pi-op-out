@@ -1,7 +1,7 @@
 const { Type } = require('typebox');
 const { Check } = require('typebox/value');
-const assets = require('./session-broker/goal-assets.cjs');
-const dependencies = require('./session-broker/goal-dependencies.cjs');
+const assets = require('./piop-storage/goal-assets.cjs');
+const dependencies = require('./piop-storage/goal-dependencies.cjs');
 const database = require('./session-database.cjs');
 
 const contractSchema = Type.Object({ version: Type.Literal(1), policy: Type.Literal('shared-profile'), directories: Type.Array(Type.Object({ path: Type.String(), identity: Type.String() })) });
@@ -32,7 +32,7 @@ function seeds(root, entries) {
 }
 
 function saved(root, directory) {
-  const expected = require('./session-broker/goal-ownership.cjs').savedIdentity(root, directory);
+  const expected = require('./piop-storage/goal-ownership.cjs').savedIdentity(root, directory);
 
   if (expected === undefined) return;
   const db = database.open(root);

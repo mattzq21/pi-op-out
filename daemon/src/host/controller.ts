@@ -238,13 +238,12 @@ export class Host implements SessionHost {
     if (intent === 'transfer' && (session.working() || session.compacting())) {
       throw new Error('The agent is running on another daemon. Wait for it to finish before transferring ownership.');
     }
-    if (intent === 'relocate' && (session.working() || session.compacting())) throw new Error('Stop the response before moving this chat to another folder.');
     if (intent === 'message') await session.retire();
     const saved = session.savedState();
     for (const [runtime] of session.views()) this.readonlyMap.set(runtime, { id, path: typeof saved?.sessionFile === 'string' ? saved.sessionFile : null });
     session.publish({ type: 'ownership_lost' }, null);
     if (intent === 'transfer-local') return;
-    if (intent !== 'archive' && (session.working() || session.compacting())) { try { await session.raw({ type: 'abort' }); } catch {} }
+    if (!['archive', 'delete', 'relocate'].includes(intent) && (session.working() || session.compacting())) { try { await session.raw({ type: 'abort' }); } catch {} }
     await session.stop();
     if (intent === 'archive') this.pending.delete(session.key);
   }

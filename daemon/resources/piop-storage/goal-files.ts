@@ -1,20 +1,20 @@
 import { lockSync as lockSync } from "../file-lock.cjs";
-import { begin as beginDirectoryRecovery, finish as finishDirectoryRecovery, recoverPublished } from "../session-broker/goal-directory-recovery.cjs";
-import { read as readDependencies, textContents, savePreparedText, removePreparedText } from "../session-broker/goal-dependencies.cjs";
+import { begin as beginDirectoryRecovery, finish as finishDirectoryRecovery, recoverPublished } from "./goal-directory-recovery.cjs";
+import { read as readDependencies, textContents, savePreparedText, removePreparedText } from "./goal-dependencies.cjs";
 import { markCleanup } from "../session-database.cjs";
 import { link, mkdir, open, rename, rm } from "node:fs/promises";
 import { createHash, randomUUID } from "node:crypto";
 import { closeSync, constants, existsSync, fstatSync, openSync } from "node:fs";
 import { dirname, join } from "node:path";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { validateObjective } from "./state.ts";
+import { validateObjective } from "../piop-goals/state.ts";
 import { Type, type Static } from "typebox";
 import { Parse } from "typebox/value";
-import { read as readPreparation } from "../session-broker/goal-prepared-files.cjs";
-import { save as savePreparation } from "../session-broker/goal-preparations.cjs";
-import { allocate as allocateGoalDirectory } from "../session-broker/goal-ownership.cjs";
-import { acquire as acquireGoalAssets, exists as goalDirectoryExists, claim, directReferences, validPath, discardPreparation, rootForDirectory } from "../session-broker/goal-assets.cjs";
-import { acquireReferencePublicationLockAsync } from "../session-broker/reference-publication-lock.cjs";
+import { read as readPreparation } from "./goal-prepared-files.cjs";
+import { save as savePreparation } from "./goal-preparations.cjs";
+import { allocate as allocateGoalDirectory } from "./goal-ownership.cjs";
+import { acquire as acquireGoalAssets, exists as goalDirectoryExists, claim, directReferences, validPath, discardPreparation, rootForDirectory } from "./goal-assets.cjs";
+import { acquireReferencePublicationLockAsync } from "./reference-publication-lock.cjs";
 import { homedir } from "node:os";
 
 const imageSchema = Type.Object({ data: Type.String(), mimeType: Type.Union([Type.Literal("image/png"), Type.Literal("image/jpeg"), Type.Literal("image/gif"), Type.Literal("image/webp")]) });

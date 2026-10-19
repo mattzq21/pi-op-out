@@ -1,5 +1,5 @@
-import { randomUUID } from 'node:crypto';
-import { closeSync, constants, existsSync, fsyncSync, linkSync, lstatSync, openSync, realpathSync, statSync, unlinkSync, writeSync } from 'node:fs';
+import { createTranscript, removeTemporary } from '../../resources/piop-storage/recovery.cjs';
+import { closeSync, constants, existsSync, openSync, realpathSync, statSync } from 'node:fs';
 import { basename, dirname, extname, isAbsolute, join } from 'node:path';
 import * as Registry from '../session_registry';
 import { ensurePrivateDir } from '../private_fs';
@@ -131,52 +131,6 @@ function recoverTranscript(root: string, target: string, id: string, cwd: string
   const created = createTranscript(target, id, cwd, name);
   registerRecovered(root, target, id);
   return created;
-}
-
-function transcript(id: string, cwd: string, name: string): string {
-  const timestamp = new Date().toISOString();
-  const header = { type: 'session', version: 3, id, timestamp, cwd };
-  const info = { type: 'session_info', id: randomUUID().slice(0, 8), parentId: null, timestamp, name: 'Recovered queued input: ' + Array.from(Array.from(name).slice(0, 120).join('').trim()).slice(0, 120).join('') };
-  return JSON.stringify(header) + '\n' + JSON.stringify(info) + '\n';
-}
-
-function syncDirectory(path: string): void {
-  const fd = openSync(path, 'r');
-  try { fsyncSync(fd); } finally { closeSync(fd); }
-}
-
-function createTranscript(path: string, id: string, cwd: string, name: string): boolean {
-  const temporary = join(dirname(path), '.queued-input-recovery-' + id);
-  let created: boolean;
-  try { created = installTranscript(path, temporary, transcript(id, cwd, name)); }
-  catch (error) { try { removeTemporary(temporary); } catch {} throw error; }
-  removeTemporary(temporary);
-  return created;
-}
-
-function removeTemporary(path: string): void {
-  let metadata;
-  try { metadata = lstatSync(path); } catch (error: any) {
-    if (error?.code === 'ENOENT') return;
-    throw error;
-  }
-  if (!metadata.isFile()) throw new Error('Invalid queued-input recovery temporary file');
-  unlinkSync(path);
-  syncDirectory(dirname(path));
-}
-
-function installTranscript(path: string, temporary: string, body: string): boolean {
-  const fd = openSync(temporary, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL, 0o600);
-  try {
-    writeSync(fd, body);
-    fsyncSync(fd);
-  } finally { closeSync(fd); }
-  try { linkSync(temporary, path); } catch (error: any) {
-    if (error?.code === 'EEXIST') return false;
-    throw error;
-  }
-  syncDirectory(dirname(path));
-  return true;
 }
 
 function registerRecovered(root: string, target: string, id: string): void {

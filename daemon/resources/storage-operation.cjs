@@ -1,7 +1,7 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const { lockSync } = require('./file-lock.cjs');
-const { holdTransactionLock } = require('./session-broker/session-publication-io.cjs');
+const { holdTransactionLock } = require('./piop-storage/session-publication-io.cjs');
 const { withReferencePublicationLock } = require('./storage-lock.cjs');
 const transaction = require('./storage-transaction.cjs');
 

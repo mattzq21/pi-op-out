@@ -1,13 +1,14 @@
+import { sessionStorage } from "../piop-storage/interface.ts";
 import { createHash, randomUUID } from "node:crypto";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
-import { read as readUsageChannel } from "./subagent-usage-storage.cjs";
+import { read as readUsageChannel } from "../piop-storage/subagent-usage-storage.cjs";
 import { Type, type Static } from "typebox";
 import { Check } from "typebox/value";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { usageTokens } from "./subagent-tokens.ts";
 import { claimUsageChannel } from "./subagent-usage-channel.ts";
 import { subagentParent } from "./subagent-state.ts";
-import { syncSubagentTranscript } from "./subagent-results.ts";
+import { syncSubagentTranscript } from "../piop-storage/subagent-results.ts";
 import { transcriptUsage } from "./subagent-transcript.ts";
 
 const channelSchema = Type.Object({ port: Type.Integer({ minimum: 1, maximum: 65535 }), token: Type.String(), usageProtocol: Type.Optional(Type.Integer()), startedAt: Type.Optional(Type.Number()), offset: Type.Optional(Type.Integer({ minimum: 0 })) });
@@ -158,7 +159,7 @@ export function registerSubagentUsage(pi: ExtensionAPI) {
   };
 
   const record = async (tokens: number, apiCost: number, eventId: string, ctx: ExtensionContext) => {
-    pi.appendEntry("piop-subagent-self-usage", { eventId, tokens, apiCost });
+    sessionStorage(pi).append("piop-subagent-self-usage", { eventId, tokens, apiCost });
     await syncSubagentTranscript(ctx);
 
     try { await report(tokens, ctx, { sourceId: JSON.stringify([ctx.sessionManager.getSessionId(), eventId]), total: tokens }); lastFailure = ""; }

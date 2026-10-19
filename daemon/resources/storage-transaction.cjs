@@ -86,7 +86,7 @@ function rows(root) {
     });
 }
 
-function goalAssets() { return require('./session-broker/goal-assets.cjs'); }
+function goalAssets() { return require('./piop-storage/goal-assets.cjs'); }
 
 function readEntries(file) { return fs.readFileSync(file, 'utf8').split('\n').filter(line => line.trim()).map(line => JSON.parse(line)); }
 

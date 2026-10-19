@@ -6,7 +6,7 @@ import { fileURLToPath } from "node:url";
 
 type Channel = { port: number; token: string; usageProtocol: number; startedAt?: number; offset?: number };
 
-const storageModule = fileURLToPath(new URL("./subagent-usage-storage.cjs", import.meta.url));
+const storageModule = fileURLToPath(new URL("../piop-storage/subagent-usage-storage.cjs", import.meta.url));
 
 const channelUpdateScript = `
   const fs = require("node:fs");

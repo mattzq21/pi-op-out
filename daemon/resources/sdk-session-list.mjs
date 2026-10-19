@@ -2,7 +2,7 @@ import { createReadStream, realpathSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, join, resolve, sep } from "node:path";
 import database from "./session-database.cjs";
-import { sessionHeaderMatches } from "./sdk-storage.mjs";
+import { sessionHeaderMatches } from "./piop-storage/session-storage.mjs";
 
 const cached = new Map();
 

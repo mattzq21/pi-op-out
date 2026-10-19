@@ -2,8 +2,8 @@ const path = require('node:path');
 const { DatabaseSync } = require('node:sqlite');
 const { Type } = require('typebox');
 const { Check } = require('typebox/value');
-const assets = require('./session-broker/goal-assets.cjs');
-const { retainedDependencies } = require('./session-broker/session-publication.cjs');
+const assets = require('./piop-storage/goal-assets.cjs');
+const { retainedDependencies } = require('./piop-storage/session-publication.cjs');
 const io = require('./session-transactions.cjs');
 const { validSessionHeader } = require('./session-header.cjs');
 const goalReferences = require('./goal-cleanup-references.cjs');
@@ -117,7 +117,7 @@ function external(root, observation) {
 }
 
 function preparedOwner(root, directory) {
-  const receipt = require('./session-broker/goal-preparations.cjs').read(root, directory);
+  const receipt = require('./piop-storage/goal-preparations.cjs').read(root, directory);
 
   if (receipt === undefined) return;
 
@@ -133,7 +133,7 @@ function candidate(root, directory, candidates, ownerIds) {
     return;
   }
 
-  const identity = assets.exists(directory) ? assets.identity(directory) : require('./session-broker/goal-ownership.cjs').savedIdentity(root, directory);
+  const identity = assets.exists(directory) ? assets.identity(directory) : require('./piop-storage/goal-ownership.cjs').savedIdentity(root, directory);
 
   if (identity === undefined) return;
   const previous = candidates.get(directory);
@@ -160,7 +160,7 @@ function plan(root, targets) {
 
     for (const target of targets) goalReferences.collect(root, readTranscript(root, target.path)).directories.forEach(directory => candidate(root, directory, candidates, [target.sessionId]));
 
-    for (const directory of require('./session-broker/goal-ownership.cjs').directories(root)) ownedCandidate(root, directory, deleted, candidates);
+    for (const directory of require('./piop-storage/goal-ownership.cjs').directories(root)) ownedCandidate(root, directory, deleted, candidates);
 
     return [...candidates.values()];
   });
@@ -173,7 +173,7 @@ function confirmedDeletions(root) {
   try {
     const current = database.prepare('SELECT 1 FROM sessions WHERE session_id=?');
 
-    for (const directory of require('./session-broker/goal-ownership.cjs').directories(root)) {
+    for (const directory of require('./piop-storage/goal-ownership.cjs').directories(root)) {
       try {
         const record = assets.readOwners(root, directory);
         const ids = [...record.owners.map(owner => owner.sessionId), ...record.retiredOwners ?? [], preparedOwner(root, directory)];
@@ -200,7 +200,7 @@ function retireOwners(root, directory, deleted, observation, origins) {
   const retiredOwners = new Set(record.retiredOwners ?? []);
   origins.filter(id => deleted.has(id) && !observation.sessions.has(id)).forEach(id => retiredOwners.add(id));
 
-  if (owners.length !== record.owners.length || retiredOwners.size !== (record.retiredOwners?.length ?? 0)) require('./session-broker/goal-ownership.cjs').save(root, directory, { ...record, owners, retiredOwners: [...retiredOwners] });
+  if (owners.length !== record.owners.length || retiredOwners.size !== (record.retiredOwners?.length ?? 0)) require('./piop-storage/goal-ownership.cjs').save(root, directory, { ...record, owners, retiredOwners: [...retiredOwners] });
 
   return owners;
 }
@@ -241,7 +241,7 @@ function finishCandidate(transaction, candidate, observation, deleted, save) {
 }
 
 function finishMissingCandidate(transaction, candidate, observation, deleted, save) {
-  const identity = require('./session-broker/goal-ownership.cjs').savedIdentity(transaction.root, candidate.path);
+  const identity = require('./piop-storage/goal-ownership.cjs').savedIdentity(transaction.root, candidate.path);
 
   if (identity !== undefined && identity !== candidate.identity) throw new Error(`Saved goal ownership changed; retained: ${candidate.path}`);
   const record = assets.readOwners(transaction.root, candidate.path);

@@ -1,8 +1,10 @@
+import { join } from "node:path";
+import { reserve, releaseReservation } from "./session_registry";
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { spawn, type ChildProcess } from 'node:child_process';
 import { readFileSync, statSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
-import { BROKER_BODY_BYTES, BROKER_HEADER_BYTES, BROKER_QUEUE_DEPTH, BROKER_WORKERS, MAX_AGENT_OUTPUT_BYTES } from './config';
+import { STORAGE_DIRECTORY, BROKER_BODY_BYTES, BROKER_HEADER_BYTES, BROKER_QUEUE_DEPTH, BROKER_WORKERS, MAX_AGENT_OUTPUT_BYTES } from './config';
 import { MessageOutput, recover as recoverOutput } from './broker_output';
 import { buildPiCommand, launchSpec, type LaunchCommand } from './pi_launch';
 import { ensureDesktopSessionsDir, shellQuote, spawnOptions } from './process_io';
@@ -189,6 +191,18 @@ async function enqueueBrokerMessage(app: App, broker: BrokerRuntime, response: S
 }
 
 async function respondBrokerRequest(app: App, broker: BrokerRuntime, method: string, path: string, body: Buffer): Promise<any> {
+  if (method === 'POST' && path === '/session-identity') {
+    const value = parseJson(body, 'Invalid session identity request');
+    const root = join(homeDir(), STORAGE_DIRECTORY);
+    if (value?.action === 'reserve' && Number.isInteger(value.count) && value.count >= 1 && value.count <= 2) {
+      return { sessionIds: Array.from({ length: value.count }, () => reserve(root)) };
+    }
+    if (value?.action === 'release' && Array.isArray(value.sessionIds) && value.sessionIds.length <= 2 && value.sessionIds.every(isUuid)) {
+      for (const id of value.sessionIds) releaseReservation(root, id);
+      return null;
+    }
+    throw new Error('Invalid session identity request');
+  }
   if (method === 'POST' && path === '/fast-models') {
     const value = parseJson(body, 'Invalid fast model request');
     if (typeof value?.hostId !== 'string') throw new Error('hostId is required');

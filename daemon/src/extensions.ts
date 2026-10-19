@@ -66,7 +66,7 @@ export const SESSION_BROKER_MODULES = R.SESSION_BROKER_MODULES;
 export const EXCALIDRAW_ASSETS = R.EXCALIDRAW_ASSETS;
 
 /** Installs session-broker and the session extensions that share its modules. Returns the entries in load order. */
-export function prepareSessionExtensions(): { controls: string; broker: string; goals: string; reviews: string } {
+export function prepareSessionExtensions(): { storage: string; controls: string; broker: string; goals: string; reviews: string } {
   const dir = generatedExtensionRoot();
   ensurePrivateDir(dir);
   prepareBrokerStorage(dir);
@@ -79,20 +79,24 @@ export function prepareSessionExtensions(): { controls: string; broker: string; 
   }
   const broker = join(dir, 'session-broker.ts');
   atomicWritePrivate(broker, R.sessionBroker);
-  return { controls: join(dir, 'piop-controls/index.ts'), broker, goals: join(dir, 'piop-goals/index.ts'), reviews: join(dir, 'piop-reviews/index.ts') };
+  return { storage: join(dir, 'piop-storage/index.ts'), controls: join(dir, 'piop-controls/index.ts'), broker, goals: join(dir, 'piop-goals/index.ts'), reviews: join(dir, 'piop-reviews/index.ts') };
 }
 
 function prepareSdkStorage(dir: string): void {
   atomicWritePrivate(join(dir, 'transcript-references.cjs'), R.transcriptReferences);
   atomicWritePrivate(join(dir, 'sdk-storage.mjs'), R.sdkStorage);
+  atomicWritePrivate(join(dir, 'storage-file.mjs'), R.storageFile);
   atomicWritePrivate(join(dir, 'sdk-session-list.mjs'), R.sdkSessionList);
   atomicWritePrivate(join(dir, 'session-database.cjs'), R.sessionDatabase);
+  atomicWritePrivate(join(dir, 'session-registry.cjs'), R.sessionRegistry);
 }
 
 function prepareBrokerStorage(dir: string): void {
   atomicWritePrivate(join(dir, 'transcript-references.cjs'), R.transcriptReferences);
   atomicWritePrivate(join(dir, 'session-database.cjs'), R.sessionDatabase);
+  atomicWritePrivate(join(dir, 'session-registry.cjs'), R.sessionRegistry);
   atomicWritePrivate(join(dir, 'sdk-storage.mjs'), R.sdkStorage);
+  atomicWritePrivate(join(dir, 'storage-file.mjs'), R.storageFile);
 }
 
 export function prepareProvidersRefreshExtension(): string {

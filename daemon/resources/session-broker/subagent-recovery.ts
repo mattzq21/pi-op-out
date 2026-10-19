@@ -4,7 +4,7 @@ import { Check, Parse } from "typebox/value";
 import { setTimeout as delay } from "node:timers/promises";
 import { request } from "./client.ts";
 import { sessionSnapshot, snapshotStatus } from "./orchestration.ts";
-import { accountingUnresolved, persistSubagentRun, resultNotificationId, savedSubagentRuns, unresolvedSubagentRuns, type SubagentRun } from "./subagent-results.ts";
+import { accountingUnresolved, persistSubagentRun, resultNotificationId, savedSubagentRuns, unresolvedSubagentRuns, type SubagentRun } from "../piop-storage/subagent-results.ts";
 import { subagentParent } from "./subagent-state.ts";
 
 export interface RecoveryScope { signal?: AbortSignal; recoveryDepth?: number; recoveryDeadline?: number }

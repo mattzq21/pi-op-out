@@ -68,19 +68,30 @@ test('archiving a chat while its agent runs a command ends the command, and the 
   expect(seen).toEqual([['user', 'Archived job'], ['assistant', ''], ['tool', 'No result provided'], ['user', 'Carry on after the restore']]);
 }, 60000);
 
-test('moving a chat to another folder while its agent works is refused with what to do, and the response goes on', async () => {
-  let release!: (reply: { text: string }) => void;
-  const busy = new Promise<{ text: string }>(resolve => { release = resolve; });
-  agents.scripts.set('Busy before the move', () => busy);
+test('moving a running chat stops its worker before changing the saved directory', async () => {
+  agents.scripts.set('Busy before the move', () => ({ tool: 'bash', arguments: { command: 'sleep 3; echo done > moved-late.txt' } }));
   const chat = await agents.rootChat();
   await chat.command({ type: 'prompt', message: 'Busy before the move' });
-  await chat.until(() => agents.model.requests.some(request => text(request.messages.at(-1)) === 'Busy before the move'));
+  await chat.until(history => history.some(message => message.stopReason === 'toolUse'));
   const { sessionFile } = await chat.command({ type: 'get_state' });
   const target = join(agents.daemon.home, 'move-target');
   mkdirSync(target);
-  const refusal = await agents.daemon.invoke('relocate_session', { hostId: 'local', sessionPath: sessionFile, cwd: target, clientId: 'laptop' }).then(() => 'moved', (error: Error) => error.message);
-  expect(refusal).toBe('Stop the response before moving this chat to another folder.');
-  release({ text: 'Finished where it was.' });
-  const history = await chat.until(messages => text(messages.at(-1)) === 'Finished where it was.');
-  expect(history.some(message => message.stopReason === 'aborted')).toBe(false);
+  await agents.daemon.invoke('relocate_session', { hostId: 'local', sessionPath: sessionFile, cwd: target, clientId: 'laptop' });
+  await Bun.sleep(4000);
+  expect(existsSync(join(chat.cwd, 'moved-late.txt'))).toBe(false);
+  const moved = (await agents.daemon.invoke('list_sessions')).find((session: any) => session.id === chat.sessionId);
+  expect(moved.cwd).toBe(target);
+}, 60000);
+
+test('deleting a running chat stops its worker before removing its saved data', async () => {
+  agents.scripts.set('Busy before deletion', () => ({ tool: 'bash', arguments: { command: 'sleep 3; echo done > deleted-late.txt' } }));
+  const chat = await agents.rootChat();
+  await chat.command({ type: 'prompt', message: 'Busy before deletion' });
+  await chat.until(history => history.some(message => message.stopReason === 'toolUse'));
+  const { sessionFile } = await chat.command({ type: 'get_state' });
+  await agents.daemon.invoke('delete_session', { hostId: 'local', sessionPath: sessionFile, clientId: 'laptop' });
+  await Bun.sleep(4000);
+  expect(existsSync(join(chat.cwd, 'deleted-late.txt'))).toBe(false);
+  expect(existsSync(sessionFile)).toBe(false);
+  expect((await agents.daemon.invoke('list_sessions')).some((session: any) => session.id === chat.sessionId)).toBe(false);
 }, 60000);

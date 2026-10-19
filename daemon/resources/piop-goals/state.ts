@@ -1,3 +1,4 @@
+import { sessionStorage } from "../piop-storage/interface.ts";
 import { randomUUID } from "node:crypto";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { current, validate } from "./goal-records.cjs";
@@ -52,7 +53,7 @@ export class GoalState {
       try {
         if (!ctx.sessionManager.getSessionFile()) throw new Error("Save this conversation before setting a goal");
         validate(this.goal);
-        this.pi.appendEntry("piop-goal", this.goal && { ...this.goal });
+        sessionStorage(this.pi).append("piop-goal", this.goal && { ...this.goal });
       } catch (error) { this.goal = JSON.parse(this.saved); throw error; }
       this.saved = next;
       if (!this.goal) process.emit("piop:goal-cleared", ctx.sessionManager.getSessionId());

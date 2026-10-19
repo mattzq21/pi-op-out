@@ -3,7 +3,7 @@ import { Type as Schema } from "typebox";
 import { Check } from "typebox/value";
 import { currentHost } from "./client.ts";
 import { sendAgentMailbox } from "./orchestration.ts";
-import { persistSubagentRun, savedSubagentRuns } from "./subagent-results.ts";
+import { persistSubagentRun, savedSubagentRuns } from "../piop-storage/subagent-results.ts";
 import { runSchema, resultNotificationId, type SubagentRun } from "./subagent-identity.ts";
 
 export { runSchema, type SubagentRun } from "./subagent-identity.ts";

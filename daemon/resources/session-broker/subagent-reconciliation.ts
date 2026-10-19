@@ -1,3 +1,4 @@
+import { sessionStorage } from "../piop-storage/interface.ts";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Type as Schema, type Static } from "typebox";
 import { Check, Parse } from "typebox/value";
@@ -7,7 +8,7 @@ import { listenSubagentUsage, type UsageCheckpoint } from "./subagent-usage.ts";
 import { branchEntries, interruptSession, sendSessionMessage, sessionSnapshot, snapshotStatus } from "./orchestration.ts";
 import { originalRunTask, saveRun, type SubagentRun } from "./subagent-state.ts";
 import { transcriptLines, transcriptMetadata, transcriptUsage } from "./subagent-transcript.ts";
-import { accountingUnresolved, reportedSubagentUsage, savedSubagentRuns, syncSubagentTranscript, unresolvedSubagentRuns } from "./subagent-results.ts";
+import { accountingUnresolved, reportedSubagentUsage, savedSubagentRuns, syncSubagentTranscript, unresolvedSubagentRuns } from "../piop-storage/subagent-results.ts";
 import { resultNotificationId } from "./subagent-identity.ts";
 import { boundedRecovery, recoverDescendantAccounting, recoverStoppedRun, waitForAccounting, type RecoveryScope } from "./subagent-recovery.ts";
 import { activeConversation } from "./conversation-location.ts";
@@ -172,7 +173,7 @@ async function accountTranscript(run: SubagentRun, observation: Observation, ter
 
   try {
     if (total > previous || received) {
-      pi.appendEntry("piop-subagent-usage", { version: 1, tokens: total - previous, total: uncredited(run, total), accountedTotal: total, runId: usageSourceId(run), sourceRunId: run.runId, parentSessionId: run.parentSessionId, sessionId: run.sessionId, sourceTotals: run.sourceTotals });
+      sessionStorage(pi).append("piop-subagent-usage", { version: 1, tokens: total - previous, total: uncredited(run, total), accountedTotal: total, runId: usageSourceId(run), sourceRunId: run.runId, parentSessionId: run.parentSessionId, sessionId: run.sessionId, sourceTotals: run.sourceTotals });
       await syncSubagentTranscript(ctx);
     }
   } catch (error) { run.sourceTotals = sources; throw error; }

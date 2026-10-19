@@ -1,4 +1,4 @@
-import { restoreGoalAttachments } from "./files.ts";
+import { restoreGoalAttachments } from "../piop-storage/goal-files.ts";
 import type { ExtensionAPI, ExtensionContext, AgentBeforeSettleEventResult, InputEventResult } from "@earendil-works/pi-coding-agent";
 import { GoalState, GOAL_CONTEXT } from "./state.ts";
 import { goalChangedPrompt, goalPrompt } from "./prompts.ts";

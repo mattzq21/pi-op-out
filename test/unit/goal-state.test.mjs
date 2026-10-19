@@ -1,3 +1,4 @@
+import storageExtension from "../../daemon/resources/piop-storage/index.ts";
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
@@ -9,10 +10,12 @@ import records from '../../daemon/resources/piop-goals/goal-records.cjs';
 function fixture() {
   const entries = [];
   let branch = entries, sessionId = 'chat-1', fail = false;
-  const pi = { appendEntry(customType, data) {
+  const handlers = new Map();
+  const pi = { events: { on: (name, fn) => { handlers.set(name, fn); return () => handlers.delete(name); }, emit: (name, request) => handlers.get(name)?.(request) }, on() {}, appendEntry(customType, data) {
     if (fail) throw new Error('Save failed');
     entries.push({ type: 'custom', customType, data: structuredClone(data), id: String(entries.length + 1), parentId: branch.at(-1)?.id ?? null });
   } };
+  storageExtension(pi);
   const ctx = { sessionManager: { getBranch: () => branch, getSessionId: () => sessionId, getSessionFile: () => '/chat.jsonl' }, ui: { setWidget() {}, setStatus() {} } };
   return { entries, ctx, state: new GoalState(pi), reopen: () => new GoalState(pi), branch: value => { branch = value; }, session: value => { sessionId = value; }, fail: () => { fail = true; } };
 }
@@ -80,4 +83,34 @@ test('closed-chat reads follow transcript parents, including an explicit clear',
   entries.push({ type: 'custom', id: 'd', parentId: 'c', customType: 'piop-goal', data: null });
   save();
   assert.equal(records.read(file), null);
+});
+
+
+test('closed-chat goal reads keep the last saved state when the final write is incomplete', t => {
+  const dir = mkdtempSync(join(tmpdir(), 'piop-goal-tail-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const file = join(dir, 'chat.jsonl');
+  const goal = { id: 'goal-1', sessionId: 'chat-1', objective: 'Finish', status: 'active' };
+  const body = JSON.stringify({ type: 'session', id: 'chat-1' }) + '\n'
+    + JSON.stringify({ type: 'custom', id: 'a', parentId: null, customType: 'piop-goal', data: goal }) + '\n'
+    + '{"type":"custom","id":"b","parentId":"a"';
+  writeFileSync(file, body);
+  assert.deepEqual(records.read(file), goal);
+});
+
+
+test('storage remains available while other extensions save during shutdown', async () => {
+  const { sessionStorage } = await import('../../daemon/resources/piop-storage/interface.ts');
+  const handlers = new Map();
+  const shutdown = [];
+  const entries = [];
+  const pi = {
+    events: { on: (name, handler) => { handlers.set(name, handler); return () => handlers.delete(name); }, emit: (name, request) => handlers.get(name)?.(request) },
+    on: (name, handler) => { if (name === 'session_shutdown') shutdown.push(handler); },
+    appendEntry: (type, data) => entries.push({ type, data }),
+  };
+  storageExtension(pi);
+  pi.on('session_shutdown', () => sessionStorage(pi).append('final-usage', { tokens: 10 }));
+  for (const stop of shutdown) await stop();
+  assert.deepEqual(entries, [{ type: 'final-usage', data: { tokens: 10 } }]);
 });

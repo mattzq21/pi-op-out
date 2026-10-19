@@ -1,4 +1,4 @@
-import { reserveSessionId } from "./session-file.ts";
+import { reserveSessionId } from "../piop-storage/session-file.ts";
 import type { AgentToolResult, ExtensionAPI, ExtensionContext, CustomEntryDraft } from "@earendil-works/pi-coding-agent";
 import type { SubagentLimitsRequest } from "../../../extensions/piop-define-agents/contracts.ts";
 import { Type } from "@earendil-works/pi-ai";
@@ -8,7 +8,7 @@ import { childFastModeEntry } from "./fast-mode.ts";
 import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 import { currentHost } from "./client.ts";
-import { writeSessionFile } from "./session-file.ts";
+import { writeSessionFile } from "../piop-storage/session-file.ts";
 import { activeConversation } from "./conversation-location.ts";
 import { registerSubagentUsage } from "./subagent-usage.ts";
 import type { UsageCheckpoint } from "./subagent-usage.ts";
@@ -16,7 +16,7 @@ import { registerSubagentMailbox } from "./subagent-mailbox.ts";
 import { interruptSession, sendSessionMessage, sessionSnapshot, snapshotStatus } from "./orchestration.ts";
 import { SUBAGENT_PARENT, latestRuns, ownedRuns, saveRun, subagentParent, subagentPayload, registerSubagentResults, type SubagentRun } from "./subagent-state.ts";
 import { acceptedSubmission, cancelSubagent, drainAccountingRecovery, finishRun, observeSubagent, recoverSubagentAccounting, subagentReceiptSchema, SubagentCancellation, type ActiveSubagent } from "./subagent-reconciliation.ts";
-import { accountingUnresolved, resultNotificationId, savedSubagentRuns } from "./subagent-results.ts";
+import { accountingUnresolved, resultNotificationId, savedSubagentRuns } from "../piop-storage/subagent-results.ts";
 import { boundedRecovery, registerSubagentRecovery } from "./subagent-recovery.ts";
 
 const MAX_DELEGATION_DEPTH = 2;
@@ -117,7 +117,7 @@ async function createSubagent(pi: ExtensionAPI, ctx: ExtensionContext, task: Sub
   if (!header || !ctx.sessionManager.getSessionFile()) throw new Error("Save this conversation before delegating work");
   const profile = await resolveAgentProfile(pi, task.agent);
   const fastMode = await childFastModeEntry(pi, profile, Boolean(task.agent));
-  const sessionId = reserveSessionId();
+  const sessionId = await reserveSessionId();
   const timestamp = new Date().toISOString();
   const sessionPath = join(ctx.sessionManager.getSessionDir(), `${timestamp.replace(/[:.]/g, "-")}_${sessionId}.jsonl`);
   let retained = inheritedHistory(ctx, task);

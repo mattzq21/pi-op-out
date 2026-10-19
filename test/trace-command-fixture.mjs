@@ -1,3 +1,5 @@
+import { createServer } from "node:http";
+import { reserve } from "../daemon/resources/session-database.cjs";
 import { createRequire } from 'node:module';
 import { openSync, closeSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
@@ -30,6 +32,27 @@ export async function publishedTrace(t, traceReader, content, { folder = '', hom
   const outfile = join(buildDirectory, 'operations.mjs');
   await build({ entryPoints: ['daemon/resources/piop-controls/index.ts'], outfile, bundle: true, platform: 'node', format: 'esm', target: 'node22', logLevel: 'silent', external: ['@earendil-works/*'], plugins: [storageSchemaImports()],
     banner: { js: "import { createRequire } from 'node:module'; const require = createRequire(import.meta.url);" },
+  });
+  const previousBroker = [process.env.PI_DESKTOP_BROKER_URL, process.env.PI_DESKTOP_BROKER_TOKEN];
+  const server = createServer(async (request, response) => {
+    if (request.method !== 'POST' || request.url !== '/session-identity' || request.headers.authorization !== 'Bearer fixture') {
+      response.writeHead(400); response.end(JSON.stringify({ error: 'Unexpected storage request' })); return;
+    }
+    response.setHeader('Content-Type', 'application/json');
+    const chunks = [];
+    for await (const chunk of request) chunks.push(chunk);
+    const { count } = JSON.parse(Buffer.concat(chunks).toString());
+    response.end(JSON.stringify({ data: { sessionIds: Array.from({ length: count }, () => reserve(join(home, '.piop'))) } }));
+  });
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  server.unref();
+  process.env.PI_DESKTOP_BROKER_URL = `http://127.0.0.1:${server.address().port}`;
+  process.env.PI_DESKTOP_BROKER_TOKEN = 'fixture';
+  t.after(() => {
+    server.closeAllConnections(); server.close();
+    for (const [index, key] of ['PI_DESKTOP_BROKER_URL', 'PI_DESKTOP_BROKER_TOKEN'].entries()) {
+      if (previousBroker[index] === undefined) delete process.env[key]; else process.env[key] = previousBroker[index];
+    }
   });
   const { default: controls } = await import(pathToFileURL(outfile));
   const listeners = [];

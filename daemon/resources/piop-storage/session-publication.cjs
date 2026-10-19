@@ -1,3 +1,4 @@
+const registry = require('../session-registry.cjs');
 const fs = require('node:fs');
 const path = require('node:path');
 const { randomUUID } = require('node:crypto');
@@ -6,7 +7,7 @@ const { Check } = require('typebox/value');
 const io = require('./session-publication-io.cjs');
 const reviews = require('./review-publication.cjs');
 const dependencies = require('./session-publication-dependencies.cjs');
-const children = require('./session-child-index.cjs');
+const children = require('../session-broker/session-child-index.cjs');
 const database = require('../session-database.cjs');
 
 const identitySchema = Type.String({ pattern: '^\\d+:\\d+$' });
@@ -91,10 +92,7 @@ function prepare(root, target, body, options) {
 
   if (!Check(io.uuid, id)) throw new Error('Invalid session publication identity');
   const prepared = prepareBody(body, id);
-  const db = database.open(root);
-
-  try { database.bind(db, prepared.header.id, target); }
-  finally { db.close(); }
+  registry.bindSession(root, prepared.header.id, target);
 
 
   if (!path.basename(target).endsWith(`_${prepared.header.id}.jsonl`) || io.exists(target)) throw new Error('Session publication target is occupied or does not bind its session identity');

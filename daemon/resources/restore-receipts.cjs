@@ -5,7 +5,7 @@ const { createHash } = require('node:crypto');
 const { Type } = require('typebox');
 const { Check } = require('typebox/value');
 const io = require('./session-transactions.cjs');
-const { heldTransactionLock } = require('./session-broker/session-publication-io.cjs');
+const { heldTransactionLock } = require('./piop-storage/session-publication-io.cjs');
 const database = require('./session-database.cjs');
 
 const traceSchema = Type.Object({ source: Type.String(), destination: Type.String(), identity: Type.String({ pattern: '^\\d+:\\d+$' }) });

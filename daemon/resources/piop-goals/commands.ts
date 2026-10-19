@@ -1,7 +1,7 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Type as Schema, type Static } from "typebox";
 import { Parse } from "typebox/value";
-import { goalImagesSchema, goalPreparationView } from "./files.ts";
+import { goalImagesSchema, goalPreparationView } from "../piop-storage/goal-files.ts";
 import { objectivePrompt, prepareGoal, resumePreparedGoal, type GoalCore } from "./preparation.ts";
 import type { GoalReport, GoalSession } from "./interface.ts";
 

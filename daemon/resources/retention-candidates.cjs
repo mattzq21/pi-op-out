@@ -164,13 +164,13 @@ function goalStorageProtected(record, candidate, file) {
   if (['owners.json', 'prepared.json', 'dependencies.json'].some(name => metadata(path.join(file, name)))) return true;
   const root = path.dirname(path.dirname(record.file));
 
-  if (require('./session-broker/goal-dependencies.cjs').retained(root, candidate.path, candidate.identity)) return true;
+  if (require('./piop-storage/goal-dependencies.cjs').retained(root, candidate.path, candidate.identity)) return true;
 
-  if (require('./session-broker/goal-preparations.cjs').retained(root, candidate.path, candidate.identity)) return true;
+  if (require('./piop-storage/goal-preparations.cjs').retained(root, candidate.path, candidate.identity)) return true;
 
-  if (require('./session-broker/goal-ownership.cjs').retained(root, candidate.path, candidate.identity)) return true;
+  if (require('./piop-storage/goal-ownership.cjs').retained(root, candidate.path, candidate.identity)) return true;
 
-  const publications = require('./session-broker/session-publication.cjs').retainedDependencies(root);
+  const publications = require('./piop-storage/session-publication.cjs').retainedDependencies(root);
 
   return publications.some(publication => JSON.stringify(publication.dependencies ?? null).includes(candidate.path)
     || publication.transcriptPaths.some(transcript => JSON.stringify(require('./transcript-references.cjs').read(root, transcript)).includes(JSON.stringify(candidate.path).slice(1, -1))));

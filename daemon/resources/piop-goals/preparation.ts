@@ -1,6 +1,6 @@
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { GoalState, Goal } from "./state.ts";
-import { goalImagesSchema, loadMaterializedGoal, materializeGoal, readGoalPreparation } from "./files.ts";
+import { goalImagesSchema, loadMaterializedGoal, materializeGoal, readGoalPreparation } from "../piop-storage/goal-files.ts";
 import type { GoalCoordination } from "./coordination.ts";
 import type { Static } from "typebox";
 import { randomUUID } from "node:crypto";

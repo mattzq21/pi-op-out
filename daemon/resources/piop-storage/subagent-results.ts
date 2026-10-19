@@ -1,3 +1,4 @@
+import { sessionStorage } from "./interface.ts";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { constants } from "node:fs";
 import { open } from "node:fs/promises";
@@ -5,11 +6,11 @@ import type { DatabaseSync } from "node:sqlite";
 import { Type as Schema, type Static } from "typebox";
 import { Check, Parse } from "typebox/value";
 import { open as openDatabase, register, storageRoot } from "../session-database.cjs";
-import { resultNotificationId, runSchema, type SubagentRun } from "./subagent-identity.ts";
+import { resultNotificationId, runSchema, type SubagentRun } from "../session-broker/subagent-identity.ts";
 
-export { resultNotificationId } from "./subagent-identity.ts";
+export { resultNotificationId } from "../session-broker/subagent-identity.ts";
 
-export { runSchema, type SubagentRun } from "./subagent-identity.ts";
+export { runSchema, type SubagentRun } from "../session-broker/subagent-identity.ts";
 
 export const SUBAGENT_RUN = "piop-subagent-run";
 
@@ -103,7 +104,7 @@ export function persistSubagentRun(pi: ExtensionAPI, ctx: ExtensionContext, run:
     db.exec("COMMIT");
   } finally { db.close(); }
 
-  if (accepted) pi.appendEntry(SUBAGENT_RUN, structuredClone(run));
+  if (accepted) sessionStorage(pi).append(SUBAGENT_RUN, structuredClone(run));
 }
 
 function readRuns(file: string, sessionId: string) {

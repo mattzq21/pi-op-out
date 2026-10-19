@@ -1,13 +1,14 @@
-import { reserveSessionId } from "../session-broker/session-file.ts";
+import { sessionStorage } from "../piop-storage/interface.ts";
+import { reserveSessionId } from "../piop-storage/session-file.ts";
 import type { ExtensionAPI, ExtensionCommandContext, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { realpath, mkdir, rmdir } from "node:fs/promises";
 import { basename, dirname, join, resolve } from "node:path";
 import { currentHost } from "../session-broker/client.ts";
-import { writeSessionFile, publicationRetainsDependencies, type SessionPublication } from "../session-broker/session-file.ts";
+import { writeSessionFile, publicationRetainsDependencies, type SessionPublication } from "../piop-storage/session-file.ts";
 import { Type } from "typebox";
 import { Check } from "typebox/value";
 import { existsSync } from "node:fs";
-import { releaseHistory, retainHistory, rootForDirectory } from "../session-broker/goal-assets.cjs";
+import { releaseHistory, retainHistory, rootForDirectory } from "../piop-storage/goal-assets.cjs";
 import type { ForkMode, ForkResult } from "./interface.ts";
 
 export type ForkOptions = { cwd?: string; entryId?: string; position?: "before" | "at" };
@@ -45,7 +46,7 @@ export async function forkAndForget(pi: ExtensionAPI, ctx: ExtensionCommandConte
   if (!entry || entry.type !== "message" || entry.message.role !== "assistant") throw new Error("Assistant response not found in this conversation");
   const result = await ctx.navigateTree(entryId);
 
-  if (!result.cancelled) pi.appendEntry("pi-desktop-fork-and-forget", { entryId });
+  if (!result.cancelled) sessionStorage(pi).append("pi-desktop-fork-and-forget", { entryId });
 
   return result;
 }
@@ -58,7 +59,7 @@ export async function forkConversation(ctx: ExtensionContext, options: ForkOptio
   if (!header || !source) throw new Error("Save this conversation before forking it");
   const cwd = await forkDirectory(ctx.cwd, options);
 
-  const sessionId = reserveSessionId();
+  const sessionId = await reserveSessionId();
   const timestamp = new Date().toISOString();
   const sessionPath = join(ctx.sessionManager.getSessionDir(), `${timestamp.replace(/[:.]/g, "-")}_${sessionId}.jsonl`);
   let publication: SessionPublication | undefined;

@@ -18,7 +18,8 @@ function current(branch) {
 function read(file) {
   const text = fs.readFileSync(file, 'utf8');
   const lines = text.split('\n');
-  if (lines.at(-1) !== '') throw new Error('Incomplete goal transcript');
+  const tail = lines.pop();
+  if (tail) console.warn(`${file}: last write was interrupted; ignored ${Buffer.byteLength(tail)} bytes`);
   const entries = lines.filter(Boolean).map(line => JSON.parse(line));
   const indexed = new Map(entries.filter(entry => entry.type !== 'session').map(entry => [entry.id, entry]));
   const branch = [];

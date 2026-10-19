@@ -3,7 +3,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const { Type } = require('typebox');
 const { Check } = require('typebox/value');
-const io = require('./session-publication-io.cjs');
+const io = require('../piop-storage/session-publication-io.cjs');
 const tables = require('../session-database.cjs');
 
 const childSchema = Type.Object({ sessionId: Type.String(), sessionPath: Type.String(), kind: Type.Union([Type.Literal('subagent'), Type.Literal('review')]) });
