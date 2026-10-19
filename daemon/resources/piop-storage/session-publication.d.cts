@@ -8,6 +8,7 @@ export interface ReviewPublicationRecord {
 }
 
 export interface PublicationOptions {
+  goalSource?: string;
   review?: { record: ReviewPublicationRecord; parentSessionPath: string };
   dependencies?: {
     workspace?: { path: string; kind: "existing" | "created-directory" };

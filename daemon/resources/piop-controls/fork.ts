@@ -68,6 +68,7 @@ export async function forkConversation(ctx: ExtensionContext, options: ForkOptio
   try {
     goalAssets = retainHistory(rootForDirectory(ctx.sessionManager.getSessionDir()), [{ ...header, parentSession: source }, ...retained], sessionId, sessionPath);
     publication = await writeSessionFile(sessionPath, [{ ...header, id: sessionId, timestamp, cwd, parentSession: source, goalAssets }, ...retained], {
+      goalSource: source,
       dependencies: { workspace: { path: cwd, kind: options.cwd === undefined ? "existing" : "created-directory" } },
     });
   } catch (error) {

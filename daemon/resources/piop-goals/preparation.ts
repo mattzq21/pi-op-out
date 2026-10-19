@@ -35,7 +35,7 @@ export async function prepareGoal(args: string, ctx: ExtensionContext, core: Goa
     return { key: snapshot(ctx, core), goal: core.state.goal && { ...core.state.goal } };
   });
 
-  const reused = await preparedGoalMatches(ctx, submissionId, captured.goal, captured.key);
+  const reused = await preparedGoalMatches(ctx, core, submissionId, captured.goal, captured.key);
   const objective = await goalInput(args, ctx, captured.goal, editing, reused);
 
   if (objective === undefined) return;
@@ -43,7 +43,7 @@ export async function prepareGoal(args: string, ctx: ExtensionContext, core: Goa
   return commitPreparedGoal(objective, ctx, core, captured.key, editing, start, reused, submissionId, images);
 }
 
-async function preparedGoalMatches(ctx: ExtensionContext, submissionId: string | undefined, goal: Goal | null, captured: string) {
+async function preparedGoalMatches(ctx: ExtensionContext, core: GoalCore, submissionId: string | undefined, goal: Goal | null, captured: string) {
   if (!submissionId) return false;
   const previous = await readGoalPreparation(ctx, submissionId);
 
@@ -51,21 +51,13 @@ async function preparedGoalMatches(ctx: ExtensionContext, submissionId: string |
 
   if (previous.goalId && previous.goalId === goal?.id) return true;
 
-  if (previous.goalId && knownGoal(ctx, previous.goalId)) {
+  if (previous.goalId && core.state.known(ctx, previous.goalId)) {
     throw new Error(`This submission already prepared a goal (${previous.objective}), but the current goal changed. Inspect the prepared goal in saved input recovery before retrying.`);
   }
 
   if (previous.expectedState !== undefined && previous.expectedState !== captured) throw new Error("The goal changed after this submission was prepared. Inspect saved input recovery before submitting a new goal.");
 
   return false;
-}
-
-function knownGoal(ctx: ExtensionContext, goalId: string) {
-  const file = ctx.sessionManager.getSessionFile();
-
-  if (!file) throw new Error("Save this conversation before preparing a goal");
-
-  return ctx.sessionManager.getEntries().some(entry => entry.type === "custom" && entry.customType === "piop-goal" && (entry.data as Goal | null)?.id === goalId);
 }
 
 async function goalInput(args: string, ctx: ExtensionContext, goal: Goal | null, editing: boolean, reused: boolean) {
@@ -128,7 +120,7 @@ export async function resumePreparedGoal(message: string, ctx: ExtensionContext,
   return core.coordination.run(ctx, async () => {
     core.assertAvailable(ctx);
     const captured = snapshot(ctx, core);
-    const reused = await preparedGoalMatches(ctx, submissionId, core.state.goal, captured);
+    const reused = await preparedGoalMatches(ctx, core, submissionId, core.state.goal, captured);
     const draft = await loadMaterializedGoal(ctx, submissionId);
 
     if (message !== objectivePrompt(draft.objective)) throw new Error("The queued goal prompt does not match its saved preparation.");

@@ -1,3 +1,4 @@
+import { copy as copyGoal } from "./goals.cjs";
 import { takeSessionId } from "./identities.mjs";
 import { lockSync as storageLockSync } from "../file-lock.cjs";
 import * as registry from "../session-registry.cjs";
@@ -92,6 +93,7 @@ function installSessionCreation(SessionManager) {
     const session = this.create(targetCwd, sessionDir, { ...options, parentSession: sourcePath });
     session.fileEntries = [session.fileEntries[0], ...structuredClone(source.fileEntries.filter(entry => entry.type !== "session"))];
     session._buildIndex();
+    copyGoal(sourcePath, session.sessionFile, session.getSessionId());
     sessionStoragePublish(session, session.fileEntries, false);
     session.flushed = true;
 
@@ -120,6 +122,7 @@ function installSessionBranching(prototype) {
     header.parentSession = parent;
     this.sessionFile = storagePath.join(this.getSessionDir(), `${header.timestamp.replace(/[:.]/g, "-")}_${id}.jsonl`);
     bindNewSession(this);
+    copyGoal(parent, this.sessionFile, id);
     sessionStoragePublish(this, this.fileEntries, true);
     this.flushed = true;
 

@@ -1,4 +1,4 @@
-const goalRecords = require("./piop-goals/goal-records.cjs");
+const goalRecords = require("./piop-storage/goals.cjs");
 const { realpathSync, readFileSync, existsSync, openSync, closeSync, fsyncSync } = require("node:fs");
 const { dirname, join, isAbsolute } = require("node:path");
 const { pathToFileURL } = require("node:url");
@@ -325,7 +325,8 @@ const isReview = text => /^\/(?:review|rs)(?:\s|$)/.test(text);
 const reviewText = message => message.role === "user" ? message.content.filter(part => part.type === "text").map(part => part.text).join("") : "";
 
 function currentGoal(session) {
-  return goalRecords.current(session.sessionManager.getBranch());
+  const file = session.sessionManager.getSessionFile();
+  return file ? goalRecords.read(file, session.sessionManager.getSessionId()) : null;
 }
 
 const hasGoal = session => currentGoal(session) !== null;

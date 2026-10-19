@@ -1,27 +1,31 @@
 import storageExtension from "../../daemon/resources/piop-storage/index.ts";
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { GoalState } from '../../daemon/resources/piop-goals/state.ts';
-import records from '../../daemon/resources/piop-goals/goal-records.cjs';
+import goals from '../../daemon/resources/piop-storage/goals.cjs';
+import database from '../../daemon/resources/session-database.cjs';
 
-function fixture() {
-  const entries = [];
-  let branch = entries, sessionId = 'chat-1', fail = false;
+function fixture(t) {
+  const root = mkdtempSync(join(tmpdir(), 'piop-goal-sql-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  mkdirSync(join(root, 'sessions'));
+  const file = join(root, 'sessions', 'chat.jsonl');
+  const db = database.open(root);
+  db.prepare('INSERT INTO sessions VALUES (?, ?)').run('chat-1', file);
+  db.close();
   const handlers = new Map();
-  const pi = { events: { on: (name, fn) => { handlers.set(name, fn); return () => handlers.delete(name); }, emit: (name, request) => handlers.get(name)?.(request) }, on() {}, appendEntry(customType, data) {
-    if (fail) throw new Error('Save failed');
-    entries.push({ type: 'custom', customType, data: structuredClone(data), id: String(entries.length + 1), parentId: branch.at(-1)?.id ?? null });
-  } };
+  const entries = [];
+  const pi = { events: { on: (name, fn) => { handlers.set(name, fn); return () => handlers.delete(name); }, emit: (name, request) => handlers.get(name)?.(request) }, appendEntry: (...entry) => entries.push(entry) };
   storageExtension(pi);
-  const ctx = { sessionManager: { getBranch: () => branch, getSessionId: () => sessionId, getSessionFile: () => '/chat.jsonl' }, ui: { setWidget() {}, setStatus() {} } };
-  return { entries, ctx, state: new GoalState(pi), reopen: () => new GoalState(pi), branch: value => { branch = value; }, session: value => { sessionId = value; }, fail: () => { fail = true; } };
+  const ctx = { sessionManager: { getSessionId: () => 'chat-1', getSessionFile: () => file }, ui: { setWidget() {}, setStatus() {} } };
+  return { root, file, entries, ctx, state: new GoalState(pi), reopen: () => new GoalState(pi) };
 }
 
-test('goal changes and clearing survive reload from the transcript', () => {
-  const f = fixture();
+test('goal changes and clearing survive reload without transcript entries', t => {
+  const f = fixture(t);
   f.state.create(f.ctx, 'Finish the task');
   const id = f.state.goal.id;
   f.state.setStatus(f.ctx, 'paused');
@@ -29,75 +33,59 @@ test('goal changes and clearing survive reload from the transcript', () => {
   restored.restore(f.ctx);
   assert.deepEqual(restored.response(), { goal: { id, sessionId: 'chat-1', objective: 'Finish the task', status: 'paused' } });
   restored.clear(f.ctx);
+  assert.equal(restored.known(f.ctx, id), true);
   f.state.restore(f.ctx);
   assert.equal(f.state.goal, null);
-  assert.equal(f.entries.at(-1).data, null);
+  assert.deepEqual(f.entries, []);
 });
 
-test('restore uses the selected branch and gives a copied chat a new goal ID', () => {
-  const f = fixture();
+test('forks copy current goal with independent identity and state', t => {
+  const f = fixture(t);
   f.state.create(f.ctx, 'First objective');
-  const first = f.state.goal.id;
+  const target = join(f.root, 'sessions', 'fork.jsonl');
+  const db = database.open(f.root);
+  db.prepare('INSERT INTO sessions VALUES (?, ?)').run('chat-2', target);
+  db.close();
+  goals.copy(f.file, target, 'chat-2');
+  const fork = goals.read(target);
+  assert.notEqual(fork.id, f.state.goal.id);
+  assert.equal(fork.sessionId, 'chat-2');
+  assert.equal(fork.objective, 'First objective');
   f.state.clear(f.ctx);
-  f.state.create(f.ctx, 'Other objective');
-  f.branch(f.entries.slice(0, 1));
-  f.state.restore(f.ctx);
-  assert.equal(f.state.goal.id, first);
-  assert.equal(f.state.goal.objective, 'First objective');
-  f.session('chat-2');
-  f.state.restore(f.ctx);
-  assert.notEqual(f.state.goal.id, first);
-  assert.equal(f.state.goal.sessionId, 'chat-2');
+  assert.deepEqual(goals.read(target), fork);
 });
 
-test('a failed save keeps the last saved goal and reports the failure', () => {
-  const f = fixture();
+test('a failed save restores the last saved in-memory state', t => {
+  const f = fixture(t);
   f.state.create(f.ctx, 'Keep working');
-  f.fail();
+  const db = database.open(f.root);
+  db.exec("CREATE TRIGGER reject_goal BEFORE UPDATE ON session_goals BEGIN SELECT RAISE(ABORT, 'Save failed'); END");
+  db.close();
   assert.throws(() => f.state.setStatus(f.ctx, 'paused'), /Save failed/);
   assert.equal(f.state.goal.status, 'active');
-  assert.throws(() => f.state.clear(f.ctx), /Save failed/);
-  assert.equal(f.state.goal.status, 'active');
+  assert.equal(goals.read(f.file).status, 'active');
 });
 
-test('invalid saved goals are reported', () => {
-  const f = fixture();
-  f.entries.push({ type: 'custom', customType: 'piop-goal', data: { status: 'blocked' } });
-  assert.throws(() => f.state.restore(f.ctx), /Invalid saved goal/);
+test('archive and restore keep goals; deletion removes them', t => {
+  const f = fixture(t);
+  f.state.create(f.ctx, 'Keep working');
+  const archived = join(f.root, 'archived', 'chat.jsonl');
+  const db = database.open(f.root);
+  db.prepare('UPDATE sessions SET session_path=? WHERE session_id=?').run(archived, 'chat-1');
+  assert.deepEqual(goals.read(archived), f.state.goal);
+  db.prepare('UPDATE sessions SET session_path=? WHERE session_id=?').run(f.file, 'chat-1');
+  assert.deepEqual(goals.read(f.file), f.state.goal);
+  db.prepare('DELETE FROM sessions WHERE session_id=?').run('chat-1');
+  assert.equal(db.prepare('SELECT count(*) AS n FROM session_goals').get().n, 0);
+  db.close();
 });
 
-test('closed-chat reads follow transcript parents, including an explicit clear', t => {
-  const dir = mkdtempSync(join(tmpdir(), 'piop-goal-records-'));
-  t.after(() => rmSync(dir, { recursive: true, force: true }));
-  const file = join(dir, 'chat.jsonl');
-  const goal = { id: 'goal-1', sessionId: 'chat-1', objective: 'Finish', status: 'active' };
-  const entries = [
-    { type: 'session', id: 'chat-1' },
-    { type: 'custom', id: 'a', parentId: null, customType: 'piop-goal', data: goal },
-    { type: 'custom', id: 'b', parentId: 'a', customType: 'piop-goal', data: null },
-    { type: 'message', id: 'c', parentId: 'a', message: {} },
-  ];
-  const save = () => writeFileSync(file, entries.map(entry => JSON.stringify(entry)).join('\n') + '\n');
-  save();
-  assert.deepEqual(records.read(file), goal);
-  entries.push({ type: 'custom', id: 'd', parentId: 'c', customType: 'piop-goal', data: null });
-  save();
-  assert.equal(records.read(file), null);
+test('invalid or mismatched goals are rejected', t => {
+  const f = fixture(t);
+  assert.throws(() => goals.write(f.file, 'chat-1', { status: 'blocked' }), /Invalid saved goal/);
+  f.state.create(f.ctx, 'Finish');
+  assert.throws(() => goals.write(f.file, 'chat-1', { ...f.state.goal, sessionId: 'other' }), /another conversation/);
 });
-
-
-test('closed-chat goal reads keep the last saved state when the final write is incomplete', t => {
-  const dir = mkdtempSync(join(tmpdir(), 'piop-goal-tail-'));
-  t.after(() => rmSync(dir, { recursive: true, force: true }));
-  const file = join(dir, 'chat.jsonl');
-  const goal = { id: 'goal-1', sessionId: 'chat-1', objective: 'Finish', status: 'active' };
-  const body = JSON.stringify({ type: 'session', id: 'chat-1' }) + '\n'
-    + JSON.stringify({ type: 'custom', id: 'a', parentId: null, customType: 'piop-goal', data: goal }) + '\n'
-    + '{"type":"custom","id":"b","parentId":"a"';
-  writeFileSync(file, body);
-  assert.deepEqual(records.read(file), goal);
-});
-
 
 test('storage remains available while other extensions save during shutdown', async () => {
   const { sessionStorage } = await import('../../daemon/resources/piop-storage/interface.ts');

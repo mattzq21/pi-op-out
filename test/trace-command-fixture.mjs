@@ -1,5 +1,5 @@
 import { createServer } from "node:http";
-import { reserve } from "../daemon/resources/session-database.cjs";
+import { reserve, bind, open } from "../daemon/resources/session-database.cjs";
 import { createRequire } from 'node:module';
 import { openSync, closeSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
@@ -21,14 +21,18 @@ export async function publishedTrace(t, traceReader, content, { folder = '', hom
   t.after(async () => {
     if (previousHome === undefined) delete process.env.HOME; else process.env.HOME = previousHome;
     if (previousStorage === undefined) delete process.env.PIOP_STORAGE_DIRECTORY; else process.env.PIOP_STORAGE_DIRECTORY = previousStorage;
+    const db = open(join(home, '.piop'));
+    try { db.prepare('DELETE FROM sessions WHERE session_path=?').run(source); } finally { db.close(); }
     if (existingHome) { await rm(buildDirectory, { recursive: true, force: true }); await rm(source, { force: true }); }
     else await rm(home, { recursive: true, force: true });
   });
   await mkdir(sessions, { recursive: true });
-  const id = randomUUID();
+  const id = reserve(join(home, '.piop'));
   const header = { type: 'session', version: 3, id, cwd: cwd ?? home };
   const user = { type: 'message', id: 'user', parentId: null, message: { role: 'user', content: 'Start' } };
   await writeFile(source, JSON.stringify(header) + '\n' + JSON.stringify(user) + '\n');
+  const sourceDb = open(join(home, '.piop'));
+  try { bind(sourceDb, id, source); } finally { sourceDb.close(); }
   const outfile = join(buildDirectory, 'operations.mjs');
   await build({ entryPoints: ['daemon/resources/piop-controls/index.ts'], outfile, bundle: true, platform: 'node', format: 'esm', target: 'node22', logLevel: 'silent', external: ['@earendil-works/*'], plugins: [storageSchemaImports()],
     banner: { js: "import { createRequire } from 'node:module'; const require = createRequire(import.meta.url);" },

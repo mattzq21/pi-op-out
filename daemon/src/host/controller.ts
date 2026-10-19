@@ -1,4 +1,4 @@
-import { read as readGoal } from "../../resources/piop-goals/goal-records.cjs";
+import { read as readGoal } from "../../resources/piop-storage/goals.cjs";
 import { join } from 'node:path';
 import * as Registry from '../session_registry';
 import * as Settings from '../settings';

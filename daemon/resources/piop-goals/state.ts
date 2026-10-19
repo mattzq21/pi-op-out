@@ -1,7 +1,6 @@
 import { sessionStorage } from "../piop-storage/interface.ts";
 import { randomUUID } from "node:crypto";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { current, validate } from "./goal-records.cjs";
 import type { GoalReport, GoalView, GoalStatus } from "./interface.ts";
 
 export const GOAL_CONTEXT = "piop-goal-context";
@@ -19,12 +18,16 @@ export class GoalState {
   constructor(private pi: ExtensionAPI) {}
 
   restore(ctx: ExtensionContext) {
-    this.goal = current(ctx.sessionManager.getBranch());
+    const file = ctx.sessionManager.getSessionFile();
+    this.goal = file ? sessionStorage(this.pi).readGoal(file, ctx.sessionManager.getSessionId()) : null;
     this.saved = JSON.stringify(this.goal);
-    if (this.goal && this.goal.sessionId !== ctx.sessionManager.getSessionId()) {
-      this.goal = { ...this.goal, id: randomUUID(), sessionId: ctx.sessionManager.getSessionId() };
-    }
     this.save(ctx);
+  }
+
+  known(ctx: ExtensionContext, goalId: string) {
+    const file = ctx.sessionManager.getSessionFile();
+    if (!file) throw new Error("Save this conversation before preparing a goal");
+    return sessionStorage(this.pi).knownGoal(file, ctx.sessionManager.getSessionId(), goalId);
   }
 
   create(ctx: ExtensionContext, objective: string) {
@@ -52,8 +55,7 @@ export class GoalState {
     if (next !== this.saved) {
       try {
         if (!ctx.sessionManager.getSessionFile()) throw new Error("Save this conversation before setting a goal");
-        validate(this.goal);
-        sessionStorage(this.pi).append("piop-goal", this.goal && { ...this.goal });
+        sessionStorage(this.pi).writeGoal(ctx.sessionManager.getSessionFile()!, ctx.sessionManager.getSessionId(), this.goal);
       } catch (error) { this.goal = JSON.parse(this.saved); throw error; }
       this.saved = next;
       if (!this.goal) process.emit("piop:goal-cleared", ctx.sessionManager.getSessionId());

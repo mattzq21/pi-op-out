@@ -1,3 +1,4 @@
+const goals = require('./goals.cjs');
 const registry = require('../session-registry.cjs');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -108,6 +109,7 @@ function prepare(root, target, body, options) {
 
 function prepareJournal(root, target, prepared, id, lock, lease, options) {
   const contract = dependencies.plan(root, prepared.entries, options.dependencies);
+  if (options.goalSource) goals.copy(options.goalSource, target, prepared.header.id);
   prepared.header = { ...prepared.header, goalAssets: contract.goalAssets };
   prepared.entries[0] = prepared.header;
   prepared.body = prepared.entries.map(value => JSON.stringify(value)).join('\n') + '\n';

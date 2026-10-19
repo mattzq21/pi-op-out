@@ -75,7 +75,7 @@ import brokerModule26 from '../resources/session-broker/subagent-mailbox.ts?raw'
 import storageRuns from '../resources/piop-storage/subagent-results.ts?raw';
 import brokerModule28 from '../resources/session-broker/subagent-recovery.ts?raw';
 import brokerModule29 from '../resources/session-broker/subagent-identity.ts?raw';
-import goalsRecords from '../resources/piop-goals/goal-records.cjs?raw';
+import goalsRecords from '../resources/piop-storage/goals.cjs?raw';
 import storageReferencesRaw from '../resources/piop-storage/reference-publication-lock.cjs?raw';
 import storageGoalDependencies from '../resources/piop-storage/goal-dependencies.cjs?raw';
 import storageGoalPreparedFiles from '../resources/piop-storage/goal-prepared-files.cjs?raw';
@@ -203,6 +203,7 @@ export const SESSION_EXTENSIONS: Array<[string, Array<[string, string]>]> = [
     ['identities.mjs', storageIdentities],
     ['bootstrap.mjs', storageBootstrap],
     ['interface.ts', storageInterface],
+    ['goals.cjs', goalsRecords],
     ['session-storage.mjs', embedFileLock(sessionStorageRaw)],
     ['goal-files.ts', storageGoalFiles],
     ['goal-directory-recovery.cjs', storageGoalRecovery],
@@ -227,7 +228,7 @@ export const SESSION_EXTENSIONS: Array<[string, Array<[string, string]>]> = [
     ['commands.ts', controlsCommands], ['fast-mode.ts', controlsFastMode], ['index.ts', controlsIndex],
   ]],
   ['piop-goals', [
-    ['goal-records.cjs', goalsRecords], ['interface.ts', goalsInterface], ['state.ts', goalsState], ['prompts.ts', goalsPrompts], ['coordination.ts', goalsCoordination],
+    ['interface.ts', goalsInterface], ['state.ts', goalsState], ['prompts.ts', goalsPrompts], ['coordination.ts', goalsCoordination],
     ['preparation.ts', goalsPreparation], ['goals.ts', goalsGoals], ['tools.ts', goalsTools],
     ['commands.ts', goalsCommands], ['index.ts', goalsIndex],
   ]],

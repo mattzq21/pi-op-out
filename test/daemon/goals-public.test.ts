@@ -102,8 +102,7 @@ test('a goal continues through empty replies and large usage until completed', a
   expect(calls).toBe(8);
   const entries = (await chat.command({ type: 'get_entries' })).entries;
   const goals = entries.filter((entry: any) => entry.customType === 'piop-goal');
-  expect(goals.map((entry: any) => entry.data?.status ?? null)).toEqual(['active', 'complete', null]);
-  expect(Object.keys(goals[0].data).sort()).toEqual(['id', 'objective', 'sessionId', 'status']);
+  expect(goals).toEqual([]);
   const state = await chat.command({ type: 'get_state' });
   const saved = readFileSync(state.sessionFile, 'utf8').trim().split('\n').map(line => JSON.parse(line));
   expect(saved.filter((entry: any) => entry.customType === 'piop-goal')).toEqual(goals);
