@@ -2,7 +2,6 @@ import { randomUUID } from 'node:crypto';
 import { flag, text } from './json';
 import { ownershipError } from './ownership';
 import { isUuid } from './protocol';
-import { lockGate } from './lock_gate';
 import { attach } from './attachment';
 import { queueCommand } from './session_commands';
 import type { Host } from './controller';
@@ -11,7 +10,7 @@ import type { Session } from './session';
 const CANCELLED_DELIVERY_TTL_MS = 10 * 60_000;
 
 /**
- * Orchestration requests for conversations on this host: locate, read, send a message, interrupt, and recover subagent usage.
+ * Orchestration requests for conversations on this host: locate, read, send a message, and interrupt.
  * A conversation that is not running is started in a hidden view for the request.
  */
 export class Orchestration {
@@ -41,7 +40,6 @@ export class Orchestration {
     switch (action) {
       case 'read': return session ? session.execute({ type: 'get_snapshot' }) : host.ownership().snapshot(id, packet.sessionPath);
       case 'send': return this.send(packet, session);
-      case 'recover_usage': return this.recoverUsage(packet, session);
       default: throw new Error('Unknown orchestration action');
     }
   }
@@ -149,46 +147,8 @@ export class Orchestration {
     const error = session.settings.error();
     if (error !== null) throw new Error(error);
     if (this.deliveryCancelled(text(packet, 'deliveryId'))) throw new Error('Agent delivery was cancelled');
-    if (flag(packet, 'wake')) await session.activateUsageRecovery();
     return queueCommand(session, { type: 'orchestration_message', deliveryId: packet.deliveryId ?? null, sourceSessionId: packet.sourceSessionId ?? null,
       sourceHostId: packet.sourceHostId ?? null, message: packet.message ?? null, wake: packet.wake ?? null });
-  }
-
-  private async recoverUsage(packet: any, existing: Session | undefined): Promise<any> {
-    const id = text(packet, 'sessionKey');
-    const runtime = 'usage-recovery-' + randomUUID();
-    const attached = !existing || existing.stopping();
-    if (attached) await this.attachHidden(packet, runtime, id);
-    let result: any;
-    let failure: unknown;
-    const session = this.host.findSession(id);
-    try {
-      if (!session) throw new Error('Conversation is no longer running');
-      result = await session.execute({ type: 'recover_subagent_usage', sourceSessionId: packet.sourceSessionId ?? null, recoveryDepth: packet.recoveryDepth ?? null, deadline: packet.deadline ?? null });
-    } catch (error) { failure = error ?? new Error('Usage recovery failed'); }
-    if (attached) {
-      try { await this.recoveryDetach(runtime, id); } catch (error) { if (failure === undefined) throw error; }
-    }
-    if (failure !== undefined) throw failure;
-    return result;
-  }
-
-  private async recoveryDetach(runtime: string, id: string): Promise<any> {
-    const host = this.host;
-    const release = await lockGate(host.sessionGates, id);
-    let session: Session | undefined;
-    try {
-      host.attachments.delete(runtime);
-      session = host.subscriptions.get(runtime);
-      host.subscriptions.delete(runtime);
-      if (session) {
-        session.detachView(runtime);
-        try { await session.retire(); } catch {}
-      }
-    } finally { release(); }
-    // Attach takes the ownership lock before the session lock, so ownership is released only after the session lock is free.
-    if (session) await host.releaseUnused(session);
-    return null;
   }
 
   private async detach(runtime: string): Promise<any> {

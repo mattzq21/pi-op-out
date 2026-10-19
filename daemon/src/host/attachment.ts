@@ -80,7 +80,6 @@ class Attachment {
       this.host.attachView(this.runtime, session, structuredClone(this.packet.presence ?? null));
       this.host.remember(this.runtime, session);
       this.stored = this.host.attachments.get(this.runtime);
-      if (this.spec.env.PIOP_USAGE_RECOVERY !== '1') await session.activateUsageRecovery();
       this.host.reconcile(session);
       return { attached: session.views().length > 1 || session.submitted(), owned: true };
     } finally { release(); }

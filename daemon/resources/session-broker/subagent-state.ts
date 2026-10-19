@@ -56,10 +56,6 @@ export function latestRuns(ctx: ExtensionContext) {
   return [...runs.values()];
 }
 
-export function originalRunTask(ctx: ExtensionContext, run: SubagentRun) {
-  return savedSubagentRuns(ctx).find(saved => resultNotificationId(saved) === resultNotificationId(run))?.originalTask ?? run.originalTask ?? run.task;
-}
-
 function precedes(run: SubagentRun, previous: SubagentRun) {
   const generation = (run.generation ?? 0) - (previous.generation ?? 0);
 

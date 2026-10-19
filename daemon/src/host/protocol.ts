@@ -36,7 +36,6 @@ export function argument(spec: LaunchSpec, flagName: string): string | undefined
 
 export function sessionSpec(spec: LaunchSpec, flagName: string, value: string): LaunchSpec {
   const next = cloneSpec(spec);
-  delete next.env.PIOP_USAGE_RECOVERY;
   next.args = [];
   for (let index = 0; index < spec.args.length; index++) {
     const arg = spec.args[index]!;
@@ -104,7 +103,7 @@ function controlAction(command: string): string | undefined {
   }
 }
 
-const APP_REQUESTS = new Set(['queue_prompt', 'prepare_goal_prompt', 'get_goal_preparation', 'orchestration_message', 'recover_subagent_usage', 'activate_usage_recovery', 'provider_auth_refresh', 'context_cap_settings',
+const APP_REQUESTS = new Set(['queue_prompt', 'prepare_goal_prompt', 'get_goal_preparation', 'orchestration_message', 'provider_auth_refresh', 'context_cap_settings',
   'fork_and_forget', 'fork_after', 'prepare_fork', 'select_agent', 'configure_agents', 'get_agent_configuration',
   'review_feedback', 'open_review', 'set_fast_mode', 'conversation_client']);
 

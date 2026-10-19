@@ -48,7 +48,6 @@ import codexWebSearchExtension from '../../extensions/piop-codex-web-search/inde
 import excalidrawSkill from '../../extensions/piop-excalidraw/SKILL.md?raw';
 import excalidrawCheatsheet from '../../extensions/piop-excalidraw/references/cheatsheet.md?raw';
 import storageGoalRecovery from '../resources/piop-storage/goal-directory-recovery.cjs?raw';
-import storageUsage from '../resources/piop-storage/subagent-usage-storage.cjs?raw';
 import brokerModule2 from '../resources/session-broker/app-settings.cjs?raw';
 import brokerModule4 from '../resources/session-broker/client.ts?raw';
 import brokerModule5 from '../resources/session-broker/conversation-location.ts?raw';
@@ -64,16 +63,11 @@ import storagePublicationTypes from '../resources/piop-storage/session-publicati
 import brokerModule17 from '../resources/session-broker/subagents.ts?raw';
 import brokerModule18 from '../resources/session-broker/subagent-state.ts?raw';
 import brokerModule19 from '../resources/session-broker/subagent-reconciliation.ts?raw';
-import subagentTokens from '../resources/session-broker/subagent-tokens.ts?raw';
-import brokerModule20 from '../resources/session-broker/subagent-transcript.ts?raw';
 import brokerModule21 from '../resources/session-broker/orchestration.ts?raw';
 import storageMailbox from '../resources/piop-storage/durable-mailbox.ts?raw';
 import brokerModule23 from '../resources/session-broker/agent-profiles.ts?raw';
-import brokerModule24 from '../resources/session-broker/subagent-usage.ts?raw';
-import brokerModule25Raw from '../resources/session-broker/subagent-usage-channel.ts?raw';
 import brokerModule26 from '../resources/session-broker/subagent-mailbox.ts?raw';
 import storageRuns from '../resources/piop-storage/subagent-results.ts?raw';
-import brokerModule28 from '../resources/session-broker/subagent-recovery.ts?raw';
 import brokerModule29 from '../resources/session-broker/subagent-identity.ts?raw';
 import sessionStateRecords from '../resources/piop-storage/session-records.cjs?raw';
 import goalsRecords from '../resources/piop-storage/goals.cjs?raw';
@@ -120,7 +114,6 @@ const sdkStorage = embedFileLock(sdkStorageRaw);
 const chatgptStorage = bunEnvironment + embedFileLock(chatgptStorageRaw);
 const agentPrompts = embedFileLock(agentPromptsRaw);
 const storagePublicationIo = embedFileLock(storagePublicationIoRaw);
-const brokerModule25 = embedFileLock(brokerModule25Raw);
 const storageReferences = embedFileLock(storageReferencesRaw);
 const storageGoalAssets = embedFileLock(storageGoalAssetsRaw);
 const storageGoalFiles = embedFileLock(storageGoalFilesRaw);
@@ -180,14 +173,9 @@ export const SESSION_BROKER_MODULES: Array<[string, string]> = [
   ['subagents.ts', brokerModule17],
   ['subagent-state.ts', brokerModule18],
   ['subagent-reconciliation.ts', brokerModule19],
-  ['subagent-tokens.ts', subagentTokens],
-  ['subagent-transcript.ts', brokerModule20],
   ['orchestration.ts', brokerModule21],
   ['agent-profiles.ts', brokerModule23],
-  ['subagent-usage.ts', brokerModule24],
-  ['subagent-usage-channel.ts', brokerModule25],
   ['subagent-mailbox.ts', brokerModule26],
-  ['subagent-recovery.ts', brokerModule28],
   ['subagent-identity.ts', brokerModule29],
 ];
 
@@ -218,7 +206,6 @@ export const SESSION_EXTENSIONS: Array<[string, Array<[string, string]>]> = [
     ['review-publication.cjs', storageReviews],
     ['durable-mailbox.ts', storageMailbox],
     ['subagent-results.ts', storageRuns],
-    ['subagent-usage-storage.cjs', storageUsage],
     ['session-file.ts', storagePublication],
     ['session-publication.cjs', storagePublicationJournal],
     ['session-publication-io.cjs', storagePublicationIo],

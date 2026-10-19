@@ -10,14 +10,11 @@ import { join } from "node:path";
 import { currentHost } from "./client.ts";
 import { writeSessionFile } from "../piop-storage/session-file.ts";
 import { activeConversation } from "./conversation-location.ts";
-import { registerSubagentUsage } from "./subagent-usage.ts";
-import type { UsageCheckpoint } from "./subagent-usage.ts";
 import { registerSubagentMailbox } from "./subagent-mailbox.ts";
 import { interruptSession, sendSessionMessage, sessionSnapshot, snapshotStatus } from "./orchestration.ts";
 import { SUBAGENT_PARENT, latestRuns, ownedRuns, saveRun, subagentParent, subagentPayload, registerSubagentResults, type SubagentRun } from "./subagent-state.ts";
-import { acceptedSubmission, cancelSubagent, drainAccountingRecovery, finishRun, observeSubagent, recoverSubagentAccounting, subagentReceiptSchema, SubagentCancellation, type ActiveSubagent } from "./subagent-reconciliation.ts";
-import { accountingUnresolved, resultNotificationId, savedSubagentRuns } from "../piop-storage/subagent-results.ts";
-import { boundedRecovery, registerSubagentRecovery } from "./subagent-recovery.ts";
+import { acceptedSubmission, cancelSubagent, finishRun, observeSubagent, subagentReceiptSchema, SubagentCancellation, type ActiveSubagent } from "./subagent-reconciliation.ts";
+import { savedSubagentRuns } from "../piop-storage/subagent-results.ts";
 
 const MAX_DELEGATION_DEPTH = 2;
 
@@ -172,7 +169,7 @@ async function deliverFollowup(pi: ExtensionAPI, ctx: ExtensionContext, run: Sub
   } finally { lifecycle.revision++; lifecycle.pendingDeliveries--; }
 }
 
-type SubagentExecution = { pi: ExtensionAPI; ctx: ExtensionContext; toolCallId: string; active: Map<string, ActiveSubagent>; results: SubagentRun[]; signal?: AbortSignal; ready: () => void; publish: (run: SubagentRun) => void; reportDescendants: (tokens: number, ctx: ExtensionContext, checkpoint?: UsageCheckpoint) => Promise<void> };
+type SubagentExecution = { pi: ExtensionAPI; ctx: ExtensionContext; toolCallId: string; active: Map<string, ActiveSubagent>; results: SubagentRun[]; signal?: AbortSignal; ready: () => void; publish: (run: SubagentRun) => void };
 
 async function executeSubagent(task: SubagentTask, execution: SubagentExecution) {
   const { pi, ctx, toolCallId, active, results, publish } = execution;
@@ -195,7 +192,6 @@ async function executeSubagent(task: SubagentTask, execution: SubagentExecution)
 
     if (active.has(child.sessionId)) throw new Error("This subagent is already running");
     Object.assign(run, child);
-    run.accountingPending = true;
 
     creationIntent(run, signal);
     lifecycle.run = run;
@@ -257,22 +253,15 @@ async function recoverPreviousRuns(sessionId: string, execution: Omit<SubagentEx
 
     if (run.status === "running") throw new Error("This child's previous task remains unresolved");
 
-    if (accountingUnresolved(run)) await recoverSubagentAccounting(run, { ...execution, ...boundedRecovery(execution) });
   }
 }
 
 export function registerSubagents(pi: ExtensionAPI, mailbox = registerSubagentMailbox(pi)) {
-  const reportDescendants = registerSubagentUsage(pi);
   const resultsDelivery = registerSubagentResults(pi);
   const active = new Map<string, ActiveSubagent>();
   const pending = new Set<Promise<void>>();
-  const accountingJobs = new Map<string, Promise<void>>();
   let controller = new AbortController();
   let context: ExtensionContext | undefined;
-  let restoring = Promise.resolve();
-  registerSubagentRecovery(pi, { active, ready: () => restoring, stopped: () => controller.signal,
-    recover: (run, ctx, scope) => recoverSubagentAccounting(run, { pi, ctx, reportDescendants, ...boundedRecovery(scope) }),
-    activate: ctx => restoreSubagents(ctx), publish: async (run, ctx) => { resultsDelivery.publish(ctx, run); } });
   const taskPath = (ctx: ExtensionContext, run: SubagentRun) => run.taskPath ?? `${delegationScope(ctx).taskPath}/${run.name}`;
 
   const targetRun = (ctx: ExtensionContext, target: string) => {
@@ -291,12 +280,12 @@ export function registerSubagents(pi: ExtensionAPI, mailbox = registerSubagentMa
 
     if (task.sessionId && latestRuns(ctx).some(run => run.sessionId === task.sessionId && run.status === "running")) throw new Error("This child's previous task is unresolved; observe or interrupt it before starting another run");
 
-    requireSubagentSlots(pi, ctx, pending.size - accountingJobs.size, 1);
+    requireSubagentSlots(pi, ctx, pending.size, 1);
 
     if (!task.sessionId && latestRuns(ctx).some(run => run.name === task.name)) throw new Error("Task name already exists; use followup_task to reuse the child");
     const results: SubagentRun[] = [];
     const backgroundSignal = controller.signal;
-    await launchSubagent(task, { pi, ctx, toolCallId, active, results, reportDescendants, signal: backgroundSignal, publish(run) {
+    await launchSubagent(task, { pi, ctx, toolCallId, active, results, signal: backgroundSignal, publish(run) {
       if (backgroundSignal.aborted || run.status === "running") return;
       resultsDelivery.publish(ctx, run);
     } }, pending);
@@ -415,7 +404,7 @@ export function registerSubagents(pi: ExtensionAPI, mailbox = registerSubagentMa
 
     controller.abort(intentional ? new SubagentCancellation("Subagent cancelled with its parent") : new Error("Subagent observation interrupted"));
     mailbox.reset();
-    stopping = Promise.allSettled([...pending, drainAccountingRecovery()]).then(() => {
+    stopping = Promise.allSettled([...pending]).then(() => {
       controller = new AbortController();
       stopping = undefined;
     });
@@ -430,9 +419,7 @@ export function registerSubagents(pi: ExtensionAPI, mailbox = registerSubagentMa
   const reconcile = (ctx: ExtensionContext) => {
     context = ctx;
 
-    if (process.env.PIOP_USAGE_RECOVERY === "1") return;
     resultsDelivery.flush(ctx);
-    reconcileAccounting(ctx);
 
     for (const saved of latestRuns(ctx)) {
       if (saved.status !== "running") {
@@ -443,11 +430,9 @@ export function registerSubagents(pi: ExtensionAPI, mailbox = registerSubagentMa
       if (active.has(saved.sessionId)) continue;
       const run = structuredClone(saved);
       run.runId ??= `${run.toolCallId}:${run.startedAt}`;
-      run.accountingPending = true;
 
       if (run.submission === "prepared") {
         run.status = run.cancelRequested ? "cancelled" : "failed"; run.output = "The task was not submitted before supervision was interrupted";
-        run.accountingPending = false;
         finishRun(pi, ctx, run); resultsDelivery.publish(ctx, run); continue;
       }
 
@@ -463,7 +448,7 @@ export function registerSubagents(pi: ExtensionAPI, mailbox = registerSubagentMa
 
       const signal = AbortSignal.any([controller.signal, childController.signal]);
 
-      const completion = observeSubagent(run, { pi, ctx, reportDescendants, signal }, lifecycle, false)
+      const completion = observeSubagent(run, { pi, ctx, signal }, lifecycle, false)
         .then(() => {
           lifecycle.closing = true; started();
 
@@ -477,22 +462,6 @@ export function registerSubagents(pi: ExtensionAPI, mailbox = registerSubagentMa
     }
   };
 
-  const reconcileAccounting = (ctx: ExtensionContext) => {
-    for (const saved of ownedRuns(ctx)) {
-      if (saved.status === "running" || !accountingUnresolved(saved)) continue;
-
-      const key = resultNotificationId(saved);
-
-      if (accountingJobs.has(key)) continue;
-
-      const job = recoverSubagentAccounting(structuredClone(saved), { pi, ctx, reportDescendants, ...boundedRecovery({ signal: controller.signal }) })
-        .catch(error => ctx.ui.notify(`Saved subagent usage is awaiting reconciliation: ${(error instanceof Error ? error.message : String(error))}`, "error"))
-        .finally(() => { accountingJobs.delete(key); pending.delete(job); });
-
-      accountingJobs.set(key, job); pending.add(job);
-    }
-  };
-
   const restoreSubagents = async (ctx: ExtensionContext) => {
     await stopping;
     resultsDelivery.reset();
@@ -502,7 +471,7 @@ export function registerSubagents(pi: ExtensionAPI, mailbox = registerSubagentMa
     reconcile(ctx);
   };
 
-  pi.on("session_start", (_event, ctx) => restoring = restoreSubagents(ctx).catch(error => ctx.ui.notify(`Subagent restoration remains pending: ${(error instanceof Error ? error.message : String(error))}`, "error")));
+  pi.on("session_start", (_event, ctx) => restoreSubagents(ctx).catch(error => ctx.ui.notify(`Subagent restoration remains pending: ${(error instanceof Error ? error.message : String(error))}`, "error")));
 
   pi.on("agent_start", async (_event, ctx) => {
     await stopping;
@@ -552,7 +521,7 @@ export function registerSubagents(pi: ExtensionAPI, mailbox = registerSubagentMa
 
       reconcile(ctx);
 
-      requireSubagentSlots(pi, ctx, pending.size - accountingJobs.size, params.tasks.length);
+      requireSubagentSlots(pi, ctx, pending.size, params.tasks.length);
       const resumed = params.tasks.flatMap((task) => task.sessionId ? [task.sessionId] : []);
 
       if (new Set(resumed).size !== resumed.length) throw new Error("A child can only receive one task at a time");
@@ -569,7 +538,7 @@ export function registerSubagents(pi: ExtensionAPI, mailbox = registerSubagentMa
         resultsDelivery.publish(ctx, run);
       };
 
-      await Promise.all(params.tasks.map((task) => launchSubagent(task, { pi, ctx, toolCallId, active, results, reportDescendants, signal: backgroundSignal, publish }, pending)));
+      await Promise.all(params.tasks.map((task) => launchSubagent(task, { pi, ctx, toolCallId, active, results, signal: backgroundSignal, publish }, pending)));
       pi.setActiveTools([...new Set([...pi.getActiveTools(), "wait_agent", "await_subagents"])]);
 
       return { ...subagentPayload(results), isError: results.some((run) => run.status === "failed" || run.status === "cancelled") };

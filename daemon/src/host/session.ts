@@ -303,10 +303,6 @@ export class Session {
     await this.queue.drain();
   }
 
-  async activateUsageRecovery(): Promise<void> {
-    if (this.spec.env.PIOP_USAGE_RECOVERY === '1') await this.execute({ type: 'activate_usage_recovery' });
-  }
-
   async retire(): Promise<void> {
     if (this.transient()) throw new Error('This conversation branch is still being prepared');
     if (this.closed()) return;

@@ -177,7 +177,7 @@ async function enqueueBrokerMessage(app: App, broker: BrokerRuntime, response: S
   }
   catch (error: any) { respond(response, 400, { error: error.message }); return; }
   // Only turns that run an agent take a worker slot. Interrupt, read and locate must still get through when every worker is busy.
-  const worker = !orchestration || value?.action === 'send' || value?.action === 'recover_usage';
+  const worker = !orchestration || value?.action === 'send';
   if ((worker && broker.messageCount >= BROKER_WORKERS) || broker.closing) { delivery?.(); respond(response, 503, { error: 'Session broker is busy' }); return; }
   if (worker) broker.messageCount += 1;
   try {
@@ -403,10 +403,9 @@ async function brokerConversationOperation(app: App, broker: BrokerRuntime, valu
   const field = (key: string) => value[key] ?? null;
   const packet: any = { type: 'orchestration', action, sessionKey: id, sessionPath: path,
     sourceSessionId: field('sourceSessionId'), sourceHostId: field('sourceHostId'), message: field('message'), wake: field('wake'), clientId: field('clientId'),
-    deliveryId: field('deliveryId'), deadline: field('deadline'), recoveryDepth: field('recoveryDepth') };
-  if (action === 'send' || action === 'recover_usage') {
+    deliveryId: field('deliveryId') };
+  if (action === 'send') {
     const command = buildPiCommand(broker, settings, host, { kind: 'rpc', cwd, sessionPath: path }, connection.remotePort);
-    if (action === 'recover_usage') command.env.PIOP_USAGE_RECOVERY = '1';
     packet.spec = launchSpec(command);
     packet.cwd = cwd;
   }
@@ -428,6 +427,6 @@ function brokerInterruptionStatus(broker: BrokerRuntime, request: any, result: a
 function orchestrationTarget(value: any): [string, string] {
   if (typeof value?.sessionId !== 'string') throw new Error('sessionId is required');
   if (typeof value?.action !== 'string') throw new Error('action is required');
-  if (!['read', 'send', 'interrupt', 'recover_usage', 'locate'].includes(value.action)) throw new Error('Unknown orchestration action');
+  if (!['read', 'send', 'interrupt', 'locate'].includes(value.action)) throw new Error('Unknown orchestration action');
   return [value.sessionId, value.action];
 }

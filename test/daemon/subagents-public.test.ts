@@ -1,4 +1,5 @@
 import { afterAll, beforeAll, expect, test } from 'bun:test';
+import { Database } from 'bun:sqlite';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { agentDaemon, called, text } from './agent-chats';
@@ -25,6 +26,19 @@ test('a child agent\'s final answer reaches its parent, which continues with it'
   // The chat view lists delegated work from this message; it needs these fields for each run.
   const delivered = (await root.command({ type: 'get_entries' })).entries.find((entry: any) => entry.customType === 'piop-subagent-result');
   expect(delivered.details.runs).toEqual([expect.objectContaining({ name: 'reader', task: 'Summarize the README', status: 'completed', sessionId: child.id, sessionPath: child.path, hostId: 'local' })]);
+  const db = new Database(join(agents.daemon.home, '.piop', 'sessions.sqlite'), { readonly: true });
+  try {
+    const records = db.query('SELECT entry_json FROM session_extension_records WHERE session_id IN (?, ?)').all(root.sessionId, child.id) as { entry_json: string }[];
+    expect(records.map(row => JSON.parse(row.entry_json).customType).filter(type => /^piop-subagent-.*usage$/.test(type))).toEqual([]);
+    expect(db.query("SELECT name FROM sqlite_master WHERE name='session_usage_channels'").all()).toEqual([]);
+    const rows = db.query('SELECT run_json FROM session_subagent_runs WHERE session_id=?').all(root.sessionId) as { run_json: string }[];
+    expect(rows.length).toBeGreaterThan(0);
+    for (const { run_json } of rows) {
+      const run = JSON.parse(run_json);
+      for (const field of ['accountedTokens', 'forwardedTokens', 'accountingPending', 'sourceTotals', 'apiCost', 'offset']) expect(run).not.toHaveProperty(field);
+    }
+  } finally { db.close(); }
+
 }, 120000);
 
 /** An agent that delegates task to a child named name, then answers with what the child delivered. */

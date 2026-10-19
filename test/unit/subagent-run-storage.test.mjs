@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import database from '../../daemon/resources/session-database.cjs';
 import { persistSubagentRun, savedSubagentRuns } from '../../daemon/resources/piop-storage/subagent-results.ts';
 
-test('subagent status updates use one SQL row and retain the original task', t => {
+test('subagent status updates use one SQL row with the current task', t => {
   const root = mkdtempSync(join(tmpdir(), 'piop-run-state-'));
   t.after(() => rmSync(root, { recursive: true, force: true }));
   mkdirSync(join(root, 'sessions'));
@@ -23,7 +23,7 @@ test('subagent status updates use one SQL row and retain the original task', t =
   const saved = savedSubagentRuns(ctx);
   assert.equal(saved.length, 1);
   assert.equal(saved[0].status, 'completed');
-  assert.equal(saved[0].originalTask, 'Original task');
+  assert.equal(saved[0].task, 'Resolved task text');
   assert.equal(db.prepare('SELECT count(*) AS n FROM session_extension_records').get().n, 0);
   db.close();
 });

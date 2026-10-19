@@ -1,29 +1,13 @@
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { constants } from "node:fs";
-import { open } from "node:fs/promises";
 import type { DatabaseSync } from "node:sqlite";
 import { Type as Schema, type Static } from "typebox";
-import { Check, Parse } from "typebox/value";
+import { Parse } from "typebox/value";
 import { open as openDatabase, register, storageRoot } from "../session-database.cjs";
 import { resultNotificationId, runSchema, type SubagentRun } from "../session-broker/subagent-identity.ts";
 
 export { resultNotificationId } from "../session-broker/subagent-identity.ts";
 
 export { runSchema, type SubagentRun } from "../session-broker/subagent-identity.ts";
-
-
-async function syncPath(path: string) {
-  const file = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW);
-
-  try { await file.sync(); } finally { await file.close(); }
-}
-
-export async function syncSubagentTranscript(ctx: ExtensionContext) {
-  const path = ctx.sessionManager.getSessionFile();
-
-  if (!path) throw new Error("Subagent usage requires a saved conversation");
-  await syncPath(path);
-}
 
 function sessionFile(ctx: ExtensionContext) {
   const file = ctx.sessionManager.getSessionFile();
@@ -83,8 +67,6 @@ function mergePendingRun(db: DatabaseSync, run: SubagentRun) {
 
   if (previous && previous.status !== "running" && run.status === "running") return false;
 
-  if (previous?.accountingPending === false && run.accountingPending) return false;
-  run.originalTask = previous?.originalTask ?? run.task;
   run.deliveryIds = [...new Set([...(previous?.deliveryIds ?? []), ...(run.deliveryIds ?? [])])];
 
   return true;
@@ -102,8 +84,6 @@ export function persistSubagentRun(ctx: ExtensionContext, run: SubagentRun) {
     if (accepted) storeRun(db, Parse(runSchema, run));
     db.exec("COMMIT");
   } finally { db.close(); }
-
-
 }
 
 function readRuns(file: string, sessionId: string) {
@@ -119,22 +99,4 @@ export function savedSubagentRuns(ctx: ExtensionContext) {
   const file = ctx.sessionManager.getSessionFile();
 
   return file ? readRuns(file, ctx.sessionManager.getSessionId()) : [];
-}
-
-export async function unresolvedSubagentRuns(file: string, sessionId: string) {
-  return readRuns(file, sessionId).filter(accountingUnresolved);
-}
-
-export function accountingUnresolved(run: SubagentRun) {
-  if (run.status === "running" || run.accountingPending) return true;
-  const total = run.accountedTokens ?? 0;
-
-  return total > (run.forwardedTokens ?? 0);
-}
-
-export function reportedSubagentUsage(ctx: ExtensionContext, run: SubagentRun) {
-  const schema = Schema.Object({ runId: Schema.String(), total: Schema.Integer({ minimum: 0 }) });
-  const runId = resultNotificationId(run);
-
-  return ctx.sessionManager.getEntries().reduce((total, entry) => entry.type === "custom" && entry.customType === "piop-subagent-usage" && Check(schema, entry.data) && entry.data.runId === runId ? Math.max(total, entry.data.total) : total, 0);
 }

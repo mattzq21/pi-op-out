@@ -214,7 +214,7 @@ export class Host implements SessionHost {
       const runs = database.prepare('SELECT run_json FROM session_subagent_runs WHERE session_id=?').all(id);
       return !runs.some(row => {
         const run = JSON.parse(String(row.run_json));
-        return run.status === 'running' || run.accountingPending || run.resultDelivery === 'pending';
+        return run.status === 'running' || run.resultDelivery === 'pending';
       });
     } finally { database.close(); }
   }
