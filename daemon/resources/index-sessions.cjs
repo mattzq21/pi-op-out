@@ -61,7 +61,6 @@ class SessionIndex {
       if (entry.customType === 'pi-desktop-resume' && Check(resumeSchema, data)) this.resumes.add(data.message);
     }
 
-    if (entry.type === 'session_info' && entry.name?.trim()) this.name = entry.name.trim().slice(0, 2000);
   }
 
   parent(kind, data) {
@@ -163,6 +162,7 @@ class SessionIndex {
   }
 
   summary(path) {
+    if (this.header) this.name = stateRecords.sessionName(path, this.header.id);
     this.recordBranch();
     if (this.interruptedBytes) console.warn(`${path}: last write was interrupted; ignored ${this.interruptedBytes} bytes`);
     if (this.damagedLines.length) {

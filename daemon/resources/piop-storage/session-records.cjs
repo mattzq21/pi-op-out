@@ -2,11 +2,12 @@ const database = require('../session-database.cjs');
 const { randomUUID, createHash } = require('node:crypto');
 
 const currentTypes = new Set(['pi-desktop-pause-state', 'pi-define-agents-state', 'piop-fast-mode-state', 'piop-context-cap', 'piop-session-cost-limit', 'piop-openai-cache-fork', 'piop-codemode-abilities']);
-const isCurrent = entry => entry.type === 'custom' && currentTypes.has(entry.customType);
+const stateKey = entry => entry.type === 'session_info' ? 'piop-session-name' : entry.customType;
+const isCurrent = entry => entry.type === 'session_info' || entry.type === 'custom' && currentTypes.has(entry.customType);
 
-function history(entries) {
-  const settings = new Map(entries.filter(isCurrent).map(entry => [entry.id, entry.parentId]));
-  return entries.filter(entry => !isCurrent(entry)).map(entry => {
+function history(entries, current = isCurrent) {
+  const settings = new Map(entries.filter(entry => current(entry) && typeof entry.id === 'string').map(entry => [entry.id, entry.parentId]));
+  return entries.filter(entry => !current(entry)).map(entry => {
     let parentId = entry.parentId;
     const seen = new Set();
     while (settings.has(parentId)) {
@@ -34,7 +35,7 @@ function transaction(file, sessionId, operation) {
 
 function capture(entries) {
   let after = null;
-  const current = new Map(entries.filter(isCurrent).map(entry => [entry.customType, { after: null, entry: { ...entry, parentId: null } }]));
+  const current = new Map(entries.filter(isCurrent).map(entry => [stateKey(entry), { after: null, entry: { ...entry, id: entry.id ?? randomUUID(), parentId: null } }]));
   const records = [...current.values()];
   for (const entry of history(entries).slice(1)) {
     if (entry.type === 'custom') records.push({ after, entry });
@@ -48,7 +49,7 @@ function seed(file, sessionId, records) {
     const insert = db.prepare('INSERT INTO session_extension_records (session_id, entry_id, after_id, entry_json) VALUES (?, ?, ?, ?) ON CONFLICT(session_id, entry_id) DO NOTHING');
     const previous = db.prepare('SELECT after_id, entry_json FROM session_extension_records WHERE session_id=? AND entry_id=?');
     for (const { after, entry } of records) {
-      if (entry.type !== 'custom' || typeof entry.id !== 'string' || !entry.customType?.trim()) throw new Error('Invalid session state record');
+      if (typeof entry.id !== 'string' || (entry.type === 'session_info' ? typeof entry.name !== 'string' : entry.type !== 'custom' || !entry.customType?.trim())) throw new Error('Invalid session state record');
       if (isCurrent(entry)) { setCurrent(db, sessionId, entry); continue; }
       const json = JSON.stringify(entry);
       const saved = previous.get(sessionId, entry.id);
@@ -65,7 +66,7 @@ function save(file, entries) {
 }
 
 function append(file, sessionId, after, entry) {
-  if (entry.type !== 'custom' || !entry.customType?.trim()) throw new Error('Invalid session state record');
+  if (entry.type === 'session_info' ? typeof entry.name !== 'string' : entry.type !== 'custom' || !entry.customType?.trim()) throw new Error('Invalid session state record');
   transaction(file, sessionId, db => {
     if (isCurrent(entry)) { setCurrent(db, sessionId, entry); return; }
     db.prepare('INSERT INTO session_extension_records (session_id, entry_id, after_id, entry_json) VALUES (?, ?, ?, ?)').run(sessionId, entry.id, after, JSON.stringify(entry));
@@ -86,10 +87,11 @@ function records(file, sessionId, connection) {
 function setCurrent(db, sessionId, entry) {
   const saved = { ...entry, parentId: null };
   db.prepare(`INSERT INTO session_extension_state (session_id, state_key, entry_json) VALUES (?, ?, ?)
-    ON CONFLICT(session_id, state_key) DO UPDATE SET entry_json=excluded.entry_json`).run(sessionId, entry.customType, JSON.stringify(saved));
+    ON CONFLICT(session_id, state_key) DO UPDATE SET entry_json=excluded.entry_json`).run(sessionId, stateKey(entry), JSON.stringify(saved));
 }
 
 function merge(file, entries, connection) {
+  entries = history(entries, entry => entry.type === 'session_info');
   const header = entries[0];
   if (header?.type !== 'session') throw new Error('Session state requires its conversation header');
   const known = new Set(entries.map(entry => entry.id));
@@ -114,8 +116,16 @@ function revision(file, sessionId) {
   finally { db.close(); }
 }
 
+function sessionName(file, sessionId, connection) {
+  const db = connection ?? database.open(database.storageRoot(file));
+  try {
+    const row = db.prepare("SELECT entry_json FROM session_extension_state WHERE session_id=? AND state_key='piop-session-name'").get(sessionId);
+    return row ? JSON.parse(row.entry_json).name.trim() || undefined : undefined;
+  } finally { if (!connection) db.close(); }
+}
+
 function create(type, data, parentId) {
   return { type: 'custom', customType: type, data: structuredClone(data), id: randomUUID(), parentId, timestamp: new Date().toISOString() };
 }
 
-module.exports = { isCurrent, history, stored, save, seed, capture, append, records, merge, revision, create };
+module.exports = { stateKey, sessionName, isCurrent, history, stored, save, seed, capture, append, records, merge, revision, create };

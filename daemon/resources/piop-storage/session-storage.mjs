@@ -14,11 +14,11 @@ const installedStorageClasses = new WeakSet();
 const currentSessionState = new WeakMap();
 
 function takeCurrentState(manager, entries) {
-  currentSessionState.set(manager, new Map(entries.filter(stateRecords.isCurrent).map(entry => [entry.customType, { ...entry, parentId: null }])));
+  currentSessionState.set(manager, new Map(entries.filter(stateRecords.isCurrent).map(entry => [stateRecords.stateKey(entry), { ...entry, parentId: null }])));
   return stateRecords.history(entries);
 }
 
-function currentEntries(manager) { return [...(currentSessionState.get(manager)?.values() ?? [])].sort((a, b) => a.customType.localeCompare(b.customType)); }
+function currentEntries(manager) { return [...(currentSessionState.get(manager)?.values() ?? [])].sort((a, b) => stateRecords.stateKey(a).localeCompare(stateRecords.stateKey(b))); }
 
 const failedSessionStorage = new WeakSet();
 
@@ -331,7 +331,7 @@ function sessionStorageAppend(manager, entry) {
     const previous = baseline?.path === manager.sessionFile && baseline.entries === manager.fileEntries ? baseline.references : managedGoalReferences(manager.fileEntries);
     const references = managedGoalReferences([entry]);
     validateNewGoalReferences(references, previous);
-    if (entry.type === "custom") {
+    if (entry.type === "custom" || stateRecords.isCurrent(entry)) {
       const after = manager.fileEntries.findLast(item => item.type !== "session" && item.type !== "custom")?.id ?? null;
       stateRecords.append(manager.sessionFile, manager.getSessionId(), after, entry);
     } else appendSessionStorage(manager, entry);
@@ -431,6 +431,10 @@ export function installSessionStorage(SessionManager, recordReferences) {
   prototype.getEntries = function () { return [...currentEntries(this), ...getEntries.call(this)]; };
   prototype.getBranch = function (...args) { return [...currentEntries(this), ...getBranch.apply(this, args)]; };
 
+  prototype.getSessionName = function () {
+    return currentSessionState.get(this)?.get("piop-session-name")?.name.trim() || undefined;
+  };
+
   prototype.appendCustomEntry = function (type, data) {
     const entry = stateRecords.create(type, data, this.leafId);
     this._appendEntry(entry);
@@ -443,7 +447,7 @@ export function installSessionStorage(SessionManager, recordReferences) {
       entry = { ...entry, parentId: null };
       if (this.persist && this.sessionFile) sessionStorageAppend(this, entry);
       const current = currentSessionState.get(this) ?? new Map();
-      current.set(entry.customType, entry);
+      current.set(stateRecords.stateKey(entry), entry);
       currentSessionState.set(this, current);
       return;
     }

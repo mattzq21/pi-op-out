@@ -1,3 +1,4 @@
+const stateRecords = require('./piop-storage/session-records.cjs');
 const { Type } = require("typebox");
 const { Check } = require("typebox/value");
 const { validSessionHeader } = require("./session-header.cjs");
@@ -25,24 +26,21 @@ function safeSessionId(sessionId) {
 }
 
 async function inspectSession(file, includeArchiveDetails, read) {
-  const { header, explicitName, firstPrompt, malformed, result } = await read(file, () => inspectTranscript(file));
+  const { header, firstPrompt, malformed, result } = await read(file, () => inspectTranscript(file));
   const observed = result;
 
   if (!includeArchiveDetails) return observed;
 
-  return archiveDetails(file, header, explicitName, firstPrompt, malformed, observed);
+  return archiveDetails(file, header, validSessionHeader(header) ? stateRecords.sessionName(file, header.id) : undefined, firstPrompt, malformed, observed);
 }
 
 async function inspectTranscript(file) {
   let header;
-  let explicitName = "";
   let firstPrompt = "";
   let malformed = false;
   const observation = createObservation();
 
   const recordDescription = (entry) => {
-    if (entry.type === "session_info" && Check(Type.String(), entry.name) && entry.name.trim()) explicitName = entry.name.trim().slice(0, 2000);
-
     if (!firstPrompt && entry.type === "message" && entry.message?.role === "user") firstPrompt = messageText(entry.message).trim().slice(0, 2000);
   };
 
@@ -69,7 +67,7 @@ async function inspectTranscript(file) {
 
   const result = sessionDetails(header, malformed, observation);
 
-  return { header, explicitName, firstPrompt, malformed, result };
+  return { header, firstPrompt, malformed, result };
 }
 
 function sessionDetails(header, malformed, observation) {

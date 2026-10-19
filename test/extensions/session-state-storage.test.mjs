@@ -86,6 +86,7 @@ test('failed SQL state writes do not advance the branch or change the transcript
 test('SQL state follows archive and restore and is removed with the session', async t => {
   const f = await fixture(t);
   f.manager.appendCustomEntry('pi-define-agents-state', { active: 'Builder' });
+  f.manager.appendSessionInfo('Named chat');
   const saved = f.manager.getEntries();
   mkdirSync(join(f.root, 'archived'));
   const archived = join(f.root, 'archived', 'chat.jsonl');
@@ -107,6 +108,7 @@ test('fork publication copies current settings once, independent of the selected
   const user = f.manager.appendMessage({ role: 'user', content: 'Start', timestamp: 1 });
   f.manager.appendCustomEntry('piop-fast-mode-state', { enabled: true });
   const left = f.manager.appendMessage({ role: 'user', content: 'Left', timestamp: 2 });
+  f.manager.appendSessionInfo('Current title');
   f.manager.branch(user);
   f.manager.appendCustomEntry('piop-fast-mode-state', { enabled: false });
   f.manager.appendMessage({ role: 'user', content: 'Right', timestamp: 3 });
@@ -118,10 +120,45 @@ test('fork publication copies current settings once, independent of the selected
   await writeSessionFile(target, [{ ...f.manager.getHeader(), id, parentSession: f.file }, ...f.manager.getBranch(left)]);
   assert.equal(readFileSync(target, 'utf8').split('\n').filter(Boolean).map(JSON.parse).some(entry => entry.type === 'custom'), false);
   const fork = f.SessionManager.open(target);
+  assert.equal(fork.getSessionName(), 'Current title');
   assert.deepEqual(fork.getBranch().filter(entry => entry.customType === 'piop-fast-mode-state').map(entry => entry.data), [{ enabled: false }]);
   f.manager.appendCustomEntry('piop-fast-mode-state', { enabled: true });
   assert.equal(f.SessionManager.open(target).getBranch().find(entry => entry.customType === 'piop-fast-mode-state').data.enabled, false);
   const db = database.open(f.root);
-  assert.equal(db.prepare('SELECT count(*) AS n FROM session_extension_state WHERE session_id=?').get(id).n, 1);
+  assert.equal(db.prepare('SELECT count(*) AS n FROM session_extension_state WHERE session_id=?').get(id).n, 2);
   db.close();
+});
+
+
+test('chat names keep one SQL value without writing transcript history', async t => {
+  const f = await fixture(t);
+  const first = f.manager.appendMessage({ role: 'user', content: 'First', timestamp: 1 });
+  const body = readFileSync(f.file, 'utf8');
+  const bundle = join(f.home, 'lists.mjs');
+  await build({ entryPoints: ['daemon/resources/sdk-session-list.mjs'], outfile: bundle, bundle: true, platform: 'node', format: 'esm', target: 'node22', logLevel: 'silent', plugins: [storageSchemaImports()], banner: { js: "import { createRequire } from 'node:module'; const require = createRequire(import.meta.url);" } });
+  (await import(pathToFileURL(bundle))).installSessionLists(f.SessionManager);
+  f.manager.appendSessionInfo('First name');
+  assert.equal((await f.SessionManager.listAll())[0].name, 'First name');
+  f.manager.appendSessionInfo('Current name');
+  assert.equal(f.manager.getSessionName(), 'Current name');
+  assert.equal((await f.SessionManager.listAll())[0].name, 'Current name');
+  assert.equal(f.manager.getLeafId(), first);
+  assert.equal(readFileSync(f.file, 'utf8'), body);
+  assert.equal(f.physical().some(entry => entry.type === 'session_info'), false);
+  f.manager.branch(first);
+  assert.equal(f.manager.getSessionName(), 'Current name');
+  assert.equal(f.SessionManager.open(f.file).getSessionName(), 'Current name');
+  const db = database.open(f.root);
+  try {
+    const rows = db.prepare("SELECT entry_json FROM session_extension_state WHERE session_id=? AND state_key='piop-session-name'").all(f.id);
+    assert.equal(rows.length, 1);
+    assert.equal(JSON.parse(rows[0].entry_json).name, 'Current name');
+    db.exec("CREATE TRIGGER reject_name BEFORE UPDATE ON session_extension_state BEGIN SELECT RAISE(ABORT, 'name write failed'); END;");
+    assert.throws(() => f.manager.appendSessionInfo('Lost name'), /name write failed/);
+    assert.equal(f.manager.getSessionName(), 'Current name');
+    assert.equal(readFileSync(f.file, 'utf8'), body);
+    db.exec('DROP TRIGGER reject_name');
+    f.manager.appendSessionInfo('');
+    assert.equal(f.SessionManager.open(f.file).getSessionName(), undefined);
+  } finally { db.close(); }
 });

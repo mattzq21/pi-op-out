@@ -1,4 +1,5 @@
 import { createServer } from "node:http";
+import stateRecords from '../daemon/resources/piop-storage/session-records.cjs';
 import { reserve, bind, open } from "../daemon/resources/session-database.cjs";
 import { createRequire } from 'node:module';
 import { openSync, closeSync } from 'node:fs';
@@ -74,7 +75,17 @@ export async function publishedTrace(t, traceReader, content, { folder = '', hom
     const fork = await next.ready;
     identities.set(fork.sessionPath, fork.sessionId);
     const publishedHeader = (await readFile(fork.sessionPath, 'utf8')).split('\n')[0];
-    await writeFile(fork.sessionPath, publishedHeader + '\n' + body);
+    const lines = body.split('\n').map(line => {
+      try { return { line, entry: JSON.parse(line) }; } catch { return { line }; }
+    });
+    const names = lines.flatMap(({ entry }) => entry?.type === 'session_info' ? [entry] : []);
+    stateRecords.save(fork.sessionPath, [JSON.parse(publishedHeader), ...names]);
+    const parents = new Map(names.filter(entry => typeof entry.id === 'string').map(entry => [entry.id, entry.parentId]));
+    const transcript = lines.filter(({ entry }) => entry?.type !== 'session_info').map(({ line, entry }) => {
+      if (!entry || !parents.has(entry.parentId)) return line;
+      return JSON.stringify(stateRecords.history([...names, entry]).at(-1));
+    }).join('\n');
+    await writeFile(fork.sessionPath, publishedHeader + '\n' + transcript);
     return fork.sessionPath;
   };
   const path = content === undefined ? undefined : await publish(content);
