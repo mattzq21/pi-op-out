@@ -2,8 +2,18 @@ const database = require('../session-database.cjs');
 const { randomUUID, createHash } = require('node:crypto');
 
 const currentTypes = new Set(['pi-desktop-pause-state', 'pi-define-agents-state', 'piop-fast-mode-state', 'piop-context-cap', 'piop-session-cost-limit', 'piop-openai-cache-fork', 'piop-codemode-abilities']);
-const stateKey = entry => entry.type === 'session_info' ? 'piop-session-name' : entry.customType;
-const isCurrent = entry => entry.type === 'session_info' || entry.type === 'custom' && currentTypes.has(entry.customType);
+const nativeKeys = new Map([['session_info', 'piop-session-name'], ['model_change', 'piop-selected-model'], ['thinking_level_change', 'piop-thinking-level']]);
+const stateKey = entry => nativeKeys.get(entry.type) ?? entry.customType;
+const isCurrent = entry => nativeKeys.has(entry.type) || entry.type === 'custom' && currentTypes.has(entry.customType);
+
+function validRecord(entry) {
+  switch (entry.type) {
+    case 'session_info': return typeof entry.name === 'string';
+    case 'model_change': return typeof entry.provider === 'string' && typeof entry.modelId === 'string';
+    case 'thinking_level_change': return typeof entry.thinkingLevel === 'string';
+    default: return entry.type === 'custom' && !!entry.customType?.trim();
+  }
+}
 
 function history(entries, current = isCurrent) {
   const settings = new Map(entries.filter(entry => current(entry) && typeof entry.id === 'string').map(entry => [entry.id, entry.parentId]));
@@ -49,7 +59,7 @@ function seed(file, sessionId, records) {
     const insert = db.prepare('INSERT INTO session_extension_records (session_id, entry_id, after_id, entry_json) VALUES (?, ?, ?, ?) ON CONFLICT(session_id, entry_id) DO NOTHING');
     const previous = db.prepare('SELECT after_id, entry_json FROM session_extension_records WHERE session_id=? AND entry_id=?');
     for (const { after, entry } of records) {
-      if (typeof entry.id !== 'string' || (entry.type === 'session_info' ? typeof entry.name !== 'string' : entry.type !== 'custom' || !entry.customType?.trim())) throw new Error('Invalid session state record');
+      if (typeof entry.id !== 'string' || !validRecord(entry)) throw new Error('Invalid session state record');
       if (isCurrent(entry)) { setCurrent(db, sessionId, entry); continue; }
       const json = JSON.stringify(entry);
       const saved = previous.get(sessionId, entry.id);
@@ -66,7 +76,7 @@ function save(file, entries) {
 }
 
 function append(file, sessionId, after, entry) {
-  if (entry.type === 'session_info' ? typeof entry.name !== 'string' : entry.type !== 'custom' || !entry.customType?.trim()) throw new Error('Invalid session state record');
+  if (!validRecord(entry)) throw new Error('Invalid session state record');
   transaction(file, sessionId, db => {
     if (isCurrent(entry)) { setCurrent(db, sessionId, entry); return; }
     db.prepare('INSERT INTO session_extension_records (session_id, entry_id, after_id, entry_json) VALUES (?, ?, ?, ?)').run(sessionId, entry.id, after, JSON.stringify(entry));
@@ -91,7 +101,7 @@ function setCurrent(db, sessionId, entry) {
 }
 
 function merge(file, entries, connection) {
-  entries = history(entries, entry => entry.type === 'session_info');
+  entries = history(entries, entry => nativeKeys.has(entry.type));
   const header = entries[0];
   if (header?.type !== 'session') throw new Error('Session state requires its conversation header');
   const known = new Set(entries.map(entry => entry.id));

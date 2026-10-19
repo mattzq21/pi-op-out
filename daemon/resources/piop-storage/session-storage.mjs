@@ -429,7 +429,19 @@ export function installSessionStorage(SessionManager, recordReferences) {
   const getEntry = prototype.getEntry;
   prototype.getEntry = function (id) { return currentEntries(this).find(entry => entry.id === id) ?? getEntry.call(this, id); };
   prototype.getEntries = function () { return [...currentEntries(this), ...getEntries.call(this)]; };
-  prototype.getBranch = function (...args) { return [...currentEntries(this), ...getBranch.apply(this, args)]; };
+  prototype.getBranch = function (...args) {
+    const current = currentEntries(this);
+    const selection = entry => ["model_change", "thinking_level_change"].includes(entry.type);
+    return [...current.filter(entry => !selection(entry)), ...getBranch.apply(this, args), ...current.filter(selection)];
+  };
+  const buildProjection = prototype.buildSessionProjection;
+  prototype.buildSessionProjection = function (...args) {
+    const projection = buildProjection.apply(this, args);
+    const current = currentSessionState.get(this);
+    const model = current?.get("piop-selected-model");
+    return { ...projection, model: model ? { provider: model.provider, modelId: model.modelId } : null,
+      thinkingLevel: current?.get("piop-thinking-level")?.thinkingLevel ?? "off" };
+  };
 
   prototype.getSessionName = function () {
     return currentSessionState.get(this)?.get("piop-session-name")?.name.trim() || undefined;

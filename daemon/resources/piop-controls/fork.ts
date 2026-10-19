@@ -1,3 +1,4 @@
+import { isCurrent } from "../piop-storage/session-records.cjs";
 import { reserveSessionId } from "../piop-storage/session-file.ts";
 import type { ExtensionCommandContext, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { realpath, mkdir, rmdir } from "node:fs/promises";
@@ -47,7 +48,8 @@ export async function forkAndForget(ctx: ExtensionCommandContext, entryId: strin
 }
 
 export async function forkConversation(ctx: ExtensionContext, options: ForkOptions) {
-  const retained = structuredClone(options.position ? positionedHistory(ctx, options.entryId, options.position) : forkHistory(ctx, options.entryId));
+  const selected = options.position ? positionedHistory(ctx, options.entryId, options.position) : forkHistory(ctx, options.entryId);
+  const retained = structuredClone([...selected.filter(entry => !isCurrent(entry)), ...ctx.sessionManager.getEntries().filter(isCurrent)]);
   const header = ctx.sessionManager.getHeader();
   const source = ctx.sessionManager.getSessionFile();
 

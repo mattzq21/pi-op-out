@@ -162,3 +162,36 @@ test('chat names keep one SQL value without writing transcript history', async t
     assert.equal(f.SessionManager.open(f.file).getSessionName(), undefined);
   } finally { db.close(); }
 });
+
+test('model and thinking selections stay current across messages, navigation and restart', async t => {
+  const f = await fixture(t);
+  const { getBranchSelection } = await import(pathToFileURL(join(sdk, 'dist/core/virtual-models.js')));
+  f.manager.appendModelChange('provider', 'old-model');
+  f.manager.appendThinkingLevelChange('low');
+  const user = f.manager.appendMessage({ role: 'user', content: 'Question', timestamp: 1 });
+  f.manager.appendMessage({ role: 'assistant', provider: 'provider', model: 'old-model', content: [{ type: 'text', text: 'Answer' }], stopReason: 'stop', timestamp: 2 });
+  const body = readFileSync(f.file, 'utf8');
+  const leaf = f.manager.getLeafId();
+  f.manager.appendModelChange('provider', 'new-model');
+  f.manager.appendThinkingLevelChange('high');
+  assert.equal(readFileSync(f.file, 'utf8'), body);
+  assert.equal(f.manager.getLeafId(), leaf);
+  for (const manager of [f.manager, f.SessionManager.open(f.file)]) {
+    for (const id of [leaf, user]) {
+      manager.branch(id);
+      assert.deepEqual(manager.buildSessionContext().model, { provider: 'provider', modelId: 'new-model' });
+      assert.equal(manager.buildSessionContext().thinkingLevel, 'high');
+      assert.deepEqual(getBranchSelection(manager.getBranch(), () => undefined), { provider: 'provider', modelId: 'new-model' });
+    }
+  }
+  const db = database.open(f.root);
+  try {
+    assert.equal(db.prepare('SELECT count(*) AS n FROM session_extension_state WHERE session_id=?').get(f.id).n, 2);
+    assert.equal(db.prepare('SELECT count(*) AS n FROM session_extension_records WHERE session_id=?').get(f.id).n, 0);
+    db.exec("CREATE TRIGGER reject_selection BEFORE UPDATE ON session_extension_state BEGIN SELECT RAISE(ABORT, 'selection write failed'); END;");
+    assert.throws(() => f.manager.appendModelChange('provider', 'lost-model'), /selection write failed/);
+    assert.throws(() => f.manager.appendThinkingLevelChange('low'), /selection write failed/);
+    assert.deepEqual(f.manager.buildSessionContext().model, { provider: 'provider', modelId: 'new-model' });
+    assert.equal(f.manager.buildSessionContext().thinkingLevel, 'high');
+  } finally { db.close(); }
+});
