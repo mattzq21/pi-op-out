@@ -103,7 +103,6 @@ async function transfer(host: Host, session: Session, next: Session, runtime: st
     host.attachView(runtime, next, presence);
     await host.releaseUnused(session);
   }
-  await next.activateUsageRecovery();
   host.reconcile(next);
   host.remember(runtime, next);
   if (host.current(runtime, next)) next.publish({ type: 'session_switched' }, runtime);
