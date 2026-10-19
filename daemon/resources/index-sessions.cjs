@@ -183,14 +183,22 @@ async function indexFile(path) {
   const feed = line => {
     index.line(line);
     if (!index.header) return;
-    state ??= stateRecords.records(path, index.header.id);
+    if (!state) {
+      state = new Map();
+      for (const record of stateRecords.records(path, index.header.id)) {
+        const group = state.get(record.after) ?? [];
+        group.push(record.entry);
+        state.set(record.after, group);
+      }
+    }
     let entry;
     try { entry = JSON.parse(line.toString("utf8")); } catch { return; }
     const after = entry.type === "session" ? null : entry.id;
-    for (const record of state.filter(record => record.after === after)) {
-      const bytes = index.bytes;
-      index.line(Buffer.from(JSON.stringify(record.entry)));
+    for (const record of state.get(after) ?? []) {
+      const bytes = index.bytes, lineNumber = index.lineNumber;
+      index.line(Buffer.from(JSON.stringify(record)));
       index.bytes = bytes;
+      index.lineNumber = lineNumber;
     }
   };
 

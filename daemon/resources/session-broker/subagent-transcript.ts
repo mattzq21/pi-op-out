@@ -98,7 +98,7 @@ export async function* transcriptLines(path: string, start = 0, sessionId?: stri
   let input;
   let pending = Buffer.alloc(0);
   let offset = 0;
-  let state: ReturnType<typeof savedRecords> | undefined;
+  const state = new Map<string | null, ReturnType<typeof savedRecords>>();
 
   try {
     if (sessionId) {
@@ -117,10 +117,14 @@ export async function* transcriptLines(path: string, start = 0, sessionId?: stri
         const next = offset + end + 1;
         const line = pending.subarray(0, end).toString("utf8");
         const entry = JSON.parse(line);
-        if (entry.type === "session") state = savedRecords(path, entry.id);
+        if (entry.type === "session") for (const record of savedRecords(path, entry.id)) {
+          const group = state.get(record.after) ?? [];
+          group.push(record);
+          state.set(record.after, group);
+        }
         if (offset >= start) yield { line, offset, next };
         const after = entry.type === "session" ? null : entry.id;
-        if (next >= start) for (const record of state?.filter(record => record.after === after) ?? []) {
+        if (next >= start) for (const record of state.get(after) ?? []) {
           yield { line: JSON.stringify(record.entry), offset: next, next };
         }
         pending = pending.subarray(end + 1);
