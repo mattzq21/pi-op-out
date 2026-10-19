@@ -83,14 +83,14 @@ export function createPiFastModeExtension(options: FastModeExtensionOptions = {}
     pi.on("session_start", (_event, ctx) => load(ctx));
     pi.on("session_tree", (_event, ctx) => load(ctx));
 
-    pi.on("model_select", async (event, ctx) => {
-      currentModel = toModelRef(event.model) ?? toModelRef(ctx.model);
-      try {
-        updateFastStatus(ctx, await session.getEnabled(), currentModel);
-      } catch (error) {
-        clearFastStatus(ctx);
-        notifyError(ctx, error);
-      }
+    // The saved choice loads in this extension's session_start. Another extension can change the model before then, so the status waits for the load without holding up the model change.
+    pi.on("model_select", (event, ctx) => {
+      const model = toModelRef(event.model) ?? toModelRef(ctx.model);
+      currentModel = model;
+      void session.getEnabled().then(
+        enabled => { if (currentModel === model) updateFastStatus(ctx, enabled, model); },
+        error => { if (currentModel === model) { clearFastStatus(ctx); notifyError(ctx, error); } },
+      );
     });
 
     pi.on("before_provider_request", async (event, ctx) => getFastModePayload(await session.getEnabled(), toModelRef(ctx.model) ?? currentModel, event.payload));

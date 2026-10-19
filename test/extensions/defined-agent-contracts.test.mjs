@@ -300,6 +300,22 @@ test('a resumed session keeps its saved agent, skills and fast mode choice inste
   assert.equal(g.capability().active, 'general');
 });
 
+test('a new session whose default agent uses another model than the runtime starts when agents loads before fast mode', async t => {
+  const initial = { provider: 'openai', id: 'initial', api: 'openai-responses' };
+  const chosen = { provider: 'openai', id: 'chosen', api: 'openai-responses' };
+  const f = await agentFixture(t, {
+    config: configured([profile(), profile('chosen', { isDefault: true, model: 'openai/chosen', fastMode: true })]), model: initial, models: [initial, chosen],
+    realFastMode: { agentFirst: true, catalog: [{ slug: 'initial', service_tiers: [{ id: 'priority' }] }, { slug: 'chosen', service_tiers: [{ id: 'priority' }] }] },
+  });
+  await f.load();
+  const started = await Promise.race([f.start().then(() => true), new Promise(resolve => setTimeout(() => resolve(false), 2000))]);
+  assert.equal(started, true);
+  assert.deepEqual(f.modelSelections.map(model => model.id), ['chosen']);
+  assert.equal(f.capability().active, 'chosen');
+  assert.equal(await f.fastEnabled(), true);
+  assert.deepEqual(f.notices, []);
+});
+
 test('manual model and effort defaults survive extension reload', async t => {
   const f = await agentFixture(t, { config: null });
   await f.load(); await f.start();
