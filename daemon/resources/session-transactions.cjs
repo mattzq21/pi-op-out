@@ -208,7 +208,7 @@ function recover(root) {
 }
 
 function recoverPublications(root) {
-  const result = require('./session-broker/session-publication.cjs').recover(root);
+  const result = require('./piop-storage/session-publication.cjs').recover(root);
 
   for (const warning of result.warnings) console.error(`Session publication recovery retained: ${warning}`);
 

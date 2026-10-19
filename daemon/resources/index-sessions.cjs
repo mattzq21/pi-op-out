@@ -1,7 +1,8 @@
+const stateRecords = require('./piop-storage/session-records.cjs');
 const fs = require('node:fs');
 const { Type } = require('typebox');
 const { Check } = require('typebox/value');
-const { reviewVisibility } = require('./session-broker/session-publication.cjs');
+const { reviewVisibility } = require('./piop-storage/session-publication.cjs');
 
 const parentSchema = Type.Object({ parentSessionId: Type.String(), sessionId: Type.Optional(Type.String()) });
 
@@ -60,7 +61,6 @@ class SessionIndex {
       if (entry.customType === 'pi-desktop-resume' && Check(resumeSchema, data)) this.resumes.add(data.message);
     }
 
-    if (entry.type === 'session_info' && entry.name?.trim()) this.name = entry.name.trim().slice(0, 2000);
   }
 
   parent(kind, data) {
@@ -141,6 +141,7 @@ class SessionIndex {
     }
 
     this.metadata(entry);
+    if (stateRecords.isCurrent(entry)) return;
 
     if (entry.type === 'usage') this.recordCost(entry);
 
@@ -162,6 +163,11 @@ class SessionIndex {
   }
 
   summary(path) {
+    if (this.header) this.name = stateRecords.sessionName(path, this.header.id);
+    if (this.header) {
+      this.leaf = stateRecords.selectedLeaf(path, this.header.id, this.leaf);
+      if (this.leaf !== null && !this.nodes.has(this.leaf)) throw new Error('The saved branch points to a missing entry');
+    }
     this.recordBranch();
     if (this.interruptedBytes) console.warn(`${path}: last write was interrupted; ignored ${this.interruptedBytes} bytes`);
     if (this.damagedLines.length) {
@@ -178,6 +184,28 @@ class SessionIndex {
 async function indexFile(path) {
   const index = new SessionIndex();
   let pending = [];
+  let state;
+  const feed = line => {
+    index.line(line);
+    if (!index.header) return;
+    if (!state) {
+      state = new Map();
+      for (const record of stateRecords.records(path, index.header.id)) {
+        const group = state.get(record.after) ?? [];
+        group.push(record.entry);
+        state.set(record.after, group);
+      }
+    }
+    let entry;
+    try { entry = JSON.parse(line.toString("utf8")); } catch { return; }
+    const after = entry.type === "session" ? null : entry.id;
+    for (const record of state.get(after) ?? []) {
+      const bytes = index.bytes, lineNumber = index.lineNumber;
+      index.line(Buffer.from(JSON.stringify(record)));
+      index.bytes = bytes;
+      index.lineNumber = lineNumber;
+    }
+  };
 
   for await (const chunk of fs.createReadStream(path)) {
     let start = 0, end;
@@ -186,7 +214,7 @@ async function indexFile(path) {
       pending.push(chunk.subarray(start, end));
       const line = Buffer.concat(pending);
       pending = []; start = end + 1;
-      index.line(line);
+      feed(line);
     }
 
     if (start < chunk.length) pending.push(chunk.subarray(start));

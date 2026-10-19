@@ -20,7 +20,7 @@ const directory = mkdtempSync(join(home, 'append-chat-test-'));
 try {
   const outfile = join(directory, 'storage.mjs');
   await build({
-    entryPoints: ['daemon/resources/sdk-storage.mjs'], outfile, bundle: true, platform: 'node', format: 'esm', target: 'node22',
+    entryPoints: ['daemon/resources/piop-storage/session-storage.mjs'], outfile, bundle: true, platform: 'node', format: 'esm', target: 'node22',
     logLevel: 'silent', plugins: [storageSchemaImports()],
     banner: { js: "import { createRequire } from 'node:module'; const require = createRequire(import.meta.url);" },
   });

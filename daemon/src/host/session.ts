@@ -15,7 +15,6 @@ import { SessionSettings } from './session_settings';
 import { PromptErrors } from './prompt_errors';
 import { ToolPayload, type ToolPayloadCache } from './tool_payload';
 import { RuntimeWorker, type Request, type WorkerObserver } from './worker';
-import { PENDING_QUESTIONS_STATUS_KEY, QUESTION_RECOVERY_STATUS_KEY } from '../../../extensions/piop-user-questions/interface';
 
 /** The controller functions that a session calls. */
 export interface SessionHost {
@@ -194,7 +193,7 @@ export class Session {
 
   unused(): boolean {
     if (this.busy(null)) return false;
-    return this.viewsList.length === 0 && !this.settings.applying() && !flag(this.pauseState, 'isPausing') && !this.dialogs.blocking();
+    return this.viewsList.length === 0 && !this.settings.applying() && !flag(this.pauseState, 'isPausing') && this.dialogs.empty();
   }
 
   idle(): boolean {
@@ -302,10 +301,6 @@ export class Session {
   async drain(): Promise<void> {
     await this.events;
     await this.queue.drain();
-  }
-
-  async activateUsageRecovery(): Promise<void> {
-    if (this.spec.env.PIOP_USAGE_RECOVERY === '1') await this.execute({ type: 'activate_usage_recovery' });
   }
 
   async retire(): Promise<void> {
@@ -426,13 +421,6 @@ export class Session {
       catch (error) { return { ok: false, error: errorText(error) }; }
     };
     switch (event.statusKey) {
-      case PENDING_QUESTIONS_STATUS_KEY: case QUESTION_RECOVERY_STATUS_KEY: {
-        const result = parsed();
-        if (!result.ok) { this.host.output({ type: 'diagnostic', line: result.error }); return true; }
-        if (event.statusKey === QUESTION_RECOVERY_STATUS_KEY) await this.queue.recoverQuestionAnswers(result.value);
-        else this.dialogs.receiveQuestions(result.value);
-        return true;
-      }
       case 'piop-input-rejected': {
         const result = parsed();
         if (result.ok) this.promptErrors.rejectInput(result.value);
@@ -487,7 +475,7 @@ export class Session {
     if (kind(command) === 'resume' && typeof result?.resumeMessage === 'string' && result.resumeMessage) await this.raw({ type: 'prompt', message: result.resumeMessage });
     if (['set_model', 'set_thinking_level', 'set_session_name', 'fork_and_forget'].includes(kind(command))) this.publish({ type: 'session_info_changed' }, null);
     // The chat list shows the name, so every client reloads it.
-    if (kind(command) === 'set_session_name') this.host.output({ type: 'sessions_changed' });
+    if (['set_session_name', 'fork_and_forget'].includes(kind(command))) this.host.output({ type: 'sessions_changed' });
     return result;
   }
 
@@ -574,7 +562,7 @@ export class Session {
     if (snapshotState && typeof snapshotState === 'object' && !Array.isArray(snapshotState)) {
       snapshotState.isStreaming = this.isWorking;
       snapshotState.viewers = this.visibleViewers();
-      snapshotState.needsInput = this.dialogs.waiting();
+      snapshotState.needsInput = !this.dialogs.empty();
       snapshotState.pendingMessageCount = array(queue, 'steering').length + array(queue, 'followUp').length;
     }
     return {

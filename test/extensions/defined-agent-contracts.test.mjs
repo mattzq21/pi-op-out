@@ -19,15 +19,6 @@ test('agent startup reads local definitions even when a broker is configured', a
   assert.deepEqual(await f.input('Start'), { action: 'continue' });
 });
 
-test('restoring general preserves explicitly enabled question tools', async t => {
-  const f = await agentFixture(t, { tools: ['read', 'request_user_input'], config: null });
-  await f.load(); await f.start();
-  await f.configure(configured([profile('general', { tools: ['read', 'request_user_input'] })]));
-  await f.select('general');
-  assert.ok(f.pi.getActiveTools().includes('request_user_input'));
-  await f.reloadExtensions();
-  assert.ok(f.pi.getActiveTools().includes('request_user_input'));
-});
 
 test('skill switches save before reload and failed activation restores overrides without history writes', async t => {
   const f = await agentFixture(t, { runtime: { skills: { userInvokedSkills: [], agentInvokedSkills: ['/skills/review', '/skills/broken'] } }, config: null });

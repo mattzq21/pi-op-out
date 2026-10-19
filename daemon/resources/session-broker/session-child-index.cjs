@@ -1,9 +1,10 @@
+const stateRecords = require('../piop-storage/session-records.cjs');
 const path = require('node:path');
 const fs = require('node:fs');
 const os = require('node:os');
 const { Type } = require('typebox');
 const { Check } = require('typebox/value');
-const io = require('./session-publication-io.cjs');
+const io = require('../piop-storage/session-publication-io.cjs');
 const tables = require('../session-database.cjs');
 
 const childSchema = Type.Object({ sessionId: Type.String(), sessionPath: Type.String(), kind: Type.Union([Type.Literal('subagent'), Type.Literal('review')]) });
@@ -98,7 +99,7 @@ function add(root, parentSessionId, parentSessionPath, child) {
 }
 
 function registerTranscript(root, sessionPath, body) {
-  const entries = body.trim().split('\n').map(JSON.parse);
+  const entries = stateRecords.merge(sessionPath, body.trim().split('\n').map(JSON.parse));
   const header = entries[0];
 
   if (!Check(io.headerSchema, header)) throw new Error('Invalid conversation child publication');

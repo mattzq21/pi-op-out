@@ -1,8 +1,10 @@
+import { join } from "node:path";
+import { reserve, releaseReservation } from "./session_registry";
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { spawn, type ChildProcess } from 'node:child_process';
 import { readFileSync, statSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
-import { BROKER_BODY_BYTES, BROKER_HEADER_BYTES, BROKER_QUEUE_DEPTH, BROKER_WORKERS, MAX_AGENT_OUTPUT_BYTES } from './config';
+import { STORAGE_DIRECTORY, BROKER_BODY_BYTES, BROKER_HEADER_BYTES, BROKER_QUEUE_DEPTH, BROKER_WORKERS, MAX_AGENT_OUTPUT_BYTES } from './config';
 import { MessageOutput, recover as recoverOutput } from './broker_output';
 import { buildPiCommand, launchSpec, type LaunchCommand } from './pi_launch';
 import { ensureDesktopSessionsDir, shellQuote, spawnOptions } from './process_io';
@@ -175,7 +177,7 @@ async function enqueueBrokerMessage(app: App, broker: BrokerRuntime, response: S
   }
   catch (error: any) { respond(response, 400, { error: error.message }); return; }
   // Only turns that run an agent take a worker slot. Interrupt, read and locate must still get through when every worker is busy.
-  const worker = !orchestration || value?.action === 'send' || value?.action === 'recover_usage';
+  const worker = !orchestration || value?.action === 'send';
   if ((worker && broker.messageCount >= BROKER_WORKERS) || broker.closing) { delivery?.(); respond(response, 503, { error: 'Session broker is busy' }); return; }
   if (worker) broker.messageCount += 1;
   try {
@@ -189,6 +191,18 @@ async function enqueueBrokerMessage(app: App, broker: BrokerRuntime, response: S
 }
 
 async function respondBrokerRequest(app: App, broker: BrokerRuntime, method: string, path: string, body: Buffer): Promise<any> {
+  if (method === 'POST' && path === '/session-identity') {
+    const value = parseJson(body, 'Invalid session identity request');
+    const root = join(homeDir(), STORAGE_DIRECTORY);
+    if (value?.action === 'reserve' && Number.isInteger(value.count) && value.count >= 1 && value.count <= 2) {
+      return { sessionIds: Array.from({ length: value.count }, () => reserve(root)) };
+    }
+    if (value?.action === 'release' && Array.isArray(value.sessionIds) && value.sessionIds.length <= 2 && value.sessionIds.every(isUuid)) {
+      for (const id of value.sessionIds) releaseReservation(root, id);
+      return null;
+    }
+    throw new Error('Invalid session identity request');
+  }
   if (method === 'POST' && path === '/fast-models') {
     const value = parseJson(body, 'Invalid fast model request');
     if (typeof value?.hostId !== 'string') throw new Error('hostId is required');
@@ -389,10 +403,9 @@ async function brokerConversationOperation(app: App, broker: BrokerRuntime, valu
   const field = (key: string) => value[key] ?? null;
   const packet: any = { type: 'orchestration', action, sessionKey: id, sessionPath: path,
     sourceSessionId: field('sourceSessionId'), sourceHostId: field('sourceHostId'), message: field('message'), wake: field('wake'), clientId: field('clientId'),
-    deliveryId: field('deliveryId'), deadline: field('deadline'), recoveryDepth: field('recoveryDepth') };
-  if (action === 'send' || action === 'recover_usage') {
+    deliveryId: field('deliveryId') };
+  if (action === 'send') {
     const command = buildPiCommand(broker, settings, host, { kind: 'rpc', cwd, sessionPath: path }, connection.remotePort);
-    if (action === 'recover_usage') command.env.PIOP_USAGE_RECOVERY = '1';
     packet.spec = launchSpec(command);
     packet.cwd = cwd;
   }
@@ -414,6 +427,6 @@ function brokerInterruptionStatus(broker: BrokerRuntime, request: any, result: a
 function orchestrationTarget(value: any): [string, string] {
   if (typeof value?.sessionId !== 'string') throw new Error('sessionId is required');
   if (typeof value?.action !== 'string') throw new Error('action is required');
-  if (!['read', 'send', 'interrupt', 'recover_usage', 'locate'].includes(value.action)) throw new Error('Unknown orchestration action');
+  if (!['read', 'send', 'interrupt', 'locate'].includes(value.action)) throw new Error('Unknown orchestration action');
   return [value.sessionId, value.action];
 }

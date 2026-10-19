@@ -7,7 +7,7 @@ import { registerOrchestration } from "./session-broker/orchestration.ts";
 import { existsSync } from "node:fs";
 import { initialize } from "./session-broker/session-child-index.cjs";
 
-export { writeSessionFile, publicationRetainsDependencies, type PublicationOptions, type SessionPublication } from "./session-broker/session-file.ts";
+export { writeSessionFile, publicationRetainsDependencies, type PublicationOptions, type SessionPublication } from "./piop-storage/session-file.ts";
 
 export { registerSubagents } from "./session-broker/subagents.ts";
 

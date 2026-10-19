@@ -4,7 +4,7 @@ import { Type } from "typebox";
 import { Check, Errors, Parse } from "typebox/value";
 import { configPath, DEFAULT_PROMPT_PATH, DEFAULT_SYSTEM_PROMPT, resolvePromptPath, ensurePromptFile, snapshotPrompts, ensureDefaultAgentPrompt, readPrompt, readConfigDocument, writeConfig } from "./prompts.ts";
 import { mcpServersSchema } from "./mcp-schema.ts";
-import { fallbackConfig, migrateQuestionSnapshot, selectedProfileState } from "./profiles.ts";
+import { fallbackConfig, copySnapshot, selectedProfileState } from "./profiles.ts";
 import { migrateExcalidrawAgent } from "./excalidraw.ts";
 import { mcpServers, type McpServers, type LegacyMcpServer } from "./mcp-config.ts";
 import type { Agent, AgentSnapshot, RequiredToolsRequest, McpToolsRequest, McpSelection, SessionAgentState } from "./contracts.ts";
@@ -23,7 +23,7 @@ const STATUS_KEY = "pi-define-agents";
 
 const sessionTools = ["subagent"];
 
-export type Config = { revision?: string; agents: Agent[]; webSearchDefaultApplied?: boolean; sessionToolsDefaultApplied?: boolean; subagentsDefaultApplied?: boolean; diagramistDefaultApplied?: boolean; askerAgentDefaultApplied?: boolean; tokagentDefaultApplied?: boolean; excalidrawAgentDefaultApplied?: boolean };
+export type Config = { revision?: string; agents: Agent[]; webSearchDefaultApplied?: boolean; sessionToolsDefaultApplied?: boolean; subagentsDefaultApplied?: boolean; diagramistDefaultApplied?: boolean; tokagentDefaultApplied?: boolean; excalidrawAgentDefaultApplied?: boolean };
 
 type ConfigRuntime = { enabledTools?: readonly string[] };
 
@@ -136,7 +136,7 @@ function normalize(value: Omit<Partial<Config>, "agents"> & { agents?: StoredAge
 
   if (!defaults.length) required(agents.find(agent => agent.name === "general")).isDefault = true;
 
-  return { revision: value.revision, agents, webSearchDefaultApplied: value.webSearchDefaultApplied === true, sessionToolsDefaultApplied: value.sessionToolsDefaultApplied === true, subagentsDefaultApplied: value.subagentsDefaultApplied === true, diagramistDefaultApplied: value.diagramistDefaultApplied === true, askerAgentDefaultApplied: value.askerAgentDefaultApplied === true, tokagentDefaultApplied: value.tokagentDefaultApplied === true, excalidrawAgentDefaultApplied: value.excalidrawAgentDefaultApplied === true };
+  return { revision: value.revision, agents, webSearchDefaultApplied: value.webSearchDefaultApplied === true, sessionToolsDefaultApplied: value.sessionToolsDefaultApplied === true, subagentsDefaultApplied: value.subagentsDefaultApplied === true, diagramistDefaultApplied: value.diagramistDefaultApplied === true, tokagentDefaultApplied: value.tokagentDefaultApplied === true, excalidrawAgentDefaultApplied: value.excalidrawAgentDefaultApplied === true };
 }
 
 async function readConfig(pi: ConfigRuntime, supplied: StoredConfig | undefined, initialize: boolean, storage: ConfigStorage): Promise<Config> {
@@ -182,31 +182,6 @@ function migrateSubagents(config: Config, pi: ConfigRuntime) {
   return false;
 }
 
-function migrateUserInput(config: Config, pi: ConfigRuntime) {
-  if (config.askerAgentDefaultApplied || !enabledTools(pi)?.includes("request_user_input")) return false;
-  const general = config.agents.find((agent) => agent.name === "general");
-
-  if (general && !config.agents.some(agent => agent.name === "asker-agent")) {
-    const asker = structuredClone(general);
-    asker.name = "asker-agent";
-    delete asker.isDefault;
-    asker.tools = [...new Set([...asker.tools, "request_user_input"])];
-    config.agents.push(asker);
-  }
-
-  for (const agent of config.agents) {
-    agent.tools = [...new Set(agent.tools.flatMap(tool => {
-      if (tool !== "request_user_input_async" && tool !== "request_user_input") return [tool];
-
-      return agent.name === "general" ? [] : ["request_user_input"];
-    }))];
-  }
-
-  config.askerAgentDefaultApplied = true;
-
-  return true;
-}
-
 function migrateTokagent(config: Config, pi: ConfigRuntime) {
   if (config.tokagentDefaultApplied) return false;
 
@@ -241,7 +216,7 @@ export async function loadConfig(pi: ConfigRuntime, supplied?: StoredConfig, ini
 
 async function loadMigratedConfig(pi: ConfigRuntime, supplied: StoredConfig | undefined, initialize: boolean, storage: ConfigStorage): Promise<Config> {
   const config = await readConfig(pi, supplied, initialize, storage);
-  let changed = [migrateSessionTools(config, pi), migrateSubagents(config, pi), await migrateDiagramist(config, pi, storage), migrateUserInput(config, pi), await migrateExcalidrawAgent(config, storage)].some(Boolean);
+  let changed = [migrateSessionTools(config, pi), migrateSubagents(config, pi), await migrateDiagramist(config, pi, storage), await migrateExcalidrawAgent(config, storage)].some(Boolean);
 
   for (const agent of config.agents) {
     if (!agent.tools.some((tool) => tool === "exec_command" || tool === "apply_patch")) continue;
@@ -415,7 +390,7 @@ export default async function defineAgents(pi: ExtensionAPI) {
   const publish = (ctx: ExtensionContext) => ctx.ui.setStatus(STATUS_KEY, `json:${encode({ version: 1, active: currentAgent()?.name ?? active, locked, saved: !!snapshot, unavailable: !currentAgent(), config })}`);
 
   const saveState = (submit = false) => {
-    const state = { active, modelOverride, effortOverride, snapshot };
+    const state = { active, modelOverride, effortOverride, snapshot, locked };
 
     if (!submit && !locked) {
       process.env[DRAFT_STATE_ENV] = JSON.stringify({ session: runtimeSession, identity: savedState, state });
@@ -640,7 +615,7 @@ export default async function defineAgents(pi: ExtensionAPI) {
     const branch = ctx.sessionManager.getBranch();
     const { states, stored, identity } = readAgentState(branch, runtimeSession);
     savedState = identity;
-    snapshot = migrateQuestionSnapshot(stored?.snapshot);
+    snapshot = copySnapshot(stored?.snapshot);
     active = startingAgentName(stored);
 
     locked = sessionIsLocked(states, branch);
@@ -671,7 +646,7 @@ export default async function defineAgents(pi: ExtensionAPI) {
   pi.on("resources_discover", (_event, ctx) => {
     if (!snapshot) {
       const stored = readAgentState(ctx.sessionManager.getBranch(), ctx.sessionManager.getSessionFile() || "").stored;
-      snapshot = migrateQuestionSnapshot(stored?.snapshot);
+      snapshot = copySnapshot(stored?.snapshot);
       active = startingAgentName(stored);
     }
     const agent = currentAgent(); const skillPaths = agent ? agentSkills(pi, agent) : [];

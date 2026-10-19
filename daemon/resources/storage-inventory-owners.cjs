@@ -42,18 +42,7 @@ function recordSession(discovery, details, candidate, root) {
     addRoot(discovery.legacy, root, source, 'unattributed', [owner]);
   }
 
-  observeSavedGoal(root, id, details);
-
   recordGoals(discovery, details, owner, candidate);
-}
-
-function observeSavedGoal(root, id, details) {
-  if (!id) return;
-  const goal = require('./session-broker/goal-storage.cjs').read(root, id);
-
-  if (!goal) return;
-
-  for (const directory of require('./session-broker/goal-assets.cjs').directReferences([goal], root)) details.observation.goals.add(directory);
 }
 
 function recordGoals(discovery, details, owner, candidate) {

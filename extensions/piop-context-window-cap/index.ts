@@ -30,7 +30,7 @@ type Branch = ReturnType<ExtensionContext["sessionManager"]["getBranch"]>;
 
 type Choice = { cap: number | null; source: ContextCapSource };
 
-/** The latest choice entry on the branch and the clamped window recorded after it, if any. */
+
 type Logged = { choice?: Choice; clamp?: number };
 
 type Operation = { kind: "manual"; cap: number | null } | { kind: "reset" } | { kind: "settings"; settings: ContextCapSettings } | { kind: "refresh" };
@@ -41,7 +41,8 @@ type Subscriber = { listener: (state: ContextCapState) => void; onError: (error:
 
 const entrySchema = Type.Object({
   cap: Type.Union([Type.Null(), Type.Integer({ minimum: 1, maximum: Number.MAX_SAFE_INTEGER })]),
-  source: Type.Union([Type.Literal("manual"), Type.Literal("config"), Type.Literal("agent_definition"), Type.Literal("modelMax")]),
+  source: Type.Union([Type.Literal("manual"), Type.Literal("config"), Type.Literal("agent_definition")]),
+  clamp: Type.Optional(Type.Integer({ minimum: 1 })),
 });
 
 const asError = (error: unknown) => error instanceof Error ? error : new Error(String(error));
@@ -50,32 +51,14 @@ const sameChoice = (left: Choice | undefined, right: Choice | undefined) => left
 
 const sameState = (left: ContextCapState | undefined, right: ContextCapState) => left?.cap === right.cap && left.source === right.source && left.appliedWindow === right.appliedWindow;
 
-/** Reads the chosen cap from the branch. A trailing modelMax entry is a clamp; the choice is the entry before it. */
-export function readLog(branch: Branch): Logged {
-  let clamp: number | undefined;
-
-  for (const entry of [...branch].reverse()) {
-    if (entry.type !== "custom" || entry.customType !== CAP_ENTRY) continue;
-
-    if (!Check(entrySchema, entry.data)) throw new Error("Saved context cap entry " + entry.id + " is invalid");
-    const data: ContextCapEntry = entry.data;
-
-    if (data.source === "modelMax") {
-      if (data.cap === null) throw new Error("Saved context cap entry " + entry.id + " has no clamped window");
-      clamp ??= data.cap;
-      continue;
-    }
-
-    const error = data.cap === null ? undefined : capRangeError(data.cap);
-
-    if (error) throw new Error("Saved context cap entry " + entry.id + " is invalid: " + error);
-
-    return { choice: { cap: data.cap, source: data.source }, clamp };
-  }
-
-  if (clamp !== undefined) throw new Error("Saved context cap history has a clamped window without a chosen cap");
-
-  return {};
+export function readLog(entries: Branch): Logged {
+  const entry = entries.findLast(entry => entry.type === "custom" && entry.customType === CAP_ENTRY);
+  if (!entry || entry.type !== "custom") return {};
+  if (!Check(entrySchema, entry.data)) throw new Error("Saved context cap is invalid");
+  const data: ContextCapEntry = entry.data;
+  const error = data.cap === null ? undefined : capRangeError(data.cap);
+  if (error) throw new Error("Saved context cap is invalid: " + error);
+  return { choice: { cap: data.cap, source: data.source }, clamp: data.clamp };
 }
 
 /** Resolves agent definition, provider/model config, general config, then the model default. */
@@ -216,18 +199,10 @@ export default function contextWindowCap(pi: ExtensionAPI) {
 
   const append = (data: ContextCapEntry) => { pi.appendEntry(CAP_ENTRY, data); };
 
-  /** Appends the entries that bring the branch history to the effective choice and clamp. */
   const record = (next: Choice) => {
     const clamp = clampFor(next);
-
-    if (!sameChoice(logged.choice, next)) {
-      append({ cap: next.cap, source: next.source });
-      logged = { choice: next };
-    }
-
-    if (logged.clamp === clamp) return;
-
-    append(clamp === undefined ? { cap: next.cap, source: next.source } : { cap: clamp, source: "modelMax" });
+    if (sameChoice(logged.choice, next) && logged.clamp === clamp) return;
+    append({ cap: next.cap, source: next.source, ...(clamp === undefined ? {} : { clamp }) });
     logged = { choice: next, clamp };
   };
 

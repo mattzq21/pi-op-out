@@ -1,17 +1,17 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Type as Schema, type Static } from "typebox";
 import { Parse } from "typebox/value";
-import { goalImagesSchema, goalPreparationView } from "./files.ts";
+import { goalImagesSchema, goalPreparationView } from "../piop-storage/goal-files.ts";
 import { objectivePrompt, prepareGoal, resumePreparedGoal, type GoalCore } from "./preparation.ts";
 import type { GoalReport, GoalSession } from "./interface.ts";
 
-const USAGE = "/goal [objective|edit|pause|resume|clear|budget <tokens|clear>]";
+const USAGE = "/goal [objective|edit|pause|resume|clear]";
 
 const promptSchema = Schema.Object({ message: Schema.String(), goalSubmissionId: Schema.Optional(Schema.String()), images: Schema.Optional(goalImagesSchema), prepared: Schema.Optional(Schema.Boolean()) });
 
 const preparationRequestSchema = Schema.Object({ goalSubmissionId: Schema.String() });
 
-const isGoalObjective = (value: string) => Boolean(value) && !["edit", "clear", "pause", "resume", "budget"].includes(value) && !value.startsWith("budget ");
+const isGoalObjective = (value: string) => Boolean(value) && !["edit", "clear", "pause", "resume"].includes(value);
 
 function goalObjective(text: string) {
   const value = text.trimStart().match(/^\/goal\s+([\s\S]*)$/)?.[1].trim();
@@ -23,11 +23,9 @@ function promptGoalObjective(message: string, images: Static<typeof goalImagesSc
   return goalObjective(message) ?? (images.length && message.trim() === "/goal" ? "" : undefined);
 }
 
-function goalSummary({ goal, remainingTokens }: GoalReport) {
+function goalSummary({ goal }: GoalReport) {
   if (!goal) return `No goal is set. ${USAGE}`;
-  const budget = goal.tokenBudget === null ? `${goal.tokensUsed.toLocaleString()} used; no limit` : `${goal.tokensUsed.toLocaleString()} / ${goal.tokenBudget.toLocaleString()} (${remainingTokens?.toLocaleString()} remaining)`;
-
-  return `Goal ${goal.status.replaceAll("_", " ")}\n\n${goal.objective}\n\nTokens: ${budget}\nActive time: ${goal.timeUsedSeconds}s\n\n${USAGE}`;
+  return `Goal ${goal.status}\n\n${goal.objective}\n\n${USAGE}`;
 }
 
 /** Runs /goal arguments other than a new objective. */
@@ -38,11 +36,7 @@ async function runGoalCommand(value: string, ctx: ExtensionContext, session: Goa
     case "clear": return session.clear(ctx);
     case "pause": return session.pause(ctx);
     case "resume": return session.resume(ctx);
-    default:
-      if (!value.startsWith("budget ")) throw new Error(USAGE);
-      const budget = value.slice(7).trim();
-
-      return session.setBudget(ctx, budget === "clear" ? null : Number(budget));
+    default: throw new Error(USAGE);
   }
 }
 
@@ -88,7 +82,7 @@ export function registerGoalCommands(pi: ExtensionAPI, session: GoalSession, cor
   });
   pi.registerCommand("goal", {
     description: `Persistent conversation goal. ${USAGE}`,
-    getArgumentCompletions: prefix => ["edit", "pause", "resume", "clear", "budget"].flatMap(value => value.startsWith(prefix.trim()) ? [{ value, label: value }] : []),
+    getArgumentCompletions: prefix => ["edit", "pause", "resume", "clear"].flatMap(value => value.startsWith(prefix.trim()) ? [{ value, label: value }] : []),
     async handler(args, ctx) {
       try {
         const value = args.trim();

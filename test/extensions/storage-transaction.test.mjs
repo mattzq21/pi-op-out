@@ -1,3 +1,5 @@
+import { historyContract } from '../../daemon/resources/piop-storage/goal-assets.cjs';
+import { DatabaseSync } from 'node:sqlite';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { spawnSync, execFileSync } from 'node:child_process';
@@ -79,6 +81,12 @@ function run(request, environment = {}) {
   if (result.error) throw result.error;
   const reply = result.stdout ? JSON.parse(result.stdout) : undefined;
   return { ...result, reply, outcome: reply && (reply.ok ? reply.result : { state: reply.state, error: reply.error }) };
+}
+
+function goalOwners(root, directory) {
+  const db = new DatabaseSync(join(root, 'sessions.sqlite'), { readOnly: true });
+  try { return db.prepare('SELECT identity, record_json FROM goal_ownership WHERE directory=? ORDER BY identity').all(directory); }
+  finally { db.close(); }
 }
 
 const deletion = fixture => ({ action: 'delete', targets: [{ path: fixture.target, area: 'sessions', root: fixture.sessions }], activeSessionIds: [] });
@@ -299,6 +307,7 @@ test('archive with goal folders fully happens or fully rolls back after a crash 
     const prepared = await prepareGoal(current.target, objective);
     const goal = join(current.sessions, 'attachments', readdirSync(join(current.sessions, 'attachments')).find(name => name.startsWith('goal-')));
     assert.ok(prepared.message.includes(join(goal, 'goal-objective.md')));
+    const ownersBeforeMove = goalOwners(current.profile, goal);
     const header = JSON.parse(readFileSync(current.target, 'utf8'));
     const source = goalTranscript(current.target, header, goal);
     const archived = join(current.profile, 'archived');
@@ -320,6 +329,7 @@ test('archive with goal folders fully happens or fully rolls back after a crash 
     if (!moved) assert.equal(readFileSync(surviving, 'utf8'), source);
     assert.deepEqual(tree(surviving.replace(/\.jsonl$/, '.snapshots')), ['one.json={}']);
     assert.equal(readFileSync(join(goal, 'goal-objective.md'), 'utf8'), objective);
+    assert.deepEqual(goalOwners(current.profile, goal), ownersBeforeMove, 'archive must not change attachment ownership');
     assert.equal(readFileSync(join(current.sessions, 'other.jsonl'), 'utf8'), other);
     const beforeRetry = { sessions: tree(current.sessions), archived: tree(archived), goal: tree(goal) };
     const repeated = run({ action: 'recover', root: current.profile });
@@ -336,7 +346,7 @@ test('archive with goal folders fully happens or fully rolls back after a crash 
   assert.deepEqual([...outcomes].sort(), ['after', 'before']);
 });
 
-test('archive that fails a later goal claim undoes the earlier goal claim', async t => {
+test('archive that rejects a later attachment leaves all attachment ownership unchanged', async t => {
   const current = fixture(t);
   const prepareGoal = await goalCommand(t);
   const firstPrepared = await prepareGoal(current.target, 'Preserve the first objective. '.repeat(150).trim());
@@ -370,7 +380,7 @@ test('archive that fails a later goal claim undoes the earlier goal claim', asyn
   for (const [path, goal] of [[current.target, firstGoal], [second, secondGoal]]) {
     const deleted = run({ action: 'delete', targets: [{ path, area: 'sessions', root: current.sessions }], activeSessionIds: [] });
     assert.equal(deleted.status, 0, deleted.stdout + deleted.stderr);
-    assert.equal(existsSync(goal), false, 'rolled-back claims must not retain deleted goal files');
+    assert.equal(existsSync(goal), false, 'failed moves must not retain deleted goal files');
   }
 });
 
@@ -399,6 +409,7 @@ test('restore with goal folders fully happens or fully rolls back after a crash 
     const goalPath = prepared.message.match(/Read the goal objective file at (.+?) before continuing\./)?.[1];
     assert.ok(goalPath, 'prepared prompt must name the saved objective file');
     const goal = dirname(goalPath);
+    const ownersBeforeMove = goalOwners(profile, goal);
     const header = JSON.parse(readFileSync(chat.path, 'utf8').split('\n')[0]);
     goalTranscript(chat.path, header, goal);
     const snapshots = chat.path.replace(/\.jsonl$/, '.snapshots');
@@ -433,6 +444,7 @@ test('restore with goal folders fully happens or fully rolls back after a crash 
     assert.deepEqual(observe(), state);
     assert.equal(readFileSync(otherPath, 'utf8'), otherContent);
     assert.equal(readFileSync(goalPath, 'utf8'), objective);
+    assert.deepEqual(goalOwners(profile, goal), ownersBeforeMove, 'moving a chat must not change attachment ownership');
     const surviving = state.active ? chat.path : archived;
     const deleted = run({ action: 'delete', targets: [{ path: surviving, area: state.active ? 'sessions' : 'archived', root: join(profile, state.active ? 'sessions' : 'archived') }], activeSessionIds: [] });
     assert.equal(deleted.status, 0, deleted.stdout + deleted.stderr);
@@ -447,7 +459,7 @@ test('restore with goal folders fully happens or fully rolls back after a crash 
   assert.deepEqual([...outcomes].sort(), ['after', 'before']);
 });
 
-test('restore that fails a later goal claim undoes the earlier goal claim', async t => {
+test('restore that rejects a later attachment leaves all attachment ownership unchanged', async t => {
   const daemon = await daemonClient(t);
   const prepareGoal = await goalCommand(t);
   const home = await daemon.invoke('home_directory', { hostId: 'local' });
@@ -460,6 +472,7 @@ test('restore that fails a later goal claim undoes the earlier goal claim', asyn
     const prepared = await prepareGoal(chat.path, objective);
     const goalPath = prepared.message.match(/Read the goal objective file at (.+?) before continuing\./)[1];
     const goal = dirname(goalPath);
+    const ownersBeforeMove = goalOwners(profile, goal);
     goalTranscript(chat.path, JSON.parse(readFileSync(chat.path, 'utf8').split('\n')[0]), goal);
     await daemon.invoke('archive_session', { hostId: 'local', sessionPath: chat.path, terminalIds: [], clientId: 'restore-failure-test' });
     const report = await daemon.invoke('storage_report');
@@ -467,6 +480,7 @@ test('restore that fails a later goal claim undoes the earlier goal claim', asyn
     writeFileSync(chat.path, 'Occupied destination');
     await assert.rejects(daemon.invoke('restore_archived_session', { hostId: 'local', sessionPath: archived, clientId: 'restore-failure-test' }), /Restoration destination already exists/);
     rmSync(chat.path);
+    assert.deepEqual(goalOwners(profile, goal), ownersBeforeMove);
     chats.push({ ...chat, archived, goal, files: tree(goal), content: readFileSync(archived, 'utf8') });
   }
   const displaced = chats[1].goal + '-displaced';
@@ -488,6 +502,23 @@ test('restore that fails a later goal claim undoes the earlier goal claim', asyn
   for (const chat of chats) {
     const deleted = run({ action: 'delete', targets: [{ path: chat.archived, area: 'archived', root: join(profile, 'archived') }], activeSessionIds: [] });
     assert.equal(deleted.status, 0, deleted.stdout + deleted.stderr);
-    assert.equal(existsSync(chat.goal), false, 'rolled-back claims must not retain deleted goal files');
+    assert.equal(existsSync(chat.goal), false, 'failed moves must not retain deleted goal files');
   }
+});
+
+
+test('archive inspection does not turn a reference into a new attachment owner', async t => {
+  const current = fixture(t);
+  const prepareGoal = await goalCommand(t);
+  const prepared = await prepareGoal(current.target, 'Keep this attachment. '.repeat(200).trim());
+  const goal = dirname(prepared.message.match(/Read the goal objective file at (.+?) before continuing\./)[1]);
+  const before = goalOwners(current.profile, goal);
+  const otherId = crypto.randomUUID();
+  const entries = [
+    { type: 'session', id: otherId, cwd: current.profile },
+    { type: 'message', id: 'm1', parentId: null, message: { role: 'user', content: 'Read ' + join(goal, 'goal-objective.md') } },
+  ];
+  assert.deepEqual(historyContract(current.profile, entries, otherId).directories, []);
+  assert.equal(historyContract(current.profile, entries, sessionId).directories[0].path, goal);
+  assert.deepEqual(goalOwners(current.profile, goal), before);
 });

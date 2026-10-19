@@ -6,16 +6,8 @@ import { QueueRecord, track } from './queue_record';
 import { QueueDelivery, type Execution } from './queue_delivery';
 import { changePending } from './queue_changes';
 import { enqueue, executeHeldPrompt, reviewCommand } from './queue_submission';
-import { ANSWER_QUESTION_COMMAND, questionQueueId } from '../../../extensions/piop-user-questions/interface';
 
 const TIMEOUT = 'Pi command timed out';
-
-function validAnswer(item: any): boolean {
-  const response = item?.questionResponse;
-  return typeof item?.message === 'string' && item.behavior === 'followUp' && flag(item, 'retry') && flag(item, 'recovered')
-    && response?.type === ANSWER_QUESTION_COMMAND && typeof response?.value === 'string'
-    && typeof response?.requestId === 'string' && item.id === questionQueueId(response.requestId);
-}
 
 /** The queued input of one session: routes commands to Pi, pauses and resumes delivery, and keeps a saved copy. */
 export class SessionQueue {
@@ -176,7 +168,6 @@ export class SessionQueue {
       ...originals.filter(item => !flag(item, 'retry') && array(result, item.behavior === 'steer' ? 'steering' : 'followUp').some(message => jsonEqual(message, item.message))),
       ...clone(this.s.heldItems()),
     ];
-    for (const item of removed) await this.delivery.acknowledgeQuestionRemoval(item, 'remove');
     for (const item of removed) this.s.remove(text(item, 'id'));
     this.s.held = null;
     this.s.steering = []; this.s.followUp = []; this.s.awaitingSteering = [];
@@ -262,20 +253,4 @@ export class SessionQueue {
 
   async consumed(id: string): Promise<void> { await this.delivery.consumed(id); }
 
-  questionResponse(request: string): any | undefined { return this.s.questionResponse(request); }
-
-  async recoverQuestionAnswers(answers: any): Promise<void> {
-    const added: string[] = [];
-    try {
-      for (const item of Array.isArray(answers) ? answers : []) if (validAnswer(item)) this.s.recoverQuestion(item, () => {
-        const id = this.record.nextId();
-        added.push(id);
-        return id;
-      });
-      await this.delivery.publish();
-    } catch (error) {
-      for (const id of added) this.s.remove(id);
-      throw error;
-    }
-  }
 }

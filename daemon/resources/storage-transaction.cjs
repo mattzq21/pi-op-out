@@ -1,3 +1,4 @@
+const sessionStorage = require('./piop-storage/maintenance.cjs');
 const fs = require('node:fs');
 const path = require('node:path');
 const { createHash, randomUUID } = require('node:crypto');
@@ -86,23 +87,13 @@ function rows(root) {
     });
 }
 
-function goalAssets() { return require('./session-broker/goal-assets.cjs'); }
-
-function readEntries(file) { return fs.readFileSync(file, 'utf8').split('\n').filter(line => line.trim()).map(line => JSON.parse(line)); }
-
 const steps = {
-  'claim-goals': {
+  'inspect-storage': {
     run(step, journal) {
-      const entries = readEntries(step.source);
-
-      if (entries[0]?.id !== step.sessionId) throw new Error(`Session identity changed: ${step.source}`);
-      step.contract = goalAssets().claimHistory(journal.root, entries, step.sessionId, step.sessionPath, snapshots => { step.snapshots = snapshots; save(journal); });
+      step.contract = sessionStorage.inspectSession(journal.root, step.source, step.sessionId);
       save(journal);
     },
-    undo(step, journal) {
-      if (!step.applied || !step.snapshots) return;
-      goalAssets().undoHistory(journal.root, step.snapshots, step.sessionId, step.sessionPath);
-    },
+    undo() {},
     done(step) { return Boolean(step.contract); },
   },
   move: {
@@ -133,12 +124,11 @@ const steps = {
   },
   'prepare-transcript': {
     run(step, journal) {
-      const entries = readEntries(step.source);
-      const claim = journal.steps.find(other => other.type === 'claim-goals' && other.source === step.source);
+      const inspected = journal.steps.find(other => other.type === 'inspect-storage' && other.source === step.source);
 
-      if (entries[0]?.id !== step.sessionId || !claim?.contract) throw new Error(`Archived session identity changed: ${step.source}`);
-      entries[0] = { ...entries[0], ...step.header, goalAssets: claim.contract };
-      fs.writeFileSync(step.prepared, entries.map(entry => JSON.stringify(entry)).join('\n') + '\n', { flag: 'wx', mode: step.mode });
+      if (!inspected?.contract) throw new Error(`Session storage was not inspected: ${step.source}`);
+      const body = sessionStorage.archiveContent(step.source, step.sessionId, step.header, inspected.contract);
+      fs.writeFileSync(step.prepared, body, { flag: 'wx', mode: step.mode });
       io.syncTree(step.prepared);
       io.sync(path.dirname(step.prepared));
     },
@@ -173,8 +163,7 @@ const steps = {
 
 const finishSteps = {
   'forget-registry'(journal) { require('./registry-deletion.cjs').forget(journal.root, journal.targets); },
-  'goal-assets'(journal) { require('./goal-asset-cleanup.cjs').finish(journal, save); },
-  'record-retention'(journal, step) { require('./retention-candidates.cjs').recordRetention(journal.root, journal.id, step.pending); },
+  'storage-removal'(journal) { sessionStorage.finishRemoval(journal, save); },
   'temporary-chats'(journal) { database.markCleanup(journal.root, 'temporary-chat'); },
   'move-paths'(journal) { database.movePaths(journal.root, journal.targets.map(target => ({ source: target.path, destination: target.destination }))); },
   'remember-metadata'(journal) { for (const target of journal.targets) require('./transcript-metadata.cjs').remember(target.destination); },
@@ -348,14 +337,13 @@ function planDelete(root, request) {
   const id = randomUUID();
   const staging = path.join(root, 'storage-transactions', id);
   const files = targets.flatMap(target => [{ file: target.path, sessionId: target.sessionId }, ...supportingFiles(target.path).map(file => ({ file }))]);
-  const goalAssets = require('./goal-asset-cleanup.cjs').plan(root, targets);
-  const retention = require('./deletion-retention.cjs').collectRetention(root, sources, files);
+  const storage = sessionStorage.planRemoval(root, targets, files);
   const moves = files.map((saved, index) => ({ type: 'move', source: saved.file, staged: path.join(staging, `${index}.staged`), identity: io.describe(saved.file) }));
 
   return {
-    version: 1, id, kind: 'delete', state: 'prepared', root, staging, targets, goalAssets,
+    version: 1, id, kind: 'delete', state: 'prepared', root, staging, targets, storage,
     steps: [...moves, ...targets.flatMap(target => ownershipRecord(root, target.sessionId))],
-    finish: [{ type: 'forget-registry' }, { type: 'goal-assets' }, { type: 'record-retention', pending: retention.deferred }, { type: 'temporary-chats' }, { type: 'remove-staged' }],
+    finish: [{ type: 'forget-registry' }, { type: 'storage-removal' }, { type: 'temporary-chats' }, { type: 'remove-staged' }],
   };
 }
 
@@ -381,15 +369,15 @@ function selectedFiles(files, message) {
   return [...new Set(files.map(file => fs.realpathSync(file)))];
 }
 
-function claimStep(target) {
-  return { type: 'claim-goals', source: target.path, sessionId: target.sessionId, sessionPath: target.destination };
+function inspectStorageStep(target) {
+  return { type: 'inspect-storage', source: target.path, sessionId: target.sessionId, sessionPath: target.destination };
 }
 
 function archiveSteps(staging, target, index) {
   const prepared = path.join(staging, `${index}.prepared`);
 
   return [
-    claimStep(target),
+    inspectStorageStep(target),
     { type: 'prepare-transcript', source: target.path, sessionId: target.sessionId, prepared, mode: target.mode, header: { archiveSessionPath: target.path } },
     { type: 'move', source: target.path, staged: path.join(staging, `${index}.staged`), identity: io.describe(target.path) },
     ...existingPlacements(placements(target).slice(1)),
@@ -426,7 +414,7 @@ function planRestore(root, request) {
   const result = { path: sessions[0].path, sessionPath: sessions[0].sessionPath, sessionId: sessions[0].sessionId, sessions };
 
   if (Buffer.byteLength(JSON.stringify({ state: 'committed', result })) + 1 > 64 * 1024 * 1024) throw new Rejected('Restore group is too large; restore fewer sessions at a time');
-  const steps = [...targets.map(claimStep), ...placeSteps(targets), ...targets.map(target => restoreRecord(root, target.sessionId, target.destination))];
+  const steps = [...targets.map(inspectStorageStep), ...placeSteps(targets), ...targets.map(target => restoreRecord(root, target.sessionId, target.destination))];
 
   const id = randomUUID();
 
@@ -489,7 +477,7 @@ function afterCommit(root, outcome) {
   try { require('./restore-receipts.cjs').prune(root); }
   catch (error) { warnings.push(`Restore receipt pruning will retry: ${error.message}`); }
 
-  try { require('./retention-collection.cjs').collectDeferredRetention(root); }
+  try { sessionStorage.collectUnused(root); }
   catch (error) { warnings.push(`Deferred retention cleanup will retry: ${error.message}`); }
 
   const temporary = cleanupTemporaryChats(root);
@@ -533,7 +521,7 @@ function validPlacement(journal, target, step) {
 }
 
 const stepChecks = {
-  'claim-goals': (journal, step) => journal.kind !== 'delete' && journal.targets.some(target => target.path === step.source && target.sessionId === step.sessionId && target.destination === step.sessionPath),
+  'inspect-storage': (journal, step) => journal.kind !== 'delete' && journal.targets.some(target => target.path === step.source && target.sessionId === step.sessionId && target.destination === step.sessionPath),
   move: (journal, step) => journal.kind !== 'restore' && path.dirname(step.staged) === journal.staging && journal.targets.some(target => supportingPaths(target.path).includes(step.source)),
   place: (journal, step) => journal.kind !== 'delete' && journal.targets.some(target => validPlacement(journal, target, step)),
   'prepare-transcript': (journal, step) => journal.kind === 'archive' && path.dirname(step.prepared) === journal.staging && journal.targets.some(target => target.path === step.source),
@@ -576,7 +564,7 @@ function recoverJournals(root) {
 function recover(root) {
   const failures = [];
 
-  for (const replay of [recoverStorage, require('./retention-collection.cjs').collectDeferredRetention]) {
+  for (const replay of [recoverStorage, sessionStorage.collectUnused]) {
     try { replay(root); }
     catch (error) { failures.push(error.message); }
   }

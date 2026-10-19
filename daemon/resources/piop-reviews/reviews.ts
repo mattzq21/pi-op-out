@@ -1,17 +1,18 @@
+import { sessionStorage } from "../piop-storage/interface.ts";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 import { open, readFile } from "node:fs/promises";
 import { constants } from "node:fs";
 import { homedir } from "node:os";
-import { reserveSessionId, writeSessionFile } from "../session-broker/session-file.ts";
+import { reserveSessionId, writeSessionFile } from "../piop-storage/session-file.ts";
 import type { SessionAgentState, SubagentProfileRequest } from "../../../extensions/piop-define-agents/contracts.ts";
 import { Type as Schema, type Static } from "typebox";
 import { Check, Parse } from "typebox/value";
 import { currentHost } from "../session-broker/client.ts";
 import { childFastModeEntry } from "../session-broker/fast-mode.ts";
 import { locateConversation } from "../session-broker/conversation-location.ts";
-import { acknowledge, pendingReviews, release, type SessionPublication } from "../session-broker/session-publication.cjs";
+import { acknowledge, pendingReviews, release, type SessionPublication } from "../piop-storage/session-publication.cjs";
 import { read as readAppSettings } from "../session-broker/app-settings.cjs";
 import type { ReviewDelegation, ReviewImage, ReviewSession } from "./interface.ts";
 
@@ -61,7 +62,7 @@ async function createReview(pi: ExtensionAPI, ctx: ExtensionContext, agentState:
   const fastMode = await childFastModeEntry(pi, agentState, true);
   signal?.throwIfAborted();
   const timestamp = new Date().toISOString();
-  const sessionId = reserveSessionId();
+  const sessionId = await reserveSessionId();
   const record = { sessionId, sessionPath: join(ctx.sessionManager.getSessionDir(), `${timestamp.replace(/[:.]/g, "-")}_${sessionId}.jsonl`), cwd: ctx.cwd, parentSessionId: ctx.sessionManager.getSessionId(), hostId: currentHost(), publicationId: randomUUID() };
   const metadataId = randomUUID();
 
@@ -85,7 +86,7 @@ async function publishReview(pi: ExtensionAPI, ctx: ExtensionContext, record: Re
     if (ctx.sessionManager.getSessionId() !== record.parentSessionId) throw new Error("Review publication requires its actual original parent");
     const saved = ctx.sessionManager.getEntries();
 
-    if (!saved.some(entry => entry.type === "custom" && entry.customType === "piop-review" && Check(reviewSchema, entry.data) && matchesPublication(entry.data, record))) pi.appendEntry("piop-review", record);
+    if (!saved.some(entry => entry.type === "custom" && entry.customType === "piop-review" && Check(reviewSchema, entry.data) && matchesPublication(entry.data, record))) sessionStorage(pi).append("piop-review", record);
 
     if (!saved.some(entry => entry.type === "custom_message" && entry.customType === "piop-review-link" && Check(reviewSchema, entry.details) && matchesPublication(entry.details, record))) pi.sendMessage({ customType: "piop-review-link", content: "Code review", display: true, details: record }, { triggerTurn: false });
 

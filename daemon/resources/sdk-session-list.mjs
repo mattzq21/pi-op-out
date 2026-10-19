@@ -1,8 +1,9 @@
 import { createReadStream, realpathSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, join, resolve, sep } from "node:path";
-import database from "./session-database.cjs";
-import { sessionHeaderMatches } from "./sdk-storage.mjs";
+import * as database from "./session-database.cjs";
+import * as stateRecords from "./piop-storage/session-records.cjs";
+import { sessionHeaderMatches } from "./piop-storage/session-storage.mjs";
 
 const cached = new Map();
 
@@ -101,8 +102,6 @@ function collectEntry(state, record) {
     return true;
   }
 
-  if (record.type === "session_info") state.name = record.name?.trim() || undefined;
-
   if (record.type === "message") collectMessage(state, record);
 
   return true;
@@ -181,7 +180,10 @@ function sorted(values) {
 }
 
 async function availableSummary(db, row, signal) {
-  try { return await summary(db, row, signal); }
+  try {
+    const value = await summary(db, row, signal);
+    return value ? { ...value, name: stateRecords.sessionName(row.session_path, row.session_id, db) } : undefined;
+  }
   catch (error) {
     signal?.throwIfAborted();
 

@@ -150,7 +150,10 @@ function configureLocalLaunch(command: LaunchCommand, launch: PiLaunch, piPath: 
   if (launch.kind === 'rpc') {
     command.cwd = localLaunchDirectory(launch.cwd ?? undefined);
     command.env.PI_DESKTOP_PI_EXECUTABLE = piPath;
-    if (launch.forkPath) command.args.push('--fork', launch.forkPath);
+    if (launch.forkPath) {
+      if (!launch.sessionId) throw new Error('Fork requires a reserved session identity');
+      command.args.push('--fork', launch.forkPath, '--session-id', launch.sessionId);
+    }
     else if (launch.sessionPath) command.args.push('--session', launch.sessionPath);
     else if (launch.sessionId) command.args.push('--session-id', launch.sessionId);
   } else {
@@ -176,9 +179,8 @@ function configureLocalExtensions(command: LaunchCommand, settings: AppSettings,
   const session = Ext.prepareSessionExtensions();
   command.args.push('--extension', 'builtin:codemode', '--extension', 'builtin:tool-search');
   command.args.push('--extension', Ext.prepareCodemodeToolsDescriptionExtension(), '--session-dir', sessionDir, '--approve', '--no-skills',
-    '--extension', Ext.prepareProvidersRefreshExtension(), '--extension', mcpExtension, '--extension', session.controls, '--extension', session.broker,
-    '--extension', Ext.prepareUserQuestionsExtension(), '--extension', session.goals, '--extension', session.reviews,
-    '--extension', Ext.prepareHtmlPreviewExtension(),
+    '--extension', Ext.prepareProvidersRefreshExtension(), '--extension', mcpExtension, '--extension', session.storage, '--extension', session.controls, '--extension', session.broker,
+    '--extension', session.goals, '--extension', session.reviews,
     '--extension', contextWindowCapExtension, '--extension', contextBarExtension, '--extension', sessionCostLimitExtension,
     '--extension', Ext.prepareFastModeExtension(), '--extension', openaiCacheForkExtension, '--extension', codexWebSearchExtension,
     '--extension', definedAgentsExtension);

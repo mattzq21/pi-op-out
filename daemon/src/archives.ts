@@ -214,7 +214,7 @@ async function deleteStoredSessions(app: App, runtime: PiRuntime, sessionPaths: 
       const sessionIds: string[] = [];
       for (const [path] of paths) sessionIds.push(await sessionIdentity(settings, hostId, path));
       await stopTerminals(app.terminals, terminalSessions.sessionTerminals(app.terminals, hostId, sessionIds));
-      await deleteSessionTargets(runtime, targets, hostId, settings);
+      await deleteSessionTargets(targets, hostId);
       for (let index = 0; index < paths.length; index++) {
         try { await mutations[index]!.finishCommitted(); }
         catch (error: any) { console.error(`Conversation deletion committed, but ownership cleanup failed for ${paths[index]![0]}: ${error.message ?? error}`); }
@@ -227,14 +227,9 @@ async function deleteStoredSessions(app: App, runtime: PiRuntime, sessionPaths: 
   });
 }
 
-async function deleteSessionTargets(runtime: PiRuntime, targets: storageTransactions.DeletionTarget[], hostId: string, settings: AppSettings): Promise<void> {
-  const agents = [...runtime.activeAgents.values()];
-  if (agents.some(agent => !agent.messageable && agent.hostId === hostId && targets.some(target => agent.sessionPath !== undefined && agent.sessionPath === target.path))) {
-    throw new Error('Close the session before deleting it');
-  }
-  const activeSessionIds = agents.filter(agent => !agent.messageable && agent.hostId === hostId).map(agent => agent.sessionId).filter((id): id is string => id !== undefined);
+async function deleteSessionTargets(targets: storageTransactions.DeletionTarget[], hostId: string): Promise<void> {
   requireLocal(hostId);
-  await storageTransactions.deleteSessions(targets, activeSessionIds);
+  await storageTransactions.deleteSessions(targets, []);
 }
 
 export function deleteSession(app: App, runtime: PiRuntime, sessionPath: string, hostId: string | undefined | null, clientId: string): Promise<string[]> {

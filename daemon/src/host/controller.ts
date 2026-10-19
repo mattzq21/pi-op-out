@@ -1,3 +1,4 @@
+import { read as readGoal } from "../../resources/piop-storage/goals.cjs";
 import { join } from 'node:path';
 import * as Registry from '../session_registry';
 import * as Settings from '../settings';
@@ -19,7 +20,6 @@ import { Session, type SessionHost } from './session';
 import { sessionCommand } from './session_commands';
 import { recoverQueuedInput, watchRetention } from './storage_upkeep';
 import { ToolPayloadCache } from './tool_payload';
-import { HTML_PREVIEW_VIEWPORT_COMMAND } from '../../../extensions/piop-html-preview/interface';
 import type { HostServices } from './services';
 
 export class Host implements SessionHost {
@@ -207,12 +207,14 @@ export class Host implements SessionHost {
     const database = Registry.open(this.storageRoot());
     try {
       const id = session.identity;
-      if (database.prepare("SELECT 1 FROM session_goals WHERE session_id=? AND status!='complete' LIMIT 1").get(id)) return false;
+      const file = session.savedState()?.sessionFile;
+      const goal = typeof file === 'string' ? readGoal(file) : null;
+      if (goal && goal.status !== 'complete') return false;
       if (database.prepare('SELECT 1 FROM session_mailbox WHERE session_id=? LIMIT 1').get(id)) return false;
       const runs = database.prepare('SELECT run_json FROM session_subagent_runs WHERE session_id=?').all(id);
       return !runs.some(row => {
         const run = JSON.parse(String(row.run_json));
-        return run.status === 'running' || run.accountingPending || run.resultDelivery === 'pending';
+        return run.status === 'running' || run.resultDelivery === 'pending';
       });
     } finally { database.close(); }
   }
@@ -236,13 +238,12 @@ export class Host implements SessionHost {
     if (intent === 'transfer' && (session.working() || session.compacting())) {
       throw new Error('The agent is running on another daemon. Wait for it to finish before transferring ownership.');
     }
-    if (intent === 'relocate' && (session.working() || session.compacting())) throw new Error('Stop the response before moving this chat to another folder.');
     if (intent === 'message') await session.retire();
     const saved = session.savedState();
     for (const [runtime] of session.views()) this.readonlyMap.set(runtime, { id, path: typeof saved?.sessionFile === 'string' ? saved.sessionFile : null });
     session.publish({ type: 'ownership_lost' }, null);
     if (intent === 'transfer-local') return;
-    if (intent !== 'archive' && (session.working() || session.compacting())) { try { await session.raw({ type: 'abort' }); } catch {} }
+    if (!['archive', 'delete', 'relocate'].includes(intent) && (session.working() || session.compacting())) { try { await session.raw({ type: 'abort' }); } catch {} }
     await session.stop();
     if (intent === 'archive') this.pending.delete(session.key);
   }
@@ -389,10 +390,6 @@ export class Host implements SessionHost {
     if (name === 'detach') return this.detach(packet, runtime, session);
     if (name === 'presence') {
       session.presence(runtime, structuredClone(packet.presence ?? null));
-      const presence = packet.presence;
-      if (flag(presence, 'visible') && flag(presence, 'focused') && typeof presence?.htmlPreviewSize === 'number') {
-        await session.raw({ type: HTML_PREVIEW_VIEWPORT_COMMAND, size: presence.htmlPreviewSize });
-      }
       return null;
     }
     if (name === 'command' && packet.command?.type === 'reload_agents') return this.reloadAgents(runtime, text(packet.command, 'sessionId'));

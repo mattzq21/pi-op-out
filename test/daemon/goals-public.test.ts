@@ -31,7 +31,7 @@ test('a goal keeps the agent working turn after turn until the agent marks it co
   // The goal bar in the app reads these fields from the published goal status.
   const published = agents.daemon.events.filter(event => event.payload?.runtimeId === chat.runtimeId && event.payload.event?.method === 'setStatus' && event.payload.event.statusKey === 'piop-goal' && event.payload.event.statusText)
     .map(event => JSON.parse(event.payload.event.statusText));
-  expect(published.at(0)).toMatchObject({ objective: 'Write the report', status: 'active', tokenBudget: null, tokensUsed: expect.any(Number), elapsedMs: expect.any(Number) });
+  expect(published.at(0)).toMatchObject({ objective: 'Write the report', status: 'active' });
   expect(published.at(-1)).toMatchObject({ objective: 'Write the report', status: 'complete' });
   await Bun.sleep(1500);
   expect(text((await chat.history()).at(-1))).toBe('Report finished.');
@@ -88,78 +88,27 @@ test('Stop during a goal ends its turns at once and marks it paused, and resumin
 }, 120000);
 
 
-test('a goal that uses up its token budget stops at once without adding any message, and reports the budget as reached', async () => {
+test('a goal continues through empty replies and large usage until completed', async () => {
   await agents.enableAgentTools('get_goal', 'create_goal', 'update_goal');
-  agents.scripts.set('Spend the budget', async () => { await Bun.sleep(150); return { text: 'Working.', tokens: 400 }; });
-  const chat = await agents.rootChat();
-  const entries = async () => (await chat.command({ type: 'get_entries' })).entries;
-  const goalSummary = async () => (await entries()).filter((entry: any) => entry.customType === 'piop-goal-summary').map((entry: any) => text(entry)).at(-1) ?? '';
-  await send(chat, '/goal Spend the budget');
-  await chat.until(history => history.some(message => text(message) === 'Working.'));
-  await send(chat, '/goal budget 1000');
-  await chat.until(history => history.filter(message => text(message) === 'Working.').length >= 3);
-  await Bun.sleep(1500);
-  const turns = (await chat.history()).filter(message => text(message) === 'Working.').length;
-  expect(turns).toBe(3);
-  await Bun.sleep(1500);
-  expect((await chat.history()).filter(message => text(message) === 'Working.').length).toBe(turns);
-  await send(chat, '/goal');
-  let summary = '';
-  for (let tries = 0; !summary.startsWith('Goal budget limited') && tries < 50; tries++, await Bun.sleep(100)) summary = await goalSummary();
-  expect(summary).toStartWith('Goal budget limited\n\nSpend the budget\n\nTokens: 1,200 / 1,000 (0 remaining)');
-  expect((await entries()).some((entry: any) => text(entry).includes('reached its token budget'))).toBe(false);
-  const requests = agents.model.requests.filter(request => JSON.stringify(request.messages).includes('Spend the budget'));
-  expect(requests.some(request => JSON.stringify(request.messages).includes('reached its token budget'))).toBe(false);
-}, 120000);
-
-test('tokens a goal\'s child agent uses count against the goal\'s budget, and reaching it stops the goal', async () => {
-  await agents.enableAgentTools('get_goal', 'create_goal', 'update_goal');
-  let parentTurns = 0;
-  agents.scripts.set('Goal with a costly helper', async messages => {
-    await Bun.sleep(300);
-    if (!called(messages, 'spawn_agent')) return { tool: 'spawn_agent', arguments: { task_name: 'costly', message: 'Costly child task' }, tokens: 10 };
-    if (!called(messages, 'wait_agent')) return { tool: 'wait_agent', arguments: { targets: ['costly'] }, tokens: 10 };
-    parentTurns++;
-    return { text: 'Parent turn.', tokens: 10 };
+  let calls = 0;
+  agents.scripts.set('Keep going without limits', messages => {
+    if (called(messages, 'update_goal')) return { text: 'Finished without limits.' };
+    calls++;
+    return calls <= 7 ? { text: '', tokens: 100000 } : { tool: 'update_goal', arguments: { status: 'complete' } };
   });
-  agents.scripts.set('Costly child task', () => ({ text: 'Child answer.', tokens: 1500 }));
   const chat = await agents.rootChat();
-  const entries = async () => (await chat.command({ type: 'get_entries' })).entries;
-  await send(chat, '/goal Goal with a costly helper');
-  for (let tries = 0; parentTurns < 1 && tries < 200; tries++) await Bun.sleep(100);
-  // The parent's own calls use 10 tokens each, far below the budget; the child's 1500 tokens reach it.
-  await send(chat, '/goal budget 1000');
-  await Bun.sleep(2000);
-  const stoppedAt = parentTurns;
-  await Bun.sleep(2000);
-  expect(parentTurns).toBe(stoppedAt);
-  await send(chat, '/goal');
-  let summary = '';
-  for (let tries = 0; !summary.startsWith('Goal budget limited') && tries < 50; tries++, await Bun.sleep(100)) summary = (await entries()).filter((entry: any) => entry.customType === 'piop-goal-summary').map((entry: any) => text(entry)).at(-1) ?? '';
-  expect(summary).toStartWith('Goal budget limited\n\nGoal with a costly helper');
-  expect(Number(summary.match(/Tokens: ([\d,]+) \//)?.[1].replace(/,/g, ''))).toBeGreaterThan(1500);
+  await send(chat, '/goal Keep going without limits');
+  await chat.until(history => text(history.at(-1)) === 'Finished without limits.');
+  expect(calls).toBe(8);
+  const entries = (await chat.command({ type: 'get_entries' })).entries;
+  const goals = entries.filter((entry: any) => entry.customType === 'piop-goal');
+  expect(goals).toEqual([]);
+  const state = await chat.command({ type: 'get_state' });
+  const saved = readFileSync(state.sessionFile, 'utf8').trim().split('\n').map(line => JSON.parse(line));
+  expect(saved.filter((entry: any) => entry.customType === 'piop-goal')).toEqual(goals);
 }, 120000);
 
-
-test('a goal whose agent keeps answering with nothing is marked blocked and stops', async () => {
-  await agents.enableAgentTools('get_goal', 'create_goal', 'update_goal');
-  agents.scripts.set('Find the impossible', async () => { await Bun.sleep(100); return { text: '' }; });
-  const chat = await agents.rootChat();
-  const entries = async () => (await chat.command({ type: 'get_entries' })).entries;
-  const answers = async () => (await chat.history()).filter(message => message.role === 'assistant').length;
-  await send(chat, '/goal Find the impossible');
-  for (let tries = 0; (await answers()) < 4 && tries < 100; tries++) await Bun.sleep(100);
-  await Bun.sleep(2000);
-  const settled = await answers();
-  expect(settled).toBe(4);
-  await send(chat, '/goal');
-  let summary = '';
-  for (let tries = 0; !summary && tries < 50; tries++, await Bun.sleep(100)) summary = (await entries()).filter((entry: any) => entry.customType === 'piop-goal-summary').map((entry: any) => text(entry)).at(-1) ?? '';
-  expect(summary).toStartWith('Goal blocked\n\nFind the impossible');
-  expect(await answers()).toBe(settled);
-}, 120000);
-
-test('a goal whose model keeps refusing for a rate limit is retried, then marked usage limited, and its chat is paused', async () => {
+test('a goal whose model keeps refusing for a rate limit is retried, then its goal and chat are paused', async () => {
   await agents.enableAgentTools('get_goal', 'create_goal', 'update_goal');
   let calls = 0;
   agents.scripts.set('Beat the rate limit', () => { calls++; throw new Error('Rate limit exceeded'); });
@@ -173,27 +122,24 @@ test('a goal whose model keeps refusing for a rate limit is retried, then marked
   await send(chat, '/goal');
   let summary = '';
   for (let tries = 0; !summary && tries < 50; tries++, await Bun.sleep(100)) summary = (await entries()).filter((entry: any) => entry.customType === 'piop-goal-summary').map((entry: any) => text(entry)).at(-1) ?? '';
-  expect(summary).toStartWith('Goal usage limited\n\nBeat the rate limit');
+  expect(summary).toStartWith('Goal paused\n\nBeat the rate limit');
   expect(calls).toBe(4);
 }, 120000);
 
-test('a goal whose tool calls keep failing is marked blocked after five turns', async () => {
+test('a goal continues after repeated tool failures', async () => {
   await agents.enableAgentTools('get_goal', 'create_goal', 'update_goal');
   agents.scripts.set('Read the missing file', async messages => {
     await Bun.sleep(100);
+    if (called(messages, 'update_goal')) return { text: 'Failure handled.' };
+    if (messages.filter((message: any) => text(message) === 'Could not read it.').length >= 7) return { tool: 'update_goal', arguments: { status: 'complete' } };
     const previous = messages.findLast((message: any) => message.role === 'assistant');
     return previous?.tool_calls?.length ? { text: 'Could not read it.' } : { tool: 'read', arguments: { path: '/nonexistent/piop-test-file' } };
   });
   const chat = await agents.rootChat();
   const failedReads = async () => (await chat.history()).filter(message => message.role === 'toolResult' && message.toolName === 'read' && message.isError).length;
   await send(chat, '/goal Read the missing file');
-  for (let tries = 0; (await failedReads()) < 5 && tries < 150; tries++) await Bun.sleep(100);
-  await Bun.sleep(2000);
-  expect(await failedReads()).toBe(5);
-  await send(chat, '/goal');
-  let summary = '';
-  for (let tries = 0; !summary && tries < 50; tries++, await Bun.sleep(100)) summary = (await chat.command({ type: 'get_entries' })).entries.filter((entry: any) => entry.customType === 'piop-goal-summary').map((entry: any) => text(entry)).at(-1) ?? '';
-  expect(summary).toStartWith('Goal blocked\n\nRead the missing file');
+  await chat.until(history => text(history.at(-1)) === 'Failure handled.');
+  expect(await failedReads()).toBeGreaterThanOrEqual(7);
 }, 120000);
 
 test('a long goal is saved to a file the agent reads, which stays while any chat still uses it', async () => {

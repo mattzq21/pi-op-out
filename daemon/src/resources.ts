@@ -1,3 +1,11 @@
+import sessionRegistry from "../resources/session-registry.cjs?raw";
+import storageRecovery from "../resources/piop-storage/recovery.cjs?raw";
+import storageIdentities from "../resources/piop-storage/identities.mjs?raw";
+import storageBootstrap from "../resources/piop-storage/bootstrap.mjs?raw";
+import storageIndex from "../resources/piop-storage/index.ts?raw";
+import storageInterface from "../resources/piop-storage/interface.ts?raw";
+import sessionStorageRaw from "../resources/piop-storage/session-storage.mjs?raw";
+import storageFile from "../resources/storage-file.mjs?raw";
 import agentResources from "../../extensions/piop-define-agents/resources.ts?raw";
 import fileLockSource from '../resources/file-lock.cjs?raw';
 import sessionDatabase from '../resources/session-database.cjs?raw';
@@ -19,9 +27,6 @@ import runtimeBridge from '../resources/runtime-bridge.cjs?raw';
 import mcpSchemaBundle from '../resources/mcp-schema.bundle.mjs?raw';
 import mcpBridgeBundle from '../resources/mcp-bridge.bundle.mjs?raw';
 import fastModeBundle from '../resources/fast-mode.bundle.mjs?raw';
-import userQuestionsExtension from '../../extensions/piop-user-questions/index.ts?raw';
-import userQuestionsInterface from '../../extensions/piop-user-questions/interface.ts?raw';
-import userQuestionsLogic from '../../extensions/piop-user-questions/questions.ts?raw';
 import sessionCostLimitExtension from '../../extensions/piop-session-cost-limit/index.ts?raw';
 import codemodeToolsDescriptionExtension from '../../extensions/piop-codemode-tools-description/index.ts?raw';
 import providersRefreshExtension from '../../extensions/piop-providers-refresh/index.ts?raw';
@@ -39,46 +44,39 @@ import contextWindowCapExtension from '../../extensions/piop-context-window-cap/
 import contextWindowCapDefaults from '../../extensions/piop-context-window-cap/defaults.ts?raw';
 import contextWindowCapInterface from '../../extensions/piop-context-window-cap/interface.ts?raw';
 import contextBarExtension from '../../extensions/piop-context-bar/index.ts?raw';
-import htmlPreviewExtension from '../../extensions/piop-html-preview/index.ts?raw';
-import htmlPreviewInterface from '../../extensions/piop-html-preview/interface.ts?raw';
-import htmlPreviewFeature from '../../extensions/piop-html-preview/preview.ts?raw';
 import codexWebSearchExtension from '../../extensions/piop-codex-web-search/index.ts?raw';
 import excalidrawSkill from '../../extensions/piop-excalidraw/SKILL.md?raw';
 import excalidrawCheatsheet from '../../extensions/piop-excalidraw/references/cheatsheet.md?raw';
-import brokerModule0 from '../resources/session-broker/goal-directory-recovery.cjs?raw';
-import brokerModule1 from '../resources/session-broker/subagent-usage-storage.cjs?raw';
+import storageGoalRecovery from '../resources/piop-storage/goal-directory-recovery.cjs?raw';
 import brokerModule2 from '../resources/session-broker/app-settings.cjs?raw';
 import brokerModule4 from '../resources/session-broker/client.ts?raw';
 import brokerModule5 from '../resources/session-broker/conversation-location.ts?raw';
 import brokerModule7 from '../resources/session-broker/fast-mode.ts?raw';
-import brokerModule8 from '../resources/session-broker/session-file.ts?raw';
+import storagePublication from '../resources/piop-storage/session-file.ts?raw';
 import brokerModule9 from '../resources/session-broker/session-child-index.cjs?raw';
 import brokerModule10 from '../resources/session-broker/session-child-index.d.cts?raw';
-import brokerModule11 from '../resources/session-broker/session-publication.cjs?raw';
-import brokerModule12Raw from '../resources/session-broker/session-publication-io.cjs?raw';
-import brokerModule13 from '../resources/session-broker/session-publication-dependencies.cjs?raw';
-import brokerModule14 from '../resources/session-broker/review-publication.cjs?raw';
-import brokerModule15 from '../resources/session-broker/session-publication.d.cts?raw';
+import storagePublicationJournal from '../resources/piop-storage/session-publication.cjs?raw';
+import storagePublicationIoRaw from '../resources/piop-storage/session-publication-io.cjs?raw';
+import storagePublicationDependencies from '../resources/piop-storage/session-publication-dependencies.cjs?raw';
+import storageReviews from '../resources/piop-storage/review-publication.cjs?raw';
+import storagePublicationTypes from '../resources/piop-storage/session-publication.d.cts?raw';
 import brokerModule17 from '../resources/session-broker/subagents.ts?raw';
 import brokerModule18 from '../resources/session-broker/subagent-state.ts?raw';
 import brokerModule19 from '../resources/session-broker/subagent-reconciliation.ts?raw';
-import brokerModule20 from '../resources/session-broker/subagent-transcript.ts?raw';
 import brokerModule21 from '../resources/session-broker/orchestration.ts?raw';
-import brokerModule22 from '../resources/session-broker/durable-mailbox.ts?raw';
+import storageMailbox from '../resources/piop-storage/durable-mailbox.ts?raw';
 import brokerModule23 from '../resources/session-broker/agent-profiles.ts?raw';
-import brokerModule24 from '../resources/session-broker/subagent-usage.ts?raw';
-import brokerModule25Raw from '../resources/session-broker/subagent-usage-channel.ts?raw';
 import brokerModule26 from '../resources/session-broker/subagent-mailbox.ts?raw';
-import brokerModule27 from '../resources/session-broker/subagent-results.ts?raw';
-import brokerModule28 from '../resources/session-broker/subagent-recovery.ts?raw';
+import storageRuns from '../resources/piop-storage/subagent-results.ts?raw';
 import brokerModule29 from '../resources/session-broker/subagent-identity.ts?raw';
-import brokerModule36 from '../resources/session-broker/goal-storage.cjs?raw';
-import brokerModule39Raw from '../resources/session-broker/reference-publication-lock.cjs?raw';
-import brokerModule41 from '../resources/session-broker/goal-dependencies.cjs?raw';
-import brokerModule42 from '../resources/session-broker/goal-prepared-files.cjs?raw';
-import brokerModule43 from '../resources/session-broker/goal-preparations.cjs?raw';
-import brokerModule44 from '../resources/session-broker/goal-ownership.cjs?raw';
-import brokerModule45Raw from '../resources/session-broker/goal-assets.cjs?raw';
+import sessionStateRecords from '../resources/piop-storage/session-records.cjs?raw';
+import goalsRecords from '../resources/piop-storage/goals.cjs?raw';
+import storageReferencesRaw from '../resources/piop-storage/reference-publication-lock.cjs?raw';
+import storageGoalDependencies from '../resources/piop-storage/goal-dependencies.cjs?raw';
+import storageGoalPreparedFiles from '../resources/piop-storage/goal-prepared-files.cjs?raw';
+import storageGoalPreparations from '../resources/piop-storage/goal-preparations.cjs?raw';
+import storageGoalOwnership from '../resources/piop-storage/goal-ownership.cjs?raw';
+import storageGoalAssetsRaw from '../resources/piop-storage/goal-assets.cjs?raw';
 import controlsIndex from '../resources/piop-controls/index.ts?raw';
 import controlsInterface from '../resources/piop-controls/interface.ts?raw';
 import controlsPause from '../resources/piop-controls/pause.ts?raw';
@@ -90,7 +88,7 @@ import goalsInterface from '../resources/piop-goals/interface.ts?raw';
 import goalsGoals from '../resources/piop-goals/goals.ts?raw';
 import goalsState from '../resources/piop-goals/state.ts?raw';
 import goalsPreparation from '../resources/piop-goals/preparation.ts?raw';
-import goalsFilesRaw from '../resources/piop-goals/files.ts?raw';
+import storageGoalFilesRaw from '../resources/piop-storage/goal-files.ts?raw';
 import goalsPrompts from '../resources/piop-goals/prompts.ts?raw';
 import goalsCoordination from '../resources/piop-goals/coordination.ts?raw';
 import goalsTools from '../resources/piop-goals/tools.ts?raw';
@@ -115,17 +113,18 @@ function embedFileLock(source: string): string {
 const sdkStorage = embedFileLock(sdkStorageRaw);
 const chatgptStorage = bunEnvironment + embedFileLock(chatgptStorageRaw);
 const agentPrompts = embedFileLock(agentPromptsRaw);
-const brokerModule12 = embedFileLock(brokerModule12Raw);
-const brokerModule25 = embedFileLock(brokerModule25Raw);
-const brokerModule39 = embedFileLock(brokerModule39Raw);
-const brokerModule45 = embedFileLock(brokerModule45Raw);
-const goalsFiles = embedFileLock(goalsFilesRaw);
+const storagePublicationIo = embedFileLock(storagePublicationIoRaw);
+const storageReferences = embedFileLock(storageReferencesRaw);
+const storageGoalAssets = embedFileLock(storageGoalAssetsRaw);
+const storageGoalFiles = embedFileLock(storageGoalFilesRaw);
 
 export {
   sessionDatabase,
+  sessionRegistry,
   appSettingsCjs,
   transcriptReferences,
   sdkStorage,
+  storageFile,
   agentCommands,
   sdkStorageBundle,
   providerSdk,
@@ -141,9 +140,6 @@ export {
   mcpSchemaBundle,
   mcpBridgeBundle,
   fastModeBundle,
-  userQuestionsExtension,
-  userQuestionsInterface,
-  userQuestionsLogic,
   sessionCostLimitExtension,
   codemodeToolsDescriptionExtension,
   providersRefreshExtension,
@@ -162,49 +158,25 @@ export {
   contextWindowCapInterface,
   contextWindowCapDefaults,
   contextBarExtension,
-  htmlPreviewExtension,
-  htmlPreviewInterface,
-  htmlPreviewFeature,
   codexWebSearchExtension,
   excalidrawSkill,
   excalidrawCheatsheet,
 };
 
 export const SESSION_BROKER_MODULES: Array<[string, string]> = [
-  ['goal-directory-recovery.cjs', brokerModule0],
-  ['subagent-usage-storage.cjs', brokerModule1],
   ['app-settings.cjs', brokerModule2],
   ['client.ts', brokerModule4],
   ['conversation-location.ts', brokerModule5],
   ['fast-mode.ts', brokerModule7],
-  ['session-file.ts', brokerModule8],
   ['session-child-index.cjs', brokerModule9],
   ['session-child-index.d.cts', brokerModule10],
-  ['session-publication.cjs', brokerModule11],
-  ['session-publication-io.cjs', brokerModule12],
-  ['session-publication-dependencies.cjs', brokerModule13],
-  ['review-publication.cjs', brokerModule14],
-  ['session-publication.d.cts', brokerModule15],
   ['subagents.ts', brokerModule17],
   ['subagent-state.ts', brokerModule18],
   ['subagent-reconciliation.ts', brokerModule19],
-  ['subagent-transcript.ts', brokerModule20],
   ['orchestration.ts', brokerModule21],
-  ['durable-mailbox.ts', brokerModule22],
   ['agent-profiles.ts', brokerModule23],
-  ['subagent-usage.ts', brokerModule24],
-  ['subagent-usage-channel.ts', brokerModule25],
   ['subagent-mailbox.ts', brokerModule26],
-  ['subagent-results.ts', brokerModule27],
-  ['subagent-recovery.ts', brokerModule28],
   ['subagent-identity.ts', brokerModule29],
-  ['goal-storage.cjs', brokerModule36],
-  ['reference-publication-lock.cjs', brokerModule39],
-  ['goal-dependencies.cjs', brokerModule41],
-  ['goal-prepared-files.cjs', brokerModule42],
-  ['goal-preparations.cjs', brokerModule43],
-  ['goal-ownership.cjs', brokerModule44],
-  ['goal-assets.cjs', brokerModule45],
 ];
 
 export const EXCALIDRAW_ASSETS: Array<[string, string]> = [
@@ -214,13 +186,39 @@ export const EXCALIDRAW_ASSETS: Array<[string, string]> = [
 
 /** Session extensions installed next to session-broker. Each directory holds one extension with index.ts as its entry. */
 export const SESSION_EXTENSIONS: Array<[string, Array<[string, string]>]> = [
+  ['piop-storage', [
+    ['index.ts', storageIndex],
+    ['recovery.cjs', storageRecovery],
+    ['identities.mjs', storageIdentities],
+    ['bootstrap.mjs', storageBootstrap],
+    ['interface.ts', storageInterface],
+    ['goals.cjs', goalsRecords],
+    ['session-records.cjs', sessionStateRecords],
+    ['session-storage.mjs', embedFileLock(sessionStorageRaw)],
+    ['goal-files.ts', storageGoalFiles],
+    ['goal-directory-recovery.cjs', storageGoalRecovery],
+    ['goal-assets.cjs', storageGoalAssets],
+    ['goal-dependencies.cjs', storageGoalDependencies],
+    ['goal-prepared-files.cjs', storageGoalPreparedFiles],
+    ['goal-preparations.cjs', storageGoalPreparations],
+    ['goal-ownership.cjs', storageGoalOwnership],
+    ['reference-publication-lock.cjs', storageReferences],
+    ['review-publication.cjs', storageReviews],
+    ['durable-mailbox.ts', storageMailbox],
+    ['subagent-results.ts', storageRuns],
+    ['session-file.ts', storagePublication],
+    ['session-publication.cjs', storagePublicationJournal],
+    ['session-publication-io.cjs', storagePublicationIo],
+    ['session-publication-dependencies.cjs', storagePublicationDependencies],
+    ['session-publication.d.cts', storagePublicationTypes],
+  ]],
   ['piop-controls', [
     ['interface.ts', controlsInterface], ['pause.ts', controlsPause], ['fork.ts', controlsFork],
     ['commands.ts', controlsCommands], ['fast-mode.ts', controlsFastMode], ['index.ts', controlsIndex],
   ]],
   ['piop-goals', [
     ['interface.ts', goalsInterface], ['state.ts', goalsState], ['prompts.ts', goalsPrompts], ['coordination.ts', goalsCoordination],
-    ['files.ts', goalsFiles], ['preparation.ts', goalsPreparation], ['goals.ts', goalsGoals], ['tools.ts', goalsTools],
+    ['preparation.ts', goalsPreparation], ['goals.ts', goalsGoals], ['tools.ts', goalsTools],
     ['commands.ts', goalsCommands], ['index.ts', goalsIndex],
   ]],
   ['piop-reviews', [

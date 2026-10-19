@@ -5,7 +5,7 @@ const { Check } = require("typebox/value");
 const sessionIdSchema = Type.String();
 
 const path = require("node:path");
-const io = require("./session-broker/session-publication-io.cjs");
+const io = require("./piop-storage/session-publication-io.cjs");
 const childIndex = require("./session-broker/session-child-index.cjs");
 
 async function validatedParent(root, source) {

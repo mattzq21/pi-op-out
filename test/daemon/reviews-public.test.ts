@@ -1,3 +1,5 @@
+import { Database } from "bun:sqlite";
+import { join } from "node:path";
 import { afterAll, beforeAll, expect, test } from 'bun:test';
 import { readFileSync } from 'node:fs';
 import { agentDaemon, text } from './agent-chats';
@@ -61,8 +63,15 @@ test('a review opens a separate code review chat in the side pane, linked to the
   expect(review.task).toContain('src/parser.ts');
   const saved = readFileSync(review.sessionPath, 'utf8').trim().split('\n').map(line => JSON.parse(line));
   expect(saved[0]).toMatchObject({ type: 'session', id: review.sessionId });
-  expect(saved.find(entry => entry.customType === 'piop-review-parent')?.data).toMatchObject({ parentSessionId: chat.sessionId, sessionId: review.sessionId });
-  expect(saved.find(entry => entry.type === 'session_info')?.name).toBe('Code review');
+  expect(saved.some(entry => entry.type === 'custom')).toBe(false);
+  const db = new Database(join(agents.daemon.home, '.piop', 'sessions.sqlite'), { readonly: true });
+  try {
+    const name = db.query("SELECT entry_json FROM session_extension_state WHERE session_id=? AND state_key='piop-session-name'").get(review.sessionId) as { entry_json: string };
+    expect(JSON.parse(name.entry_json).name).toBe('Code review');
+    const records = db.query('SELECT entry_json FROM session_extension_records WHERE session_id=?').all(review.sessionId) as { entry_json: string }[];
+    expect(records.map(row => JSON.parse(row.entry_json)).find(entry => entry.customType === 'piop-review-parent')?.data).toMatchObject({ parentSessionId: chat.sessionId, sessionId: review.sessionId });
+  } finally { db.close(); }
+  expect(saved.some(entry => entry.type === 'session_info')).toBe(false);
   expect((await agents.daemon.invoke('list_sessions')).some((session: any) => session.id === review.sessionId)).toBe(false);
   const entries = (await chat.command({ type: 'get_entries' })).entries;
   // The chat view opens the review from sessionId and hides it in forks by comparing parentSessionId.

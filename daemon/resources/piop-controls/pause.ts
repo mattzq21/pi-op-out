@@ -1,3 +1,4 @@
+import { sessionStorage } from "../piop-storage/interface.ts";
 import type { AssistantMessage } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 import { Check } from "typebox/value";
@@ -88,7 +89,7 @@ export function registerPauseControl(pi: ExtensionAPI, publish: (ctx: ExtensionC
     if (controlContext) publish(controlContext, { isPaused, isPausing });
   };
 
-  const persistPause = (paused: boolean) => { isPaused = paused; pi.appendEntry(pauseEntry, { isPaused: paused }); };
+  const persistPause = (paused: boolean) => { sessionStorage(pi).append(pauseEntry, { isPaused: paused }); isPaused = paused; };
 
   const restorePause = (ctx: ExtensionContext) => {
     generation += 1; controlContext = ctx;
@@ -182,7 +183,7 @@ export function registerPauseControl(pi: ExtensionAPI, publish: (ctx: ExtensionC
 
       if (version !== generation || !isPaused || !ctx.isIdle()) return;
       const message = `/pi-desktop-resume-turn ${crypto.randomUUID()}`;
-      resumeMessages.add(message); pi.appendEntry(resumeEntry, { message });
+      resumeMessages.add(message); sessionStorage(pi).append(resumeEntry, { message });
 
       return message;
     },

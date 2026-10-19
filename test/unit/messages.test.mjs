@@ -26,7 +26,7 @@ test('message normalization preserves content and selects stable identifiers and
   assert.equal(normalizeMessage({ role: 'toolResult' }).toolStatus, 'done');
   assert.equal(normalizeMessage({ role: 'toolResult' }).role, 'tool');
 
-  for (const customType of ['pi-desktop-mcp-status', 'piop-review-link', 'piop-html-preview']) assert.equal(normalizeMessage({ role: 'custom', customType }).role, 'system');
+  for (const customType of ['pi-desktop-mcp-status', 'piop-review-link']) assert.equal(normalizeMessage({ role: 'custom', customType }).role, 'system');
   assert.equal(normalizeMessage({ role: 'custom', customType: 'other' }).role, 'custom');
   assert.equal(original.id, 'original');
 });

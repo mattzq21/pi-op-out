@@ -72,7 +72,7 @@ async function recordClaims(profile, record, discovery) {
   try {
     record.identity = await directoryIdentity(record.path);
     const file = path.join(profile, 'sessions.sqlite');
-    const claims = require('./session-broker/goal-ownership.cjs').read(profile, record.path);
+    const claims = require('./piop-storage/goal-ownership.cjs').read(profile, record.path);
 
     if (claims === undefined) return;
 
@@ -131,7 +131,7 @@ async function dependencies(profile, record, discovery) {
 
   try {
     if (!record.identity || await directoryIdentity(record.path) !== record.identity) throw new Error('Dependency source directory identity unavailable or changed');
-    const contract = require('./session-broker/goal-dependencies.cjs').read(profile, record.path);
+    const contract = require('./piop-storage/goal-dependencies.cjs').read(profile, record.path);
 
     if (contract === undefined) {
       record.provenance.push('No saved dependency record; undeclared legacy text dependencies are outside verified ownership coverage');

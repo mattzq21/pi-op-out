@@ -14,15 +14,6 @@ test('subagent migration adds the available tool once', async t => {
   ]);
 });
 
-test('question migration creates an asker and removes questions only from general', async t => {
-  const config = configured([profile('general', { tools: ['read', 'request_user_input_async', 'request_user_input'] }), profile('reviewer', { tools: ['request_user_input_async', 'read', 'request_user_input'] })]);
-  delete config.askerAgentDefaultApplied;
-  const f = await agentFixture(t, { config, runtime: { enabledTools: ['read', 'request_user_input'] } });
-  await f.load();
-  assert.deepEqual((await f.configuration()).agents.map(agent => [agent.name, agent.tools]), [
-    ['general', ['read']], ['reviewer', ['request_user_input', 'read']], ['asker-agent', ['read', 'request_user_input']],
-  ]);
-});
 
 test('diagramist migration writes its instructions and preserves an existing custom profile', async t => {
   const config = configured([profile()]); delete config.diagramistDefaultApplied;
@@ -46,13 +37,6 @@ test('obsolete voice agents are removed and restored voice selections fall back 
   assert.equal(f.capability().active, 'general');
 });
 
-test('saved question tools migrate without changing the historical snapshot', async t => {
-  const snapshot = { version: 1, definition: profile('general', { tools: ['read', 'request_user_input_async', 'request_user_input'] }), systemPrompt: 'Saved', agentPrompt: '' };
-  const f = await agentFixture(t, { config: null, tools: ['read', 'request_user_input'], entries: [{ type: 'custom', customType: 'pi-define-agents-state', data: { active: 'general', snapshot } }] });
-  await f.load(); await f.start();
-  assert.deepEqual(f.pi.getActiveTools(), ['read', 'request_user_input']);
-  assert.deepEqual(f.entries[0].data.snapshot, snapshot);
-});
 
 test('prompt options clear duplicate project context and mark explicit skills by file or directory', async t => {
   const f = await agentFixture(t, { config: null, runtime: { enabledTools: ['read'], skills: { userInvokedSkills: ['/skills/file/SKILL.md', '/skills/directory/'], agentInvokedSkills: [] } } });
@@ -174,14 +158,6 @@ test('session tool migration persists independently of the other completed migra
   assert.deepEqual(f.pi.getActiveTools(), ['read', 'subagent']);
 });
 
-test('helper profiles inherit general regardless of ordering', async t => {
-  const config = configured([profile('reviewer', { tools: ['bash'] }), profile('general', { tools: ['read'] })]);
-  config.askerAgentDefaultApplied = false;
-  const f = await agentFixture(t, { config, runtime: { enabledTools: ['read', 'bash', 'request_user_input'] } });
-  await f.load();
-  const saved = await f.configuration();
-  assert.deepEqual(saved.agents.find(agent => agent.name === 'asker-agent').tools, ['read', 'request_user_input']);
-});
 
 test('subagents use model overrides even when they differ from cached runtime defaults', async t => {
   const f = await agentFixture(t, { config: null, entries: [{ type: 'custom', customType: 'pi-define-agents-state', data: { active: 'general', modelOverride: 'test/review/model' } }] });
@@ -275,24 +251,4 @@ test('removing the migrated subagent tool remains effective after reload', async
   assert.deepEqual((await f.configuration()).agents[0].tools, ['read']);
   await f.select('general');
   assert.deepEqual(f.pi.getActiveTools(), ['read']);
-});
-
-test('deleting the migrated asker keeps it absent after reload', async t => {
-  const config = configured([profile()]); delete config.askerAgentDefaultApplied;
-  const f = await agentFixture(t, { config, runtime: { enabledTools: ['read', 'request_user_input'] } });
-  await f.load(); await f.start();
-  assert.deepEqual((await f.configuration()).agents.map(agent => agent.name), ['general', 'asker-agent']);
-  await f.configure({ agents: [profile()] });
-  await f.reloadExtensions();
-  assert.deepEqual((await f.configuration()).agents.map(agent => agent.name), ['general']);
-});
-
-test('asker migration preserves an existing custom asker', async t => {
-  const config = configured([profile('reviewer', { tools: ['bash'] }), profile(), profile('asker-agent', { tools: ['bash', 'request_user_input'] })]);
-  config.askerAgentDefaultApplied = false;
-  const f = await agentFixture(t, { config, runtime: { enabledTools: ['read', 'bash', 'request_user_input'] }, tools: ['read', 'bash', 'request_user_input'] });
-  await f.load(); await f.start();
-  await f.select('asker-agent');
-  assert.deepEqual(f.pi.getActiveTools(), ['bash', 'request_user_input']);
-  assert.deepEqual((await f.configuration()).agents.find(agent => agent.name === 'asker-agent').tools, ['bash', 'request_user_input']);
 });

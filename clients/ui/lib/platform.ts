@@ -15,12 +15,6 @@ export type { UnlistenFn };
 
 export const isMobile = import.meta.env.MODE === "mobile";
 
-export function htmlPreviewSize() {
-  const width = typeof window === "undefined" ? undefined : window.screen?.width;
-
-  return z.number().finite().min(2560).safeParse(width).success ? 750 : 600;
-}
-
 const clientPreferences = registerPlugin<{
   load(): Promise<{ settings: unknown; revision: string }>;
   save(options: { settings: unknown; baseline: unknown; initialize: boolean }): Promise<{ settings: unknown; revision: string; publication: SettingsPublication }>;

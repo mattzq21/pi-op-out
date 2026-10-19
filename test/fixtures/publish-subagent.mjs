@@ -13,10 +13,11 @@ process.env.HOME = home; delete process.env.PIOP_STORAGE_DIRECTORY;
 const directory = await mkdtemp(join(home, 'subagent-fixture-'));
 try {
   const outfile = join(directory, 'session-file.mjs');
-  await build({ entryPoints: ['daemon/resources/session-broker/session-file.ts'], outfile, bundle: true, platform: 'node', format: 'esm', target: 'node22', logLevel: 'silent', external: ['@earendil-works/*'], plugins: [storageSchemaImports()],
+  await build({ entryPoints: ['daemon/resources/piop-storage/session-file.ts'], outfile, bundle: true, platform: 'node', format: 'esm', target: 'node22', logLevel: 'silent', external: ['@earendil-works/*'], plugins: [storageSchemaImports()],
     banner: { js: "import { createRequire } from 'node:module'; const require = createRequire(import.meta.url);" } });
-  const { writeSessionFile, reserveSessionId } = await import(pathToFileURL(outfile));
-  const id = reserveSessionId();
+  const { writeSessionFile } = await import(pathToFileURL(outfile));
+  const { reserve } = await import("../../daemon/resources/session-database.cjs");
+  const id = reserve(join(home, ".piop"));
   const timestamp = new Date().toISOString();
   const path = join(dirname(parent.path), `${timestamp.replace(/[:.]/g, '-')}_${id}.jsonl`);
   const cwd = JSON.parse(readFileSync(parent.path, 'utf8').split('\n')[0]).cwd;

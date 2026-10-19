@@ -285,7 +285,7 @@ export function SettingsView(props: SettingsViewProps) {
 
   const addAgent = () => { if (!agentConfig() || saving()) return; let suffix = nextAgentSuffixRef.current;
 
-  while (agentDrafts().some((item) => item.name.toLowerCase() === `agent-${suffix}`)) suffix += 1; nextAgentSuffixRef.current = suffix + 1; const next: AgentProfile = { name: `agent-${suffix}`, model: "", effort: "", path_systemprompt: "sysprompt/default.md", path_agent_prompt: "", tools: draft().tools.filter((item) => item.enabled && !["goal", "get_goal", "create_goal", "update_goal", "render_html"].includes(item.name)).map((item) => item.name), skills: draft().skills.filter((item) => item.enabled).map((item) => item.path), mcpServers: {} }; setAgentDrafts((current) => [...current, next]); setAgentIndex(agentDrafts().length - 1); };
+  while (agentDrafts().some((item) => item.name.toLowerCase() === `agent-${suffix}`)) suffix += 1; nextAgentSuffixRef.current = suffix + 1; const next: AgentProfile = { name: `agent-${suffix}`, model: "", effort: "", path_systemprompt: "sysprompt/default.md", path_agent_prompt: "", tools: draft().tools.filter((item) => item.enabled && !["goal", "get_goal", "create_goal", "update_goal"].includes(item.name)).map((item) => item.name), skills: draft().skills.filter((item) => item.enabled).map((item) => item.path), mcpServers: {} }; setAgentDrafts((current) => [...current, next]); setAgentIndex(agentDrafts().length - 1); };
 
   const removeAgent = () => { if (!agent() || isBuiltInAgent(agent())) return;
 

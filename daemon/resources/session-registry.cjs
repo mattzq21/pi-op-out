@@ -1,3 +1,4 @@
+const { createHash } = require('node:crypto');
 const fs = require('node:fs');
 const path = require('node:path');
 const { DatabaseSync } = require('node:sqlite');
@@ -58,4 +59,64 @@ function recordDirectory(request) {
   } finally { db.close(); db = undefined; }
 }
 
-module.exports = { recordDirectory };
+function registerExternalTranscript(root, transcript, sessionId) {
+  if (!transcript) return;
+  const file = path.resolve(transcript);
+  const relative = path.relative(root, file);
+
+  if (["sessions", "archived"].some(area => relative.startsWith(area + path.sep))) return;
+  const databasePath = path.join(root, "sessions.sqlite");
+  if (fs.lstatSync(databasePath, { throwIfNoEntry: false })?.isSymbolicLink()) throw new Error("Database path must not be a symbolic link");
+  const database = new DatabaseSync(databasePath);
+
+  try {
+    fs.chmodSync(databasePath, 0o600);
+    database.exec("PRAGMA busy_timeout=10000; PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; CREATE TABLE IF NOT EXISTS external_transcripts (record_id TEXT PRIMARY KEY, record_json TEXT NOT NULL)");
+    database.prepare("INSERT INTO external_transcripts VALUES (?, ?) ON CONFLICT(record_id) DO UPDATE SET record_json=json_patch(external_transcripts.record_json, excluded.record_json)")
+      .run(createHash("sha256").update(file).digest("hex"), JSON.stringify({ path: file, sessionId }));
+  } finally { database.close(); }
+}
+
+function saveManagedMetadata(database, id, file, saved) {
+  database.prepare("DELETE FROM session_file_metadata WHERE session_id=?").run(id);
+
+  if (!saved) {
+    database.prepare("INSERT INTO session_file_writes VALUES (?) ON CONFLICT DO NOTHING").run(id);
+
+    return;
+  }
+
+  const metadata = fs.lstatSync(file, { bigint: true });
+
+  if (!metadata.isFile()) throw new Error("Saved session is not a regular file");
+  database.prepare("INSERT INTO session_file_metadata VALUES (?, ?, ?, ?)").run(id, file, String(metadata.mtimeNs), metadata.size);
+  database.prepare("DELETE FROM session_file_writes WHERE session_id=?").run(id);
+}
+
+function withRegistry(root, operation) {
+  const database = sessionTables.open(root);
+  try { return operation(database); } finally { database.close(); }
+}
+
+function bindSession(root, id, file) {
+  return withRegistry(root, database => sessionTables.bind(database, id, file));
+}
+
+function requireSession(root, id, file) {
+  return withRegistry(root, database => sessionTables.register(database, id, file));
+}
+
+function recordTranscript(root, id, file, saved) {
+  return withRegistry(root, database => {
+    database.exec('BEGIN IMMEDIATE');
+    sessionTables.register(database, id, file);
+    saveManagedMetadata(database, id, file, saved);
+    database.exec('COMMIT');
+  });
+}
+
+function sessionPath(root, id) {
+  return withRegistry(root, database => database.prepare('SELECT session_path FROM sessions WHERE session_id=?').get(id)?.session_path);
+}
+
+module.exports = { recordDirectory, bindSession, requireSession, recordTranscript, sessionPath, registerExternalTranscript };

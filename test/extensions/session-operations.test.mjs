@@ -1,5 +1,7 @@
 import assert from 'node:assert/strict';
 import { test, after } from 'node:test';
+import { createServer } from 'node:http';
+import database from '../../daemon/resources/session-database.cjs';
 import { mkdtemp, mkdir, readFile, writeFile, rm, stat, readdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
@@ -15,6 +17,35 @@ async function fixture(t) {
   const dir = await mkdtemp(join(home, 'storage-'));
   process.env.PIOP_STORAGE_DIRECTORY = basename(dir);
   t.after(() => rm(dir, { recursive: true, force: true }));
+
+  const previousBroker = [process.env.PI_DESKTOP_BROKER_URL, process.env.PI_DESKTOP_BROKER_TOKEN];
+  const server = createServer(async (request, response) => {
+    response.setHeader('Content-Type', 'application/json');
+    try {
+      if (request.method !== 'POST' || request.url !== '/session-identity' || request.headers.authorization !== 'Bearer fixture') {
+        response.writeHead(400).end(JSON.stringify({ error: 'Unexpected identity request' }));
+        return;
+      }
+      const chunks = [];
+      for await (const chunk of request) chunks.push(chunk);
+      const { action, count } = JSON.parse(Buffer.concat(chunks).toString());
+      if (action !== 'reserve' || !Number.isInteger(count) || count < 1 || count > 2) {
+        response.writeHead(400).end(JSON.stringify({ error: 'Invalid identity reservation' }));
+        return;
+      }
+      response.end(JSON.stringify({ data: { sessionIds: Array.from({ length: count }, () => database.reserve(dir)) } }));
+    } catch (error) { response.writeHead(500).end(JSON.stringify({ error: error.message })); }
+  });
+  await new Promise((resolve, reject) => { server.once('error', reject); server.listen(0, '127.0.0.1', resolve); });
+  process.env.PI_DESKTOP_BROKER_URL = `http://127.0.0.1:${server.address().port}`;
+  process.env.PI_DESKTOP_BROKER_TOKEN = 'fixture';
+  t.after(async () => {
+    server.closeAllConnections();
+    await new Promise((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
+    for (const [index, key] of ['PI_DESKTOP_BROKER_URL', 'PI_DESKTOP_BROKER_TOKEN'].entries()) {
+      if (previousBroker[index] === undefined) delete process.env[key]; else process.env[key] = previousBroker[index];
+    }
+  });
 
   const bundle = await build({
     stdin: { contents: 'export { default as controls } from "./daemon/resources/piop-controls/index.ts";', resolveDir: process.cwd() },
@@ -34,14 +65,16 @@ async function fixture(t) {
     { type: 'message', id: 'tool', parentId: 'u2', message: { role: 'assistant', stopReason: 'toolUse', content: [{ type: 'toolCall', id: 'pending' }] } },
   ];
 
-  const header = { type: 'session', version: 3, id: 'source', cwd: dir };
+  const header = { type: 'session', version: 3, id: database.reserve(dir), cwd: dir };
   const sessions = join(dir, 'sessions');
   await mkdir(sessions);
   const sourcePath = join(sessions, 'source.jsonl');
   const sourceText = [header, ...entries].map(JSON.stringify).join('\n') + '\n';
   await writeFile(sourcePath, sourceText);
+  const db = database.open(dir);
+  try { database.bind(db, header.id, sourcePath); } finally { db.close(); }
   const notices = [], operations = [], listeners = [];
-  const ctx = { cwd: dir, sessionManager: { getEntries: () => entries, getBranch: () => entries, getEntry: id => entries.find(entry => entry.id === id), getHeader: () => header, getSessionId: () => 'source', getSessionFile: () => sourcePath, getSessionDir: () => sessions }, ui: { notify: (...args) => notices.push(args) } };
+  const ctx = { cwd: dir, sessionManager: { getEntries: () => entries, getBranch: () => entries, getEntry: id => entries.find(entry => entry.id === id), getHeader: () => header, getSessionId: () => header.id, getSessionFile: () => sourcePath, getSessionDir: () => sessions }, ui: { notify: (...args) => notices.push(args) } };
   module.controls({ on: () => undefined, events: { on: (name, handler) => { if (name === 'piop:rpc') listeners.push(handler); }, emit: () => undefined }, appendEntry: (customType, data) => operations.push({ customType, data }) });
 
   const rpc = async (command, payload) => {
@@ -64,7 +97,11 @@ test('fork retains completed history, unique identity, permissions, and untouche
   const result = await f.rpc('prepare_fork', { mode: 'fork_after', entryId: 'a1' });
   const entries = await readEntries(result.sessionPath);
   assert.equal(entries[0].parentSession, f.sourcePath);
-  assert.notEqual(entries[0].id, 'source');
+  assert.notEqual(entries[0].id, f.ctx.sessionManager.getSessionId());
+  const db = database.open(f.dir);
+  try {
+    assert.equal(db.prepare('SELECT session_path FROM sessions WHERE session_id=?').get(entries[0].id).session_path, result.sessionPath);
+  } finally { db.close(); }
   assert.equal(entries[0].cwd, f.dir);
   assert.deepEqual(entries.slice(1), [
     { type: 'message', id: 'u1', parentId: null, message: { role: 'user', content: 'first prompt' } },
@@ -112,7 +149,7 @@ test('fork RPC switches to a completed response without changing the parent', as
 
 
 
-test('forget RPC records successful navigation and preserves cancelled or invalid requests', async t => {
+test('forget RPC navigates without recording state and preserves cancelled or invalid requests', async t => {
   const f = await fixture(t);
   const targets = [];
   f.ctx.navigateTree = async id => { targets.push(id);
@@ -122,7 +159,7 @@ test('forget RPC records successful navigation and preserves cancelled or invali
   assert.deepEqual(await f.rpc('fork_and_forget', { entryId: 'a1' }), { cancelled: true });
   assert.deepEqual(f.operations, []);
   assert.deepEqual(await f.rpc('fork_and_forget', { entryId: 'a1' }), { cancelled: false });
-  assert.deepEqual(f.operations, [{ customType: 'pi-desktop-fork-and-forget', data: { entryId: 'a1' } }]);
+  assert.deepEqual(f.operations, []);
 
   for (const entryId of ['missing', 'u1']) await assert.rejects(f.rpc('fork_and_forget', { entryId }), /Assistant response not found/);
   assert.deepEqual(targets, ['a1', 'a1']);

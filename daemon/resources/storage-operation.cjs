@@ -1,8 +1,8 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const { lockSync } = require('./file-lock.cjs');
-const { holdTransactionLock } = require('./session-broker/session-publication-io.cjs');
-const { withReferencePublicationLock } = require('./storage-lock.cjs');
+const { holdTransactionLock } = require('./piop-storage/session-publication-io.cjs');
+const { withStorage } = require('./piop-storage/maintenance.cjs');
 const transaction = require('./storage-transaction.cjs');
 
 const busy = { state: 'skipped', reason: 'busy' };
@@ -37,7 +37,7 @@ async function underStorageLock(context, nonblocking, operation) {
 }
 
 async function nonblocking(root, operation) {
-  return await withReferencePublicationLock(root, operation, true) ?? busy;
+  return await withStorage(root, operation, true) ?? busy;
 }
 
 function checkTarget(context, target) {
@@ -53,7 +53,7 @@ async function deleteSessions(context, request) {
   targets.forEach(target => checkTarget(context, target));
   const root = context.root;
 
-  return underStorageLock(context, false, () => withReferencePublicationLock(root, () => transaction.deleteSessions(root, request)));
+  return underStorageLock(context, false, () => withStorage(root, () => transaction.deleteSessions(root, request)));
 }
 
 async function deleteBlank(context, target) {
@@ -75,7 +75,7 @@ async function deleteBlank(context, target) {
 }
 
 async function locked(context, operation) {
-  return underStorageLock(context, false, () => withReferencePublicationLock(context.root, () => operation(context.root)));
+  return underStorageLock(context, false, () => withStorage(context.root, () => operation(context.root)));
 }
 
 async function recover(context) {

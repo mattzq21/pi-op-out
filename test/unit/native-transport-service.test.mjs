@@ -48,7 +48,7 @@ test('transport shares concurrent connects, publishes presence and cleans up lis
   assert.equal(commands('start_pi')[0].args.cwd, home);
   const visible = nextPresence(true);
   client.setVisible(true);
-  assert.deepEqual(await visible, { visible: true, focused: true, htmlPreviewSize: 600 });
+  assert.deepEqual(await visible, { visible: true, focused: true });
   const hidden = nextPresence(false);
   visibility = 'hidden';
   document.dispatchEvent(new Event('visibilitychange'));

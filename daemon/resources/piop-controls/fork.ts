@@ -1,14 +1,14 @@
-import { reserveSessionId } from "../session-broker/session-file.ts";
-import type { ExtensionAPI, ExtensionCommandContext, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { copy as copyGoal, read as readGoal } from "../session-broker/goal-storage.cjs";
+import { isCurrent } from "../piop-storage/session-records.cjs";
+import { reserveSessionId } from "../piop-storage/session-file.ts";
+import type { ExtensionCommandContext, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { realpath, mkdir, rmdir } from "node:fs/promises";
 import { basename, dirname, join, resolve } from "node:path";
 import { currentHost } from "../session-broker/client.ts";
-import { writeSessionFile, publicationRetainsDependencies, type SessionPublication } from "../session-broker/session-file.ts";
+import { writeSessionFile, publicationRetainsDependencies, type SessionPublication } from "../piop-storage/session-file.ts";
 import { Type } from "typebox";
 import { Check } from "typebox/value";
 import { existsSync } from "node:fs";
-import { releaseHistory, retainHistory, rootForDirectory } from "../session-broker/goal-assets.cjs";
+import { releaseHistory, retainHistory, rootForDirectory } from "../piop-storage/goal-assets.cjs";
 import type { ForkMode, ForkResult } from "./interface.ts";
 
 export type ForkOptions = { cwd?: string; entryId?: string; position?: "before" | "at" };
@@ -40,37 +40,32 @@ export async function forkSession(ctx: ExtensionContext, mode: ForkMode, entryId
 }
 
 /** SessionControls.forkAndForget. */
-export async function forkAndForget(pi: ExtensionAPI, ctx: ExtensionCommandContext, entryId: string) {
+export async function forkAndForget(ctx: ExtensionCommandContext, entryId: string) {
   const entry = ctx.sessionManager.getEntry(entryId);
 
   if (!entry || entry.type !== "message" || entry.message.role !== "assistant") throw new Error("Assistant response not found in this conversation");
-  const result = await ctx.navigateTree(entryId);
-
-  if (!result.cancelled) pi.appendEntry("pi-desktop-fork-and-forget", { entryId });
-
-  return result;
+  return ctx.navigateTree(entryId);
 }
 
 export async function forkConversation(ctx: ExtensionContext, options: ForkOptions) {
-  const retained = structuredClone(options.position ? positionedHistory(ctx, options.entryId, options.position) : forkHistory(ctx, options.entryId));
+  const selected = options.position ? positionedHistory(ctx, options.entryId, options.position) : forkHistory(ctx, options.entryId);
+  const retained = structuredClone([...selected.filter(entry => !isCurrent(entry)), ...ctx.sessionManager.getEntries().filter(isCurrent)]);
   const header = ctx.sessionManager.getHeader();
   const source = ctx.sessionManager.getSessionFile();
 
   if (!header || !source) throw new Error("Save this conversation before forking it");
   const cwd = await forkDirectory(ctx.cwd, options);
 
-  const sessionId = reserveSessionId();
+  const sessionId = await reserveSessionId();
   const timestamp = new Date().toISOString();
   const sessionPath = join(ctx.sessionManager.getSessionDir(), `${timestamp.replace(/[:.]/g, "-")}_${sessionId}.jsonl`);
   let publication: SessionPublication | undefined;
   let goalAssets: ReturnType<typeof retainHistory> | undefined;
 
   try {
-    const root = rootForDirectory(ctx.sessionManager.getSessionDir());
-    copyGoal(root, ctx.sessionManager.getSessionId(), sessionId);
-    const goal = readGoal(root, sessionId);
-    goalAssets = retainHistory(rootForDirectory(ctx.sessionManager.getSessionDir()), [{ ...header, parentSession: source, objective: goal?.objective }, ...retained], sessionId, sessionPath);
+    goalAssets = retainHistory(rootForDirectory(ctx.sessionManager.getSessionDir()), [{ ...header, parentSession: source }, ...retained], sessionId, sessionPath);
     publication = await writeSessionFile(sessionPath, [{ ...header, id: sessionId, timestamp, cwd, parentSession: source, goalAssets }, ...retained], {
+      goalSource: source,
       dependencies: { workspace: { path: cwd, kind: options.cwd === undefined ? "existing" : "created-directory" } },
     });
   } catch (error) {

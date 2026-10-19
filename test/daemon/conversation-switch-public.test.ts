@@ -121,4 +121,13 @@ test('after fork and forget, the chat list shows the chat as it is now, without 
   await chat.command({ type: 'fork_and_forget', entryId: firstAnswer.id });
   for (let tries = 0; (await listed())?.preview !== 'Reply to Choose a fruit' && tries < 50; tries++) await Bun.sleep(100);
   expect(await listed()).toMatchObject({ preview: 'Reply to Choose a fruit', messageCount: 3, name: 'Choose a fruit' });
+  const original = await chat.command({ type: 'get_state' });
+  await agents.daemon.invoke('stop_pi', { runtimeId: chat.runtimeId });
+  await agents.daemon.invoke('start_pi', { runtimeId: chat.runtimeId, clientId: 'laptop', cwd: chat.cwd, sessionPath: original.sessionFile, presence: { readOnly: true } });
+  expect((await chat.command({ type: 'get_snapshot' })).history.leafId).toBe(firstAnswer.id);
+  await agents.daemon.invoke('stop_pi', { runtimeId: chat.runtimeId });
+  await agents.daemon.invoke('start_pi', { runtimeId: chat.runtimeId, clientId: 'laptop', cwd: chat.cwd, sessionPath: original.sessionFile });
+  expect((await chat.command({ type: 'get_snapshot' })).history.leafId).toBe(firstAnswer.id);
+  expect(await listed()).toMatchObject({ preview: 'Reply to Choose a fruit', messageCount: 3 });
+
 }, 60000);

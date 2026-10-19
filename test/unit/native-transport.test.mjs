@@ -176,7 +176,7 @@ test('compact prompts become commands while ordinary prompts and state updates r
   await client.command({ type: 'prompt', message: '/compact   keep the decisions  ' });
   await client.command({ type: 'prompt', message: '/compact' });
   await client.command({ type: 'prompt', message: '/compactly' });
-  assert.deepEqual(rpc('compact').map(call => call.args.command), [{ type: 'compact', customInstructions: 'keep the decisions', clientHtmlPreviewSize: 600 }, { type: 'compact', clientHtmlPreviewSize: 600 }]);
+  assert.deepEqual(rpc('compact').map(call => call.args.command), [{ type: 'compact', customInstructions: 'keep the decisions' }, { type: 'compact' }]);
   assert.equal(rpc('prompt')[0].args.command.message, '/compactly');
   responses.set('pi_command:get_state', { sessionFile: '/session', sessionId: 'id' });
   await client.command({ type: 'get_state' });
@@ -191,7 +191,7 @@ test('compact prompts become commands while ordinary prompts and state updates r
   await client.command({ type: 'fork' });
   assert.equal(client.connectionTarget().sessionId, undefined);
   await client.changePendingMessage('pending', { type: 'remove' });
-  assert.deepEqual(rpc('change_pending')[0].args.command, { type: 'change_pending', id: 'pending', action: { type: 'remove' }, clientHtmlPreviewSize: 600 });
+  assert.deepEqual(rpc('change_pending')[0].args.command, { type: 'change_pending', id: 'pending', action: { type: 'remove' } });
 });
 
 test('diagnostics retain the last five matching stderr lines and augment connection failures only', async () => {

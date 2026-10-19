@@ -11,12 +11,6 @@ import * as peers from './peers';
 
 export { mergeDiscoveredSkills };
 
-function migrateQuestionTool(settings: AppSettings): void {
-  const hasCurrent = settings.tools.some(tool => tool?.name === 'request_user_input');
-  if (hasCurrent) settings.tools = settings.tools.filter(tool => tool?.name !== 'request_user_input_async');
-  for (const tool of settings.tools) if (tool?.name === 'request_user_input_async') tool.name = 'request_user_input';
-}
-
 export async function loadAppSettings(app: App): Promise<AppSettings> {
   const path = await settingsPath();
   synchronization.start(app);
@@ -56,7 +50,6 @@ export function readSettingsAt(path: string): AppSettings {
   const settings = body ? parseAppSettings(JSON.parse(body.toString('utf8'))) : defaultSettings();
   validateHostIds(settings);
   settings.settingsRevision = settingsRevision(body);
-  migrateQuestionTool(settings);
   migrateGoalTools(settings);
   initializeSessionTools(settings);
   migrateBuiltinTools(settings);
@@ -66,7 +59,6 @@ export function readSettingsAt(path: string): AppSettings {
 }
 
 export async function saveAppSettings(app: App, settings: AppSettings, agentHostId: string | undefined): Promise<any> {
-  migrateQuestionTool(settings);
   migrateGoalTools(settings);
   for (const tool of sessionOperationTools()) if (!settings.tools.some(existing => existing?.name === tool.name)) settings.tools.push(tool);
   const runtime = app.pi;

@@ -3,12 +3,11 @@ import { Type as Schema } from "typebox";
 import { Check } from "typebox/value";
 import { currentHost } from "./client.ts";
 import { sendAgentMailbox } from "./orchestration.ts";
-import { persistSubagentRun, savedSubagentRuns } from "./subagent-results.ts";
+import { persistSubagentRun, savedSubagentRuns } from "../piop-storage/subagent-results.ts";
 import { runSchema, resultNotificationId, type SubagentRun } from "./subagent-identity.ts";
 
 export { runSchema, type SubagentRun } from "./subagent-identity.ts";
 
-export const SUBAGENT_RUN = "piop-subagent-run";
 
 export const SUBAGENT_PARENT = "piop-subagent-parent";
 
@@ -57,15 +56,6 @@ export function latestRuns(ctx: ExtensionContext) {
   return [...runs.values()];
 }
 
-export function originalRunTask(ctx: ExtensionContext, run: SubagentRun) {
-  const key = run.runId ?? `${run.toolCallId}:${run.startedAt}`;
-
-  const entry = ctx.sessionManager.getEntries().find(entry => entry.type === "custom" && entry.customType === SUBAGENT_RUN && Check(runSchema, entry.data)
-    && entry.data.parentSessionId === run.parentSessionId && entry.data.sessionId === run.sessionId && (entry.data.runId ?? `${entry.data.toolCallId}:${entry.data.startedAt}`) === key);
-
-  return entry?.type === "custom" && Check(runSchema, entry.data) ? entry.data.task : run.task;
-}
-
 function precedes(run: SubagentRun, previous: SubagentRun) {
   const generation = (run.generation ?? 0) - (previous.generation ?? 0);
 
@@ -77,7 +67,7 @@ export function saveRun(pi: ExtensionAPI, ctx: ExtensionContext, run: SubagentRu
   const previous = ownedRuns(ctx).find(item => resultNotificationId(item) === resultNotificationId(run));
 
   if (previous?.resultDelivery === "delivered") run.resultDelivery = "delivered";
-  persistSubagentRun(pi, ctx, run);
+  persistSubagentRun(ctx, run);
 }
 
 export function subagentPayload(runs: SubagentRun[]): AgentToolResult<{ version: 1; runs: SubagentRun[] }> {

@@ -66,7 +66,7 @@ export const SESSION_BROKER_MODULES = R.SESSION_BROKER_MODULES;
 export const EXCALIDRAW_ASSETS = R.EXCALIDRAW_ASSETS;
 
 /** Installs session-broker and the session extensions that share its modules. Returns the entries in load order. */
-export function prepareSessionExtensions(): { controls: string; broker: string; goals: string; reviews: string } {
+export function prepareSessionExtensions(): { storage: string; controls: string; broker: string; goals: string; reviews: string } {
   const dir = generatedExtensionRoot();
   ensurePrivateDir(dir);
   prepareBrokerStorage(dir);
@@ -79,30 +79,24 @@ export function prepareSessionExtensions(): { controls: string; broker: string; 
   }
   const broker = join(dir, 'session-broker.ts');
   atomicWritePrivate(broker, R.sessionBroker);
-  return { controls: join(dir, 'piop-controls/index.ts'), broker, goals: join(dir, 'piop-goals/index.ts'), reviews: join(dir, 'piop-reviews/index.ts') };
+  return { storage: join(dir, 'piop-storage/index.ts'), controls: join(dir, 'piop-controls/index.ts'), broker, goals: join(dir, 'piop-goals/index.ts'), reviews: join(dir, 'piop-reviews/index.ts') };
 }
 
 function prepareSdkStorage(dir: string): void {
   atomicWritePrivate(join(dir, 'transcript-references.cjs'), R.transcriptReferences);
   atomicWritePrivate(join(dir, 'sdk-storage.mjs'), R.sdkStorage);
+  atomicWritePrivate(join(dir, 'storage-file.mjs'), R.storageFile);
   atomicWritePrivate(join(dir, 'sdk-session-list.mjs'), R.sdkSessionList);
   atomicWritePrivate(join(dir, 'session-database.cjs'), R.sessionDatabase);
+  atomicWritePrivate(join(dir, 'session-registry.cjs'), R.sessionRegistry);
 }
 
 function prepareBrokerStorage(dir: string): void {
   atomicWritePrivate(join(dir, 'transcript-references.cjs'), R.transcriptReferences);
   atomicWritePrivate(join(dir, 'session-database.cjs'), R.sessionDatabase);
+  atomicWritePrivate(join(dir, 'session-registry.cjs'), R.sessionRegistry);
   atomicWritePrivate(join(dir, 'sdk-storage.mjs'), R.sdkStorage);
-}
-
-export function prepareUserQuestionsExtension(): string {
-  const dir = join(generatedExtensionRoot(), 'piop-user-questions');
-  ensurePrivateDir(dir);
-  atomicWritePrivate(join(dir, 'interface.ts'), R.userQuestionsInterface);
-  atomicWritePrivate(join(dir, 'questions.ts'), R.userQuestionsLogic);
-  const path = join(dir, 'index.ts');
-  atomicWritePrivate(path, R.userQuestionsExtension);
-  return path;
+  atomicWritePrivate(join(dir, 'storage-file.mjs'), R.storageFile);
 }
 
 export function prepareProvidersRefreshExtension(): string {
@@ -150,16 +144,6 @@ export function prepareContextBarExtension(): string {
   ensurePrivateDir(dir);
   const path = join(dir, 'piop-context-bar.ts');
   atomicWritePrivate(path, R.contextBarExtension);
-  return path;
-}
-
-export function prepareHtmlPreviewExtension(): string {
-  const dir = join(generatedExtensionRoot(), 'piop-html-preview');
-  ensurePrivateDir(dir);
-  atomicWritePrivate(join(dir, 'interface.ts'), R.htmlPreviewInterface);
-  atomicWritePrivate(join(dir, 'preview.ts'), R.htmlPreviewFeature);
-  const path = join(dir, 'index.ts');
-  atomicWritePrivate(path, R.htmlPreviewExtension);
   return path;
 }
 

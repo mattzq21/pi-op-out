@@ -1,5 +1,4 @@
-const goalStorage = require("./session-broker/goal-storage.cjs");
-const sessionDatabase = require("./session-database.cjs");
+const goalRecords = require("./piop-storage/goals.cjs");
 const { realpathSync, readFileSync, existsSync, openSync, closeSync, fsyncSync } = require("node:fs");
 const { dirname, join, isAbsolute } = require("node:path");
 const { pathToFileURL } = require("node:url");
@@ -74,8 +73,7 @@ async function queueContracts(root) {
     import(pathToFileURL(runtimeRequire.resolve("typebox/value")).href),
   ]);
 
-  const response = Type.Object({ type: Type.Literal("answer_question"), requestId: Type.String(), value: Type.Optional(Type.String()), cancelled: Type.Optional(Type.Boolean()) });
-  const prompt = Type.Object({ queueId: Type.String({ minLength: 1 }), message: Type.String(), streamingBehavior: Type.Union([Type.Literal("steer"), Type.Literal("followUp")]), images: Type.Optional(Type.Array(Type.Unknown())), questionResponse: Type.Optional(response), goalSubmissionId: Type.Optional(Type.String()), goalPrepared: Type.Optional(Type.Boolean()) });
+  const prompt = Type.Object({ queueId: Type.String({ minLength: 1 }), message: Type.String(), streamingBehavior: Type.Union([Type.Literal("steer"), Type.Literal("followUp")]), images: Type.Optional(Type.Array(Type.Unknown())), goalSubmissionId: Type.Optional(Type.String()), goalPrepared: Type.Optional(Type.Boolean()) });
   const user = Type.Object({ role: Type.Literal("user"), piopQueueId: Type.String({ minLength: 1 }) });
 
   return { parse: payload => Parse(prompt, payload), check: message => Check(user, message) };
@@ -200,21 +198,8 @@ function appInput(dispatch) {
   stdin.on("end", () => { if (pending) input.write(pending); input.end(); });
 }
 
-async function resolveQueuedAnswer(payload, session) {
-  if (!payload.questionResponse) return false;
-  await runtimeRequest(session, "answer_question", { ...payload.questionResponse, action: "resolve", queueId: payload.queueId });
-
-  return session.sessionManager.getBranch().some(entry => entry.type === "message" && entry.message.role === "user" && entry.message.piopQueueId === payload.queueId);
-}
-
 async function dispatchQueuedPrompt(command, session, output) {
   const payload = queueValidation.parse(command.payload);
-
-  if (await resolveQueuedAnswer(payload, session)) {
-    output({ type: "response", id: command.id, command: command.command, success: true, data: { disposition: "handled" } });
-
-    return;
-  }
 
   let preflightSucceeded = false;
   void session.prompt(payload.message, {
@@ -341,8 +326,7 @@ const reviewText = message => message.role === "user" ? message.content.filter(p
 
 function currentGoal(session) {
   const file = session.sessionManager.getSessionFile();
-
-  return file ? goalStorage.read(sessionDatabase.storageRoot(file), session.sessionManager.getSessionId()) : null;
+  return file ? goalRecords.read(file, session.sessionManager.getSessionId()) : null;
 }
 
 const hasGoal = session => currentGoal(session) !== null;
@@ -665,12 +649,10 @@ function installGoalPendingMessages(AgentSession) {
 async function main() {
   const [executable, ...args] = process.argv.slice(2);
   const root = runtimeRoot(executable);
-  const { installRuntimeStorage, installSessionStorage } = await import("./sdk-storage.mjs");
-  const { installSessionLists } = await import("./sdk-session-list.mjs");
+  const { installRuntimeStorage } = await import("./sdk-storage.mjs");
+  const { installStorage } = await import("./piop-storage/bootstrap.mjs");
   await installRuntimeStorage(root);
-  const { SessionManager } = await import(pathToFileURL(join(root, "dist/core/session-manager.js")).href);
-  installSessionStorage(SessionManager, require("./transcript-references.cjs").publish);
-  installSessionLists(SessionManager);
+  await installStorage(root);
   process.argv = [process.execPath, join(root, "dist/cli.js"), ...args];
 
   if (args.includes("--print")) return import(pathToFileURL(join(root, "dist/cli.js")).href);
