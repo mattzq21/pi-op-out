@@ -35,7 +35,7 @@ export function storageSchemaImports() {
 }
 
 const canonicalModules = new Set([
-  "file-lock.cjs",
+  "file-lock.cjs", "session-records.cjs",
   "external-transcripts.cjs", "transcript-metadata.cjs", "conversation-storage.cjs",
   "session-database.cjs", "temporary-chat.cjs", "transcript-references.cjs", "goal-dependencies.cjs", "goal-preparations.cjs", "goal-ownership.cjs",
 

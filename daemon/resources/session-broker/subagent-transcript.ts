@@ -1,3 +1,4 @@
+import { records as savedRecords } from "../piop-storage/session-records.cjs";
 import { open, type FileHandle } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import { Type, type Static } from "typebox";
@@ -96,7 +97,8 @@ export async function* transcriptLines(path: string, start = 0, sessionId?: stri
   const file = await open(path, "r");
   let input;
   let pending = Buffer.alloc(0);
-  let offset = start;
+  let offset = 0;
+  let state: ReturnType<typeof savedRecords> | undefined;
 
   try {
     if (sessionId) {
@@ -105,7 +107,7 @@ export async function* transcriptLines(path: string, start = 0, sessionId?: stri
       if (expectedHeader && header !== expectedHeader) throw new Error("The conversation moved during usage accounting; retry with its current task boundary");
     }
 
-    input = file.createReadStream({ start, autoClose: false });
+    input = file.createReadStream({ start: 0, autoClose: false });
 
     for await (const chunk of input) {
       pending = Buffer.concat([pending, chunk]);
@@ -113,7 +115,14 @@ export async function* transcriptLines(path: string, start = 0, sessionId?: stri
 
       while (end >= 0) {
         const next = offset + end + 1;
-        yield { line: pending.subarray(0, end).toString("utf8"), offset, next };
+        const line = pending.subarray(0, end).toString("utf8");
+        const entry = JSON.parse(line);
+        if (entry.type === "session") state = savedRecords(path, entry.id);
+        if (offset >= start) yield { line, offset, next };
+        const after = entry.type === "session" ? null : entry.id;
+        if (next >= start) for (const record of state?.filter(record => record.after === after) ?? []) {
+          yield { line: JSON.stringify(record.entry), offset: next, next };
+        }
         pending = pending.subarray(end + 1);
         offset = next;
         end = pending.indexOf(10);

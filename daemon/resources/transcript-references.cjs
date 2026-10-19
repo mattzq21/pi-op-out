@@ -1,3 +1,4 @@
+const stateRecords = require('./piop-storage/session-records.cjs');
 const fs = require('node:fs');
 const database = require('./session-database.cjs');
 
@@ -151,7 +152,7 @@ function read(root, file, connection) {
     if (row) {
       if (fingerprint(fs.lstatSync(file, { bigint: true })) !== before) throw new Error('Transcript changed while reading saved references');
 
-      return JSON.parse(row.entries_json);
+      return stateRecords.merge(file, JSON.parse(row.entries_json), db);
     }
 
     const descriptor = fs.openSync(file, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK);
@@ -164,7 +165,7 @@ function read(root, file, connection) {
     } finally { fs.closeSync(descriptor); }
 
     if (fingerprint(fs.lstatSync(file, { bigint: true })) !== before) throw new Error('Transcript changed during reference import');
-    const saved = summarize(entries, root);
+    const saved = summarize(stateRecords.merge(file, entries, db), root);
     save(db, file, before, saved);
 
     return saved;

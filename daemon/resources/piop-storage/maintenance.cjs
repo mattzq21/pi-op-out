@@ -1,3 +1,4 @@
+const stateRecords = require('./session-records.cjs');
 const { acquireReferencePublicationLock } = require('./reference-publication-lock.cjs');
 const fs = require('node:fs');
 const assets = require('./goal-assets.cjs');
@@ -13,7 +14,7 @@ function entries(file, id) {
 }
 
 function inspectSession(root, file, id) {
-  return assets.historyContract(root, entries(file, id), id);
+  return assets.historyContract(root, stateRecords.merge(file, entries(file, id)), id);
 }
 
 function archiveContent(file, id, header, contract) {

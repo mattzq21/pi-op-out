@@ -1,3 +1,4 @@
+import { savedSubagentRuns } from "../piop-storage/subagent-results.ts";
 import type { AgentToolResult, ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Type } from "@earendil-works/pi-ai";
 import { Type as Schema } from "typebox";
@@ -56,7 +57,7 @@ export function registerSubagentMailbox(pi: ExtensionAPI) {
   pi.on("session_start", () => { pending.clear(); wake("cancelled"); });
 
   const unsubscribe = pi.events.on("piop:required-tools", request => {
-    if (request.ctx.sessionManager.getEntries().some(entry => entry.type === "custom" && entry.customType === "piop-subagent-run")) request.tools.push("wait_agent", "await_subagents");
+    if (savedSubagentRuns(request.ctx).length > 0) request.tools.push("wait_agent", "await_subagents");
   });
 
   pi.on("session_shutdown", unsubscribe);

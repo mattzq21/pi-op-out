@@ -1,3 +1,4 @@
+const stateRecords = require('./session-records.cjs');
 const fs = require('node:fs');
 const path = require('node:path');
 const { randomUUID } = require('node:crypto');
@@ -126,7 +127,7 @@ function acknowledge(journal) {
   const parent = parentLocation(journal);
 
   if (!parent) return false;
-  const saved = entries(io.read(parent.path).body);
+  const saved = stateRecords.merge(parent.path, entries(io.read(parent.path).body));
 
   const state = publicationState(saved, currentRecord(journal));
 
@@ -169,10 +170,12 @@ function reattachLocked(journal) {
 
   const record = currentRecord(journal);
 
-  const missing = missingEntries(entries(snapshot.body), record);
+  const saved = stateRecords.merge(parent.path, entries(snapshot.body));
+  const missing = missingEntries(saved, record);
+  stateRecords.save(parent.path, [...saved, ...missing]);
 
   if (missing.length) {
-    const text = missing.map(entry => JSON.stringify(entry)).join('\n') + '\n';
+    const text = stateRecords.stored(missing).map(entry => JSON.stringify(entry)).join('\n') + '\n';
     journal.parentRepair = { path: parent.path, identity: io.identity(parent.path), bytes: snapshot.bytes.length, digest: io.hash(snapshot.bytes), text };
     savedJournal(journal);
     appendRemaining(parent.path, snapshot, journal.parentRepair, Buffer.from(text));

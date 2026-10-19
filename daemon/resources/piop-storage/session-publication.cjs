@@ -1,3 +1,4 @@
+const stateRecords = require('./session-records.cjs');
 const goals = require('./goals.cjs');
 const registry = require('../session-registry.cjs');
 const fs = require('node:fs');
@@ -19,6 +20,7 @@ const journalSchema = Type.Object({
   bytes: Type.Integer({ minimum: 1 }), digest: Type.String({ pattern: '^[a-f0-9]{64}$' }), lock: Type.String(), lockIdentity: identitySchema,
   writer: io.writerSchema, phase: Type.Union(['planned', 'writing', 'ready', 'linked', 'parent-pending', 'quarantined'].map(value => Type.Literal(value))),
   temporaryIdentity: Type.Optional(identitySchema), review: Type.Optional(reviews.reviewSchema),
+  state: Type.Optional(Type.Array(Type.Unknown())),
   dependencies: Type.Optional(dependencies.contractSchema), preparationComplete: Type.Optional(Type.Boolean()),
   quarantine: Type.Optional(Type.Object({ path: Type.String(), reason: Type.String() })),
 });
@@ -112,12 +114,12 @@ function prepareJournal(root, target, prepared, id, lock, lease, options) {
   if (options.goalSource) goals.copy(options.goalSource, target, prepared.header.id);
   prepared.header = { ...prepared.header, goalAssets: contract.goalAssets };
   prepared.entries[0] = prepared.header;
-  prepared.body = prepared.entries.map(value => JSON.stringify(value)).join('\n') + '\n';
+  prepared.body = stateRecords.stored(prepared.entries).map(value => JSON.stringify(value)).join('\n') + '\n';
 
   const journal = {
     version: 1, kind: 'session-publication', id, root, rootIdentity: io.identity(root), target, directoryIdentity: io.identity(path.dirname(target)),
     temporary: `${target}.${id}.tmp`, sessionId: prepared.header.id, bytes: Buffer.byteLength(prepared.body), digest: io.hash(prepared.body),
-    lock, lockIdentity: io.identity(lock), writer: io.writer(), phase: 'planned', dependencies: contract,
+    lock, lockIdentity: io.identity(lock), writer: io.writer(), phase: 'planned', dependencies: contract, state: prepared.entries,
   };
 
   if (options.beforeWrite) {
@@ -125,7 +127,7 @@ function prepareJournal(root, target, prepared, id, lock, lease, options) {
     journal.preparationComplete = false;
   }
 
-  if (options.review) journal.review = reviews.prepare(root, { ...options.review, target }, prepared.header, id, prepared.body);
+  if (options.review) journal.review = reviews.prepare(root, { ...options.review, target }, prepared.header, id, prepared.entries.map(entry => JSON.stringify(entry)).join("\n") + "\n");
 
   if (database.publication(root, id)) throw new Error('Session publication operation identity is already in use');
   io.sync(lock);
@@ -212,6 +214,7 @@ async function publishLocked(root, target, body, options) {
 
   try {
     dependencies.retain(journal);
+    stateRecords.save(journal.target, journal.state);
 
     if (options.beforeWrite) { await options.beforeWrite(); journal.preparationComplete = true; save(journal); }
 
@@ -275,6 +278,7 @@ function recoverUnlinked(journal) {
   if (io.exists(journal.target)) return quarantine(journal, 'Publication target belongs to another transcript; both files were retained');
   verifyPreparation(journal);
   dependencies.retain(journal);
+  stateRecords.save(journal.target, journal.state);
   journal.temporaryIdentity = io.identity(journal.temporary);
   journal.phase = 'ready';
   save(journal);
@@ -435,7 +439,7 @@ function visibleReview(root, file, parentId) {
   const parent = io.locate(root, parentId);
 
   if (parent) {
-    const saved = JSON.parse(`[${io.read(parent.path).body.trim().split('\n').join(',')}]`);
+    const saved = stateRecords.merge(parent.path, JSON.parse(`[${io.read(parent.path).body.trim().split('\n').join(',')}]`));
 
     if (saved.some(entry => Check(recordSchema, entry) && entry.type === 'custom' && entry.customType === 'piop-review' && entry.data?.sessionId === child.id && entry.data.parentSessionId === parentId)) return null;
   }

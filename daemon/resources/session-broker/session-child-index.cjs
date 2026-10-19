@@ -1,3 +1,4 @@
+const stateRecords = require('../piop-storage/session-records.cjs');
 const path = require('node:path');
 const fs = require('node:fs');
 const os = require('node:os');
@@ -98,7 +99,7 @@ function add(root, parentSessionId, parentSessionPath, child) {
 }
 
 function registerTranscript(root, sessionPath, body) {
-  const entries = body.trim().split('\n').map(JSON.parse);
+  const entries = stateRecords.merge(sessionPath, body.trim().split('\n').map(JSON.parse));
   const header = entries[0];
 
   if (!Check(io.headerSchema, header)) throw new Error('Invalid conversation child publication');

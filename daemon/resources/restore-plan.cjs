@@ -1,3 +1,4 @@
+const stateRecords = require('./piop-storage/session-records.cjs');
 const fs = require('node:fs');
 const path = require('node:path');
 const { Type } = require('typebox');
@@ -18,7 +19,7 @@ function readArchive(root, file) {
 
   if (header?.type !== 'session' || !Check(Type.String({ minLength: 1 }), header.id) || !path.isAbsolute(header.cwd ?? '')) throw new Error('Invalid archived session header');
 
-  return { path: file, entries, header };
+  return { path: file, entries: stateRecords.merge(file, entries), header };
 }
 
 function referencedPaths(records) {
@@ -29,7 +30,7 @@ function referencedPaths(records) {
       if (entry.type !== 'custom') continue;
       const data = entry.data;
 
-      if (['piop-review', 'piop-subagent-run'].includes(entry.customType) && Check(Type.String(), data?.sessionPath)) paths.set(data.sessionId, data.sessionPath);
+      if (entry.customType === 'piop-review' && Check(Type.String(), data?.sessionPath)) paths.set(data.sessionId, data.sessionPath);
 
       if (entry.customType === 'piop-subagent-parent' && Check(Type.String(), data?.parentSessionPath)) paths.set(data.parentSessionId, data.parentSessionPath);
     }

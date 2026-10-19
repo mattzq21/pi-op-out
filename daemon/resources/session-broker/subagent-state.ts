@@ -8,7 +8,6 @@ import { runSchema, resultNotificationId, type SubagentRun } from "./subagent-id
 
 export { runSchema, type SubagentRun } from "./subagent-identity.ts";
 
-export const SUBAGENT_RUN = "piop-subagent-run";
 
 export const SUBAGENT_PARENT = "piop-subagent-parent";
 
@@ -58,12 +57,7 @@ export function latestRuns(ctx: ExtensionContext) {
 }
 
 export function originalRunTask(ctx: ExtensionContext, run: SubagentRun) {
-  const key = run.runId ?? `${run.toolCallId}:${run.startedAt}`;
-
-  const entry = ctx.sessionManager.getEntries().find(entry => entry.type === "custom" && entry.customType === SUBAGENT_RUN && Check(runSchema, entry.data)
-    && entry.data.parentSessionId === run.parentSessionId && entry.data.sessionId === run.sessionId && (entry.data.runId ?? `${entry.data.toolCallId}:${entry.data.startedAt}`) === key);
-
-  return entry?.type === "custom" && Check(runSchema, entry.data) ? entry.data.task : run.task;
+  return savedSubagentRuns(ctx).find(saved => resultNotificationId(saved) === resultNotificationId(run))?.originalTask ?? run.originalTask ?? run.task;
 }
 
 function precedes(run: SubagentRun, previous: SubagentRun) {

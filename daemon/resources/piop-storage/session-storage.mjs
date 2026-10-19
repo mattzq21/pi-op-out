@@ -1,3 +1,4 @@
+import * as stateRecords from "./session-records.cjs";
 import { copy as copyGoal } from "./goals.cjs";
 import { takeSessionId } from "./identities.mjs";
 import { lockSync as storageLockSync } from "../file-lock.cjs";
@@ -233,13 +234,13 @@ function storedSessionEntries(path, manager) {
   const lines = body.toString("utf8").split("\n");
   lines.pop();
 
-  return lines.map((line, index) => {
+  return stateRecords.merge(path, lines.map((line, index) => {
     try {
       const entry = JSON.parse(line);
       if (!entry || typeof entry.type !== "string") throw new Error("Invalid record");
       return entry;
     } catch { throw new Error(`Damaged chat record at line ${index + 1}: ${path}`); }
-  });
+  }));
 }
 
 function sessionParentPath(entry) {
@@ -294,7 +295,8 @@ function sessionStoragePublish(manager, entries, exclusive) {
     registerManagedTranscript(manager);
     const references = validateSessionReferencePublication(entries, exclusive ? undefined : storedSessionEntries(path));
 
-    try { storagePublish(path, sessionStorageTemporary(path), entries.map(entry => JSON.stringify(entry) + "\n").join(""), exclusive); }
+    stateRecords.save(path, entries);
+    try { storagePublish(path, sessionStorageTemporary(path), stateRecords.stored(entries).map(entry => JSON.stringify(entry) + "\n").join(""), exclusive); }
     catch (error) {
       if (storageFs.existsSync(path)) failedSessionStorage.add(manager);
       throw error;
@@ -315,7 +317,10 @@ function sessionStorageAppend(manager, entry) {
     const previous = baseline?.path === manager.sessionFile && baseline.entries === manager.fileEntries ? baseline.references : managedGoalReferences(manager.fileEntries);
     const references = managedGoalReferences([entry]);
     validateNewGoalReferences(references, previous);
-    appendSessionStorage(manager, entry);
+    if (entry.type === "custom") {
+      const after = manager.fileEntries.findLast(item => item.type !== "session" && item.type !== "custom")?.id ?? null;
+      stateRecords.append(manager.sessionFile, manager.getSessionId(), after, entry);
+    } else appendSessionStorage(manager, entry);
     finishManagedTranscript(manager, manager.fileEntries, entry);
     sessionReferenceBaselines.set(manager, { path: manager.sessionFile, entries: manager.fileEntries, references: new Set([...previous, ...references]) });
   }
@@ -404,6 +409,12 @@ export function installSessionStorage(SessionManager, recordReferences) {
   installSessionCreation(SessionManager);
 
   if (recordReferences) sessionReferenceRecorders.set(prototype, recordReferences);
+
+  prototype.appendCustomEntry = function (type, data) {
+    const entry = stateRecords.create(type, data, this.leafId);
+    this._appendEntry(entry);
+    return entry.id;
+  };
 
   prototype._appendEntry = function (entry) {
     sessionStorageState(this);

@@ -1,4 +1,3 @@
-import { sessionStorage } from "./interface.ts";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { constants } from "node:fs";
 import { open } from "node:fs/promises";
@@ -12,7 +11,6 @@ export { resultNotificationId } from "../session-broker/subagent-identity.ts";
 
 export { runSchema, type SubagentRun } from "../session-broker/subagent-identity.ts";
 
-export const SUBAGENT_RUN = "piop-subagent-run";
 
 async function syncPath(path: string) {
   const file = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW);
@@ -86,6 +84,7 @@ function mergePendingRun(db: DatabaseSync, run: SubagentRun) {
   if (previous && previous.status !== "running" && run.status === "running") return false;
 
   if (previous?.accountingPending === false && run.accountingPending) return false;
+  run.originalTask = previous?.originalTask ?? run.task;
   run.deliveryIds = [...new Set([...(previous?.deliveryIds ?? []), ...(run.deliveryIds ?? [])])];
 
   return true;
@@ -104,7 +103,7 @@ export function persistSubagentRun(pi: ExtensionAPI, ctx: ExtensionContext, run:
     db.exec("COMMIT");
   } finally { db.close(); }
 
-  if (accepted) sessionStorage(pi).append(SUBAGENT_RUN, structuredClone(run));
+
 }
 
 function readRuns(file: string, sessionId: string) {

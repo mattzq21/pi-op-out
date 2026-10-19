@@ -1,3 +1,4 @@
+const stateRecords = require('./piop-storage/session-records.cjs');
 const fs = require('node:fs');
 const { Type } = require('typebox');
 const { Check } = require('typebox/value');
@@ -178,6 +179,20 @@ class SessionIndex {
 async function indexFile(path) {
   const index = new SessionIndex();
   let pending = [];
+  let state;
+  const feed = line => {
+    index.line(line);
+    if (!index.header) return;
+    state ??= stateRecords.records(path, index.header.id);
+    let entry;
+    try { entry = JSON.parse(line.toString("utf8")); } catch { return; }
+    const after = entry.type === "session" ? null : entry.id;
+    for (const record of state.filter(record => record.after === after)) {
+      const bytes = index.bytes;
+      index.line(Buffer.from(JSON.stringify(record.entry)));
+      index.bytes = bytes;
+    }
+  };
 
   for await (const chunk of fs.createReadStream(path)) {
     let start = 0, end;
@@ -186,7 +201,7 @@ async function indexFile(path) {
       pending.push(chunk.subarray(start, end));
       const line = Buffer.concat(pending);
       pending = []; start = end + 1;
-      index.line(line);
+      feed(line);
     }
 
     if (start < chunk.length) pending.push(chunk.subarray(start));
