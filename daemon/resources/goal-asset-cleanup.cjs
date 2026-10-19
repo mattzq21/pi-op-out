@@ -52,9 +52,6 @@ function registered(root, observation, deleted) {
   try {
     for (const record of database.prepare('SELECT session_id, session_path FROM sessions').all()) observeRegistered(root, record, observation, deleted);
 
-    for (const goal of database.prepare('SELECT session_id, objective FROM session_goals').all()) {
-      if (!deleted.has(goal.session_id)) observeReferences(root, [goal], observation);
-    }
   } finally { database.close(); }
 }
 

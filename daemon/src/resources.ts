@@ -56,6 +56,7 @@ import brokerModule15 from '../resources/session-broker/session-publication.d.ct
 import brokerModule17 from '../resources/session-broker/subagents.ts?raw';
 import brokerModule18 from '../resources/session-broker/subagent-state.ts?raw';
 import brokerModule19 from '../resources/session-broker/subagent-reconciliation.ts?raw';
+import subagentTokens from '../resources/session-broker/subagent-tokens.ts?raw';
 import brokerModule20 from '../resources/session-broker/subagent-transcript.ts?raw';
 import brokerModule21 from '../resources/session-broker/orchestration.ts?raw';
 import brokerModule22 from '../resources/session-broker/durable-mailbox.ts?raw';
@@ -66,7 +67,7 @@ import brokerModule26 from '../resources/session-broker/subagent-mailbox.ts?raw'
 import brokerModule27 from '../resources/session-broker/subagent-results.ts?raw';
 import brokerModule28 from '../resources/session-broker/subagent-recovery.ts?raw';
 import brokerModule29 from '../resources/session-broker/subagent-identity.ts?raw';
-import brokerModule36 from '../resources/session-broker/goal-storage.cjs?raw';
+import goalsRecords from '../resources/piop-goals/goal-records.cjs?raw';
 import brokerModule39Raw from '../resources/session-broker/reference-publication-lock.cjs?raw';
 import brokerModule41 from '../resources/session-broker/goal-dependencies.cjs?raw';
 import brokerModule42 from '../resources/session-broker/goal-prepared-files.cjs?raw';
@@ -176,6 +177,7 @@ export const SESSION_BROKER_MODULES: Array<[string, string]> = [
   ['subagents.ts', brokerModule17],
   ['subagent-state.ts', brokerModule18],
   ['subagent-reconciliation.ts', brokerModule19],
+  ['subagent-tokens.ts', subagentTokens],
   ['subagent-transcript.ts', brokerModule20],
   ['orchestration.ts', brokerModule21],
   ['durable-mailbox.ts', brokerModule22],
@@ -186,7 +188,6 @@ export const SESSION_BROKER_MODULES: Array<[string, string]> = [
   ['subagent-results.ts', brokerModule27],
   ['subagent-recovery.ts', brokerModule28],
   ['subagent-identity.ts', brokerModule29],
-  ['goal-storage.cjs', brokerModule36],
   ['reference-publication-lock.cjs', brokerModule39],
   ['goal-dependencies.cjs', brokerModule41],
   ['goal-prepared-files.cjs', brokerModule42],
@@ -207,7 +208,7 @@ export const SESSION_EXTENSIONS: Array<[string, Array<[string, string]>]> = [
     ['commands.ts', controlsCommands], ['fast-mode.ts', controlsFastMode], ['index.ts', controlsIndex],
   ]],
   ['piop-goals', [
-    ['interface.ts', goalsInterface], ['state.ts', goalsState], ['prompts.ts', goalsPrompts], ['coordination.ts', goalsCoordination],
+    ['goal-records.cjs', goalsRecords], ['interface.ts', goalsInterface], ['state.ts', goalsState], ['prompts.ts', goalsPrompts], ['coordination.ts', goalsCoordination],
     ['files.ts', goalsFiles], ['preparation.ts', goalsPreparation], ['goals.ts', goalsGoals], ['tools.ts', goalsTools],
     ['commands.ts', goalsCommands], ['index.ts', goalsIndex],
   ]],

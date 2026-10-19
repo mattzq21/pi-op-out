@@ -129,7 +129,7 @@ export function accountingUnresolved(run: SubagentRun) {
   if (run.status === "running" || run.accountingPending) return true;
   const total = run.accountedTokens ?? 0;
 
-  return total > (run.forwardedTokens ?? 0) || Boolean(run.goalId && total > (run.goalTokens ?? 0));
+  return total > (run.forwardedTokens ?? 0);
 }
 
 export function reportedSubagentUsage(ctx: ExtensionContext, run: SubagentRun) {

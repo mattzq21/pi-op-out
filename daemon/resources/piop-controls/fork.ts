@@ -1,6 +1,5 @@
 import { reserveSessionId } from "../session-broker/session-file.ts";
 import type { ExtensionAPI, ExtensionCommandContext, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { copy as copyGoal, read as readGoal } from "../session-broker/goal-storage.cjs";
 import { realpath, mkdir, rmdir } from "node:fs/promises";
 import { basename, dirname, join, resolve } from "node:path";
 import { currentHost } from "../session-broker/client.ts";
@@ -66,10 +65,7 @@ export async function forkConversation(ctx: ExtensionContext, options: ForkOptio
   let goalAssets: ReturnType<typeof retainHistory> | undefined;
 
   try {
-    const root = rootForDirectory(ctx.sessionManager.getSessionDir());
-    copyGoal(root, ctx.sessionManager.getSessionId(), sessionId);
-    const goal = readGoal(root, sessionId);
-    goalAssets = retainHistory(rootForDirectory(ctx.sessionManager.getSessionDir()), [{ ...header, parentSession: source, objective: goal?.objective }, ...retained], sessionId, sessionPath);
+    goalAssets = retainHistory(rootForDirectory(ctx.sessionManager.getSessionDir()), [{ ...header, parentSession: source }, ...retained], sessionId, sessionPath);
     publication = await writeSessionFile(sessionPath, [{ ...header, id: sessionId, timestamp, cwd, parentSession: source, goalAssets }, ...retained], {
       dependencies: { workspace: { path: cwd, kind: options.cwd === undefined ? "existing" : "created-directory" } },
     });

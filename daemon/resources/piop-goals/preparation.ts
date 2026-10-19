@@ -1,5 +1,3 @@
-import { known } from "../session-broker/goal-storage.cjs";
-import { storageRoot } from "../session-database.cjs";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { GoalState, Goal } from "./state.ts";
 import { goalImagesSchema, loadMaterializedGoal, materializeGoal, readGoalPreparation } from "./files.ts";
@@ -13,7 +11,7 @@ export type GoalCore = {
   coordination: GoalCoordination;
   /** Throws when the conversation is not saved or the goal tools are disabled. */
   assertAvailable(ctx: ExtensionContext): void;
-  /** Resets the stall audit, saves, and tells a running agent about the change. */
+  /** Saves and tells a running agent about the change. */
   changed(ctx: ExtensionContext): void;
   /** Starts goal work when the goal is active and Pi is idle. */
   start(ctx: ExtensionContext): void;
@@ -25,7 +23,7 @@ export const objectivePrompt = (objective: string) => `Work toward the conversat
 function snapshot(ctx: ExtensionContext, core: GoalCore) {
   const goal = core.state.goal;
 
-  return JSON.stringify([ctx.sessionManager.getSessionId(), goal?.id, goal?.objective, goal?.status, goal?.tokenBudget]);
+  return JSON.stringify([ctx.sessionManager.getSessionId(), goal?.id, goal?.objective, goal?.status]);
 }
 
 export async function prepareGoal(args: string, ctx: ExtensionContext, core: GoalCore, editing: boolean, start = true, submissionId?: string, images: Static<typeof goalImagesSchema> = []) {
@@ -67,7 +65,7 @@ function knownGoal(ctx: ExtensionContext, goalId: string) {
 
   if (!file) throw new Error("Save this conversation before preparing a goal");
 
-  return known(storageRoot(file), ctx.sessionManager.getSessionId(), goalId);
+  return ctx.sessionManager.getEntries().some(entry => entry.type === "custom" && entry.customType === "piop-goal" && (entry.data as Goal | null)?.id === goalId);
 }
 
 async function goalInput(args: string, ctx: ExtensionContext, goal: Goal | null, editing: boolean, reused: boolean) {
@@ -77,7 +75,7 @@ async function goalInput(args: string, ctx: ExtensionContext, goal: Goal | null,
     return ctx.ui.editor("Edit goal", goal.objective);
   }
 
-  if (!reused && goal && goal.status !== "complete" && !await ctx.ui.confirm("Replace current goal?", "This starts a new objective with fresh usage and no token budget.")) return;
+  if (!reused && goal && goal.status !== "complete" && !await ctx.ui.confirm("Replace current goal?", "This replaces the current objective.")) return;
 
   return args;
 }
@@ -95,7 +93,7 @@ function commitPreparedGoal(objective: string, ctx: ExtensionContext, core: Goal
 }
 
 function newPreparedGoal(ctx: ExtensionContext, objective: string, id: string = randomUUID()): Goal {
-  return { id, sessionId: ctx.sessionManager.getSessionId(), objective, status: "active", tokenBudget: null, tokensUsed: 0, elapsedMs: 0 };
+  return { id, sessionId: ctx.sessionManager.getSessionId(), objective, status: "active" };
 }
 
 async function bindPreparedGoal(draft: Awaited<ReturnType<typeof materializeGoal>>, ctx: ExtensionContext, core: GoalCore, captured: string, editing: boolean, start: boolean, reused: boolean, stableIdentity: boolean) {
@@ -142,13 +140,11 @@ export async function resumePreparedGoal(message: string, ctx: ExtensionContext,
 function applyDraft(ctx: ExtensionContext, core: GoalCore, target: Goal, objective: string, editing: boolean) {
   if (editing) {
     const goal = core.state.require();
-    core.state.flushClock(); goal.objective = objective;
+    goal.objective = objective;
 
-    if (["complete", "budget_limited"].includes(goal.status)) core.state.setStatus(ctx, "active");
+    if (goal.status === "complete") core.state.setStatus(ctx, "active");
   } else {
-    core.state.finishRun(); core.state.goal = target;
-
-    if (!ctx.isIdle()) core.state.beginRun();
+    core.state.goal = target;
   }
 
   core.changed(ctx);

@@ -1,3 +1,4 @@
+import { read as readGoal } from "../../resources/piop-goals/goal-records.cjs";
 import { join } from 'node:path';
 import * as Registry from '../session_registry';
 import * as Settings from '../settings';
@@ -206,7 +207,9 @@ export class Host implements SessionHost {
     const database = Registry.open(this.storageRoot());
     try {
       const id = session.identity;
-      if (database.prepare("SELECT 1 FROM session_goals WHERE session_id=? AND status!='complete' LIMIT 1").get(id)) return false;
+      const file = session.savedState()?.sessionFile;
+      const goal = typeof file === 'string' ? readGoal(file) : null;
+      if (goal && goal.status !== 'complete') return false;
       if (database.prepare('SELECT 1 FROM session_mailbox WHERE session_id=? LIMIT 1').get(id)) return false;
       const runs = database.prepare('SELECT run_json FROM session_subagent_runs WHERE session_id=?').all(id);
       return !runs.some(row => {
