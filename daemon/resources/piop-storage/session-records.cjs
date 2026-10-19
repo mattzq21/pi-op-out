@@ -15,21 +15,34 @@ function transaction(file, sessionId, operation) {
   finally { db.close(); }
 }
 
+function capture(entries) {
+  let after = null;
+  const records = [];
+  for (const entry of entries.slice(1)) {
+    if (entry.type === 'custom') records.push({ after, entry });
+    else after = entry.id;
+  }
+  return records;
+}
+
+function seed(file, sessionId, records) {
+  transaction(file, sessionId, db => {
+    const insert = db.prepare('INSERT INTO session_extension_records (session_id, entry_id, after_id, entry_json) VALUES (?, ?, ?, ?) ON CONFLICT(session_id, entry_id) DO NOTHING');
+    const previous = db.prepare('SELECT after_id, entry_json FROM session_extension_records WHERE session_id=? AND entry_id=?');
+    for (const { after, entry } of records) {
+      if (entry.type !== 'custom' || typeof entry.id !== 'string' || !entry.customType?.trim()) throw new Error('Invalid session state record');
+      const json = JSON.stringify(entry);
+      const saved = previous.get(sessionId, entry.id);
+      if (saved && (saved.entry_json !== json || saved.after_id !== after)) throw new Error('Session state record identity was reused');
+      insert.run(sessionId, entry.id, after, json);
+    }
+  });
+}
+
 function save(file, entries) {
   const header = entries[0];
   if (header?.type !== 'session') throw new Error('Session state requires its conversation header');
-  transaction(file, header.id, db => {
-    let after = null;
-    const insert = db.prepare('INSERT INTO session_extension_records (session_id, entry_id, after_id, entry_json) VALUES (?, ?, ?, ?) ON CONFLICT(session_id, entry_id) DO NOTHING');
-    const previous = db.prepare('SELECT entry_json FROM session_extension_records WHERE session_id=? AND entry_id=?');
-    for (const entry of entries.slice(1)) {
-      if (entry.type !== 'custom') { after = entry.id; continue; }
-      const json = JSON.stringify(entry);
-      const saved = previous.get(header.id, entry.id);
-      if (saved && saved.entry_json !== json) throw new Error('Session state record identity was reused');
-      insert.run(header.id, entry.id, after, json);
-    }
-  });
+  seed(file, header.id, capture(entries));
 }
 
 function append(file, sessionId, after, entry) {
@@ -66,4 +79,4 @@ function create(type, data, parentId) {
   return { type: 'custom', customType: type, data: structuredClone(data), id: randomUUID(), parentId, timestamp: new Date().toISOString() };
 }
 
-module.exports = { stored, save, append, records, merge, create };
+module.exports = { stored, save, seed, capture, append, records, merge, create };

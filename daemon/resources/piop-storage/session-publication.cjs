@@ -20,7 +20,7 @@ const journalSchema = Type.Object({
   bytes: Type.Integer({ minimum: 1 }), digest: Type.String({ pattern: '^[a-f0-9]{64}$' }), lock: Type.String(), lockIdentity: identitySchema,
   writer: io.writerSchema, phase: Type.Union(['planned', 'writing', 'ready', 'linked', 'parent-pending', 'quarantined'].map(value => Type.Literal(value))),
   temporaryIdentity: Type.Optional(identitySchema), review: Type.Optional(reviews.reviewSchema),
-  state: Type.Optional(Type.Array(Type.Unknown())),
+  state: Type.Array(Type.Unknown()),
   dependencies: Type.Optional(dependencies.contractSchema), preparationComplete: Type.Optional(Type.Boolean()),
   quarantine: Type.Optional(Type.Object({ path: Type.String(), reason: Type.String() })),
 });
@@ -119,7 +119,7 @@ function prepareJournal(root, target, prepared, id, lock, lease, options) {
   const journal = {
     version: 1, kind: 'session-publication', id, root, rootIdentity: io.identity(root), target, directoryIdentity: io.identity(path.dirname(target)),
     temporary: `${target}.${id}.tmp`, sessionId: prepared.header.id, bytes: Buffer.byteLength(prepared.body), digest: io.hash(prepared.body),
-    lock, lockIdentity: io.identity(lock), writer: io.writer(), phase: 'planned', dependencies: contract, state: prepared.entries,
+    lock, lockIdentity: io.identity(lock), writer: io.writer(), phase: 'planned', dependencies: contract, state: stateRecords.capture(prepared.entries),
   };
 
   if (options.beforeWrite) {
@@ -214,7 +214,7 @@ async function publishLocked(root, target, body, options) {
 
   try {
     dependencies.retain(journal);
-    stateRecords.save(journal.target, journal.state);
+    stateRecords.seed(journal.target, journal.sessionId, journal.state);
 
     if (options.beforeWrite) { await options.beforeWrite(); journal.preparationComplete = true; save(journal); }
 
@@ -278,7 +278,7 @@ function recoverUnlinked(journal) {
   if (io.exists(journal.target)) return quarantine(journal, 'Publication target belongs to another transcript; both files were retained');
   verifyPreparation(journal);
   dependencies.retain(journal);
-  stateRecords.save(journal.target, journal.state);
+  stateRecords.seed(journal.target, journal.sessionId, journal.state);
   journal.temporaryIdentity = io.identity(journal.temporary);
   journal.phase = 'ready';
   save(journal);
