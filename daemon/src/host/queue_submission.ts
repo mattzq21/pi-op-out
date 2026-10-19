@@ -24,23 +24,20 @@ function goalSubmission(command: any): boolean {
 
 function submissionPayload(command: any, id: string, name: string): any {
   const pending: any = { id, message: command.message ?? null, behavior: name === 'steer' ? 'steer' : 'followUp' };
-  for (const field of ['images', 'questionResponse', 'goalSubmissionId', 'goalPrepared']) if (command[field] !== undefined) pending[field] = clone(command[field]);
+  for (const field of ['images', 'goalSubmissionId', 'goalPrepared']) if (command[field] !== undefined) pending[field] = clone(command[field]);
   return pending;
 }
 
 /**
  * Adds a steer or follow-up message to the queue and sends it to Pi, unless the queue is paused.
- * Returns null for a repeated question answer, an item kept while paused, or an item kept for retry after a failure.
+ * Returns null for an item kept while paused, or an item kept for retry after a failure.
  * Returns false when goal preparation declines the message.
  */
 export async function enqueue(queue: QueueDelivery, command: any, name: string): Promise<any> {
   const state = queue.state;
-  const request = command.questionResponse?.requestId;
-  if (typeof request === 'string' && state.questionResponse(request) !== undefined) return null;
   if (state.durableMessages().length >= 100) throw new Error('Queue is full');
   const prepared = await prepareSubmission(queue, command);
   if (prepared === undefined) return false;
-  const question = prepared.questionResponse?.requestId;
   const id = queue.record.nextId();
   const pending = submissionPayload(prepared, id, name);
   // A bad item would stay queued and make every later save fail, so it is rejected before the queue changes.
@@ -52,7 +49,7 @@ export async function enqueue(queue: QueueDelivery, command: any, name: string):
   let result: any;
   let failure: unknown;
   let failed = false;
-  try { result = await queue.deliver(pending, typeof question !== 'string'); } catch (error) { failure = error; failed = true; }
+  try { result = await queue.deliver(pending, true); } catch (error) { failure = error; failed = true; }
   const rejected = failed && state.failedSubmission(id);
   state.sending.delete(id);
   await queue.reportStorageError(() => queue.publish());

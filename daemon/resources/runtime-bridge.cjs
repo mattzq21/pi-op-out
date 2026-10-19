@@ -74,8 +74,7 @@ async function queueContracts(root) {
     import(pathToFileURL(runtimeRequire.resolve("typebox/value")).href),
   ]);
 
-  const response = Type.Object({ type: Type.Literal("answer_question"), requestId: Type.String(), value: Type.Optional(Type.String()), cancelled: Type.Optional(Type.Boolean()) });
-  const prompt = Type.Object({ queueId: Type.String({ minLength: 1 }), message: Type.String(), streamingBehavior: Type.Union([Type.Literal("steer"), Type.Literal("followUp")]), images: Type.Optional(Type.Array(Type.Unknown())), questionResponse: Type.Optional(response), goalSubmissionId: Type.Optional(Type.String()), goalPrepared: Type.Optional(Type.Boolean()) });
+  const prompt = Type.Object({ queueId: Type.String({ minLength: 1 }), message: Type.String(), streamingBehavior: Type.Union([Type.Literal("steer"), Type.Literal("followUp")]), images: Type.Optional(Type.Array(Type.Unknown())), goalSubmissionId: Type.Optional(Type.String()), goalPrepared: Type.Optional(Type.Boolean()) });
   const user = Type.Object({ role: Type.Literal("user"), piopQueueId: Type.String({ minLength: 1 }) });
 
   return { parse: payload => Parse(prompt, payload), check: message => Check(user, message) };
@@ -200,21 +199,8 @@ function appInput(dispatch) {
   stdin.on("end", () => { if (pending) input.write(pending); input.end(); });
 }
 
-async function resolveQueuedAnswer(payload, session) {
-  if (!payload.questionResponse) return false;
-  await runtimeRequest(session, "answer_question", { ...payload.questionResponse, action: "resolve", queueId: payload.queueId });
-
-  return session.sessionManager.getBranch().some(entry => entry.type === "message" && entry.message.role === "user" && entry.message.piopQueueId === payload.queueId);
-}
-
 async function dispatchQueuedPrompt(command, session, output) {
   const payload = queueValidation.parse(command.payload);
-
-  if (await resolveQueuedAnswer(payload, session)) {
-    output({ type: "response", id: command.id, command: command.command, success: true, data: { disposition: "handled" } });
-
-    return;
-  }
 
   let preflightSucceeded = false;
   void session.prompt(payload.message, {

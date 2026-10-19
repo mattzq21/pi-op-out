@@ -340,39 +340,6 @@ kbd { font: 11px "DM Sans"; border: 1px solid #d5d1c9; background: white; paddin
 .extension-dialog { width: min(430px, calc(100vw - 40px)); max-height: calc(100vh - 32px); overflow-y: auto; overflow-wrap: anywhere; border: 0; border-radius: 12px; background: var(--paper); color: var(--ink); box-shadow: 0 24px 80px #0005; padding: 22px; }.extension-dialog::backdrop { background: #1d1b1780; backdrop-filter: blur(3px); }.extension-dialog h2 { margin: 0 0 7px; font: calc(25px + var(--settings-font-offset, 0px)) "Instrument Serif"; }.extension-dialog > p:not(.eyebrow) { color: var(--muted); font-size: calc(13px + var(--settings-font-offset, 0px)); line-height: 1.5; }.extension-dialog > input, .extension-dialog > textarea { width: 100%; border: 1px solid var(--line); border-radius: 7px; background: white; outline: 0; padding: 9px; font: calc(13px + var(--settings-font-offset, 0px))/1.5 "DM Sans"; resize: vertical; }.dialog-options { display: grid; gap: 6px; margin-top: 14px; }.dialog-options button { min-height: 35px; overflow-wrap: anywhere; border: 1px solid var(--line); background: white; border-radius: 7px; text-align: left; padding: 7px 10px; font-size: 13px; }.dialog-options button:hover { border-color: var(--accent); }.dialog-actions { position: sticky; bottom: -22px; display: flex; justify-content: flex-end; gap: 6px; margin: 17px -22px -22px; padding: 8px 22px 14px; background: var(--paper); }.dialog-actions > button:not(.primary-button) { height: 33px; border: 0; background: transparent; color: var(--muted); font-size: calc(12px + var(--settings-font-offset, 0px)); padding: 0 10px; }
 .extension-dialog > .dialog-error { margin: 7px 1px 0; color: #c64f38; font-size: calc(12px + var(--settings-font-offset, 0px)); }.dialog-actions .browse-directory { margin-right: auto; border: 1px solid var(--line); border-radius: 7px; background: transparent; color: var(--muted); padding: 0 10px; }.dialog-actions .browse-directory:hover { background: #efede7; color: var(--ink); }.dialog-actions .browse-directory:disabled { opacity: .6; cursor: default; }
 .dialog-checkbox { display: flex; align-items: center; gap: 8px; margin-top: 14px; color: var(--muted); font-size: 12px; }.dialog-checkbox input { margin: 0; }
-.ask-user-dialog { --question-bg: #2c2c2c; --question-hover: #373737; --question-border: #404040; --question-text: #f3f3f3; --question-muted: #aaa; width: 100%; min-width: 0; margin: 16px 0 0; padding: 12px 8px 14px; border: 1px solid var(--question-border); border-radius: 21px; background: var(--question-bg); color: var(--question-text); box-shadow: 0 12px 40px #0002; font: 13px/1.5 "DM Sans", system-ui, sans-serif; }
-.composer-questions { width: min(740px, calc(100% - 72px)); max-height: min(45vh, 480px); overflow-y: auto; overscroll-behavior: contain; margin: 0 auto 8px; border-radius: 21px; }
-.composer-questions:empty { display: none; }
-.composer-questions > .ask-user-dialog { margin-top: 8px; box-shadow: none; }
-.composer-questions > .ask-user-dialog:first-child { margin-top: 0; }
-.ask-user-header { display: flex; align-items: center; gap: 9px; min-height: 28px; margin: 0 8px 12px; color: var(--question-muted); }
-.ask-user-progress { font-size: 11px; }
-.ask-user-dialog button { font: inherit; color: inherit; cursor: pointer; }
-.ask-user-dialog button:disabled { cursor: default; }
-.ask-user-dialog button:focus-visible, .ask-user-response:focus-within { outline: 2px solid #aaa; outline-offset: 2px; }
-.ask-user-dialog .ask-user-close { display: grid; place-items: center; width: 28px; height: 28px; margin-left: auto; padding: 0; border: 0; border-radius: 50%; background: transparent; color: var(--question-muted); }
-.ask-user-dialog .ask-user-close:hover { background: var(--question-hover); }
-.ask-user-dialog h2 { margin: 0 8px 12px; font: inherit; overflow-wrap: anywhere; }
-.ask-user-options { display: grid; gap: 4px; border: 0; padding: 0; margin: 0; min-width: 0; }
-.ask-user-option { display: flex; align-items: center; gap: 8px; width: 100%; min-height: 40px; padding: 6px 8px; border: 0; border-radius: 12px; background: transparent; text-align: left; }
-.ask-user-option.suggested, .ask-user-option:hover, .ask-user-option:focus-visible { background: var(--question-hover); }
-.ask-user-options:has(.ask-user-option:hover) .ask-user-option.suggested:not(:hover) { background: transparent; }
-.ask-user-number { display: grid; place-items: center; flex: 0 0 28px; width: 28px; height: 28px; border: 1px solid #494949; border-radius: 50%; background: #ffffff08; color: var(--question-muted); font-size: 12px; }
-.ask-user-label { flex: 1; min-width: 0; overflow-wrap: anywhere; }
-.ask-user-arrow { flex-shrink: 0; color: #929292; opacity: 0; }
-.ask-user-option.suggested .ask-user-arrow, .ask-user-option:hover .ask-user-arrow, .ask-user-option:focus-visible .ask-user-arrow { opacity: 1; }
-.ask-user-footer { display: flex; align-items: center; gap: 8px; margin: 10px 8px 0; }
-.ask-user-response { display: flex; align-items: center; gap: 8px; flex: 1; min-width: 0; border-radius: 8px; }
-.ask-user-response input { width: 100%; min-width: 0; padding: 4px 0; border: 0; outline: 0; background: transparent; color: var(--question-text); font: 14px/1.5 "DM Sans", system-ui, sans-serif; }
-.ask-user-response input::placeholder { color: #777; }
-.ask-user-secondary, .ask-user-send { flex-shrink: 0; min-height: 28px; padding: 3px 9px; border: 1px solid var(--question-border); border-radius: 18px; background: #ffffff04; }
-.ask-user-secondary:hover { background: var(--question-hover); }
-.ask-user-dialog .ask-user-send { border-color: transparent; background: #eee; color: #252525; }
-.ask-user-dialog .ask-user-send:disabled { background: #818181; color: #383838; }
-.ask-user-dialog .dictation-controls button { min-height: 28px; padding: 4px; border: 0; border-radius: 50%; background: transparent; }
-.ask-user-dialog .dictation-controls button:hover { background: var(--question-hover); }
-.ask-user-dialog .dialog-error { margin: 8px; color: #ff9680; font-size: 12px; }
-@media (max-width: 480px) { .ask-user-footer { flex-wrap: wrap; gap: 6px; }.ask-user-response { flex-basis: calc(100% - 40px); }.ask-user-secondary:first-of-type { margin-left: auto; } }
 .directory-palette { width: min(620px, calc(100vw - 40px)); margin-top: min(18vh, 150px); padding: 0; overflow: hidden; }
 .directory-palette-heading { display: flex; align-items: center; gap: 10px; padding: 14px 18px 0; }
 .directory-palette-heading h2 { flex: 1; margin: 0; font: 500 12px "DM Sans"; color: var(--muted); }

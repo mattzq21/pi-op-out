@@ -15,7 +15,6 @@ import { SessionSettings } from './session_settings';
 import { PromptErrors } from './prompt_errors';
 import { ToolPayload, type ToolPayloadCache } from './tool_payload';
 import { RuntimeWorker, type Request, type WorkerObserver } from './worker';
-import { PENDING_QUESTIONS_STATUS_KEY, QUESTION_RECOVERY_STATUS_KEY } from '../../../extensions/piop-user-questions/interface';
 
 /** The controller functions that a session calls. */
 export interface SessionHost {
@@ -194,7 +193,7 @@ export class Session {
 
   unused(): boolean {
     if (this.busy(null)) return false;
-    return this.viewsList.length === 0 && !this.settings.applying() && !flag(this.pauseState, 'isPausing') && !this.dialogs.blocking();
+    return this.viewsList.length === 0 && !this.settings.applying() && !flag(this.pauseState, 'isPausing') && this.dialogs.empty();
   }
 
   idle(): boolean {
@@ -426,13 +425,6 @@ export class Session {
       catch (error) { return { ok: false, error: errorText(error) }; }
     };
     switch (event.statusKey) {
-      case PENDING_QUESTIONS_STATUS_KEY: case QUESTION_RECOVERY_STATUS_KEY: {
-        const result = parsed();
-        if (!result.ok) { this.host.output({ type: 'diagnostic', line: result.error }); return true; }
-        if (event.statusKey === QUESTION_RECOVERY_STATUS_KEY) await this.queue.recoverQuestionAnswers(result.value);
-        else this.dialogs.receiveQuestions(result.value);
-        return true;
-      }
       case 'piop-input-rejected': {
         const result = parsed();
         if (result.ok) this.promptErrors.rejectInput(result.value);
@@ -574,7 +566,7 @@ export class Session {
     if (snapshotState && typeof snapshotState === 'object' && !Array.isArray(snapshotState)) {
       snapshotState.isStreaming = this.isWorking;
       snapshotState.viewers = this.visibleViewers();
-      snapshotState.needsInput = this.dialogs.waiting();
+      snapshotState.needsInput = !this.dialogs.empty();
       snapshotState.pendingMessageCount = array(queue, 'steering').length + array(queue, 'followUp').length;
     }
     return {

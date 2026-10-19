@@ -19,9 +19,6 @@ import runtimeBridge from '../resources/runtime-bridge.cjs?raw';
 import mcpSchemaBundle from '../resources/mcp-schema.bundle.mjs?raw';
 import mcpBridgeBundle from '../resources/mcp-bridge.bundle.mjs?raw';
 import fastModeBundle from '../resources/fast-mode.bundle.mjs?raw';
-import userQuestionsExtension from '../../extensions/piop-user-questions/index.ts?raw';
-import userQuestionsInterface from '../../extensions/piop-user-questions/interface.ts?raw';
-import userQuestionsLogic from '../../extensions/piop-user-questions/questions.ts?raw';
 import sessionCostLimitExtension from '../../extensions/piop-session-cost-limit/index.ts?raw';
 import codemodeToolsDescriptionExtension from '../../extensions/piop-codemode-tools-description/index.ts?raw';
 import providersRefreshExtension from '../../extensions/piop-providers-refresh/index.ts?raw';
@@ -141,9 +138,6 @@ export {
   mcpSchemaBundle,
   mcpBridgeBundle,
   fastModeBundle,
-  userQuestionsExtension,
-  userQuestionsInterface,
-  userQuestionsLogic,
   sessionCostLimitExtension,
   codemodeToolsDescriptionExtension,
   providersRefreshExtension,

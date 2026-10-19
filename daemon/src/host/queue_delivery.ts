@@ -40,7 +40,6 @@ export class QueueDelivery {
     this.state.sending.add(id);
     const command: any = { type: 'queue_prompt', queueId: id, message: item.message ?? null, streamingBehavior: item.behavior ?? null, discardOnRejection };
     for (const field of ['goalSubmissionId', 'goalPrepared']) if (item[field] !== undefined) command[field] = clone(item[field]);
-    if (item.questionResponse !== undefined) command.questionResponse = clone(item.questionResponse);
     if (Array.isArray(item.images) && item.images.length) command.images = clone(item.images);
     try {
       await this.record.retain(retained);
@@ -70,13 +69,4 @@ export class QueueDelivery {
     }
   }
 
-  /** Tells the questions extension that a queued answer was removed. */
-  async acknowledgeQuestionRemoval(item: any, action: string): Promise<void> {
-    const response = item?.questionResponse;
-    if (action !== 'remove' || response === null || typeof response !== 'object' || Array.isArray(response)) return;
-    const command = clone(response);
-    command.action = 'resolve';
-    command.queueId = item.id ?? null;
-    await this.execute(command);
-  }
 }

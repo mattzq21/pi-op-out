@@ -24,7 +24,6 @@ export async function changePending(queue: QueueDelivery, gate: Mutex, id: strin
     if (!change) return null;
     const { target, behavior, neighbor } = change;
     if (action === 'steer' && reviewCommand(text(target, 'message'))) throw new Error('Review commands can only be queued as a follow-up');
-    await queue.acknowledgeQuestionRemoval(target, behavior);
     assertOwner();
     if (cancelling) return await changeLive(queue, id, 'remove', undefined, action);
     if (changeHeld(queue, id, behavior, neighbor, action)) { await queue.publish(); return null; }

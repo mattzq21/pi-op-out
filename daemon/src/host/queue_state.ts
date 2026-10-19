@@ -55,11 +55,6 @@ export class QueueState {
     return false;
   }
 
-  questionResponse(request: string): any | undefined {
-    const item = this.retained.find(entry => entry.questionResponse?.requestId === request);
-    return item?.questionResponse === undefined ? undefined : clone(item.questionResponse);
-  }
-
   texts(behavior: string): any[] { return behavior === 'steer' ? this.steering : this.followUp; }
 
   view(pending: any[]): any {
@@ -167,22 +162,6 @@ export class QueueState {
     }
   }
 
-  recoverQuestion(item: any, nextId: () => string): void {
-    const request = item.questionResponse?.requestId;
-    if (this.retained.some(saved => saved.id === item.id || jsonEqual(saved.questionResponse?.requestId, request))) return;
-    const matched = this.retained.find(saved => jsonEqual(saved.message, item.message) && saved.questionResponse === undefined);
-    if (matched) {
-      const id = text(matched, 'id');
-      for (const saved of [...this.pending, ...this.retained, ...this.heldItems()]) {
-        if (saved.id === id) { saved.questionResponse = clone(item.questionResponse); saved.recovered = true; }
-      }
-    } else {
-      if (durableMessages(this).length >= 100) throw new Error('Queue is full');
-      item = { ...item, id: nextId() };
-      this.pending.push(clone(item));
-      this.retained.push(clone(item));
-    }
-  }
 }
 
 export function durableMessages(state: QueueState): any[] {
