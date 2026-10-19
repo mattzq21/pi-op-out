@@ -1,5 +1,4 @@
-const goalStorage = require("./session-broker/goal-storage.cjs");
-const sessionDatabase = require("./session-database.cjs");
+const goalRecords = require("./piop-goals/goal-records.cjs");
 const { realpathSync, readFileSync, existsSync, openSync, closeSync, fsyncSync } = require("node:fs");
 const { dirname, join, isAbsolute } = require("node:path");
 const { pathToFileURL } = require("node:url");
@@ -340,9 +339,7 @@ const isReview = text => /^\/(?:review|rs)(?:\s|$)/.test(text);
 const reviewText = message => message.role === "user" ? message.content.filter(part => part.type === "text").map(part => part.text).join("") : "";
 
 function currentGoal(session) {
-  const file = session.sessionManager.getSessionFile();
-
-  return file ? goalStorage.read(sessionDatabase.storageRoot(file), session.sessionManager.getSessionId()) : null;
+  return goalRecords.current(session.sessionManager.getBranch());
 }
 
 const hasGoal = session => currentGoal(session) !== null;

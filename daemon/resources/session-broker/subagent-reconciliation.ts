@@ -3,7 +3,6 @@ import { Type as Schema, type Static } from "typebox";
 import { Check, Parse } from "typebox/value";
 import { randomUUID } from "node:crypto";
 import { setTimeout as delay } from "node:timers/promises";
-import { goalSession } from "../piop-goals/interface.ts";
 import { listenSubagentUsage, type UsageCheckpoint } from "./subagent-usage.ts";
 import { branchEntries, interruptSession, sendSessionMessage, sessionSnapshot, snapshotStatus } from "./orchestration.ts";
 import { originalRunTask, saveRun, type SubagentRun } from "./subagent-state.ts";
@@ -97,7 +96,6 @@ function seedRecordedUsage(run: SubagentRun, ctx: ExtensionContext) {
   if (!credits) return;
   run.legacyCredits = credits;
   run.accountedTokens = Math.max(run.accountedTokens ?? 0, credits);
-  run.goalTokens = Math.max(run.goalTokens ?? 0, credits);
   run.forwardedTokens = Math.max(run.forwardedTokens ?? 0, credits);
 }
 
@@ -107,7 +105,6 @@ async function initializeLegacy(run: SubagentRun, observation: Observation, snap
   const credits = usage.tokens;
   run.legacyCredits = credits;
   run.accountedTokens = credits;
-  run.goalTokens = credits;
   run.forwardedTokens = credits;
   saveRun(observation.pi, observation.ctx, run);
 }
@@ -129,17 +126,8 @@ function sameRun(checkpoint: Static<typeof usageCheckpointSchema>, run: Subagent
 export async function settleAccounting(run: SubagentRun, observation: Observation) {
   const { pi, ctx } = observation;
   observation.signal.throwIfAborted();
-  const goals = goalSession(pi);
-  await goals?.replaySubagentUsage(ctx);
   const total = accountedTokens(run, ctx);
   const sourceId = usageSourceId(run);
-
-  if (run.goalId && total > (run.goalTokens ?? 0)) {
-    if (!goals) throw new Error("Cumulative subagent goal accounting is unavailable");
-    await goals.addSubagentUsage(ctx, { goalId: run.goalId, sourceId, total: uncredited(run, total) });
-    run.goalTokens = total;
-    saveRun(pi, ctx, run);
-  }
 
   if (total > (run.forwardedTokens ?? 0)) {
     if (!observation.recoveryDepth) await observation.reportDescendants(total - (run.forwardedTokens ?? 0), ctx, { sourceId, total: uncredited(run, total) });
@@ -184,7 +172,7 @@ async function accountTranscript(run: SubagentRun, observation: Observation, ter
 
   try {
     if (total > previous || received) {
-      pi.appendEntry("piop-subagent-usage", { version: 1, tokens: total - previous, total: uncredited(run, total), accountedTotal: total, runId: usageSourceId(run), sourceRunId: run.runId, parentSessionId: run.parentSessionId, sessionId: run.sessionId, goalId: run.goalId, sourceTotals: run.sourceTotals });
+      pi.appendEntry("piop-subagent-usage", { version: 1, tokens: total - previous, total: uncredited(run, total), accountedTotal: total, runId: usageSourceId(run), sourceRunId: run.runId, parentSessionId: run.parentSessionId, sessionId: run.sessionId, sourceTotals: run.sourceTotals });
       await syncSubagentTranscript(ctx);
     }
   } catch (error) { run.sourceTotals = sources; throw error; }
@@ -322,7 +310,6 @@ class SubagentObserver {
     const metadata = await transcriptMetadata(this.run.sessionPath, this.run.sessionId);
     this.run.offset = metadata.size;
     this.run.offsetHeader = metadata.header;
-    this.run.goalId = await goalSession(pi)?.usageGoalId(ctx);
     this.save();
     await this.channel();
     signal.throwIfAborted();

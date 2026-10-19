@@ -4,7 +4,7 @@ import { read as readUsageChannel } from "./subagent-usage-storage.cjs";
 import { Type, type Static } from "typebox";
 import { Check } from "typebox/value";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { goalTokens } from "../piop-goals/interface.ts";
+import { usageTokens } from "./subagent-tokens.ts";
 import { claimUsageChannel } from "./subagent-usage-channel.ts";
 import { subagentParent } from "./subagent-state.ts";
 import { syncSubagentTranscript } from "./subagent-results.ts";
@@ -173,14 +173,14 @@ export function registerSubagentUsage(pi: ExtensionAPI) {
   pi.on("message_end", async (event, ctx) => {
     if (event.message.role !== "assistant" || !subagentParent(ctx)) return;
     const id = randomUUID();
-    await record(goalTokens(event.message.usage), apiCost(event.message.usage.cost.total), `assistant:${id}`, ctx);
+    await record(usageTokens(event.message.usage), apiCost(event.message.usage.cost.total), `assistant:${id}`, ctx);
 
     return { message: { ...event.message, piopSubagentUsageId: id } };
   });
   pi.on("session_compact", (event, ctx) => {
     if (!subagentParent(ctx)) return;
 
-    return record(goalTokens(event.compactionEntry.usage), apiCost(event.compactionEntry.usage?.cost.total ?? 0), `entry:${event.compactionEntry.id}`, ctx);
+    return record(usageTokens(event.compactionEntry.usage), apiCost(event.compactionEntry.usage?.cost.total ?? 0), `entry:${event.compactionEntry.id}`, ctx);
   });
   pi.on("session_shutdown", () => pending);
 

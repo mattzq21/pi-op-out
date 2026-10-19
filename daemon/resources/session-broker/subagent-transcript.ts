@@ -2,7 +2,7 @@ import { open, type FileHandle } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import { Type, type Static } from "typebox";
 import { Check } from "typebox/value";
-import { goalTokens } from "../piop-goals/interface.ts";
+import { usageTokens } from "./subagent-tokens.ts";
 
 const headerSchema = Type.Object({ type: Type.Literal("session"), id: Type.String() });
 
@@ -37,7 +37,7 @@ function entryKey(entry: Static<typeof entrySchema>, offset: number) {
 function entryUsage(entry: Static<typeof entrySchema>, offset: number, recorded: Map<string, number>) {
   const assistant = Check(assistantSchema, entry.message) ? entry.message : undefined;
   const usage = assistant?.usage ?? entry.usage;
-  const tokens = assistant ? unrecordedTokens(assistant, goalTokens(usage), recorded) : goalTokens(usage);
+  const tokens = assistant ? unrecordedTokens(assistant, usageTokens(usage), recorded) : usageTokens(usage);
   const amount = usage?.cost?.total ?? 0;
   const apiCost = Number.isFinite(amount) ? Math.max(0, amount) : 0;
 

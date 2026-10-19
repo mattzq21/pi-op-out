@@ -11,7 +11,6 @@ export const runSchema = Schema.Object({
   cwd: Schema.Optional(Schema.String()),
   runId: Schema.Optional(Schema.String()), generation: Schema.Optional(counter), offset: Schema.Optional(counter), accountedTokens: Schema.Optional(counter), forwardedTokens: Schema.Optional(counter),
   offsetHeader: Schema.Optional(Schema.String()), usageBoundaryId: Schema.Optional(Schema.String()), usageNotificationId: Schema.Optional(Schema.String()),
-  goalId: Schema.Optional(Schema.String()), goalTokens: Schema.Optional(counter),
   sourceTotals: Schema.Optional(Schema.Record(Schema.String(), counter)), legacyCredits: Schema.Optional(counter),
   observation: Schema.Optional(Schema.Union([Schema.Literal("watching"), Schema.Literal("interrupted")])),
   cancelRequested: Schema.Optional(Schema.Boolean()), cancelReason: Schema.Optional(Schema.String()),
