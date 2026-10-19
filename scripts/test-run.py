@@ -30,7 +30,13 @@ def service(owner, started, command):
             return 125
         if current != started or select.select([owner_fd], [], [], 0)[0]:
             return 125
-        env = {**os.environ, 'TMPDIR': os.environ['RUNTIME_DIRECTORY']}
+        directory = Path(os.environ['CACHE_DIRECTORY'])
+        cache = directory.parent / 'cache'
+        env = {**os.environ, 'TMPDIR': str(directory),
+               'BUN_INSTALL_CACHE_DIR': str(cache / 'packages'),
+               'BUN_RUNTIME_TRANSPILER_CACHE_PATH': str(cache / 'transpiled')}
+        for key in ('BUN_INSTALL_CACHE_DIR', 'BUN_RUNTIME_TRANSPILER_CACHE_PATH'):
+            Path(env[key]).mkdir(parents=True, exist_ok=True)
         child = subprocess.Popen(command, env=env)
         with os.fdopen(pidfd_open(child.pid), 'rb') as child_pid:
             ready, _, _ = select.select([owner_fd, child_pid], [], [])
@@ -40,11 +46,25 @@ def service(owner, started, command):
             return code if code >= 0 else 128 - code
 
 
-def stop():
+def service_group():
     group = Path('/proc/self/cgroup').read_text().strip().split('::', 1)[1]
     unit = os.environ.get('PIOP_TEST_UNIT', '')
     if not re.fullmatch(r'piop-tests-[0-9a-f]{32}\.service', unit) or not group.endswith('/' + unit):
         raise RuntimeError('Cleanup must run inside its own test service')
+    return group
+
+
+def clean():
+    service_group()
+    directory = Path(os.environ['CACHE_DIRECTORY'])
+    if 'piop-tests-' + directory.name + '.service' != os.environ['PIOP_TEST_UNIT']:
+        raise RuntimeError('Unexpected test directory')
+    shutil.rmtree(directory)
+    return 0
+
+
+def stop():
+    group = service_group()
     members = Path('/sys/fs/cgroup' + group) / 'cgroup.procs'
     while True:
         handles = []
@@ -93,23 +113,25 @@ def run(command):
         raise OSError(error, os.strerror(error))
     if os.getppid() != parent:
         return 125
-    unit = 'piop-tests-' + uuid.uuid4().hex
+    identifier = uuid.uuid4().hex
+    unit = 'piop-tests-' + identifier
     args = ['systemd-run', '--user', '--wait', '--pipe', '--collect', '--quiet',
             '--expand-environment=no', '--unit=' + unit, '--property=Type=exec', '--property=KillMode=control-group',
             '--property=TimeoutStopSec=5s', '--property=SendSIGKILL=yes',
-            '--property=RuntimeDirectory=' + unit, '--property=RuntimeDirectoryMode=0700',
+            '--property=CacheDirectory=piop/tests/' + identifier, '--property=CacheDirectoryMode=0700',
             '--property=WorkingDirectory=' + os.getcwd()]
     quote = lambda value: '"' + value.replace('\\', '\\\\').replace('"', '\\"') + '"'
     args.append('--property=ExecStop=:' + quote(sys.executable) + ' ' + quote(str(Path(__file__).resolve())) + ' --stop')
+    args.append('--property=ExecStopPost=:' + quote(sys.executable) + ' ' + quote(str(Path(__file__).resolve())) + ' --clean')
     args.extend('--setenv=' + key for key in os.environ
-                if re.fullmatch(r'[A-Za-z_][A-Za-z0-9_]*', key) and key not in ('RUNTIME_DIRECTORY', 'PIOP_TEST_UNIT'))
+                if re.fullmatch(r'[A-Za-z_][A-Za-z0-9_]*', key) and key not in ('CACHE_DIRECTORY', 'RUNTIME_DIRECTORY', 'PIOP_TEST_UNIT'))
     args += ['--setenv=PIOP_TEST_UNIT=' + unit + '.service',
              sys.executable, str(Path(__file__).resolve()), '--service', str(os.getpid()),
              Path('/proc/self/stat').read_text().rsplit(') ', 1)[1].split()[19],
              executable, *command[1:]]
 
     def cancel(signum, _frame):
-        # Wait for every child and its runtime directory to be removed before returning.
+        # Wait for every child and its temporary directory to be removed before returning.
         result = subprocess.run(['systemctl', '--user', 'stop', unit + '.service'])
         raise SystemExit(128 + signum if result.returncode == 0 else 1)
 
@@ -119,6 +141,8 @@ def run(command):
 
 
 if __name__ == '__main__':
+    if sys.argv[1:2] == ['--clean']:
+        sys.exit(clean())
     if sys.argv[1:2] == ['--stop']:
         sys.exit(stop())
     if sys.argv[1:2] == ['--service']:

@@ -20,7 +20,7 @@ test('a renamed chat shows its new name in the chat list, for other connections 
     expect(await named(phone)).toBe('Release 2.0 plan');
     phone.close();
 
-    await agents.close();
+    await agents.daemon.stop();
     next = await startDaemon({ home: agents.daemon.home });
     expect(await named(next)).toBe('Release 2.0 plan');
   } finally { await next?.stop(); await agents.close().catch(() => {}); }

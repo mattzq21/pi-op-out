@@ -1,10 +1,10 @@
 import { build } from 'esbuild';
 import { createHash, randomBytes } from 'node:crypto';
 import { execFile } from 'node:child_process';
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, symlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { Database } from 'bun:sqlite';
 import { tmpdir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { developmentEndpointKey } from '../../daemon/src/config';
 
 const root = resolve(import.meta.dir, '../..');
@@ -60,8 +60,10 @@ export function daemonDirectory(home: string, options: BuildOptions = {}): strin
 
 export function temporaryDirectory(prefix = 'piop-test-'): string {
   const unit = process.env.PIOP_TEST_UNIT;
+  const base = process.env.CACHE_DIRECTORY;
+  const path = base ? relative(base, tmpdir()) : '..';
   if (!unit || !readFileSync('/proc/self/cgroup', 'utf8').trim().endsWith('/' + unit)
-    || tmpdir() !== process.env.RUNTIME_DIRECTORY) {
+    || isAbsolute(path) || path === '..' || path.startsWith('..' + sep)) {
     throw new Error('Run daemon tests with bun run test:daemon, or python3 scripts/test-run.py bun test <test file>');
   }
   return mkdtempSync(join(tmpdir(), prefix));
@@ -159,6 +161,7 @@ export interface TestDaemon extends Client {
   endpoint: { url: string; token: string };
   connect(): Promise<Client>;
   stop(): Promise<void>;
+  dispose(): Promise<void>;
   log(): string;
 }
 
@@ -266,6 +269,10 @@ export async function startDaemon(options: BuildOptions & { home?: string; env?:
     return {
       ...main, home, bin, endpoint, connect, log: () => logTail(daemonLog),
       stop,
+      async dispose() {
+        await stop();
+        if (!options.home) rmSync(home, { recursive: true, force: true });
+      },
     };
   } catch (error: any) {
     await stop().catch(reason => { error.message += '\n' + reason.message; });

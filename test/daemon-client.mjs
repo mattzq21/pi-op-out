@@ -2,10 +2,14 @@ import { WebSocket } from 'ws';
 import { spawn } from 'node:child_process';
 import { createInterface } from 'node:readline';
 import { fileURLToPath } from 'node:url';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 /** A real daemon for UI tests. With model 'echo', its only model answers each message with "Reply to " and the message text. */
 export async function daemonClient(t, onEvent = () => {}, { remotes = [], model } = {}) {
-  const worker = spawn('bun', [fileURLToPath(new URL('./daemon/ui-host.ts', import.meta.url))], { env: { ...process.env, PIOP_TEST_UI_REMOTES: JSON.stringify(remotes), ...(model ? { PIOP_TEST_UI_MODEL: model } : {}) }, stdio: ['pipe', 'pipe', 'pipe'] });
+  const directory = await mkdtemp(join(tmpdir(), 'piop-ui-'));
+  const worker = spawn('bun', [fileURLToPath(new URL('./daemon/ui-host.ts', import.meta.url))], { env: { ...process.env, TMPDIR: directory, PIOP_TEST_UI_REMOTES: JSON.stringify(remotes), ...(model ? { PIOP_TEST_UI_MODEL: model } : {}) }, stdio: ['pipe', 'pipe', 'pipe'] });
   let diagnostics = '';
   worker.stderr.on('data', data => { diagnostics += data; });
   const exited = new Promise(resolve => worker.once('exit', (code, signal) => resolve({ code, signal })));
@@ -19,6 +23,7 @@ export async function daemonClient(t, onEvent = () => {}, { remotes = [], model 
     try {
       const result = await exited;
       if (result.code !== 0) throw new Error(`Daemon test host ended: ${JSON.stringify(result)}\n${diagnostics}`);
+      await rm(directory, { recursive: true });
     } finally { clearTimeout(timer); }
   });
   const endpoint = await new Promise((resolve, reject) => {
