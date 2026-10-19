@@ -8,7 +8,7 @@ beforeAll(async () => {
   agents = await agentDaemon();
   const chat = await agents.rootChat();
   const configuration = await chat.command({ type: 'get_agent_configuration' });
-  const general = configuration.agents.find((agent: any) => agent.name === 'general');
+  const { isDefault: _isDefault, ...general } = configuration.agents.find((agent: any) => agent.name === 'general');
   const thinker = { ...general, name: 'deep-thinker', model: 'scripted/scripted-thinker', effort: 'low' };
   const reader = { ...general, name: 'reader', model: 'scripted/scripted-model', tools: ['read'] };
   await chat.command({ type: 'configure_agents', configuration: { revision: configuration.revision, agents: [...configuration.agents, thinker, reader] } });

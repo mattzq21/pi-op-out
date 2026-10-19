@@ -13,7 +13,7 @@ describe('settings editor', () => {
       if (command === 'provider_auth' && args.request.action === 'fast_models') return { ready: true, providers: { p: { supportedModelIds: supportedModels } } };
       throw new Error('Unexpected command: ' + command);
     }, { shouldMockEvents: true });
-    props = { providerHostId: 'local', settings: { defaultAgent: 'general', hiddenModels: [], defaultThinking: 'off', defaultFastMode: false, contextWindowCap: 100_000, modelContextWindowCaps: {}, contextWindowCapEnabled: true, autoCompaction: true, autoRetry: true, debugMode: false, keybindings: { ...defaultKeybindings }, tools: [], skills: [], hosts: [] }, onSave: async (...args) => saves.push(args), onDirtyChange: value => dirty.push(value) };
+    props = { providerHostId: 'local', settings: { hiddenModels: [], defaultThinking: 'off', defaultFastMode: false, contextWindowCap: 100_000, modelContextWindowCaps: {}, contextWindowCapEnabled: true, autoCompaction: true, autoRetry: true, debugMode: false, keybindings: { ...defaultKeybindings }, tools: [], skills: [], hosts: [] }, onSave: async (...args) => saves.push(args), onDirtyChange: value => dirty.push(value) };
   });
   afterEach(async () => { if (view) await view.unmount(); view = undefined; dom.restore(); });
 
@@ -28,7 +28,7 @@ describe('settings editor', () => {
   const section = async name => click([...document.querySelectorAll('nav button')].find(item => item.textContent === name));
   const select = async (label, value) => act(async () => { control(label).value = value; control(label).dispatchEvent(new Event('change', { bubbles: true })); });
   const selectAgent = async name => click([...document.querySelectorAll('.agent-list button')].find(item => item.textContent === name));
-  const profile = (name, extra = {}) => ({ name, model: '', effort: '', path_systemprompt: 'system.md', path_agent_prompt: '', tools: [], skills: [], mcpServers: {}, ...extra });
+  const profile = (name, extra = {}) => ({ name, ...(name === 'general' ? { isDefault: true } : {}), model: '', effort: '', path_systemprompt: 'system.md', path_agent_prompt: '', tools: [], skills: [], mcpServers: {}, ...extra });
 
   test('model aliases save with stable model IDs and appear in agent choices', async () => {
     await render({ models: [{ provider: 'p', id: 'model', name: 'Original' }], agentConfig: { agents: [profile('general', { model: 'p/model' })] } });
@@ -188,11 +188,13 @@ describe('settings editor', () => {
     await click(document.querySelector('.agent-list button')); assert.equal(control('Agent name').disabled, true); assert.equal(control('Remove general').disabled, true);
   });
 
-  test('renaming and deleting the default agent maintain a valid default', async () => {
-    props.settings.defaultAgent = 'review';
-    await render({ agentConfig: { agents: [profile('general'), profile('review')] } }); await section('Agents'); await selectAgent('review');
-    await enterText(control('Agent name'), 'renamed'); await click(save()); assert.equal(saves[0][0].defaultAgent, 'renamed');
-    await click(control('Remove renamed')); await click(save()); assert.equal(saves[1][0].defaultAgent, 'general'); assert.deepEqual(saves[1][1].agents.map(agent => agent.name), ['general']);
+  test('the default agent flag follows a rename and returns to general when its agent is removed', async () => {
+    await render({ agentConfig: { agents: [profile('general'), profile('review')] } }); await section('General');
+    await select('Default agent', 'review'); await section('Agents'); await selectAgent('review');
+    await enterText(control('Agent name'), 'renamed'); await click(save());
+    assert.deepEqual(saves[0][1].agents.map(agent => [agent.name, agent.isDefault]), [['general', undefined], ['renamed', true]]);
+    await click(control('Remove renamed')); await click(save());
+    assert.deepEqual(saves[1][1].agents.map(agent => [agent.name, agent.isDefault]), [['general', true]]);
   });
 
   test('unavailable agent settings prevent saving until all errors are corrected', async () => {

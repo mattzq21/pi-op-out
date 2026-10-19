@@ -155,7 +155,7 @@ test('a save that edits one setting keeps every other saved setting across a dae
   try {
     const settings = await daemon.invoke('load_app_settings');
     Object.assign(settings, {
-      reviewAgent: 'reviewer', localEnabled: false, defaultAgent: 'builder', defaultThinking: 'high', defaultFastMode: true,
+      reviewAgent: 'reviewer', localEnabled: false, defaultThinking: 'high', defaultFastMode: true,
       modelAliases: { 'openai/gpt': 'Daily model' }, hiddenModels: ['openai/old'],
       contextWindowCap: 200_000, contextWindowCapEnabled: false,
       modelContextWindowCaps: { 'openai/gpt': 400_000, 'anthropic/claude': null },
@@ -172,7 +172,7 @@ test('a save that edits one setting keeps every other saved setting across a dae
     const restored = await daemon.invoke('load_app_settings');
     expect(restored).toMatchObject({
       reviewPrompt: 'Only the review prompt changes',
-      reviewAgent: 'reviewer', localEnabled: false, defaultAgent: 'builder', defaultThinking: 'high', defaultFastMode: true,
+      reviewAgent: 'reviewer', localEnabled: false, defaultThinking: 'high', defaultFastMode: true,
       modelAliases: { 'openai/gpt': 'Daily model' }, hiddenModels: ['openai/old'],
       contextWindowCap: 200_000, contextWindowCapEnabled: false,
       modelContextWindowCaps: { 'openai/gpt': 400_000, 'anthropic/claude': null },

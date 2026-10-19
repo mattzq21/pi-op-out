@@ -278,7 +278,10 @@ export function SettingsView(props: SettingsViewProps) {
 
   const renameAgent = (name: string) => { if (!agent() || (!isBuiltInAgent(agent()) && name.trim().toLowerCase() === "general")) return;
 
-  if ((draft().defaultAgent ?? "general") === agent().name) patch({ defaultAgent: name }); updateAgent({ name }); };
+  updateAgent({ name }); };
+
+  const defaultAgentName = createMemo(() => agentDrafts().find(item => item.isDefault)?.name);
+  const setDefaultAgent = (name: string) => setAgentDrafts(current => current.map(({ isDefault: _isDefault, ...item }) => item.name === name ? { ...item, isDefault: true } : item));
 
   const addAgent = () => { if (!agentConfig() || saving()) return; let suffix = nextAgentSuffixRef.current;
 
@@ -286,7 +289,7 @@ export function SettingsView(props: SettingsViewProps) {
 
   const removeAgent = () => { if (!agent() || isBuiltInAgent(agent())) return;
 
-  if (draft().defaultAgent === agent().name) patch({ defaultAgent: "general" }); const next = agentDrafts().filter((_, index) => index !== agentIndex()); setMcpDrafts(current => Array.from(current).filter((_, index) => index !== agentIndex())); setAgentDrafts(next); setAgentIndex(firstAgentIndex(next)); };
+  const removedDefault = agent().isDefault; const next = agentDrafts().filter((_, index) => index !== agentIndex()).map(item => removedDefault && isBuiltInAgent(item) ? { ...item, isDefault: true } : item); setMcpDrafts(current => Array.from(current).filter((_, index) => index !== agentIndex())); setAgentDrafts(next); setAgentIndex(firstAgentIndex(next)); };
 
   const agentLevels = (item: AgentProfile) => {
     const model = settingsProps().models.find((model) => `${model.provider}/${model.id}` === (item.model));
@@ -321,10 +324,10 @@ export function SettingsView(props: SettingsViewProps) {
     const modelDiscoveryUnavailable = settingsProps().models.length === 0;
     const thinkingDiscoveryUnavailable = modelDiscoveryUnavailable;
     const agentsValid = !agentConfig() || (agentDrafts().some(isBuiltInAgent) && agentDrafts().every((item) => agentProfileSchema.safeParse(item).success && item.name.length > 0 && !!item.path_systemprompt?.trim() && (!item.model || modelDiscoveryUnavailable || availableModelIds.has(item.model)) && (!item.effort || thinkingDiscoveryUnavailable || agentLevels(item).includes(item.effort))) && new Set(agentDrafts().map((item) => item.name)).size === agentDrafts().length);
-    const defaultAgentAvailable = !agentConfig() || agentDrafts().some((item) => item.name === (draft().defaultAgent ?? "general"));
+    const defaultAgentValid = !agentConfig() || agentDrafts().filter((item) => item.isDefault).length === 1;
     const invalidHost = draft().hosts.find((host) => !host.name.trim() || !host.target.trim() || !host.piPath.trim());
 
-    return { availableModelIds, hiddenModels, modelChoices, modelDiscoveryUnavailable, thinkingDiscoveryUnavailable, agentsValid, defaultAgentAvailable, invalidHost };
+    return { availableModelIds, hiddenModels, modelChoices, modelDiscoveryUnavailable, thinkingDiscoveryUnavailable, agentsValid, defaultAgentValid, invalidHost };
   };
 
   const agentValidation = createMemo(() => (validateAgentResources()));
@@ -374,7 +377,7 @@ export function SettingsView(props: SettingsViewProps) {
 
   const validationError = createMemo(() => (firstValidationError([
     () => mcpError(),
-    () => !agentValidation().defaultAgentAvailable ? `Default agent is unavailable: ${draft().defaultAgent}` : undefined,
+    () => agentValidation().defaultAgentValid ? undefined : "Pick one default agent",
     () => nameValidation().contextWindowValid ? undefined : capRangeError(draft().contextWindowCap, "General context cap"),
     () => Object.entries(capErrors()).map(([label, error]) => label + ": " + error)[0],
     () => draft().hosts.length > 16 ? "At most 16 remote machines can be configured" : undefined,
@@ -434,7 +437,7 @@ export function SettingsView(props: SettingsViewProps) {
         <SettingRow icon={<CircleGauge />} title="Default context window cap" description="Used when no /cap choice, agent cap, or model cap applies. Off uses each model's full window. Open conversations update when idle."><div class="setting-cap-controls"><input class="setting-number" aria-label="Context window cap" aria-invalid={!nameValidation().contextWindowValid} disabled={!draft().contextWindowCapEnabled} type="number" min={100000} max={50000000} step={1000} value={draft().contextWindowCap} onInput={(event) => patch({ contextWindowCap: Number(event.target.value) })} /><Toggle label="Enable context window cap" checked={draft().contextWindowCapEnabled} onChange={(contextWindowCapEnabled) => patch({ contextWindowCapEnabled })} /></div></SettingRow>
         <SettingRow icon={<ShieldCheck />} title="Automatic retry" description="Retry transient provider and network errors."><Toggle label="Automatic retry" checked={draft().autoRetry} onChange={(autoRetry) => patch({ autoRetry })} /></SettingRow>
         <div class="general-agent-default">
-          <label class="field"><span>Default agent</span><select aria-label="Default agent" disabled={!agentConfig()} value={draft().defaultAgent ?? "general"} onChange={(event) => patch({ defaultAgent: event.target.value })}>{!agentValidation().defaultAgentAvailable && <option value={draft().defaultAgent} disabled>Unavailable: {draft().defaultAgent}</option>}{!agentConfig() && <option value={draft().defaultAgent ?? "general"}>{draft().defaultAgent ?? "general"}</option>}{<Key each={agentDrafts()} by={(item) => item.name}>{(item, _index) => <option  value={item().name}>{item().name}</option>}</Key>}</select></label>
+          <label class="field"><span>Default agent</span><select aria-label="Default agent" disabled={!agentConfig()} value={defaultAgentName() ?? ""} onChange={(event) => setDefaultAgent(event.target.value)}>{<Key each={agentDrafts()} by={(item) => item.name}>{(item, _index) => <option  value={item().name}>{item().name}</option>}</Key>}</select></label>
         </div>
       </SettingsSection>);
 

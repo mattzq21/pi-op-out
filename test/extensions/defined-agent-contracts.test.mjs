@@ -244,6 +244,78 @@ for (const state of ['not JSON', { model: 7, effort: 'low' }, { model: 'test/rev
   assert.equal(f.pi.getThinkingLevel(), 'high');
 });
 
+test('a new root session starts as the flagged agent, and a session with a stored agent keeps it', async t => {
+  const config = configured([profile(), profile('reviewer', { isDefault: true })]);
+  const f = await agentFixture(t, { config });
+  await f.load(); await f.start();
+  assert.equal(f.capability().active, 'reviewer');
+
+  const g = await agentFixture(t, { config, entries: [{ type: 'custom', customType: 'pi-define-agents-state', data: { active: 'general' } }] });
+  await g.load(); await g.start();
+  assert.equal(g.capability().active, 'general');
+});
+
+test('general becomes the default when no agent has the flag, and two flags are rejected', async t => {
+  const f = await agentFixture(t, { config: configured([profile(), profile('reviewer')]) });
+  await f.load(); await f.start();
+  assert.equal(f.capability().active, 'general');
+  assert.deepEqual(f.capability().config.agents.map(agent => agent.isDefault), [true, undefined]);
+
+  const g = await agentFixture(t, { config: configured([profile('general', { isDefault: true }), profile('reviewer', { isDefault: true })]) });
+  await assert.rejects(g.load(), /Only one agent can be the default/);
+});
+
+const chosenConfig = () => configured([profile('general', { skills: ['/general-skill'] }), profile('chosen', { isDefault: true, skills: ['/chosen-skill'], model: 'openai/gpt-5.4', fastMode: true })]);
+const fastModel = { provider: 'openai', id: 'gpt-5.4', api: 'openai-responses' };
+const fastCatalog = [{ slug: 'gpt-5.4', service_tiers: [{ id: 'priority' }] }];
+
+for (const agentFirst of [false, true]) {
+  test(`a new session loads the default agent's skills and fast mode on its first turn (${agentFirst ? 'agents' : 'fast mode'} loads first)`, async t => {
+    const f = await agentFixture(t, { config: chosenConfig(), model: fastModel, models: [fastModel], realFastMode: { agentFirst, catalog: fastCatalog } });
+    await f.load();
+    assert.deepEqual(await f.emit('resources_discover', {}), { skillPaths: ['/chosen-skill'] });
+    await f.start();
+    assert.equal(f.capability().active, 'chosen');
+    assert.equal(await f.fastEnabled(), true);
+    assert.deepEqual(await f.emit('resources_discover', {}), { skillPaths: ['/chosen-skill'] });
+    assert.deepEqual(f.notices, []);
+  });
+}
+
+test('a resumed session keeps its saved agent, skills and fast mode choice instead of the default agent', async t => {
+  const f = await agentFixture(t, {
+    config: chosenConfig(), model: fastModel, models: [fastModel], realFastMode: { agentFirst: false, catalog: fastCatalog },
+    entries: [{ type: 'custom', customType: 'pi-define-agents-state', data: { active: 'chosen', locked: true } }, { type: 'custom', customType: 'piop-fast-mode-state', data: { enabled: false } }],
+  });
+  await f.load();
+  assert.deepEqual(await f.emit('resources_discover', {}), { skillPaths: ['/chosen-skill'] });
+  await f.start();
+  assert.equal(f.capability().active, 'chosen');
+  assert.equal(await f.fastEnabled(), false);
+
+  const g = await agentFixture(t, { config: chosenConfig(), entries: [{ type: 'custom', customType: 'pi-define-agents-state', data: { active: 'general' } }] });
+  await g.load();
+  assert.deepEqual(await g.emit('resources_discover', {}), { skillPaths: ['/general-skill'] });
+  await g.start();
+  assert.equal(g.capability().active, 'general');
+});
+
+test('a new session whose default agent uses another model than the runtime starts when agents loads before fast mode', async t => {
+  const initial = { provider: 'openai', id: 'initial', api: 'openai-responses' };
+  const chosen = { provider: 'openai', id: 'chosen', api: 'openai-responses' };
+  const f = await agentFixture(t, {
+    config: configured([profile(), profile('chosen', { isDefault: true, model: 'openai/chosen', fastMode: true })]), model: initial, models: [initial, chosen],
+    realFastMode: { agentFirst: true, catalog: [{ slug: 'initial', service_tiers: [{ id: 'priority' }] }, { slug: 'chosen', service_tiers: [{ id: 'priority' }] }] },
+  });
+  await f.load();
+  const started = await Promise.race([f.start().then(() => true), new Promise(resolve => setTimeout(() => resolve(false), 2000))]);
+  assert.equal(started, true);
+  assert.deepEqual(f.modelSelections.map(model => model.id), ['chosen']);
+  assert.equal(f.capability().active, 'chosen');
+  assert.equal(await f.fastEnabled(), true);
+  assert.deepEqual(f.notices, []);
+});
+
 test('manual model and effort defaults survive extension reload', async t => {
   const f = await agentFixture(t, { config: null });
   await f.load(); await f.start();

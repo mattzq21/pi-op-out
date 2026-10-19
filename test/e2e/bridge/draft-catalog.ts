@@ -1,7 +1,7 @@
 // Public provider command response used by the isolated UI tests before a conversation starts.
 export const draftCatalog = {
   config: { agents: [
-    { name: "general", model: "e2e/acceptance", effort: "high", path_systemprompt: "", path_agent_prompt: "", tools: [], skills: [], mcpServers: {} },
+    { name: "general", isDefault: true, model: "e2e/acceptance", effort: "high", path_systemprompt: "", path_agent_prompt: "", tools: [], skills: [], mcpServers: {} },
     { name: "reviewer", model: "e2e/acceptance", effort: "off", path_systemprompt: "", path_agent_prompt: "", tools: [], skills: [], mcpServers: {} },
   ] },
   models: [

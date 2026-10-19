@@ -1,4 +1,4 @@
-import { MAX_REMOTE_HOSTS, codexWebSearchTool, defaultAgent, defaultSettings, parseAppSettings, serializeAppSettings, sessionOperationTools, validateContextCaps, validateRemoteHost, type AppSettings } from './settings_types';
+import { MAX_REMOTE_HOSTS, codexWebSearchTool, defaultSettings, parseAppSettings, serializeAppSettings, sessionOperationTools, validateContextCaps, validateRemoteHost, type AppSettings } from './settings_types';
 import { mergeDiscoveredSkills } from './skill_discovery';
 import { migrateKeybindings, validateKeybindings } from './keybindings';
 import { lockSettings, settingsPath, settingsRevision, storageLock } from './settings_storage';
@@ -59,7 +59,6 @@ export function readSettingsAt(path: string): AppSettings {
   migrateQuestionTool(settings);
   migrateGoalTools(settings);
   initializeSessionTools(settings);
-  if (settings.defaultAgent === 'voice-orchestrator') settings.defaultAgent = defaultAgent();
   migrateBuiltinTools(settings);
   migrateKeybindings(settings);
   if (settings.hosts.length > MAX_REMOTE_HOSTS) throw new Error(`Settings contain more than ${MAX_REMOTE_HOSTS} remote machines`);
