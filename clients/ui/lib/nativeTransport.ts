@@ -11,7 +11,7 @@ import { NativeSettings } from "./nativeSettings";
 import { locateConversation } from "./conversationLookup";
 import { nativeTerminals } from "./nativeTerminals";
 import { ConversationCommands } from "./conversationCommands";
-import { htmlPreviewSize, listen, type UnlistenFn } from "./platform";
+import { listen, type UnlistenFn } from "./platform";
 import { restoredSessionTarget, targetedWindowSession } from "./sessionResume";
 import { recoverSessionDirectory } from "./sessionRecovery";
 import { ConversationChangedError } from "./conversationChanged";
@@ -121,7 +121,7 @@ export class NativeTransport {
   private presenceCleanup?: () => void;
   setVisible(visible: boolean) { this.visible = visible; this.publishPresence(); }
   private presence() {
-    const presence = { visible: this.visible && document.visibilityState !== "hidden", focused: document.hasFocus(), htmlPreviewSize: htmlPreviewSize() };
+    const presence = { visible: this.visible && document.visibilityState !== "hidden", focused: document.hasFocus() };
 
     return this.readOnly ? { ...presence, readOnly: true, archived: this.archived } : presence;
   }
@@ -539,7 +539,7 @@ export class NativeTransport {
     command = this.conversationCommands.normalize(command);
 
     try {
-      const result = await call("pi_command", { runtimeId: this.runtimeId, command: { ...command, clientHtmlPreviewSize: htmlPreviewSize() } });
+      const result = await call("pi_command", { runtimeId: this.runtimeId, command });
       this.retainCommandSession(command, commandSessionSchema.parse(result));
       this.resetChangedSession(command, z.object({ cancelled: z.boolean().optional() }).catch({}).parse(result));
 

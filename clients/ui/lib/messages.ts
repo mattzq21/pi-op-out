@@ -1,9 +1,8 @@
 import type { ChatMessage } from "../types";
 import { z } from "zod";
 import { pauseStateSchema, promptContextSchema, resumeContentSchema, resumeMarkerSchema, wireMessageSchema, type WireMessage } from "./messageSchemas";
-import { HTML_PREVIEW_MESSAGE } from "../../../extensions/piop-html-preview/interface";
 
-const SYSTEM_MESSAGES = new Set(["pi-desktop-mcp-status", "piop-review-link", HTML_PREVIEW_MESSAGE]);
+const SYSTEM_MESSAGES = new Set(["pi-desktop-mcp-status", "piop-review-link"]);
 
 export function isContextInjection(message: { role?: string; customType?: string }) {
   return message.role === "custom" && !SYSTEM_MESSAGES.has(message.customType ?? "") && !["piop-subagent-result", "piop-goal-summary", "piop-session-operation"].includes(message.customType ?? "");

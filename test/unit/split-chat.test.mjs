@@ -27,7 +27,7 @@ describe('split conversation lifecycle', () => {
       ['broker_request', ({ body }) => ({ sessionId: body.sessionId, sessionPath: '/session.jsonl', cwd: '/repo', archived: false, revision: '1' })]]);
     mockIPC((command, args) => {
       if (command === 'pi_command') {
-        const { clientHtmlPreviewSize, ...rpc } = args.command; calls.push(rpc);
+        const rpc = args.command; calls.push(rpc);
         for (const waiter of [...waiters]) waiter(rpc);
         const result = responses.get(rpc.type);
 

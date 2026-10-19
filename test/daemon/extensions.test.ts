@@ -135,12 +135,9 @@ test('a Pi start installs the bundled extensions as private files and refreshes 
     ['piop-reviews/index.ts', 'daemon/resources/piop-reviews/index.ts'],
     ['piop-openai-cache-fork.ts', 'extensions/piop-openai-cache-fork/index.ts'],
     ['piop-codex-web-search.ts', 'extensions/piop-codex-web-search/index.ts'],
-    ['piop-html-preview/index.ts', 'extensions/piop-html-preview/index.ts'],
-    ['piop-html-preview/interface.ts', 'extensions/piop-html-preview/interface.ts'],
-    ['piop-html-preview/preview.ts', 'extensions/piop-html-preview/preview.ts'],
   ];
   const extensions = extensionPaths(await launchPublicPi(daemon));
-  for (const name of ['piop-controls/index.ts', 'session-broker.ts', 'piop-html-preview/index.ts', 'piop-user-questions/index.ts', 'piop-goals/index.ts', 'piop-reviews/index.ts', 'piop-openai-cache-fork.ts', 'piop-codex-web-search.ts']) expect(extensions).toContain(join(generated, name));
+  for (const name of ['piop-controls/index.ts', 'session-broker.ts', 'piop-user-questions/index.ts', 'piop-goals/index.ts', 'piop-reviews/index.ts', 'piop-openai-cache-fork.ts', 'piop-codex-web-search.ts']) expect(extensions).toContain(join(generated, name));
   for (const removed of ['runtime-settings.ts', 'piop-skills-store/index.ts', 'piop-tool-store/index.ts']) expect(extensions).not.toContain(join(generated, removed));
   for (const name of ['piop-providers-refresh.ts', 'piop-codemode-tools-description.ts']) expect(extensions).toContain(join(generated, name));
   for (const [name, relative] of bundles) {

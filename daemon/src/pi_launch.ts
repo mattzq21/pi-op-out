@@ -178,7 +178,6 @@ function configureLocalExtensions(command: LaunchCommand, settings: AppSettings,
   command.args.push('--extension', Ext.prepareCodemodeToolsDescriptionExtension(), '--session-dir', sessionDir, '--approve', '--no-skills',
     '--extension', Ext.prepareProvidersRefreshExtension(), '--extension', mcpExtension, '--extension', session.controls, '--extension', session.broker,
     '--extension', Ext.prepareUserQuestionsExtension(), '--extension', session.goals, '--extension', session.reviews,
-    '--extension', Ext.prepareHtmlPreviewExtension(),
     '--extension', contextWindowCapExtension, '--extension', contextBarExtension, '--extension', sessionCostLimitExtension,
     '--extension', Ext.prepareFastModeExtension(), '--extension', openaiCacheForkExtension, '--extension', codexWebSearchExtension,
     '--extension', definedAgentsExtension);

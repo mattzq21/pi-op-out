@@ -39,9 +39,6 @@ import contextWindowCapExtension from '../../extensions/piop-context-window-cap/
 import contextWindowCapDefaults from '../../extensions/piop-context-window-cap/defaults.ts?raw';
 import contextWindowCapInterface from '../../extensions/piop-context-window-cap/interface.ts?raw';
 import contextBarExtension from '../../extensions/piop-context-bar/index.ts?raw';
-import htmlPreviewExtension from '../../extensions/piop-html-preview/index.ts?raw';
-import htmlPreviewInterface from '../../extensions/piop-html-preview/interface.ts?raw';
-import htmlPreviewFeature from '../../extensions/piop-html-preview/preview.ts?raw';
 import codexWebSearchExtension from '../../extensions/piop-codex-web-search/index.ts?raw';
 import excalidrawSkill from '../../extensions/piop-excalidraw/SKILL.md?raw';
 import excalidrawCheatsheet from '../../extensions/piop-excalidraw/references/cheatsheet.md?raw';
@@ -162,9 +159,6 @@ export {
   contextWindowCapInterface,
   contextWindowCapDefaults,
   contextBarExtension,
-  htmlPreviewExtension,
-  htmlPreviewInterface,
-  htmlPreviewFeature,
   codexWebSearchExtension,
   excalidrawSkill,
   excalidrawCheatsheet,

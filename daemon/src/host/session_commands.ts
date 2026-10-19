@@ -3,7 +3,6 @@ import { lockGate } from './lock_gate';
 import * as Branching from './branching';
 import type { Host } from './controller';
 import type { Session } from './session';
-import { HTML_PREVIEW_VIEWPORT_COMMAND } from '../../../extensions/piop-html-preview/interface';
 import { ANSWER_QUESTION_COMMAND } from '../../../extensions/piop-user-questions/interface';
 
 /** Runs a command from the view that owns the session. Commands that change the session check ownership first. */
@@ -24,7 +23,6 @@ export async function sessionCommand(host: Host, session: Session, runtime: stri
     if (error !== null) throw new Error(error);
   }
   if (['fork', 'fork_after', 'clone', 'new_session', 'switch_session'].includes(kind(command))) return Branching.switchSession(host, session, runtime, command);
-  if (typeof command?.clientHtmlPreviewSize === 'number') await session.raw({ type: HTML_PREVIEW_VIEWPORT_COMMAND, size: command.clientHtmlPreviewSize });
   return queueCommand(session, command, kind(command).startsWith('get_') ? undefined : assertOwner);
 }
 

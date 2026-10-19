@@ -229,7 +229,6 @@ export function sessionOperationTools(): any[] {
   return ([
     ['subagent', 'Delegate parallel tasks to agents with saved transcripts'],
     ['request_user_input', 'Ask the user questions with choices and free-text answers'],
-    ['render_html', 'Display self-contained HTML previews in chat'],
     ['get_goal', 'Read the current persistent goal'],
     ['create_goal', 'Create a persistent goal with an optional token budget'],
     ['update_goal', 'Complete, block or pause the current goal'],

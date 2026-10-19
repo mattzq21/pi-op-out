@@ -4,7 +4,6 @@ import { argument, expandHome, isUuid, parseLaunchSpec, specIdentity, type Launc
 import { lockGate } from './lock_gate';
 import type { Host } from './controller';
 import type { Session } from './session';
-import { HTML_PREVIEW_VIEWPORT_COMMAND } from '../../../extensions/piop-html-preview/interface';
 
 /** Attaches a view to a conversation. The owning client's view starts the session when needed; other views attach read-only. */
 export async function attach(host: Host, packet: any): Promise<any> {
@@ -76,7 +75,6 @@ class Attachment {
       opened.session = session;
       await session.setClientId(text(this.packet, 'clientId'));
       await session.execute({ type: 'get_state' });
-      if (typeof this.packet.presence?.htmlPreviewSize === 'number') await session.raw({ type: HTML_PREVIEW_VIEWPORT_COMMAND, size: this.packet.presence.htmlPreviewSize });
       this.assertCurrent();
       this.host.readonlyMap.delete(this.runtime);
       this.host.attachView(this.runtime, session, structuredClone(this.packet.presence ?? null));

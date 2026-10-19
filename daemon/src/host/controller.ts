@@ -19,7 +19,6 @@ import { Session, type SessionHost } from './session';
 import { sessionCommand } from './session_commands';
 import { recoverQueuedInput, watchRetention } from './storage_upkeep';
 import { ToolPayloadCache } from './tool_payload';
-import { HTML_PREVIEW_VIEWPORT_COMMAND } from '../../../extensions/piop-html-preview/interface';
 import type { HostServices } from './services';
 
 export class Host implements SessionHost {
@@ -389,10 +388,6 @@ export class Host implements SessionHost {
     if (name === 'detach') return this.detach(packet, runtime, session);
     if (name === 'presence') {
       session.presence(runtime, structuredClone(packet.presence ?? null));
-      const presence = packet.presence;
-      if (flag(presence, 'visible') && flag(presence, 'focused') && typeof presence?.htmlPreviewSize === 'number') {
-        await session.raw({ type: HTML_PREVIEW_VIEWPORT_COMMAND, size: presence.htmlPreviewSize });
-      }
       return null;
     }
     if (name === 'command' && packet.command?.type === 'reload_agents') return this.reloadAgents(runtime, text(packet.command, 'sessionId'));
