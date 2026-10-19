@@ -90,3 +90,25 @@ test('SQL state follows archive and restore and is removed with the session', as
   assert.equal(db.prepare('SELECT count(*) AS n FROM session_extension_records').get().n, 0);
   db.close();
 });
+
+test('fork publication copies only the selected branch state into SQL', async t => {
+  const f = await fixture(t);
+  const initial = f.manager.appendCustomEntry('piop-fast-mode-state', { enabled: false });
+  const user = f.manager.appendMessage({ role: 'user', content: 'Start', timestamp: 1 });
+  const left = f.manager.appendCustomEntry('piop-fast-mode-state', { enabled: true });
+  f.manager.appendMessage({ role: 'user', content: 'Left', timestamp: 2 });
+  f.manager.branch(user);
+  f.manager.appendCustomEntry('piop-fast-mode-state', { enabled: false });
+  f.manager.appendMessage({ role: 'user', content: 'Right', timestamp: 3 });
+  const bundle = join(f.home, 'publish.mjs');
+  await build({ entryPoints: ['daemon/resources/piop-storage/session-file.ts'], outfile: bundle, bundle: true, platform: 'node', format: 'esm', target: 'node22', logLevel: 'silent', plugins: [storageSchemaImports()], banner: { js: "import { createRequire } from 'node:module'; const require = createRequire(import.meta.url);" } });
+  const { writeSessionFile } = await import(pathToFileURL(bundle));
+  const id = database.reserve(f.root);
+  const target = join(f.root, 'sessions', `2026-10-19T01-00-00-000Z_${id}.jsonl`);
+  await writeSessionFile(target, [{ ...f.manager.getHeader(), id, parentSession: f.file }, ...f.manager.getBranch(left)]);
+  assert.equal(readFileSync(target, 'utf8').split('\n').filter(Boolean).map(JSON.parse).some(entry => entry.type === 'custom'), false);
+  assert.deepEqual(f.SessionManager.open(target).getBranch().filter(entry => entry.type === 'custom').map(entry => entry.id), [initial, left]);
+  const db = database.open(f.root);
+  assert.equal(db.prepare('SELECT count(*) AS n FROM session_extension_records WHERE session_id=?').get(id).n, 2);
+  db.close();
+});
