@@ -241,3 +241,27 @@ test('the chat preview and reopened session follow a branch choice without a tra
   assert.equal((await summary()).messageCount, 1);
   assert.equal(f.SessionManager.open(f.file).getLeafId(), next);
 });
+
+test('recovered queued-input chats keep their names in SQL when reopened', async t => {
+  const f = await fixture(t);
+  const { createTranscript } = await import('../../daemon/resources/piop-storage/recovery.cjs');
+  const id = database.reserve(f.root);
+  const file = join(f.root, 'sessions', `recovered_${id}.jsonl`);
+  const db = database.open(f.root);
+  try {
+    database.bind(db, id, file);
+    db.exec("CREATE TRIGGER reject_recovered_name BEFORE INSERT ON session_extension_state BEGIN SELECT RAISE(ABORT, 'recovery name write failed'); END;");
+    assert.throws(() => createTranscript(file, id, f.home, 'Important queued request'), /recovery name write failed/);
+    assert.equal(existsSync(file), false);
+    assert.equal(existsSync(join(f.root, 'sessions', '.queued-input-recovery-' + id)), false);
+    db.exec('DROP TRIGGER reject_recovered_name');
+    assert.equal(createTranscript(file, id, f.home, 'Important queued request'), true);
+    const recovered = f.SessionManager.open(file);
+    assert.equal(recovered.getSessionName(), 'Recovered queued input: Important queued request');
+    assert.equal(readFileSync(file, 'utf8').trim().split('\n').map(JSON.parse).some(entry => entry.type === 'session_info'), false);
+    assert.equal(db.prepare("SELECT count(*) AS n FROM session_extension_state WHERE session_id=? AND state_key='piop-session-name'").get(id).n, 1);
+    recovered.appendSessionInfo('Renamed recovered chat');
+    assert.equal(createTranscript(file, id, f.home, 'Another request'), false);
+    assert.equal(f.SessionManager.open(file).getSessionName(), 'Renamed recovered chat');
+  } finally { db.close(); }
+});

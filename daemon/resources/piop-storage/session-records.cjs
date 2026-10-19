@@ -143,6 +143,14 @@ function revision(file, sessionId) {
   finally { db.close(); }
 }
 
+function initializeSessionName(file, sessionId, name) {
+  const entry = { type: 'session_info', id: randomUUID(), parentId: null, timestamp: new Date().toISOString(), name };
+  transaction(file, sessionId, db => {
+    db.prepare('INSERT INTO session_extension_state (session_id, state_key, entry_json) VALUES (?, ?, ?) ON CONFLICT(session_id, state_key) DO NOTHING')
+      .run(sessionId, stateKey(entry), JSON.stringify(entry));
+  });
+}
+
 function sessionName(file, sessionId, connection) {
   const db = connection ?? database.open(database.storageRoot(file));
   try {
@@ -155,4 +163,4 @@ function create(type, data, parentId) {
   return { type: 'custom', customType: type, data: structuredClone(data), id: randomUUID(), parentId, timestamp: new Date().toISOString() };
 }
 
-module.exports = { selectBranch, selectedLeaf, stateKey, sessionName, isCurrent, history, stored, save, seed, capture, append, records, merge, revision, create };
+module.exports = { selectBranch, selectedLeaf, stateKey, initializeSessionName, sessionName, isCurrent, history, stored, save, seed, capture, append, records, merge, revision, create };
