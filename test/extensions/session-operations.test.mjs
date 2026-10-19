@@ -112,7 +112,7 @@ test('fork RPC switches to a completed response without changing the parent', as
 
 
 
-test('forget RPC records successful navigation and preserves cancelled or invalid requests', async t => {
+test('forget RPC navigates without recording state and preserves cancelled or invalid requests', async t => {
   const f = await fixture(t);
   const targets = [];
   f.ctx.navigateTree = async id => { targets.push(id);
@@ -122,7 +122,7 @@ test('forget RPC records successful navigation and preserves cancelled or invali
   assert.deepEqual(await f.rpc('fork_and_forget', { entryId: 'a1' }), { cancelled: true });
   assert.deepEqual(f.operations, []);
   assert.deepEqual(await f.rpc('fork_and_forget', { entryId: 'a1' }), { cancelled: false });
-  assert.deepEqual(f.operations, [{ customType: 'pi-desktop-fork-and-forget', data: { entryId: 'a1' } }]);
+  assert.deepEqual(f.operations, []);
 
   for (const entryId of ['missing', 'u1']) await assert.rejects(f.rpc('fork_and_forget', { entryId }), /Assistant response not found/);
   assert.deepEqual(targets, ['a1', 'a1']);

@@ -1,6 +1,5 @@
-import { sessionStorage } from "../piop-storage/interface.ts";
 import { reserveSessionId } from "../piop-storage/session-file.ts";
-import type { ExtensionAPI, ExtensionCommandContext, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import type { ExtensionCommandContext, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { realpath, mkdir, rmdir } from "node:fs/promises";
 import { basename, dirname, join, resolve } from "node:path";
 import { currentHost } from "../session-broker/client.ts";
@@ -40,15 +39,11 @@ export async function forkSession(ctx: ExtensionContext, mode: ForkMode, entryId
 }
 
 /** SessionControls.forkAndForget. */
-export async function forkAndForget(pi: ExtensionAPI, ctx: ExtensionCommandContext, entryId: string) {
+export async function forkAndForget(ctx: ExtensionCommandContext, entryId: string) {
   const entry = ctx.sessionManager.getEntry(entryId);
 
   if (!entry || entry.type !== "message" || entry.message.role !== "assistant") throw new Error("Assistant response not found in this conversation");
-  const result = await ctx.navigateTree(entryId);
-
-  if (!result.cancelled) sessionStorage(pi).append("pi-desktop-fork-and-forget", { entryId });
-
-  return result;
+  return ctx.navigateTree(entryId);
 }
 
 export async function forkConversation(ctx: ExtensionContext, options: ForkOptions) {

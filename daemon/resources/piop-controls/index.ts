@@ -15,7 +15,7 @@ export default function controls(pi: ExtensionAPI) {
     stop: ctx => pause.stop(ctx),
     cancelPreparation: () => pause.cancelPreparation(),
     fork: forkSession,
-    forkAndForget: (ctx, entryId) => forkAndForget(pi, ctx, entryId),
+    forkAndForget,
   };
   const unsubscribe = pi.events.on("piop:controls:session", request => { request.session = session; });
   pi.on("session_shutdown", () => { unsubscribe(); });
