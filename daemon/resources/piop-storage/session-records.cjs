@@ -116,12 +116,29 @@ function merge(file, entries, connection) {
   return [header, ...(groups.get(null) ?? []), ...entries.slice(1).flatMap(entry => [entry, ...(groups.get(entry.id) ?? [])])];
 }
 
+function selectBranch(file, sessionId, tipId, leafId) {
+  transaction(file, sessionId, db => {
+    db.prepare(`INSERT INTO session_branch_selection (session_id, tip_id, leaf_id) VALUES (?, ?, ?)
+      ON CONFLICT(session_id) DO UPDATE SET tip_id=excluded.tip_id, leaf_id=excluded.leaf_id`).run(sessionId, tipId, leafId);
+  });
+}
+
+function selectedLeaf(file, sessionId, tipId) {
+  const db = database.open(database.storageRoot(file));
+  try {
+    const row = db.prepare('SELECT tip_id, leaf_id FROM session_branch_selection WHERE session_id=?').get(sessionId);
+    // A later entry supersedes the saved branch choice, including after an interrupted append.
+    return row && row.tip_id === tipId ? row.leaf_id : tipId;
+  } finally { db.close(); }
+}
+
 function revision(file, sessionId) {
   const db = database.open(database.storageRoot(file));
   try {
     const sequence = db.prepare('SELECT coalesce(max(sequence), 0) AS revision FROM session_extension_records WHERE session_id=?').get(sessionId).revision;
     const current = db.prepare('SELECT state_key, entry_json FROM session_extension_state WHERE session_id=? ORDER BY state_key').all(sessionId);
-    return sequence + ':' + createHash('sha256').update(JSON.stringify(current)).digest('hex');
+    const branch = db.prepare('SELECT tip_id, leaf_id FROM session_branch_selection WHERE session_id=?').get(sessionId);
+    return sequence + ':' + createHash('sha256').update(JSON.stringify({ current, branch })).digest('hex');
   }
   finally { db.close(); }
 }
@@ -138,4 +155,4 @@ function create(type, data, parentId) {
   return { type: 'custom', customType: type, data: structuredClone(data), id: randomUUID(), parentId, timestamp: new Date().toISOString() };
 }
 
-module.exports = { stateKey, sessionName, isCurrent, history, stored, save, seed, capture, append, records, merge, revision, create };
+module.exports = { selectBranch, selectedLeaf, stateKey, sessionName, isCurrent, history, stored, save, seed, capture, append, records, merge, revision, create };

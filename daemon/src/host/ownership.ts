@@ -270,7 +270,9 @@ export class ConversationOwnership {
     if (saved) entries = SessionRecords.merge(saved.path, [saved.header, ...entries]).slice(1);
     const revision = saved ? saved.revision : 'missing:' + id;
     const leaf = [...entries].reverse().find(entry => entry?.type !== 'session' && !SessionRecords.isCurrent(entry));
-    const leafId = typeof leaf?.id === 'string' ? leaf.id : null;
+    const tipId = typeof leaf?.id === 'string' ? leaf.id : null;
+    const leafId = saved ? SessionRecords.selectedLeaf(saved.path, id, tipId) : tipId;
+    if (leafId !== null && !entries.some(entry => entry.id === leafId)) throw new Error('The saved branch points to a missing entry');
     const control = ControlState.reduce(entries, leafId);
     const snapshot: any = {
       revision,

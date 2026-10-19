@@ -109,6 +109,8 @@ function installSessionCreation(SessionManager) {
     session.fileEntries = takeCurrentState(session, session.fileEntries);
     session._buildIndex();
     session.flushed = true;
+    if (source.getLeafId() === null) session.resetLeaf();
+    else session.branch(source.getLeafId());
 
     return session;
   };
@@ -423,6 +425,26 @@ export function installSessionStorage(SessionManager, recordReferences) {
   installSessionCreation(SessionManager);
 
   if (recordReferences) sessionReferenceRecorders.set(prototype, recordReferences);
+
+  const buildIndex = prototype._buildIndex;
+  prototype._buildIndex = function () {
+    buildIndex.call(this);
+    if (!this.persist || !this.sessionFile) return;
+    const tip = this.fileEntries.findLast(entry => entry.type !== "session" && !stateRecords.isCurrent(entry))?.id ?? null;
+    const leaf = stateRecords.selectedLeaf(this.sessionFile, this.getSessionId(), tip);
+    if (leaf !== null && !this.byId.has(leaf)) throw new Error("The saved branch points to a missing entry");
+    this.leafId = leaf;
+  };
+
+  const selectBranch = (manager, leaf) => {
+    sessionStorageState(manager);
+    if (leaf !== null && !manager.byId.has(leaf)) throw new Error(`Entry ${leaf} not found`);
+    const tip = manager.fileEntries.findLast(entry => entry.type !== "session" && !stateRecords.isCurrent(entry))?.id ?? null;
+    if (manager.persist && manager.sessionFile) stateRecords.selectBranch(manager.sessionFile, manager.getSessionId(), tip, leaf);
+    manager.leafId = leaf;
+  };
+  prototype.branch = function (id) { selectBranch(this, id); };
+  prototype.resetLeaf = function () { selectBranch(this, null); };
 
   const getEntries = prototype.getEntries;
   const getBranch = prototype.getBranch;

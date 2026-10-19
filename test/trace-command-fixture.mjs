@@ -64,7 +64,7 @@ export async function publishedTrace(t, traceReader, content, { folder = '', hom
   controls({ on() {}, events: { on(name, handler) { if (name === 'piop:rpc') listeners.push(handler); }, emit() {} }, appendEntry() { throw new Error('Unexpected history append'); } });
   const request = { command: 'prepare_fork', payload: { mode: 'fork', entryId: 'user' }, ctx: {
     cwd: cwd ?? home,
-    sessionManager: { getEntry: () => user, getBranch: () => [user], getHeader: () => header, getSessionFile: () => source, getSessionId: () => id, getSessionDir: () => sessions },
+    sessionManager: { getEntry: () => user, getEntries: () => [user], getBranch: () => [user], getHeader: () => header, getSessionFile: () => source, getSessionId: () => id, getSessionDir: () => sessions },
     ui: { notify(message) { throw new Error(message); } },
   } };
   const identities = new Map();

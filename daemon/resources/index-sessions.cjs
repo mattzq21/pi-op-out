@@ -141,6 +141,7 @@ class SessionIndex {
     }
 
     this.metadata(entry);
+    if (stateRecords.isCurrent(entry)) return;
 
     if (entry.type === 'usage') this.recordCost(entry);
 
@@ -163,6 +164,10 @@ class SessionIndex {
 
   summary(path) {
     if (this.header) this.name = stateRecords.sessionName(path, this.header.id);
+    if (this.header) {
+      this.leaf = stateRecords.selectedLeaf(path, this.header.id, this.leaf);
+      if (this.leaf !== null && !this.nodes.has(this.leaf)) throw new Error('The saved branch points to a missing entry');
+    }
     this.recordBranch();
     if (this.interruptedBytes) console.warn(`${path}: last write was interrupted; ignored ${this.interruptedBytes} bytes`);
     if (this.damagedLines.length) {

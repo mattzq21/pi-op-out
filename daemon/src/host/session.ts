@@ -475,7 +475,7 @@ export class Session {
     if (kind(command) === 'resume' && typeof result?.resumeMessage === 'string' && result.resumeMessage) await this.raw({ type: 'prompt', message: result.resumeMessage });
     if (['set_model', 'set_thinking_level', 'set_session_name', 'fork_and_forget'].includes(kind(command))) this.publish({ type: 'session_info_changed' }, null);
     // The chat list shows the name, so every client reloads it.
-    if (kind(command) === 'set_session_name') this.host.output({ type: 'sessions_changed' });
+    if (['set_session_name', 'fork_and_forget'].includes(kind(command))) this.host.output({ type: 'sessions_changed' });
     return result;
   }
 

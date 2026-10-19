@@ -87,18 +87,24 @@ test('SQL state follows archive and restore and is removed with the session', as
   const f = await fixture(t);
   f.manager.appendCustomEntry('pi-define-agents-state', { active: 'Builder' });
   f.manager.appendSessionInfo('Named chat');
+  const selected = f.manager.appendMessage({ role: 'user', content: 'First', timestamp: 1 });
+  f.manager.appendMessage({ role: 'user', content: 'Second', timestamp: 2 });
+  f.manager.branch(selected);
   const saved = f.manager.getEntries();
   mkdirSync(join(f.root, 'archived'));
   const archived = join(f.root, 'archived', 'chat.jsonl');
   renameSync(f.file, archived);
   database.movePaths(f.root, [{ source: f.file, destination: archived }]);
   assert.deepEqual(f.SessionManager.open(archived).getEntries(), saved);
+  assert.equal(f.SessionManager.open(archived).getLeafId(), selected);
   renameSync(archived, f.file);
   database.movePaths(f.root, [{ source: archived, destination: f.file }]);
   assert.deepEqual(f.SessionManager.open(f.file).getEntries(), saved);
+  assert.equal(f.SessionManager.open(f.file).getLeafId(), selected);
   const db = database.open(f.root);
   db.prepare('DELETE FROM sessions WHERE session_id=?').run(f.id);
   assert.equal(db.prepare('SELECT count(*) AS n FROM session_extension_state').get().n, 0);
+  assert.equal(db.prepare('SELECT count(*) AS n FROM session_branch_selection').get().n, 0);
   db.close();
 });
 
@@ -194,4 +200,44 @@ test('model and thinking selections stay current across messages, navigation and
     assert.deepEqual(f.manager.buildSessionContext().model, { provider: 'provider', modelId: 'new-model' });
     assert.equal(f.manager.buildSessionContext().thinkingLevel, 'high');
   } finally { db.close(); }
+});
+
+test('the chat preview and reopened session follow a branch choice without a transcript write', async t => {
+  const f = await fixture(t);
+  const bundle = join(f.home, 'index.mjs');
+  await build({ stdin: { contents: 'export { indexSessions } from "./daemon/resources/index-sessions.cjs";', resolveDir: process.cwd() }, outfile: bundle, bundle: true, platform: 'node', format: 'esm', target: 'node22', logLevel: 'silent', plugins: [storageSchemaImports()], banner: { js: "import { createRequire } from 'node:module'; const require = createRequire(import.meta.url);" } });
+  const { indexSessions } = await import(pathToFileURL(bundle));
+  const summary = async () => {
+    const result = await indexSessions({ paths: [f.file] });
+    assert.deepEqual(result.warnings, []);
+    return result.summaries[0];
+  };
+  f.manager.appendMessage({ role: 'user', content: 'First question', timestamp: 1 });
+  const answer = f.manager.appendMessage({ role: 'assistant', content: [{ type: 'text', text: 'First answer' }], timestamp: 2 });
+  f.manager.appendMessage({ role: 'user', content: 'Detour', timestamp: 3 });
+  const detour = f.manager.appendMessage({ role: 'assistant', content: [{ type: 'text', text: 'Detour answer' }], timestamp: 4 });
+  assert.equal((await summary()).preview, 'Detour answer');
+  const body = readFileSync(f.file, 'utf8');
+  f.manager.branch(answer);
+  assert.equal(readFileSync(f.file, 'utf8'), body);
+  assert.equal((await summary()).preview, 'First answer');
+  assert.equal((await summary()).messageCount, 2);
+  assert.equal(f.SessionManager.open(f.file).getLeafId(), answer);
+  const db = database.open(f.root);
+  try {
+    db.exec("CREATE TRIGGER reject_branch BEFORE UPDATE ON session_branch_selection BEGIN SELECT RAISE(ABORT, 'branch write failed'); END;");
+    assert.throws(() => f.manager.branch(detour), /branch write failed/);
+    assert.equal(f.manager.getLeafId(), answer);
+    db.exec('DROP TRIGGER reject_branch');
+    assert.equal(db.prepare('SELECT count(*) AS n FROM session_branch_selection WHERE session_id=?').get(f.id).n, 1);
+  } finally { db.close(); }
+  f.manager.branch(detour);
+  assert.equal((await summary()).preview, 'Detour answer');
+  f.manager.resetLeaf();
+  assert.equal((await summary()).messageCount, 0);
+  assert.equal(f.SessionManager.open(f.file).getLeafId(), null);
+  const next = f.manager.appendMessage({ role: 'user', content: 'New start', timestamp: 5 });
+  assert.equal((await summary()).preview, 'New start');
+  assert.equal((await summary()).messageCount, 1);
+  assert.equal(f.SessionManager.open(f.file).getLeafId(), next);
 });
