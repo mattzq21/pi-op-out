@@ -1,3 +1,4 @@
+import * as SessionRecords from "../../resources/piop-storage/session-records.cjs";
 import { createServer, type Server } from 'node:http';
 import { randomUUID } from 'node:crypto';
 import { closeSync, constants, openSync, readFileSync, realpathSync, statSync } from 'node:fs';
@@ -256,7 +257,7 @@ export class ConversationOwnership {
 
   snapshot(id: string, _path?: string | null): any {
     const saved = this.lookupSaved(id, false)?.[0] ?? null;
-    const entries: any[] = [];
+    let entries: any[] = [];
     const damagedLines: number[] = [];
     for (let index = 1; saved && index < saved.lines.length; index++) {
       try {
@@ -266,6 +267,7 @@ export class ConversationOwnership {
       } catch { damagedLines.push(index + 1); }
     }
     if (damagedLines.length) console.error(`Incomplete chat history: ${saved!.path}; damaged record lines: ${damagedLines.join(', ')}`);
+    if (saved) entries = SessionRecords.merge(saved.path, [saved.header, ...entries]).slice(1);
     const revision = saved ? saved.revision : 'missing:' + id;
     const leaf = [...entries].reverse().find(entry => entry?.type !== 'session');
     const leafId = typeof leaf?.id === 'string' ? leaf.id : null;
@@ -397,7 +399,7 @@ export function readCandidate(id: string, original: string, root: string, metada
   const found = readSavedHeader(id, path);
   if (!found) return null;
   const [header, metadata] = found;
-  const revision = savedRevision(id, metadata);
+  const revision = savedRevision(id, metadata) + ":" + SessionRecords.revision(path, id);
   let lines: string[] = [];
   if (!metadataOnly) {
     const saved = readSavedLines(id, path);

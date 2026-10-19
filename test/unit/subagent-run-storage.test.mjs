@@ -16,11 +16,10 @@ test('subagent status updates use one SQL row and retain the original task', t =
   database.bind(db, parent, file);
   database.bind(db, child, childFile);
   const ctx = { sessionManager: { getSessionFile: () => file, getSessionId: () => parent } };
-  const pi = { appendEntry() { throw new Error('Run state must not be appended to history'); } };
   const run = { version: 1, toolCallId: 'call', parentSessionId: parent, sessionId: child, sessionPath: childFile, hostId: 'local', name: 'Worker', task: 'Original task', status: 'running', startedAt: 1 };
-  persistSubagentRun(pi, ctx, run);
-  persistSubagentRun(pi, ctx, { ...run, task: 'Resolved task text', status: 'completed', output: 'Done' });
-  persistSubagentRun(pi, ctx, run);
+  persistSubagentRun(ctx, run);
+  persistSubagentRun(ctx, { ...run, task: 'Resolved task text', status: 'completed', output: 'Done' });
+  persistSubagentRun(ctx, run);
   const saved = savedSubagentRuns(ctx);
   assert.equal(saved.length, 1);
   assert.equal(saved[0].status, 'completed');

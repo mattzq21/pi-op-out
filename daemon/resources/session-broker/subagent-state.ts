@@ -71,7 +71,7 @@ export function saveRun(pi: ExtensionAPI, ctx: ExtensionContext, run: SubagentRu
   const previous = ownedRuns(ctx).find(item => resultNotificationId(item) === resultNotificationId(run));
 
   if (previous?.resultDelivery === "delivered") run.resultDelivery = "delivered";
-  persistSubagentRun(pi, ctx, run);
+  persistSubagentRun(ctx, run);
 }
 
 export function subagentPayload(runs: SubagentRun[]): AgentToolResult<{ version: 1; runs: SubagentRun[] }> {

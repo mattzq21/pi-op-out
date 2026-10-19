@@ -75,8 +75,14 @@ function merge(file, entries, connection) {
   return [header, ...(groups.get(null) ?? []), ...entries.slice(1).flatMap(entry => [entry, ...(groups.get(entry.id) ?? [])])];
 }
 
+function revision(file, sessionId) {
+  const db = database.open(database.storageRoot(file));
+  try { return db.prepare('SELECT coalesce(max(sequence), 0) AS revision FROM session_extension_records WHERE session_id=?').get(sessionId).revision; }
+  finally { db.close(); }
+}
+
 function create(type, data, parentId) {
   return { type: 'custom', customType: type, data: structuredClone(data), id: randomUUID(), parentId, timestamp: new Date().toISOString() };
 }
 
-module.exports = { stored, save, seed, capture, append, records, merge, create };
+module.exports = { stored, save, seed, capture, append, records, merge, revision, create };

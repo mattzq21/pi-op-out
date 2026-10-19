@@ -1,4 +1,4 @@
-import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { constants } from "node:fs";
 import { open } from "node:fs/promises";
 import type { DatabaseSync } from "node:sqlite";
@@ -90,7 +90,7 @@ function mergePendingRun(db: DatabaseSync, run: SubagentRun) {
   return true;
 }
 
-export function persistSubagentRun(pi: ExtensionAPI, ctx: ExtensionContext, run: SubagentRun) {
+export function persistSubagentRun(ctx: ExtensionContext, run: SubagentRun) {
   if (run.parentSessionId !== ctx.sessionManager.getSessionId()) throw new Error("Subagent run belongs to another parent conversation");
   const db = runDatabase(sessionFile(ctx), run.parentSessionId);
   let accepted = false;
