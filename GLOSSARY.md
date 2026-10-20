@@ -6,6 +6,10 @@
 **Paired agent** - the agent that the voice agent talks to, also a root agent.  
 **Root agent/session** - the regular agent/session. Might have auxiliary agents.  
 **Auxiliary agent/session** - owned by root agent/session. E.g. subagents, reviewing agent.  
+**Non-project session** - A session with no assigned project folder.  
+**Folder-project session** - A session assigned to a folder that is not a Git repository root.  
+**Repository-project session** - A session assigned to a Git repository root, including a linked worktree root. It can use either the main worktree or a linked worktree.  
+**Main-worktree session** - A repository-project session assigned to the main worktree created by `git init` or `git clone`.  
 **Subagents** - root agent and (grand/)children agents.  
 **Turn** - what's commonly known as agent turn: a reasoning, tool call etc.  
 **Task** - from agent prompted to agent settled.  
