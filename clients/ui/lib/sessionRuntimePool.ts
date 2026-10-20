@@ -109,7 +109,8 @@ export class SessionRuntimePool {
       const previous = this.liveSessions.get(transport);
       const projectDetails = this.retainedProjectDetails(previous, cwd, transport.currentHostId());
       this.releasedSessions.delete(sessionKey(transport.currentHostId(), state.sessionId));
-      this.liveSessions.set(transport, { ...projectDetails, id: state.sessionId, path: state.sessionFile || "", name: retainedName(state, prompt, previous), project: cwd.split(/[\\/]/).filter(Boolean).at(-1) || "Workspace", cwd, ...retainedActivity(state, previous, prompt, lastMessageAt), daemonId: transport.currentDaemonId(), hostId: transport.currentHostId() });
+      const forkSourceId = state.forkSource?.sessionId;
+      this.liveSessions.set(transport, { ...projectDetails, id: state.sessionId, ...(forkSourceId ? { forkSourceId } : {}), path: state.sessionFile || "", name: retainedName(state, prompt, previous), project: cwd.split(/[\\/]/).filter(Boolean).at(-1) || "Workspace", cwd, ...retainedActivity(state, previous, prompt, lastMessageAt), daemonId: transport.currentDaemonId(), hostId: transport.currentHostId() });
       this.liveRevision += 1; this.notify();
     }).catch((reason) => this.errorHandler?.(`Could not list the retained session: ${reason instanceof Error ? reason.message : String(reason)}`));
   }

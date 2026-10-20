@@ -154,6 +154,22 @@ describe('session runtime pool', () => {
     await pool.remove(session);
   });
 
+  // The sidebar seeds groups from these summaries before the chat list has a new branch. A summary without its source let
+  // the branch's worktree folder become its group, and the daemon keeps that first assignment.
+  test('a retained branch summary names its source chat from session state', async () => {
+    responses.set('pi_command:get_state', { model: null, thinkingLevel: 'off', isStreaming: false, sessionId: 'branch', sessionFile: '/branch.jsonl', messageCount: 2, pendingMessageCount: 0,
+      forkSource: { sessionId: 'source', sessionPath: '/source.jsonl', entryId: 'answer' } });
+    const client = pool.create({ cwd: '/worktrees/branch' });
+    const id = await connect(client);
+    await send(id, { type: 'extension_ui_request', id: 'mcp-status', method: 'setStatus', statusKey: 'pi-desktop-mcp-status', statusText: 'json:[{"status":"starting"}]' });
+    await settled(); await settled();
+    assert.equal(pool.liveSessionSummaries()[0].id, 'branch');
+    assert.equal(pool.liveSessionSummaries()[0].forkSourceId, 'source');
+    await send(id, { type: 'message_start', message: { role: 'user', content: [{ type: 'text', text: 'Next step' }] } });
+    await settled(); await settled();
+    assert.equal(pool.liveSessionSummaries()[0].forkSourceId, 'source');
+  });
+
   test('malformed MCP statuses and late state responses cannot resurrect released sessions', async () => {
     const pending = Promise.withResolvers();
     const started = Promise.withResolvers();
