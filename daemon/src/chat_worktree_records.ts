@@ -1,5 +1,4 @@
 import * as Records from '../resources/chat-worktree-records.cjs';
-import * as SessionTables from '../resources/session-database.cjs';
 import { removeCreatedWorktree } from './chat_worktrees';
 import { forgetProjectRepository } from './project_repositories';
 import { discardBranchHistory } from './chat_branch_operations';
@@ -60,8 +59,9 @@ export function activate(chatId: string, root = profileRoot()): ChatWorktreeReco
 export const RECOVERY_OWNER = 'recovery';
 
 /**
- * Undoes a creation that was not handed to the user, in order: discards the new transcript and its attachment claims,
- * removes the worktree and branch, forgets the record, then releases the reserved chat ID. First puts an active record
+ * Undoes a creation that was not handed to the user, in order: discards the new transcript, its publication journals and
+ * attachment claims, removes the worktree and branch, releases the reserved chat ID, then forgets the record. The record
+ * goes last so it marks unfinished cleanup until every other step succeeded. First puts an active record
  * back to preparing, owned by this process, so a crash during cleanup leaves it for recovery. Each step needs the one
  * before it; the first failure stops the cleanup, keeps the record owned by recovery with lastError, and throws.
  */
@@ -72,14 +72,13 @@ export async function abandonCreation(chatId: string, sessionPath: string | null
     record = replace(record, { ...record, state: 'preparing', owner: Records.processToken() }, root)!;
   }
   try {
-    const transcript = sessionPath ?? SessionTables.lookup(root, chatId);
-    if (typeof transcript === 'string') await discardBranchHistory(root, chatId, transcript);
+    await discardBranchHistory(root, chatId, sessionPath);
     if (record !== null) {
       await removeCreatedWorktree({ chatId, gitCommonDir: record.gitCommonDir, home: homeDir() });
       forgetProjectRepository(root, record.worktree);
-      replace(record, null, root);
     }
     Registry.releaseReservation(root, chatId);
+    if (record !== null) replace(record, null, root);
   } catch (error: any) {
     const message = `Could not undo the creation of chat ${chatId}: ${error?.message ?? error}`;
     const current = read(chatId, root);
