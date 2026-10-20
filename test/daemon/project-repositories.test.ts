@@ -32,3 +32,19 @@ test('repository detection from a project subdirectory stores the repository roo
     expect((await refreshProjectRepository(join(directory, 'profile'), join(project, 'sub')))?.root).toBe(project);
   } finally { rmSync(directory, { recursive: true, force: true }); }
 });
+
+test('new draft chat rechecks the project but reopening it does not', async () => {
+  const { startDaemon } = await import('./harness');
+  const daemon = await startDaemon();
+  const project = join(daemon.home, 'project');
+  mkdirSync(project);
+  try {
+    await daemon.invoke('validate_project_directory', { path: project, hostId: 'local', allowStorage: true, newChat: true });
+    expect(getProjectRepository(join(daemon.home, '.piop'), project)).toBeNull();
+    execFileSync('git', ['init', project], { stdio: 'ignore' });
+    await daemon.invoke('validate_project_directory', { path: project, hostId: 'local', allowStorage: true });
+    expect(getProjectRepository(join(daemon.home, '.piop'), project)).toBeNull();
+    await daemon.invoke('validate_project_directory', { path: project, hostId: 'local', allowStorage: true, newChat: true });
+    expect(getProjectRepository(join(daemon.home, '.piop'), project)?.root).toBe(project);
+  } finally { await daemon.dispose(); }
+}, 60000);

@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process';
-import { chmodSync, existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { beforeAll, expect, test } from 'bun:test';
@@ -153,6 +153,37 @@ test('removeCreatedWorktree undoes creation and repeats safely', async () => {
   await Worktrees.removeCreatedWorktree({ chatId, gitCommonDir: created.gitCommonDir, home });
   expect(existsSync(created.worktree)).toBe(false);
   expect(hasRef(repo, 'refs/heads/' + created.branch)).toBe(false);
+});
+
+test('removes a worktree with read-only parts, and a later call finishes a removal that stopped part way', async () => {
+  const { repo, home } = repository();
+  const chatId = randomUUID();
+  const created = await Worktrees.createWorktree({ sourceCwd: repo, chatId, home });
+  write(join(created.worktree, 'locked/inner.txt'), 'x');
+  chmodSync(join(created.worktree, 'locked'), 0o555);
+  const archive = await Worktrees.protectArchive({ worktree: created, home });
+  await Worktrees.removeArchivedWorktree({ archive, home });
+  expect(existsSync(created.worktree)).toBe(false);
+  expect(readdirSync(join(home, '.local/share/piop/worktrees'))).toEqual([]);
+  expect(git(repo, 'worktree', 'list', '--porcelain').split('\n').filter(line => line.startsWith('worktree ')).length).toBe(1);
+
+  const leftover = join(home, '.local/share/piop/worktrees', `.removing-${chatId}-${randomUUID()}`);
+  write(join(leftover, 'locked/inner.txt'), 'x');
+  chmodSync(join(leftover, 'locked'), 0o555);
+  const other = join(home, '.local/share/piop/worktrees', `.removing-${randomUUID()}-${randomUUID()}`);
+  mkdirSync(other);
+  await Worktrees.removeArchivedWorktree({ archive, home });
+  expect(existsSync(leftover)).toBe(false);
+  expect(existsSync(other)).toBe(true);
+});
+
+test('undo and delete succeed when nothing was ever created on this machine', async () => {
+  const { repo, home } = repository();
+  const chatId = randomUUID();
+  const gitCommonDir = join(repo, '.git');
+  expect(existsSync(join(home, '.local/share/piop/worktrees'))).toBe(false);
+  await Worktrees.removeCreatedWorktree({ chatId, gitCommonDir, home });
+  await Worktrees.deleteChatWorktree({ record: { repository: repo, gitCommonDir, chatId, worktree: Worktrees.worktreePath(home, chatId), branch: Worktrees.branchName(chatId), archive: null }, home });
 });
 
 test('archives the last commit and restores it even after the branch is deleted', async () => {

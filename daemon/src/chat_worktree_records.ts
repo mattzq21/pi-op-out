@@ -1,6 +1,7 @@
 import * as Records from '../resources/chat-worktree-records.cjs';
 import * as SessionTables from '../resources/session-database.cjs';
 import { removeCreatedWorktree } from './chat_worktrees';
+import { forgetProjectRepository } from './project_repositories';
 import { discardBranchHistory } from './chat_branch_operations';
 import { homeDir } from './environment';
 import { profileRoot } from './host_operations';
@@ -63,6 +64,7 @@ export async function abandon(chatId: string, root = profileRoot()): Promise<voi
   if (record.state !== 'preparing' && record.state !== 'active') throw new Error(`Chat worktree is ${record.state}; only an unfinished creation can be undone: ${chatId}`);
   try { await removeCreatedWorktree({ chatId, gitCommonDir: record.gitCommonDir, home: homeDir() }); }
   catch (error: any) { throw new Error(fail(record, `Could not undo the worktree of chat ${chatId}: ${error?.message ?? error}`, root)); }
+  forgetProjectRepository(root, record.worktree);
   replace(read(chatId, root), null, root);
 }
 

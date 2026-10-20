@@ -2,7 +2,7 @@ import { realpathSync, statSync } from 'node:fs';
 import { extname, join, sep } from 'node:path';
 import { STORAGE_DIRECTORY } from './config';
 import { homeDir, piExecutable } from './environment';
-import { readFirstLine, sessionIdentity } from './pi_launch';
+import { sessionIdentity } from './pi_launch';
 import { desktopSessionsDir } from './process_io';
 import { DEFAULT_TIMEOUT, hostOperation, profileRoot, runHostOperation, STORAGE_TIMEOUT } from './host_operations';
 import { loadAppSettings } from './settings';
@@ -10,7 +10,6 @@ import * as restoreRecovery from './restore_recovery';
 import * as storageTransactions from './storage_transactions';
 import { StorageTransactionError } from './storage_transactions';
 import * as chatWorktrees from './chat_worktree_lifecycle';
-import * as SessionTables from '../resources/session-database.cjs';
 import { requireLocal } from './host_connection';
 import { restoreSessionTree } from './restore';
 import { MutationGuard } from './conversation_ownership';
@@ -38,7 +37,7 @@ export async function inspectStorage(): Promise<HostStorage> {
   let inventory: Inventory;
   try { inventory = await runHostOperation(storageInventory, { profile: profileRoot(), piPath: piExecutable() }); }
   catch (error: any) { throw new Error(`Could not inspect storage on Local: ${error?.message ?? error}`); }
-  return { hostId: 'local', hostName: 'Local', ...inventory };
+  return { hostId: 'local', hostName: 'Local', ...inventory, warnings: [...inventory.warnings, ...chatWorktrees.pendingWarnings()] };
 }
 
 function normalizeCategory(category: any): any {
@@ -156,7 +155,7 @@ export async function archiveSession(app: App, runtime: TerminalRuntime, session
       const archiving = await chatWorktrees.beginArchive(sessionIds);
       const invalidate = app.sessionIndex.projects.invalidateAfter(hostId);
       try { await storageTransactions.archive(paths); }
-      catch (error) { await undoAfter(error, () => chatWorktrees.rollbackArchive(archiving)); }
+      catch (error) { chatWorktrees.stopped(archiving); await undoAfter(error, () => chatWorktrees.rollbackArchive(archiving)); }
       finally { invalidate(); }
       const warnings = await chatWorktrees.finishArchive(archiving);
       for (let index = 0; index < paths.length; index++) {
@@ -260,48 +259,54 @@ export function deleteArchivedSession(app: App, runtime: PiRuntime, sessionPath:
   return deleteStoredSessions(app, runtime, [...(sessionPaths ?? []), sessionPath], hostId, true, clientId);
 }
 
-export async function restoreArchivedSession(app: App, sessionPath: string, hostIdOption: string | undefined | null, clientId: string): Promise<void> {
+const restores = new Map<string, Promise<void>>();
+
+/**
+ * Restores an archived chat tree: first its Piop worktrees, then its transcripts in one storage transaction that also
+ * points them at a moved worktree folder. The chats return to the active list unopened. Concurrent requests for the same
+ * chat share one restore; a later repeat returns the saved restore receipt.
+ */
+export function restoreArchivedSession(app: App, sessionPath: string, hostIdOption: string | undefined | null, clientId: string): Promise<void> {
   const hostId = hostIdOption ?? 'local';
-  await app.pi.lifecycle.run(async () => {
-    requireLocal(hostId);
-    const settings = await loadAppSettings(app);
-    const source = await locateSessionFile(sessionPath, true);
-    const tree = [source, ...(await sessionDescendants(source, true, false)).map(([path]) => path)];
-    const chatIds: string[] = [];
-    for (const path of tree) chatIds.push(await sessionIdentity(settings, hostId, path));
-    const restoring = await chatWorktrees.beginRestore(chatIds);
-    let result: Awaited<ReturnType<typeof restoreSessionTree>>;
-    try { result = await restoreSessionTree(sessionPath, path => MutationGuard.acquire(app, hostId, path, clientId, true, 'restore')); }
-    catch (error) { return undoAfter(error, () => chatWorktrees.rollbackRestore(restoring)); }
-    try {
-      for (const moved of chatWorktrees.relocations(restoring)) await relocateChatTree(moved, result.sessions.map(session => session.sessionPath));
-      await chatWorktrees.finishRestore(restoring);
-    } catch (error: any) { reportWarnings(app, hostId, [`Restore committed; worktree recovery will retry: ${error?.message ?? error}`]); }
-    for (const session of result.sessions) app.emit('pi://session-restored', { hostId, sessionId: session.sessionId, sessionPath: session.sessionPath });
-    app.emit('pi://sessions-changed', {});
-  });
+  const key = hostId + '\0' + sessionPath;
+  const running = restores.get(key);
+  if (running) return running;
+  const restore = app.pi.lifecycle.run(() => restoreTree(app, hostId, sessionPath, clientId)).finally(() => restores.delete(key));
+  restores.set(key, restore);
+  return restore;
 }
 
-/** Points each transcript in sessionPaths that still names moved.from at the restored folder moved.to. Idempotent. */
-async function relocateChatTree(moved: chatWorktrees.Relocation, sessionPaths: string[]): Promise<void> {
-  for (const path of sessionPaths) {
-    const header = JSON.parse(readFirstLine(path));
-    if (header?.cwd !== moved.from) continue;
-    try { await runHostOperation(relocateOperation, { profile: profileRoot(), sessionPath: path, cwd: moved.to }); }
-    catch (error: any) { throw new Error(`Could not point ${path} at the restored worktree ${moved.to}: ${error?.message ?? error}`); }
-  }
+async function restoreTree(app: App, hostId: string, sessionPath: string, clientId: string): Promise<void> {
+  requireLocal(hostId);
+  const restoring = await beginTreeRestore(app, hostId, sessionPath);
+  let result: Awaited<ReturnType<typeof restoreSessionTree>>;
+  try { result = await restoreSessionTree(sessionPath, path => MutationGuard.acquire(app, hostId, path, clientId, true, 'restore'), chatWorktrees.folderMoves(restoring)); }
+  catch (error) { chatWorktrees.stopped(restoring); return undoAfter(error, () => chatWorktrees.rollbackRestore(restoring)); }
+  try { await chatWorktrees.finishRestore(restoring); }
+  catch (error: any) { reportWarnings(app, hostId, [`Restore committed; releasing the archive reference will retry: ${error?.message ?? error}`]); }
+  for (const session of result.sessions) app.emit('pi://session-restored', { hostId, sessionId: session.sessionId, sessionPath: session.sessionPath });
+  app.emit('pi://sessions-changed', {});
+}
+
+/** Restores the worktrees of the archived tree at sessionPath. Returns none when the tree is no longer archived, so the restore receipt answers. */
+async function beginTreeRestore(app: App, hostId: string, sessionPath: string): Promise<Awaited<ReturnType<typeof chatWorktrees.beginRestore>>> {
+  let source: string;
+  try { source = localArchivedSessionFileAt(homeDir(), sessionPath); }
+  catch { return []; }
+  const settings = await loadAppSettings(app);
+  const tree = [source, ...(await sessionDescendants(source, true, false)).map(([path]) => path)];
+  const chatIds: string[] = [];
+  for (const path of tree) chatIds.push(await sessionIdentity(settings, hostId, path));
+  return chatWorktrees.beginRestore(chatIds);
 }
 
 /**
  * Finishes or undoes chat worktree steps that a crash interrupted. Call once at daemon startup, before clients connect.
- * Throws with every record that still needs recovery.
+ * Records that still need recovery are logged and reported to clients; the daemon keeps running.
  */
 export async function recoverChatWorktrees(app: App): Promise<void> {
-  await app.pi.lifecycle.run(() => chatWorktrees.recover(async moved => {
-    const path = SessionTables.lookup(profileRoot(), moved.chatId);
-    if (typeof path !== 'string') throw new Error('Restored chat has no transcript: ' + moved.chatId);
-    await relocateChatTree(moved, [path, ...(await sessionDescendants(path, false, false)).map(([child]) => child)]);
-  }));
+  try { await app.pi.lifecycle.run(() => chatWorktrees.recover()); }
+  catch (error: any) { reportWarnings(app, 'local', [error?.message ?? String(error)]); }
 }
 
 export async function relocateSession(app: App, sessionPath: string, cwd: string, hostIdOption: string | undefined | null, clientId: string): Promise<void> {

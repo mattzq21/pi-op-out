@@ -16,12 +16,12 @@ const UUID = /^[0-9a-fA-F]{8}-?[0-9a-fA-F]{4}-?[0-9a-fA-F]{4}-?[0-9a-fA-F]{4}-?[
 interface Destination { key: string; spec: LaunchSpec; path: string; existing: boolean; cwd: string | null }
 
 export async function switchSession(host: Host, session: Session, runtime: string, command: any): Promise<any> {
-  if (!['fork', 'fork_after'].includes(kind(command)) && (session.working() || !session.queue.isEmpty())) {
+  if (!['fork', 'fork_after', 'copy_after'].includes(kind(command)) && (session.working() || !session.queue.isEmpty())) {
     throw new Error('Stop or pause the response and finish queued messages before switching');
   }
   const state = await session.execute({ type: 'get_state' });
   assertCurrent(host, session, runtime);
-  if (['fork', 'fork_after', 'clone'].includes(kind(command))) {
+  if (['fork', 'fork_after', 'copy_after', 'clone'].includes(kind(command))) {
     const path = typeof state?.sessionFile === 'string' && state.sessionFile ? state.sessionFile : undefined;
     if (path === undefined) throw new Error('The conversation has no session file');
     return fork(host, session, runtime, command, state, path);
@@ -146,7 +146,7 @@ class Branch {
   constructor(private host: Host, private session: Session, private runtime: string, private state: any, private path: string) {}
 
   async create(command: any): Promise<any> {
-    const request: any = { type: 'prepare_fork', mode: kind(command) };
+    const request: any = { type: 'prepare_fork', mode: kind(command) === 'copy_after' ? 'fork_after' : kind(command) };
     if (command?.entryId !== undefined) request.entryId = command.entryId;
     const branch = kind(command) === 'fork_after' ? await this.prepareManaged(text(command, 'entryId')) : await this.session.raw(request);
     const destination = validatePrepared(this.host, branch, this.state, this.path);

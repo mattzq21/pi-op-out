@@ -8,7 +8,7 @@ for (const withHistory of [false, true]) test(`current model and thinking surviv
   const agents = await agentDaemon();
   try {
     agents.scripts.set('First question', () => ({ text: 'First answer' }));
-    const chat = await agents.rootChat();
+    const chat = await agents.rootChat({ repository: withHistory });
     if (withHistory) {
       await chat.command({ type: 'prompt', message: 'First question' });
       await chat.until(history => text(history.at(-1)) === 'First answer');

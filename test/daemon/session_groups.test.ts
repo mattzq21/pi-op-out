@@ -274,3 +274,57 @@ test('a group change fails while another process holds the session database, kee
   expect(daemon.events.slice(start).filter(event => event.event === 'pi://groups-changed')).toEqual([]);
   expect(names(await change({ type: 'create', name: 'After' }))).toEqual(['After']);
 }, 30_000);
+
+test('a branch takes its source chat\'s group, and its own worktree folder never becomes a group', async () => {
+  await reset();
+  const repo = join(daemon.home, 'branch-repo'); const worktreeRoot = join(daemon.home, 'worktrees');
+  mkdirSync(repo, { recursive: true });
+  const worktree = (id: string) => { const path = join(worktreeRoot, id); mkdirSync(path, { recursive: true }); return path; };
+  const [inProject, inCustom, ungrouped] = [publicSession(repo), publicSession(repo), publicSession(repo)];
+  const custom = (await change({ type: 'create', name: 'Release work' })).groups[0].id;
+  const branches = [publicSession(), publicSession(), publicSession(), publicSession()];
+  const [fromProject, fromCustom, fromUngrouped, fromBranch] = branches.map(branch => ({ ...branch, cwd: worktree(branch.id) }));
+  const seed = (session: { id: string }, cwd: string, parent?: { id: string }) =>
+    ({ sessionKey: 'local:' + session.id, project: project('local:' + cwd, cwd.split('/').at(-1)!, cwd), ...(parent ? { parentKey: 'local:' + parent.id } : {}) });
+  await load([seed(inProject, repo), seed(inCustom, repo), seed(ungrouped, repo)]);
+  await change({ type: 'assign', key: 'local:' + inCustom.id, group: custom });
+  await change({ type: 'assign', key: 'local:' + ungrouped.id, group: null });
+
+  // A branch of a branch is listed before its own source here; its group still comes from the chain.
+  const state = await load([seed(fromBranch, fromBranch.cwd, fromProject), seed(fromProject, fromProject.cwd, inProject),
+    seed(fromCustom, fromCustom.cwd, inCustom), seed(fromUngrouped, fromUngrouped.cwd, ungrouped), seed(inProject, repo)]);
+  expect(state.assignments['local:' + fromProject.id]).toBe('local:' + repo);
+  expect(state.assignments['local:' + fromBranch.id]).toBe('local:' + repo);
+  expect(state.assignments['local:' + fromCustom.id]).toBe(custom);
+  expect(state.assignments['local:' + fromUngrouped.id]).toBeNull();
+  expect(state.groups.filter((group: any) => group.cwd?.startsWith(worktreeRoot))).toEqual([]);
+
+  // A branch the user moves stays where it was moved.
+  await change({ type: 'assign', key: 'local:' + fromProject.id, group: custom });
+  expect((await load([seed(fromProject, fromProject.cwd, inProject)])).assignments['local:' + fromProject.id]).toBe(custom);
+});
+
+test('a branch whose source has no group yet waits, then takes the source\'s group once the source loads', async () => {
+  await reset();
+  const repo = join(daemon.home, 'late-repo');
+  mkdirSync(repo, { recursive: true });
+  const [source, branch] = [publicSession(repo), publicSession()];
+  const branchSeed = { sessionKey: 'local:' + branch.id, project: project('local:' + daemon.home + '/wt', 'wt', daemon.home), parentKey: 'local:' + source.id };
+  const waiting = await load([branchSeed]);
+  expect('local:' + branch.id in waiting.assignments).toBe(false);
+  expect(waiting.groups).toEqual([]);
+  const state = await load([branchSeed, { sessionKey: 'local:' + source.id, project: project('local:' + repo, 'late-repo', repo) }]);
+  expect(state.assignments['local:' + branch.id]).toBe('local:' + repo);
+  expect(names(state)).toEqual(['late-repo']);
+});
+
+test('a branch on another machine takes the group of its source on that machine', async () => {
+  await reset();
+  const [source, branch] = ['devbox:' + crypto.randomUUID(), 'devbox:' + crypto.randomUUID()];
+  const remote = (cwd: string) => project('devbox:' + cwd, cwd.split('/').at(-1)!, cwd, 'devbox', 'Devbox');
+  await load([{ sessionKey: source, project: remote('/srv/app') }]);
+  const state = await load([{ sessionKey: branch, project: remote('/home/dev/.local/share/piop/worktrees/' + branch.slice(7)), parentKey: source }]);
+  expect(state.assignments[branch]).toBe('devbox:/srv/app');
+  expect(names(state)).toEqual(['app']);
+  expect(await daemon.failure('load_session_groups', { seeds: [{ sessionKey: branch, project: remote('/srv/app'), parentKey: branch }] })).toContain('branched from itself');
+});

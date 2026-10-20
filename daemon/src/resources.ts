@@ -64,6 +64,7 @@ import brokerModule17 from '../resources/session-broker/subagents.ts?raw';
 import brokerModule18 from '../resources/session-broker/subagent-state.ts?raw';
 import brokerModule19 from '../resources/session-broker/subagent-reconciliation.ts?raw';
 import brokerModule21 from '../resources/session-broker/orchestration.ts?raw';
+import brokerInputHold from '../resources/session-broker/input-hold.ts?raw';
 import storageMailbox from '../resources/piop-storage/durable-mailbox.ts?raw';
 import brokerModule23 from '../resources/session-broker/agent-profiles.ts?raw';
 import brokerModule26 from '../resources/session-broker/subagent-mailbox.ts?raw';
@@ -174,6 +175,7 @@ export const SESSION_BROKER_MODULES: Array<[string, string]> = [
   ['subagent-state.ts', brokerModule18],
   ['subagent-reconciliation.ts', brokerModule19],
   ['orchestration.ts', brokerModule21],
+  ['input-hold.ts', brokerInputHold],
   ['agent-profiles.ts', brokerModule23],
   ['subagent-mailbox.ts', brokerModule26],
   ['subagent-identity.ts', brokerModule29],

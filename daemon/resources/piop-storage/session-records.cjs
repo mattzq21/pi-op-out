@@ -1,7 +1,7 @@
 const database = require('../session-database.cjs');
 const { randomUUID, createHash } = require('node:crypto');
 
-const currentTypes = new Set(['pi-desktop-pause-state', 'pi-define-agents-state', 'piop-fast-mode-state', 'piop-context-cap', 'piop-session-cost-limit', 'piop-openai-cache-fork', 'piop-codemode-abilities']);
+const currentTypes = new Set(['pi-desktop-pause-state', 'pi-define-agents-state', 'piop-fast-mode-state', 'piop-context-cap', 'piop-session-cost-limit', 'piop-openai-cache-fork', 'piop-codemode-abilities', 'piop-input-hold']);
 const nativeKeys = new Map([['session_info', 'piop-session-name'], ['model_change', 'piop-selected-model'], ['thinking_level_change', 'piop-thinking-level']]);
 const stateKey = entry => nativeKeys.get(entry.type) ?? entry.customType;
 const isCurrent = entry => nativeKeys.has(entry.type) || entry.type === 'custom' && currentTypes.has(entry.customType);

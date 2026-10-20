@@ -566,7 +566,7 @@ export class NativeTransport {
     return new Error(diagnostics && /disconnect|connect|start|running/i.test(message) ? `${message}\n${diagnostics}` : message);
   }
   private resetChangedSession(command: RpcCommand, result: { cancelled?: boolean }) {
-    if (["new_session", "switch_session", "fork", "fork_after", "clone"].includes(command.type) && !result.cancelled) { forgetSession(this); this.sessionId = undefined; }
+    if (["new_session", "switch_session", "fork", "fork_after", "copy_after", "clone"].includes(command.type) && !result.cancelled) { forgetSession(this); this.sessionId = undefined; }
   }
   subscribe(listener: (event: RpcEvent) => void) { this.listeners.add(listener); listener(this.queueView()); this.retainedStatuses.forEach((event) => listener(event)); this.retainedWidgets.forEach((event) => listener(event)); this.retainedRequests.forEach((event) => listener(event));
 
@@ -587,7 +587,7 @@ export class NativeTransport {
     return this.settings.save(settings, reconnect, agentHostId, scope, baseline);
   }
   homeDirectory(hostId: string) { return call("home_directory", { hostId }, z.string()); }
-  validateProjectDirectory(path: string, hostId: string, allowStorage = false) { return call("validate_project_directory", { path, hostId, allowStorage }, z.string()); }
+  validateProjectDirectory(path: string, hostId: string, allowStorage = false, newChat = false) { return call("validate_project_directory", { path, hostId, allowStorage, newChat }, z.string()); }
   listDirectories(hostId: string, path?: string) { return call("list_directories", { hostId, path }, directoryListingSchema); }
   async prepareTemporaryChat(hostId: string) { this.cwd = undefined; this.sessionPath = undefined; this.sessionId = undefined; this.hostId = hostId; this.temporaryChat = true; this.temporaryChatUsed = false;
 

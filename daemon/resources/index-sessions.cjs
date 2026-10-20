@@ -177,7 +177,9 @@ class SessionIndex {
     }
     if (!this.header || !this.visible(path)) return;
 
-    return { path, id: this.header.id || '', cwd: this.header.cwd || 'Unknown project', name: this.name || this.first || 'Untitled session', preview: this.preview, messageCount: this.count, lastMessageAt: this.lastMessageAt, apiCost: this.cost, explicitlyNamed: !!this.name, hasUserMessage: this.hasUserMessage, bytes: this.bytes, subagentParentId: this.ownSubagentParentId ?? this.subagentParentId };
+    const forkSourceId = typeof this.header.piopForkSource?.sessionId === 'string' && this.header.piopForkSource.sessionId ? this.header.piopForkSource.sessionId : undefined;
+
+    return { path, id: this.header.id || '', cwd: this.header.cwd || 'Unknown project', name: this.name || this.first || 'Untitled session', preview: this.preview, messageCount: this.count, lastMessageAt: this.lastMessageAt, apiCost: this.cost, explicitlyNamed: !!this.name, hasUserMessage: this.hasUserMessage, bytes: this.bytes, subagentParentId: this.ownSubagentParentId ?? this.subagentParentId, forkSourceId };
   }
 }
 

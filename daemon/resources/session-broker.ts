@@ -4,6 +4,7 @@ import { registerSubagents } from "./session-broker/subagents.ts";
 import { registerSubagentMailbox } from "./session-broker/subagent-mailbox.ts";
 import { MESSAGE_TIMEOUT_MS, currentHost, registerConversationClient, request } from "./session-broker/client.ts";
 import { registerOrchestration } from "./session-broker/orchestration.ts";
+import { registerInputHold } from "./session-broker/input-hold.ts";
 import { existsSync } from "node:fs";
 import { initialize } from "./session-broker/session-child-index.cjs";
 
@@ -33,6 +34,7 @@ export default function sessionBroker(pi: ExtensionAPI) {
     if (send) await send("turn_end", data);
     else await request("/runtime-event", { hostId: currentHost(), name: "turn_end", data }, undefined, MESSAGE_TIMEOUT_MS);
   });
+  registerInputHold(pi);
   registerConversationClient(pi);
   const mailbox = registerSubagentMailbox(pi);
   registerOrchestration(pi);

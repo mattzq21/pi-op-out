@@ -1,4 +1,6 @@
 import { afterAll, beforeAll, expect, test } from 'bun:test';
+import { existsSync } from 'node:fs';
+import { join } from 'node:path';
 import { agentDaemon, text } from './agent-chats';
 
 let agents: Awaited<ReturnType<typeof agentDaemon>>;
@@ -71,7 +73,7 @@ test('switching to a conversation another device has open only watches it, and c
 
 test('branching after an answer opens a new conversation with the history up to that answer and leaves the original intact', async () => {
   agents.scripts.set('First question', messages => ({ text: 'Answer to ' + text(messages.at(-1)) }));
-  const chat = await agents.rootChat();
+  const chat = await agents.rootChat({ repository: true });
   await chat.command({ type: 'prompt', message: 'First question' });
   await chat.until(history => text(history.at(-1)) === 'Answer to First question');
   await chat.command({ type: 'prompt', message: 'Second question' });
@@ -87,6 +89,31 @@ test('branching after an answer opens a new conversation with the history up to 
   const sessions = await agents.daemon.invoke('list_sessions');
   expect(sessions.find((session: any) => session.id === original.sessionId)).toMatchObject({ preview: 'Answer to Second question' });
   expect(sessions.find((session: any) => session.id === branch.sessionId)).toMatchObject({ preview: 'Answer to Different second question' });
+  expect(sessions.find((session: any) => session.id === branch.sessionId).forkSourceId).toBe(original.sessionId);
+  expect(sessions.find((session: any) => session.id === original.sessionId).forkSourceId).toBeUndefined();
+}, 60000);
+
+test('copying after an answer outside a Git repository opens a new conversation in the same folder, without a worktree', async () => {
+  agents.scripts.set('Copy question', messages => ({ text: 'Copy answer to ' + text(messages.at(-1)) }));
+  const chat = await agents.rootChat();
+  await chat.command({ type: 'prompt', message: 'Copy question' });
+  await chat.until(history => text(history.at(-1)) === 'Copy answer to Copy question');
+  await chat.command({ type: 'prompt', message: 'Later question' });
+  await chat.until(history => text(history.at(-1)) === 'Copy answer to Later question');
+  const original = await chat.command({ type: 'get_state' });
+  const answer = (await chat.command({ type: 'get_entries' })).entries.find((entry: any) => entry.type === 'message' && text(entry.message) === 'Copy answer to Copy question');
+  await expect(chat.command({ type: 'fork_after', entryId: answer.id })).rejects.toThrow('not a Git repository');
+  await chat.command({ type: 'copy_after', entryId: answer.id });
+  const copy = await chat.command({ type: 'get_state' });
+  expect(copy.sessionId).not.toBe(original.sessionId);
+  expect(copy.cwd).toBe(original.cwd);
+  expect(existsSync(join(agents.daemon.home, '.local/share/piop/worktrees', copy.sessionId))).toBe(false);
+  expect((await chat.history()).filter(message => message.role !== 'system').map(text)).toEqual(['Copy question', 'Copy answer to Copy question']);
+  await chat.command({ type: 'prompt', message: 'Other question' });
+  await chat.until(history => text(history.at(-1)) === 'Copy answer to Other question');
+  const sessions = await agents.daemon.invoke('list_sessions');
+  expect(sessions.find((session: any) => session.id === original.sessionId)).toMatchObject({ preview: 'Copy answer to Later question' });
+  expect(sessions.find((session: any) => session.id === copy.sessionId)).toMatchObject({ preview: 'Copy answer to Other question' });
 }, 60000);
 
 test('fork and forget goes back to an earlier answer in the same conversation, and the model no longer sees what came after', async () => {

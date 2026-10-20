@@ -24,7 +24,8 @@ export interface SessionGroups {
   removedProjects: Set<string>;
 }
 
-export interface SessionSeed { sessionKey: string; project: SessionGroup }
+/** A chat the client lists. parentKey names the chat it was branched from; the branch then takes that chat's group. */
+export interface SessionSeed { sessionKey: string; project: SessionGroup; parentKey?: string }
 
 export type GroupChange =
   | { type: 'create'; name: string }
@@ -57,7 +58,9 @@ export function parseGroup(value: any): SessionGroup {
 
 export function parseSeed(value: any): SessionSeed {
   if (typeof value?.sessionKey !== 'string') throw new Error('missing field `sessionKey`');
-  return { sessionKey: value.sessionKey, project: parseGroup(value.project) };
+  const parentKey = optionalText(value.parentKey, 'parentKey');
+  if (parentKey === value.sessionKey) throw new Error('A chat cannot be branched from itself');
+  return { sessionKey: value.sessionKey, project: parseGroup(value.project), ...(parentKey ? { parentKey } : {}) };
 }
 
 export function parseChange(value: any): GroupChange {
@@ -209,6 +212,26 @@ function assignSeed(state: SessionGroups, seed: SessionSeed): boolean {
   return true;
 }
 
+/**
+ * Gives each new branch the group its source chat has: a project group, a custom group or no group. The branch's own
+ * folder never makes a group. A branch whose source has no assignment yet waits for a later load.
+ */
+function inheritSeeds(state: SessionGroups, branches: SessionSeed[]): boolean {
+  let dirty = false;
+  let waiting = branches.filter(seed => !state.assignments.has(seed.sessionKey));
+  while (waiting.length) {
+    const next = waiting.filter(seed => !state.assignments.has(seed.parentKey!));
+    for (const seed of waiting) {
+      if (!state.assignments.has(seed.parentKey!)) continue;
+      state.assignments.set(seed.sessionKey, state.assignments.get(seed.parentKey!) ?? null);
+      dirty = true;
+    }
+    if (next.length === waiting.length) break;
+    waiting = next;
+  }
+  return dirty;
+}
+
 function hasMissingLocalFolder(seed: SessionSeed): boolean {
   return seed.project.hostId === 'local' && typeof seed.project.cwd === 'string' && !isDirectory(seed.project.cwd);
 }
@@ -223,8 +246,9 @@ async function loadAt(path: string, allSeeds: SessionSeed[]): Promise<SessionGro
     dirty = restoreSuppressedProjects(state, seeds) || dirty;
     for (const seed of seeds) {
       dirty = updateSeedMetadata(state, seed) || dirty;
-      dirty = assignSeed(state, seed) || dirty;
+      if (seed.parentKey === undefined) dirty = assignSeed(state, seed) || dirty;
     }
+    dirty = inheritSeeds(state, seeds.filter(seed => seed.parentKey !== undefined)) || dirty;
     const ids = new Set(state.groups.map(group => group.id));
     for (const [key, destination] of state.assignments) {
       if (destination !== null && (destination === DIRLESS_KEY || !ids.has(destination))) { state.assignments.set(key, null); dirty = true; }

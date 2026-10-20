@@ -131,6 +131,43 @@ test('a branch that fails after its worktree exists removes the worktree, branch
   }
 }, 120000);
 
+test('the first branch on a machine that fails before its worktree exists cleans up and leaves no pending work', async () => {
+  const agents = await agentDaemon();
+  try {
+    const cwd = join(agents.daemon.home, 'project');
+    mkdirSync(cwd);
+    git(cwd, 'init', '--quiet', '--initial-branch=main');
+    git(cwd, 'config', 'user.email', 'test@piop.local');
+    git(cwd, 'config', 'user.name', 'Piop test');
+    writeFileSync(join(cwd, 'tracked.txt'), 'initial');
+    git(cwd, 'add', '.');
+    git(cwd, 'commit', '--quiet', '-m', 'Initial');
+    agents.scripts.set('Question', messages => ({ text: 'Answer: ' + text(messages.at(-1)) }));
+    const runtimeId = 'branch-' + randomUUID();
+    await agents.daemon.invoke('start_pi', { runtimeId, clientId: 'laptop', cwd });
+    const command = (value: any) => agents.daemon.invoke('pi_command', { runtimeId, command: value });
+    await command({ type: 'set_model', provider: 'scripted', modelId: 'scripted-model' });
+    const seen = new Set(agents.daemon.events.map(event => event.payload));
+    await command({ type: 'prompt', message: 'Question one' });
+    await agents.daemon.waitEvent('pi://event', p => !seen.has(p) && p.runtimeId === runtimeId && p.event?.type === 'agent_settled', 60000);
+    const reply = (await command({ type: 'get_entries' })).entries.filter((entry: any) => entry.message?.role === 'assistant').at(-1);
+    const state = await command({ type: 'get_state' });
+    // Git cannot read this file, so copying the current files fails before the worktree folder exists.
+    writeFileSync(join(cwd, 'unreadable.txt'), 'secret');
+    chmodSync(join(cwd, 'unreadable.txt'), 0o000);
+    const failure = await command({ type: 'fork_after', entryId: reply.id }).then(() => 'branch was created', error => String(error?.message ?? error));
+    chmodSync(join(cwd, 'unreadable.txt'), 0o644);
+    expect(failure).toContain('unreadable.txt');
+    expect(failure).not.toContain('cleanup failed');
+    expect(failure).not.toContain('ENOENT');
+    expect((await command({ type: 'get_state' })).sessionId).toBe(state.sessionId);
+    expect(piopBranches(cwd)).toEqual([]);
+    expect(worktreeFolders(agents.daemon.home)).toEqual([]);
+    const report = await agents.daemon.invoke('storage_report');
+    expect(report.hosts.find((host: any) => host.hostId === 'local').warnings.filter((line: string) => /worktree/i.test(line))).toEqual([]);
+  } finally { await agents.close(); }
+}, 120000);
+
 test('a branch of a branch survives archiving its parent and restores from shared Git storage', async () => {
   const { agents, cwd, command, ask } = await repositoryChat();
   try {

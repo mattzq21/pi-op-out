@@ -652,8 +652,11 @@ function bindReviewQueue(session) {
   };
 }
 
+/** While a goal runs, user follow-ups wait for its turn boundary. An idle chat, such as a new branch with an active goal, runs them now. */
 function holdFollowUp(session, options) {
-  return options?.streamingBehavior === "followUp" && options?.source === "rpc" && !options?.goalPrepared && hasGoal(session);
+  const idle = session.isIdle && !session._isEmittingAgentSettled;
+
+  return options?.streamingBehavior === "followUp" && options?.source === "rpc" && !options?.goalPrepared && !idle && hasGoal(session);
 }
 
 async function queueHeldFollowUp(session, text, options) {

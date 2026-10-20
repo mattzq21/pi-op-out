@@ -1,4 +1,5 @@
 import { historyContract } from '../../daemon/resources/piop-storage/goal-assets.cjs';
+import conversationStorage from '../../daemon/resources/conversation-storage.cjs';
 import { DatabaseSync } from 'node:sqlite';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
@@ -521,4 +522,68 @@ test('archive inspection does not turn a reference into a new attachment owner',
   assert.deepEqual(historyContract(current.profile, entries, otherId).directories, []);
   assert.equal(historyContract(current.profile, entries, sessionId).directories[0].path, goal);
   assert.deepEqual(goalOwners(current.profile, goal), before);
+});
+
+/** Gives the fixture chat the ownership record that a restore updates. */
+function own(current) {
+  conversationStorage.writeRecord(current.profile, conversationStorage.key(sessionId), JSON.stringify({ path: current.target, deleted: false, client: null }));
+}
+
+test('restore with a moved worktree folder rewrites the folder atomically after a crash at any write', t => {
+  const outcomes = new Set();
+
+  for (let crashAfter = 0; ; crashAfter += 1) {
+    assert.ok(crashAfter < maxCrashes, 'no committed run within ' + maxCrashes + ' crash points');
+    const current = fixture(t);
+    own(current);
+    const from = dirname(current.profile);
+    const to = join(from, 'restored-worktree');
+    mkdirSync(to);
+    const archived = run({ action: 'archive', paths: [current.target], root: current.profile });
+    assert.equal(archived.status, 0, archived.stdout + archived.stderr);
+    const path = archived.outcome.result.sessions[0].sessionPath;
+    const [header, ...rest] = readFileSync(path, 'utf8').split('\n');
+    const observe = () => {
+      const active = existsSync(current.target);
+      const file = active ? current.target : path;
+      const lines = readFileSync(file, 'utf8').split('\n');
+      return { active, archived: existsSync(path), cwd: JSON.parse(lines[0]).cwd, body: lines.slice(1).join('\n'), snapshots: tree(file.replace(/\.jsonl$/, '.snapshots')) };
+    };
+    const before = { active: false, archived: true, cwd: from, body: rest.join('\n'), snapshots: ['one.json={}'] };
+    const after = { ...before, active: true, archived: false, cwd: to };
+    assert.equal(JSON.parse(header).cwd, from);
+    const result = run({ action: 'restore', paths: [path], root: current.profile, cwdMoves: [{ from, to }] }, { PIOP_STORAGE_TRANSACTION_CRASH_AFTER: String(crashAfter) });
+    if (result.status !== 0) assert.equal(result.stdout, '', 'crash ' + crashAfter + ' wrote a result: ' + result.stderr);
+    else assert.deepEqual(result.outcome.result.sessions, [{ path: to, sessionPath: current.target, sessionId, sourcePath: path }]);
+    const recovered = run({ action: 'recover', root: current.profile });
+    assert.equal(recovered.status, 0, recovered.stdout + recovered.stderr);
+    const state = observe();
+    assert.ok([before, after].some(expected => JSON.stringify(expected) === JSON.stringify(state)), 'crash ' + crashAfter + ' left ' + JSON.stringify(state));
+    assert.deepEqual(readdirSync(join(current.profile, 'storage-transactions')), []);
+    if (result.status === 0) {
+      assert.deepEqual(state, after);
+      const receipt = run({ action: 'result', path, root: current.profile });
+      assert.equal(receipt.status, 0, receipt.stdout + receipt.stderr);
+      assert.deepEqual(receipt.outcome.result, result.outcome.result);
+      break;
+    }
+    outcomes.add(state.active ? 'after' : 'before');
+  }
+  assert.ok(outcomes.has('before'));
+});
+
+test('restore rejects a moved folder that does not exist and leaves the archive unchanged', t => {
+  const current = fixture(t);
+  own(current);
+  const archived = run({ action: 'archive', paths: [current.target], root: current.profile });
+  assert.equal(archived.status, 0, archived.stdout + archived.stderr);
+  const path = archived.outcome.result.sessions[0].sessionPath;
+  const content = readFileSync(path, 'utf8');
+  const missing = join(dirname(current.profile), 'missing');
+  const result = run({ action: 'restore', paths: [path], root: current.profile, cwdMoves: [{ from: dirname(current.profile), to: missing }] });
+  assert.equal(result.status, 1);
+  assert.equal(result.outcome.state, 'rolled-back');
+  assert.equal(result.outcome.error, 'Restore failed: Restored folder does not exist: ' + missing);
+  assert.equal(readFileSync(path, 'utf8'), content);
+  assert.equal(existsSync(current.target), false);
 });

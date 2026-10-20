@@ -470,7 +470,7 @@ export function createAppConversations(preloadChat: () => void) {
 
     return owner; };
 
-  const prepareNewSession = (owner: NativeTransport, hostId: string, cwd?: string) => cwd ? owner.validateProjectDirectory(cwd, hostId, true) : owner.prepareTemporaryChat(hostId);
+  const prepareNewSession = (owner: NativeTransport, hostId: string, cwd?: string) => cwd ? owner.validateProjectDirectory(cwd, hostId, true, true) : owner.prepareTemporaryChat(hostId);
   const assignNewSessionGroup = (owner: NativeTransport, group?: SessionGroup) => { if (group) pendingSessionGroups.current.set(owner, group); };
 
   const existingSessionDraft = () => {

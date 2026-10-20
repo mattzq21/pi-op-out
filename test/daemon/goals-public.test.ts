@@ -150,7 +150,7 @@ test('a long goal is saved to a file the agent reads, which stays while any chat
     file ||= JSON.stringify(messages).match(/Read the goal objective file at ([^ ]+?\.md)/)?.[1] ?? '';
     return called(messages, 'update_goal') ? { text: 'Brief done.' } : { tool: 'update_goal', arguments: { status: 'complete' } };
   });
-  const chat = await agents.rootChat();
+  const chat = await agents.rootChat({ repository: true });
   await send(chat, '/goal ' + objective);
   await chat.until(history => text(history.at(-1)) === 'Brief done.');
   expect(readFileSync(file, 'utf8').trim()).toBe(objective.trim());

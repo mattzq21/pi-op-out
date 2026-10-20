@@ -21,7 +21,7 @@ export async function sessionCommand(host: Host, session: Session, runtime: stri
     const error = session.settings.error();
     if (error !== null) throw new Error(error);
   }
-  if (['fork', 'fork_after', 'clone', 'new_session', 'switch_session'].includes(kind(command))) return Branching.switchSession(host, session, runtime, command);
+  if (['fork', 'fork_after', 'copy_after', 'clone', 'new_session', 'switch_session'].includes(kind(command))) return Branching.switchSession(host, session, runtime, command);
   return queueCommand(session, command, kind(command).startsWith('get_') ? undefined : assertOwner);
 }
 

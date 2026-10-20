@@ -6,6 +6,7 @@ import { GoalCoordination } from "./coordination.ts";
 import type { GoalSession } from "./interface.ts";
 import type { GoalCore } from "./preparation.ts";
 import { sessionControls } from "../piop-controls/interface.ts";
+import { inputHold } from "../session-broker/input-hold.ts";
 
 interface AgentsReady { ctx: ExtensionContext }
 
@@ -100,6 +101,8 @@ export function registerGoals(pi: ExtensionAPI): { session: GoalSession; core: G
     if (!allowed()) { state.setStatus(ctx, "paused");
 
     return; }
+
+    // A chat waiting for the user's first message keeps its goal active; the user's message starts the work.
 
     start(ctx);
     });

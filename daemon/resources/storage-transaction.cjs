@@ -141,6 +141,27 @@ const steps = {
     },
     done(step) { return !io.exists(step.prepared); },
   },
+  'prepare-restored': {
+    run(step) {
+      const lines = fs.readFileSync(step.source, 'utf8').split('\n');
+      const index = lines.findIndex(line => line.trim());
+      const header = JSON.parse(lines[index]);
+
+      if (header.cwd !== step.from) throw new Error(`Restored session folder changed: ${step.source}`);
+      lines[index] = JSON.stringify({ ...header, cwd: step.cwd });
+      fs.writeFileSync(step.prepared, lines.join('\n'), { flag: 'wx', mode: step.mode });
+      io.syncTree(step.prepared);
+      io.sync(path.dirname(step.prepared));
+    },
+    undo(step) {
+      if (!step.applied || !io.exists(step.prepared)) return;
+
+      if (!fs.lstatSync(step.prepared).isFile()) throw new Error(`Prepared restore copy is not a regular file: ${step.prepared}`);
+      fs.unlinkSync(step.prepared);
+      io.sync(path.dirname(step.prepared));
+    },
+    done(step) { return !io.exists(step.prepared); },
+  },
   'write-record': {
     run(step) {
       const storage = require('./conversation-storage.cjs');
@@ -167,7 +188,10 @@ const finishSteps = {
   'temporary-chats'(journal) { database.markCleanup(journal.root, 'temporary-chat'); },
   'move-paths'(journal) { database.movePaths(journal.root, journal.targets.map(target => ({ source: target.path, destination: target.destination }))); },
   'remember-metadata'(journal) { for (const target of journal.targets) require('./transcript-metadata.cjs').remember(target.destination); },
-  'publish-receipt'(journal) { require('./restore-receipts.cjs').record(journal.root, journal); },
+  'publish-receipt'(journal) {
+    if (!journal.trace.identity) journal.trace.identity = journal.steps.find(step => step.type === 'place' && step.destination === journal.trace.destination).identity.identity;
+    require('./restore-receipts.cjs').record(journal.root, journal);
+  },
   'remove-staged'(journal) {
     for (const step of journal.steps.filter(step => step.type === 'move')) {
       if (!io.exists(step.staged)) continue;
@@ -409,20 +433,54 @@ function restoreRecord(root, sessionId, destination) {
 
 function planRestore(root, request) {
   const planned = require('./restore-plan.cjs').planTargets(root, selectedFiles(request.paths, 'No archived sessions selected'));
+  const moved = folderMoves(request.cwdMoves);
+  const cwdOf = target => moved.get(target.cwd) ?? target.cwd;
   const targets = planned.map(target => ({ path: target.path, sessionId: target.sessionId, destination: target.destination }));
-  const sessions = planned.map(target => ({ path: target.cwd, sessionPath: target.destination, sessionId: target.sessionId, sourcePath: target.path }));
+  const sessions = planned.map(target => ({ path: cwdOf(target), sessionPath: target.destination, sessionId: target.sessionId, sourcePath: target.path }));
   const result = { path: sessions[0].path, sessionPath: sessions[0].sessionPath, sessionId: sessions[0].sessionId, sessions };
 
   if (Buffer.byteLength(JSON.stringify({ state: 'committed', result })) + 1 > 64 * 1024 * 1024) throw new Rejected('Restore group is too large; restore fewer sessions at a time');
-  const steps = [...targets.map(inspectStorageStep), ...placeSteps(targets), ...targets.map(target => restoreRecord(root, target.sessionId, target.destination))];
-
   const id = randomUUID();
+  const staging = path.join(root, 'storage-transactions', id);
+  const placed = placeSteps(targets);
+  const transcripts = planned.flatMap((target, index) => {
+    const own = placed.find(step => step.source === target.path);
+
+    if (cwdOf(target) === target.cwd) return [own];
+    const prepared = path.join(staging, `${index}.restored`);
+
+    return [
+      { type: 'prepare-restored', source: target.path, prepared, from: target.cwd, cwd: cwdOf(target), mode: fs.statSync(target.path).mode & 0o777 },
+      { type: 'move', source: target.path, staged: path.join(staging, `${index}.staged`), identity: own.identity },
+      { type: 'place', source: prepared, destination: target.destination },
+    ];
+  });
+  const steps = [...targets.map(inspectStorageStep), ...placed.filter(step => !step.source.endsWith('.jsonl')), ...transcripts, ...targets.map(target => restoreRecord(root, target.sessionId, target.destination))];
+  const first = steps.find(step => step.type === 'place' && step.source === targets[0].path);
 
   return {
-    version: 1, id, kind: 'restore', state: 'prepared', root, staging: path.join(root, 'storage-transactions', id), targets, result,
-    trace: { source: targets[0].path, destination: targets[0].destination, identity: steps.find(step => step.type === 'place' && step.source === targets[0].path).identity.identity },
-    steps, finish: [{ type: 'move-paths' }, { type: 'remember-metadata' }, { type: 'publish-receipt' }],
+    version: 1, id, kind: 'restore', state: 'prepared', root, staging, targets, result,
+    trace: { source: targets[0].path, destination: targets[0].destination, identity: first ? first.identity.identity : null },
+    steps, finish: [{ type: 'move-paths' }, { type: 'remember-metadata' }, { type: 'publish-receipt' }, ...(steps.some(step => step.type === 'move') ? [{ type: 'remove-staged' }] : [])],
   };
+}
+
+/** Reads the folder moves of a restore: each restored session whose folder is from gets the folder to instead. */
+function folderMoves(value) {
+  const moves = new Map();
+
+  if (value === undefined) return moves;
+
+  if (!Check(Type.Array(Type.Object({ from: Type.String(), to: Type.String() })), value)) throw new Rejected('Invalid restore folder moves');
+
+  for (const { from, to } of value) {
+    if (!path.isAbsolute(from) || !path.isAbsolute(to) || moves.has(from)) throw new Rejected('Invalid restore folder moves');
+
+    if (!fs.existsSync(to) || !fs.statSync(to).isDirectory()) throw new Rejected(`Restored folder does not exist: ${to}`);
+    moves.set(from, to);
+  }
+
+  return moves;
 }
 
 function recoverEarlier(root, kind) {
@@ -513,7 +571,9 @@ function validDestination(root, kind, target) {
 }
 
 function preparedPlacement(journal, target, step) {
-  return journal.kind === 'archive' && step.destination === target.destination && journal.steps.some(other => other.type === 'prepare-transcript' && other.prepared === step.source && other.source === target.path);
+  const preparation = { archive: 'prepare-transcript', restore: 'prepare-restored' }[journal.kind];
+
+  return Boolean(preparation) && step.destination === target.destination && journal.steps.some(other => other.type === preparation && other.prepared === step.source && other.source === target.path);
 }
 
 function validPlacement(journal, target, step) {
@@ -522,9 +582,12 @@ function validPlacement(journal, target, step) {
 
 const stepChecks = {
   'inspect-storage': (journal, step) => journal.kind !== 'delete' && journal.targets.some(target => target.path === step.source && target.sessionId === step.sessionId && target.destination === step.sessionPath),
-  move: (journal, step) => journal.kind !== 'restore' && path.dirname(step.staged) === journal.staging && journal.targets.some(target => supportingPaths(target.path).includes(step.source)),
+  move: (journal, step) => path.dirname(step.staged) === journal.staging && (journal.kind === 'restore'
+    ? journal.steps.some(other => other.type === 'prepare-restored' && other.source === step.source)
+    : journal.targets.some(target => supportingPaths(target.path).includes(step.source))),
   place: (journal, step) => journal.kind !== 'delete' && journal.targets.some(target => validPlacement(journal, target, step)),
   'prepare-transcript': (journal, step) => journal.kind === 'archive' && path.dirname(step.prepared) === journal.staging && journal.targets.some(target => target.path === step.source),
+  'prepare-restored': (journal, step) => journal.kind === 'restore' && path.dirname(step.prepared) === journal.staging && journal.targets.some(target => target.path === step.source),
   'write-record': (journal, step) => journal.targets.some(target => step.file === ownershipFile(journal.root, target.sessionId)),
 };
 

@@ -1,6 +1,7 @@
 import { locateSessionFile, sessionDescendants } from './archives';
 import * as storageTransactions from './storage_transactions';
 import { StorageTransactionError, type RestoreResult } from './storage_transactions';
+import type { FolderMove } from './storage_transactions';
 
 /** The hold of the Host daemon on one session during a restore. */
 export interface RestoreLease {
@@ -10,11 +11,12 @@ export interface RestoreLease {
 }
 
 /**
- * Restores the archived session tree at sessionPath on this machine.
+ * Restores the archived session tree at sessionPath on this machine. Sessions whose folder matches a cwdMoves entry get
+ * the new folder in the same transaction.
  * When the run fails but a restore receipt shows that this tree is already restored, returns the saved result.
  * Throws the first error when there is no receipt, or a pending StorageTransactionError when an earlier restore must finish first.
  */
-export async function restoreSessionTree(sessionPath: string, lease: (path: string) => Promise<RestoreLease>): Promise<RestoreResult> {
+export async function restoreSessionTree(sessionPath: string, lease: (path: string) => Promise<RestoreLease>, cwdMoves: FolderMove[] = []): Promise<RestoreResult> {
   const leases: Array<[string, RestoreLease]> = [];
   let source = sessionPath;
   try {
@@ -23,7 +25,7 @@ export async function restoreSessionTree(sessionPath: string, lease: (path: stri
       source = await locateSessionFile(sessionPath, true);
       leases.push([source, await lease(source)]);
       for (const [child] of await sessionDescendants(source, true, false)) leases.push([child, await lease(child)]);
-      result = await storageTransactions.restore(leases.map(([path]) => path));
+      result = await storageTransactions.restore(leases.map(([path]) => path), cwdMoves);
       restored = restoredPaths(result, leases.map(([path]) => path));
     } catch (error) {
       result = await savedResult(source, error);

@@ -1,9 +1,7 @@
-import { execFile } from 'node:child_process';
-import { promisify } from 'node:util';
+import { detectRepository } from './chat_worktrees';
 import { resolve } from 'node:path';
 import * as Registry from './session_registry';
 
-const run = promisify(execFile);
 export interface ProjectRepository { root: string; gitDir: string }
 
 function database(storageRoot: string) {
@@ -26,17 +24,15 @@ export function rememberProjectRepository(storageRoot: string, cwd: string, repo
   finally { db.close(); }
 }
 
+export function forgetProjectRepository(storageRoot: string, cwd: string): void {
+  const db = database(storageRoot);
+  try { db.prepare('DELETE FROM project_repositories WHERE cwd=?').run(resolve(cwd)); }
+  finally { db.close(); }
+}
+
 export async function refreshProjectRepository(storageRoot: string, cwd: string): Promise<ProjectRepository | null> {
-  let repository: ProjectRepository | null;
-  try {
-    const { stdout } = await run('git', ['-C', cwd, 'rev-parse', '--show-toplevel', '--path-format=absolute', '--git-common-dir'], { encoding: 'utf8', env: { ...process.env, LC_ALL: 'C' } });
-    const [root, gitDir] = stdout.trimEnd().split('\n');
-    if (!root || !gitDir) throw new Error('Git returned an invalid repository location');
-    repository = { root, gitDir };
-  } catch (error: any) {
-    if (!String(error.stderr ?? '').includes('not a git repository')) throw error;
-    repository = null;
-  }
+  const detected = await detectRepository(cwd);
+  const repository = detected ? { root: detected.repository, gitDir: detected.gitCommonDir } : null;
   rememberProjectRepository(storageRoot, cwd, repository);
   return repository;
 }

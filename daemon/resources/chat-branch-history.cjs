@@ -109,6 +109,8 @@ async function publishBranchHistory(request) {
   const current = currentState(entries);
   const timestamp = new Date().toISOString();
   current.set('piop-session-name', { type: 'session_info', id: randomUUID(), parentId: null, timestamp, name: branchName(request.name, current, history) });
+  // The branch stays idle until the user sends a message (core input hold).
+  current.set('piop-input-hold', { type: 'custom', customType: 'piop-input-hold', data: { held: true }, id: randomUUID(), parentId: null, timestamp });
   const cwd = fs.realpathSync(request.cwd);
   const sessionPath = path.join(path.dirname(sourcePath), timestamp.replace(/[:.]/g, '-') + '_' + sessionId + '.jsonl');
   const forkSource = { sessionId: source.id, sessionPath: sourcePath, entryId };

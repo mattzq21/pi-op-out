@@ -1,6 +1,6 @@
 import { execFile } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { mkdir, mkdtemp, realpath, rm, stat } from 'node:fs/promises';
+import { chmod, lstat, mkdir, mkdtemp, readdir, realpath, rename, rm, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
 
@@ -216,18 +216,48 @@ export async function createWorktree(input: { sourceCwd: string; chatId: string;
   });
 }
 
-/** Removes the folder if Git lists it as a worktree of the repository. A missing folder is done; any other folder is kept and reported. */
+/**
+ * Removes the folder if Git lists it as a worktree of the repository. A missing folder is done; any other folder is kept
+ * and reported. The folder is first renamed to a Piop trash name (`.removing-<folder>-<uuid>`) in the same parent, so
+ * Git forgets it in one step and a removal that fails part way is finished by the next call.
+ */
 async function removeFolder(gitCommonDir: string, home: string, id: string, worktree: string): Promise<void> {
   requireOwnedFolder(home, id, worktree);
-  if (!await exists(worktree)) {
-    await git(gitCommonDir, ['worktree', 'prune']);
-    return;
+  if (await exists(worktree)) {
+    const real = await realpath(worktree);
+    const listed = await worktrees(gitCommonDir);
+    if (!listed.some(item => item.path === real || item.path === worktree)) throw new Error(`${worktree} is not a worktree of ${gitCommonDir}; it was kept`);
+    await rename(worktree, join(dirname(worktree), `.removing-${basename(worktree)}-${randomUUID()}`));
   }
-  const real = await realpath(worktree);
-  const listed = await worktrees(gitCommonDir);
-  if (!listed.some(item => item.path === real || item.path === worktree)) throw new Error(`${worktree} is not a worktree of ${gitCommonDir}; it was kept`);
-  await git(gitCommonDir, ['worktree', 'remove', '--force', '--force', worktree]);
-  if (await exists(worktree)) throw new Error(`Worktree folder remains: ${worktree}`);
+  await git(gitCommonDir, ['worktree', 'prune']);
+  await removeTrash(dirname(worktree), basename(worktree));
+}
+
+/** Deletes every trash folder of one worktree folder name. Makes read-only parts writable first; they are Piop's own. */
+async function removeTrash(parent: string, name: string): Promise<void> {
+  const pattern = new RegExp(`^\\.removing-${name}-${UUID}$`);
+  const failures: unknown[] = [];
+  for (const entry of await readdir(parent)) {
+    if (!pattern.test(entry)) continue;
+    const trash = join(parent, entry);
+    try {
+      try { await rm(trash, { recursive: true, force: true }); }
+      catch (error) {
+        if (!['EACCES', 'EPERM', 'ENOTEMPTY'].includes((error as NodeJS.ErrnoException).code ?? '')) throw error;
+        await makeWritable(trash);
+        await rm(trash, { recursive: true, force: true });
+      }
+    } catch (error) { failures.push(new Error(`Could not remove ${trash}: ${(error as Error).message}`)); }
+  }
+  if (failures.length === 1) throw failures[0];
+  if (failures.length) throw new AggregateError(failures, (failures as Error[]).map(error => error.message).join('; '));
+}
+
+async function makeWritable(path: string): Promise<void> {
+  const info = await lstat(path);
+  if (!info.isDirectory()) return;
+  await chmod(path, (info.mode & 0o7777) | 0o700);
+  for (const entry of await readdir(path)) await makeWritable(join(path, entry));
 }
 
 /** Deletes a chat branch. A missing branch is done; a branch checked out in a worktree is kept and reported. */

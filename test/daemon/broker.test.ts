@@ -1,7 +1,7 @@
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { afterAll, beforeAll, expect, test } from 'bun:test';
-import { readFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { connect, createServer, type Socket } from 'node:net';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
@@ -110,6 +110,39 @@ test('a started Pi gets the broker address and a UUID token, and the broker refu
   expect(broker.token).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/);
   for (const token of ['', 'wrong', randomUUID()]) expect((await request('GET', '/agents', undefined, token)).status).toBe(401);
   expect((await request('GET', '/agents')).status).toBe(200);
+});
+
+/*
+ * An agent that runs for one message has no input channel, so its turn_end hook sends the event to the broker and
+ * waits for the answer. The daemon applies the same save policy as for app chats, using the saved repository status.
+ */
+test('a one-message agent saves its final response through the broker, and a failed save is its error', async () => {
+  const repository = join(daemon.home, 'broker-repository');
+  const git = (...args: string[]) => execFileSync('git', ['-C', repository, ...args], { encoding: 'utf8' }).trim();
+  mkdirSync(repository);
+  git('init', '--quiet');
+  git('config', 'user.name', 'Piop Test');
+  git('config', 'user.email', 'piop@example.com');
+  writeFileSync(join(repository, 'README.md'), 'start\n');
+  git('add', '.');
+  git('commit', '--quiet', '-m', 'initial');
+  await daemon.invoke('validate_project_directory', { hostId: 'local', path: repository, newChat: true });
+  const turnEnd = (content: unknown[]) => request('POST', '/runtime-event', { hostId: 'local', name: 'turn_end', clientId: 'broker-client', data: {
+    sessionId: randomUUID(), cwd: repository, turnIndex: 0, messageEntryId: 'entry', toolResultEntryIds: [], outcome: 'completed',
+    message: { role: 'assistant', stopReason: content.some((part: any) => part.type === 'toolCall') ? 'toolUse' : 'stop', content },
+  } });
+  writeFileSync(join(repository, 'work.txt'), 'work\n');
+
+  expect((await turnEnd([{ type: 'toolCall', id: 'call', name: 'bash', arguments: {} }])).status).toBe(200);
+  expect(git('log', '--format=%s')).toBe('initial');
+  expect((await turnEnd([{ type: 'text', text: 'Done.' }])).status).toBe(200);
+  expect(git('log', '--format=%s').split('\n')).toEqual(['Piop saving progress', 'initial']);
+
+  writeFileSync(join(repository, 'more.txt'), 'more\n');
+  writeFileSync(join(repository, '.git/index.lock'), '');
+  const failed = await turnEnd([{ type: 'text', text: 'Done again.' }]);
+  expect(failed.status).not.toBe(200);
+  expect(JSON.parse(failed.body).error).toContain('index.lock');
 });
 
 test('broker answers are JSON with a content length in UTF-8 bytes and close the connection', async () => {

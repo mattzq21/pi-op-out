@@ -235,7 +235,7 @@ async function runPiCommand(app: App, runtime: PiRuntime, broker: BrokerRuntime,
     if (commandType === 'switch_session') claim = await prepareSessionSwitch(app, runtime, broker, runtimeId, command);
     const result = await executePiCommand(runtime, runtimeId, command);
     if (commandType === 'take_ownership') { const agent = runtime.activeAgents.get(runtimeId); if (agent) agent.messageable = false; }
-    const state = ['get_snapshot', 'fork', 'fork_after', 'clone'].includes(commandType) ? result?.state : commandType === 'get_state' ? result : undefined;
+    const state = ['get_snapshot', 'fork', 'fork_after', 'copy_after', 'clone'].includes(commandType) ? result?.state : commandType === 'get_state' ? result : undefined;
     if (state !== undefined && state !== null) updateRuntimeSnapshot(runtime, runtimeId, state);
     return result;
   } finally { claim?.release(); }

@@ -48,6 +48,7 @@ const sessionSummarySchema = z.object({
   messageCount: z.number().int().nonnegative(), lastMessageAt: z.number().nonnegative(), apiCost: z.number().nonnegative(),
   explicitlyNamed: z.boolean(), hasUserMessage: z.boolean(), bytes: z.number().int().nonnegative(),
   subagentParentId: z.string().min(1).optional(),
+  forkSourceId: z.string().min(1).optional(),
 });
 const indexSessions = hostOperation<{ paths: string[] }, { summaries: z.infer<typeof sessionSummarySchema>[]; warnings: string[] }>('index-sessions', 'general', STORAGE_TIMEOUT,
   value => z.object({ summaries: z.array(sessionSummarySchema), warnings: z.array(z.string()) }).parse(value));
@@ -91,7 +92,7 @@ async function readSummaryBatch(candidates: SessionCandidate[]): Promise<Map<str
     const item = items.get(value.path);
     if (!item) throw new Error(`Unexpected session summary path: ${value.path}`);
     const summary: SessionSummary = {
-      groupId: null, subagentParentId: value.subagentParentId,
+      groupId: null, subagentParentId: value.subagentParentId, forkSourceId: value.forkSourceId,
       id: value.id, path: value.path, name: value.name, project: basename(value.cwd) || 'Workspace', cwd: value.cwd, cwdExists: true,
       modifiedAt: item[2], preview: value.preview, messageCount: value.messageCount, lastMessageAt: value.lastMessageAt, apiCost: value.apiCost,
       hostId: 'local', hostName: 'Local',
@@ -232,10 +233,11 @@ export async function removeLocalTemporaryChat(home: string, path: string): Prom
   catch (error: any) { throw new Error(`Could not remove temporary chat directory: ${error?.message ?? error}`); }
 }
 
-export async function validateProjectDirectory(app: App, path: string, hostId: string, allowStorage: boolean | undefined): Promise<string> {
+export async function validateProjectDirectory(app: App, path: string, hostId: string, allowStorage: boolean | undefined, newChat = false): Promise<string> {
   if (!path.trim()) throw new Error("Path can't be empty");
   if (allowStorage === true) {
     await validateSessionWorkingDirectory(await loadAppSettings(app), hostId, path);
+    if (newChat && hostId === 'local') await refreshProjectRepository(join(homeDir(), STORAGE_DIRECTORY), path);
     return path;
   }
   if (hostId === 'local') {

@@ -4,6 +4,8 @@ export interface ArchivedSession { sessionId: string; sourcePath: string; sessio
 export interface RestoredSession extends ArchivedSession { path: string }
 export interface RestoreResult { path: string; sessionPath: string; sessionId: string; sessions: RestoredSession[] }
 export interface DeletionTarget { path: string; area: 'sessions' | 'archived' }
+/** A restored session whose working folder is from gets the folder to, written in the same transaction. */
+export interface FolderMove { from: string; to: string }
 
 export type StorageFailureState = 'rolled-back' | 'pending' | 'unknown';
 
@@ -23,7 +25,8 @@ export function responseErrorText(error: unknown): string {
 }
 
 type Request =
-  | { action: 'archive' | 'restore'; paths: string[] }
+  | { action: 'archive'; paths: string[] }
+  | { action: 'restore'; paths: string[]; cwdMoves?: FolderMove[] }
   | { action: 'delete'; targets: DeletionTarget[]; activeSessionIds: string[] }
   | { action: 'delete'; blank: { path?: string | null; id?: string | null } }
   | { action: 'result'; path: string }
@@ -87,8 +90,8 @@ export async function deleteBlank(blank: { path?: string | null; id?: string | n
   await run({ action: 'delete', blank });
 }
 
-export async function restore(paths: string[]): Promise<RestoreResult> {
-  return checked(await run({ action: 'restore', paths }), restoreResult);
+export async function restore(paths: string[], cwdMoves: FolderMove[] = []): Promise<RestoreResult> {
+  return checked(await run({ action: 'restore', paths, cwdMoves }), restoreResult);
 }
 
 export async function committedRestore(path: string): Promise<RestoreResult | null> {

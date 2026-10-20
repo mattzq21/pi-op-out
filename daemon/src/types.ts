@@ -3,6 +3,8 @@ export interface AgentAddress { hostId: string; sessionId?: string; sessionPath?
 export interface SessionSummary {
   id: string;
   subagentParentId?: string;
+  /** The conversation this one was branched from, on the same machine. */
+  forkSourceId?: string;
   groupId: string | null;
   path: string;
   name: string;
@@ -23,6 +25,7 @@ export interface SessionSummary {
 export function serializeSession(session: SessionSummary): Record<string, unknown> {
   const result: Record<string, unknown> = { id: session.id };
   if (session.subagentParentId !== undefined && session.subagentParentId !== null) result.subagentParentId = session.subagentParentId;
+  if (session.forkSourceId !== undefined) result.forkSourceId = session.forkSourceId;
   Object.assign(result, {
     groupId: session.groupId ?? null, path: session.path, name: session.name, project: session.project, cwd: session.cwd, cwdExists: session.cwdExists,
     preview: session.preview, messageCount: session.messageCount, lastMessageAt: session.lastMessageAt, apiCost: session.apiCost, hostId: session.hostId, hostName: session.hostName,
@@ -37,6 +40,7 @@ export function parseSession(value: any): SessionSummary {
   if (typeof value?.cwdExists !== 'boolean') throw new Error('missing field `cwdExists`');
   return {
     id: text('id'), subagentParentId: typeof value.subagentParentId === 'string' ? value.subagentParentId : undefined,
+    forkSourceId: typeof value.forkSourceId === 'string' && value.forkSourceId ? value.forkSourceId : undefined,
     groupId: typeof value.groupId === 'string' ? value.groupId : null, path: text('path'), name: text('name'), project: text('project'), cwd: text('cwd'),
     cwdExists: value.cwdExists, modifiedAt: 0, preview: text('preview'), messageCount: number('messageCount'), lastMessageAt: number('lastMessageAt'),
     apiCost: number('apiCost'), hostId: text('hostId'), hostName: text('hostName'),
