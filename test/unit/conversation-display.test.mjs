@@ -278,3 +278,13 @@ test("Retry is unavailable for an abort after a pause marker", async t => {
   assert.ok(![...view.container.querySelectorAll('article button')].some(button => button.textContent === 'Retry'));
   assert.equal(view.container.querySelector('[aria-label="Message piop"]').value, '');
 });
+
+test('auxiliary chats have no fork actions, including when their folder is a repository', async t => {
+  const view = await conversation(t, { state: { ...repositoryState, canFork: false }, messages: [{ id: 'answer', role: 'assistant', content: 'Answer', stopReason: 'stop' }], onFork: () => {}, onBranch: () => {}, onForkAndForget: () => {} });
+  assert.equal(view.container.querySelector('.branch-button'), null);
+  await view.update({ state: { ...repositoryState, canFork: false, repository: null } });
+  assert.equal(view.container.querySelector('.branch-button'), null);
+  await view.update({ state: { ...repositoryState, canFork: true } });
+  assert.ok(view.container.querySelector('[aria-label="Fork"]'));
+  assert.ok(forkControl(view));
+});

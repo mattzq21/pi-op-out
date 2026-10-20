@@ -1,3 +1,4 @@
+import { canFork } from '../../resources/piop-storage/session-records.cjs';
 import { randomUUID } from 'node:crypto';
 import { dirname } from 'node:path';
 import { getProjectRepository } from '../project_repositories';
@@ -44,6 +45,7 @@ function stateChange(name: string): boolean { return STATE_CHANGES.has(name); }
 export interface InterruptTask { finished: boolean; promise: Promise<any> }
 
 export class Session {
+  private forkAllowed?: boolean;
   readonly identity: string;
   private clientIdValue: string;
   readonly spec: LaunchSpec;
@@ -351,7 +353,13 @@ export class Session {
     }
   }
 
-  raw(command: any): Promise<any> { return this.rawAs(command, kind(command), null); }
+  async raw(command: any): Promise<any> {
+    if (kind(command) === 'get_state' && this.forkAllowed === undefined) {
+      const history = await this.rawAs({ type: 'get_entries' }, 'get_entries', null);
+      this.forkAllowed = canFork(history.entries);
+    }
+    return this.rawAs(command, kind(command), null);
+  }
 
   private async rawAs(command: any, requestType: string, snapshot: any): Promise<any> {
     if (this.closed()) throw new Error(this.startupError ?? 'Pi is not running');
@@ -559,6 +567,7 @@ export class Session {
   private async receiveState(data: any): Promise<void> {
     const queueRoot = this.host.queueRoot();
     if (data && typeof data === 'object') {
+      data.canFork = this.forkAllowed === true;
       data.cwd = this.cwd ?? undefined;
       data.repository = queueRoot && this.cwd ? getProjectRepository(dirname(queueRoot), this.cwd) : null;
       if (typeof data.sessionFile === 'string') {
@@ -584,6 +593,8 @@ export class Session {
     this.live.addTo(data);
     const snapshotState = clone(request.snapshotState) ?? null;
     if (snapshotState && typeof snapshotState === 'object' && !Array.isArray(snapshotState)) {
+      snapshotState.canFork = canFork(data.entries);
+      this.forkAllowed = snapshotState.canFork;
       snapshotState.isStreaming = this.isWorking;
       snapshotState.viewers = this.visibleViewers();
       snapshotState.needsInput = !this.dialogs.empty();

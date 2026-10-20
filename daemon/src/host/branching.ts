@@ -22,6 +22,9 @@ export async function switchSession(host: Host, session: Session, runtime: strin
   const state = await session.execute({ type: 'get_state' });
   assertCurrent(host, session, runtime);
   if (['fork', 'fork_after', 'copy_after', 'clone'].includes(kind(command))) {
+    const snapshot = await session.execute({ type: 'get_snapshot' });
+    if (snapshot.state?.canFork !== true) throw new Error('Only main chats can be forked');
+    assertCurrent(host, session, runtime);
     const path = typeof state?.sessionFile === 'string' && state.sessionFile ? state.sessionFile : undefined;
     if (path === undefined) throw new Error('The conversation has no session file');
     return fork(host, session, runtime, command, state, path);

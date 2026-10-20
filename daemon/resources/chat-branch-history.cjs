@@ -10,8 +10,6 @@ const database = require('./session-database.cjs');
 const { acquireReferencePublicationLock } = require('./piop-storage/reference-publication-lock.cjs');
 
 const UUID = /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/;
-// Links that make a chat a child of another chat. A branch is a sibling of its source, so it does not copy them.
-const parentLinks = new Set(['piop-subagent-parent', 'piop-review-parent']);
 
 function message(error) { return error instanceof Error ? error.message : String(error); }
 
@@ -37,6 +35,7 @@ function finalResponse(entry) {
 
 /** Entries from the first entry through entryId on the branch that ends at leafId, without current-state entries. */
 function selectHistory(entries, leafId, entryId) {
+  if (!stateRecords.canFork(entries)) throw new Error("Only main chats can be forked");
   const byId = new Map(entries.filter(entry => entry?.type !== 'session' && typeof entry?.id === 'string').map(entry => [entry.id, entry]));
   const selected = byId.get(entryId);
   if (!selected) throw new Error('The selected response is no longer in this conversation');
@@ -54,7 +53,7 @@ function selectHistory(entries, leafId, entryId) {
   const end = path.findIndex(entry => entry.id === entryId);
   if (end < 0) throw new Error('The selected response is not on the current branch');
   let parentId = null;
-  return path.slice(0, end + 1).filter(entry => !stateRecords.isCurrent(entry) && !(entry.type === 'custom' && parentLinks.has(entry.customType))).map(entry => {
+  return path.slice(0, end + 1).filter(entry => !stateRecords.isCurrent(entry)).map(entry => {
     const copy = { ...structuredClone(entry), parentId };
     parentId = entry.id;
     return copy;

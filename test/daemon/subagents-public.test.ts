@@ -23,6 +23,14 @@ test('a child agent\'s final answer reaches its parent, which continues with it'
   const sessions = await agents.daemon.invoke('list_sessions');
   const child = sessions.find((session: any) => session.subagentParentId === root.sessionId);
   expect(child).toMatchObject({ name: 'Subagent: reader' });
+  await agents.daemon.invoke('start_pi', { runtimeId: 'subagent-fork-check', clientId: 'laptop', cwd: root.cwd, sessionPath: child.path });
+  const childCommand = (command: any) => agents.daemon.invoke('pi_command', { runtimeId: 'subagent-fork-check', command });
+  expect((await childCommand({ type: 'get_state' })).canFork).toBe(false);
+  expect((await childCommand({ type: 'get_snapshot' })).state.canFork).toBe(false);
+  for (const type of ['copy_after', 'fork_after', 'fork', 'clone', 'fork_and_forget']) {
+    await expect(childCommand({ type, entryId: 'any-response' })).rejects.toThrow('Only main chats can be forked');
+  }
+
   // The chat view lists delegated work from this message; it needs these fields for each run.
   const delivered = (await root.command({ type: 'get_entries' })).entries.find((entry: any) => entry.customType === 'piop-subagent-result');
   expect(delivered.details.runs).toEqual([expect.objectContaining({ name: 'reader', task: 'Summarize the README', status: 'completed', sessionId: child.id, sessionPath: child.path, hostId: 'local' })]);

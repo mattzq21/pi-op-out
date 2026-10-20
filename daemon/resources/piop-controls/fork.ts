@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { isCurrent } from "../piop-storage/session-records.cjs";
+import { canFork, isCurrent } from "../piop-storage/session-records.cjs";
 import { reserveSessionId } from "../piop-storage/session-file.ts";
 import type { ExtensionCommandContext, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { realpath, mkdir, rmdir } from "node:fs/promises";
@@ -31,6 +31,7 @@ function userText(ctx: ExtensionContext, entryId?: string) {
 
 /** SessionControls.fork. */
 export async function forkSession(ctx: ExtensionContext, mode: ForkMode, entryId?: string): Promise<ForkResult> {
+  assertForkable(ctx);
   if (mode !== "clone" && !entryId) throw new Error("Select a message to branch from");
   const selected = mode === "clone" ? ctx.sessionManager.getLeafId() ?? undefined : entryId;
   const text = mode === "fork" ? userText(ctx, selected) : undefined;
@@ -42,6 +43,7 @@ export async function forkSession(ctx: ExtensionContext, mode: ForkMode, entryId
 
 /** SessionControls.forkAndForget. */
 export async function forkAndForget(ctx: ExtensionCommandContext, entryId: string) {
+  assertForkable(ctx);
   const entry = ctx.sessionManager.getEntry(entryId);
 
   if (!entry || entry.type !== "message" || entry.message.role !== "assistant") throw new Error("Assistant response not found in this conversation");
@@ -49,6 +51,7 @@ export async function forkAndForget(ctx: ExtensionCommandContext, entryId: strin
 }
 
 export async function forkConversation(ctx: ExtensionContext, options: ForkOptions) {
+  assertForkable(ctx);
   const selected = options.position ? positionedHistory(ctx, options.entryId, options.position) : forkHistory(ctx, options.entryId);
   const retained = structuredClone([...selected.filter(entry => !isCurrent(entry)), ...ctx.sessionManager.getEntries().filter(entry => isCurrent(entry) && !(entry.type === "custom" && entry.customType === "piop-input-hold"))]);
   const header = ctx.sessionManager.getHeader();
@@ -159,4 +162,8 @@ function forkHistory(ctx: ExtensionContext, entryId?: string) {
   const retained = branch.slice(0, end + 1);
 
   return retained;
+}
+
+function assertForkable(ctx: ExtensionContext) {
+  if (!canFork(ctx.sessionManager.getEntries())) throw new Error("Only main chats can be forked");
 }

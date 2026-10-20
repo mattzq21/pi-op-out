@@ -61,6 +61,14 @@ test('a review opens a separate code review chat in the side pane, linked to the
   const review = JSON.parse(open.placeholder);
   expect(review).toMatchObject({ parentSessionId: chat.sessionId, readOnly: false });
   expect(review.task).toContain('src/parser.ts');
+  await agents.daemon.invoke('start_pi', { runtimeId: 'review-fork-check', clientId: 'laptop', cwd: chat.cwd, sessionPath: review.sessionPath });
+  const childCommand = (command: any) => agents.daemon.invoke('pi_command', { runtimeId: 'review-fork-check', command });
+  expect((await childCommand({ type: 'get_state' })).canFork).toBe(false);
+  expect((await childCommand({ type: 'get_snapshot' })).state.canFork).toBe(false);
+  for (const type of ['copy_after', 'fork_after', 'fork', 'clone', 'fork_and_forget']) {
+    await expect(childCommand({ type, entryId: 'any-response' })).rejects.toThrow('Only main chats can be forked');
+  }
+
   const saved = readFileSync(review.sessionPath, 'utf8').trim().split('\n').map(line => JSON.parse(line));
   expect(saved[0]).toMatchObject({ type: 'session', id: review.sessionId });
   expect(saved.some(entry => entry.type === 'custom')).toBe(false);

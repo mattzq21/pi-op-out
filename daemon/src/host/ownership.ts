@@ -277,7 +277,7 @@ export class ConversationOwnership {
     const control = ControlState.reduce(entries, leafId);
     const snapshot: any = {
       revision,
-      state: { sessionId: id, model: null, thinkingLevel: 'off', isStreaming: false, pendingMessageCount: 0, isPaused: control.isPaused, isPausing: false, needsInput: false, messageCount: entries.filter(entry => entry?.type === 'message').length },
+      state: { canFork: SessionRecords.canFork(entries), sessionId: id, model: null, thinkingLevel: 'off', isStreaming: false, pendingMessageCount: 0, isPaused: control.isPaused, isPausing: false, needsInput: false, messageCount: entries.filter(entry => entry?.type === 'message').length },
       history: { leafId, entries, ...(damagedLines.length ? { incomplete: true, damagedLines } : {}) }, sequence: 0, epoch: 'readonly:' + id,
       liveTools: [], queue: { type: 'queue_update', steering: [], followUp: [], pendingMessages: [] },
     };

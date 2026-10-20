@@ -7,7 +7,7 @@ export function canBranchFrom(message: ChatMessage | undefined) {
 
 /** Branching needs the saved project repository reported by the daemon. */
 export function branchingAvailable(state: AgentState) {
-  return Boolean(state.repository);
+  return state.canFork !== false && Boolean(state.repository);
 }
 
 /** The branch must run in the worktree folder the daemon created for it. */

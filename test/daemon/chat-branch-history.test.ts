@@ -206,3 +206,11 @@ test('a publication that saves the transcript but cannot finish is removed', asy
   expect(leftovers(sessionId, join(root, 'missing'))).toMatchObject({ registry: false, goal: false, state: 0, journals: 0, quarantine: 0, locks: locksBefore });
   expect(owners(source.attachment)).toEqual([source.id]);
 });
+
+for (const customType of ['piop-subagent-parent', 'piop-review-parent']) test(`worktree history rejects ${customType} even outside the selected history`, async () => {
+  const source = await sourceChat();
+  const body = readFileSync(source.path, 'utf8');
+  source.entries.push({ type: 'custom', id: 'parent-marker', parentId: null, timestamp: new Date().toISOString(), customType, data: { parentSessionId: 'parent' } } as any);
+  await expect(modules.history.publishBranchHistory({ root, sourcePath: source.path, sessionId: modules.database.reserve(root), cwd: source.cwd, entries: source.entries, leafId: 'a3', entryId: 'a1' })).rejects.toThrow('Only main chats can be forked');
+  expect(readFileSync(source.path, 'utf8')).toBe(body);
+});

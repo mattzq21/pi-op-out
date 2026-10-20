@@ -213,3 +213,15 @@ test('fork before the first user message returns an empty history and the draft 
   assert.equal(result.text, 'first prompt');
   assert.equal(await readFile(f.sourcePath, 'utf8'), f.sourceText);
 });
+
+for (const customType of ['piop-subagent-parent', 'piop-review-parent']) test(`${customType} cannot fork through session controls`, async t => {
+  const f = await fixture(t);
+  f.entries.push({ type: 'custom', id: 'parent-marker', customType, data: { parentSessionId: 'parent' } });
+  const before = await readdir(f.sessions);
+  for (const mode of ['fork', 'fork_after', 'clone']) {
+    await assert.rejects(f.rpc('prepare_fork', { mode, entryId: mode === 'fork' ? 'u2' : 'a1' }), /Only main chats can be forked/);
+  }
+  await assert.rejects(f.rpc('fork_and_forget', { entryId: 'a1' }), /Only main chats can be forked/);
+  assert.deepEqual(await readdir(f.sessions), before);
+  assert.equal(await readFile(f.sourcePath, 'utf8'), f.sourceText);
+});

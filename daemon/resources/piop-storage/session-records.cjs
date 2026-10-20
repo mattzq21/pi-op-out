@@ -163,4 +163,8 @@ function create(type, data, parentId) {
   return { type: 'custom', customType: type, data: structuredClone(data), id: randomUUID(), parentId, timestamp: new Date().toISOString() };
 }
 
-module.exports = { selectBranch, selectedLeaf, stateKey, initializeSessionName, sessionName, isCurrent, history, stored, save, seed, capture, append, records, merge, revision, create };
+function canFork(entries) {
+  return !entries.some(entry => entry?.type === 'custom' && ['piop-subagent-parent', 'piop-review-parent'].includes(entry.customType));
+}
+
+module.exports = { canFork, selectBranch, selectedLeaf, stateKey, initializeSessionName, sessionName, isCurrent, history, stored, save, seed, capture, append, records, merge, revision, create };
