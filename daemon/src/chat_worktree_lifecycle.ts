@@ -60,13 +60,24 @@ function canonicalFolder(folder: string): string {
 }
 
 /** Archived chats still need their shared folder when restored. Read current headers, not sidebar caches. */
-function sharedFolder(record: ChatWorktreeRecord, root: string, folder = record.worktree): boolean {
+function sharedFolder(record: ChatWorktreeRecord, root: string, folder = record.worktree, excludeArchivedChildren = false): boolean {
   const db = SessionTables.open(root);
   let sessions: Array<{ session_id: string; session_path: string }>;
-  try { sessions = db.prepare('SELECT session_id, session_path FROM sessions WHERE session_path IS NOT NULL AND session_id != ?').all(record.chatId) as typeof sessions; }
+  const children = new Set<string>();
+  try {
+    sessions = db.prepare('SELECT session_id, session_path FROM sessions WHERE session_path IS NOT NULL AND session_id != ?').all(record.chatId) as typeof sessions;
+    if (excludeArchivedChildren) {
+      const descendants = db.prepare(`WITH RECURSIVE descendants(id) AS (
+        SELECT child_id FROM session_children WHERE parent_id=?
+        UNION SELECT c.child_id FROM session_children c JOIN descendants d ON c.parent_id=d.id
+      ) SELECT id FROM descendants`).all(record.chatId) as Array<{ id: string }>;
+      for (const child of descendants) children.add(child.id);
+    }
+  }
   finally { db.close(); }
   const target = canonicalFolder(folder);
   for (const session of sessions) {
+    if (children.has(session.session_id) && session.session_path.startsWith(join(root, 'archived') + sep)) continue;
     let header: any;
     try { header = JSON.parse(readHeaderLine(session.session_path)); }
     catch (error: any) { if (error.code === 'ENOENT') continue; throw error; }
@@ -153,7 +164,7 @@ export async function finishArchive(archiving: ChatWorktreeRecord[], root = prof
     let archived: ChatWorktreeRecord;
     try { archived = Worktrees.replace(Worktrees.read(record.chatId, root), { ...settled(record), state: 'archived' }, root)!; }
     catch (error) { warnings.push(`Archive committed, but the worktree record of chat ${record.chatId} was not updated: ${errorText(error)}`); continue; }
-    try { if (!sharedFolder(archived, root)) await removeArchivedWorktree({ archive: archiveOf(archived), home: homeDir() }); }
+    try { if (!sharedFolder(archived, root, archived.worktree, true)) await removeArchivedWorktree({ archive: archiveOf(archived), home: homeDir() }); }
     catch (error) { warnings.push(Worktrees.fail(archived, `Archive committed, but worktree ${archived.worktree} was kept: ${errorText(error)}`, root)); }
   }
   return warnings;
@@ -171,7 +182,7 @@ export async function beginRestore(chatIds: string[], root = profileRoot()): Pro
       if (record.state !== 'archived') throw new Error(`Cannot restore chat ${record.chatId}: its worktree is ${record.state}`);
       running.add(record.chatId);
       const archive = archiveOf(record);
-      const plan = await planRestore({ archive, home: homeDir(), retainShared: sharedFolder(record, root) });
+      const plan = await planRestore({ archive, home: homeDir(), retainShared: sharedFolder(record, root, record.worktree, true) });
       const restoring = Worktrees.replace(record, { ...settled(record), state: 'restoring', restore: plan }, root)!;
       done.push(restoring);
       await restoreWorktree({ archive, home: homeDir(), plan });

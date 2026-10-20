@@ -119,7 +119,7 @@ async function transfer(host: Host, session: Session, next: Session, runtime: st
 async function fork(host: Host, session: Session, runtime: string, command: any, state: any, path: string): Promise<any> {
   const pending = pendingBranches.get(session) ?? new Map<string, Promise<any>>();
   pendingBranches.set(session, pending);
-  const key = kind(command) + ':' + text(command, 'entryId');
+  const key = JSON.stringify([runtime, kind(command), text(command, 'entryId')]);
   const existing = pending.get(key);
   if (existing) return existing;
   const operation = runFork(host, session, runtime, command, state, path);
