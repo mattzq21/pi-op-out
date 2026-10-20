@@ -111,8 +111,11 @@ test('a branch copies history through the selected final response, current setti
   expect(saved.slice(1).map((entry: any) => entry.id)).toEqual(['u1', 'a1']);
   expect(registered(sessionId)).toBe(result.sessionPath);
   expect(modules.records.sessionName(result.sessionPath, sessionId)).toBe('Source (branch)');
-  const settings = modules.records.records(result.sessionPath, sessionId).map((record: any) => record.entry.type).sort();
-  expect(settings).toEqual(['session_info', 'thinking_level_change']);
+  const settings = modules.records.records(result.sessionPath, sessionId).map((record: any) => record.entry);
+  expect(settings.map((entry: any) => entry.customType ?? entry.type).sort()).toEqual(['piop-input-hold', 'session_info', 'thinking_level_change']);
+  // The branch waits for the user's first message.
+  expect(settings.find((entry: any) => entry.customType === 'piop-input-hold').data).toEqual({ held: true });
+  expect(settings.find((entry: any) => entry.type === 'thinking_level_change').thinkingLevel).toBe('high');
   expect(modules.goals.read(result.sessionPath, sessionId)).toMatchObject({ objective: 'Keep going', sessionId });
   expect(owners(source.attachment)).toEqual([source.id, sessionId].sort());
 
