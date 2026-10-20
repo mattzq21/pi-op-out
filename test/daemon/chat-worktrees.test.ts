@@ -105,7 +105,7 @@ test('creates a chat worktree at the source commit with the current files as unc
   const created = await Worktrees.createWorktree({ sourceCwd: repo, chatId, home });
 
   const worktree = join(home, '.local/share/piop/worktrees', chatId);
-  expect(created).toEqual({ repository: repo, gitCommonDir: join(repo, '.git'), chatId, worktree, branch: 'piop/' + chatId, commit: before.head });
+  expect(created).toEqual({ repository: repo, gitCommonDir: join(repo, '.git'), chatId, worktree, cwd: worktree, branch: 'piop/' + chatId, commit: before.head });
   expect(git(worktree, 'rev-parse', 'HEAD')).toBe(before.head);
   expect(git(worktree, 'branch', '--show-current')).toBe('piop/' + chatId);
   const copied = { ...before.files };

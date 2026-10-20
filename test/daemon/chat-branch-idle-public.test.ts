@@ -1,6 +1,7 @@
 import { expect, test } from 'bun:test';
 import { Database } from 'bun:sqlite';
 import { join } from 'node:path';
+import { readFileSync, writeFileSync } from 'node:fs';
 import { agentDaemon, called, text } from './agent-chats';
 
 for (const [mode, repository] of [['fork_after', true], ['copy_after', true], ['copy_after', false]] as const) test(`${mode} (${repository ? 'repository' : 'plain folder'}) keeps an active goal idle until user input`, async () => {
@@ -49,5 +50,33 @@ for (const [mode, repository] of [['fork_after', true], ['copy_after', true], ['
       expect(hold()).toBe(false);
       expect(goal()).toBeNull();
     } finally { db.close(); }
+  } finally { await agents.close(); }
+}, 120000);
+
+
+test('worktree forks preserve a project subfolder, including when forking a worktree again', async () => {
+  const agents = await agentDaemon();
+  try {
+    agents.scripts.set('Subfolder project', () => ({ text: 'Ready.' }));
+    const source = await agents.rootChat({ repository: true, subfolder: 'apps/web' });
+    writeFileSync(join(source.cwd, 'package.json'), '{"name":"web"}\n');
+    await source.command({ type: 'prompt', message: 'Subfolder project' });
+    await source.until(messages => text(messages.at(-1)) === 'Ready.');
+    const answer = (await source.command({ type: 'get_entries' })).entries.find((entry: any) => entry.message?.role === 'assistant');
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const result = await source.command({ type: 'fork_after', entryId: answer.id });
+      const state = await source.command({ type: 'get_state' });
+      const worktree = join(agents.daemon.home, '.local/share/piop/worktrees', state.sessionId);
+      expect(state.cwd).toBe(join(worktree, 'apps/web'));
+      expect(result.state.cwd).toBe(state.cwd);
+      expect(state.repository.root).toBe(worktree);
+      const db = new Database(join(agents.daemon.home, '.piop', 'sessions.sqlite'), { readonly: true });
+      try {
+        const row = db.query('SELECT record_json FROM chat_worktrees WHERE chat_id=?').get(state.sessionId) as { record_json: string };
+        expect(JSON.parse(row.record_json).worktree).toBe(worktree);
+      } finally { db.close(); }
+      expect(JSON.parse(readFileSync(join(state.cwd, 'package.json'), 'utf8')).name).toBe('web');
+      expect(JSON.parse(readFileSync(state.sessionFile, 'utf8').split('\n')[0]).cwd).toBe(state.cwd);
+    }
   } finally { await agents.close(); }
 }, 120000);

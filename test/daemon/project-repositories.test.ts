@@ -3,7 +3,7 @@ import { mkdtempSync, mkdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { execFileSync } from 'node:child_process';
-import { getProjectRepository, refreshProjectRepository } from '../../daemon/src/project_repositories';
+import { forgetProjectRepository, rememberProjectRepository, getProjectRepository, refreshProjectRepository } from '../../daemon/src/project_repositories';
 
 test('repository status changes only on an explicit project or new-chat check', async () => {
   const directory = mkdtempSync(join(tmpdir(), 'piop-project-git-'));
@@ -48,3 +48,20 @@ test('new draft chat rechecks the project but reopening it does not', async () =
     expect(getProjectRepository(join(daemon.home, '.piop'), project)?.root).toBe(project);
   } finally { await daemon.dispose(); }
 }, 60000);
+
+
+test('forgetting a worktree clears its project subfolders without affecting adjacent folders', () => {
+  const directory = mkdtempSync(join(tmpdir(), 'piop-project-forget-'));
+  const root = join(directory, 'profile');
+  const worktree = join(directory, 'worktree');
+  const nested = join(worktree, 'apps/web');
+  const adjacent = worktree + '-other';
+  const repository = { root: worktree, gitDir: join(directory, '.git') };
+  try {
+    for (const cwd of [worktree, nested, adjacent]) rememberProjectRepository(root, cwd, repository);
+    forgetProjectRepository(root, worktree);
+    expect(getProjectRepository(root, worktree)).toBeNull();
+    expect(getProjectRepository(root, nested)).toBeNull();
+    expect(getProjectRepository(root, adjacent)).toEqual(repository);
+  } finally { rmSync(directory, { recursive: true, force: true }); }
+});

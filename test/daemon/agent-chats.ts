@@ -45,10 +45,12 @@ export async function agentDaemon() {
    * A new root chat that uses the scripted model. visible opens it in a shown, focused window, which receives its dialogs.
    * repository starts it in a new Git repository with one commit, as branching needs.
    */
-  const rootChat = async ({ visible = false, repository = false } = {}) => {
+  const rootChat = async ({ visible = false, repository = false, subfolder = '' } = {}) => {
     const chat = await daemon.invoke('create_temporary_chat', { hostId: 'local' });
     const runtimeId = 'root-' + ++runtimes;
-    const cwd = repository ? gitRepository(join(daemon.home, 'repository-' + runtimeId)) : chat.cwd;
+    const projectRoot = repository ? gitRepository(join(daemon.home, 'repository-' + runtimeId)) : chat.cwd;
+    const cwd = join(projectRoot, subfolder);
+    mkdirSync(cwd, { recursive: true });
     await daemon.invoke('start_pi', { runtimeId, clientId: 'laptop', cwd, sessionId: chat.sessionId, ...(visible ? { presence: { visible: true, focused: true } } : {}) });
     const command = (value: any) => daemon.invoke('pi_command', { runtimeId, command: value });
     await command({ type: 'set_model', provider: 'scripted', modelId: 'scripted-model' });

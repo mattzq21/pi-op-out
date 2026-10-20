@@ -1,5 +1,5 @@
 import { detectRepository } from './chat_worktrees';
-import { resolve } from 'node:path';
+import { resolve, sep } from 'node:path';
 import * as Registry from './session_registry';
 
 export interface ProjectRepository { root: string; gitDir: string }
@@ -26,7 +26,9 @@ export function rememberProjectRepository(storageRoot: string, cwd: string, repo
 
 export function forgetProjectRepository(storageRoot: string, cwd: string): void {
   const db = database(storageRoot);
-  try { db.prepare('DELETE FROM project_repositories WHERE cwd=?').run(resolve(cwd)); }
+  const folder = resolve(cwd);
+  const prefix = folder.endsWith(sep) ? folder : folder + sep;
+  try { db.prepare('DELETE FROM project_repositories WHERE cwd=? OR substr(cwd, 1, ?)=?').run(folder, prefix.length, prefix); }
   finally { db.close(); }
 }
 
