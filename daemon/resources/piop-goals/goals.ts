@@ -103,6 +103,7 @@ export function registerGoals(pi: ExtensionAPI): { session: GoalSession; core: G
     return; }
 
     // A chat waiting for the user's first message keeps its goal active; the user's message starts the work.
+    if (inputHold(pi).held(ctx)) return;
 
     start(ctx);
     });
