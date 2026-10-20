@@ -59,12 +59,14 @@ export async function forkConversation(ctx: ExtensionContext, options: ForkOptio
   const sessionId = await reserveSessionId();
   const timestamp = new Date().toISOString();
   const sessionPath = join(ctx.sessionManager.getSessionDir(), `${timestamp.replace(/[:.]/g, "-")}_${sessionId}.jsonl`);
+  // The copy names the chat and entry it came from. A source's own fork source is replaced, so a copy of a branch names the branch.
+  const piopForkSource = options.entryId ? { sessionId: header.id, sessionPath: source, entryId: options.entryId } : undefined;
   let publication: SessionPublication | undefined;
   let goalAssets: ReturnType<typeof retainHistory> | undefined;
 
   try {
     goalAssets = retainHistory(rootForDirectory(ctx.sessionManager.getSessionDir()), [{ ...header, parentSession: source }, ...retained], sessionId, sessionPath);
-    publication = await writeSessionFile(sessionPath, [{ ...header, id: sessionId, timestamp, cwd, parentSession: source, goalAssets }, ...retained], {
+    publication = await writeSessionFile(sessionPath, [{ ...header, id: sessionId, timestamp, cwd, parentSession: source, piopForkSource, goalAssets }, ...retained], {
       goalSource: source,
       dependencies: { workspace: { path: cwd, kind: options.cwd === undefined ? "existing" : "created-directory" } },
     });

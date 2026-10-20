@@ -107,6 +107,7 @@ test('copying after an answer outside a Git repository opens a new conversation 
   const copy = await chat.command({ type: 'get_state' });
   expect(copy.sessionId).not.toBe(original.sessionId);
   expect(copy.cwd).toBe(original.cwd);
+  expect(copy.forkSource).toEqual({ sessionId: original.sessionId, sessionPath: original.sessionFile, entryId: answer.id });
   expect(existsSync(join(agents.daemon.home, '.local/share/piop/worktrees', copy.sessionId))).toBe(false);
   expect((await chat.history()).filter(message => message.role !== 'system').map(text)).toEqual(['Copy question', 'Copy answer to Copy question']);
   await chat.command({ type: 'prompt', message: 'Other question' });
@@ -114,6 +115,8 @@ test('copying after an answer outside a Git repository opens a new conversation 
   const sessions = await agents.daemon.invoke('list_sessions');
   expect(sessions.find((session: any) => session.id === original.sessionId)).toMatchObject({ preview: 'Copy answer to Later question' });
   expect(sessions.find((session: any) => session.id === copy.sessionId)).toMatchObject({ preview: 'Copy answer to Other question' });
+  // The chat list names the source, so the copy takes the source's sidebar group without any client write.
+  expect(sessions.find((session: any) => session.id === copy.sessionId).forkSourceId).toBe(original.sessionId);
 }, 60000);
 
 test('fork and forget goes back to an earlier answer in the same conversation, and the model no longer sees what came after', async () => {

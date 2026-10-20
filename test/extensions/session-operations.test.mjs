@@ -97,6 +97,7 @@ test('fork retains completed history, unique identity, permissions, and untouche
   const result = await f.rpc('prepare_fork', { mode: 'fork_after', entryId: 'a1' });
   const entries = await readEntries(result.sessionPath);
   assert.equal(entries[0].parentSession, f.sourcePath);
+  assert.deepEqual(entries[0].piopForkSource, { sessionId: f.ctx.sessionManager.getSessionId(), sessionPath: f.sourcePath, entryId: 'a1' });
   assert.notEqual(entries[0].id, f.ctx.sessionManager.getSessionId());
   const db = database.open(f.dir);
   try {
@@ -109,6 +110,15 @@ test('fork retains completed history, unique identity, permissions, and untouche
   ]);
   assert.equal((await stat(result.sessionPath)).mode & 0o777, 0o600);
   assert.equal(await readFile(f.sourcePath, 'utf8'), f.sourceText);
+});
+
+test('a copy of a branch names the branch as its source, not the branch\'s own source', async t => {
+  const f = await fixture(t);
+  f.ctx.sessionManager.getHeader().piopForkSource = { sessionId: 'older-chat', sessionPath: '/sessions/older.jsonl', entryId: 'older-entry' };
+  const result = await f.rpc('prepare_fork', { mode: 'fork_after', entryId: 'a1' });
+  const [header] = await readEntries(result.sessionPath);
+  assert.deepEqual(header.piopForkSource, { sessionId: f.ctx.sessionManager.getSessionId(), sessionPath: f.sourcePath, entryId: 'a1' });
+  assert.equal(header.parentSession, f.sourcePath);
 });
 
 test('fork uses the current project and preserves its files', async t => {
