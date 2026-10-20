@@ -6,6 +6,7 @@ import { extname, join, dirname, sep } from 'node:path';
 import * as ConversationStorage from '../conversation_storage';
 import * as RestoreRecovery from '../restore_recovery';
 import * as Registry from '../session_registry';
+import { getProjectRepository } from '../project_repositories';
 import { ensurePrivateDir } from '../private_fs';
 import { FileLock, flockDescriptor } from '../util/flock';
 import { flag, text } from './json';
@@ -280,7 +281,12 @@ export class ConversationOwnership {
       history: { leafId, entries, ...(damagedLines.length ? { incomplete: true, damagedLines } : {}) }, sequence: 0, epoch: 'readonly:' + id,
       liveTools: [], queue: { type: 'queue_update', steering: [], followUp: [], pendingMessages: [] },
     };
-    if (saved) snapshot.state.sessionFile = saved.path;
+    if (saved) {
+      snapshot.state.sessionFile = saved.path;
+      snapshot.state.cwd = saved.header.cwd;
+      snapshot.state.repository = typeof saved.header.cwd === 'string' ? getProjectRepository(this.root, saved.header.cwd) : null;
+      if (saved.header.piopForkSource) snapshot.state.forkSource = saved.header.piopForkSource;
+    }
     return snapshot;
   }
 

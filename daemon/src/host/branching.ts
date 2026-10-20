@@ -1,4 +1,8 @@
-import { basename, isAbsolute } from 'node:path';
+import { basename, isAbsolute, join } from 'node:path';
+import { getProjectRepository, rememberProjectRepository } from '../project_repositories';
+import { createWorktree } from '../chat_worktrees';
+import * as Worktrees from '../chat_worktree_records';
+import { publishBranchHistory, discardBranchHistory } from '../chat_branch_operations';
 import * as Registry from '../session_registry';
 import { kind, text } from './json';
 import { Guard, ownershipError } from './ownership';
@@ -110,11 +114,24 @@ async function transfer(host: Host, session: Session, next: Session, runtime: st
 }
 
 async function fork(host: Host, session: Session, runtime: string, command: any, state: any, path: string): Promise<any> {
+  const pending = pendingBranches.get(session) ?? new Map<string, Promise<any>>();
+  pendingBranches.set(session, pending);
+  const key = kind(command) + ':' + text(command, 'entryId');
+  const existing = pending.get(key);
+  if (existing) return existing;
+  const operation = runFork(host, session, runtime, command, state, path);
+  pending.set(key, operation);
+  try { return await operation; } finally { pending.delete(key); }
+}
+
+const pendingBranches = new WeakMap<Session, Map<string, Promise<any>>>();
+
+async function runFork(host: Host, session: Session, runtime: string, command: any, state: any, path: string): Promise<any> {
   const branch = new Branch(host, session, runtime, state, path);
   let result: any;
   let failure: unknown;
   try { result = await branch.create(command); } catch (error) { failure = error ?? new Error('Fork failed'); }
-  try { await branch.cleanup(); } catch (error) { if (failure === undefined) failure = error; }
+  try { await branch.cleanup(); } catch (error) { failure = new Error([failure && String(failure), 'Branch cleanup failed: ' + String(error)].filter(Boolean).join('\n')); }
   if (failure !== undefined) throw failure;
   return result;
 }
@@ -123,19 +140,40 @@ class Branch {
   next: Session | null = null;
   guard: Guard | null = null;
   committed = false;
+  managedId: string | null = null;
+  managedPath: string | null = null;
 
   constructor(private host: Host, private session: Session, private runtime: string, private state: any, private path: string) {}
 
   async create(command: any): Promise<any> {
     const request: any = { type: 'prepare_fork', mode: kind(command) };
     if (command?.entryId !== undefined) request.entryId = command.entryId;
-    const branch = await this.session.raw(request);
+    const branch = kind(command) === 'fork_after' ? await this.prepareManaged(text(command, 'entryId')) : await this.session.raw(request);
     const destination = validatePrepared(this.host, branch, this.state, this.path);
     const retained = (error: unknown): Error => new Error('Conversation branch was saved at ' + destination + '; its history and dependencies were retained: ' + ((error as any)?.message ?? String(error)));
     let opened: Session;
-    try { opened = await this.open(branch, destination); } catch (error) { throw retained(error); }
-    try { await this.commit(opened); } catch (error) { throw retained(error); }
+    try { opened = await this.open(branch, destination); } catch (error) { throw this.managedId ? error : retained(error); }
+    try { await this.commit(opened); } catch (error) { throw this.managedId ? error : retained(error); }
     return { cancelled: false, text: branch?.text ?? null, state: { sessionId: branch?.sessionId ?? null, sessionFile: destination, cwd: branch?.cwd ?? null } };
+  }
+
+  private async prepareManaged(entryId: string): Promise<any> {
+    const cwd = this.session.cwd;
+    const savedRepository = cwd ? getProjectRepository(this.host.storageRoot(), cwd) : null;
+    if (!cwd || !savedRepository) throw new Error('This folder is not a Git repository');
+    const snapshot = await this.session.execute({ type: 'get_snapshot' });
+    const entries = snapshot.history.entries;
+    const selected = entries.find((entry: any) => entry.id === entryId);
+    if (selected?.type !== 'message' || selected.message?.role !== 'assistant' || selected.message.stopReason !== 'stop' || selected.message.content.some((part: any) => part.type === 'toolCall')) throw new Error('Select a finished final assistant response');
+    const repository = { repository: savedRepository.root, gitCommonDir: savedRepository.gitDir };
+    const sessionId = Registry.reserve(this.host.storageRoot());
+    this.managedId = sessionId;
+    Worktrees.prepare({ chatId: sessionId, ...repository, worktree: join(this.host.home, '.local/share/piop/worktrees', sessionId) }, this.host.storageRoot());
+    const created = await createWorktree({ sourceCwd: cwd, chatId: sessionId, home: this.host.home, repository });
+    rememberProjectRepository(this.host.storageRoot(), created.worktree, { root: created.worktree, gitDir: created.gitCommonDir });
+    const result = await publishBranchHistory({ root: this.host.storageRoot(), sourcePath: this.path, sessionId, cwd: created.worktree, entries, leafId: snapshot.history.leafId, entryId, name: this.state.sessionName ? this.state.sessionName + ' (branch)' : undefined });
+    this.managedPath = result.sessionPath;
+    return { sessionId, sessionPath: result.sessionPath, cwd: created.worktree };
   }
 
   private async open(branch: any, destination: string): Promise<Session> {
@@ -143,7 +181,10 @@ class Branch {
     const ownership = await this.host.ownership().begin(branchId, this.session.clientId(), { path: destination });
     this.guard = ownership;
     if (!ownership.owned) throw new Error(ownershipError());
-    const opened = await this.host.spawnSession({ key: branchId, spec: sessionSpec(this.session.spec, '--session', destination), timeout: this.session.timeout, transient: true, clientId: this.session.clientId(), cwd: this.session.cwd });
+    const cwd = text(branch, 'cwd') || this.session.cwd;
+    const spec = sessionSpec(this.session.spec, '--session', destination);
+    if (cwd) { spec.cwd = cwd; if (spec.env.PIOP_SESSION_CWD !== undefined) spec.env.PIOP_SESSION_CWD = cwd; }
+    const opened = await this.host.spawnSession({ key: branchId, spec, timeout: this.session.timeout, transient: true, clientId: this.session.clientId(), cwd });
     opened.setReservedPath(destination);
     this.next = opened;
     const actual = await opened.execute({ type: 'get_state' });
@@ -153,6 +194,7 @@ class Branch {
 
   private async commit(opened: Session): Promise<void> {
     if (!this.host.current(this.runtime, this.session)) throw new Error('The conversation changed while preparing its branch');
+    if (this.managedId) Worktrees.activate(this.managedId, this.host.storageRoot());
     const presence = this.session.views().find(([id]) => id === this.runtime)?.[1] ?? {};
     this.session.detachView(this.runtime);
     opened.setReservedPath(null);
@@ -160,21 +202,37 @@ class Branch {
     this.host.attachView(this.runtime, opened, presence);
     this.committed = true;
     this.host.remember(this.runtime, opened);
-    await this.session.finishDetach(false, true);
-    await this.host.releaseUnused(this.session);
+    try {
+      await this.session.finishDetach(false, true);
+      await this.host.releaseUnused(this.session);
+    } catch (error) {
+      this.host.output({ type: 'diagnostic', line: 'Branch created, but source chat release failed: ' + String(error) });
+    }
     this.host.reconcile(opened);
     if (this.host.current(this.runtime, opened)) opened.publish({ type: 'session_switched' }, this.runtime);
   }
 
   async cleanup(): Promise<void> {
+    const failures: string[] = [];
+    const attempt = async (operation: () => unknown | Promise<unknown>) => {
+      try { await operation(); } catch (error) { failures.push(String(error)); }
+    };
     if (!this.committed && this.next) {
-      await this.next.stop();
+      await attempt(() => this.next!.stop());
       this.host.forgetWorker(this.next);
     }
     const guard = this.guard;
     this.guard = null;
-    guard?.release(this.host.ownership(), false);
+    await attempt(() => guard?.release(this.host.ownership(), false));
+    if (!this.committed && this.managedId) {
+      const id = this.managedId;
+      await attempt(() => discardBranchHistory(this.host.storageRoot(), id, this.managedPath));
+      await attempt(() => Worktrees.abandon(id, this.host.storageRoot()));
+      await attempt(() => Registry.releaseReservation(this.host.storageRoot(), id));
+    }
+    if (failures.length) throw new Error(failures.join('\n'));
   }
+
 }
 
 function validatePrepared(host: Host, branch: any, state: any, parent: string): string {

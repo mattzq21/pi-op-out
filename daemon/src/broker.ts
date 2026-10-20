@@ -209,6 +209,13 @@ async function respondBrokerRequest(app: App, broker: BrokerRuntime, method: str
     return providerAuth.forOwner(app, 'fast-models', value.hostId, { action: 'fast_models' });
   }
   if (method === 'GET' && path === '/agents') return brokerAgents(app, broker);
+  if (method === 'POST' && path === '/runtime-event') {
+    const value = parseJson(body, 'Invalid runtime event');
+    if (value?.hostId !== 'local') throw new Error('Runtime events come only from local agents');
+    const connection = app.pi.connections.get('local');
+    if (!connection?.alive) throw new Error('The local Piop host is not running');
+    return connection.request({ type: 'runtime_event', event: { id: randomUUID(), name: value.name, data: value.data } });
+  }
   if (method === 'POST' && path === '/cancel') {
     const value = parseJson(body, 'Invalid cancellation request');
     const requestId = value?.requestId;

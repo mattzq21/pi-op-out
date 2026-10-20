@@ -2,7 +2,7 @@ import type { AppRequest } from "../../extensions/piop-define-agents/contracts.t
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { registerSubagents } from "./session-broker/subagents.ts";
 import { registerSubagentMailbox } from "./session-broker/subagent-mailbox.ts";
-import { registerConversationClient } from "./session-broker/client.ts";
+import { MESSAGE_TIMEOUT_MS, currentHost, registerConversationClient, request } from "./session-broker/client.ts";
 import { registerOrchestration } from "./session-broker/orchestration.ts";
 import { existsSync } from "node:fs";
 import { initialize } from "./session-broker/session-child-index.cjs";
@@ -22,6 +22,16 @@ export default function sessionBroker(pi: ExtensionAPI) {
     const file = ctx.sessionManager.getSessionFile();
 
     if (file) await initialize(file, ctx.sessionManager.getSessionId(), !existsSync(file));
+  });
+  // Piop decides what a finished turn means. Pi waits here, so Piop's work ends before Pi takes a follow-up.
+  pi.on("turn_end", async (event, ctx) => {
+    const { type: _type, context: _context, entries: _entries, continue: _continue, toolResults: _toolResults, ...rest } = event as typeof event & Record<string, unknown>;
+    const data = { ...rest, sessionId: ctx.sessionManager.getSessionId(), cwd: ctx.cwd };
+    // App chats answer over Pi's input. Chats run for one message by another agent have no input channel and use the broker.
+    const send = Object.getOwnPropertyDescriptor(globalThis, Symbol.for("piop.runtime-events"))?.value as ((name: string, data: unknown) => Promise<void>) | undefined;
+
+    if (send) await send("turn_end", data);
+    else await request("/runtime-event", { hostId: currentHost(), name: "turn_end", data }, undefined, MESSAGE_TIMEOUT_MS);
   });
   registerConversationClient(pi);
   const mailbox = registerSubagentMailbox(pi);

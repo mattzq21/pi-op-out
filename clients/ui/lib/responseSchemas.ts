@@ -59,7 +59,13 @@ export const modelSchema = z.object({ provider: z.string(), id: z.string(), name
 
 export const contextUsageSchema = z.object({ tokens: z.union([z.number(), z.null()]), contextWindow: z.number(), percent: z.union([z.number(), z.null()]) });
 
-export const agentStateSchema = z.object({ viewers: z.number().optional(), pendingMessages: z.array(pendingMessageSchema).optional(), model: z.union([modelSchema, z.null()]), thinkingLevel: z.string(), isStreaming: z.boolean(), isCompacting: z.boolean().optional(), isPaused: z.boolean().optional(), isPausing: z.boolean().optional(), sessionFile: z.string().optional(), sessionId: z.string(), sessionName: z.string().optional(), messageCount: z.number(), pendingMessageCount: z.number(), activity: z.string().optional(), contextUsage: contextUsageSchema.optional() });
+export const gitRepositorySchema = z.object({ root: z.string().min(1), gitDir: z.string().min(1) });
+
+export const forkSourceSchema = z.object({ sessionId: z.string().min(1), sessionPath: z.string().min(1), entryId: z.string().min(1) });
+
+export const agentStateSchema = z.object({ viewers: z.number().optional(), pendingMessages: z.array(pendingMessageSchema).optional(), model: z.union([modelSchema, z.null()]), thinkingLevel: z.string(), isStreaming: z.boolean(), isCompacting: z.boolean().optional(), isPaused: z.boolean().optional(), isPausing: z.boolean().optional(), sessionFile: z.string().optional(), sessionId: z.string(), sessionName: z.string().optional(), cwd: z.string().optional(), repository: z.union([gitRepositorySchema, z.null()]).optional(), forkSource: forkSourceSchema.optional(), messageCount: z.number(), pendingMessageCount: z.number(), activity: z.string().optional(), contextUsage: contextUsageSchema.optional() });
+
+export const forkAfterResultSchema = z.object({ cancelled: z.boolean().optional(), state: z.object({ cwd: z.union([z.string(), z.null()]).optional() }).optional() });
 
 export const sessionSnapshotSchema = z.object({ revision: z.string(), state: agentStateSchema, history: z.object({ entries: z.array(entrySchema), leafId: z.union([z.string(), z.null()]), omittedEntries: z.number().optional(), incomplete: z.boolean().optional(), damagedLines: z.array(z.number().int().positive()).optional() }), sequence: z.number(), epoch: z.string(), liveTools: z.array(rpcEventSchema), queue: rpcEventSchema });
 

@@ -166,10 +166,11 @@ describe('split conversation lifecycle', () => {
   test('branching forks before the next prompt', async () => {
     const entries = [{ type: 'message', id: 'u', parentId: null, message: { role: 'user', content: 'Question' } }, { type: 'message', id: 'a', parentId: 'u', message: { role: 'assistant', content: 'Answer', stopReason: 'stop' } }, { type: 'message', id: 'next', parentId: 'a', message: { role: 'user', content: 'Next question' } }];
     responses.get('get_snapshot').history = { entries, leafId: 'next' };
+    responses.get('get_snapshot').state = { ...responses.get('get_snapshot').state, repository: { root: '/repo', gitDir: '/repo/.git' } };
     const changes = []; const changed = Promise.withResolvers();
-    responses.set('fork_after', () => { const snapshot = responses.get('get_snapshot'); snapshot.state = { ...snapshot.state, sessionId: 'forked', sessionName: 'Fork', sessionFile: '/fork.jsonl' }; snapshot.history = { entries: entries.slice(0, 2), leafId: 'a' };
+    responses.set('fork_after', () => { const snapshot = responses.get('get_snapshot'); snapshot.state = { ...snapshot.state, sessionId: 'forked', sessionName: 'Fork', sessionFile: '/fork.jsonl', cwd: '/worktrees/forked' }; snapshot.history = { entries: entries.slice(0, 2), leafId: 'a' };
 
-    return {}; });
+    return { cancelled: false, state: { cwd: '/worktrees/forked' } }; });
     responses.set('get_entries', { entries: entries.slice(0, 2), leafId: 'a' });
     await render({ onSessionChange: (...args) => { changes.push(args); changed.resolve(); } });
     assert.ok(control('Fork'), JSON.stringify({ text: document.body.textContent, calls }));
@@ -178,10 +179,12 @@ describe('split conversation lifecycle', () => {
     await Promise.race([changed.promise, untilDom(() => document.querySelector('.split-control-error')).then(error => assert.fail(error.textContent))]);
     assert.equal(pool.forSession({ id: 'forked', cwd: '/repo', path: '/fork.jsonl', hostId: 'local' }), transport);
     assert.equal(changes[0][0].id, 'forked'); assert.equal(changes[0][0].path, '/fork.jsonl'); assert.equal(changes[0][0].name, 'Fork'); assert.equal(changes[0][1], transport);
+    assert.equal(changes[0][0].cwd, '/worktrees/forked'); assert.equal(transport.currentCwd(), '/worktrees/forked');
   });
 
   test('branching the latest answer forks after it, honors cancellation, and exposes runtime errors', async () => {
     responses.get('get_snapshot').history = { entries: [{ type: 'message', id: 'a', parentId: null, message: { role: 'assistant', content: 'Answer', stopReason: 'stop' } }], leafId: 'a' };
+    responses.get('get_snapshot').state = { ...responses.get('get_snapshot').state, repository: { root: '/repo', gitDir: '/repo/.git' } };
     const changes = [];
     responses.set('fork_after', { cancelled: true }); await render({ onSessionChange: value => changes.push(value) });
     assert.ok(control('Fork'), JSON.stringify({ text: document.body.textContent, calls }));

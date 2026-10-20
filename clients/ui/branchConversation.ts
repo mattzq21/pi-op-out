@@ -1,5 +1,6 @@
 import { z } from "zod";
-import { agentStateSchema, entrySchema } from "./lib/responseSchemas";
+import { agentStateSchema, entrySchema, forkAfterResultSchema } from "./lib/responseSchemas";
+import { branchCwd } from "./lib/branching";
 import { beginBranching } from "./lib/branchActivity";
 import { type Dispatch, type RefObject, type StateUpdate } from "./lib/solid";
 
@@ -18,7 +19,7 @@ type Context = {
   sessions: SessionSummary[];
   runtimePool: SessionRuntimePool;
   messages: ChatMessage[];
-  rekeyConversationUi: (previousKey: string, nextKey: string, ownerTransport: NativeTransport, moveTerminals?: boolean, copyDraft?: boolean) => void;
+  rekeyConversationUi: (previousKey: string, nextKey: string, ownerTransport: NativeTransport, mode?: "rename" | "branch") => void;
   activeTransportRef: RefObject<NativeTransport>;
   setActiveCwd: Dispatch<StateUpdate<string | undefined>>;
   setState: Dispatch<StateUpdate<AgentState>>;
@@ -29,10 +30,12 @@ type Context = {
   activateConversationKey: (key: string) => void;
   addNotice: (notice: { title: string; message: string; }) => void;
   syncSessionIndex: () => Promise<void>;
+  requestComposerFocus: () => void;
 };
 
-export function createBranchConversation({ transport, activeConversationKeyRef, branchPending, state, sessions, runtimePool, rekeyConversationUi, activeTransportRef, setActiveCwd, setState, setMessages, updateConnected, configureRuntime, transportConversationKeys, activateConversationKey, syncSessionIndex }: Context) {
-  return async (message: ChatMessage) => {
+export function createBranchConversation({ transport, activeConversationKeyRef, branchPending, state, sessions, runtimePool, rekeyConversationUi, activeTransportRef, setActiveCwd, setState, setMessages, updateConnected, configureRuntime, transportConversationKeys, activateConversationKey, syncSessionIndex, requestComposerFocus }: Context) {
+  /** "branch" creates a managed worktree chat; "copy" copies history in the same folder for Fork and forget. */
+  return async (message: ChatMessage, mode: "branch" | "copy" = "branch") => {
     const ownerTransport = transport; const previousKey = activeConversationKeyRef.current;
     const entryId = await resolveMessageEntry(ownerTransport, message);
     const pendingKey = `${previousKey}:${entryId}`;
@@ -47,23 +50,26 @@ export function createBranchConversation({ transport, activeConversationKeyRef, 
     const parentSession = [...sessions, ...runtimePool.liveSessionSummaries()].find((session) => session.path === sourcePath && (session.hostId ?? "local") === sourceHostId);
 
     const forkSource = async () => {
-      const fork = await ownerTransport.command({ type: "fork_after", entryId }, z.object({ cancelled: z.boolean().optional() }));
+      const fork = await ownerTransport.command({ type: mode === "branch" ? "fork_after" : "copy_after", entryId }, forkAfterResultSchema);
 
       if (fork.cancelled) return false;
 
-      return true;
+      return { cwd: fork.state?.cwd ?? undefined };
 
     };
 
-    const publishBranch = (nextState: AgentState, history: { entries: PiEntry[]; leafId: string | null }, nextKey: string) => {
+    const publishBranch = (nextState: AgentState, history: { entries: PiEntry[]; leafId: string | null }, nextKey: string, cwd: string | undefined) => {
+      if (cwd !== undefined) ownerTransport.adoptBranchCwd(cwd);
+
       if (parentSession) {
-        runtimePool.setLiveSession(ownerTransport, { ...parentSession, id: nextState.sessionId, path: nextState.sessionFile ?? "", name: nextState.sessionName || parentSession.name, messageCount: nextState.messageCount });
+        runtimePool.setLiveSession(ownerTransport, { ...parentSession, id: nextState.sessionId, path: nextState.sessionFile ?? "", cwd: cwd ?? parentSession.cwd, name: nextState.sessionName || parentSession.name, messageCount: nextState.messageCount });
       }
 
-      rekeyConversationUi(previousKey, nextKey, ownerTransport, true);
+      rekeyConversationUi(previousKey, nextKey, ownerTransport, mode === "branch" ? "branch" : "rename");
 
       if (activeTransportRef.current === ownerTransport && activeConversationKeyRef.current === nextKey) {
-        setState(nextState); setMessages(branchMessages(history.entries, history.leafId)); updateConnected(true);
+        if (cwd !== undefined) setActiveCwd(cwd);
+        setState(nextState); setMessages(branchMessages(history.entries, history.leafId)); updateConnected(true); requestComposerFocus();
       }
 
     };
@@ -98,7 +104,9 @@ export function createBranchConversation({ transport, activeConversationKeyRef, 
     const finishBranching = beginBranching();
 
     try {
-      if (!await forkSource()) return false;
+      const forked_ = await forkSource();
+
+      if (!forked_) return false;
       forked = true;
       const nextState = await ownerTransport.command({ type: "get_state" }, agentStateSchema);
       const history = await ownerTransport.command({ type: "get_entries" }, z.object({ entries: z.array(entrySchema), leafId: z.union([z.string(), z.null()]) }));
@@ -106,7 +114,7 @@ export function createBranchConversation({ transport, activeConversationKeyRef, 
       const nextKey = `${sourceHostId}:${nextState.sessionId}`;
       await inheritSessionGroup(`${sourceHostId}:${state.sessionId}`, nextKey, parentSession);
       runtimePool.bind(sourceHostId, nextState.sessionId, ownerTransport);
-      publishBranch(nextState, history, nextKey);
+      publishBranch(nextState, history, nextKey, mode === "branch" ? branchCwd(forked_.cwd, nextState.cwd) : sourceCwd);
 
       void syncSessionIndex();
 

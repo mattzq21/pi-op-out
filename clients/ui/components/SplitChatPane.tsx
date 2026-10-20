@@ -298,13 +298,13 @@ export function SplitChatPane(componentProps: Props) {
 
   const reportControlError = (cause: unknown) => setControlError(cause instanceof Error ? cause.message : String(cause));
 
-  const branch = async (message: ChatMessage) => {
+  const branch = async (message: ChatMessage, mode: "branch" | "copy" = "branch") => {
     const finishBranching = beginBranching();
     const capturedTransport = transport(); const capturedSession = { ...session() }; const capturedRuntimePool0 = componentProps.runtimePool; const capturedSession1 = componentProps.session; const capturedOnSessionChange2 = componentProps.onSessionChange;
 
- try { const entryId = await resolveMessageEntry(capturedTransport, message); const result = await capturedTransport.command({ type: "fork_after", entryId }, z.object({ cancelled: z.boolean().optional() }));
+ try { const entryId = await resolveMessageEntry(capturedTransport, message); const result = await capturedTransport.command({ type: mode === "branch" ? "fork_after" : "copy_after", entryId }, forkAfterResultSchema);
 
- if (result.cancelled) return false; const nextState = await capturedSession.refresh(); await inheritSessionGroup(`${capturedSession1.hostId ?? "local"}:${capturedSession1.id}`, `${capturedSession1.hostId ?? "local"}:${nextState.sessionId}`, capturedSession1); capturedRuntimePool0.bind(capturedSession1.hostId ?? "local", nextState.sessionId, capturedTransport); capturedOnSessionChange2({ ...capturedSession1, id: nextState.sessionId, path: nextState.sessionFile || "", name: nextState.sessionName || capturedSession1.name }, capturedTransport);
+ if (result.cancelled) return false; const nextState = await capturedSession.refresh(); const cwd = mode === "branch" ? branchCwd(result.state?.cwd, nextState.cwd) : capturedSession1.cwd; if (mode === "branch") capturedTransport.adoptBranchCwd(cwd); await inheritSessionGroup(`${capturedSession1.hostId ?? "local"}:${capturedSession1.id}`, `${capturedSession1.hostId ?? "local"}:${nextState.sessionId}`, capturedSession1); capturedRuntimePool0.bind(capturedSession1.hostId ?? "local", nextState.sessionId, capturedTransport); capturedOnSessionChange2({ ...capturedSession1, cwd, id: nextState.sessionId, path: nextState.sessionFile || "", name: nextState.sessionName || capturedSession1.name }, capturedTransport);
 
  return true; } catch (reason) { reportControlError(reason);
 
@@ -325,7 +325,7 @@ export function SplitChatPane(componentProps: Props) {
       if (conversationBusy()) throw new Error("Wait for the current response and queued messages to finish first");
       const entryId = await resolveMessageEntry(owner, message);
 
-        if (!await branch({ ...message, entryId })) return;
+        if (!await branch({ ...message, entryId }, "copy")) return;
 
       await archiveOriginal(source);
     } catch (reason) { reportControlError(reason); }
@@ -353,7 +353,7 @@ export function SplitChatPane(componentProps: Props) {
 
   const agentDefinitionHost = () => (componentProps.session.hostId ?? "local") === "local" ? localHostLabel() : componentProps.session.hostName || componentProps.session.hostId;
 
-  const renderSplitPaneStatus = () => (error() ? <div class="split-pane-status error">{(error())}</div> : <ChatView followConversation={followSource} readOnly={Boolean(componentProps.inheritedReviewParent || componentProps.archivedReview)} agentHostLabel={agentDefinitionHost()} transport={transport()} state={transport().promptControls.state(session().state)} messages={session().messages} debug={componentProps.settings.debugMode} agents={chatAgents()} activeAgent={definedAgents()?.active} agentLocked={definedAgents()?.locked} agentSaved={definedAgents()?.saved} agentUnavailable={definedAgents()?.unavailable} refreshError={session().error} capabilityErrors={session().capabilityErrors} capabilitiesLoading={session().capabilitiesLoading} onRetryCapabilities={session().retryCapabilities} modelAliases={componentProps.modelVisibility.aliases(componentProps.session.hostId ?? "local")} models={chatModels()} commands={chatCommands()} thinkingLevels={transport().promptControls.levels(session().thinkingLevels)} widgets={chatWidgets()} statuses={transport().promptControls.statuses(statuses(), fastModelNames(hostFastModels(componentProps.session.hostId ?? "local")()), transport().promptControls.state(session().state).model)} projectCwd={componentProps.session.cwd} controlsDisabled={!connected()} draft={componentProps.draft} onDraftChange={(update) => componentProps.drafts.setTransportDraft(transport(), update)} focusRequest={(componentProps.focusRequest === undefined ? 0 : componentProps.focusRequest) + extensionFocusRequest()} onActivate={componentProps.onActivate} uploads={uploads()} onUploadsChange={setUploads} onSend={send} onChangePending={(id, behavior) => transport().changePendingMessage(id, behavior)} onAbort={abort} onPause={pause} onResume={resume} onOpenTerminal={componentProps.onOpenTerminal} onOpenProject={() => undefined} onBranch={branch} onForkAndForget={forkAndForget} onAgent={(name) => void transport().command({ type: "select_agent", agent: name }).then(() => { transport().promptControls.reset();
+  const renderSplitPaneStatus = () => (error() ? <div class="split-pane-status error">{(error())}</div> : <ChatView followConversation={followSource} readOnly={Boolean(componentProps.inheritedReviewParent || componentProps.archivedReview)} agentHostLabel={agentDefinitionHost()} transport={transport()} state={transport().promptControls.state(session().state)} messages={session().messages} debug={componentProps.settings.debugMode} agents={chatAgents()} activeAgent={definedAgents()?.active} agentLocked={definedAgents()?.locked} agentSaved={definedAgents()?.saved} agentUnavailable={definedAgents()?.unavailable} refreshError={session().error} capabilityErrors={session().capabilityErrors} capabilitiesLoading={session().capabilitiesLoading} onRetryCapabilities={session().retryCapabilities} modelAliases={componentProps.modelVisibility.aliases(componentProps.session.hostId ?? "local")} models={chatModels()} commands={chatCommands()} thinkingLevels={transport().promptControls.levels(session().thinkingLevels)} widgets={chatWidgets()} statuses={transport().promptControls.statuses(statuses(), fastModelNames(hostFastModels(componentProps.session.hostId ?? "local")()), transport().promptControls.state(session().state).model)} projectCwd={componentProps.session.cwd} controlsDisabled={!connected()} draft={componentProps.draft} onDraftChange={(update) => componentProps.drafts.setTransportDraft(transport(), update)} focusRequest={(componentProps.focusRequest === undefined ? 0 : componentProps.focusRequest) + extensionFocusRequest()} onActivate={componentProps.onActivate} uploads={uploads()} onUploadsChange={setUploads} onSend={send} onChangePending={(id, behavior) => transport().changePendingMessage(id, behavior)} onAbort={abort} onPause={pause} onResume={resume} onOpenTerminal={componentProps.onOpenTerminal} onOpenProject={() => undefined} onBranch={message => branch(message)} onForkAndForget={forkAndForget} onAgent={(name) => void transport().command({ type: "select_agent", agent: name }).then(() => { transport().promptControls.reset();
 
   return session().refresh(); }).catch(reportControlError)} onModel={(model) => transport().promptControls.model(model, transport().promptControls.state(session().state).thinkingLevel)} onToggleFastMode={() => transport().promptControls.toggle(statuses())} onThinking={(level) => transport().promptControls.thinking(level)} />);
 
@@ -374,3 +374,5 @@ export function SplitChatPane(componentProps: Props) {
 }
 
 import { beginBranching } from "../lib/branchActivity";
+import { branchCwd } from "../lib/branching";
+import { forkAfterResultSchema } from "../lib/responseSchemas";

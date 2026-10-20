@@ -682,3 +682,4 @@ kbd { font: 11px "DM Sans"; border: 1px solid #d5d1c9; background: white; paddin
 .dictation-form > div { grid-column: 2; display: flex; align-items: center; gap: 4px; }
 .dictation-form .primary-button:disabled { opacity: .45; }
 .dictation-form .dictation-link { margin: 0; padding: 4px 8px; }
+.fork-source { display: flex; justify-content: center; margin: 4px 0 12px; color: var(--muted); font-size: 11px; }.fork-source-link { border: 0; padding: 2px 6px; border-radius: 5px; color: var(--muted); background: transparent; font: inherit; text-decoration: underline; }.fork-source-link:hover { color: var(--ink); background: var(--hover); }

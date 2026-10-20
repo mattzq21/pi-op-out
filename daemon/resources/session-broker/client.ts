@@ -18,7 +18,7 @@ interface BrokerRequest {
   action?: string; sourceSessionId?: string; sourceHostId?: string; wake?: boolean;
   hostId?: string; sessionId?: string; id?: string; cwd?: string; name?: string;
   message?: string; requestId?: string; deadline?: number; deliveryId?: string;
-  recoveryDepth?: number;
+  recoveryDepth?: number; data?: Record<string, unknown>;
 }
 
 const responseSchema = Type.Object({ error: Type.Optional(Type.String()), data: Type.Optional(Type.Unknown()) });

@@ -2,12 +2,15 @@ import { realpathSync, statSync } from 'node:fs';
 import { extname, join, sep } from 'node:path';
 import { STORAGE_DIRECTORY } from './config';
 import { homeDir, piExecutable } from './environment';
-import { sessionIdentity } from './pi_launch';
+import { readFirstLine, sessionIdentity } from './pi_launch';
 import { desktopSessionsDir } from './process_io';
 import { DEFAULT_TIMEOUT, hostOperation, profileRoot, runHostOperation, STORAGE_TIMEOUT } from './host_operations';
 import { loadAppSettings } from './settings';
 import * as restoreRecovery from './restore_recovery';
 import * as storageTransactions from './storage_transactions';
+import { StorageTransactionError } from './storage_transactions';
+import * as chatWorktrees from './chat_worktree_lifecycle';
+import * as SessionTables from '../resources/session-database.cjs';
 import { requireLocal } from './host_connection';
 import { restoreSessionTree } from './restore';
 import { MutationGuard } from './conversation_ownership';
@@ -103,6 +106,24 @@ async function retireArchivedSession(app: App, client: PiRuntime, hostId: string
 
 async function releaseAll(guards: MutationGuard[]): Promise<void> { for (const guard of guards) await guard.release(); }
 
+/** True when a failed storage transaction may have changed storage, so Git steps must wait for recovery. */
+function maybeCommitted(error: unknown): boolean { return error instanceof StorageTransactionError && error.state !== 'rolled-back'; }
+
+function reportWarnings(app: App, hostId: string, warnings: string[]): void {
+  if (!warnings.length) return;
+  const line = warnings.join('\n');
+  console.error(line);
+  app.emit('pi://daemon-error', { hostId, line });
+}
+
+/** Undoes Git steps after a failed transcript step that changed nothing, keeping the first error. */
+async function undoAfter(error: unknown, undo: () => Promise<void>): Promise<never> {
+  if (maybeCommitted(error)) throw error;
+  try { await undo(); }
+  catch (cleanup: any) { throw new Error(`${(error as any)?.message ?? error}\nWorktree cleanup failed: ${cleanup?.message ?? cleanup}`); }
+  throw error;
+}
+
 async function archiveSessionPaths(app: App, client: PiRuntime, hostId: string, sessionPath: string, clientId: string, mutations: MutationGuard[]): Promise<string[]> {
   mutations.push(await MutationGuard.acquire(app, hostId, sessionPath, clientId, false, 'archive'));
   await retireArchivedSession(app, client, hostId, sessionPath);
@@ -132,20 +153,18 @@ export async function archiveSession(app: App, runtime: TerminalRuntime, session
       for (const path of paths) sessionIds.push(await sessionIdentity(settings, hostId, path));
       terminalIds.push(...terminalSessions.sessionTerminals(runtime, hostId, sessionIds));
       await stopTerminals(runtime, terminalIds);
+      const archiving = await chatWorktrees.beginArchive(sessionIds);
       const invalidate = app.sessionIndex.projects.invalidateAfter(hostId);
       try { await storageTransactions.archive(paths); }
+      catch (error) { await undoAfter(error, () => chatWorktrees.rollbackArchive(archiving)); }
       finally { invalidate(); }
-      const warnings: string[] = [];
+      const warnings = await chatWorktrees.finishArchive(archiving);
       for (let index = 0; index < paths.length; index++) {
         try { await mutations[index]!.finishCommitted(); }
         catch (error: any) { warnings.push(`Archive committed, but ownership cleanup failed for ${paths[index]}: ${error?.message ?? error}`); }
         app.emit('pi://session-removed', { hostId, sessionPath: paths[index], sessionId: sessionIds[index] });
       }
-      if (warnings.length) {
-        const line = warnings.join('\n');
-        console.error(line);
-        app.emit('pi://daemon-error', { hostId, line });
-      }
+      reportWarnings(app, hostId, warnings);
     } finally { await releaseAll(mutations); }
   });
 }
@@ -215,6 +234,7 @@ async function deleteStoredSessions(app: App, runtime: PiRuntime, sessionPaths: 
       for (const [path] of paths) sessionIds.push(await sessionIdentity(settings, hostId, path));
       await stopTerminals(app.terminals, terminalSessions.sessionTerminals(app.terminals, hostId, sessionIds));
       await deleteSessionTargets(targets, hostId);
+      reportWarnings(app, hostId, await chatWorktrees.releaseDeleted(sessionIds));
       for (let index = 0; index < paths.length; index++) {
         try { await mutations[index]!.finishCommitted(); }
         catch (error: any) { console.error(`Conversation deletion committed, but ownership cleanup failed for ${paths[index]![0]}: ${error.message ?? error}`); }
@@ -244,10 +264,44 @@ export async function restoreArchivedSession(app: App, sessionPath: string, host
   const hostId = hostIdOption ?? 'local';
   await app.pi.lifecycle.run(async () => {
     requireLocal(hostId);
-    const result = await restoreSessionTree(sessionPath, path => MutationGuard.acquire(app, hostId, path, clientId, true, 'restore'));
+    const settings = await loadAppSettings(app);
+    const source = await locateSessionFile(sessionPath, true);
+    const tree = [source, ...(await sessionDescendants(source, true, false)).map(([path]) => path)];
+    const chatIds: string[] = [];
+    for (const path of tree) chatIds.push(await sessionIdentity(settings, hostId, path));
+    const restoring = await chatWorktrees.beginRestore(chatIds);
+    let result: Awaited<ReturnType<typeof restoreSessionTree>>;
+    try { result = await restoreSessionTree(sessionPath, path => MutationGuard.acquire(app, hostId, path, clientId, true, 'restore')); }
+    catch (error) { return undoAfter(error, () => chatWorktrees.rollbackRestore(restoring)); }
+    try {
+      for (const moved of chatWorktrees.relocations(restoring)) await relocateChatTree(moved, result.sessions.map(session => session.sessionPath));
+      await chatWorktrees.finishRestore(restoring);
+    } catch (error: any) { reportWarnings(app, hostId, [`Restore committed; worktree recovery will retry: ${error?.message ?? error}`]); }
     for (const session of result.sessions) app.emit('pi://session-restored', { hostId, sessionId: session.sessionId, sessionPath: session.sessionPath });
     app.emit('pi://sessions-changed', {});
   });
+}
+
+/** Points each transcript in sessionPaths that still names moved.from at the restored folder moved.to. Idempotent. */
+async function relocateChatTree(moved: chatWorktrees.Relocation, sessionPaths: string[]): Promise<void> {
+  for (const path of sessionPaths) {
+    const header = JSON.parse(readFirstLine(path));
+    if (header?.cwd !== moved.from) continue;
+    try { await runHostOperation(relocateOperation, { profile: profileRoot(), sessionPath: path, cwd: moved.to }); }
+    catch (error: any) { throw new Error(`Could not point ${path} at the restored worktree ${moved.to}: ${error?.message ?? error}`); }
+  }
+}
+
+/**
+ * Finishes or undoes chat worktree steps that a crash interrupted. Call once at daemon startup, before clients connect.
+ * Throws with every record that still needs recovery.
+ */
+export async function recoverChatWorktrees(app: App): Promise<void> {
+  await app.pi.lifecycle.run(() => chatWorktrees.recover(async moved => {
+    const path = SessionTables.lookup(profileRoot(), moved.chatId);
+    if (typeof path !== 'string') throw new Error('Restored chat has no transcript: ' + moved.chatId);
+    await relocateChatTree(moved, [path, ...(await sessionDescendants(path, false, false)).map(([child]) => child)]);
+  }));
 }
 
 export async function relocateSession(app: App, sessionPath: string, cwd: string, hostIdOption: string | undefined | null, clientId: string): Promise<void> {

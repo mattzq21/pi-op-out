@@ -9,6 +9,7 @@ import { localLaunchDirectory, remoteDirectoryPath, remoteHost, ssh } from './pi
 import { output, runLimited, shellQuote } from './process_io';
 import { inspectSessionProjectsWith } from './folder_inspection';
 import { ProjectMetadataCache } from './project_metadata';
+import { refreshProjectRepository } from './project_repositories';
 import * as sidebarStorage from './sidebar_storage';
 import * as Registry from './session_registry';
 import * as restoreRecovery from './restore_recovery';
@@ -237,7 +238,11 @@ export async function validateProjectDirectory(app: App, path: string, hostId: s
     await validateSessionWorkingDirectory(await loadAppSettings(app), hostId, path);
     return path;
   }
-  if (hostId === 'local') return validateLocalProjectDirectory(path);
+  if (hostId === 'local') {
+    const cwd = validateLocalProjectDirectory(path);
+    await refreshProjectRepository(join(homeDir(), STORAGE_DIRECTORY), cwd);
+    return cwd;
+  }
   const settings = await loadAppSettings(app); const host = remoteHost(settings, hostId);
   const script = `test -d ${shellQuote(path)} && cd ${shellQuote(path)} || exit 1; candidate=$(pwd -P); for storage in "$HOME/.piop" "$HOME/.piop-dev"; do [ ! -d "$storage" ] || storage=$(cd "$storage" && pwd -P); case "$candidate" in "$storage"|"$storage"/*) echo 'Piop storage directories cannot be selected as projects' >&2; exit 1;; esac; done; printf '%s\\n' "$candidate"`;
   let result;

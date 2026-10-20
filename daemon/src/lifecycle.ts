@@ -1,3 +1,4 @@
+import { recoverChatWorktrees } from './archives';
 import { App } from './app';
 import { DEVELOPMENT } from './config';
 import * as daemonEndpoint from './daemon_endpoint';
@@ -60,6 +61,7 @@ async function runBackend(): Promise<void> {
     let settings: Awaited<ReturnType<typeof loadAppSettings>> | undefined;
     // Before the broker recovers message output, so files still held by workers of a dead daemon are free again.
     await step(() => stopOrphanedProcesses());
+    await step(() => recoverChatWorktrees(app));
     await step(() => startSessionBroker(app, app.broker));
     await step(async () => { settings = await loadAppSettings(app); });
     await step(() => prepareDefinedAgentsExtension());

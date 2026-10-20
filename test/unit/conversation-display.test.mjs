@@ -26,6 +26,7 @@ async function conversation(t, extra = {}) {
   };
   view = await renderComponent(ChatView, props);
   view.update = async changes => { props = { ...props, ...changes }; await view.rerender(props); };
+  view.dom = dom;
   return view;
 }
 
@@ -117,11 +118,56 @@ test('ending the pause offers retry only for the latest aborted response', async
   assert.ok(retries[0].closest('article').textContent.includes('Partial answer'));
 });
 
-test('Fork uses the current callback for an already displayed response', async t => {
-  const previous = [], current = [];
+const repositoryState = { model: null, thinkingLevel: 'off', isStreaming: false, messageCount: 2, repository: { root: '/repo', gitDir: '/repo/.git' } };
+const forkControl = view => view.container.querySelector('[aria-label="Fork"]');
+
+test('Fork appears only under finished final responses in a Git repository', async t => {
+  const question = { id: 'question', role: 'user', content: 'Question' };
+  const answer = { id: 'answer', role: 'assistant', content: [{ type: 'text', text: 'Answer' }], stopReason: 'stop' };
+  const view = await conversation(t, { state: repositoryState, messages: [question, answer], onBranch: () => {} });
+  assert.ok(forkControl(view));
+  for (const changed of [{ stopReason: 'aborted' }, { stopReason: 'error' }, { stopReason: 'length' }, { streaming: true }, { content: [{ type: 'text', text: 'Answer' }, { type: 'toolCall', id: 'call', name: 'read', arguments: {} }] }]) {
+    await view.update({ messages: [question, { ...answer, ...changed }] });
+    assert.equal(forkControl(view), null, JSON.stringify(changed));
+  }
+  await view.update({ messages: [question, answer], state: { ...repositoryState, repository: null } });
+  assert.equal(forkControl(view), null);
+  await view.update({ state: { ...repositoryState, repository: undefined } });
+  assert.equal(forkControl(view), null);
+});
+
+test('a branched conversation links to its original conversation and message', async t => {
+  const opened = [];
+  const forkSource = { sessionId: '019a6e31-8c42-7b05-a281-3d96e04fc812', sessionPath: '/sessions/original.jsonl', entryId: 'answer' };
+  const view = await conversation(t, { state: { ...repositoryState, forkSource }, forkSourceName: 'Login fix', onOpenForkSource: source => opened.push(source) });
+  const link = view.container.querySelector('.fork-source-link');
+  assert.equal(link.textContent, 'Branched from “Login fix”');
+  await act(() => link.click());
+  assert.deepEqual(opened, [forkSource]);
+  await view.update({ forkSourceName: undefined });
+  assert.equal(view.container.querySelector('.fork-source-link').textContent, 'Branched from 019a6e31');
+});
+
+test('opening the original conversation scrolls to the selected response once', async t => {
+  const scrolled = [], revealed = [];
   const view = await conversation(t, { messages: [
     { id: 'question', role: 'user', content: 'Question' },
-    { id: 'answer', role: 'assistant', content: 'Partial answer', stopReason: 'aborted' },
+    { id: 'answer', role: 'assistant', content: 'Answer', stopReason: 'stop' },
+  ], revealEntryId: 'answer', onEntryRevealed: () => revealed.push('answer') });
+  const prototype = view.container.ownerDocument.defaultView.Element.prototype;
+  const original = prototype.scrollIntoView;
+  prototype.scrollIntoView = function () { scrolled.push(this.getAttribute('data-response-id')); };
+  t.after(() => { prototype.scrollIntoView = original; });
+  await view.dom.flushFrames();
+  assert.deepEqual(scrolled, ['answer']);
+  assert.deepEqual(revealed, ['answer']);
+});
+
+test('Fork uses the current callback for an already displayed response', async t => {
+  const previous = [], current = [];
+  const view = await conversation(t, { state: repositoryState, messages: [
+    { id: 'question', role: 'user', content: 'Question' },
+    { id: 'answer', role: 'assistant', content: 'Answer', stopReason: 'stop' },
   ], onBranch: message => previous.push(message.id) });
   await view.update({ onBranch: message => current.push(message.id) });
   const fork = view.container.querySelector('[aria-label="Fork"]');

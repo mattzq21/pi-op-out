@@ -1,9 +1,11 @@
 import { randomUUID } from 'node:crypto';
+import { dirname } from 'node:path';
+import { getProjectRepository } from '../project_repositories';
 import * as Registry from '../session_registry';
 import { Mutex, errorText } from '../util/sync';
 import { array, clone, flag, kind, merge, setEntry, text, jsonEqual } from './json';
 import { savedToolPayload } from './payload';
-import { argument, prepareSpec, specIdentity, type LaunchSpec, type SessionLaunch } from './protocol';
+import { readHeaderLine, argument, prepareSpec, specIdentity, type LaunchSpec, type SessionLaunch } from './protocol';
 import { SessionQueue } from './queue';
 import type { Execution } from './queue_delivery';
 import { QueueStorage } from './queue_storage';
@@ -14,6 +16,7 @@ import { LiveOutput } from './session_live';
 import { SessionSettings } from './session_settings';
 import { PromptErrors } from './prompt_errors';
 import { ToolPayload, type ToolPayloadCache } from './tool_payload';
+import type { RuntimeEvent, RuntimeEventSource } from './runtime_events';
 import { RuntimeWorker, type Request, type WorkerObserver } from './worker';
 
 /** The controller functions that a session calls. */
@@ -28,6 +31,8 @@ export interface SessionHost {
   maintenance(key: string): void;
   canStopIdle(session: Session): boolean;
   refreshProviders(): Promise<number>;
+  /** Handles an event that Pi waits on. Pi continues when the promise settles; a rejection is reported to the chat. */
+  runtimeEvent(source: RuntimeEventSource, event: RuntimeEvent): Promise<void>;
 }
 
 const STATE_CHANGES = new Set(['session_info_changed', 'session_switched', 'model_select', 'thinking_level_changed', 'agent_start', 'agent_end', 'agent_settled',
@@ -120,6 +125,7 @@ export class Session {
     return {
       // inOrder already reports a failed event; the returned promise only tells the worker when the event is done.
       event: event => this.inOrder(() => this.receive(event)).then(() => {}, () => {}),
+      runtimeEvent: event => this.inOrder(() => this.receiveRuntimeEvent(event)),
       response: (event, request) => this.inOrder(() => this.response(event, request)),
       stderr: line => {
         if (this.stderrTail.push(line) > 20) this.stderrTail.shift();
@@ -373,6 +379,15 @@ export class Session {
     finally { this.idleStop.schedule(); }
   }
 
+  private async receiveRuntimeEvent(event: RuntimeEvent): Promise<void> {
+    this.idleStop.cancel();
+    try { await this.host.runtimeEvent({ sessionKey: this.key, identity: this.identity, cwd: this.cwd }, event); }
+    catch (error) {
+      this.host.output({ type: 'diagnostic', line: this.key + ': ' + event.name + ' failed: ' + errorText(error) });
+      throw error;
+    } finally { this.idleStop.schedule(); }
+  }
+
   private async receiveEvent(event: any): Promise<void> {
     if (kind(event) === 'queue_consumed') {
       if (event.sessionId === this.identity) await this.queue.consumed(text(event, 'queueId'));
@@ -542,6 +557,15 @@ export class Session {
   }
 
   private async receiveState(data: any): Promise<void> {
+    const queueRoot = this.host.queueRoot();
+    if (data && typeof data === 'object') {
+      data.cwd = this.cwd ?? undefined;
+      data.repository = queueRoot && this.cwd ? getProjectRepository(dirname(queueRoot), this.cwd) : null;
+      if (typeof data.sessionFile === 'string') {
+        const header = JSON.parse(readHeaderLine(data.sessionFile));
+        if (header.piopForkSource) data.forkSource = header.piopForkSource;
+      }
+    }
     if (!jsonEqual(this.state?.sessionId, data?.sessionId)) Registry.record(data, this.cwd);
     this.state = clone(data);
     const id = data?.sessionId;

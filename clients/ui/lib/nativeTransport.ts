@@ -275,6 +275,7 @@ export class NativeTransport {
     } finally { this.listeners.delete(listener); }
   }
   currentCwd() { return this.cwd; }
+  adoptBranchCwd(cwd: string) { this.cwd = cwd; }
   currentSessionPath() { return this.sessionPath; }
   isTemporaryChat() { return this.temporaryChat; }
   lastDiagnostic() { return this.stderrLines.join("\n"); }

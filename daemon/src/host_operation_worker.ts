@@ -15,6 +15,8 @@ function started(operation: (input: any) => Promise<unknown> | unknown): Handler
 }
 
 const handlers: Record<HostOperationName, Handler> = {
+  'chat-branch-history': started(async input => (await import('./chat_branch_history')).publishBranchHistory(input)),
+  'discard-chat-branch': started(async input => (await import('./chat_branch_history')).discardBranchHistory(input.root, input.sessionId, input.sessionPath)),
   'session-descendants': started(async input => (await import('../resources/session-descendants.cjs')).sessionDescendants(input)),
   'index-sessions': started(async input => (await import('../resources/index-sessions.cjs')).indexSessions(input)),
   'storage-inventory': started(async input => (await import('../resources/storage-inventory.cjs')).storageInventory(input)),

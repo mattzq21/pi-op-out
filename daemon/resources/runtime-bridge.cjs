@@ -6,6 +6,7 @@ const { execFileSync } = require("node:child_process");
 const { PassThrough } = require("node:stream");
 const { AsyncLocalStorage } = require("node:async_hooks");
 const { createRequire } = require("node:module");
+const { randomUUID } = require("node:crypto");
 
 const queuePromptContext = new AsyncLocalStorage();
 
@@ -173,7 +174,39 @@ function runtimeRoot(executable) {
   }
 }
 
-function appInput(dispatch) {
+function runtimeEvents(output) {
+  const pending = new Map();
+
+  const send = (name, data) => new Promise((resolve, reject) => {
+    if (typeof name !== "string" || !name) throw new Error("A runtime event needs a name");
+    const id = randomUUID();
+    pending.set(id, { resolve, reject });
+
+    try { output({ type: "piop_runtime_event", id, name, data }); }
+    catch (error) { pending.delete(id); reject(error); }
+  });
+
+  const answer = result => {
+    const waiter = pending.get(result.id);
+
+    if (!waiter) { console.error(`Piop answered unknown runtime event ${String(result.id)}`); return; }
+    pending.delete(result.id);
+
+    if (typeof result.error === "string") waiter.reject(new Error(result.error));
+    else waiter.resolve();
+  };
+
+  const close = () => {
+    for (const waiter of pending.values()) waiter.reject(new Error("Piop stopped before it handled the runtime event"));
+    pending.clear();
+  };
+
+  Object.defineProperty(globalThis, Symbol.for("piop.runtime-events"), { value: send, configurable: true });
+
+  return { answer, close };
+}
+
+function appInput(dispatch, events) {
   const stdin = process.stdin;
   const input = new PassThrough();
   Object.defineProperty(process, "stdin", { value: input });
@@ -191,11 +224,12 @@ function appInput(dispatch) {
       try { command = JSON.parse(line); } catch {}
 
       if (command?.type === "piop_request") void dispatch(command);
+      else if (command?.type === "piop_runtime_event_result") events.answer(command);
       else if (command?.type === "prompt") void dispatch({ ...command, command: "prompt" });
       else input.write(`${line}\n`);
     }
   });
-  stdin.on("end", () => { if (pending) input.write(pending); input.end(); });
+  stdin.on("end", () => { events.close(); if (pending) input.write(pending); input.end(); });
 }
 
 async function dispatchQueuedPrompt(command, session, output) {
@@ -696,7 +730,7 @@ async function main() {
     bridge.value({ command: "session_ready", payload: null, ctx: this.extensionRunner.createCommandContext() });
   };
 
-  appInput(command => dispatch(command, () => session, sessionReady, output));
+  appInput(command => dispatch(command, () => session, sessionReady, output), runtimeEvents(output));
   process.argv = [process.execPath, join(root, "dist/cli.js"), ...args];
   await import(pathToFileURL(join(root, "dist/cli.js")).href);
 }

@@ -1,5 +1,7 @@
 import { read as readGoal } from "../../resources/piop-storage/goals.cjs";
 import { join } from 'node:path';
+import { getProjectRepository, refreshProjectRepository } from '../project_repositories';
+import { saveProgress } from '../chat_worktrees';
 import * as Registry from '../session_registry';
 import * as Settings from '../settings';
 import * as Extensions from '../extensions';
@@ -13,9 +15,10 @@ import { MutationGuards } from './mutation_guards';
 import { Orchestration } from './orchestration';
 import { ConversationOwnership, ownershipError } from './ownership';
 import { clientPayload } from './payload';
-import { sessionSpec, serializeSpec, type SessionLaunch } from './protocol';
+import { argument, sessionSpec, serializeSpec, type SessionLaunch } from './protocol';
 import { drainSaves } from './queue_storage';
 import { readonlyCommand, type ReadonlyView } from './readonly_views';
+import { finalResponse, parseRuntimeEvent, type RuntimeEvent, type RuntimeEventSource } from './runtime_events';
 import { Session, type SessionHost } from './session';
 import { sessionCommand } from './session_commands';
 import { recoverQueuedInput, watchRetention } from './storage_upkeep';
@@ -111,6 +114,28 @@ export class Host implements SessionHost {
   maintenance(key: string): void { this.maintain(key); }
   refreshProviders(): Promise<number> { return this.services.refreshProviders(); }
 
+  /** Commits a chat's repository on Pi's final response, before Pi takes a follow-up (ADR 0006). Uses the saved repository status. */
+  async runtimeEvent(source: RuntimeEventSource, event: RuntimeEvent): Promise<void> {
+    if (!finalResponse(event) || source.cwd === null) return;
+    const repository = getProjectRepository(this.storageRoot(), source.cwd);
+    if (!repository) return;
+    await saveProgress(source.cwd, { repository: repository.root, gitCommonDir: repository.gitDir });
+  }
+
+  /** A runtime event from an agent that runs for one message, through the session broker. */
+  private async brokerRuntimeEvent(packet: any): Promise<null> {
+    const event = parseRuntimeEvent(packet.event);
+    const identity = text(event.data, 'sessionId');
+    const cwd = text(event.data, 'cwd');
+    if (!identity || !cwd) throw new Error('Runtime event ' + event.name + ' has no chat');
+    try { await this.runtimeEvent({ sessionKey: identity, identity, cwd }, event); }
+    catch (error) {
+      this.output({ type: 'diagnostic', line: identity + ': ' + event.name + ' failed: ' + errorText(error) });
+      throw error;
+    }
+    return null;
+  }
+
   findSession(identity: string): Session | undefined {
     for (const session of this.sessions.values()) if (session.identity === identity && !session.closed()) return session;
     return undefined;
@@ -149,6 +174,13 @@ export class Host implements SessionHost {
         if (launch.transient) throw new Error('The prepared branch identity is already in use');
         if (existing.transient()) throw new Error('This conversation branch is still being prepared');
         return existing;
+      }
+      if (!argument(launch.spec, '--session') && launch.cwd) {
+        const db = Registry.open(this.storageRoot());
+        let saved: unknown;
+        try { saved = db.prepare('SELECT session_path FROM sessions WHERE session_id=?').get(key); }
+        finally { db.close(); }
+        if (!(saved as any)?.session_path) await refreshProjectRepository(this.storageRoot(), launch.cwd);
       }
       const pending = this.pending.get(key) ?? [];
       this.pending.delete(key);
@@ -343,6 +375,7 @@ export class Host implements SessionHost {
       case 'attach': return attach(this, packet);
       case 'shutdown': await this.shutdown(); return null;
       case 'retire': return this.retire(packet);
+      case 'runtime_event': return this.brokerRuntimeEvent(packet);
       case 'session_command': return this.directSessionCommand(packet);
       case 'orchestration': return this.orchestration.handle(packet);
     }

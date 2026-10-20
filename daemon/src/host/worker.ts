@@ -6,12 +6,15 @@ import { join } from 'node:path';
 import { ensurePrivateDir } from '../private_fs';
 import { descendantProcesses, killVerified, newProcessTag, PROCESS_TAG, signalProcessGroup, taggedProcesses } from '../process_cleanup';
 import { kind, type LaunchSpec, wireCommand } from './protocol';
+import { isRuntimeEvent, parseRuntimeEvent, runtimeEventResult, type RuntimeEvent } from './runtime_events';
 
 export interface Request { command: any; requestType: string; snapshotState: any }
 
 export interface WorkerObserver {
   /** Settles when the event is handled. The worker stops reading Pi's output while too many events wait. */
   event(event: any): Promise<void>;
+  /** Settles when Piop handled an event that Pi waits on. A rejection goes back to Pi, which reports it as the hook's error. */
+  runtimeEvent(event: RuntimeEvent): Promise<void>;
   response(event: any, request: Request): any;
   stderr(line: string): void;
   diagnostic(line: string): void;
@@ -119,6 +122,7 @@ export class RuntimeWorker {
       if (typeof statusText !== 'string' || !statusText.startsWith('json:')) return;
       try { event = JSON.parse(statusText.slice(5)); } catch (error: any) { this.observer.diagnostic(error.message); return; }
     }
+    if (isRuntimeEvent(event)) { this.track(this.answerRuntimeEvent(event), size); return; }
     if (kind(event) !== 'response') { this.track(this.observer.event(event), size); return; }
     const id = event?.id;
     if (typeof id !== 'string') return;
@@ -126,6 +130,20 @@ export class RuntimeWorker {
     if (!request) return;
     this.pending.delete(id);
     try { request.resolve(this.observer.response(event, request)); } catch (error: any) { request.reject(error instanceof Error ? error : new Error(String(error))); }
+  }
+
+  /** Answers an event that Pi waits on, after Piop handled it. A malformed event gets its error back, so Pi reports it. */
+  private async answerRuntimeEvent(value: any): Promise<void> {
+    let event: RuntimeEvent;
+    try { event = parseRuntimeEvent(value); } catch (error: any) {
+      this.observer.diagnostic(error.message);
+      if (typeof value?.id === 'string') await this.write(runtimeEventResult(value.id, error.message)).catch(failure => this.observer.diagnostic(failure.message));
+      return;
+    }
+    let failure: string | undefined;
+    try { await this.observer.runtimeEvent(event); }
+    catch (error: any) { failure = error instanceof Error ? error.message : String(error); }
+    await this.write(runtimeEventResult(event.id, failure)).catch(error => this.observer.diagnostic('Could not answer Pi runtime event ' + event.name + ': ' + error.message));
   }
 
   /** Pauses reading Pi's output while the backlog is over its limit, and resumes at half of it. */

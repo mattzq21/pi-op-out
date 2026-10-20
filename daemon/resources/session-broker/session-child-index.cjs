@@ -62,7 +62,8 @@ function store(root, value) {
     db.exec('BEGIN IMMEDIATE');
     write(db, value);
     db.exec('COMMIT');
-  } finally { db.close(); }
+  } catch (error) { if (db.isTransaction) db.exec('ROLLBACK'); throw error; }
+  finally { db.close(); }
 }
 
 function ensure(root, sessionId, sessionPath, complete = false) {
@@ -95,7 +96,8 @@ function add(root, parentSessionId, parentSessionPath, child) {
     }
 
     db.exec('COMMIT');
-  } finally { db.close(); }
+  } catch (error) { if (db.isTransaction) db.exec('ROLLBACK'); throw error; }
+  finally { db.close(); }
 }
 
 function registerTranscript(root, sessionPath, body) {

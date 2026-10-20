@@ -48,7 +48,11 @@ export interface PromptContextInfo {
 
 export interface PendingMessage { id: string; message: string; behavior: "steer" | "followUp"; images?: Omit<ImageAttachment, "data">[]; retry?: boolean; recovered?: boolean; }
 
-export interface AgentState { viewers?: number; pendingMessages?: PendingMessage[]; model: Model | null; thinkingLevel: string; isStreaming: boolean; isCompacting?: boolean; isPaused?: boolean; isPausing?: boolean; sessionFile?: string; sessionId: string; sessionName?: string; messageCount: number; pendingMessageCount: number; activity?: string; contextUsage?: ContextUsage; }
+export interface GitRepository { root: string; gitDir: string; }
+
+export interface ForkSource { sessionId: string; sessionPath: string; entryId: string; }
+
+export interface AgentState { viewers?: number; pendingMessages?: PendingMessage[]; model: Model | null; thinkingLevel: string; isStreaming: boolean; isCompacting?: boolean; isPaused?: boolean; isPausing?: boolean; sessionFile?: string; sessionId: string; sessionName?: string; cwd?: string; repository?: GitRepository | null; forkSource?: ForkSource; messageCount: number; pendingMessageCount: number; activity?: string; contextUsage?: ContextUsage; }
 
 export interface ExtensionUiRequest { type: "extension_ui_request"; id: string; method: "select" | "confirm" | "input" | "editor" | "notify" | "setStatus" | "setWidget" | "setTitle" | "set_editor_text"; title?: string; message?: string; error?: string; options?: string[]; placeholder?: string; prefill?: string; notifyType?: "info" | "warning" | "error"; statusKey?: string; statusText?: string; widgetKey?: string; widgetLines?: string[]; widgetPlacement?: "aboveEditor" | "belowEditor"; text?: string; }
 
