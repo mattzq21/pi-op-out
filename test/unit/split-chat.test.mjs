@@ -185,6 +185,23 @@ describe('split conversation lifecycle', () => {
     assert.deepEqual(archived, []);
   });
 
+  test('the split source link requests the source chat at its selected response', async () => {
+    const source = { sessionId: 'source-chat', sessionPath: '/source.jsonl', entryId: 'source-answer' };
+    const snapshot = responses.get('get_snapshot');
+    snapshot.state = { ...snapshot.state, forkSource: source };
+    snapshot.history = { entries: [
+      { type: 'message', id: 'source-question', parentId: null, message: { role: 'user', content: 'Question' } },
+      { type: 'message', id: 'source-answer', parentId: 'source-question', message: { role: 'assistant', content: 'Answer', stopReason: 'stop' } },
+    ], leafId: 'source-answer' };
+    const opened = [];
+    await render({ forkSourceName: value => value.sessionId === 'source-chat' ? 'Original chat' : undefined, onOpenForkSource: value => opened.push(value) });
+    const link = document.querySelector('button.fork-source-link');
+    assert.ok(link);
+    assert.equal(link.textContent, 'Branched from “Original chat”');
+    await click(link);
+    assert.deepEqual(opened, [source]);
+  });
+
   test('branching forks before the next prompt', async () => {
     const entries = [{ type: 'message', id: 'u', parentId: null, message: { role: 'user', content: 'Question' } }, { type: 'message', id: 'a', parentId: 'u', message: { role: 'assistant', content: 'Answer', stopReason: 'stop' } }, { type: 'message', id: 'next', parentId: 'a', message: { role: 'user', content: 'Next question' } }];
     responses.get('get_snapshot').history = { entries, leafId: 'next' };

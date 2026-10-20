@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { isCurrent } from "../piop-storage/session-records.cjs";
 import { reserveSessionId } from "../piop-storage/session-file.ts";
 import type { ExtensionCommandContext, ExtensionContext } from "@earendil-works/pi-coding-agent";
@@ -49,7 +50,7 @@ export async function forkAndForget(ctx: ExtensionCommandContext, entryId: strin
 
 export async function forkConversation(ctx: ExtensionContext, options: ForkOptions) {
   const selected = options.position ? positionedHistory(ctx, options.entryId, options.position) : forkHistory(ctx, options.entryId);
-  const retained = structuredClone([...selected.filter(entry => !isCurrent(entry)), ...ctx.sessionManager.getEntries().filter(isCurrent)]);
+  const retained = structuredClone([...selected.filter(entry => !isCurrent(entry)), ...ctx.sessionManager.getEntries().filter(entry => isCurrent(entry) && !(entry.type === "custom" && entry.customType === "piop-input-hold"))]);
   const header = ctx.sessionManager.getHeader();
   const source = ctx.sessionManager.getSessionFile();
 
@@ -58,6 +59,7 @@ export async function forkConversation(ctx: ExtensionContext, options: ForkOptio
 
   const sessionId = await reserveSessionId();
   const timestamp = new Date().toISOString();
+  retained.push({ type: "custom", customType: "piop-input-hold", data: { held: true }, id: randomUUID(), parentId: null, timestamp });
   const sessionPath = join(ctx.sessionManager.getSessionDir(), `${timestamp.replace(/[:.]/g, "-")}_${sessionId}.jsonl`);
   // The copy names the chat and entry it came from. A source's own fork source is replaced, so a copy of a branch names the branch.
   const piopForkSource = options.entryId ? { sessionId: header.id, sessionPath: source, entryId: options.entryId } : undefined;

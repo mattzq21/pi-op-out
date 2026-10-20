@@ -2,18 +2,16 @@ const { lockSync } = require('../file-lock.cjs');
 const fs = require('node:fs');
 const path = require('node:path');
 const { createHash } = require('node:crypto');
-const { Type } = require('typebox');
-const { Check } = require('typebox/value');
 const goalDependencies = require('./goal-dependencies.cjs');
 const goalOwnership = require('./goal-ownership.cjs');
 
-const ownerSchema = Type.Object({ sessionId: Type.String({ minLength: 1 }), sessionPath: Type.Optional(Type.String()) });
-
-const ownershipSchema = Type.Object({ version: Type.Literal(1), kind: Type.Literal('goal-assets'), owners: Type.Array(ownerSchema), retiredOwners: Type.Optional(Type.Array(Type.String())) });
-
-const dependencySchema = Type.Object({ path: Type.String(), identity: Type.String() });
-
-const contractSchema = Type.Object({ version: Type.Literal(1), policy: Type.Literal('shared-profile'), directories: Type.Array(dependencySchema) });
+const object = value => value !== null && typeof value === 'object' && !Array.isArray(value);
+const strings = value => Array.isArray(value) && value.every(item => typeof item === 'string');
+const validOwnership = value => object(value) && value.version === 1 && value.kind === 'goal-assets'
+  && Array.isArray(value.owners) && value.owners.every(owner => object(owner) && typeof owner.sessionId === 'string' && owner.sessionId.length > 0 && (owner.sessionPath === undefined || typeof owner.sessionPath === 'string'))
+  && (value.retiredOwners === undefined || strings(value.retiredOwners));
+const validContract = value => object(value) && value.version === 1 && value.policy === 'shared-profile'
+  && Array.isArray(value.directories) && value.directories.every(item => object(item) && typeof item.path === 'string' && typeof item.identity === 'string');
 
 const inside = (root, file) => path.isAbsolute(file) && path.resolve(file) === file && file.startsWith(root + path.sep);
 
@@ -81,15 +79,15 @@ function readOwners(root, directory) {
 
   if (record === undefined) return { version: 1, kind: 'goal-assets', owners: [] };
 
-  if (!Check(ownershipSchema, record)) throw new Error(`Damaged goal ownership retained: ${directory}`);
+  if (!validOwnership(record)) throw new Error(`Damaged goal ownership retained: ${directory}`);
 
   return record;
 }
 
 function visitStrings(value, visit) {
-  if (Check(Type.String(), value)) visit(value);
+  if (typeof value === 'string') visit(value);
   else if (Array.isArray(value)) value.forEach(item => visitStrings(item, visit));
-  else if (value && Check(Type.Object({}, { additionalProperties: true }), value)) Object.values(value).forEach(item => visitStrings(item, visit));
+  else if (value && object(value)) Object.values(value).forEach(item => visitStrings(item, visit));
 }
 
 function directReferences(entries, root) {
@@ -159,7 +157,7 @@ function references(entries, root) {
 }
 
 function inheritedReferences(entries, root) {
-  const parents = new Set(entries.flatMap(entry => entry?.type === 'session' && Check(Type.String(), entry.parentSession) ? [entry.parentSession] : []));
+  const parents = new Set(entries.flatMap(entry => entry?.type === 'session' && typeof entry.parentSession === 'string' ? [entry.parentSession] : []));
   const directories = new Set();
 
   for (const file of parents) {
@@ -284,7 +282,7 @@ function ownedDirectories(root, sessionId) {
 function verifyContract(root, contract) {
   if (contract === undefined) return;
 
-  if (!Check(contractSchema, contract)) throw new Error('Invalid goal asset dependency contract');
+  if (!validContract(contract)) throw new Error('Invalid goal asset dependency contract');
 
   for (const dependency of contract.directories) {
     if (!validPath(root, dependency.path) || !goalDependencies.matchesDirectory(root, dependency.path, dependency.identity, identity(dependency.path))) throw new Error(`Archived goal assets changed or are missing: ${dependency.path}`);

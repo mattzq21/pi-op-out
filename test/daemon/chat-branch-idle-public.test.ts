@@ -3,7 +3,7 @@ import { Database } from 'bun:sqlite';
 import { join } from 'node:path';
 import { agentDaemon, called, text } from './agent-chats';
 
-test('a branch of a chat with an active goal stays idle with the goal active until the user sends a message', async () => {
+for (const [mode, repository] of [['fork_after', true], ['copy_after', true], ['copy_after', false]] as const) test(`${mode} (${repository ? 'repository' : 'plain folder'}) keeps an active goal idle until user input`, async () => {
   const agents = await agentDaemon();
   try {
     await agents.enableAgentTools('get_goal', 'create_goal', 'update_goal');
@@ -16,14 +16,14 @@ test('a branch of a chat with an active goal stays idle with the goal active unt
       if (prompt >= 0 && !messages.slice(prompt).some(message => message.role === 'assistant')) return { text: 'Branch answer.' };
       return finish ? { tool: 'update_goal', arguments: { status: 'complete' } } : { text: 'Goal turn.' };
     });
-    const source = await agents.rootChat({ repository: true });
+    const source = await agents.rootChat({ repository });
     await source.command({ type: 'prompt', message: 'Idle branch question' });
     await source.until(messages => text(messages.at(-1)) === 'First answer.');
     const answer = (await source.command({ type: 'get_entries' })).entries.find((entry: any) => entry.message?.role === 'assistant');
     await source.command({ type: 'follow_up', message: '/goal Keep the branch going', goalSubmissionId: crypto.randomUUID() });
     await source.until(messages => messages.some(message => text(message) === 'Goal turn.'));
 
-    await source.command({ type: 'fork_after', entryId: answer.id });
+    await source.command({ type: mode, entryId: answer.id });
     const branch = await source.command({ type: 'get_state' });
     expect(branch.forkSource).toMatchObject({ entryId: answer.id });
     const visible = async () => (await source.history()).filter(message => ['user', 'assistant'].includes(message.role)).map(text);

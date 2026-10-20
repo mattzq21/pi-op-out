@@ -415,13 +415,13 @@ export function createAppConversations(preloadChat: () => void) {
   const branchConversation = createMemo(() => (createBranchConversation({ transport: transport(), activeConversationKeyRef, branchPending, state: chatSession().state, sessions: sessions(), runtimePool: runtimePool(), messages: chatSession().messages, rekeyConversationUi, activeTransportRef, setActiveCwd, setState: chatSession().setState, setMessages: chatSession().setMessages, updateConnected, configureRuntime, transportConversationKeys, activateConversationKey, addNotice, syncSessionIndex, requestComposerFocus: () => setMainComposerFocusRequest(request => request + 1) })));
 
   const [revealEntry, setRevealEntry] = createSignal<{ key: string; entryId: string }>();
-  const forkSourceSession = (source: ForkSource) => sessions().find(session => session.id === source.sessionId && (session.hostId ?? "local") === activeHostId());
+  const forkSourceSession = (source: ForkSource, hostId = activeHostId()) => sessions().find(session => session.id === source.sessionId && (session.hostId ?? "local") === hostId);
   const forkSourceName = createMemo(() => { const source = chatSession().state.forkSource;
 
     return source ? forkSourceSession(source)?.name : undefined; });
 
-  const openForkSource = (source: ForkSource) => {
-    const session = forkSourceSession(source);
+  const openForkSource = (source: ForkSource, hostId = activeHostId()) => {
+    const session = forkSourceSession(source, hostId);
 
     if (!session) { addNotice({ title: "Could not open the original conversation", message: "It is archived or deleted." }); return; }
     setRevealEntry({ key: (session.hostId ?? "local") + ":" + session.id, entryId: source.entryId });

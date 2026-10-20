@@ -105,6 +105,8 @@ export default function App(props: { suppressConnectionNotices?: boolean } = {})
 
             if (current) toggleComposerTerminal("split", { sessionKey: splitConversationKey(current), cwd: current.session.cwd, hostId: current.session.hostId ?? "local" }); }}
           onDialogRequest={queueExtensionDialog} onDialogResolved={resolveExtensionDialog} onDialogTransportClosed={closeTransportDialogs}
+          onOpenForkSource={source => openForkSource(source, (currentPane()?.session ?? pane.session).hostId ?? "local")}
+          forkSourceName={source => sessions().find(session => session.id === source.sessionId && (session.hostId ?? "local") === ((currentPane()?.session ?? pane.session).hostId ?? "local"))?.name}
           onReleaseTransport={releaseSplitTransport} onArchiveOriginal={archiveReplacedSession} onSessionChange={changeSession} freshReview={Boolean(pane.review)} inheritedReviewParent={inheritedParent()} archivedReview={archivedReview()} onShowArchive={() => { setArchivesOpen(true); setPanelOpen(true); }} initialPrompt={pane.review?.task} initialImages={pane.review?.images}
           onReady={pane.review ? () => respondToReview(required(pane.review).requestId, { value: "opened" }) : undefined}
           onMessageMain={pane.review?.messageMain}

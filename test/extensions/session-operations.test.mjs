@@ -102,6 +102,8 @@ test('fork retains completed history, unique identity, permissions, and untouche
   const db = database.open(f.dir);
   try {
     assert.equal(db.prepare('SELECT session_path FROM sessions WHERE session_id=?').get(entries[0].id).session_path, result.sessionPath);
+    const hold = db.prepare("SELECT entry_json FROM session_extension_state WHERE session_id=? AND state_key='piop-input-hold'").get(entries[0].id);
+    assert.equal(JSON.parse(hold.entry_json).data.held, true);
   } finally { db.close(); }
   assert.equal(entries[0].cwd, f.dir);
   assert.deepEqual(entries.slice(1), [
