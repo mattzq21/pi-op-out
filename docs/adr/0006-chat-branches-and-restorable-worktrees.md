@@ -21,25 +21,9 @@ Branching creates an independent chat and Git worktree. Chat history stops at th
 
 Check whether the project is in a Git repository when the project is added to Piop and whenever a new chat is created from that project. Save the result for the project. Do not check periodically or provide a manual recheck action. Branching into worktrees is unavailable for projects outside Git repositories; normal chats remain available. Report errors if a later Git operation fails.
 
-Apply automatic commits to all chats in repositories, including chats in the original project folder. Use Pi's `turn_end` event, with this condition:
+Apply automatic commits to all chats in repositories, including chats in the original project folder. Commit on the final agent response, before follow-up messages.
 
-```ts
-pi.on("turn_end", async (event) => {
-  const message = event.message;
-
-  if (
-    message.role !== "assistant" ||
-    message.stopReason !== "stop" ||
-    message.content.some(part => part.type === "toolCall")
-  ) return;
-
-  // Await the save here, before a follow-up starts.
-});
-```
-
-Save after each qualifying final assistant response and before processing a follow-up, including a queued follow-up. Do not wait for the agent to settle. Responses that end with tool calls, cancellation, failure, or a stop reason other than `stop` do not trigger a save.
-
-For each save, run `git add .` from the repository root and commit changed content with the message `Piop saving progress`. Await this operation in the event handler. Skip empty commits and report save failures. Chats that share a folder can have their changes saved in the same commit; this is accepted. Git's normal ignore rules apply: ignored untracked files are excluded, but already tracked files remain tracked.
+For each save, run `git add .` from the repository root and commit changed content with the message `Piop saving progress`. Skip empty commits and report save failures. Chats that share a folder can have their changes saved in the same commit; this is accepted. Git's normal ignore rules apply: ignored untracked files are excluded, but already tracked files remain tracked.
 
 ## Archive and restore
 
