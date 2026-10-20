@@ -62,6 +62,8 @@ function check(record) {
     const plan = record.restore;
 
     if (!plan || typeof plan.reuse !== 'boolean' || !CHAT_ID.test(plan.restoreId ?? '')) throw new Error('Invalid restore plan');
+    if (plan.retained !== undefined && plan.retained !== true) throw new Error('Invalid retained worktree restore');
+    if (plan.retained && (!plan.reuse || plan.worktree !== record.worktree || plan.branch !== record.branch)) throw new Error('Retained restore must use the shared worktree');
     absolute(plan.worktree, 'restored worktree');
     branchOf(chatId, plan.branch);
   } else if (record.restore !== undefined) throw new Error('Only restoring chats have a restore plan');

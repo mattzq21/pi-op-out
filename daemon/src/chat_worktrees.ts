@@ -26,7 +26,7 @@ export type CreatedWorktree = ChatWorktree & { commit: string };
 /** An archived chat: `ref` (refs/piop/archives/<chatId>) protects `commit` in the shared Git storage. */
 export type ChatArchive = ChatWorktree & { ref: string; commit: string };
 /** How one restore attempt places the worktree. `restoreId` is fresh per attempt; `reuse` keeps the old branch. */
-export type RestorePlan = { restoreId: string; worktree: string; branch: string; reuse: boolean };
+export type RestorePlan = { restoreId: string; worktree: string; branch: string; reuse: boolean; retained?: boolean };
 
 export class GitError extends Error {
   constructor(message: string, readonly args: string[], readonly code: number | null, readonly stderr: string) { super(message); }
@@ -342,11 +342,17 @@ export async function removeArchivedWorktree(input: { archive: ChatArchive; home
  * archived commit and no worktree has it; otherwise `branchName(chatId, restoreId)`. Reuses the previous folder when
  * free; otherwise `worktreePath(home, chatId, restoreId)`.
  */
-export async function planRestore(input: { archive: ChatArchive; home: string }): Promise<RestorePlan> {
+export async function planRestore(input: { archive: ChatArchive; home: string; retainShared?: boolean }): Promise<RestorePlan> {
   const { archive, home } = input;
   return serialized(archive.gitCommonDir, async () => {
     await requireArchive(archive);
     const restoreId = randomUUID();
+    if (input.retainShared && await exists(archive.worktree)) {
+      requireOwnedFolder(home, archive.chatId, archive.worktree);
+      const real = await realpath(archive.worktree);
+      if (!(await worktrees(archive.gitCommonDir)).some(item => item.path === real)) throw new Error(`Shared folder is not a worktree of ${archive.gitCommonDir}: ${archive.worktree}`);
+      return { restoreId, worktree: archive.worktree, branch: archive.branch, reuse: true, retained: true };
+    }
     const inUse = (await worktrees(archive.gitCommonDir)).some(item => item.branch === archive.branch);
     const reuse = !inUse && await commitOf(archive.gitCommonDir, `refs/heads/${archive.branch}`) === archive.commit;
     const preferred = worktreePath(home, archive.chatId);
@@ -373,6 +379,12 @@ export async function restoreWorktree(input: { archive: ChatArchive; home: strin
   requireOwnedBranch(archive.chatId, plan.branch);
   return serialized(archive.gitCommonDir, async () => {
     await requireArchive(archive);
+    if (plan.retained) {
+      if (plan.worktree !== archive.worktree || plan.branch !== archive.branch || !plan.reuse) throw new Error('Invalid shared worktree restore');
+      const real = await realpath(plan.worktree);
+      if (!(await worktrees(archive.gitCommonDir)).some(item => item.path === real)) throw new Error(`Shared worktree is missing: ${plan.worktree}`);
+      return { ...archive };
+    }
     if (plan.reuse) {
       if (plan.branch !== archive.branch || await commitOf(archive.gitCommonDir, `refs/heads/${plan.branch}`) !== archive.commit) throw new Error(`Branch ${plan.branch} no longer points to ${archive.commit}`);
     } else if (await commitOf(archive.gitCommonDir, `refs/heads/${plan.branch}`)) throw new Error(`Branch already exists: ${plan.branch}`);
@@ -384,6 +396,7 @@ export async function restoreWorktree(input: { archive: ChatArchive; home: strin
 /** Undoes `restoreWorktree`: removes the planned folder, and the planned branch when it was new. Idempotent. */
 export async function removeRestoredWorktree(input: { archive: ChatArchive; home: string; plan: RestorePlan }): Promise<void> {
   const { archive, home, plan } = input;
+  if (plan.retained) return;
   await serialized(archive.gitCommonDir, () => both(
     () => removeFolder(archive.gitCommonDir, home, archive.chatId, plan.worktree),
     async () => { if (!plan.reuse) await removeBranch(archive.gitCommonDir, archive.chatId, plan.branch); },

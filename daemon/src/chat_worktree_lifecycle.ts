@@ -1,5 +1,6 @@
-import { existsSync } from 'node:fs';
-import { join, sep } from 'node:path';
+import { existsSync, realpathSync } from 'node:fs';
+import { join, resolve, sep } from 'node:path';
+import { readHeaderLine } from './host/protocol';
 import * as SessionTables from '../resources/session-database.cjs';
 import { archivedCommit, archiveRef, deleteChatWorktree, planRestore, protectArchive, releaseArchive, removeArchivedWorktree, removeRestoredWorktree, restoreWorktree, type ChatArchive, type ChatWorktree } from './chat_worktrees';
 import * as Worktrees from './chat_worktree_records';
@@ -51,6 +52,29 @@ export function stopped(records: ChatWorktreeRecord[]): void { for (const record
 
 function records(chatIds: string[], root: string): ChatWorktreeRecord[] {
   return chatIds.map(id => Worktrees.read(id, root)).filter((record): record is ChatWorktreeRecord => record !== null);
+}
+
+function canonicalFolder(folder: string): string {
+  try { return realpathSync(folder); }
+  catch (error: any) { if (error.code === 'ENOENT') return resolve(folder); throw error; }
+}
+
+/** Archived chats still need their shared folder when restored. Read current headers, not sidebar caches. */
+function sharedFolder(record: ChatWorktreeRecord, root: string, folder = record.worktree): boolean {
+  const db = SessionTables.open(root);
+  let sessions: Array<{ session_id: string; session_path: string }>;
+  try { sessions = db.prepare('SELECT session_id, session_path FROM sessions WHERE session_path IS NOT NULL AND session_id != ?').all(record.chatId) as typeof sessions; }
+  finally { db.close(); }
+  const target = canonicalFolder(folder);
+  for (const session of sessions) {
+    let header: any;
+    try { header = JSON.parse(readHeaderLine(session.session_path)); }
+    catch (error: any) { if (error.code === 'ENOENT') continue; throw error; }
+    if (typeof header.cwd !== 'string' || !header.cwd) throw new Error(`Chat ${session.session_id} has no working folder; shared worktree cleanup was stopped`);
+    const cwd = canonicalFolder(header.cwd);
+    if (cwd === target || cwd.startsWith(target + sep)) return true;
+  }
+  return false;
 }
 
 /**
@@ -129,7 +153,7 @@ export async function finishArchive(archiving: ChatWorktreeRecord[], root = prof
     let archived: ChatWorktreeRecord;
     try { archived = Worktrees.replace(Worktrees.read(record.chatId, root), { ...settled(record), state: 'archived' }, root)!; }
     catch (error) { warnings.push(`Archive committed, but the worktree record of chat ${record.chatId} was not updated: ${errorText(error)}`); continue; }
-    try { await removeArchivedWorktree({ archive: archiveOf(archived), home: homeDir() }); }
+    try { if (!sharedFolder(archived, root)) await removeArchivedWorktree({ archive: archiveOf(archived), home: homeDir() }); }
     catch (error) { warnings.push(Worktrees.fail(archived, `Archive committed, but worktree ${archived.worktree} was kept: ${errorText(error)}`, root)); }
   }
   return warnings;
@@ -147,7 +171,7 @@ export async function beginRestore(chatIds: string[], root = profileRoot()): Pro
       if (record.state !== 'archived') throw new Error(`Cannot restore chat ${record.chatId}: its worktree is ${record.state}`);
       running.add(record.chatId);
       const archive = archiveOf(record);
-      const plan = await planRestore({ archive, home: homeDir() });
+      const plan = await planRestore({ archive, home: homeDir(), retainShared: sharedFolder(record, root) });
       const restoring = Worktrees.replace(record, { ...settled(record), state: 'restoring', restore: plan }, root)!;
       done.push(restoring);
       await restoreWorktree({ archive, home: homeDir(), plan });
@@ -200,13 +224,20 @@ export async function finishRestore(restoring: ChatWorktreeRecord[], root = prof
  */
 export async function releaseDeleted(chatIds: string[], root = profileRoot()): Promise<string[]> {
   const warnings: string[] = [];
-  for (const record of records(chatIds, root)) {
+  // A previous owner's record stays until the last sharing chat is deleted, even if that chat owns no worktree.
+  for (const record of Worktrees.list(root).filter(record => record.state !== 'preparing' && (chatIds.includes(record.chatId) || transcriptArea(root, record.chatId) === 'missing'))) {
     try {
+      if (sharedFolder(record, root) || (record.restore && sharedFolder(record, root, record.restore.worktree))) continue;
       if (record.state === 'restoring') await removeRestoredWorktree({ archive: archiveOf(record), home: homeDir(), plan: record.restore! });
       await deleteChatWorktree({ record: { ...worktreeOf(record), archive: record.archive }, home: homeDir() });
       Worktrees.replace(record, null, root);
       for (const folder of new Set([record.worktree, record.restore?.worktree].filter((path): path is string => Boolean(path)))) forgetProjectRepository(root, folder);
     } catch (error) { warnings.push(Worktrees.fail(record, `Deletion committed, but the Git data of chat ${record.chatId} was kept: ${errorText(error)}`, root)); }
+  }
+  // Deleting the last sharing chat may also free a folder whose owner is still archived.
+  for (const record of Worktrees.list(root)) {
+    if (record.state !== 'archived' || transcriptArea(root, record.chatId) !== 'archived') continue;
+    warnings.push(...await finishArchive([record], root));
   }
   return warnings;
 }
@@ -254,7 +285,7 @@ export async function recover(root = profileRoot()): Promise<void> {
         else await rollbackRestore([record], root);
       } else if (record.state === 'archived') {
         if (area !== 'archived') throw new Error('Chat worktree is archived, but its transcript is active');
-        if (existsSync(record.worktree)) failures.push(...await finishArchive([record], root));
+        failures.push(...await finishArchive([record], root));
       } else if (area !== 'sessions') throw new Error('Chat worktree is active, but its transcript is archived');
       else if (record.protecting) await releaseUnrecordedArchive(record, root);
     } catch (error) { failures.push(`${record.chatId}: ${errorText(error)}`); }

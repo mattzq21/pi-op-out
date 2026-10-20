@@ -24,7 +24,7 @@ export interface ChatWorktreeRecord {
   branch: string;
   state: 'preparing' | 'active' | 'archiving' | 'archived' | 'restoring';
   archive: null | { ref: string; commit: string };
-  restore?: { restoreId: string; worktree: string; branch: string; reuse: boolean };
+  restore?: { restoreId: string; worktree: string; branch: string; reuse: boolean; retained?: boolean };
   /** Process that creates the worktree; only while preparing. */
   owner?: string;
   /** Set on an active record while its archive reference may exist without the archiving state. */

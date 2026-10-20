@@ -1,6 +1,6 @@
 import { afterEach, expect, test } from 'bun:test';
 import { execFileSync } from 'node:child_process';
-import { chmodSync, existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, readFileSync, realpathSync, unlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { DatabaseSync } from 'node:sqlite';
@@ -269,4 +269,85 @@ test('an archive started after such a crash releases the leftover reference itse
   await archive(daemon, chat.path);
   expect(git(repo, 'rev-parse', Records.archiveRef(chat.id))).toBe(saved);
   expect(Records.read(chat.id, profile)).toMatchObject({ state: 'archived', archive: { commit: saved } });
+}, 120000);
+
+test('archive and deletion retain a shared worktree and its saved state until the last chat is deleted', async () => {
+  const { daemon, home, profile, repo, chat, worktree } = await scene();
+  const copy = publish(home, worktree, 'Independent copy');
+  const saved = git(worktree, 'rev-parse', 'HEAD');
+  writeFileSync(join(worktree, 'work.txt'), 'unsaved shared work');
+  await archive(daemon, chat.path);
+  expect((await activeChat(daemon, copy.id)).cwd).toBe(worktree);
+  expect(readFileSync(join(worktree, 'work.txt'), 'utf8')).toBe('unsaved shared work');
+  await daemon.invoke('delete_archived_session', { hostId: 'local', sessionPath: await archivedPath(daemon, chat.id), clientId: 'lifecycle-test' });
+  expect(Records.read(chat.id, profile)?.archive?.commit).toBe(saved);
+  expect(git(repo, 'rev-parse', Records.archiveRef(chat.id))).toBe(saved);
+  await archive(daemon, copy.path);
+  await daemon.stop();
+  const restarted = await start(home);
+  expect(readFileSync(join(worktree, 'work.txt'), 'utf8')).toBe('unsaved shared work');
+  expect(git(repo, 'rev-parse', Records.archiveRef(chat.id))).toBe(saved);
+  await restore(restarted, await archivedPath(restarted, copy.id));
+  const restored = await activeChat(restarted, copy.id);
+  expect(restored.cwd).toBe(worktree);
+  await restarted.invoke('delete_session', { hostId: 'local', sessionPath: restored.path, clientId: 'lifecycle-test' });
+  expect(existsSync(worktree)).toBe(false);
+  expect(Records.read(chat.id, profile)).toBeNull();
+  expect(tryGit(repo, 'rev-parse', '--verify', '--quiet', Records.archiveRef(chat.id))).toBeNull();
+  expect(tryGit(repo, 'rev-parse', '--verify', '--quiet', 'piop/' + chat.id)).toBeNull();
+  expect(getProjectRepository(profile, worktree)).toBeNull();
+}, 120000);
+
+test('deleting the active owner keeps a worktree used by a chat in a subfolder through restart', async () => {
+  const { daemon, home, profile, chat, worktree } = await scene();
+  mkdirSync(join(worktree, 'sub'));
+  const copy = publish(home, join(worktree, 'sub'));
+  await daemon.invoke('delete_session', { hostId: 'local', sessionPath: chat.path, clientId: 'lifecycle-test' });
+  await daemon.stop();
+  const restarted = await start(home);
+  expect(existsSync(worktree)).toBe(true);
+  expect(Records.read(chat.id, profile)).not.toBeNull();
+  await restarted.invoke('delete_session', { hostId: 'local', sessionPath: copy.path, clientId: 'lifecycle-test' });
+  expect(existsSync(worktree)).toBe(false);
+  expect(Records.read(chat.id, profile)).toBeNull();
+}, 120000);
+
+test('restoring a shared owner reuses its live folder and a failed restore never removes that folder', async () => {
+  const { daemon, home, profile, chat, worktree } = await scene();
+  const copy = publish(home, worktree);
+  await archive(daemon, chat.path);
+  writeFileSync(join(worktree, 'work.txt'), 'copy kept working');
+  writeFileSync(chat.path, 'occupied');
+  await expect(restore(daemon, await archivedPath(daemon, chat.id))).rejects.toThrow('Restoration destination already exists');
+  expect(readFileSync(join(worktree, 'work.txt'), 'utf8')).toBe('copy kept working');
+  unlinkSync(chat.path);
+  await restore(daemon, await archivedPath(daemon, chat.id));
+  expect((await activeChat(daemon, chat.id)).cwd).toBe(worktree);
+  expect((await activeChat(daemon, copy.id)).cwd).toBe(worktree);
+  expect(Records.read(chat.id, profile)?.worktree).toBe(worktree);
+  expect(readFileSync(join(worktree, 'work.txt'), 'utf8')).toBe('copy kept working');
+}, 120000);
+
+test('deleting the last sharing chat removes an archived owner folder but retains its restore reference', async () => {
+  const { daemon, home, profile, repo, chat, worktree } = await scene();
+  const copy = publish(home, worktree);
+  await archive(daemon, chat.path);
+  expect(existsSync(worktree)).toBe(true);
+  await daemon.invoke('delete_session', { hostId: 'local', sessionPath: copy.path, clientId: 'lifecycle-test' });
+  expect(existsSync(worktree)).toBe(false);
+  expect(git(repo, 'rev-parse', Records.archiveRef(chat.id))).toBe(Records.read(chat.id, profile)!.archive!.commit);
+  await restore(daemon, await archivedPath(daemon, chat.id));
+  expect(readFileSync(join(worktree, 'work.txt'), 'utf8')).toBe('saved work');
+}, 120000);
+
+test('restart removes archive trash even when the original worktree folder is absent', async () => {
+  const { daemon, home, chat, worktree } = await scene();
+  await archive(daemon, chat.path);
+  await daemon.stop();
+  const trash = join(worktree, '..', '.removing-' + chat.id + '-11111111-1111-4111-8111-111111111111');
+  mkdirSync(trash);
+  writeFileSync(join(trash, 'leftover.txt'), 'Interrupted removal');
+  await start(home);
+  expect(existsSync(worktree)).toBe(false);
+  expect(existsSync(trash)).toBe(false);
 }, 120000);
