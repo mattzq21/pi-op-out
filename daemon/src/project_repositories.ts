@@ -1,5 +1,5 @@
 import { detectRepository } from './chat_worktrees';
-import { resolve, sep } from 'node:path';
+import { resolve } from 'node:path';
 import * as Registry from './session_registry';
 
 export interface ProjectRepository { root: string; gitDir: string }
@@ -14,7 +14,8 @@ export function getProjectRepository(storageRoot: string, cwd: string): ProjectR
   const db = database(storageRoot);
   try {
     const row = db.prepare('SELECT repository FROM project_repositories WHERE cwd=?').get(resolve(cwd)) as { repository: string | null } | undefined;
-    return row?.repository ? JSON.parse(row.repository) : null;
+    const repository: ProjectRepository | null = row?.repository ? JSON.parse(row.repository) : null;
+    return repository && resolve(repository.root) === resolve(cwd) ? repository : null;
   } finally { db.close(); }
 }
 
@@ -26,15 +27,13 @@ export function rememberProjectRepository(storageRoot: string, cwd: string, repo
 
 export function forgetProjectRepository(storageRoot: string, cwd: string): void {
   const db = database(storageRoot);
-  const folder = resolve(cwd);
-  const prefix = folder.endsWith(sep) ? folder : folder + sep;
-  try { db.prepare('DELETE FROM project_repositories WHERE cwd=? OR substr(cwd, 1, ?)=?').run(folder, prefix.length, prefix); }
+  try { db.prepare('DELETE FROM project_repositories WHERE cwd=?').run(resolve(cwd)); }
   finally { db.close(); }
 }
 
 export async function refreshProjectRepository(storageRoot: string, cwd: string): Promise<ProjectRepository | null> {
   const detected = await detectRepository(cwd);
-  const repository = detected ? { root: detected.repository, gitDir: detected.gitCommonDir } : null;
+  const repository = detected ? { root: resolve(cwd), gitDir: detected.gitCommonDir } : null;
   rememberProjectRepository(storageRoot, cwd, repository);
   return repository;
 }

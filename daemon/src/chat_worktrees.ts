@@ -2,7 +2,7 @@ import { execFile } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { chmod, lstat, mkdir, mkdtemp, readdir, realpath, rename, rm, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { basename, dirname, join, relative } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 
 /*
  * All Git work of ADR 0006: finding the repository, automatic progress commits, and creating, archiving, restoring
@@ -22,7 +22,7 @@ export type Repository = { repository: string; gitCommonDir: string };
 /** A chat worktree. `branch` has no refs/heads/ prefix. */
 export type ChatWorktree = Repository & { chatId: string; worktree: string; branch: string };
 /** A new chat worktree; `commit` is the source HEAD it starts from. The current files sit on it as uncommitted changes. */
-export type CreatedWorktree = ChatWorktree & { commit: string; cwd: string };
+export type CreatedWorktree = ChatWorktree & { commit: string };
 /** An archived chat: `ref` (refs/piop/archives/<chatId>) protects `commit` in the shared Git storage. */
 export type ChatArchive = ChatWorktree & { ref: string; commit: string };
 /** How one restore attempt places the worktree. `restoreId` is fresh per attempt; `reuse` keeps the old branch. */
@@ -113,6 +113,7 @@ export async function detectRepository(cwd: string): Promise<Repository | null> 
     throw new GitError(`Could not check for a Git repository in ${cwd}: ${probe.stderr.trim()}`, ['rev-parse'], probe.code, probe.stderr);
   }
   if (probe.stdout.trim() !== 'true') return null;
+  if (await realpath(cwd) !== await topLevel(cwd)) return null;
   const gitCommonDir = await realpath((await git(cwd, ['rev-parse', '--path-format=absolute', '--git-common-dir'])).stdout.trim());
   const main = (await worktrees(gitCommonDir))[0];
   if (!main) throw new Error(`Could not find the main worktree of ${gitCommonDir}`);
@@ -200,7 +201,6 @@ export async function createWorktree(input: { sourceCwd: string; chatId: string;
     if (await commitOf(repository.gitCommonDir, `refs/heads/${branch}`)) throw new Error(`Branch already exists: ${branch}`);
     if (await exists(worktree)) throw new Error(`Worktree folder already exists: ${worktree}`);
     const root = await topLevel(input.sourceCwd);
-    const subfolder = relative(root, await realpath(input.sourceCwd));
     const commit = await commitOf(root, 'HEAD');
     if (!commit) throw new Error(`Cannot branch a chat from a repository without commits: ${root}`);
     const tree = await currentTree(root, commit);
@@ -208,9 +208,7 @@ export async function createWorktree(input: { sourceCwd: string; chatId: string;
       const made = await checkOut(repository.gitCommonDir, worktree, ['-b', branch, worktree, commit]);
       await git(made, ['read-tree', '-u', '--reset', tree]);
       await git(made, ['reset', '--quiet']);
-      const cwd = join(made, subfolder);
-      await mkdir(cwd, { recursive: true });
-      return { ...repository, chatId: input.chatId, worktree: made, branch, commit, cwd };
+      return { ...repository, chatId: input.chatId, worktree: made, branch, commit };
     } catch (error) {
       try {
         await both(

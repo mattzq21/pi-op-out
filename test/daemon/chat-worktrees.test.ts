@@ -65,11 +65,12 @@ function makeDirty(repo: string): void {
   write(join(repo, 'debug.log'), 'ignored\n');
 }
 
-test('detects the main repository from a subfolder and from a linked worktree, and returns null outside Git', async () => {
+test('detects repository roots and linked worktree roots, but not subfolders or folders outside Git', async () => {
   const { repo, base } = repository();
   mkdirSync(join(repo, 'sub'));
   const expected = { repository: repo, gitCommonDir: join(repo, '.git') };
-  expect(await Worktrees.detectRepository(join(repo, 'sub'))).toEqual(expected);
+  expect(await Worktrees.detectRepository(repo)).toEqual(expected);
+  expect(await Worktrees.detectRepository(join(repo, 'sub'))).toBeNull();
   git(repo, 'worktree', 'add', '--quiet', join(base, 'linked'));
   expect(await Worktrees.detectRepository(join(base, 'linked'))).toEqual(expected);
   const outside = join(base, 'plain');
@@ -82,7 +83,8 @@ test('saves progress with git add . from the root, skips empty commits, and repo
   const { repo } = repository();
   makeDirty(repo);
   mkdirSync(join(repo, 'sub'));
-  const saved = await Worktrees.saveProgress(join(repo, 'sub'));
+  await expect(Worktrees.saveProgress(join(repo, 'sub'))).rejects.toThrow('Cannot save progress');
+  const saved = await Worktrees.saveProgress(repo);
   expect(saved?.commit).toBe(git(repo, 'rev-parse', 'HEAD'));
   expect(git(repo, 'log', '-1', '--format=%s')).toBe(Worktrees.SAVE_MESSAGE);
   expect(git(repo, 'ls-tree', '-r', '--name-only', 'HEAD').split('\n').sort()).toEqual(['.gitignore', 'dir/new.txt', 'staged.txt', 'tracked.txt']);
@@ -105,7 +107,7 @@ test('creates a chat worktree at the source commit with the current files as unc
   const created = await Worktrees.createWorktree({ sourceCwd: repo, chatId, home });
 
   const worktree = join(home, '.local/share/piop/worktrees', chatId);
-  expect(created).toEqual({ repository: repo, gitCommonDir: join(repo, '.git'), chatId, worktree, cwd: worktree, branch: 'piop/' + chatId, commit: before.head });
+  expect(created).toEqual({ repository: repo, gitCommonDir: join(repo, '.git'), chatId, worktree, branch: 'piop/' + chatId, commit: before.head });
   expect(git(worktree, 'rev-parse', 'HEAD')).toBe(before.head);
   expect(git(worktree, 'branch', '--show-current')).toBe('piop/' + chatId);
   const copied = { ...before.files };

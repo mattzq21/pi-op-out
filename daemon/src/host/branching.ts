@@ -173,10 +173,10 @@ class Branch {
     this.managedId = sessionId;
     Worktrees.prepare({ chatId: sessionId, ...repository, worktree: join(this.host.home, '.local/share/piop/worktrees', sessionId) }, this.host.storageRoot());
     const created = await createWorktree({ sourceCwd: cwd, chatId: sessionId, home: this.host.home, repository });
-    rememberProjectRepository(this.host.storageRoot(), created.cwd, { root: created.worktree, gitDir: created.gitCommonDir });
-    const result = await publishBranchHistory({ root: this.host.storageRoot(), sourcePath: this.path, sessionId, cwd: created.cwd, entries, leafId: snapshot.history.leafId, entryId, name: this.state.sessionName ? this.state.sessionName + ' (branch)' : undefined });
+    rememberProjectRepository(this.host.storageRoot(), created.worktree, { root: created.worktree, gitDir: created.gitCommonDir });
+    const result = await publishBranchHistory({ root: this.host.storageRoot(), sourcePath: this.path, sessionId, cwd: created.worktree, entries, leafId: snapshot.history.leafId, entryId, name: this.state.sessionName ? this.state.sessionName + ' (branch)' : undefined });
     this.managedPath = result.sessionPath;
-    return { sessionId, sessionPath: result.sessionPath, cwd: created.cwd };
+    return { sessionId, sessionPath: result.sessionPath, cwd: created.worktree };
   }
 
   private async open(branch: any, destination: string): Promise<Session> {
