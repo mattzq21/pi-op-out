@@ -119,7 +119,7 @@ test('ending the pause offers retry only for the latest aborted response', async
 });
 
 const repositoryState = { model: null, thinkingLevel: 'off', isStreaming: false, messageCount: 2, repository: { root: '/repo', gitDir: '/repo/.git' } };
-const forkControl = view => view.container.querySelector('[aria-label="Fork in worktree"]');
+const forkControl = view => view.container.querySelector('[aria-label="Branch off"]');
 
 test('regular Fork is available with and without a repository and is separate from worktree Fork', async t => {
   const answer = { id: 'answer', role: 'assistant', content: 'Answer', stopReason: 'stop' };
@@ -195,7 +195,7 @@ test('Fork uses the current callback for an already displayed response', async t
     { id: 'answer', role: 'assistant', content: 'Answer', stopReason: 'stop' },
   ], onBranch: message => previous.push(message.id) });
   await view.update({ onBranch: message => current.push(message.id) });
-  const fork = view.container.querySelector('[aria-label="Fork in worktree"]');
+  const fork = view.container.querySelector('[aria-label="Branch off"]');
   assert.ok(fork);
   await act(() => fork.click());
   assert.deepEqual(current, ['answer']);

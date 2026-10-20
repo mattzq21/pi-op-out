@@ -175,7 +175,7 @@ describe('split conversation lifecycle', () => {
     });
     await render({ onSessionChange: value => changes.push(value), onArchiveOriginal: value => archived.push(value) });
     assert.ok(control('Fork'));
-    assert.equal(Boolean(control('Fork in worktree')), Boolean(repository));
+    assert.equal(Boolean(control('Branch off')), Boolean(repository));
     await click(control('Fork'));
     await untilDom(() => changes.length === 1);
     assert.ok(calls.some(command => command.type === 'copy_after' && command.entryId === 'a'));
@@ -212,8 +212,8 @@ describe('split conversation lifecycle', () => {
     return { cancelled: false, state: { cwd: '/worktrees/forked' } }; });
     responses.set('get_entries', { entries: entries.slice(0, 2), leafId: 'a' });
     await render({ onSessionChange: (...args) => { changes.push(args); changed.resolve(); } });
-    assert.ok(control('Fork in worktree'), JSON.stringify({ text: document.body.textContent, calls }));
-    await click(control('Fork in worktree'));
+    assert.ok(control('Branch off'), JSON.stringify({ text: document.body.textContent, calls }));
+    await click(control('Branch off'));
     await received(command => command.type === 'fork_after' && command.entryId === 'a');
     await Promise.race([changed.promise, untilDom(() => document.querySelector('.split-control-error')).then(error => assert.fail(error.textContent))]);
     assert.equal(pool.forSession({ id: 'forked', cwd: '/repo', path: '/fork.jsonl', hostId: 'local' }), transport);
@@ -229,10 +229,10 @@ describe('split conversation lifecycle', () => {
     responses.get('get_snapshot').state = { ...responses.get('get_snapshot').state, repository: { root: '/repo', gitDir: '/repo/.git' } };
     const changes = [];
     responses.set('fork_after', { cancelled: true }); await render({ onSessionChange: value => changes.push(value) });
-    assert.ok(control('Fork in worktree'), JSON.stringify({ text: document.body.textContent, calls }));
-    await click(control('Fork in worktree')); await received(command => command.type === 'fork_after' && command.entryId === 'a'); await untilDom(() => control('Fork in worktree') && !control('Fork in worktree').disabled);
+    assert.ok(control('Branch off'), JSON.stringify({ text: document.body.textContent, calls }));
+    await click(control('Branch off')); await received(command => command.type === 'fork_after' && command.entryId === 'a'); await untilDom(() => control('Branch off') && !control('Branch off').disabled);
     assert.deepEqual(changes, []); assert.equal(document.querySelector('.split-control-error'), null);
-    responses.set('fork_after', new Error('fork failed')); await click(control('Fork in worktree')); await untilDom(() => /fork failed/.test(document.querySelector('.split-control-error')?.textContent ?? ''));
+    responses.set('fork_after', new Error('fork failed')); await click(control('Branch off')); await untilDom(() => /fork failed/.test(document.querySelector('.split-control-error')?.textContent ?? ''));
     await click(control('Dismiss split pane error')); assert.equal(document.querySelector('.split-control-error'), null); assert.deepEqual(changes, []);
   });
 +  test('review feedback waits for the reviewer when asked, sends its finished answer to the main chat once, and can be cancelled', async () => {
