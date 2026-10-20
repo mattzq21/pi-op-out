@@ -57,6 +57,7 @@ async function fixture(t, props, group = 'repo', native, beforeMount, options = 
       if (item.cwd === undefined) item.cwd = temporaryDirectories.get(item.id);
     }
     for (const item of input.sessions ?? []) if (item.subagentParentId) item.subagentParentId = sessionIds.get(item.subagentParentId) ?? item.subagentParentId;
+    for (const item of input.sessions ?? []) if (item.forkSourceId) item.forkSourceId = sessionIds.get(item.forkSourceId) ?? item.forkSourceId;
     const mapped = { ...input };
     if (mapped.activeId) mapped.activeId = sessionIds.get(mapped.activeId) ?? mapped.activeId;
     for (const field of ['runningSessions', 'unseenSessions']) if (mapped[field]) mapped[field] = new Set([...mapped[field]].map(key => key.startsWith('local:') ? 'local:' + (sessionIds.get(key.slice(6)) ?? key.slice(6)) : key));
@@ -400,4 +401,20 @@ test('a failed group rename keeps the typed name and saves it when retried after
   assert.ok(control('Group actions for Notes'));
   assert.equal(control('Group actions for Research'), null);
   assert.doesNotMatch(document.body.textContent, /connection is not open/i);
+});
+
+test('a branch in its own worktree folder joins its source chat\'s group, and the worktree folder gets no group', async t => {
+  const root = await mkdtemp(join(tmpdir(), 'piop-panel-branch-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const folder = '0190a6e3-8c42-7b05-a281-3d96e04fc812';
+  const worktree = join(root, '.local/share/piop/worktrees', folder);
+  await mkdir(worktree, { recursive: true });
+  const source = session('source', 'Source chat');
+  const panel = await fixture(t, { sessions: [source] });
+  await panel.render({ sessions: [source, session('branch', 'Branch chat', { cwd: worktree, project: folder, forkSourceId: 'source' })] });
+  await untilDom(() => row('branch') && groupContents('repo').contains(row('branch')));
+  assert.equal(control('Group actions for ' + folder), null);
+  await panel.reopen();
+  assert.ok(groupContents('repo').contains(row('branch')));
+  assert.equal(control('Group actions for ' + folder), null);
 });

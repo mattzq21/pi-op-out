@@ -3,6 +3,7 @@ import { execFileSync } from 'node:child_process';
 import { chmodSync, existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { randomUUID } from 'node:crypto';
+import { Database } from 'bun:sqlite';
 import { agentDaemon, text } from './agent-chats';
 
 /*
@@ -14,6 +15,12 @@ const git = (cwd: string, ...args: string[]) => execFileSync('git', ['-C', cwd, 
 const worktreesRoot = (home: string) => join(home, '.local/share/piop/worktrees');
 const piopBranches = (cwd: string) => git(cwd, 'for-each-ref', '--format=%(refname)', 'refs/heads/piop').split('\n').filter(Boolean);
 const worktreeFolders = (home: string) => existsSync(worktreesRoot(home)) ? readdirSync(worktreesRoot(home)) : [];
+/** Folders under the Piop worktrees folder that the project repository cache still knows. */
+function cachedWorktrees(home: string): string[] {
+  const database = new Database(join(home, '.piop', 'sessions.sqlite'), { readonly: true });
+  try { return (database.query('SELECT cwd FROM project_repositories').all() as { cwd: string }[]).map(row => row.cwd).filter(cwd => cwd.startsWith(worktreesRoot(home) + '/')); }
+  finally { database.close(); }
+}
 
 async function repositoryChat() {
   const agents = await agentDaemon();
@@ -111,6 +118,7 @@ test('a branch that fails after its worktree exists removes the worktree, branch
 
     expect(worktreeFolders(agents.daemon.home)).toEqual([]);
     expect(piopBranches(cwd)).toEqual([]);
+    expect(cachedWorktrees(agents.daemon.home)).toEqual([]);
     expect(git(cwd, 'worktree', 'list', '--porcelain').split('\n').filter(line => line.startsWith('worktree '))).toEqual(['worktree ' + cwd]);
     expect(sourceState(cwd)).toEqual(before);
     expect((await command({ type: 'get_state' })).sessionId).toBe(state.sessionId);
@@ -125,6 +133,7 @@ test('a branch that fails after its worktree exists removes the worktree, branch
     expect(branch.sessionId).not.toBe(state.sessionId);
     expect(worktreeFolders(agents.daemon.home)).toEqual([branch.sessionId]);
     expect(readFileSync(join(branch.cwd, 'tracked.txt'), 'utf8')).toBe('dirty');
+    expect(cachedWorktrees(agents.daemon.home)).toEqual([branch.cwd]);
   } finally {
     chmodSync(sessionFolder(), 0o755);
     await agents.close();

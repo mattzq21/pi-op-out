@@ -180,6 +180,9 @@ describe('split conversation lifecycle', () => {
     assert.equal(pool.forSession({ id: 'forked', cwd: '/repo', path: '/fork.jsonl', hostId: 'local' }), transport);
     assert.equal(changes[0][0].id, 'forked'); assert.equal(changes[0][0].path, '/fork.jsonl'); assert.equal(changes[0][0].name, 'Fork'); assert.equal(changes[0][1], transport);
     assert.equal(changes[0][0].cwd, '/worktrees/forked'); assert.equal(transport.currentCwd(), '/worktrees/forked');
+    // The daemon gives the branch its source's group when it loads groups; the pane writes no group itself.
+    assert.equal(changes[0][0].forkSourceId, 'session');
+    assert.deepEqual(daemon.filter(({ command }) => command === 'change_session_groups'), []);
   });
 
   test('branching the latest answer forks after it, honors cancellation, and exposes runtime errors', async () => {

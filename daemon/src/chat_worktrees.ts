@@ -87,6 +87,12 @@ export function archiveRef(id: string): string {
   return `refs/piop/archives/${chatId(id)}`;
 }
 
+/** The commit that the archive reference of a chat names, or null when the reference does not exist. Read only. */
+export async function archivedCommit(input: { chatId: string; gitCommonDir: string }): Promise<string | null> {
+  const ref = archiveRef(input.chatId);
+  return serialized(input.gitCommonDir, () => commitOf(input.gitCommonDir, ref));
+}
+
 function ownedName(id: string, name: string, prefix = ''): boolean {
   return new RegExp(`^${prefix}${chatId(id)}(-${UUID})?$`).test(name);
 }
