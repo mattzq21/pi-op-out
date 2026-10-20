@@ -14,7 +14,8 @@ export const DIRLESS_KEY = "__pi-desktop-dirless__";
 
 export interface SessionGroups { groups: SessionGroup[]; parents: Record<string, string>; assignments: Record<string, string | null>; removedProjects: string[]; }
 
-export interface SessionGroupSeed { sessionKey: string; project: SessionGroup; }
+/** parentKey names the chat this one was branched from; the daemon then gives the branch that chat's group. */
+export interface SessionGroupSeed { sessionKey: string; project: SessionGroup; parentKey?: string; }
 
 export type GroupChange = { type: "move"; id: string; parent: string | null } | { type: "relocate"; project: SessionGroup; key: string } | { type: "create"; name: string } | { type: "project"; project: SessionGroup; key?: string } | { type: "rename"; id: string; name: string } | { type: "remove"; id: string } | { type: "assign"; key: string; group: string | null };
 
@@ -42,17 +43,6 @@ export function updateSessionGroups(update: GroupChange) {
 
 let queue: Promise<void> = Promise.resolve();
 
-export function inheritSessionGroup(parentKey: string, childKey: string, parent?: SessionSummary) {
-  return enqueue(async () => {
-    const seeds = parent && parent.cwdExists !== false && !isTemporaryChatCwd(parent.cwd) ? [sessionGroupSeed(parent)] : [];
-    const state = await loadSessionGroups(seeds);
-    const revision = eventRevision;
-    const next = await changeSessionGroups({ type: "assign", key: childKey, group: state.assignments[parentKey] ?? null });
-
-    return revision === eventRevision ? publish(next) : next;
-  });
-}
-
 function enqueue<T>(work: () => Promise<T>): Promise<T> {
   const result = queue.then(work, work);
   queue = result.then(() => undefined, () => undefined);
@@ -71,11 +61,12 @@ function sessionGroupSeed(session: SessionSummary): SessionGroupSeed {
   return {
     sessionKey: `${hostId}:${session.id}`,
     project: { id: projectGroupId(session), name: session.project, cwd, hostId, hostName: session.hostName ?? session.hostId ?? "Local" },
+    ...(session.forkSourceId ? { parentKey: `${hostId}:${session.forkSourceId}` } : {}),
   };
 }
 
 function sessionGroupSeedInputs(session: SessionSummary) {
-  return [session.id, session.hostId, session.cwd, session.cwdExists, session.project, session.hostName];
+  return [session.id, session.hostId, session.cwd, session.cwdExists, session.project, session.hostName, session.forkSourceId];
 }
 
 function sessionGroupSeeds(sessions: Accessor<SessionSummary[]>) {

@@ -4,7 +4,6 @@ import { fastModelNames, hostFastModels } from "../lib/fastModels";
 import { localHostLabel } from "../lib/mobileHosts";
 import { trackToastMessage, trackToastNotices } from "../lib/toastHistory";
 import { extensionUiSchema } from "../lib/extensionUiSchema";
-import { inheritSessionGroup } from "../lib/sessionGroups";
 import { resolveMessageEntry } from "../lib/resolveMessageEntry";
 import { Key } from "@solid-primitives/keyed";
 import { createComputed, createMemo, createSignal } from "solid-js";
@@ -304,7 +303,7 @@ export function SplitChatPane(componentProps: Props) {
 
  try { const entryId = await resolveMessageEntry(capturedTransport, message); const result = await capturedTransport.command({ type: mode === "branch" ? "fork_after" : "copy_after", entryId }, forkAfterResultSchema);
 
- if (result.cancelled) return false; const nextState = await capturedSession.refresh(); const cwd = mode === "branch" ? branchCwd(result.state?.cwd, nextState.cwd) : capturedSession1.cwd; if (mode === "branch") capturedTransport.adoptBranchCwd(cwd); await inheritSessionGroup(`${capturedSession1.hostId ?? "local"}:${capturedSession1.id}`, `${capturedSession1.hostId ?? "local"}:${nextState.sessionId}`, capturedSession1); capturedRuntimePool0.bind(capturedSession1.hostId ?? "local", nextState.sessionId, capturedTransport); capturedOnSessionChange2({ ...capturedSession1, cwd, id: nextState.sessionId, path: nextState.sessionFile || "", name: nextState.sessionName || capturedSession1.name }, capturedTransport);
+ if (result.cancelled) return false; const nextState = await capturedSession.refresh(); const cwd = mode === "branch" ? branchCwd(result.state?.cwd, nextState.cwd) : capturedSession1.cwd; if (mode === "branch") capturedTransport.adoptBranchCwd(cwd); capturedRuntimePool0.bind(capturedSession1.hostId ?? "local", nextState.sessionId, capturedTransport); capturedOnSessionChange2({ ...capturedSession1, cwd, id: nextState.sessionId, forkSourceId: capturedSession1.id, path: nextState.sessionFile || "", name: nextState.sessionName || capturedSession1.name }, capturedTransport);
 
  return true; } catch (reason) { reportControlError(reason);
 

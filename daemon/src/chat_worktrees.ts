@@ -237,7 +237,13 @@ async function removeFolder(gitCommonDir: string, home: string, id: string, work
 async function removeTrash(parent: string, name: string): Promise<void> {
   const pattern = new RegExp(`^\\.removing-${name}-${UUID}$`);
   const failures: unknown[] = [];
-  for (const entry of await readdir(parent)) {
+  let entries: string[];
+  try { entries = await readdir(parent); }
+  catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return;
+    throw error;
+  }
+  for (const entry of entries) {
     if (!pattern.test(entry)) continue;
     const trash = join(parent, entry);
     try {

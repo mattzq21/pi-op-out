@@ -1,7 +1,8 @@
+import { execFile } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { join, sep } from 'node:path';
 import * as SessionTables from '../resources/session-database.cjs';
-import { deleteChatWorktree, planRestore, protectArchive, releaseArchive, removeArchivedWorktree, removeRestoredWorktree, restoreWorktree, type ChatArchive, type ChatWorktree } from './chat_worktrees';
+import { archiveRef, deleteChatWorktree, planRestore, protectArchive, releaseArchive, removeArchivedWorktree, removeRestoredWorktree, restoreWorktree, type ChatArchive, type ChatWorktree } from './chat_worktrees';
 import * as Worktrees from './chat_worktree_records';
 import * as Records from '../resources/chat-worktree-records.cjs';
 import type { ChatWorktreeRecord } from './chat_worktree_records';
@@ -63,8 +64,9 @@ export async function beginArchive(chatIds: string[], root = profileRoot()): Pro
     for (const record of records(chatIds, root)) {
       if (record.state !== 'active') throw new Error(`Cannot archive chat ${record.chatId}: its worktree is ${record.state}`);
       running.add(record.chatId);
-      const archive = await protectArchive({ worktree: worktreeOf(record), home: homeDir() });
-      try { done.push(Worktrees.replace(record, { ...settled(record), state: 'archiving', archive: { ref: archive.ref, commit: archive.commit } }, root)!); }
+      const intent = await recordProtection(record, root);
+      const archive = await protectArchive({ worktree: worktreeOf(intent), home: homeDir() });
+      try { done.push(Worktrees.replace(intent, { ...without(settled(intent), 'protecting'), state: 'archiving', archive: { ref: archive.ref, commit: archive.commit } } as ChatWorktreeRecord, root)!); }
       catch (error) {
         try { await releaseArchive(archive); }
         catch (cleanup) { throw new Error(`${errorText(error)}\nCould not release ${archive.ref}: ${errorText(cleanup)}`); }
@@ -74,10 +76,46 @@ export async function beginArchive(chatIds: string[], root = profileRoot()): Pro
     return done;
   } catch (error) {
     for (const id of chatIds) running.delete(id);
-    try { await rollbackArchive(done, root); }
+    try {
+      await rollbackArchive(done, root);
+      for (const record of records(chatIds, root)) if (record.state === 'active' && record.protecting) await releaseUnrecordedArchive(record, root);
+    }
     catch (cleanup) { throw new Error(`${errorText(error)}\nCould not undo the archive references: ${errorText(cleanup)}`); }
     throw error;
   }
+}
+
+/**
+ * Marks an active record before its archive reference is created, so a crash between the reference and the record
+ * write leaves a mark. An earlier mark means such a crash happened: its reference is released first. A reference that
+ * exists without a mark was not made by Piop and stops the archive.
+ */
+async function recordProtection(record: ChatWorktreeRecord, root: string): Promise<ChatWorktreeRecord> {
+  const current = record.protecting ? await releaseUnrecordedArchive(record, root) : record;
+  const ref = archiveRef(record.chatId);
+  const existing = await refCommit(record.gitCommonDir, ref);
+  if (existing) throw new Error(`Cannot archive chat ${record.chatId}: ${ref} already points to ${existing}; Piop did not create it, so it was kept`);
+  return Worktrees.replace(current, { ...settled(current), protecting: true }, root)!;
+}
+
+/** Releases the archive reference that an interrupted beginArchive created for an active record, then clears its mark. */
+async function releaseUnrecordedArchive(record: ChatWorktreeRecord, root: string): Promise<ChatWorktreeRecord> {
+  const ref = archiveRef(record.chatId);
+  const commit = await refCommit(record.gitCommonDir, ref);
+  if (commit) {
+    try { await releaseArchive({ ...worktreeOf(record), ref, commit }); }
+    catch (error) { throw new Error(Worktrees.fail(record, `Could not release the unrecorded ${ref}: ${errorText(error)}`, root)); }
+  }
+  return Worktrees.replace(Worktrees.read(record.chatId, root), without(settled(record), 'protecting') as ChatWorktreeRecord, root)!;
+}
+
+/** The commit that ref names in the shared Git storage, or null when the ref does not exist. Read only. */
+function refCommit(gitCommonDir: string, ref: string): Promise<string | null> {
+  return new Promise((resolve, reject) => execFile('git', ['-C', gitCommonDir, 'rev-parse', '--verify', '--quiet', ref + '^{commit}'], { encoding: 'utf8', env: { ...process.env, GIT_TERMINAL_PROMPT: '0', LC_ALL: 'C' } }, (error, stdout, stderr) => {
+    if (!error) return resolve(stdout.trim());
+    if ((error as { code?: unknown }).code === 1) return resolve(null);
+    reject(new Error(`git rev-parse ${ref} failed in ${gitCommonDir}: ${(stderr || error.message).trim()}`));
+  }));
 }
 
 /** Undoes beginArchive after the transcripts stayed active: releases each archive reference and marks the chat active again. */
@@ -191,7 +229,7 @@ type Area = 'sessions' | 'archived' | 'missing';
  */
 export function pendingWarnings(root = profileRoot()): string[] {
   return Worktrees.list(root).flatMap(record => {
-    const unfinished = (!running.has(record.chatId) && (record.state === 'archiving' || record.state === 'restoring')) || (record.state === 'preparing' && !Records.ownerAlive(record.owner));
+    const unfinished = (!running.has(record.chatId) && (record.state === 'archiving' || record.state === 'restoring' || record.protecting === true)) || (record.state === 'preparing' && !Records.ownerAlive(record.owner));
     if (!record.lastError && !unfinished) return [];
     const step = unfinished ? ` is ${record.state}` : '';
     return [`Worktree ${record.worktree} of chat ${record.chatId}${step}${record.lastError ? ': ' + record.lastError : ''}. Piop retries when it starts again.`];
@@ -228,6 +266,7 @@ export async function recover(root = profileRoot()): Promise<void> {
         if (area !== 'archived') throw new Error('Chat worktree is archived, but its transcript is active');
         if (existsSync(record.worktree)) failures.push(...await finishArchive([record], root));
       } else if (area !== 'sessions') throw new Error('Chat worktree is active, but its transcript is archived');
+      else if (record.protecting) await releaseUnrecordedArchive(record, root);
     } catch (error) { failures.push(`${record.chatId}: ${errorText(error)}`); }
   }
   if (failures.length) throw new Error('Chat worktree recovery is pending:\n' + failures.join('\n'));

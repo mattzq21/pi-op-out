@@ -28,6 +28,8 @@ export interface ChatWorktreeRecord {
   restore?: { restoreId: string; worktree: string; branch: string; reuse: boolean };
   /** Process that creates the worktree; only while preparing. */
   owner?: string;
+  /** Set on an active record while its archive reference may exist without the archiving state. */
+  protecting?: true;
   /** Error of the last failed cleanup; recovery retries. */
   lastError?: string;
 }

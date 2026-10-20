@@ -239,3 +239,34 @@ test('a failed worktree removal after archive keeps the archive reference, is re
   await restore(restarted, await archivedPath(restarted, chat.id));
   expect(readFileSync(join(worktree, 'work.txt'), 'utf8')).toBe('saved work');
 }, 180000);
+
+test('a crash after the archive reference was saved but before the record changed is undone, and archiving works again', async () => {
+  const { daemon, home, profile, repo, chat, worktree } = await scene();
+  const saved = git(worktree, 'rev-parse', 'HEAD');
+  await daemon.stop();
+  const active = Records.read(chat.id, profile)!;
+  Records.replace(active, { ...active, protecting: true }, profile);
+  git(repo, 'update-ref', Records.archiveRef(chat.id), saved);
+  const restarted = await start(home);
+  expect(tryGit(repo, 'rev-parse', '--verify', '--quiet', Records.archiveRef(chat.id))).toBeNull();
+  expect(Records.read(chat.id, profile)).toEqual(active);
+  const report = await restarted.invoke('storage_report');
+  expect(report.hosts.find((host: any) => host.hostId === 'local').warnings.some((line: string) => line.includes(chat.id))).toBe(false);
+  await archive(restarted, chat.path);
+  expect(existsSync(worktree)).toBe(false);
+  expect(git(repo, 'rev-parse', Records.archiveRef(chat.id))).toBe(saved);
+  expect(Records.read(chat.id, profile)).toMatchObject({ state: 'archived', archive: { commit: saved } });
+  expect(Records.read(chat.id, profile)?.protecting).toBeUndefined();
+}, 180000);
+
+test('an archive started after such a crash releases the leftover reference itself', async () => {
+  const { daemon, profile, repo, chat, worktree } = await scene();
+  const active = Records.read(chat.id, profile)!;
+  git(worktree, 'commit', '--quiet', '--allow-empty', '-m', 'Piop saving progress');
+  const saved = git(worktree, 'rev-parse', 'HEAD');
+  Records.replace(active, { ...active, protecting: true }, profile);
+  git(repo, 'update-ref', Records.archiveRef(chat.id), git(worktree, 'rev-parse', 'HEAD~1'));
+  await archive(daemon, chat.path);
+  expect(git(repo, 'rev-parse', Records.archiveRef(chat.id))).toBe(saved);
+  expect(Records.read(chat.id, profile)).toMatchObject({ state: 'archived', archive: { commit: saved } });
+}, 120000);

@@ -7,7 +7,6 @@ import { type Dispatch, type RefObject, type StateUpdate } from "./lib/solid";
 import { branchMessages, type PiEntry } from "./lib/messages";
 import { NativeTransport } from "./lib/nativeTransport";
 import { SessionRuntimePool } from "./lib/sessionRuntimePool";
-import { inheritSessionGroup } from "./lib/sessionGroups";
 import { resolveMessageEntry } from "./lib/resolveMessageEntry";
 import type { AgentState, AppSettings, ChatMessage, SessionSummary } from "./types";
 
@@ -62,7 +61,7 @@ export function createBranchConversation({ transport, activeConversationKeyRef, 
       if (cwd !== undefined) ownerTransport.adoptBranchCwd(cwd);
 
       if (parentSession) {
-        runtimePool.setLiveSession(ownerTransport, { ...parentSession, id: nextState.sessionId, path: nextState.sessionFile ?? "", cwd: cwd ?? parentSession.cwd, name: nextState.sessionName || parentSession.name, messageCount: nextState.messageCount });
+        runtimePool.setLiveSession(ownerTransport, { ...parentSession, id: nextState.sessionId, forkSourceId: parentSession.id, path: nextState.sessionFile ?? "", cwd: cwd ?? parentSession.cwd, name: nextState.sessionName || parentSession.name, messageCount: nextState.messageCount });
       }
 
       rekeyConversationUi(previousKey, nextKey, ownerTransport, mode === "branch" ? "branch" : "rename");
@@ -112,7 +111,6 @@ export function createBranchConversation({ transport, activeConversationKeyRef, 
       const history = await ownerTransport.command({ type: "get_entries" }, z.object({ entries: z.array(entrySchema), leafId: z.union([z.string(), z.null()]) }));
 
       const nextKey = `${sourceHostId}:${nextState.sessionId}`;
-      await inheritSessionGroup(`${sourceHostId}:${state.sessionId}`, nextKey, parentSession);
       runtimePool.bind(sourceHostId, nextState.sessionId, ownerTransport);
       publishBranch(nextState, history, nextKey, mode === "branch" ? branchCwd(forked_.cwd, nextState.cwd) : sourceCwd);
 
