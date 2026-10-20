@@ -46,12 +46,12 @@ async function archivedPanel(t, archives, { remotes, initial } = {}) {
   };
   const chats = {};
   for (const archive of archives) {
-    const { name, hostId, key = name } = typeof archive === 'string' ? { name: archive, hostId: 'local' } : archive;
+    const { name, hostId, key = name, customType } = typeof archive === 'string' ? { name: archive, hostId: 'local' } : archive;
     assert.equal(Object.hasOwn(chats, key), false, `Archive fixture key ${key} is used twice`);
     const home = await daemon.invoke('home_directory', { hostId });
     chats[key] = JSON.parse(execFileSync('node', [fileURLToPath(new URL('../fixtures/publish-chat.mjs', import.meta.url))], {
       encoding: 'utf8', timeout: 30000,
-      input: JSON.stringify({ home, content: JSON.stringify({ type: 'message', id: 'question', parentId: null, message: { role: 'user', content: name } }) + '\n' }),
+      input: JSON.stringify({ home, content: JSON.stringify({ type: 'message', id: 'question', parentId: null, message: { role: 'user', content: name } }) + '\n' + (customType ? JSON.stringify({ type: 'custom', id: 'parent-marker', parentId: 'question', customType, data: { parentSessionId: 'root' } }) + '\n' : '') }),
     }));
     await daemon.invoke('archive_session', { hostId, sessionPath: chats[key].path, terminalIds: [], clientId: 'archived-panel-test' });
   }
@@ -228,4 +228,17 @@ test('refreshing while a restore is pending still removes the chat once the arch
   reports.release();
   await settle();
   await assertRestoredOnce(panel, 'Restore me');
+});
+
+
+for (const customType of ['piop-subagent-parent', 'piop-review-parent']) test(`an archived ${customType} has no restore action and cannot be restored directly`, { timeout: 60000 }, async t => {
+  const panel = await archivedPanel(t, [{ name: 'Auxiliary chat', hostId: 'local', customType }, 'Root chat']);
+  await panel.settle();
+  assert.ok(panel.view.container.textContent.includes('Auxiliary chat'));
+  assert.equal(panel.button('Auxiliary chat'), null);
+  assert.ok(panel.button('Root chat'));
+  const report = await panel.daemon.invoke('storage_report');
+  const auxiliary = report.hosts.flatMap(host => host.archives).find(archive => archive.id === panel.chats['Auxiliary chat'].id);
+  assert.equal(auxiliary.restorable, false);
+  await assert.rejects(panel.daemon.invoke('restore_archived_session', { hostId: 'local', sessionPath: auxiliary.path, clientId: 'archived-panel-test' }), /Auxiliary sessions can only be restored with their root session/);
 });

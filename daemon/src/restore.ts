@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs';
+import { isAuxiliary, records } from '../resources/piop-storage/session-records.cjs';
 import { locateSessionFile, sessionDescendants } from './archives';
 import * as storageTransactions from './storage_transactions';
 import { StorageTransactionError, type RestoreResult } from './storage_transactions';
@@ -23,6 +25,7 @@ export async function restoreSessionTree(sessionPath: string, lease: (path: stri
     let result: RestoreResult, restored: string[];
     try {
       source = await locateSessionFile(sessionPath, true);
+      assertRootRestore(source);
       leases.push([source, await lease(source)]);
       for (const [child] of await sessionDescendants(source, true, false)) leases.push([child, await lease(child)]);
       result = await storageTransactions.restore(leases.map(([path]) => path), cwdMoves);
@@ -62,4 +65,10 @@ function restoredPaths(result: RestoreResult, sources: string[]): string[] {
     if (!session) throw new Error('Storage transaction committed, but its result is invalid: no restored session for ' + source);
     return session.sessionPath;
   });
+}
+
+export function assertRootRestore(source: string): void {
+  const entries = readFileSync(source, 'utf8').split('\n').filter(line => line.trim()).map(line => JSON.parse(line));
+  const saved = records(source, entries[0]?.id).map((record: any) => record.entry);
+  if (isAuxiliary([...entries, ...saved])) throw new Error('Auxiliary sessions can only be restored with their root session');
 }

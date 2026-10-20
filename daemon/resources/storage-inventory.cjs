@@ -38,6 +38,7 @@ async function inspectTranscript(file) {
   let header;
   let firstPrompt = "";
   let malformed = false;
+  let auxiliary = false;
   const observation = createObservation();
 
   const recordDescription = (entry) => {
@@ -54,6 +55,7 @@ async function inspectTranscript(file) {
       try { entry = JSON.parse(line); } catch { malformed = true; continue; }
 
       observeEntry(observation, entry);
+      if (stateRecords.isAuxiliary([entry])) auxiliary = true;
 
       if (!header) {
         if (entry.type !== "session") throw new Error("Invalid session header");
@@ -65,7 +67,7 @@ async function inspectTranscript(file) {
     }
   } finally { lines.close(); }
 
-  const result = sessionDetails(header, malformed, observation);
+  const result = { ...sessionDetails(header, malformed, observation), auxiliary };
 
   return { header, firstPrompt, malformed, result };
 }
@@ -90,7 +92,7 @@ async function archiveDetails(file, header, explicitName, firstPrompt, malformed
     byteSize: metadata.size,
     byteSizeCoverage: archiveCoverage + ' Queued messages are stored in the shared database and excluded from this size.',
     deletable,
-    restorable: validHeader && !malformed,
+    restorable: validHeader && !malformed && !result.auxiliary && !stateRecords.isAuxiliary(stateRecords.records(file, header.id).map(record => record.entry)),
   };
 
   if (!deletable) archive.deleteError = deleteError;

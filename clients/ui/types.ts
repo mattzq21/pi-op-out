@@ -24,7 +24,7 @@ export interface StorageRoot { path: string; ownership: StorageOwnership; proven
 
 export interface StorageCategory { id: "active-conversations" | "archived-conversations" | "temporary-chats" | "other-storage" | "recovery-storage" | "unattributed-recovery-storage" | "chatgpt-storage" | "goal-attachments" | "unattributed-goal-attachments"; byteSize: number; itemCount: number; estimated?: boolean; directories?: string[]; countUnit?: string; coverage?: string; ownership?: StorageOwnership; reclaimability?: "retained" | "requires-owner-check" | "unknown"; measurement?: "allocated-blocks"; includedInTotal?: boolean; roots?: StorageRoot[]; }
 
-export interface ArchivedConversation { id: string; path: string; name: string; cwd: string; modifiedAt: number; byteSize: number; deletable: boolean; deleteError?: string; byteSizeCoverage?: string; }
+export interface ArchivedConversation { restorable: boolean; id: string; path: string; name: string; cwd: string; modifiedAt: number; byteSize: number; deletable: boolean; deleteError?: string; byteSizeCoverage?: string; }
 
 export interface HostStorage { hostId: string; hostName: string; categories: StorageCategory[]; archives: ArchivedConversation[]; warnings: string[]; error?: string; }
 

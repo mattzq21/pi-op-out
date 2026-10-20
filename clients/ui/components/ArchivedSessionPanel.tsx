@@ -83,7 +83,7 @@ export function ArchivedSessionPanel() {
             <small class="archived-session-detail">{archive().cwd}</small>
             <small class="archived-session-detail">{new Date(archive().modifiedAt * 1000).toLocaleString()}</small>
           </div></div>
-          <IconButton label={`Restore ${archive().name} to active sessions`} disabled={Boolean(restoring())} onClick={() => void restore(host().hostId, archive().path)}>{restoring() === `${host().hostId}:${archive().path}` ? <RefreshCw size={15} class="spinning" /> : <ArchiveRestore size={15} />}</IconButton>
+          <Show when={archive().restorable}><IconButton label={`Restore ${archive().name} to active sessions`} disabled={Boolean(restoring())} onClick={() => void restore(host().hostId, archive().path)}>{restoring() === `${host().hostId}:${archive().path}` ? <RefreshCw size={15} class="spinning" /> : <ArchiveRestore size={15} />}</IconButton></Show>
         </div>}</Key>
       </section>}</Key>
       <Show when={!loading() && !error() && hosts().every(host => !host.archives.length && !host.error)}><p class="empty-small">{query().trim() ? "No matching archived sessions." : "No archived sessions."}</p></Show>

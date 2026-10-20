@@ -11,7 +11,7 @@ import * as storageTransactions from './storage_transactions';
 import { StorageTransactionError } from './storage_transactions';
 import * as chatWorktrees from './chat_worktree_lifecycle';
 import { requireLocal } from './host_connection';
-import { restoreSessionTree } from './restore';
+import { assertRootRestore, restoreSessionTree } from './restore';
 import { MutationGuard } from './conversation_ownership';
 import * as sessionGroups from './session_groups';
 import * as terminalSessions from './terminal_sessions';
@@ -293,6 +293,7 @@ async function beginTreeRestore(app: App, hostId: string, sessionPath: string): 
   let source: string;
   try { source = localArchivedSessionFileAt(homeDir(), sessionPath); }
   catch { return []; }
+  assertRootRestore(source);
   const settings = await loadAppSettings(app);
   const tree = [source, ...(await sessionDescendants(source, true, false)).map(([path]) => path)];
   const chatIds: string[] = [];

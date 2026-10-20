@@ -39,7 +39,7 @@ export const storageRootSchema = z.object({ path: z.string(), ownership: storage
 
 export const storageCategorySchema = z.object({ id: z.enum(["active-conversations", "archived-conversations", "temporary-chats", "other-storage", "recovery-storage", "unattributed-recovery-storage", "chatgpt-storage", "goal-attachments", "unattributed-goal-attachments"]), byteSize: z.number(), itemCount: z.number(), estimated: z.boolean().optional(), directories: z.array(z.string()).optional(), countUnit: z.string().optional(), coverage: z.string().optional(), ownership: storageOwnershipSchema.optional(), reclaimability: z.enum(["retained", "requires-owner-check", "unknown"]).optional(), measurement: z.enum(["allocated-blocks"]).optional(), includedInTotal: z.boolean().optional(), roots: z.array(storageRootSchema).optional() });
 
-export const archivedConversationSchema = z.object({ id: z.string(), path: z.string(), name: z.string(), cwd: z.string(), modifiedAt: z.number(), byteSize: z.number(), deletable: z.boolean(), deleteError: z.string().optional(), byteSizeCoverage: z.string().optional() });
+export const archivedConversationSchema = z.object({ restorable: z.boolean().default(false), id: z.string(), path: z.string(), name: z.string(), cwd: z.string(), modifiedAt: z.number(), byteSize: z.number(), deletable: z.boolean(), deleteError: z.string().optional(), byteSizeCoverage: z.string().optional() });
 
 export const hostStorageSchema = z.object({ hostId: z.string(), hostName: z.string(), categories: z.array(storageCategorySchema), archives: z.array(archivedConversationSchema), warnings: z.array(z.string()), error: z.string().optional() });
 
