@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process';
-import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, unlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { beforeAll, expect, test } from 'bun:test';
@@ -188,7 +188,7 @@ test('undo and delete succeed when nothing was ever created on this machine', as
   await Worktrees.deleteChatWorktree({ record: { repository: repo, gitCommonDir, chatId, worktree: Worktrees.worktreePath(home, chatId), branch: Worktrees.branchName(chatId), archive: null }, home });
 });
 
-test('archives the last commit and restores it even after the branch is deleted', async () => {
+test('archive removes the folder and branch, and restore recreates both from the saved commit', async () => {
   const { repo, home } = repository();
   const chatId = randomUUID();
   const created = await Worktrees.createWorktree({ sourceCwd: repo, chatId, home });
@@ -203,14 +203,11 @@ test('archives the last commit and restores it even after the branch is deleted'
   await Worktrees.removeArchivedWorktree({ archive, home });
   await Worktrees.removeArchivedWorktree({ archive, home });
   expect(existsSync(created.worktree)).toBe(false);
-  expect(git(repo, 'rev-parse', 'refs/heads/' + created.branch)).toBe(saved!.commit);
-
-  git(repo, 'branch', '-D', created.branch);
+  expect(hasRef(repo, 'refs/heads/' + created.branch)).toBe(false);
   git(repo, 'gc', '--quiet', '--prune=now');
   const plan = await Worktrees.planRestore({ archive, home });
   expect(plan.reuse).toBe(false);
-  expect(plan.branch).toBe(`piop/${chatId}-${plan.restoreId}`);
-  expect(plan.branch.length).toBe(78);
+  expect(plan.branch).toBe(created.branch);
   expect(plan.worktree).toBe(created.worktree);
   const restored = await Worktrees.restoreWorktree({ archive, home, plan });
   expect(restored).toEqual({ repository: repo, gitCommonDir: created.gitCommonDir, chatId, worktree: created.worktree, branch: plan.branch });
@@ -224,6 +221,26 @@ test('archives the last commit and restores it even after the branch is deleted'
   expect(hasRef(repo, archive.ref)).toBe(false);
 });
 
+test('archive reports a failed branch removal and can finish after the folder is gone', async () => {
+  const { repo, home } = repository();
+  const created = await Worktrees.createWorktree({ sourceCwd: repo, chatId: randomUUID(), home });
+  const archive = await Worktrees.protectArchive({ worktree: created, home });
+  const lock = join(created.gitCommonDir, 'refs/heads/' + created.branch + '.lock');
+  write(lock, '');
+  try {
+    await expect(Worktrees.removeArchivedWorktree({ archive, home })).rejects.toThrow();
+    expect(existsSync(created.worktree)).toBe(false);
+    expect(hasRef(repo, 'refs/heads/' + created.branch)).toBe(true);
+    expect(git(repo, 'rev-parse', archive.ref)).toBe(archive.commit);
+  } finally { unlinkSync(lock); }
+  await Worktrees.removeArchivedWorktree({ archive, home });
+  expect(hasRef(repo, 'refs/heads/' + created.branch)).toBe(false);
+  const plan = await Worktrees.planRestore({ archive, home });
+  const restored = await Worktrees.restoreWorktree({ archive, home, plan });
+  expect(restored.branch).toBe(created.branch);
+  expect(git(restored.worktree, 'rev-parse', 'HEAD')).toBe(archive.commit);
+});
+
 test('restore reuses an unchanged branch, and avoids a moved branch and an occupied folder', async () => {
   const { repo, home } = repository();
   const chatId = randomUUID();
@@ -231,6 +248,7 @@ test('restore reuses an unchanged branch, and avoids a moved branch and an occup
   const archive = await Worktrees.protectArchive({ worktree: created, home });
   await Worktrees.removeArchivedWorktree({ archive, home });
 
+  git(repo, 'branch', created.branch, archive.commit);
   const same = await Worktrees.planRestore({ archive, home });
   expect(same).toMatchObject({ reuse: true, branch: created.branch, worktree: created.worktree });
   const reused = await Worktrees.restoreWorktree({ archive, home, plan: same });

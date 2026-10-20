@@ -329,12 +329,12 @@ export async function protectArchive(input: { worktree: ChatWorktree; home: stri
   });
 }
 
-/** Removes the folder of an archived chat after `protectArchive`. Keeps the branch. Changes after the commit are discarded. */
 export async function removeArchivedWorktree(input: { archive: ChatArchive; home: string }): Promise<void> {
   const { archive, home } = input;
   await serialized(archive.gitCommonDir, async () => {
     if (await commitOf(archive.gitCommonDir, archive.ref) !== archive.commit) throw new Error(`${archive.ref} does not protect ${archive.commit}; the worktree was kept`);
     await removeFolder(archive.gitCommonDir, home, archive.chatId, archive.worktree);
+    await removeBranch(archive.gitCommonDir, archive.chatId, archive.branch);
   });
 }
 
@@ -355,12 +355,13 @@ export async function planRestore(input: { archive: ChatArchive; home: string; r
       return { restoreId, worktree: archive.worktree, branch: archive.branch, reuse: true, retained: true };
     }
     const inUse = (await worktrees(archive.gitCommonDir)).some(item => item.branch === archive.branch);
-    const reuse = !inUse && await commitOf(archive.gitCommonDir, `refs/heads/${archive.branch}`) === archive.commit;
+    const branchCommit = await commitOf(archive.gitCommonDir, `refs/heads/${archive.branch}`);
+    const reuse = !inUse && branchCommit === archive.commit;
     const preferred = worktreePath(home, archive.chatId);
     return {
       restoreId,
       worktree: await exists(preferred) ? worktreePath(home, archive.chatId, restoreId) : preferred,
-      branch: reuse ? archive.branch : branchName(archive.chatId, restoreId),
+      branch: !inUse && (!branchCommit || reuse) ? archive.branch : branchName(archive.chatId, restoreId),
       reuse,
     };
   });

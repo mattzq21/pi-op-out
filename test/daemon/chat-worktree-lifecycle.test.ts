@@ -94,12 +94,13 @@ test('archiving a chat in the original project folder keeps the folder and its u
   expect(readFileSync(join(repo, 'dirty.txt'), 'utf8')).toBe('uncommitted');
 }, 120000);
 
-test('archive saves the last commit, removes the worktree, and restore reuses the unchanged branch and folder', async () => {
+test('archive saves the last commit, removes the worktree and branch, and restore recreates them', async () => {
   const { daemon, profile, repo, chat, worktree } = await scene();
   const saved = git(worktree, 'rev-parse', 'HEAD');
   writeFileSync(join(worktree, 'work.txt'), 'after the last commit');
   await archive(daemon, chat.path);
   expect(existsSync(worktree)).toBe(false);
+  expect(tryGit(repo, 'rev-parse', '--verify', '--quiet', 'refs/heads/piop/' + chat.id)).toBeNull();
   expect(git(repo, 'rev-parse', Records.archiveRef(chat.id))).toBe(saved);
   expect(Records.read(chat.id, profile)).toMatchObject({ state: 'archived', archive: { commit: saved } });
   const path = await archivedPath(daemon, chat.id);
@@ -143,7 +144,7 @@ test('a failed restore removes what it created and leaves the chat archived', as
   expect(existsSync(worktree)).toBe(false);
   expect(Records.read(chat.id, profile)).toEqual(before);
   expect(git(repo, 'rev-parse', Records.archiveRef(chat.id))).toBe(before!.archive!.commit);
-  expect(git(repo, 'for-each-ref', '--format=%(refname)', 'refs/heads/piop')).toBe('refs/heads/piop/' + chat.id);
+  expect(git(repo, 'for-each-ref', '--format=%(refname)', 'refs/heads/piop')).toBe('');
   expect(await archivedPath(daemon, chat.id)).toBe(path);
 }, 120000);
 
