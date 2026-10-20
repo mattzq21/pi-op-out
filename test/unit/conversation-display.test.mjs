@@ -154,9 +154,19 @@ test('Worktree fork appears only under finished final responses in a Git reposit
 test('a branched conversation links to its original conversation and message', async t => {
   const opened = [];
   const forkSource = { sessionId: '019a6e31-8c42-7b05-a281-3d96e04fc812', sessionPath: '/sessions/original.jsonl', entryId: 'answer' };
-  const view = await conversation(t, { state: { ...repositoryState, forkSource }, forkSourceName: 'Login fix', onOpenForkSource: source => opened.push(source) });
+  const view = await conversation(t, { state: { ...repositoryState, forkSource }, forkSourceName: 'Login fix', onOpenForkSource: source => opened.push(source), messages: [
+    { id: 'question', role: 'user', content: 'Question' },
+    { id: 'display-answer', entryId: 'answer', role: 'assistant', content: 'Original answer', stopReason: 'stop' },
+    { id: 'follow-up', role: 'user', content: 'Follow-up' },
+    { id: 'later-answer', role: 'assistant', content: 'Later answer', stopReason: 'stop' },
+  ] });
   const link = view.container.querySelector('.fork-source-link');
   assert.equal(link.textContent, 'Branched from “Login fix”');
+  const turns = view.container.querySelectorAll('.conversation-turn');
+  const following = link.ownerDocument.defaultView.Node.DOCUMENT_POSITION_FOLLOWING;
+  assert.ok(turns[0].compareDocumentPosition(link) & following);
+  assert.ok(link.compareDocumentPosition(turns[1]) & following);
+  assert.equal(view.container.querySelectorAll('.fork-source').length, 1);
   await act(() => link.click());
   assert.deepEqual(opened, [forkSource]);
   await view.update({ forkSourceName: undefined });
