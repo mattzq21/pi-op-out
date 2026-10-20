@@ -163,6 +163,28 @@ describe('split conversation lifecycle', () => {
     assert.ok(calls.some(command => command.type === 'resume')); assert.ok(calls.some(command => command.type === 'abort'));
   });
 
+  for (const repository of [null, { root: '/repo', gitDir: '/repo/.git' }]) test(`regular fork keeps the folder and original chat (${repository ? 'repository' : 'plain folder'})`, async () => {
+    const entries = [{ type: 'message', id: 'u', parentId: null, message: { role: 'user', content: 'Question' } }, { type: 'message', id: 'a', parentId: 'u', message: { role: 'assistant', content: 'Answer', stopReason: 'stop' } }];
+    const snapshot = responses.get('get_snapshot');
+    snapshot.history = { entries, leafId: 'a' };
+    snapshot.state = { ...snapshot.state, repository };
+    const changes = [], archived = [];
+    responses.set('copy_after', () => {
+      snapshot.state = { ...snapshot.state, sessionId: 'regular-fork', sessionFile: '/regular-fork.jsonl', cwd: '/repo' };
+      return { cancelled: false, state: snapshot.state };
+    });
+    await render({ onSessionChange: value => changes.push(value), onArchiveOriginal: value => archived.push(value) });
+    assert.ok(control('Fork'));
+    assert.equal(Boolean(control('Fork in worktree')), Boolean(repository));
+    await click(control('Fork'));
+    await untilDom(() => changes.length === 1);
+    assert.ok(calls.some(command => command.type === 'copy_after' && command.entryId === 'a'));
+    assert.equal(calls.some(command => command.type === 'fork_after'), false);
+    assert.equal(changes[0].cwd, '/repo');
+    assert.equal(changes[0].id, 'regular-fork');
+    assert.deepEqual(archived, []);
+  });
+
   test('branching forks before the next prompt', async () => {
     const entries = [{ type: 'message', id: 'u', parentId: null, message: { role: 'user', content: 'Question' } }, { type: 'message', id: 'a', parentId: 'u', message: { role: 'assistant', content: 'Answer', stopReason: 'stop' } }, { type: 'message', id: 'next', parentId: 'a', message: { role: 'user', content: 'Next question' } }];
     responses.get('get_snapshot').history = { entries, leafId: 'next' };
@@ -173,8 +195,8 @@ describe('split conversation lifecycle', () => {
     return { cancelled: false, state: { cwd: '/worktrees/forked' } }; });
     responses.set('get_entries', { entries: entries.slice(0, 2), leafId: 'a' });
     await render({ onSessionChange: (...args) => { changes.push(args); changed.resolve(); } });
-    assert.ok(control('Fork'), JSON.stringify({ text: document.body.textContent, calls }));
-    await click(control('Fork'));
+    assert.ok(control('Fork in worktree'), JSON.stringify({ text: document.body.textContent, calls }));
+    await click(control('Fork in worktree'));
     await received(command => command.type === 'fork_after' && command.entryId === 'a');
     await Promise.race([changed.promise, untilDom(() => document.querySelector('.split-control-error')).then(error => assert.fail(error.textContent))]);
     assert.equal(pool.forSession({ id: 'forked', cwd: '/repo', path: '/fork.jsonl', hostId: 'local' }), transport);
@@ -190,10 +212,10 @@ describe('split conversation lifecycle', () => {
     responses.get('get_snapshot').state = { ...responses.get('get_snapshot').state, repository: { root: '/repo', gitDir: '/repo/.git' } };
     const changes = [];
     responses.set('fork_after', { cancelled: true }); await render({ onSessionChange: value => changes.push(value) });
-    assert.ok(control('Fork'), JSON.stringify({ text: document.body.textContent, calls }));
-    await click(control('Fork')); await received(command => command.type === 'fork_after' && command.entryId === 'a'); await untilDom(() => control('Fork') && !control('Fork').disabled);
+    assert.ok(control('Fork in worktree'), JSON.stringify({ text: document.body.textContent, calls }));
+    await click(control('Fork in worktree')); await received(command => command.type === 'fork_after' && command.entryId === 'a'); await untilDom(() => control('Fork in worktree') && !control('Fork in worktree').disabled);
     assert.deepEqual(changes, []); assert.equal(document.querySelector('.split-control-error'), null);
-    responses.set('fork_after', new Error('fork failed')); await click(control('Fork')); await untilDom(() => /fork failed/.test(document.querySelector('.split-control-error')?.textContent ?? ''));
+    responses.set('fork_after', new Error('fork failed')); await click(control('Fork in worktree')); await untilDom(() => /fork failed/.test(document.querySelector('.split-control-error')?.textContent ?? ''));
     await click(control('Dismiss split pane error')); assert.equal(document.querySelector('.split-control-error'), null); assert.deepEqual(changes, []);
   });
 +  test('review feedback waits for the reviewer when asked, sends its finished answer to the main chat once, and can be cancelled', async () => {

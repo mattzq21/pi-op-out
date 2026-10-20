@@ -433,10 +433,10 @@ export function createAppConversations(preloadChat: () => void) {
     return entry && entry.key === activeConversationKey() ? entry.entryId : undefined; });
   const entryRevealed = () => setRevealEntry(undefined);
 
-  const branch = async (message: ChatMessage) => {
+  const branch = async (message: ChatMessage, mode: "branch" | "fork" = "branch") => {
     const capturedBranchConversation = branchConversation();
 
-    try { await capturedBranchConversation(message); } catch (reason) { addNotice({ title: "Could not fork conversation", message: reason instanceof Error ? reason.message : String(reason) }); } };
+    try { await capturedBranchConversation(message, mode); } catch (reason) { addNotice({ title: "Could not fork conversation", message: reason instanceof Error ? reason.message : String(reason) }); } };
 
   const conversationBusy = () => chatSession().state.isStreaming || chatSession().state.isPausing || chatSession().state.pendingMessageCount;
 

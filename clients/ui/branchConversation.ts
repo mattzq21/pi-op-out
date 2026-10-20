@@ -33,8 +33,8 @@ type Context = {
 };
 
 export function createBranchConversation({ transport, activeConversationKeyRef, branchPending, state, sessions, runtimePool, rekeyConversationUi, activeTransportRef, setActiveCwd, setState, setMessages, updateConnected, configureRuntime, transportConversationKeys, activateConversationKey, syncSessionIndex, requestComposerFocus }: Context) {
-  /** "branch" creates a managed worktree chat; "copy" copies history in the same folder for Fork and forget. */
-  return async (message: ChatMessage, mode: "branch" | "copy" = "branch") => {
+  /** "branch" creates a worktree; "fork" keeps the folder; "copy" also transfers the draft for Fork and forget. */
+  return async (message: ChatMessage, mode: "branch" | "fork" | "copy" = "branch") => {
     const ownerTransport = transport; const previousKey = activeConversationKeyRef.current;
     const entryId = await resolveMessageEntry(ownerTransport, message);
     const pendingKey = `${previousKey}:${entryId}`;
@@ -64,7 +64,7 @@ export function createBranchConversation({ transport, activeConversationKeyRef, 
         runtimePool.setLiveSession(ownerTransport, { ...parentSession, id: nextState.sessionId, forkSourceId: parentSession.id, path: nextState.sessionFile ?? "", cwd: cwd ?? parentSession.cwd, name: nextState.sessionName || parentSession.name, messageCount: nextState.messageCount });
       }
 
-      rekeyConversationUi(previousKey, nextKey, ownerTransport, mode === "branch" ? "branch" : "rename");
+      rekeyConversationUi(previousKey, nextKey, ownerTransport, mode === "copy" ? "rename" : "branch");
 
       if (activeTransportRef.current === ownerTransport && activeConversationKeyRef.current === nextKey) {
         if (cwd !== undefined) setActiveCwd(cwd);

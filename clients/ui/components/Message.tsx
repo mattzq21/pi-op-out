@@ -7,7 +7,7 @@ import { type Accessor, createMemo, createSignal, Index, Show, useContext } from
 import { ConversationImageProject } from "./markdownImages";
 import { createDependencyEffect, createRef } from "../lib/solid";
 
-import { Check, ChevronRight, CircleAlert, Copy, Pause, Split, Undo2, Wrench } from "lucide-solid";
+import { Check, ChevronRight, CircleAlert, Copy, Pause, GitBranch, Split, Undo2, Wrench } from "lucide-solid";
 import { hasVisibleText, textOf, thinkingOf } from "../lib/content";
 import { cacheHitStats, isContextInjection } from "../lib/messages";
 import { CacheIcon } from "./CacheIcon";
@@ -19,7 +19,7 @@ import { ZoomableImage } from "./ZoomableImage";
 import { SubagentResults, subagentRuns } from "./SubagentResults";
 import { copyText } from "../lib/clipboard";
 
-interface Props { message: ChatMessage; turnCacheUsage?: { input: number; cacheRead: number }; expanded?: boolean; showActions?: boolean; toolCount?: number; debug?: boolean; paused?: boolean; onBranch?: (message: ChatMessage) => void | Promise<void>; onForkAndForget?: (message: ChatMessage) => void | Promise<void>; onRetry?: () => void; retrying?: boolean; }
+interface Props { message: ChatMessage; turnCacheUsage?: { input: number; cacheRead: number }; expanded?: boolean; showActions?: boolean; toolCount?: number; debug?: boolean; paused?: boolean; onBranch?: (message: ChatMessage) => void | Promise<void>; onFork?: (message: ChatMessage) => void | Promise<void>; onForkAndForget?: (message: ChatMessage) => void | Promise<void>; onRetry?: () => void; retrying?: boolean; }
 
 function cacheTokenDigits(tokens: number) {
   const groups = String(tokens).match(/\d{1,3}(?=(?:\d{3})*$)/g) ?? [];
@@ -254,7 +254,7 @@ export function Message(componentProps: Props) {
     const metadata = responseMetadata(() => componentProps.message, () => componentProps.turnCacheUsage);
     const failureState = createMemo(() => (responseFailure(componentProps.message, (componentProps.paused === undefined ? false : componentProps.paused))));
 
-    const branch = async () => { const capturedOnBranch0 = componentProps.onBranch; const capturedMessage1 = componentProps.message;
+    const branch = async (worktree = false) => { const capturedOnBranch0 = worktree ? componentProps.onBranch : componentProps.onFork; const capturedMessage1 = componentProps.message;
 
       if (!capturedOnBranch0 || branchingRef.current || forgettingRef.current) return;
       branchingRef.current = true; setBranching(true);
@@ -277,7 +277,8 @@ export function Message(componentProps: Props) {
 
       const renderMessageActions = () => {
         const renderCopyResponse = () => (<IconButton title="Copy" label={copyState() === "copied" ? `${metadata().responseLabel} copied` : copyState() === "error" ? `Copy failed for ${metadata().responseLabel.toLowerCase()}` : `Copy ${metadata().responseLabel.toLowerCase()}`} onClick={copy}>{copyState() === "copied" ? <Check size={14} /> : copyState() === "error" ? <CircleAlert size={14} /> : <Copy size={14} />}</IconButton>);
-        const renderBranchAction = () => (componentProps.onBranch && <button class="branch-button" aria-label="Fork" data-tooltip="Fork" disabled={branching() || forgetting()} onClick={() => void branch()}><Split size={14} /></button>);
+        const renderForkAction = () => (componentProps.onFork && <button class="branch-button" aria-label="Fork" data-tooltip="Fork" disabled={branching() || forgetting()} onClick={() => void branch()}><Split size={14} /></button>);
+        const renderBranchAction = () => (componentProps.onBranch && <button class="branch-button" aria-label="Fork in worktree" data-tooltip="Fork in worktree" disabled={branching() || forgetting()} onClick={() => void branch(true)}><GitBranch size={14} /></button>);
         const renderForkAndForgetAction = () => (componentProps.onForkAndForget && <button class="branch-button fork-and-forget-button" aria-label={`Fork and forget from ${metadata().responseLabel.toLowerCase()}`} data-tooltip="Fork and forget" disabled={branching() || forgetting()} onClick={() => void forkAndForget()}><Undo2 size={14} /></button>);
         const renderCacheHitRate = () => ((componentProps.debug ?? false) && metadata().cache && <span class={`cache-hit-rate${required((metadata().cache)).low ? " low" : ""}`} tabIndex={0} aria-label={`Cache ${required((metadata().cache)).rate}%, ${required((metadata().cache)).cachedTokens}/${required((metadata().cache)).promptTokens}`}><CacheIcon rate={required((metadata().cache)).rate} />{required((metadata().cache)).rate}%<span class="cache-fraction-tooltip" aria-hidden="true"><span>{cacheTokenDigits(required((metadata().cache)).cachedTokens)}</span><span>{cacheTokenDigits(required((metadata().cache)).promptTokens)}</span></span></span>);
 
@@ -286,6 +287,7 @@ export function Message(componentProps: Props) {
         return (showActions() && <div class="message-actions">
           {renderCopyResponse()}
           {copyState() === "error" && <span class="copy-feedback" role="status">Could not copy response</span>}
+          {renderForkAction()}
           {renderBranchAction()}
 
           {renderCacheHitRate()}

@@ -119,9 +119,24 @@ test('ending the pause offers retry only for the latest aborted response', async
 });
 
 const repositoryState = { model: null, thinkingLevel: 'off', isStreaming: false, messageCount: 2, repository: { root: '/repo', gitDir: '/repo/.git' } };
-const forkControl = view => view.container.querySelector('[aria-label="Fork"]');
+const forkControl = view => view.container.querySelector('[aria-label="Fork in worktree"]');
 
-test('Fork appears only under finished final responses in a Git repository', async t => {
+test('regular Fork is available with and without a repository and is separate from worktree Fork', async t => {
+  const answer = { id: 'answer', role: 'assistant', content: 'Answer', stopReason: 'stop' };
+  const forks = [], worktrees = [];
+  const view = await conversation(t, { state: repositoryState, messages: [answer], onFork: value => forks.push(value.id), onBranch: value => worktrees.push(value.id) });
+  await act(() => view.container.querySelector('[aria-label="Fork"]').click());
+  await act(() => forkControl(view).click());
+  assert.deepEqual(forks, ['answer']);
+  assert.deepEqual(worktrees, ['answer']);
+  await view.update({ state: { ...repositoryState, repository: null } });
+  assert.equal(forkControl(view), null);
+  await act(() => view.container.querySelector('[aria-label="Fork"]').click());
+  assert.deepEqual(forks, ['answer', 'answer']);
+  assert.deepEqual(worktrees, ['answer']);
+});
+
+test('Worktree fork appears only under finished final responses in a Git repository', async t => {
   const question = { id: 'question', role: 'user', content: 'Question' };
   const answer = { id: 'answer', role: 'assistant', content: [{ type: 'text', text: 'Answer' }], stopReason: 'stop' };
   const view = await conversation(t, { state: repositoryState, messages: [question, answer], onBranch: () => {} });
@@ -170,7 +185,7 @@ test('Fork uses the current callback for an already displayed response', async t
     { id: 'answer', role: 'assistant', content: 'Answer', stopReason: 'stop' },
   ], onBranch: message => previous.push(message.id) });
   await view.update({ onBranch: message => current.push(message.id) });
-  const fork = view.container.querySelector('[aria-label="Fork"]');
+  const fork = view.container.querySelector('[aria-label="Fork in worktree"]');
   assert.ok(fork);
   await act(() => fork.click());
   assert.deepEqual(current, ['answer']);

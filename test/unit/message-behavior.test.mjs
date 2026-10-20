@@ -80,7 +80,7 @@ const copyResponse = () => document.querySelector('button[aria-label^="Copy assi
 test('a pending fork prevents another action until it finishes', async t => {
   const pending = Promise.withResolvers(), branches = [], forgotten = [];
   const message = { id: 'assistant-id', role: 'assistant', content: 'answer' };
-  await renderMessage(t, message, { onBranch: value => { branches.push(value); return pending.promise; }, onForkAndForget: value => forgotten.push(value) });
+  await renderMessage(t, message, { onFork: value => { branches.push(value); return pending.promise; }, onForkAndForget: value => forgotten.push(value) });
   await click(control('Fork'));
   assert.equal(control('Fork').disabled, true);
   assert.equal(forgetControl().disabled, true);
@@ -95,7 +95,7 @@ test('a pending fork prevents another action until it finishes', async t => {
 });
 
 test('streaming responses show work in progress and hide completed response actions', async t => {
-  await renderMessage(t, { role: 'assistant', content: 'partial answer', streaming: true }, { onBranch: () => {}, onForkAndForget: () => {} });
+  await renderMessage(t, { role: 'assistant', content: 'partial answer', streaming: true }, { onFork: () => {}, onBranch: () => {}, onForkAndForget: () => {} });
   assert.match(document.querySelector('[role=status]').textContent, /piop is working/);
   assert.equal(control('Fork'), null);
   assert.equal(forgetControl(), null);
@@ -103,7 +103,7 @@ test('streaming responses show work in progress and hide completed response acti
 });
 
 test('the caller can hide completed response actions', async t => {
-  await renderMessage(t, { role: 'assistant', content: 'answer' }, { showActions: false, onBranch: () => {}, onForkAndForget: () => {} });
+  await renderMessage(t, { role: 'assistant', content: 'answer' }, { showActions: false, onFork: () => {}, onBranch: () => {}, onForkAndForget: () => {} });
   assert.match(document.body.textContent, /answer/);
   assert.equal(control('Fork'), null);
   assert.equal(forgetControl(), null);
