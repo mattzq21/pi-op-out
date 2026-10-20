@@ -2,7 +2,7 @@ import { basename, isAbsolute, join } from 'node:path';
 import { getProjectRepository, rememberProjectRepository } from '../project_repositories';
 import { createWorktree } from '../chat_worktrees';
 import * as Worktrees from '../chat_worktree_records';
-import { publishBranchHistory, discardBranchHistory } from '../chat_branch_operations';
+import { publishBranchHistory } from '../chat_branch_operations';
 import * as Registry from '../session_registry';
 import { kind, text } from './json';
 import { Guard, ownershipError } from './ownership';
@@ -226,9 +226,7 @@ class Branch {
     await attempt(() => guard?.release(this.host.ownership(), false));
     if (!this.committed && this.managedId) {
       const id = this.managedId;
-      await attempt(() => discardBranchHistory(this.host.storageRoot(), id, this.managedPath));
-      await attempt(() => Worktrees.abandon(id, this.host.storageRoot()));
-      await attempt(() => Registry.releaseReservation(this.host.storageRoot(), id));
+      await attempt(() => Worktrees.abandonCreation(id, this.managedPath, this.host.storageRoot()));
     }
     if (failures.length) throw new Error(failures.join('\n'));
   }

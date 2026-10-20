@@ -56,34 +56,49 @@ export function prepare(fields: NewChatWorktree, root = profileRoot()): ChatWork
 /** Call when the new chat is complete. Until then recovery undoes the creation. */
 export function activate(chatId: string, root = profileRoot()): ChatWorktreeRecord { return Records.activate(root, chatId); }
 
+/** Owner of a creation whose cleanup failed. No process has this token, so the next recovery run takes it over. */
+export const RECOVERY_OWNER = 'recovery';
+
 /**
- * Undoes a creation that did not complete: removes the worktree folder and branch, then the record. Accepts a preparing
- * record, or an active one whose chat was never handed to the user. Throws and keeps the record with lastError on failure.
+ * Undoes a creation that was not handed to the user, in order: discards the new transcript and its attachment claims,
+ * removes the worktree and branch, forgets the record, then releases the reserved chat ID. First puts an active record
+ * back to preparing, owned by this process, so a crash during cleanup leaves it for recovery. Each step needs the one
+ * before it; the first failure stops the cleanup, keeps the record owned by recovery with lastError, and throws.
  */
-export async function abandon(chatId: string, root = profileRoot()): Promise<void> {
-  const record = read(chatId, root);
-  if (record === null) return;
-  if (record.state !== 'preparing' && record.state !== 'active') throw new Error(`Chat worktree is ${record.state}; only an unfinished creation can be undone: ${chatId}`);
-  try { await removeCreatedWorktree({ chatId, gitCommonDir: record.gitCommonDir, home: homeDir() }); }
-  catch (error: any) { throw new Error(fail(record, `Could not undo the worktree of chat ${chatId}: ${error?.message ?? error}`, root)); }
-  forgetProjectRepository(root, record.worktree);
-  replace(read(chatId, root), null, root);
+export async function abandonCreation(chatId: string, sessionPath: string | null, root = profileRoot()): Promise<void> {
+  let record = read(chatId, root);
+  if (record !== null) {
+    if (record.state !== 'preparing' && record.state !== 'active') throw new Error(`Chat worktree is ${record.state}; only an unfinished creation can be undone: ${chatId}`);
+    record = replace(record, { ...record, state: 'preparing', owner: Records.processToken() }, root)!;
+  }
+  try {
+    const transcript = sessionPath ?? SessionTables.lookup(root, chatId);
+    if (typeof transcript === 'string') await discardBranchHistory(root, chatId, transcript);
+    if (record !== null) {
+      await removeCreatedWorktree({ chatId, gitCommonDir: record.gitCommonDir, home: homeDir() });
+      forgetProjectRepository(root, record.worktree);
+      replace(record, null, root);
+    }
+    Registry.releaseReservation(root, chatId);
+  } catch (error: any) {
+    const message = `Could not undo the creation of chat ${chatId}: ${error?.message ?? error}`;
+    const current = read(chatId, root);
+    if (current === null) throw new Error(message);
+    try { record = replace(current, { ...current, state: 'preparing', owner: RECOVERY_OWNER }, root)!; }
+    catch (update: any) { throw new Error(`${message}\nCleanup record could not be handed to recovery: ${update?.message ?? update}`); }
+    throw new Error(fail(record, message, root));
+  }
 }
 
 /**
- * Undoes creations whose process ended before activation: discards the new transcript and its attachment claims, removes
- * the worktree and branch, then releases the reserved chat ID. Returns the errors of records that still need recovery.
+ * Undoes creations whose process ended or whose cleanup failed. Returns the errors of records that still need recovery.
  */
 export async function recoverPreparing(root = profileRoot()): Promise<string[]> {
   const failures: string[] = [];
   for (const record of list(root)) {
     if (record.state !== 'preparing' || Records.ownerAlive(record.owner)) continue;
-    try {
-      const sessionPath = SessionTables.lookup(root, record.chatId);
-      if (typeof sessionPath === 'string') await discardBranchHistory(root, record.chatId, sessionPath);
-      await abandon(record.chatId, root);
-      Registry.releaseReservation(root, record.chatId);
-    } catch (error: any) { failures.push(`${record.chatId}: ${error?.message ?? error}`); }
+    try { await abandonCreation(record.chatId, null, root); }
+    catch (error: any) { failures.push(`${record.chatId}: ${error?.message ?? error}`); }
   }
   return failures;
 }
