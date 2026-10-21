@@ -17,7 +17,7 @@ export function registerConversationClient(pi: ExtensionAPI) {
 interface BrokerRequest {
   action?: string; sourceSessionId?: string; sourceHostId?: string; wake?: boolean;
   hostId?: string; sessionId?: string; id?: string; cwd?: string; name?: string;
-  message?: string; requestId?: string; deadline?: number; deliveryId?: string;
+  message?: string; deliveryId?: string;
   recoveryDepth?: number; data?: Record<string, unknown>;
 }
 
@@ -27,15 +27,8 @@ const url = process.env.PI_DESKTOP_BROKER_URL;
 
 const token = process.env.PI_DESKTOP_BROKER_TOKEN;
 
-export const MESSAGE_TIMEOUT_MS = 120_000;
-
 export class BrokerRequestError extends Error {
   constructor(message: string, readonly transient: boolean) { super(message); }
-}
-
-export async function cancelRequest(requestId: string) {
-  if (!url || !token) return;
-  await fetch(`${url}/cancel`, { method: "POST", headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" }, body: JSON.stringify({ requestId }), signal: AbortSignal.timeout(5_000) }).catch(() => undefined);
 }
 
 function requestOptions(body: BrokerRequest | undefined, signal: AbortSignal) {

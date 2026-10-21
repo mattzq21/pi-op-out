@@ -378,14 +378,13 @@ function ownedByOther(previous: any, client: string): boolean {
 }
 
 function claimIntent(options: any): string {
-  if (flag(options, 'message')) return 'message';
   if (flag(options, 'archive')) return 'archive';
   if (flag(options, 'delete')) return 'delete';
   if (flag(options, 'relocate')) return 'relocate';
   return 'transfer';
 }
 
-function exclusiveMutation(options: any): boolean { return flag(options, 'mutation') && !flag(options, 'message'); }
+function exclusiveMutation(options: any): boolean { return flag(options, 'mutation'); }
 
 function validateSavedPath(path: string, root: string): void {
   if (!within(path, root) || path === root || extname(path) !== '.jsonl' || path.endsWith('/.jsonl')) throw new Error('Invalid conversation path');

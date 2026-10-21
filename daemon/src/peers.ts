@@ -142,7 +142,6 @@ export class PeerRuntime {
   pending = new Map<string, { host: RemoteHost; cancel(): void }>();
   revision = 0;
   routes = new Map<string, Route>();
-  messages = new Map<string, Connection>();
   running = new Set<string>();
   errors = new Map<string, string>();
   remoteSessions = new Map<string, RemoteSessionList>();
@@ -533,24 +532,11 @@ export async function ensureRestartSafe(app: App): Promise<void> {
 export async function forwardBroker(app: App, hostId: string, path: string, body: any): Promise<any> {
   const connection = await connect(app, hostId);
   body = { ...(body ?? {}), hostId: 'local' };
-  const requestId = path === '/message' && typeof body.requestId === 'string' ? body.requestId as string : undefined;
-  if (requestId !== undefined) {
-    app.broker.withUncancelledRequest(requestId, () => {
-      if (app.peers.messages.has(requestId)) throw new Error('This agent message is already in progress');
-      app.peers.messages.set(requestId, connection);
-    });
-  }
-  try { return await connection.invoke('broker_request', { path, body }); }
-  finally { if (requestId !== undefined) app.peers.messages.delete(requestId); }
-}
-
-export async function cancelMessage(app: App, requestId: string): Promise<void> {
-  const connection = app.peers.messages.get(requestId);
-  if (connection) await connection.invoke('broker_request', { path: '/cancel', body: { requestId } });
+  return connection.invoke('broker_request', { path, body });
 }
 
 export function localBrokerRequest(app: App, path: string, body: any): Promise<any> {
-  if (!['/message', '/cancel', '/orchestration'].includes(path) || (typeof body?.hostId === 'string' && body.hostId !== 'local')) {
+  if (path !== '/orchestration' || (typeof body?.hostId === 'string' && body.hostId !== 'local')) {
     return Promise.reject(new Error('Peer broker requests must target this machine'));
   }
   const [port, token] = brokerEnvironment(app.broker);

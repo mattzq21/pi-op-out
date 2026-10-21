@@ -112,9 +112,7 @@ function importExternalIdentity(path: string): string {
   return header.id;
 }
 
-export type PiLaunch =
-  | { kind: 'rpc'; cwd?: string | null; sessionPath?: string | null; sessionId?: string | null; forkPath?: string | null }
-  | { kind: 'print'; cwd: string; sessionPath: string };
+export type PiLaunch = { kind: 'rpc'; cwd?: string | null; sessionPath?: string | null; sessionId?: string | null; forkPath?: string | null };
 
 export function buildPiCommand(broker: BrokerRuntime, settings: AppSettings, hostId: string, launch: PiLaunch, _daemonPort?: number): LaunchCommand {
   if (hostId !== 'local') throw new Error('Remote Pi must be launched by its owning daemon');
@@ -122,20 +120,18 @@ export function buildPiCommand(broker: BrokerRuntime, settings: AppSettings, hos
   return localPiCommand(settings, hostId, launch, brokerPort, brokerToken, homeDir());
 }
 
-function localWorkerCommand(piPath: string, isRpc: boolean): LaunchCommand {
+function localWorkerCommand(piPath: string): LaunchCommand {
   const command = sessionWorkerCommand(piPath);
   command.env.PIOP_STORAGE_DIRECTORY = STORAGE_DIRECTORY;
   command.env.PI_CODING_AGENT_DIR = join(homeDir(), STORAGE_DIRECTORY);
-  command.args.push(isRpc ? '--mode' : '--print');
-  if (isRpc) command.args.push('rpc');
+  command.args.push('--mode', 'rpc');
   return command;
 }
 
 function localPiCommand(settings: AppSettings, hostId: string, launch: PiLaunch, brokerPort: number, brokerToken: string, desktopHome: string): LaunchCommand {
-  const isRpc = launch.kind === 'rpc';
   const piPath = piExecutable();
   const sessionDir = ensureDesktopSessionsDir(desktopHome);
-  const command = localWorkerCommand(piPath, isRpc);
+  const command = localWorkerCommand(piPath);
   configureLocalExtensions(command, settings, hostId, brokerPort, brokerToken, sessionDir);
   command.env.PIOP_RPC_ENTRY = join(Ext.generatedExtensionRoot(), 'runtime-bridge.cjs');
   const node = nodeExecutable();
@@ -148,19 +144,14 @@ function localPiCommand(settings: AppSettings, hostId: string, launch: PiLaunch,
 }
 
 function configureLocalLaunch(command: LaunchCommand, launch: PiLaunch, piPath: string): void {
-  if (launch.kind === 'rpc') {
-    command.cwd = localLaunchDirectory(launch.cwd ?? undefined);
-    command.env.PI_DESKTOP_PI_EXECUTABLE = piPath;
-    if (launch.forkPath) {
-      if (!launch.sessionId) throw new Error('Fork requires a reserved session identity');
-      command.args.push('--fork', launch.forkPath, '--session-id', launch.sessionId);
-    }
-    else if (launch.sessionPath) command.args.push('--session', launch.sessionPath);
-    else if (launch.sessionId) command.args.push('--session-id', launch.sessionId);
-  } else {
-    command.cwd = launch.cwd;
-    command.args.push('--session', launch.sessionPath);
+  command.cwd = localLaunchDirectory(launch.cwd ?? undefined);
+  command.env.PI_DESKTOP_PI_EXECUTABLE = piPath;
+  if (launch.forkPath) {
+    if (!launch.sessionId) throw new Error('Fork requires a reserved session identity');
+    command.args.push('--fork', launch.forkPath, '--session-id', launch.sessionId);
   }
+  else if (launch.sessionPath) command.args.push('--session', launch.sessionPath);
+  else if (launch.sessionId) command.args.push('--session-id', launch.sessionId);
 }
 
 function configureLocalExtensions(command: LaunchCommand, settings: AppSettings, hostId: string, brokerPort: number, brokerToken: string, sessionDir: string): void {
