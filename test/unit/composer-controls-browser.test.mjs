@@ -169,7 +169,7 @@ test('command options show after the command name: hints describe a free argumen
   await editor.fill('/rs ');
   const rs = page.getByRole('listbox', { name: '/rs options' });
   await rs.waitFor();
-  assert.equal(await rs.textContent(), '[n] [scope]');
+  assert.equal(await rs.textContent(), '/rs [n] [scope]');
   assert.equal(await rs.getByRole('option').count(), 0);
   await editor.fill('/rs 2');
   assert.equal(await rs.count(), 0);
