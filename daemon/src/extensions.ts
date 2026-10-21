@@ -139,14 +139,6 @@ export function prepareFastModeExtension(): string {
   return path;
 }
 
-export function prepareCodemodeToolsDescriptionExtension(): string {
-  const dir = generatedExtensionRoot();
-  ensurePrivateDir(dir);
-  const path = join(dir, 'piop-codemode-tools-description.ts');
-  atomicWritePrivate(path, R.codemodeToolsDescriptionExtension);
-  return path;
-}
-
 export function prepareCodexWebSearchExtension(): string {
   const dir = generatedExtensionRoot();
   ensurePrivateDir(dir);

@@ -128,7 +128,6 @@ test('a Pi start installs the bundled extensions as private files and refreshes 
     ['hooks-extended/index.ts', 'daemon/resources/hooks-extended/index.ts'],
     ['hooks-extended/interface.ts', 'daemon/resources/hooks-extended/interface.ts'],
     ['piop-providers-refresh.ts', 'extensions/piop-providers-refresh/index.ts'],
-    ['piop-codemode-tools-description.ts', 'extensions/piop-codemode-tools-description/index.ts'],
     ['piop-context-window-cap/defaults.ts', 'extensions/piop-context-window-cap/defaults.ts'],
     ['piop-controls/index.ts', 'daemon/resources/piop-controls/index.ts'],
     ['piop-goals/index.ts', 'daemon/resources/piop-goals/index.ts'],
@@ -138,8 +137,8 @@ test('a Pi start installs the bundled extensions as private files and refreshes 
   ];
   const extensions = extensionPaths(await launchPublicPi(daemon));
   for (const name of ['hooks-extended/index.ts', 'piop-controls/index.ts', 'session-broker.ts', 'piop-goals/index.ts', 'plugins/review/index.ts', 'piop-openai-cache-fork.ts', 'piop-codex-web-search.ts']) expect(extensions).toContain(join(generated, name));
-  for (const removed of ['runtime-settings.ts', 'piop-skills-store/index.ts', 'piop-tool-store/index.ts']) expect(extensions).not.toContain(join(generated, removed));
-  for (const name of ['piop-providers-refresh.ts', 'piop-codemode-tools-description.ts']) expect(extensions).toContain(join(generated, name));
+  for (const removed of ['runtime-settings.ts', 'piop-skills-store/index.ts', 'piop-tool-store/index.ts', 'piop-codemode-tools-description.ts']) expect(extensions).not.toContain(join(generated, removed));
+  expect(extensions).toContain(join(generated, 'piop-providers-refresh.ts'));
   for (const [name, relative] of bundles) {
     expect(readFileSync(join(generated, name), 'utf8')).toBe(name === 'piop-context-window-cap/defaults.ts' ? source(relative).replace('../../daemon/resources/session-broker/app-settings.cjs', './app-settings.cjs') : source(relative));
     expect(mode(join(generated, name))).toBe(0o600);
@@ -312,7 +311,6 @@ test('development Pi extensions stay inside their daemon directory across two pr
       const launch = lastLaunch(home);
       expect(launch.readError).toBeUndefined();
       expect(extensionPaths(launch)).toContain(join(debug.extensionRoot, 'piop-mcp-bridge.ts'));
-      expect(extensionPaths(launch)).toContain(join(debug.extensionRoot, 'piop-codemode-tools-description.ts'));
       expect(readFileSync(join(debug.extensionRoot, 'piop-mcp-bridge.ts'), 'utf8')).toBe(source('daemon/resources/mcp-bridge.bundle.mjs'));
       expect(extensionPaths(launch)).toContain(join(debug.extensionRoot, 'piop-providers-refresh.ts'));
       expect(readFileSync(join(debug.extensionRoot, 'piop-providers-refresh.ts'), 'utf8')).toBe(source('extensions/piop-providers-refresh/index.ts'));

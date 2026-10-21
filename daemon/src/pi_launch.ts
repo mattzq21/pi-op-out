@@ -167,7 +167,7 @@ function configureLocalExtensions(command: LaunchCommand, settings: AppSettings,
   const plugins = Ext.preparePluginExtensions();
   const after = (core: Contributions.CoreExtension) => plugins.filter(plugin => plugin.after === core).flatMap(plugin => ['--extension', plugin.path]);
   command.args.push('--extension', 'builtin:codemode', '--extension', 'builtin:tool-search');
-  command.args.push('--extension', Ext.prepareCodemodeToolsDescriptionExtension(), '--session-dir', sessionDir, '--approve', '--no-skills',
+  command.args.push('--session-dir', sessionDir, '--approve', '--no-skills',
     '--extension', Ext.prepareProvidersRefreshExtension(), '--extension', mcpExtension, '--extension', session.storage, '--extension', session.hooks, '--extension', session.controls, '--extension', session.broker,
     '--extension', session.goals, ...after('goals'),
     '--extension', contextWindowCapExtension, '--extension', contextBarExtension, ...after('context-bar'),
