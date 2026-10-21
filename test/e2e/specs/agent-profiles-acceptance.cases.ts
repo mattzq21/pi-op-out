@@ -147,8 +147,8 @@ describe("Agent profiles acceptance", () => {
       }, { timeout: 30_000, timeoutMsg: "Settings reader did not finish loading the current agent revision" });
       await $('//button[normalize-space(.)="Add agent"]').click();
       await $('input[aria-label="Agent name"]').setValue(agentName);
-      await $('input[aria-label="Agent prompt file"]').setValue("sysprompt/default.md");
-      await $('input[aria-label="System prompt file"]').setValue("sysprompt/default.md");
+      await $('input[aria-label="Agent prompt file"]').setValue("~/.agents/prompts/system/default.md");
+      await $('input[aria-label="System prompt file"]').setValue("~/.agents/prompts/system/default.md");
       try { await expect(app.saveSettingsButton).toBeClickable(); }
       catch (error) { throw new Error("Agent save is disabled: " + await browser.execute(() => document.querySelector(".settings-workspace")?.textContent), { cause: error }); }
       await app.saveSettingsButton.click();
@@ -163,13 +163,13 @@ describe("Agent profiles acceptance", () => {
       // A separate native reader verifies persistence after the GUI writer has closed.
       const saved = await nativeAgentConfiguration();
       expect(saved.agents.find(agent => agent.name === agentName)).toMatchObject({
-        path_agent_prompt: "sysprompt/default.md", path_systemprompt: "sysprompt/default.md",
+        path_agent_prompt: "~/.agents/prompts/system/default.md", path_systemprompt: "~/.agents/prompts/system/default.md",
       });
       await app.openConversations();
       await app.openSettings();
       await app.openSettingsSection("Agents");
       await $(`//div[contains(@class,"agent-list")]//button[.//span[normalize-space(.)="${agentName}"]]`).click();
-      await expect($('input[aria-label="Agent prompt file"]')).toHaveValue("sysprompt/default.md");
+      await expect($('input[aria-label="Agent prompt file"]')).toHaveValue("~/.agents/prompts/system/default.md");
     } finally {
       await resetBackend();
       await nativeAgentConfiguration(originalConfig.agents);

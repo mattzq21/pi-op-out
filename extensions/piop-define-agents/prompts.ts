@@ -101,9 +101,10 @@ export async function writeConfig(value: Config, createOnly = false): Promise<{ 
 
 export const configPath = process.env.PIOP_AGENT_CONFIG_PATH || join(dirname(fileURLToPath(import.meta.url)), "config.json");
 
-export const DEFAULT_PROMPT_PATH = "sysprompt/default.md";
+/** Default prompt files live with the user's own agent files in ~/.agents, shared by every Piop profile. */
+export const DEFAULT_PROMPT_PATH = "~/.agents/prompts/system/default.md";
 
-export const DEFAULT_AGENT_PROMPT_PATH = `~/${process.env.PIOP_STORAGE_DIRECTORY || ".piop"}/agents/default.md`;
+export const DEFAULT_AGENT_PROMPT_PATH = "~/.agents/prompts/agent/default.md";
 
 export const DEFAULT_SYSTEM_PROMPT = `You are an expert coding assistant operating inside a coding agent harness. You help users by reading files, executing commands, editing code, and writing new files.
 
