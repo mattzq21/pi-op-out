@@ -736,9 +736,6 @@ async function main() {
   const bind = AgentSession.prototype.bindExtensions;
   AgentSession.prototype.bindExtensions = async function (...bindings) {
     installQueueProtocol(this, output);
-    const settings = this.settingsManager;
-    // Extensions set how the codemode tool presents the other tools: "only" hides them from the model, "on" keeps them declared.
-    Object.defineProperty(globalThis, Symbol.for("piop.codemode-mode"), { value: mode => settings.applyOverrides({ codemode: { mode } }), writable: true, configurable: true });
 
     if (session !== this) {
       bindGoalQueue(this, prompt);

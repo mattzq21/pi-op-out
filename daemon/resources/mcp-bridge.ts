@@ -3,7 +3,7 @@ import type { TSchema } from "typebox";
 import { createMcpExtension, type ExtensionAPI, type ExtensionContext, type ExtensionEvent, type ExtensionHandler, type McpServerConfig, type SessionStartEvent } from "@earendil-works/pi-coding-agent";
 import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
 
-type Selection = { servers: Record<string, McpServerConfig & { piopInjectAgentId?: boolean }>; codemode?: "only" | "on" | "off"; sessionId: string; registered?: Promise<string[]> };
+type Selection = { servers: Record<string, McpServerConfig & { piopInjectAgentId?: boolean }>; codemode?: "on" | "off"; sessionId: string; registered?: Promise<string[]> };
 
 type ToolRequest = { tools?: string[]; availableTools?: string[] };
 

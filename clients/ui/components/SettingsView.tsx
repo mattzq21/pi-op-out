@@ -60,9 +60,8 @@ export const daemonSections = (hostId: string) => sections.filter((item) => !cli
 const isBuiltInAgent = (agent: AgentProfile) => agent.name === "general";
 
 type CodemodeChoice = NonNullable<AgentProfile["codemode"]>;
-const NEXT_CODEMODE: Record<CodemodeChoice, CodemodeChoice> = { only: "off", off: "on", on: "only" };
+const NEXT_CODEMODE: Record<CodemodeChoice, CodemodeChoice> = { on: "off", off: "on" };
 const CODEMODE_HINTS: Record<CodemodeChoice, string> = {
-  only: "ONLY: the agent calls every tool from codemode scripts.",
   on: "ON: the agent calls tools directly or from codemode scripts.",
   off: "OFF: the agent calls every tool directly, without codemode.",
 };
@@ -492,7 +491,7 @@ export function SettingsView(props: SettingsViewProps) {
               {renderAgentDefaults()}
               {renderAgentPromptFiles()}<label class="field"><span>Agent prompt file</span><input aria-label="Agent prompt file" placeholder="Optional path to an agent prompt file" value={agent().path_agent_prompt ?? ""} onInput={(event) => updateAgent({ path_agent_prompt: event.target.value })} /></label>
               <AgentExtensions paths={agent().extensions ?? []} onChange={extensions => updateAgent({ extensions })} />
-              <AgentAllowlist title="Tools" query={toolQuery()} onQuery={setToolQuery} titleAction={<><RefreshTools hostId={providerHostId()} onChange={tools => patch({ tools })} /><button type="button" class="agent-codemode" data-mode={agent().codemode ?? "only"} aria-label={"Codemode " + (agent().codemode ?? "only").toUpperCase()} data-tooltip={CODEMODE_HINTS[agent().codemode ?? "only"]} onClick={() => updateAgent({ codemode: NEXT_CODEMODE[agent().codemode ?? "only"] })}>Codemode {(agent().codemode ?? "only").toUpperCase()}</button></>}><AgentTools tools={draft().tools} query={toolQuery()} selected={agent().tools} agent={agent()} onChange={tools => updateAgent({ tools })} onLimitsChange={updateAgent} /></AgentAllowlist><AgentAllowlist title="Skills" query={skillQuery()} onQuery={setSkillQuery} titleAction={<RefreshSkills hostId={providerHostId()} skills={draft().skills} onChange={skills => patch({ skills })} />}><AgentSkills skills={draft().skills} query={skillQuery()} selected={agent().skills} onChange={skills => updateAgent({ skills })} /></AgentAllowlist><McpSettings value={agent().mcpServers} draft={mcpDrafts()[agentIndex()]} onDraft={value => setMcpDrafts(current => agentDrafts().map((_, index) => index === agentIndex() ? value : current[index]))} onChange={mcpServers => updateAgent({ mcpServers })} />
+              <AgentAllowlist title="Tools" query={toolQuery()} onQuery={setToolQuery} titleAction={<><RefreshTools hostId={providerHostId()} onChange={tools => patch({ tools })} /><button type="button" class="agent-codemode" data-mode={agent().codemode ?? "on"} aria-label={"Codemode " + (agent().codemode ?? "on").toUpperCase()} data-tooltip={CODEMODE_HINTS[agent().codemode ?? "on"]} onClick={() => updateAgent({ codemode: NEXT_CODEMODE[agent().codemode ?? "on"] })}>Codemode {(agent().codemode ?? "on").toUpperCase()}</button></>}><AgentTools tools={draft().tools} query={toolQuery()} selected={agent().tools} agent={agent()} onChange={tools => updateAgent({ tools })} onLimitsChange={updateAgent} /></AgentAllowlist><AgentAllowlist title="Skills" query={skillQuery()} onQuery={setSkillQuery} titleAction={<RefreshSkills hostId={providerHostId()} skills={draft().skills} onChange={skills => patch({ skills })} />}><AgentSkills skills={draft().skills} query={skillQuery()} selected={agent().skills} onChange={skills => updateAgent({ skills })} /></AgentAllowlist><McpSettings value={agent().mcpServers} draft={mcpDrafts()[agentIndex()]} onDraft={value => setMcpDrafts(current => agentDrafts().map((_, index) => index === agentIndex() ? value : current[index]))} onChange={mcpServers => updateAgent({ mcpServers })} />
             </div></Show>);
           };
 

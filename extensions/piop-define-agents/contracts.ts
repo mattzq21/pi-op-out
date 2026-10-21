@@ -8,8 +8,8 @@ export interface RequiredToolsRequest { ctx: ExtensionContext; tools: string[]; 
 
 export interface McpToolsRequest { tools?: string[]; availableTools?: string[] }
 
-/** How an agent reaches its tools. only: through codemode scripts only. on: directly and through codemode. off: directly, without codemode. Missing means only. */
-export type CodemodeChoice = "only" | "on" | "off";
+/** Whether an agent has the codemode tool next to its other tools. Missing means on. */
+export type CodemodeChoice = "on" | "off";
 
 export interface McpSelection { codemode?: CodemodeChoice; servers: McpServers; sessionId: string; registered?: Promise<string[]> }
 
