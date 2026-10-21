@@ -21,10 +21,9 @@ test('unsaved daemon settings lock the other settings pages until they are saved
   const saved = cap.value;
   const before = (await daemon.invoke('load_app_settings')).contextWindowCap;
   await enterText(cap, '250000');
-  await untilDom(() => /Save before switching hosts/.test(root.querySelector('.settings-host-nav').textContent));
-  assert.equal(navButton(root, 'Keybinds').disabled, true, 'client pages are locked while daemon edits are unsaved');
+  await untilDom(() => navButton(root, 'Keybinds').disabled, 10000);
 
-  await click([...root.querySelectorAll('.settings-switch-hint button')].find(button => button.textContent === 'discard changes'));
+  await click(root.querySelector('.settings-save > .discard-button'));
   const fresh = await untilDom(() => root.querySelector('[aria-label="Context window cap"]'));
   assert.equal(fresh.value, saved);
   assert.equal(navButton(root, 'Keybinds').disabled, false);
@@ -34,8 +33,8 @@ test('unsaved daemon settings lock the other settings pages until they are saved
 test('saved daemon settings reach the daemon and unlock the other pages', async t => {
   const { root, cap, daemon, settle } = await daemonSettings(t);
   await enterText(cap, '250000');
-  await click(root.querySelector('.settings-save > button'));
-  await untilDom(() => !root.querySelector('.settings-switch-hint'), 10000);
+  await click(root.querySelector('.settings-save > .primary-button'));
+  await untilDom(() => !navButton(root, 'Keybinds').disabled, 10000);
   await settle();
   assert.equal((await daemon.invoke('load_app_settings')).contextWindowCap, 250000);
   assert.equal(navButton(root, 'Keybinds').disabled, false);
