@@ -87,7 +87,7 @@ test('a failed save goes back to Pi as the hook error, shows once in the chat, a
   expect(rest).toEqual([]);
   expect(failure.event).toBe('turn_end');
   // Pi itself reported the error, so the daemon's rejection reached Pi's turn_end hook.
-  expect(failure.extensionPath).toContain('session-broker');
+  expect(failure.extensionPath).toContain('hooks-extended');
   expect(failure.error).toContain('index.lock');
   expect(subjects(chat.repository)).toEqual(['initial']);
   await chat.command({ type: 'prompt', message: 'Continue anyway' });

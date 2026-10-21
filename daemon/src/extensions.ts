@@ -66,7 +66,7 @@ export const SESSION_BROKER_MODULES = R.SESSION_BROKER_MODULES;
 export const EXCALIDRAW_ASSETS = R.EXCALIDRAW_ASSETS;
 
 /** Installs session-broker and the session extensions that share its modules. Returns the entries in load order. */
-export function prepareSessionExtensions(): { storage: string; controls: string; broker: string; goals: string; reviews: string } {
+export function prepareSessionExtensions(): { hooks: string; storage: string; controls: string; broker: string; goals: string; reviews: string } {
   const dir = generatedExtensionRoot();
   ensurePrivateDir(dir);
   prepareBrokerStorage(dir);
@@ -79,7 +79,7 @@ export function prepareSessionExtensions(): { storage: string; controls: string;
   }
   const broker = join(dir, 'session-broker.ts');
   atomicWritePrivate(broker, R.sessionBroker);
-  return { storage: join(dir, 'piop-storage/index.ts'), controls: join(dir, 'piop-controls/index.ts'), broker, goals: join(dir, 'piop-goals/index.ts'), reviews: join(dir, 'piop-reviews/index.ts') };
+  return { hooks: join(dir, 'hooks-extended/index.ts'), storage: join(dir, 'piop-storage/index.ts'), controls: join(dir, 'piop-controls/index.ts'), broker, goals: join(dir, 'piop-goals/index.ts'), reviews: join(dir, 'piop-reviews/index.ts') };
 }
 
 function prepareSdkStorage(dir: string): void {

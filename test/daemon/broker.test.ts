@@ -48,7 +48,7 @@ if (args.includes('--print')) {
   const state = { sessionFile, sessionId, isStreaming: false, messageCount: 0, pendingMessageCount: 0, model: null, thinkingLevel: 'medium' };
   require('node:readline').createInterface({ input: process.stdin }).on('line', line => {
     const request = JSON.parse(line);
-    process.stdout.write(JSON.stringify({ type: 'response', id: request.id, command: request.type, success: true, data: request.type === 'get_state' ? state : null }) + '\\n');
+    process.stdout.write(JSON.stringify({ type: 'response', id: request.id, command: request.type, success: true, data: request.type === 'get_state' ? state : request.type === 'get_entries' ? { entries: [], leafId: null } : null }) + '\\n');
   });
 }
 `);
@@ -113,7 +113,7 @@ test('a started Pi gets the broker address and a UUID token, and the broker refu
 });
 
 /*
- * An agent that runs for one message has no input channel, so its turn_end hook sends the event to the broker and
+ * An agent that runs for one message has no input channel, so its task_end hook sends the event to the broker and
  * waits for the answer. The daemon applies the same save policy as for app chats, using the saved repository status.
  */
 test('a one-message agent saves its final response through the broker, and a failed save is its error', async () => {
@@ -127,20 +127,20 @@ test('a one-message agent saves its final response through the broker, and a fai
   git('add', '.');
   git('commit', '--quiet', '-m', 'initial');
   await daemon.invoke('validate_project_directory', { hostId: 'local', path: repository, newChat: true });
-  const turnEnd = (content: unknown[]) => request('POST', '/runtime-event', { hostId: 'local', name: 'turn_end', clientId: 'broker-client', data: {
+  const taskEnd = (content: unknown[], name = 'task_end') => request('POST', '/runtime-event', { hostId: 'local', name, clientId: 'broker-client', data: {
     sessionId: randomUUID(), cwd: repository, turnIndex: 0, messageEntryId: 'entry', toolResultEntryIds: [], outcome: 'completed',
     message: { role: 'assistant', stopReason: content.some((part: any) => part.type === 'toolCall') ? 'toolUse' : 'stop', content },
   } });
   writeFileSync(join(repository, 'work.txt'), 'work\n');
 
-  expect((await turnEnd([{ type: 'toolCall', id: 'call', name: 'bash', arguments: {} }])).status).toBe(200);
+  expect((await taskEnd([{ type: 'toolCall', id: 'call', name: 'bash', arguments: {} }], 'turn_end')).status).toBe(200);
   expect(git('log', '--format=%s')).toBe('initial');
-  expect((await turnEnd([{ type: 'text', text: 'Done.' }])).status).toBe(200);
+  expect((await taskEnd([{ type: 'text', text: 'Done.' }])).status).toBe(200);
   expect(git('log', '--format=%s').split('\n')).toEqual(['Piop saving progress', 'initial']);
 
   writeFileSync(join(repository, 'more.txt'), 'more\n');
   writeFileSync(join(repository, '.git/index.lock'), '');
-  const failed = await turnEnd([{ type: 'text', text: 'Done again.' }]);
+  const failed = await taskEnd([{ type: 'text', text: 'Done again.' }]);
   expect(failed.status).not.toBe(200);
   expect(JSON.parse(failed.body).error).toContain('index.lock');
 });
