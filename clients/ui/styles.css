@@ -531,8 +531,24 @@ textarea::placeholder { color: var(--faint); }
 .general-fast-mode .fast-mode-indicator { width: 35px; height: 35px; flex-basis: 35px; }
 .general-fast-mode .fast-mode-indicator svg { width: 22px; height: 22px; }
 .setting-number:disabled { opacity: .5; cursor: not-allowed; }
-.agent-mcp-settings { margin-top: 20px; }
-.agent-mcp-settings h3 { font-size: calc(13px + var(--settings-font-offset, 0px)); font-weight: 500; }
+.agent-setting-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 16px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 8px; font-size: calc(12px + var(--settings-font-offset, 0px)); }
+.agent-mcp-settings { margin-top: 22px; }
+.agent-mcp-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+.agent-mcp-settings h3 { margin: 0; font-size: calc(13px + var(--settings-font-offset, 0px)); font-weight: 600; }
+.agent-mcp-header p, .agent-mcp-empty, .mcp-card-extra { margin: 4px 0 0; color: var(--muted); font-size: calc(11px + var(--settings-font-offset, 0px)); line-height: 1.45; }
+.agent-mcp-empty { margin-top: 14px; padding: 14px; border: 1px dashed var(--line); border-radius: 9px; text-align: center; }
+.mcp-view-toggle { flex: none; min-height: 26px; padding: 0 10px; border: 1px solid var(--line); border-radius: 6px; background: transparent; color: var(--muted); font: 600 calc(11px + var(--settings-font-offset, 0px)) ui-monospace, SFMono-Regular, Consolas, monospace; cursor: pointer; }
+.mcp-view-toggle:hover:not(:disabled), .mcp-view-toggle[aria-pressed="true"] { color: var(--ink); border-color: #aaa49a; }
+.mcp-view-toggle:disabled { cursor: default; opacity: .6; }
+.mcp-json { display: block; box-sizing: border-box; width: 100%; margin-top: 14px; padding: 10px; border: 1px solid var(--line); border-radius: 9px; background: var(--dark-control); color: var(--ink); font: calc(12px + var(--settings-font-offset, 0px))/1.5 ui-monospace, SFMono-Regular, Consolas, monospace; resize: vertical; outline: 0; }
+.mcp-json:focus { border-color: #aaa49a; }
+.mcp-card-body { margin-left: 32px; }
+.mcp-card-body .mcp-transport-toggle { margin-top: 10px; }
+.mcp-card-body .mcp-transport-toggle button { min-width: 72px; min-height: 26px; padding: 3px 12px; }
+.mcp-card-body .command-fields textarea { box-sizing: border-box; width: 100%; border: 1px solid var(--line); background: var(--dark-control); border-radius: 7px; padding: 7px 10px; color: var(--ink); font: calc(12px + var(--settings-font-offset, 0px))/1.5 ui-monospace, SFMono-Regular, Consolas, monospace; resize: vertical; outline: 0; }
+.mcp-card-body .command-fields textarea:focus { border-color: #aaa49a; }
+.mcp-card-head > input[aria-invalid="true"] { color: #d77865; }
+.agent-mcp-settings .mcp-error { margin-left: 0; }
 .agent-mcp-settings .mcp-card-head { grid-template-columns: 24px minmax(0, 1fr) auto auto; }
 .agent-mcp-settings > .secondary-button { margin-top: 10px; }
 .model-bulk-actions { display: flex; flex-wrap: wrap; gap: 7px; padding: 12px 0; }

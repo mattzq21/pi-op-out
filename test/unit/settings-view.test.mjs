@@ -26,6 +26,7 @@ describe('settings editor', () => {
   const control = label => document.querySelector(`[aria-label="${label}"]`);
   const button = text => [...document.querySelectorAll('button')].find(item => item.textContent === text);
   const click = async element => act(async () => element.click());
+  const mcpJson = async () => { if (!control('MCP server configuration')) await click(control('Edit MCP servers as JSON')); return control('MCP server configuration'); };
   const save = () => document.querySelector('.settings-save > .primary-button');
   const section = async name => click([...document.querySelectorAll('nav button')].find(item => item.textContent === name));
   const select = async (label, value) => act(async () => { control(label).value = value; control(label).dispatchEvent(new Event('change', { bubbles: true })); });
@@ -154,20 +155,41 @@ describe('settings editor', () => {
 
   test('MCP JSON validation rejects bad URLs, headers, arguments and timeouts before saving', async () => {
     await render({ agentConfig: { agents: [profile('general')] } }); await section('Agents');
-    const editor = () => control('MCP server configuration');
+    const editor = mcpJson;
 
     for (const text of ['{bad', '[]', '{"search":{"url":"file:///tmp/x"}}', '{"search":{"url":"https://example.com/mcp","headers":{"a":3}}}', '{"search":{"command":"server","args":"one two"}}', '{"search":{"command":"server","timeout":0}}']) {
-      await enterText(editor(), text);
+      await enterText(await editor(), text);
       assert.ok(document.querySelector('.mcp-error'));
       assert.equal(save().disabled, true);
       assert.equal(saves.length, 0);
     }
 
     const servers = { search: { url: 'https://example.com/mcp', headers: { Authorization: 'test' }, timeout: 20000 } };
-    await enterText(editor(), JSON.stringify(servers)); assert.equal(document.querySelector('.mcp-error'), null);
+    await enterText(await editor(), JSON.stringify(servers)); assert.equal(document.querySelector('.mcp-error'), null);
     await click(save()); assert.deepEqual(saves[0][1].agents[0].mcpServers, servers);
-    await enterText(editor(), '{"search":{"command":""}}'); assert.match(document.querySelector('.mcp-error').textContent, /requires a command/);
-    await enterText(editor(), '{}'); await click(save()); assert.deepEqual(saves[1][1].agents[0].mcpServers, {});
+    await enterText(await editor(), '{"search":{"command":""}}'); assert.match(document.querySelector('.mcp-error').textContent, /requires a command/);
+    await enterText(await editor(), '{}'); await click(save()); assert.deepEqual(saves[1][1].agents[0].mcpServers, {});
+  });
+
+  test('MCP server form adds, renames and switches a server to a URL', async () => {
+    await render({ agentConfig: { agents: [profile('general')] } }); await section('Agents');
+    const change = async (label, value) => act(async () => { control(label).value = value; control(label).dispatchEvent(new Event('change', { bubbles: true })); });
+    await click(button('Add server'));
+    assert.ok(document.querySelector('.mcp-error')); assert.equal(save().disabled, true);
+    await enterText(control('server command'), 'npx');
+    await change('server arguments', '-y\n  tool@1  \n\n');
+    await change('MCP server name', 'tool');
+    assert.equal(document.querySelector('.mcp-error'), null);
+    await click(save());
+    assert.deepEqual(saves[0][1].agents[0].mcpServers, { tool: { command: 'npx', args: ['-y', 'tool@1'] } });
+    await click(control('Enable tool'));
+    await click(button('URL'));
+    await enterText(control('tool URL'), 'https://example.com/mcp');
+    await click(save());
+    assert.deepEqual(saves[1][1].agents[0].mcpServers, { tool: { enabled: false, url: 'https://example.com/mcp' } });
+    await click(control('Remove tool'));
+    assert.ok(button('Add server')); await click(save());
+    assert.deepEqual(saves[2][1].agents[0].mcpServers, {});
   });
 
   test('MCP edits and deletion stay within the selected agent even when server ids match', async () => {
@@ -175,16 +197,16 @@ describe('settings editor', () => {
     const reviewServer = { command: 'review-server', args: [], enabled: true };
     const config = { agents: [profile('general', { mcpServers: { shared: generalServer } }), profile('review', { mcpServers: { shared: reviewServer } })] };
     await render({ agentConfig: config }); await section('Agents'); await selectAgent('review');
-    assert.deepEqual(JSON.parse(control('MCP server configuration').value), { shared: reviewServer });
+    assert.deepEqual(JSON.parse((await mcpJson()).value), { shared: reviewServer });
     const edited = { ...reviewServer, command: 'changed-review-server', enabled: false };
-    await enterText(control('MCP server configuration'), JSON.stringify({ shared: edited }));
+    await enterText((await mcpJson()), JSON.stringify({ shared: edited }));
     await click(document.querySelector('.agent-list button'));
-    assert.deepEqual(JSON.parse(control('MCP server configuration').value), { shared: generalServer });
+    assert.deepEqual(JSON.parse((await mcpJson()).value), { shared: generalServer });
     await click(save());
     assert.equal('mcpServers' in saves[0][0], false);
     assert.deepEqual(saves[0][1].agents[0].mcpServers, { shared: generalServer });
     assert.deepEqual(saves[0][1].agents[1].mcpServers, { shared: edited });
-    await enterText(control('MCP server configuration'), '{}'); await click(save());
+    await enterText((await mcpJson()), '{}'); await click(save());
     assert.deepEqual(saves[1][1].agents[0].mcpServers, {});
     assert.deepEqual(saves[1][1].agents[1].mcpServers, { shared: edited });
     assert.deepEqual(config.agents[1].mcpServers, { shared: reviewServer });
@@ -263,8 +285,8 @@ describe('settings editor', () => {
   test('removing embedded servers saves an empty server configuration', async () => {
     await render({ agentConfig: { agents: [profile('general'), profile('review', { mcpServers: { existing: { command: 'cmd', args: [], enabled: true } } })] } });
     await section('Agents'); await selectAgent('review');
-    assert.match(control('MCP server configuration').value, /existing/);
-    await enterText(control('MCP server configuration'), '{}');
+    assert.match((await mcpJson()).value, /existing/);
+    await enterText((await mcpJson()), '{}');
     await click(save());
     assert.equal(saves.length, 1);
     assert.deepEqual(saves[0][1].agents[1].mcpServers, {});
