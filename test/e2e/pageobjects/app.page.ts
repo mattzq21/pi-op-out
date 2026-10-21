@@ -93,9 +93,6 @@ class AppPage {
   }
 
   async refreshForReset() {
-    await browser.execute(() => {
-      window.addEventListener("beforeunload", (event) => event.stopImmediatePropagation(), { capture: true, once: true });
-    });
     await browser.refresh();
   }
 

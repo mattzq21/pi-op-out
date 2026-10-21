@@ -194,9 +194,6 @@ export const resetApp = async () => {
   // The E2E build includes a script-free same-origin page. Unloading the app
   // destroys its timers and writers before storage is cleared.
   const cleanupUrl = new URL("/e2e-cleanup.html", appUrl).href;
-  await browser.execute(() => {
-    window.addEventListener("beforeunload", event => event.stopImmediatePropagation(), { capture: true, once: true });
-  });
   try {
     await browser.url(cleanupUrl);
     await $('[data-piop-fixture-cleanup]').waitForExist();

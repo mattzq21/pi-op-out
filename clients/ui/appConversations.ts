@@ -355,14 +355,6 @@ export function createAppConversations(preloadChat: () => void) {
 
     return () => window.removeEventListener("pagehide", shutdown); }, () => [runtimePool(), transport()]);
   createDependencyEffect(() => {
-    const capturedSettingsDirty = settingsDirty() || drafts.draftSummaries().length > 0 || drafts.submissions().length > 0;
-
-    if (!capturedSettingsDirty) return; const warn = (event: BeforeUnloadEvent) => { event.preventDefault(); event.returnValue = ""; };
-
-    window.addEventListener("beforeunload", warn);
-
-    return () => window.removeEventListener("beforeunload", warn); }, () => [settingsDirty(), drafts.draftSummaries(), drafts.submissions()]);
-  createDependencyEffect(() => {
     const capturedRuntimePool = runtimePool(); const capturedView = view(); const capturedTransport = transport();
     capturedRuntimePool.activate(capturedView === "chat" ? capturedTransport : undefined); }, () => [runtimePool(), transport(), view()]);
 
