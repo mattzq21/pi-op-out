@@ -52,7 +52,7 @@ export const sections: SettingsSection[] = [
 
 export const clientSections = new Set<Section>(["keybinds", "connections", "toasts", ...pluginSettingsSections.filter(item => item.scope === "client").map(item => item.section)]);
 
-export const visibleClientSections = () => sections.filter(item => clientSections.has(item.id) && (!item.plugin || pluginSettingsEnabled("local", item.id)));
+export const visibleClientSections = (debugMode: boolean) => sections.filter(item => clientSections.has(item.id) && (item.id !== "toasts" || debugMode) && (!item.plugin || pluginSettingsEnabled("local", item.id)));
 
 export const daemonSections = (hostId: string) => sections.filter((item) => !clientSections.has(item.id) && (item.id !== "machines" || (hostId === "local" && !isMobile)) && (!item.plugin || pluginSettingsEnabled(hostId, item.id)));
 
@@ -406,8 +406,9 @@ export function SettingsView(props: SettingsViewProps) {
     const fastModeValidationError = invalidFastModeAgent ? `${invalidFastModeAgent.name}: model ${invalidFastModeAgent.model} does not support fast mode` : undefined;
     const formValid = agentValidation().agentsValid && !validationError() && !fastModeValidationError;
     const searchTerms = settingsQuery().trim().toLocaleLowerCase().split(/\s+/).filter(Boolean);
-    const matchingSections = (settingsProps().scope === "client" ? visibleClientSections() : daemonSections(settingsProps().providerHostId ?? "local")).filter((item) => searchTerms.every((term) => item.label.toLocaleLowerCase().includes(term)));
-    const visibleSection = settingsProps().selectedSection ?? (matchingSections.some((item) => item.id === section()) ? section() : matchingSections[0]?.id);
+    const matchingSections = (settingsProps().scope === "client" ? visibleClientSections(settingsProps().settings.debugMode) : daemonSections(settingsProps().providerHostId ?? "local")).filter((item) => searchTerms.every((term) => item.label.toLocaleLowerCase().includes(term)));
+    const selectedSection = settingsProps().selectedSection === "toasts" && !settingsProps().settings.debugMode ? "keybinds" : settingsProps().selectedSection;
+    const visibleSection = selectedSection ?? (matchingSections.some((item) => item.id === section()) ? section() : matchingSections[0]?.id);
 
     return { invalidFastModeAgent, fastModeValidationError, formValid, searchTerms, matchingSections, visibleSection };
   };
