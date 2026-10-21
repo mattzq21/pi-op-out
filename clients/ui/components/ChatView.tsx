@@ -367,7 +367,7 @@ function associateQueuedContext(messages: ChatMessage[]) {
 }
 
 function groupTurns(messages: ChatMessage[], previous: ConversationGroup[] = []) {
-  messages = associateQueuedContext(messages);
+  messages = associateQueuedContext(messages.filter(message => !message.submissionId || !message.piopQueueId));
   const prefix = reusableTurns(messages, previous);
 
   if (prefix.start === messages.length && prefix.count === previous.length) return previous;
