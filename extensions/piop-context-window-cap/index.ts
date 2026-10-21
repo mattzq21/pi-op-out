@@ -477,9 +477,7 @@ export default function contextWindowCap(pi: ExtensionAPI) {
   pi.on("turn_start", () => sync());
   pi.on("turn_end", () => sync());
   pi.on("session_before_compact", () => sync());
-  pi.on("agent_settled", () => drain());
-  pi.on("session_compact", () => { setTimeout(drain, 0); });
-  pi.on("session_compact_failed", () => drain());
+  extendedHooks(pi).on("session_available", () => drain());
   pi.on("input", (event, ctx) => {
     if (!ctx.isIdle()) return;
     drain();

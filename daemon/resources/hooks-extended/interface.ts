@@ -8,7 +8,10 @@ export interface SessionRestoreEvent {
   reason: "start" | "branch_change";
 }
 
+export interface SessionAvailableEvent { type: "session_available" }
+
 export interface ExtendedHookEvents {
+  session_available: SessionAvailableEvent;
   task_end: TaskEndEvent;
   session_restore: SessionRestoreEvent;
 }
@@ -16,6 +19,7 @@ export interface ExtendedHookEvents {
 export type ExtendedHookHandler<K extends keyof ExtendedHookEvents> = (event: ExtendedHookEvents[K], ctx: ExtensionContext) => void | Promise<void>;
 
 export interface ExtendedHooks {
+  waitForAvailable(ctx: ExtensionContext): Promise<void>;
   on<K extends keyof ExtendedHookEvents>(name: K, handler: ExtendedHookHandler<K>): () => void;
 }
 

@@ -57,6 +57,7 @@ export function prepareRuntimeBridge(): void {
   const dir = generatedExtensionRoot();
   ensurePrivateDir(dir);
   atomicWritePrivate(join(dir, 'runtime-bridge.cjs'), R.runtimeBridge);
+  atomicWritePrivate(join(dir, 'runtime-availability.cjs'), R.runtimeAvailability);
   atomicWritePrivate(join(dir, 'runtime-configuration.cjs'), R.runtimeConfiguration);
   atomicWritePrivate(join(dir, 'app-settings.cjs'), R.appSettingsCjs);
   prepareSdkStorage(dir);
