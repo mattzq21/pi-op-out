@@ -497,7 +497,8 @@ kbd { font: 11px "DM Sans"; border: 1px solid #d5d1c9; background: white; paddin
 .plugin-restart-actions { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
 .plugin-restart-success { display: flex; color: var(--green); }
 .model-alias { display: block; width: 100%; min-width: 0; margin: 4px 0; padding: 5px 7px; border: 1px solid var(--line); border-radius: 5px; background: var(--paper); }
-.model-row small { overflow-wrap: anywhere; }
+.model-heading { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
+.model-heading strong, .model-row small { overflow-wrap: anywhere; min-width: 0; }
 
 .composer-above { display: flex; align-items: center; gap: 8px; padding-bottom: 6px; }
 .composer-above > .stream-banner { margin: 0; }
