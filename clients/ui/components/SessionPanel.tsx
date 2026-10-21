@@ -1,6 +1,6 @@
 import { required } from "../lib/required";
 import { Key } from "@solid-primitives/keyed";
-import { createComputed,createMemo,createSignal,Show,type JSX } from "solid-js";
+import { createComputed,createMemo,createSignal,Show,untrack,type JSX } from "solid-js";
 import { Dynamic } from "solid-js/web";
 import { createDependencyEffect,createMemoFields,createRef,cssPixels,type KeyboardEvent,type MouseEvent } from "../lib/solid";
 
@@ -17,7 +17,7 @@ import { RemoveGroupDialog } from "./RemoveGroupDialog";
 
 export type SessionAction = "split" | "new-window" | "rename" | "open-directory" | "archive" | "copy-id" | "open-rollout";
 
-interface Props { transport: NativeTransport; settings: AppSettings; isArchiving: (session: SessionSummary) => boolean; debug?: boolean; sidebar: SidebarState; activeId?: string; activeHostId?: string; runningSessions?: ReadonlySet<string>; unseenSessions?: ReadonlySet<string>; recoverySessions?: ReadonlySet<string>; query: string; onQuery: (query: string) => void; onSelect: (session: SessionSummary) => NativeTransport | undefined; onAction: (session: SessionSummary, action: SessionAction) => void; onNewChat: (group: SessionGroup) => void; createGroupRequest?: number; onCreateGroupHandled?: () => void; }
+interface Props { transport: NativeTransport; settings: AppSettings; isArchiving: (session: SessionSummary) => boolean; debug?: boolean; sidebar: SidebarState; activeId?: string; activeHostId?: string; runningSessions?: ReadonlySet<string>; unseenSessions?: ReadonlySet<string>; recoverySessions?: ReadonlySet<string>; query: string; onQuery: (query: string) => void; onSelect: (session: SessionSummary) => NativeTransport | undefined; onAction: (session: SessionSummary, action: SessionAction) => void; onNewChat: (group: SessionGroup) => void; createGroupRequest?: number; onCreateGroupHandled?: () => void; newChatRequest?: number; }
 
 type CustomGroup = SessionGroup;
 
@@ -52,8 +52,8 @@ function formatApiCost(cost = 0) {
   return `$${cost.toFixed(2)}`;
 }
 
-function sessionPanelDefaults({ debug = false, sidebar, activeId, activeHostId = "local", runningSessions = new Set(), unseenSessions = new Set(), query, onQuery, onSelect, onAction, onNewChat, createGroupRequest = 0, onCreateGroupHandled }: Props) {
-  return { debug, sessions: sidebar.sessions(), activeId, activeHostId, runningSessions, unseenSessions, query, onQuery, onSelect, onAction, onNewChat, createGroupRequest, onCreateGroupHandled };
+function sessionPanelDefaults({ debug = false, sidebar, activeId, activeHostId = "local", runningSessions = new Set(), unseenSessions = new Set(), query, onQuery, onSelect, onAction, onNewChat, createGroupRequest = 0, onCreateGroupHandled, newChatRequest = 0 }: Props) {
+  return { debug, sessions: sidebar.sessions(), activeId, activeHostId, runningSessions, unseenSessions, query, onQuery, onSelect, onAction, onNewChat, createGroupRequest, onCreateGroupHandled, newChatRequest };
 }
 
 function groupLabel(project: string, hostId: string, hostName: string | undefined) {
@@ -134,6 +134,8 @@ export function SessionPanel(props: Props) {
     sessionScrollRef.current?.scrollTo({ top: 0 });
     capturedPanel.onCreateGroupHandled?.();
   }, () => [panel().createGroupRequest, panel().onCreateGroupHandled]);
+  // A new chat closes the form for a new group that the Group button opened.
+  createDependencyEffect(() => { if (panel().newChatRequest && untrack(newGroupName) !== undefined && !untrack(editingGroupId)) void finishGroup(true); }, () => [panel().newChatRequest]);
   createDependencyEffect(() => { const capturedNewGroupName = newGroupName();
 
     if (capturedNewGroupName === undefined) return;

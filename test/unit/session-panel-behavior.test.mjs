@@ -418,3 +418,17 @@ test('a branch in its own worktree folder joins its source chat\'s group, and th
   assert.ok(groupContents('repo').contains(row('branch')));
   assert.equal(control('Group actions for ' + folder), null);
 });
+
+test('starting a new chat closes the new-group form that the Group button opened', async t => {
+  const panel = await fixture(t, { sessions: [session('a', 'Chat 2')] });
+  await panel.render({ createGroupRequest: 1 });
+  await untilDom(() => control('Group name'));
+  await panel.render({ newChatRequest: 1 });
+  await untilDom(() => !control('Group name'));
+  await panel.render({ createGroupRequest: 2 });
+  await enterText(control('Group name'), 'Kept');
+  await key(control('Group name'), 'Enter');
+  await untilDom(() => control('Group actions for Kept') && !control('Group name'));
+  await panel.render({ newChatRequest: 2 });
+  assert.ok(control('Group actions for Kept'), 'existing groups stay');
+});
