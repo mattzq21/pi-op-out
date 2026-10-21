@@ -57,6 +57,7 @@ export function prepareRuntimeBridge(): void {
   const dir = generatedExtensionRoot();
   ensurePrivateDir(dir);
   atomicWritePrivate(join(dir, 'runtime-bridge.cjs'), R.runtimeBridge);
+  atomicWritePrivate(join(dir, 'runtime-availability.cjs'), R.runtimeAvailability);
   atomicWritePrivate(join(dir, 'runtime-configuration.cjs'), R.runtimeConfiguration);
   atomicWritePrivate(join(dir, 'app-settings.cjs'), R.appSettingsCjs);
   prepareSdkStorage(dir);
@@ -66,7 +67,7 @@ export const SESSION_BROKER_MODULES = R.SESSION_BROKER_MODULES;
 export const EXCALIDRAW_ASSETS = R.EXCALIDRAW_ASSETS;
 
 /** Installs session-broker and the session extensions that share its modules. Returns the entries in load order. */
-export function prepareSessionExtensions(): { storage: string; controls: string; broker: string; goals: string; reviews: string } {
+export function prepareSessionExtensions(): { hooks: string; storage: string; controls: string; broker: string; goals: string; reviews: string } {
   const dir = generatedExtensionRoot();
   ensurePrivateDir(dir);
   prepareBrokerStorage(dir);
@@ -79,7 +80,7 @@ export function prepareSessionExtensions(): { storage: string; controls: string;
   }
   const broker = join(dir, 'session-broker.ts');
   atomicWritePrivate(broker, R.sessionBroker);
-  return { storage: join(dir, 'piop-storage/index.ts'), controls: join(dir, 'piop-controls/index.ts'), broker, goals: join(dir, 'piop-goals/index.ts'), reviews: join(dir, 'piop-reviews/index.ts') };
+  return { hooks: join(dir, 'hooks-extended/index.ts'), storage: join(dir, 'piop-storage/index.ts'), controls: join(dir, 'piop-controls/index.ts'), broker, goals: join(dir, 'piop-goals/index.ts'), reviews: join(dir, 'piop-reviews/index.ts') };
 }
 
 function prepareSdkStorage(dir: string): void {
@@ -155,7 +156,7 @@ export function prepareContextWindowCapExtension(settings: AppSettings): string 
   atomicWritePrivate(join(dir, 'interface.ts'), R.contextWindowCapInterface);
   atomicWritePrivate(join(dir, 'app-settings.cjs'), R.appSettingsCjs);
   atomicWritePrivate(join(dir, 'defaults.ts'), R.contextWindowCapDefaults.replace('../../daemon/resources/session-broker/app-settings.cjs', './app-settings.cjs'));
-  atomicWritePrivate(extensionPath, R.contextWindowCapExtension);
+  atomicWritePrivate(extensionPath, R.contextWindowCapExtension.replace('../../daemon/resources/hooks-extended/interface.ts', '../hooks-extended/interface.ts'));
   return extensionPath;
 }
 
@@ -163,7 +164,7 @@ export function prepareSessionCostLimitExtension(_settings: AppSettings): string
   const dir = join(generatedExtensionRoot(), 'piop-session-cost-limit');
   ensurePrivateDir(dir);
   const path = join(dir, 'index.ts');
-  atomicWritePrivate(path, R.sessionCostLimitExtension);
+  atomicWritePrivate(path, R.sessionCostLimitExtension.replace('../../daemon/resources/hooks-extended/interface.ts', '../hooks-extended/interface.ts'));
   return path;
 }
 

@@ -1,3 +1,4 @@
+import hooksExtended from "../../daemon/resources/hooks-extended/index.ts";
 import { beforeEach, describe, expect, mock, test } from "bun:test";
 
 const budgets = { reserveTokens: 16_384, keepRecentTokens: 20_000 };
@@ -18,7 +19,16 @@ class Host {
   commands = new Map<string, any>();
   notes: Array<[string, string]> = [];
   statuses: Array<[string, string | undefined]> = [];
-  idle = true;
+  private idleState = true;
+  private idleWaiters = new Set<() => void>();
+  get idle() { return this.idleState; }
+  set idle(value: boolean) {
+    const changed = value !== this.idleState;
+    this.idleState = value;
+    if (!changed) return;
+    if (!value) void this.fire("agent_start");
+    else { for (const resolve of this.idleWaiters) resolve(); this.idleWaiters.clear(); }
+  }
   agentCap: number | null | undefined;
   model: Model | undefined;
   ctx: any;
@@ -31,9 +41,11 @@ class Host {
     this.ctx = {
       get model() { return host.model; },
       isIdle: () => host.idle,
+      [Symbol.for("piop.wait-for-idle")]: () => host.idle ? Promise.resolve() : new Promise<void>(resolve => host.idleWaiters.add(resolve)),
       sessionManager: { getBranch: () => host.savedCap ? [host.savedCap] : [] },
       ui: { notify: (message: string, type: string) => host.notes.push([type, message]), setStatus: (key: string, text?: string) => host.statuses.push([key, text]) },
     };
+    hooksExtended(this.api() as any);
     contextWindowCap(this.api() as any);
     this.api().events.on("piop:agents:context-cap", request => { request.cap = this.agentCap; });
   }

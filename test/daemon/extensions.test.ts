@@ -38,7 +38,7 @@ require('node:readline').createInterface({ input: process.stdin }).on('line', li
   if (request.type === 'piop_request' && ['context_cap_settings'].includes(request.command)) {
     process.stdout.write(JSON.stringify({ type: 'fixture_settings', command: request.command, settings: request.payload.settings }) + '\\n');
   }
-  process.stdout.write(JSON.stringify({ type: 'response', id: request.id, command: request.type, success: true, data: request.type === 'get_state' ? state : null }) + '\\n');
+  process.stdout.write(JSON.stringify({ type: 'response', id: request.id, command: request.type, success: true, data: request.type === 'get_state' ? state : request.type === 'get_entries' ? { entries: [], leafId: null } : null }) + '\\n');
 });
 `);
 }
@@ -124,6 +124,8 @@ test('a Pi start installs the bundled extensions as private files and refreshes 
   const generated = join(daemon.home, '.piop');
   const bundles: [string, string][] = [
     ['session-broker.ts', 'daemon/resources/session-broker.ts'],
+    ['hooks-extended/index.ts', 'daemon/resources/hooks-extended/index.ts'],
+    ['hooks-extended/interface.ts', 'daemon/resources/hooks-extended/interface.ts'],
     ['piop-providers-refresh.ts', 'extensions/piop-providers-refresh/index.ts'],
     ['piop-codemode-tools-description.ts', 'extensions/piop-codemode-tools-description/index.ts'],
     ['piop-context-window-cap/defaults.ts', 'extensions/piop-context-window-cap/defaults.ts'],
@@ -134,7 +136,7 @@ test('a Pi start installs the bundled extensions as private files and refreshes 
     ['piop-codex-web-search.ts', 'extensions/piop-codex-web-search/index.ts'],
   ];
   const extensions = extensionPaths(await launchPublicPi(daemon));
-  for (const name of ['piop-controls/index.ts', 'session-broker.ts', 'piop-goals/index.ts', 'piop-reviews/index.ts', 'piop-openai-cache-fork.ts', 'piop-codex-web-search.ts']) expect(extensions).toContain(join(generated, name));
+  for (const name of ['hooks-extended/index.ts', 'piop-controls/index.ts', 'session-broker.ts', 'piop-goals/index.ts', 'piop-reviews/index.ts', 'piop-openai-cache-fork.ts', 'piop-codex-web-search.ts']) expect(extensions).toContain(join(generated, name));
   for (const removed of ['runtime-settings.ts', 'piop-skills-store/index.ts', 'piop-tool-store/index.ts']) expect(extensions).not.toContain(join(generated, removed));
   for (const name of ['piop-providers-refresh.ts', 'piop-codemode-tools-description.ts']) expect(extensions).toContain(join(generated, name));
   for (const [name, relative] of bundles) {
@@ -168,7 +170,7 @@ test('a started Pi receives resource lists and separate context settings', async
     expect(extensionPaths(launch)).toEqual(expect.arrayContaining([join(generated, 'piop-mcp-bridge.ts'), join(generated, 'piop-context-window-cap/index.ts')]));
     expect(readFileSync(join(generated, 'piop-mcp-bridge.ts'), 'utf8')).toBe(source('daemon/resources/mcp-bridge.bundle.mjs'));
     expect(existsSync(join(generated, 'mcp-servers.json'))).toBe(false);
-    expect(readFileSync(join(generated, 'piop-context-window-cap/index.ts'), 'utf8')).toBe(source('extensions/piop-context-window-cap/index.ts'));
+    expect(readFileSync(join(generated, 'piop-context-window-cap/index.ts'), 'utf8')).toBe(source('extensions/piop-context-window-cap/index.ts').replace('../../daemon/resources/hooks-extended/interface.ts', '../hooks-extended/interface.ts'));
     for (const file of ['piop-mcp-bridge.ts', 'piop-context-window-cap/index.ts']) expect(mode(join(generated, file))).toBe(0o600);
     expect(launch.contextSettings).toEqual({ contextWindowCap: enabled ? 123456 : 200000, contextWindowCapEnabled: enabled, modelContextWindowCaps: {} });
     // The goal tools are always on.

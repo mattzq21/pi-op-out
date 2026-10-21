@@ -1,5 +1,6 @@
 import type { AppRequest } from "../../extensions/piop-define-agents/contracts.ts";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { extendedHooks } from "./hooks-extended/interface.ts";
 import { registerSubagents } from "./session-broker/subagents.ts";
 import { registerSubagentMailbox } from "./session-broker/subagent-mailbox.ts";
 import { MESSAGE_TIMEOUT_MS, currentHost, registerConversationClient, request } from "./session-broker/client.ts";
@@ -24,16 +25,16 @@ export default function sessionBroker(pi: ExtensionAPI) {
 
     if (file) await initialize(file, ctx.sessionManager.getSessionId(), !existsSync(file));
   });
-  // Piop decides what a finished turn means. Pi waits here, so Piop's work ends before Pi takes a follow-up.
-  pi.on("turn_end", async (event, ctx) => {
+  const unsubscribeTaskSuccess = extendedHooks(pi).on("task_success", async (event, ctx) => {
     const { type: _type, context: _context, entries: _entries, continue: _continue, toolResults: _toolResults, ...rest } = event as typeof event & Record<string, unknown>;
     const data = { ...rest, sessionId: ctx.sessionManager.getSessionId(), cwd: ctx.cwd };
     // App chats answer over Pi's input. Chats run for one message by another agent have no input channel and use the broker.
     const send = Object.getOwnPropertyDescriptor(globalThis, Symbol.for("piop.runtime-events"))?.value as ((name: string, data: unknown) => Promise<void>) | undefined;
 
-    if (send) await send("turn_end", data);
-    else await request("/runtime-event", { hostId: currentHost(), name: "turn_end", data }, undefined, MESSAGE_TIMEOUT_MS);
+    if (send) await send("task_success", data);
+    else await request("/runtime-event", { hostId: currentHost(), name: "task_success", data }, undefined, MESSAGE_TIMEOUT_MS);
   });
+  pi.on("session_shutdown", unsubscribeTaskSuccess);
   registerInputHold(pi);
   registerConversationClient(pi);
   const mailbox = registerSubagentMailbox(pi);

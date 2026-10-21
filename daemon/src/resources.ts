@@ -21,9 +21,13 @@ import chatgptStorageRaw from '../resources/chatgpt-storage.mjs?raw';
 import chatgptService from '../resources/chatgpt-service.mjs?raw';
 import reviewPrompt from '../resources/piop-reviews/review-prompt.txt?raw';
 import sessionBroker from '../resources/session-broker.ts?raw';
+import hooksExtendedIndex from '../resources/hooks-extended/index.ts?raw';
+import hooksExtendedInterface from '../resources/hooks-extended/interface.ts?raw';
 import sdkSessionList from '../resources/sdk-session-list.mjs?raw';
 import runtimeConfiguration from '../resources/runtime-configuration.cjs?raw';
 import runtimeBridge from '../resources/runtime-bridge.cjs?raw';
+import runtimeAvailability from '../resources/runtime-availability.cjs?raw';
+import hooksAvailability from '../resources/hooks-extended/availability.ts?raw';
 import mcpSchemaBundle from '../resources/mcp-schema.bundle.mjs?raw';
 import mcpBridgeBundle from '../resources/mcp-bridge.bundle.mjs?raw';
 import fastModeBundle from '../resources/fast-mode.bundle.mjs?raw';
@@ -138,6 +142,7 @@ export {
   sdkSessionList,
   runtimeConfiguration,
   runtimeBridge,
+  runtimeAvailability,
   mcpSchemaBundle,
   mcpBridgeBundle,
   fastModeBundle,
@@ -188,6 +193,7 @@ export const EXCALIDRAW_ASSETS: Array<[string, string]> = [
 
 /** Session extensions installed next to session-broker. Each directory holds one extension with index.ts as its entry. */
 export const SESSION_EXTENSIONS: Array<[string, Array<[string, string]>]> = [
+  ['hooks-extended', [['index.ts', hooksExtendedIndex], ['interface.ts', hooksExtendedInterface], ['availability.ts', hooksAvailability]]],
   ['piop-storage', [
     ['index.ts', storageIndex],
     ['recovery.cjs', storageRecovery],

@@ -1,3 +1,4 @@
+import hooksExtended from "../../daemon/resources/hooks-extended/index.ts";
 import { afterAll, beforeEach, describe, expect, mock, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -35,9 +36,11 @@ function host() {
   const notes: Array<[string, string]> = [];
   const settings = { contextWindowCap: 300_000, contextWindowCapEnabled: true, modelContextWindowCaps: {} as Record<string, number | null> };
   let idle = true;
+  const idleWaiters = new Set<() => void>();
   const ctx = {
     model: { provider: "test", id: "large", contextWindow: 1_000_000 },
     isIdle: () => idle,
+    [Symbol.for("piop.wait-for-idle")]: () => idle ? Promise.resolve() : new Promise<void>(resolve => idleWaiters.add(resolve)),
     sessionManager: { getBranch: () => [] },
     ui: { notify: (message: string, type: string) => notes.push([type, message]), setStatus: () => undefined },
   };
@@ -58,13 +61,19 @@ function host() {
     },
   };
   save(settings);
+  hooksExtended(pi as any);
   contextWindowCap(pi as any);
   pi.events.on("piop:agents:context-cap", () => undefined);
   pi.events.on("piop:runtime-settings", () => { throw new Error("Context settings must not come from runtime-settings"); });
 
   return {
     ctx, notes, settings, emit,
-    setIdle: (value: boolean) => { idle = value; },
+    setIdle: (value: boolean) => {
+      if (idle === value) return;
+      idle = value;
+      if (!value) { for (const handler of handlers.get("agent_start") ?? []) handler({ type: "agent_start" }, ctx); }
+      else { for (const resolve of idleWaiters) resolve(); idleWaiters.clear(); }
+    },
     fire: async (name: string, event: any = {}) => { for (const handler of handlers.get(name) ?? []) await handler({ type: name, ...event }, ctx); },
     state: () => { const request: any = {}; emit("piop:context-cap:session", request); return request.session.getState(); },
   };

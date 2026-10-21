@@ -1,3 +1,4 @@
+import { extendedHooks } from "../../daemon/resources/hooks-extended/interface.ts";
 import { Type } from "typebox";
 import { Check } from "typebox/value";
 import type { ExtensionAPI, ExtensionCommandContext, ExtensionContext } from "@earendil-works/pi-coding-agent";
@@ -98,11 +99,7 @@ export default async function sessionCostLimit(pi: ExtensionAPI) {
       : `Session ${formatCost(cost)} / ${formatCost(limit)}`);
   };
 
-  pi.on("session_start", (_event, ctx) => {
-    restoreLimit(ctx);
-    publish(ctx);
-  });
-  pi.on("session_tree", (_event, ctx) => {
+  extendedHooks(pi).on("session_restore", (_event, ctx) => {
     restoreLimit(ctx);
     publish(ctx);
   });

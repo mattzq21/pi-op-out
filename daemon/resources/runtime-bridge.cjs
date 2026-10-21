@@ -692,9 +692,11 @@ async function main() {
   await installStorage(root);
   process.argv = [process.execPath, join(root, "dist/cli.js"), ...args];
 
+  const { AgentSession } = await import(pathToFileURL(join(root, "dist/index.js")).href);
+  require("./runtime-availability.cjs").installAvailability(AgentSession);
+
   if (args.includes("--print")) return import(pathToFileURL(join(root, "dist/cli.js")).href);
   queueValidation = await queueContracts(root);
-  const { AgentSession } = await import(pathToFileURL(join(root, "dist/index.js")).href);
   installReloadLifecycle(AgentSession);
   const { writeRawStdout } = await import(pathToFileURL(join(root, "dist/core/output-guard.js")).href);
   const output = value => writeRawStdout(`${JSON.stringify(value)}\n`);

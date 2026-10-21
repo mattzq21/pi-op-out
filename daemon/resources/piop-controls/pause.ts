@@ -1,3 +1,4 @@
+import { extendedHooks } from "../hooks-extended/interface.ts";
 import { sessionStorage } from "../piop-storage/interface.ts";
 import type { AssistantMessage } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
@@ -106,8 +107,7 @@ export function registerPauseControl(pi: ExtensionAPI, publish: (ctx: ExtensionC
     publishPause();
   };
 
-  pi.on("session_start", (_event, ctx) => { restorePause(ctx); });
-  pi.on("session_tree", (_event, ctx) => { restorePause(ctx); });
+  extendedHooks(pi).on("session_restore", (_event, ctx) => { restorePause(ctx); });
   pi.on("agent_start", (_event, ctx) => {
     if (isPausing) { ctx.abort();
 
@@ -151,9 +151,7 @@ export function registerPauseControl(pi: ExtensionAPI, publish: (ctx: ExtensionC
   });
   pi.on("context", (event) => ({ messages: desktopPauseContext(event.messages, resumeMessages) }));
 
-  const waitForIdle = async (ctx: ExtensionContext, version: number) => {
-    while (version === generation && !ctx.isIdle()) await new Promise((resolve) => setTimeout(resolve, 20));
-  };
+  const waitForIdle = (ctx: ExtensionContext) => extendedHooks(pi).waitForAvailable(ctx);
 
   const controller: PauseController = {
     state: () => ({ isPaused, isPausing }),
@@ -165,7 +163,7 @@ export function registerPauseControl(pi: ExtensionAPI, publish: (ctx: ExtensionC
         const version = generation;
         pauseStopped = false; isPausing = true; persistPause(true); isPaused = false; publishPause();
         pauseOperation = (async () => {
-          try { controller.cancelPreparation(); ctx.abort(); await waitForIdle(ctx, version); }
+          try { controller.cancelPreparation(); ctx.abort(); await waitForIdle(ctx); }
           finally { if (version === generation) { isPaused = !pauseStopped; isPausing = false; pauseOperation = undefined; publishPause(); } }
         })();
       }
@@ -193,7 +191,7 @@ export function registerPauseControl(pi: ExtensionAPI, publish: (ctx: ExtensionC
       controlContext = ctx; pauseStopped = true;
 
       if (isPaused || isPausing) persistPause(false);
-      publishPause(); ctx.abort(); await pauseOperation; await waitForIdle(ctx, generation);
+      publishPause(); ctx.abort(); await pauseOperation; await waitForIdle(ctx);
     },
     cancelPreparation() { pi.events.emit("piop:cancel-preparation", {}); },
   };

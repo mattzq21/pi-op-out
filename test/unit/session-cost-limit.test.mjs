@@ -1,6 +1,17 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import costLimit from '../../extensions/piop-session-cost-limit/index.ts';
+import costLimitExtension from '../../extensions/piop-session-cost-limit/index.ts';
+import hooksExtended from '../../daemon/resources/hooks-extended/index.ts';
+
+function costLimit(pi) {
+  const listeners = new Map();
+  pi.events = {
+    on(name, handler) { listeners.set(name, handler); return () => listeners.delete(name); },
+    emit(name, value) { listeners.get(name)?.(value); },
+  };
+  hooksExtended(pi);
+  return costLimitExtension(pi);
+}
 
 for (const type of ['compaction', 'usage', 'branch_summary']) test(`session cost limits include ${type} charges`, async () => {
   const handlers = {}; const commands = {}; const entries = [];

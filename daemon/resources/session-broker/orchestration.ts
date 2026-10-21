@@ -1,3 +1,4 @@
+import { extendedHooks } from "../hooks-extended/interface.ts";
 import type { AgentToolResult, ContextEvent, ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Type } from "@earendil-works/pi-ai";
 import { Type as Schema, type Static } from "typebox";
@@ -219,15 +220,12 @@ function registerDelivery(pi: ExtensionAPI) {
   let suspended = false;
   let runSignal: AbortSignal | undefined;
   let runAborted = false;
-  let navigationTimer: ReturnType<typeof setTimeout> | undefined;
 
   const cancel = () => {
     generation++;
     suspended = true;
     mailboxGenerations.set(pi, generation);
     mailbox.reset();
-    clearTimeout(navigationTimer);
-    navigationTimer = undefined;
     mailboxes.delete(pi);
   };
 
@@ -280,34 +278,7 @@ function registerDelivery(pi: ExtensionAPI) {
 
     flush(ctx);
   });
-  pi.on("session_before_tree", (_event, ctx) => {
-    clearTimeout(navigationTimer);
-    const version = generation;
-    const sessionId = ctx.sessionManager.getSessionId();
-
-    const checkIdle = () => {
-      navigationTimer = undefined;
-
-      if (version !== generation || ctx.sessionManager.getSessionId() !== sessionId) return;
-
-      if (ctx.isIdle()) { flush(ctx);
-
-        return; }
-
-      navigationTimer = setTimeout(checkIdle, 20);
-    };
-
-    navigationTimer = setTimeout(checkIdle, 0);
-  });
-  pi.on("session_compact", (_event, ctx) => {
-    const version = generation;
-    const sessionId = ctx.sessionManager.getSessionId();
-
-    setTimeout(() => {
-      if (version === generation && ctx.sessionManager.getSessionId() === sessionId) flush(ctx);
-    }, 0);
-  });
-  pi.on("session_compact_failed", (_event, ctx) => { flush(ctx); });
+  extendedHooks(pi).on("session_available", (_event, ctx) => flush(ctx));
   pi.events.on("piop:rpc", request => {
     if (request.command !== "session_ready") return;
     if (mailboxes.get(pi)?.length) flush(request.ctx);

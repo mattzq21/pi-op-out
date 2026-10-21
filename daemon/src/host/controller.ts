@@ -18,7 +18,7 @@ import { clientPayload } from './payload';
 import { argument, sessionSpec, serializeSpec, type SessionLaunch } from './protocol';
 import { drainSaves } from './queue_storage';
 import { readonlyCommand, type ReadonlyView } from './readonly_views';
-import { finalResponse, parseRuntimeEvent, type RuntimeEvent, type RuntimeEventSource } from './runtime_events';
+import { parseRuntimeEvent, type RuntimeEvent, type RuntimeEventSource } from './runtime_events';
 import { Session, type SessionHost } from './session';
 import { sessionCommand } from './session_commands';
 import { recoverQueuedInput, watchRetention } from './storage_upkeep';
@@ -116,7 +116,7 @@ export class Host implements SessionHost {
 
   /** Commits a chat's repository on Pi's final response, before Pi takes a follow-up (ADR 0006). Uses the saved repository status. */
   async runtimeEvent(source: RuntimeEventSource, event: RuntimeEvent): Promise<void> {
-    if (!finalResponse(event) || source.cwd === null) return;
+    if (event.name !== 'task_success' || source.cwd === null) return;
     const repository = getProjectRepository(this.storageRoot(), source.cwd);
     if (!repository) return;
     await saveProgress(source.cwd, { repository: repository.root, gitCommonDir: repository.gitDir });
