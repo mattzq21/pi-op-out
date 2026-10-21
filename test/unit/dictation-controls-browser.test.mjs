@@ -21,10 +21,10 @@ async function dictationPage(t, { finalText = 'Write a note', configuration = { 
       await page.exposeFunction('nativeCommand', async (command, args) => {
         const { clientId, ...request } = args ?? {};
         engine.push({ command, request });
-        if (command === 'dictation_configuration') return configuration;
-        if (command === 'dictation_stream_start') return { id: 'stream-1' };
-        if (command === 'dictation_stream_feed' || command === 'dictation_stream_cancel') return null;
-        if (command === 'dictation_stream_finish') return { text: finalText };
+        if (command === 'plugin:dictation|dictation_configuration') return configuration;
+        if (command === 'plugin:dictation|dictation_stream_start') return { id: 'stream-1' };
+        if (command === 'plugin:dictation|dictation_stream_feed' || command === 'plugin:dictation|dictation_stream_cancel') return null;
+        if (command === 'plugin:dictation|dictation_stream_finish') return { text: finalText };
         throw new Error('Unexpected command: ' + command);
       });
     },
@@ -38,38 +38,38 @@ test('the user sees the words while speaking, and stopping puts the final text i
   const { page, sent, until } = await dictationPage(t, { finalText: '  Write a note about rain  ' });
   await page.getByRole('button', { name: 'Dictate' }).click();
   await page.getByRole('button', { name: 'Stop dictation' }).waitFor();
-  await until(() => sent('dictation_stream_feed').length > 0);
+  await until(() => sent('plugin:dictation|dictation_stream_feed').length > 0);
   await page.evaluate(() => window.nativeEvent('pi://dictation-stream', { id: 'stream-1', committed: 'Write a note', tentative: 'about' }));
   await page.locator('.dictation-live').filter({ hasText: 'Write a note about' }).waitFor();
   await page.getByRole('button', { name: 'Stop dictation' }).click();
   await page.getByRole('button', { name: 'Dictate' }).waitFor();
   assert.equal(await page.getByLabel('Draft').textContent(), 'Write a note about rain');
   assert.equal(await page.locator('.dictation-live').count(), 0);
-  assert.equal(sent('dictation_stream_finish').length, 1);
+  assert.equal(sent('plugin:dictation|dictation_stream_finish').length, 1);
 });
 
 test('cancelling a dictation keeps the draft as it was and ends the speech engine stream', async t => {
   const { page, sent, until } = await dictationPage(t);
   await page.getByRole('button', { name: 'Dictate' }).click();
   await page.getByRole('button', { name: 'Stop dictation' }).waitFor();
-  await until(() => sent('dictation_stream_feed').length > 0);
+  await until(() => sent('plugin:dictation|dictation_stream_feed').length > 0);
   await page.getByRole('button', { name: 'Cancel dictation' }).click();
   await page.getByRole('button', { name: 'Dictate' }).waitFor();
-  await until(() => sent('dictation_stream_cancel').length === 1);
+  await until(() => sent('plugin:dictation|dictation_stream_cancel').length === 1);
   assert.equal(await page.getByLabel('Draft').textContent(), '');
-  assert.equal(sent('dictation_stream_finish').length, 0);
+  assert.equal(sent('plugin:dictation|dictation_stream_finish').length, 0);
 });
 
 test('a speech engine failure while speaking ends the dictation and shows the error', async t => {
   const { page, sent, until } = await dictationPage(t);
   await page.getByRole('button', { name: 'Dictate' }).click();
   await page.getByRole('button', { name: 'Stop dictation' }).waitFor();
-  await until(() => sent('dictation_stream_feed').length > 0);
+  await until(() => sent('plugin:dictation|dictation_stream_feed').length > 0);
   await page.evaluate(() => window.nativeEvent('pi://dictation-stream', { id: 'stream-1', error: 'The speech model crashed' }));
   await page.getByRole('alert').filter({ hasText: 'The speech model crashed' }).waitFor();
   await page.getByRole('button', { name: 'Dictate' }).waitFor();
   assert.equal(await page.getByLabel('Draft').textContent(), '');
-  assert.equal(sent('dictation_stream_finish').length, 0);
+  assert.equal(sent('plugin:dictation|dictation_stream_finish').length, 0);
 });
 
 test('a speech engine that is not set up hides the button and says what is wrong', async t => {

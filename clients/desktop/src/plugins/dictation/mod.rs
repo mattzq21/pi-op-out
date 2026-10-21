@@ -1,12 +1,20 @@
-//! Dictation on the desktop client: runs the speech engine chosen in the client preferences.
+//! The dictation plugin: runs the speech engine chosen in the client preferences.
 //! The engines are separately installed Python programs (transcribe.cpp or Cactus Needle). Each live dictation runs
 //! the embedded worker script, which reads 16 kHz mono 16-bit audio on stdin and writes JSON lines on stdout.
-use super::*;
-use base64::Engine as _;
-use std::io::{BufRead, BufReader, Read as _, Write as _};
-use std::process::{Child, ChildStdin};
+//! The engine loads when a window first asks for the dictation configuration.
+mod microphone;
+mod settings;
 
-const WORKER: &str = include_str!("../resources/dictation-worker.py");
+use crate::{client_settings, home_dir, platform::AppHandle};
+use base64::Engine as _;
+use serde_json::{json, Value};
+use std::io::{BufRead, BufReader, Read as _, Write as _};
+use std::{fs, path::{Path, PathBuf}, process::{Child, ChildStdin, Command, Stdio}, sync::{mpsc, Arc, Mutex}, thread, time::Duration};
+use tauri::{plugin::TauriPlugin, Emitter, Listener, Manager};
+use uuid::Uuid;
+use settings::DictationSettings;
+
+const WORKER: &str = include_str!("dictation-worker.py");
 const BYTES_PER_SECOND: usize = 16000 * 2;
 const MAX_STREAM_BYTES: usize = BYTES_PER_SECOND * 120;
 const MAX_FEED_BYTES: usize = BYTES_PER_SECOND * 5;
@@ -18,10 +26,26 @@ const IDLE_TIMEOUT: Duration = Duration::from_secs(15);
 const DISCOVERY_TIMEOUT: Duration = Duration::from_secs(30);
 const UNCONFIGURED: &str = "No dictation model is configured";
 
-/// The dictation fields of the client preferences. Empty strings mean "not set".
-/// engine is "transcribe.cpp" or "needle"; program is its optional path; args holds engine options such as "--language en".
-#[derive(Clone, PartialEq)]
-pub(crate) struct DictationSettings { pub engine: String, pub program: String, pub model: String, pub args: String }
+/// The dictation plugin. Commands are invoked as plugin:dictation|<command>.
+pub(crate) fn init() -> TauriPlugin<tauri::Wry> {
+    tauri::plugin::Builder::new("dictation")
+        .invoke_handler(tauri::generate_handler![dictation_configuration, dictation_find_engines, dictation_stream_start, dictation_stream_feed, dictation_stream_finish, dictation_stream_cancel])
+        .setup(|app, _| {
+            app.manage(Dictation::default());
+            settings::register(app)?;
+            let handle = app.clone();
+            app.listen_any(client_settings::CLIENT_SETTINGS_CHANGED, move |event| {
+                match serde_json::from_str::<Value>(event.payload()).map_err(|error| error.to_string()).and_then(|value| settings::from_client_settings(Some(&value))) {
+                    Ok(settings) => apply_settings(&handle, settings),
+                    Err(error) => eprintln!("Could not read the dictation settings: {error}"),
+                }
+            });
+            Ok(())
+        })
+        .on_webview_ready(|webview| if let Err(error) = microphone::allow(&webview) { eprintln!("Could not allow the microphone for dictation in {}: {error}", webview.label()); })
+        .on_event(|app, event| if let tauri::RunEvent::WindowEvent { label, event: tauri::WindowEvent::Destroyed, .. } = event { close_window(app, label); })
+        .build()
+}
 
 /// A speech-to-text setup that can run: the Python command, the model file and the language ("" lets the model choose).
 #[derive(Clone)]
@@ -38,6 +62,8 @@ struct Stream { id: String, window: String, worker: Arc<Worker>, bytes: usize, f
 
 struct State {
     settings: Option<DictationSettings>,
+    /// True after a window asked for the configuration. Before that, the engine does not load.
+    active: bool,
     generation: u64,
     engine: Option<Engine>,
     languages: Option<Languages>,
@@ -46,11 +72,11 @@ struct State {
     stream: Option<Stream>,
 }
 
-pub(crate) struct Dictation { state: Mutex<State> }
+struct Dictation { state: Mutex<State> }
 
 impl Default for Dictation {
     fn default() -> Self {
-        Self { state: Mutex::new(State { settings: None, generation: 0, engine: None, languages: None, error: None, loading: true, stream: None }) }
+        Self { state: Mutex::new(State { settings: None, active: false, generation: 0, engine: None, languages: None, error: None, loading: true, stream: None }) }
     }
 }
 
@@ -102,21 +128,38 @@ fn arm_idle(app: &AppHandle, stream: &mut Stream) {
     }));
 }
 
-/// Loads the engine for these settings when they changed.
-pub(crate) fn reload(app: &AppHandle, settings: DictationSettings) {
-    let generation = {
-        let mut state = lock_state(app);
-        if state.settings.as_ref() == Some(&settings) { return; }
-        state.settings = Some(settings.clone());
-        state.generation += 1;
-        close_stream(app, &mut state, Some("Dictation stopped because the speech engine changed"));
-        state.engine = None;
-        state.languages = None;
-        state.error = None;
-        state.loading = true;
-        publish(app, &state);
-        state.generation
-    };
+/// Keeps the new settings. Loads the engine again when they changed and dictation is active.
+fn apply_settings(app: &AppHandle, settings: DictationSettings) {
+    let mut state = lock_state(app);
+    if state.settings.as_ref() == Some(&settings) { return; }
+    state.settings = Some(settings);
+    if state.active { load(app, &mut state); }
+}
+
+/// Loads the engine the first time a window asks for dictation. Reads the saved settings when no change event came before.
+fn activate(app: &AppHandle) -> Result<(), String> {
+    if lock_state(app).active { return Ok(()); }
+    // Read the file without the dictation lock: a save holds the file lock while it sends the settings event.
+    let stored = settings::from_client_settings(client_settings::stored_client_settings()?.as_ref())?;
+    let mut state = lock_state(app);
+    if state.active { return Ok(()); }
+    state.active = true;
+    if state.settings.is_none() { state.settings = Some(stored); }
+    load(app, &mut state);
+    Ok(())
+}
+
+/// Must hold the state lock. Loads the engine for the current settings.
+fn load(app: &AppHandle, state: &mut State) {
+    let Some(settings) = state.settings.clone() else { return };
+    state.generation += 1;
+    close_stream(app, state, Some("Dictation stopped because the speech engine changed"));
+    state.engine = None;
+    state.languages = None;
+    state.error = None;
+    state.loading = true;
+    publish(app, state);
+    let generation = state.generation;
     let app = app.clone();
     thread::spawn(move || {
         let loaded = load_engine(&settings);
@@ -135,7 +178,7 @@ pub(crate) fn reload(app: &AppHandle, settings: DictationSettings) {
 }
 
 /// Stops the dictation of a closed window.
-pub(crate) fn close_window(app: &AppHandle, window: &str) {
+fn close_window(app: &AppHandle, window: &str) {
     let mut state = lock_state(app);
     if state.stream.as_ref().is_some_and(|stream| stream.window == window) { close_stream(app, &mut state, None); }
 }
@@ -376,7 +419,7 @@ fn new_id() -> String { Uuid::new_v4().to_string() }
 /// Searches for each engine. paths maps an engine type to its set path ("" searches PATH).
 /// Returns, for each engine type, { "executable": path } or { "error": text }.
 #[tauri::command]
-pub(crate) async fn dictation_find_engines(paths: std::collections::HashMap<String, String>) -> Result<Value, String> {
+async fn dictation_find_engines(paths: std::collections::HashMap<String, String>) -> Result<Value, String> {
     blocking(move || find_engines(&paths)).await
 }
 
@@ -389,12 +432,15 @@ fn find_engines(paths: &std::collections::HashMap<String, String>) -> Value {
     Value::Object(result)
 }
 
-#[tauri::command(async)]
-pub(crate) fn dictation_configuration(app: AppHandle) -> Value { configuration(&lock_state(&app)) }
+/// The dictation status. The first call loads the engine; later changes arrive as pi://dictation events.
+#[tauri::command]
+pub(crate) async fn dictation_configuration(app: AppHandle) -> Result<Value, String> {
+    blocking(move || activate(&app).map(|_| configuration(&lock_state(&app)))).await?
+}
 
 /// Starts a live dictation. Text changes arrive as pi://dictation-stream events with this id.
 #[tauri::command]
-pub(crate) async fn dictation_stream_start(app: AppHandle, window: tauri::WebviewWindow) -> Result<Value, String> {
+async fn dictation_stream_start(app: AppHandle, window: tauri::WebviewWindow) -> Result<Value, String> {
     let label = window.label().to_owned();
     blocking(move || stream_start(&app, label)).await?
 }
@@ -435,7 +481,7 @@ fn owned<'a>(state: &'a mut State, window: &str, id: &str) -> Result<&'a mut Str
 }
 
 #[tauri::command]
-pub(crate) async fn dictation_stream_feed(app: AppHandle, window: tauri::WebviewWindow, id: String, audio: String) -> Result<(), String> {
+async fn dictation_stream_feed(app: AppHandle, window: tauri::WebviewWindow, id: String, audio: String) -> Result<(), String> {
     let label = window.label().to_owned();
     blocking(move || stream_feed(&app, &label, &id, audio)).await?
 }
@@ -458,7 +504,7 @@ fn stream_feed(app: &AppHandle, window: &str, id: &str, audio: String) -> Result
 }
 
 #[tauri::command]
-pub(crate) async fn dictation_stream_finish(app: AppHandle, window: tauri::WebviewWindow, id: String) -> Result<Value, String> {
+async fn dictation_stream_finish(app: AppHandle, window: tauri::WebviewWindow, id: String) -> Result<Value, String> {
     let label = window.label().to_owned();
     blocking(move || stream_finish(&app, &label, &id)).await?
 }
@@ -480,7 +526,7 @@ fn stream_finish(app: &AppHandle, window: &str, id: &str) -> Result<Value, Strin
 }
 
 #[tauri::command(async)]
-pub(crate) fn dictation_stream_cancel(app: AppHandle, window: tauri::WebviewWindow, id: String) {
+fn dictation_stream_cancel(app: AppHandle, window: tauri::WebviewWindow, id: String) {
     let mut state = lock_state(&app);
     if owned(&mut state, window.label(), &id).is_ok() { close_stream(&app, &mut state, None); }
 }

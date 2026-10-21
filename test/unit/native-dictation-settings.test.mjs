@@ -18,7 +18,7 @@ async function dictation(t) {
       await native.invoke('save_client_settings', { settings, baseline: saved });
       saved = settings;
       for (let attempt = 0; attempt < 200; attempt++) {
-        const status = await native.invoke('dictation_configuration');
+        const status = await native.invoke('plugin:dictation|dictation_configuration');
         if (!status.loading) return status;
         await sleep(25);
       }

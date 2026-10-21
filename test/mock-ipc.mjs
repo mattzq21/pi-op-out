@@ -14,7 +14,7 @@ function desktopBackground() {
     sync_prompt_history: ({ entries, legacy }) => { history.push(...legacy, ...entries.map(entry => entry.prompt)); history.splice(0, Math.max(0, history.length - 100));
 
     return [...history]; },
-    dictation_configuration: () => ({ enabled: false, loading: false }),
+    'plugin:dictation|dictation_configuration': () => ({ enabled: false, loading: false }),
   };
 }
 

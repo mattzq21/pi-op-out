@@ -1,10 +1,12 @@
+import "./dictation.css";
 import { createEffect, createSignal, For, on, onCleanup, Show } from "solid-js";
 import { Pencil, Plus, Settings2, Trash2 } from "lucide-solid";
-import { useDictationConfiguration } from "../lib/dictation";
-import { invoke, isMobile } from "../lib/platform";
-import { dictationFoundEnginesSchema } from "../lib/responseSchemas";
-import type { AppSettings, DictationEngine, DictationEngineSettings, DictationModelEntry } from "../types";
-import { IconButton } from "./IconButton";
+import { useDictationConfiguration } from "./dictation";
+import { invoke, isMobile } from "./transport";
+import { dictationFoundEnginesSchema } from "./settingsSchema";
+import type { AppSettings } from "../../types";
+import type { DictationEngine, DictationEngineSettings, DictationModelEntry } from "./types";
+import { IconButton } from "../../components/IconButton";
 
 const engines: Record<DictationEngine, { label: string; program: string; extension: string }> = {
   "transcribe.cpp": { label: "Transcribe.cpp", program: "python3 with transcribe.cpp", extension: ".gguf" },

@@ -13,7 +13,7 @@ import { createDependencyEffect,createMemoFields,createRef,cssPixels,type CSSPro
 import { useComposerAttachments } from "../lib/useComposerAttachments";
 import { stageComposerDraft, type DraftSubmissionHandle, type StageDraftSubmission } from "../lib/draftSubmission";
 import { ComposerSettingsMenu } from "./ComposerSettingsMenu";
-import { DictationControls } from "./DictationControls";
+import { ComposerPlugins } from "../plugins/composer";
 
 import { ArrowUp,ChevronDown,ChevronUp,CircleStop,CircleX,CornerDownRight,FileText,ImagePlus,MoveVertical,Pause,Play,RefreshCw,TerminalSquare,Trash2,X,Zap } from "lucide-solid";
 import { hasVisibleText } from "../lib/content";
@@ -544,7 +544,7 @@ export function Composer(props: Props) {
         return () => mobileQuery.removeEventListener("change", updateLayout);
       }, () => []);
 
-      const ComposerTools = () => (<div class="composer-tools"><DictationControls disabled={composer().controlsDisabled} onText={(text) => { const current = value(); setValue(`${current}${current && !/\s$/.test(current) ? " " : ""}${text}`); focusOwnedEditor(); }} />{composer().onOpenTerminal && <IconButton class="composer-terminal" title={props.terminalDisabled ? "Unavailable in empty session" : ""} label="Open terminal" disabled={props.terminalDisabled || (composer().controlsDisabled && !props.ownershipRequired)} onClick={(composer().onOpenTerminal)}><TerminalSquare size={17} /></IconButton>}<Show when={composer().contextUsage}>{usage => <ContextWheel usage={usage()} />}</Show><Show when={composer().sessionCache}>{cache => <span class={`session-cache-hit${cache().low ? " low" : ""}`} aria-label={`Cache ${cache().rate}%, ${cache().cachedTokens}/${cache().promptTokens}`} tabIndex={0} data-tooltip={`${cache().cachedTokens.toLocaleString()} / ${cache().promptTokens.toLocaleString()} tokens cached`}><CacheIcon rate={cache().rate} />{cache().rate}%</span>}</Show></div>);
+      const ComposerTools = () => (<div class="composer-tools"><ComposerPlugins disabled={composer().controlsDisabled} onText={(text) => { const current = value(); setValue(`${current}${current && !/\s$/.test(current) ? " " : ""}${text}`); focusOwnedEditor(); }} />{composer().onOpenTerminal && <IconButton class="composer-terminal" title={props.terminalDisabled ? "Unavailable in empty session" : ""} label="Open terminal" disabled={props.terminalDisabled || (composer().controlsDisabled && !props.ownershipRequired)} onClick={(composer().onOpenTerminal)}><TerminalSquare size={17} /></IconButton>}<Show when={composer().contextUsage}>{usage => <ContextWheel usage={usage()} />}</Show><Show when={composer().sessionCache}>{cache => <span class={`session-cache-hit${cache().low ? " low" : ""}`} aria-label={`Cache ${cache().rate}%, ${cache().cachedTokens}/${cache().promptTokens}`} tabIndex={0} data-tooltip={`${cache().cachedTokens.toLocaleString()} / ${cache().promptTokens.toLocaleString()} tokens cached`}><CacheIcon rate={cache().rate} />{cache().rate}%</span>}</Show></div>);
 
       const renderComposerActions = () => {
         const agentSelectionDisabled = () => composer().agentLocked || composer().streaming || controls().inputDisabled;

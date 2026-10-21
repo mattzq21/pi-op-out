@@ -1,6 +1,7 @@
+import "./dictation.css";
 import { Mic, Square, X } from "lucide-solid";
 import { createEffect, createSignal, onCleanup, Show } from "solid-js";
-import { DictationRecording, useDictationEnabled } from "../lib/dictation";
+import { DictationRecording, useDictationEnabled } from "./dictation";
 
 export function DictationControls(props: { disabled: boolean; compact?: boolean; onText: (text: string) => void }) {
   const configuration = useDictationEnabled();

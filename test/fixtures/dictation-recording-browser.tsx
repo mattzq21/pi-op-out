@@ -1,7 +1,7 @@
 import { createSignal } from 'solid-js';
 import { render } from 'solid-js/web';
 import { mockIPC, mockWindows } from '@tauri-apps/api/mocks';
-import { DictationRecording } from '../../clients/ui/lib/dictation';
+import { DictationRecording } from '../../clients/ui/plugins/dictation/dictation';
 
 mockWindows('main');
 mockIPC((command, args: any) => {

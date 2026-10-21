@@ -2,7 +2,7 @@ import { createSignal } from 'solid-js';
 import { render } from 'solid-js/web';
 import { emit } from '@tauri-apps/api/event';
 import { mockIPC, mockWindows } from '@tauri-apps/api/mocks';
-import { DictationControls } from '../../clients/ui/components/DictationControls';
+import { DictationControls } from '../../clients/ui/plugins/dictation/DictationControls';
 
 mockWindows('main');
 mockIPC((command, args: any) => {
