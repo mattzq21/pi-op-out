@@ -616,3 +616,18 @@ kbd { font: 11px "DM Sans"; border: 1px solid #d5d1c9; background: white; paddin
 .fork-source { display: flex; justify-content: center; margin: 4px 0 12px; color: var(--muted); font-size: 11px; }.fork-source-link { border: 0; padding: 2px 6px; border-radius: 5px; color: var(--muted); background: transparent; font: inherit; text-decoration: underline; }.fork-source-link:hover { color: var(--ink); background: var(--hover); }
 
 .session-title-row > strong.session-recovery { color: #d77865; }
+.worktree-picker { display: inline-flex; align-items: center; min-width: 0; max-width: 100%; height: 31px; padding: 1px; border: 1px solid var(--line); border-radius: 6px; background: var(--dark-subtle, transparent); }
+.worktree-picker .composer-picker { min-width: 0; }
+.app .new-chat-project .worktree-picker .composer-picker-trigger { max-width: 190px; height: 27px; gap: 6px; padding: 0 6px 0 7px; border: 0; border-radius: 4px; background: transparent; color: var(--muted); font-size: 12px; font-weight: 500; }
+.app .new-chat-project .worktree-picker .composer-picker-trigger:hover:not(:disabled), .app .new-chat-project .worktree-picker .composer-picker-trigger[aria-expanded="true"] { background: var(--dark-control, var(--panel)); color: var(--ink); }
+.app .new-chat-project .worktree-picker .composer-picker-trigger:focus-visible { outline-offset: -2px; }
+.app .new-chat-project .worktree-picker[data-mode="new"] .composer-picker-trigger[aria-label^="Worktree:"] { color: var(--accent); }
+.worktree-picker .composer-picker-trigger > svg { flex-shrink: 0; }
+.worktree-picker .composer-picker-trigger > span { min-width: 0; overflow: hidden; color: inherit; font: inherit; text-overflow: ellipsis; text-transform: none; white-space: nowrap; }
+.worktree-picker-chevron { margin-left: -1px; opacity: .55; }
+.worktree-picker .composer-picker-trigger[aria-expanded="true"] .worktree-picker-chevron { transform: rotate(180deg); }
+.worktree-picker-divider { flex: none; width: 1px; height: 15px; margin: 0 1px; background: var(--line); }
+.worktree-picker .composer-picker-menu button[role="option"] { position: relative; padding-right: 28px; }
+.worktree-picker .composer-picker-menu button[aria-selected="true"] span { color: var(--accent); }
+.worktree-picker .composer-picker-menu button[aria-selected="true"]::after { content: ""; position: absolute; top: 50%; right: 11px; width: 4px; height: 8px; border: solid var(--accent); border-width: 0 1.5px 1.5px 0; transform: translateY(-65%) rotate(45deg); }
+@media (max-width: 600px) { .app .new-chat-project .worktree-picker .composer-picker-trigger { max-width: 132px; } }
