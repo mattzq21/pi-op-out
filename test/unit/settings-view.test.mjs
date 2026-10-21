@@ -35,6 +35,7 @@ describe('settings editor', () => {
   test('model aliases save with stable model IDs and appear in agent choices', async () => {
     await render({ models: [{ provider: 'p', id: 'model', name: 'Original' }], agentConfig: { agents: [profile('general', { model: 'p/model' })] } });
     await section('Inference');
+    await click(control('Edit alias for p/model'));
     const input = control('Alias for p/model');
     await enterText(input, 'My model');
     assert.equal(control('Alias for p/model'), input);
