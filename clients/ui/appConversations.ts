@@ -468,8 +468,10 @@ export function createAppConversations(preloadChat: () => void) {
   const prepareNewSession = (owner: NativeTransport, hostId: string, cwd?: string) => cwd ? owner.validateProjectDirectory(cwd, hostId, true, true) : owner.prepareTemporaryChat(hostId);
   const assignNewSessionGroup = (owner: NativeTransport, group?: SessionGroup) => { if (group) pendingSessionGroups.current.set(owner, group); };
 
+  /** The unsent new chat that New conversation reopens: the newest one, on the current host first. */
   const existingSessionDraft = () => {
-    const candidates = draftSessions();
+    const onHost = (draft: SessionSummary) => (draft.hostId ?? "local") === activeHostId() ? 0 : 1;
+    const candidates = [...draftSessions()].sort((left, right) => onHost(left) - onHost(right) || (right.lastMessageAt ?? 0) - (left.lastMessageAt ?? 0));
 
     return candidates.find(draft => draft.isDraft && (!isSelectedSession(draft) || currentSessionIsDraft()) && !runningSessions().has(`${draft.hostId ?? "local"}:${draft.id}`) && ![...sessions(), ...liveSessions()].some(saved => saved.messageCount > 0 && (saved.hostId ?? "local") === (draft.hostId ?? "local") && (saved.id === draft.id || Boolean(draft.path && saved.path === draft.path))));
   };
@@ -757,7 +759,8 @@ export function createAppConversations(preloadChat: () => void) {
   const sidebar = createSidebarState(() => {
     const summaries = new Map([...liveSessions(), ...draftSessions(), ...sessions()].map(session => [`${session.hostId ?? "local"}:${session.id}`, session]));
 
-    return [...summaries.values()].filter(session => !archives.isArchived(session) && (!session.isDraft || drafts.hasDraft(`${session.hostId ?? "local"}:${session.id}`)));
+    // A new chat joins the list when its first message is sent. The New chat button reopens an unsent one.
+    return [...summaries.values()].filter(session => !archives.isArchived(session) && !session.isDraft);
   }, query);
 
   const chatAgentProps = () => { if (!extensionStateIsCurrent()) return { agents: [], activeAgent: undefined, agentLocked: false, agentSaved: false, agentUnavailable: false };
