@@ -1,3 +1,4 @@
+import { isChatSubmissionActive } from "./lib/chatSubmission";
 import { batch, createComputed, createMemo, createSignal, onCleanup } from "solid-js";
 import { NativeTransport, type NativeConnectionTarget } from "./lib/nativeTransport";
 import type { StateUpdate } from "./lib/solid";
@@ -169,6 +170,7 @@ export function createConversationDrafts(reportStorageError: (message: string) =
 
   const visibleRecords = createMemo(() => [...records()].filter(([key, record]) => allows(key, record.destination)));
   const visibleSubmissions = createMemo(() => submissions().filter(item => allows(item.destination.key, item.destination)));
+  const recoveries = createMemo(() => visibleSubmissions().filter(item => !isChatSubmissionActive(item.id)));
   const composerDrafts = createMemo(() => Object.fromEntries(visibleRecords().map(([key, record]) => [key, record.text])));
 
   const setComposerDraft = (sessionKey: string, value: StateUpdate<string>) => {
@@ -392,5 +394,5 @@ export function createConversationDrafts(reportStorageError: (message: string) =
     return ownerFor(owner).command({ type: "get_goal_preparation", goalSubmissionId: submission.id }, goalPreparationSchema.nullable());
   };
 
-  return { configureHosts, records: draftRecords, hasDraft: transportHasDraftForKey, uploadsFor: (key: string) => recordFor(key).uploads, setDraftTarget, keyForTransport, removeSessionDrafts, composerDrafts, uploadsByTransport, setComposerDraft, setComposerUploads, setTransportDraft, transportHasDraft, inspectGoalPreparation, rekeyDraft, removeDraft, discard, bindTransport, draftSummaries, submissions: visibleSubmissions, restoreSubmission, retireSubmission };
+  return { configureHosts, records: draftRecords, hasDraft: transportHasDraftForKey, uploadsFor: (key: string) => recordFor(key).uploads, setDraftTarget, keyForTransport, removeSessionDrafts, composerDrafts, uploadsByTransport, setComposerDraft, setComposerUploads, setTransportDraft, transportHasDraft, inspectGoalPreparation, rekeyDraft, removeDraft, discard, bindTransport, draftSummaries, submissions: visibleSubmissions, recoveries, restoreSubmission, retireSubmission };
 }
