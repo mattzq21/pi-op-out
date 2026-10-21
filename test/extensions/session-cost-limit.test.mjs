@@ -27,7 +27,7 @@ const { SessionManager } = await sdk('session-manager');
 const { ModelRuntime } = await sdk('model-runtime');
 const usage = total => ({ input: 1, output: 1, cacheRead: 0, cacheWrite: 0, totalTokens: 2, cost: { input: 0, output: total, cacheRead: 0, cacheWrite: 0, total } });
 
-async function fixture(t, { toolCost = 0, responseCost = 1, toolCalls = false, dir, sessionManager } = {}) {
+async function fixture(t, { toolCost = 0, responseCost = 1, toolCalls = false, dir, sessionManager, extraExtensions = [], keepRecentTokens = 20000 } = {}) {
   if (!dir) {
     dir = await mkdtemp(join(tmpdir(), 'piop-cost-test-'));
     t.after(() => rm(dir, { recursive: true, force: true }));
@@ -35,12 +35,12 @@ async function fixture(t, { toolCost = 0, responseCost = 1, toolCalls = false, d
   const outfile = join(dir, 'cost.mjs');
   await build({ stdin: { contents: 'export { default } from "./extensions/piop-session-cost-limit/index.ts"; export { default as hooksExtended } from "./daemon/resources/hooks-extended/index.ts";', resolveDir: process.cwd() }, outfile, bundle: true, format: 'esm', platform: 'node', logLevel: 'silent' });
   const { default: costLimit, hooksExtended } = await import(pathToFileURL(outfile));
-  const settingsManager = SettingsManager.inMemory({ compaction: { enabled: false }, retry: { enabled: false } });
+  const settingsManager = SettingsManager.inMemory({ compaction: { enabled: false, keepRecentTokens }, retry: { enabled: false } });
   const modelRuntime = await ModelRuntime.create({ authPath: join(dir, 'auth.json'), modelsPath: null, refreshOnCreate: false });
   await modelRuntime.setRuntimeApiKey('openai', 'unused-test-key');
   const model = modelRuntime.getModels().find(model => model.provider === 'openai');
   assert.ok(model);
-  const resourceLoader = new DefaultResourceLoader({ cwd: dir, agentDir: dir, settingsManager, noExtensions: true, noSkills: true, noContextFiles: true, noThemes: true, noPromptTemplates: true, extensionFactories: [hooksExtended, costLimit] });
+  const resourceLoader = new DefaultResourceLoader({ cwd: dir, agentDir: dir, settingsManager, noExtensions: true, noSkills: true, noContextFiles: true, noThemes: true, noPromptTemplates: true, extensionFactories: [hooksExtended, costLimit, ...extraExtensions] });
   await resourceLoader.reload();
   assert.deepEqual(resourceLoader.getExtensions().errors, []);
   let executions = 0;
@@ -187,3 +187,48 @@ for (const kind of ['compaction', 'cache_warm']) test(`${kind} charges added dur
   assert.equal(f.requests, 0);
   assert.equal(f.aborted, 1);
 });
+
+
+for (const operation of ['tree success', 'tree cancelled', 'compact cancelled', 'compact failed', 'compact success']) {
+  test(`session_available follows real ${operation} after Pi clears its busy state`, async t => {
+    let notifications = 0;
+    let operationStarted = false;
+    let ready;
+    const available = new Promise(resolve => { ready = resolve; });
+    const f = await fixture(t, { responseCost: 0, keepRecentTokens: 1, extraExtensions: [pi => {
+      const request = {};
+      pi.events.emit('hooks-extended', request);
+      request.hooks.on('session_available', (_event, ctx) => {
+        if (operationStarted) { notifications++; assert.equal(ctx.isIdle(), true); ready(); }
+      });
+      pi.on('session_before_tree', () => operation === 'tree cancelled' ? { cancel: true } : undefined);
+      pi.on('session_before_compact', event => {
+        if (operation === 'compact cancelled') return { cancel: true };
+        return { compaction: { summary: 'Summary', firstKeptEntryId: event.preparation.firstKeptEntryId, tokensBefore: event.preparation.tokensBefore } };
+      });
+    }] });
+    await f.session.prompt('first');
+    const target = f.session.sessionManager.getLeafId();
+    await f.session.prompt('second');
+    await f.session.waitForIdle();
+    // Finish the notification for the preceding run before starting the history operation.
+    await new Promise(resolve => setImmediate(resolve));
+    operationStarted = true;
+    if (operation.startsWith('tree')) {
+      const result = await f.session.navigateTree(target);
+      assert.equal(result.cancelled, operation === 'tree cancelled');
+    } else {
+      if (operation === 'compact cancelled') await assert.rejects(f.session.compact(), /cancelled/i);
+      else if (operation === 'compact failed') {
+        // A missing model fails before session_before_compact is reached.
+        const currentModel = f.session.agent.state.model;
+        f.session.agent.state.model = undefined;
+        await assert.rejects(f.session.compact());
+        f.session.agent.state.model = currentModel;
+      } else await f.session.compact();
+    }
+    await available;
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(notifications, 1);
+  });
+}

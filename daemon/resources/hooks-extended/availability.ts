@@ -33,6 +33,7 @@ export function availability(pi: ExtensionAPI, publish: (ctx: ExtensionContext) 
     void wait(ctx).then(async () => {
       if (version !== generation) return;
       if (watching === token) watching = undefined;
+      if (!ctx.isIdle()) { watch(ctx); return; }
       await publish(ctx);
     }).catch(error => {
       if (version === generation) ctx.ui.notify(`Session availability failed: ${error instanceof Error ? error.message : String(error)}`, "error");
@@ -41,8 +42,10 @@ export function availability(pi: ExtensionAPI, publish: (ctx: ExtensionContext) 
 
   pi.on("session_start", reset);
   pi.on("session_shutdown", reset);
+  pi.on("before_agent_start", (_event, ctx) => watch(ctx));
   pi.on("agent_start", (_event, ctx) => watch(ctx));
   pi.on("session_before_compact", (_event, ctx) => watch(ctx));
   pi.on("session_before_tree", (_event, ctx) => watch(ctx));
+  pi.on("session_compact_failed", (_event, ctx) => watch(ctx));
   return { wait };
 }
