@@ -130,10 +130,10 @@ test("double clicking the sidebar handle restores the viewport default", async t
   const page = await openSidebar(t);
   const separator = page.getByRole('separator', { name: 'Sidebar width' });
   await separator.press('End'); await separator.dblclick();
-  assert.equal(await separator.getAttribute('aria-valuenow'), '260');
+  assert.equal(await separator.getAttribute('aria-valuenow'), '320');
   await page.setViewportSize({ width: 1000, height: 700 });
   await separator.dblclick();
-  assert.equal(await separator.getAttribute('aria-valuenow'), '232');
+  assert.equal(await separator.getAttribute('aria-valuenow'), '280');
   await page.evaluate(() => window.settleStorage());
 });
 
@@ -213,17 +213,17 @@ test('losing pointer capture ends a sidebar drag and permits resetting its width
   await page.mouse.up();
   await page.setViewportSize({ width: 1000, height: 700 });
   await separator.dblclick();
-  assert.equal(await separator.getAttribute('aria-valuenow'), '232');
+  assert.equal(await separator.getAttribute('aria-valuenow'), '280');
 });
 
 test('sidebar resizing remains usable when browser storage is unavailable', async t => {
   const page = await openSidebar(t, { storageUnavailable: true });
   const separator = page.getByRole('separator', { name: 'Sidebar width' });
-  assert.equal(await separator.getAttribute('aria-valuenow'), '260');
+  assert.equal(await separator.getAttribute('aria-valuenow'), '320');
   const savedFailure = page.waitForEvent('console', message => message.type() === 'error' && message.text().includes('Could not save panel sizes'));
   await separator.press('Shift+ArrowRight');
-  assert.equal(await separator.getAttribute('aria-valuenow'), '310');
+  assert.equal(await separator.getAttribute('aria-valuenow'), '370');
   await savedFailure;
   await separator.dblclick();
-  assert.equal(await separator.getAttribute('aria-valuenow'), '260');
+  assert.equal(await separator.getAttribute('aria-valuenow'), '320');
 });
