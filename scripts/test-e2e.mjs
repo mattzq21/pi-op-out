@@ -80,7 +80,7 @@ if (values.list) {
     const batch = selected.slice(start, start + batchSize);
     const pattern = `^(?:${batch.map(title => title.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|')})$`;
     console.log(`E2E batch ${Math.floor(start / batchSize) + 1}: tests ${start + 1}–${start + batch.length} of ${selected.length}`);
-    const child = spawn(process.execPath, ['--max-old-space-size=768', 'node_modules/@wdio/cli/bin/wdio.js', 'run', 'wdio.conf.ts', '--mochaOpts.grep', pattern], { stdio: 'inherit' });
+    const child = spawn(process.execPath, ['--max-old-space-size=1536', 'node_modules/@wdio/cli/bin/wdio.js', 'run', 'wdio.conf.ts', '--mochaOpts.grep', pattern], { stdio: 'inherit' });
     const result = await new Promise((resolve, reject) => { child.once('error', reject); child.once('exit', (code, signal) => resolve({ code, signal })); });
 
     if (result.signal) throw new Error(`E2E runner terminated by ${result.signal}`);

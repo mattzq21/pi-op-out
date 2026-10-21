@@ -4,6 +4,7 @@ import { spawn, execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { join } from 'node:path';
 import { fakeProgram, startDaemon, temporaryDirectory, type Client, type TestDaemon } from './harness';
+import { recordTools } from '../../daemon/src/tool_inventory';
 
 const root = join(import.meta.dir, '../..');
 const source = (relative: string) => readFileSync(join(root, relative), 'utf8');
@@ -152,15 +153,15 @@ test('a Pi start installs the bundled extensions as private files and refreshes 
 }, 60_000);
 
 
-test('a started Pi receives resource lists and separate context settings', async () => {
+test('a started Pi receives the reported tools, skill lists and separate context settings', async () => {
   const generated = join(daemon.home, '.piop');
   const skill = join(daemon.home, '.agents/skills/spaced skill');
   mkdirSync(skill, { recursive: true });
   writeFileSync(join(skill, 'SKILL.md'), '---\nname: spaced\n---\n');
   await daemon.invoke('load_app_settings', { refreshSkills: true });
+  recordTools([{ name: 'web_search', description: 'Search', source: '/ext/web-search.ts' }, { name: 'read', description: 'Read', source: 'builtin:read' }], join(generated, 'settings.json'));
   for (const enabled of [true, false]) {
     const settings = await daemon.invoke('load_app_settings');
-    for (const tool of settings.tools) tool.enabled = enabled && tool.name === 'read';
     for (const entry of settings.skills) entry.enabled = enabled;
     settings.contextWindowCap = enabled ? 123456 : 200000;
     settings.contextWindowCapEnabled = enabled;
@@ -173,8 +174,8 @@ test('a started Pi receives resource lists and separate context settings', async
     expect(readFileSync(join(generated, 'piop-context-window-cap/index.ts'), 'utf8')).toBe(source('extensions/piop-context-window-cap/index.ts').replace('../../daemon/resources/hooks-extended/interface.ts', '../hooks-extended/interface.ts'));
     for (const file of ['piop-mcp-bridge.ts', 'piop-context-window-cap/index.ts']) expect(mode(join(generated, file))).toBe(0o600);
     expect(launch.contextSettings).toEqual({ contextWindowCap: enabled ? 123456 : 200000, contextWindowCapEnabled: enabled, modelContextWindowCaps: {} });
-    // The goal tools are always on.
-    expect(launch.tools.enabledTools).toEqual(enabled ? ['read', 'get_goal', 'create_goal', 'update_goal'] : ['get_goal', 'create_goal', 'update_goal']);
+    // A new Pi gets the tools that Pi last reported on the host.
+    expect(launch.tools).toEqual({ enabledTools: ['read', 'web_search'], registeredTools: ['read', 'web_search'] });
     expect(launch.skills).toEqual({ userInvokedSkills: [], agentInvokedSkills: enabled ? [skill] : [] });
   }
   rmSync(skill, { recursive: true, force: true });

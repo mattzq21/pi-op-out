@@ -119,13 +119,13 @@ test('settings never save tools and load the tools that Pi reported on the host'
   expect(loaded.tools).toEqual(current.tools);
 });
 
-test('settings default when absent and reject too many remote machines', async () => {
+test('settings default when absent and reject too many remote hosts', async () => {
   const fresh = await startDaemon();
   try {
     const loaded = await fresh.invoke('load_app_settings');
     expect(loaded.hosts).toEqual([]);
     const hosts = Array.from({ length: 17 }, (_, index) => ({ enabled: true, id: 'remote-' + index, name: 'Remote ' + index, target: 'host' + index, piPath: 'pi' }));
-    expect(await fresh.failure('save_app_settings', { settings: { ...loaded, hosts } })).toContain('remote machines');
+    expect(await fresh.failure('save_app_settings', { settings: { ...loaded, hosts } })).toContain('remote hosts');
     expect((await fresh.invoke('load_app_settings')).hosts).toEqual([]);
   } finally { await fresh.stop(); }
 }, 60_000);

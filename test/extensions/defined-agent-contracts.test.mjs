@@ -30,7 +30,7 @@ test('skill switches save before reload and failed activation restores overrides
   await f.select('reviewer'); assert.equal(f.capability().active, 'reviewer'); assert.equal(f.entries.length, 0);
   await f.pi.setModel({ provider: 'test', id: 'default' }); f.pi.setThinkingLevel('medium');
   const before = structuredClone(f.entries);
-  await assert.rejects(f.select('broken'), /cannot run because Pi does not allow its configured tool: missing/);
+  await assert.rejects(f.select('broken'), /cannot run because Pi does not have its configured tool: missing/);
   assert.deepEqual(f.entries, before); assert.equal(f.capability().active, 'reviewer');
   assert.deepEqual(f.pi.getActiveTools(), ['read']); assert.deepEqual(f.ctx.model, { provider: 'test', id: 'default' }); assert.equal(f.pi.getThinkingLevel(), 'medium');
   assert.deepEqual(await f.emit('resources_discover'), { skillPaths: ['/skills/review'] });
@@ -344,13 +344,13 @@ test('session restore uses the latest state, ignores unrelated custom records, a
   assert.deepEqual(f.notices.at(-1), { message: 'Agent "missing" is unavailable. This conversation cannot start.', level: 'warning' });
 });
 
-test('tool validation combines global restrictions and actual availability with deduplicated diagnostics', async t => {
+test('tool validation reports each configured tool that Pi does not have once', async t => {
   const f = await agentFixture(t, { tools: ['read', 'bash'], runtime: { enabledTools: ['read', 'unknown'] }, config: null });
   await f.load();
   await f.configure(configured([profile('general', { tools: ['bash', 'unknown', 'bash'] })]));
   await f.start();
   assert.deepEqual(f.pi.getActiveTools(), []);
-  assert.equal(f.notices.at(-1).message, 'Agent "general" cannot run because Pi does not allow its configured tools: bash, unknown');
+  assert.equal(f.notices.at(-1).message, 'Agent "general" cannot run because Pi does not have its configured tool: unknown');
   assert.deepEqual(await f.input('blocked'), { action: 'handled' });
 });
 
@@ -1362,7 +1362,7 @@ test('agent MCP tools remain usable after a normal agent refresh', async t => {
   assert.deepEqual(await f.tools.get('mcp_tool_query').execute(), { content: [{ type: 'text', text: 'Second result' }] });
 });
 
-test('started agent keeps tool lists across catalog changes and resume', async t => {
+test('started agent keeps tool lists across catalog changes and resume, and a fresh session uses the tools that Pi has', async t => {
   const runtime = { enabledTools: ['read'] };
   const f = await agentFixture(t, { runtime, config: configured([profile()]) });
   await f.load(); await f.start(); await f.input('Start');
@@ -1377,8 +1377,7 @@ test('started agent keeps tool lists across catalog changes and resume', async t
   assert.deepEqual(await f.input('Continue'), { action: 'continue' });
   const fresh = await agentFixture(t, { runtime, config: configured([profile()]) });
   await fresh.load(); await fresh.start();
-  assert.deepEqual(fresh.pi.getActiveTools(), []);
-  assert.match(fresh.notices.at(-1).message, /does not allow its configured tool: read/);
+  assert.deepEqual(fresh.pi.getActiveTools(), ['read']);
 });
 
 test('agent shutdown releases the MCP tool and agent refresh services', async t => {
@@ -1501,7 +1500,7 @@ test("failed agent selection without skill changes preserves usable MCP tools", 
   await f.start(); await f.select('reviewer');
   assert.deepEqual(f.pi.getActiveTools(), ['read', 'mcp_remote_read']);
   assert.deepEqual(await f.tools.get('mcp_remote_read').execute(), { content: [{ type: 'text', text: 'Remote content' }] });
-  await assert.rejects(f.select('broken'), /does not allow its configured tool: missing/);
+  await assert.rejects(f.select('broken'), /does not have its configured tool: missing/);
   assert.equal(f.capability().active, 'reviewer');
   assert.deepEqual(f.pi.getActiveTools(), ['read', 'mcp_remote_read']);
   assert.deepEqual(await f.tools.get('mcp_remote_read').execute(), { content: [{ type: 'text', text: 'Remote content' }] });
@@ -1521,7 +1520,7 @@ test("failed agent selection with skill changes preserves usable MCP tools", asy
   await f.start(); await f.select('reviewer');
   assert.deepEqual(f.pi.getActiveTools(), ['read', 'mcp_remote_read']);
   assert.deepEqual(await f.tools.get('mcp_remote_read').execute(), { content: [{ type: 'text', text: 'Remote content' }] });
-  await assert.rejects(f.select('broken'), /does not allow its configured tool: missing/);
+  await assert.rejects(f.select('broken'), /does not have its configured tool: missing/);
   assert.equal(f.capability().active, 'reviewer');
   assert.deepEqual(f.pi.getActiveTools(), ['read', 'mcp_remote_read']);
   assert.deepEqual(await f.tools.get('mcp_remote_read').execute(), { content: [{ type: 'text', text: 'Remote content' }] });
