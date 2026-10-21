@@ -33,7 +33,7 @@ fn attachment_command_bridge() {
             context.config_mut().build.dev_url = Some(url.clone());
             context.config_mut().build.frontend_dist = Some(tauri::utils::config::FrontendDist::Url(url));
         }
-        Some(tauri::Builder::default().any_thread().manage(client_settings::ClientSettingsHooks::default()).manage(desktop_daemon::DesktopDaemon::default()).build(context).expect("build native test app"))
+        Some(tauri::Builder::default().any_thread().manage(desktop_daemon::DesktopDaemon::default()).build(context).expect("build native test app"))
     } else { None };
     println!("PIOP_TEST_NATIVE_READY");
     let serve = move |handle: Option<AppHandle>| {

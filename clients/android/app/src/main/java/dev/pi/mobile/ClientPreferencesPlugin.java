@@ -9,52 +9,12 @@ import java.util.Iterator;
 import java.util.LinkedHashSet;
 import java.util.Objects;
 import java.util.Set;
-import java.util.concurrent.CopyOnWriteArrayList;
 import org.json.JSONException;
 import org.json.JSONObject;
 
 @CapacitorPlugin(name = "ClientPreferences")
 public class ClientPreferencesPlugin extends Plugin {
     private static final Object STORAGE_LOCK = new Object();
-    private static final Set<String> CORE_FIELDS = Set.of("keybindings", "debugMode");
-    private static final CopyOnWriteArrayList<Section> sections = new CopyOnWriteArrayList<>();
-
-    interface Section {
-        Set<String> fields();
-
-        void validate(JSONObject settings) throws JSONException;
-
-        default void merge(JSONObject latest, JSONObject baseline, JSONObject intended) throws JSONException {
-            for (String field : fields()) mergeField(latest, baseline, intended, field);
-        }
-
-        void changed(JSONObject settings);
-    }
-
-    static void addSection(Section section) {
-        for (Section other : sections) {
-            for (String field : section.fields()) {
-                if (CORE_FIELDS.contains(field) || other.fields().contains(field)) throw new IllegalStateException("The client preference field " + field + " has two owners");
-            }
-        }
-        sections.add(section);
-    }
-
-    static void removeSection(Section section) {
-        sections.remove(section);
-    }
-
-    static void mergeField(JSONObject latest, JSONObject baseline, JSONObject intended, String field) throws JSONException {
-        Object after = intended.opt(field);
-        if (same(baseline.opt(field), after)) return;
-        if (after == null) latest.remove(field);
-        else latest.put(field, after);
-    }
-
-    static boolean same(Object left, Object right) {
-        return Objects.equals(left == null ? null : left.toString(), right == null ? null : right.toString());
-    }
-
     @PluginMethod
     public void load(PluginCall call) {
         synchronized (STORAGE_LOCK) {
@@ -78,7 +38,6 @@ public class ClientPreferencesPlugin extends Plugin {
             if (!(shortcuts.get(keys.next()) instanceof String)) throw new JSONException("Invalid client preference keybindings");
         }
         if (!(settings.get("debugMode") instanceof Boolean)) throw new JSONException("Invalid client preference debugMode");
-        for (Section section : sections) section.validate(settings);
     }
 
     private static void mergeKeybindings(JSONObject latest, JSONObject baseline, JSONObject intended) throws JSONException {
@@ -104,16 +63,6 @@ public class ClientPreferencesPlugin extends Plugin {
     private static JSONObject merge(JSONObject latest, JSONObject baseline, JSONObject intended) throws JSONException {
         mergeKeybindings(latest, baseline, intended);
         if (!intended.get("debugMode").equals(baseline.get("debugMode"))) latest.put("debugMode", intended.get("debugMode"));
-        Set<String> owned = new LinkedHashSet<>(CORE_FIELDS);
-        for (Section section : sections) {
-            section.merge(latest, baseline, intended);
-            owned.addAll(section.fields());
-        }
-        Set<String> rest = new LinkedHashSet<>();
-        baseline.keys().forEachRemaining(rest::add);
-        intended.keys().forEachRemaining(rest::add);
-        rest.removeAll(owned);
-        for (String field : rest) mergeField(latest, baseline, intended, field);
         return latest;
     }
 
@@ -134,7 +83,6 @@ public class ClientPreferencesPlugin extends Plugin {
                 String revision = java.util.UUID.randomUUID().toString();
                 storage.write(serialized, revision);
                 storage.commit();
-                for (Section section : sections) section.changed(new JSONObject(serialized));
                 JSObject publication = new JSObject();
                 publication.put("committed", true);
                 publication.put("durable", true);
