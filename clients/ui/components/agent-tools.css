@@ -6,14 +6,14 @@
 .agent-allowlist .agent-allowlist-search:focus-within { border-color: #aaa49a; color: var(--muted); }
 .agent-allowlist-search input { width: 120px; min-width: 0; padding: 0; border: 0; outline: 0; background: transparent; color: var(--ink); font: inherit; font-size: calc(11px + var(--settings-font-offset, 0px)); }
 .agent-tool-group-heading { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
-.agent-tool-group h4 { margin: 0 0 10px; color: var(--muted); font-size: calc(11px + var(--settings-font-offset, 0px)); font-weight: 600; }
+.agent-tool-group h4 { margin: 0 0 10px; color: #cfcbc2; font-size: calc(11px + var(--settings-font-offset, 0px)); font-weight: 600; }
 .agent-tool-group-members { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 7px 12px; }
 .agent-allowlist label:has(> input[type="checkbox"]) { min-width: 0; margin: 0 -6px; padding: 4px 6px; border-radius: 6px; color: var(--ink); cursor: pointer; overflow-wrap: anywhere; transition: background-color .12s, color .12s; }
-.agent-allowlist label:has(> input[type="checkbox"]:not(:checked):not(:indeterminate)) { color: var(--muted); }
+.agent-allowlist label:has(> input[type="checkbox"]:not(:checked):not(:indeterminate)) { color: #d6d2c9; }
 .agent-allowlist label:has(> input[type="checkbox"]):hover { background: var(--accent-05); color: var(--ink); }
-.agent-tool-group-heading label:has(> input[type="checkbox"]) { margin: 0; padding: 0; color: var(--muted); }
+.agent-tool-group-heading label:has(> input[type="checkbox"]) { margin: 0; padding: 0; color: #cfcbc2; }
 .agent-tool-group-heading label:has(> input[type="checkbox"]):hover { background: transparent; color: var(--ink); }
-.agent-allowlist input[type="checkbox"] { appearance: none; flex: none; display: grid; place-content: center; width: 15px; height: 15px; margin: 0; border: 1.5px solid #6b675f; border-radius: 4px; background: transparent; cursor: pointer; transition: background-color .12s, border-color .12s; }
+.agent-allowlist input[type="checkbox"] { appearance: none; flex: none; display: grid; place-content: center; width: 15px; height: 15px; margin: 0; border: 1.5px solid #8d887f; border-radius: 4px; background: transparent; cursor: pointer; transition: background-color .12s, border-color .12s; }
 .agent-allowlist label:hover > input[type="checkbox"] { border-color: #aaa49a; }
 .agent-allowlist input[type="checkbox"]:checked, .agent-allowlist input[type="checkbox"]:indeterminate { border-color: var(--accent); background: var(--accent); }
 .agent-allowlist input[type="checkbox"]:checked::after { content: ""; width: 7px; height: 3.5px; border: solid #1b1a17; border-width: 0 0 2.5px 2.5px; transform: translateY(-1px) rotate(-45deg); }
