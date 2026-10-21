@@ -708,7 +708,6 @@ async function main() {
   const { AgentSession } = await import(pathToFileURL(join(root, "dist/index.js")).href);
   require("./runtime-availability.cjs").installAvailability(AgentSession);
 
-  if (args.includes("--print")) return import(pathToFileURL(join(root, "dist/cli.js")).href);
   queueValidation = await queueContracts(root);
   installReloadLifecycle(AgentSession);
   const { writeRawStdout } = await import(pathToFileURL(join(root, "dist/core/output-guard.js")).href);
