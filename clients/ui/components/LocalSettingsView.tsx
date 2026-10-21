@@ -1,6 +1,4 @@
-import { reportModels } from "../lib/modelReports";
 import { localHostLabel } from "../lib/mobileHosts";
-import { modelSchema } from "../lib/responseSchemas";
 import { z } from "zod";
 import { required } from "../lib/required";
 import { Key, Rerun } from "@solid-primitives/keyed";
@@ -9,8 +7,7 @@ import { Dynamic } from "solid-js/web";
 import { createDependencyEffect } from "../lib/solid";
 
 import { Monitor } from "lucide-solid";
-import { decodeAgentValue, DEFINED_AGENTS_STATUS_KEY } from "../lib/agentProtocol";
-import { agentConfigChangeSchema, agentConfigSchema, definedAgentsCapabilitySchema } from "../lib/agentSchemas";
+import { agentConfigChangeSchema } from "../lib/agentSchemas";
 import { settingsChangeSchema } from "../lib/responseSchemas";
 import { restoreAgentConfiguration, saveAgentConfiguration } from "../lib/agentConfiguration";
 import { NativeTransport } from "../lib/nativeTransport";
@@ -36,7 +33,6 @@ export function LocalSettingsView(props: Props) {
   const [selectedSection, setSelectedSection] = createSignal<Section>("keybinds");
   const [dirty, setDirty] = createSignal(false);
   const [saving, setSaving] = createSignal(false);
-  const [generation, setGeneration] = createSignal(0);
   const pendingDurability = new Map<string, string>();
 
   const preserveHostSettings = (hostId: string, settings: AppSettings, publication?: Publication) => {
@@ -59,7 +55,7 @@ export function LocalSettingsView(props: Props) {
       <div class="settings-nav-group"><p class="eyebrow">Client</p>{<Key each={visibleClientSections(props.settings.debugMode)} by={(item) => item.id}>{(item, _index) => <button  disabled={target() !== "client" && (dirty() || saving())} class={target() === "client" && selectedSection() === item().id ? "active" : ""} aria-current={target() === "client" && selectedSection() === item().id ? "page" : undefined} onClick={() => { setTarget("client"); setSelectedSection(item().id); }}><Dynamic component={item().icon} size={16} /><span>{item().label}</span></button>}</Key>}</div>
       <div class="settings-nav-group"><p class="eyebrow">Daemons</p>{<Key each={[{ id: "local", name: localHostLabel() }, ...props.settings.hosts.filter((host) => host.enabled !== false)]} by={(host) => host.id}>{(host, _index) => <div ><button class={target() === host().id ? "active" : ""} disabled={target() !== host().id && (dirty() || saving())} aria-expanded={target() === host().id} onClick={() => { if (target() !== host().id) { setTarget(host().id); setSelectedSection("general"); } }}><Monitor size={16} /><span>{host().name}</span></button>{target() === host().id && <div class="settings-daemon-tabs">{<Key each={daemonSections(host().id)} by={(item) => item.id}>{(item, _index) => <button  class={selectedSection() === item().id ? "active" : ""} aria-current={selectedSection() === item().id ? "page" : undefined} onClick={() => setSelectedSection(item().id)}><Dynamic component={item().icon} size={16} /><span>{item().label}</span></button>}</Key>}</div>}</div>}</Key>}</div>
     </nav>
-    <div class="settings-editor-content"><Rerun on={() => `${target()}:${generation()}`}>{(_key) => <DaemonSettingsEditor  {...props} preserveHostSettings={preserveHostSettings} target={target()} label={label()} selectedSection={selectedSection()} onDirtyChange={changeDirty} onSavingChange={setSaving} />}</Rerun></div>
+    <div class="settings-editor-content"><Rerun on={() => target()}>{(_key) => <DaemonSettingsEditor  {...props} preserveHostSettings={preserveHostSettings} target={target()} label={label()} selectedSection={selectedSection()} onDirtyChange={changeDirty} onSavingChange={setSaving} />}</Rerun></div>
   </div>;
 }
 
