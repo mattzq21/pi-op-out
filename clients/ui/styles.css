@@ -499,7 +499,8 @@ kbd { font: 11px "DM Sans"; border: 1px solid #d5d1c9; background: white; paddin
 .plugin-restart-success { display: flex; color: var(--green); }
 .model-label { display: flex; align-items: center; gap: 8px; min-width: 0; }
 .model-id { color: var(--muted); }
-.model-alias-toggle { border: 0; padding: 0; cursor: pointer; }
+.model-cap-controls { display: flex; align-items: center; gap: 8px; }
+.model-alias-toggle, .model-cap-toggle { border: 0; padding: 0; cursor: pointer; }
 .model-alias { width: 140px; max-width: 40%; min-width: 0; flex-shrink: 0; padding: 3px 6px; font-size: calc(12px + var(--settings-font-offset, 0px)); border: 1px solid var(--line); border-radius: 5px; background: var(--paper); }
 .model-row strong, .model-row small { overflow-wrap: anywhere; min-width: 0; }
 
