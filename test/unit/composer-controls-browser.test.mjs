@@ -165,11 +165,11 @@ test('command options show after the command name: hints describe a free argumen
   const page = await controlsPage(t);
   const editor = page.getByRole('textbox', { name: 'Message piop' });
   await editor.fill('/rs');
-  assert.deepEqual(await page.getByRole('listbox', { name: 'piop commands' }).getByRole('option').allTextContents(), ['/rs [n]']);
+  assert.deepEqual(await page.getByRole('listbox', { name: 'piop commands' }).getByRole('option').allTextContents(), ['/rs [n] [scope]']);
   await editor.fill('/rs ');
   const rs = page.getByRole('listbox', { name: '/rs options' });
   await rs.waitFor();
-  assert.equal(await rs.textContent(), '[n]');
+  assert.equal(await rs.textContent(), '[n] [scope]');
   assert.equal(await rs.getByRole('option').count(), 0);
   await editor.fill('/rs 2');
   assert.equal(await rs.count(), 0);

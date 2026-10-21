@@ -37,16 +37,19 @@ test('review findings sent to the main chat start a turn there, and only that ch
   expect(feedback.map((entry: any) => [entry.content, entry.details.sessionId])).toEqual([['Missing EOF token', review.sessionId]]);
 }, 60000);
 
-test('/rs asks the reviewer for the given number of subagents, or a fitting number; any other count only shows how to use it', async () => {
+test('/rs takes an optional subagent count, then an optional scope; a count that is not positive only shows how to use it', async () => {
   const chat = await agents.rootChat({ visible: true });
-  for (const command of ['/rs 0', '/rs two', '/rs -1']) await chat.command({ type: 'follow_up', message: command });
+  for (const command of ['/rs 0', '/rs -1 src']) await chat.command({ type: 'follow_up', message: command });
   const notices = () => agents.daemon.events.filter(event => event.payload?.runtimeId === chat.runtimeId && event.payload.event?.method === 'notify').map(event => event.payload.event.message);
-  for (let tries = 0; notices().length < 3 && tries < 100; tries++) await Bun.sleep(100);
-  const warnings = notices();
-  expect(warnings).toEqual(Array(3).fill('Usage: /rs [n] — omit n for proportionate delegation, or supply a positive integer'));
+  for (let tries = 0; notices().length < 2 && tries < 100; tries++) await Bun.sleep(100);
+  expect(notices()).toEqual(Array(2).fill('Usage: /rs [n] [scope] — n is a positive number of review subagents'));
   expect(uiRequests(chat.runtimeId, 'input').filter(request => request.title === '__pi_desktop_review__')).toEqual([]);
-  const review = await openReview(chat, '/rs 2');
-  expect(review.task).toContain('You must spawn exactly 2 review subagents.');
+  const counted = await openReview(chat, '/rs 2 src/parser.ts');
+  expect(counted.task).toContain('You must spawn exactly 2 review subagents.');
+  expect(counted.task).toContain('src/parser.ts');
+  const scoped = await openReview(chat, '/rs the lexer');
+  expect(scoped.task).toContain('choose a proportionate number of review subagents');
+  expect(scoped.task).toContain('the lexer');
   expect((await openReview(chat, '/rs')).task).toContain('choose a proportionate number of review subagents');
 }, 60000);
 

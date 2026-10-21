@@ -9,25 +9,28 @@ const feedbackSchema = Schema.Object({ sessionId: Schema.String(), message: Sche
 
 const openSchema = Schema.Object({ reviewId: Schema.String() });
 
-/** /review delegates nothing. /rs takes an optional positive count; returns undefined after a usage warning for other arguments. */
-function reviewDelegation(args: string, command: "review" | "rs", ctx: ExtensionContext): ReviewDelegation | undefined {
-  if (command === "review") return "none";
+/** /review delegates nothing and takes a scope. /rs takes an optional count, then an optional scope. A first word that is a number is the count; other text is the scope. Returns undefined after a usage warning for a count that is not a positive integer. */
+function reviewRequest(args: string, command: "review" | "rs", ctx: ExtensionContext): { delegation: ReviewDelegation; scope: string } | undefined {
+  const text = args.trim();
 
-  if (!args.trim()) return "auto";
-  const count = Number(args.trim());
+  if (command === "review") return { delegation: "none", scope: text };
+  const [, first, rest = ""] = /^(\S+)(?:\s+([\s\S]*))?$/.exec(text) ?? [];
 
-  if (/^[1-9]\d*$/.test(args.trim()) && Number.isSafeInteger(count)) return count;
-  ctx.ui.notify("Usage: /rs [n] — omit n for proportionate delegation, or supply a positive integer", "warning");
+  if (!first || !/^[+-]?\d+$/.test(first)) return { delegation: "auto", scope: text };
+  const count = Number(first);
+
+  if (/^[1-9]\d*$/.test(first) && Number.isSafeInteger(count)) return { delegation: count, scope: rest.trim() };
+  ctx.ui.notify("Usage: /rs [n] [scope] — n is a positive number of review subagents", "warning");
 }
 
 /** Connects /review, /rs and Piop review requests to the review feature. */
 export function registerReviewCommands(pi: ExtensionAPI, reviews: ReviewSession) {
   const start = async (args: string, ctx: ExtensionContext, command: "review" | "rs" = "review", images?: ReviewImage[]) => {
     ctx.signal?.throwIfAborted();
-    const delegation = reviewDelegation(args, command, ctx);
+    const request = reviewRequest(args, command, ctx);
 
-    if (delegation === undefined) return;
-    await reviews.start(ctx, { scope: command === "review" ? args : undefined, delegation, images });
+    if (request === undefined) return;
+    await reviews.start(ctx, { scope: request.scope || undefined, delegation: request.delegation, images });
   };
 
   pi.registerCommand("review", {
@@ -36,8 +39,8 @@ export function registerReviewCommands(pi: ExtensionAPI, reviews: ReviewSession)
     handler: (args, ctx) => start(args, ctx),
   });
   pi.registerCommand("rs", {
-    description: "Review with proportionate delegation, or an explicit subagent count: /rs [n]",
-    getArgumentCompletions: prefix => prefix.trim() ? null : [{ value: "", label: "[n]", description: "Optional. Number of review subagents. Empty: the reviewer chooses a proportionate number" }],
+    description: "Review with review subagents: /rs [n] [scope]",
+    getArgumentCompletions: prefix => prefix.trim() ? null : [{ value: "", label: "[n] [scope]", description: "Optional. Number of review subagents, then text that limits the review" }],
     handler: (args, ctx) => start(args, ctx, "rs"),
   });
   pi.events.on("piop:rpc", request => {
