@@ -1,6 +1,5 @@
 const fs = require('node:fs/promises');
 const path = require('node:path');
-const os = require('node:os');
 const { Type } = require('typebox');
 const { Check } = require('typebox/value');
 
@@ -9,8 +8,6 @@ const absolute = value => Check(Type.String(), value) && path.isAbsolute(value);
 const ownerSchema = Type.Object({ sessionId: Type.String({ minLength: 1 }), sessionPath: Type.String() });
 
 const recoverySchema = Type.Object({ version: Type.Literal(1), managedBy: Type.Literal('piop'), kind: Type.Literal('missing-directory-recovery'), id: Type.String({ pattern: '^[a-f0-9]{8}(-[a-f0-9]{4}){3}-[a-f0-9]{12}$' }), state: Type.Union(['allocated', 'ready', 'published'].map(value => Type.Literal(value))), mode: Type.Union(['empty', 'legacy-copy'].map(value => Type.Literal(value))), directory: Type.String(), originalCwd: Type.String(), owners: Type.Array(ownerSchema, { minItems: 1 }) });
-
-const packageSchema = Type.Object({ name: Type.String(), piConfig: Type.Optional(Type.Object({ name: Type.Optional(Type.String()), configDir: Type.Optional(Type.String()) })) });
 
 const nullableString = Type.Union([Type.String(), Type.Null()]);
 
@@ -32,7 +29,6 @@ function addRoot(roots, target, provenance, ownership = 'referenced', owners = [
   return root;
 }
 
-async function readJson(file) { return JSON.parse(await fs.readFile(file, 'utf8')); }
 
 async function readRegistry(profile, discovery) {
   const database = path.join(profile, 'sessions.sqlite');
@@ -113,99 +109,10 @@ function legacyRecovery(cwd) {
     || /^\/tmp\/piop-recovery-[a-zA-Z0-9]{6}\/workdir$/.test(cwd);
 }
 
-function piCandidates(selected) {
-  if (selected) {
-    const expanded = selected.startsWith('~/') ? path.join(os.homedir(), selected.slice(2)) : selected;
-
-    if (/[/\\]/.test(expanded)) return [path.resolve(expanded)];
-
-    return (process.env.PATH || '').split(path.delimiter).map(directory => path.resolve(directory, expanded));
-  }
-
-  const candidates = ['.local/bin/pi', '.npm-global/bin/pi', '.bun/bin/pi'].map(file => path.join(os.homedir(), file));
-
-  for (const directory of (process.env.PATH || '').split(path.delimiter)) candidates.push(path.resolve(directory, 'pi'));
-
-  return candidates;
-}
-
-async function selectedPiPath(profile, warnings, piPath) {
-  const hint = process.env.PIOP_INVENTORY_PI_PATH || piPath;
-
-  if (hint) return hint;
-
-  try {
-    const settings = require('./session-broker/app-settings.cjs').read(profile) ?? {};
-
-    if (Check(Type.String({ minLength: 1 }), settings.piPath)) return settings.piPath;
-  } catch (error) {
-    if (error.code !== 'ENOENT') warnings.push(`Selected Pi settings unavailable: ${error.message}`);
-  }
-
-  warnings.push('ChatGPT coverage is limited to the host-discovered Pi auth directory and environment override. The caller did not identify the selected Pi executable; alternative installations or custom host Pi paths may use additional roots.');
-}
-
-async function piPackage(selected) {
-  const candidates = piCandidates(selected);
-
-  for (const candidate of candidates) {
-    let directory;
-
-    try { directory = path.dirname(await fs.realpath(candidate)); } catch { continue; }
-
-    while (directory !== path.dirname(directory)) {
-      try {
-        const metadata = await readJson(path.join(directory, 'package.json'));
-
-        if (Check(packageSchema, metadata) && ['@earendil-works/pi-coding-agent', '@mariozechner/pi-coding-agent'].includes(metadata.name)) return metadata;
-      } catch { }
-
-      directory = path.dirname(directory);
-    }
-  }
-}
-
-function authDirectory(metadata) {
-  const name = metadata?.piConfig?.name || 'pi';
-  const configured = process.env[`${name.toUpperCase()}_CODING_AGENT_DIR`];
-
-  const directory = configured ? path.resolve(configured.startsWith('~/') ? path.join(os.homedir(), configured.slice(2)) : configured)
-    : path.join(os.homedir(), metadata?.piConfig?.configDir || '.pi', 'agent');
-
-  return { directory, configured };
-}
-
-async function chatGptRoots(profile, discovery, piPath) {
-  const selected = await selectedPiPath(profile, discovery.warnings, piPath);
-  const metadata = await piPackage(selected);
-  const { directory, configured } = authDirectory(metadata);
-  const root = path.join(directory, 'piop-chatgpt');
-
-  const provenance = configured ? 'Pi auth-directory environment override' : 'Pi auth-directory configuration; all stored accounts';
-  addRoot(discovery.chatgpt, root, selected ? `${provenance}; selected Pi: ${selected}` : `${provenance}; host-discovered Pi`, 'shared');
-
-  if (!metadata) discovery.warnings.push('Pi installation configuration unavailable; ChatGPT discovery covers the default/overridden auth directory only.');
-
-  try {
-    await fs.stat(directory);
-    await fs.lstat(root);
-  } catch (error) {
-    // No Pi auth directory, or none for ChatGPT inside it, means nothing is stored for ChatGPT yet.
-    if (error.code === 'ENOENT' && (error.path === root || error.path === directory)) {
-      discovery.chatgpt.delete(root);
-
-      return;
-    }
-
-    discovery.warnings.push(`${root}: auth-directory ChatGPT storage unavailable: ${error.message}`);
-  }
-}
-
-async function discoverRoots(profile, piPath) {
-  const discovery = { cwds: new Map(), recovery: new Map(), legacy: new Map(), retainedArtifacts: new Map(), chatgpt: new Map(), sessionPaths: new Set(), warnings: [] };
+async function discoverRoots(profile) {
+  const discovery = { cwds: new Map(), recovery: new Map(), legacy: new Map(), retainedArtifacts: new Map(), sessionPaths: new Set(), warnings: [] };
   await readRegistry(profile, discovery);
   await recoveryRoots(profile, discovery);
-  await chatGptRoots(profile, discovery, piPath);
 
   return discovery;
 }

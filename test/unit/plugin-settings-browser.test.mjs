@@ -8,7 +8,7 @@ let dom, view, restarts, status;
 
 beforeEach(() => {
   dom = installDom(); restarts = [];
-  status = { enabled: ['chatgpt', 'markdown'], configured: ['chatgpt', 'markdown'], revision: 'first', error: null };
+  status = { enabled: ['cost', 'review'], configured: ['cost', 'review'], revision: 'first', error: null };
   // The daemon side of a restart has its own test; this daemon answers as one with one open terminal.
   mockIPC((command, args) => {
     if (command === 'plugin_status') return status;
@@ -31,7 +31,7 @@ const click = element => act(async () => element.click());
 test('restarting with an open terminal asks first; cancel keeps the terminal, confirm restarts with the chosen plugins', async () => {
   view = await renderComponent(PluginSettings, { hostId: 'local' });
   await untilDom(() => button('Restart daemon') && !button('Restart daemon').disabled);
-  await click(control('Enable ChatGPT plugin'));
+  await click(control('Enable Cost limit plugin'));
   await click(button('Restart daemon'));
   const dialog = await untilDom(() => control('Close terminals and restart?'));
   assert.match(dialog.textContent, /close 1 running terminal,/);
@@ -44,9 +44,9 @@ test('restarting with an open terminal asks first; cancel keeps the terminal, co
   await untilDom(() => control('Close terminals and restart?'));
   await click(button('Close terminals and restart'));
   await untilDom(() => control('Daemon restarted'), 5000);
-  assert.deepEqual(restarts.at(-1), { hostId: 'local', enabled: ['markdown'], revision: 'first', closeTerminals: true });
-  assert.equal(control('Enable ChatGPT plugin').getAttribute('aria-checked'), 'false');
-  assert.equal(control('Enable Notes plugin').getAttribute('aria-checked'), 'true');
+  assert.deepEqual(restarts.at(-1), { hostId: 'local', enabled: ['review'], revision: 'first', closeTerminals: true });
+  assert.equal(control('Enable Cost limit plugin').getAttribute('aria-checked'), 'false');
+  assert.equal(control('Enable Review plugin').getAttribute('aria-checked'), 'true');
 });
 
 test('a plugin setup that cannot load shows the daemon message, and Reload tries again', async () => {
@@ -61,10 +61,11 @@ test('a plugin setup that cannot load shows the daemon message, and Reload tries
   assert.equal(alert.textContent, 'Plugins are unavailable');
   fail = false;
   await click(button('Reload plugin setup'));
-  await untilDom(() => !document.querySelector('[role="alert"]') && control('Enable Notes plugin'));
+  await untilDom(() => !document.querySelector('[role="alert"]') && control('Enable Review plugin'));
 });
 
 test('cost and review can be enabled independently in plugin settings', async () => {
+  status = { enabled: [], configured: [], revision: 'first', error: null };
   view = await renderComponent(PluginSettings, { hostId: 'local' });
   const cost = await untilDom(() => control('Enable Cost limit plugin'));
   const review = control('Enable Review plugin');
@@ -76,7 +77,7 @@ test('cost and review can be enabled independently in plugin settings', async ()
   await untilDom(() => control('Close terminals and restart?'));
   await click(button('Close terminals and restart'));
   await untilDom(() => control('Daemon restarted'), 5000);
-  assert.deepEqual(restarts.at(-1).enabled, ['chatgpt', 'markdown', 'cost', 'review']);
+  assert.deepEqual(restarts.at(-1).enabled, ['cost', 'review']);
   assert.equal(control('Enable Cost limit plugin').getAttribute('aria-checked'), 'true');
   assert.equal(control('Enable Review plugin').getAttribute('aria-checked'), 'true');
 });

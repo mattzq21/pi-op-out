@@ -10,7 +10,7 @@ import * as records from './settings_records';
 import * as daemonLog from './daemon_log';
 import * as plugins from './plugins';
 import * as peers from './peers';
-import { preserveLeasesForRestart, validCheckpoint, validateConfiguration } from './host/index';
+import { validateConfiguration } from './host/index';
 import { piExecutable } from './environment';
 import { hostOperationsBusy } from './host_operations';
 import { daemonScript } from './session_worker';
@@ -30,7 +30,6 @@ interface Plan {
   fallback: string;
   enabled: string[];
   previous: string[];
-  tickets: any;
   bind: string;
   debug_bind: string | null;
   automatic: boolean;
@@ -129,11 +128,10 @@ async function makePlan(app: App, prepared: any): Promise<[Plan, artifacts.Backu
   const executable = replacementExecutable();
   const enabled = strings(prepared?.enabled);
   const previous = strings(prepared?.previous);
-  if (!validCheckpoint(prepared?.tickets)) throw new Error('Invalid restart checkpoint tickets');
   const bind = restartBind(current.url);
   await validateRestartBind(bind);
   const backup = await artifacts.Backup.create(id, executable);
-  const plan: Plan = { id, owner: process.pid, executable, fallback: backup.path, enabled, previous, tickets: prepared.tickets, bind, debug_bind: debugBind, automatic: app.clients.automatic() };
+  const plan: Plan = { id, owner: process.pid, executable, fallback: backup.path, enabled, previous, bind, debug_bind: debugBind, automatic: app.clients.automatic() };
   return [plan, backup];
 }
 
@@ -171,19 +169,15 @@ async function prepareOnce(app: App, args: any): Promise<any> {
 
 async function preparePluginHandoff(app: App, daemon: Daemon, args: any): Promise<any> {
   const prepared = await daemon.request(args);
-  const preservingNotes = ['enabled', 'previous'].every(key => Array.isArray(prepared?.[key]) && prepared[key].includes('markdown'));
-  const leases = preservingNotes ? await preserveLeasesForRestart() : undefined;
   let backup: artifacts.Backup | undefined;
   try {
     const [plan, created] = await makePlan(app, prepared);
     backup = created;
     const result = await prepareHandoff(plan);
     backup.handOff();
-    leases?.commit();
     return result;
   } catch (error) {
     await backup?.drop();
-    try { await leases?.drop(); } catch (failure) { console.error(failure); }
     throw error;
   }
 }
@@ -395,13 +389,6 @@ async function runSpecial(mode: string): Promise<void> {
   try { await coordinate(plan); }
   catch (error: any) { try { await publish(plan, 'failed', error?.message ?? String(error)); } catch (failure) { console.error(failure); } throw error; }
   finally { try { await artifacts.reconcile(); } catch (error: any) { console.error('Restart artifact cleanup remains pending: ' + (error?.message ?? error)); } }
-}
-
-export function startupTickets(): any {
-  if (process.argv[2] !== '--restart-candidate') return undefined;
-  let plan: Plan;
-  try { plan = readPlan(); } catch (error: any) { throw new Error('Could not read the restart plan, so in-memory ChatGPT state was not restored: ' + (error?.message ?? error)); }
-  return process.argv[3] === plan.id ? plan.tickets : undefined;
 }
 
 export async function initializeCandidate(app: App): Promise<void> {

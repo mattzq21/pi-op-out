@@ -10,7 +10,7 @@ export const clientPreferencesSchema = z.object({
 
 export type ClientPreferences = z.infer<typeof clientPreferencesSchema>;
 
-export const clientPreferenceKeys = new Set<keyof AppSettings>(["keybindings", "debugMode", ...pluginClientPreferenceKeys]);
+export const clientPreferenceKeys = new Set<keyof AppSettings>(["keybindings", "debugMode", ...pluginClientPreferenceKeys as (keyof AppSettings)[]]);
 
 export function clientPreferences(settings: AppSettings): ClientPreferences {
   return { keybindings: { ...settings.keybindings }, debugMode: settings.debugMode, ...pluginClientPreferences(settings) };

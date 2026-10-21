@@ -1,5 +1,0 @@
-.selection-chatgpt-tip { position: fixed; z-index: 100; transform: translate(-50%, -100%); padding: 8px 12px; border-radius: 8px; color: #eee; background: #303038; border: 1px solid #52525b; cursor: pointer; }
-.selection-chatgpt-tip.below { transform: translate(-50%, 0); }
-.selection-chatgpt-tip button { background: transparent; border: 0; padding: 2px 6px; color: inherit; cursor: pointer; }
-.selection-chatgpt-tip.mobile { top: auto !important; bottom: calc(20px + env(safe-area-inset-bottom)); left: 50% !important; transform: translateX(-50%); }
-.selection-chatgpt-tip.mobile button { min-height: 32px; }

@@ -2,7 +2,6 @@ import { createEffect, createSignal, For, onCleanup, onMount, Show } from "solid
 import { ArrowDown, ArrowUp, Check } from "lucide-solid";
 import { pluginError, plugins, refreshPlugins, restartPlugins, type PluginStatus } from "../plugins";
 import { Toggle } from "./Toggle";
-import { RetainedNoteDrafts } from "../plugins/markdown/RetainedNoteDrafts";
 
 export function PluginSettings(props: { hostId: string; onBusyChange?: (busy: boolean) => void }) {
   const [status, setStatus] = createSignal<PluginStatus>();
@@ -85,7 +84,6 @@ export function PluginSettings(props: { hostId: string; onBusyChange?: (busy: bo
     </div>
     <Show when={error() || status()?.error || pluginError(props.hostId)}><p role="alert">{error() || status()?.error || pluginError(props.hostId)}</p></Show>
     <Show when={message()}><p role="status">{message()}</p></Show>
-    <RetainedNoteDrafts hostId={props.hostId} busy={busy()} />
     <div class="config-list"><For each={orderedPlugins()}>{plugin => <div class="config-row plugin-settings-row">
       <Toggle label={`Enable ${plugin.name} plugin`} checked={enabled().includes(plugin.id)} disabled={busy() || !status()} onChange={checked => change(plugin.id, checked)} />
       <span><strong>{plugin.name}</strong></span>

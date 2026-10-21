@@ -207,7 +207,6 @@ function handlePacket(app: App, connection: Daemon, hostId: string, packet: any)
     case 'session_removed': app.emit('pi://session-removed', { hostId, sessionId: packet.sessionId ?? null, sessionPath: packet.sessionPath ?? null }); return;
     case 'stderr': app.emit('pi://stderr', packet); return;
     case 'provider_auth_changed': app.emit('pi://provider-auth-changed', { hostId, flow: packet.flow ?? null }); return;
-    case 'chatgpt_changed': app.emit('pi://chatgpt-changed', { hostId, providerId: packet.providerId ?? null, scope: packet.scope ?? null }); return;
     case 'plugins_changed': app.emit('pi://plugins-changed', { hostId }); return;
     case 'fast_models_changed': app.emit('pi://fast-models-changed', { hostId }); return;
     case 'diagnostic': app.emit('pi://daemon-error', { hostId, line: packet.line ?? null }); return;

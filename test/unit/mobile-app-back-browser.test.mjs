@@ -45,16 +45,13 @@ function androidBridge(initialSettings) {
   window.Capacitor = {
     PluginHeaders: [
       { name: 'ClientPreferences', methods: [{ name: 'load', rtype: 'promise' }, { name: 'save', rtype: 'promise' }] },
-      { name: 'Dictation', methods: [{ name: 'configuration', rtype: 'promise' }, { name: 'addListener', rtype: 'callback' }, { name: 'removeListener', rtype: 'promise' }] },
       { name: 'App', methods: [{ name: 'addListener', rtype: 'callback' }, { name: 'removeListener', rtype: 'promise' }, { name: 'minimizeApp', rtype: 'promise' }] },
     ],
     nativeCallback: (plugin, method, options, callback) => {
-      if (plugin === 'Dictation' && method === 'addListener') return 'dictation-listener';
       if (plugin === 'App' && method === 'addListener') { listeners.set(options.eventName, [...listeners.get(options.eventName) ?? [], callback]); return options.eventName + '-listener'; }
       throw new Error('Unexpected native callback: ' + plugin + '.' + method);
     },
     nativePromise: async (plugin, method, options) => {
-      if (plugin === 'Dictation' && method === 'configuration') return { enabled: false, loading: false };
       if (method === 'removeListener') return;
       if (plugin === 'App' && method === 'minimizeApp') {
         window.androidMinimizeAttempts++;

@@ -33,7 +33,7 @@ fn attachment_command_bridge() {
             context.config_mut().build.dev_url = Some(url.clone());
             context.config_mut().build.frontend_dist = Some(tauri::utils::config::FrontendDist::Url(url));
         }
-        Some(tauri::Builder::default().any_thread().manage(client_settings::ClientSettingsHooks::default()).plugin(plugins::dictation::init()).manage(desktop_daemon::DesktopDaemon::default()).build(context).expect("build native test app"))
+        Some(tauri::Builder::default().any_thread().manage(client_settings::ClientSettingsHooks::default()).manage(desktop_daemon::DesktopDaemon::default()).build(context).expect("build native test app"))
     } else { None };
     println!("PIOP_TEST_NATIVE_READY");
     let serve = move |handle: Option<AppHandle>| {
@@ -107,7 +107,6 @@ fn attachment_command_bridge() {
             Some("new_window") => new_window(
                 handle.as_ref().expect("desktop test app").clone(), request["target"].clone(),
             ).map(Value::String),
-            Some("plugin:dictation|dictation_configuration") => tauri::async_runtime::block_on(plugins::dictation::dictation_configuration(handle.as_ref().expect("desktop test app").clone())),
             Some("sync_prompt_history") => tauri::async_runtime::block_on(sync_prompt_history(
                 handle.as_ref().expect("desktop test app").clone(),
                 serde_json::from_value(request["entries"].clone()).expect("history entries"),

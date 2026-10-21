@@ -370,7 +370,7 @@ export class Host implements SessionHost {
       case 'conversation_owner': return this.ownership().owns(text(packet, 'sessionId'), text(packet, 'clientId'), flag(packet, 'allowReleased'));
       case 'conversation_mutation': return this.mutations.begin(packet);
       case 'conversation_mutation_end': return this.mutations.end(packet);
-      case 'provider_auth': case 'provider_auth_cancel_owner': case 'plugin_call': case 'plugin_status': return this.services.handle(packet);
+      case 'provider_auth': case 'provider_auth_cancel_owner': case 'plugin_status': return this.services.handle(packet);
       case 'configure': await this.configure(packet.configuration); return null;
       case 'attach': return attach(this, packet);
       case 'shutdown': await this.shutdown(); return null;
@@ -387,7 +387,7 @@ export class Host implements SessionHost {
     if (sessions.some(session => session.busy(null) || session.transient()) || this.orchestration.busy() || this.mutations.active()) {
       throw new Error('Wait for active agents to finish before restarting the daemon');
     }
-    return this.services.handle(kind(packet) === 'check_daemon_idle' ? { type: 'plugin_idle' } : packet);
+    return kind(packet) === 'check_daemon_idle' ? true : this.services.handle(packet);
   }
 
   private async retire(packet: any): Promise<any> {

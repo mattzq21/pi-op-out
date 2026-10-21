@@ -11,11 +11,10 @@ export class HostServices {
 
   constructor(executable: string) {
     this.providers = new ProviderService(executable);
-    this.plugins = new PluginService(executable);
+    this.plugins = new PluginService();
   }
 
   bind(host: Host): void {
-    this.plugins.bind(host);
     this.providers.bind(host);
   }
 
@@ -24,7 +23,7 @@ export class HostServices {
   async handle(packet: any): Promise<any> {
     switch (kind(packet)) {
       case 'provider_auth': return this.providers.handle(text(packet, 'owner'), packet.request ?? null);
-      case 'plugin_call': case 'plugin_status': case 'plugin_idle': case 'prepare_daemon_restart': return this.plugins.handle(packet);
+      case 'plugin_status': case 'prepare_daemon_restart': return this.plugins.handle(packet);
       case 'provider_auth_cancel_owner': await this.providers.cancelOwner(text(packet, 'owner')); return null;
       default: throw new Error('Unknown host service operation');
     }

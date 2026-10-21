@@ -1,5 +1,5 @@
 import { Worker } from 'node:worker_threads';
-import { closeSync, constants, fstatSync, lstatSync, mkdirSync, openSync, realpathSync } from 'node:fs';
+import { closeSync, constants, fstatSync, mkdirSync, openSync, realpathSync } from 'node:fs';
 import { join } from 'node:path';
 import { BUILD_ID, STORAGE_DIRECTORY } from './config';
 import { homeDir } from './environment';
@@ -219,9 +219,6 @@ const lanes: Record<Lane, WorkerLane> = {
 
 /** Opens the storage lock files of root in the daemon, so they close even when the worker that locks them fails. */
 function openStorageLocks(root: string): StorageLocks {
-  const notes = join(root, 'notes');
-  mkdirSync(notes, { recursive: true, mode: 0o700 });
-  if (!lstatSync(notes).isDirectory()) throw new Error('Invalid notes storage directory');
   const opened: number[] = [];
   const open = (file: string) => {
     const descriptor = openSync(file, constants.O_CREAT | constants.O_RDWR | constants.O_NOFOLLOW, 0o600);
@@ -231,16 +228,14 @@ function openStorageLocks(root: string): StorageLocks {
   };
   try {
     return {
-      ownership: open(join(notes, 'ownership.lock')),
       restore: open(join(root, 'restore.lock')),
       transactions: open(join(root, 'session-transactions.lock')),
-      notes: open(join(root, 'note-mutations.lock')),
     };
   } catch (error) { for (const descriptor of opened) closeSync(descriptor); throw error; }
 }
 
 function closeStorageLocks(locks: StorageLocks): void {
-  for (const descriptor of [locks.ownership, locks.restore, locks.transactions, locks.notes]) {
+  for (const descriptor of [locks.restore, locks.transactions]) {
     try { closeSync(descriptor); } catch (error) { console.error('Could not close storage lock: ' + errorMessage(error)); }
   }
 }

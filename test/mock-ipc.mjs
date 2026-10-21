@@ -4,7 +4,7 @@ import { mockIPC as mockNativeIPC, mockWindows } from '@tauri-apps/api/mocks';
 export { clearMocks, mockWindows } from '@tauri-apps/api/mocks';
 
 /**
- * Desktop services that every composer starts in the background: prompt history sync and the dictation status.
+ * Desktop services that every composer starts in the background: prompt history sync.
  * They answer like an idle desktop, so tests only see the commands they exercise. Pass `{ background: false }` to handle them yourself.
  */
 function desktopBackground() {
@@ -14,7 +14,6 @@ function desktopBackground() {
     sync_prompt_history: ({ entries, legacy }) => { history.push(...legacy, ...entries.map(entry => entry.prompt)); history.splice(0, Math.max(0, history.length - 100));
 
     return [...history]; },
-    'plugin:dictation|dictation_configuration': () => ({ enabled: false, loading: false }),
   };
 }
 

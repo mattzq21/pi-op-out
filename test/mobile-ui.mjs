@@ -29,17 +29,9 @@ try {
  await page.addInitScript(initialSettings => {
   window.__testClientPreferences = initialSettings;
   window.Capacitor = {
-   PluginHeaders: [{name:'ClientPreferences',methods:[{name:'load',rtype:'promise'},{name:'save',rtype:'promise'}]},{name:'Dictation',methods:[{name:'configuration',rtype:'promise'},{name:'addListener',rtype:'callback'},{name:'removeListener',rtype:'promise'}]}],
-   nativeCallback: (plugin,method) => {
-    if(plugin!=='Dictation'||method!=='addListener') throw new Error(`Unexpected native callback: ${plugin}.${method}`);
-
-    return 'dictation-listener';
-   },
+   PluginHeaders: [{name:'ClientPreferences',methods:[{name:'load',rtype:'promise'},{name:'save',rtype:'promise'}]}],
+   nativeCallback: (plugin,method) => { throw new Error(`Unexpected native callback: ${plugin}.${method}`); },
    nativePromise: async (plugin,method,options) => {
-    if(plugin==='Dictation'&&method==='configuration') return {enabled:false,loading:false};
-
-    if(plugin==='Dictation'&&method==='removeListener') return;
-
     if(plugin!=='ClientPreferences') throw new Error(`Unexpected native plugin: ${plugin}`);
 
     window.__testClientRevision ??= 0;
