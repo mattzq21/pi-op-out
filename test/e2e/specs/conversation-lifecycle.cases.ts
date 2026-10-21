@@ -159,7 +159,7 @@ describe("Conversation lifecycle", () => {
       await app.conversationSearch.setValue(indexed.name);
       const session = $(".session-item");
       await session.moveTo();
-      await app.confirmAction(`Archive “${indexed.name}”?`, () => session.$(`button[aria-label="Archive ${indexed.name}"]`).click());
+      await session.$(`button[aria-label="Archive ${indexed.name}"]`).click();
 
       await expect(app.terminalPanel).not.toBeDisplayed();
       await browser.waitUntil(async () => (await backendCalls()).some(({ command }) => command === "archive_session"));

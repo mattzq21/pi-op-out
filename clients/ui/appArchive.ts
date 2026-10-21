@@ -47,7 +47,7 @@ export function createConversationArchive(context: ArchiveContext) {
   const ownsSelectedSession = (owner: NativeTransport, session: SessionSummary) => owner === transport() && isSelectedSession(session);
   const ownsConversationUi = (owner: NativeTransport, key: string) => activeTransportRef.current === owner && activeConversationKeyRef.current === key;
 
-  const archiveTarget = (session: SessionSummary, key: string, confirm: boolean) => {
+  const archiveTarget = (session: SessionSummary, key: string) => {
     if (archivePending().has(key)) return;
 
     if (session.isDraft || !session.path) {
@@ -56,16 +56,12 @@ export function createConversationArchive(context: ArchiveContext) {
       return;
     }
 
-    const ownerTransport = runtimePool().forSession(session);
-
-    if (confirm && !window.confirm(`Archive “${session.name}”?`)) return;
-
-    return ownerTransport;
+    return runtimePool().forSession(session);
   };
 
-  const archiveSession = async (session: SessionSummary, confirm = true) => { const capturedRuntimePool = runtimePool(); const capturedSession = { ...chatSession() }; const capturedActiveHostId = activeHostId(); const capturedTransport = transport();
+  const archiveSession = async (session: SessionSummary) => { const capturedRuntimePool = runtimePool(); const capturedSession = { ...chatSession() }; const capturedActiveHostId = activeHostId(); const capturedTransport = transport();
     const archivedSessionKey = `${session.hostId ?? "local"}:${session.id}`;
-    const ownerTransport = archiveTarget(session, archivedSessionKey, confirm);
+    const ownerTransport = archiveTarget(session, archivedSessionKey);
 
     if (!ownerTransport) return;
     setArchivePending(current => new Set(current).add(archivedSessionKey));

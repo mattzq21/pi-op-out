@@ -265,7 +265,7 @@ describe("Conversation acceptance", () => {
       await expect(session.$(".session-main")).toBeDisplayed();
       await expect(session.$(".session-main")).toHaveAttribute("aria-label", expect.stringContaining(indexed.name));
       await session.moveTo();
-      await app.confirmAction(`Archive “${indexed.name}”?`, () => session.$(`button[aria-label="Archive ${indexed.name}"]`).click());
+      await session.$(`button[aria-label="Archive ${indexed.name}"]`).click();
 
       await browser.waitUntil(async () => (await backendCalls()).some(({ command }) => command === "archive_session"));
       expect((await backendCalls()).find(({ command }) => command === "archive_session")?.args).toMatchObject({ sessionPath: indexed.path, hostId: "local", terminalIds: [] });
@@ -285,7 +285,7 @@ describe("Conversation acceptance", () => {
       await expect(session.$(".session-main")).toBeDisplayed();
       await expect(session.$(".session-main")).toHaveAttribute("aria-label", expect.stringContaining(indexed.name));
       await session.moveTo();
-      await app.confirmAction(`Archive “${indexed.name}”?`, () => session.$(`button[aria-label="Archive ${indexed.name}"]`).click());
+      await session.$(`button[aria-label="Archive ${indexed.name}"]`).click();
 
       await expect($(".error-toast strong")).toHaveText("Could not archive conversation");
       await expect($(".error-toast span")).toHaveText("Archive destination is unavailable");
