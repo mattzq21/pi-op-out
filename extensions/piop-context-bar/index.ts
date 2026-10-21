@@ -200,9 +200,14 @@ export default function contextBar(pi: ExtensionAPI) {
 
     if (changeInstruction) instructions.push({ path: changeInstruction.path, content: changeInstruction.content });
     const activeTools = new Set(pi.getActiveTools());
+    const codemode = activeTools.has("codemode");
     // With codemode in "only" mode, Pi leaves the direct tools out of the request: the model calls them from codemode scripts.
-    const codemodeOnly = activeTools.has("codemode") && pi.getSettings().codemode?.mode === "only";
-    const tools = pi.getAllTools().filter((tool) => activeTools.has(tool.name) && !(codemodeOnly && tool.name !== "codemode" && tool.exposure === "direct")).map(({ name, description, parameters }) => ({ name, description, parameters }));
+    const codemodeOnly = codemode && pi.getSettings().codemode?.mode === "only";
+    // Codemode scripts can call every active direct tool, but no model-only tool.
+    const inCodemode = (tool: { name: string; exposure?: string }) => tool.name !== "codemode" && tool.exposure !== "model-only";
+    const activeInfo = pi.getAllTools().filter((tool) => activeTools.has(tool.name));
+    const tools = activeInfo.map(tool => ({ name: tool.name, description: tool.description, parameters: tool.parameters, ...codemode && tool.name !== "codemode" ? { codemode: inCodemode(tool) } : {} }));
+    const declaredTools = tools.filter((_, index) => !(codemodeOnly && activeInfo[index]!.name !== "codemode" && activeInfo[index]!.exposure === "direct"));
     const estimate = (value: string) => Math.ceil(value.length / 4);
     const skillTokens = { defined: estimate(skillPrompt), invoked: invokedSkills.reduce((sum, skill) => sum + estimate(skill.content), 0) };
 
@@ -214,7 +219,7 @@ export default function contextBar(pi: ExtensionAPI) {
       skills,
       userInvokedSkills: invokedSkills,
       skillTokens,
-      tokens: { system: estimate(instructionBlocks.reduce((prompt, block) => prompt.replace(block, ""), systemPrompt.replace(skillPrompt, ""))), instructions: estimate(instructionPrompt) + estimate(messageProjectContext.block) + estimate(changeInstruction?.block ?? ""), tools: estimate(JSON.stringify(tools)), skills: skillTokens.defined + skillTokens.invoked },
+      tokens: { system: estimate(instructionBlocks.reduce((prompt, block) => prompt.replace(block, ""), systemPrompt.replace(skillPrompt, ""))), instructions: estimate(instructionPrompt) + estimate(messageProjectContext.block) + estimate(changeInstruction?.block ?? ""), tools: estimate(JSON.stringify(declaredTools)), skills: skillTokens.defined + skillTokens.invoked },
     };
 
     const previous = savedPromptParts(branch);

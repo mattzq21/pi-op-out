@@ -40,7 +40,8 @@ export interface PromptContextInfo {
   userTimestamp?: number;
   systemPrompt: string;
   instructions: Array<{ path: string; content: string }>;
-  tools: Array<{ name: string; description: string; parameters?: unknown }>;
+  /** codemode: whether codemode scripts can call the tool. Present only while codemode is active. */
+  tools: Array<{ name: string; description: string; parameters?: unknown; codemode?: boolean }>;
   skills: Array<{ name: string; description: string; filePath: string }>;
   userInvokedSkills?: Array<{ id?: string; name: string; description: string; filePath: string; content?: string }>;
   skillTokens?: { defined: number; invoked: number };

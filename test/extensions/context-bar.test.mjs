@@ -77,15 +77,18 @@ test('the context panel lists project instructions, the working directory and sk
   assert.ok(panel.tokens.instructions > 0 && panel.tokens.skills > 0 && panel.tokens.system > 0);
 });
 
-test('with codemode only, the panel lists the tools the model gets: codemode and the tools it cannot call from scripts', () => {
+test('while codemode is active, each tool says whether codemode scripts can call it', () => {
   const tools = [
     { name: 'read', description: 'Read files', parameters: {}, exposure: 'direct' },
     { name: 'spawn_agent', description: 'Start a child', parameters: {}, exposure: 'model-only' },
     { name: 'codemode', description: 'Run scripts', parameters: {}, exposure: 'direct' },
   ];
-  const names = settings => { const chat = session({ tools, settings }); chat.say('hi'); chat.emit('context', { messages: [] }); return chat.panel().tools.map(tool => tool.name); };
-  assert.deepEqual(names({ codemode: { mode: 'only' } }), ['spawn_agent', 'codemode']);
-  assert.deepEqual(names({ codemode: { mode: 'on' } }), ['read', 'spawn_agent', 'codemode']);
+  const panel = (settings, active = tools) => { const chat = session({ tools: active, settings }); chat.say('hi'); chat.emit('context', { messages: [] }); return chat.panel(); };
+  const only = panel({ codemode: { mode: 'only' } }), on = panel({ codemode: { mode: 'on' } });
+  assert.deepEqual(only.tools.map(tool => [tool.name, tool.codemode]), [['read', true], ['spawn_agent', false], ['codemode', undefined]]);
+  assert.deepEqual(on.tools, only.tools);
+  assert.ok(only.tokens.tools < on.tokens.tools, 'tools hidden by codemode only are not counted');
+  assert.deepEqual(panel({}, tools.slice(0, 2)).tools.map(tool => tool.codemode), [undefined, undefined]);
 });
 
 test('each user message saves one snapshot, and an unchanged prompt or tool list is not stored again', () => {
