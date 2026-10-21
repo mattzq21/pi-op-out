@@ -404,12 +404,7 @@ export function createTerminalController({ transport, sessionTransport, conversa
     }])));
   };
 
-  const chatStartedFor = (key: string) => {
-    if (sessionTransport(key)?.hasSentMessage()) return true;
-    addNotice({ title: "Terminal unavailable", message: "Send a message first. The terminal opens in the conversation's directory." });
-
-    return false;
-  };
+  const chatStartedFor = (key: string) => sessionTransport(key)?.hasSentMessage() ?? false;
 
   const toggleFor = (target: TerminalTarget) => {
     if (!chatStartedFor(target.sessionKey)) return;
