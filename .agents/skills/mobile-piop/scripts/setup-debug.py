@@ -8,6 +8,7 @@ from concurrent.futures import Future
 import fcntl
 import hashlib
 import json
+import secrets
 import os
 from pathlib import Path
 import queue
@@ -478,6 +479,7 @@ def app_stater(client, app_id):
 def parse_args():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--project", type=Path, default=Path.cwd())
+    parser.add_argument("--resume", type=Path, help="Reuse the owner token from a previous session file")
     parser.add_argument("--broker", type=Path, default=Path(os.environ.get("ANDROID_VM_BROKER", str(Path.home() / "Projects/android-vm-broker/android-vm-broker"))))
     parser.add_argument("--timeout", type=float, default=1800, help="Setup deadline in seconds")
     args = parser.parse_args()
@@ -687,7 +689,36 @@ def reinstaller(args, directory, client, app_id, shared_env, build_env, log):
     return reinstall
 
 
+def save_session(path, manifest):
+    with tempfile.NamedTemporaryFile(mode="w", dir=path.parent, delete=False) as output:
+        temporary = Path(output.name)
+        try:
+            json.dump(manifest, output, indent=2)
+            output.write("\n")
+            output.flush()
+            os.fsync(output.fileno())
+            temporary.replace(path)
+        finally:
+            temporary.unlink(missing_ok=True)
+
+
+def owner_session(args, directory):
+    if args.resume:
+        saved = json.loads(args.resume.expanduser().resolve(strict=True).read_text())
+        if Path(saved["project"]).resolve() != args.project:
+            raise ValueError("The saved session belongs to a different project")
+        token = saved["ownerToken"]
+    else:
+        token = os.environ.get("ANDROID_VM_BROKER_OWNER_TOKEN", secrets.token_hex(32))
+    if not isinstance(token, str) or len(token) != 64 or any(c not in "0123456789abcdef" for c in token):
+        raise ValueError("Owner token must contain 64 lowercase hexadecimal characters")
+    saved = {"project": str(args.project), "ownerToken": token, "sessionFile": str(directory / "session.json")}
+    save_session(directory / "session.json", saved)
+    return saved
+
+
 def launch(args, directory):
+    ownership = owner_session(args, directory)
     deadline = time.monotonic() + args.timeout
     instance = str(uuid.uuid4())
     marker = f"{MARKER}={instance}".encode()
@@ -703,7 +734,7 @@ def launch(args, directory):
         try:
             print("Acquiring a private Android VM from android-vm-broker.", file=sys.stderr, flush=True)
             process = subprocess.Popen([sys.executable, str(args.broker), "mcp"], cwd=args.project,
-                                       env=shared_env, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                                       env={**shared_env, "ANDROID_VM_BROKER_OWNER_TOKEN": ownership["ownerToken"]}, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                                        stderr=broker_log, start_new_session=True)
             children.append(("Android broker lease", process))
             client = McpClient(process, "Android broker")
@@ -764,13 +795,14 @@ def launch(args, directory):
             ])
             session_file = directory / "session.json"
             manifest = {
+                "ownerToken": ownership["ownerToken"],
                 "project": str(args.project), "instanceId": instance, "launcherPid": os.getpid(),
                 "apk": str(apk), "appId": app_id, "url": endpoint["url"], "runtime": endpoint.get("runtime"),
                 "sessionFile": str(session_file), "mcpSocket": str(directory / "mcp.sock"),
                 "logs": {name: str(directory / f"{name}.log") for name in ("setup", "broker")},
                 "mcp": {"command": sys.executable, "args": [str(Path(__file__).resolve()), "connect", "--session", str(session_file)]},
             }
-            session_file.write_text(json.dumps(manifest, indent=2) + "\n")
+            save_session(session_file, manifest)
             print(json.dumps(manifest, indent=2), flush=True)
             print("Ready: use this sessionFile for tools and calls. Keep this launcher running.", file=sys.stderr, flush=True)
             while not stopped.wait(0.5):
@@ -792,7 +824,7 @@ def launch(args, directory):
                 stop_children(children, marker)
                 for worker in workers:
                     worker.join(timeout=2)
-                (directory / "session.json").unlink(missing_ok=True)
+                save_session(directory / "session.json", ownership)
             finally:
                 for sig, handler in handlers.items():
                     signal.signal(sig, handler)
