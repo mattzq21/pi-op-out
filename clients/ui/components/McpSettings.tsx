@@ -1,6 +1,6 @@
 import { createMemo, createSignal, For, Show } from "solid-js";
 import { Key } from "@solid-primitives/keyed";
-import { CirclePlus, Server, Trash2 } from "lucide-solid";
+import { CirclePlus, Pencil, Server, Trash2 } from "lucide-solid";
 import { mcpServersSchema } from "../lib/agentSchemas";
 import type { McpServers } from "../types";
 import { IconButton } from "./IconButton";
@@ -109,7 +109,11 @@ function McpServerCard(props: { name: string; server: Record<string, unknown>; n
   return <div class="mcp-card">
     <div class="mcp-card-head">
       <span class="config-icon mcp"><Server size={14} /></span>
-      <input aria-label="MCP server name" aria-invalid={Boolean(nameError())} value={props.name} onChange={event => rename(event.currentTarget)} />
+      <label class="mcp-name" data-tooltip="Rename">
+        <input aria-label="MCP server name" aria-invalid={Boolean(nameError())} spellcheck={false} value={props.name} onChange={event => rename(event.currentTarget)}
+          onKeyDown={event => { if (event.key === "Enter") event.currentTarget.blur(); else if (event.key === "Escape") { event.currentTarget.value = props.name; setNameError(undefined); event.currentTarget.blur(); } }} />
+        <Pencil size={12} aria-hidden="true" />
+      </label>
       <Toggle label={`Enable ${props.name}`} checked={props.server.enabled !== false} onChange={enabled => set({ enabled })} />
       <IconButton label={`Remove ${props.name}`} onClick={props.onRemove}><Trash2 size={15} /></IconButton>
     </div>

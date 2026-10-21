@@ -547,7 +547,12 @@ textarea::placeholder { color: var(--faint); }
 .mcp-card-body .mcp-transport-toggle button { min-width: 72px; min-height: 26px; padding: 3px 12px; }
 .mcp-card-body .command-fields textarea { box-sizing: border-box; width: 100%; border: 1px solid var(--line); background: var(--dark-control); border-radius: 7px; padding: 7px 10px; color: var(--ink); font: calc(12px + var(--settings-font-offset, 0px))/1.5 ui-monospace, SFMono-Regular, Consolas, monospace; resize: vertical; outline: 0; }
 .mcp-card-body .command-fields textarea:focus { border-color: #aaa49a; }
-.mcp-card-head > input[aria-invalid="true"] { color: #d77865; }
+.mcp-name { display: flex; align-items: center; gap: 6px; min-width: 0; padding: 3px 7px; border: 1px solid transparent; border-radius: 6px; color: var(--faint); cursor: text; transition: border-color .12s, background-color .12s; }
+.mcp-name:hover { border-color: var(--line); }
+.mcp-name:focus-within { border-color: #aaa49a; background: var(--paper); }
+.mcp-name:focus-within svg { visibility: hidden; }
+.mcp-name input { flex: 1; min-width: 0; padding: 0; border: 0; outline: 0; background: transparent; color: var(--ink); font-weight: 600; font-size: calc(13px + var(--settings-font-offset, 0px)); }
+.mcp-name input[aria-invalid="true"] { color: #d77865; }
 .agent-mcp-settings .mcp-error { margin-left: 0; }
 .agent-mcp-settings .mcp-card-head { grid-template-columns: 24px minmax(0, 1fr) auto auto; }
 .agent-mcp-settings > .secondary-button { margin-top: 10px; }
