@@ -188,7 +188,6 @@ function migrateWorkhorse(config: Config, pi: ConfigRuntime) {
     const agent = structuredClone(config.agents.find(agent => agent.name === "general") ?? generalAgent(pi));
     agent.name = "workhorse";
     delete agent.isDefault;
-    agent.extensions = [...new Set([...(agent.extensions ?? []), "../piop-rtk/rtk.ts"])];
     config.agents.push(agent);
   }
 

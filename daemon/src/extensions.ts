@@ -178,9 +178,6 @@ export function prepareContextWindowCapExtension(settings: AppSettings): string 
 function prepareAgentDirectories(dir: string): void {
   ensurePrivateDir(dir);
   atomicWritePrivate(join(dir, '../app-settings.cjs'), R.appSettingsCjs);
-  const rtk = join(homeDir(), STORAGE_DIRECTORY, 'piop-rtk');
-  ensurePrivateDir(rtk);
-  atomicWritePrivate(join(rtk, 'rtk.ts'), R.rtkExtension);
 }
 
 export function prepareDefinedAgentsExtension(): string {

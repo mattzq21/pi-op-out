@@ -255,7 +255,7 @@ describe('settings editor', () => {
   });
 
   test('agent extensions are added, edited and removed one path at a time', async () => {
-    await render({ agentConfig: { agents: [profile('general'), profile('review', { extensions: ['../piop-rtk/rtk.ts'] })] } });
+    await render({ agentConfig: { agents: [profile('general'), profile('review', { extensions: ['/ext/first.ts'] })] } });
     await section('Agents'); await selectAgent('review');
     const change = async (label, value) => act(async () => { control(label).value = value; control(label).dispatchEvent(new Event('change', { bubbles: true })); });
     await enterText(control('New extension path'), ' /ext/one.ts ');
