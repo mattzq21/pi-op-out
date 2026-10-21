@@ -14,7 +14,7 @@ import { createComputed, createEffect, createMemo, createSignal, For, Index, Sho
 import { Dynamic } from "solid-js/web";
 import { createDependencyEffect, createMemoFields, createRef, type JSXElement } from "../lib/solid";
 
-import { Bot, Check, CircleGauge, CirclePlus, ClipboardCheck, Cpu, HardDrive, Keyboard, Pencil, PlugZap, RotateCcw, Save, Search, Server, Settings2, ShieldCheck, Trash2, Zap } from "lucide-solid";
+import { Bot, Check, CircleGauge, CirclePlus, Clipboard, Cpu, HardDrive, Keyboard, Pencil, PlugZap, RotateCcw, Save, Search, Server, Settings2, ShieldCheck, Trash2, Zap } from "lucide-solid";
 import { uid } from "../lib/content";
 import { defaultKeybindings, keybindDefinitions, shortcutError, shortcutFromEvent, shortcutsConflict, type KeybindAction } from "../lib/keybindings";
 import { isMobile } from "../lib/platform";
@@ -43,7 +43,7 @@ export const sections: SettingsSection[] = [
   ...pluginSettingsSections.map(item => ({ id: item.section, label: item.label, icon: item.icon, plugin: true })),
   { id: "storage", label: "Storage", icon: HardDrive },
   { id: "keybinds", label: "Keybinds", icon: Keyboard },
-  { id: "toasts", label: "Toast history", icon: ClipboardCheck },
+  { id: "toasts", label: "Toast history", icon: Clipboard },
   { id: "plugins", label: "Plugins", icon: PlugZap },
   { id: "machines", label: "Machines", icon: Server },
   { id: "agents", label: "Agents", icon: Bot },
