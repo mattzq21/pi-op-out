@@ -39,6 +39,7 @@ const mobileSections: SettingsSection[] = isMobile ? [{ id: "connections", label
 
 export const sections: SettingsSection[] = [
   { id: "general", label: "General", icon: Settings2 },
+  { id: "agents", label: "Agents", icon: Bot },
   { id: "inference", label: "Inference", icon: Cpu },
   ...pluginSettingsSections.map(item => ({ id: item.section, label: item.label, icon: item.icon, plugin: true })),
   { id: "storage", label: "Storage", icon: HardDrive },
@@ -46,7 +47,6 @@ export const sections: SettingsSection[] = [
   { id: "toasts", label: "Toast history", icon: Clipboard },
   { id: "plugins", label: "Plugins", icon: PlugZap },
   { id: "hosts", label: "Hosts", icon: Server },
-  { id: "agents", label: "Agents", icon: Bot },
   ...mobileSections,
 ];
 
