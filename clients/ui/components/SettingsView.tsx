@@ -432,7 +432,7 @@ export function SettingsView(props: SettingsViewProps) {
       return (<div class="settings-save">{renderDiscardChanges()}{renderPendingSettingsCount()}{renderSaveButton()}{renderSaveButtonLabel()}</div>);
     };
 
-    return (<header class="settings-header"><div><p class="eyebrow">piop</p><h1>{settingsProps().scope === "client" ? "Client settings" : settingsProps().daemonLabel + " settings"}</h1><p>Client preferences stay on this device. Daemon settings belong to the machine running piop.</p></div>{renderSaveControls()}</header>);
+    return (<header class="settings-header"><div><h1>{settingsProps().scope === "client" ? "Client settings" : settingsProps().daemonLabel + " settings"}</h1></div>{renderSaveControls()}</header>);
   };
 
   const renderSettingsLayout = () => {
