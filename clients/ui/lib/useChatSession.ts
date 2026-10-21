@@ -130,7 +130,7 @@ function createChatSession(transport: Accessor<Pick<NativeTransport, "command" |
         if (commandResult) {
           const visible = commandResult.commands.filter(command => command.sourceInfo?.source !== "inline");
 
-          session.setCommands(visible.some(command => command.name === "compact") ? visible : [{ name: "compact", description: "Compact conversation context", source: "builtin" }, ...visible]);
+          session.setCommands(visible.some(command => command.name === "compact") ? visible : [{ name: "compact", description: "Compact conversation context", source: "builtin", options: [{ value: "", label: "[instructions]" }] }, ...visible]);
         }
       });
 

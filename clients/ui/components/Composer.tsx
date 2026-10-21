@@ -98,13 +98,13 @@ function commandMatches(commands: SlashCommand[], query: string) {
   return [...exact, ...matches].slice(0, 7);
 }
 
-/** The arguments a command takes, for example "[scope]" or "[on|off|toggle]". Undefined when the command declares none. */
+/** The arguments a command takes, for example "[scope]" or "[on|off|toggle]". Hints (options with an empty value) give the full form; without hints the choices make it. Undefined when the command declares none. */
 function commandUsage(command: SlashCommand) {
   const options = command.options ?? [];
   const hints = options.filter(option => !option.value).map(option => option.label);
   const choices = options.filter(option => option.value).map(option => option.value);
 
-  return [...hints, ...(choices.length ? [`[${choices.join("|")}]`] : [])].join(" ") || undefined;
+  return (hints.length ? hints.join(" ") : choices.length ? `[${choices.join("|")}]` : "") || undefined;
 }
 
 function skillMatches(commands: SlashCommand[], query: string) {
@@ -275,16 +275,20 @@ export function Composer(props: Props) {
     return typed && command?.options?.length ? { command, options: command.options, prefix: typed[2].trimStart().toLowerCase() } : undefined;
   });
 
-  /** Options that match the typed argument. Hints (empty value) describe the arguments and show while the user writes the command. */
-  const argumentShown = createMemo<CommandOption[]>(() => {
+  /** The command and its arguments, shown while the user writes the command. */
+  const argumentUsage = createMemo(() => {
+    const input = argumentInput();
+
+    return input && !paletteDismissed() ? `/${input.command.name}` : undefined;
+  });
+  /** Choices that match the typed argument. */
+  const argumentChoices = createMemo<CommandOption[]>(() => {
     const input = argumentInput();
 
     if (paletteDismissed() || !input) return [];
 
-    return input.options.filter(option => option.value === "" || (option.value.toLowerCase().startsWith(input.prefix) && option.value.toLowerCase() !== input.prefix));
+    return input.options.filter(option => option.value && option.value.toLowerCase().startsWith(input.prefix) && option.value.toLowerCase() !== input.prefix);
   });
-  const argumentHints = createMemo(() => argumentShown().filter(option => !option.value));
-  const argumentChoices = createMemo(() => argumentShown().filter(option => option.value));
   const pickCount = () => matches().length || argumentChoices().length;
 
   createDependencyEffect(() => { setSelectedMatch(0); }, () => [commandQuery(), skillQuery(), matches().length, argumentChoices().length]);
@@ -509,7 +513,7 @@ export function Composer(props: Props) {
   const handlePaletteKey = (event: KeyboardEvent<HTMLTextAreaElement>) => {
     if (event.currentTarget.selectionStart !== event.currentTarget.selectionEnd) return false;
 
-    if (event.key === "Escape" && (matches().length || argumentShown().length)) { event.preventDefault(); event.stopPropagation(); setPaletteDismissed(true);
+    if (event.key === "Escape" && (matches().length || argumentUsage())) { event.preventDefault(); event.stopPropagation(); setPaletteDismissed(true);
 
     return true; }
 
@@ -575,10 +579,10 @@ export function Composer(props: Props) {
   const ComposerBody = () => {
     const renderComposerDropHint = () => (draggingFiles() && !controls().inputDisabled && <div class="composer-drop-hint" role="status">Drop files to attach</div>);
     const renderCommandPalette = () => (<Show when={matches().length > 0}><div class="command-palette" role="listbox" aria-label={skillQuery() === undefined ? "piop commands" : "piop skills"}>{<Key each={matches()} by={(command) => `${command.source}:${command.name}`}>{(command, index) => <button ref={element => { if (index() === selectedMatch()) selectedCommandRef.current = element; }} role="option" aria-selected={index() === selectedMatch()}  type="button" onClick={() => chooseCommand(command())}><span><strong>{skillQuery() !== undefined ? `$${skillName(command())}` : `/${command().name}`}<Show when={skillQuery() === undefined && commandUsage(command())}>{usage => <em class="command-usage"> {usage()}</em>}</Show></strong></span></button>}</Key>}</div></Show>);
-    const renderArgumentPalette = () => (<Show when={argumentShown().length > 0}><div class="command-palette" role="listbox" aria-label={`/${argumentInput()?.command.name} options`}>
-      <Key each={argumentHints()} by={option => option.label}>{option => <div class="command-hint"><span><strong>/{argumentInput()?.command.name}<em class="command-usage"> {option().label}</em></strong></span></div>}</Key>
+    const renderArgumentPalette = () => (<Show when={argumentUsage()}>{name => <div class="command-palette" role="listbox" aria-label={`${name()} options`}>
+      <div class="command-hint"><span><strong>{name()}<em class="command-usage"> {commandUsage(required(argumentInput()).command)}</em></strong></span></div>
       <Key each={argumentChoices()} by={option => option.value}>{(option, index) => <button role="option" aria-selected={index() === selectedMatch()} type="button" onClick={() => chooseOption(option())}><span><strong>{option().label}</strong>{option().description && <small>{option().description}</small>}</span></button>}</Key>
-    </div></Show>);
+    </div>}</Show>);
 
     const renderComposerEditor = () => (<div class="composer-editor">
         <textarea ref={element => { ref.current = element; }} aria-label="Message piop" readOnly={props.ownershipRequired} onFocus={() => { setPaletteDismissed(false); if (props.ownershipRequired) void props.onTakeOwnership?.(); }} placeholder={props.ownershipRequired ? "" : composer().paused ? "Send a message to continue piop…" : composer().streaming ? "Queue a follow-up…" : "Ask piop to build, explain, or change anything…"} value={value()} rows={1} onSelect={(event) => setSelection({ start: event.currentTarget.selectionStart, end: event.currentTarget.selectionEnd })} onInput={(event) => { setSelection({ start: event.target.selectionStart, end: event.target.selectionEnd }); setPaletteDismissed(false); setValue(event.target.value); }} onKeyDown={handleEditorKey} />

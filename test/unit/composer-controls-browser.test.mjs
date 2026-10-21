@@ -180,7 +180,8 @@ test('command options show after the command name: hints describe a free argumen
   await page.keyboard.press('ArrowDown');
   await page.keyboard.press('Tab');
   assert.equal(await editor.inputValue(), '/fast off');
-  assert.equal(await fast.count(), 0);
+  assert.equal(await fast.getByRole('option').count(), 0);
+  assert.match(await fast.textContent(), /^\/fast \[on\|off\|toggle\]$/);
   await page.keyboard.press('Enter');
   assert.deepEqual(await sent(page), [['/fast off', null, []]]);
 });
