@@ -31,7 +31,7 @@ class AppPage {
   get openProjectButton() { return $(".directory-palette-open"); }
   get dialogAlert() { return $('.directory-palette [role="alert"]'); }
   get automaticRetryToggle() { return $('[role="switch"][aria-label="Automatic retry"]'); }
-  get addMachineButton() { return $('//button[normalize-space(.)="Add machine"]'); }
+  get addHostButton() { return $('//button[normalize-space(.)="Add host"]'); }
   get addMcpServerButton() { return $('//button[normalize-space(.)="Add MCP server"]'); }
   get restoreKeybindsButton() { return $('//button[normalize-space(.)="Restore defaults"]'); }
   get contextWindowCap() { return $('input[aria-label="Context window cap"]'); }

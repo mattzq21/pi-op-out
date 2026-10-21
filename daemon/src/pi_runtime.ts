@@ -90,7 +90,7 @@ export function ensureRuntimeOwner(runtime: PiRuntime, runtimeId: string, owner:
 
 async function sessionLaunchSettings(app: App, hostId: string, cwd: string | null | undefined, readOnly: boolean): Promise<AppSettings> {
   const settings = await loadAppSettings(app);
-  if (hostId === 'local' && !settings.localEnabled) throw new Error('Local machine is disabled. Enable it in Settings → Machines.');
+  if (hostId === 'local' && !settings.localEnabled) throw new Error('Local host is disabled. Enable it in Settings → Hosts.');
   if (!readOnly) await validateSessionWorkingDirectory(settings, hostId, cwd);
   return settings;
 }

@@ -49,7 +49,7 @@ describe("Settings acceptance", () => {
     await app.openSettings();
     await expect(app.saveSettingsButton).toHaveText("Save changes");
 
-    for (const section of ["General", "Machines", "Keybinds", "Agents"]) {
+    for (const section of ["General", "Hosts", "Keybinds", "Agents"]) {
       if (section === "Agents") await $('//nav[contains(@class,"settings-nav")]//button[normalize-space(.)="Local"]').click();
       await app.openSettingsSection(section);
       await expect(app.settingsSectionHeading).toHaveText(section);
@@ -66,7 +66,7 @@ describe("Settings acceptance", () => {
     const changedValue = initialValue === "true" ? "false" : "true";
     await expect(app.automaticRetryToggle).toHaveAttribute("aria-checked", changedValue);
 
-    await app.openSettingsSection("Machines");
+    await app.openSettingsSection("Hosts");
     await app.openSettingsSection("General");
     await expect(app.automaticRetryToggle).toHaveAttribute("aria-checked", changedValue);
 
@@ -89,14 +89,14 @@ describe("Settings acceptance", () => {
 
   it("can prepare a remote machine without saving it", async () => {
     await app.openSettings();
-    await app.openSettingsSection("Machines");
-    const before = await $$("input[aria-label='Machine name']").length;
-    await app.addMachineButton.click();
-    const names = await $$("input[aria-label='Machine name']");
+    await app.openSettingsSection("Hosts");
+    const before = await $$("input[aria-label='Host name']").length;
+    await app.addHostButton.click();
+    const names = await $$("input[aria-label='Host name']");
     const name = names[(await names.length) - 1];
 
     await expect(names).toBeElementsArrayOfSize(before + 1);
-    await expect(name).toHaveValue("New machine");
+    await expect(name).toHaveValue("New host");
     await name.setValue("Acceptance machine");
     const card = await name.$('./ancestor::div[contains(@class, "mcp-card")]');
     const target = await card.$('input[placeholder="user@example.com"]');
@@ -113,8 +113,8 @@ describe("Settings acceptance", () => {
     await expect(target).toHaveValue("tester@example.com");
     await expect(executable).toHaveValue("/opt/pi/bin/piopd");
     await $('button[aria-label="Remove Acceptance machine"]').click();
-    await $('//dialog//button[normalize-space(.)="Remove machine"]').click();
-    await expect($$("input[aria-label='Machine name']")).toBeElementsArrayOfSize(before);
+    await $('//dialog//button[normalize-space(.)="Remove host"]').click();
+    await expect($$("input[aria-label='Host name']")).toBeElementsArrayOfSize(before);
     await app.openConversations();
   });
 

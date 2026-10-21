@@ -212,12 +212,12 @@ describe('settings editor', () => {
     assert.deepEqual(config.agents[1].mcpServers, { shared: reviewServer });
   });
 
-  test('machine removal requires confirmation when sessions use it', async () => {
+  test('host removal requires confirmation when sessions use it', async () => {
     props.settings.hosts = [{ id: 'remote', name: 'Remote', target: 'user@host', piPath: 'pi' }];
-    await render({ sessions: [{ hostId: 'remote' }, { hostId: 'remote' }] }); await section('Machines');
-    await click(control('Remove Remote')); assert.match(document.querySelector('dialog').textContent, /files and conversations will remain on the remote machine/);
+    await render({ sessions: [{ hostId: 'remote' }, { hostId: 'remote' }] }); await section('Hosts');
+    await click(control('Remove Remote')); assert.match(document.querySelector('dialog').textContent, /files and conversations will remain on the remote host/);
     await click(button('Cancel')); assert.ok(control('Remove Remote'));
-    await click(control('Remove Remote')); await click(button('Remove machine')); assert.equal(control('Remove Remote'), null);
+    await click(control('Remove Remote')); await click(button('Remove host')); assert.equal(control('Remove Remote'), null);
     await click(save()); assert.deepEqual(saves[0][0].hosts, []);
   });
 
@@ -420,13 +420,13 @@ describe('settings editor', () => {
     assert.doesNotMatch(document.body.textContent, /No models match/);
   });
 
-  test('new machines reject reserved names and save valid connection details', async () => {
-    await render(); await section('Machines');
-    await click(button('Add machine'));
-    await enterText(control('Machine name'), 'Local');
+  test('new hosts reject reserved names and save valid connection details', async () => {
+    await render(); await section('Hosts');
+    await click(button('Add host'));
+    await enterText(control('Host name'), 'Local');
     assert.match(document.querySelector('[role=alert]').textContent, /reserved/);
     assert.equal(save().disabled, true);
-    await enterText(control('Machine name'), 'Build');
+    await enterText(control('Host name'), 'Build');
     await enterText(control('Build SSH target'), 'builder@host');
     await enterText(control('Build Piop daemon executable'), '/opt/pi');
     await click(save());
@@ -456,11 +456,11 @@ describe('settings editor', () => {
     assert.deepEqual(saves[0][1].agents.map(agent => agent.name), ['general', firstName, secondName]);
   });
 
-  test('new machines receive distinct nonempty IDs when saved', async () => {
-    await render(); await section('Machines');
+  test('new hosts receive distinct nonempty IDs when saved', async () => {
+    await render(); await section('Hosts');
     for (const [name, target] of [['Build one', 'builder@one'], ['Build two', 'builder@two']]) {
-      await click(button('Add machine'));
-      const input = [...document.querySelectorAll('[aria-label="Machine name"]')].find(element => element.value === 'New machine');
+      await click(button('Add host'));
+      const input = [...document.querySelectorAll('[aria-label="Host name"]')].find(element => element.value === 'New host');
       await enterText(input, name);
       await enterText(control(`${name} SSH target`), target);
     }

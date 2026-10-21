@@ -75,7 +75,7 @@ export async function saveAppSettings(app: App, settings: AppSettings, agentHost
 }
 
 function validateHostIds(settings: AppSettings): void {
-  if (settings.hosts.some(host => host.id.trim().toLowerCase() === 'local')) throw new Error("Remote machine id 'local' is reserved for the local machine");
+  if (settings.hosts.some(host => host.id.trim().toLowerCase() === 'local')) throw new Error("Remote host id 'local' is reserved for the local host");
 }
 
 export function validateSettingsForSave(settings: AppSettings): void {
@@ -90,7 +90,7 @@ export function validateSettingsForSave(settings: AppSettings): void {
     hostIds.add(host.id);
     const name = host.name.trim().toLowerCase();
     if (!name) throw new Error('Every machine needs a name');
-    if (hostNames.has(name)) throw new Error(`Machine name '${host.name.trim()}' is already in use`);
+    if (hostNames.has(name)) throw new Error(`Host name '${host.name.trim()}' is already in use`);
     hostNames.add(name);
     validateRemoteHost(host);
   }

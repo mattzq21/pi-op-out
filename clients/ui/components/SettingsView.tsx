@@ -27,9 +27,9 @@ import { StorageSettings } from "./StorageSettings";
 import { PluginSettings } from "./PluginSettings";
 import { ToastHistory } from "./ToastHistory";
 import { Toggle } from "./Toggle";
-import { RemoveMachineDialog } from "./RemoveMachineDialog";
+import { RemoveHostDialog } from "./RemoveHostDialog";
 
-type CoreSection = "inference" | "general" | "storage" | "agents" | "machines" | "keybinds" | "connections" | "plugins" | "toasts";
+type CoreSection = "inference" | "general" | "storage" | "agents" | "hosts" | "keybinds" | "connections" | "plugins" | "toasts";
 
 export type Section = CoreSection | (string & Record<never, never>);
 
@@ -45,7 +45,7 @@ export const sections: SettingsSection[] = [
   { id: "keybinds", label: "Keybinds", icon: Keyboard },
   { id: "toasts", label: "Toast history", icon: Clipboard },
   { id: "plugins", label: "Plugins", icon: PlugZap },
-  { id: "machines", label: "Machines", icon: Server },
+  { id: "hosts", label: "Hosts", icon: Server },
   { id: "agents", label: "Agents", icon: Bot },
   ...mobileSections,
 ];
@@ -54,7 +54,7 @@ export const clientSections = new Set<Section>(["keybinds", "connections", "toas
 
 export const visibleClientSections = (debugMode: boolean) => sections.filter(item => clientSections.has(item.id) && (item.id !== "toasts" || debugMode) && (!item.plugin || pluginSettingsEnabled("local", item.id)));
 
-export const daemonSections = (hostId: string) => sections.filter((item) => !clientSections.has(item.id) && (item.id !== "machines" || (hostId === "local" && !isMobile)) && (!item.plugin || pluginSettingsEnabled(hostId, item.id)));
+export const daemonSections = (hostId: string) => sections.filter((item) => !clientSections.has(item.id) && (item.id !== "hosts" || (hostId === "local" && !isMobile)) && (!item.plugin || pluginSettingsEnabled(hostId, item.id)));
 
 const isBuiltInAgent = (agent: AgentProfile) => agent.name === "general";
 
@@ -270,14 +270,14 @@ export function SettingsView(props: SettingsViewProps) {
   };
 
   const nextAgentSuffixRef = createRef(agentDrafts().length);
-  const addHost = () => setDraft((current) => ({ ...current, hosts: [...current.hosts, { id: uid("host"), enabled: true, name: "New machine", target: "", piPath: "piopd" }] }));
+  const addHost = () => setDraft((current) => ({ ...current, hosts: [...current.hosts, { id: uid("host"), enabled: true, name: "New host", target: "", piPath: "piopd" }] }));
   const updateHost = (id: string, value: Partial<RemoteHost>) => setDraft((current) => ({ ...current, hosts: current.hosts.map((host) => host.id === id ? { ...host, ...value } : host) }));
-  const [machineToRemove, setMachineToRemove] = createSignal<RemoteHost>();
-  const removeHost = (host: RemoteHost) => setMachineToRemove(host);
+  const [hostToRemove, setHostToRemove] = createSignal<RemoteHost>();
+  const removeHost = (host: RemoteHost) => setHostToRemove(host);
 
   const confirmRemoveHost = (host: RemoteHost) => {
     setDraft((current) => ({ ...current, hosts: current.hosts.filter((item) => item.id !== host.id) }));
-    setMachineToRemove(undefined);
+    setHostToRemove(undefined);
   };
 
   const agent = createMemo(() => (agentDrafts()[agentIndex()]));
@@ -391,10 +391,10 @@ export function SettingsView(props: SettingsViewProps) {
     () => agentValidation().defaultAgentValid ? undefined : "Pick one default agent",
     () => nameValidation().contextWindowValid ? undefined : capRangeError(draft().contextWindowCap, "General context cap"),
     () => Object.entries(capErrors()).map(([label, error]) => label + ": " + error)[0],
-    () => draft().hosts.length > 16 ? "At most 16 remote machines can be configured" : undefined,
-    () => nameValidation().reservedLocalHostName ? "The machine name “Local” is reserved for this machine" : undefined,
-    () => nameValidation().duplicateHostNames.size ? `Machine name “${[...nameValidation().duplicateHostNames][0]}” is used more than once` : undefined,
-    () => agentValidation().invalidHost ? `${required((agentValidation().invalidHost)).name.trim() || "Machine"}: name, SSH target, and Pi executable are required` : undefined,
+    () => draft().hosts.length > 16 ? "At most 16 remote hosts can be configured" : undefined,
+    () => nameValidation().reservedLocalHostName ? "The host name “Local” is reserved for this host" : undefined,
+    () => nameValidation().duplicateHostNames.size ? `Host name “${[...nameValidation().duplicateHostNames][0]}” is used more than once` : undefined,
+    () => agentValidation().invalidHost ? `${required((agentValidation().invalidHost)).name.trim() || "Host"}: name, SSH target, and Pi executable are required` : undefined,
     () => shortcutValidation().error,
     () => shortcutValidation().duplicateShortcuts.size ? `Shortcut “${[...shortcutValidation().duplicateShortcuts][0]}” is assigned more than once` : undefined,
     () => !agentDrafts().some(isBuiltInAgent) && agentConfig() ? "The built-in general agent is required" : undefined,
@@ -506,11 +506,11 @@ export function SettingsView(props: SettingsViewProps) {
         {formValidation().visibleSection === "inference" && inferenceView() === "providers" && <Rerun on={providerHostId}>{(_key) => <ProviderSettings  hosts={settingsProps().providerHosts ?? settingsProps().settings.hosts} initialHostId={settingsProps().providerHostId} fixedHost />}</Rerun>}
         {renderGeneral()}
         {renderModels()}
-        {formValidation().visibleSection === "connections" && <SettingsSection title="Anchor host" description="This device connects to one host. You can use the machines that this host has added."><button class="secondary-button" disabled={dirty() || saving()} onClick={() => window.dispatchEvent(new Event("piop-mobile-disconnect"))}>Change anchor host</button>{dirty() && <p>Save your changes before switching hosts.</p>}</SettingsSection>}
+        {formValidation().visibleSection === "connections" && <SettingsSection title="Anchor host" description="This device connects to one host. You can use the hosts that this host has added."><button class="secondary-button" disabled={dirty() || saving()} onClick={() => window.dispatchEvent(new Event("piop-mobile-disconnect"))}>Change anchor host</button>{dirty() && <p>Save your changes before switching hosts.</p>}</SettingsSection>}
         {renderAgents()}
         <For each={pluginSettingsSections}>{item => <Show when={formValidation().visibleSection === item.section}><SettingsSection title={item.label} description={item.description}><Dynamic component={item.component} settings={draft()} agents={agentDrafts()} onChange={patch} /></SettingsSection></Show>}</For>
         {formValidation().visibleSection === "storage" && <StorageSettings hostId={settingsProps().providerHostId} />}
-        {formValidation().visibleSection === "machines" && <SettingsSection title="Machines" description="Connect to Piop daemons over SSH. Sessions and configuration stay on each machine."><div class="mcp-list"><div class="mcp-card"><div class="mcp-card-head"><span class="config-icon mcp"><Server size={16} /></span><strong>Local</strong><Toggle label="Enable local machine" checked={draft().localEnabled !== false} onChange={(localEnabled) => setDraft((current) => ({ ...current, localEnabled }))} /></div></div>{<Key each={draft().hosts} by={(host) => host.id}>{(host, _index) => <div class="mcp-card" ><div class="mcp-card-head"><span class="config-icon mcp"><Server size={16} /></span><input aria-label="Machine name" aria-invalid={!host().name.trim() || host().name.trim().toLowerCase() === "local" || nameValidation().duplicateHostNames.has(host().name.trim().toLowerCase())} value={host().name} onInput={(event) => updateHost(host().id, { name: event.target.value })} /><Toggle label={`Enable ${host().name}`} checked={host().enabled !== false} onChange={(enabled) => updateHost(host().id, { enabled })} /><IconButton label={`Remove ${host().name}`} onClick={() => removeHost(host())}><Trash2 size={15} /></IconButton></div><div class="command-fields"><label><span>SSH target</span><input aria-label={`${host().name} SSH target`} aria-invalid={!host().target.trim()} placeholder="user@example.com" value={host().target} onInput={(event) => updateHost(host().id, { target: event.target.value })} /></label><label><span>Piop daemon executable</span><input aria-label={`${host().name} Piop daemon executable`} aria-invalid={!host().piPath.trim()} placeholder="piopd" value={host().piPath === "pi" ? "piopd" : host().piPath.endsWith("/pi") ? `${host().piPath.slice(0, -2)}piopd` : host().piPath} onInput={(event) => updateHost(host().id, { piPath: event.target.value })} /></label></div></div>}</Key>}</div><button class="secondary-button" disabled={draft().hosts.length >= 16} onClick={addHost}><CirclePlus size={15} />Add machine</button></SettingsSection>}
+        {formValidation().visibleSection === "hosts" && <SettingsSection title="Hosts" description="Connect to Piop daemons over SSH. Sessions and configuration stay on each host."><div class="mcp-list"><div class="mcp-card"><div class="mcp-card-head"><span class="config-icon mcp"><Server size={16} /></span><strong>Local</strong><Toggle label="Enable local host" checked={draft().localEnabled !== false} onChange={(localEnabled) => setDraft((current) => ({ ...current, localEnabled }))} /></div></div>{<Key each={draft().hosts} by={(host) => host.id}>{(host, _index) => <div class="mcp-card" ><div class="mcp-card-head"><span class="config-icon mcp"><Server size={16} /></span><input aria-label="Host name" aria-invalid={!host().name.trim() || host().name.trim().toLowerCase() === "local" || nameValidation().duplicateHostNames.has(host().name.trim().toLowerCase())} value={host().name} onInput={(event) => updateHost(host().id, { name: event.target.value })} /><Toggle label={`Enable ${host().name}`} checked={host().enabled !== false} onChange={(enabled) => updateHost(host().id, { enabled })} /><IconButton label={`Remove ${host().name}`} onClick={() => removeHost(host())}><Trash2 size={15} /></IconButton></div><div class="command-fields"><label><span>SSH target</span><input aria-label={`${host().name} SSH target`} aria-invalid={!host().target.trim()} placeholder="user@example.com" value={host().target} onInput={(event) => updateHost(host().id, { target: event.target.value })} /></label><label><span>Piop daemon executable</span><input aria-label={`${host().name} Piop daemon executable`} aria-invalid={!host().piPath.trim()} placeholder="piopd" value={host().piPath === "pi" ? "piopd" : host().piPath.endsWith("/pi") ? `${host().piPath.slice(0, -2)}piopd` : host().piPath} onInput={(event) => updateHost(host().id, { piPath: event.target.value })} /></label></div></div>}</Key>}</div><button class="secondary-button" disabled={draft().hosts.length >= 16} onClick={addHost}><CirclePlus size={15} />Add host</button></SettingsSection>}
         {formValidation().visibleSection === "keybinds" && <SettingsSection title="Keybinds" description="Customize global application shortcuts."><div class="keybind-list">{<Key each={keybindDefinitions} by={(binding) => binding.action}>{(binding, _index) => <label class="keybind-row" ><span><strong>{binding().label}</strong><small>{binding().description}</small></span><KeybindInput action={binding().action} value={draft().keybindings[binding().action]} invalid={shortcutValidation().duplicateShortcuts.has(draft().keybindings[binding().action].trim().toLowerCase())} onChange={(shortcut) => setDraft((current) => ({ ...current, keybindings: { ...current.keybindings, [binding().action]: shortcut } }))} /></label>}</Key>}</div><button class="secondary-button" onClick={() => patch({ keybindings: { ...defaultKeybindings } })}><RotateCcw size={15} />Restore defaults</button></SettingsSection>}
 
       </section>);
@@ -525,7 +525,7 @@ export function SettingsView(props: SettingsViewProps) {
   return <main class={dirty() ? "settings-shell has-unsaved" : "settings-shell"}>{renderSettingsHeader()}
     {renderSettingsLayout()}
     {renderSettingsSaveFab()}
-    <Show when={machineToRemove()}>{(host) => <RemoveMachineDialog name={host().name} onCancel={() => setMachineToRemove(undefined)} onRemove={() => confirmRemoveHost(host())} />}</Show>
+    <Show when={hostToRemove()}>{(host) => <RemoveHostDialog name={host().name} onCancel={() => setHostToRemove(undefined)} onRemove={() => confirmRemoveHost(host())} />}</Show>
   </main>;
 }
 
