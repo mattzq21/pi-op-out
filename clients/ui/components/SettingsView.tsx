@@ -14,7 +14,7 @@ import { createComputed, createEffect, createMemo, createSignal, For, Index, Sho
 import { Dynamic } from "solid-js/web";
 import { createDependencyEffect, createMemoFields, createRef, type JSXElement } from "../lib/solid";
 
-import { Bot, Check, CircleGauge, CirclePlus, Clipboard, Cpu, HardDrive, Keyboard, Pencil, PlugZap, RotateCcw, Save, Search, Server, Settings2, ShieldCheck, Trash2, Zap } from "lucide-solid";
+import { Bot, Check, CircleGauge, CirclePlus, Clipboard, Cpu, HardDrive, Keyboard, Pencil, PlugZap, RotateCcw, Save, Search, Server, Settings2, ShieldCheck, Trash2, X, Zap } from "lucide-solid";
 import { uid } from "../lib/content";
 import { defaultKeybindings, keybindDefinitions, shortcutError, shortcutFromEvent, shortcutsConflict, type KeybindAction } from "../lib/keybindings";
 import { isMobile } from "../lib/platform";
@@ -418,7 +418,7 @@ export function SettingsView(props: SettingsViewProps) {
 
   const renderSettingsHeader = () => {
     const renderSaveControls = () => {
-      const renderDiscardChanges = () => (dirty() && !saving() && <button onClick={reloadLatest}>Discard changes</button>);
+      const renderDiscardChanges = () => (dirty() && !saving() && <button class="discard-button" onClick={reloadLatest}><X size={15} />Discard changes</button>);
       const renderPendingSettingsCount = () => (settingsProps().pendingSettingsCount > 0 && !dirty() && <small role="status">Saved · waiting for {settingsProps().pendingSettingsCount} session{settingsProps().pendingSettingsCount === 1 ? "" : "s"} to apply changes</small>);
       const renderSaveButton = () => (conflict() ? <small role="alert">{saveError() || "Settings changed in another window."} <button disabled={saving()} onClick={reloadLatest}>Reload latest settings and discard local edits</button></small> : (saveError() || validationError() || formValidation().fastModeValidationError || durabilityError()) && <small role="alert">{saveError() || validationError() || formValidation().fastModeValidationError || durabilityError()}</small>);
 
