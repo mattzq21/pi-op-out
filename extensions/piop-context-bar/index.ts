@@ -170,9 +170,40 @@ function savedPromptParts(branch: ReturnType<ExtensionContext["sessionManager"][
   return { systemPrompt, tools };
 }
 
+type RequestTool = { name: string; description: string; parameters?: unknown };
+
+const isRecord = (value: unknown): value is Record<string, unknown> => typeof value === "object" && value !== null && !Array.isArray(value);
+
+/**
+ * The tools a provider request declares to the model, as sent: OpenAI chat and responses, Anthropic and Google request shapes.
+ * Undefined when the request has no tool list this reads.
+ */
+function requestTools(payload: unknown): RequestTool[] | undefined {
+  if (!isRecord(payload)) return undefined;
+  const lists = [payload.tools, isRecord(payload.config) ? payload.config.tools : undefined].filter(Array.isArray);
+
+  if (!lists.length) return undefined;
+  const tools: RequestTool[] = [];
+  const add = (value: unknown) => {
+    if (!isRecord(value) || typeof value.name !== "string") return;
+    tools.push({ name: value.name, description: typeof value.description === "string" ? value.description : "", parameters: value.parameters ?? value.input_schema ?? value.parametersJsonSchema });
+  };
+
+  for (const item of lists.flat()) {
+    if (!isRecord(item)) continue;
+
+    if (Array.isArray(item.functionDeclarations)) item.functionDeclarations.forEach(add);
+    else add(isRecord(item.function) ? item.function : item);
+  }
+
+  return tools;
+}
+
 export default function contextBar(pi: ExtensionAPI) {
   let promptOptions: BuildSystemPromptOptions | undefined;
   let publishInputTokens: ((tokens: number, ctx: ExtensionContext) => void) | undefined;
+  /** The snapshot of the latest user message until its first model request is sent. It is saved with the tools of that request. */
+  let pending: { save: (sent: RequestTool[] | undefined, ctx: ExtensionContext) => void } | undefined;
 
   const publishPromptContext = (ctx: ExtensionContext, messages: ContextMessages) => {
     const branch = ctx.sessionManager.getBranch();
@@ -208,6 +239,7 @@ export default function contextBar(pi: ExtensionAPI) {
     const activeInfo = pi.getAllTools().filter((tool) => activeTools.has(tool.name));
     const tools = activeInfo.map(tool => ({ name: tool.name, description: tool.description, parameters: tool.parameters, ...codemode && tool.name !== "codemode" ? { codemode: inCodemode(tool) } : {} }));
     const declaredTools = tools.filter((_, index) => !(codemodeOnly && activeInfo[index]!.name !== "codemode" && activeInfo[index]!.exposure === "direct"));
+    const codemodeFlags = new Map(tools.map(tool => [tool.name, tool.codemode]));
     const estimate = (value: string) => Math.ceil(value.length / 4);
     const skillTokens = { defined: estimate(skillPrompt), invoked: invokedSkills.reduce((sum, skill) => sum + estimate(skill.content), 0) };
 
@@ -215,30 +247,47 @@ export default function contextBar(pi: ExtensionAPI) {
       userTimestamp: user.message.timestamp,
       systemPrompt,
       instructions,
-      tools,
+      tools: declaredTools,
       skills,
       userInvokedSkills: invokedSkills,
       skillTokens,
       tokens: { system: estimate(instructionBlocks.reduce((prompt, block) => prompt.replace(block, ""), systemPrompt.replace(skillPrompt, ""))), instructions: estimate(instructionPrompt) + estimate(messageProjectContext.block) + estimate(changeInstruction?.block ?? ""), tools: estimate(JSON.stringify(declaredTools)), skills: skillTokens.defined + skillTokens.invoked },
     };
 
-    const previous = savedPromptParts(branch);
-    const sameSystemPrompt = previous.systemPrompt === systemPrompt;
-    const sameTools = previous.tools === JSON.stringify(tools);
-    const { systemPrompt: _systemPrompt, tools: _tools, ...rest } = snapshot;
-    pi.appendEntry(ENTRY_TYPE, {
-      ...rest,
-      ...sameSystemPrompt ? {} : { systemPrompt },
-      ...sameTools ? {} : { tools },
-      ...sameSystemPrompt || sameTools ? { sameAsPrevious: { ...sameSystemPrompt ? { systemPrompt: true } : {}, ...sameTools ? { tools: true } : {} } } : {},
-    });
-    ctx.ui.setStatus(STATUS_KEY, `json:${JSON.stringify(snapshot)}`);
-    publishInputTokens = (inputTokens, context) => context.ui.setStatus(STATUS_KEY, `json:${JSON.stringify({ ...snapshot, inputTokens })}`);
+    const publish = (context: ExtensionContext) => {
+      context.ui.setStatus(STATUS_KEY, `json:${JSON.stringify(snapshot)}`);
+      publishInputTokens = (inputTokens, next) => next.ui.setStatus(STATUS_KEY, `json:${JSON.stringify({ ...snapshot, inputTokens })}`);
+    };
+
+    publish(ctx);
+    pending = { save(sent, context) {
+      if (sent) {
+        snapshot.tools = sent.map(tool => ({ ...tool, ...codemodeFlags.get(tool.name) === undefined ? {} : { codemode: codemodeFlags.get(tool.name) } }));
+        snapshot.tokens.tools = estimate(JSON.stringify(sent));
+      }
+
+      const previous = savedPromptParts(context.sessionManager.getBranch());
+      const sameSystemPrompt = previous.systemPrompt === systemPrompt;
+      const sameTools = previous.tools === JSON.stringify(snapshot.tools);
+      const { systemPrompt: _systemPrompt, tools: savedTools, ...rest } = snapshot;
+      pi.appendEntry(ENTRY_TYPE, {
+        ...rest,
+        ...sameSystemPrompt ? {} : { systemPrompt },
+        ...sameTools ? {} : { tools: savedTools },
+        ...sameSystemPrompt || sameTools ? { sameAsPrevious: { ...sameSystemPrompt ? { systemPrompt: true } : {}, ...sameTools ? { tools: true } : {} } } : {},
+      });
+      publish(context);
+    } };
   };
 
-  pi.on("session_start", (_event, ctx) => { promptOptions = undefined; publishInputTokens = undefined; ctx.ui.setStatus(STATUS_KEY, undefined); });
+  pi.on("session_start", (_event, ctx) => { promptOptions = undefined; publishInputTokens = undefined; pending = undefined; ctx.ui.setStatus(STATUS_KEY, undefined); });
   pi.on("before_agent_start", (event) => { promptOptions = event.systemPromptOptions; });
   pi.on("context", (event, ctx) => { publishPromptContext(ctx, event.messages); });
+  pi.on("before_provider_request", (event, ctx) => {
+    const current = pending;
+    pending = undefined;
+    current?.save(requestTools(event.payload), ctx);
+  });
   pi.on("provider_stream_event", (event, ctx) => {
     if (!publishInputTokens || !["openai-responses", "openai-codex-responses"].includes(event.api) || !Check(responseUsageSchema, event.data)) return;
     publishInputTokens(event.data.response.usage.input_tokens, ctx);
