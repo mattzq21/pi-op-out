@@ -1,8 +1,8 @@
 import { env, InferenceSession, Tensor } from "onnxruntime-web/wasm";
-import wasmUrl from "../../../node_modules/onnxruntime-web/dist/ort-wasm-simd-threaded.wasm?url";
-import moduleUrl from "../../../node_modules/onnxruntime-web/dist/ort-wasm-simd-threaded.mjs?url";
-import modelBase64 from "../assets/silero-vad.base64?raw";
-import { decodeBase64 } from "./base64";
+import wasmUrl from "../../../../node_modules/onnxruntime-web/dist/ort-wasm-simd-threaded.wasm?url";
+import moduleUrl from "../../../../node_modules/onnxruntime-web/dist/ort-wasm-simd-threaded.mjs?url";
+import modelBase64 from "./silero-vad.base64?raw";
+import { decodeBase64 } from "../../lib/base64";
 
 const SAMPLE_RATE = 16000;
 

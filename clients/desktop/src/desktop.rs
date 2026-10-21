@@ -2,7 +2,7 @@ mod platform;
 mod daemon_endpoint;
 mod desktop_daemon;
 mod client_settings;
-mod dictation;
+mod plugins;
 #[path = "settings_concurrency.rs"]
 mod settings_concurrency;
 #[path = "private_fs.rs"]
@@ -12,7 +12,6 @@ mod clipboard_image;
 use clipboard_image::{configure_image_copy, read_clipboard_image};
 use client_settings::{load_client_settings, save_client_settings, sync_prompt_history};
 use desktop_daemon::{daemon_invoke, daemon_log_statuses};
-use dictation::{dictation_configuration, dictation_find_engines, dictation_stream_cancel, dictation_stream_feed, dictation_stream_finish, dictation_stream_start};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::{collections::HashMap, fs, io::Read, path::{Path, PathBuf}, process::{Command, Stdio}, sync::{mpsc, Arc, Mutex, atomic::{AtomicBool, AtomicU64, Ordering}}, thread, time::Duration};
@@ -34,30 +33,8 @@ fn new_window(app: AppHandle, target: Value) -> Result<String, String> {
         .background_color(tauri::window::Color(24, 24, 23, 255))
         .title(APP_TITLE).inner_size(1280.0, 800.0).min_inner_size(900.0, 640.0)
         .build().map_err(|error| error.to_string())?;
-    configure_dictation_microphone(&window)?;
     configure_image_copy(&window)?;
     Ok(label)
-}
-
-fn configure_dictation_microphone(window: &tauri::WebviewWindow) -> Result<(), String> {
-    let dev_url = window.app_handle().config().build.dev_url.clone();
-    window.with_webview(move |webview| {
-        use gtk::prelude::Cast;
-        use webkit2gtk::{PermissionRequestExt, SettingsExt, UserMediaPermissionRequest, UserMediaPermissionRequestExt, WebViewExt};
-        let view = webview.inner();
-        if let Some(settings) = WebViewExt::settings(&view) { settings.set_enable_media_stream(true); }
-        view.connect_permission_request(move |view, request| {
-            let trusted = view.uri().and_then(|uri| tauri::Url::parse(&uri).ok()).is_some_and(|url| {
-                url.scheme() == "tauri" && url.host_str() == Some("localhost")
-                    || matches!(url.scheme(), "http" | "https") && url.host_str() == Some("tauri.localhost")
-                    || DEVELOPMENT && dev_url.as_ref().is_some_and(|configured| url.origin() == configured.origin())
-            });
-            if trusted && request.downcast_ref::<UserMediaPermissionRequest>().is_some_and(|media| media.is_for_audio_device() && !media.is_for_video_device()) {
-                request.allow(); true
-            } else { false }
-        });
-    }).map_err(|error| error.to_string())?;
-    Ok(())
 }
 
 fn conversation_window_target(target: &Value) -> Result<(String, String), String> {
@@ -199,13 +176,8 @@ pub fn run() {
         (context, start_window)
     };
     let builder = tauri::Builder::default();
-    builder.manage(desktop_daemon::DesktopDaemon::default()).manage(dictation::Dictation::default()).setup(move |app| -> Result<(), Box<dyn std::error::Error>> {
-        match client_settings::stored_dictation_settings() {
-            Ok(settings) => dictation::reload(app.handle(), settings),
-            Err(error) => eprintln!("Could not read the dictation settings: {error}"),
-        }
+    builder.manage(desktop_daemon::DesktopDaemon::default()).manage(client_settings::ClientSettingsHooks::default()).plugin(plugins::dictation::init()).setup(move |app| -> Result<(), Box<dyn std::error::Error>> {
         for window in app.webview_windows().values() {
-            configure_dictation_microphone(window)?;
             configure_image_copy(window)?;
             let handle = app.handle().clone();
             let label = window.label().to_owned();
@@ -227,9 +199,8 @@ pub fn run() {
             window.show()?;
         }
         Ok(())
-    }).invoke_handler(tauri::generate_handler![daemon_invoke, daemon_log_statuses, reload_development_window, load_client_settings, save_client_settings, sync_prompt_history, new_window, open_project_directory, open_rollout_file, open_external_url, read_dropped_file, read_clipboard_image, dictation_configuration, dictation_find_engines, dictation_stream_start, dictation_stream_feed, dictation_stream_finish, dictation_stream_cancel]).build(context).expect("error while building piop").run(|app, event| {
+    }).invoke_handler(tauri::generate_handler![daemon_invoke, daemon_log_statuses, reload_development_window, load_client_settings, save_client_settings, sync_prompt_history, new_window, open_project_directory, open_rollout_file, open_external_url, read_dropped_file, read_clipboard_image]).build(context).expect("error while building piop").run(|app, event| {
         if let tauri::RunEvent::WindowEvent { label, event: tauri::WindowEvent::Destroyed, .. } = &event {
-            dictation::close_window(app, label);
             let app = app.clone(); let label = label.clone();
             tauri::async_runtime::spawn(async move { app.state::<desktop_daemon::DesktopDaemon>().close_window(&app, &label).await; });
         }

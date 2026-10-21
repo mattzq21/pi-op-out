@@ -4,24 +4,33 @@ use crate::settings_concurrency::{lock_settings, settings_revision};
 #[path = "settings_records.rs"]
 pub(crate) mod records;
 
-/// A model added to an engine, with its arguments. The path and the arguments together identify it.
-#[derive(Clone, Deserialize, Serialize, PartialEq)]
-pub(crate) struct DictationModel {
-    #[serde(default, skip_serializing_if = "String::is_empty")]
-    name: String,
-    path: String,
-    #[serde(default, skip_serializing_if = "String::is_empty")]
-    args: String,
+/// Sent to all windows after a save. The payload is the saved client settings object.
+/// Rust code uses on_changed: Tauri queues an event for Rust listeners while another event is being dispatched.
+pub(crate) const CLIENT_SETTINGS_CHANGED: &str = "pi://client-settings-changed";
+
+/// Merges one plugin field when a window saves: (latest, baseline, intended) values to the stored value. None means absent.
+pub(crate) type FieldMerge = fn(Option<&Value>, Option<&Value>, Option<&Value>) -> Result<Option<Value>, String>;
+
+/// Called with the saved client settings object after each save, in save order.
+pub(crate) type ChangeHandler = Arc<dyn Fn(&Value) + Send + Sync>;
+
+/// What plugins register for the client settings.
+/// merges: field merges. Fields without a merge take the intended value when the window changed it.
+/// changed: change handlers. Each save calls them while it holds the settings lock, so they see the saves in order.
+#[derive(Default)]
+pub(crate) struct ClientSettingsHooks { merges: Mutex<HashMap<String, FieldMerge>>, changed: Mutex<Vec<ChangeHandler>> }
+
+pub(crate) fn register_field_merge(app: &AppHandle, field: &str, merge: FieldMerge) -> Result<(), String> {
+    let hooks = app.state::<ClientSettingsHooks>();
+    let mut fields = hooks.merges.lock().map_err(|_| "Client settings hooks are unavailable")?;
+    if fields.insert(field.to_owned(), merge).is_some() { return Err(format!("Client settings field {field} already has a merge")); }
+    Ok(())
 }
 
-/// The settings of one engine type: its program path ("" searches PATH) and its models. The engine type identifies it.
-#[derive(Clone, Deserialize, Serialize, PartialEq)]
-pub(crate) struct DictationEngineEntry {
-    engine: String,
-    #[serde(default, skip_serializing_if = "String::is_empty")]
-    path: String,
-    #[serde(default)]
-    models: Vec<DictationModel>,
+pub(crate) fn on_changed(app: &AppHandle, handler: impl Fn(&Value) + Send + Sync + 'static) -> Result<(), String> {
+    let hooks = app.state::<ClientSettingsHooks>();
+    hooks.changed.lock().map_err(|_| "Client settings hooks are unavailable")?.push(Arc::new(handler));
+    Ok(())
 }
 
 #[derive(Clone, Deserialize, Serialize)]
@@ -29,53 +38,16 @@ pub(crate) struct DictationEngineEntry {
 pub(crate) struct ClientSettings {
     keybindings: HashMap<String, String>,
     debug_mode: bool,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    dictation_engine: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    dictation_engines: Option<Vec<DictationEngineEntry>>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    dictation_model_path: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    dictation_args: Option<String>,
+    /// The fields that plugins own. Null values count as absent.
+    #[serde(flatten)]
+    fields: serde_json::Map<String, Value>,
 }
 
-impl ClientSettings {
-    fn dictation(&self) -> crate::dictation::DictationSettings {
-        let field = |value: &Option<String>| value.as_deref().unwrap_or_default().trim().to_owned();
-        let engine = field(&self.dictation_engine);
-        let engine = if engine.is_empty() { "transcribe.cpp".to_owned() } else { engine };
-        let program = self.dictation_engines.iter().flatten().find(|entry| entry.engine == engine).map(|entry| entry.path.trim().to_owned()).unwrap_or_default();
-        crate::dictation::DictationSettings {
-            engine,
-            program,
-            model: field(&self.dictation_model_path),
-            args: field(&self.dictation_args),
-        }
-    }
-}
-
-fn merge_engines(latest: &[DictationEngineEntry], baseline: &[DictationEngineEntry], intended: &[DictationEngineEntry]) -> Result<Vec<DictationEngineEntry>, String> {
-    let find = |entries: &[DictationEngineEntry], engine: &str| entries.iter().find(|entry| entry.engine == engine).cloned();
-    let mut engines: Vec<String> = latest.iter().map(|entry| entry.engine.clone()).collect();
-    for entry in intended { if !engines.contains(&entry.engine) { engines.push(entry.engine.clone()); } }
-    let mut merged = Vec::new();
-    for engine in engines {
-        let (before, after) = (find(baseline, &engine), find(intended, &engine));
-        let current = find(latest, &engine);
-        if before != after && current != before && current != after { return Err(format!("Client preference conflict at dictationEngines.{engine}: another window changed this engine. Reload the latest preferences and apply your edits again.")); }
-        if let Some(entry) = if before != after { after } else { current } { merged.push(entry); }
-    }
-    Ok(merged)
-}
-
-/// The dictation settings saved on this computer. Missing preferences use the defaults.
-pub(crate) fn stored_dictation_settings() -> Result<crate::dictation::DictationSettings, String> {
+/// The client settings saved on this computer, or None when nothing is saved.
+pub(crate) fn stored_client_settings() -> Result<Option<Value>, String> {
     let path = storage_path()?;
     let _guard = lock_settings(&path)?;
-    Ok(match read_preferences(&path)? {
-        Some(settings) => settings.dictation(),
-        None => crate::dictation::DictationSettings { engine: "transcribe.cpp".into(), program: String::new(), model: String::new(), args: String::new() },
-    })
+    read_preferences(&path)?.map(|settings| serde_json::to_value(settings).map_err(|error| error.to_string())).transpose()
 }
 
 fn storage_path() -> Result<PathBuf, String> {
@@ -125,22 +97,34 @@ fn validate_keybindings(keybindings: &HashMap<String, String>) -> Result<(), Str
     Ok(())
 }
 
-fn merge_preferences(mut latest: ClientSettings, baseline: &ClientSettings, intended: &ClientSettings) -> Result<ClientSettings, String> {
+fn merge_fields(app: &AppHandle, latest: &mut serde_json::Map<String, Value>, baseline: &serde_json::Map<String, Value>, intended: &serde_json::Map<String, Value>) -> Result<(), String> {
+    let hooks = app.state::<ClientSettingsHooks>();
+    let merges = hooks.merges.lock().map_err(|_| "Client settings hooks are unavailable")?;
+    let keys: std::collections::BTreeSet<String> = latest.keys().chain(baseline.keys()).chain(intended.keys()).cloned().collect();
+    let get = |fields: &serde_json::Map<String, Value>, key: &str| fields.get(key).cloned().filter(|value| !value.is_null());
+    for key in keys {
+        let (current, before, after) = (get(latest, &key), get(baseline, &key), get(intended, &key));
+        let merged = match merges.get(&key) {
+            Some(merge) => merge(current.as_ref(), before.as_ref(), after.as_ref())?,
+            None if before != after => after,
+            None => current,
+        };
+        match merged { Some(value) => { latest.insert(key, value); } None => { latest.remove(&key); } }
+    }
+    Ok(())
+}
+
+fn merge_preferences(app: &AppHandle, mut latest: ClientSettings, baseline: &ClientSettings, intended: &ClientSettings) -> Result<ClientSettings, String> {
     merge_keybindings(&mut latest.keybindings, &baseline.keybindings, &intended.keybindings)?;
     if intended.debug_mode != baseline.debug_mode { latest.debug_mode = intended.debug_mode; }
-    if intended.dictation_engine != baseline.dictation_engine { latest.dictation_engine = intended.dictation_engine.clone(); }
-    if intended.dictation_model_path != baseline.dictation_model_path { latest.dictation_model_path = intended.dictation_model_path.clone(); }
-    if intended.dictation_args != baseline.dictation_args { latest.dictation_args = intended.dictation_args.clone(); }
-    if latest.dictation_engines.is_some() || intended.dictation_engines.is_some() {
-        latest.dictation_engines = Some(merge_engines(latest.dictation_engines.as_deref().unwrap_or_default(), baseline.dictation_engines.as_deref().unwrap_or_default(), intended.dictation_engines.as_deref().unwrap_or_default())?);
-    }
+    merge_fields(app, &mut latest.fields, &baseline.fields, &intended.fields)?;
     Ok(latest)
 }
 
-fn intended_preferences(path: &Path, baseline: &ClientSettings, intended: ClientSettings, initialize: bool) -> Result<ClientSettings, String> {
+fn intended_preferences(app: &AppHandle, path: &Path, baseline: &ClientSettings, intended: ClientSettings, initialize: bool) -> Result<ClientSettings, String> {
     match read_preferences(path)? {
         Some(latest) if initialize => Ok(latest),
-        Some(latest) => merge_preferences(latest, baseline, &intended),
+        Some(latest) => merge_preferences(app, latest, baseline, &intended),
         None => Ok(intended),
     }
 }
@@ -165,12 +149,15 @@ pub(crate) async fn save_client_settings(app: AppHandle, settings: ClientSetting
     tauri::async_runtime::spawn_blocking(move || {
         let path = storage_path()?;
         let _guard = lock_settings(&path)?;
-        let settings = intended_preferences(&path, &baseline, settings, initialize.unwrap_or(false))?;
+        let mut settings = intended_preferences(&app, &path, &baseline, settings, initialize.unwrap_or(false))?;
+        settings.fields.retain(|_, value| !value.is_null());
         validate_keybindings(&settings.keybindings)?;
         let body = serde_json::to_vec_pretty(&settings).map_err(|error| error.to_string())?;
         let publication = records::publish(&path, &body)?;
-        crate::dictation::reload(&app, settings.dictation());
-        for window in app.webview_windows().values() { if let Err(error) = window.emit("pi://client-settings-changed", ()) { eprintln!("Could not report client settings change: {error}"); } }
+        let saved = serde_json::to_value(&settings).map_err(|error| error.to_string())?;
+        let handlers = app.state::<ClientSettingsHooks>().changed.lock().map_err(|_| "Client settings hooks are unavailable")?.clone();
+        for handler in handlers { handler(&saved); }
+        if let Err(error) = app.emit(CLIENT_SETTINGS_CHANGED, &saved) { eprintln!("Could not report client settings change: {error}"); }
         Ok(json!({"settings":settings,"revision":settings_revision(Some(&body)),"publication":publication}))
     }).await.map_err(|error| format!("Client settings task failed: {error}"))?
 }

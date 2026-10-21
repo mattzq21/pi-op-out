@@ -29,9 +29,9 @@ window.addEventListener("unhandledrejection", event => window.__piopE2eErrors.pu
 const consoleError = console.error.bind(console);
 console.error = (...values: unknown[]) => { window.__piopE2eErrors.push("console: " + values.map(describeError).join(" ")); consoleError(...values); };
 
-/** Commands that the app sends through its platform invoke (clients/ui/lib/platform.ts). */
-const localCommands = new Set(["load_client_settings", "save_client_settings", "sync_prompt_history", "new_window", "open_external_url", "open_project_directory", "open_rollout_file", "read_dropped_file", "dictation_find_engines",
-  "dictation_configuration", "dictation_stream_start", "dictation_stream_feed", "dictation_stream_finish", "dictation_stream_cancel"]);
+/** Commands that the app sends through its platform invoke (clients/ui/lib/platform.ts) and the native commands of client plugins (clients/ui/plugins/native.ts). */
+const localCommands = new Set(["load_client_settings", "save_client_settings", "sync_prompt_history", "new_window", "open_external_url", "open_project_directory", "open_rollout_file", "read_dropped_file",
+  ...["dictation_find_engines", "dictation_configuration", "dictation_stream_start", "dictation_stream_feed", "dictation_stream_finish", "dictation_stream_cancel"].map(command => "plugin:dictation|" + command)]);
 
 const mockMetadataSchema = z.object({ error: z.string().optional(), events: z.array(rpcEventSchema).optional() }).catch({});
 

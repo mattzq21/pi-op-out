@@ -12,7 +12,10 @@ export interface PluginContext {
   activate: () => void;
 }
 
+export interface ComposerToolProps { disabled: boolean; compact?: boolean; onText: (text: string) => void }
+
 export interface PluginInstance {
+  composer?: Component<ComposerToolProps>;
   panel?: () => JSX.Element;
   show?: () => void;
   transcript?: Component<TranscriptProps>;
@@ -22,7 +25,7 @@ export interface PluginModule { createPlugin: (context: PluginContext) => Plugin
 
 export interface PluginSettingsProps { settings: AppSettings; agents: AgentProfile[]; onChange: (patch: Partial<AppSettings>) => void }
 
-export interface PluginSettingsSection { section: string; label: string; description: string; icon: (props: LucideProps) => JSX.Element; load: () => Promise<{ default: Component<PluginSettingsProps> }> }
+export interface PluginSettingsSection { scope?: "client" | "host"; section: string; label: string; description: string; icon: (props: LucideProps) => JSX.Element; load: () => Promise<{ default: Component<PluginSettingsProps> }> }
 
 export type PluginScope = "client" | "host" | "conversation";
 
@@ -43,6 +46,7 @@ export interface SplitPaneRequestHandler {
 export interface PluginDefinition {
   id: string;
   scope: PluginScope;
+  retainOnHostRestart?: boolean;
   name: string;
   description: string;
   load: () => Promise<PluginModule>;

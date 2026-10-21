@@ -1,9 +1,9 @@
 import { z } from "zod";
-import { dictationConfigurationSchema } from "./responseSchemas";
+import { dictationConfigurationSchema } from "./settingsSchema";
 import { createMemo, createSignal, onCleanup, onMount } from "solid-js";
-import { invoke, listen } from "./platform";
+import { invoke, listen } from "./transport";
 import type { DictationVad } from "./dictationVad";
-import { encodeBase64 } from "./base64";
+import { encodeBase64 } from "../../lib/base64";
 
 type Configuration = z.output<typeof dictationConfigurationSchema>;
 

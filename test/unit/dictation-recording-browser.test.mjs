@@ -21,9 +21,9 @@ test('dictation ends by itself after the speaker stops, and the recorded audio g
       await page.exposeFunction('nativeCommand', async (command, args) => {
         const { clientId, ...request } = args ?? {};
         engine.push({ command, request });
-        if (command === 'dictation_stream_start') return { id: 'stream-1' };
-        if (command === 'dictation_stream_feed') return null;
-        if (command === 'dictation_stream_finish') return { text: 'Please write a note about the weather' };
+        if (command === 'plugin:dictation|dictation_stream_start') return { id: 'stream-1' };
+        if (command === 'plugin:dictation|dictation_stream_feed') return null;
+        if (command === 'plugin:dictation|dictation_stream_finish') return { text: 'Please write a note about the weather' };
         throw new Error('Unexpected command: ' + command);
       });
     },
@@ -37,9 +37,9 @@ test('dictation ends by itself after the speaker stops, and the recorded audio g
   assert.ok(Date.now() - started > 2000 && Date.now() - started < 15000, 'ended after ' + (Date.now() - started) + ' ms');
 
   const commands = engine.map(call => call.command);
-  assert.equal(commands[0], 'dictation_stream_start');
-  assert.equal(commands.at(-1), 'dictation_stream_finish');
-  const fed = engine.filter(call => call.command === 'dictation_stream_feed');
+  assert.equal(commands[0], 'plugin:dictation|dictation_stream_start');
+  assert.equal(commands.at(-1), 'plugin:dictation|dictation_stream_finish');
+  const fed = engine.filter(call => call.command === 'plugin:dictation|dictation_stream_feed');
   assert.ok(fed.length > 0 && fed.every(call => call.request.id === 'stream-1'));
   const seconds = fed.reduce((total, call) => total + Buffer.from(call.request.audio, 'base64').length / 2, 0) / 16000;
   // Short pauses between words do not end it; 1.5 seconds of silence after the speech does, before the clip starts again.

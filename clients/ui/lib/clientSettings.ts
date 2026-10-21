@@ -1,21 +1,20 @@
 import type { AppSettings } from "../types";
 import { invoke } from "./platform";
 import { z } from "zod";
-import { dictationEngineSchema, dictationEngineSettingsSchema, settingsPublicationSchema } from "./responseSchemas";
+import { settingsPublicationSchema } from "./responseSchemas";
 import { applyClientPreferences, clientPreferences, clientPreferencesSchema, ClientPreferenceConflictError } from "./clientPreferenceMerge";
+import { storedPluginClientPreferences } from "../plugins/clientPreferences";
 
 const storageKey = "piop-client-settings";
 
 let durabilityFailure: { revision: string; error: string } | undefined;
 
-const clientSettingsSchema = z.object({
+const coreClientSettingsSchema = z.object({
   keybindings: z.record(z.string(), z.string()).optional().catch(undefined),
   debugMode: z.boolean().optional().catch(undefined),
-  dictationEngine: dictationEngineSchema.optional().catch(undefined),
-  dictationEngines: z.array(dictationEngineSettingsSchema).optional().catch(undefined),
-  dictationModelPath: z.string().optional().catch(undefined),
-  dictationArgs: z.string().optional().catch(undefined),
 }).catch({});
+
+const clientSettingsSchema = z.unknown().transform(value => ({ ...coreClientSettingsSchema.parse(value), ...storedPluginClientPreferences(value) }));
 
 type StoredPreferences = z.infer<typeof clientSettingsSchema>;
 
@@ -40,10 +39,7 @@ function mergeClientSettings(settings: AppSettings, stored: StoredPreferences): 
   return { ...settings,
     keybindings: stored.keybindings ? { ...settings.keybindings, ...stored.keybindings } : settings.keybindings,
     debugMode: stored.debugMode ?? settings.debugMode,
-    dictationEngine: stored.dictationEngine,
-    dictationEngines: stored.dictationEngines,
-    dictationModelPath: stored.dictationModelPath,
-    dictationArgs: stored.dictationArgs,
+    ...storedPluginClientPreferences(stored),
   };
 }
 

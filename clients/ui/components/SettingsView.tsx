@@ -14,7 +14,7 @@ import { createComputed, createEffect, createMemo, createSignal, For, Index, Sho
 import { Dynamic } from "solid-js/web";
 import { createDependencyEffect, createMemoFields, createRef, type JSXElement } from "../lib/solid";
 
-import { Bot, Check, CircleGauge, CirclePlus, ClipboardCheck, Cpu, HardDrive, Keyboard, Mic, PlugZap, RotateCcw, Save, Search, Server, Settings2, ShieldCheck, Trash2, Zap } from "lucide-solid";
+import { Bot, Check, CircleGauge, CirclePlus, ClipboardCheck, Cpu, HardDrive, Keyboard, PlugZap, RotateCcw, Save, Search, Server, Settings2, ShieldCheck, Trash2, Zap } from "lucide-solid";
 import { uid } from "../lib/content";
 import { defaultKeybindings, keybindDefinitions, shortcutError, shortcutFromEvent, shortcutsConflict, type KeybindAction } from "../lib/keybindings";
 import { isMobile } from "../lib/platform";
@@ -23,14 +23,13 @@ import { IconButton } from "./IconButton";
 import { ProviderSettings } from "./ProviderSettings";
 import { pluginSettingsEnabled, pluginSettingsSections } from "../plugins/settings";
 import { refreshPlugins, setPluginError } from "../plugins";
-import { DictationSettings } from "./DictationSettings";
 import { StorageSettings } from "./StorageSettings";
 import { PluginSettings } from "./PluginSettings";
 import { ToastHistory } from "./ToastHistory";
 import { Toggle } from "./Toggle";
 import { RemoveMachineDialog } from "./RemoveMachineDialog";
 
-type CoreSection = "inference" | "general" | "dictation" | "storage" | "agents" | "machines" | "keybinds" | "connections" | "plugins" | "toasts";
+type CoreSection = "inference" | "general" | "storage" | "agents" | "machines" | "keybinds" | "connections" | "plugins" | "toasts";
 
 export type Section = CoreSection | (string & Record<never, never>);
 
@@ -40,7 +39,6 @@ const mobileSections: SettingsSection[] = isMobile ? [{ id: "connections", label
 
 export const sections: SettingsSection[] = [
   { id: "general", label: "General", icon: Settings2 },
-  { id: "dictation", label: "Dictation", icon: Mic },
   { id: "inference", label: "Inference", icon: Cpu },
   ...pluginSettingsSections.map(item => ({ id: item.section, label: item.label, icon: item.icon, plugin: true })),
   { id: "storage", label: "Storage", icon: HardDrive },
@@ -52,7 +50,9 @@ export const sections: SettingsSection[] = [
   ...mobileSections,
 ];
 
-export const clientSections = new Set<Section>(["dictation", "keybinds", "connections", "toasts"]);
+export const clientSections = new Set<Section>(["keybinds", "connections", "toasts", ...pluginSettingsSections.filter(item => item.scope === "client").map(item => item.section)]);
+
+export const visibleClientSections = () => sections.filter(item => clientSections.has(item.id) && (!item.plugin || pluginSettingsEnabled("local", item.id)));
 
 export const daemonSections = (hostId: string) => sections.filter((item) => !clientSections.has(item.id) && (item.id !== "machines" || (hostId === "local" && !isMobile)) && (!item.plugin || pluginSettingsEnabled(hostId, item.id)));
 
@@ -115,7 +115,7 @@ export function SettingsView(props: SettingsViewProps) {
   const retainedSaveError = createRef(false);
   createEffect(() => { const host = settingsProps().providerHostId ?? "local";
 
-  if (settingsProps().scope === "daemon") void refreshPlugins(host).catch(reason => setPluginError(host, reason instanceof Error ? reason.message : String(reason))); });
+  void refreshPlugins(settingsProps().scope === "client" ? "local" : host).catch(reason => setPluginError(host, reason instanceof Error ? reason.message : String(reason))); });
   const [modelFilter, setModelFilter] = createSignal("");
   const [inferenceView, setInferenceView] = createSignal<"models" | "providers">("models");
   const [settingsQuery, setSettingsQuery] = createSignal("");
@@ -406,7 +406,7 @@ export function SettingsView(props: SettingsViewProps) {
     const fastModeValidationError = invalidFastModeAgent ? `${invalidFastModeAgent.name}: model ${invalidFastModeAgent.model} does not support fast mode` : undefined;
     const formValid = agentValidation().agentsValid && !validationError() && !fastModeValidationError;
     const searchTerms = settingsQuery().trim().toLocaleLowerCase().split(/\s+/).filter(Boolean);
-    const matchingSections = (settingsProps().scope === "client" ? sections.filter((item) => clientSections.has(item.id)) : daemonSections(settingsProps().providerHostId ?? "local")).filter((item) => searchTerms.every((term) => item.label.toLocaleLowerCase().includes(term)));
+    const matchingSections = (settingsProps().scope === "client" ? visibleClientSections() : daemonSections(settingsProps().providerHostId ?? "local")).filter((item) => searchTerms.every((term) => item.label.toLocaleLowerCase().includes(term)));
     const visibleSection = settingsProps().selectedSection ?? (matchingSections.some((item) => item.id === section()) ? section() : matchingSections[0]?.id);
 
     return { invalidFastModeAgent, fastModeValidationError, formValid, searchTerms, matchingSections, visibleSection };
@@ -437,7 +437,6 @@ export function SettingsView(props: SettingsViewProps) {
   const renderSettingsLayout = () => {
     const renderSettingsContent = () => {
 
-      const renderDictation = () => (formValidation().visibleSection === "dictation" && <SettingsSection title="Dictation" description="Choose the speech engine and model that this device uses."><DictationSettings settings={draft()} onChange={patch} /></SettingsSection>);
 
       const renderGeneral = () => (formValidation().visibleSection === "general" && <SettingsSection title="General" description="Agent behavior.">
         <SettingRow icon={<CircleGauge />} title="Default context window cap" description="Used when no /cap choice, agent cap, or model cap applies. Off uses each model's full window. Open conversations update when idle."><div class="setting-cap-controls"><input class="setting-number" aria-label="Context window cap" aria-invalid={!nameValidation().contextWindowValid} disabled={!draft().contextWindowCapEnabled} type="number" min={100000} max={50000000} step={1000} value={draft().contextWindowCap} onInput={(event) => patch({ contextWindowCap: Number(event.target.value) })} /><Toggle label="Enable context window cap" checked={draft().contextWindowCapEnabled} onChange={(contextWindowCapEnabled) => patch({ contextWindowCapEnabled })} /></div></SettingRow>
@@ -500,7 +499,6 @@ export function SettingsView(props: SettingsViewProps) {
         {formValidation().visibleSection === "inference" && <div class="segmented-control" role="group" aria-label="Inference view">{(["models", "providers"] as const).map(view => <button type="button" aria-pressed={inferenceView() === view} onClick={() => setInferenceView(view)}>{view === "models" ? "Models" : "Providers"}</button>)}</div>}
         {formValidation().visibleSection === "inference" && inferenceView() === "providers" && <Rerun on={providerHostId}>{(_key) => <ProviderSettings  hosts={settingsProps().providerHosts ?? settingsProps().settings.hosts} initialHostId={settingsProps().providerHostId} fixedHost />}</Rerun>}
         {renderGeneral()}
-        {renderDictation()}
         {renderModels()}
         {formValidation().visibleSection === "connections" && <SettingsSection title="Anchor host" description="This device connects to one host. You can use the machines that this host has added."><button class="secondary-button" disabled={dirty() || saving()} onClick={() => window.dispatchEvent(new Event("piop-mobile-disconnect"))}>Change anchor host</button>{dirty() && <p>Save your changes before switching hosts.</p>}</SettingsSection>}
         {renderAgents()}

@@ -33,7 +33,7 @@ fn attachment_command_bridge() {
             context.config_mut().build.dev_url = Some(url.clone());
             context.config_mut().build.frontend_dist = Some(tauri::utils::config::FrontendDist::Url(url));
         }
-        Some(tauri::Builder::default().any_thread().manage(dictation::Dictation::default()).manage(desktop_daemon::DesktopDaemon::default()).build(context).expect("build native test app"))
+        Some(tauri::Builder::default().any_thread().manage(client_settings::ClientSettingsHooks::default()).plugin(plugins::dictation::init()).manage(desktop_daemon::DesktopDaemon::default()).build(context).expect("build native test app"))
     } else { None };
     println!("PIOP_TEST_NATIVE_READY");
     let serve = move |handle: Option<AppHandle>| {
@@ -54,9 +54,34 @@ fn attachment_command_bridge() {
         None => tauri::WebviewWindowBuilder::new(app, "daemon-test", tauri::WebviewUrl::External(tauri::Url::parse("about:blank").unwrap())).visible(false).build(),
     }.map_err(|error| error.to_string());
     let (mut stream, _) = listener.accept().expect("connect native test client");
+    // A Rust listener that blocks keeps Tauri's event handlers locked, as a slow listener does while another event is sent.
+    let mut held_dispatch: Option<(std::sync::mpsc::Sender<()>, std::thread::JoinHandle<()>)> = None;
     for line in BufReader::new(stream.try_clone().unwrap()).lines() {
         let request: Value = serde_json::from_str(&line.expect("read native test request")).unwrap();
         let result = match request["command"].as_str() {
+            Some("hold_event_dispatch") => {
+                use tauri::Listener;
+                let app = handle.as_ref().expect("desktop test app").clone();
+                let (entered_sender, entered) = std::sync::mpsc::channel();
+                let (release, released) = std::sync::mpsc::channel::<()>();
+                let released = std::sync::Mutex::new(Some(released));
+                app.listen_any("piop-test://hold", move |_| {
+                    let Some(released) = released.lock().unwrap().take() else { return };
+                    entered_sender.send(()).unwrap();
+                    let _ = released.recv();
+                });
+                let emitter = std::thread::spawn(move || { app.emit("piop-test://hold", ()).expect("hold event dispatch"); });
+                entered.recv_timeout(std::time::Duration::from_secs(5)).expect("event dispatch held");
+                held_dispatch = Some((release, emitter));
+                Ok(Value::Null)
+            },
+            Some("release_event_dispatch") => match held_dispatch.take() {
+                Some((release, emitter)) => {
+                    let _ = release.send(());
+                    emitter.join().map(|_| Value::Null).map_err(|_| "The held event dispatch failed".to_owned())
+                },
+                None => Err("No event dispatch is held".to_owned()),
+            },
             Some("daemon_invoke") => {
                 let app = handle.as_ref().expect("desktop test app");
                 daemon_window(app).and_then(|window| tauri::async_runtime::block_on(desktop_daemon::daemon_invoke(
@@ -82,7 +107,7 @@ fn attachment_command_bridge() {
             Some("new_window") => new_window(
                 handle.as_ref().expect("desktop test app").clone(), request["target"].clone(),
             ).map(Value::String),
-            Some("dictation_configuration") => Ok(dictation_configuration(handle.as_ref().expect("desktop test app").clone())),
+            Some("plugin:dictation|dictation_configuration") => tauri::async_runtime::block_on(plugins::dictation::dictation_configuration(handle.as_ref().expect("desktop test app").clone())),
             Some("sync_prompt_history") => tauri::async_runtime::block_on(sync_prompt_history(
                 handle.as_ref().expect("desktop test app").clone(),
                 serde_json::from_value(request["entries"].clone()).expect("history entries"),
@@ -103,6 +128,10 @@ fn attachment_command_bridge() {
             Err(error) => json!({ "id": request["id"], "error": error }),
         };
         writeln!(stream, "{}", response).expect("write native test response");
+    }
+    if let Some((release, emitter)) = held_dispatch.take() {
+        let _ = release.send(());
+        emitter.join().expect("event dispatch thread");
     }
     std::fs::remove_file(path).expect("remove native test socket");
     if let Some(handle) = handle { handle.exit(0); }

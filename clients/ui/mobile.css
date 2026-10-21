@@ -85,9 +85,6 @@ html[data-mobile] .app:has(.icon-rail:not(.compact)) ~ .mobile-reconnect-banner 
   .composer-bar { flex-wrap: wrap; gap: 4px; }
   .composer-bar .icon-button { width: 30px; height: 30px; min-width: 30px; min-height: 30px; }
   .composer-bar .icon-button svg { width: 20px; height: 20px; }
-  .composer-bar .dictation-controls button { min-width: 30px; height: 30px; min-height: 30px; padding: 4px; justify-content: center; font-size: calc(11px + var(--settings-font-offset, 0px)); }
-  .composer-bar .dictation-controls svg { width: 20px; height: 20px; }
-  .composer-bar .dictation-label { display: inline; }
   .composer-bar .select-control { height: 30px; padding-inline: 3px; font-size: 11px; }
   .composer-bar .fast-mode-indicator { height: 30px; }
   .composer-bar .context-wheel { width: 26px; height: 30px; margin-left: 2px; }

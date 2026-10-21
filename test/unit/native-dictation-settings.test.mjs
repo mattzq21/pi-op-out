@@ -13,19 +13,41 @@ async function dictation(t) {
   let saved = base;
   return {
     home: native.directory,
-    async configure(preferences) {
+    native,
+    async save(preferences) {
       const settings = { ...base, ...preferences };
       await native.invoke('save_client_settings', { settings, baseline: saved });
       saved = settings;
+    },
+    async status() {
       for (let attempt = 0; attempt < 200; attempt++) {
-        const status = await native.invoke('dictation_configuration');
+        const status = await native.invoke('plugin:dictation|dictation_configuration');
         if (!status.loading) return status;
         await sleep(25);
       }
       throw new Error('The dictation engine check did not finish');
     },
+    async configure(preferences) {
+      await this.save(preferences);
+      return this.status();
+    },
   };
 }
+
+test('a settings save reaches dictation while another event is being dispatched', async t => {
+  const speech = await dictation(t);
+  const models = join(speech.home, 'models');
+  await mkdir(models);
+  await writeFile(join(models, 'whisper.bin'), '');
+  assert.equal((await speech.configure({ dictationEngine: 'transcribe.cpp', dictationModelPath: '~/models/missing.gguf' })).error, `The model file ${models}/missing.gguf does not exist`);
+  await speech.native.invoke('hold_event_dispatch');
+  try {
+    await speech.save({ dictationEngine: 'transcribe.cpp', dictationModelPath: '~/models/whisper.bin' });
+    assert.equal((await speech.status()).error, `The model file ${models}/whisper.bin is not a .gguf file. Transcribe.cpp needs a .gguf model.`);
+  } finally {
+    await speech.native.invoke('release_event_dispatch');
+  }
+});
 
 test('dictation settings that cannot work say what to fix', async t => {
   const speech = await dictation(t);

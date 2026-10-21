@@ -93,7 +93,7 @@ export function createPluginWorkspace(source: Accessor<PluginConversation>, visi
       await untrack(() => Promise.all(targets.map(target => flushPlugins(target, pluginStatus(target)?.enabled))));
 
       if (stale()) return;
-      const retained = previous.filter(item => enabled.some(target => target.definition.id === item.id && target.host === item.host && target.revision === item.revision));
+      const retained = previous.filter(item => enabled.some(target => target.definition.id === item.id && target.host === item.host && (target.definition.retainOnHostRestart || target.revision === item.revision)));
       setRunning(retained);
 
       for (const item of previous) if (!retained.includes(item)) item.dispose();
@@ -175,5 +175,5 @@ export function createPluginWorkspace(source: Accessor<PluginConversation>, visi
     <For each={tabs()}>{item => <div class="plugin-panel" id={`plugin-panel-${item.id}`} role="tabpanel" aria-labelledby={`plugin-tab-${item.id}`} hidden={active() !== item.id}>{item.instance.panel?.()}</div>}</For>
   </Sidepane>;
 
-  return { open, close, button, panel, transcripts: () => running().flatMap(item => item.instance.transcript ? [item.instance.transcript] : []) };
+  return { open, close, button, panel, composers: () => running().flatMap(item => item.instance.composer ? [item.instance.composer] : []), transcripts: () => running().flatMap(item => item.instance.transcript ? [item.instance.transcript] : []) };
 }

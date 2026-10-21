@@ -7,6 +7,7 @@ import type { BundledPlugin } from './types';
 export const CATALOG: readonly BundledPlugin[] = [
   { id: 'chatgpt', name: 'ChatGPT' },
   { id: 'markdown', name: 'Notes' },
+  { id: 'dictation', name: 'Dictation' },
   cost,
   review,
 ];

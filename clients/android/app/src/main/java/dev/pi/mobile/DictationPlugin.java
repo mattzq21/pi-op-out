@@ -13,8 +13,11 @@ import java.nio.ByteOrder;
 import java.nio.ShortBuffer;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
+import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -22,6 +25,7 @@ import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
 import org.json.JSONArray;
+import org.json.JSONException;
 import org.json.JSONObject;
 
 /** On-device dictation: runs the speech engine chosen in the client preferences. */
@@ -38,6 +42,8 @@ public class DictationPlugin extends Plugin {
     private final ScheduledExecutorService timers = Executors.newSingleThreadScheduledExecutor();
     private static final int IDLE_SECONDS = 15;
     private final Object lock = new Object();
+    private final Object settingsLock = new Object();
+    private boolean active;
 
     /** The engine settings that are loaded or loading. A change reloads the engine. */
     private String settingsKey;
@@ -96,13 +102,79 @@ public class DictationPlugin extends Plugin {
         }
     }
 
+    private static final Set<String> TEXT_FIELDS = Set.of("dictationEngine", "dictationModelPath", "dictationArgs");
+
+    private final ClientPreferencesPlugin.Section preferences = new ClientPreferencesPlugin.Section() {
+        private final Set<String> fields = Set.of("dictationEngine", "dictationModelPath", "dictationArgs", "dictationEngines");
+
+        @Override
+        public Set<String> fields() {
+            return fields;
+        }
+
+        @Override
+        public void validate(JSONObject settings) throws JSONException {
+            for (String field : TEXT_FIELDS) {
+                if (settings.has(field) && !(settings.get(field) instanceof String)) throw new JSONException("Invalid client preference " + field);
+            }
+            engines(settings);
+        }
+
+        @Override
+        public void merge(JSONObject latest, JSONObject baseline, JSONObject intended) throws JSONException {
+            for (String field : TEXT_FIELDS) ClientPreferencesPlugin.mergeField(latest, baseline, intended, field);
+            mergeEngines(latest, baseline, intended);
+        }
+
+        @Override
+        public void changed(JSONObject settings) {
+            synchronized (settingsLock) {
+                if (active) apply(settings);
+            }
+        }
+    };
+
     @Override
     public void load() {
-        reload();
+        ClientPreferencesPlugin.addSection(preferences);
+    }
+
+    private static LinkedHashMap<String, JSONObject> engines(JSONObject settings) throws JSONException {
+        LinkedHashMap<String, JSONObject> result = new LinkedHashMap<>();
+        if (!settings.has("dictationEngines")) return result;
+        JSONArray values = settings.getJSONArray("dictationEngines");
+        for (int index = 0; index < values.length(); index++) {
+            JSONObject engine = values.getJSONObject(index);
+            if (!(engine.get("engine") instanceof String) || (engine.has("path") && !(engine.get("path") instanceof String)) || result.containsKey(engine.getString("engine"))) throw new JSONException("Invalid client preference dictationEngines");
+            JSONArray models = engine.getJSONArray("models");
+            for (int position = 0; position < models.length(); position++) {
+                JSONObject model = models.getJSONObject(position);
+                if (!(model.get("path") instanceof String) || (model.has("name") && !(model.get("name") instanceof String)) || (model.has("args") && !(model.get("args") instanceof String))) throw new JSONException("Invalid client preference dictationEngines");
+            }
+            result.put(engine.getString("engine"), engine);
+        }
+        return result;
+    }
+
+    private static void mergeEngines(JSONObject latest, JSONObject baseline, JSONObject intended) throws JSONException {
+        if (!latest.has("dictationEngines") && !intended.has("dictationEngines")) return;
+        LinkedHashMap<String, JSONObject> before = engines(baseline);
+        LinkedHashMap<String, JSONObject> after = engines(intended);
+        LinkedHashMap<String, JSONObject> merged = engines(latest);
+        Set<String> types = new LinkedHashSet<>(merged.keySet());
+        types.addAll(after.keySet());
+        for (String type : types) {
+            JSONObject updated = after.get(type);
+            if (ClientPreferencesPlugin.same(before.get(type), updated)) continue;
+            if (updated == null) merged.remove(type);
+            else merged.put(type, updated);
+        }
+        latest.put("dictationEngines", new JSONArray(merged.values()));
     }
 
     @Override
     protected void handleOnDestroy() {
+        ClientPreferencesPlugin.removeSection(preferences);
         synchronized (lock) {
             generation++;
             closeStream(null);
@@ -154,22 +226,32 @@ public class DictationPlugin extends Plugin {
     }
 
     /** Reads the client preferences and reloads the engine when its settings changed. */
-    void reload() {
-        String kind;
-        String model;
-        String args;
+    private void activate() {
+        synchronized (settingsLock) {
+            if (active) return;
+            active = true;
+            reload();
+        }
+    }
+
+    private void reload() {
+        JSONObject settings;
         try (ClientPreferencesStorage storage = new ClientPreferencesStorage(getContext())) {
             String stored = storage.read().settings;
             storage.commit();
-            JSONObject settings = stored == null ? null : new JSONObject(stored);
-            String chosen = setting(settings, "dictationEngine");
-            kind = chosen.isEmpty() ? "transcribe.cpp" : chosen;
-            model = setting(settings, "dictationModelPath");
-            args = setting(settings, "dictationArgs");
+            settings = stored == null ? null : new JSONObject(stored);
         } catch (Exception error) {
             publish(state(false, "Could not read the dictation settings: " + error.getMessage()), null);
             return;
         }
+        apply(settings);
+    }
+
+    private void apply(JSONObject settings) {
+        String chosen = setting(settings, "dictationEngine");
+        String kind = chosen.isEmpty() ? "transcribe.cpp" : chosen;
+        String model = setting(settings, "dictationModelPath");
+        String args = setting(settings, "dictationArgs");
         String key = kind + "\n" + model + "\n" + args;
         int current;
         synchronized (lock) {
@@ -259,6 +341,7 @@ public class DictationPlugin extends Plugin {
 
     @PluginMethod
     public void configuration(PluginCall call) {
+        activate();
         synchronized (lock) {
             call.resolve(configuration);
         }

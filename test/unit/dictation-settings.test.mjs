@@ -3,14 +3,14 @@ import { afterEach, beforeEach, test } from 'node:test';
 import { createComponent, createSignal } from 'solid-js';
 import { act, enterText, installDom, renderComponent, untilDom } from '../dom.mjs';
 import { clearMocks, mockIPC } from '../mock-ipc.mjs';
-import { DictationSettings } from '../../clients/ui/components/DictationSettings.tsx';
+import { DictationSettings } from '../../clients/ui/plugins/dictation/DictationSettings.tsx';
 
 let dom, view, settings, searches;
 
 beforeEach(() => {
   dom = installDom(); searches = [];
   mockIPC((command, args) => {
-    if (command === 'dictation_find_engines') { searches.push(args.paths); return { 'transcribe.cpp': { executable: '/usr/bin/python3' }, needle: { error: 'needle is not on PATH' } }; }
+    if (command === 'plugin:dictation|dictation_find_engines') { searches.push(args.paths); return { 'transcribe.cpp': { executable: '/usr/bin/python3' }, needle: { error: 'needle is not on PATH' } }; }
     throw new Error('Unexpected command: ' + command);
   }, { shouldMockEvents: true });
 });

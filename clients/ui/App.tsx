@@ -1,3 +1,4 @@
+import { ComposerPluginsContext } from "./plugins/composer";
 import { localHostLabel } from "./lib/mobileHosts";
 import { hostChoices } from "./lib/hostChoices";
 import { TranscriptPluginsContext, conversationSource } from "./plugins/transcript";
@@ -150,7 +151,7 @@ export default function App(props: { suppressConnectionNotices?: boolean } = {})
     {!mobileSidebarOpen() && renderMobileSidebarToggle()}
     {renderMobileSidebarBackdrop()}
     {renderSidebar()}
-    <TranscriptPluginsContext.Provider value={pluginPane.transcripts}>{renderChatWorkspace()}</TranscriptPluginsContext.Provider>
+    <ComposerPluginsContext.Provider value={pluginPane.composers}><TranscriptPluginsContext.Provider value={pluginPane.transcripts}>{renderChatWorkspace()}</TranscriptPluginsContext.Provider></ComposerPluginsContext.Provider>
     {renderSettingsView()}
     <FindInPage selector=".chat-panes > .main-chat > .chat-shell" scopeKey={activeConversationKey()} onActivate={() => setActivePane("main")} active={activePane() === "main" || !hasSidePane()} enabled={view() === "chat"} />
     {renderSubagentFind()}
