@@ -10,7 +10,7 @@ use base64::Engine as _;
 use serde_json::{json, Value};
 use std::io::{BufRead, BufReader, Read as _, Write as _};
 use std::{fs, path::{Path, PathBuf}, process::{Child, ChildStdin, Command, Stdio}, sync::{mpsc, Arc, Mutex}, thread, time::Duration};
-use tauri::{plugin::TauriPlugin, Emitter, Listener, Manager};
+use tauri::{plugin::TauriPlugin, Emitter, Manager};
 use uuid::Uuid;
 use settings::DictationSettings;
 
@@ -34,12 +34,10 @@ pub(crate) fn init() -> TauriPlugin<tauri::Wry> {
             app.manage(Dictation::default());
             settings::register(app)?;
             let handle = app.clone();
-            app.listen_any(client_settings::CLIENT_SETTINGS_CHANGED, move |event| {
-                match serde_json::from_str::<Value>(event.payload()).map_err(|error| error.to_string()).and_then(|value| settings::from_client_settings(Some(&value))) {
-                    Ok(settings) => apply_settings(&handle, settings),
-                    Err(error) => eprintln!("Could not read the dictation settings: {error}"),
-                }
-            });
+            client_settings::on_changed(app, move |saved| match settings::from_client_settings(Some(saved)) {
+                Ok(settings) => apply_settings(&handle, settings),
+                Err(error) => eprintln!("Could not read the dictation settings: {error}"),
+            })?;
             Ok(())
         })
         .on_webview_ready(|webview| if let Err(error) = microphone::allow(&webview) { eprintln!("Could not allow the microphone for dictation in {}: {error}", webview.label()); })

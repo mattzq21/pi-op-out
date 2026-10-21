@@ -4,20 +4,32 @@ use crate::settings_concurrency::{lock_settings, settings_revision};
 #[path = "settings_records.rs"]
 pub(crate) mod records;
 
-/// Sent to all windows and Rust listeners after a save. The payload is the saved client settings object.
+/// Sent to all windows after a save. The payload is the saved client settings object.
+/// Rust code uses on_changed: Tauri queues an event for Rust listeners while another event is being dispatched.
 pub(crate) const CLIENT_SETTINGS_CHANGED: &str = "pi://client-settings-changed";
 
 /// Merges one plugin field when a window saves: (latest, baseline, intended) values to the stored value. None means absent.
 pub(crate) type FieldMerge = fn(Option<&Value>, Option<&Value>, Option<&Value>) -> Result<Option<Value>, String>;
 
-/// The field merges that plugins register. Fields without a merge take the intended value when the window changed it.
+/// Called with the saved client settings object after each save, in save order.
+pub(crate) type ChangeHandler = Arc<dyn Fn(&Value) + Send + Sync>;
+
+/// What plugins register for the client settings.
+/// merges: field merges. Fields without a merge take the intended value when the window changed it.
+/// changed: change handlers. Each save calls them while it holds the settings lock, so they see the saves in order.
 #[derive(Default)]
-pub(crate) struct ClientSettingsFields(Mutex<HashMap<String, FieldMerge>>);
+pub(crate) struct ClientSettingsHooks { merges: Mutex<HashMap<String, FieldMerge>>, changed: Mutex<Vec<ChangeHandler>> }
 
 pub(crate) fn register_field_merge(app: &AppHandle, field: &str, merge: FieldMerge) -> Result<(), String> {
-    let fields = app.state::<ClientSettingsFields>();
-    let mut fields = fields.0.lock().map_err(|_| "Client settings fields are unavailable")?;
+    let hooks = app.state::<ClientSettingsHooks>();
+    let mut fields = hooks.merges.lock().map_err(|_| "Client settings hooks are unavailable")?;
     if fields.insert(field.to_owned(), merge).is_some() { return Err(format!("Client settings field {field} already has a merge")); }
+    Ok(())
+}
+
+pub(crate) fn on_changed(app: &AppHandle, handler: impl Fn(&Value) + Send + Sync + 'static) -> Result<(), String> {
+    let hooks = app.state::<ClientSettingsHooks>();
+    hooks.changed.lock().map_err(|_| "Client settings hooks are unavailable")?.push(Arc::new(handler));
     Ok(())
 }
 
@@ -86,8 +98,8 @@ fn validate_keybindings(keybindings: &HashMap<String, String>) -> Result<(), Str
 }
 
 fn merge_fields(app: &AppHandle, latest: &mut serde_json::Map<String, Value>, baseline: &serde_json::Map<String, Value>, intended: &serde_json::Map<String, Value>) -> Result<(), String> {
-    let merges = app.state::<ClientSettingsFields>();
-    let merges = merges.0.lock().map_err(|_| "Client settings fields are unavailable")?;
+    let hooks = app.state::<ClientSettingsHooks>();
+    let merges = hooks.merges.lock().map_err(|_| "Client settings hooks are unavailable")?;
     let keys: std::collections::BTreeSet<String> = latest.keys().chain(baseline.keys()).chain(intended.keys()).cloned().collect();
     let get = |fields: &serde_json::Map<String, Value>, key: &str| fields.get(key).cloned().filter(|value| !value.is_null());
     for key in keys {
@@ -142,7 +154,10 @@ pub(crate) async fn save_client_settings(app: AppHandle, settings: ClientSetting
         validate_keybindings(&settings.keybindings)?;
         let body = serde_json::to_vec_pretty(&settings).map_err(|error| error.to_string())?;
         let publication = records::publish(&path, &body)?;
-        if let Err(error) = app.emit(CLIENT_SETTINGS_CHANGED, &settings) { eprintln!("Could not report client settings change: {error}"); }
+        let saved = serde_json::to_value(&settings).map_err(|error| error.to_string())?;
+        let handlers = app.state::<ClientSettingsHooks>().changed.lock().map_err(|_| "Client settings hooks are unavailable")?.clone();
+        for handler in handlers { handler(&saved); }
+        if let Err(error) = app.emit(CLIENT_SETTINGS_CHANGED, &saved) { eprintln!("Could not report client settings change: {error}"); }
         Ok(json!({"settings":settings,"revision":settings_revision(Some(&body)),"publication":publication}))
     }).await.map_err(|error| format!("Client settings task failed: {error}"))?
 }

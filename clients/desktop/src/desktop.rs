@@ -176,7 +176,7 @@ pub fn run() {
         (context, start_window)
     };
     let builder = tauri::Builder::default();
-    builder.manage(desktop_daemon::DesktopDaemon::default()).manage(client_settings::ClientSettingsFields::default()).plugin(plugins::dictation::init()).setup(move |app| -> Result<(), Box<dyn std::error::Error>> {
+    builder.manage(desktop_daemon::DesktopDaemon::default()).manage(client_settings::ClientSettingsHooks::default()).plugin(plugins::dictation::init()).setup(move |app| -> Result<(), Box<dyn std::error::Error>> {
         for window in app.webview_windows().values() {
             configure_image_copy(window)?;
             let handle = app.handle().clone();
