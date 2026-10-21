@@ -74,7 +74,7 @@ test('a local Pi stays attached while remote machines change, and an unknown mac
   }
   expect(daemon.events.slice(from).filter(event => event.payload?.runtimeId === 'transport-runtime' && event.payload?.event?.type === 'disconnected')).toEqual([]);
   expect(await daemon.invoke('pi_command', { runtimeId: 'transport-runtime', command: { type: 'get_state' } })).toMatchObject({ sessionFile: session.path });
-  expect(await daemon.failure('start_pi', { runtimeId: 'missing-runtime', clientId: 'transport-client', cwd: daemon.home, hostId: 'missing' })).toBe('Unknown machine: missing');
+  expect(await daemon.failure('start_pi', { runtimeId: 'missing-runtime', clientId: 'transport-client', cwd: daemon.home, hostId: 'missing' })).toBe('Unknown host: missing');
   await daemon.invoke('stop_pi', { runtimeId: 'transport-runtime' });
 });
 

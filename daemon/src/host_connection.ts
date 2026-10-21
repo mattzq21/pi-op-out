@@ -5,13 +5,13 @@ import { validateRemoteHost, type AppSettings, type RemoteHost } from './setting
 
 /** Stored data of another machine changes only through the Piop daemon of that machine. Requests for it go there through peers. */
 export function requireLocal(hostId: string): void {
-  if (hostId !== 'local') throw new Error('Requests for another machine must go through the Piop daemon of that machine');
+  if (hostId !== 'local') throw new Error('Requests for another host must go through the Piop daemon of that host');
 }
 
 export function remoteHost(settings: AppSettings, hostId: string): RemoteHost {
   const host = settings.hosts.find(host => host.id === hostId);
-  if (!host) throw new Error(`Unknown machine: ${hostId}`);
-  if (!host.enabled) throw new Error(`Machine ${host.name} is disabled`);
+  if (!host) throw new Error(`Unknown host: ${hostId}`);
+  if (!host.enabled) throw new Error(`Host ${host.name} is disabled`);
   validateRemoteHost(host);
   return host;
 }

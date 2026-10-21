@@ -3,14 +3,14 @@ import { test } from 'node:test';
 import { appService } from '../app-service-fixture.mjs';
 import { act, enterText, untilDom } from '../dom.mjs';
 
-const navButton = (root, text) => [...root.querySelectorAll('.settings-machine-nav button')].find(button => button.textContent.trim() === text);
+const navButton = (root, text) => [...root.querySelectorAll('.settings-host-nav button')].find(button => button.textContent.trim() === text);
 const click = element => act(async () => element.click());
 
 /** The app with the settings of the local daemon open. */
 async function daemonSettings(t) {
   const app = await appService(t);
   await click(app.root.querySelector('[aria-label="Settings"]'));
-  const daemonButton = await untilDom(() => [...app.root.querySelectorAll('.settings-machine-nav .settings-nav-group:nth-of-type(2) button')][0], 10000);
+  const daemonButton = await untilDom(() => [...app.root.querySelectorAll('.settings-host-nav .settings-nav-group:nth-of-type(2) button')][0], 10000);
   await click(daemonButton);
   const cap = await untilDom(() => app.root.querySelector('[aria-label="Context window cap"]'), 10000);
   return { ...app, daemonButton, cap };
@@ -21,7 +21,7 @@ test('unsaved daemon settings lock the other settings pages until they are saved
   const saved = cap.value;
   const before = (await daemon.invoke('load_app_settings')).contextWindowCap;
   await enterText(cap, '250000');
-  await untilDom(() => /Save before switching computers/.test(root.querySelector('.settings-machine-nav').textContent));
+  await untilDom(() => /Save before switching hosts/.test(root.querySelector('.settings-host-nav').textContent));
   assert.equal(navButton(root, 'Keybinds').disabled, true, 'client pages are locked while daemon edits are unsaved');
 
   await click([...root.querySelectorAll('.settings-switch-hint button')].find(button => button.textContent === 'discard changes'));

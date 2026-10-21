@@ -100,7 +100,7 @@ export class DraftRuntime {
   private showDefault({ thinking, fastMode }: { thinking: string; fastMode: boolean }) {
     const agent = this.catalog?.config.agents.find(agent => agent.isDefault);
 
-    if (!agent) throw new Error("This machine has no default agent");
+    if (!agent) throw new Error("This host has no default agent");
     this.agent = agent.name;
     const model = this.catalog?.models.find(model => `${model.provider}/${model.id}` === agent.model) ?? null;
     this.state = { ...this.state, model, thinkingLevel: agent.effort || thinking };

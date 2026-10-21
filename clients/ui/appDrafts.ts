@@ -200,7 +200,7 @@ export function createConversationDrafts(reportStorageError: (message: string) =
 
   const storeSubmission = async (submission: DraftSubmission) => {
     await initialize();
-    if (!allows(submission.destination.key, submission.destination)) throw new Error("This machine was removed or disabled");
+    if (!allows(submission.destination.key, submission.destination)) throw new Error("This host was removed or disabled");
     if (!loaded) submissionsChangedBeforeLoad.add(submission.id);
     const previous = submissions().find(item => item.id === submission.id);
     setSubmissions(current => [...current.filter(item => item.id !== submission.id), submission]);

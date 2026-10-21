@@ -97,7 +97,7 @@ test('opening a project directory on a remote machine runs that machine’s file
     await daemon.invoke('open_project_directory', { cwd: directory, hostId: 'build' });
     expect(opened(server.home)).toEqual([directory]);
     expect(opened(daemon.home)).toEqual(local);
-    expect(await daemon.failure('open_project_directory', { cwd: directory, hostId: 'missing' })).toBe('Unknown machine: missing');
+    expect(await daemon.failure('open_project_directory', { cwd: directory, hostId: 'missing' })).toBe('Unknown host: missing');
   } finally {
     await useRemotes(daemon, []);
     await server.stop();

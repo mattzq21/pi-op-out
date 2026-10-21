@@ -259,8 +259,8 @@ test('machines accept plain SSH targets and executable paths and reject shell sy
     expect(await saveHosts([remoteSetting({ piPath })]), piPath).toContain('Pi executable');
   }
   expect(await saveHosts([remoteSetting()])).toBe('');
-  expect(await daemon.failure('home_directory', { hostId: 'remote' })).toBe('Machine Server is disabled');
-  expect(await daemon.failure('home_directory', { hostId: 'missing' })).toBe('Unknown machine: missing');
+  expect(await daemon.failure('home_directory', { hostId: 'remote' })).toBe('Host Server is disabled');
+  expect(await daemon.failure('home_directory', { hostId: 'missing' })).toBe('Unknown host: missing');
   expect(await saveHosts([])).toBe('');
 });
 

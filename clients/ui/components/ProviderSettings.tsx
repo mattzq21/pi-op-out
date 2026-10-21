@@ -71,7 +71,7 @@ export function ProviderSettings(componentProps: { hosts: RemoteHost[]; initialH
   const loadingProviders = () => auth.loading && !auth.providers.length;
 
   return <div class="settings-section provider-settings">
-    <div class="section-title"><div><h2>Providers</h2><p>Sign in to providers on the machine running Pi. Credentials stay on that host and remain available after you disconnect.</p></div></div>
+    <div class="section-title"><div><h2>Providers</h2><p>Sign in to providers on the host running Pi. Credentials stay on that host and remain available after you disconnect.</p></div></div>
     <div class="provider-toolbar">
       {!(componentProps.fixedHost === undefined ? false : componentProps.fixedHost) && <label>Host <select aria-label="Provider host" value={hostId()} disabled={disabled()} onChange={(event) => setHostId(event.target.value)}><option value="local">{localHostLabel()}</option>{<Key each={componentProps.hosts.filter((host) => host.enabled !== false)} by={(host) => host.id}>{(host, _index) => <option  value={host().id}>{host().name}</option>}</Key>}</select></label>}
       <label class="section-filter"><Search size={14} /><input aria-label="Filter providers" placeholder="Filter providers" value={filter()} onInput={(event) => setFilter(event.target.value)} /></label>

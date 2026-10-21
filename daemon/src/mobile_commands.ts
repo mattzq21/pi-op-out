@@ -80,8 +80,8 @@ export async function dispatchPeer(app: App, owner: string, command: string, arg
 }
 
 async function dispatchPeerRequest(app: App, owner: string, command: string, args: any): Promise<any> {
-  if (typeof args?.hostId === 'string' && args.hostId !== 'local') throw new Error("Peer connections expose only this daemon's local machine");
-  if (command === 'save_app_settings' || command === 'change_session_groups' || command === 'load_session_groups') throw new Error('Configure this machine through its own Piop settings');
+  if (typeof args?.hostId === 'string' && args.hostId !== 'local') throw new Error("Peer connections expose only this daemon's local host");
+  if (command === 'save_app_settings' || command === 'change_session_groups' || command === 'load_session_groups') throw new Error('Configure this host through its own Piop settings');
   if (command === 'list_sessions') return peers.localSessions(app);
   if (command === 'storage_report') return { hosts: [await archives.inspectStorage()] };
   return dispatchLocal(app, owner, command, args);

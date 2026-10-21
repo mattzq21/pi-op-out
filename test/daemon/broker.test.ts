@@ -88,7 +88,7 @@ test('a started Pi gets the broker address and a UUID token, and the broker refu
 test('broker answers are JSON with a content length in UTF-8 bytes and close the connection', async () => {
   const answer = await request('POST', '/orchestration', { action: 'read', hostId: 'café 🦆', sessionId: randomUUID() });
   expect(answer.status).toBe(400);
-  expect(JSON.parse(answer.body)).toEqual({ error: 'Unknown machine: café 🦆' });
+  expect(JSON.parse(answer.body)).toEqual({ error: 'Unknown host: café 🦆' });
   expect(answer.headers).toMatch(/^HTTP\/1\.1 400 /);
   expect(answer.headers).toMatch(/\r\ncontent-type: application\/json\r\n/i);
   expect(answer.headers).toMatch(/\r\nconnection: close\r\n/i);

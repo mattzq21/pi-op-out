@@ -62,7 +62,7 @@ html[data-mobile] .app:has(.icon-rail:not(.compact)) ~ .mobile-reconnect-banner 
   .settings-header { margin-top: 0; padding: 56px 16px 20px; min-height: 100px; }
   .settings-layout { display: flex; flex-direction: column; gap: 20px; padding: 20px 16px 50px; }
   .settings-nav { flex-direction: row; flex-wrap: wrap; }
-  .settings-nav.settings-machine-nav { padding-top: 56px; }
+  .settings-nav.settings-host-nav { padding-top: 56px; }
   .settings-nav button { width: auto; min-height: 44px; }
   .settings-nav .settings-search { width: 100%; }
   .section-title { flex-wrap: wrap; }

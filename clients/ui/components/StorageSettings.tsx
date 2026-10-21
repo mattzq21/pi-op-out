@@ -181,7 +181,7 @@ export function StorageSettings(componentProps: { hostId?: string }) {
       setArchiveDeletion(undefined);
       void removeArchives(selected.host, selected.archives);
     }} />}</Show>
-    <div class="section-title"><div><h2>Storage</h2><p>Storage used on each machine.</p></div><button class="storage-refresh" disabled={loading() || deleting().size > 0} onClick={() => void refresh()}><RefreshCw size={14} class={loading() ? "spinning" : ""} />{loading() ? "Scanning…" : "Refresh"}</button></div>
+    <div class="section-title"><div><h2>Storage</h2><p>Storage used on each host.</p></div><button class="storage-refresh" disabled={loading() || deleting().size > 0} onClick={() => void refresh()}><RefreshCw size={14} class={loading() ? "spinning" : ""} />{loading() ? "Scanning…" : "Refresh"}</button></div>
     {error() && <div class="storage-error" role="alert">{(error())}</div>}
     {!report() && loading() && <div class="storage-loading" role="status"><HardDrive size={20} />Scanning storage…</div>}
     {<Key each={report()?.hosts} by={host => host.hostId}>{(host, _index) => {

@@ -202,11 +202,11 @@ export async function connect(app: App, hostId: string): Promise<Connection> {
       if (child.exitCode !== null || child.signalCode !== null) throw new Error('SSH disconnected from ' + host.name + detail());
       if (ready?.peerProtocol !== PEER_PROTOCOL_VERSION || typeof ready?.daemonId !== 'string') {
         close();
-        throw new Error('Could not attach to ' + host.name + '. Install or upgrade piopd on that machine.' + detail());
+        throw new Error('Could not attach to ' + host.name + '. Install or upgrade piopd on that host.' + detail());
       }
       if (!BUILD_ID || ready.buildId !== BUILD_ID) {
         close();
-        throw new Error('Piop daemon build mismatch on ' + host.name + ': local ' + (BUILD_ID || 'unknown') + ', remote ' + (ready.buildId || 'unknown') + '. Install the same piopd build on both machines and restart the remote daemon.');
+        throw new Error('Piop daemon build mismatch on ' + host.name + ': local ' + (BUILD_ID || 'unknown') + ', remote ' + (ready.buildId || 'unknown') + '. Install the same piopd build on both hosts and restart the remote daemon.');
       }
       if (ready.daemonId === daemonEndpoint.identity()) { close(); throw new Error('This SSH target is the current daemon; use Local'); }
       child.stderr!.removeListener('data', onStderr);
@@ -537,7 +537,7 @@ export async function forwardBroker(app: App, hostId: string, path: string, body
 
 export function localBrokerRequest(app: App, path: string, body: any): Promise<any> {
   if (path !== '/orchestration' || (typeof body?.hostId === 'string' && body.hostId !== 'local')) {
-    return Promise.reject(new Error('Peer broker requests must target this machine'));
+    return Promise.reject(new Error('Peer broker requests must target this host'));
   }
   const [port, token] = brokerEnvironment(app.broker);
   const payload = Buffer.from(JSON.stringify(body ?? null));

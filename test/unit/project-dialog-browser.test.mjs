@@ -167,7 +167,7 @@ test('stale directory responses cannot replace the newly selected host', async t
   });
   try {
     await started.promise;
-    await page.getByRole('combobox', { name: 'Machine' }).selectOption('remote');
+    await page.getByRole('combobox', { name: 'Host' }).selectOption('remote');
     await page.getByRole('listbox', { name: 'Matching folders' }).getByRole('option', { name: 'new', exact: true }).waitFor();
     assert.deepEqual(await page.getByRole('listbox').getByRole('option').allTextContents(), ['new']);
     pending.resolve();
@@ -233,7 +233,7 @@ test('a late home folder from the previous machine cannot replace the newly sele
   });
   try {
     await started.promise;
-    await page.getByRole('combobox', { name: 'Machine' }).selectOption('remote');
+    await page.getByRole('combobox', { name: 'Host' }).selectOption('remote');
     await page.getByRole('listbox', { name: 'Matching folders' }).getByRole('option', { name: 'new', exact: true }).waitFor();
     pending.resolve();
     await page.getByLabel('Settled home requests').evaluate(node => new Promise(resolve => {
@@ -260,7 +260,7 @@ test('after a home folder failure, choosing another machine clears the error and
   assert.match(await error.textContent(), /local home unavailable/);
   const open = page.getByRole('button', { name: /Open current folder/ });
   assert.equal(await open.isDisabled(), true);
-  await page.getByRole('combobox', { name: 'Machine' }).selectOption('remote');
+  await page.getByRole('combobox', { name: 'Host' }).selectOption('remote');
   await page.getByRole('listbox', { name: 'Matching folders' }).getByRole('option', { name: 'new', exact: true }).waitFor();
   assert.equal(await error.count(), 0);
   assert.equal(await open.isDisabled(), false);

@@ -54,7 +54,7 @@ export function readSettingsAt(path: string): AppSettings {
   initializeSessionTools(settings);
   migrateBuiltinTools(settings);
   migrateKeybindings(settings);
-  if (settings.hosts.length > MAX_REMOTE_HOSTS) throw new Error(`Settings contain more than ${MAX_REMOTE_HOSTS} remote machines`);
+  if (settings.hosts.length > MAX_REMOTE_HOSTS) throw new Error(`Settings contain more than ${MAX_REMOTE_HOSTS} remote hosts`);
   return settings;
 }
 
@@ -82,14 +82,14 @@ export function validateSettingsForSave(settings: AppSettings): void {
   validateContextCaps(settings);
   validateKeybindings(settings);
   validateHostIds(settings);
-  if (settings.hosts.length > MAX_REMOTE_HOSTS) throw new Error(`At most ${MAX_REMOTE_HOSTS} remote machines can be configured`);
+  if (settings.hosts.length > MAX_REMOTE_HOSTS) throw new Error(`At most ${MAX_REMOTE_HOSTS} remote hosts can be configured`);
   const hostIds = new Set<string>();
   const hostNames = new Set(['local']);
   for (const host of settings.hosts) {
-    if (!host.id.trim() || hostIds.has(host.id)) throw new Error('Every machine needs a unique id');
+    if (!host.id.trim() || hostIds.has(host.id)) throw new Error('Every host needs a unique id');
     hostIds.add(host.id);
     const name = host.name.trim().toLowerCase();
-    if (!name) throw new Error('Every machine needs a name');
+    if (!name) throw new Error('Every host needs a name');
     if (hostNames.has(name)) throw new Error(`Host name '${host.name.trim()}' is already in use`);
     hostNames.add(name);
     validateRemoteHost(host);

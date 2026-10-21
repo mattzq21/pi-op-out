@@ -498,15 +498,15 @@ textarea::placeholder { color: var(--faint); }
 .settings-nav .settings-search { margin: 0 0 12px; flex-shrink: 0; }
 .settings-nav-group { display: flex; flex-direction: column; gap: 3px; }
 .settings-workspace { order: 2; flex: 1; min-width: 0; min-height: 0; display: flex; }
-.settings-machine-nav { width: 220px; flex: 0 0 220px; padding: 32px 16px; overflow-y: auto; border-right: 1px solid var(--line); }
+.settings-host-nav { width: 220px; flex: 0 0 220px; padding: 32px 16px; overflow-y: auto; border-right: 1px solid var(--line); }
 .settings-editor-content { display: flex; flex-direction: column; flex: 1; min-width: 0; min-height: 0; }
 .settings-editor-content > [role="alert"], .settings-editor-content > [role="status"] { padding: 0 32px; }
 .settings-layout.settings-layout-embedded { display: block; }
 .settings-layout-embedded .settings-content { max-width: 720px; }
 .settings-daemon-tabs { padding-left: 14px; margin: 6px 0 12px; }
 .settings-switch-hint { font-size: calc(12px + var(--settings-font-offset, 0px)); color: var(--muted); }
-.settings-machine-nav button:disabled { opacity: .5; cursor: default; }
-@media (max-width: 760px) { .settings-workspace { flex-direction: column; }.settings-machine-nav { width: 100%; flex: 0 0 auto; max-height: 38vh; padding: 16px; border-right: 0; border-bottom: 1px solid var(--line); }.settings-daemon-tabs { display: flex; flex-wrap: wrap; }.settings-machine-nav .settings-nav-group { width: 100%; } }
+.settings-host-nav button:disabled { opacity: .5; cursor: default; }
+@media (max-width: 760px) { .settings-workspace { flex-direction: column; }.settings-host-nav { width: 100%; flex: 0 0 auto; max-height: 38vh; padding: 16px; border-right: 0; border-bottom: 1px solid var(--line); }.settings-daemon-tabs { display: flex; flex-wrap: wrap; }.settings-host-nav .settings-nav-group { width: 100%; } }
 .settings-nav-group + .settings-nav-group { margin-top: 18px; }
 .settings-nav-group > .eyebrow { margin: 0 10px 5px; }
 @media (max-width: 1050px) { .settings-nav-group { width: 100%; flex-direction: row; flex-wrap: wrap; }.settings-nav-group > .eyebrow { width: 100%; }.settings-nav-group + .settings-nav-group { margin-top: 10px; } }

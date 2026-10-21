@@ -42,7 +42,7 @@ test('a refresh that fails says why and changes nothing', async t => {
   await render({ hostId: 'missing-machine', skills: [] });
   await act(async () => button().click());
   const alert = await untilDom(() => document.querySelector('[role="alert"]'), 10000);
-  assert.equal(alert.textContent, 'Unknown machine: missing-machine');
+  assert.equal(alert.textContent, 'Unknown host: missing-machine');
   assert.deepEqual(changes, []);
   assert.equal(button().disabled, false);
 });
