@@ -531,7 +531,6 @@ textarea::placeholder { color: var(--faint); }
 .general-fast-mode .fast-mode-indicator { width: 35px; height: 35px; flex-basis: 35px; }
 .general-fast-mode .fast-mode-indicator svg { width: 22px; height: 22px; }
 .setting-number:disabled { opacity: .5; cursor: not-allowed; }
-.agent-setting-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 16px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 8px; font-size: calc(12px + var(--settings-font-offset, 0px)); }
 .agent-mcp-settings { margin-top: 22px; }
 .agent-mcp-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
 .agent-mcp-settings h3 { margin: 0; font-size: calc(13px + var(--settings-font-offset, 0px)); font-weight: 600; }
