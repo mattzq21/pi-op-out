@@ -36,7 +36,7 @@
     "android:debug-connection": "bun scripts/mobile-debug-connection.mjs",
     "reinstall": "bun scripts/reinstall-mobile.mjs",
     "test:mobile": "python3 scripts/test-run.py node --test test/mobile/*.test.mjs",
-    "test:unit": "python3 scripts/test-run.py node --max-old-space-size=768 --enable-source-maps --import ./test/register-typescript.mjs --test --test-concurrency=1 --test-timeout=30000 test/unit/*.test.mjs",
+    "test:unit": "python3 scripts/test-run.py node --max-old-space-size=1536 --enable-source-maps --import ./test/register-typescript.mjs --test --test-concurrency=6 --test-timeout=30000 test/unit/*.test.mjs",
     "test:extensions": "python3 scripts/test-run.py sh -c 'node --test --test-timeout=120000 test/extensions/*.test.mjs && bun test ./extensions'",
     "test:runner": "python3 test/runner/cleanup.test.py && python3 scripts/test-run.py node --test test/runner/storage.test.mjs",
     "test:daemon": "python3 scripts/test-run.py bun test --timeout 60000 test/daemon",
