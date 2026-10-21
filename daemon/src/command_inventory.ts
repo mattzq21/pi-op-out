@@ -1,4 +1,5 @@
 import * as records from './settings_records';
+import { reported } from './pi_discovery';
 
 /** An argument choice or hint of a command. A hint has an empty value. */
 export interface CommandOption { value: string; label: string; description?: string }
@@ -34,12 +35,14 @@ export function parseCommands(value: unknown): CommandInfo[] {
   return value.map(command);
 }
 
-/** The saved commands of this host. settingsFile locates the host storage. */
-export function savedCommands(settingsFile: string): CommandInfo[] {
-  return parseCommands(records.commandInventory(settingsFile));
+/** The saved commands of this host, or null before Pi first reported them. settingsFile locates the host storage. */
+export function savedCommands(settingsFile: string): CommandInfo[] | null {
+  const saved = records.commandInventory(settingsFile);
+  return saved === null ? null : parseCommands(saved);
 }
 
 /** Saves the commands that a Pi session reported. */
 export function recordCommands(value: unknown, settingsFile: string): void {
   records.saveCommandInventory(settingsFile, parseCommands(value));
+  reported('commands');
 }

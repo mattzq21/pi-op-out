@@ -89,12 +89,12 @@ export function saveToolInventory(path: string, tools: unknown[]): boolean {
 
 const COMMAND_INVENTORY = 'CREATE TABLE IF NOT EXISTS command_inventory (id INTEGER PRIMARY KEY CHECK (id = 1), entries_json TEXT NOT NULL)';
 
-/** The extension commands that Pi last reported on this host, or an empty list before the first report. */
-export function commandInventory(path: string): unknown[] {
+/** The extension commands that Pi last reported on this host, or null before the first report. */
+export function commandInventory(path: string): unknown[] | null {
   return withDatabase(open(path), database => {
     database.exec(COMMAND_INVENTORY);
     const row = database.prepare('SELECT entries_json FROM command_inventory WHERE id=1').get() as { entries_json: string } | undefined;
-    return row ? JSON.parse(row.entries_json) : [];
+    return row ? JSON.parse(row.entries_json) : null;
   });
 }
 

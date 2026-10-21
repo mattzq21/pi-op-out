@@ -52,6 +52,9 @@ test('cost and review are plugins: enabled by default, gone with an explicit err
   agents.scripts.set('Plugin chat', () => ({ text: 'Plugin chat ready.' }));
   let client: Client = agents.daemon;
   expect(await client.invoke('plugin_status', { hostId: 'local' })).toMatchObject({ enabled: ALL, configured: ALL, error: null });
+  // No chat ran on this host yet, so the catalog starts a short Pi run for the command hints.
+  const fresh = await client.invoke('provider_auth', { hostId: 'local', request: { action: 'draft_catalog', reload: true } });
+  expect(fresh.commandDetails.find((item: any) => item.name === 'review').options).toEqual([{ value: '', label: '[scope]', description: expect.stringContaining('limits the review') }]);
   expect(await catalog(client)).toEqual(expect.arrayContaining(['cost', 'review', 'rs']));
 
   const first = await openChat(client);

@@ -1,20 +1,16 @@
-import { randomUUID } from 'node:crypto';
 import { join } from 'node:path';
 import { STORAGE_DIRECTORY } from './config';
 import { homeDir } from './environment';
 import * as records from './settings_records';
 import type { ToolConfig } from './settings_types';
-import type { App } from './app';
-import { startPiForOwner, stopPi } from './pi_runtime';
+import { reported } from './pi_discovery';
 
 /**
  * The tools that Pi offers on this host. Each Pi session reports them when it starts, and the latest report is saved.
  * Tools that one agent adds, from its MCP servers or its own extensions, are not part of it.
  */
 
-const DISCOVERY_TIMEOUT_MS = 60_000;
 const changeListeners = new Set<() => void>();
-const reportWaiters = new Set<() => void>();
 
 function defaultSettingsFile(): string { return join(homeDir(), STORAGE_DIRECTORY, 'settings.json'); }
 
@@ -46,36 +42,11 @@ export function savedTools(settingsFile = defaultSettingsFile()): ToolConfig[] {
 export function recordTools(value: unknown, settingsFile = defaultSettingsFile()): void {
   const tools = parseTools(value);
   const changed = records.saveToolInventory(settingsFile, tools);
-  for (const waiter of [...reportWaiters]) waiter();
+  reported('tools');
   if (changed) for (const listener of changeListeners) listener();
 }
 
 export function onToolsChanged(listener: () => void): () => void {
   changeListeners.add(listener);
   return () => { changeListeners.delete(listener); };
-}
-
-function nextReport(): { reported: Promise<void>; cancel: () => void } {
-  let waiter!: () => void;
-  let timer!: ReturnType<typeof setTimeout>;
-  const reported = new Promise<void>((resolve, reject) => {
-    waiter = () => { cancel(); resolve(); };
-    timer = setTimeout(() => { cancel(); reject(new Error('Pi did not report its tools within ' + DISCOVERY_TIMEOUT_MS / 1000 + ' seconds')); }, DISCOVERY_TIMEOUT_MS);
-    reportWaiters.add(waiter);
-  });
-  const cancel = () => { clearTimeout(timer); reportWaiters.delete(waiter); };
-  return { reported, cancel };
-}
-
-/** Starts a Pi session on this host without a chat, waits for its tool report, then stops it. */
-export async function discoverTools(app: App): Promise<void> {
-  const runtimeId = 'tool-discovery-' + randomUUID();
-  const report = nextReport();
-  try {
-    await startPiForOwner(app, 'tool-discovery', app.pi, app.broker, { runtimeId, clientId: runtimeId, hostId: 'local', cwd: homeDir() });
-    await report.reported;
-  } finally {
-    report.cancel();
-    await stopPi(app.pi, runtimeId, true);
-  }
 }
