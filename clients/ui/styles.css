@@ -491,7 +491,7 @@ kbd { font: 11px "DM Sans"; border: 1px solid #d5d1c9; background: white; paddin
 .find-highlights span.active { background: #ee963966; outline: 1px solid #efaa56; }
 
 .config-row.model-row { grid-template-columns: 34px minmax(0, 1fr) auto auto auto; }
-.model-context { white-space: nowrap; }
+.config-row .model-context { white-space: nowrap; color: var(--ink); font-size: calc(13px + var(--settings-font-offset, 0px)); }
 .config-row.plugin-settings-row { grid-template-columns: auto minmax(0, 1fr) auto; padding: 12px 0; }
 .plugin-order-actions { display: flex; align-items: center; gap: 4px; }
 .plugin-settings-row > span { display: grid; gap: 4px; min-width: 0; }
