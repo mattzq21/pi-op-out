@@ -6,6 +6,8 @@ import { authText, authUrl } from './catalogs';
 import { Sdk } from './provider_sdk';
 import { FastModelStore, type FastModelScanResult, type FastModelSnapshot } from './fast_models';
 import type { Host } from './controller';
+import { join } from 'node:path';
+import { savedCommands } from '../command_inventory';
 
 /** One login attempt that a client started for a provider. */
 class Flow {
@@ -101,7 +103,7 @@ export class ProviderService {
     if (!owner) throw new Error('Login owner is missing');
     switch (request?.action) {
       case 'fast_models': return this.fastModels.snapshot();
-      case 'draft_catalog': return this.sdk.request({ method: 'draft_catalog' });
+      case 'draft_catalog': return { ...await this.sdk.request({ method: 'draft_catalog' }), commandDetails: savedCommands(join(this.host!.home, this.host!.storage, 'settings.json')) };
       case 'list': return this.listing(flag(request, 'refreshModels'));
       case 'begin': return this.begin(owner, request);
       case 'logout': return this.logout(text(request, 'providerId'));

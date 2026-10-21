@@ -6,6 +6,7 @@ import * as Registry from '../session_registry';
 import * as Settings from '../settings';
 import * as Extensions from '../extensions';
 import { recordTools } from '../tool_inventory';
+import { recordCommands } from '../command_inventory';
 import * as DaemonRestart from '../daemon_restart';
 import { Mutex, errorText } from '../util/sync';
 import { flag, kind, text, jsonEqual } from './json';
@@ -116,11 +117,12 @@ export class Host implements SessionHost {
   refreshProviders(): Promise<number> { return this.services.refreshProviders(); }
 
   /**
-   * tools_available saves the tools that a starting Pi offers on this host.
+   * tools_available saves the tools that a starting Pi offers on this host. commands_available saves its extension commands.
    * task_success commits a chat's repository on Pi's final response, before Pi takes a follow-up (ADR 0006). Uses the saved repository status.
    */
   async runtimeEvent(source: RuntimeEventSource, event: RuntimeEvent): Promise<void> {
     if (event.name === 'tools_available') { recordTools(event.data.tools, join(this.home, this.storage, 'settings.json')); return; }
+    if (event.name === 'commands_available') { recordCommands(event.data.commands, join(this.home, this.storage, 'settings.json')); return; }
     if (event.name !== 'task_success' || source.cwd === null) return;
     const repository = getProjectRepository(this.storageRoot(), source.cwd);
     if (!repository) return;

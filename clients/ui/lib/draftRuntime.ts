@@ -7,7 +7,7 @@ import { modelSchema } from "./responseSchemas";
 import { encodeAgentValue, DEFINED_AGENTS_STATUS_KEY } from "./agentProtocol";
 import type { AgentState, RpcCommand, RpcEvent } from "../types";
 
-const catalogSchema = z.object({ config: agentConfigSchema, models: z.array(modelSchema), commands: z.array(z.string()) });
+const catalogSchema = z.object({ config: agentConfigSchema, models: z.array(modelSchema), commands: z.array(z.string()), commandDetails: z.array(z.object({ name: z.string(), description: z.string().optional(), options: z.array(z.object({ value: z.string(), label: z.string(), description: z.string().optional() })).optional() })) });
 
 const catalogs = new Map<string, Promise<z.infer<typeof catalogSchema>>>();
 
@@ -74,7 +74,7 @@ export class DraftRuntime {
 
     if (type === "get_available_thinking_levels") return { levels: this.levels() };
 
-    if (type === "get_commands") return { commands: this.catalog?.commands.map(name => ({ name, source: "extension" })) };
+    if (type === "get_commands") return { commands: this.catalog?.commands.map(name => ({ ...this.catalog?.commandDetails.find(command => command.name === name), name, source: "extension" })) };
 
     if (type === "get_state") return this.state;
 

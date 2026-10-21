@@ -87,6 +87,26 @@ export function saveToolInventory(path: string, tools: unknown[]): boolean {
   });
 }
 
+const COMMAND_INVENTORY = 'CREATE TABLE IF NOT EXISTS command_inventory (id INTEGER PRIMARY KEY CHECK (id = 1), entries_json TEXT NOT NULL)';
+
+/** The extension commands that Pi last reported on this host, or an empty list before the first report. */
+export function commandInventory(path: string): unknown[] {
+  return withDatabase(open(path), database => {
+    database.exec(COMMAND_INVENTORY);
+    const row = database.prepare('SELECT entries_json FROM command_inventory WHERE id=1').get() as { entries_json: string } | undefined;
+    return row ? JSON.parse(row.entries_json) : [];
+  });
+}
+
+/** Saves the reported commands. */
+export function saveCommandInventory(path: string, commands: unknown[]): void {
+  const entries = JSON.stringify(commands);
+  withDatabase(open(path), database => {
+    database.exec(COMMAND_INVENTORY);
+    database.prepare('INSERT INTO command_inventory VALUES (1, ?) ON CONFLICT(id) DO UPDATE SET entries_json=excluded.entries_json').run(entries);
+  });
+}
+
 export function skillInventory(path: string, root: string, refresh: boolean, discover: () => any[]): any[] {
   return withDatabase(open(path), database => {
     database.exec('CREATE TABLE IF NOT EXISTS skill_inventory (root TEXT PRIMARY KEY, entries_json TEXT NOT NULL)');

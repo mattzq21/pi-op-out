@@ -388,6 +388,14 @@ async function commandOptions(session, command) {
   }
 }
 
+/** Sends the extension commands of this Pi to its Piop host, which saves them for chats that have not started Pi yet. */
+async function reportCommands(session) {
+  try {
+    const commands = (await listCommands(session)).filter(command => command.source === "extension").map(({ name, description, options }) => ({ name, description, options }));
+    await Object.getOwnPropertyDescriptor(globalThis, Symbol.for("piop.runtime-events")).value("commands_available", { commands });
+  } catch (error) { console.error(`Piop could not save the commands of this Pi: ${error instanceof Error ? error.message : String(error)}`); }
+}
+
 if (process.env.PIOP_COMMAND_POLICY === undefined) throw new Error("Piop command policy is missing");
 
 const commandPolicy = JSON.parse(process.env.PIOP_COMMAND_POLICY);
@@ -783,6 +791,7 @@ async function main() {
     const bridge = Object.getOwnPropertyDescriptor(globalThis, Symbol.for("piop.runtime-bridge"));
     if (!bridge) throw new Error("Piop runtime bridge is unavailable");
     bridge.value({ command: "session_ready", payload: null, ctx: this.extensionRunner.createCommandContext() });
+    void reportCommands(this);
   };
 
   appInput(command => dispatch(command, () => session, sessionReady, output), runtimeEvents(output));
