@@ -321,8 +321,11 @@ export function SettingsView(props: SettingsViewProps) {
 
   const filteredModelChoices = createMemo(() => {
     const query = modelFilter().trim().toLocaleLowerCase();
+    const { modelChoices, hiddenModels } = modelCatalog();
 
-    return modelCatalog().modelChoices.filter((model) => `${draft().modelAliases?.[model.id] ?? ""} ${model.name} ${model.id}`.toLocaleLowerCase().includes(query));
+    return modelChoices
+      .filter((model) => `${draft().modelAliases?.[model.id] ?? ""} ${model.name} ${model.id}`.toLocaleLowerCase().includes(query))
+      .sort((left, right) => Number(hiddenModels.has(left.id)) - Number(hiddenModels.has(right.id)));
   });
 
   const validateAgentResources = () => {
