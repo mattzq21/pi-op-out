@@ -75,7 +75,7 @@ async function fixture(t) {
   try { database.bind(db, header.id, sourcePath); } finally { db.close(); }
   const notices = [], operations = [], listeners = [];
   const ctx = { cwd: dir, sessionManager: { getEntries: () => entries, getBranch: () => entries, getEntry: id => entries.find(entry => entry.id === id), getHeader: () => header, getSessionId: () => header.id, getSessionFile: () => sourcePath, getSessionDir: () => sessions }, ui: { notify: (...args) => notices.push(args) } };
-  module.controls({ on: () => undefined, events: { on: (name, handler) => { if (name === 'piop:rpc') listeners.push(handler); }, emit: () => undefined }, appendEntry: (customType, data) => operations.push({ customType, data }) });
+  module.controls({ on: () => undefined, events: { on: (name, handler) => { if (name === 'piop:rpc') listeners.push(handler); }, emit: (name, request) => { if (name === "hooks-extended") request.hooks = { on: () => () => {} }; } }, appendEntry: (customType, data) => operations.push({ customType, data }) });
 
   const rpc = async (command, payload) => {
     const request = { command, payload, ctx };

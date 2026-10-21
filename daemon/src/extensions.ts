@@ -155,7 +155,7 @@ export function prepareContextWindowCapExtension(settings: AppSettings): string 
   atomicWritePrivate(join(dir, 'interface.ts'), R.contextWindowCapInterface);
   atomicWritePrivate(join(dir, 'app-settings.cjs'), R.appSettingsCjs);
   atomicWritePrivate(join(dir, 'defaults.ts'), R.contextWindowCapDefaults.replace('../../daemon/resources/session-broker/app-settings.cjs', './app-settings.cjs'));
-  atomicWritePrivate(extensionPath, R.contextWindowCapExtension);
+  atomicWritePrivate(extensionPath, R.contextWindowCapExtension.replace('../../daemon/resources/hooks-extended/interface.ts', '../hooks-extended/interface.ts'));
   return extensionPath;
 }
 
@@ -163,7 +163,7 @@ export function prepareSessionCostLimitExtension(_settings: AppSettings): string
   const dir = join(generatedExtensionRoot(), 'piop-session-cost-limit');
   ensurePrivateDir(dir);
   const path = join(dir, 'index.ts');
-  atomicWritePrivate(path, R.sessionCostLimitExtension);
+  atomicWritePrivate(path, R.sessionCostLimitExtension.replace('../../daemon/resources/hooks-extended/interface.ts', '../hooks-extended/interface.ts'));
   return path;
 }
 

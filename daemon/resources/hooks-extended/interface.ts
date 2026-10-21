@@ -3,8 +3,20 @@ import type { ExtensionAPI, ExtensionContext, TurnEndEvent } from "@earendil-wor
 export type TaskEndEvent = Omit<TurnEndEvent, "type"> & { type: "task_end" };
 export type TaskEndHandler = (event: TaskEndEvent, ctx: ExtensionContext) => void | Promise<void>;
 
+export interface SessionRestoreEvent {
+  type: "session_restore";
+  reason: "start" | "branch_change";
+}
+
+export interface ExtendedHookEvents {
+  task_end: TaskEndEvent;
+  session_restore: SessionRestoreEvent;
+}
+
+export type ExtendedHookHandler<K extends keyof ExtendedHookEvents> = (event: ExtendedHookEvents[K], ctx: ExtensionContext) => void | Promise<void>;
+
 export interface ExtendedHooks {
-  on(name: "task_end", handler: TaskEndHandler): () => void;
+  on<K extends keyof ExtendedHookEvents>(name: K, handler: ExtendedHookHandler<K>): () => void;
 }
 
 export interface ExtendedHooksRequest { hooks?: ExtendedHooks }

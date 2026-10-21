@@ -30,14 +30,14 @@ async function fixture(t, { toolCost = 0, responseCost = 1, toolCalls = false, d
     t.after(() => rm(dir, { recursive: true, force: true }));
   }
   const outfile = join(dir, 'cost.mjs');
-  await build({ entryPoints: ['extensions/piop-session-cost-limit/index.ts'], outfile, bundle: true, format: 'esm', platform: 'node', logLevel: 'silent' });
-  const { default: costLimit } = await import(pathToFileURL(outfile));
+  await build({ stdin: { contents: 'export { default } from "./extensions/piop-session-cost-limit/index.ts"; export { default as hooksExtended } from "./daemon/resources/hooks-extended/index.ts";', resolveDir: process.cwd() }, outfile, bundle: true, format: 'esm', platform: 'node', logLevel: 'silent' });
+  const { default: costLimit, hooksExtended } = await import(pathToFileURL(outfile));
   const settingsManager = SettingsManager.inMemory({ compaction: { enabled: false }, retry: { enabled: false } });
   const modelRuntime = await ModelRuntime.create({ authPath: join(dir, 'auth.json'), modelsPath: null, refreshOnCreate: false });
   await modelRuntime.setRuntimeApiKey('openai', 'unused-test-key');
   const model = modelRuntime.getModels().find(model => model.provider === 'openai');
   assert.ok(model);
-  const resourceLoader = new DefaultResourceLoader({ cwd: dir, agentDir: dir, settingsManager, noExtensions: true, noSkills: true, noContextFiles: true, noThemes: true, noPromptTemplates: true, extensionFactories: [costLimit] });
+  const resourceLoader = new DefaultResourceLoader({ cwd: dir, agentDir: dir, settingsManager, noExtensions: true, noSkills: true, noContextFiles: true, noThemes: true, noPromptTemplates: true, extensionFactories: [hooksExtended, costLimit] });
   await resourceLoader.reload();
   assert.deepEqual(resourceLoader.getExtensions().errors, []);
   let executions = 0;

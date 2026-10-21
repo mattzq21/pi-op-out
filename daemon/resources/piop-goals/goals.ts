@@ -1,3 +1,4 @@
+import { extendedHooks } from "../hooks-extended/interface.ts";
 import { restoreGoalAttachments } from "../piop-storage/goal-files.ts";
 import type { ExtensionAPI, ExtensionContext, AgentBeforeSettleEventResult, InputEventResult } from "@earendil-works/pi-coding-agent";
 import { GoalState, GOAL_CONTEXT } from "./state.ts";
@@ -91,8 +92,7 @@ export function registerGoals(pi: ExtensionAPI): { session: GoalSession; core: G
     }
   };
 
-  pi.on("session_start", (_event, ctx) => coordination.run(ctx, () => restore(ctx)));
-  pi.on("session_tree", (_event, ctx) => coordination.run(ctx, () => restore(ctx)));
+  extendedHooks(pi).on("session_restore", (_event, ctx) => coordination.run(ctx, () => restore(ctx)));
 
   const ready = pi.events.on("piop:agents:ready", ({ ctx }) => {
     schedule(ctx, () => {

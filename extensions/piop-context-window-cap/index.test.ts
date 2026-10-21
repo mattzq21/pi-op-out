@@ -1,3 +1,4 @@
+import hooksExtended from "../../daemon/resources/hooks-extended/index.ts";
 import { beforeEach, describe, expect, mock, test } from "bun:test";
 
 const budgets = { reserveTokens: 16_384, keepRecentTokens: 20_000 };
@@ -34,6 +35,7 @@ class Host {
       sessionManager: { getBranch: () => host.savedCap ? [host.savedCap] : [] },
       ui: { notify: (message: string, type: string) => host.notes.push([type, message]), setStatus: (key: string, text?: string) => host.statuses.push([key, text]) },
     };
+    hooksExtended(this.api() as any);
     contextWindowCap(this.api() as any);
     this.api().events.on("piop:agents:context-cap", request => { request.cap = this.agentCap; });
   }

@@ -1,3 +1,4 @@
+import { extendedHooks } from "../../daemon/resources/hooks-extended/interface.ts";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { registerContextCapSettings } from "./defaults.ts";
 import { SettingsManager } from "@earendil-works/pi-coding-agent";
@@ -470,8 +471,7 @@ export default function contextWindowCap(pi: ExtensionAPI) {
 
   registerContextCapSettings(pi, next => session.updateSettings(next));
 
-  pi.on("session_start", (_event, ctx) => restore(ctx));
-  pi.on("session_tree", (_event, ctx) => restore(ctx));
+  extendedHooks(pi).on("session_restore", (_event, ctx) => restore(ctx));
   pi.on("model_select", event => modelChanged(event.model));
   pi.on("before_agent_start", () => sync());
   pi.on("turn_start", () => sync());

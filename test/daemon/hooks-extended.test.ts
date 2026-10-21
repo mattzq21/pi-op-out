@@ -70,3 +70,31 @@ test('handler failures reach Pi and subscriptions are removed on shutdown', asyn
   await f.emit('turn_end', end());
   expect(() => extendedHooks(f.pi)).toThrow('Load hooks-extended');
 });
+
+for (const [native, reason] of [['session_start', 'start'], ['session_tree', 'branch_change']] as const) {
+  test(`session_restore waits for restoration on ${reason} and passes the current context`, async () => {
+    const f = fixture();
+    hooksExtended(f.pi);
+    let release!: () => void;
+    const held = new Promise<void>(resolve => { release = resolve; });
+    const seen: unknown[] = [];
+    const off = extendedHooks(f.pi).on('session_restore', async (event, ctx) => {
+      seen.push(event, ctx);
+      await held;
+      seen.push('restored');
+    });
+    const run = f.emit(native).then(() => { seen.push('continued'); });
+    expect(seen).toEqual([{ type: 'session_restore', reason }, f.ctx]);
+    release();
+    await run;
+    expect(seen.slice(2)).toEqual(['restored', 'continued']);
+    off();
+    seen.length = 0;
+    await f.emit(native);
+    expect(seen).toEqual([]);
+    extendedHooks(f.pi).on('session_restore', async () => { throw new Error('Restore failed'); });
+    await expect(f.emit(native)).rejects.toThrow('Restore failed');
+    await f.emit('session_shutdown');
+    await f.emit(native);
+  });
+}
