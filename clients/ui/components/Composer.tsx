@@ -21,6 +21,7 @@ import { usePendingMessageDrag } from "../lib/usePendingMessageDrag";
 import type { AgentProfile,ComposerUpload,ContextUsage,ImageAttachment,Model,PendingMessage,SlashCommand } from "../types";
 import { IconButton } from "./IconButton";
 import { z } from "zod";
+import { splitPaneCommand } from "../plugins";
 
 const pastedImageSchema = z.object({ data: z.string().optional(), mimeType: z.string().optional(), error: z.string().optional() });
 
@@ -151,7 +152,7 @@ function canPickCommand(event: KeyboardEvent) {
 }
 
 function reviewBehavior(message: string, behavior: "steer" | "followUp") {
-  return /^\/(?:review|rs)(?:\s|$)/.test(message) ? "followUp" : behavior;
+  return splitPaneCommand(message) ? "followUp" : behavior;
 }
 
 export function Composer(props: Props) {
@@ -676,7 +677,7 @@ export function Composer(props: Props) {
             <button type="button" class="pending-icon-button" disabled={disabled() || position() <= 0} aria-label={`Move queued message up: ${text()}`} data-tooltip="Move earlier in this delivery queue" onClick={() => change("moveUp")}><ChevronUp size={13} /></button>
             <button type="button" class="pending-icon-button" disabled={disabled() || position() < 0 || position() >= peerCount() - 1} aria-label={`Move queued message down: ${text()}`} data-tooltip="Move later in this delivery queue" onClick={() => change("moveDown")}><ChevronDown size={13} /></button>
           </div>
-          <Show when={message().retry || !/^\/(?:review|rs)(?:\s|$)/.test(text())}><button type="button" disabled={disabled()} data-tooltip={message().behavior === "steer" ? "Queue after the current response" : "Steer at the next turn"} onClick={() => change(message().retry ? message().behavior : message().behavior === "steer" ? "followUp" : "steer")}><CornerDownRight size={13} />{message().retry ? "Retry" : message().behavior === "steer" ? "Queue" : "Steer"}</button></Show>
+          <Show when={message().retry || !splitPaneCommand(text())}><button type="button" disabled={disabled()} data-tooltip={message().behavior === "steer" ? "Queue after the current response" : "Steer at the next turn"} onClick={() => change(message().retry ? message().behavior : message().behavior === "steer" ? "followUp" : "steer")}><CornerDownRight size={13} />{message().retry ? "Retry" : message().behavior === "steer" ? "Queue" : "Steer"}</button></Show>
           <button type="button" class="pending-icon-button" disabled={disabled()} aria-label={`Remove queued message: ${text()}`} data-tooltip="Remove message" onClick={() => change("remove")}><Trash2 size={13} /></button>
         </div>);
 

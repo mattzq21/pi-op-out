@@ -1,3 +1,4 @@
+import type { PluginSettings } from "./plugins/settingsSchema";
 import type { z } from "zod";
 import type { rpcCommandSchema, rpcEventSchema } from "./lib/rpcSchemas";
 import type { JSONType } from "zod";
@@ -97,7 +98,7 @@ export interface ComposerUpload { id: string; name: string; kind: "image" | "tex
  /** A saved dictation setup: the model file, the engine program ("" finds it automatically) and the arguments. All three identify it. */
  export interface DictationModelEntry { name?: string; path: string; args?: string; }
  export interface DictationEngineSettings { engine: DictationEngine; path?: string; models: DictationModelEntry[]; }
- export interface AppSettings { settingsRevision?: string; clientSettingsRevision?: string; settingsDurabilityError?: string; clientSettingsDurabilityError?: string; dictationEngine?: DictationEngine; dictationEngines?: DictationEngineSettings[]; dictationModelPath?: string; dictationArgs?: string; localEnabled?: boolean; reviewAgent?: string; reviewPrompt?: string; modelAliases?: Record<string, string>; hiddenModels: string[]; knownModels?: string[]; defaultThinking: string; defaultFastMode: boolean; contextWindowCap: number; contextWindowCapEnabled: boolean; modelContextWindowCaps: Record<string, number | null>; autoRetry: boolean; debugMode: boolean; keybindings: import("./lib/keybindings").Keybindings; tools: ToolConfig[]; skills: SkillConfig[]; hosts: RemoteHost[]; }
+ export interface AppSettings extends PluginSettings { settingsRevision?: string; clientSettingsRevision?: string; settingsDurabilityError?: string; clientSettingsDurabilityError?: string; dictationEngine?: DictationEngine; dictationEngines?: DictationEngineSettings[]; dictationModelPath?: string; dictationArgs?: string; localEnabled?: boolean; modelAliases?: Record<string, string>; hiddenModels: string[]; knownModels?: string[]; defaultThinking: string; defaultFastMode: boolean; contextWindowCap: number; contextWindowCapEnabled: boolean; modelContextWindowCaps: Record<string, number | null>; autoRetry: boolean; debugMode: boolean; keybindings: import("./lib/keybindings").Keybindings; tools: ToolConfig[]; skills: SkillConfig[]; hosts: RemoteHost[]; }
 
 export interface CodexUsage { remainingPercent: number; resetAt?: number; }
 

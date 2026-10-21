@@ -17,7 +17,8 @@ export function createPluginWorkspace(source: Accessor<PluginConversation>, visi
   const [active, setActive] = createSignal("");
   const [selectedTabs, setSelectedTabs] = createSignal<string[]>([]);
   const [running, setRunning] = createSignal<RunningPlugin[]>([]);
-  const tabs = createMemo(() => running().filter(item => selectedTabs().includes(item.id)));
+  const panels = createMemo(() => running().filter(item => item.instance.panel));
+  const tabs = createMemo(() => panels().filter(item => selectedTabs().includes(item.id)));
   const [loadError, setLoadError] = createSignal<string>();
   const [reloading, setReloading] = createSignal(false);
   const owner = getOwner();
@@ -33,7 +34,7 @@ export function createPluginWorkspace(source: Accessor<PluginConversation>, visi
   const enabledPlugins = createMemo(() => {
     const order = [...new Set([host(), ...hosts()].flatMap(target => pluginStatus(target)?.enabled ?? []))];
 
-    return order.flatMap(id => plugins.filter(plugin => plugin.id === id && (plugin.scope === "client" || conversationReady()) && pluginStatus(runtimeHost(plugin.scope))?.enabled.includes(plugin.id)));
+    return order.flatMap(id => plugins.filter(plugin => plugin.id === id && (plugin.scope !== "conversation" || conversationReady()) && pluginStatus(runtimeHost(plugin.scope))?.enabled.includes(plugin.id)));
   });
 
   const configuration = createMemo(() => JSON.stringify([
@@ -124,7 +125,7 @@ export function createPluginWorkspace(source: Accessor<PluginConversation>, visi
       loadingFailures = failures;
       setRunning(enabled.flatMap(({ definition }) => next.filter(item => item.id === definition.id)));
 
-      if (!next.length) setOpen(false);
+      if (!next.some(item => item.instance.panel)) setOpen(false);
       setLoadError(failures.length ? `Plugins could not load: ${[...new Set(failures.map(failure => failure.message))].join("\n")}` : undefined);
     })().catch(reason => { if (current === generation) {
       loadingFailures = hosts().map(target => ({ host: target, message: reason instanceof Error ? reason.message : String(reason) }));
@@ -160,18 +161,18 @@ export function createPluginWorkspace(source: Accessor<PluginConversation>, visi
     event.preventDefault(); setActive(item.id); document.getElementById(`plugin-tab-${item.id}`)?.focus();
   };
 
-  const button = () => <Show when={running().length || error()}><IconButton class="open-plugins-button" label="Open sidepane" aria-controls="plugin-sidepane" aria-expanded={open()} onClick={() => { if (open()) close(); else { onOpen(); setOpen(true); } }}><PanelRight size={19} /></IconButton></Show>;
+  const button = () => <Show when={panels().length || error()}><IconButton class="open-plugins-button" label="Open sidepane" aria-controls="plugin-sidepane" aria-expanded={open()} onClick={() => { if (open()) close(); else { onOpen(); setOpen(true); } }}><PanelRight size={19} /></IconButton></Show>;
 
   const panel = () => <Sidepane open={open() && visible()}>
     <header class="plugin-pane-header">
-      <PluginTabPicker items={running()} onSelect={activate} />
+      <PluginTabPicker items={panels()} onSelect={activate} />
       <div role="tablist" aria-label="Sidepane plugins" onKeyDown={changeTab}><For each={tabs()}>{item => <div class="plugin-tab" role="presentation">
         <button id={`plugin-tab-${item.id}`} role="tab" aria-controls={`plugin-panel-${item.id}`} aria-selected={active() === item.id} tabIndex={active() === item.id ? 0 : -1} onClick={() => setActive(item.id)}>{item.name}</button>
         <button class="plugin-tab-remove" type="button" aria-label={`Remove ${item.name} tab`} tabIndex={active() === item.id ? 0 : -1} onClick={() => removeTab(item.id)}><X size={13} /></button>
       </div>}</For></div>
     </header>
     <Show when={error()}><p class="plugin-error" role="alert">{error()}</p></Show>
-    <For each={tabs()}>{item => <div class="plugin-panel" id={`plugin-panel-${item.id}`} role="tabpanel" aria-labelledby={`plugin-tab-${item.id}`} hidden={active() !== item.id}>{item.instance.panel()}</div>}</For>
+    <For each={tabs()}>{item => <div class="plugin-panel" id={`plugin-panel-${item.id}`} role="tabpanel" aria-labelledby={`plugin-tab-${item.id}`} hidden={active() !== item.id}>{item.instance.panel?.()}</div>}</For>
   </Sidepane>;
 
   return { open, close, button, panel, transcripts: () => running().flatMap(item => item.instance.transcript ? [item.instance.transcript] : []) };

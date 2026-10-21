@@ -237,8 +237,9 @@ async function messageContext(app: App, broker: BrokerRuntime, session: SessionS
   try {
     ownership = await conversationOwnership.MutationGuard.acquire(app, session.hostId, session.path, clientId, false, 'message');
     const settings = await loadAppSettings(app);
-    const connection = app.pi.connections.get(session.hostId);
-    if (connection?.alive) await connection.request({ type: 'retire', sessionKey: session.id, sessionPath: session.path });
+    // The host starts the plugins, whose extensions and command rules the message worker loads.
+    const connection = await daemon.connect(app, app.pi, broker, settings, session.hostId);
+    await connection.request({ type: 'retire', sessionKey: session.id, sessionPath: session.path });
     return { settings, claim, ownership };
   } catch (error) { ownership?.release(); claim.release(); throw error; }
 }

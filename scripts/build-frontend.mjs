@@ -30,7 +30,7 @@ async function frontend() {
 
   await cachedBuild({
     name: `Vite ${outDir}`,
-    inputs: ["clients/ui", "daemon/resources/piop-reviews/review-prompt.txt", "extensions/piop-define-agents/mcp-schema.ts", "node_modules/onnxruntime-web/dist/ort-wasm-simd-threaded.wasm", "node_modules/onnxruntime-web/dist/ort-wasm-simd-threaded.mjs", "public", "index.html", "scripts/build-frontend.mjs", "scripts/build-cache.mjs", ...files, ...(resolved.configFileDependencies ?? [])],
+    inputs: ["clients/ui", "daemon/plugins/review/review-prompt.txt", "extensions/piop-define-agents/mcp-schema.ts", "node_modules/onnxruntime-web/dist/ort-wasm-simd-threaded.wasm", "node_modules/onnxruntime-web/dist/ort-wasm-simd-threaded.mjs", "public", "index.html", "scripts/build-frontend.mjs", "scripts/build-cache.mjs", ...files, ...(resolved.configFileDependencies ?? [])],
     outputs: [outDir],
     key: [mode, version, resolved.env, process.env.NODE_ENV ?? "production", resolved.define],
   }, () => build(configuration));

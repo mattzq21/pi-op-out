@@ -15,17 +15,13 @@ type SessionTerminals = { activeId: string; tabs: TerminalTabState[] };
 
 type QueuedTerminalOutput = { data: string; length: number };
 
-type ReviewRequest = { task?: string; requestId: string; images?: import("./types").ImageAttachment[]; readOnly?: boolean; archived?: boolean; inherited?: boolean; parentSessionId?: string; messageMain?: (message: string) => Promise<void> };
-
-type SplitPaneState = { key: string; session: SessionSummary; review?: ReviewRequest };
+type SplitPaneState = { key: string; session: SessionSummary; request?: import("./plugins/types").SplitPaneRequest };
 
 type OwnedExtensionDialog = { request: ExtensionUiRequest; transport: NativeTransport; owner: string; queueId: string };
 
 type RenameTarget = { session: SessionSummary; transport: NativeTransport };
 
 type TerminalTarget = { sessionKey: string; cwd?: string; hostId: string };
-
-const REVIEW_REQUEST_TITLE = "__pi_desktop_review__";
 
 const PROMPT_CONTEXT_STATUS_KEY = "pi-desktop-prompt-context";
 
@@ -131,6 +127,6 @@ function useUsageClock(codexUsage: Accessor<CodexUsage | undefined>, opencodeGoU
 
 function definedAgentSettings(capability?: DefinedAgentsCapability): AgentConfig | undefined { return capability ? { agents: capability.config.agents } : undefined; }
 
-export { appendTerminalOutputs,AppLoading,REVIEW_REQUEST_TITLE,definedAgentSettings,dialogOwnerName,formatCodexReset,goUsageBadge,initialTerminals,LimitBadge,MAX_TERMINALS,MCP_STATUS_KEY,normalizeCodexUsage,normalizeOpencodeGoUsage,PROMPT_CONTEXT_STATUS_KEY,selectedProjectCwd,splitConversationKey,staleExtensionContext,terminalConversationKey,usageWindowsDescription,useUsageClock,windowInstanceId };
+export { appendTerminalOutputs,AppLoading,definedAgentSettings,dialogOwnerName,formatCodexReset,goUsageBadge,initialTerminals,LimitBadge,MAX_TERMINALS,MCP_STATUS_KEY,normalizeCodexUsage,normalizeOpencodeGoUsage,PROMPT_CONTEXT_STATUS_KEY,selectedProjectCwd,splitConversationKey,staleExtensionContext,terminalConversationKey,usageWindowsDescription,useUsageClock,windowInstanceId };
 
-export type { ReviewRequest,OwnedExtensionDialog,QueuedTerminalOutput,RenameTarget,SessionTerminals,SplitPaneState,TerminalTabState,TerminalTarget };
+export type { OwnedExtensionDialog,QueuedTerminalOutput,RenameTarget,SessionTerminals,SplitPaneState,TerminalTabState,TerminalTarget };

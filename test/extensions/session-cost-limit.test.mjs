@@ -33,7 +33,7 @@ async function fixture(t, { toolCost = 0, responseCost = 1, toolCalls = false, d
     t.after(() => rm(dir, { recursive: true, force: true }));
   }
   const outfile = join(dir, 'cost.mjs');
-  await build({ stdin: { contents: 'export { default } from "./extensions/piop-session-cost-limit/index.ts"; export { default as hooksExtended } from "./daemon/resources/hooks-extended/index.ts";', resolveDir: process.cwd() }, outfile, bundle: true, format: 'esm', platform: 'node', logLevel: 'silent' });
+  await build({ stdin: { contents: 'export { default } from "./daemon/plugins/cost/index.ts"; export { default as hooksExtended } from "./daemon/resources/hooks-extended/index.ts";', resolveDir: process.cwd() }, outfile, bundle: true, format: 'esm', platform: 'node', logLevel: 'silent' });
   const { default: costLimit, hooksExtended } = await import(pathToFileURL(outfile));
   const settingsManager = SettingsManager.inMemory({ compaction: { enabled: false, keepRecentTokens }, retry: { enabled: false } });
   const modelRuntime = await ModelRuntime.create({ authPath: join(dir, 'auth.json'), modelsPath: null, refreshOnCreate: false });

@@ -1,11 +1,12 @@
 import type { ChatMessage } from "../types";
+import { pluginMessageMetadata } from "../plugins/messageMetadata";
 import { z } from "zod";
 import { pauseStateSchema, promptContextSchema, resumeContentSchema, resumeMarkerSchema, wireMessageSchema, type WireMessage } from "./messageSchemas";
 
-const SYSTEM_MESSAGES = new Set(["pi-desktop-mcp-status", "piop-review-link"]);
+const SYSTEM_MESSAGES = new Set(["pi-desktop-mcp-status"]);
 
 export function isContextInjection(message: { role?: string; customType?: string }) {
-  return message.role === "custom" && !SYSTEM_MESSAGES.has(message.customType ?? "") && !["piop-subagent-result", "piop-goal-summary", "piop-session-operation"].includes(message.customType ?? "");
+  return message.role === "custom" && (pluginMessageMetadata(message.customType)?.contextInjection ?? (!SYSTEM_MESSAGES.has(message.customType ?? "") && !["piop-subagent-result", "piop-goal-summary", "piop-session-operation"].includes(message.customType ?? "")));
 }
 
 export type PiEntry = { type: string; id: string; parentId: string | null; message?: Partial<WireMessage>; customType?: string; details?: unknown; content?: ChatMessage["content"]; data?: unknown; display?: boolean; timestamp?: string; tokensBefore?: number };
@@ -72,7 +73,9 @@ function messageTimestamp(source: WireMessage) {
 }
 
 function messageRole(source: WireMessage): ChatMessage['role'] {
-  if (source.role === "custom" && source.customType === "piop-review-feedback") return "tool";
+  const customRole = pluginMessageMetadata(source.customType)?.customRole;
+
+  if (source.role === "custom" && customRole) return customRole;
   const isSystemMessage = source.role === "custom" && SYSTEM_MESSAGES.has(String(source.customType));
 
   return source.role === 'toolResult' ? 'tool' : isSystemMessage ? 'system' : source.role ?? 'system';
@@ -89,7 +92,11 @@ export function normalizeMessage(message: Partial<WireMessage> | null | undefine
 
   const normalized: ChatMessage = { ...source, id: messageIdentity(source, stamp, entryId, fallbackId), entryId, role: messageRole(source), toolStatus: source.role === "toolResult" ? (source.isError ? "error" : "done") : undefined, timestamp: stamp };
 
-  if (source.customType === "piop-review-feedback") { normalized.toolName = "review_feedback"; normalized.toolStatus = "done"; }
+  const metadata = pluginMessageMetadata(source.customType);
+
+  if (metadata?.toolName !== undefined) normalized.toolName = metadata.toolName;
+
+  if (metadata?.toolStatus !== undefined) normalized.toolStatus = metadata.toolStatus;
 
   if (Number.isFinite(completionStamp)) normalized.completedAt = completionStamp;
 

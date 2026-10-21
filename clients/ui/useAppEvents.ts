@@ -6,15 +6,13 @@ import { initializeSession } from "./lib/sessionInitialization";
 import { type Accessor } from "solid-js";
 import { createDependencyEffect, type Dispatch, type RefObject, type StateUpdate } from "./lib/solid";
 
-import { REVIEW_REQUEST_TITLE, MCP_STATUS_KEY, PROMPT_CONTEXT_STATUS_KEY, staleExtensionContext, type OwnedExtensionDialog, type SplitPaneState, type TerminalTarget } from "./appSupport";
+import { MCP_STATUS_KEY, PROMPT_CONTEXT_STATUS_KEY, staleExtensionContext, type OwnedExtensionDialog, type SplitPaneState, type TerminalTarget } from "./appSupport";
 import { decodeAgentValue, DEFINED_AGENTS_STATUS_KEY } from "./lib/agentProtocol";
 import { definedAgentsCapabilitySchema } from "./lib/agentSchemas";
 import { NativeTransport } from "./lib/nativeTransport";
+import { splitPaneHandler } from "./plugins";
+import type { SplitPaneRequestHandler } from "./plugins/types";
 import type { AgentState, AppSettings, DefinedAgentsCapability, ExtensionUiRequest, RpcEvent } from "./types";
-
-const optionalString = z.string().optional().catch(undefined);
-
-const reviewPayloadSchema = z.object({ task: optionalString, cwd: optionalString, parentSessionId: optionalString, sessionId: optionalString, sessionPath: optionalString, hostId: optionalString, readOnly: z.boolean().optional(), archived: z.boolean().optional(), inherited: z.boolean().optional(), images: z.array(z.object({ type: z.literal("image"), data: z.string(), mimeType: z.string(), name: z.string().optional() })).optional() });
 
 type AppEventsContext = {
   transport: NativeTransport;
@@ -27,8 +25,8 @@ type AppEventsContext = {
   terminalExited: (terminalId: string) => void;
   addNotice: (notice: { title: string; message: string; }) => void;
   activeTransportRef: RefObject<NativeTransport>;
-  pendingReviewRequest: RefObject<{ id: string; transport: NativeTransport; } | undefined>;
-  reviewImages: WeakMap<NativeTransport, import("./types").ImageAttachment[]>;
+  pendingSplitRequest: RefObject<{ id: string; transport: NativeTransport; command: string } | undefined>;
+  commandImages: WeakMap<NativeTransport, import("./types").ImageAttachment[]>;
   setSplitPane: Dispatch<StateUpdate<SplitPaneState | undefined>>;
   activeHostIdRef: RefObject<string>;
   setExtensionOwner: Dispatch<StateUpdate<NativeTransport>>;
@@ -110,43 +108,18 @@ export function useAppEvents(options: Accessor<AppEventsContext>) {
         if (capturedOptions.transport !== capturedOptions.activeTransportRef.current) return;
         const notifyExtension = () => { if (!event.inputRejected) capturedOptions.addNotice({ title: request.notifyType === "error" ? "Extension error" : request.notifyType === "warning" ? "Extension warning" : "piop extension", message: request.message || "Notification" }); };
 
-        const reviewPayload = () => {
-          const payload = reviewPayloadSchema.parse(JSON.parse(request.placeholder || "{}"));
-
-          if (!payload.parentSessionId) throw new Error("Invalid /review request");
-
-          if (payload.sessionId === undefined || !payload.sessionPath) throw new Error("Missing saved review session");
-
-          return { ...payload, task: payload.readOnly ? undefined : payload.task, parentSessionId: payload.parentSessionId, sessionId: payload.sessionId, sessionPath: payload.sessionPath };
-        };
-
-        const reviewHost = (hostId?: string) => hostId ?? capturedOptions.activeHostIdRef.current;
-
-        const reviewImages = (payload: z.infer<typeof reviewPayloadSchema>) => payload.readOnly ? undefined : payload.images ?? capturedOptions.reviewImages.get(capturedOptions.transport);
-
-        const openReview = () => {
+        const openSplitPane = (handler: SplitPaneRequestHandler) => {
           try {
-            const payload = reviewPayload();
-            const cwd = payload.cwd || ".";
-            const hostId = reviewHost(payload.hostId);
-            const previous = capturedOptions.pendingReviewRequest.current;
+            const opened = handler.open(request, { activeHostId: capturedOptions.activeHostIdRef.current, pendingImages: capturedOptions.commandImages.get(capturedOptions.transport), parent: capturedOptions.transport });
+            const previous = capturedOptions.pendingSplitRequest.current;
 
             if (previous && previous.id !== request.id) void previous.transport.command({ type: "extension_ui_response", id: previous.id, cancelled: true }).catch(() => undefined);
-            capturedOptions.pendingReviewRequest.current = { id: request.id, transport: capturedOptions.transport };
-            capturedOptions.setSplitPane({
-              key: crypto.randomUUID(),
-              session: { id: payload.sessionId, path: payload.sessionPath, name: "Code review", project: cwd.split(/[\\/]/).filter(Boolean).at(-1) || "Workspace", cwd, preview: payload.task ?? "Code review", messageCount: 0, lastMessageAt: Date.now(), apiCost: 0, hostId },
-              review: { task: payload.task, requestId: request.id, readOnly: payload.readOnly, archived: payload.archived, inherited: payload.inherited, parentSessionId: payload.parentSessionId, images: reviewImages(payload), messageMain: payload.readOnly ? undefined : async message => {
-                  const parent = capturedOptions.transport;
-
-                  if (parent.connectionTarget().sessionId !== payload.parentSessionId) throw new Error("The original main conversation is no longer connected");
-                  await parent.command({ type: "review_feedback", sessionId: payload.sessionId, message });
-                } },
-            });
-            capturedOptions.reviewImages.delete(capturedOptions.transport);
+            capturedOptions.pendingSplitRequest.current = { id: request.id, transport: capturedOptions.transport, command: handler.command };
+            capturedOptions.setSplitPane({ key: crypto.randomUUID(), session: opened.session, request: opened.request });
+            capturedOptions.commandImages.delete(capturedOptions.transport);
           } catch (reason) {
             void capturedOptions.transport.command({ type: "extension_ui_response", id: request.id, cancelled: true });
-            capturedOptions.addNotice({ title: "Could not start /review", message: reason instanceof Error ? reason.message : String(reason) });
+            capturedOptions.addNotice({ title: `Could not start ${handler.command}`, message: reason instanceof Error ? reason.message : String(reason) });
           }
         };
 
@@ -202,7 +175,9 @@ export function useAppEvents(options: Accessor<AppEventsContext>) {
 
         if (request.method === "notify") return notifyExtension();
 
-        if (request.method === "input" && request.title === REVIEW_REQUEST_TITLE) return openReview();
+        const splitHandler = request.method === "input" ? splitPaneHandler(request.title) : undefined;
+
+        if (splitHandler) return openSplitPane(splitHandler);
 
         if (request.method === "setStatus") return handleStatus();
 

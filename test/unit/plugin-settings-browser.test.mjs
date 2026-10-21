@@ -63,3 +63,20 @@ test('a plugin setup that cannot load shows the daemon message, and Reload tries
   await click(button('Reload plugin setup'));
   await untilDom(() => !document.querySelector('[role="alert"]') && control('Enable Notes plugin'));
 });
+
+test('cost and review can be enabled independently in plugin settings', async () => {
+  view = await renderComponent(PluginSettings, { hostId: 'local' });
+  const cost = await untilDom(() => control('Enable Cost limit plugin'));
+  const review = control('Enable Review plugin');
+  assert.equal(cost.getAttribute('aria-checked'), 'false');
+  assert.equal(review.getAttribute('aria-checked'), 'false');
+  await click(cost);
+  await click(review);
+  await click(button('Restart daemon'));
+  await untilDom(() => control('Close terminals and restart?'));
+  await click(button('Close terminals and restart'));
+  await untilDom(() => control('Daemon restarted'), 5000);
+  assert.deepEqual(restarts.at(-1).enabled, ['chatgpt', 'markdown', 'cost', 'review']);
+  assert.equal(control('Enable Cost limit plugin').getAttribute('aria-checked'), 'true');
+  assert.equal(control('Enable Review plugin').getAttribute('aria-checked'), 'true');
+});

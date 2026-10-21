@@ -123,3 +123,35 @@ test('a review uses the prompt and agent from Settings → Review, and says what
     expect(uiRequests(missing.runtimeId, 'input').filter(request => request.title === '__pi_desktop_review__')).toEqual([]);
   } finally { await save({}); }
 }, 60000);
+
+test('a review submitted during a reply waits for that reply and is not sent to the model', async () => {
+  const started = Promise.withResolvers<void>();
+  const finish = Promise.withResolvers<{ text: string }>();
+  agents.scripts.set('Prepare queued review', () => { started.resolve(); return finish.promise; });
+  const chat = await agents.rootChat({ visible: true });
+  await chat.command({ type: 'prompt', message: 'Prepare queued review' });
+  await started.promise;
+  try {
+    await chat.command({ type: 'steer', message: '/review queued.ts' });
+    expect(uiRequests(chat.runtimeId, 'input').some(request => request.title === '__pi_desktop_review__')).toBe(false);
+  } finally { finish.resolve({ text: 'Ready for review.' }); }
+  const opened = await agents.daemon.waitEvent('pi://event', payload => payload.runtimeId === chat.runtimeId && payload.event?.title === '__pi_desktop_review__', 30000);
+  expect(JSON.parse(opened.event.placeholder).task).toContain('queued.ts');
+  const requests = agents.model.requests.filter(request => request.messages.some((message: any) => text(message).includes('Prepare queued review')));
+  expect(requests).toHaveLength(1);
+  expect(requests.some(request => request.messages.some((message: any) => text(message).includes('/review queued.ts')))).toBe(false);
+}, 60000);
+
+test('review commands held by pause keep their follow-up behavior and run after resume', async () => {
+  const chat = await agents.rootChat({ visible: true });
+  await chat.command({ type: 'pause' });
+  await chat.command({ type: 'follow_up', message: '/review paused.ts' });
+  const queued = await agents.daemon.waitEvent('pi://event', payload => payload.runtimeId === chat.runtimeId && payload.event?.type === 'queue_update' && payload.event.pendingMessages?.some((item: any) => item.message === '/review paused.ts'));
+  const item = queued.event.pendingMessages.find((item: any) => item.message === '/review paused.ts');
+  expect(item.behavior).toBe('followUp');
+  await expect(chat.command({ type: 'change_pending', id: item.id, action: 'steer' })).rejects.toThrow('only be queued as a follow-up');
+  expect(uiRequests(chat.runtimeId, 'input').some(request => request.title === '__pi_desktop_review__')).toBe(false);
+  await chat.command({ type: 'resume' });
+  const opened = await agents.daemon.waitEvent('pi://event', payload => payload.runtimeId === chat.runtimeId && payload.event?.title === '__pi_desktop_review__', 30000);
+  expect(JSON.parse(opened.event.placeholder).task).toContain('paused.ts');
+}, 60000);

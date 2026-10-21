@@ -354,9 +354,22 @@ async function dispatchReady(command, session, output) {
   }
 }
 
-const isReview = text => /^\/(?:review|rs)(?:\s|$)/.test(text);
+if (process.env.PIOP_COMMAND_POLICY === undefined) throw new Error("Piop command policy is missing");
 
-const reviewText = message => message.role === "user" ? message.content.filter(part => part.type === "text").map(part => part.text).join("") : "";
+const commandPolicy = JSON.parse(process.env.PIOP_COMMAND_POLICY);
+
+/** Commands of enabled plugins that wait in the follow-up queue and run in order when the conversation reaches them. They never reach the model. */
+const queuedCommands = new Set(commandPolicy.queued);
+
+/** Commands of disabled plugins, with the error to show. They are rejected so they never reach the model as text. */
+const disabledCommands = new Map(Object.entries(commandPolicy.disabled));
+
+/** The slash command at the start of a message, without the slash. Matches commandName in the daemon. */
+const commandName = text => /^\/(\S+)/.exec(text)?.[1];
+
+const queuedCommand = text => queuedCommands.has(commandName(text));
+
+const userText = message => message.role === "user" ? message.content.filter(part => part.type === "text").map(part => part.text).join("") : "";
 
 function currentGoal(session) {
   const file = session.sessionManager.getSessionFile();
@@ -421,9 +434,9 @@ function trackReleasedPrompt(session, scope) {
 
     if (event.type !== "message_start" || event.message !== scope.preparedMessage) return;
     scope.started = true;
-    const original = reviewText(scope.messages[0]);
+    const original = userText(scope.messages[0]);
 
-    if (original === reviewText(event.message)) return;
+    if (original === userText(event.message)) return;
     const pending = session.getFollowUpMessages();
     const index = pending.indexOf(original);
 
@@ -431,7 +444,7 @@ function trackReleasedPrompt(session, scope) {
   });
 }
 
-async function releaseQueuedReviews(session, messages, prompt) {
+async function releaseQueuedCommands(session, messages, prompt) {
   await session._runAgentPrompt(messages);
 
   if (!session._agentRunAbortRequested && session.isIdle && !hasGoal(session)) await releaseGoalQueue(session, prompt);
@@ -449,7 +462,7 @@ async function releaseGoalQueue(session, prompt, messages = session.agent.follow
   if (!messages.length) return;
   const first = messages[0];
 
-  if (isReview(reviewText(first))) return releaseQueuedReviews(session, messages, prompt);
+  if (queuedCommand(userText(first))) return releaseQueuedCommands(session, messages, prompt);
   const images = first.role === "user" ? first.content.filter(part => part.type === "image") : [];
   const scope = { session, messages, goalId: first.piopGoalId, nextTurnMessages: session._pendingNextTurnMessages, inputPending: true, preparing: true, runRequested: false, started: false };
   const stopTracking = trackReleasedPrompt(session, scope);
@@ -457,7 +470,7 @@ async function releaseGoalQueue(session, prompt, messages = session.agent.follow
   session._isAgentRunActive = true;
 
   try {
-    await releasedPromptContext.run(scope, () => prompt.call(session, reviewText(first), { images, source: "rpc", expandPromptTemplates: false }));
+    await releasedPromptContext.run(scope, () => prompt.call(session, userText(first), { images, source: "rpc", expandPromptTemplates: false }));
   } catch (error) {
     restoreReleasedPrompt(session, scope);
 
@@ -557,30 +570,30 @@ function bindFollowUpDrain(session) {
 
     if (goalMessages !== undefined) return goalMessages;
     const messages = drain.call(this);
-    const review = messages.findIndex(message => isReview(reviewText(message)));
+    const queued = messages.findIndex(message => queuedCommand(userText(message)));
 
-    if (review === -1) return messages;
-    const count = review === 0 ? 1 : review;
+    if (queued === -1) return messages;
+    const count = queued === 0 ? 1 : queued;
     this.messages.unshift(...messages.slice(count));
 
     return messages.slice(0, count);
   };
 }
 
-function executeQueuedReview(session, text, images) {
-  return afterReload(session, () => executeQueuedReviewReady(session, text, images));
+function executeQueuedCommand(session, text, images) {
+  return afterReload(session, () => executeQueuedCommandReady(session, text, images));
 }
 
-async function executeQueuedReviewReady(session, text, images) {
+async function executeQueuedCommandReady(session, text, images) {
   const ctx = session.extensionRunner.createCommandContext();
   const signal = ctx.signal;
   const command = text.split(/\s/, 1)[0].slice(1);
-  const request = { command: "start_review", payload: { command, args: text.slice(command.length + 1).trim(), images }, ctx };
+  const request = { command: "run_queued_command", payload: { command, args: text.slice(command.length + 1).trim(), images }, ctx };
 
   try {
     Object.getOwnPropertyDescriptor(globalThis, Symbol.for("piop.runtime-bridge")).value(request);
 
-    if (!request.ready) throw new Error("Review requests are unavailable");
+    if (!request.ready) throw new Error(`/${command} is unavailable`);
     await request.ready;
   } catch (error) {
     if (signal?.aborted) return false;
@@ -590,20 +603,20 @@ async function executeQueuedReviewReady(session, text, images) {
   return !signal?.aborted;
 }
 
-async function consumeReviews(session, messages) {
+async function consumeQueuedCommands(session, messages) {
   const prompts = [];
 
   for (const message of messages) {
-    const text = reviewText(message);
+    const text = userText(message);
 
-    if (!isReview(text)) { prompts.push(message); continue; }
+    if (!queuedCommand(text)) { prompts.push(message); continue; }
 
     const pending = session.getFollowUpMessages();
     const index = pending.indexOf(text);
 
     if (index !== -1) pending.splice(index, 1);
     session._emitQueueUpdate();
-    const consumed = await executeQueuedReview(session, text, message.content.filter(part => part.type === "image"));
+    const consumed = await executeQueuedCommand(session, text, message.content.filter(part => part.type === "image"));
 
     if (consumed && isQueuedUserMessage(message)) session.sessionManager.appendMessage(message);
   }
@@ -611,19 +624,19 @@ async function consumeReviews(session, messages) {
   return prompts;
 }
 
-async function drainReviews(session, drain) {
+async function drainQueuedCommands(session, drain) {
   while (true) {
     if (session.agent.signal?.aborted) return [];
     const messages = await drain();
 
     if (!messages.length) return messages;
-    const prompts = await consumeReviews(session, messages);
+    const prompts = await consumeQueuedCommands(session, messages);
 
     if (prompts.length) return prompts;
   }
 }
 
-function bindReviewQueue(session) {
+function bindQueuedCommands(session) {
   const agent = session.agent;
   bindFollowUpDrain(session);
   const createLoopConfig = agent.createLoopConfig;
@@ -632,19 +645,19 @@ function bindReviewQueue(session) {
   agent.createLoopConfig = function (...args) {
     const config = createLoopConfig.apply(this, args);
     const followUp = config.getFollowUpMessages;
-    config.getFollowUpMessages = () => drainReviews(session, followUp);
+    config.getFollowUpMessages = () => drainQueuedCommands(session, followUp);
 
     return config;
   };
 
   agent.runPromptMessages = async function (messages, options) {
-    if (options?.skipInitialSteeringPoll || !messages.some(message => isReview(reviewText(message)))) {
+    if (options?.skipInitialSteeringPoll || !messages.some(message => queuedCommand(userText(message)))) {
       return runPromptMessages.call(this, messages, options);
     }
 
     let cancelled = false;
     await this.runWithLifecycle(async signal => {
-      await consumeReviews(session, messages);
+      await consumeQueuedCommands(session, messages);
       cancelled = signal.aborted;
     });
 
@@ -660,7 +673,7 @@ function holdFollowUp(session, options) {
 }
 
 async function queueHeldFollowUp(session, text, options) {
-  if (isReview(text)) {
+  if (queuedCommand(text)) {
     await session._queueFollowUp(text, options.images);
     options.preflightResult?.("queued");
   } else if (text.startsWith("/") && options.expandPromptTemplates !== false && await session._tryExecuteExtensionCommand(text)) {
@@ -702,9 +715,13 @@ async function main() {
   const output = value => writeRawStdout(`${JSON.stringify(value)}\n`);
   const prompt = AgentSession.prototype.prompt;
   AgentSession.prototype.prompt = async function (text, options) {
+    const disabled = disabledCommands.get(commandName(text));
+
+    if (disabled !== undefined) throw new Error(disabled);
+
     if (holdFollowUp(this, options)) return queueHeldFollowUp(this, text, options);
 
-    if (isReview(text) && this.isStreaming) {
+    if (queuedCommand(text) && this.isStreaming) {
       return this._queueFollowUp(text, options?.images).then(() => options?.preflightResult?.("queued"));
     }
 
@@ -723,7 +740,7 @@ async function main() {
 
     if (session !== this) {
       bindGoalQueue(this, prompt);
-      bindReviewQueue(this);
+      bindQueuedCommands(this);
     }
 
     await bind.apply(this, bindings);

@@ -1,6 +1,7 @@
 import { z, type JSONType } from "zod";
 import { required } from "../lib/required";
-import { ReviewLink } from "./ReviewLink";
+import { Dynamic } from "solid-js/web";
+import { pluginMessageRenderer } from "../plugins/messages";
 import { AgentDelivery } from "./AgentDelivery";
 import { Key } from "@solid-primitives/keyed";
 import { type Accessor, createMemo, createSignal, Index, Show, useContext } from "solid-js";
@@ -313,5 +314,5 @@ export function Message(componentProps: Props) {
 
   const renderToolMessage = () => (<ToolResult message={componentProps.message} toolCount={(componentProps.toolCount === undefined ? 1 : componentProps.toolCount)} debug={(componentProps.debug === undefined ? false : componentProps.debug)} />);
 
-  return <>{componentProps.message.customType === "piop-agent-message" ? <AgentDelivery message={componentProps.message} /> : isContextInjection(componentProps.message) ? <ContextInjection title={componentProps.message.customType === "pi-project-files-watch" ? "Project files changed" : "Context added"} content={textOf(componentProps.message.content)} /> : componentProps.message.customType === "piop-subagent-result" ? <SubagentResults runs={subagentRuns(componentProps.message.details)} /> : componentProps.message.customType === "piop-review-link" ? <ReviewLink details={componentProps.message.details} /> : componentProps.message.role === "system" ? (<div class="command-result" role="status">{textOf(componentProps.message.content)}</div>) : componentProps.message.role === "tool" ? renderToolMessage() : componentProps.message.role === "user" ? (<UserMessage />) : (renderAssistantMessage())}</>;
+  return <>{componentProps.message.customType === "piop-agent-message" ? <AgentDelivery message={componentProps.message} /> : isContextInjection(componentProps.message) ? <ContextInjection title={componentProps.message.customType === "pi-project-files-watch" ? "Project files changed" : "Context added"} content={textOf(componentProps.message.content)} /> : componentProps.message.customType === "piop-subagent-result" ? <SubagentResults runs={subagentRuns(componentProps.message.details)} /> : pluginMessageRenderer(componentProps.message.customType) ? <Dynamic component={pluginMessageRenderer(componentProps.message.customType)} details={componentProps.message.details} /> : componentProps.message.role === "system" ? (<div class="command-result" role="status">{textOf(componentProps.message.content)}</div>) : componentProps.message.role === "tool" ? renderToolMessage() : componentProps.message.role === "user" ? (<UserMessage />) : (renderAssistantMessage())}</>;
 }

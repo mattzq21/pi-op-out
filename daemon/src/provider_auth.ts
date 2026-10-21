@@ -1,4 +1,5 @@
 import { agentCommands } from './resources';
+import * as Contributions from './plugin_contributions';
 import { loadAppSettings } from './settings';
 import * as daemon from './daemon';
 import type { App } from './app';
@@ -14,7 +15,10 @@ export async function forOwner(app: App, owner: string, hostId: string | undefin
   if (request.action === 'draft_catalog') {
     const definitions = await connection.request({ type: 'agent_definitions', reload: request.reload === true });
     const catalog = await connection.request({ type: 'provider_auth', owner, request: { action: 'draft_catalog' } });
-    return { config: definitions?.config ?? null, models: catalog?.models ?? null, commands: JSON.parse(agentCommands) };
+    // Plugin commands depend on the plugins that run on the target host.
+    const plugins = await connection.request({ type: 'plugin_status' });
+    if (!Array.isArray(plugins?.enabled) || plugins.enabled.some((id: unknown) => typeof id !== 'string')) throw new Error('The host returned an invalid plugin status');
+    return { config: definitions?.config ?? null, models: catalog?.models ?? null, commands: Contributions.agentCommands(JSON.parse(agentCommands), plugins.enabled) };
   }
   return connection.request({ type: 'provider_auth', owner, request });
 }

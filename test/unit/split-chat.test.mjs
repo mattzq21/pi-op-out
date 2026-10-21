@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { describe, test, beforeEach, afterEach } from 'node:test';
-import { createRoot } from 'solid-js';
+import { createRoot, createComponent } from 'solid-js';
+import { ReviewFeedback } from '../../clients/ui/plugins/review/ReviewFeedback.tsx';
 import { emit } from '@tauri-apps/api/event';
 import { channelsClosed, enterText, installDom, renderComponent, act, untilDom } from '../dom.mjs';
 import { SplitChatPane } from '../../clients/ui/components/SplitChatPane.tsx';
@@ -237,7 +238,7 @@ describe('split conversation lifecycle', () => {
   });
 +  test('review feedback waits for the reviewer when asked, sends its finished answer to the main chat once, and can be cancelled', async () => {
     const sent = [];
-    await render({ onMessageMain: async message => { sent.push(message); } });
+    await render({ actions: controls => createComponent(ReviewFeedback, { ...controls, messageMain: async message => { sent.push(message); } }) });
     const button = () => document.querySelector('.review-feedback-button');
     const state = () => [button().textContent, button().disabled];
     assert.deepEqual(state(), ['Send feedback', true]);
@@ -262,7 +263,7 @@ describe('split conversation lifecycle', () => {
 
   test('review feedback queued while the reviewer works reports a review that stops without an answer', async () => {
     const sent = [];
-    await render({ onMessageMain: async message => { sent.push(message); } });
+    await render({ actions: controls => createComponent(ReviewFeedback, { ...controls, messageMain: async message => { sent.push(message); } }) });
     const button = () => document.querySelector('.review-feedback-button');
     await event({ type: 'agent_start' }); await click(button());
     const stopped = { role: 'assistant', content: [], stopReason: 'aborted', timestamp: 4 };

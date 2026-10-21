@@ -2,7 +2,9 @@ import assert from 'node:assert/strict';
 import { afterEach, beforeEach, test } from 'node:test';
 import { createComponent } from 'solid-js';
 import { act, installDom, renderComponent, untilDom } from '../dom.mjs';
-import { ReviewLink, ReviewNavigationContext } from '../../clients/ui/components/ReviewLink.tsx';
+import { ReviewLink } from '../../clients/ui/plugins/review/ReviewLink.tsx';
+
+import { PluginMessageContext } from '../../clients/ui/plugins/messages.ts';
 
 let dom, view;
 beforeEach(() => { dom = installDom(); });
@@ -11,7 +13,7 @@ afterEach(async () => { await view?.unmount(); view = undefined; dom.restore(); 
 /** A review link as the daemon saves it, shown in the chat with sessionId current. */
 async function render(current, open) {
   const opened = [];
-  view = await renderComponent(() => createComponent(ReviewNavigationContext.Provider, { value: { sessionId: () => current, open: async id => { opened.push(id); await open?.(id); } }, get children() {
+  view = await renderComponent(() => createComponent(PluginMessageContext.Provider, { value: { sessionId: () => current, command: async command => { assert.equal(command.type, 'open_review'); opened.push(command.reviewId); await open?.(command.reviewId); } }, get children() {
     return createComponent(ReviewLink, { details: { sessionId: 'review-1', parentSessionId: 'chat-1' } });
   } }));
   return { opened, button: () => document.querySelector('.command-result button') };

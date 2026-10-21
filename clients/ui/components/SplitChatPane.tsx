@@ -7,11 +7,13 @@ import { trackToastMessage, trackToastNotices } from "../lib/toastHistory";
 import { extensionUiSchema } from "../lib/extensionUiSchema";
 import { resolveMessageEntry } from "../lib/resolveMessageEntry";
 import { Key } from "@solid-primitives/keyed";
-import { createComputed, createMemo, createSignal } from "solid-js";
+import { createComputed, createMemo, createSignal, Show, type Component } from "solid-js";
+import { Dynamic } from "solid-js/web";
 import { createDependencyEffect, createRef, type StateUpdate } from "../lib/solid";
 
 import { X } from "lucide-solid";
-import { REVIEW_REQUEST_TITLE } from "../appSupport";
+import { splitPaneHandler } from "../plugins";
+import type { SplitPaneControls } from "../plugins/types";
 import { decodeAgentValue, DEFINED_AGENTS_STATUS_KEY } from "../lib/agentProtocol";
 import { definedAgentsCapabilitySchema } from "../lib/agentSchemas";
 import { z } from "zod";
@@ -22,21 +24,20 @@ import { useChatSession } from "../lib/useChatSession";
 import { followConversation } from "../plugins/conversation";
 import type { AgentState, AppSettings, ChatMessage, ComposerUpload, DefinedAgentsCapability, ExtensionUiRequest, ImageAttachment, RpcEvent, SessionSummary } from "../types";
 
-import { textOf } from "../lib/content";
 import { ChatView } from "./ChatView";
 import type { createConversationDrafts } from "../appDrafts";
 import { draftUploadsFromImages, stageDraftSubmission, submitDraftPrompt } from "../lib/draftSubmission";
 import { trackChatSubmission, updateChatPreparation, waitForConversationReady } from "../lib/chatSubmission";
 
-interface Props { forkSourceName?: (source: ForkSource) => string | undefined; onOpenForkSource?: (source: ForkSource) => void; drafts: ReturnType<typeof createConversationDrafts>; onArchiveOriginal: (session: SessionSummary) => Promise<void>; uploadsFor: (owner: NativeTransport) => ComposerUpload[]; onUploadsChange: (owner: NativeTransport, update: StateUpdate<ComposerUpload[]>) => void; runtimePool: SessionRuntimePool; session: SessionSummary; settings: AppSettings; modelVisibility: HostModelVisibility; draft: string; focusRequest?: number; onActivate?: () => void; onOpenTerminal: () => void; onDialogRequest: (request: ExtensionUiRequest, transport: NativeTransport, owner: string) => void; onDialogResolved: (transport: NativeTransport, id: string) => void; onDialogTransportClosed: (transport: NativeTransport) => Promise<void>; onReleaseTransport: (transport: NativeTransport) => Promise<void>; freshReview?: boolean; inheritedReviewParent?: string; archivedReview?: boolean; onShowArchive: () => void; initialPrompt?: string; initialImages?: ImageAttachment[]; onMessageMain?: (message: string) => Promise<void>; onReady?: () => void; onFailed?: (cause: unknown) => void; onSessionChange: (session: SessionSummary, transport: NativeTransport) => void; onClose: () => void; }
+interface Props { forkSourceName?: (source: ForkSource) => string | undefined; onOpenForkSource?: (source: ForkSource) => void; drafts: ReturnType<typeof createConversationDrafts>; onArchiveOriginal: (session: SessionSummary) => Promise<void>; uploadsFor: (owner: NativeTransport) => ComposerUpload[]; onUploadsChange: (owner: NativeTransport, update: StateUpdate<ComposerUpload[]>) => void; runtimePool: SessionRuntimePool; session: SessionSummary; settings: AppSettings; modelVisibility: HostModelVisibility; draft: string; focusRequest?: number; onActivate?: () => void; onOpenTerminal: () => void; onDialogRequest: (request: ExtensionUiRequest, transport: NativeTransport, owner: string) => void; onDialogResolved: (transport: NativeTransport, id: string) => void; onDialogTransportClosed: (transport: NativeTransport) => Promise<void>; onReleaseTransport: (transport: NativeTransport) => Promise<void>; pluginPane?: boolean; readOnly?: boolean; actions?: Component<SplitPaneControls>; notice?: Component<{ onShowArchive: () => void }>; onShowArchive: () => void; initialPrompt?: string; initialImages?: ImageAttachment[]; onReady?: () => void; onFailed?: (cause: unknown) => void; onSessionChange: (session: SessionSummary, transport: NativeTransport) => void; onClose: () => void; }
 
 const initialState = (session: SessionSummary): AgentState => ({ model: null, thinkingLevel: "off", isStreaming: false, sessionId: session.id, sessionName: session.name, messageCount: session.messageCount, pendingMessageCount: 0 });
 
 export function SplitChatPane(componentProps: Props) {
   const [transport] = createSignal((() => {
-    if (componentProps.inheritedReviewParent || componentProps.archivedReview) return componentProps.runtimePool.forReadOnly(componentProps.session);
+    if (componentProps.readOnly) return componentProps.runtimePool.forReadOnly(componentProps.session);
 
-    return componentProps.freshReview ? componentProps.runtimePool.forReview(componentProps.session) : componentProps.runtimePool.forSession(componentProps.session);
+    return componentProps.pluginPane ? componentProps.runtimePool.forPluginPane(componentProps.session) : componentProps.runtimePool.forSession(componentProps.session);
   })());
 
   componentProps.drafts.bindTransport(transport(), `${componentProps.session.hostId ?? "local"}:${componentProps.session.id}`);
@@ -62,59 +63,7 @@ export function SplitChatPane(componentProps: Props) {
   const reconnectRef = createRef<() => void>(() => undefined);
   const lifecycleRef = createRef(0);
   const [initialPromptPending, setInitialPromptPending] = createSignal(Boolean(componentProps.initialPrompt));
-  const [feedbackQueued, setFeedbackQueued] = createSignal(false);
-  const [feedbackSending, setFeedbackSending] = createSignal(false);
-  const [sentFeedback, setSentFeedback] = createSignal<string>();
-  const reviewBusy = () => initialPromptPending() || session().state.isStreaming || session().state.isPaused || session().state.isPausing || session().state.isCompacting || session().state.pendingMessageCount > 0;
-
-  const reviewFeedback = createMemo(() => {
-    const messages = session().messages;
-
-    for (let index = messages.length - 1; index >= 0; index--) {
-      const message = messages[index];
-
-      if (message.role === "user") return undefined;
-
-      if (message.role !== "assistant") continue;
-
-      return !message.streaming && (message.stopReason === "stop" || message.stopReason === "length") && textOf(message.content).trim() ? message : undefined;
-    }
-
-    return undefined;
-  });
-
-  const feedbackKey = () => { const message = reviewFeedback();
-
-  return message ? `${session().state.sessionId}:${message.timestamp}:${textOf(message.content)}` : undefined; };
-
-  const deliverFeedback = async () => {
-    const message = reviewFeedback(); const messageMain = componentProps.onMessageMain; const key = feedbackKey();
-
-    if (!connected() || reviewBusy() || !message || !messageMain || feedbackSending() || sentFeedback() === key) return;
-    setFeedbackQueued(false); setFeedbackSending(true);
-
-    try { await messageMain(textOf(message.content)); setSentFeedback(key); }
-    catch (reason) { setControlError(reason instanceof Error ? reason.message : String(reason)); }
-    finally { setFeedbackSending(false); }
-  };
-
-  const clickFeedback = () => {
-    if (feedbackQueued()) { setFeedbackQueued(false);
-
-    return; }
-
-    if (reviewBusy()) setFeedbackQueued(true);
-    else void deliverFeedback();
-  };
-
-  createDependencyEffect(() => {
-    if (!feedbackQueued() || !connected() || reviewBusy()) return;
-    setFeedbackQueued(false);
-
-    if (reviewFeedback()) void deliverFeedback();
-    else setControlError("The review stopped without completed feedback. Run it again or finish the review before sending.");
-  }, () => [feedbackQueued(), connected(), reviewBusy(), reviewFeedback()]);
-  createDependencyEffect(() => { setFeedbackQueued(false); setSentFeedback(undefined); }, () => [componentProps.session.id]);
+  const paneBusy = () => initialPromptPending() || session().state.isStreaming || session().state.isPaused || session().state.isPausing || session().state.isCompacting || session().state.pendingMessageCount > 0;
   createDependencyEffect(() => { const capturedTransport = transport(); const capturedSession = { ...session() }; const capturedRuntimePool0 = componentProps.runtimePool; const capturedSettings1 = componentProps.settings; const capturedInitialPrompt2 = componentProps.initialPrompt; const capturedOnReady3 = componentProps.onReady; const capturedOnFailed4 = componentProps.onFailed; const capturedSession5 = componentProps.session; const capturedOnDialogTransportClosed7 = componentProps.onDialogTransportClosed; const capturedOnDialogResolved8 = componentProps.onDialogResolved; const capturedOnDialogRequest9 = componentProps.onDialogRequest; const capturedDrafts = componentProps.drafts; const capturedOnReleaseTransport11 = componentProps.onReleaseTransport;
     const lifecycle = ++lifecycleRef.current; let closing = false; let reconnecting = false; let connectedOnce = false;
     capturedRuntimePool0.setInteractive(capturedTransport, true);
@@ -196,9 +145,11 @@ export function SplitChatPane(componentProps: Props) {
       const handleExtensionUiRequest = () => {
         const request = extensionUiSchema.parse(event);
 
-        if (request.method === "input" && request.title === REVIEW_REQUEST_TITLE) {
+        const handler = request.method === "input" ? splitPaneHandler(request.title) : undefined;
+
+        if (handler) {
           void capturedTransport.command({ type: "extension_ui_response", id: request.id, cancelled: true }).catch(reportControlError);
-          setControlError("To start /review from this conversation, select it in the main pane first.");
+          setControlError(handler.rejectInSplit);
 
           return;
         }
@@ -279,7 +230,7 @@ export function SplitChatPane(componentProps: Props) {
     void connectRuntime(true);
 
     return () => { closing = true; capturedRuntimePool0.setInteractive(capturedTransport, false); document.title = "piop"; reconnectRef.current = () => undefined; unsubscribe(); queueMicrotask(() => { if (lifecycleRef.current === lifecycle) void capturedOnReleaseTransport11(capturedTransport); }); };
-  }, () => [transport(), componentProps.freshReview, componentProps.initialPrompt, session().handleEvent, session().refresh, componentProps.onDialogRequest, componentProps.onDialogTransportClosed, componentProps.onReleaseTransport]);
+  }, () => [transport(), componentProps.pluginPane, componentProps.initialPrompt, session().handleEvent, session().refresh, componentProps.onDialogRequest, componentProps.onDialogTransportClosed, componentProps.onReleaseTransport]);
   createDependencyEffect(() => {
     const capturedConnected = connected(); const capturedTransport = transport(); const capturedSettings0 = componentProps.settings;
 
@@ -353,21 +304,18 @@ export function SplitChatPane(componentProps: Props) {
 
   const agentDefinitionHost = () => (componentProps.session.hostId ?? "local") === "local" ? localHostLabel() : componentProps.session.hostName || componentProps.session.hostId;
 
-  const renderSplitPaneStatus = () => (error() ? <div class="split-pane-status error">{(error())}</div> : <ChatView followConversation={followSource} readOnly={Boolean(componentProps.inheritedReviewParent || componentProps.archivedReview)} agentHostLabel={agentDefinitionHost()} transport={transport()} state={transport().promptControls.state(session().state)} messages={session().messages} debug={componentProps.settings.debugMode} agents={chatAgents()} activeAgent={definedAgents()?.active} agentLocked={definedAgents()?.locked} agentSaved={definedAgents()?.saved} agentUnavailable={definedAgents()?.unavailable} refreshError={session().error} capabilityErrors={session().capabilityErrors} capabilitiesLoading={session().capabilitiesLoading} onRetryCapabilities={session().retryCapabilities} modelAliases={componentProps.modelVisibility.aliases(componentProps.session.hostId ?? "local")} models={chatModels()} commands={chatCommands()} thinkingLevels={transport().promptControls.levels(session().thinkingLevels)} widgets={chatWidgets()} statuses={transport().promptControls.statuses(statuses(), fastModelNames(hostFastModels(componentProps.session.hostId ?? "local")()), transport().promptControls.state(session().state).model)} projectCwd={componentProps.session.cwd} controlsDisabled={!connected()} draft={componentProps.draft} onDraftChange={(update) => componentProps.drafts.setTransportDraft(transport(), update)} focusRequest={(componentProps.focusRequest === undefined ? 0 : componentProps.focusRequest) + extensionFocusRequest()} onActivate={componentProps.onActivate} uploads={uploads()} onUploadsChange={setUploads} onSend={send} onChangePending={(id, behavior) => transport().changePendingMessage(id, behavior)} onAbort={abort} onPause={pause} onResume={resume} onOpenTerminal={componentProps.onOpenTerminal} onOpenProject={() => undefined} onBranch={message => branch(message)} onFork={async message => { await branch(message, "fork"); }} onForkAndForget={forkAndForget} forkSourceName={session().state.forkSource ? componentProps.forkSourceName?.(session().state.forkSource!) : undefined} onOpenForkSource={componentProps.onOpenForkSource} onAgent={(name) => void transport().command({ type: "select_agent", agent: name }).then(() => { transport().promptControls.reset();
+  const renderSplitPaneStatus = () => (error() ? <div class="split-pane-status error">{(error())}</div> : <ChatView followConversation={followSource} readOnly={Boolean(componentProps.readOnly)} agentHostLabel={agentDefinitionHost()} transport={transport()} state={transport().promptControls.state(session().state)} messages={session().messages} debug={componentProps.settings.debugMode} agents={chatAgents()} activeAgent={definedAgents()?.active} agentLocked={definedAgents()?.locked} agentSaved={definedAgents()?.saved} agentUnavailable={definedAgents()?.unavailable} refreshError={session().error} capabilityErrors={session().capabilityErrors} capabilitiesLoading={session().capabilitiesLoading} onRetryCapabilities={session().retryCapabilities} modelAliases={componentProps.modelVisibility.aliases(componentProps.session.hostId ?? "local")} models={chatModels()} commands={chatCommands()} thinkingLevels={transport().promptControls.levels(session().thinkingLevels)} widgets={chatWidgets()} statuses={transport().promptControls.statuses(statuses(), fastModelNames(hostFastModels(componentProps.session.hostId ?? "local")()), transport().promptControls.state(session().state).model)} projectCwd={componentProps.session.cwd} controlsDisabled={!connected()} draft={componentProps.draft} onDraftChange={(update) => componentProps.drafts.setTransportDraft(transport(), update)} focusRequest={(componentProps.focusRequest === undefined ? 0 : componentProps.focusRequest) + extensionFocusRequest()} onActivate={componentProps.onActivate} uploads={uploads()} onUploadsChange={setUploads} onSend={send} onChangePending={(id, behavior) => transport().changePendingMessage(id, behavior)} onAbort={abort} onPause={pause} onResume={resume} onOpenTerminal={componentProps.onOpenTerminal} onOpenProject={() => undefined} onBranch={message => branch(message)} onFork={async message => { await branch(message, "fork"); }} onForkAndForget={forkAndForget} forkSourceName={session().state.forkSource ? componentProps.forkSourceName?.(session().state.forkSource!) : undefined} onOpenForkSource={componentProps.onOpenForkSource} onAgent={(name) => void transport().command({ type: "select_agent", agent: name }).then(() => { transport().promptControls.reset();
 
   return session().refresh(); }).catch(reportControlError)} onModel={(model) => transport().promptControls.model(model, transport().promptControls.state(session().state).thinkingLevel)} onToggleFastMode={() => transport().promptControls.toggle(statuses())} onThinking={(level) => transport().promptControls.thinking(level)} />);
 
   const renderSplitControlError = () => (controlError() && <div class="split-control-error" role="alert"><span>{(controlError())}</span>{!connected() && <button onClick={() => { setControlError("Reconnecting…"); reconnectRef.current(); }}>Retry</button>}<button aria-label="Dismiss split pane error" onClick={() => setControlError(undefined)}>×</button></div>);
 
-  const feedbackLabel = () => feedbackSending() ? "Sending…" : feedbackQueued() ? "Cancel auto-send" : reviewBusy() ? "Send when done" : sentFeedback() && sentFeedback() === feedbackKey() ? "Feedback sent" : "Send feedback";
-  const feedbackDisabled = () => feedbackSending() || (!feedbackQueued() && (!connected() || (!reviewBusy() && (!reviewFeedback() || sentFeedback() === feedbackKey()))));
-  const renderReviewFeedback = () => componentProps.onMessageMain && <button type="button" class="review-feedback-button" aria-pressed={feedbackQueued()} disabled={feedbackDisabled()} onClick={clickFeedback}>{feedbackLabel()}</button>;
+  const renderActions = () => <Show when={componentProps.actions}>{actions => <Dynamic component={actions()} state={() => session().state} messages={() => session().messages} paneKey={() => componentProps.session.id} connected={connected} busy={paneBusy} reportError={reportControlError} />}</Show>;
 
   return <section class="split-chat" aria-label={`Split conversation: ${componentProps.session.name}`}>
-    <header class="split-pane-header"><span><strong data-tooltip={componentProps.session.name}>{componentProps.session.name}</strong><small data-tooltip={componentProps.session.cwd}>{componentProps.session.project}</small></span><div class="split-pane-actions">{renderReviewFeedback()}<button class="split-pane-close" aria-label="Close split pane" data-tooltip="Close split pane" onClick={componentProps.onClose}><X size={15} /></button></div></header>
+    <header class="split-pane-header"><span><strong data-tooltip={componentProps.session.name}>{componentProps.session.name}</strong><small data-tooltip={componentProps.session.cwd}>{componentProps.session.project}</small></span><div class="split-pane-actions">{renderActions()}<button class="split-pane-close" aria-label="Close split pane" data-tooltip="Close split pane" onClick={componentProps.onClose}><X size={15} /></button></div></header>
     {renderSplitPaneStatus()}
-    {componentProps.inheritedReviewParent && <div class="split-pane-status" role="status">Inherited review, opened read-only. Feedback belongs to the original conversation ({componentProps.inheritedReviewParent}). Open that conversation to send feedback.</div>}
-    {componentProps.archivedReview && <div class="split-pane-status" role="status">This review is archived and read-only. <button type="button" onClick={componentProps.onShowArchive}>Open archived sessions to restore it</button></div>}
+    <Show when={componentProps.notice}>{notice => <Dynamic component={notice()} onShowArchive={componentProps.onShowArchive} />}</Show>
     {renderSplitControlError()}
     {notices().length > 0 && <div class="split-notices">{<Key each={notices()} by={(notice) => notice.id}>{(notice, _index) => <div class="error-toast" role="alert" ><strong>{notice().title}</strong><span>{notice().message}</span><button aria-label={`Dismiss ${notice().title}`} onClick={() => setNotices((current) => current.filter((item) => item.id !== notice().id))}>×</button></div>}</Key>}</div>}
   </section>;

@@ -39,7 +39,7 @@ const SplitChatPane = lazy(() => import("./components/SplitChatPane").then(modul
 const SubagentPane = lazy(() => import("./components/SubagentPane").then(module => ({ default: module.SubagentPane })));
 
 export default function App(props: { suppressConnectionNotices?: boolean } = {}) {
- const { modelVisibility, drafts, archiveReplacedSession, isArchiving, missingDirectoryDialog, archivesOpen, setArchivesOpen, runtimePool, transport, view, setView, activeConversationKey, chatViewKey, runningSessions, unseenSessions, pendingSettingsCount, chatSession, sessions, settings, settingsSaving, debugModeSaving, setSettingsDirty, panelOpen, setPanelOpen, query, setQuery, connected, error, setError, createGroupRequest, setCreateGroupRequest, handleCreateGroup, activeHostId, codexUsage, usageClock, opencodeGoBadge, codexUsageError, opencodeGoUsageError, setDialogs, notices, setNotices, queueExtensionDialog, resolveExtensionDialog, closeTransportDialogs, releaseSplitTransport, statuses, renameSession, setRenameSession, projectOpen, setProjectOpen, projectOpenRef, uploadsByTransport, setComposerUploads, splitPane, setSplitPane, subagentPane, hasSidePane, mainComposerFocusRequest, splitComposerFocusRequest, activePane, setActivePane, terminals, terminalOpen, terminalLocationState, startTerminal, addTerminal, selectTerminal, deleteTerminal, reconnectPending, splitSessionId, composerState, terminalViewKey, syncSessionIndex, composerControls, resolveHomeDirectory, send, respondToReview, closeSplitPane, openSubagent, canLeaveSettings, rekeyConversationUi, branch, forkAndForget, forkSourceName, openForkSource, revealEntryId, entryRevealed, startNewSession, newSession, clearChatProject, chooseChatHost, selectSession, setModel, setThinking, abortInteraction, pauseInteraction, resumeInteraction, saveSettings, setAgent, openProject, chooseChatProject, sessionAction, draftChangeFor, uploadsChangeFor, toggleComposerTerminal, toggleDebugMode, reconnectMain, extensionStateIsCurrent, activeDialog, projectCwd, mobileSidebarOpen, sidebar, chatAgentProps, chatModels, chatCommands, chatWidgets } = createAppConversations(() => { void ChatView.preload().catch(() => undefined); });
+ const { modelVisibility, drafts, archiveReplacedSession, isArchiving, missingDirectoryDialog, archivesOpen, setArchivesOpen, runtimePool, transport, view, setView, activeConversationKey, chatViewKey, runningSessions, unseenSessions, pendingSettingsCount, chatSession, sessions, settings, settingsSaving, debugModeSaving, setSettingsDirty, panelOpen, setPanelOpen, query, setQuery, connected, error, setError, createGroupRequest, setCreateGroupRequest, handleCreateGroup, activeHostId, codexUsage, usageClock, opencodeGoBadge, codexUsageError, opencodeGoUsageError, setDialogs, notices, setNotices, queueExtensionDialog, resolveExtensionDialog, closeTransportDialogs, releaseSplitTransport, statuses, renameSession, setRenameSession, projectOpen, setProjectOpen, projectOpenRef, uploadsByTransport, setComposerUploads, splitPane, setSplitPane, subagentPane, hasSidePane, mainComposerFocusRequest, splitComposerFocusRequest, activePane, setActivePane, terminals, terminalOpen, terminalLocationState, startTerminal, addTerminal, selectTerminal, deleteTerminal, reconnectPending, splitSessionId, composerState, terminalViewKey, syncSessionIndex, composerControls, resolveHomeDirectory, send, respondToSplitRequest, closeSplitPane, openSubagent, canLeaveSettings, rekeyConversationUi, branch, forkAndForget, forkSourceName, openForkSource, revealEntryId, entryRevealed, startNewSession, newSession, clearChatProject, chooseChatHost, selectSession, setModel, setThinking, abortInteraction, pauseInteraction, resumeInteraction, saveSettings, setAgent, openProject, chooseChatProject, sessionAction, draftChangeFor, uploadsChangeFor, toggleComposerTerminal, toggleDebugMode, reconnectMain, extensionStateIsCurrent, activeDialog, projectCwd, mobileSidebarOpen, sidebar, chatAgentProps, chatModels, chatCommands, chatWidgets } = createAppConversations(() => { void ChatView.preload().catch(() => undefined); });
 
   const pluginPane = createPluginWorkspace(conversationSource(activeHostId, chatSession), () => view() === "chat", closeSplitPane);
   createEffect(() => { if (hasSidePane()) pluginPane.close(); });
@@ -78,14 +78,6 @@ export default function App(props: { suppressConnectionNotices?: boolean } = {})
         const pane = required(splitPane());
         const currentPane = () => splitPane()?.key === pane.key ? splitPane() : undefined;
 
-        const inheritedParent = () => {
-          const review = pane.review;
-
-          return review?.inherited || review?.readOnly && !review.archived ? review.parentSessionId : undefined;
-        };
-
-        const archivedReview = () => pane.review?.archived;
-
         const changeSession = (next: SessionSummary, owner: NativeTransport) => {
           const current = currentPane();
 
@@ -107,10 +99,9 @@ export default function App(props: { suppressConnectionNotices?: boolean } = {})
           onDialogRequest={queueExtensionDialog} onDialogResolved={resolveExtensionDialog} onDialogTransportClosed={closeTransportDialogs}
           onOpenForkSource={source => openForkSource(source, (currentPane()?.session ?? pane.session).hostId ?? "local")}
           forkSourceName={source => sessions().find(session => session.id === source.sessionId && (session.hostId ?? "local") === ((currentPane()?.session ?? pane.session).hostId ?? "local"))?.name}
-          onReleaseTransport={releaseSplitTransport} onArchiveOriginal={archiveReplacedSession} onSessionChange={changeSession} freshReview={Boolean(pane.review)} inheritedReviewParent={inheritedParent()} archivedReview={archivedReview()} onShowArchive={() => { setArchivesOpen(true); setPanelOpen(true); }} initialPrompt={pane.review?.task} initialImages={pane.review?.images}
-          onReady={pane.review ? () => respondToReview(required(pane.review).requestId, { value: "opened" }) : undefined}
-          onMessageMain={pane.review?.messageMain}
-          onFailed={pane.review ? () => respondToReview(required(pane.review).requestId, { cancelled: true }) : undefined}
+          onReleaseTransport={releaseSplitTransport} onArchiveOriginal={archiveReplacedSession} onSessionChange={changeSession} pluginPane={Boolean(pane.request)} readOnly={pane.request?.readOnly} actions={pane.request?.actions} notice={pane.request?.notice} onShowArchive={() => { setArchivesOpen(true); setPanelOpen(true); }} initialPrompt={pane.request?.initialPrompt} initialImages={pane.request?.initialImages}
+          onReady={pane.request ? () => respondToSplitRequest(required(pane.request).requestId, { value: "opened" }) : undefined}
+          onFailed={pane.request ? () => respondToSplitRequest(required(pane.request).requestId, { cancelled: true }) : undefined}
           onClose={() => { if (currentPane()) closeSplitPane(); }} />;
       }}</Rerun></Show>);
 

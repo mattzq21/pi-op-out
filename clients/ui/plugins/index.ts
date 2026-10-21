@@ -1,13 +1,28 @@
 import { createSignal } from "solid-js";
+import { ClipboardCheck } from "lucide-solid";
 import { z } from "zod";
 import { invoke } from "../lib/platform";
-import type { PluginModule } from "./types";
+import type { PluginDefinition } from "./types";
 import { flushPlugins, waitForClientPlugins } from "./lifecycle";
+import { reviewSplitPane } from "./review/requests";
 
-export const plugins = [
-  { id: "chatgpt", scope: "client", name: "ChatGPT", description: "Client-owned ChatGPT chats with context from any agent host.", load: (): Promise<PluginModule> => import("./chatgpt/plugin") },
-  { id: "markdown", scope: "conversation", name: "Notes", description: "Shared conversation notes, with one client editing at a time.", load: (): Promise<PluginModule> => import("./markdown/plugin") },
+export const plugins: PluginDefinition[] = [
+  { id: "chatgpt", scope: "client", name: "ChatGPT", description: "Client-owned ChatGPT chats with context from any agent host.", load: () => import("./chatgpt/plugin") },
+  { id: "markdown", scope: "conversation", name: "Notes", description: "Shared conversation notes, with one client editing at a time.", load: () => import("./markdown/plugin") },
+  { id: "cost", scope: "host", name: "Cost limit", description: "Per-conversation API cost limit, set with /cost.", load: () => import("./cost/plugin") },
+  { id: "review", scope: "host", name: "Review", description: "Code reviews in a split pane, started with /review.", load: () => import("./review/plugin"),
+    settings: { section: "review", label: "Review", description: "Choose the agent and instructions for code reviews.", icon: ClipboardCheck, load: () => import("./review/ReviewSettings").then(module => ({ default: module.ReviewSettings })) },
+    splitPane: reviewSplitPane,
+    messages: { "piop-review-link": () => import("./review/ReviewLink").then(module => ({ default: module.ReviewLink })) } },
 ];
+
+export const splitPaneHandler = (title?: string) => plugins.find(plugin => plugin.splitPane?.title === title)?.splitPane;
+
+export function splitPaneCommand(text: string) {
+  const [word] = text.trim().split(/\s/, 1);
+
+  return word.startsWith("/") ? plugins.find(plugin => plugin.splitPane?.commands.includes(word.slice(1)))?.splitPane : undefined;
+}
 
 export const pluginStatusSchema = z.object({ enabled: z.array(z.string()), configured: z.array(z.string()), revision: z.string(), error: z.string().nullable() });
 

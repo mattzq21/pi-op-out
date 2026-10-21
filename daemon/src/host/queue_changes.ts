@@ -2,7 +2,8 @@ import { array, clone, flag, jsonEqual, text } from './json';
 import type { Mutex } from '../util/sync';
 import { sortHeld, unique } from './queue_state';
 import type { QueueDelivery } from './queue_delivery';
-import { reviewCommand } from './queue_submission';
+import { commandName } from '../plugin_contributions';
+import { queuedCommand } from './queue_submission';
 
 /**
  * Changes one pending item: removes it, switches it between steer and follow-up, moves it, or sends it again.
@@ -23,7 +24,7 @@ export async function changePending(queue: QueueDelivery, gate: Mutex, id: strin
     const change = pendingChange(queue, id, action);
     if (!change) return null;
     const { target, behavior, neighbor } = change;
-    if (action === 'steer' && reviewCommand(text(target, 'message'))) throw new Error('Review commands can only be queued as a follow-up');
+    if (action === 'steer' && queuedCommand(text(target, 'message'))) throw new Error('/' + commandName(text(target, 'message')) + ' can only be queued as a follow-up');
     assertOwner();
     if (cancelling) return await changeLive(queue, id, 'remove', undefined, action);
     if (changeHeld(queue, id, behavior, neighbor, action)) { await queue.publish(); return null; }

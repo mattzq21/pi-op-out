@@ -68,8 +68,8 @@ export class SessionRuntimePool {
 
     this.liveRevision += 1; this.notify();
   }
-  private reviewTransports = new WeakSet<NativeTransport>();
-  liveSessionSummaries() { return [...this.releasedSessions.values(), ...[...this.liveSessions].flatMap(([transport, session]) => !this.reviewTransports.has(transport) ? [session] : [])]; }
+  private pluginPaneTransports = new WeakSet<NativeTransport>();
+  liveSessionSummaries() { return [...this.releasedSessions.values(), ...[...this.liveSessions].flatMap(([transport, session]) => !this.pluginPaneTransports.has(transport) ? [session] : [])]; }
   setLiveSession(transport: NativeTransport, session: SessionSummary) {
     if (this.isRemoved(session)) return;
     this.releasedSessions.delete(sessionKey(session.hostId ?? "local", session.id));
@@ -178,9 +178,9 @@ export class SessionRuntimePool {
     return transport;
   }
 
-  forReview(session: SessionSummary) {
+  forPluginPane(session: SessionSummary) {
     const transport = this.forSession(session);
-    this.reviewTransports.add(transport);
+    this.pluginPaneTransports.add(transport);
 
     return transport;
   }
@@ -343,7 +343,7 @@ export class SessionRuntimePool {
 
       const summary = this.liveSessions.get(transport);
 
-      if (summary && keepSummary && !this.reviewTransports.has(transport) && !this.isRemoved(summary)) this.releasedSessions.set(sessionKey(summary.hostId ?? "local", summary.id), summary);
+      if (summary && keepSummary && !this.pluginPaneTransports.has(transport) && !this.isRemoved(summary)) this.releasedSessions.set(sessionKey(summary.hostId ?? "local", summary.id), summary);
 
       if (this.liveSessions.delete(transport)) { this.liveRevision += 1; this.notify(); }
 

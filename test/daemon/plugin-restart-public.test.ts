@@ -20,7 +20,7 @@ async function restartResult(restartId: string, target: TestDaemon = daemon) {
 
 test('a plugin change waits for an open terminal and the current setup, then restarts the daemon with only the chosen plugins', async () => {
   const before = await daemon.invoke('plugin_status', { hostId: 'local' });
-  expect(before).toMatchObject({ enabled: ['chatgpt', 'markdown'], error: null });
+  expect(before).toMatchObject({ enabled: ['chatgpt', 'markdown', 'cost', 'review'], error: null });
 
   expect(await daemon.failure('restart_daemon', { hostId: 'local', enabled: ['markdown'], revision: 'stale', closeTerminals: false })).toContain('Plugin setup changed in another client');
   expect(await daemon.failure('restart_daemon', { hostId: 'local', enabled: ['markdown', 'unknown'], revision: before.revision, closeTerminals: true })).toBe('Unknown bundled plugin: unknown');

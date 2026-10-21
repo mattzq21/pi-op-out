@@ -19,7 +19,6 @@ import fastModelDiscovery from '../resources/fast-model-discovery.mjs?raw';
 import chatgptStream from '../resources/chatgpt-stream.mjs?raw';
 import chatgptStorageRaw from '../resources/chatgpt-storage.mjs?raw';
 import chatgptService from '../resources/chatgpt-service.mjs?raw';
-import reviewPrompt from '../resources/piop-reviews/review-prompt.txt?raw';
 import sessionBroker from '../resources/session-broker.ts?raw';
 import hooksExtendedIndex from '../resources/hooks-extended/index.ts?raw';
 import hooksExtendedInterface from '../resources/hooks-extended/interface.ts?raw';
@@ -31,7 +30,6 @@ import hooksAvailability from '../resources/hooks-extended/availability.ts?raw';
 import mcpSchemaBundle from '../resources/mcp-schema.bundle.mjs?raw';
 import mcpBridgeBundle from '../resources/mcp-bridge.bundle.mjs?raw';
 import fastModeBundle from '../resources/fast-mode.bundle.mjs?raw';
-import sessionCostLimitExtension from '../../extensions/piop-session-cost-limit/index.ts?raw';
 import codemodeToolsDescriptionExtension from '../../extensions/piop-codemode-tools-description/index.ts?raw';
 import providersRefreshExtension from '../../extensions/piop-providers-refresh/index.ts?raw';
 import rtkExtension from '../../extensions/piop-rtk/rtk.ts?raw';
@@ -98,10 +96,6 @@ import goalsPrompts from '../resources/piop-goals/prompts.ts?raw';
 import goalsCoordination from '../resources/piop-goals/coordination.ts?raw';
 import goalsTools from '../resources/piop-goals/tools.ts?raw';
 import goalsCommands from '../resources/piop-goals/commands.ts?raw';
-import reviewsIndex from '../resources/piop-reviews/index.ts?raw';
-import reviewsInterface from '../resources/piop-reviews/interface.ts?raw';
-import reviewsReviews from '../resources/piop-reviews/reviews.ts?raw';
-import reviewsCommands from '../resources/piop-reviews/commands.ts?raw';
 
 
 const bunEnvironment = 'process.env.PIOP_BUN = ' + JSON.stringify(process.execPath) + ';\n';
@@ -137,7 +131,6 @@ export {
   chatgptStream,
   chatgptStorage,
   chatgptService,
-  reviewPrompt,
   sessionBroker,
   sdkSessionList,
   runtimeConfiguration,
@@ -146,7 +139,6 @@ export {
   mcpSchemaBundle,
   mcpBridgeBundle,
   fastModeBundle,
-  sessionCostLimitExtension,
   codemodeToolsDescriptionExtension,
   providersRefreshExtension,
   rtkExtension,
@@ -228,9 +220,5 @@ export const SESSION_EXTENSIONS: Array<[string, Array<[string, string]>]> = [
     ['interface.ts', goalsInterface], ['state.ts', goalsState], ['prompts.ts', goalsPrompts], ['coordination.ts', goalsCoordination],
     ['preparation.ts', goalsPreparation], ['goals.ts', goalsGoals], ['tools.ts', goalsTools],
     ['commands.ts', goalsCommands], ['index.ts', goalsIndex],
-  ]],
-  ['piop-reviews', [
-    ['interface.ts', reviewsInterface], ['review-prompt.txt', reviewPrompt], ['reviews.ts', reviewsReviews],
-    ['commands.ts', reviewsCommands], ['index.ts', reviewsIndex],
   ]],
 ];

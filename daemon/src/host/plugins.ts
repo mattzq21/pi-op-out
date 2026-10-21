@@ -3,6 +3,7 @@ import { join } from 'node:path';
 import * as Endpoint from '../daemon_endpoint';
 import * as DaemonRestart from '../daemon_restart';
 import * as RestartStorage from '../restart_storage';
+import * as Contributions from '../plugin_contributions';
 import { chatgptService, chatgptStorage, chatgptStream } from '../resources';
 import { RwLock, errorText, sleep } from '../util/sync';
 import * as Markdown from './markdown';
@@ -11,8 +12,8 @@ import type { Host } from './controller';
 
 export { preserveLeasesForRestart } from './markdown';
 
-const BUNDLED = ['chatgpt', 'markdown'];
-const NAMES: Record<string, string> = { chatgpt: 'ChatGPT', markdown: 'Notes' };
+const BUNDLED = Contributions.CATALOG.map(plugin => plugin.id);
+const NAMES: Record<string, string> = Object.fromEntries(Contributions.CATALOG.map(plugin => [plugin.id, plugin.name]));
 const CHATGPT_SOURCE = chatgptStream + '\n' + chatgptStorage + '\n' + chatgptService +
   '\nconst bundledPlugin = { call: handleChatGpt, idle: chatGptIdle, checkpoint: chatGptTicketSnapshot, restore: chatGptRestore };';
 
@@ -31,7 +32,7 @@ class Runtime {
   /** configured lists every requested plugin; enabled lists only those that started. */
   constructor(readonly configured: string[], readonly enabled: string[], readonly chatgpt: Sdk | null, readonly failures: string[]) {}
 
-  /** Starts each plugin on its own, so one failed plugin does not stop the others. */
+  /** Starts each plugin on its own, so one failed plugin does not stop the others. Plugins that only add Pi extensions and commands have nothing to start. */
   static async load(executable: string, enabled: string[], events: Events): Promise<Runtime> {
     validate(enabled);
     const started: string[] = [];
@@ -88,6 +89,7 @@ class Runtime {
       if (!this.chatgpt) throw new Error('ChatGPT plugin is unavailable');
       return this.chatgpt.request({ method: 'plugin_call', request: packet.request ?? null });
     }
+    if (BUNDLED.includes(id)) throw new Error('The ' + NAMES[id] + ' plugin does not accept plugin requests');
     throw new Error('Unknown plugin: ' + id);
   }
 
@@ -192,6 +194,7 @@ export class PluginService {
         }
       } catch (reason) { errors.push(errorText(reason)); }
       const runtime = await Runtime.load(this.executable, enabled, this.events());
+      Contributions.activate(runtime.enabled);
       if (runtime.failures.length) errors.push('Some plugins could not start: ' + runtime.failures.map(failure => failure.replace(/\.$/, '')).join('; ') + '. Restart the plugins to try again.');
       try { await runtime.restoreStartup(); } catch (reason) { errors.push(errorText(reason)); }
       this.state = { runtime, revision: randomUUID(), error: errors.length ? errors.join('\n') : null, workerError: null };

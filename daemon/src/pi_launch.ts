@@ -4,6 +4,7 @@ import { join, sep } from 'node:path';
 import { STORAGE_DIRECTORY } from './config';
 import { homeDir, nodeExecutable, pathWithNode, piExecutable } from './environment';
 import * as Ext from './extensions';
+import * as Contributions from './plugin_contributions';
 import { ensureDesktopSessionsDir, shellQuote } from './process_io';
 import * as Registry from './session_registry';
 import { validateRemoteHost, type AppSettings } from './settings_types';
@@ -172,23 +173,24 @@ function configureLocalExtensions(command: LaunchCommand, settings: AppSettings,
   const mcpExtension = Ext.prepareMcpBridge();
   const contextWindowCapExtension = Ext.prepareContextWindowCapExtension(settings);
   const contextBarExtension = Ext.prepareContextBarExtension();
-  const sessionCostLimitExtension = Ext.prepareSessionCostLimitExtension(settings);
   const openaiCacheForkExtension = Ext.prepareOpenaiCacheForkExtension();
   const codexWebSearchExtension = Ext.prepareCodexWebSearchExtension();
   const definedAgentsExtension = Ext.prepareDefinedAgentsExtension();
   const session = Ext.prepareSessionExtensions();
+  const plugins = Ext.preparePluginExtensions();
+  const after = (core: Contributions.CoreExtension) => plugins.filter(plugin => plugin.after === core).flatMap(plugin => ['--extension', plugin.path]);
   command.args.push('--extension', 'builtin:codemode', '--extension', 'builtin:tool-search');
   command.args.push('--extension', Ext.prepareCodemodeToolsDescriptionExtension(), '--session-dir', sessionDir, '--approve', '--no-skills',
     '--extension', Ext.prepareProvidersRefreshExtension(), '--extension', mcpExtension, '--extension', session.storage, '--extension', session.hooks, '--extension', session.controls, '--extension', session.broker,
-    '--extension', session.goals, '--extension', session.reviews,
-    '--extension', contextWindowCapExtension, '--extension', contextBarExtension, '--extension', sessionCostLimitExtension,
+    '--extension', session.goals, ...after('goals'),
+    '--extension', contextWindowCapExtension, '--extension', contextBarExtension, ...after('context-bar'),
     '--extension', Ext.prepareFastModeExtension(), '--extension', openaiCacheForkExtension, '--extension', codexWebSearchExtension,
     '--extension', definedAgentsExtension);
   Object.assign(command.env, {
     PI_DESKTOP_DEFINED_AGENTS_EXTENSION: definedAgentsExtension,
     PI_DESKTOP_CODEX_WEB_SEARCH_EXTENSION: codexWebSearchExtension,
     PI_DESKTOP_CONTEXT_WINDOW_CAP_EXTENSION: contextWindowCapExtension,
-    PI_DESKTOP_SESSION_COST_LIMIT_EXTENSION: sessionCostLimitExtension,
+    PIOP_COMMAND_POLICY: JSON.stringify(Contributions.commandPolicy()),
     PI_DESKTOP_BROKER_URL: `http://127.0.0.1:${brokerPort}`,
     PI_DESKTOP_BROKER_TOKEN: brokerToken,
     PI_DESKTOP_HOST_ID: hostId,

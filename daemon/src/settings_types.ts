@@ -1,4 +1,4 @@
-import reviewPrompt from '../resources/piop-reviews/review-prompt.txt?raw';
+import { defaultPluginSettings, parsePluginSettings, serializePluginSettings, type PluginSettings } from '../plugins/catalog';
 import { defaultKeybindings } from './keybindings';
 import { capRangeError } from '../../extensions/piop-context-window-cap/interface';
 
@@ -10,10 +10,8 @@ export interface RemoteHost {
   piPath: string;
 }
 
-export interface AppSettings {
+export interface AppSettings extends PluginSettings {
   settingsRevision?: string;
-  reviewAgent: string;
-  reviewPrompt: string;
   localEnabled: boolean;
   modelAliases?: Record<string, string>;
   hiddenModels: string[];
@@ -36,9 +34,6 @@ export interface ToolConfig { name: string; description: string; enabled: boolea
 export interface SkillConfig { name: string; path: string; description: string; enabled: boolean; userInvokedOnly?: boolean }
 
 export const MAX_REMOTE_HOSTS = 16;
-
-export function generalAgent(): string { return 'general'; }
-export function defaultReviewPrompt(): string { return reviewPrompt.trim(); }
 
 function fail(field: string, expected: string): never { throw new Error(`invalid type for ${field}: expected ${expected}`); }
 
@@ -146,8 +141,7 @@ export function parseAppSettings(value: any): AppSettings {
   }
   const settings: AppSettings = {
     settingsRevision: optionalString(value.settingsRevision, 'settingsRevision'),
-    reviewAgent: stringField(value.reviewAgent, 'reviewAgent', generalAgent),
-    reviewPrompt: stringField(value.reviewPrompt, 'reviewPrompt', defaultReviewPrompt),
+    ...parsePluginSettings(value),
     localEnabled: boolField(value.localEnabled, 'localEnabled', true),
     modelAliases: modelAliases(value.modelAliases),
     hiddenModels: value.hiddenModels === undefined ? [] : stringArray(value.hiddenModels, 'hiddenModels'),
@@ -171,8 +165,7 @@ export function parseAppSettings(value: any): AppSettings {
 export function serializeAppSettings(settings: AppSettings): Record<string, unknown> {
   const result: Record<string, unknown> = {};
   if (settings.settingsRevision !== undefined) result.settingsRevision = settings.settingsRevision;
-  result.reviewAgent = settings.reviewAgent;
-  result.reviewPrompt = settings.reviewPrompt;
+  serializePluginSettings(settings, result);
   result.localEnabled = settings.localEnabled;
   result.modelAliases = settings.modelAliases ?? {};
   result.hiddenModels = settings.hiddenModels;
@@ -197,8 +190,7 @@ export function cloneSettings(settings: AppSettings): AppSettings {
 
 export function defaultSettings(): AppSettings {
   return {
-    reviewAgent: generalAgent(),
-    reviewPrompt: defaultReviewPrompt(),
+    ...defaultPluginSettings(),
     localEnabled: true,
     defaultFastMode: false,
     modelAliases: {},

@@ -1,11 +1,13 @@
 import { kind, text } from './json';
 import { lockGate } from './lock_gate';
 import * as Branching from './branching';
+import * as Contributions from '../plugin_contributions';
 import type { Host } from './controller';
 import type { Session } from './session';
 
 /** Runs a command from the view that owns the session. Commands that change the session check ownership first. */
 export async function sessionCommand(host: Host, session: Session, runtime: string, command: any): Promise<any> {
+  Contributions.pluginRequest(kind(command));
   const client = text(host.attachments.get(runtime), 'clientId');
   const assertOwner = () => {
     if (host.readonlyMap.has(runtime) || host.subscriptions.get(runtime) !== session || !host.ownership().owns(session.identity, client, false)) {
@@ -33,9 +35,10 @@ export async function queueCommand(session: Session, original: any, assertOwner?
   const message = text(command, 'message');
   const first = message.split(/\s+/).find(part => part) ?? '';
   if (first === '/goal' && Array.isArray(command.images) && command.images.length) throw new Error('Goals do not accept attachments. Remove the files and images before sending.');
-  const review = first === '/review' || first === '/rs';
-  if (kind(command) === 'prompt' && (!message.startsWith('/') || review) && !session.queue.held()) {
-    command.type = !review && command.streamingBehavior === 'steer' ? 'steer' : 'follow_up';
+  Contributions.assertCommandAvailable(message);
+  const queued = Contributions.queuedCommand(message);
+  if (kind(command) === 'prompt' && (!message.startsWith('/') || queued) && !session.queue.held()) {
+    command.type = !queued && command.streamingBehavior === 'steer' ? 'steer' : 'follow_up';
   }
   return session.queue.command(command, assertOwner);
 }

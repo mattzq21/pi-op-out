@@ -18,6 +18,7 @@ import type { MissingDirectoryRequest } from "./components/MissingDirectoryDialo
 import { isConversationChanged } from "./lib/conversationChanged";
 import { initialWindowTarget,NativeTransport,openSessionWindow } from "./lib/nativeTransport";
 import { chatSubmission,waitForConversationReady } from "./lib/chatSubmission";
+import { splitPaneCommand } from "./plugins";
 import { promptWasAccepted, submitDraftPrompt } from "./lib/draftSubmission";
 import { isMobile,listen } from "./lib/platform";
 import { sessionDebugAction } from "./lib/sessionDebugAction";
@@ -155,7 +156,7 @@ export function createAppConversations(preloadChat: () => void) {
   const [mainComposerFocusRequest, setMainComposerFocusRequest] = createSignal(0);
   const [splitComposerFocusRequest, setSplitComposerFocusRequest] = createSignal(0);
   const [activePane, setActivePane] = createSignal<"main" | "split">("main");
-  const pendingReviewRequest = createRef<{ id: string; transport: NativeTransport } | undefined>(undefined);
+  const pendingSplitRequest = createRef<{ id: string; transport: NativeTransport; command: string } | undefined>(undefined);
 
   const terminals = createTerminalController({
     transport, conversationKey: activeConversationKey, addNotice,
@@ -321,7 +322,7 @@ export function createAppConversations(preloadChat: () => void) {
 
   const composerControls = createComposerControls(transport, () => fastModelNames(hostFastModels(activeHostId())()));
   const configureRuntime = (value: AppSettings) => configureConversationRuntime(value, transport(), () => activeTransportRef.current);
-  const reviewImages = new WeakMap<NativeTransport, ImageAttachment[]>();
+  const commandImages = new WeakMap<NativeTransport, ImageAttachment[]>();
   const resolveHomeDirectory = (hostId: string) => transport().homeDirectory(hostId);
 
   const prepareSession = async (owner: NativeTransport) => {
@@ -343,7 +344,7 @@ export function createAppConversations(preloadChat: () => void) {
     }
   };
 
-  useAppEvents(() => ({ transport: transport(), prepareSession, handleEvent: chatSession().handleEvent, setDialogs, loadSettings, refresh, queueTerminalOutput, terminalExited: terminals.exited, addNotice, activeTransportRef, pendingReviewRequest, reviewImages, setSplitPane, activeHostIdRef, setExtensionOwner, setDefinedAgents, refreshSession, setStatuses, setWidgets, setComposerDraft, transportConversationKeys, terminalSessionId, setActivePane, setMainComposerFocusRequest, queueExtensionDialog, mainDialogOwnerRef, setActiveHostId, setActiveCwd, activateConversationKey, setTerminalOpen, setTerminalTarget, configureRuntime, setError, updateConnected, flushTerminalOutput: terminals.flushOutput }));
+  useAppEvents(() => ({ transport: transport(), prepareSession, handleEvent: chatSession().handleEvent, setDialogs, loadSettings, refresh, queueTerminalOutput, terminalExited: terminals.exited, addNotice, activeTransportRef, pendingSplitRequest, commandImages, setSplitPane, activeHostIdRef, setExtensionOwner, setDefinedAgents, refreshSession, setStatuses, setWidgets, setComposerDraft, transportConversationKeys, terminalSessionId, setActivePane, setMainComposerFocusRequest, queueExtensionDialog, mainDialogOwnerRef, setActiveHostId, setActiveCwd, activateConversationKey, setTerminalOpen, setTerminalTarget, configureRuntime, setError, updateConnected, flushTerminalOutput: terminals.flushOutput }));
   createDependencyEffect(() => {
     const capturedTransport = transport(); const capturedRuntimePool = runtimePool();
     const shutdown = () => { for (const id of terminals.draftTerminalIds()) void capturedTransport.closeTerminal(id).catch(() => undefined); void capturedRuntimePool.disconnectAll(); };
@@ -370,7 +371,7 @@ export function createAppConversations(preloadChat: () => void) {
     const ownerTransport = capturedTransport;
     const imagePayload = images.length ? { images } : {};
 
-    if (/^\/(?:review|rs)(?:\s|$)/.test(text.trim())) reviewImages.set(capturedTransport, images);
+    if (splitPaneCommand(text)) commandImages.set(capturedTransport, images);
 
     try {
       if (behavior) { const result = await submitDraftPrompt(ownerTransport, { type: behavior === "steer" ? "steer" : "follow_up", message: text, ...imagePayload });
@@ -383,15 +384,15 @@ export function createAppConversations(preloadChat: () => void) {
     } catch (reason) { addNotice({ title: "Could not send message", message: reason instanceof Error ? reason.message : String(reason) }); throw reason; }
   };
 
-  const respondToReview = (requestId: string, response: { value?: string; cancelled?: boolean }) => {
-    const pending = pendingReviewRequest.current;
+  const respondToSplitRequest = (requestId: string, response: { value?: string; cancelled?: boolean }) => {
+    const pending = pendingSplitRequest.current;
 
     if (!pending || pending.id !== requestId) return;
-    pendingReviewRequest.current = undefined;
-    void pending.transport.command({ type: "extension_ui_response", id: requestId, ...response }).catch((reason) => addNotice({ title: "Could not finish /review request", message: reason instanceof Error ? reason.message : String(reason) }));
+    pendingSplitRequest.current = undefined;
+    void pending.transport.command({ type: "extension_ui_response", id: requestId, ...response }).catch((reason) => addNotice({ title: `Could not finish ${pending.command} request`, message: reason instanceof Error ? reason.message : String(reason) }));
   };
 
-  const closeSplitPane = () => { if (splitPane()?.review) respondToReview(required(required((splitPane())).review).requestId, { cancelled: true }); setSplitPane(undefined); setSubagentPane(undefined); setActivePane("main"); };
+  const closeSplitPane = () => { if (splitPane()?.request) respondToSplitRequest(required(required((splitPane())).request).requestId, { cancelled: true }); setSplitPane(undefined); setSubagentPane(undefined); setActivePane("main"); };
 
   const openSubagent = (target: SubagentTarget) => { closeSplitPane(); setSubagentPane(target); setActivePane("split"); };
 
@@ -588,7 +589,7 @@ export function createAppConversations(preloadChat: () => void) {
   const chooseChatHost = (hostId: string) => hostId === activeHostId() ? undefined : startNewSession(true, undefined, undefined, hostId);
   const isSplitSession = (session: SessionSummary) => splitPane()?.session.id === session.id && (required((splitPane())).session.hostId ?? "local") === (session.hostId ?? "local");
   const isSelectedSession = (session: SessionSummary) => (session.hostId ?? "local") === activeHostId() && (session.id === chatSession().state.sessionId || `${session.hostId ?? "local"}:${session.id}` === activeConversationKey());
-  const closeSplitForSession = (session: SessionSummary) => { if (isSplitSession(session) || splitPane()?.review) closeSplitPane(); };
+  const closeSplitForSession = (session: SessionSummary) => { if (isSplitSession(session) || splitPane()?.request) closeSplitPane(); };
 
   const selectSession = (session: SessionSummary) => {
     if (archives.isPending(session) || !canLeaveSettings()) return undefined;
@@ -801,6 +802,6 @@ export function createAppConversations(preloadChat: () => void) {
       } });
   };
 
- return { modelVisibility, drafts, archiveReplacedSession: (session: SessionSummary) => archives.archiveSession(session, false), isArchiving: archives.isPending, missingDirectoryDialog, archivesOpen, setArchivesOpen, runtimePool, transport, view, setView, activeConversationKey, chatViewKey, runningSessions, unseenSessions, pendingSettingsCount, chatSession, sessions, settings, settingsSaving, debugModeSaving, setSettingsDirty, panelOpen, setPanelOpen, query, setQuery, connected, error, setError, createGroupRequest, setCreateGroupRequest, handleCreateGroup, activeHostId, codexUsage, usageClock, opencodeGoBadge, codexUsageError, opencodeGoUsageError, setDialogs, notices, setNotices, addNotice, queueExtensionDialog, resolveExtensionDialog, closeTransportDialogs, releaseSplitTransport, statuses, widgets, renameSession, setRenameSession, projectOpen, setProjectOpen, projectOpenRef, uploadsByTransport, setComposerDraft, setComposerUploads, splitPane, setSplitPane, subagentPane, hasSidePane, mainComposerFocusRequest, splitComposerFocusRequest, activePane, setActivePane, terminals, terminalOpen, terminalSessionId, terminalLocationState, startTerminal, addTerminal, selectTerminal, saveTerminalSnapshot, deleteTerminal, reconnectPending, splitSessionId, composerState, terminalViewKey, syncSessionIndex, composerControls, resolveHomeDirectory, send, respondToReview, closeSplitPane, openSubagent, canLeaveSettings, rekeyConversationUi, branch, forkAndForget, forkSourceName, openForkSource, revealEntryId, entryRevealed, startNewSession, newSession, clearChatProject, chooseChatHost, selectSession, setModel, setThinking, abortInteraction, pauseInteraction, resumeInteraction, saveSettings, setAgent, openProject, chooseChatProject, sessionAction, draftChangeFor, uploadsChangeFor, toggleComposerTerminal, toggleDebugMode, reconnectMain, extensionStateIsCurrent, activeDialog, projectCwd, mobileSidebarOpen, sidebar, chatAgentProps, chatModels, chatCommands, chatWidgets };
+ return { modelVisibility, drafts, archiveReplacedSession: (session: SessionSummary) => archives.archiveSession(session, false), isArchiving: archives.isPending, missingDirectoryDialog, archivesOpen, setArchivesOpen, runtimePool, transport, view, setView, activeConversationKey, chatViewKey, runningSessions, unseenSessions, pendingSettingsCount, chatSession, sessions, settings, settingsSaving, debugModeSaving, setSettingsDirty, panelOpen, setPanelOpen, query, setQuery, connected, error, setError, createGroupRequest, setCreateGroupRequest, handleCreateGroup, activeHostId, codexUsage, usageClock, opencodeGoBadge, codexUsageError, opencodeGoUsageError, setDialogs, notices, setNotices, addNotice, queueExtensionDialog, resolveExtensionDialog, closeTransportDialogs, releaseSplitTransport, statuses, widgets, renameSession, setRenameSession, projectOpen, setProjectOpen, projectOpenRef, uploadsByTransport, setComposerDraft, setComposerUploads, splitPane, setSplitPane, subagentPane, hasSidePane, mainComposerFocusRequest, splitComposerFocusRequest, activePane, setActivePane, terminals, terminalOpen, terminalSessionId, terminalLocationState, startTerminal, addTerminal, selectTerminal, saveTerminalSnapshot, deleteTerminal, reconnectPending, splitSessionId, composerState, terminalViewKey, syncSessionIndex, composerControls, resolveHomeDirectory, send, respondToSplitRequest, closeSplitPane, openSubagent, canLeaveSettings, rekeyConversationUi, branch, forkAndForget, forkSourceName, openForkSource, revealEntryId, entryRevealed, startNewSession, newSession, clearChatProject, chooseChatHost, selectSession, setModel, setThinking, abortInteraction, pauseInteraction, resumeInteraction, saveSettings, setAgent, openProject, chooseChatProject, sessionAction, draftChangeFor, uploadsChangeFor, toggleComposerTerminal, toggleDebugMode, reconnectMain, extensionStateIsCurrent, activeDialog, projectCwd, mobileSidebarOpen, sidebar, chatAgentProps, chatModels, chatCommands, chatWidgets };
 
 }

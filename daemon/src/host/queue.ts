@@ -5,7 +5,7 @@ import { QueueState, heldMessages } from './queue_state';
 import { QueueRecord, track } from './queue_record';
 import { QueueDelivery, type Execution } from './queue_delivery';
 import { changePending } from './queue_changes';
-import { enqueue, executeHeldPrompt, reviewCommand } from './queue_submission';
+import { enqueue, executeHeldPrompt, queuedCommand } from './queue_submission';
 
 const TIMEOUT = 'Pi command timed out';
 
@@ -158,7 +158,7 @@ export class SessionQueue {
     }
     if (this.resumingPrompt(command, name)) return this.resumeCommand(command, name);
     if (name !== 'steer' && name !== 'follow_up') return this.delivery.execute(command);
-    return enqueue(this.delivery, command, reviewCommand(text(command, 'message')) ? 'follow_up' : name);
+    return enqueue(this.delivery, command, queuedCommand(text(command, 'message')) ? 'follow_up' : name);
   }
 
   private async clear(command: any): Promise<any> {

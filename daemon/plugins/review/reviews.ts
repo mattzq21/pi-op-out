@@ -1,19 +1,19 @@
-import { sessionStorage } from "../piop-storage/interface.ts";
+import { sessionStorage } from "../../resources/piop-storage/interface.ts";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 import { open, readFile } from "node:fs/promises";
 import { constants } from "node:fs";
 import { homedir } from "node:os";
-import { reserveSessionId, writeSessionFile } from "../piop-storage/session-file.ts";
+import { reserveSessionId, writeSessionFile } from "../../resources/piop-storage/session-file.ts";
 import type { SessionAgentState, SubagentProfileRequest } from "../../../extensions/piop-define-agents/contracts.ts";
 import { Type as Schema, type Static } from "typebox";
 import { Check, Parse } from "typebox/value";
-import { currentHost } from "../session-broker/client.ts";
-import { childFastModeEntry } from "../session-broker/fast-mode.ts";
-import { locateConversation } from "../session-broker/conversation-location.ts";
-import { acknowledge, pendingReviews, release, type SessionPublication } from "../piop-storage/session-publication.cjs";
-import { read as readAppSettings } from "../session-broker/app-settings.cjs";
+import { currentHost } from "../../resources/session-broker/client.ts";
+import { childFastModeEntry } from "../../resources/session-broker/fast-mode.ts";
+import { locateConversation } from "../../resources/session-broker/conversation-location.ts";
+import { acknowledge, pendingReviews, release, type SessionPublication } from "../../resources/piop-storage/session-publication.cjs";
+import { read as readAppSettings } from "../../resources/session-broker/app-settings.cjs";
 import type { ReviewDelegation, ReviewImage, ReviewSession } from "./interface.ts";
 
 const reviewSchema = Schema.Object({ sessionId: Schema.String(), sessionPath: Schema.String(), cwd: Schema.String(), parentSessionId: Schema.String(), hostId: Schema.Optional(Schema.String()), publicationId: Schema.Optional(Schema.String()) });

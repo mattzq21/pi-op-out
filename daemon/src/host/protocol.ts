@@ -1,6 +1,7 @@
 import { closeSync, openSync, readSync } from 'node:fs';
 import { join } from 'node:path';
 import { kind } from './json';
+import { pluginRequest } from '../plugin_contributions';
 
 export { kind, text, flag, array, messageText } from './json';
 
@@ -105,12 +106,12 @@ function controlAction(command: string): string | undefined {
 
 const APP_REQUESTS = new Set(['queue_prompt', 'prepare_goal_prompt', 'get_goal_preparation', 'orchestration_message', 'provider_auth_refresh', 'context_cap_settings',
   'fork_and_forget', 'fork_after', 'copy_after', 'prepare_fork', 'select_agent', 'configure_agents', 'get_agent_configuration',
-  'review_feedback', 'open_review', 'set_fast_mode', 'conversation_client']);
+  'set_fast_mode', 'conversation_client']);
 
 export function wireCommand(command: any, id: string): any {
   const name = kind(command);
   const action = controlAction(name);
-  const appRequest = APP_REQUESTS.has(name) ? name : undefined;
+  const appRequest = APP_REQUESTS.has(name) || pluginRequest(name) ? name : undefined;
   const wire = { ...(command && typeof command === 'object' && !Array.isArray(command) ? command : {}), id };
   if (action !== undefined || appRequest !== undefined) {
     const payload = action !== undefined ? { id, action } : wire;

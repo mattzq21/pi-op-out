@@ -1,4 +1,4 @@
-import { extendedHooks } from "../../daemon/resources/hooks-extended/interface.ts";
+import { extendedHooks } from "../../resources/hooks-extended/interface.ts";
 import { Type } from "typebox";
 import { Check } from "typebox/value";
 import type { ExtensionAPI, ExtensionCommandContext, ExtensionContext } from "@earendil-works/pi-coding-agent";

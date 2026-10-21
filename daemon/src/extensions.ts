@@ -5,6 +5,7 @@ import { homeDir } from './environment';
 import { enabledToolNames } from './pi_launch';
 import { atomicWritePrivate, ensurePrivateDir } from './private_fs';
 import * as R from './resources';
+import * as Contributions from './plugin_contributions';
 import { publish } from './settings_records';
 import type { AppSettings } from './settings_types';
 
@@ -67,7 +68,7 @@ export const SESSION_BROKER_MODULES = R.SESSION_BROKER_MODULES;
 export const EXCALIDRAW_ASSETS = R.EXCALIDRAW_ASSETS;
 
 /** Installs session-broker and the session extensions that share its modules. Returns the entries in load order. */
-export function prepareSessionExtensions(): { hooks: string; storage: string; controls: string; broker: string; goals: string; reviews: string } {
+export function prepareSessionExtensions(): { hooks: string; storage: string; controls: string; broker: string; goals: string } {
   const dir = generatedExtensionRoot();
   ensurePrivateDir(dir);
   prepareBrokerStorage(dir);
@@ -80,7 +81,25 @@ export function prepareSessionExtensions(): { hooks: string; storage: string; co
   }
   const broker = join(dir, 'session-broker.ts');
   atomicWritePrivate(broker, R.sessionBroker);
-  return { hooks: join(dir, 'hooks-extended/index.ts'), storage: join(dir, 'piop-storage/index.ts'), controls: join(dir, 'piop-controls/index.ts'), broker, goals: join(dir, 'piop-goals/index.ts'), reviews: join(dir, 'piop-reviews/index.ts') };
+  return { hooks: join(dir, 'hooks-extended/index.ts'), storage: join(dir, 'piop-storage/index.ts'), controls: join(dir, 'piop-controls/index.ts'), broker, goals: join(dir, 'piop-goals/index.ts') };
+}
+
+/**
+ * Installs the Pi extensions of enabled plugins in plugins/<plugin id>/ and returns their entries with the core extension each follows.
+ * Plugin sources import core modules through ../../resources/, which is the generated extension root here.
+ */
+export function preparePluginExtensions(): Array<{ after: Contributions.CoreExtension; path: string }> {
+  const root = generatedExtensionRoot();
+  const entries: Array<{ after: Contributions.CoreExtension; path: string }> = [];
+  ensurePrivateDir(join(root, 'plugins'));
+  for (const plugin of Contributions.enabled()) {
+    if (!plugin.extension) continue;
+    const dir = join(root, 'plugins', plugin.id);
+    ensurePrivateDir(dir);
+    for (const [name, source] of plugin.extension.files) atomicWritePrivate(join(dir, name), source.replaceAll('"../../resources/', '"../../'));
+    entries.push({ after: plugin.extension.after, path: join(dir, 'index.ts') });
+  }
+  return entries;
 }
 
 function prepareSdkStorage(dir: string): void {
@@ -158,14 +177,6 @@ export function prepareContextWindowCapExtension(settings: AppSettings): string 
   atomicWritePrivate(join(dir, 'defaults.ts'), R.contextWindowCapDefaults.replace('../../daemon/resources/session-broker/app-settings.cjs', './app-settings.cjs'));
   atomicWritePrivate(extensionPath, R.contextWindowCapExtension.replace('../../daemon/resources/hooks-extended/interface.ts', '../hooks-extended/interface.ts'));
   return extensionPath;
-}
-
-export function prepareSessionCostLimitExtension(_settings: AppSettings): string {
-  const dir = join(generatedExtensionRoot(), 'piop-session-cost-limit');
-  ensurePrivateDir(dir);
-  const path = join(dir, 'index.ts');
-  atomicWritePrivate(path, R.sessionCostLimitExtension.replace('../../daemon/resources/hooks-extended/interface.ts', '../hooks-extended/interface.ts'));
-  return path;
 }
 
 function prepareAgentDirectories(dir: string): void {

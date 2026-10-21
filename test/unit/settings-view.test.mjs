@@ -1,8 +1,9 @@
 import assert from 'node:assert/strict';
 import { describe, test, beforeEach, afterEach } from 'node:test';
-import { installDom, renderComponent, enterText, act } from '../dom.mjs';
+import { installDom, renderComponent, enterText, act, untilDom } from '../dom.mjs';
 import { SettingsView } from '../../clients/ui/components/SettingsView.tsx';
 import { mockIPC } from '../mock-ipc.mjs';
+import { refreshPlugins } from '../../clients/ui/plugins/index.ts';
 import { defaultKeybindings } from '../../clients/ui/lib/keybindings.ts';
 
 describe('settings editor', () => {
@@ -10,6 +11,7 @@ describe('settings editor', () => {
   beforeEach(() => {
     dom = installDom(); saves = []; dirty = []; supportedModels = ['model'];
     mockIPC((command, args) => {
+      if (command === 'plugin_status') return { enabled: ['cost', 'review'], configured: ['cost', 'review'], revision: 'settings-1', error: null };
       if (command === 'provider_auth' && args.request.action === 'fast_models') return { ready: true, providers: { p: { supportedModelIds: supportedModels } } };
       throw new Error('Unexpected command: ' + command);
     }, { shouldMockEvents: true });
@@ -108,6 +110,29 @@ describe('settings editor', () => {
     assert.notEqual(control('Review prompt').value, 'Only spelling.');
     await click(save());
     assert.equal(saves[0][0].reviewPrompt, control('Review prompt').value);
+  });
+
+  test('review settings follow the selected host plugin state without clearing saved choices', async () => {
+    let enabled = ['cost', 'review'];
+    mockIPC(command => {
+      if (command === 'plugin_status') return { enabled, configured: enabled, revision: enabled.join(','), error: null };
+      throw new Error('Unexpected command: ' + command);
+    }, { shouldMockEvents: true });
+    await render({ scope: 'daemon', settings: { ...props.settings, reviewAgent: 'general', reviewPrompt: 'Keep this prompt.' } });
+    await untilDom(() => button('Review'));
+    await section('Review');
+    await untilDom(() => control('Review prompt'));
+    assert.equal(control('Review prompt').value, 'Keep this prompt.');
+    enabled = ['cost'];
+    await act(() => refreshPlugins('local'));
+    await untilDom(() => !button('Review'));
+    assert.equal(control('Review prompt'), null);
+    enabled = ['cost', 'review'];
+    await act(() => refreshPlugins('local'));
+    await section('Review');
+    await untilDom(() => control('Review prompt'));
+    assert.equal(control('Review prompt').value, 'Keep this prompt.');
+    assert.equal(saves.length, 0);
   });
 
   test('subagent limits are saved as whole numbers, and a cleared or invalid limit cannot be saved', async () => {

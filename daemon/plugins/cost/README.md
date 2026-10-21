@@ -16,7 +16,7 @@ forks and branches; conversations that already have a saved limit keep it.
 Run the extension directly:
 
 ```bash
-pi --extension ./extensions/piop-session-cost-limit/index.ts
+pi --extension ./daemon/plugins/cost/index.ts
 ```
 
 When the session cost on the current branch reaches the limit, new prompts

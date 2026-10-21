@@ -4,7 +4,7 @@ import type { PluginConversation } from "../plugins/types";
 import { stringsSchema, validItems } from "../lib/messageSchemas";
 import { required } from "../lib/required";
 import { GoalBar } from "./GoalBar";
-import { ReviewNavigationContext } from "./ReviewLink";
+import { PluginMessageContext } from "../plugins/messages";
 import { chatSubmission, trackChatSubmission } from "../lib/chatSubmission";
 import { draftUploadsFromImages, stageDraftSubmission, type DraftSubmissionHandle, type DraftSubmissionPayload } from "../lib/draftSubmission";
 import { Key } from "@solid-primitives/keyed";
@@ -293,7 +293,7 @@ export function ChatView(props: Props & { transcriptActions?: JSXElement; follow
     <TranscriptPlugins messages={() => messagesRef.current} source={() => ({ hostId: props.transport?.currentHostId() ?? "local", sessionId: props.state.sessionId, title: props.state.sessionName || "Current conversation", messageCount: props.state.messageCount, messages: [...props.messages], follow: props.followConversation })} />
   </main>;
 
-  return <ConversationHostContext.Provider value={() => props.transport?.currentHostId() ?? "local"}><ReviewNavigationContext.Provider value={{ sessionId: () => props.state.sessionId, open: async id => { if (!props.transport) throw new Error("Conversation is unavailable"); await props.transport.command({ type: "open_review", reviewId: id }); } }}><ConversationShell /></ReviewNavigationContext.Provider></ConversationHostContext.Provider>;
+  return <ConversationHostContext.Provider value={() => props.transport?.currentHostId() ?? "local"}><PluginMessageContext.Provider value={{ sessionId: () => props.state.sessionId, command: async command => { if (!props.transport) throw new Error("Conversation is unavailable"); return props.transport.command(command); } }}><ConversationShell /></PluginMessageContext.Provider></ConversationHostContext.Provider>;
 }
 
 type ConversationGroup = { messages: ChatMessage[]; promptContexts: PromptContextInfo[] };

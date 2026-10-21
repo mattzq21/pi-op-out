@@ -1,8 +1,8 @@
 import { For, Show } from "solid-js";
-import type { AgentProfile, AppSettings } from "../types";
-import defaultPrompt from "../../../daemon/resources/piop-reviews/review-prompt.txt?raw";
+import type { PluginSettingsProps } from "../types";
+import defaultPrompt from "../../../../daemon/plugins/review/review-prompt.txt?raw";
 
-export function ReviewSettings(props: { settings: AppSettings; agents: AgentProfile[]; onChange: (patch: Partial<AppSettings>) => void }) {
+export function ReviewSettings(props: PluginSettingsProps) {
   const selected = () => props.settings.reviewAgent ?? "general";
   const available = () => props.agents.some(agent => agent.name === selected());
 

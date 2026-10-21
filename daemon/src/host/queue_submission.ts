@@ -3,10 +3,7 @@ import { validateItem } from './queue_storage';
 import { durableMessages, sortHeld } from './queue_state';
 import type { QueueDelivery } from './queue_delivery';
 
-export function reviewCommand(message: string): boolean {
-  const first = message.split(/\s+/).find(part => part.length > 0);
-  return first === '/review' || first === '/rs';
-}
+export { queuedCommand } from '../plugin_contributions';
 
 function goalObjective(message: string): boolean {
   const trimmed = message.trimStart();

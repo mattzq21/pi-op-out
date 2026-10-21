@@ -5,6 +5,7 @@ import type { AgentState, ChatMessage, Model, RpcEvent, SlashCommand } from "../
 import type { NativeTransport } from "./nativeTransport";
 import { z } from "zod";
 import { wireMessageSchema } from "./messageSchemas";
+import { pluginMessageMetadata } from "../plugins/messageMetadata";
 
 type SessionResource = Array<RpcEvent | undefined>;
 
@@ -225,7 +226,7 @@ export class SessionMemory {
   }
 
   private decorateMessage(message: ChatMessage): ChatMessage {
-    if (message.customType === "piop-review-feedback") return message;
+    if (pluginMessageMetadata(message.customType)?.retainContent) return message;
 
     if (message.role !== "tool") return stripToolArguments(message);
     const id = message.deferredToolPayload ?? message.toolCallId ?? message.id;
