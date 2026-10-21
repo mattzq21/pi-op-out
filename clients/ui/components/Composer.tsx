@@ -98,6 +98,15 @@ function commandMatches(commands: SlashCommand[], query: string) {
   return [...exact, ...matches].slice(0, 7);
 }
 
+/** The arguments a command takes, for example "[scope]" or "[on|off|toggle]". Undefined when the command declares none. */
+function commandUsage(command: SlashCommand) {
+  const options = command.options ?? [];
+  const hints = options.filter(option => !option.value).map(option => option.label);
+  const choices = options.filter(option => option.value).map(option => option.value);
+
+  return [...hints, ...(choices.length ? [`[${choices.join("|")}]`] : [])].join(" ") || undefined;
+}
+
 function skillMatches(commands: SlashCommand[], query: string) {
   const matches: SlashCommand[] = [];
 
@@ -565,9 +574,9 @@ export function Composer(props: Props) {
 
   const ComposerBody = () => {
     const renderComposerDropHint = () => (draggingFiles() && !controls().inputDisabled && <div class="composer-drop-hint" role="status">Drop files to attach</div>);
-    const renderCommandPalette = () => (<Show when={matches().length > 0}><div class="command-palette" role="listbox" aria-label={skillQuery() === undefined ? "piop commands" : "piop skills"}>{<Key each={matches()} by={(command) => `${command.source}:${command.name}`}>{(command, index) => <button ref={element => { if (index() === selectedMatch()) selectedCommandRef.current = element; }} role="option" aria-selected={index() === selectedMatch()}  type="button" onClick={() => chooseCommand(command())}><span><strong>{skillQuery() !== undefined ? `$${skillName(command())}` : `/${command().name}`}</strong>{command().description && <small>{command().description}</small>}</span></button>}</Key>}</div></Show>);
+    const renderCommandPalette = () => (<Show when={matches().length > 0}><div class="command-palette" role="listbox" aria-label={skillQuery() === undefined ? "piop commands" : "piop skills"}>{<Key each={matches()} by={(command) => `${command.source}:${command.name}`}>{(command, index) => <button ref={element => { if (index() === selectedMatch()) selectedCommandRef.current = element; }} role="option" aria-selected={index() === selectedMatch()}  type="button" onClick={() => chooseCommand(command())}><span><strong>{skillQuery() !== undefined ? `$${skillName(command())}` : `/${command().name}`}<Show when={skillQuery() === undefined && commandUsage(command())}>{usage => <em class="command-usage"> {usage()}</em>}</Show></strong>{!(skillQuery() === undefined && commandUsage(command())) && command().description && <small>{command().description}</small>}</span></button>}</Key>}</div></Show>);
     const renderArgumentPalette = () => (<Show when={argumentShown().length > 0}><div class="command-palette" role="listbox" aria-label={`/${argumentInput()?.command.name} options`}>
-      <Key each={argumentHints()} by={option => option.label}>{option => <div class="command-hint"><span><strong>{option().label}</strong>{option().description && <small>{option().description}</small>}</span></div>}</Key>
+      <Key each={argumentHints()} by={option => option.label}>{option => <div class="command-hint"><span><strong>{option().label}</strong></span></div>}</Key>
       <Key each={argumentChoices()} by={option => option.value}>{(option, index) => <button role="option" aria-selected={index() === selectedMatch()} type="button" onClick={() => chooseOption(option())}><span><strong>{option().label}</strong>{option().description && <small>{option().description}</small>}</span></button>}</Key>
     </div></Show>);
 

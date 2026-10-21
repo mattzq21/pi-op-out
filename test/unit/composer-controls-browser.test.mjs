@@ -164,10 +164,12 @@ test('Escape dismisses the command palette without sending', async t => {
 test('command options show after the command name: hints describe a free argument and choices fill it in', async t => {
   const page = await controlsPage(t);
   const editor = page.getByRole('textbox', { name: 'Message piop' });
+  await editor.fill('/rs');
+  assert.deepEqual(await page.getByRole('listbox', { name: 'piop commands' }).getByRole('option').allTextContents(), ['/rs [n]']);
   await editor.fill('/rs ');
   const rs = page.getByRole('listbox', { name: '/rs options' });
   await rs.waitFor();
-  assert.match(await rs.textContent(), /\[n\]Number of review subagents/);
+  assert.equal(await rs.textContent(), '[n]');
   assert.equal(await rs.getByRole('option').count(), 0);
   await editor.fill('/rs 2');
   assert.equal(await rs.count(), 0);
