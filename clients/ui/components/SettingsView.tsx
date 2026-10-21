@@ -4,7 +4,7 @@ import { stableSnapshot, settingsSnapshot, agentEditsSnapshot, settingKeys } fro
 import { applyClientPreferences, clientPreferenceKeys, clientPreferences, ClientPreferenceConflictError, mergeClientPreferences, SettingsSaveError } from "../lib/clientPreferenceMerge";
 import { required } from "../lib/required";
 import { hostFastModels, rejectsFastMode } from "../lib/fastModels";
-import { AgentTools } from "./AgentTools";
+import { AgentSkills, AgentTools } from "./AgentTools";
 import { agentProfileSchema } from "../lib/agentSchemas";
 import { McpSettings, type McpEditorDraft } from "./McpSettings";
 import { CapInput } from "./CapInput";
@@ -281,7 +281,6 @@ export function SettingsView(props: SettingsViewProps) {
   const agent = createMemo(() => (agentDrafts()[agentIndex()]));
   const agentFastModeEnabled = createMemo(() => (agent()?.fastMode ?? draft().defaultFastMode));
   const updateAgent = (value: Partial<AgentProfile>) => setAgentDrafts((current) => current.map((item, index) => index === agentIndex() ? { ...item, ...value } : item));
-  const toggleAgentResource = (key: "tools" | "skills", value: string) => { if (agent()) updateAgent({ [key]: agent()[key].includes(value) ? agent()[key].filter((item) => item !== value) : [...agent()[key], value] }); };
 
   const renameAgent = (name: string) => { if (!agent() || (!isBuiltInAgent(agent()) && name.trim().toLowerCase() === "general")) return;
 
@@ -482,7 +481,7 @@ export function SettingsView(props: SettingsViewProps) {
               {renderAgentDefaults()}
               {renderAgentPromptFiles()}<label class="field"><span>Agent prompt file</span><input aria-label="Agent prompt file" placeholder="Optional path to an agent prompt file" value={agent().path_agent_prompt ?? ""} onInput={(event) => updateAgent({ path_agent_prompt: event.target.value })} /></label>
               <label class="field"><span>piop extensions (one path per line)</span><textarea aria-label="Agent piop extensions" placeholder="/path/to/extension.ts" value={(agent().extensions ?? []).join("\n")} onInput={(event) => updateAgent({ extensions: event.target.value.split("\n") })} onBlur={() => updateAgent({ extensions: (agent().extensions ?? []).map(path => path.trim()).filter(Boolean) })} /></label>
-              <AgentAllowlist title="Tools"><AgentTools tools={draft().tools} selected={agent().tools} agent={agent()} onChange={tools => updateAgent({ tools })} onLimitsChange={updateAgent} /></AgentAllowlist><AgentAllowlist title="Skills"><RefreshSkills hostId={providerHostId()} skills={draft().skills} onChange={skills => patch({ skills })} />{<Key each={draft().skills} by={(skill) => skill.path}>{(skill, _index) => <label ><input type="checkbox" aria-label={`Allow ${skill().name}`} checked={agent().skills.includes(skill().path)} onInput={() => toggleAgentResource("skills", skill().path)} />{skill().name}</label>}</Key>}</AgentAllowlist><Toggle label="Allow codemode" checked={agent().codemode !== false} onChange={codemode => updateAgent({ codemode })} /><McpSettings value={agent().mcpServers} draft={mcpDrafts()[agentIndex()]} onDraft={value => setMcpDrafts(current => agentDrafts().map((_, index) => index === agentIndex() ? value : current[index]))} onChange={mcpServers => updateAgent({ mcpServers })} />
+              <AgentAllowlist title="Tools"><AgentTools tools={draft().tools} selected={agent().tools} agent={agent()} onChange={tools => updateAgent({ tools })} onLimitsChange={updateAgent} /></AgentAllowlist><AgentAllowlist title="Skills"><RefreshSkills hostId={providerHostId()} skills={draft().skills} onChange={skills => patch({ skills })} /><AgentSkills skills={draft().skills} selected={agent().skills} onChange={skills => updateAgent({ skills })} /></AgentAllowlist><Toggle label="Allow codemode" checked={agent().codemode !== false} onChange={codemode => updateAgent({ codemode })} /><McpSettings value={agent().mcpServers} draft={mcpDrafts()[agentIndex()]} onDraft={value => setMcpDrafts(current => agentDrafts().map((_, index) => index === agentIndex() ? value : current[index]))} onChange={mcpServers => updateAgent({ mcpServers })} />
             </div></Show>);
           };
 

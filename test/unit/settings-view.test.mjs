@@ -214,6 +214,25 @@ describe('settings editor', () => {
     await click(document.querySelector('.agent-list button')); assert.equal(control('Agent name').disabled, true); assert.equal(control('Remove general').disabled, true);
   });
 
+  test('agent skills are grouped by their folder in ~/.agents/skills', async () => {
+    props.settings.skills = [
+      { name: 'top', path: '/home/u/.agents/skills/top', enabled: true },
+      { name: 'tdd', path: '/home/u/.agents/skills/using/tdd', enabled: true },
+      { name: 'bugfix', path: '/home/u/.agents/skills/using/bugfix', enabled: true },
+      { name: 'retro', path: '/home/u/.agents/skills/mine/retro', enabled: true },
+    ];
+    await render({ agentConfig: { agents: [profile('general'), profile('review')] } });
+    await section('Agents'); await selectAgent('review');
+    const group = name => document.querySelector(`section[aria-label="${name} skills"]`);
+    assert.deepEqual([...group('using').querySelectorAll('.agent-tool-group-members label')].map(label => label.textContent), ['tdd', 'bugfix']);
+    assert.deepEqual([...group('mine').querySelectorAll('.agent-tool-group-members label')].map(label => label.textContent), ['retro']);
+    assert.equal(control('Allow top').closest('.agent-tool-group'), null);
+    await click(control('Allow all using skills'));
+    assert.equal(control('Allow tdd').checked, true); assert.equal(control('Allow bugfix').checked, true); assert.equal(control('Allow retro').checked, false);
+    await click(save());
+    assert.deepEqual(saves[0][1].agents[1].skills, ['/home/u/.agents/skills/using/tdd', '/home/u/.agents/skills/using/bugfix']);
+  });
+
   test('the default agent flag follows a rename and returns to general when its agent is removed', async () => {
     await render({ agentConfig: { agents: [profile('general'), profile('review')] } }); await section('General');
     await select('Default agent', 'review'); await section('Agents'); await selectAgent('review');
