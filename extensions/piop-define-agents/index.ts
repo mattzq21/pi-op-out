@@ -255,6 +255,20 @@ function configureAgentSystemPrompt(prompt: string, agentPrompt: string, options
 }
 
 export default async function defineAgents(pi: ExtensionAPI) {
+  /** Rejects agent definitions whose prompt files cannot be read, before they are saved. */
+  const requireReadablePrompts = async (agents: Agent[]) => {
+    for (const agent of agents) {
+      for (const [label, path] of [["System prompt", agent.path_systemprompt], ["Agent prompt", agent.path_agent_prompt]] as const) {
+        if (!path?.trim()) continue;
+
+        try { await readPrompt(resolvePromptPath(path)); }
+        catch (error) {
+          const reason = error instanceof Error && "code" in error && error.code === "ENOENT" ? "does not exist" : `cannot be read: ${error instanceof Error ? error.message : String(error)}`;
+          throw new Error(`Agent "${agent.name}": ${label} file ${path} ${reason}`);
+        }
+      }
+    }
+  };
   const extensions = agentExtensions(pi, dirname(configPath));
   const initialResources = readAgentResources();
   const configRuntime = { enabledTools: initialResources.tools.enabledTools };
@@ -719,6 +733,7 @@ export default async function defineAgents(pi: ExtensionAPI) {
       const next = normalize({ ...stored, ...supplied }, configRuntime);
 
       for (const agent of next.agents) mcpServersSchema.parse(agent.mcpServers);
+      await requireReadablePrompts(next.agents);
       const saved = await writeConfig(next);
 
       config = next;

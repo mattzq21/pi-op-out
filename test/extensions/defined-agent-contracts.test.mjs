@@ -59,7 +59,9 @@ for (const mode of ['missing', 'rejected', 'throw-error', 'throw-string']) test(
 test('missing prompt files reject input with their resolved path and recover after explicit selection', async t => {
   const f = await agentFixture(t, { config: null });
   await f.load(); await f.start();
+  await f.file('absent-system.md', 'Soon gone'); await f.file('absent-agent.md', 'Soon gone');
   await f.configure(configured([profile(), profile('reviewer', { path_systemprompt: 'absent-system.md' }), profile('writer', { path_agent_prompt: 'absent-agent.md' })]));
+  await rm(join(f.dir, 'absent-system.md')); await rm(join(f.dir, 'absent-agent.md'));
   await f.select('general');
 
   for (const [name, kind, file] of [['reviewer', 'system', 'absent-system.md'], ['writer', 'agent', 'absent-agent.md']]) {
@@ -108,7 +110,7 @@ test('agent skills include only globally allowed paths after home expansion', as
 });
 
 test('configuration edits normalize duplicate profiles and prompt paths', async t => {
-  const f = await agentFixture(t, { config: null }); await f.load(); await f.start();
+  const f = await agentFixture(t, { config: null, files: { 'agent.md': 'Review instructions' } }); await f.load(); await f.start();
   await f.configure({ agents: [profile('reviewer', { model: '', effort: 'high', tools: ['read'], skills: ['/skill'], mcpServers: { remote: remoteMcp }, path_agent_prompt: '  agent.md  ' }), profile('reviewer', { tools: ['bash'] }), profile('default')] });
   const saved = await f.configuration();
   assert.deepEqual(saved.agents.map(agent => agent.name), ['reviewer', 'general']);
@@ -877,7 +879,7 @@ test("a submitted agent keeps its prompt content after source files and configur
   await f.configure(configured([profile(), profile('reviewer', { path_agent_prompt: 'agent.md' })]));
   await f.start(); await f.select('reviewer'); await f.input('hello');
   await f.file('prompt.md', 'Changed on disk');
-  await f.file('agent.md', 'Changed agent prompt');
+  await f.file('agent.md', 'Changed agent prompt'); await f.file('new.md', 'New system');
   await f.configure(configured([profile(), profile('reviewer', { path_systemprompt: 'new.md' })]));
   await f.start();
   const prompt = await f.prompt();
@@ -1240,9 +1242,10 @@ test('selecting an unknown profile keeps the current agent usable', async t => {
 });
 
 test('a target with an unreadable agent prompt keeps the selected agent prompts and input usable', async t => {
-  const f = await agentFixture(t, { config: null, files: { 'review-system.md': 'Review system', 'review-agent.md': 'Review agent', 'broken-system.md': 'Broken system' } });
+  const f = await agentFixture(t, { config: null, files: { 'review-system.md': 'Review system', 'review-agent.md': 'Review agent', 'broken-system.md': 'Broken system', 'absent-agent.md': 'Soon gone' } });
   await f.load();
   await f.configure(configured([profile(), profile('reviewer', { path_systemprompt: 'review-system.md', path_agent_prompt: 'review-agent.md' }), profile('broken', { path_systemprompt: 'broken-system.md', path_agent_prompt: 'absent-agent.md' })]));
+  await rm(join(f.dir, 'absent-agent.md'));
   await f.start(); await f.select('reviewer');
   await assert.rejects(f.select('broken'), error => error.message.startsWith(`Agent "broken" cannot read agent prompt ${join(f.dir, 'absent-agent.md')}: ENOENT`));
   assert.equal(f.capability().active, 'reviewer');

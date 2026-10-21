@@ -237,3 +237,12 @@ test('removing the migrated subagent tool remains effective after reload', async
   await f.select('general');
   assert.deepEqual(f.pi.getActiveTools(), ['read']);
 });
+
+test('saving an agent whose prompt file does not exist is rejected and keeps the saved agents', async t => {
+  const f = await agentFixture(t, { config: configured([profile()]) });
+  await f.load();
+  const before = await f.configuration();
+  await assert.rejects(f.configure(configured([profile('general', { path_agent_prompt: '~/missing/agent.md' })])), /Agent "general": Agent prompt file ~\/missing\/agent\.md does not exist/);
+  await assert.rejects(f.configure(configured([profile('general', { path_systemprompt: 'missing.md' })])), /System prompt file missing\.md does not exist/);
+  assert.deepEqual((await f.configuration()).agents, before.agents);
+});
