@@ -28,28 +28,28 @@ const end = (stopReason = 'stop', content: any[] = [{ type: 'text', text: 'Done'
   type: 'turn_end', turnIndex: 3, message: { role: 'assistant', stopReason, content }, toolResults: [],
 });
 
-test('task_end only runs for a normal final response, and preserves the context', async () => {
+test('task_success only runs for a normal final response, and preserves the context', async () => {
   const f = fixture();
   hooksExtended(f.pi);
   const seen: any[] = [];
-  extendedHooks(f.pi).on('task_end', (event, ctx) => { seen.push({ event, ctx }); });
+  extendedHooks(f.pi).on('task_success', (event, ctx) => { seen.push({ event, ctx }); });
   for (const reason of ['toolUse', 'error', 'aborted', 'length']) await f.emit('turn_end', end(reason));
   await f.emit('turn_end', end('stop', [{ type: 'toolCall', name: 'bash' }]));
   await f.emit('turn_end', { ...end(), message: { role: 'user', content: 'Hello' } });
   expect(seen).toEqual([]);
   await f.emit('turn_end', end());
-  expect(seen).toEqual([{ event: { ...end(), type: 'task_end' }, ctx: f.ctx }]);
+  expect(seen).toEqual([{ event: { ...end(), type: 'task_success' }, ctx: f.ctx }]);
 });
 
-test('task_end waits for handlers in order before the next task can run', async () => {
+test('task_success waits for handlers in order before the next task can run', async () => {
   const f = fixture();
   hooksExtended(f.pi);
   let release!: () => void;
   const held = new Promise<void>(resolve => { release = resolve; });
   const order: string[] = [];
   const hooks = extendedHooks(f.pi);
-  hooks.on('task_end', async () => { order.push('saving'); await held; order.push('saved'); });
-  hooks.on('task_end', () => { order.push('second handler'); });
+  hooks.on('task_success', async () => { order.push('saving'); await held; order.push('saved'); });
+  hooks.on('task_success', () => { order.push('second handler'); });
   const run = f.emit('turn_end', end()).then(() => { order.push('next task'); });
   expect(order).toEqual(['saving']);
   release();
@@ -61,11 +61,11 @@ test('handler failures reach Pi and subscriptions are removed on shutdown', asyn
   const f = fixture();
   expect(() => extendedHooks(f.pi)).toThrow('Load hooks-extended');
   hooksExtended(f.pi);
-  const off = extendedHooks(f.pi).on('task_end', async () => { throw new Error('Save failed'); });
+  const off = extendedHooks(f.pi).on('task_success', async () => { throw new Error('Save failed'); });
   await expect(f.emit('turn_end', end())).rejects.toThrow('Save failed');
   off();
   await f.emit('turn_end', end());
-  extendedHooks(f.pi).on('task_end', () => { throw new Error('Stale handler'); });
+  extendedHooks(f.pi).on('task_success', () => { throw new Error('Stale handler'); });
   await f.emit('session_shutdown');
   await f.emit('turn_end', end());
   expect(() => extendedHooks(f.pi)).toThrow('Load hooks-extended');

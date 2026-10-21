@@ -1,6 +1,6 @@
 import { isObject, kind } from './json';
 
-/** An event Pi sends from a lifecycle hook and waits on until Piop answers. name is the hook name, for example "task_end". */
+/** An event Pi sends from a lifecycle hook and waits on until Piop answers. name is the hook name, for example "task_success". */
 export interface RuntimeEvent { id: string; name: string; data: Record<string, unknown> }
 
 /** The chat whose Pi sent the event. */

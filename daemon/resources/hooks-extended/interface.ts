@@ -1,7 +1,7 @@
 import type { ExtensionAPI, ExtensionContext, TurnEndEvent } from "@earendil-works/pi-coding-agent";
 
-export type TaskEndEvent = Omit<TurnEndEvent, "type"> & { type: "task_end" };
-export type TaskEndHandler = (event: TaskEndEvent, ctx: ExtensionContext) => void | Promise<void>;
+export type TaskSuccessEvent = Omit<TurnEndEvent, "type"> & { type: "task_success" };
+export type TaskSuccessHandler = (event: TaskSuccessEvent, ctx: ExtensionContext) => void | Promise<void>;
 
 export interface SessionRestoreEvent {
   type: "session_restore";
@@ -12,7 +12,7 @@ export interface SessionAvailableEvent { type: "session_available" }
 
 export interface ExtendedHookEvents {
   session_available: SessionAvailableEvent;
-  task_end: TaskEndEvent;
+  task_success: TaskSuccessEvent;
   session_restore: SessionRestoreEvent;
 }
 

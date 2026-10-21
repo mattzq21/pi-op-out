@@ -4,7 +4,7 @@ import type { ExtendedHooks, ExtendedHookEvents, ExtendedHookHandler } from "./i
 
 export default function hooksExtended(pi: ExtensionAPI) {
   const handlers: { [K in keyof ExtendedHookEvents]: Set<ExtendedHookHandler<K>> } = {
-    task_end: new Set(),
+    task_success: new Set(),
     session_available: new Set(),
     session_restore: new Set(),
   };
@@ -24,7 +24,7 @@ export default function hooksExtended(pi: ExtensionAPI) {
   pi.on("turn_end", async (event, ctx) => {
     const message = event.message;
     if (message.role !== "assistant" || message.stopReason !== "stop" || message.content.some(part => part.type === "toolCall")) return;
-    await emit("task_end", { ...event, type: "task_end" }, ctx);
+    await emit("task_success", { ...event, type: "task_success" }, ctx);
   });
   pi.on("session_start", (_event, ctx) => emit("session_restore", { type: "session_restore", reason: "start" }, ctx));
   pi.on("session_tree", (_event, ctx) => emit("session_restore", { type: "session_restore", reason: "branch_change" }, ctx));

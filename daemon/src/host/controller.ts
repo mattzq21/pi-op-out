@@ -116,7 +116,7 @@ export class Host implements SessionHost {
 
   /** Commits a chat's repository on Pi's final response, before Pi takes a follow-up (ADR 0006). Uses the saved repository status. */
   async runtimeEvent(source: RuntimeEventSource, event: RuntimeEvent): Promise<void> {
-    if (event.name !== 'task_end' || source.cwd === null) return;
+    if (event.name !== 'task_success' || source.cwd === null) return;
     const repository = getProjectRepository(this.storageRoot(), source.cwd);
     if (!repository) return;
     await saveProgress(source.cwd, { repository: repository.root, gitCommonDir: repository.gitDir });
