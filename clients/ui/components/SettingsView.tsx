@@ -59,7 +59,7 @@ export const daemonSections = (hostId: string) => sections.filter((item) => !cli
 const isBuiltInAgent = (agent: AgentProfile) => agent.name === "general";
 
 type CodemodeChoice = NonNullable<AgentProfile["codemode"]>;
-const NEXT_CODEMODE: Record<CodemodeChoice, CodemodeChoice> = { only: "on", on: "off", off: "only" };
+const NEXT_CODEMODE: Record<CodemodeChoice, CodemodeChoice> = { only: "off", off: "on", on: "only" };
 const CODEMODE_HINTS: Record<CodemodeChoice, string> = {
   only: "ONLY: the agent calls every tool from codemode scripts.",
   on: "ON: the agent calls tools directly or from codemode scripts.",
