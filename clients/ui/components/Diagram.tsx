@@ -7,7 +7,6 @@ export function Diagram(props: { source: string; complete: boolean }) {
   const [svg, setSvg] = createSignal("");
   const [error, setError] = createSignal("");
   const [sourceVisible, setSourceVisible] = createSignal(false);
-  const [dark, setDark] = createSignal(false);
   const [zoom, setZoom] = createSignal(1);
   const [expanded, setExpanded] = createSignal(false);
   const [feedback, setFeedback] = createSignal("");
@@ -17,26 +16,20 @@ export function Diagram(props: { source: string; complete: boolean }) {
   let timer: ReturnType<typeof setTimeout> | undefined;
   let drag: { x: number; y: number; left: number; top: number } | undefined;
   onMount(() => {
-    const app = root.closest(".app") ?? document.documentElement;
-    const update = () => setDark(app.classList.contains("dark"));
-    update();
-    const observer = new MutationObserver(update);
-    observer.observe(app, { attributes: true, attributeFilter: ["class"] });
     root.addEventListener("wheel", wheel, { passive: false });
-    onCleanup(() => { observer.disconnect(); root.removeEventListener("wheel", wheel); });
+    onCleanup(() => root.removeEventListener("wheel", wheel));
   });
   onCleanup(() => { revision++; clearTimeout(timer); });
   createEffect(() => {
     const source = props.source;
     const complete = props.complete;
-    const theme = dark();
     const version = ++revision;
     setError("");
     setSvg("");
 
     if (!complete) return;
     const current = () => revision === version;
-    void renderDiagram(source, theme, current).then(result => {
+    void renderDiagram(source, current).then(result => {
       if (current() && result) setSvg(result);
     }).catch(reason => {
       if (current()) setError(reason instanceof Error ? reason.message : "Could not render this diagram.");

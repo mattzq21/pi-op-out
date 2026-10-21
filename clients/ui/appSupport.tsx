@@ -108,7 +108,7 @@ function splitConversationKey(pane?: SplitPaneState) { return pane ? `${pane.ses
 function terminalConversationKey(target: TerminalTarget | undefined, fallback: string) { return target?.sessionKey ?? fallback; }
 
 function AppLoading(componentProps: { error?: string }) {
-  return <main class="app app-loading dark" role={componentProps.error ? "alert" : "status"}>
+  return <main class="app app-loading" role={componentProps.error ? "alert" : "status"}>
     <p class="eyebrow">piop</p>
     <h1>{componentProps.error ? "Could not load settings" : "Loading settings…"}</h1>
     {componentProps.error && <p>{(componentProps.error)}</p>}

@@ -24,7 +24,7 @@
 .dictation-engine-settings { flex-basis: 100%; display: grid; gap: 8px; padding: 0 6px 14px 40px; }
 .dictation-engine-settings label { display: grid; gap: 5px; }
 .dictation-engine-settings label > span { font-size: calc(11px + var(--settings-font-offset, 0px)); font-weight: 600; color: var(--muted); }
-.dictation-engine-settings input { min-height: 33px; border: 1px solid var(--line); border-radius: 7px; padding: 0 10px; background: var(--dark-control, white); color: var(--ink); font-size: calc(12px + var(--settings-font-offset, 0px)); outline: 0; }
+.dictation-engine-settings input { min-height: 33px; border: 1px solid var(--line); border-radius: 7px; padding: 0 10px; background: var(--dark-control); color: var(--ink); font-size: calc(12px + var(--settings-font-offset, 0px)); outline: 0; }
 .dictation-engine-settings input:focus { border-color: var(--accent); }
 .dictation-engine-settings .dictation-found { margin: 0; }
 .dictation-engine-add { display: grid; border: 1px dashed var(--line); border-radius: 10px; }
@@ -66,7 +66,7 @@
 .dictation-form { display: grid; grid-template-columns: max-content minmax(0, 1fr); align-items: center; gap: 8px 12px; margin-top: 10px; padding: 12px; border: 1px solid var(--line); border-radius: 9px; }
 .dictation-form > label { display: contents; }
 .dictation-form > label > span { font-size: calc(11px + var(--settings-font-offset, 0px)); font-weight: 600; color: var(--muted); }
-.dictation-form > label > input { min-height: 33px; border: 1px solid var(--line); border-radius: 7px; padding: 0 10px; background: var(--dark-control, white); color: var(--ink); font-size: calc(12px + var(--settings-font-offset, 0px)); outline: 0; }
+.dictation-form > label > input { min-height: 33px; border: 1px solid var(--line); border-radius: 7px; padding: 0 10px; background: var(--dark-control); color: var(--ink); font-size: calc(12px + var(--settings-font-offset, 0px)); outline: 0; }
 .dictation-form > label > input:focus { border-color: var(--accent); }
 .dictation-form > .dictation-add-hint { grid-column: 2; }
 .dictation-form > div { grid-column: 2; display: flex; align-items: center; gap: 4px; }

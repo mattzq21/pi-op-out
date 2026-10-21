@@ -51,7 +51,7 @@ function instanceSvg(svg: string) {
     .replace(/(aria-labelledby|aria-describedby)="([^"]*)"/g, (_match, attribute: string, value: string) => `${attribute}="${value.split(/\s+/).map(id => names.get(id) ?? id).join(" ")}"`);
 }
 
-async function render(source: string, dark: boolean) {
+async function render(source: string) {
   if (source.length > 30_000) throw new Error("Diagram is too large (maximum 30,000 characters).");
 
   if (/%%\s*\{|^\s*---/.test(source)) throw new Error("Remove Mermaid configuration directives or frontmatter; piop manages diagram styling.");
@@ -61,7 +61,7 @@ async function render(source: string, dark: boolean) {
     startOnLoad: false,
     securityLevel: "strict",
     suppressErrorRendering: true,
-    theme: dark ? "dark" : "default",
+    theme: "dark",
     fontFamily: "Arial, sans-serif",
     htmlLabels: false,
     flowchart: { htmlLabels: false },
@@ -74,16 +74,14 @@ async function render(source: string, dark: boolean) {
   finally { document.getElementById(`d${id}`)?.remove(); }
 }
 
-export function renderDiagram(source: string, dark: boolean, current: () => boolean): Promise<string | undefined> {
-  const key = `${dark}:${source}`;
-
+export function renderDiagram(source: string, current: () => boolean): Promise<string | undefined> {
   const result = queue.then(async () => {
     if (!current()) return;
-    const cached = cache.get(key);
+    const cached = cache.get(source);
 
     if (cached) return instanceSvg(cached);
-    const svg = await render(source, dark);
-    cacheDiagram(key, svg);
+    const svg = await render(source);
+    cacheDiagram(source, svg);
 
     return instanceSvg(svg);
   });

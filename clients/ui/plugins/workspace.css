@@ -1,7 +1,6 @@
 .plugin-sidepane { position: relative; flex: 0 0 var(--plugin-width); width: var(--plugin-width); min-width: 0; min-height: 0; display: flex; flex-direction: column; border-left: 1px solid var(--line); background: var(--paper); }
 .plugin-sidepane[hidden], .plugin-panel[hidden] { display: none; }
-.plugin-pane-header { display: flex; align-items: center; gap: 8px; padding: 6px 9px; border-bottom: 1px solid var(--line); background: var(--panel); flex-shrink: 0; }
-.app.dark .plugin-pane-header { background: #141413; }
+.plugin-pane-header { display: flex; align-items: center; gap: 8px; padding: 6px 9px; border-bottom: 1px solid var(--line); flex-shrink: 0; background: #141413; }
 .plugin-pane-header [role=tablist] { display: flex; min-width: 0; overflow-x: auto; gap: 4px; }
 .plugin-pane-header [role=tab] { border: 0; padding: 7px 28px 7px 10px; border-radius: 6px; background: transparent; color: var(--muted); font-size: 14px; white-space: nowrap; }
 .plugin-tab { position: relative; flex-shrink: 0; }
@@ -16,7 +15,7 @@
 .plugin-tab-picker summary { list-style: none; cursor: pointer; }
 .plugin-tab-picker summary::-webkit-details-marker { display: none; }
 .plugin-tab-picker summary:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
-.plugin-tab-options { position: absolute; left: 0; top: calc(100% + 6px); z-index: 20; min-width: 150px; padding: 5px; border: 1px solid var(--line); border-radius: 10px; background: var(--dark-control, var(--paper)); box-shadow: 0 10px 28px #0003; }
+.plugin-tab-options { position: absolute; left: 0; top: calc(100% + 6px); z-index: 20; min-width: 150px; padding: 5px; border: 1px solid var(--line); border-radius: 10px; background: var(--dark-control); box-shadow: 0 10px 28px #0003; }
 .plugin-tab-options button { display: block; width: 100%; border: 0; border-radius: 6px; padding: 9px 10px; background: transparent; color: var(--ink); font: inherit; font-size: 13px; text-align: left; cursor: pointer; }
 .plugin-tab-options button:hover, .plugin-tab-options button:focus-visible { outline: 0; background: var(--accent-08); }
 .plugin-panel { display: flex; flex: 1; min-height: 0; min-width: 0; overflow: hidden; }
