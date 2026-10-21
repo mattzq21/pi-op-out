@@ -84,6 +84,7 @@ for (const [native, reason] of [['session_start', 'start'], ['session_tree', 'br
       seen.push('restored');
     });
     const run = f.emit(native).then(() => { seen.push('continued'); });
+    await Promise.resolve();
     expect(seen).toEqual([{ type: 'session_restore', reason }, f.ctx]);
     release();
     await run;
@@ -98,3 +99,63 @@ for (const [native, reason] of [['session_start', 'start'], ['session_tree', 'br
     await f.emit(native);
   });
 }
+
+function busyFixture() {
+  const f = fixture();
+  let idle = false;
+  let release!: () => void;
+  const ready = new Promise<void>(resolve => { release = resolve; });
+  const errors: string[] = [];
+  f.ctx.isIdle = () => idle;
+  f.ctx.ui = { notify: (message: string) => errors.push(message) };
+  f.ctx[Symbol.for('piop.wait-for-idle')] = () => ready;
+  hooksExtended(f.pi);
+  return { ...f, errors, finish: () => { idle = true; release(); } };
+}
+
+for (const event of ['agent_start', 'session_before_compact', 'session_before_tree']) {
+  test(`session_available waits outside ${event}, including cancellation without an end event`, async () => {
+    const f = busyFixture();
+    let notify!: () => void;
+    const notified = new Promise<void>(resolve => { notify = resolve; });
+    const seen: unknown[] = [];
+    extendedHooks(f.pi).on('session_available', (event, ctx) => { seen.push(event, ctx.isIdle()); notify(); });
+    await f.emit(event);
+    expect(seen).toEqual([]);
+    // Multiple overlapping operations share one notification.
+    await f.emit('session_before_compact');
+    f.finish();
+    await notified;
+    expect(seen).toEqual([{ type: 'session_available' }, true]);
+    expect(f.errors).toEqual([]);
+  });
+}
+
+test('availability waits are cancelled on shutdown and never notify a closed session', async () => {
+  const f = busyFixture();
+  const seen: unknown[] = [];
+  extendedHooks(f.pi).on('session_available', event => { seen.push(event); });
+  await f.emit('agent_start');
+  const wait = extendedHooks(f.pi).waitForAvailable(f.ctx);
+  const rejected = expect(wait).rejects.toThrow('Session ended');
+  await f.emit('session_shutdown');
+  await rejected;
+  f.finish();
+  await Promise.resolve();
+  expect(seen).toEqual([]);
+  expect(f.errors).toEqual([]);
+});
+
+test('availability errors are reported, and an already available session needs no wait', async () => {
+  const f = busyFixture();
+  f.ctx[Symbol.for('piop.wait-for-idle')] = () => Promise.reject(new Error('Wait failed'));
+  await expect(extendedHooks(f.pi).waitForAvailable(f.ctx)).rejects.toThrow('Wait failed');
+  let notify!: () => void;
+  const notified = new Promise<void>(resolve => { notify = resolve; });
+  f.ctx.ui.notify = (message: string) => { f.errors.push(message); notify(); };
+  await f.emit('agent_start');
+  await notified;
+  expect(f.errors).toEqual(['Session availability failed: Wait failed']);
+  f.finish();
+  await extendedHooks(f.pi).waitForAvailable(f.ctx);
+});

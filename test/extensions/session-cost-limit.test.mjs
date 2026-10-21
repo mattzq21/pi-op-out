@@ -18,6 +18,9 @@ while (true) {
 }
 const sdk = name => import(pathToFileURL(join(root, `dist/core/${name}.js`)));
 const { createAgentSession } = await sdk('sdk');
+const { AgentSession } = await sdk('agent-session');
+const { installAvailability } = await import('../../daemon/resources/runtime-availability.cjs');
+installAvailability(AgentSession);
 const { DefaultResourceLoader } = await sdk('resource-loader');
 const { SettingsManager } = await sdk('settings-manager');
 const { SessionManager } = await sdk('session-manager');
