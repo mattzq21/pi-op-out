@@ -11,18 +11,21 @@ function recordModes(t) {
   return modes;
 }
 
-test('codemode on gives the agent only codemode, and codemode off gives it every tool directly', async t => {
-  const modes = recordModes(t);
-  const f = await agentFixture(t, { tools: ['read', 'bash', 'codemode'], config: configured([profile('general', { tools: ['read', 'bash'] })]) });
-  await f.load(); await f.start();
-  assert.deepEqual(f.pi.getActiveTools().toSorted(), ['bash', 'codemode', 'read']);
-  assert.equal(modes.at(-1), 'only');
-
-  const off = await agentFixture(t, { tools: ['read', 'bash', 'codemode'], config: configured([profile('general', { tools: ['read', 'bash'], codemode: false })]) });
-  await off.load(); await off.start();
-  assert.deepEqual(off.pi.getActiveTools().toSorted(), ['bash', 'read']);
-  assert.equal(modes.at(-1), 'on');
-});
+for (const [choice, active, mode] of [
+  [undefined, ['bash', 'codemode', 'read'], 'only'],
+  ['only', ['bash', 'codemode', 'read'], 'only'],
+  ['on', ['bash', 'codemode', 'read'], 'on'],
+  ['off', ['bash', 'read'], 'on'],
+]) {
+  test(`codemode ${choice ?? 'missing'} sets the active tools and how codemode presents them`, async t => {
+    const modes = recordModes(t);
+    const extra = choice === undefined ? { tools: ['read', 'bash'] } : { tools: ['read', 'bash'], codemode: choice };
+    const f = await agentFixture(t, { tools: ['read', 'bash', 'codemode'], config: configured([profile('general', extra)]) });
+    await f.load(); await f.start();
+    assert.deepEqual(f.pi.getActiveTools().toSorted(), active);
+    assert.equal(modes.at(-1), mode);
+  });
+}
 
 test('an agent cannot start when Piop cannot set how codemode presents the tools', async t => {
   Reflect.deleteProperty(globalThis, MODE);

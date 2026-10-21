@@ -3,7 +3,7 @@ import type { TSchema } from "typebox";
 import { createMcpExtension, type ExtensionAPI, type ExtensionContext, type ExtensionEvent, type ExtensionHandler, type McpServerConfig, type SessionStartEvent } from "@earendil-works/pi-coding-agent";
 import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
 
-type Selection = { servers: Record<string, McpServerConfig & { piopInjectAgentId?: boolean }>; codemode?: boolean; sessionId: string; registered?: Promise<string[]> };
+type Selection = { servers: Record<string, McpServerConfig & { piopInjectAgentId?: boolean }>; codemode?: "only" | "on" | "off"; sessionId: string; registered?: Promise<string[]> };
 
 type ToolRequest = { tools?: string[]; availableTools?: string[] };
 
@@ -91,7 +91,7 @@ export default function agentMcp(pi: ExtensionAPI) {
 
   const stopSelection = pi.events.on("piop:mcp:select", selection => {
     try {
-      codemodeEnabled = selection.codemode !== false;
+      codemodeEnabled = selection.codemode !== "off";
 
       if (!codemodeEnabled) pi.setActiveTools(pi.getActiveTools().filter(name => name !== "codemode"));
 
@@ -106,7 +106,7 @@ export default function agentMcp(pi: ExtensionAPI) {
         const { piopInjectAgentId, ...config } = structuredClone(supplied);
         const instance = selection.sessionId;
         const namespace = `mcp__${name.replaceAll("-", "_")}`;
-        // The agent's codemode switch decides how every tool is reached: through codemode only, or directly.
+        // The agent's codemode choice decides how MCP tools are reached: through codemode, or directly when codemode is off.
         config.exposure = codemodeEnabled ? "codemode" : "direct";
         delete config.toolExposure;
 

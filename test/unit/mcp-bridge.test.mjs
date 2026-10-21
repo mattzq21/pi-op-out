@@ -107,7 +107,7 @@ test('MCP registrations preserve native stdio and HTTP configuration without mut
 test('the agent codemode switch sets how MCP tools are reached and replaces per-server exposure', async () => fixture(async f => {
   await f.select({ search: { command: 'server', exposure: 'hidden', toolExposure: { find: 'direct' } } });
   assert.equal(f.servers.get('search').exposure, 'codemode'); assert.equal('toolExposure' in f.servers.get('search'), false);
-  await f.select({ search: { command: 'server' } }, 'session', false);
+  await f.select({ search: { command: 'server' } }, 'session', 'off');
   assert.equal(f.servers.get('search').exposure, 'direct');
 }));
 
@@ -153,7 +153,7 @@ test('MCP tool listings respect exposure, active selection and codemode settings
   f.tools.set('tool-search', { name: 'tool-search', sourceInfo: { path: 'builtin:tool-search' } }); f.tools.set('read', { name: 'read' });
   f.setActive(['read', 'mcp__search__lookup', 'tool-search', 'codemode']);
   assert.deepEqual(f.available(), { tools: ['codemode', 'mcp__search__lookup', 'tool-search'], availableTools: ['codemode', 'mcp__search__lookup', 'tool-search'] });
-  await f.select({}, 'session', false); assert.equal(f.getActive().includes('codemode'), false); assert.equal(f.available().tools.includes('codemode'), false);
+  await f.select({}, 'session', 'off'); assert.equal(f.getActive().includes('codemode'), false); assert.equal(f.available().tools.includes('codemode'), false);
 }));
 
 test('failed MCP registration rejects readiness and succeeds on retry', async () => fixture(async f => {
@@ -175,7 +175,7 @@ test('numeric MCP agent identifiers retain their schema and supplied value', asy
 }));
 
 test('the MCP SDK cannot reactivate disabled codemode', async () => fixture(async f => {
-  await f.select({}, 'session', false);
+  await f.select({}, 'session', 'off');
   f.adapter.setActiveTools(['read', 'codemode']);
   assert.deepEqual(f.getActive(), ['read']);
 }));

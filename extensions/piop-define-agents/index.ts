@@ -325,11 +325,12 @@ export default async function defineAgents(pi: ExtensionAPI) {
 
   return (includeInactive ? request.availableTools : request.tools) ?? []; };
 
-  const toolDisabledForAgent = (name: string, agent: Agent | undefined) => name === "codemode" && agent?.codemode === false;
+  const toolDisabledForAgent = (name: string, agent: Agent | undefined) => name === "codemode" && agent?.codemode === "off";
 
   /**
-   * Codemode on: the agent gets the codemode tool, and Pi shows the model only codemode, which calls every other tool from scripts.
-   * Codemode off: the agent has no codemode tool and calls every tool directly. Pi without the codemode extension is left as it is.
+   * only: the agent gets the codemode tool, and Pi shows the model only codemode, which calls every other tool from scripts.
+   * on: the agent gets the codemode tool next to its other tools, which stay directly callable.
+   * off: the agent has no codemode tool and calls every tool directly. Pi without the codemode extension is left as it is.
    */
   const applyCodemode = (agent: Agent, tools: Set<string>) => {
     if (!pi.getAllTools().some(tool => tool.name === "codemode")) return;
@@ -337,8 +338,10 @@ export default async function defineAgents(pi: ExtensionAPI) {
 
     if (!setMode) throw new Error("Piop cannot set how codemode presents the tools");
 
-    if (agent.codemode === false) { tools.delete("codemode"); setMode("on"); }
-    else { tools.add("codemode"); setMode("only"); }
+    const choice = agent.codemode ?? "only";
+
+    if (choice === "off") tools.delete("codemode"); else tools.add("codemode");
+    setMode(choice === "only" ? "only" : "on");
   };
 
   pi.on("tool_call", (event, ctx) => {
@@ -685,7 +688,7 @@ export default async function defineAgents(pi: ExtensionAPI) {
 
     if (!agent) return;
 
-    if (agent.codemode === false) pi.setActiveTools(pi.getActiveTools().filter(name => name !== "codemode"));
+    if (agent.codemode === "off") pi.setActiveTools(pi.getActiveTools().filter(name => name !== "codemode"));
     configureAgentSystemPrompt(activeSystemPrompt, activeAgentPrompt, event.systemPromptOptions, invocationPolicy);
   });
   pi.events.on("piop:rpc", request => {
