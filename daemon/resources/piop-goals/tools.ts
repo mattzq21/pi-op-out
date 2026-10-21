@@ -1,16 +1,18 @@
 import type { AgentToolResult, ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Type } from "@earendil-works/pi-ai";
-import type { GoalState } from "./state.ts";
+import type { Goal } from "./state.ts";
 import type { GoalCore } from "./preparation.ts";
 
 const goalToolDescription = "Update the existing goal. Set status to `paused` only at the user's explicit request. Report the returned status and stop goal work. Set status to `complete` only when the objective has actually been achieved and no required work remains. This tool cannot resume a goal.";
 
 /** Registers get_goal, create_goal and update_goal. */
 export function registerGoalTools(pi: ExtensionAPI, core: GoalCore) {
-  const result = (ctx: ExtensionContext, completed = false): AgentToolResult<ReturnType<GoalState["response"]>> => {
-    const data = core.state.response();
+  /** The goal as the agent sees it: its objective and status. */
+  const result = (ctx: ExtensionContext, completed = false): AgentToolResult<{ goal: Pick<Goal, "objective" | "status"> | null }> => {
+    const goal = core.state.response().goal;
+    const data = { goal: goal && { objective: goal.objective, status: goal.status } };
 
-    if (completed && data.goal?.status === "complete") core.state.clear(ctx);
+    if (completed && goal?.status === "complete") core.state.clear(ctx);
     else core.state.save(ctx);
 
     return { content: [{ type: "text", text: JSON.stringify(data) }], details: data };
