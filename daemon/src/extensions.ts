@@ -2,7 +2,6 @@ import { join } from 'node:path';
 import { DEVELOPMENT, STORAGE_DIRECTORY } from './config';
 import { directory as daemonDirectory } from './daemon_endpoint';
 import { homeDir } from './environment';
-import { enabledToolNames } from './pi_launch';
 import { atomicWritePrivate, ensurePrivateDir } from './private_fs';
 import * as R from './resources';
 import * as Contributions from './plugin_contributions';
@@ -30,12 +29,10 @@ export function skillLists(settings: AppSettings): { userInvokedSkills: string[]
   };
 }
 
-/** Tool names supplied when a Pi agent starts. */
+/** Tool names supplied when a Pi agent starts: the tools that Pi last reported on this host. */
 export function toolLists(settings: AppSettings): { enabledTools: string[]; registeredTools: string[] } {
-  return {
-    enabledTools: enabledToolNames(settings),
-    registeredTools: settings.tools.map(tool => tool?.name).filter((name): name is string => typeof name === 'string'),
-  };
+  const names = settings.tools.map(tool => tool.name);
+  return { enabledTools: names, registeredTools: [...names] };
 }
 
 export function contextCapSettings(settings: AppSettings) {

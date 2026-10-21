@@ -13,6 +13,7 @@ import * as sessionGroups from './session_groups';
 import * as Registry from './session_registry';
 import { profileRoot } from './host_operations';
 import { refreshSkills } from './skill_discovery';
+import { discoverTools } from './tool_inventory';
 import { loadAppSettings, loadSettingsChange, saveAppSettings } from './settings';
 import { parseAppSettings, serializeAppSettings } from './settings_types';
 import { serializeSession } from './types';
@@ -120,6 +121,7 @@ type Handler = (app: App, owner: string, args: any) => Promise<any> | any;
 
 async function loadSettings(app: App, args: any): Promise<any> {
   if (argument(args, 'refreshSkills', 'boolean?')) refreshSkills();
+  if (argument(args, 'refreshTools', 'boolean?')) await discoverTools(app);
   return serializeAppSettings(await loadAppSettings(app));
 }
 

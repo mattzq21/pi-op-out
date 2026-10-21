@@ -77,7 +77,8 @@ export type RpcCommand = z.infer<typeof rpcCommandSchema>;
 
 export type RpcEvent = z.infer<typeof rpcEventSchema>;
 
-export interface ToolConfig { name: string; description: string; enabled: boolean; builtin?: boolean; }
+/** A tool that Pi offers on a host. source is the path of the extension that registered it, or builtin:<name> for a Pi built-in. */
+export interface ToolConfig { name: string; description: string; source: string; }
 
 export interface SkillConfig { name: string; path: string; description: string; enabled: boolean; userInvokedOnly?: boolean; }
 

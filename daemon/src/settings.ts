@@ -1,5 +1,6 @@
-import { MAX_REMOTE_HOSTS, codexWebSearchTool, defaultSettings, parseAppSettings, serializeAppSettings, sessionOperationTools, validateContextCaps, validateRemoteHost, type AppSettings } from './settings_types';
+import { MAX_REMOTE_HOSTS, defaultSettings, parseAppSettings, serializeAppSettings, validateContextCaps, validateRemoteHost, type AppSettings } from './settings_types';
 import { mergeDiscoveredSkills } from './skill_discovery';
+import { savedTools } from './tool_inventory';
 import { migrateKeybindings, validateKeybindings } from './keybindings';
 import { lockSettings, settingsPath, settingsRevision, storageLock } from './settings_storage';
 import * as records from './settings_records';
@@ -21,46 +22,19 @@ export async function loadAppSettings(app: App): Promise<AppSettings> {
 
 export function loadSettingsChange(app: App): Promise<any> { return synchronization.snapshot(app); }
 
-function migrateGoalTools(settings: AppSettings): void {
-  settings.tools = settings.tools.filter(tool => tool?.name !== 'goal');
-  for (const tool of sessionOperationTools().filter(tool => ['get_goal', 'create_goal', 'update_goal'].includes(tool.name))) {
-    const existing = settings.tools.find(existing => existing?.name === tool.name);
-    if (existing) existing.enabled = true; else settings.tools.push(tool);
-  }
-}
-
-function initializeSessionTools(settings: AppSettings): void {
-  for (const tool of sessionOperationTools()) if (!settings.tools.some(existing => existing?.name === tool.name)) settings.tools.push(tool);
-}
-
-function migrateBuiltinTools(settings: AppSettings): void {
-  for (const [legacy, replacements] of [['exec_command', ['read', 'bash', 'grep', 'find', 'ls']], ['apply_patch', ['edit', 'write']]] as const) {
-    const legacyTool = settings.tools.find(tool => typeof tool?.name === 'string' && tool.name === legacy);
-    const enabled = typeof legacyTool?.enabled === 'boolean' ? legacyTool.enabled : true;
-    settings.tools = settings.tools.filter(tool => !(typeof tool?.name === 'string' && tool.name === legacy));
-    for (const name of replacements) {
-      if (!settings.tools.some(tool => typeof tool?.name === 'string' && tool.name === name)) settings.tools.push({ name, description: 'Pi built-in tool', enabled, builtin: true });
-    }
-  }
-  if (!settings.tools.some(tool => typeof tool?.name === 'string' && tool.name === 'web_search')) settings.tools.push(codexWebSearchTool());
-}
-
 export function readSettingsAt(path: string): AppSettings {
   const body = records.read(path);
   const settings = body ? parseAppSettings(JSON.parse(body.toString('utf8'))) : defaultSettings();
   validateHostIds(settings);
   settings.settingsRevision = settingsRevision(body);
-  migrateGoalTools(settings);
-  initializeSessionTools(settings);
-  migrateBuiltinTools(settings);
+  settings.tools = savedTools(path);
   migrateKeybindings(settings);
   if (settings.hosts.length > MAX_REMOTE_HOSTS) throw new Error(`Settings contain more than ${MAX_REMOTE_HOSTS} remote hosts`);
   return settings;
 }
 
 export async function saveAppSettings(app: App, settings: AppSettings, agentHostId: string | undefined): Promise<any> {
-  migrateGoalTools(settings);
-  for (const tool of sessionOperationTools()) if (!settings.tools.some(existing => existing?.name === tool.name)) settings.tools.push(tool);
+  settings.tools = savedTools(await settingsPath());
   const runtime = app.pi;
   const change = await saveSettingsWith(runtime, settings, agentHostId,
     () => settingsPath(),
@@ -105,8 +79,10 @@ async function lockSettingsRevision(path: string, expected: string | undefined) 
   return lock;
 }
 
+/** The saved form of the settings. Tools are left out: Pi reports them on each host. */
 export function settingsBody(settings: AppSettings): Buffer {
-  return Buffer.from(JSON.stringify(serializeAppSettings(settings), null, 2));
+  const { tools: _tools, ...saved } = serializeAppSettings(settings);
+  return Buffer.from(JSON.stringify(saved, null, 2));
 }
 
 export async function saveSettingsWith(

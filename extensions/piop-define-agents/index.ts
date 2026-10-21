@@ -314,11 +314,10 @@ export default async function defineAgents(pi: ExtensionAPI) {
     const user = new Set(resources().skills.userInvokedSkills.map(resourcePath));
     return skills.map(skill => user.has(resourcePath(skill.filePath)) || user.has(resourcePath(skill.baseDir)) ? { ...skill, disableModelInvocation: true } : { ...skill });
   };
-  const agentToolError = (api: ExtensionAPI, agent: Agent, extensionTools: string[] = []) => {
-    const allowed = new Set([...resources().tools.enabledTools, ...extensionTools]);
+  const agentToolError = (api: ExtensionAPI, agent: Agent) => {
     const available = new Set(api.getAllTools().map(tool => tool.name));
-    const denied = [...new Set(agent.tools.filter(tool => !allowed.has(tool) || !available.has(tool)))];
-    return denied.length ? `Agent "${agent.name}" cannot run because Pi does not allow its configured tool${denied.length === 1 ? "" : "s"}: ${denied.join(", ")}` : undefined;
+    const missing = [...new Set(agent.tools.filter(tool => !available.has(tool)))];
+    return missing.length ? `Agent "${agent.name}" cannot run because Pi does not have its configured tool${missing.length === 1 ? "" : "s"}: ${missing.join(", ")}` : undefined;
   };
   registerSubagentLimits(pi, currentAgent);
 
@@ -557,7 +556,7 @@ export default async function defineAgents(pi: ExtensionAPI) {
 
     return `Agent "${agent.name}" could not load its piop extensions:\n${error instanceof Error ? error.message : String(error)}`; }
 
-    const toolError = agentToolError(pi, agent, extensions.tools());
+    const toolError = agentToolError(pi, agent);
 
     if (toolError) { pi.setActiveTools([]);
 

@@ -25,12 +25,14 @@ export interface AppSettings extends PluginSettings {
   autoRetry: boolean;
   debugMode: boolean;
   keybindings: Record<string, string>;
+  /** The tools that Pi reported on this host. Filled when settings load, and never saved. */
   tools: ToolConfig[];
   skills: SkillConfig[];
   hosts: RemoteHost[];
 }
 
-export interface ToolConfig { name: string; description: string; enabled: boolean; builtin?: boolean }
+/** A tool that Pi offers. source is the path of the extension that registered it, or builtin:<name> for a Pi built-in. */
+export interface ToolConfig { name: string; description: string; source: string }
 export interface SkillConfig { name: string; path: string; description: string; enabled: boolean; userInvokedOnly?: boolean }
 
 export const MAX_REMOTE_HOSTS = 16;
@@ -71,11 +73,6 @@ function entryFields(value: any, field: string, strings: string[], booleans: str
   for (const key of strings) if (typeof value[key] !== 'string') fail(`${field}.${key}`, 'a string');
   for (const key of booleans) if (typeof value[key] !== 'boolean') fail(`${field}.${key}`, 'a boolean');
   for (const key of optionalBooleans) if (value[key] !== undefined && typeof value[key] !== 'boolean') fail(`${field}.${key}`, 'a boolean');
-}
-
-function toolConfig(value: any): ToolConfig {
-  entryFields(value, 'tools', ['name', 'description'], ['enabled'], ['builtin']);
-  return value;
 }
 
 function skillConfig(value: any): SkillConfig {
@@ -154,7 +151,7 @@ export function parseAppSettings(value: any): AppSettings {
     autoRetry: boolField(value.autoRetry, 'autoRetry', true),
     debugMode: boolField(value.debugMode, 'debugMode', false),
     keybindings,
-    tools: arrayField(value.tools, 'tools').map(toolConfig),
+    tools: [],
     skills: arrayField(value.skills, 'skills').map(skillConfig),
     hosts: value.hosts === undefined ? [] : arrayField(value.hosts, 'hosts').map(parseRemoteHost),
   };
@@ -185,7 +182,9 @@ export function serializeAppSettings(settings: AppSettings): Record<string, unkn
 }
 
 export function cloneSettings(settings: AppSettings): AppSettings {
-  return parseAppSettings(JSON.parse(JSON.stringify(serializeAppSettings(settings))));
+  const clone = parseAppSettings(JSON.parse(JSON.stringify(serializeAppSettings(settings))));
+  clone.tools = structuredClone(settings.tools);
+  return clone;
 }
 
 export function defaultSettings(): AppSettings {
@@ -202,29 +201,12 @@ export function defaultSettings(): AppSettings {
     autoRetry: true,
     debugMode: false,
     keybindings: defaultKeybindings(),
-    tools: [
-      ...['read', 'bash', 'edit', 'write', 'grep', 'find', 'ls'].map(name => ({ name, description: 'Pi built-in tool', enabled: true, builtin: true })),
-      { name: 'list_agents', description: 'List child agents and their status', enabled: true, builtin: false },
-      { name: 'send_message', description: 'Deliver an agent mailbox message', enabled: true, builtin: false },
-      codexWebSearchTool(),
-    ],
+    tools: [],
     skills: [],
     hosts: [],
   };
 }
 
-export function sessionOperationTools(): any[] {
-  return ([
-    ['subagent', 'Delegate parallel tasks to agents with saved transcripts'],
-    ['get_goal', 'Read the current persistent goal'],
-    ['create_goal', 'Create a persistent goal'],
-    ['update_goal', 'Complete or pause the current goal'],
-  ] as const).map(([name, description]) => ({ name, description, enabled: true, builtin: false }));
-}
-
-export function codexWebSearchTool(): any {
-  return { name: 'web_search', description: "Search the web with Pi's Codex login and return cited answers", enabled: true, builtin: false };
-}
 
 export function validateRemoteHost(host: RemoteHost): void {
   if (!host.target || !/^[A-Za-z0-9._@:\-\[\]]+$/.test(host.target)) throw new Error('SSH target may only contain a host, user, and port-safe characters');

@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { installDom, renderComponent, act, untilDom } from '../dom.mjs';
 import { mockIPC, mockWindows, clearMocks } from '@tauri-apps/api/mocks';
 import { daemonClient } from '../daemon-client.mjs';
-import { RefreshSkills } from '../../clients/ui/components/RefreshSkills.tsx';
+import { RefreshSkills } from '../../clients/ui/components/RefreshResources.tsx';
 
 async function skillsHost(t) {
   const dom = installDom();

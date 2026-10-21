@@ -12,6 +12,7 @@ import * as daemonEndpoint from './daemon_endpoint';
 import * as daemonRestart from './daemon_restart';
 import * as peers from './peers';
 import { onSkillsChanged } from './skill_discovery';
+import { onToolsChanged } from './tool_inventory';
 import type { App } from './app';
 import type { PiRuntime } from './pi_runtime';
 
@@ -244,8 +245,8 @@ function addPendingWarning(change: any, pending: boolean, revision: number): voi
 interface Applied {
   revision?: number;
   notifiedRevision?: number;
-  skillsDigest?: string;
-  notifiedSkillsDigest?: string;
+  discoveredDigest?: string;
+  notifiedDiscoveredDigest?: string;
   warnings: string[];
 }
 
@@ -267,26 +268,26 @@ async function retryLocked(app: App, runtime: PiRuntime, path: string, applied: 
   const journal = Journal.load(path);
   const ownerPath = progressPath(path);
   const progress = readProgress(ownerPath);
-  const current = settingsWithSkills(path);
-  const skillsDigest = digest(JSON.stringify(current.skills));
-  if (!needsRetry(journal, progress, applied, skillsDigest)) return false;
+  const current = settingsWithDiscoveries(path);
+  const discoveredDigest = digest(JSON.stringify([current.skills, current.tools]));
+  if (!needsRetry(journal, progress, applied, discoveredDigest)) return false;
   writeRecord(ownerPath, { ...progress, revision: journal.revision, synchronized: false, phase_revision: progress.revision === journal.revision ? progress.phase_revision : 0 });
   const change = currentChange(path, journal);
   const warnings = await applyCurrent(app, runtime, journal, current, change);
   change.warnings = warnings;
   change.synchronizationPending = warnings.length > 0;
-  finishRetry(app, journal, ownerPath, change, warnings, applied, skillsDigest);
+  finishRetry(app, journal, ownerPath, change, warnings, applied, discoveredDigest);
   return true;
 }
 
-function needsRetry(journal: Journal, progress: Progress, applied: Applied, skillsDigest: string): boolean {
-  return applied.revision !== journal.revision || applied.skillsDigest !== skillsDigest || progress.revision !== journal.revision || !progress.synchronized || !progress.notified;
+function needsRetry(journal: Journal, progress: Progress, applied: Applied, discoveredDigest: string): boolean {
+  return applied.revision !== journal.revision || applied.discoveredDigest !== discoveredDigest || progress.revision !== journal.revision || !progress.synchronized || !progress.notified;
 }
 
 function sameWarnings(left: string[], right: string[]): boolean { return left.length === right.length && left.every((value, index) => value === right[index]); }
 
-function finishRetry(app: App, journal: Journal, ownerPath: string, change: any, warnings: string[], applied: Applied, skillsDigest: string): void {
-  const changed = applied.notifiedRevision !== journal.revision || applied.notifiedSkillsDigest !== skillsDigest || !sameWarnings(applied.warnings, warnings);
+function finishRetry(app: App, journal: Journal, ownerPath: string, change: any, warnings: string[], applied: Applied, discoveredDigest: string): void {
+  const changed = applied.notifiedRevision !== journal.revision || applied.notifiedDiscoveredDigest !== discoveredDigest || !sameWarnings(applied.warnings, warnings);
   const progress = readProgress(ownerPath);
   progress.revision = journal.revision;
   progress.synchronized = warnings.length === 0;
@@ -297,14 +298,14 @@ function finishRetry(app: App, journal: Journal, ownerPath: string, change: any,
     change.phaseRevision = progress.phase_revision;
     notify(app, journal, change);
     applied.notifiedRevision = journal.revision;
-    applied.notifiedSkillsDigest = skillsDigest;
+    applied.notifiedDiscoveredDigest = discoveredDigest;
     reportPhaseWarnings(app, warnings);
   }
   progress.notified = true;
   writeRecord(ownerPath, progress);
   if (warnings.length === 0) {
     applied.revision = journal.revision;
-    applied.skillsDigest = skillsDigest;
+    applied.discoveredDigest = discoveredDigest;
   }
   applied.warnings = [...warnings];
 }
@@ -366,6 +367,7 @@ export function start(app: App): void {
   };
   app.listenAny('pi://settings-changed', requestPass);
   onSkillsChanged(requestPass);
+  onToolsChanged(requestPass);
   void settingsPath().then(path => watchOtherDaemons(path, requestPass)).catch((error: any) => {
     reportPhaseWarnings(app, [`Settings changes from other daemons are not watched: ${error?.message ?? error}`]);
   });
@@ -376,7 +378,7 @@ function applyEffects(app: App, applied: Applied, refreshed: boolean): void {
   if (refreshed) peers.invalidate(app);
 }
 
-function settingsWithSkills(path: string): AppSettings {
+function settingsWithDiscoveries(path: string): AppSettings {
   const current = settings.readSettingsAt(path);
   settings.mergeDiscoveredSkills(current);
   return current;

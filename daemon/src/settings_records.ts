@@ -62,6 +62,31 @@ export function readOrCreate(path: string, initial: Buffer | string): Buffer {
   }));
 }
 
+const TOOL_INVENTORY = 'CREATE TABLE IF NOT EXISTS tool_inventory (id INTEGER PRIMARY KEY CHECK (id = 1), entries_json TEXT NOT NULL)';
+
+/** The tools that Pi last reported on this host, or an empty list before the first report. */
+export function toolInventory(path: string): unknown[] {
+  return withDatabase(open(path), database => {
+    database.exec(TOOL_INVENTORY);
+    const row = database.prepare('SELECT entries_json FROM tool_inventory WHERE id=1').get() as { entries_json: string } | undefined;
+    return row ? JSON.parse(row.entries_json) : [];
+  });
+}
+
+/** Saves the reported tools. Returns whether they differ from the saved ones. */
+export function saveToolInventory(path: string, tools: unknown[]): boolean {
+  const entries = JSON.stringify(tools);
+  return withDatabase(open(path), database => {
+    database.exec(TOOL_INVENTORY);
+    return transaction(database, 'IMMEDIATE', () => {
+      const row = database.prepare('SELECT entries_json FROM tool_inventory WHERE id=1').get() as { entries_json: string } | undefined;
+      if (row?.entries_json === entries) return false;
+      database.prepare('INSERT INTO tool_inventory VALUES (1, ?) ON CONFLICT(id) DO UPDATE SET entries_json=excluded.entries_json').run(entries);
+      return true;
+    });
+  });
+}
+
 export function skillInventory(path: string, root: string, refresh: boolean, discover: () => any[]): any[] {
   return withDatabase(open(path), database => {
     database.exec('CREATE TABLE IF NOT EXISTS skill_inventory (root TEXT PRIMARY KEY, entries_json TEXT NOT NULL)');

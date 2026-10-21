@@ -40,10 +40,6 @@ export function remoteDirectoryPath(path: string | undefined | null): string {
   return shellQuote(trimmed);
 }
 
-export function enabledToolNames(settings: AppSettings): string[] {
-  return settings.tools.filter(tool => tool?.enabled === true).map(tool => tool?.name).filter((name): name is string => typeof name === 'string');
-}
-
 export async function sessionIdentity(_settings: AppSettings, hostId: string, path: string): Promise<string> {
   requireLocal(hostId);
   const registered = localRegisteredIdentity(path);
@@ -179,6 +175,7 @@ function configureLocalExtensions(command: LaunchCommand, settings: AppSettings,
     '--extension', definedAgentsExtension);
   Object.assign(command.env, {
     PI_DESKTOP_DEFINED_AGENTS_EXTENSION: definedAgentsExtension,
+    PIOP_MCP_EXTENSION: mcpExtension,
     PI_DESKTOP_CODEX_WEB_SEARCH_EXTENSION: codexWebSearchExtension,
     PI_DESKTOP_CONTEXT_WINDOW_CAP_EXTENSION: contextWindowCapExtension,
     PIOP_COMMAND_POLICY: JSON.stringify(Contributions.commandPolicy()),

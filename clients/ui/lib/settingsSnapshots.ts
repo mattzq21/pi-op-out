@@ -2,7 +2,7 @@ import { pluginSettingKeys } from "../plugins/settingsSchema";
 import { z, type JSONType } from "zod";
 import type { AgentConfig, AgentProfile, AppSettings } from "../types";
 
-type SettingsSnapshotValue = AppSettings[keyof AppSettings] | AgentProfile[] | { settings: AppSettings; agentConfig?: AgentConfig };
+type SettingsSnapshotValue = AppSettings[keyof AppSettings] | AgentProfile[] | { settings: Omit<AppSettings, "tools">; agentConfig?: AgentConfig };
 
 function sortedJson(value: JSONType): JSONType {
   if (Array.isArray(value)) return value.map(sortedJson);
@@ -20,7 +20,7 @@ export function stableSnapshot(value: SettingsSnapshotValue) {
 }
 
 export function settingsSnapshot(settings: AppSettings, agentConfig?: AgentConfig) {
-  const { settingsRevision: _settingsRevision, clientSettingsRevision: _clientSettingsRevision, settingsDurabilityError: _settingsDurabilityError, clientSettingsDurabilityError: _clientSettingsDurabilityError, ...value } = settings;
+  const { settingsRevision: _settingsRevision, clientSettingsRevision: _clientSettingsRevision, settingsDurabilityError: _settingsDurabilityError, clientSettingsDurabilityError: _clientSettingsDurabilityError, tools: _tools, ...value } = settings;
 
   return stableSnapshot({ settings: value, agentConfig: agentConfig && { ...agentConfig, revision: undefined } });
 }
@@ -30,5 +30,5 @@ export function agentEditsSnapshot(config?: AgentConfig) {
 }
 
 export const settingKeys: Array<keyof AppSettings> = [
-  "localEnabled", ...pluginSettingKeys, "modelAliases", "hiddenModels", "knownModels", "defaultThinking", "defaultFastMode", "contextWindowCap", "contextWindowCapEnabled", "modelContextWindowCaps", "autoRetry", "debugMode", "keybindings", "tools", "skills", "hosts",
+  "localEnabled", ...pluginSettingKeys, "modelAliases", "hiddenModels", "knownModels", "defaultThinking", "defaultFastMode", "contextWindowCap", "contextWindowCapEnabled", "modelContextWindowCaps", "autoRetry", "debugMode", "keybindings", "skills", "hosts",
 ];

@@ -7,7 +7,7 @@ export { rpcEventSchema, rpcCommandSchema, entrySchema, pendingMessageSchema };
 
 export const voidResultSchema = z.unknown().transform(() => undefined);
 
-export const toolConfigSchema = z.object({ name: z.string(), description: z.string(), enabled: z.boolean(), builtin: z.boolean().optional() });
+export const toolConfigSchema = z.object({ name: z.string(), description: z.string(), source: z.string() });
 
 export const skillConfigSchema = z.object({ name: z.string(), path: z.string(), description: z.string(), enabled: z.boolean(), userInvokedOnly: z.boolean().optional() });
 
