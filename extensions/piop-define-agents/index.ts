@@ -247,14 +247,6 @@ function configureAgentSystemPrompt(prompt: string, agentPrompt: string, options
   options.customPrompt = prompt || " ";
   options.sections = { ...options.sections, instructions };
 
-  const toolInstructions = (options.selectedTools ?? []).flatMap(name => {
-    const guidelines = (options.toolGuidelines?.[name] ?? []).map(text => text.trim()).filter(Boolean);
-
-    return guidelines.length ? [`${name}:\n${[...new Set(guidelines)].map(text => `- ${text}`).join("\n")}`] : [];
-  }).join("\n\n");
-
-  if (toolInstructions) options.sections.tool_instructions = toolInstructions;
-  else delete options.sections.tool_instructions;
   options.contextFiles = [];
   delete options.sections.project_context;
   delete options.sections.addendum;
