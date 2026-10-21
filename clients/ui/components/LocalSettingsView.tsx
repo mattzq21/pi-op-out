@@ -14,6 +14,7 @@ import { agentConfigChangeSchema, agentConfigSchema, definedAgentsCapabilitySche
 import { settingsChangeSchema } from "../lib/responseSchemas";
 import { restoreAgentConfiguration, saveAgentConfiguration } from "../lib/agentConfiguration";
 import { NativeTransport } from "../lib/nativeTransport";
+import { reloadSettingsResources, settingsResources } from "../lib/settingsResources";
 import { SettingsPublication } from "../lib/settingsPublication";
 import { SettingsSaveError } from "../lib/clientPreferenceMerge";
 import { isMobile, listen } from "../lib/platform";
@@ -28,11 +29,6 @@ interface Props {
   onDirtyChange: (dirty: boolean) => void;
   onSavingChange?: (saving: boolean) => void;
   selectedSection?: Section;
-}
-
-async function loadAgentConfiguration(reader: NativeTransport, target: string, discovered: () => AgentConfig | undefined) {
-  if (target === "client") return discovered() ?? { agents: [] };
-  return reader.command({ type: "get_agent_configuration" }, agentConfigSchema);
 }
 
 export function LocalSettingsView(props: Props) {
@@ -98,30 +94,14 @@ function DaemonSettingsEditor(componentProps: Props & { target: string; label: s
 
     for (const listener of listeners) void listener.then((stop) => stop()); };
   }, () => [hostId()]);
-  createDependencyEffect(() => { const capturedHostId = hostId(); const capturedTarget0 = componentProps.target;
+  createDependencyEffect(() => { const capturedHostId = hostId(); const capturedRevision = revision();
     setError(undefined);
     setLoadingModels([]);
 
     if (!needsResources()) return;
     let cancelled = false;
     const reader = new NativeTransport({ hostId: capturedHostId, cwd: "~" });
-    let config: AgentConfig | undefined;
     setLoadingModels([componentProps.label]);
-
-    const unsubscribe = reader.subscribe((event) => {
-      const statusText = z.string().safeParse(event.statusText);
-
-      if (event.type !== "extension_ui_request" || event.method !== "setStatus" || event.statusKey !== DEFINED_AGENTS_STATUS_KEY || !statusText.success || !statusText.data.startsWith("json:")) return;
-
-      try {
-        config = definedAgentsCapabilitySchema.parse(decodeAgentValue(statusText.data.slice(5))).config;
-
-        if (!cancelled && config) {
-          const discovered = config;
-          setResources((current) => ({ config: discovered, models: current?.models ?? [], levels: current?.levels ?? [] }));
-        }
-      } catch { config = undefined; }
-    });
 
     void (async () => {
       try {
@@ -129,31 +109,21 @@ function DaemonSettingsEditor(componentProps: Props & { target: string; label: s
 
         if (cancelled) return;
         receiveChange(loaded, capturedHostId);
-        await reader.connect();
-
-        if (cancelled) return;
-
-        const [models, levels, storedConfig] = await Promise.all([
-          reader.command({ type: "get_available_models" }, z.object({ models: z.array(modelSchema) })),
-          reader.command({ type: "get_available_thinking_levels" }, z.object({ levels: z.array(z.string()) })),
-          loadAgentConfiguration(reader, capturedTarget0, () => config),
-        ]);
-
-        if (cancelled) return;
-        await reportModels(capturedHostId, models.models);
+        // The first load uses the resources loaded in the background; a later one follows a change and loads them again.
+        const loadedResources = await (capturedRevision === 0 ? settingsResources(capturedHostId) : reloadSettingsResources(capturedHostId));
 
         if (cancelled) return;
         const recorded = await reader.loadHostSettingsChange();
 
         if (cancelled) return;
         receiveChange(recorded, capturedHostId);
-        setResources({ config: storedConfig, models: models.models, levels: levels.levels });
+        setResources(loadedResources);
       } catch (reason) {
         if (!cancelled) setError(reason instanceof Error ? reason.message : String(reason));
-      } finally { if (!cancelled) setLoadingModels([]); unsubscribe(); await reader.dispose().catch(() => undefined); }
+      } finally { if (!cancelled) setLoadingModels([]); await reader.dispose().catch(reason => console.error("Could not close the settings reader:", reason)); }
     })();
 
-    return () => { cancelled = true; unsubscribe(); void reader.dispose().catch(() => undefined); };
+    return () => { cancelled = true; };
   }, () => [hostId(), componentProps.target, revision(), needsResources()]);
   const current = createMemo(() => (componentProps.target === "client" || hostId() === "local" ? componentProps.settings : hostSettings()));
 
