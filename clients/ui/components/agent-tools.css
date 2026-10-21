@@ -24,4 +24,4 @@
 .agent-allowlist .agent-subagent-limits label.field { display: flex; align-items: center; gap: 8px; margin: 0; }
 .agent-subagent-limits span { white-space: nowrap; }
 .agent-subagent-limits input { width: 80px; min-width: 0; }
-.agent-codemode { display: flex; align-items: center; gap: 8px; width: fit-content; margin-top: 16px; color: var(--ink); font-size: calc(13px + var(--settings-font-offset, 0px)); cursor: pointer; }
+.agent-allowlist .agent-codemode { grid-column: 1 / -1; justify-self: center; font-size: calc(13px + var(--settings-font-offset, 0px)); }
