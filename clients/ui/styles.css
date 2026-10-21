@@ -504,7 +504,7 @@ textarea::placeholder { color: var(--faint); }
 .settings-editor-content > [role="alert"], .settings-editor-content > [role="status"] { padding: 0 32px; }
 .settings-layout.settings-layout-embedded { display: block; }
 .settings-layout-embedded .settings-content { max-width: 720px; }
-.settings-daemon-tabs { padding-left: 14px; margin: 6px 0 12px; }
+.settings-daemon-tabs { padding-left: 14px; margin: 6px 0 12px; }.settings-daemon-tabs button.sub { padding-left: 32px; height: 31px; font-size: calc(12px + var(--settings-font-offset, 0px)); }
 .settings-host-nav button:disabled { opacity: .5; cursor: default; }
 @media (max-width: 760px) { .settings-workspace { flex-direction: column; }.settings-host-nav { width: 100%; flex: 0 0 auto; max-height: 38vh; padding: 16px; border-right: 0; border-bottom: 1px solid var(--line); }.settings-daemon-tabs { display: flex; flex-wrap: wrap; }.settings-host-nav .settings-nav-group { width: 100%; } }
 .settings-nav-group + .settings-nav-group { margin-top: 18px; }

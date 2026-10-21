@@ -100,10 +100,9 @@ describe('settings editor', () => {
     await click(save()); assert.deepEqual(saves[1][0].hiddenModels, ['remote/model']); assert.deepEqual(saves[1][0].knownModels, ['remote/model']);
   });
 
-  test('the Agents tab sets the review agent and marks one that no longer exists', async () => {
+  test('the Review sub-tab of Agents sets the review agent and marks one that no longer exists', async () => {
     await render({ settings: { ...props.settings, reviewAgent: 'gone' }, agentConfig: { agents: [profile('general'), profile('reviewer')] } });
-    assert.equal(button('Review'), undefined, 'review has no settings tab of its own');
-    await section('Agents');
+    await section('Review');
     const agent = control('Review agent');
     assert.equal(agent.value, 'gone');
     assert.equal(agent.selectedOptions[0].textContent, 'Unavailable: gone');
@@ -119,7 +118,7 @@ describe('settings editor', () => {
       throw new Error('Unexpected command: ' + command);
     }, { shouldMockEvents: true });
     await render({ scope: 'daemon', settings: { ...props.settings, reviewAgent: 'general' }, agentConfig: { agents: [profile('general')] } });
-    await section('Agents');
+    await section('Review');
     await untilDom(() => control('Review agent'));
     enabled = ['cost'];
     await act(() => refreshPlugins('local'));
