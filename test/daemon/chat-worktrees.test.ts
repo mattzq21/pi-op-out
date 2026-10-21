@@ -340,3 +340,32 @@ test('runs concurrent operations on one repository one at a time', async () => {
   expect(git(repo, 'for-each-ref', '--format=%(refname)', 'refs/piop/archives').split('\n').length).toBe(6);
   expect(git(repo, 'worktree', 'list', '--porcelain').split('\n').filter(line => line.startsWith('worktree ')).length).toBe(1);
 });
+
+test('new chats list branches from the main worktree and start clean from the selected branch', async () => {
+  const { repo, home, base } = repository();
+  git(repo, 'checkout', '-b', 'feature');
+  write(join(repo, 'tracked.txt'), 'feature\n');
+  git(repo, 'commit', '-am', 'feature');
+  const featureCommit = git(repo, 'rev-parse', 'HEAD');
+  git(repo, 'checkout', 'main');
+  makeDirty(repo);
+  const before = status(repo);
+  const linked = join(base, 'linked');
+  git(repo, 'worktree', 'add', linked, 'feature');
+  const choices = await Worktrees.newChatBranches(linked);
+  expect(choices).toEqual({ repository: repo, branches: ['feature', 'main'], defaultBranch: 'main' });
+  const created = await Worktrees.createWorktree({ sourceCwd: repo, home, chatId: randomUUID(), baseBranch: 'feature' });
+  expect(created.commit).toBe(featureCommit);
+  expect(readFileSync(join(created.worktree, 'tracked.txt'), 'utf8')).toBe('feature\n');
+  expect(status(created.worktree)).toBe('');
+  expect(status(repo)).toBe(before);
+  await Worktrees.removeCreatedWorktree({ ...created, home });
+});
+
+test('a missing starting branch leaves no new worktree or branch', async () => {
+  const { repo, home } = repository();
+  const chatId = randomUUID();
+  await expect(Worktrees.createWorktree({ sourceCwd: repo, home, chatId, baseBranch: 'missing' })).rejects.toThrow('Branch does not exist');
+  expect(existsSync(Worktrees.worktreePath(home, chatId))).toBe(false);
+  expect(hasRef(repo, `refs/heads/${Worktrees.branchName(chatId)}`)).toBe(false);
+});

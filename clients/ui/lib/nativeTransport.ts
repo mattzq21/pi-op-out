@@ -169,6 +169,12 @@ export class NativeTransport {
   private readonly draftRuntime = new DraftRuntime(() => this.hostId, event => this.emit(event));
   private startingDraft?: Promise<void>;
   private draftTarget = false;
+  private baseBranch?: string;
+  private worktreeOptions?: { repository: string; branches: string[]; defaultBranch: string | null };
+  setNewChatWorktreeOptions(options: { repository: string; branches: string[]; defaultBranch: string | null }) { this.worktreeOptions = options; }
+  newChatWorktreeOptions() { return this.worktreeOptions; }
+  newChatBaseBranch() { return this.baseBranch; }
+  setNewChatBranch(branch?: string) { this.baseBranch = branch; }
   private initializingChat = false;
   private sentMessage = false;
   hasSentMessage() { return this.sentMessage; }
@@ -459,10 +465,11 @@ export class NativeTransport {
     return; }
 
     this.unlisten = unlisten; this.stderrUnlisten = stderrUnlisten;
-    const attached = await this.runProcessCommand(() => version !== this.connectionVersion ? Promise.resolve(undefined) : call("start_pi", { runtimeId: this.runtimeId, cwd: this.cwd, sessionPath: !this.readOnly && this.sessionId ? undefined : this.sessionPath, sessionId: this.sessionId, forkPath, hostId: this.hostId, presence: this.presence() }, z.object({ attached: z.boolean(), owned: z.boolean().optional(), daemonId: z.string().optional() })));
+    const attached = await this.runProcessCommand(() => version !== this.connectionVersion ? Promise.resolve(undefined) : call("start_pi", { runtimeId: this.runtimeId, cwd: this.cwd, baseBranch: !this.sessionId && !this.sessionPath ? this.baseBranch : undefined, sessionPath: !this.readOnly && this.sessionId ? undefined : this.sessionPath, sessionId: this.sessionId, forkPath, hostId: this.hostId, presence: this.presence() }, z.object({ attached: z.boolean(), owned: z.boolean().optional(), daemonId: z.string().optional(), cwd: z.string().nullable().optional() })));
 
     if (version !== this.connectionVersion || !attached) throw new Error("The conversation disconnected while starting. Reconnect to try again.");
     this.daemonId = attached.daemonId;
+    if (attached.cwd) this.cwd = attached.cwd;
 
     if (version === this.connectionVersion) {
       this.running = true;
@@ -587,6 +594,7 @@ export class NativeTransport {
     return this.settings.save(settings, reconnect, agentHostId, scope, baseline);
   }
   homeDirectory(hostId: string) { return call("home_directory", { hostId }, z.string()); }
+  newChatBranches(path: string, hostId: string) { return call("new_chat_branches", { path, hostId }, z.object({ repository: z.string(), branches: z.array(z.string()), defaultBranch: z.string().nullable() }).nullable()); }
   validateProjectDirectory(path: string, hostId: string, allowStorage = false, newChat = false) { return call("validate_project_directory", { path, hostId, allowStorage, newChat }, z.string()); }
   listDirectories(hostId: string, path?: string) { return call("list_directories", { hostId, path }, directoryListingSchema); }
   async prepareTemporaryChat(hostId: string) { this.cwd = undefined; this.sessionPath = undefined; this.sessionId = undefined; this.hostId = hostId; this.temporaryChat = true; this.temporaryChatUsed = false;

@@ -59,6 +59,22 @@ test('a draft agent reload that finishes after the first message does not replac
   assert.deepEqual(statuses, []);
 });
 
+test('a new worktree draft sends its branch choice once and uses the returned folder', async () => {
+  const client = transport({ cwd: '/repo', draftKey: 'draft' });
+  client.setNewChatBranch('feature');
+  responses.set('broker_request', { sessionId: 'created', sessionPath: '/sessions/created.jsonl', cwd: '/worktrees/chat', archived: false, revision: '1' });
+  responses.set('start_pi', { attached: true, cwd: '/worktrees/chat' });
+  responses.set('pi_command:get_state', { sessionId: 'created', sessionFile: '/sessions/created.jsonl' });
+  responses.set('pi_command:set_fast_mode', {});
+  await client.startDraft();
+  assert.equal(commands('start_pi')[0].args.baseBranch, 'feature');
+  assert.equal(client.currentCwd(), '/worktrees/chat');
+  await client.disconnect();
+  await client.connect();
+  assert.equal(commands('start_pi')[1].args.baseBranch, undefined);
+  assert.equal(commands('start_pi')[1].args.cwd, '/worktrees/chat');
+});
+
 test('a rejected stop can reconnect and receive conversation events', async () => {
   const client = transport();
   await client.connect();

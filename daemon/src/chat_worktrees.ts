@@ -120,6 +120,16 @@ export async function detectRepository(cwd: string): Promise<Repository | null> 
   return { repository: await realpath(main.path), gitCommonDir };
 }
 
+export async function newChatBranches(cwd: string): Promise<{ repository: string; branches: string[]; defaultBranch: string | null } | null> {
+  const repository = await detectRepository(cwd);
+  if (!repository) return null;
+  return serialized(repository.gitCommonDir, async () => {
+    const branches = (await git(repository.gitCommonDir, ['for-each-ref', '--format=%(refname:short)', 'refs/heads/', 'refs/remotes/'])).stdout.trim().split('\n').filter(Boolean);
+    const current = await git(repository.repository, ['symbolic-ref', '--quiet', '--short', 'HEAD'], { allow: [1] });
+    return { repository: repository.repository, branches, defaultBranch: current.code === 0 && branches.includes(current.stdout.trim()) ? current.stdout.trim() : null };
+  });
+}
+
 async function required(cwd: string, known: Repository | undefined, action: string): Promise<Repository> {
   const repository = known ?? await detectRepository(cwd);
   if (!repository) throw new Error(`Cannot ${action} outside a Git repository: ${cwd}`);
@@ -193,7 +203,7 @@ async function checkOut(gitCommonDir: string, worktree: string, args: string[]):
  * ignored files. The source keeps its files, index and HEAD. Refuses an existing folder or branch. On failure, removes
  * the folder and branch it made; later steps undo it with `removeCreatedWorktree`.
  */
-export async function createWorktree(input: { sourceCwd: string; chatId: string; home: string; repository?: Repository }): Promise<CreatedWorktree> {
+export async function createWorktree(input: { sourceCwd: string; chatId: string; home: string; repository?: Repository; baseBranch?: string }): Promise<CreatedWorktree> {
   const worktree = worktreePath(input.home, input.chatId);
   const branch = branchName(input.chatId);
   const repository = await required(input.sourceCwd, input.repository, 'branch a chat');
@@ -201,13 +211,21 @@ export async function createWorktree(input: { sourceCwd: string; chatId: string;
     if (await commitOf(repository.gitCommonDir, `refs/heads/${branch}`)) throw new Error(`Branch already exists: ${branch}`);
     if (await exists(worktree)) throw new Error(`Worktree folder already exists: ${worktree}`);
     const root = await topLevel(input.sourceCwd);
-    const commit = await commitOf(root, 'HEAD');
-    if (!commit) throw new Error(`Cannot branch a chat from a repository without commits: ${root}`);
-    const tree = await currentTree(root, commit);
+    let ref = 'HEAD';
+    if (input.baseBranch !== undefined) {
+      const branches = (await git(repository.gitCommonDir, ['for-each-ref', '--format=%(refname:short)', 'refs/heads/', 'refs/remotes/'])).stdout.trim().split('\n');
+      if (!branches.includes(input.baseBranch)) throw new Error(`Branch does not exist: ${input.baseBranch}`);
+      ref = input.baseBranch;
+    }
+    const commit = await commitOf(root, ref);
+    if (!commit) throw new Error(`Cannot branch a chat from ${ref}: no commit found`);
+    const tree = input.baseBranch === undefined ? await currentTree(root, commit) : null;
     try {
       const made = await checkOut(repository.gitCommonDir, worktree, ['-b', branch, worktree, commit]);
-      await git(made, ['read-tree', '-u', '--reset', tree]);
-      await git(made, ['reset', '--quiet']);
+      if (tree !== null) {
+        await git(made, ['read-tree', '-u', '--reset', tree]);
+        await git(made, ['reset', '--quiet']);
+      }
       return { ...repository, chatId: input.chatId, worktree: made, branch, commit };
     } catch (error) {
       try {

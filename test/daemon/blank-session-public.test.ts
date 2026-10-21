@@ -133,3 +133,34 @@ test('closing keeps a conversation after a prompt was submitted', async () => {
     await daemon.stop();
   }
 }, 30_000);
+
+test('new worktree chat starts on the selected branch and removes its unused worktree on close', async () => {
+  const daemon = await startDaemon();
+  const runtimeId = 'new-worktree';
+  const repo = join(daemon.home, 'project');
+  const git = (...args: string[]) => execFileSync('git', ['-C', repo, ...args], { encoding: 'utf8' }).trim();
+  try {
+    await Bun.$`mkdir -p ${repo}`.quiet();
+    git('init', '-b', 'main');
+    git('config', 'user.name', 'Test');
+    git('config', 'user.email', 'test@example.com');
+    writeFileSync(join(repo, 'file'), 'main');
+    git('add', '.'); git('commit', '-m', 'main');
+    git('checkout', '-b', 'feature');
+    writeFileSync(join(repo, 'file'), 'feature');
+    git('commit', '-am', 'feature');
+    git('checkout', 'main');
+    const choices = await daemon.invoke('new_chat_branches', { path: repo });
+    expect(choices.defaultBranch).toBe('main');
+    const result = await daemon.invoke('start_pi', { runtimeId, clientId: 'worktree-client', cwd: repo, baseBranch: 'feature' });
+    await daemon.waitEvent('pi://event', packet => packet.runtimeId === runtimeId && packet.event?.type === 'settings_pending' && packet.event.pending === false);
+    expect(result.cwd).not.toBe(repo);
+    expect(readFileSync(join(result.cwd, 'file'), 'utf8')).toBe('feature');
+    const state = await daemon.invoke('pi_command', { runtimeId, command: { type: 'get_state' } });
+    expect(state.cwd).toBe(result.cwd);
+    expect(await daemon.invoke('stop_pi', { runtimeId, discardBlank: true })).toBe(true);
+    expect(existsSync(result.cwd)).toBe(false);
+    expect(git('branch', '--show-current')).toBe('main');
+    expect(readFileSync(join(repo, 'file'), 'utf8')).toBe('main');
+  } finally { await daemon.stop(); }
+}, 30_000);

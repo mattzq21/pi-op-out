@@ -1,3 +1,6 @@
+import { createWorktree, detectRepository, worktreePath } from './chat_worktrees';
+import * as ChatWorktrees from './chat_worktree_records';
+import { rememberProjectRepository } from './project_repositories';
 import { spawn } from 'node:child_process';
 import { join } from 'node:path';
 import { STORAGE_DIRECTORY } from './config';
@@ -16,7 +19,7 @@ import type { AgentAddress, BlankSessionCleanup } from './types';
 import type { AppSettings } from './settings_types';
 import type { App } from './app';
 
-export interface StartPiOptions { runtimeId: string; cwd?: string | null; sessionPath?: string | null; sessionId?: string | null; forkPath?: string | null; hostId?: string | null; presence?: any; clientId: string }
+export interface StartPiOptions { runtimeId: string; baseBranch?: string; cwd?: string | null; sessionPath?: string | null; sessionId?: string | null; forkPath?: string | null; hostId?: string | null; presence?: any; clientId: string }
 
 /** attached settles when the start that registered this process finishes attaching. */
 interface PiProcess { daemon: daemon.Daemon; windowLabel: string; blankCleanup: BlankSessionCleanup; attached: Promise<void> }
@@ -71,7 +74,11 @@ export async function cleanupBlankSession(target: BlankSessionCleanup): Promise<
   } catch (error: any) { console.error('Could not clean up blank session: ' + (error?.message ?? error)); }
   // A launch that failed before Pi wrote a transcript leaves only the reserved ID, which deleteBlank does not see.
   if (target.id !== undefined) {
-    try { Registry.releaseReservation(join(homeDir(), STORAGE_DIRECTORY), target.id); }
+    try {
+      const root = join(homeDir(), STORAGE_DIRECTORY);
+      Registry.releaseReservation(root, target.id);
+      if (ChatWorktrees.read(target.id, root) && !Registry.ids(root).includes(target.id)) await ChatWorktrees.abandonCreation(target.id, null, root);
+    }
     catch (error: any) { console.error('Could not release reserved session ID ' + target.id + ': ' + (error?.message ?? error)); }
   }
 }
@@ -108,6 +115,17 @@ async function preparePiStart(app: App, owner: string, runtime: PiRuntime, broke
   const blankCleanup: BlankSessionCleanup = { id: sessionId, submitted: false };
   let claim: BusyAgent | undefined;
   try {
+    if (options.baseBranch !== undefined) {
+      if (!reserved || readOnly || !options.cwd || typeof options.baseBranch !== 'string') throw new Error('A new worktree requires a new chat and a starting branch');
+      const repository = await detectRepository(options.cwd);
+      if (!repository) throw new Error('This folder is not a Git repository');
+      const root = join(homeDir(), STORAGE_DIRECTORY);
+      ChatWorktrees.prepare({ chatId: sessionId!, ...repository, worktree: worktreePath(homeDir(), sessionId!) }, root);
+      const created = await createWorktree({ sourceCwd: repository.repository, chatId: sessionId!, home: homeDir(), repository, baseBranch: options.baseBranch });
+      rememberProjectRepository(root, created.worktree, { root: created.worktree, gitDir: created.gitCommonDir });
+      options = { ...options, cwd: created.worktree };
+      assertNotCancelled();
+    }
     const archived = readOnly && options.presence?.archived === true;
     const sessionPath = options.sessionPath == null ? undefined
       : archived ? await archivedSessionFile(settings, hostId, options.sessionPath) : await desktopSessionFile(settings, hostId, options.sessionPath);
@@ -129,7 +147,10 @@ async function preparePiStart(app: App, owner: string, runtime: PiRuntime, broke
     return { connection, process, settle, packet, claim, hostId, sessionId, sessionPath, reserved };
   } catch (error) {
     claim?.release();
-    if (reserved) await cleanupBlankSession(blankCleanup);
+    if (reserved) {
+      if (sessionId && ChatWorktrees.read(sessionId, join(homeDir(), STORAGE_DIRECTORY))) await ChatWorktrees.abandonCreation(sessionId, null, join(homeDir(), STORAGE_DIRECTORY));
+      else await cleanupBlankSession(blankCleanup);
+    }
     throw error;
   }
 }
@@ -161,8 +182,9 @@ export async function startPiForOwner(app: App, owner: string, runtime: PiRuntim
     const result = await connection.request(packet);
     if (runtime.processes.get(options.runtimeId) !== process) throw new Error('Pi runtime was detached while it started');
     runtime.activeAgents.set(options.runtimeId, { hostId, sessionId, sessionPath, working: false, messageable: result?.owned === false });
+    if (options.baseBranch !== undefined && sessionId) ChatWorktrees.activate(sessionId, join(homeDir(), STORAGE_DIRECTORY));
     settle.resolve();
-    return result;
+    return { ...result, cwd: packet.cwd };
   } catch (error) {
     settle.reject(error);
     // A timeout leaves the attach running on the host. Detach cancels it there, so it cannot finish later with nobody to stop it.
@@ -171,7 +193,10 @@ export async function startPiForOwner(app: App, owner: string, runtime: PiRuntim
       catch (detachError: any) { console.error('Could not cancel the failed start of Pi runtime ' + options.runtimeId + ': ' + (detachError?.message ?? detachError)); }
     }
     // When the cancel failed on a live host, the runtime stays registered so a later stop can retry, and its blank session is kept for it.
-    if (reserved && runtime.processes.get(options.runtimeId) !== process) await cleanupBlankSession(process.blankCleanup);
+    if (reserved && runtime.processes.get(options.runtimeId) !== process) {
+      if (sessionId && ChatWorktrees.read(sessionId, join(homeDir(), STORAGE_DIRECTORY))) await ChatWorktrees.abandonCreation(sessionId, process.blankCleanup.path ?? null, join(homeDir(), STORAGE_DIRECTORY));
+      else await cleanupBlankSession(process.blankCleanup);
+    }
     throw error;
   } finally { claim?.release(); }
 }

@@ -207,6 +207,7 @@ export function useAppEvents(options: Accessor<AppEventsContext>) {
       };
 
       const handleSessionInfoChanged = () => {
+        if (capturedOptions.activeTransportRef.current === capturedOptions.transport) capturedOptions.setActiveCwd(capturedOptions.transport.currentCwd());
         if (!initializing && !capturedOptions.transport.promptControls.isApplying()) void capturedOptions.refreshSession().catch(() => undefined);
       };
 

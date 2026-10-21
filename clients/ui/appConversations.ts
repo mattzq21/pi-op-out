@@ -530,7 +530,16 @@ export function createAppConversations(preloadChat: () => void) {
     try {
       const owner = createSessionTransport(projectCwd, hostId);
       nextTransport = owner;
-      const cwd = await prepareNewSession(owner, hostId, projectCwd);
+      let cwd = await prepareNewSession(owner, hostId, projectCwd);
+      if (projectCwd && cwd) {
+        const branches = await owner.newChatBranches(cwd, hostId);
+        if (!isCurrent()) return;
+        if (branches) {
+          cwd = await owner.validateProjectDirectory(branches.repository, hostId, true, true);
+          owner.adoptBranchCwd(cwd);
+          owner.setNewChatWorktreeOptions(branches);
+        }
+      }
 
       if (!isCurrent()) return;
       transportConversationKeys.current.set(nextTransport, conversationKey);
@@ -568,14 +577,6 @@ export function createAppConversations(preloadChat: () => void) {
 
     try {
       closeMobileSidebar(); setArchivesOpen(false);
-
-      if (!clearProject && !group && !project) {
-        if (reuseSessionDraft()) return true;
-
-        if (currentSessionIsDraft()) { setView("chat"); closeSplitPane();
-
-        return true; }
-      }
 
       return await createNewSessionDraft(clearProject, group, project, host);
     } catch (reason) { addNotice({ title: "Could not open the draft", message: reason instanceof Error ? reason.message : String(reason) }); }

@@ -1,3 +1,4 @@
+import { newChatBranches } from './chat_worktrees';
 import { DEVELOPMENT } from './config';
 import * as endpoint from './daemon_endpoint';
 import * as daemonRestart from './daemon_restart';
@@ -195,6 +196,7 @@ const COMMANDS: Record<string, Handler> = {
   home_directory: (app, _owner, args) => sessionIndex.homeDirectory(app, hostId(args)),
   create_temporary_chat: (app, _owner, args) => sessionIndex.createTemporaryChat(app, hostId(args)),
   remove_temporary_chat: async (app, _owner, args) => { await sessionIndex.removeTemporaryChat(app, argument(args, 'path', 'string'), hostId(args)); return null; },
+  new_chat_branches: (_app, _owner, args) => newChatBranches(argument(args, 'path', 'string')),
   validate_project_directory: (app, _owner, args) => sessionIndex.validateProjectDirectory(app, argument(args, 'path', 'string'), hostId(args), argument(args, 'allowStorage', 'boolean?'), argument(args, 'newChat', 'boolean?')),
   list_directories: (app, _owner, args) => sessionIndex.listDirectories(app, hostId(args), argument(args, 'path', 'string?')),
   read_image_file: (app, _owner, args) => projectFiles.readImage(app, argument(args, 'cwd', 'string'), argument(args, 'path', 'string'), argument(args, 'hostId', 'string')),
