@@ -200,7 +200,9 @@ export default function contextBar(pi: ExtensionAPI) {
 
     if (changeInstruction) instructions.push({ path: changeInstruction.path, content: changeInstruction.content });
     const activeTools = new Set(pi.getActiveTools());
-    const tools = pi.getAllTools().filter((tool) => activeTools.has(tool.name)).map(({ name, description, parameters }) => ({ name, description, parameters }));
+    // With codemode in "only" mode, Pi leaves the direct tools out of the request: the model calls them from codemode scripts.
+    const codemodeOnly = activeTools.has("codemode") && pi.getSettings().codemode?.mode === "only";
+    const tools = pi.getAllTools().filter((tool) => activeTools.has(tool.name) && !(codemodeOnly && tool.name !== "codemode" && tool.exposure === "direct")).map(({ name, description, parameters }) => ({ name, description, parameters }));
     const estimate = (value: string) => Math.ceil(value.length / 4);
     const skillTokens = { defined: estimate(skillPrompt), invoked: invokedSkills.reduce((sum, skill) => sum + estimate(skill.content), 0) };
 

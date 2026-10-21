@@ -45,7 +45,7 @@ Use the read tool to load a skill's file when the task matches its description.
 ${project}
 </cwd>`;
 
-function session({ prompt = () => systemPrompt, tools = [] } = {}) {
+function session({ prompt = () => systemPrompt, tools = [], settings = {} } = {}) {
   const handlers = new Map();
   const branch = [];
   let status;
@@ -53,6 +53,7 @@ function session({ prompt = () => systemPrompt, tools = [] } = {}) {
     on: (name, handler) => handlers.set(name, handler),
     getActiveTools: () => tools.map(tool => tool.name),
     getAllTools: () => tools,
+    getSettings: () => settings,
     appendEntry: (customType, data) => branch.push({ type: 'custom', customType, data }),
   };
   const ctx = { getSystemPrompt: prompt, ui: { setStatus: (_key, value) => { status = value; } }, sessionManager: { getBranch: () => branch } };
@@ -74,6 +75,17 @@ test('the context panel lists project instructions, the working directory and sk
   assert.deepEqual(panel.skills, [{ name: 'tdd', description: 'Test & design first', filePath: '/skills/tdd/SKILL.md' }]);
   assert.ok(!panel.systemPrompt.includes('<cwd>'));
   assert.ok(panel.tokens.instructions > 0 && panel.tokens.skills > 0 && panel.tokens.system > 0);
+});
+
+test('with codemode only, the panel lists the tools the model gets: codemode and the tools it cannot call from scripts', () => {
+  const tools = [
+    { name: 'read', description: 'Read files', parameters: {}, exposure: 'direct' },
+    { name: 'spawn_agent', description: 'Start a child', parameters: {}, exposure: 'model-only' },
+    { name: 'codemode', description: 'Run scripts', parameters: {}, exposure: 'direct' },
+  ];
+  const names = settings => { const chat = session({ tools, settings }); chat.say('hi'); chat.emit('context', { messages: [] }); return chat.panel().tools.map(tool => tool.name); };
+  assert.deepEqual(names({ codemode: { mode: 'only' } }), ['spawn_agent', 'codemode']);
+  assert.deepEqual(names({ codemode: { mode: 'on' } }), ['read', 'spawn_agent', 'codemode']);
 });
 
 test('each user message saves one snapshot, and an unchanged prompt or tool list is not stored again', () => {
