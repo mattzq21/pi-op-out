@@ -195,6 +195,8 @@ test('an outside click dismisses the command palette without sending', async t =
   assert.equal(await commands.count(), 0);
   assert.equal(await editor.inputValue(), '/cl');
   assert.deepEqual(await sent(page), []);
+  await editor.click();
+  await commands.waitFor();
 });
 
 test('submission trims text, ignores blank and composed input, and respects newline and delivery shortcuts', async t => {
