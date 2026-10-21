@@ -56,6 +56,9 @@ test('cost and review are plugins: enabled by default, gone with an explicit err
 
   const first = await openChat(client);
   expect(await first.commands()).toEqual(expect.arrayContaining(['cost', 'review', 'rs']));
+  const listed = (await first.command({ type: 'get_commands' })).commands;
+  expect(listed.find((item: any) => item.name === 'rs').options).toEqual([{ value: '', label: '[n]', description: expect.stringContaining('review subagents') }]);
+  expect(listed.find((item: any) => item.name === 'review').options).toEqual([{ value: '', label: '[scope]', description: expect.stringContaining('limits the review') }]);
   await first.command({ type: 'prompt', message: 'Plugin chat' });
   const replied = async () => (await first.command({ type: 'get_entries' })).entries.some((entry: any) => entry.type === 'message' && text(entry.message) === 'Plugin chat ready.');
   for (let tries = 0; !(await replied()) && tries < 300; tries++) await Bun.sleep(100);

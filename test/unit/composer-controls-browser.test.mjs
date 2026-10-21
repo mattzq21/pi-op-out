@@ -161,6 +161,28 @@ test('Escape dismisses the command palette without sending', async t => {
   assert.deepEqual(await sent(page), []);
 });
 
+test('command options show after the command name: hints describe a free argument and choices fill it in', async t => {
+  const page = await controlsPage(t);
+  const editor = page.getByRole('textbox', { name: 'Message piop' });
+  await editor.fill('/rs ');
+  const rs = page.getByRole('listbox', { name: '/rs options' });
+  await rs.waitFor();
+  assert.match(await rs.textContent(), /\[n\]Number of review subagents/);
+  assert.equal(await rs.getByRole('option').count(), 0);
+  await editor.fill('/rs 2');
+  assert.equal(await rs.count(), 0);
+  await editor.fill('/fast o');
+  const fast = page.getByRole('listbox', { name: '/fast options' });
+  await fast.waitFor();
+  assert.deepEqual(await fast.getByRole('option').allTextContents(), ['on', 'off']);
+  await page.keyboard.press('ArrowDown');
+  await page.keyboard.press('Tab');
+  assert.equal(await editor.inputValue(), '/fast off');
+  assert.equal(await fast.count(), 0);
+  await page.keyboard.press('Enter');
+  assert.deepEqual(await sent(page), [['/fast off', null, []]]);
+});
+
 test('an outside click dismisses the command palette without sending', async t => {
   const page = await controlsPage(t);
   const editor = page.getByRole('textbox', { name: 'Message piop' });

@@ -226,6 +226,7 @@ function appInput(dispatch, events) {
       if (command?.type === "piop_request") void dispatch(command);
       else if (command?.type === "piop_runtime_event_result") events.answer(command);
       else if (command?.type === "prompt") void dispatch({ ...command, command: "prompt" });
+      else if (command?.type === "get_commands") void dispatch({ ...command, command: "get_commands" });
       else input.write(`${line}\n`);
     }
   });
@@ -347,10 +348,43 @@ async function dispatchReady(command, session, output) {
       return;
     }
 
+    if (command.command === "get_commands") {
+      output({ type: "response", id: command.id, command: command.command, success: true, data: { commands: await listCommands(session) } });
+
+      return;
+    }
+
     const data = await runtimeRequest(session, command.command, command.payload);
     output({ type: "response", id: command.id, command: command.command, success: true, data });
   } catch (error) {
     promptError(command, command.command === "prepare_goal_prompt" ? new GoalPreparationError(error instanceof Error ? error.message : String(error)) : error, output);
+  }
+}
+
+/** Pi's command list, with the argument options of each extension command. Options come from the command's argument completions for an empty argument. */
+async function listCommands(session) {
+  const commands = [];
+
+  for (const command of session.extensionRunner.getRegisteredCommands()) {
+    commands.push({ name: command.invocationName, description: command.description, source: "extension", sourceInfo: command.sourceInfo, options: await commandOptions(session, command) });
+  }
+
+  for (const template of session.promptTemplates) commands.push({ name: template.name, description: template.description, source: "prompt", sourceInfo: template.sourceInfo });
+
+  for (const skill of session.resourceLoader.getSkills().skills) commands.push({ name: `skill:${skill.name}`, description: skill.description, source: "skill", sourceInfo: skill.sourceInfo });
+
+  return commands;
+}
+
+async function commandOptions(session, command) {
+  if (!command.getArgumentCompletions) return undefined;
+
+  try {
+    const items = await command.getArgumentCompletions("");
+
+    return items?.map(item => ({ value: item.value, label: item.label, description: item.description }));
+  } catch (error) {
+    session.extensionRunner.createContext().ui.notify(`/${command.invocationName} options failed: ${error instanceof Error ? error.message : String(error)}`, "error");
   }
 }
 

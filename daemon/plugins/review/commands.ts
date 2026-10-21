@@ -32,10 +32,12 @@ export function registerReviewCommands(pi: ExtensionAPI, reviews: ReviewSession)
 
   pi.registerCommand("review", {
     description: "Review files in the current directory in a side pane",
+    getArgumentCompletions: prefix => prefix.trim() ? null : [{ value: "", label: "[scope]", description: "Optional. Text that limits the review, for example files or a feature" }],
     handler: (args, ctx) => start(args, ctx),
   });
   pi.registerCommand("rs", {
     description: "Review with proportionate delegation, or an explicit subagent count: /rs [n]",
+    getArgumentCompletions: prefix => prefix.trim() ? null : [{ value: "", label: "[n]", description: "Optional. Number of review subagents. Empty: the reviewer chooses a proportionate number" }],
     handler: (args, ctx) => start(args, ctx, "rs"),
   });
   pi.events.on("piop:rpc", request => {

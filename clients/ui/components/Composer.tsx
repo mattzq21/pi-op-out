@@ -18,7 +18,7 @@ import { ComposerPlugins } from "../plugins/composer";
 import { ArrowUp,ChevronDown,ChevronUp,CircleStop,CircleX,CornerDownRight,FileText,ImagePlus,MoveVertical,Pause,Play,RefreshCw,TerminalSquare,Trash2,X,Zap } from "lucide-solid";
 import { hasVisibleText } from "../lib/content";
 import { usePendingMessageDrag } from "../lib/usePendingMessageDrag";
-import type { AgentProfile,ComposerUpload,ContextUsage,ImageAttachment,Model,PendingMessage,SlashCommand } from "../types";
+import type { AgentProfile,CommandOption,ComposerUpload,ContextUsage,ImageAttachment,Model,PendingMessage,SlashCommand } from "../types";
 import { IconButton } from "./IconButton";
 import { z } from "zod";
 import { splitPaneCommand } from "../plugins";
@@ -254,10 +254,34 @@ export function Composer(props: Props) {
       ? skillMatches(composer().commands, required(skillQuery()))
       : []);
 
-  createDependencyEffect(() => { setSelectedMatch(0); }, () => [commandQuery(), skillQuery(), matches().length]);
+  /** The command and argument text while the user types the argument of a command that has options. */
+  const argumentInput = createMemo(() => {
+    const caret = selection();
+    const text = value();
+
+    if (reference() || (caret && (caret.start !== caret.end || caret.end !== text.length))) return undefined;
+    const typed = /^\/(\S+) ([^\n]*)$/.exec(text);
+    const command = typed ? visibleCommands().find(command => command.name === typed[1]) : undefined;
+
+    return typed && command?.options?.length ? { command, options: command.options, prefix: typed[2].trimStart().toLowerCase() } : undefined;
+  });
+
+  /** Options that match the typed argument. Hints (empty value) describe a free argument and show only before the user types it. */
+  const argumentShown = createMemo<CommandOption[]>(() => {
+    const input = argumentInput();
+
+    if (paletteDismissed() || !input) return [];
+
+    return input.options.filter(option => option.value.toLowerCase().startsWith(input.prefix) && (option.value === "" || option.value.toLowerCase() !== input.prefix));
+  });
+  const argumentHints = createMemo(() => argumentShown().filter(option => !option.value));
+  const argumentChoices = createMemo(() => argumentShown().filter(option => option.value));
+  const pickCount = () => matches().length || argumentChoices().length;
+
+  createDependencyEffect(() => { setSelectedMatch(0); }, () => [commandQuery(), skillQuery(), matches().length, argumentChoices().length]);
   createDependencyEffect(() => {
     composerRef.current?.querySelector<HTMLElement>('.command-palette [aria-selected="true"]')?.scrollIntoView({ block: "nearest", inline: "nearest" });
-  }, () => [selectedMatch(), matches()]);
+  }, () => [selectedMatch(), matches(), argumentChoices()]);
   createDependencyEffect(() => { setPaletteDismissed(false); }, () => [value()]);
   createDependencyEffect(() => {
     const dismissOutside = (event: PointerEvent) => { if (!(event.target instanceof Node) || !composerRef.current?.contains(event.target)) setPaletteDismissed(true); };
@@ -462,18 +486,33 @@ export function Composer(props: Props) {
     ref.current?.setSelectionRange(caret, caret);
   };
 
+  const chooseOption = (option: CommandOption) => {
+    const input = argumentInput();
+
+    if (!input) return;
+    const text = `/${input.command.name} ${option.value}`;
+    setValue(text);
+    setSelection({ start: text.length, end: text.length });
+    focusOwnedEditor();
+    ref.current?.setSelectionRange(text.length, text.length);
+  };
+
   const handlePaletteKey = (event: KeyboardEvent<HTMLTextAreaElement>) => {
     if (event.currentTarget.selectionStart !== event.currentTarget.selectionEnd) return false;
 
-    if (event.key === "Escape" && matches().length) { event.preventDefault(); event.stopPropagation(); setPaletteDismissed(true);
+    if (event.key === "Escape" && (matches().length || argumentShown().length)) { event.preventDefault(); event.stopPropagation(); setPaletteDismissed(true);
 
     return true; }
 
-    if (matches().length && (event.key === "ArrowDown" || event.key === "ArrowUp")) { event.preventDefault(); setSelectedMatch((current) => (current + (event.key === "ArrowDown" ? 1 : -1) + matches().length) % matches().length);
+    if (pickCount() && (event.key === "ArrowDown" || event.key === "ArrowUp")) { event.preventDefault(); setSelectedMatch((current) => (current + (event.key === "ArrowDown" ? 1 : -1) + pickCount()) % pickCount());
 
     return true; }
 
     if (canPickCommand(event) && matches()[selectedMatch()]) { event.preventDefault(); chooseCommand(matches()[selectedMatch()]);
+
+    return true; }
+
+    if (canPickCommand(event) && argumentChoices()[selectedMatch()]) { event.preventDefault(); chooseOption(argumentChoices()[selectedMatch()]);
 
     return true; }
 
@@ -527,6 +566,10 @@ export function Composer(props: Props) {
   const ComposerBody = () => {
     const renderComposerDropHint = () => (draggingFiles() && !controls().inputDisabled && <div class="composer-drop-hint" role="status">Drop files to attach</div>);
     const renderCommandPalette = () => (<Show when={matches().length > 0}><div class="command-palette" role="listbox" aria-label={skillQuery() === undefined ? "piop commands" : "piop skills"}>{<Key each={matches()} by={(command) => `${command.source}:${command.name}`}>{(command, index) => <button ref={element => { if (index() === selectedMatch()) selectedCommandRef.current = element; }} role="option" aria-selected={index() === selectedMatch()}  type="button" onClick={() => chooseCommand(command())}><span><strong>{skillQuery() !== undefined ? `$${skillName(command())}` : `/${command().name}`}</strong>{command().description && <small>{command().description}</small>}</span></button>}</Key>}</div></Show>);
+    const renderArgumentPalette = () => (<Show when={argumentShown().length > 0}><div class="command-palette" role="listbox" aria-label={`/${argumentInput()?.command.name} options`}>
+      <Key each={argumentHints()} by={option => option.label}>{option => <div class="command-hint"><span><strong>{option().label}</strong>{option().description && <small>{option().description}</small>}</span></div>}</Key>
+      <Key each={argumentChoices()} by={option => option.value}>{(option, index) => <button role="option" aria-selected={index() === selectedMatch()} type="button" onClick={() => chooseOption(option())}><span><strong>{option().label}</strong>{option().description && <small>{option().description}</small>}</span></button>}</Key>
+    </div></Show>);
 
     const renderComposerEditor = () => (<div class="composer-editor">
         <textarea ref={element => { ref.current = element; }} aria-label="Message piop" readOnly={props.ownershipRequired} onFocus={() => { if (props.ownershipRequired) void props.onTakeOwnership?.(); }} placeholder={props.ownershipRequired ? "" : composer().paused ? "Send a message to continue piop…" : composer().streaming ? "Queue a follow-up…" : "Ask piop to build, explain, or change anything…"} value={value()} rows={1} onSelect={(event) => setSelection({ start: event.currentTarget.selectionStart, end: event.currentTarget.selectionEnd })} onInput={(event) => { setSelection({ start: event.target.selectionStart, end: event.target.selectionEnd }); setPaletteDismissed(false); setValue(event.target.value); }} onKeyDown={handleEditorKey} />
@@ -634,6 +677,7 @@ export function Composer(props: Props) {
       }}>
       {renderComposerDropHint()}
       {renderCommandPalette()}
+      {renderArgumentPalette()}
       {uploads().length > 0 && <div class="attachments">{<Key each={uploads()} by={(upload) => upload.id}>{(upload, _index) => <span >{upload().kind === "image" ? <ImagePlus size={12} /> : <FileText size={12} />}<b>{upload().name}</b><button aria-label={`Remove ${upload().name}`} onClick={() => { updateUploads((current) => current.filter((item) => item.id !== upload().id)); setUploadError(undefined); }}><X size={11} /></button></span>}</Key>}</div>}
       {uploadError() && <div class="upload-error" role="alert">{(uploadError())}</div>}
       {controlError() && <div class="upload-error" role="alert">{(controlError())}</div>}

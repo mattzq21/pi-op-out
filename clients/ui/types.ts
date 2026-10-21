@@ -89,7 +89,9 @@ export interface RemoteHost { enabled?: boolean; id: string; name: string; targe
 
 export interface DirectoryListing { path: string; parent?: string; directories: string[]; }
 
-export interface SlashCommand { name: string; description?: string; source: "builtin" | "extension" | "prompt" | "skill"; sourceInfo?: { source?: string }; }
+/** An argument choice of a slash command. An empty value is a hint that describes a free argument. */
+export interface CommandOption { value: string; label: string; description?: string; }
+export interface SlashCommand { name: string; description?: string; source: "builtin" | "extension" | "prompt" | "skill"; sourceInfo?: { source?: string }; options?: CommandOption[]; }
 
 export interface ImageAttachment { type: "image"; data: string; mimeType: string; name?: string; }
 
