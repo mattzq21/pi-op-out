@@ -11,6 +11,7 @@ function destinationSession(destination: DraftDestination): SessionSummary {
 }
 
 interface Props {
+  conversationKey: string;
   drafts: ReturnType<typeof createConversationDrafts>;
   onSelect: (session: SessionSummary) => void;
 }
@@ -19,7 +20,7 @@ export function DraftRecovery(props: Props) {
   const [error, setError] = createSignal<string>();
   const [busy, setBusy] = createSignal(false);
   const [preparedGoals, setPreparedGoals] = createSignal<Map<string, z.infer<typeof goalPreparationSchema> | null>>(new Map());
-  const recoveries = () => props.drafts.submissions().filter(item => !isChatSubmissionActive(item.id));
+  const recoveries = () => props.drafts.submissions().filter(item => item.destination.key === props.conversationKey && !isChatSubmissionActive(item.id));
 
   const action = async (work: () => Promise<void>) => {
     setBusy(true); setError(undefined);

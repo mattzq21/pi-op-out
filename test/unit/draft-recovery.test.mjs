@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { afterEach, beforeEach, test } from 'node:test';
-import { createRoot } from 'solid-js';
+import { createRoot, createSignal } from 'solid-js';
 import { act, channelsClosed, installDom, renderComponent, untilDom } from '../dom.mjs';
 import { createConversationDrafts } from '../../clients/ui/appDrafts.ts';
 import { NativeTransport } from '../../clients/ui/lib/nativeTransport.ts';
@@ -32,12 +32,13 @@ async function interruptedSend(text, { dispatched = false } = {}) {
 
 /** The next window, with its recovery list shown. */
 async function nextWindow() {
+  const [conversationKey, setConversationKey] = createSignal("local:chat-1");
   const drafts = openWindow();
   const opened = [];
-  view = await renderComponent(DraftRecovery, { drafts, onSelect: session => opened.push(session) });
+  view = await renderComponent(DraftRecovery, { drafts, get conversationKey() { return conversationKey(); }, onSelect: session => opened.push(session) });
   await untilDom(() => document.querySelector('[aria-label="Interrupted messages"] summary'));
   const button = text => [...document.querySelectorAll('[aria-label="Interrupted messages"] button')].find(item => item.textContent === text);
-  return { drafts, opened, button, summary: () => document.querySelector('[aria-label="Interrupted messages"] summary').textContent };
+  return { drafts, opened, button, setConversationKey, summary: () => document.querySelector('[aria-label="Interrupted messages"] summary').textContent };
 }
 
 test('a message whose send was cut off before it reached the host can be restored to its chat', async () => {
@@ -68,4 +69,13 @@ test('a message that may already have reached the host warns before it is sent a
   const later = openWindow();
   for (let tries = 0; !later.submissions().length && tries < 100; tries++) await new Promise(resolve => setTimeout(resolve, 20));
   assert.deepEqual(later.submissions().map(item => item.rawText), ['Keep this one'], 'a discarded message does not come back in the next window');
+});
+
+test('recovery is visible only in its chat and on its machine', async () => {
+  await interruptedSend('Only in this chat');
+  const { setConversationKey } = await nextWindow();
+  for (const key of ['local:chat-2', 'remote:chat-1', undefined, 'local:chat-1']) {
+    await act(() => setConversationKey(key));
+    assert.equal(Boolean(document.querySelector('[aria-label="Interrupted messages"]')), key === 'local:chat-1');
+  }
 });
