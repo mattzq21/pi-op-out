@@ -501,10 +501,11 @@ export function SettingsView(props: SettingsViewProps) {
           </div></>);
         };
 
-        return (formValidation().visibleSection === "agents" && <SettingsSection title="Agents" description="Choose defaults, instructions, and the resources each agent may see." headerAction={<button class="secondary-button" disabled={!agentConfig() || saving()} onClick={addAgent}><CirclePlus size={15} />Add agent</button>}>
-          <For each={pluginSettingsSections.filter(item => item.within === "agents")}>{item => <Show when={pluginSettingsEnabled(providerHostId() ?? "local", item.section)}><div class="agent-plugin-settings"><Dynamic component={item.component} settings={draft()} agents={agentDrafts()} onChange={patch} /></div></Show>}</For>
+        return (formValidation().visibleSection === "agents" && <>
+          <For each={pluginSettingsSections.filter(item => item.within === "agents")}>{item => <Show when={pluginSettingsEnabled(providerHostId() ?? "local", item.section)}><SettingsSection title={item.label} description={item.description}><div class="agent-plugin-settings"><Dynamic component={item.component} settings={draft()} agents={agentDrafts()} onChange={patch} /></div></SettingsSection></Show>}</For>
+          <SettingsSection title="Agents" description="Choose defaults, instructions, and the resources each agent may see." headerAction={<button class="secondary-button" disabled={!agentConfig() || saving()} onClick={addAgent}><CirclePlus size={15} />Add agent</button>}>
           {renderAgentEditor()}
-        </SettingsSection>);
+        </SettingsSection></>);
       };
 
       return (<section class="settings-content">
