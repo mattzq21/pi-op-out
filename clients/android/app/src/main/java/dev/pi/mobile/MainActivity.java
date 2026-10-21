@@ -13,7 +13,6 @@ public class MainActivity extends BridgeActivity {
     @Override
     public void onCreate(Bundle savedInstanceState) {
         registerPlugin(ClientPreferencesPlugin.class);
-        registerPlugin(DictationPlugin.class);
         registerPlugin(DebugConnectionPlugin.class);
         registerPlugin(TailscaleStatusPlugin.class);
         super.onCreate(savedInstanceState);

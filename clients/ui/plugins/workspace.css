@@ -21,7 +21,6 @@
 .plugin-panel { display: flex; flex: 1; min-height: 0; min-width: 0; overflow: hidden; }
 .plugin-error { padding: 8px 12px; font-size: 12px; color: var(--ink); overflow-wrap: anywhere; }
 .open-plugins-button { position: absolute; right: 12px; top: 10px; z-index: 5; }
-.plugin-panel > .quick-chat { width: 100%; border: 0; }
 .plugin-resizer { position: absolute; z-index: 5; top: 0; bottom: 0; left: -4px; width: 8px; cursor: col-resize; touch-action: none; user-select: none; }
 .plugin-resizer::after { content: ""; position: absolute; inset: 0 3px; background: transparent; }
 .plugin-resizer:hover::after, .plugin-resizer.dragging::after, .plugin-resizer:focus-visible::after { background: var(--accent); }

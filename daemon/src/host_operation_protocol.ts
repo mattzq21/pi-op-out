@@ -11,7 +11,7 @@ export const STARTED = 1;
 export const CANCELLED = 2;
 
 /** Descriptors of the storage lock files, opened by the daemon and locked by the worker. */
-export interface StorageLocks { ownership: number; restore: number; transactions: number; notes: number }
+export interface StorageLocks { restore: number; transactions: number }
 
 export interface WorkerJob {
   id: number;

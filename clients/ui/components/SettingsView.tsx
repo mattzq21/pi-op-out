@@ -50,7 +50,7 @@ export const sections: SettingsSection[] = [
   ...mobileSections,
 ];
 
-export const clientSections = new Set<Section>(["keybinds", "connections", "toasts", ...pluginSettingsSections.filter(item => item.scope === "client").map(item => item.section)]);
+export const clientSections = new Set<Section>(["keybinds", "connections", "toasts"]);
 
 export const visibleClientSections = (debugMode: boolean) => sections.filter(item => clientSections.has(item.id) && (item.id !== "toasts" || debugMode) && (!item.plugin || pluginSettingsEnabled("local", item.id)));
 

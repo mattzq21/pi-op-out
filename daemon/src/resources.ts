@@ -16,9 +16,6 @@ import agentCommands from '../resources/agent-commands.json?raw';
 import sdkStorageBundleRaw from '../resources/sdk-storage.bundle.mjs?raw';
 import providerSdk from '../resources/provider-sdk.mjs?raw';
 import fastModelDiscovery from '../resources/fast-model-discovery.mjs?raw';
-import chatgptStream from '../resources/chatgpt-stream.mjs?raw';
-import chatgptStorageRaw from '../resources/chatgpt-storage.mjs?raw';
-import chatgptService from '../resources/chatgpt-service.mjs?raw';
 import sessionBroker from '../resources/session-broker.ts?raw';
 import hooksExtendedIndex from '../resources/hooks-extended/index.ts?raw';
 import hooksExtendedInterface from '../resources/hooks-extended/interface.ts?raw';
@@ -110,7 +107,6 @@ function embedFileLock(source: string): string {
     .replace(/require\(['"][^'"]*file-lock\.cjs['"]\)/g, () => '(function () { const module = { exports: {} }; ' + fileLockSource + '; return module.exports; })()');
 }
 const sdkStorage = embedFileLock(sdkStorageRaw);
-const chatgptStorage = bunEnvironment + embedFileLock(chatgptStorageRaw);
 const agentPrompts = embedFileLock(agentPromptsRaw);
 const storagePublicationIo = embedFileLock(storagePublicationIoRaw);
 const storageReferences = embedFileLock(storageReferencesRaw);
@@ -128,9 +124,6 @@ export {
   sdkStorageBundle,
   providerSdk,
   fastModelDiscovery,
-  chatgptStream,
-  chatgptStorage,
-  chatgptService,
   sessionBroker,
   sdkSessionList,
   runtimeConfiguration,

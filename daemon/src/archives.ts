@@ -1,7 +1,7 @@
 import { realpathSync, statSync } from 'node:fs';
 import { extname, join, sep } from 'node:path';
 import { STORAGE_DIRECTORY } from './config';
-import { homeDir, piExecutable } from './environment';
+import { homeDir } from './environment';
 import { sessionIdentity } from './pi_launch';
 import { desktopSessionsDir } from './process_io';
 import { DEFAULT_TIMEOUT, hostOperation, profileRoot, runHostOperation, STORAGE_TIMEOUT } from './host_operations';
@@ -25,7 +25,7 @@ export interface HostStorage { hostId: string; hostName: string; categories: any
 
 type Inventory = { categories: any[]; archives: any[]; warnings: string[] };
 
-const storageInventory = hostOperation<{ profile: string; piPath: string }, Inventory>('storage-inventory', 'general', STORAGE_TIMEOUT, (value: any) => {
+const storageInventory = hostOperation<{ profile: string }, Inventory>('storage-inventory', 'general', STORAGE_TIMEOUT, (value: any) => {
   if (!Array.isArray(value?.categories)) throw new Error('missing field `categories`');
   if (!Array.isArray(value?.archives)) throw new Error('missing field `archives`');
   return { categories: value.categories.map(normalizeCategory), archives: value.archives.map(normalizeArchive), warnings: Array.isArray(value.warnings) ? value.warnings : [] };
@@ -35,7 +35,7 @@ const storageInventory = hostOperation<{ profile: string; piPath: string }, Inve
 export async function inspectStorage(): Promise<HostStorage> {
   await restoreRecovery.recover(profileRoot());
   let inventory: Inventory;
-  try { inventory = await runHostOperation(storageInventory, { profile: profileRoot(), piPath: piExecutable() }); }
+  try { inventory = await runHostOperation(storageInventory, { profile: profileRoot() }); }
   catch (error: any) { throw new Error(`Could not inspect storage on Local: ${error?.message ?? error}`); }
   return { hostId: 'local', hostName: 'Local', ...inventory, warnings: [...inventory.warnings, ...chatWorktrees.pendingWarnings()] };
 }

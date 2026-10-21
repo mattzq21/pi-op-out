@@ -1,5 +1,5 @@
 import { createSignal } from "solid-js";
-import { ClipboardCheck, Mic } from "lucide-solid";
+import { ClipboardCheck } from "lucide-solid";
 import { z } from "zod";
 import { invoke } from "../lib/platform";
 import type { PluginDefinition } from "./types";
@@ -7,10 +7,6 @@ import { flushPlugins, waitForClientPlugins } from "./lifecycle";
 import { reviewSplitPane } from "./review/requests";
 
 export const plugins: PluginDefinition[] = [
-  { id: "dictation", scope: "client", retainOnHostRestart: true, name: "Dictation", description: "Speech to text on this device.", load: () => import("./dictation/plugin"),
-    settings: { scope: "client", section: "dictation", label: "Dictation", description: "Choose the speech engine and model that this device uses.", icon: Mic, load: () => import("./dictation/DictationSettings").then(module => ({ default: module.DictationSettings })) } },
-  { id: "chatgpt", scope: "client", name: "ChatGPT", description: "Client-owned ChatGPT chats with context from any agent host.", load: () => import("./chatgpt/plugin") },
-  { id: "markdown", scope: "conversation", name: "Notes", description: "Shared conversation notes, with one client editing at a time.", load: () => import("./markdown/plugin") },
   { id: "cost", scope: "host", name: "Cost limit", description: "Per-conversation API cost limit, set with /cost.", load: () => import("./cost/plugin") },
   { id: "review", scope: "host", name: "Review", description: "Code reviews in a split pane, started with /review.", load: () => import("./review/plugin"),
     settings: { section: "review", label: "Review", description: "Choose the agent and instructions for code reviews.", icon: ClipboardCheck, load: () => import("./review/ReviewSettings").then(module => ({ default: module.ReviewSettings })) },

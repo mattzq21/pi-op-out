@@ -69,9 +69,8 @@ async function sourceChat() {
 
 /** Deletes a chat the way the daemon's storage worker does. */
 async function deleteChat(path: string) {
-  mkdirSync(join(root, 'notes'), { recursive: true });
   const open = (file: string) => openSync(file, constants.O_CREAT | constants.O_RDWR | constants.O_NOFOLLOW, 0o600);
-  const locks = { ownership: open(join(root, 'notes', 'ownership.lock')), restore: open(join(root, 'restore.lock')), transactions: open(join(root, 'session-transactions.lock')), notes: open(join(root, 'note-mutations.lock')) };
+  const locks = { restore: open(join(root, 'restore.lock')), transactions: open(join(root, 'session-transactions.lock')) };
   try { return await modules.operation.runStorageTransaction({ root, locks, begin: () => true }, { action: 'delete', targets: [{ area: 'sessions', path }], activeSessionIds: [] }); }
   finally { Object.values(locks).forEach(descriptor => closeSync(descriptor)); }
 }

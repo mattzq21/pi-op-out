@@ -2,7 +2,6 @@ const fs = require('node:fs/promises');
 const path = require('node:path');
 const { validGoalPath } = require('./storage-inventory-owners.cjs');
 const { goalOwner } = require('./storage-inventory-goals.cjs');
-const { chatGptStoredCount } = require('./chatgpt-storage.mjs');
 
 const localCategories = { sessions: 'active-conversations', archived: 'archived-conversations', tmp: 'temporary-chats', recovery: 'unattributed-recovery-storage' };
 
@@ -38,7 +37,6 @@ async function diskStorage(profile, discovery) {
   const warnings = [];
   const unavailable = new Set();
   const root = await fs.realpath(profile).catch(() => profile);
-  const chatRoots = new Set(await Promise.all([...discovery.chatgpt.keys()].map(directory => fs.realpath(directory).catch(() => directory))));
 
   function addCount(category, amount = 1) { counts.set(category, (counts.get(category) || 0) + amount); }
 
@@ -49,17 +47,6 @@ async function diskStorage(profile, discovery) {
 
   function observeQueue(target, metadata) {
     if (metadata.isFile() && discovery.queuedInput?.has(target)) seenQueuedInput.add(target);
-  }
-
-  async function countChats() {
-    for (const directory of chatRoots) {
-      try {
-        if (!(await fs.lstat(directory)).isDirectory()) throw new Error('ChatGPT storage is not a directory');
-        addCount('chatgpt-storage', chatGptStoredCount(directory));
-      } catch (error) {
-        if (error.code !== 'ENOENT') warnings.push(directory + ': ChatGPT chat count unavailable: ' + error.message);
-      }
-    }
   }
 
   function registerQueuedInputs() {
@@ -158,7 +145,6 @@ async function diskStorage(profile, discovery) {
     }
   }
 
-  await countChats();
   await visit(root, 'other-storage');
   registerTemporaryChats();
 
@@ -171,8 +157,6 @@ async function diskStorage(profile, discovery) {
   register('other-storage', { path: root, ownership: 'owned', provenance: ['PIOP_STORAGE_DIRECTORY profile'], owners: [], available: directories.has(root), directory: true });
 
   for (const record of discovery.recovery.values()) await visitRecovery(record);
-
-  for (const record of discovery.chatgpt.values()) await visitRecord('chatgpt-storage', record);
 
   for (const record of discovery.goals.values()) await visitRecord(goalOwner(record) ? 'goal-attachments' : 'unattributed-goal-attachments', record);
 

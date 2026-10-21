@@ -33,26 +33,22 @@ export function recoverMissingTranscripts(root: string, ownership: ConversationO
 }
 
 function recoverStorage(root: string, ownership: ConversationOwnership): Recovery {
-  const notes = tryLock(join(root, 'notes', 'ownership.lock'));
-  if (!notes) return { ...empty(), retry: true, waiting: waitForLock(join(root, 'notes', 'ownership.lock')) };
+  const restore = tryLock(join(root, 'restore.lock'));
+  if (!restore) return { ...empty(), retry: true, waiting: waitForLock(join(root, 'restore.lock')) };
   try {
-    const restore = tryLock(join(root, 'restore.lock'));
-    if (!restore) return { ...empty(), retry: true, waiting: waitForLock(join(root, 'restore.lock')) };
-    try {
-      if (Registry.pending(root, 'transaction')) return { ...empty(), retry: true, transactionsPending: true };
-      const db = Registry.open(root);
-      let entries: string[];
-      try { entries = (db.prepare('SELECT DISTINCT session_id FROM queue_items').all() as any[]).map(row => String(row.session_id)); } finally { db.close(); }
-      const recovery = empty();
-      const waiting: Promise<void>[] = [];
-      for (const entry of entries) {
-        try { recovery.recovered = recoverJournal(root, ownership, join(root, 'queued-input', entry + '.json'), waiting) || recovery.recovered; }
-        catch (error) { recovery.errors.push(errorText(error)); }
-      }
-      if (waiting.length) { recovery.retry = true; recovery.waiting = Promise.race(waiting); }
-      return recovery;
-    } finally { restore.release(); }
-  } finally { notes.release(); }
+    if (Registry.pending(root, 'transaction')) return { ...empty(), retry: true, transactionsPending: true };
+    const db = Registry.open(root);
+    let entries: string[];
+    try { entries = (db.prepare('SELECT DISTINCT session_id FROM queue_items').all() as any[]).map(row => String(row.session_id)); } finally { db.close(); }
+    const recovery = empty();
+    const waiting: Promise<void>[] = [];
+    for (const entry of entries) {
+      try { recovery.recovered = recoverJournal(root, ownership, join(root, 'queued-input', entry + '.json'), waiting) || recovery.recovered; }
+      catch (error) { recovery.errors.push(errorText(error)); }
+    }
+    if (waiting.length) { recovery.retry = true; recovery.waiting = Promise.race(waiting); }
+    return recovery;
+  } finally { restore.release(); }
 }
 
 function recoverJournal(root: string, ownership: ConversationOwnership, path: string, waiting: Promise<void>[]): boolean {

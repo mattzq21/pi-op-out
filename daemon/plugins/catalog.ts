@@ -5,9 +5,6 @@ import type { BundledPlugin } from './types';
 
 /** Every plugin bundled with the daemon, in display order. A new configuration enables all of them. */
 export const CATALOG: readonly BundledPlugin[] = [
-  { id: 'chatgpt', name: 'ChatGPT' },
-  { id: 'markdown', name: 'Notes' },
-  { id: 'dictation', name: 'Dictation' },
   cost,
   review,
 ];

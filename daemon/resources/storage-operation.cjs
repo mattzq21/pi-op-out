@@ -11,11 +11,11 @@ const busy = { state: 'skipped', reason: 'busy' };
 const cancelled = { state: 'cancelled' };
 
 /**
- * Takes the storage locks in the order that other writers use: notes ownership, restore, session transactions, note mutations.
+ * Takes the storage locks in the order that other writers use: restore, then session transactions.
  * Returns false when nonblocking is set and one of them is busy.
  */
 function lockAll(locks, nonblocking) {
-  for (const descriptor of [locks.ownership, locks.restore, locks.transactions, locks.notes]) {
+  for (const descriptor of [locks.restore, locks.transactions]) {
     if (!lockSync(descriptor, false, nonblocking)) return false;
   }
 

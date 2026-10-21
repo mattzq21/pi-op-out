@@ -4,7 +4,6 @@ import { join } from 'node:path';
 import { createInterface } from 'node:readline';
 import { STORAGE_DIRECTORY } from '../config';
 import { homeDir, nodeExecutable, pathWithNode } from '../environment';
-import * as DaemonRestart from '../daemon_restart';
 import { fastModelDiscovery, providerSdk, sdkStorageBundle } from '../resources';
 import { Mutex } from '../util/sync';
 
@@ -73,9 +72,7 @@ export class Sdk {
   private gate = new Mutex();
   private stopped = false;
 
-  constructor(private executable: string, private events: Events, private plugin?: string) {}
-
-  static plugin(executable: string, events: Events, source: string): Sdk { return new Sdk(executable, events, source); }
+  constructor(private executable: string, private events: Events) {}
 
   private spawnProcess(node: string, encoded: string): ChildProcess {
     const env = { ...process.env, PATH: pathWithNode(node), PIOP_STORAGE_DIRECTORY: STORAGE_DIRECTORY, PI_CODING_AGENT_DIR: join(homeDir(), STORAGE_DIRECTORY) };
@@ -88,7 +85,7 @@ export class Sdk {
       if (this.stopped) throw new Error('Provider SDK stopped');
       if (this.connection && !this.connection.closed) return this.connection;
       const storage = "const { installRuntimeStorage, storedModelText, saveStoredModelProvider } = await import('data:text/javascript;base64," + Buffer.from(sdkStorageBundle).toString('base64') + "');";
-      const source = [storage, fastModelDiscovery, this.plugin ?? 'const bundledPlugin = null;', providerSdk].join('\n');
+      const source = [storage, fastModelDiscovery, providerSdk].join('\n');
       const node = nodeExecutable();
       const child = this.spawnProcess(node, Buffer.from(source).toString('base64'));
       const connection = new Connection(child, error => {
@@ -153,8 +150,6 @@ export class Sdk {
     const message = { ...packet, id };
     let timer: NodeJS.Timeout | undefined;
     try {
-      if (connection.closed) throw new Error('Pi provider SDK disconnected');
-      if (this.plugin !== undefined && packet?.method === 'plugin_call' && (await DaemonRestart.blocking())) throw new Error('The daemon is restarting. Reconnect before retrying.');
       if (connection.closed) throw new Error('Pi provider SDK disconnected');
       return await new Promise<any>((resolve, reject) => {
         timer = setTimeout(() => {

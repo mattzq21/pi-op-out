@@ -1,19 +1,17 @@
 import { z } from "zod";
 import type { AppSettings, SettingsChange } from "../types";
-import { mergePluginClientPreferences, pluginClientPreferenceKeys, pluginClientPreferences, pluginClientPreferencesSchema } from "../plugins/clientPreferences";
 
 export const clientPreferencesSchema = z.object({
   keybindings: z.record(z.string(), z.string()),
   debugMode: z.boolean(),
-  ...pluginClientPreferencesSchema.shape,
 });
 
 export type ClientPreferences = z.infer<typeof clientPreferencesSchema>;
 
-export const clientPreferenceKeys = new Set<keyof AppSettings>(["keybindings", "debugMode", ...pluginClientPreferenceKeys]);
+export const clientPreferenceKeys = new Set<keyof AppSettings>(["keybindings", "debugMode"]);
 
 export function clientPreferences(settings: AppSettings): ClientPreferences {
-  return { keybindings: { ...settings.keybindings }, debugMode: settings.debugMode, ...pluginClientPreferences(settings) };
+  return { keybindings: { ...settings.keybindings }, debugMode: settings.debugMode };
 }
 
 function mergeKeybindings(latest: ClientPreferences["keybindings"], baseline: ClientPreferences["keybindings"], intended: ClientPreferences["keybindings"]) {
@@ -41,7 +39,6 @@ export function mergeClientPreferences(latest: ClientPreferences, baseline: Clie
   const preferences: ClientPreferences = {
     keybindings,
     debugMode: intended.debugMode === baseline.debugMode ? latest.debugMode : intended.debugMode,
-    ...mergePluginClientPreferences(latest, baseline, intended, conflicts),
   };
 
   return { preferences, conflicts };

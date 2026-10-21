@@ -6,7 +6,7 @@ let agents: Awaited<ReturnType<typeof agentDaemon>>;
 beforeAll(async () => { agents = await agentDaemon(); }, 60_000);
 afterAll(async () => { await agents?.close(); });
 
-const ALL = ['chatgpt', 'markdown', 'dictation', 'cost', 'review'];
+const ALL = ['cost', 'review'];
 const REVIEW = '__pi_desktop_review__';
 let runtimes = 0;
 
@@ -68,7 +68,7 @@ test('cost and review are plugins: enabled by default, gone with an explicit err
   const saved = await opened;
   expect(saved.task).toContain('before.ts');
 
-  client = await restartWith(client, ['chatgpt', 'markdown']);
+  client = await restartWith(client, []);
   expect(await catalog(client)).not.toEqual(expect.arrayContaining(['cost']));
   expect((await catalog(client)).filter((name: string) => ['cost', 'review', 'rs'].includes(name))).toEqual([]);
   const disabled = await openChat(client, first);
@@ -82,7 +82,7 @@ test('cost and review are plugins: enabled by default, gone with an explicit err
   expect(disabled.costStatuses()).toEqual([]);
 
   // Each plugin loads on its own: review without cost, then cost without review.
-  client = await restartWith(client, ['chatgpt', 'markdown', 'review']);
+  client = await restartWith(client, ['review']);
   expect((await catalog(client)).filter((name: string) => ['cost', 'review', 'rs'].includes(name)).sort()).toEqual(['review', 'rs']);
   const reviewOnly = await openChat(client, first);
   expect(await reviewOnly.owned()).toEqual(['review', 'rs']);
@@ -92,7 +92,7 @@ test('cost and review are plugins: enabled by default, gone with an explicit err
   expect(await linked).toMatchObject({ sessionId: saved.sessionId, parentSessionId: first.sessionId });
   expect(reviewOnly.costStatuses()).toEqual([]);
 
-  client = await restartWith(client, ['chatgpt', 'markdown', 'cost']);
+  client = await restartWith(client, ['cost']);
   expect((await catalog(client)).filter((name: string) => ['cost', 'review', 'rs'].includes(name))).toEqual(['cost']);
   const costOnly = await openChat(client, first);
   expect(await costOnly.owned()).toEqual(['cost']);

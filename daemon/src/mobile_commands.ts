@@ -95,10 +95,6 @@ async function dispatchLocal(app: App, owner: string, command: string, args: any
     const release = await app.restart.gate.writeWithin(10_000, 'Pending daemon requests did not finish within 10 seconds. Try restarting again once they finish.');
     try { app.clients.ensureOpen(); return await daemonRestart.prepare(app, args); } finally { release(); }
   }
-  if (command === 'plugin_call') {
-    if (await daemonRestart.blocking()) throw new Error(RESTARTING);
-    return dispatchCommand(app, owner, command, args);
-  }
   let release: (() => void) | undefined;
   if (command === 'check_daemon_idle') {
     release = app.restart.gate.tryRead();
@@ -145,7 +141,6 @@ function startPiOptions(args: any): any {
 
 const COMMANDS: Record<string, Handler> = {
   check_daemon_idle: async app => { await daemonRestart.ensureLocalIdle(app); return null; },
-  plugin_call: (app, _owner, args) => plugins.dispatch(app, 'plugin_call', args),
   plugin_status: (app, _owner, args) => plugins.dispatch(app, 'plugin_status', args),
   shared_terminal: (app, owner, args) => terminalSessions.shared(app, owner, args),
   broker_request: (app, _owner, args) => peers.localBrokerRequest(app, argument(args, 'path', 'string'), argument(args, 'body', 'any')),

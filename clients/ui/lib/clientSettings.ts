@@ -3,7 +3,6 @@ import { invoke } from "./platform";
 import { z } from "zod";
 import { settingsPublicationSchema } from "./responseSchemas";
 import { applyClientPreferences, clientPreferences, clientPreferencesSchema, ClientPreferenceConflictError } from "./clientPreferenceMerge";
-import { storedPluginClientPreferences } from "../plugins/clientPreferences";
 
 const storageKey = "piop-client-settings";
 
@@ -14,7 +13,7 @@ const coreClientSettingsSchema = z.object({
   debugMode: z.boolean().optional().catch(undefined),
 }).catch({});
 
-const clientSettingsSchema = z.unknown().transform(value => ({ ...coreClientSettingsSchema.parse(value), ...storedPluginClientPreferences(value) }));
+const clientSettingsSchema = coreClientSettingsSchema;
 
 type StoredPreferences = z.infer<typeof clientSettingsSchema>;
 
@@ -39,7 +38,6 @@ function mergeClientSettings(settings: AppSettings, stored: StoredPreferences): 
   return { ...settings,
     keybindings: stored.keybindings ? { ...settings.keybindings, ...stored.keybindings } : settings.keybindings,
     debugMode: stored.debugMode ?? settings.debugMode,
-    ...storedPluginClientPreferences(stored),
   };
 }
 

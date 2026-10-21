@@ -168,11 +168,10 @@ async function registeredSessions(root, warnings) {
 
 /** Reports storage use and archived conversations of the profile at request.profile. */
 async function storageInventory(request) {
-  if (request.piPath !== undefined && !Check(Type.String({ minLength: 1 }), request.piPath)) throw new Error('Invalid Pi executable path');
   if (!Check(Type.String({ minLength: 1 }), request.profile) || !path.isAbsolute(request.profile)) throw new Error('Invalid profile directory');
   const piopRoot = request.profile;
   const profile = await fs.realpath(piopRoot).catch(() => piopRoot);
-  const discovery = await discoverRoots(profile, request.piPath);
+  const discovery = await discoverRoots(profile);
   discovery.sessions = new Map();
   discovery.headers = new Map();
   discovery.goals = new Map();
