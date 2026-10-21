@@ -254,6 +254,21 @@ describe('settings editor', () => {
     assert.ok(control('Allow retro')); assert.ok(control('Allow tdd'));
   });
 
+  test('agent extensions are added, edited and removed one path at a time', async () => {
+    await render({ agentConfig: { agents: [profile('general'), profile('review', { extensions: ['../piop-rtk/rtk.ts'] })] } });
+    await section('Agents'); await selectAgent('review');
+    const change = async (label, value) => act(async () => { control(label).value = value; control(label).dispatchEvent(new Event('change', { bubbles: true })); });
+    await enterText(control('New extension path'), ' /ext/one.ts ');
+    await act(async () => control('New extension path').dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true })));
+    assert.equal(control('New extension path').value, '');
+    await enterText(control('New extension path'), '/ext/one.ts'); await click(button('Add'));
+    assert.match(document.querySelector('.agent-extensions [role=alert]').textContent, /already added/);
+    await change('Extension 1', '/ext/rtk.ts');
+    await click(control('Remove /ext/one.ts'));
+    await click(save());
+    assert.deepEqual(saves[0][1].agents[1].extensions, ['/ext/rtk.ts']);
+  });
+
   test('agent skills are grouped by their folder in ~/.agents/skills', async () => {
     props.settings.skills = [
       { name: 'top', path: '/home/u/.agents/skills/top', enabled: true },

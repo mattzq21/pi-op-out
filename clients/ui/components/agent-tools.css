@@ -35,3 +35,16 @@
 .refresh-resource button:disabled { cursor: default; opacity: .7; }
 .refresh-resource button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .refresh-resource [role="alert"] { color: #d77865; font-size: calc(11px + var(--settings-font-offset, 0px)); font-weight: 400; overflow-wrap: anywhere; }
+
+.agent-extensions { margin: 16px 0; padding: 10px 12px 12px; border: 1px solid var(--line); border-radius: 8px; }
+.agent-extensions legend { padding: 0 6px 0 5px; color: var(--ink); font-size: calc(15px + var(--settings-font-offset, 0px)); font-weight: 600; }
+.agent-extension { display: grid; grid-template-columns: 16px minmax(0, 1fr) auto; align-items: center; gap: 8px; min-height: 34px; padding: 0 4px 0 10px; border-radius: 7px; color: var(--muted); }
+.agent-extension + .agent-extension { margin-top: 4px; }
+.agent-extension:not(.agent-extension-add) { background: var(--dark-control); border: 1px solid var(--line); }
+.agent-extension:not(.agent-extension-add):focus-within { border-color: #aaa49a; }
+.agent-extension input { min-width: 0; padding: 6px 0; border: 0; outline: 0; background: transparent; color: var(--ink); font: calc(12px + var(--settings-font-offset, 0px))/1.4 ui-monospace, SFMono-Regular, Consolas, monospace; }
+.agent-extension .icon-button { width: 26px; height: 26px; }
+.agent-extension-add { border: 1px dashed var(--line); }
+.agent-extension-add:focus-within { border-color: #aaa49a; border-style: solid; }
+.agent-extension-add .secondary-button { min-height: 26px; padding: 0 10px; }
+.agent-extensions .mcp-error { margin: 6px 0 0; }

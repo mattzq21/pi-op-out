@@ -5,6 +5,7 @@ import { applyClientPreferences, clientPreferenceKeys, clientPreferences, Client
 import { required } from "../lib/required";
 import { hostFastModels, rejectsFastMode } from "../lib/fastModels";
 import { AgentSkills, AgentTools } from "./AgentTools";
+import { AgentExtensions } from "./AgentExtensions";
 import { agentProfileSchema } from "../lib/agentSchemas";
 import { McpSettings, type McpEditorDraft } from "./McpSettings";
 import { CapInput } from "./CapInput";
@@ -490,7 +491,7 @@ export function SettingsView(props: SettingsViewProps) {
             return (<Show when={agent()}><div class="agent-fields">{renderAgentNameRow()}
               {renderAgentDefaults()}
               {renderAgentPromptFiles()}<label class="field"><span>Agent prompt file</span><input aria-label="Agent prompt file" placeholder="Optional path to an agent prompt file" value={agent().path_agent_prompt ?? ""} onInput={(event) => updateAgent({ path_agent_prompt: event.target.value })} /></label>
-              <label class="field"><span>piop extensions (one path per line)</span><textarea aria-label="Agent piop extensions" placeholder="/path/to/extension.ts" value={(agent().extensions ?? []).join("\n")} onInput={(event) => updateAgent({ extensions: event.target.value.split("\n") })} onBlur={() => updateAgent({ extensions: (agent().extensions ?? []).map(path => path.trim()).filter(Boolean) })} /></label>
+              <AgentExtensions paths={agent().extensions ?? []} onChange={extensions => updateAgent({ extensions })} />
               <AgentAllowlist title="Tools" query={toolQuery()} onQuery={setToolQuery} titleAction={<><RefreshTools hostId={providerHostId()} onChange={tools => patch({ tools })} /><button type="button" class="agent-codemode" data-mode={agent().codemode ?? "only"} aria-label={"Codemode " + (agent().codemode ?? "only").toUpperCase()} data-tooltip={CODEMODE_HINTS[agent().codemode ?? "only"]} onClick={() => updateAgent({ codemode: NEXT_CODEMODE[agent().codemode ?? "only"] })}>Codemode {(agent().codemode ?? "only").toUpperCase()}</button></>}><AgentTools tools={draft().tools} query={toolQuery()} selected={agent().tools} agent={agent()} onChange={tools => updateAgent({ tools })} onLimitsChange={updateAgent} /></AgentAllowlist><AgentAllowlist title="Skills" query={skillQuery()} onQuery={setSkillQuery} titleAction={<RefreshSkills hostId={providerHostId()} skills={draft().skills} onChange={skills => patch({ skills })} />}><AgentSkills skills={draft().skills} query={skillQuery()} selected={agent().skills} onChange={skills => updateAgent({ skills })} /></AgentAllowlist><McpSettings value={agent().mcpServers} draft={mcpDrafts()[agentIndex()]} onDraft={value => setMcpDrafts(current => agentDrafts().map((_, index) => index === agentIndex() ? value : current[index]))} onChange={mcpServers => updateAgent({ mcpServers })} />
             </div></Show>);
           };
