@@ -102,6 +102,8 @@ export function SettingsView(props: SettingsViewProps) {
   const providerHostId = createMemo(() => settingsProps().providerHostId);
   const [saving, setSaving] = createSignal(false);
   const [saveRevision, setSaveRevision] = createSignal(0);
+  const [toolQuery, setToolQuery] = createSignal("");
+  const [skillQuery, setSkillQuery] = createSignal("");
   const [mcpDrafts, setMcpDrafts] = createSignal<Array<McpEditorDraft | undefined>>([]);
   const mcpError = createMemo(() => mcpDrafts().find(item => item?.error)?.error);
   createDependencyEffect(() => {
@@ -481,7 +483,7 @@ export function SettingsView(props: SettingsViewProps) {
               {renderAgentDefaults()}
               {renderAgentPromptFiles()}<label class="field"><span>Agent prompt file</span><input aria-label="Agent prompt file" placeholder="Optional path to an agent prompt file" value={agent().path_agent_prompt ?? ""} onInput={(event) => updateAgent({ path_agent_prompt: event.target.value })} /></label>
               <label class="field"><span>piop extensions (one path per line)</span><textarea aria-label="Agent piop extensions" placeholder="/path/to/extension.ts" value={(agent().extensions ?? []).join("\n")} onInput={(event) => updateAgent({ extensions: event.target.value.split("\n") })} onBlur={() => updateAgent({ extensions: (agent().extensions ?? []).map(path => path.trim()).filter(Boolean) })} /></label>
-              <AgentAllowlist title="Tools"><AgentTools tools={draft().tools} selected={agent().tools} agent={agent()} onChange={tools => updateAgent({ tools })} onLimitsChange={updateAgent} /></AgentAllowlist><AgentAllowlist title="Skills"><RefreshSkills hostId={providerHostId()} skills={draft().skills} onChange={skills => patch({ skills })} /><AgentSkills skills={draft().skills} selected={agent().skills} onChange={skills => updateAgent({ skills })} /></AgentAllowlist><div class="agent-setting-row"><span>Allow codemode</span><Toggle label="Allow codemode" checked={agent().codemode !== false} onChange={codemode => updateAgent({ codemode })} /></div><McpSettings value={agent().mcpServers} draft={mcpDrafts()[agentIndex()]} onDraft={value => setMcpDrafts(current => agentDrafts().map((_, index) => index === agentIndex() ? value : current[index]))} onChange={mcpServers => updateAgent({ mcpServers })} />
+              <AgentAllowlist title="Tools" query={toolQuery()} onQuery={setToolQuery}><AgentTools tools={draft().tools} query={toolQuery()} selected={agent().tools} agent={agent()} onChange={tools => updateAgent({ tools })} onLimitsChange={updateAgent} /></AgentAllowlist><AgentAllowlist title="Skills" query={skillQuery()} onQuery={setSkillQuery}><RefreshSkills hostId={providerHostId()} skills={draft().skills} onChange={skills => patch({ skills })} /><AgentSkills skills={draft().skills} query={skillQuery()} selected={agent().skills} onChange={skills => updateAgent({ skills })} /></AgentAllowlist><div class="agent-setting-row"><span>Allow codemode</span><Toggle label="Allow codemode" checked={agent().codemode !== false} onChange={codemode => updateAgent({ codemode })} /></div><McpSettings value={agent().mcpServers} draft={mcpDrafts()[agentIndex()]} onDraft={value => setMcpDrafts(current => agentDrafts().map((_, index) => index === agentIndex() ? value : current[index]))} onChange={mcpServers => updateAgent({ mcpServers })} />
             </div></Show>);
           };
 
@@ -529,7 +531,9 @@ export function SettingsView(props: SettingsViewProps) {
 
 function SettingsSection(componentProps: { title: string; description: string; headerAction?: JSXElement; children: JSXElement }) { return <div class="settings-section"><div class="section-title"><div><h2>{componentProps.title}</h2><p>{componentProps.description}</p></div>{componentProps.headerAction}</div>{componentProps.children}</div>; }
 
-function AgentAllowlist(componentProps: { title: string; children: JSXElement }) { return <fieldset class="agent-allowlist"><legend>{componentProps.title}</legend><div>{componentProps.children}</div></fieldset>; }
+function AgentAllowlist(componentProps: { title: string; query: string; onQuery: (query: string) => void; children: JSXElement }) {
+  return <fieldset class="agent-allowlist"><legend><span>{componentProps.title}</span><span class="agent-allowlist-line" /><label class="agent-allowlist-search"><Search size={12} aria-hidden="true" /><input type="search" placeholder="Search" aria-label={`Search ${componentProps.title.toLowerCase()}`} value={componentProps.query} onInput={event => componentProps.onQuery(event.currentTarget.value)} /></label></legend><div>{componentProps.children}</div></fieldset>;
+}
 
 function SettingRow(componentProps: { icon: JSXElement; title: string; description: string; children: JSXElement }) { return <div class="setting-row"><span class="setting-icon">{componentProps.icon}</span><span><strong>{componentProps.title}</strong><small>{componentProps.description}</small></span><div>{componentProps.children}</div></div>; }
 

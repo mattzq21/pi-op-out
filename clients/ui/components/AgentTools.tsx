@@ -13,6 +13,12 @@ const SKILLS_ROOT = "/.agents/skills/";
 
 type Item = { key: string; label: string };
 
+/** Whether the text contains the search query, ignoring case. An empty query matches everything. */
+const matches = (text: string, query: string) => text.toLowerCase().includes(query.trim().toLowerCase());
+
+/** The items to show: all of them when the group name matches, otherwise the items whose label matches. */
+const visible = (name: string, items: Item[], query: string) => matches(name, query) ? items : items.filter(item => matches(item.label, query));
+
 /** Adds or removes keys from the selection. */
 const toggled = (selected: string[], keys: string[], enabled: boolean) => enabled
   ? [...new Set([...selected, ...keys])]
@@ -36,14 +42,15 @@ function AllowGroup(props: { name: string; kind: string; items: Item[]; selected
   </section>;
 }
 
-export function AgentTools(props: { tools: ToolConfig[]; selected: string[]; onChange: (tools: string[]) => void; agent: AgentProfile; onLimitsChange: (limits: Partial<AgentProfile>) => void }) {
+export function AgentTools(props: { tools: ToolConfig[]; query: string; selected: string[]; onChange: (tools: string[]) => void; agent: AgentProfile; onLimitsChange: (limits: Partial<AgentProfile>) => void }) {
   const toggle = (names: string[], enabled: boolean) => props.onChange(toggled(props.selected, names, enabled));
   const item = (tool: ToolConfig): Item => ({ key: tool.name, label: tool.name });
+  const groupItems = (names: string[]) => props.tools.filter(tool => names.includes(tool.name)).map(item);
 
   return <>
-    <For each={props.tools.filter(tool => !toolGroups.some(group => group.tools.includes(tool.name)))}>{tool => <ItemCheckbox item={item(tool)} selected={props.selected} onToggle={toggle} />}</For>
-    <For each={toolGroups.filter(group => props.tools.some(tool => group.tools.includes(tool.name)))}>{group =>
-      <AllowGroup name={group.name} kind="tools" items={props.tools.filter(tool => group.tools.includes(tool.name)).map(item)} selected={props.selected} onToggle={toggle}>
+    <For each={props.tools.filter(tool => !toolGroups.some(group => group.tools.includes(tool.name)) && matches(tool.name, props.query))}>{tool => <ItemCheckbox item={item(tool)} selected={props.selected} onToggle={toggle} />}</For>
+    <For each={toolGroups.filter(group => visible(group.name, groupItems(group.tools), props.query).length)}>{group =>
+      <AllowGroup name={group.name} kind="tools" items={visible(group.name, groupItems(group.tools), props.query)} selected={props.selected} onToggle={toggle}>
         <Show when={group.name === "Subagents" && props.selected.includes("subagent")}>
           <div class="agent-subagent-limits">
             <label class="field"><span>Max subagents</span><input type="number" aria-label="Max subagents" min="0" max={Number.MAX_SAFE_INTEGER} step="1" value={props.agent.max_subagents ?? 8} onInput={event => props.onLimitsChange({ max_subagents: event.currentTarget.valueAsNumber })} /></label>
@@ -62,7 +69,7 @@ function skillFolder(path: string): string | undefined {
   return parts.length > 1 ? parts[0] : undefined;
 }
 
-export function AgentSkills(props: { skills: SkillConfig[]; selected: string[]; onChange: (skills: string[]) => void }) {
+export function AgentSkills(props: { skills: SkillConfig[]; query: string; selected: string[]; onChange: (skills: string[]) => void }) {
   const toggle = (paths: string[], enabled: boolean) => props.onChange(toggled(props.selected, paths, enabled));
   const item = (skill: SkillConfig): Item => ({ key: skill.path, label: skill.name });
   const groups = createMemo(() => {
@@ -71,11 +78,11 @@ export function AgentSkills(props: { skills: SkillConfig[]; selected: string[]; 
       const folder = skillFolder(skill.path);
       if (folder !== undefined) byFolder.set(folder, [...(byFolder.get(folder) ?? []), item(skill)]);
     }
-    return [...byFolder].sort(([left], [right]) => left.localeCompare(right)).map(([name, items]) => ({ name, items }));
+    return [...byFolder].sort(([left], [right]) => left.localeCompare(right)).map(([name, items]) => ({ name, items: visible(name, items, props.query) })).filter(group => group.items.length);
   });
 
   return <>
-    <For each={props.skills.filter(skill => skillFolder(skill.path) === undefined).map(item)}>{skill => <ItemCheckbox item={skill} selected={props.selected} onToggle={toggle} />}</For>
+    <For each={props.skills.filter(skill => skillFolder(skill.path) === undefined && matches(skill.name, props.query)).map(item)}>{skill => <ItemCheckbox item={skill} selected={props.selected} onToggle={toggle} />}</For>
     <For each={groups()}>{group => <AllowGroup name={group.name} kind="skills" items={group.items} selected={props.selected} onToggle={toggle} />}</For>
   </>;
 }

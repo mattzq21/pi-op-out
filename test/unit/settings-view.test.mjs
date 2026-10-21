@@ -236,6 +236,24 @@ describe('settings editor', () => {
     await click(document.querySelector('.agent-list button')); assert.equal(control('Agent name').disabled, true); assert.equal(control('Remove general').disabled, true);
   });
 
+  test('tool and skill searches filter by name and by group name', async () => {
+    props.settings.tools = [{ name: 'read', enabled: true }, { name: 'bash', enabled: true }, { name: 'get_goal', enabled: true }, { name: 'create_goal', enabled: true }];
+    props.settings.skills = [{ name: 'tdd', path: '/h/.agents/skills/using/tdd', enabled: true }, { name: 'retro', path: '/h/.agents/skills/mine/retro', enabled: true }];
+    await render({ agentConfig: { agents: [profile('general'), profile('review')] } });
+    await section('Agents'); await selectAgent('review');
+    await enterText(control('Search tools'), 'EAD');
+    assert.ok(control('Allow read')); assert.equal(control('Allow bash'), null); assert.equal(control('Allow all Goal tools'), null);
+    await enterText(control('Search tools'), 'create');
+    assert.equal(control('Allow read'), null); assert.ok(control('Allow create_goal')); assert.equal(control('Allow get_goal'), null);
+    await click(control('Allow all Goal tools'));
+    await enterText(control('Search tools'), 'goal');
+    assert.equal(control('Allow create_goal').checked, true); assert.equal(control('Allow get_goal').checked, false);
+    await enterText(control('Search skills'), 'mine');
+    assert.ok(control('Allow retro')); assert.equal(control('Allow tdd'), null);
+    await enterText(control('Search skills'), '');
+    assert.ok(control('Allow retro')); assert.ok(control('Allow tdd'));
+  });
+
   test('agent skills are grouped by their folder in ~/.agents/skills', async () => {
     props.settings.skills = [
       { name: 'top', path: '/home/u/.agents/skills/top', enabled: true },
