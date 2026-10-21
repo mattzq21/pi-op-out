@@ -25,7 +25,8 @@ export interface PluginModule { createPlugin: (context: PluginContext) => Plugin
 
 export interface PluginSettingsProps { settings: AppSettings; agents: AgentProfile[]; onChange: (patch: Partial<AppSettings>) => void }
 
-export interface PluginSettingsSection { section: string; label: string; description: string; icon: (props: LucideProps) => JSX.Element; load: () => Promise<{ default: Component<PluginSettingsProps> }> }
+/** Plugin settings: a tab of their own, or with "within" a part of a core settings tab such as "agents". */
+export interface PluginSettingsSection { section: string; label: string; description: string; icon: (props: LucideProps) => JSX.Element; within?: "agents"; load: () => Promise<{ default: Component<PluginSettingsProps> }> }
 
 export type PluginScope = "client" | "host" | "conversation";
 

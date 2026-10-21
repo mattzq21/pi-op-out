@@ -522,7 +522,7 @@ textarea::placeholder { color: var(--faint); }
 .toast-history-entry { display: grid; gap: 5px; padding: 12px; border: 1px solid var(--line); border-radius: 8px; min-width: 0; overflow-wrap: anywhere; font-size: calc(12px + var(--settings-font-offset, 0px)); line-height: 1.45; }
 .toast-history-entry small { color: var(--muted); font-size: calc(10px + var(--settings-font-offset, 0px)); }
 .toast-history-entry p { margin: 0; white-space: pre-wrap; user-select: text; }
-.general-agent-default { max-width: 480px; }
+.general-agent-default, .agent-plugin-settings { max-width: 480px; }
 .general-agent-default .field, .general-agent-default select { min-width: 0; }
 .agent-defaults { grid-template-columns: minmax(0, 1fr) auto 140px 120px; }
 .agent-defaults .setting-cap { width: 100%; text-align: center; }

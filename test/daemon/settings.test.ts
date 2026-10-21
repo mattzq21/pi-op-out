@@ -85,11 +85,11 @@ test('each save tells clients the new settings and gives each agent machine a ri
   for (const host of ['remote', undefined, 'local', 'remote']) {
     const settings = await load();
     const model = 'model-' + changes.length;
-    settings.reviewPrompt = model;
+    settings.reviewAgent = model;
     const change = await save(settings, host);
-    expect(change.settings.reviewPrompt).toBe(model);
-    expect((await load()).reviewPrompt).toBe(model);
-    await daemon.waitEvent('pi://settings-changed', payload => payload.settings.reviewPrompt === model);
+    expect(change.settings.reviewAgent).toBe(model);
+    expect((await load()).reviewAgent).toBe(model);
+    await daemon.waitEvent('pi://settings-changed', payload => payload.settings.reviewAgent === model);
     changes.push(change);
   }
   const [first, none, local, second] = changes;
@@ -109,11 +109,11 @@ test('each save tells clients the new settings and gives each agent machine a ri
 test('a save based on outdated settings is rejected and keeps the newer settings', async () => {
   const stale = await load();
   const fresh = structuredClone(stale);
-  fresh.reviewPrompt = 'fresh-model';
+  fresh.reviewAgent = 'fresh-model';
   await save(fresh);
-  stale.reviewPrompt = 'stale-model';
+  stale.reviewAgent = 'stale-model';
   expect(await daemon.failure('save_app_settings', { settings: stale })).toContain('Settings changed in another window or client');
-  expect((await load()).reviewPrompt).toBe('fresh-model');
+  expect((await load()).reviewAgent).toBe('fresh-model');
 });
 
 test('a save that cannot lock the settings fails, keeps the settings and tells no client', async () => {
@@ -122,7 +122,7 @@ test('a save that cannot lock the settings fails, keeps the settings and tells n
   rmSync(lock, { force: true });
   mkdirSync(lock);
   try {
-    const changed = { ...before, reviewPrompt: 'unsaved-model' };
+    const changed = { ...before, reviewAgent: 'unsaved-model' };
     const seen = daemon.events.length;
     expect(await daemon.failure('save_app_settings', { settings: changed })).toStartWith('Could not lock settings');
     expect(daemon.events.slice(seen).filter(event => event.event === 'pi://settings-changed')).toEqual([]);
@@ -150,15 +150,15 @@ test('settings are kept when running agents cannot take them, and the save repor
     try {
       fakeProgram(bin, 'pi', '#!/bin/sh\necho "pi is broken" >&2\nexit 1\n');
       const settings = await local.invoke('load_app_settings');
-      settings.reviewPrompt = 'saved-model';
+      settings.reviewAgent = 'saved-model';
       const change = await local.invoke('save_app_settings', { settings, agentHostId: 'local' });
       expect(change).toMatchObject({ synchronizationPending: true, agentConfigChange: { hostId: 'local', revision: change.committedRevision } });
       expect(change.warnings).toEqual([expect.stringMatching(/^Settings were saved, but runtime synchronization failed:/)]);
       expect(await local.waitEvent('pi://daemon-error', payload => payload.line.startsWith('Could not synchronize settings:'))).toMatchObject({ hostId: 'local' });
-      expect((await local.invoke('load_app_settings')).reviewPrompt).toBe('saved-model');
+      expect((await local.invoke('load_app_settings')).reviewAgent).toBe('saved-model');
       const snapshot = await local.invoke('load_settings_change');
       expect(snapshot).toMatchObject({
-        settings: { reviewPrompt: 'saved-model' }, committed: true, revision: change.revision, synchronizationPending: true,
+        settings: { reviewAgent: 'saved-model' }, committed: true, revision: change.revision, synchronizationPending: true,
         warnings: [`Settings were saved; synchronization of revision ${change.revision} is pending and will retry automatically.`],
       });
       expect(snapshot.phaseRevision).toBeGreaterThanOrEqual(change.phaseRevision);
@@ -166,9 +166,9 @@ test('settings are kept when running agents cannot take them, and the save repor
       restore();
       const recovered = await local.waitEvent('pi://settings-changed', payload =>
         payload.revision === change.revision && payload.synchronizationPending === false, 20_000);
-      expect(recovered.settings.reviewPrompt).toBe('saved-model');
+      expect(recovered.settings.reviewAgent).toBe('saved-model');
       const settled = await local.invoke('load_settings_change');
-      expect(settled).toMatchObject({ settings: { reviewPrompt: 'saved-model' }, committed: true, revision: change.revision, synchronizationPending: false, warnings: [] });
+      expect(settled).toMatchObject({ settings: { reviewAgent: 'saved-model' }, committed: true, revision: change.revision, synchronizationPending: false, warnings: [] });
     } finally { restore(); }
   } finally { await local.stop(); }
 }, 60_000);
@@ -193,22 +193,22 @@ test('a newer save while synchronization is pending replaces the older pending r
     try {
       fakeProgram(bin, 'pi', '#!/bin/sh\necho "pi is broken" >&2\nexit 1\n');
       const settings = await local.invoke('load_app_settings');
-      settings.reviewPrompt = 'prompt-a';
+      settings.reviewAgent = 'prompt-a';
       const first = await local.invoke('save_app_settings', { settings, agentHostId: 'local' });
       expect(first).toMatchObject({ synchronizationPending: true, agentConfigChange: { hostId: 'local', revision: first.committedRevision } });
-      const second = await local.invoke('save_app_settings', { settings: { ...first.settings, reviewPrompt: 'prompt-b' }, agentHostId: 'local' });
+      const second = await local.invoke('save_app_settings', { settings: { ...first.settings, reviewAgent: 'prompt-b' }, agentHostId: 'local' });
       expect(second).toMatchObject({ synchronizationPending: true, agentConfigChange: { hostId: 'local', revision: second.committedRevision } });
       expect(second.committedRevision).toBeGreaterThan(first.committedRevision);
       // With Pi working again, only the newest saved revision may be synchronized.
       restore();
       const recovered = await local.waitEvent('pi://settings-changed', payload =>
         payload.revision === second.revision && payload.synchronizationPending === false, 20_000);
-      expect(recovered.settings.reviewPrompt).toBe('prompt-b');
+      expect(recovered.settings.reviewAgent).toBe('prompt-b');
       const settled = await local.invoke('load_settings_change');
-      expect(settled).toMatchObject({ settings: { reviewPrompt: 'prompt-b' }, committed: true, revision: second.revision, synchronizationPending: false, warnings: [] });
+      expect(settled).toMatchObject({ settings: { reviewAgent: 'prompt-b' }, committed: true, revision: second.revision, synchronizationPending: false, warnings: [] });
       // The older revision must not come back: its settings are now outdated.
       expect(await local.failure('save_app_settings', { settings: first.settings, agentHostId: 'local' })).toContain('Settings changed in another window or client');
-      expect((await local.invoke('load_app_settings')).reviewPrompt).toBe('prompt-b');
+      expect((await local.invoke('load_app_settings')).reviewAgent).toBe('prompt-b');
     } finally { restore(); }
   } finally { await local.stop(); }
 }, 60_000);
@@ -219,7 +219,7 @@ test('a save fails and keeps the settings while another process holds the settin
   const other = new Database(join(daemon.home, '.piop/sessions.sqlite'));
   other.exec('BEGIN IMMEDIATE');
   let error: string;
-  try { error = await daemon.failure('save_app_settings', { settings: { ...before, reviewPrompt: 'unsaved-model' } }); }
+  try { error = await daemon.failure('save_app_settings', { settings: { ...before, reviewAgent: 'unsaved-model' } }); }
   finally { other.exec('ROLLBACK'); other.close(); }
   expect(error).toBe('database is locked');
   expect(await load()).toEqual(before);
@@ -227,12 +227,12 @@ test('a save fails and keeps the settings while another process holds the settin
   expect(failed.revision).toBe(baseline.revision);
   expect(failed.settings).toEqual(baseline.settings);
   // The retry uses the original baseline, so it succeeds only if the failed save released its locks and kept the revision.
-  const retried = await save({ ...before, reviewPrompt: 'retried-model' });
+  const retried = await save({ ...before, reviewAgent: 'retried-model' });
   expect(retried.committedRevision).toBe(baseline.revision + 1);
   const after = await daemon.invoke('load_settings_change');
   expect(after.revision).toBe(baseline.revision + 1);
-  expect(after.settings.reviewPrompt).toBe('retried-model');
-  expect((await load()).reviewPrompt).toBe('retried-model');
+  expect(after.settings.reviewAgent).toBe('retried-model');
+  expect((await load()).reviewAgent).toBe('retried-model');
 }, 30_000);
 
 test('skill front matter is read only inside its header and keeps quoted values', async () => {

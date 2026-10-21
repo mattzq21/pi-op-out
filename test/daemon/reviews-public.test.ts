@@ -102,23 +102,18 @@ test('a dialog waits until a window shows the chat, then goes to that window', a
   expect(JSON.parse(dialog().placeholder).parentSessionId).toBe(chat.sessionId);
 }, 60000);
 
-test('a review uses the prompt and agent from Settings → Review, and says what is wrong when they cannot be used', async () => {
+test('a review uses the built-in review prompt and the agent from Settings → Agents, and says what is wrong when the agent is missing', async () => {
   const original = await agents.daemon.invoke('load_app_settings');
   /** Saves on top of the latest settings, as the settings view does after each save. */
-  const save = async (patch: any) => agents.daemon.invoke('save_app_settings', { settings: { ...await agents.daemon.invoke('load_app_settings'), reviewAgent: original.reviewAgent, reviewPrompt: original.reviewPrompt, ...patch } });
+  const save = async (patch: any) => agents.daemon.invoke('save_app_settings', { settings: { ...await agents.daemon.invoke('load_app_settings'), reviewAgent: original.reviewAgent, ...patch } });
   try {
-    await save({ reviewPrompt: 'Check only the spelling.' });
     const chat = await agents.rootChat({ visible: true });
     const review = await openReview(chat, '/review README.md');
-    expect(review.task).toBe('Check only the spelling.\n\nReview scope supplied by the user:\nREADME.md');
+    expect(review.task).toMatch(/^You are the dedicated code review agent[\s\S]*\n\nReview scope supplied by the user:\nREADME\.md$/);
 
-    await save({ reviewPrompt: '   ' });
-    const empty = await agents.rootChat({ visible: true });
-    const failure = (chat: any) => chat.command({ type: 'follow_up', message: '/review' }).then(() => 'sent', (error: Error) => error.message);
-    expect(await failure(empty)).toBe('Set a review prompt in Settings → Review');
-
-    await save({ reviewPrompt: 'Check only the spelling.', reviewAgent: 'no-such-agent' });
+    await save({ reviewAgent: 'no-such-agent' });
     const missing = await agents.rootChat({ visible: true });
+    const failure = (chat: any) => chat.command({ type: 'follow_up', message: '/review' }).then(() => 'sent', (error: Error) => error.message);
     expect(await failure(missing)).toContain('no-such-agent');
     expect(uiRequests(missing.runtimeId, 'input').filter(request => request.title === '__pi_desktop_review__')).toEqual([]);
   } finally { await save({}); }

@@ -18,7 +18,7 @@ import type { ReviewDelegation, ReviewImage, ReviewSession } from "./interface.t
 
 const reviewSchema = Schema.Object({ sessionId: Schema.String(), sessionPath: Schema.String(), cwd: Schema.String(), parentSessionId: Schema.String(), hostId: Schema.Optional(Schema.String()), publicationId: Schema.Optional(Schema.String()) });
 
-const settingsSchema = Schema.Object({ reviewAgent: Schema.Optional(Schema.String()), reviewPrompt: Schema.Optional(Schema.String()) });
+const settingsSchema = Schema.Object({ reviewAgent: Schema.Optional(Schema.String()) });
 
 const fileErrorSchema = Schema.Object({ code: Schema.String() });
 
@@ -132,9 +132,7 @@ async function reviewSettings() {
   const settings = Parse(settingsSchema, readAppSettings(join(homedir(), process.env.PIOP_STORAGE_DIRECTORY || ".piop")) ?? {});
 
   const agent = settings.reviewAgent?.trim() || "general";
-  const prompt = settings.reviewPrompt ?? await readFile(new URL("./review-prompt.txt", import.meta.url), "utf8");
-
-  if (!prompt.trim()) throw new Error("Set a review prompt in Settings → Review");
+  const prompt = await readFile(new URL("./review-prompt.txt", import.meta.url), "utf8");
 
   return { agent, prompt };
 }

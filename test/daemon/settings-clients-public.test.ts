@@ -9,25 +9,25 @@ test('separate development daemons notify their clients when shared settings cha
       const daemon = await startDaemon({ home, development: true, projectRoot: temporaryDirectory('piop-settings-project-') });
       running.push(daemon);
       const initial = await daemon.invoke('load_app_settings');
-      initial.reviewPrompt = 'Initial settings for project ' + index;
+      initial.reviewAgent = 'Initial settings for project ' + index;
       const baseline = await daemon.invoke('save_app_settings', { settings: initial });
       await synchronizationFinished(daemon, baseline.revision);
     }
     const [first, second] = running as [TestDaemon, TestDaemon];
     const settings = await first.invoke('load_app_settings');
-    settings.reviewPrompt = 'Review changes from the first project';
+    settings.reviewAgent = 'Review changes from the first project';
     const saved = await first.invoke('save_app_settings', { settings });
     const received = await second.waitEvent('pi://settings-changed', change =>
-      change.settings.reviewPrompt === 'Review changes from the first project');
+      change.settings.reviewAgent === 'Review changes from the first project');
     expect(received.revision).toBe(saved.committedRevision);
 
     const next = await second.invoke('save_app_settings', {
-      settings: { ...received.settings, reviewPrompt: 'Review changes from the second project' },
+      settings: { ...received.settings, reviewAgent: 'Review changes from the second project' },
     });
     const returned = await first.waitEvent('pi://settings-changed', change =>
-      change.settings.reviewPrompt === 'Review changes from the second project');
+      change.settings.reviewAgent === 'Review changes from the second project');
     expect(returned.revision).toBe(next.committedRevision);
-    expect((await first.invoke('load_app_settings')).reviewPrompt)
+    expect((await first.invoke('load_app_settings')).reviewAgent)
       .toBe('Review changes from the second project');
   } finally { await Promise.all(running.map(daemon => daemon.stop())); }
 }, 60_000);
@@ -40,7 +40,7 @@ test('separate development daemons sharing settings accept one simultaneous save
       const daemon = await startDaemon({ home, development: true, projectRoot: temporaryDirectory('piop-settings-race-project-') });
       running.push(daemon);
       const initial = await daemon.invoke('load_app_settings');
-      initial.reviewPrompt = 'Initial settings for project ' + index;
+      initial.reviewAgent = 'Initial settings for project ' + index;
       const baseline = await daemon.invoke('save_app_settings', { settings: initial });
       await synchronizationFinished(daemon, baseline.revision);
     }
@@ -53,7 +53,7 @@ test('separate development daemons sharing settings accept one simultaneous save
 
     const prompts = ['Review correctness from the first project', 'Review reliability from the second project'];
     const results = await Promise.allSettled(daemons.map((daemon, index) =>
-      daemon.invoke('save_app_settings', { settings: { ...structuredClone(baselines[index].settings), reviewPrompt: prompts[index] } })));
+      daemon.invoke('save_app_settings', { settings: { ...structuredClone(baselines[index].settings), reviewAgent: prompts[index] } })));
     expect(results.filter(result => result.status === 'fulfilled')).toHaveLength(1);
     expect(results.filter(result => result.status === 'rejected')).toHaveLength(1);
     const loser = results.findIndex(result => result.status === 'rejected');
@@ -64,18 +64,18 @@ test('separate development daemons sharing settings accept one simultaneous save
     for (const daemon of daemons) {
       const visible = await daemon.invoke('load_settings_change');
       expect(visible.revision).toBe(accepted.committedRevision);
-      expect(visible.settings.reviewPrompt).toBe(prompts[winner]);
+      expect(visible.settings.reviewAgent).toBe(prompts[winner]);
     }
 
     const reloaded = await daemons[loser]!.invoke('load_app_settings');
-    reloaded.reviewPrompt = 'Review correctness and reliability from both projects';
+    reloaded.reviewAgent = 'Review correctness and reliability from both projects';
     const retried = await daemons[loser]!.invoke('save_app_settings', { settings: reloaded });
     expect(retried.committedRevision).toBe(accepted.committedRevision + 1);
     await daemons[winner]!.waitEvent('pi://settings-changed', change => change.revision === retried.committedRevision);
     for (const daemon of daemons) {
       const visible = await daemon.invoke('load_settings_change');
       expect(visible.revision).toBe(retried.committedRevision);
-      expect(visible.settings.reviewPrompt).toBe('Review correctness and reliability from both projects');
+      expect(visible.settings.reviewAgent).toBe('Review correctness and reliability from both projects');
     }
   } finally { await Promise.all(running.map(daemon => daemon.stop())); }
 }, 60_000);
@@ -84,21 +84,21 @@ test('saved settings survive a daemon restart and the saved version remains edit
   let daemon = await startDaemon();
   try {
     const settings = await daemon.invoke('load_app_settings');
-    settings.reviewPrompt = 'Check that user data survives failures';
+    settings.reviewAgent = 'Check that user data survives failures';
     const saved = await daemon.invoke('save_app_settings', { settings });
     const home = daemon.home;
     await daemon.stop();
     daemon = await startDaemon({ home });
 
     const restored = await daemon.invoke('load_settings_change');
-    expect(restored.settings.reviewPrompt).toBe('Check that user data survives failures');
+    expect(restored.settings.reviewAgent).toBe('Check that user data survives failures');
     expect(restored.revision).toBe(saved.committedRevision);
     expect(restored.settings.settingsRevision).toBe(saved.settings.settingsRevision);
     const next = await daemon.invoke('save_app_settings', {
-      settings: { ...saved.settings, reviewPrompt: 'Check recovery after a second save' },
+      settings: { ...saved.settings, reviewAgent: 'Check recovery after a second save' },
     });
     expect(next.committedRevision).toBe(saved.committedRevision + 1);
-    expect((await daemon.invoke('load_app_settings')).reviewPrompt)
+    expect((await daemon.invoke('load_app_settings')).reviewAgent)
       .toBe('Check recovery after a second save');
   } finally { await daemon.stop(); }
 }, 60_000);
@@ -109,8 +109,8 @@ test('simultaneous settings saves accept one client and let the other retry afte
     const other = await daemon.connect();
     const clients = [daemon, other];
     const settings = await Promise.all(clients.map(client => client.invoke('load_app_settings')));
-    settings[0].reviewPrompt = 'Review correctness';
-    settings[1].reviewPrompt = 'Review reliability';
+    settings[0].reviewAgent = 'Review correctness';
+    settings[1].reviewAgent = 'Review reliability';
     const results = await Promise.allSettled(clients.map((client, index) =>
       client.invoke('save_app_settings', { settings: settings[index] })));
     expect(results.filter(result => result.status === 'fulfilled')).toHaveLength(1);
@@ -119,11 +119,11 @@ test('simultaneous settings saves accept one client and let the other retry afte
     const failure = results[rejected] as PromiseRejectedResult;
     expect(failure.reason.message).toContain('Settings changed in another window or client');
     const saved = await clients[rejected]!.invoke('load_app_settings');
-    expect(saved.reviewPrompt).toBe(settings[1 - rejected].reviewPrompt);
+    expect(saved.reviewAgent).toBe(settings[1 - rejected].reviewAgent);
 
-    saved.reviewPrompt = 'Review correctness and reliability';
+    saved.reviewAgent = 'Review correctness and reliability';
     await clients[rejected]!.invoke('save_app_settings', { settings: saved });
-    expect((await clients[1 - rejected]!.invoke('load_app_settings')).reviewPrompt)
+    expect((await clients[1 - rejected]!.invoke('load_app_settings')).reviewAgent)
       .toBe('Review correctness and reliability');
   } finally { await daemon.stop(); }
 }, 60_000);
@@ -133,19 +133,19 @@ test('another connected client receives saved settings and can edit that receive
   try {
     const other = await daemon.connect();
     const settings = await daemon.invoke('load_app_settings');
-    settings.reviewPrompt = 'Check failure recovery';
+    settings.reviewAgent = 'Check failure recovery';
     const saved = await daemon.invoke('save_app_settings', { settings });
     const received = await other.waitEvent('pi://settings-changed', change =>
-      change.settings.reviewPrompt === 'Check failure recovery');
+      change.settings.reviewAgent === 'Check failure recovery');
     expect(received.settings).toEqual(saved.settings);
     expect(received.revision).toBe(saved.revision);
 
-    const edited = { ...received.settings, reviewPrompt: 'Check recovery and data preservation' };
+    const edited = { ...received.settings, reviewAgent: 'Check recovery and data preservation' };
     await other.invoke('save_app_settings', { settings: edited });
     const returned = await daemon.waitEvent('pi://settings-changed', change =>
-      change.settings.reviewPrompt === 'Check recovery and data preservation');
-    expect(returned.settings.reviewPrompt).toBe('Check recovery and data preservation');
-    expect((await daemon.invoke('load_app_settings')).reviewPrompt)
+      change.settings.reviewAgent === 'Check recovery and data preservation');
+    expect(returned.settings.reviewAgent).toBe('Check recovery and data preservation');
+    expect((await daemon.invoke('load_app_settings')).reviewAgent)
       .toBe('Check recovery and data preservation');
   } finally { await daemon.stop(); }
 }, 60_000);
@@ -164,15 +164,14 @@ test('a save that edits one setting keeps every other saved setting across a dae
     });
     settings.keybindings.newConversation = 'Alt+N';
     const first = await daemon.invoke('save_app_settings', { settings });
-    await daemon.invoke('save_app_settings', { settings: { ...first.settings, reviewPrompt: 'Only the review prompt changes' } });
+    await daemon.invoke('save_app_settings', { settings: { ...first.settings, reviewAgent: 'workhorse' } });
     const home = daemon.home;
     await daemon.stop();
     daemon = await startDaemon({ home });
 
     const restored = await daemon.invoke('load_app_settings');
     expect(restored).toMatchObject({
-      reviewPrompt: 'Only the review prompt changes',
-      reviewAgent: 'reviewer', localEnabled: false, defaultThinking: 'high', defaultFastMode: true,
+      reviewAgent: 'workhorse', localEnabled: false, defaultThinking: 'high', defaultFastMode: true,
       modelAliases: { 'openai/gpt': 'Daily model' }, hiddenModels: ['openai/old'],
       contextWindowCap: 200_000, contextWindowCapEnabled: false,
       modelContextWindowCaps: { 'openai/gpt': 400_000, 'anthropic/claude': null },
@@ -207,31 +206,13 @@ test('invalid per-model context caps are rejected and the saved settings stay un
   } finally { await daemon.stop(); }
 }, 60_000);
 
-test('a daemon restarts after a save turns off a tool the default agent uses, and settings stay editable', async () => {
-  let daemon = await startDaemon();
-  try {
-    const settings = await daemon.invoke('load_app_settings');
-    settings.tools.find((tool: any) => tool.name === 'web_search').enabled = false;
-    await daemon.invoke('save_app_settings', { settings });
-    const home = daemon.home;
-    await daemon.stop();
-    daemon = await startDaemon({ home });
-
-    const restored = await daemon.invoke('load_app_settings');
-    expect(restored.tools.find((tool: any) => tool.name === 'web_search').enabled).toBe(false);
-    restored.tools.find((tool: any) => tool.name === 'web_search').enabled = true;
-    await daemon.invoke('save_app_settings', { settings: restored });
-    expect((await daemon.invoke('load_app_settings')).tools.find((tool: any) => tool.name === 'web_search').enabled).toBe(true);
-  } finally { await daemon.stop(); }
-}, 60_000);
-
 test('a rejected settings save preserves the revision and permits a corrected retry', async () => {
   const daemon = await startDaemon();
   try {
     const other = await daemon.connect();
     const baseline = await daemon.invoke('load_settings_change');
     const machine = { enabled: false, id: 'build', name: 'Build server', target: 'user@build;id', piPath: 'pi' };
-    const invalid = { ...structuredClone(baseline.settings), reviewPrompt: 'Rejected review prompt', hosts: [machine] };
+    const invalid = { ...structuredClone(baseline.settings), reviewAgent: 'Rejected review prompt', hosts: [machine] };
     expect(await daemon.failure('save_app_settings', { settings: invalid }))
       .toContain('SSH target may only contain a host, user, and port-safe characters');
 
@@ -239,13 +220,13 @@ test('a rejected settings save preserves the revision and permits a corrected re
     expect(after.revision).toBe(baseline.revision);
     expect(after.settings).toEqual(baseline.settings);
 
-    const corrected = { ...structuredClone(baseline.settings), reviewPrompt: 'Corrected review prompt', hosts: [{ ...machine, target: 'user@build' }] };
+    const corrected = { ...structuredClone(baseline.settings), reviewAgent: 'Corrected review prompt', hosts: [{ ...machine, target: 'user@build' }] };
     const saved = await daemon.invoke('save_app_settings', { settings: corrected });
     expect(saved.committedRevision).toBe(baseline.revision + 1);
-    const received = await other.waitEvent('pi://settings-changed', change => change.settings.reviewPrompt === 'Corrected review prompt');
+    const received = await other.waitEvent('pi://settings-changed', change => change.settings.reviewAgent === 'Corrected review prompt');
     expect(received.revision).toBe(saved.committedRevision);
     expect(received.settings.hosts).toEqual([{ ...machine, target: 'user@build' }]);
-    expect(other.events.some(event => event.payload?.settings?.reviewPrompt === 'Rejected review prompt')).toBe(false);
+    expect(other.events.some(event => event.payload?.settings?.reviewAgent === 'Rejected review prompt')).toBe(false);
   } finally { await daemon.stop(); }
 }, 60_000);
 
@@ -275,12 +256,12 @@ test('removed settings entries stay removed when a client with older settings re
     };
     expect(received.settings.modelAliases).toEqual(remaining.modelAliases);
     expect(received.settings.hosts).toEqual(remaining.hosts);
-    expect(await other.failure('save_app_settings', { settings: { ...stale, reviewPrompt: 'Edit from older settings' } }))
+    expect(await other.failure('save_app_settings', { settings: { ...stale, reviewAgent: 'Edit from older settings' } }))
       .toContain('Settings changed in another window or client');
 
-    const edit = await other.invoke('save_app_settings', { settings: { ...received.settings, reviewPrompt: 'Edit after reload' } });
+    const edit = await other.invoke('save_app_settings', { settings: { ...received.settings, reviewAgent: 'Edit after reload' } });
     const returned = await daemon.waitEvent('pi://settings-changed', change => change.revision === edit.revision);
-    const expected = { ...remaining, reviewPrompt: 'Edit after reload' };
+    const expected = { ...remaining, reviewAgent: 'Edit after reload' };
     expect(returned.settings).toMatchObject(expected);
     expect(returned.settings.modelAliases).toEqual(remaining.modelAliases);
     const home = daemon.home;

@@ -100,40 +100,34 @@ describe('settings editor', () => {
     await click(save()); assert.deepEqual(saves[1][0].hiddenModels, ['remote/model']); assert.deepEqual(saves[1][0].knownModels, ['remote/model']);
   });
 
-  test('the review settings mark a review agent that no longer exists, and restore the default prompt', async () => {
-    await render({ settings: { ...props.settings, reviewAgent: 'gone', reviewPrompt: 'Only spelling.' }, agentConfig: { agents: [profile('general')] } });
-    await section('Review');
+  test('the Agents tab sets the review agent and marks one that no longer exists', async () => {
+    await render({ settings: { ...props.settings, reviewAgent: 'gone' }, agentConfig: { agents: [profile('general'), profile('reviewer')] } });
+    assert.equal(button('Review'), undefined, 'review has no settings tab of its own');
+    await section('Agents');
     const agent = control('Review agent');
     assert.equal(agent.value, 'gone');
     assert.equal(agent.selectedOptions[0].textContent, 'Unavailable: gone');
-    assert.equal(control('Review prompt').value, 'Only spelling.');
-    await click(button('Restore default prompt'));
-    assert.match(control('Review prompt').value, /\S/);
-    assert.notEqual(control('Review prompt').value, 'Only spelling.');
+    await act(async () => { agent.value = 'reviewer'; agent.dispatchEvent(new Event('change', { bubbles: true })); });
     await click(save());
-    assert.equal(saves[0][0].reviewPrompt, control('Review prompt').value);
+    assert.equal(saves[0][0].reviewAgent, 'reviewer');
   });
 
-  test('review settings follow the selected host plugin state without clearing saved choices', async () => {
+  test('the review agent choice follows the selected host plugin state without clearing saved choices', async () => {
     let enabled = ['cost', 'review'];
     mockIPC(command => {
       if (command === 'plugin_status') return { enabled, configured: enabled, revision: enabled.join(','), error: null };
       throw new Error('Unexpected command: ' + command);
     }, { shouldMockEvents: true });
-    await render({ scope: 'daemon', settings: { ...props.settings, reviewAgent: 'general', reviewPrompt: 'Keep this prompt.' } });
-    await untilDom(() => button('Review'));
-    await section('Review');
-    await untilDom(() => control('Review prompt'));
-    assert.equal(control('Review prompt').value, 'Keep this prompt.');
+    await render({ scope: 'daemon', settings: { ...props.settings, reviewAgent: 'general' }, agentConfig: { agents: [profile('general')] } });
+    await section('Agents');
+    await untilDom(() => control('Review agent'));
     enabled = ['cost'];
     await act(() => refreshPlugins('local'));
-    await untilDom(() => !button('Review'));
-    assert.equal(control('Review prompt'), null);
+    await untilDom(() => !control('Review agent'));
     enabled = ['cost', 'review'];
     await act(() => refreshPlugins('local'));
-    await section('Review');
-    await untilDom(() => control('Review prompt'));
-    assert.equal(control('Review prompt').value, 'Keep this prompt.');
+    await untilDom(() => control('Review agent'));
+    assert.equal(control('Review agent').value, 'general');
     assert.equal(saves.length, 0);
   });
 
