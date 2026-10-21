@@ -170,7 +170,7 @@ test('a started Pi receives resource lists and separate context settings', async
     expect(extensionPaths(launch)).toEqual(expect.arrayContaining([join(generated, 'piop-mcp-bridge.ts'), join(generated, 'piop-context-window-cap/index.ts')]));
     expect(readFileSync(join(generated, 'piop-mcp-bridge.ts'), 'utf8')).toBe(source('daemon/resources/mcp-bridge.bundle.mjs'));
     expect(existsSync(join(generated, 'mcp-servers.json'))).toBe(false);
-    expect(readFileSync(join(generated, 'piop-context-window-cap/index.ts'), 'utf8')).toBe(source('extensions/piop-context-window-cap/index.ts'));
+    expect(readFileSync(join(generated, 'piop-context-window-cap/index.ts'), 'utf8')).toBe(source('extensions/piop-context-window-cap/index.ts').replace('../../daemon/resources/hooks-extended/interface.ts', '../hooks-extended/interface.ts'));
     for (const file of ['piop-mcp-bridge.ts', 'piop-context-window-cap/index.ts']) expect(mode(join(generated, file))).toBe(0o600);
     expect(launch.contextSettings).toEqual({ contextWindowCap: enabled ? 123456 : 200000, contextWindowCapEnabled: enabled, modelContextWindowCaps: {} });
     // The goal tools are always on.

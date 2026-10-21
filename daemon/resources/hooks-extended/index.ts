@@ -16,10 +16,13 @@ export default function hooksExtended(pi: ExtensionAPI) {
       return () => { handlers[name].delete(handler); };
     },
   };
-  const emit = async <K extends keyof ExtendedHookEvents>(name: K, event: ExtendedHookEvents[K], ctx: ExtensionContext) => {
-    for (const handler of [...handlers[name]]) await handler(event, ctx);
+  const emit = async <K extends keyof ExtendedHookEvents>(name: K, event: ExtendedHookEvents[K], ctx: ExtensionContext, signal?: AbortSignal) => {
+    for (const handler of [...handlers[name]]) {
+      if (signal?.aborted) return;
+      await handler(event, ctx);
+    }
   };
-  const available = availability(pi, ctx => emit("session_available", { type: "session_available" }, ctx));
+  const available = availability(pi, (ctx, signal) => emit("session_available", { type: "session_available" }, ctx, signal));
   const unsubscribe = pi.events.on("hooks-extended", request => { request.hooks = hooks; });
   pi.on("turn_end", async (event, ctx) => {
     const message = event.message;

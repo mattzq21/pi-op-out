@@ -159,3 +159,60 @@ test('availability errors are reported, and an already available session needs n
   f.finish();
   await extendedHooks(f.pi).waitForAvailable(f.ctx);
 });
+
+test('runtime invalidation cancels availability before the context becomes stale', async () => {
+  const { installAvailability } = await import('../../daemon/resources/runtime-availability.cjs');
+  const f = fixture();
+  let idle = false;
+  let stale = false;
+  let staleReads = 0;
+  let release!: () => void;
+  const ready = new Promise<void>(resolve => { release = resolve; });
+  const check = () => { if (stale) { staleReads++; throw new Error('Stale context'); } };
+  const runner = {
+    createContext() { return { isIdle: () => { check(); return idle; }, get ui() { check(); return { notify() {} }; } }; },
+    invalidate() { stale = true; },
+  };
+  class Session {
+    _bindExtensionCore(_runner: typeof runner) {}
+    waitForIdle() { return ready; }
+  }
+  installAvailability(Session);
+  new Session()._bindExtensionCore(runner);
+  Object.defineProperties(f.ctx, Object.getOwnPropertyDescriptors(runner.createContext()));
+  hooksExtended(f.pi);
+  const seen: unknown[] = [];
+  extendedHooks(f.pi).on('session_available', event => { seen.push(event); });
+  await f.emit('agent_start');
+  const pending = extendedHooks(f.pi).waitForAvailable(f.ctx).catch(error => error);
+  idle = true;
+  release();
+  runner.invalidate();
+  expect(await pending).toBeInstanceOf(Error);
+  await new Promise(resolve => setImmediate(resolve));
+  expect(staleReads).toBe(0);
+  expect(seen).toEqual([]);
+});
+
+for (const fails of [false, true]) test(`invalidation during an availability handler skips remaining handlers and stale errors (rejects: ${fails})`, async () => {
+  const f = busyFixture();
+  const lifetime = new AbortController();
+  f.ctx[Symbol.for('piop.context-lifetime')] = lifetime.signal;
+  let began!: () => void;
+  const started = new Promise<void>(resolve => { began = resolve; });
+  let finish!: () => void;
+  const held = new Promise<void>((resolve, reject) => { finish = () => fails ? reject(new Error('Handler stopped')) : resolve(); });
+  let laterCalls = 0;
+  const hooks = extendedHooks(f.pi);
+  hooks.on('session_available', async () => { began(); await held; });
+  hooks.on('session_available', () => { laterCalls++; });
+  await f.emit('agent_start');
+  f.finish();
+  await started;
+  lifetime.abort();
+  Object.defineProperty(f.ctx, 'ui', { get() { throw new Error('Stale context'); } });
+  finish();
+  await new Promise(resolve => setImmediate(resolve));
+  expect(laterCalls).toBe(0);
+  expect(f.errors).toEqual([]);
+});
