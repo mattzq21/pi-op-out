@@ -137,9 +137,9 @@ test('availability waits are cancelled on shutdown and never notify a closed ses
   extendedHooks(f.pi).on('session_available', event => { seen.push(event); });
   await f.emit('agent_start');
   const wait = extendedHooks(f.pi).waitForAvailable(f.ctx);
-  const rejected = expect(wait).rejects.toThrow('Session ended');
+  const rejected = wait.then(() => undefined, error => error);
   await f.emit('session_shutdown');
-  await rejected;
+  expect((await rejected)?.message).toContain("Session ended");
   f.finish();
   await Promise.resolve();
   expect(seen).toEqual([]);
