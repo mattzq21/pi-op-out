@@ -15,6 +15,7 @@ export type SettingsResources = { config: AgentConfig; models: Model[]; levels: 
  */
 const cache = new Map<string, Promise<SettingsResources>>();
 let listening = false;
+const RELOAD_DELAY_MS = 2000;
 
 async function load(hostId: string): Promise<SettingsResources> {
   const reader = new NativeTransport({ hostId, cwd: "~" });
@@ -42,7 +43,8 @@ function start(hostId: string): Promise<SettingsResources> {
 function changed(hostId: string) {
   cache.delete(hostId);
 
-  if (hostId === "local") requestIdleCallback(() => { if (!cache.has("local")) void start("local").catch(() => undefined); });
+  // Loaded again shortly after, so the next opening of the settings does not wait for Pi.
+  if (hostId === "local") setTimeout(() => { if (!cache.has("local")) void start("local").catch(() => undefined); }, RELOAD_DELAY_MS);
 }
 
 function listenForChanges() {

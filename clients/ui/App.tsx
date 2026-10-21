@@ -32,14 +32,15 @@ const TerminalView = lazy(() => import("./components/TerminalView").then(module 
 
 let settingsPreloaded = false;
 
-/** Once the chat view is loaded, loads the settings page and the local host's settings data while the app is idle, so settings open without waiting. */
+/** Once the chat view is loaded, loads the settings page and the local host's settings data in the background, so settings open without waiting. */
 function preloadSettings() {
   if (settingsPreloaded) return;
   settingsPreloaded = true;
-  requestIdleCallback(() => {
+  // A short delay lets the chat view finish its own startup first.
+  setTimeout(() => {
     void import("./components/LocalSettingsView").catch(reason => console.error("Could not preload the settings page:", reason));
     void import("./lib/settingsResources").then(module => module.preloadSettingsResources(), reason => console.error("Could not preload the settings data:", reason));
-  }, { timeout: 5000 });
+  }, 1000);
 }
 
 const ChatView = lazy(() => import("./components/ChatView").then(module => { preloadSettings(); return { default: module.ChatView }; }));
