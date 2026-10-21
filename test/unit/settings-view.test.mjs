@@ -138,7 +138,7 @@ describe('settings editor', () => {
   });
 
   test('subagent limits are saved as whole numbers, and a cleared or invalid limit cannot be saved', async () => {
-    await render({ settings: { ...props.settings, tools: [{ name: 'subagent', description: 'Delegate', enabled: true }] }, agentConfig: { agents: [profile('general', { tools: ['subagent'] })] } });
+    await render({ settings: { ...props.settings, tools: [{ name: 'subagent', description: '', source: '/x/session-broker.ts' }] }, agentConfig: { agents: [profile('general', { tools: ['subagent'] })] } });
     await section('Agents');
     const limit = control('Max subagents');
     assert.equal(limit.value, '8');
@@ -222,7 +222,7 @@ describe('settings editor', () => {
   });
 
   test('agent edits save defaults, prompts and resource permissions without changing the built-in identity', async () => {
-    props.settings.tools = [{ name: 'read', enabled: true }]; props.settings.skills = [{ name: 'Research', path: '/research', enabled: true }];
+    props.settings.tools = [{ name: 'read', description: '', source: 'builtin:read' }]; props.settings.skills = [{ name: 'Research', path: '/research', enabled: true }];
     await render({ agentConfig: { agents: [profile('general'), profile('review')] }, models: [{ provider: 'p', id: 'model', reasoning: true }] });
     await section('Agents'); await selectAgent('review'); assert.equal(control('Agent name').value, 'review');
     await enterText(control('Agent name'), 'code review!'); assert.equal(control('Agent name').value, 'codereview');
@@ -237,7 +237,7 @@ describe('settings editor', () => {
   });
 
   test('tool and skill searches filter by name and by group name', async () => {
-    props.settings.tools = [{ name: 'read', enabled: true }, { name: 'bash', enabled: true }, { name: 'get_goal', enabled: true }, { name: 'create_goal', enabled: true }];
+    props.settings.tools = [{ name: 'read', description: '', source: 'builtin:read' }, { name: 'bash', description: '', source: 'builtin:bash' }, { name: 'get_goal', description: '', source: '/x/piop-goals/index.ts' }, { name: 'create_goal', description: '', source: '/x/piop-goals/index.ts' }];
     props.settings.skills = [{ name: 'tdd', path: '/h/.agents/skills/using/tdd', enabled: true }, { name: 'retro', path: '/h/.agents/skills/mine/retro', enabled: true }];
     await render({ agentConfig: { agents: [profile('general'), profile('review')] } });
     await section('Agents'); await selectAgent('review');
@@ -437,9 +437,9 @@ describe('settings editor', () => {
     assert.equal(saves[0][0].hosts[0].piPath, '/opt/pi');
   });
 
-  test('new agents inherit only enabled resources', async () => {
-    props.settings.tools = [{ name: 'read', enabled: true }, { name: 'write', enabled: false }];
-    await render({ agentConfig: { agents: [profile('general')] } }); await section('Agents');
+  test('new agents start with the tools of the general agent and only enabled skills', async () => {
+    props.settings.tools = [{ name: 'read', description: '', source: 'builtin:read' }, { name: 'write', description: '', source: 'builtin:write' }];
+    await render({ agentConfig: { agents: [profile('general', { tools: ['read'] })] } }); await section('Agents');
     await click(button('Add agent'));
     assert.equal(control('Allow read').checked, true);
     assert.equal(control('Allow write').checked, false);

@@ -111,20 +111,12 @@ test('skills that only users may invoke stay enabled', async () => {
   await settings({ refreshSkills: true });
 });
 
-test('loading settings replaces legacy tools without overwriting explicit choices or rewriting the saved settings', async () => {
+test('settings never save tools and load the tools that Pi reported on the host', async () => {
   const current = await settings();
-  await save({ ...current, tools: [
-    { name: 'exec_command', description: 'legacy', enabled: false }, { name: 'apply_patch', description: 'legacy', enabled: true },
-    { name: 'read', description: 'Pi built-in tool', enabled: true, builtin: true }, { name: 'edit', description: 'Pi built-in tool', enabled: false, builtin: true },
-  ] });
-  const migrated = await settings();
-  const enabled = (name: string) => migrated.tools.find((tool: any) => tool.name === name).enabled;
-  expect(enabled('read')).toBe(true); expect(enabled('edit')).toBe(false); expect(enabled('write')).toBe(true); expect(enabled('web_search')).toBe(true);
-  for (const name of ['bash', 'grep', 'find', 'ls']) expect(enabled(name)).toBe(false);
-  expect(migrated.tools.some((tool: any) => tool.name === 'exec_command' || tool.name === 'apply_patch')).toBe(false);
-  expect((await settings()).settingsRevision).toBe(migrated.settingsRevision);
-  await save(migrated);
-  expect((await settings()).tools).toEqual(migrated.tools);
+  await save({ ...current, tools: [{ name: 'invented', description: 'Not reported by Pi', source: 'builtin:invented' }] });
+  const loaded = await settings();
+  expect(loaded.tools.some((tool: any) => tool.name === 'invented')).toBe(false);
+  expect(loaded.tools).toEqual(current.tools);
 });
 
 test('settings default when absent and reject too many remote machines', async () => {
