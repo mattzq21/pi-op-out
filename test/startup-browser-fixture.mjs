@@ -1,7 +1,6 @@
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { basename, resolve } from 'node:path';
-import { execFileSync } from 'node:child_process';
 import { createServer } from 'node:http';
 import { build } from 'esbuild';
 import { transformSync } from '@babel/core';
@@ -46,7 +45,7 @@ export async function startupPage(t, mode, { entryPoint = 'test/fixtures/startup
   let browser;
   t.after(async () => { await browser?.close(); await new Promise(resolve => server.close(resolve)); });
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
-  browser = await chromium.launch({ executablePath: executablePath ?? process.env.CHROME_BIN ?? execFileSync('which', ['chromium'], { encoding: 'utf8' }).trim(), headless: true, args: browserArgs });
+  browser = await chromium.launch({ executablePath: executablePath ?? process.env.CHROME_BIN ?? chromium.executablePath(), headless: true, args: browserArgs });
   const context = await browser.newContext();
   const page = await context.newPage();
   page.setDefaultTimeout(10000);

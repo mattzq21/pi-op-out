@@ -1,5 +1,4 @@
 import { readFile } from 'node:fs/promises';
-import { execFileSync } from 'node:child_process';
 import { createServer } from 'node:http';
 import { before, after, test } from 'node:test';
 import { build } from 'esbuild';
@@ -27,7 +26,7 @@ before(async () => {
   });
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   url = `http://127.0.0.1:${server.address().port}`;
-  browser = await chromium.launch({ executablePath: process.env.CHROME_BIN ?? execFileSync('which', ['chromium'], { encoding: 'utf8' }).trim(), headless: true });
+  browser = await chromium.launch({ executablePath: process.env.CHROME_BIN ?? chromium.executablePath(), headless: true });
 });
 after(async () => { await browser?.close(); if (server) await new Promise(resolve => server.close(resolve)); });
 

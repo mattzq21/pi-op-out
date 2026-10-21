@@ -1,14 +1,13 @@
 import { spawn } from 'node:child_process';
 import { mkdtemp } from 'node:fs/promises';
-import { existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { delimiter, join } from 'node:path';
+import { join } from 'node:path';
 import { chromium } from 'playwright-core';
 import assert from 'node:assert/strict';
 
 const screenshots = await mkdtemp(join(tmpdir(), 'piop-mobile-ui-'));
 
-const chromePath = process.env.CHROME_PATH || (process.env.PATH || '').split(delimiter).flatMap(directory => ['chromium', 'google-chrome', 'chromium-browser', 'chrome'].map(name => join(directory, name + (process.platform === 'win32' ? '.exe' : '')))).find(existsSync) || '/snap/bin/chromium';
+const chromePath = process.env.CHROME_PATH || chromium.executablePath();
 
 const server = spawn(process.execPath, ['node_modules/vite/bin/vite.js', '--mode', 'mobile', '--host', '127.0.0.1', '--port', '1424', '--strictPort'], { stdio: 'ignore' });
 

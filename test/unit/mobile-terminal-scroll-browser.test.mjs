@@ -1,5 +1,4 @@
 import { test, after } from 'node:test';
-import { execFileSync } from 'node:child_process';
 import { build } from 'esbuild';
 import { transformSync } from '@babel/core';
 import solid from 'babel-preset-solid';
@@ -23,7 +22,7 @@ const server=createServer((req,res)=>{res.setHeader('Content-Type',req.url==='/a
 
 await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
 
-const browser=await chromium.launch({executablePath:process.env.CHROME_BIN ?? execFileSync('which', ['chromium'], { encoding: 'utf8' }).trim(),headless:true});
+const browser=await chromium.launch({executablePath:process.env.CHROME_BIN ?? chromium.executablePath(),headless:true});
 
 after(async () => { await browser.close(); await new Promise(resolve => server.close(resolve)); });
 
