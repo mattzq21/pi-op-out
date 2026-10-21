@@ -2,6 +2,18 @@
 .agent-tool-group-heading { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
 .agent-tool-group h4 { margin: 0 0 10px; color: var(--muted); font-size: calc(11px + var(--settings-font-offset, 0px)); font-weight: 600; }
 .agent-tool-group-members { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 7px 12px; }
+.agent-allowlist label:has(> input[type="checkbox"]) { min-width: 0; margin: 0 -6px; padding: 4px 6px; border-radius: 6px; color: var(--ink); cursor: pointer; overflow-wrap: anywhere; transition: background-color .12s, color .12s; }
+.agent-allowlist label:has(> input[type="checkbox"]:not(:checked):not(:indeterminate)) { color: var(--muted); }
+.agent-allowlist label:has(> input[type="checkbox"]):hover { background: var(--accent-05); color: var(--ink); }
+.agent-tool-group-heading label:has(> input[type="checkbox"]) { margin: 0; padding: 0; color: var(--muted); }
+.agent-tool-group-heading label:has(> input[type="checkbox"]):hover { background: transparent; color: var(--ink); }
+.agent-allowlist input[type="checkbox"] { appearance: none; flex: none; display: grid; place-content: center; width: 15px; height: 15px; margin: 0; border: 1.5px solid #6b675f; border-radius: 4px; background: transparent; cursor: pointer; transition: background-color .12s, border-color .12s; }
+.agent-allowlist label:hover > input[type="checkbox"] { border-color: #aaa49a; }
+.agent-allowlist input[type="checkbox"]:checked, .agent-allowlist input[type="checkbox"]:indeterminate { border-color: var(--accent); background: var(--accent); }
+.agent-allowlist input[type="checkbox"]:checked::after { content: ""; width: 7px; height: 3.5px; border: solid #fff; border-width: 0 0 2px 2px; transform: translateY(-1px) rotate(-45deg); }
+.agent-allowlist input[type="checkbox"]:indeterminate::after { content: ""; width: 7px; height: 2px; border-radius: 1px; background: #fff; }
+.agent-allowlist input[type="checkbox"]:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.agent-allowlist input[type="checkbox"]:disabled { cursor: default; opacity: .5; }
 .agent-subagent-limits { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 10px 24px; margin-top: 8px; }
 .agent-allowlist .agent-subagent-limits label.field { display: flex; align-items: center; gap: 8px; margin: 0; }
 .agent-subagent-limits span { white-space: nowrap; }
