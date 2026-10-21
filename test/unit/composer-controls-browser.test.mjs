@@ -161,27 +161,22 @@ test('Escape dismisses the command palette without sending', async t => {
   assert.deepEqual(await sent(page), []);
 });
 
-test('command options show after the command name: hints describe a free argument and choices fill it in', async t => {
+test('the command and its arguments stay above the message box while the command is written', async t => {
   const page = await controlsPage(t);
   const editor = page.getByRole('textbox', { name: 'Message piop' });
   await editor.fill('/rs');
   assert.deepEqual(await page.getByRole('listbox', { name: 'piop commands' }).getByRole('option').allTextContents(), ['/rs [n] [scope]']);
   await editor.fill('/rs ');
-  const rs = page.getByRole('listbox', { name: '/rs options' });
+  const rs = page.getByLabel('/rs arguments');
   await rs.waitFor();
   assert.equal(await rs.textContent(), '/rs [n] [scope]');
-  assert.equal(await rs.getByRole('option').count(), 0);
   await editor.fill('/rs 2 src');
   assert.equal(await rs.textContent(), '/rs [n] [scope]');
   await editor.fill('/fast o');
-  const fast = page.getByRole('listbox', { name: '/fast options' });
-  await fast.waitFor();
-  assert.deepEqual(await fast.getByRole('option').allTextContents(), ['on', 'off']);
-  await page.keyboard.press('ArrowDown');
-  await page.keyboard.press('Tab');
-  assert.equal(await editor.inputValue(), '/fast off');
-  assert.equal(await fast.getByRole('option').count(), 0);
-  assert.match(await fast.textContent(), /^\/fast \[on\|off\|toggle\]$/);
+  const fast = page.getByLabel('/fast arguments');
+  assert.equal(await fast.textContent(), '/fast [on|off|toggle]');
+  assert.equal(await page.getByRole('listbox', { name: 'piop commands' }).count(), 0);
+  await editor.fill('/fast off');
   await page.keyboard.press('Enter');
   assert.deepEqual(await sent(page), [['/fast off', null, []]]);
 });
