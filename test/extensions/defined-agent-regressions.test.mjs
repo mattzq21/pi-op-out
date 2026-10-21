@@ -15,21 +15,6 @@ test('subagent migration adds the available tool once', async t => {
 });
 
 
-test('diagramist migration writes its instructions and preserves an existing custom profile', async t => {
-  const config = configured([profile()]); delete config.diagramistDefaultApplied;
-  const f = await agentFixture(t, { config }); await f.load();
-  const saved = await f.configuration();
-  assert.equal(saved.diagramistDefaultApplied, true);
-  const diagramist = saved.agents.find(agent => agent.name === 'diagramist');
-  assert.deepEqual(diagramist.extensions, []);
-  assert.match(await readFile(join(f.dir, diagramist.path_systemprompt), 'utf8'), /You are diagramist\. Explain systems, code, and data/);
-  diagramist.tools = ['read']; diagramist.path_systemprompt = 'prompt.md'; Object.assign(diagramist, { max_subagents: 8, max_sub_subagents: 8 });
-  saved.diagramistDefaultApplied = false;
-  await f.file('config.json', JSON.stringify(saved)); await f.load();
-  assert.deepEqual((await f.configuration()).agents, saved.agents);
-  assert.equal((await f.configuration()).diagramistDefaultApplied, true);
-});
-
 test('obsolete voice agents are removed and restored voice selections fall back to general', async t => {
   const f = await agentFixture(t, { config: configured([profile(), profile('voice-orchestrator')]), entries: [{ type: 'custom', customType: 'pi-define-agents-state', data: { active: 'voice-orchestrator' } }] });
   await f.load(); await f.start();

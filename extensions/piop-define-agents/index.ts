@@ -5,7 +5,6 @@ import { Check, Errors, Parse } from "typebox/value";
 import { configPath, DEFAULT_PROMPT_PATH, DEFAULT_SYSTEM_PROMPT, resolvePromptPath, ensurePromptFile, snapshotPrompts, ensureDefaultAgentPrompt, readPrompt, readConfigDocument, writeConfig } from "./prompts.ts";
 import { mcpServersSchema } from "./mcp-schema.ts";
 import { fallbackConfig, copySnapshot, selectedProfileState } from "./profiles.ts";
-import { migrateExcalidrawAgent } from "./excalidraw.ts";
 import { mcpServers, type McpServers, type LegacyMcpServer } from "./mcp-config.ts";
 import type { Agent, AgentSnapshot, RequiredToolsRequest, McpToolsRequest, McpSelection, SessionAgentState } from "./contracts.ts";
 import { fastModeSession, fastModelProblem, hostFastModels } from "./fast-models.ts";
@@ -23,7 +22,7 @@ const STATUS_KEY = "pi-define-agents";
 
 const sessionTools = ["subagent"];
 
-export type Config = { revision?: string; agents: Agent[]; webSearchDefaultApplied?: boolean; sessionToolsDefaultApplied?: boolean; subagentsDefaultApplied?: boolean; diagramistDefaultApplied?: boolean; tokagentDefaultApplied?: boolean; excalidrawAgentDefaultApplied?: boolean };
+export type Config = { revision?: string; agents: Agent[]; webSearchDefaultApplied?: boolean; sessionToolsDefaultApplied?: boolean; subagentsDefaultApplied?: boolean; tokagentDefaultApplied?: boolean; };
 
 type ConfigRuntime = { enabledTools?: readonly string[] };
 
@@ -136,7 +135,7 @@ function normalize(value: Omit<Partial<Config>, "agents"> & { agents?: StoredAge
 
   if (!defaults.length) required(agents.find(agent => agent.name === "general")).isDefault = true;
 
-  return { revision: value.revision, agents, webSearchDefaultApplied: value.webSearchDefaultApplied === true, sessionToolsDefaultApplied: value.sessionToolsDefaultApplied === true, subagentsDefaultApplied: value.subagentsDefaultApplied === true, diagramistDefaultApplied: value.diagramistDefaultApplied === true, tokagentDefaultApplied: value.tokagentDefaultApplied === true, excalidrawAgentDefaultApplied: value.excalidrawAgentDefaultApplied === true };
+  return { revision: value.revision, agents, webSearchDefaultApplied: value.webSearchDefaultApplied === true, sessionToolsDefaultApplied: value.sessionToolsDefaultApplied === true, subagentsDefaultApplied: value.subagentsDefaultApplied === true, tokagentDefaultApplied: value.tokagentDefaultApplied === true };
 }
 
 async function readConfig(pi: ConfigRuntime, supplied: StoredConfig | undefined, initialize: boolean, storage: ConfigStorage): Promise<Config> {
@@ -165,7 +164,7 @@ function migrateSessionTools(config: Config, pi: ConfigRuntime) {
 
   if (config.sessionToolsDefaultApplied || !available.length) return false;
 
-  for (const agent of config.agents) if (agent.name !== "excalidraw-agent") agent.tools = [...new Set([...agent.tools, ...available])];
+  for (const agent of config.agents) agent.tools = [...new Set([...agent.tools, ...available])];
   config.sessionToolsDefaultApplied = true;
 
   return true;
@@ -173,7 +172,7 @@ function migrateSessionTools(config: Config, pi: ConfigRuntime) {
 
 function migrateSubagents(config: Config, pi: ConfigRuntime) {
   if (!config.subagentsDefaultApplied && enabledTools(pi)?.includes("subagent")) {
-    for (const agent of config.agents) if (agent.name !== "excalidraw-agent" && !agent.tools.includes("subagent")) agent.tools.push("subagent");
+    for (const agent of config.agents) if (!agent.tools.includes("subagent")) agent.tools.push("subagent");
     config.subagentsDefaultApplied = true;
 
     return true;
@@ -198,25 +197,11 @@ function migrateTokagent(config: Config, pi: ConfigRuntime) {
   return true;
 }
 
-async function migrateDiagramist(config: Config, pi: ConfigRuntime, storage: ConfigStorage) {
-  if (config.diagramistDefaultApplied) return false;
-
-  if (!config.agents.some(agent => agent.name === "diagramist")) {
-    const path = "sysprompt/diagramist.md";
-    await storage.ensurePromptFile(path, `${DEFAULT_SYSTEM_PROMPT}\n\nYou are diagramist. Explain systems, code, and data through clear, accurate diagrams. Inspect the relevant sources before depicting relationships, and distinguish observed behavior from proposed designs.\n\nPiop renders fenced mermaid blocks as interactive diagrams and charts in conversation messages. Use them proactively when a visual makes architecture, dependencies, request flows, state transitions, timelines, or quantitative comparisons easier to understand. Prefer a small, focused diagram over a long prose description of relationships; skip visuals for simple answers.\n\nUse Mermaid flowchart, sequenceDiagram, stateDiagram-v2, classDiagram, erDiagram, gantt, timeline, pie, or xychart-beta syntax as appropriate. Use short plain-text labels, stable node identifiers, and an accTitle/accDescr where supported. Close every fence. Do not include Mermaid configuration directives, frontmatter, HTML, external images, or click handlers; piop controls appearance and interaction. Use only observed or supplied values in charts, and clearly label estimates. Keep the explanation beside the diagram concise.`);
-    config.agents.push({ ...generalAgent(pi), name: "diagramist", path_systemprompt: path });
-  }
-
-  config.diagramistDefaultApplied = true;
-
-  return true;
-}
-
 export async function loadConfig(pi: ConfigRuntime, supplied?: StoredConfig, initialize = true, storage: ConfigStorage = { ensurePromptFile, writeConfig }): Promise<Config> { return loadMigratedConfig(pi, supplied, initialize, storage); }
 
 async function loadMigratedConfig(pi: ConfigRuntime, supplied: StoredConfig | undefined, initialize: boolean, storage: ConfigStorage): Promise<Config> {
   const config = await readConfig(pi, supplied, initialize, storage);
-  let changed = [migrateSessionTools(config, pi), migrateSubagents(config, pi), await migrateDiagramist(config, pi, storage), await migrateExcalidrawAgent(config, storage)].some(Boolean);
+  let changed = [migrateSessionTools(config, pi), migrateSubagents(config, pi)].some(Boolean);
 
   for (const agent of config.agents) {
     if (!agent.tools.some((tool) => tool === "exec_command" || tool === "apply_patch")) continue;
@@ -227,7 +212,7 @@ async function loadMigratedConfig(pi: ConfigRuntime, supplied: StoredConfig | un
   }
 
   if (!config.webSearchDefaultApplied && enabledTools(pi)?.includes("web_search")) {
-    for (const agent of config.agents.filter(agent => agent.name !== "excalidraw-agent")) if (!agent.tools.includes("web_search")) agent.tools.push("web_search");
+    for (const agent of config.agents) if (!agent.tools.includes("web_search")) agent.tools.push("web_search");
     config.webSearchDefaultApplied = true;
     changed = true;
   }

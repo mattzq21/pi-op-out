@@ -62,7 +62,6 @@ export function prepareRuntimeBridge(): void {
 }
 
 export const SESSION_BROKER_MODULES = R.SESSION_BROKER_MODULES;
-export const EXCALIDRAW_ASSETS = R.EXCALIDRAW_ASSETS;
 
 /** Installs session-broker and the session extensions that share its modules. Returns the entries in load order. */
 export function prepareSessionExtensions(): { hooks: string; storage: string; controls: string; broker: string; goals: string } {
@@ -182,10 +181,6 @@ function prepareAgentDirectories(dir: string): void {
   const rtk = join(homeDir(), STORAGE_DIRECTORY, 'piop-rtk');
   ensurePrivateDir(rtk);
   atomicWritePrivate(join(rtk, 'rtk.ts'), R.rtkExtension);
-  const excalidraw = join(homeDir(), STORAGE_DIRECTORY, 'piop-excalidraw');
-  ensurePrivateDir(excalidraw);
-  ensurePrivateDir(join(excalidraw, 'references'));
-  for (const [name, source] of EXCALIDRAW_ASSETS) atomicWritePrivate(join(excalidraw, name), source);
 }
 
 export function prepareDefinedAgentsExtension(): string {
@@ -200,7 +195,6 @@ export function prepareDefinedAgentsExtension(): string {
     ['resources.ts', R.agentResources],
     ['prompts.ts', R.agentPrompts],
     ['profiles.ts', R.agentProfiles],
-    ['excalidraw.ts', R.agentExcalidraw],
     ['fast-models.ts', R.agentFastModels],
     ['../piop-context-window-cap/interface.ts', R.contextWindowCapInterface],
     ['index.ts', R.definedAgentsExtension],

@@ -37,15 +37,12 @@ import agentProfiles from '../../extensions/piop-define-agents/profiles.ts?raw';
 import agentMcpConfig from '../../extensions/piop-define-agents/mcp-config.ts?raw';
 import definedAgentsExtension from '../../extensions/piop-define-agents/index.ts?raw';
 import agentExtensionLoader from '../../extensions/piop-define-agents/extension-loader.ts?raw';
-import agentExcalidraw from '../../extensions/piop-define-agents/excalidraw.ts?raw';
 import agentFastModels from '../../extensions/piop-define-agents/fast-models.ts?raw';
 import contextWindowCapExtension from '../../extensions/piop-context-window-cap/index.ts?raw';
 import contextWindowCapDefaults from '../../extensions/piop-context-window-cap/defaults.ts?raw';
 import contextWindowCapInterface from '../../extensions/piop-context-window-cap/interface.ts?raw';
 import contextBarExtension from '../../extensions/piop-context-bar/index.ts?raw';
 import codexWebSearchExtension from '../../extensions/piop-codex-web-search/index.ts?raw';
-import excalidrawSkill from '../../extensions/piop-excalidraw/SKILL.md?raw';
-import excalidrawCheatsheet from '../../extensions/piop-excalidraw/references/cheatsheet.md?raw';
 import storageGoalRecovery from '../resources/piop-storage/goal-directory-recovery.cjs?raw';
 import brokerModule2 from '../resources/session-broker/app-settings.cjs?raw';
 import brokerModule4 from '../resources/session-broker/client.ts?raw';
@@ -144,15 +141,12 @@ export {
   agentMcpConfig,
   definedAgentsExtension,
   agentExtensionLoader,
-  agentExcalidraw,
   agentFastModels,
   contextWindowCapExtension,
   contextWindowCapInterface,
   contextWindowCapDefaults,
   contextBarExtension,
   codexWebSearchExtension,
-  excalidrawSkill,
-  excalidrawCheatsheet,
 };
 
 export const SESSION_BROKER_MODULES: Array<[string, string]> = [
@@ -171,11 +165,6 @@ export const SESSION_BROKER_MODULES: Array<[string, string]> = [
   ['agent-profiles.ts', brokerModule23],
   ['subagent-mailbox.ts', brokerModule26],
   ['subagent-identity.ts', brokerModule29],
-];
-
-export const EXCALIDRAW_ASSETS: Array<[string, string]> = [
-  ['SKILL.md', excalidrawSkill],
-  ['references/cheatsheet.md', excalidrawCheatsheet],
 ];
 
 /** Session extensions installed next to session-broker. Each directory holds one extension with index.ts as its entry. */
