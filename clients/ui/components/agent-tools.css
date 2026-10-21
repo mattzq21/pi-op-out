@@ -1,6 +1,6 @@
 .agent-tool-group { grid-column: 1 / -1; border-top: 1px solid var(--line); margin-top: 5px; padding-top: 10px; }
 .agent-allowlist > legend { display: flex; align-items: center; width: 100%; box-sizing: border-box; padding: 0; }
-.agent-allowlist > legend > span:first-child { padding: 0 8px 0 5px; color: var(--ink); font-size: calc(13px + var(--settings-font-offset, 0px)); }
+.agent-allowlist > legend > span:first-child { padding: 0 8px 0 5px; color: var(--ink); font-size: calc(15px + var(--settings-font-offset, 0px)); font-weight: 600; }
 .agent-allowlist-line { flex: 1; height: 1px; background: var(--line); }
 .agent-allowlist .agent-allowlist-search { flex: none; gap: 6px; height: 30px; padding: 0 10px; border: 1px solid var(--line); border-radius: 6px; background: var(--dark-control); color: var(--faint); font-weight: 400; cursor: text; }
 .agent-allowlist .agent-allowlist-search:focus-within { border-color: #aaa49a; color: var(--muted); }
