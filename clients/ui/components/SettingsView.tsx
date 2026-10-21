@@ -418,7 +418,7 @@ export function SettingsView(props: SettingsViewProps) {
 
   const renderSettingsHeader = () => {
     const renderSaveControls = () => {
-      const renderUnsavedBadge = () => (dirty() && !saving() && <small role="status" class="unsaved-badge"><span aria-hidden="true" />{durabilityError() ? "Save needs confirmation" : "Unsaved changes"}</small>);
+      const renderDiscardChanges = () => (dirty() && !saving() && <button onClick={reloadLatest}>Discard changes</button>);
       const renderPendingSettingsCount = () => (settingsProps().pendingSettingsCount > 0 && !dirty() && <small role="status">Saved · waiting for {settingsProps().pendingSettingsCount} session{settingsProps().pendingSettingsCount === 1 ? "" : "s"} to apply changes</small>);
       const renderSaveButton = () => (conflict() ? <small role="alert">{saveError() || "Settings changed in another window."} <button disabled={saving()} onClick={reloadLatest}>Reload latest settings and discard local edits</button></small> : (saveError() || validationError() || formValidation().fastModeValidationError || durabilityError()) && <small role="alert">{saveError() || validationError() || formValidation().fastModeValidationError || durabilityError()}</small>);
 
@@ -429,7 +429,7 @@ export function SettingsView(props: SettingsViewProps) {
         return (<button class={dirty() && !saving() && formValidation().formValid ? "primary-button needs-save" : "primary-button"} disabled={saving() || conflict() || !dirty() || !formValidation().formValid} onClick={() => void save()}>{renderSaveStatus()}{renderSaveLabel()}</button>);
       };
 
-      return (<div class="settings-save">{renderUnsavedBadge()}{renderPendingSettingsCount()}{renderSaveButton()}{renderSaveButtonLabel()}</div>);
+      return (<div class="settings-save">{renderDiscardChanges()}{renderPendingSettingsCount()}{renderSaveButton()}{renderSaveButtonLabel()}</div>);
     };
 
     return (<header class="settings-header"><div><p class="eyebrow">piop</p><h1>{settingsProps().scope === "client" ? "Client settings" : settingsProps().daemonLabel + " settings"}</h1><p>Client preferences stay on this device. Daemon settings belong to the machine running piop.</p></div>{renderSaveControls()}</header>);

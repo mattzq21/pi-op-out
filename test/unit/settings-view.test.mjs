@@ -26,7 +26,7 @@ describe('settings editor', () => {
   const control = label => document.querySelector(`[aria-label="${label}"]`);
   const button = text => [...document.querySelectorAll('button')].find(item => item.textContent === text);
   const click = async element => act(async () => element.click());
-  const save = () => document.querySelector('.settings-save > button');
+  const save = () => document.querySelector('.settings-save > .primary-button');
   const section = async name => click([...document.querySelectorAll('nav button')].find(item => item.textContent === name));
   const select = async (label, value) => act(async () => { control(label).value = value; control(label).dispatchEvent(new Event('change', { bubbles: true })); });
   const selectAgent = async name => click([...document.querySelectorAll('.agent-list button')].find(item => item.textContent === name));
