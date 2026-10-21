@@ -22,7 +22,7 @@ const STATUS_KEY = "pi-define-agents";
 
 const sessionTools = ["subagent"];
 
-export type Config = { revision?: string; agents: Agent[]; webSearchDefaultApplied?: boolean; sessionToolsDefaultApplied?: boolean; subagentsDefaultApplied?: boolean; tokagentDefaultApplied?: boolean; };
+export type Config = { revision?: string; agents: Agent[]; webSearchDefaultApplied?: boolean; sessionToolsDefaultApplied?: boolean; subagentsDefaultApplied?: boolean; workhorseDefaultApplied?: boolean; };
 
 type ConfigRuntime = { enabledTools?: readonly string[] };
 
@@ -135,7 +135,7 @@ function normalize(value: Omit<Partial<Config>, "agents"> & { agents?: StoredAge
 
   if (!defaults.length) required(agents.find(agent => agent.name === "general")).isDefault = true;
 
-  return { revision: value.revision, agents, webSearchDefaultApplied: value.webSearchDefaultApplied === true, sessionToolsDefaultApplied: value.sessionToolsDefaultApplied === true, subagentsDefaultApplied: value.subagentsDefaultApplied === true, tokagentDefaultApplied: value.tokagentDefaultApplied === true };
+  return { revision: value.revision, agents, webSearchDefaultApplied: value.webSearchDefaultApplied === true, sessionToolsDefaultApplied: value.sessionToolsDefaultApplied === true, subagentsDefaultApplied: value.subagentsDefaultApplied === true, workhorseDefaultApplied: value.workhorseDefaultApplied === true };
 }
 
 async function readConfig(pi: ConfigRuntime, supplied: StoredConfig | undefined, initialize: boolean, storage: ConfigStorage): Promise<Config> {
@@ -181,18 +181,18 @@ function migrateSubagents(config: Config, pi: ConfigRuntime) {
   return false;
 }
 
-function migrateTokagent(config: Config, pi: ConfigRuntime) {
-  if (config.tokagentDefaultApplied) return false;
+function migrateWorkhorse(config: Config, pi: ConfigRuntime) {
+  if (config.workhorseDefaultApplied) return false;
 
-  if (!config.agents.some(agent => agent.name === "tokagent")) {
+  if (!config.agents.some(agent => agent.name === "workhorse")) {
     const agent = structuredClone(config.agents.find(agent => agent.name === "general") ?? generalAgent(pi));
-    agent.name = "tokagent";
+    agent.name = "workhorse";
     delete agent.isDefault;
     agent.extensions = [...new Set([...(agent.extensions ?? []), "../piop-rtk/rtk.ts"])];
     config.agents.push(agent);
   }
 
-  config.tokagentDefaultApplied = true;
+  config.workhorseDefaultApplied = true;
 
   return true;
 }
@@ -221,7 +221,7 @@ async function loadMigratedConfig(pi: ConfigRuntime, supplied: StoredConfig | un
 
   if (retainedAgents.length !== config.agents.length) { config.agents = retainedAgents; changed = true; }
 
-  changed = migrateTokagent(config, pi) || changed;
+  changed = migrateWorkhorse(config, pi) || changed;
 
   if (changed) await storage.writeConfig(config);
 
