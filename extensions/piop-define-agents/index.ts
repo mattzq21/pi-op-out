@@ -327,6 +327,20 @@ export default async function defineAgents(pi: ExtensionAPI) {
 
   const toolDisabledForAgent = (name: string, agent: Agent | undefined) => name === "codemode" && agent?.codemode === false;
 
+  /**
+   * Codemode on: the agent gets the codemode tool, and Pi shows the model only codemode, which calls every other tool from scripts.
+   * Codemode off: the agent has no codemode tool and calls every tool directly. Pi without the codemode extension is left as it is.
+   */
+  const applyCodemode = (agent: Agent, tools: Set<string>) => {
+    if (!pi.getAllTools().some(tool => tool.name === "codemode")) return;
+    const setMode = Object.getOwnPropertyDescriptor(globalThis, Symbol.for("piop.codemode-mode"))?.value as ((mode: "on" | "only") => void) | undefined;
+
+    if (!setMode) throw new Error("Piop cannot set how codemode presents the tools");
+
+    if (agent.codemode === false) { tools.delete("codemode"); setMode("on"); }
+    else { tools.add("codemode"); setMode("only"); }
+  };
+
   pi.on("tool_call", (event, ctx) => {
     const agent = currentAgent();
     const required: RequiredToolsRequest = { ctx, tools: [], availableTools: agent?.tools }; pi.events.emit("piop:required-tools", required);
@@ -575,7 +589,8 @@ export default async function defineAgents(pi: ExtensionAPI) {
     const required: RequiredToolsRequest = { ctx, tools: [], availableTools: [...tools] }; pi.events.emit("piop:required-tools", required);
 
     for (const tool of required.tools) tools.add(tool);
-    pi.setActiveTools([...tools].filter(name => agent.codemode !== false || name !== "codemode"));
+    applyCodemode(agent, tools);
+    pi.setActiveTools([...tools]);
 
     return undefined;
   };

@@ -2,26 +2,26 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { agentFixture, profile } from '../defined-agent-fixture.mjs';
 
-test('agent configuration preserves stdio MCP launch and exposure options', async t => {
+test('agent configuration preserves stdio MCP launch options', async t => {
   const f = await agentFixture(t, { config: null });
   await f.load();
   await f.configure({ agents: [profile('reviewer', { mcpServers: {
-    search: { command: 'search-server', args: ['--query', 'two words'], env: { MODE: 'search' }, enabled: false, timeout: 900, exposure: 'deferred', piopInjectAgentId: true },
+    search: { command: 'search-server', args: ['--query', 'two words'], env: { MODE: 'search' }, enabled: false, timeout: 900, piopInjectAgentId: true },
   } })] });
   const saved = await f.configuration();
   assert.deepEqual(saved.agents.find(agent => agent.name === 'reviewer').mcpServers, {
-    search: { command: 'search-server', args: ['--query', 'two words'], env: { MODE: 'search' }, enabled: false, timeout: 900, exposure: 'deferred', piopInjectAgentId: true },
+    search: { command: 'search-server', args: ['--query', 'two words'], env: { MODE: 'search' }, enabled: false, timeout: 900, piopInjectAgentId: true },
   });
 });
 
-test('agent configuration preserves HTTP MCP authentication and tool exposure options', async t => {
+test('agent configuration preserves HTTP MCP authentication options', async t => {
   const f = await agentFixture(t, { config: null });
   await f.load();
   await f.configure({ agents: [profile('reviewer', { mcpServers: {
-    web: { type: 'streamable-http', url: 'https://example.com/mcp', headers: { Authorization: 'fixture' }, toolExposure: { search: 'hidden' }, oauth: { clientId: 'fixture', callbackPort: 12345, callbackUrl: 'http://127.0.0.1:12345/callback' } },
+    web: { type: 'streamable-http', url: 'https://example.com/mcp', headers: { Authorization: 'fixture' }, oauth: { clientId: 'fixture', callbackPort: 12345, callbackUrl: 'http://127.0.0.1:12345/callback' } },
   } })] });
   assert.deepEqual((await f.configuration()).agents.find(agent => agent.name === 'reviewer').mcpServers, {
-    web: { type: 'streamable-http', url: 'https://example.com/mcp', headers: { Authorization: 'fixture' }, toolExposure: { search: 'hidden' }, oauth: { clientId: 'fixture', callbackPort: 12345, callbackUrl: 'http://127.0.0.1:12345/callback' } },
+    web: { type: 'streamable-http', url: 'https://example.com/mcp', headers: { Authorization: 'fixture' }, oauth: { clientId: 'fixture', callbackPort: 12345, callbackUrl: 'http://127.0.0.1:12345/callback' } },
   });
 });
 

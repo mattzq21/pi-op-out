@@ -96,12 +96,19 @@ test('a failed MCP startup remains retryable on the next input', async () => fix
 test('MCP registrations preserve native stdio and HTTP configuration without mutating callers', async () => fixture(async f => {
   const definitions = { search: { command: '/server', args: ['two words'], env: { CUSTOM: 'value' }, timeout: 23000, piopInjectAgentId: true }, remote: { url: 'https://example.invalid/mcp', headers: { 'X-Test': 'value' } } };
   const original = structuredClone(definitions); await f.select(definitions);
-  assert.deepEqual(definitions, original); assert.deepEqual(f.servers.get('remote'), definitions.remote);
+  assert.deepEqual(definitions, original); assert.deepEqual(f.servers.get('remote'), { ...definitions.remote, exposure: 'codemode' });
   assert.deepEqual(f.servers.get('search').args, ['two words']); assert.equal(f.servers.get('search').timeout, 23000); assert.equal(f.servers.get('search').env.CUSTOM, 'value');
   const identity = f.servers.get('search').env.PIOP_CUA_INSTANCE_ID;
   assert.equal(typeof identity, 'string');
   assert.notEqual(identity.trim(), '');
   assert.equal('piopInjectAgentId' in f.servers.get('search'), false);
+}));
+
+test('the agent codemode switch sets how MCP tools are reached and replaces per-server exposure', async () => fixture(async f => {
+  await f.select({ search: { command: 'server', exposure: 'hidden', toolExposure: { find: 'direct' } } });
+  assert.equal(f.servers.get('search').exposure, 'codemode'); assert.equal('toolExposure' in f.servers.get('search'), false);
+  await f.select({ search: { command: 'server' } }, 'session', false);
+  assert.equal(f.servers.get('search').exposure, 'direct');
 }));
 
 test('unchanged MCP definitions retain registrations and replacements remove only affected servers', async () => fixture(async f => {

@@ -1,7 +1,5 @@
 import { array, boolean, enum as enumeration, number, object, record, string } from "zod";
 
-const exposure = enumeration(["direct", "deferred", "codemode", "codemode-deferred", "hidden"]);
-
 const loopback = (url: URL) => ["localhost", "127.0.0.1", "[::1]"].includes(url.hostname);
 
 const httpUrl = string().refine(value => URL.canParse(value) && ["http:", "https:"].includes(new URL(value).protocol), "Expected an HTTP or HTTPS URL");
@@ -31,11 +29,14 @@ export const mcpServerSchema = object({
   command: string().optional(), args: array(string()).optional(), env: record(string(), string()).optional(), cwd: string().optional(),
   url: httpUrl.optional(), headers: record(string(), string()).optional(),
   enabled: boolean().optional(), timeout: number().positive().optional(), description: string().optional(),
-  exposure: exposure.optional(), toolExposure: record(string(), exposure).optional(),
   oauth: oauth.optional(), auth: object({ provider: string().min(1) }).passthrough().optional(),
   piopInjectAgentId: boolean().optional(),
 }).passthrough().superRefine((value, ctx) => {
   const http = value.url !== undefined && value.type !== "stdio";
+
+  for (const field of ["exposure", "toolExposure"]) {
+    if (field in value) ctx.addIssue({ code: "custom", path: [field], message: "The agent's Codemode switch decides how MCP tools are reached. Remove " + field });
+  }
 
   if (!http && !(value.command?.trim() && (value.type === undefined || value.type === "stdio"))) ctx.addIssue({ code: "custom", message: "Transport requires a command for stdio or a URL for HTTP" });
 

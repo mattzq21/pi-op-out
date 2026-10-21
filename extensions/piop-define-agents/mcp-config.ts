@@ -66,7 +66,7 @@ function legacyHeaders(server: LegacyMcpServer) {
 }
 
 function legacyConfig(server: LegacyMcpServer): AgentMcpServerConfig {
-  const options: Pick<AgentMcpServerConfig, "enabled" | "description" | "exposure" | "timeout" | "piopInjectAgentId"> = { enabled: server.enabled ?? true, description: server.name, exposure: "direct", timeout: 120 };
+  const options: Pick<AgentMcpServerConfig, "enabled" | "description" | "timeout" | "piopInjectAgentId"> = { enabled: server.enabled ?? true, description: server.name, timeout: 120 };
 
   if (server.injectAgentId) options.piopInjectAgentId = true;
 

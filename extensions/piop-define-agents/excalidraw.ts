@@ -10,7 +10,7 @@ export async function migrateExcalidrawAgent(config: Config, storage: ConfigStor
     config.agents.push({
       name: "excalidraw-agent", model: "", effort: "high", codemode: false,
       path_systemprompt: path, path_agent_prompt: "", tools: ["read"], skills: [],
-      mcpServers: { excalidraw: { command: "npx", args: ["-y", "mcp-excalidraw-server@2.0.0"], enabled: true, timeout: 120, exposure: "direct" } },
+      mcpServers: { excalidraw: { command: "npx", args: ["-y", "mcp-excalidraw-server@2.0.0"], enabled: true, timeout: 120 } },
     });
   }
 

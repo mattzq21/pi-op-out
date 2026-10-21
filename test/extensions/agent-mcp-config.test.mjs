@@ -10,7 +10,7 @@ test('stored MCP command arguments preserve quoted words and empty arguments', a
 
   const configuration = await f.configuration();
   assert.deepEqual(configuration.agents.find(agent => agent.name === 'reviewer').mcpServers, {
-    search: { command: 'search-server', args: ['--query', 'two words', '', 'escaped space'], enabled: true, description: 'Search', exposure: 'direct', timeout: 120, piopInjectAgentId: true },
+    search: { command: 'search-server', args: ['--query', 'two words', '', 'escaped space'], enabled: true, description: 'Search', timeout: 120, piopInjectAgentId: true },
   });
 });
 
@@ -22,7 +22,7 @@ test('stored HTTP MCP settings preserve headers and a disabled server', async t 
 
   const configuration = await f.configuration();
   assert.deepEqual(configuration.agents.find(agent => agent.name === 'reviewer').mcpServers, {
-    web: { url: 'https://example.com/mcp', headers: { Authorization: 'fixture' }, enabled: false, description: 'Web', exposure: 'direct', timeout: 120 },
+    web: { url: 'https://example.com/mcp', headers: { Authorization: 'fixture' }, enabled: false, description: 'Web', timeout: 120 },
   });
 });
 
