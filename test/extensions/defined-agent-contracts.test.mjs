@@ -126,14 +126,14 @@ test('first run creates private defaults and preserves existing prompts (product
   const allTools = ['read', 'bash', 'edit', 'write', 'grep', 'find', 'ls', 'web_search', 'subagent'];
   const f = await agentFixture(t, { config: null, env, runtime: { enabledTools: allTools }, tools: allTools, files: { 'home/.agents/AGENTS.md': 'Personal instructions' } });
   await f.load(); const config = await f.configuration();
-  const expected = { name: 'general', model: '', effort: development ? 'medium' : 'high', extensions: [], max_subagents: 8, max_sub_subagents: 8, path_systemprompt: '~/.agents/prompts/system/default.md', path_agent_prompt: '~/.agents/prompts/agent/default.md', tools: allTools, skills: [], mcpServers: {} };
+  const expected = { name: 'general', model: '', effort: development ? 'medium' : 'high', extensions: [], max_subagents: 8, max_sub_subagents: 8, path_systemprompt: '~/.agents/prompts/system/default.md', path_agent_prompt: '~/.agents/AGENTS.md', tools: allTools, skills: [], mcpServers: {} };
 
   if (development) expected.fastMode = false;
   assert.partialDeepStrictEqual(config.agents[0], expected);
-  const system = join(f.home, '.agents/prompts/system/default.md'), agent = join(f.home, '.agents/prompts/agent/default.md');
-  assert.match(await readFile(system, 'utf8'), /^You are an expert coding assistant/); assert.equal(await readFile(agent, 'utf8'), '');
+  const system = join(f.home, '.agents/prompts/system/default.md'), agent = join(f.home, '.agents/AGENTS.md');
+  assert.match(await readFile(system, 'utf8'), /^You are an expert coding assistant/); assert.equal(await readFile(agent, 'utf8'), 'Personal instructions', 'an existing AGENTS.md is kept');
   assert.equal((await stat(system)).mode & 0o777, 0o600); assert.equal((await stat(join(f.home, '.agents/prompts/system'))).mode & 0o777, 0o700);
-  await f.file('home/.agents/prompts/system/default.md', 'Custom system'); await f.file('home/.agents/prompts/agent/default.md', 'Custom agent');
+  await f.file('home/.agents/prompts/system/default.md', 'Custom system'); await f.file('home/.agents/AGENTS.md', 'Custom agent');
   await f.reloadExtensions(); assert.equal(await readFile(system, 'utf8'), 'Custom system'); assert.equal(await readFile(agent, 'utf8'), 'Custom agent');
 });
 
@@ -143,14 +143,14 @@ test('first run creates private defaults and preserves existing prompts (develop
   const allTools = ['read', 'bash', 'edit', 'write', 'grep', 'find', 'ls', 'web_search', 'subagent'];
   const f = await agentFixture(t, { config: null, env, runtime: { enabledTools: allTools }, tools: allTools, files: { 'home/.agents/AGENTS.md': 'Personal instructions' } });
   await f.load(); const config = await f.configuration();
-  const expected = { name: 'general', model: '', effort: development ? 'medium' : 'high', extensions: [], max_subagents: 8, max_sub_subagents: 8, path_systemprompt: '~/.agents/prompts/system/default.md', path_agent_prompt: '~/.agents/prompts/agent/default.md', tools: allTools, skills: [], mcpServers: {} };
+  const expected = { name: 'general', model: '', effort: development ? 'medium' : 'high', extensions: [], max_subagents: 8, max_sub_subagents: 8, path_systemprompt: '~/.agents/prompts/system/default.md', path_agent_prompt: '~/.agents/AGENTS.md', tools: allTools, skills: [], mcpServers: {} };
 
   if (development) expected.fastMode = false;
   assert.partialDeepStrictEqual(config.agents[0], expected);
-  const system = join(f.home, '.agents/prompts/system/default.md'), agent = join(f.home, '.agents/prompts/agent/default.md');
-  assert.match(await readFile(system, 'utf8'), /^You are an expert coding assistant/); assert.equal(await readFile(agent, 'utf8'), '');
+  const system = join(f.home, '.agents/prompts/system/default.md'), agent = join(f.home, '.agents/AGENTS.md');
+  assert.match(await readFile(system, 'utf8'), /^You are an expert coding assistant/); assert.equal(await readFile(agent, 'utf8'), 'Personal instructions', 'an existing AGENTS.md is kept');
   assert.equal((await stat(system)).mode & 0o777, 0o600); assert.equal((await stat(join(f.home, '.agents/prompts/system'))).mode & 0o777, 0o700);
-  await f.file('home/.agents/prompts/system/default.md', 'Custom system'); await f.file('home/.agents/prompts/agent/default.md', 'Custom agent');
+  await f.file('home/.agents/prompts/system/default.md', 'Custom system'); await f.file('home/.agents/AGENTS.md', 'Custom agent');
   await f.reloadExtensions(); assert.equal(await readFile(system, 'utf8'), 'Custom system'); assert.equal(await readFile(agent, 'utf8'), 'Custom agent');
 });
 
@@ -174,9 +174,9 @@ test('invalid configuration and filesystem failures surface instead of silently 
 
   for (const name of ['sessions.sqlite', 'sessions.sqlite-wal', 'sessions.sqlite-shm']) await rm(join(f.dir, name), { force: true });
   await mkdir(join(f.dir, 'sessions.sqlite')); await assert.rejects(f.load(), /Settings database is not a regular file/);
-  await rm(join(f.dir, 'sessions.sqlite'), { recursive: true }); await f.file('config.json', JSON.stringify(configured([profile('general', { path_agent_prompt: '~/.agents/prompts/agent/default.md' })])));
-  await f.load(); await rm(join(f.home, '.agents/prompts/agent/default.md')); await mkdir(join(f.home, '.agents/prompts/agent/default.md'));
-  await f.start(); assert.match(f.notices.at(-1).message, /cannot read agent prompt .*default\.md: EISDIR/); assert.deepEqual(await f.input('hello'), { action: 'handled' });
+  await rm(join(f.dir, 'sessions.sqlite'), { recursive: true }); await f.file('config.json', JSON.stringify(configured([profile('general', { path_agent_prompt: '~/.agents/AGENTS.md' })])));
+  await f.load(); await rm(join(f.home, '.agents/AGENTS.md')); await mkdir(join(f.home, '.agents/AGENTS.md'));
+  await f.start(); assert.match(f.notices.at(-1).message, /cannot read agent prompt .*AGENTS\.md: EISDIR/); assert.deepEqual(await f.input('hello'), { action: 'handled' });
 });
 
 test('legacy migration skips null entries and empty names while retaining a general profile', async t => {
@@ -427,9 +427,9 @@ test('tool migration adds missing defaults without removing explicit builtin cho
 });
 
 test('an unreadable inherited agent prompt does not silently become an empty prompt', async t => {
-  const f = await agentFixture(t, { config: null }); await mkdir(join(f.home, '.agents/prompts/agent/default.md'), { recursive: true });
+  const f = await agentFixture(t, { config: null }); await mkdir(join(f.home, '.agents/AGENTS.md'), { recursive: true });
   await f.load(); await f.start();
-  assert.match(f.notices.at(-1).message, /Agent "general" cannot read agent prompt .*\.agents\/prompts\/agent\/default\.md: EISDIR/);
+  assert.match(f.notices.at(-1).message, /Agent "general" cannot read agent prompt .*\.agents\/AGENTS\.md: EISDIR/);
   assert.deepEqual(f.pi.getActiveTools(), []); assert.deepEqual(await f.input('hello'), { action: 'handled' });
 });
 
@@ -570,8 +570,8 @@ test('adding profiles supplies a missing general profile and inherited agent pro
   await f.configure(configured([profile('reviewer')])); assert.deepEqual((await f.configuration()).agents.map(agent => agent.name), ['general', 'reviewer']);
 
   for (const name of ['general', 'default']) {
-    const agent = profile(name, { path_agent_prompt: '~/.agents/prompts/agent/default.md' });
-    await f.configure(configured([agent])); assert.equal((await f.configuration()).agents[0].path_agent_prompt, '~/.agents/prompts/agent/default.md');
+    const agent = profile(name, { path_agent_prompt: '~/.agents/AGENTS.md' });
+    await f.configure(configured([agent])); assert.equal((await f.configuration()).agents[0].path_agent_prompt, '~/.agents/AGENTS.md');
   }
 });
 
@@ -589,7 +589,7 @@ test('legacy prompt type errors and whitespace fall back to the default system p
   await f.load(); const agents = (await f.configuration()).agents;
   assert.equal(agents[0].path_systemprompt, '~/.agents/prompts/system/default.md');
   assert.match(await readFile(join(f.dir, agents[1].path_systemprompt), 'utf8'), /^You are an expert coding assistant[\s\S]*\n\nAdditional$/);
-  assert.equal(await readFile(join(f.home, '.agents/prompts/agent/default.md'), 'utf8'), '');
+  assert.equal(await readFile(join(f.home, '.agents/AGENTS.md'), 'utf8'), '');
 });
 
 

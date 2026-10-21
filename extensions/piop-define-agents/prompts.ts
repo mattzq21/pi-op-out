@@ -104,7 +104,7 @@ export const configPath = process.env.PIOP_AGENT_CONFIG_PATH || join(dirname(fil
 /** Default prompt files live with the user's own agent files in ~/.agents, shared by every Piop profile. */
 export const DEFAULT_PROMPT_PATH = "~/.agents/prompts/system/default.md";
 
-export const DEFAULT_AGENT_PROMPT_PATH = "~/.agents/prompts/agent/default.md";
+export const DEFAULT_AGENT_PROMPT_PATH = "~/.agents/AGENTS.md";
 
 export const DEFAULT_SYSTEM_PROMPT = `You are an expert coding assistant operating inside a coding agent harness. You help users by reading files, executing commands, editing code, and writing new files.
 
