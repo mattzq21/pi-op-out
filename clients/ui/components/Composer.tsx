@@ -275,13 +275,13 @@ export function Composer(props: Props) {
     return typed && command?.options?.length ? { command, options: command.options, prefix: typed[2].trimStart().toLowerCase() } : undefined;
   });
 
-  /** Options that match the typed argument. Hints (empty value) describe a free argument and show only before the user types it. */
+  /** Options that match the typed argument. Hints (empty value) describe the arguments and show while the user writes the command. */
   const argumentShown = createMemo<CommandOption[]>(() => {
     const input = argumentInput();
 
     if (paletteDismissed() || !input) return [];
 
-    return input.options.filter(option => option.value.toLowerCase().startsWith(input.prefix) && (option.value === "" || option.value.toLowerCase() !== input.prefix));
+    return input.options.filter(option => option.value === "" || (option.value.toLowerCase().startsWith(input.prefix) && option.value.toLowerCase() !== input.prefix));
   });
   const argumentHints = createMemo(() => argumentShown().filter(option => !option.value));
   const argumentChoices = createMemo(() => argumentShown().filter(option => option.value));

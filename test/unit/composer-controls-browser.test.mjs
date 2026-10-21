@@ -171,8 +171,8 @@ test('command options show after the command name: hints describe a free argumen
   await rs.waitFor();
   assert.equal(await rs.textContent(), '/rs [n] [scope]');
   assert.equal(await rs.getByRole('option').count(), 0);
-  await editor.fill('/rs 2');
-  assert.equal(await rs.count(), 0);
+  await editor.fill('/rs 2 src');
+  assert.equal(await rs.textContent(), '/rs [n] [scope]');
   await editor.fill('/fast o');
   const fast = page.getByRole('listbox', { name: '/fast options' });
   await fast.waitFor();
