@@ -34,7 +34,7 @@ test('refreshing skills finds new and removed skills on the host and keeps which
   await act(async () => button().click());
   await untilDom(() => changes.length === 1, 10000);
   assert.deepEqual(changes[0].map(skill => [skill.name, skill.enabled]).sort(), [['review-code', false], ['write-tests', true]]);
-  assert.equal(button().textContent, 'Refresh skills');
+  assert.equal(button().getAttribute('aria-label'), 'Refresh skills');
 });
 
 test('a refresh that fails says why and changes nothing', async t => {

@@ -1,4 +1,5 @@
 import { createSignal, onCleanup, Show } from "solid-js";
+import { RefreshCw } from "lucide-solid";
 import { nativeCall } from "../lib/nativeCall";
 import { appSettingsSchema } from "../lib/responseSchemas";
 import type { AppSettings } from "../types";
@@ -24,7 +25,10 @@ function RefreshResource(props: { hostId: string; resource: "skills" | "tools"; 
     finally { if (!disposed) setBusy(false); }
   };
 
-  return <div class="refresh-resource"><button type="button" class="secondary-button" disabled={busy()} onClick={() => void refresh()}>{busy() ? `Refreshing ${props.resource}…` : `Refresh ${props.resource}`}</button><Show when={error()}><p role="alert">{error()}</p></Show></div>;
+  return <span class="refresh-resource">
+    <button type="button" aria-label={`Refresh ${props.resource}`} data-tooltip={busy() ? `Refreshing ${props.resource}…` : `Refresh ${props.resource}`} disabled={busy()} onClick={() => void refresh()}><RefreshCw size={13} class={busy() ? "spinning" : ""} aria-hidden="true" /></button>
+    <Show when={error()}><span role="alert">{error()}</span></Show>
+  </span>;
 }
 
 export function RefreshSkills(props: { hostId: string; skills: AppSettings["skills"]; onChange: (skills: AppSettings["skills"]) => void }) {
