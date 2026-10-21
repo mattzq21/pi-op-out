@@ -1,6 +1,6 @@
 import { expect, test } from 'bun:test';
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { startDaemon } from './harness';
@@ -75,7 +75,9 @@ test('closing an unused temporary chat keeps the subfolder of an archived chat r
     await daemon.invoke('remove_temporary_chat', { hostId: 'local', path: temporary.cwd });
     expect(readFileSync(join(project, 'notes.txt'), 'utf8')).toBe('archived work');
 
-    const archives = (await daemon.invoke('storage_report')).hosts.find((host: any) => host.hostId === 'local').archives;
+    const report = (await daemon.invoke('storage_report')).hosts.find((host: any) => host.hostId === 'local');
+    expect(report.warnings.some((line: string) => line.includes('Temporary folder cleanup'))).toBe(false);
+    const archives = report.archives;
     await daemon.invoke('restore_archived_session', { hostId: 'local', sessionPath: archives.find((row: any) => row.id === saved.id).path, clientId: 'archived-reference-test' });
     expect((await daemon.invoke('list_sessions')).find((row: any) => row.id === saved.id))
       .toMatchObject({ cwd: project, cwdExists: true, preview: 'Archived in a temporary folder' });
@@ -85,6 +87,8 @@ test('closing an unused temporary chat keeps the subfolder of an archived chat r
       expect((await daemon.invoke('pi_command', { runtimeId: reader, command: { type: 'get_entries' } })).entries)
         .toMatchObject([{ id: 'question', message: { role: 'user', content: 'Archived in a temporary folder' } }]);
     } finally { await daemon.invoke('stop_pi', { runtimeId: reader }); }
+    await daemon.invoke('delete_session', { hostId: 'local', sessionPath: saved.path, clientId: 'archived-reference-test' });
+    expect(existsSync(temporary.cwd)).toBe(false);
   } finally { await daemon.stop(); }
 }, 60_000);
 

@@ -131,7 +131,7 @@ function cleanupDeleted(root) {
     db.exec('COMMIT');
 
     if (failures.length) throw new Error(`Temporary folder cleanup failed: ${failures.join('; ')}`);
-    const pending = db.prepare('SELECT a.original_path FROM temporary_chat_allocations a WHERE NOT EXISTS (SELECT 1 FROM sessions s WHERE s.session_id=a.session_id)').all().map(row => row.original_path);
+    const pending = db.prepare('SELECT a.original_path FROM temporary_chat_allocations a WHERE NOT EXISTS (SELECT 1 FROM sessions s WHERE s.session_id=a.session_id)').all().map(row => row.original_path).filter(directory => !inUse(snapshot, directory));
 
     return pending.length ? { pending: true, warning: `Temporary folder cleanup deferred: ${pending.join('; ')}` } : { pending: false };
   } finally { db.close(); }
