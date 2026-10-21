@@ -177,7 +177,6 @@ export async function finishArchive(archiving: ChatWorktreeRecord[], root = prof
         warnings.push(Worktrees.fail(record, `Archive committed, but the missing repository record could not be cleared: ${errorText(error)}`, root));
         continue;
       }
-      warnings.push(`Chat archived without Git history because its source repository is missing: ${record.gitCommonDir}. Any remaining worktree files were kept.`);
       continue;
     }
     let archived: ChatWorktreeRecord;
