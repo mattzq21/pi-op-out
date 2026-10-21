@@ -32,7 +32,7 @@ describe("Conversation acceptance", () => {
 
     await expect(app.sendMessageButton).toBeClickable();
     await app.openSettings();
-    await expect(app.settingsHeading).toHaveText("Local daemon settings");
+    await expect(app.settingsHeading).toHaveText("Daemon settings");
 
     await app.openConversations();
     await expect(app.composer).toHaveValue(draft);

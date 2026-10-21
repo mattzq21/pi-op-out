@@ -48,7 +48,7 @@ export function LocalSettingsView(props: Props) {
 
   const changeDirty = (value: boolean) => { setDirty(value); props.onDirtyChange(value); };
 
-  const label = createMemo(() => (target() === "client" ? "Client" : target() === "local" ? isMobile ? localHostLabel() : "Local daemon" : props.settings.hosts.find((host) => host.id === target())?.name ?? target()));
+  const label = createMemo(() => (target() === "client" ? "Client" : target() === "local" ? isMobile ? localHostLabel() : "Daemon" : props.settings.hosts.find((host) => host.id === target())?.name ?? target()));
 
   return <div class="settings-workspace">
     <nav class="settings-nav settings-host-nav" aria-label="Settings">

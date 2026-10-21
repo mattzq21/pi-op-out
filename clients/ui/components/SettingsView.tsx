@@ -100,7 +100,7 @@ function mergeSettingsDraft(incoming: AppSettings, baseline: AppSettings, local:
 
 type SettingsViewProps = { selectedSection?: Section; embedded?: boolean; resourceError?: string; scope?: "client" | "daemon"; daemonLabel?: string; providerHosts?: RemoteHost[]; onSavingChange?: (saving: boolean) => void; providerHostId?: string; settings: AppSettings; pendingSettingsCount?: number; agentConfig?: AgentConfig; sessions?: SessionSummary[]; models?: Model[]; loadingModels?: string[]; thinkingLevels?: string[]; onSave: (settings: AppSettings, agentConfig?: AgentConfig, baseline?: AppSettings) => Promise<void>; onDirtyChange?: (dirty: boolean) => void };
 
-function settingsViewDefaults({ selectedSection, embedded = false, resourceError, scope = "daemon", daemonLabel = "Local daemon", providerHosts, onSavingChange, providerHostId = "local", settings, pendingSettingsCount = 0, agentConfig: incomingConfiguration, sessions = [], models = [], loadingModels = [], thinkingLevels = ["off", "minimal", "low", "medium", "high", "xhigh", "max"], onSave, onDirtyChange }: SettingsViewProps) {
+function settingsViewDefaults({ selectedSection, embedded = false, resourceError, scope = "daemon", daemonLabel = "Daemon", providerHosts, onSavingChange, providerHostId = "local", settings, pendingSettingsCount = 0, agentConfig: incomingConfiguration, sessions = [], models = [], loadingModels = [], thinkingLevels = ["off", "minimal", "low", "medium", "high", "xhigh", "max"], onSave, onDirtyChange }: SettingsViewProps) {
   return { selectedSection, embedded, resourceError, scope, daemonLabel, providerHosts, onSavingChange, providerHostId, settings, pendingSettingsCount, incomingConfiguration, sessions, models, loadingModels, thinkingLevels, onSave, onDirtyChange };
 }
 
