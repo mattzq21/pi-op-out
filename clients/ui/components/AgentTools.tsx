@@ -31,8 +31,8 @@ export function AgentTools(props: { tools: ToolConfig[]; selected: string[]; onC
     }}</For>
     <Show when={props.selected.includes("subagent")}>
       <div class="agent-subagent-limits">
-        <label class="field"><span>Maximum concurrent subagents</span><input type="number" aria-label="Maximum concurrent subagents" min="0" max={Number.MAX_SAFE_INTEGER} step="1" value={props.agent.max_subagents ?? 8} onInput={event => props.onLimitsChange({ max_subagents: event.currentTarget.valueAsNumber })} /></label>
-        <label class="field"><span>Maximum concurrent children per subagent</span><input type="number" aria-label="Maximum concurrent children per subagent" min="0" max={Number.MAX_SAFE_INTEGER} step="1" value={props.agent.max_sub_subagents ?? 8} onInput={event => props.onLimitsChange({ max_sub_subagents: event.currentTarget.valueAsNumber })} /></label>
+        <label class="field"><span>Max subagents</span><input type="number" aria-label="Max subagents" min="0" max={Number.MAX_SAFE_INTEGER} step="1" value={props.agent.max_subagents ?? 8} onInput={event => props.onLimitsChange({ max_subagents: event.currentTarget.valueAsNumber })} /></label>
+        <label class="field"><span>Max sub-subagents</span><input type="number" aria-label="Max sub-subagents" min="0" max={Number.MAX_SAFE_INTEGER} step="1" value={props.agent.max_sub_subagents ?? 8} onInput={event => props.onLimitsChange({ max_sub_subagents: event.currentTarget.valueAsNumber })} /></label>
       </div>
     </Show>
   </>;

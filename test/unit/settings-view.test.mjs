@@ -139,13 +139,13 @@ describe('settings editor', () => {
   test('subagent limits are saved as whole numbers, and a cleared or invalid limit cannot be saved', async () => {
     await render({ settings: { ...props.settings, tools: [{ name: 'subagent', description: 'Delegate', enabled: true }] }, agentConfig: { agents: [profile('general', { tools: ['subagent'] })] } });
     await section('Agents');
-    const limit = control('Maximum concurrent subagents');
+    const limit = control('Max subagents');
     assert.equal(limit.value, '8');
     await enterText(limit, '3');
     await click(save());
     assert.equal(saves[0][1].agents[0].max_subagents, 3);
     for (const text of ['', '2.5', '-1']) {
-      await enterText(control('Maximum concurrent subagents'), text);
+      await enterText(control('Max subagents'), text);
       assert.equal(save().disabled, true, JSON.stringify(text) + ' cannot be saved');
       assert.match(document.querySelector('[role=alert]')?.textContent ?? '', /Every agent needs a unique name and valid resources/);
     }
