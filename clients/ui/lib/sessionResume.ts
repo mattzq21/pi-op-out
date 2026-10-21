@@ -192,6 +192,6 @@ export function useSessionResume(selection: Accessor<{ target: NativeConnectionT
     try {
       if (current.saved && current.target.sessionId && current.target.sessionPath) saveTarget(key, savedSessionTargetSchema.parse(current.target));
       else saveTarget(key, null);
-    } catch { }
+    } catch (error) { reportBackgroundError("Could not save the last conversation", error); }
   }, () => [selection()]);
 }

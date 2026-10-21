@@ -59,6 +59,18 @@ test('a new unsent conversation is not resumed and never points at a nonexistent
   assert.deepEqual(await page.evaluate(() => window.resumeTarget({ cwd: '/fallback' })), { cwd: '/fallback' });
 });
 
+test('an invalid saved target reports the error and keeps the last usable target', async t => {
+  const page = await resumePage(t);
+  await page.getByText('Resume ready', { exact: true }).waitFor();
+  const target = { hostId: 'local', cwd: '/project', sessionId: 'saved', sessionPath: '/saved.jsonl' };
+  await page.evaluate(target => window.selectResume({ ready: true, saved: true, target }), target);
+  await page.evaluate(() => window.settleResumeStorage());
+  const reported = page.waitForEvent('console', { predicate: message => message.type() === 'error' && message.text().includes('Could not save the last conversation') });
+  await page.evaluate(() => window.selectResume({ ready: true, saved: true, target: { hostId: 'local', sessionId: 'new', sessionPath: '/new.jsonl' } }));
+  await reported;
+  assert.deepEqual(await page.evaluate(() => window.resumeTarget()), target);
+});
+
 test('saved session restoration ignores unready selections, follows other windows and rejects damaged records', async t => {
   const page = await resumePage(t);
   await page.getByText('Resume ready', { exact: true }).waitFor();

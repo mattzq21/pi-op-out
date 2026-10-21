@@ -175,7 +175,7 @@ export function createAppConversations(preloadChat: () => void) {
   useSessionResume(() => {
     const saved = chatSession().state.messageCount > 0;
 
-    return { ready: connected(), saved, target: { sessionId: chatSession().state.sessionId, sessionPath: chatSession().state.sessionFile, cwd: !saved && transport().isTemporaryChat() ? undefined : activeCwd(), hostId: activeHostId(), draftKey: transportHasDraft(transport(), activeConversationKey()) ? activeConversationKey() : undefined } };
+    return { ready: connected(), saved, target: { sessionId: chatSession().state.sessionId, sessionPath: chatSession().state.sessionFile, cwd: !saved && transport().isTemporaryChat() ? undefined : transport().currentCwd(), hostId: activeHostId(), draftKey: transportHasDraft(transport(), activeConversationKey()) ? activeConversationKey() : undefined } };
   });
   const splitSessionId = createMemo(() => splitConversationKey(splitPane()));
 

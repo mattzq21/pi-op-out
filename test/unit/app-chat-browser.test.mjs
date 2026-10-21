@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { appBrowser } from '../app-browser-fixture.mjs';
+import { appBrowser, trackBrowserStorage } from '../app-browser-fixture.mjs';
 
 /** The app on a real daemon whose only model echoes each message, with that model chosen. */
 async function chatPage(t) {
@@ -22,6 +22,17 @@ test('a message typed in the composer is answered by the model, and the composer
   const page = await chatPage(t);
   const composer = await send(page, 'Hello from the window');
   assert.equal(await composer.inputValue(), '');
+});
+
+test('a chat without a project reopens after its first reply and a full reload', async t => {
+  const page = await chatPage(t);
+  await trackBrowserStorage(page);
+  await send(page, 'Reopen this chat');
+  await page.getByRole('button', { name: 'Stop piop', exact: true }).waitFor({ state: 'detached' });
+  await page.evaluate(() => window.savedDraft());
+  await page.reload();
+  await page.getByRole('textbox', { name: 'Message piop' }).waitFor();
+  await page.getByText('Reply to Reopen this chat').waitFor();
 });
 
 test('archiving the open chat removes it from the chat list and opens a new empty chat', async t => {
