@@ -29,6 +29,7 @@ export interface ChatWorktreeRecord {
   owner?: string;
   /** Set on an active record while its archive reference may exist without the archiving state. */
   protecting?: true;
+  repositoryMissing?: true;
   /** Error of the last failed cleanup; recovery retries. */
   lastError?: string;
 }

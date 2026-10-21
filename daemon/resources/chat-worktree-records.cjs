@@ -53,7 +53,8 @@ function check(record) {
 
   if (!STATES.includes(record.state)) throw new Error('Invalid chat worktree state: ' + record.state);
 
-  if (['archiving', 'archived', 'restoring'].includes(record.state)) checkArchive(chatId, record.archive);
+  if (record.repositoryMissing !== undefined && (record.repositoryMissing !== true || record.state !== 'archiving' || record.archive !== null)) throw new Error('Invalid missing repository archive');
+  if (['archiving', 'archived', 'restoring'].includes(record.state) && !record.repositoryMissing) checkArchive(chatId, record.archive);
   else if (record.archive !== null) throw new Error('Only archived chats have a saved commit');
 
   if ((record.state === 'preparing') !== (typeof record.owner === 'string')) throw new Error('Only preparing chat worktrees have an owner');

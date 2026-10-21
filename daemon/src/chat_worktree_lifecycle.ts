@@ -1,4 +1,5 @@
 import { existsSync, realpathSync } from 'node:fs';
+import { stat } from 'node:fs/promises';
 import { join, resolve, sep } from 'node:path';
 import { readHeaderLine } from './host/protocol';
 import * as SessionTables from '../resources/session-database.cjs';
@@ -98,6 +99,13 @@ export async function beginArchive(chatIds: string[], root = profileRoot()): Pro
     for (const record of records(chatIds, root)) {
       if (record.state !== 'active') throw new Error(`Cannot archive chat ${record.chatId}: its worktree is ${record.state}`);
       running.add(record.chatId);
+      let repositoryMissing = false;
+      try { await stat(record.gitCommonDir); }
+      catch (error: any) { if (error.code !== 'ENOENT') throw error; repositoryMissing = true; }
+      if (repositoryMissing) {
+        done.push(Worktrees.replace(record, { ...without(settled(record), 'protecting'), state: 'archiving', repositoryMissing: true }, root)!);
+        continue;
+      }
       const intent = await recordProtection(record, root);
       const archive = await protectArchive({ worktree: worktreeOf(intent), home: homeDir() });
       try { done.push(Worktrees.replace(intent, { ...without(settled(intent), 'protecting'), state: 'archiving', archive: { ref: archive.ref, commit: archive.commit } } as ChatWorktreeRecord, root)!); }
@@ -147,9 +155,9 @@ async function releaseUnrecordedArchive(record: ChatWorktreeRecord, root: string
 export async function rollbackArchive(archiving: ChatWorktreeRecord[], root = profileRoot()): Promise<void> {
   for (const record of archiving) running.delete(record.chatId);
   await each(archiving, async record => {
-    try { await releaseArchive(archiveOf(record)); }
+    try { if (!record.repositoryMissing) await releaseArchive(archiveOf(record)); }
     catch (error) { throw new Error(Worktrees.fail(record, `Could not release the archive reference of chat ${record.chatId}: ${errorText(error)}`, root)); }
-    Worktrees.replace(Worktrees.read(record.chatId, root), { ...settled(record), state: 'active', archive: null }, root);
+    Worktrees.replace(Worktrees.read(record.chatId, root), { ...without(settled(record), 'repositoryMissing'), state: 'active', archive: null }, root);
   });
 }
 
@@ -161,6 +169,17 @@ export async function finishArchive(archiving: ChatWorktreeRecord[], root = prof
   for (const record of archiving) running.delete(record.chatId);
   const warnings: string[] = [];
   for (const record of archiving) {
+    if (record.repositoryMissing) {
+      try {
+        forgetProjectRepository(root, record.worktree);
+        Worktrees.replace(Worktrees.read(record.chatId, root), null, root);
+      } catch (error) {
+        warnings.push(Worktrees.fail(record, `Archive committed, but the missing repository record could not be cleared: ${errorText(error)}`, root));
+        continue;
+      }
+      warnings.push(`Chat archived without Git history because its source repository is missing: ${record.gitCommonDir}. Any remaining worktree files were kept.`);
+      continue;
+    }
     let archived: ChatWorktreeRecord;
     try { archived = Worktrees.replace(Worktrees.read(record.chatId, root), { ...settled(record), state: 'archived' }, root)!; }
     catch (error) { warnings.push(`Archive committed, but the worktree record of chat ${record.chatId} was not updated: ${errorText(error)}`); continue; }

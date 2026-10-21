@@ -1,6 +1,6 @@
 import { afterEach, expect, test } from 'bun:test';
 import { execFileSync } from 'node:child_process';
-import { chmodSync, existsSync, mkdirSync, readFileSync, realpathSync, unlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, readFileSync, realpathSync, rmSync, unlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { DatabaseSync } from 'node:sqlite';
@@ -351,4 +351,29 @@ test('restart removes archive trash even when the original worktree folder is ab
   await start(home);
   expect(existsSync(worktree)).toBe(false);
   expect(existsSync(trash)).toBe(false);
+}, 120000);
+
+test('archive and restore the transcript when its source repository was removed', async () => {
+  const { daemon, profile, repo, chat, worktree } = await scene();
+  rmSync(repo, { recursive: true });
+  await archive(daemon, chat.path);
+  const path = await archivedPath(daemon, chat.id);
+  expect(existsSync(chat.path)).toBe(false);
+  expect(readFileSync(join(worktree, 'work.txt'), 'utf8')).toBe('saved work');
+  expect(Records.read(chat.id, profile)).toBeNull();
+  await restore(daemon, path);
+  expect((await activeChat(daemon, chat.id))?.cwd).toBe(worktree);
+}, 120000);
+
+test('recovery rolls back an interrupted archive with a missing repository', async () => {
+  const { daemon, home, profile, repo, chat, worktree } = await scene();
+  await daemon.stop();
+  rmSync(repo, { recursive: true });
+  await asHome(home, () => Lifecycle.beginArchive([chat.id], profile));
+  expect(Records.read(chat.id, profile)).toMatchObject({ state: 'archiving', repositoryMissing: true });
+  Lifecycle.stopped([Records.read(chat.id, profile)!]);
+  await start(home);
+  expect(Records.read(chat.id, profile)).toMatchObject({ state: 'active', archive: null });
+  expect(Records.read(chat.id, profile)?.repositoryMissing).toBeUndefined();
+  expect(readFileSync(join(worktree, 'work.txt'), 'utf8')).toBe('saved work');
 }, 120000);
