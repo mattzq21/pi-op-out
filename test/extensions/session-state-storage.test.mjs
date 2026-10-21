@@ -44,6 +44,16 @@ async function fixture(t) {
   return { home, root, id, file, SessionManager, manager: SessionManager.open(file), physical: () => readFileSync(file, 'utf8').trim().split('\n').map(JSON.parse) };
 }
 
+test('session names keep at most 30 characters after saving and reopening', async t => {
+  const f = await fixture(t);
+  for (const name of ['x'.repeat(30), 'x'.repeat(31), '😀'.repeat(31)]) {
+    f.manager.appendSessionInfo(name);
+    const expected = Array.from(name).slice(0, 30).join('');
+    assert.equal(f.manager.getSessionName(), expected);
+    assert.equal(f.SessionManager.open(f.file).getSessionName(), expected);
+  }
+});
+
 test('settings keep only their current value across navigation and restart', async t => {
   const f = await fixture(t);
   f.manager.appendCustomEntry('piop-fast-mode-state', { enabled: false });
@@ -257,7 +267,7 @@ test('recovered queued-input chats keep their names in SQL when reopened', async
     db.exec('DROP TRIGGER reject_recovered_name');
     assert.equal(createTranscript(file, id, f.home, 'Important queued request'), true);
     const recovered = f.SessionManager.open(file);
-    assert.equal(recovered.getSessionName(), 'Recovered queued input: Important queued request');
+    assert.equal(recovered.getSessionName(), 'Recovered queued input: Import');
     assert.equal(readFileSync(file, 'utf8').trim().split('\n').map(JSON.parse).some(entry => entry.type === 'session_info'), false);
     assert.equal(db.prepare("SELECT count(*) AS n FROM session_extension_state WHERE session_id=? AND state_key='piop-session-name'").get(id).n, 1);
     recovered.appendSessionInfo('Renamed recovered chat');

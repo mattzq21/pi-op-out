@@ -1,3 +1,4 @@
+import { capSessionName } from "./lib/sessionName";
 import { ComposerPluginsContext } from "./plugins/composer";
 import { localHostLabel } from "./lib/mobileHosts";
 import { hostChoices } from "./lib/hostChoices";
@@ -168,7 +169,7 @@ export default function App(props: { suppressConnectionNotices?: boolean } = {})
 
         return; }
 
-      if (response.value === undefined || !hasVisibleText(response.value)) throw new Error("Conversation name can't be empty"); const name = response.value.trim(); await required((capturedRenameSession)).transport.connect(); await required((capturedRenameSession)).transport.command({ type: "set_session_name", name });
+      if (response.value === undefined || !hasVisibleText(response.value)) throw new Error("Conversation name can't be empty"); const name = capSessionName(response.value); await required((capturedRenameSession)).transport.connect(); await required((capturedRenameSession)).transport.command({ type: "set_session_name", name });
 
       if (required((capturedRenameSession)).session.id === capturedSession.state.sessionId && (required((capturedRenameSession)).session.hostId ?? "local") === capturedActiveHostId) capturedSession.setState((current) => ({ ...current, sessionName: name })); await syncSessionIndex(); setRenameSession(undefined); }} />}</Rerun>}
     {renderMissingDirectoryDialog()}

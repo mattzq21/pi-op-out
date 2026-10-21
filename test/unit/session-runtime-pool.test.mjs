@@ -145,7 +145,7 @@ describe('session runtime pool', () => {
     await send(id, { type: 'message_start', message: { role: 'user', content: [{ type: 'text', text }] } });
     await settled();
     const current = pool.liveSessionSummaries()[0];
-    assert.equal(current.name, 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz12345678');
+    assert.equal(current.name, 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcd');
     assert.equal(current.preview, text);
     assert.equal(current.messageCount, 4);
     assert.equal(current.apiCost, 2);

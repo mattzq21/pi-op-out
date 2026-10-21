@@ -1,3 +1,4 @@
+import { capSessionName } from "./sessionName";
 import { agentStateSchema } from "./responseSchemas";
 import { extensionUiSchema } from "./extensionUiSchema";
 import { wireMessageSchema } from "./messageSchemas";
@@ -16,7 +17,7 @@ const IDLE_LIMIT = 8;
 const startsUserMessage = (event: RpcEvent) => event.type === "message_start" && z.object({ role: z.literal("user") }).safeParse(event.message).success;
 
 function retainedName(state: AgentState, prompt: string | undefined, previous: SessionSummary | undefined) {
-  return state.sessionName || prompt?.slice(0, 60) || previous?.name || "New session";
+  return capSessionName(state.sessionName || prompt || previous?.name || "New session");
 }
 
 function retainedActivity(state: AgentState, previous: SessionSummary | undefined, prompt?: string, lastMessageAt?: number) {

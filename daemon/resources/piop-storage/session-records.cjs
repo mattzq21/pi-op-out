@@ -1,6 +1,8 @@
 const database = require('../session-database.cjs');
 const { randomUUID, createHash } = require('node:crypto');
 
+const capSessionName = name => Array.from(name.trim()).slice(0, 30).join('').trimEnd();
+
 const currentTypes = new Set(['pi-desktop-pause-state', 'pi-define-agents-state', 'piop-fast-mode-state', 'piop-context-cap', 'piop-session-cost-limit', 'piop-openai-cache-fork', 'piop-codemode-abilities', 'piop-input-hold']);
 const nativeKeys = new Map([['session_info', 'piop-session-name'], ['model_change', 'piop-selected-model'], ['thinking_level_change', 'piop-thinking-level']]);
 const stateKey = entry => nativeKeys.get(entry.type) ?? entry.customType;
@@ -96,6 +98,7 @@ function records(file, sessionId, connection) {
 
 function setCurrent(db, sessionId, entry) {
   const saved = { ...entry, parentId: null };
+  if (saved.type === 'session_info') saved.name = capSessionName(saved.name);
   db.prepare(`INSERT INTO session_extension_state (session_id, state_key, entry_json) VALUES (?, ?, ?)
     ON CONFLICT(session_id, state_key) DO UPDATE SET entry_json=excluded.entry_json`).run(sessionId, stateKey(entry), JSON.stringify(saved));
 }
@@ -144,7 +147,7 @@ function revision(file, sessionId) {
 }
 
 function initializeSessionName(file, sessionId, name) {
-  const entry = { type: 'session_info', id: randomUUID(), parentId: null, timestamp: new Date().toISOString(), name };
+  const entry = { type: 'session_info', id: randomUUID(), parentId: null, timestamp: new Date().toISOString(), name: capSessionName(name) };
   transaction(file, sessionId, db => {
     db.prepare('INSERT INTO session_extension_state (session_id, state_key, entry_json) VALUES (?, ?, ?) ON CONFLICT(session_id, state_key) DO NOTHING')
       .run(sessionId, stateKey(entry), JSON.stringify(entry));
@@ -155,7 +158,7 @@ function sessionName(file, sessionId, connection) {
   const db = connection ?? database.open(database.storageRoot(file));
   try {
     const row = db.prepare("SELECT entry_json FROM session_extension_state WHERE session_id=? AND state_key='piop-session-name'").get(sessionId);
-    return row ? JSON.parse(row.entry_json).name.trim() || undefined : undefined;
+    return row ? capSessionName(JSON.parse(row.entry_json).name) || undefined : undefined;
   } finally { if (!connection) db.close(); }
 }
 
@@ -169,4 +172,4 @@ function isAuxiliary(entries) {
 
 function canFork(entries) { return !isAuxiliary(entries); }
 
-module.exports = { isAuxiliary, canFork, selectBranch, selectedLeaf, stateKey, initializeSessionName, sessionName, isCurrent, history, stored, save, seed, capture, append, records, merge, revision, create };
+module.exports = { capSessionName, isAuxiliary, canFork, selectBranch, selectedLeaf, stateKey, initializeSessionName, sessionName, isCurrent, history, stored, save, seed, capture, append, records, merge, revision, create };

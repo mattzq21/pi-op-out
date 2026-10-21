@@ -466,7 +466,8 @@ export function installSessionStorage(SessionManager, recordReferences) {
   };
 
   prototype.getSessionName = function () {
-    return currentSessionState.get(this)?.get("piop-session-name")?.name.trim() || undefined;
+    const name = currentSessionState.get(this)?.get("piop-session-name")?.name;
+    return name ? stateRecords.capSessionName(name) || undefined : undefined;
   };
 
   prototype.appendCustomEntry = function (type, data) {
@@ -479,6 +480,7 @@ export function installSessionStorage(SessionManager, recordReferences) {
     sessionStorageState(this);
     if (stateRecords.isCurrent(entry)) {
       entry = { ...entry, parentId: null };
+      if (entry.type === "session_info") entry.name = stateRecords.capSessionName(entry.name);
       if (this.persist && this.sessionFile) sessionStorageAppend(this, entry);
       const current = currentSessionState.get(this) ?? new Map();
       current.set(stateRecords.stateKey(entry), entry);
