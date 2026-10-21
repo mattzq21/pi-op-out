@@ -1,22 +1,23 @@
 import { pluginSettingKeys } from "../plugins/settingsSchema";
-import { z, type JSONType } from "zod";
 import type { AgentConfig, AgentProfile, AppSettings } from "../types";
 
 type SettingsSnapshotValue = AppSettings[keyof AppSettings] | AgentProfile[] | { settings: Omit<AppSettings, "tools">; agentConfig?: AgentConfig };
 
-function sortedJson(value: JSONType): JSONType {
+/** The value with object keys in sorted order. The value comes from JSON.parse, so it holds only JSON values. */
+function sortedJson(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(sortedJson);
-  const object = z.record(z.string(), z.json()).safeParse(value);
 
-  if (!object.success) return value;
+  if (value === null || typeof value !== "object") return value;
+  const object = value as Record<string, unknown>;
 
-  return Object.fromEntries(Object.entries(object.data).sort(([left], [right]) => left.localeCompare(right)).map(([key, item]) => [key, sortedJson(item)]));
+  return Object.fromEntries(Object.keys(object).sort().map(key => [key, sortedJson(object[key])]));
 }
 
+/** JSON text of the value with sorted object keys, so equal settings give equal text whatever their key order. */
 export function stableSnapshot(value: SettingsSnapshotValue) {
   const serialized = JSON.stringify(value);
 
-  return serialized === undefined ? undefined : JSON.stringify(sortedJson(z.json().parse(JSON.parse(serialized))));
+  return serialized === undefined ? undefined : JSON.stringify(sortedJson(JSON.parse(serialized)));
 }
 
 export function settingsSnapshot(settings: AppSettings, agentConfig?: AgentConfig) {

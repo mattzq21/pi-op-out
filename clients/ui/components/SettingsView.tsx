@@ -143,7 +143,7 @@ export function SettingsView(props: SettingsViewProps) {
     return () => window.removeEventListener("scroll", onScroll, true);
   }, () => []);
   const [baselineValue, setBaselineValue] = createSignal(structuredClone(settingsProps().settings));
-  const baselineSettings = () => settingsSnapshot(baselineValue());
+  const baselineSettings = createMemo(() => settingsSnapshot(baselineValue()));
   const [baselineAgentConfig, setBaselineAgentConfig] = createSignal(agentEditsSnapshot(agentConfig()));
   const [baselineAgentRevision, setBaselineAgentRevision] = createSignal(agentConfig()?.revision);
   const agentConfigSnapshot = createMemo(() => (agentEditsSnapshot(agentConfig())));
