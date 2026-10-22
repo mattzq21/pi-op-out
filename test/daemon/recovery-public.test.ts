@@ -26,7 +26,7 @@ const recover = (daemon: TestDaemon, path: string) => daemon.invoke('recover_mis
   sessionPath: path, hostId: 'local', action: 'empty', clientId: 'recovery-test',
 });
 
-test('recovering a missing project gives the chat an empty directory and keeps its messages', async () => {
+test.concurrent('recovering a missing project gives the chat an empty directory and keeps its messages', async () => {
   const daemon = await startDaemon();
   try {
     const chat = missingChat(daemon);
@@ -43,7 +43,7 @@ test('recovering a missing project gives the chat an empty directory and keeps i
   } finally { await daemon.stop(); }
 }, 60_000);
 
-test('another client learns about a recovered directory through the session change event', async () => {
+test.concurrent('another client learns about a recovered directory through the session change event', async () => {
   const daemon = await startDaemon();
   try {
     const chat = missingChat(daemon);
@@ -59,7 +59,7 @@ test('another client learns about a recovered directory through the session chan
   } finally { await daemon.stop(); }
 }, 60_000);
 
-test('failed recovery preserves the chat and permits retry after the storage obstruction is removed', async () => {
+test.concurrent('failed recovery preserves the chat and permits retry after the storage obstruction is removed', async () => {
   const daemon = await startDaemon();
   try {
     const chat = missingChat(daemon);
@@ -82,7 +82,7 @@ test('failed recovery preserves the chat and permits retry after the storage obs
   } finally { await daemon.stop(); }
 }, 60_000);
 
-test('recovery refuses a broken symbolic link at the original project path', async () => {
+test.concurrent('recovery refuses a broken symbolic link at the original project path', async () => {
   const daemon = await startDaemon();
   try {
     const chat = missingChat(daemon);
@@ -98,7 +98,7 @@ test('recovery refuses a broken symbolic link at the original project path', asy
   } finally { await daemon.stop(); }
 }, 60_000);
 
-test('chats from the same missing project recover into separate directories', async () => {
+test.concurrent('chats from the same missing project recover into separate directories', async () => {
   const daemon = await startDaemon();
   try {
     const first = missingChat(daemon);
@@ -120,7 +120,7 @@ test('chats from the same missing project recover into separate directories', as
   } finally { await daemon.stop(); }
 }, 60_000);
 
-test('recovery refuses a project that exists again and leaves the chat and files unchanged', async () => {
+test.concurrent('recovery refuses a project that exists again and leaves the chat and files unchanged', async () => {
   const daemon = await startDaemon();
   try {
     const chat = missingChat(daemon);
@@ -136,7 +136,7 @@ test('recovery refuses a project that exists again and leaves the chat and files
   } finally { await daemon.stop(); }
 }, 60_000);
 
-test('retrying recovery after restart reuses the directory and keeps work saved there', async () => {
+test.concurrent('retrying recovery after restart reuses the directory and keeps work saved there', async () => {
   let daemon = await startDaemon();
   try {
     const chat = missingChat(daemon);
@@ -156,7 +156,7 @@ test('retrying recovery after restart reuses the directory and keeps work saved 
   } finally { await daemon.stop(); }
 }, 60_000);
 
-test('concurrent recovery from another client is refused while the first recovery gives the chat one directory', async () => {
+test.concurrent('concurrent recovery from another client is refused while the first recovery gives the chat one directory', async () => {
   const daemon = await startDaemon();
   try {
     const chat = missingChat(daemon);
@@ -178,7 +178,7 @@ test('concurrent recovery from another client is refused while the first recover
   } finally { await daemon.stop(); }
 }, 60_000);
 
-test('recovery is refused while another client has the chat open and succeeds after that client closes it', async () => {
+test.concurrent('recovery is refused while another client has the chat open and succeeds after that client closes it', async () => {
   const daemon = await startDaemon();
   try {
     const chat = projectChat(daemon);

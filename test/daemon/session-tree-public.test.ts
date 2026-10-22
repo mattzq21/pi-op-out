@@ -15,10 +15,10 @@ const fixture = (name: string, input: unknown): Chat => JSON.parse(execFileSync(
 /** A chat with a subagent that has its own subagent, plus an unrelated chat in the same project. */
 function sessionTree(project: string) {
   const cwd = join(daemon.home, project); mkdirSync(cwd, { recursive: true });
-  const root = fixture('publish-chat.mjs', { home: daemon.home, content: '', cwd, folder: project });
+  const root = fixture('publish-chat.mjs', { home: daemon.home, content: JSON.stringify({ type: 'message', id: 'request', parentId: null, message: { role: 'user', content: 'Saved chat', timestamp: 1 } }) + '\n', cwd, folder: project });
   const child = fixture('publish-subagent.mjs', { home: daemon.home, parent: root, name: 'researcher' });
   const grandchild = fixture('publish-subagent.mjs', { home: daemon.home, parent: child, name: 'reader' });
-  const other = fixture('publish-chat.mjs', { home: daemon.home, content: '', cwd, folder: project });
+  const other = fixture('publish-chat.mjs', { home: daemon.home, content: JSON.stringify({ type: 'message', id: 'request', parentId: null, message: { role: 'user', content: 'Saved chat', timestamp: 1 } }) + '\n', cwd, folder: project });
   return { root, child, grandchild, other };
 }
 

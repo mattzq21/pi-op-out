@@ -11,7 +11,7 @@ afterAll(async () => { await daemon?.stop(); });
 
 function publishChat(cwd: string): { id: string; path: string } {
   return JSON.parse(execFileSync('node', [fileURLToPath(new URL('../fixtures/publish-chat.mjs', import.meta.url))], {
-    encoding: 'utf8', timeout: 30000, input: JSON.stringify({ home: daemon.home, content: '', cwd }),
+    encoding: 'utf8', timeout: 30000, input: JSON.stringify({ home: daemon.home, content: JSON.stringify({ type: 'message', id: 'request', parentId: null, message: { role: 'user', content: 'Saved chat', timestamp: 1 } }) + '\n', cwd }),
   }));
 }
 
