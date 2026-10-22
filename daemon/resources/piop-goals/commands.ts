@@ -100,7 +100,8 @@ export function registerGoalCommands(pi: ExtensionAPI, session: GoalSession, cor
 
         const report = await runGoalCommand(value, ctx, session, core);
 
-        if (report && value !== "clear") pi.sendMessage({ customType: "piop-goal-summary", content: goalSummary(report), display: true }, { triggerTurn: false });
+        // Only /goal without arguments shows the goal card. Pause, resume and edit show in the goal bar.
+        if (report && value === "") pi.sendMessage({ customType: "piop-goal-summary", content: goalSummary(report), display: true }, { triggerTurn: false });
       } catch (error) { ctx.ui.notify(error instanceof Error ? error.message : String(error), "error"); }
     },
   });
