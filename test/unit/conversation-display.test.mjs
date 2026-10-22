@@ -288,3 +288,23 @@ test('auxiliary chats have no fork actions, including when their folder is a rep
   assert.ok(view.container.querySelector('[aria-label="Fork"]'));
   assert.ok(forkControl(view));
 });
+
+test('a turn started by another agent session shows the message once and its context bar in debug mode', async t => {
+  const delivery = { id: 'delivery', role: 'custom', customType: 'piop-agent-message', timestamp: 1, details: { notificationId: 'n1' },
+    content: JSON.stringify({ notificationId: 'n1', sourceSessionId: 'chat-7', sourceHostId: 'local', message: 'Draw a smile' }),
+    promptContext: { systemPrompt: '', instructions: [], tools: [], skills: [], tokens: { system: 10, instructions: 0, tools: 0, skills: 0 }, agentNotificationId: 'n1', inputTokens: 100 } };
+  const reply = { id: 'reply', role: 'assistant', content: [{ type: 'text', text: 'Done' }], stopReason: 'stop', timestamp: 2 };
+  const view = await conversation(t, { debug: true, messages: [delivery, reply] });
+  assert.equal(view.container.querySelectorAll('[aria-label="Message from another agent"]').length, 1);
+  assert.match(view.container.textContent, /System prompt/);
+});
+
+test('a turn started by a subagent result shows the result once and its context bar in debug mode', async t => {
+  const result = { id: 'result', role: 'custom', customType: 'piop-subagent-result', timestamp: 1, content: 'Subagent finished',
+    details: { notificationId: 'r1', runs: [{ name: 'painter', task: 'Draw', status: 'completed', sessionId: 's1', sessionPath: '/s1.jsonl', hostId: 'local' }] },
+    promptContext: { systemPrompt: '', instructions: [], tools: [], skills: [], tokens: { system: 10, instructions: 0, tools: 0, skills: 0 }, agentNotificationId: 'r1', inputTokens: 100 } };
+  const reply = { id: 'reply', role: 'assistant', content: [{ type: 'text', text: 'Done' }], stopReason: 'stop', timestamp: 2 };
+  const view = await conversation(t, { debug: true, messages: [result, reply] });
+  assert.equal(view.container.querySelectorAll('[aria-label="Delegated work"]').length, 1);
+  assert.match(view.container.textContent, /System prompt/);
+});

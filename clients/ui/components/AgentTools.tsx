@@ -60,12 +60,14 @@ function AllowGroup(props: { name: string; kind: string; items: Item[]; selected
   </section>;
 }
 
+const ACCESS_MODES = [{ mode: "all", label: "All" }, { mode: "none", label: "None" }, { mode: "list", label: "Only these" }] as const;
+
 /** Chooses which agents this agent may start: all, none, or the checked ones. */
 function AgentAccessPicker(props: { label: string; value: AgentAccess | undefined; names: string[]; onChange: (value: AgentAccess) => void }) {
   const list = () => Array.isArray(props.value) ? props.value : undefined;
 
   return <div class="agent-access">
-    <label class="field"><span>{props.label}</span><select aria-label={props.label} value={list() ? "list" : props.value ?? "all"} onChange={event => { const mode = event.currentTarget.value; props.onChange(mode === "list" ? [] : mode === "none" ? "none" : "all"); }}><option value="all">All agents</option><option value="none">No agents</option><option value="list">Only these</option></select></label>
+    <div class="agent-access-row"><span>Callable agents</span><div class="segmented-control" role="group" aria-label={props.label}><For each={ACCESS_MODES}>{option => <button type="button" aria-pressed={(list() ? "list" : props.value ?? "all") === option.mode} onClick={() => props.onChange(option.mode === "list" ? list() ?? [] : option.mode)}>{option.label}</button>}</For></div></div>
     <Show when={list()}>{selected => <div class="agent-tool-group-members"><For each={props.names}>{name => <ItemCheckbox item={{ key: name, label: name }} selected={selected()} onToggle={(keys, enabled) => props.onChange(toggled(selected(), keys, enabled))} />}</For></div>}</Show>
   </div>;
 }
@@ -94,10 +96,10 @@ export function AgentTools(props: { tools: ToolConfig[]; query: string; selected
             <label class="field"><span>Max subagents</span><input type="number" aria-label="Max subagents" min="0" max={Number.MAX_SAFE_INTEGER} step="1" value={props.agent.max_subagents ?? 8} onInput={event => props.onLimitsChange({ max_subagents: event.currentTarget.valueAsNumber })} /></label>
             <label class="field"><span>Max 2nd level subagents</span><input type="number" aria-label="Max 2nd level subagents" min="0" max={Number.MAX_SAFE_INTEGER} step="1" value={props.agent.max_sub_subagents ?? 8} onInput={event => props.onLimitsChange({ max_sub_subagents: event.currentTarget.valueAsNumber })} /></label>
           </div>
-          <AgentAccessPicker label="Can start as subagents" value={props.agent.allowed_subagents} names={props.agentNames} onChange={allowed_subagents => props.onLimitsChange({ allowed_subagents })} />
+          <AgentAccessPicker label="Callable subagents" value={props.agent.allowed_subagents} names={props.agentNames} onChange={allowed_subagents => props.onLimitsChange({ allowed_subagents })} />
         </Show>
         <Show when={group.name === "Orchestration" && props.selected.includes("create_thread")}>
-          <AgentAccessPicker label="Can start as threads" value={props.agent.allowed_threads} names={props.agentNames} onChange={allowed_threads => props.onLimitsChange({ allowed_threads })} />
+          <AgentAccessPicker label="Callable threads" value={props.agent.allowed_threads} names={props.agentNames} onChange={allowed_threads => props.onLimitsChange({ allowed_threads })} />
         </Show>
       </AllowGroup>}</For>
   </>;

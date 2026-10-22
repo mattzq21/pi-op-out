@@ -17,7 +17,7 @@ import { ChevronRight, Folder, LoaderCircle, Monitor, X } from "lucide-solid";
 import { findReplaceableAbortedTurn } from "../lib/abortedTurn";
 import { markStoppedPrompt, wasPromptStopped } from "../lib/stoppedPrompt";
 import { hasVisibleText, textOf, thinkingOf } from "../lib/content";
-import { cacheHitStats, isContextInjection } from "../lib/messages";
+import { cacheHitStats, isContextInjection, isPromptMessage } from "../lib/messages";
 import type { AgentProfile, AgentState, ChatMessage, ComposerUpload, ForkSource, ImageAttachment, Model, PromptContextInfo, SlashCommand } from "../types";
 import { branchingAvailable, canBranchFrom } from "../lib/branching";
 import { Composer, ContainedPicker } from "./Composer";
@@ -311,7 +311,7 @@ export function ChatView(props: Props & { transcriptActions?: JSXElement; follow
 type ConversationGroup = { messages: ChatMessage[]; promptContexts: PromptContextInfo[] };
 
 function startsTurn(message: ChatMessage | undefined) {
-  return message?.role === "user";
+  return message !== undefined && isPromptMessage(message);
 }
 
 function sameTurn(turn: ConversationGroup, messages: ChatMessage[], start: number) {
@@ -322,7 +322,7 @@ function sameTurn(turn: ConversationGroup, messages: ChatMessage[], start: numbe
 
     if (message !== previous || (index > 0 && startsTurn(message))) return false;
 
-    if (message.role !== "user" || !message.promptContext) return true;
+    if (!isPromptMessage(message) || !message.promptContext) return true;
 
     return turn.promptContexts[context++] === message.promptContext;
   }) && context === turn.promptContexts.length;
@@ -348,7 +348,7 @@ function reusableTurns(messages: ChatMessage[], previous: ConversationGroup[]) {
 function turnPromptContexts(messages: ChatMessage[]) {
   const contexts: PromptContextInfo[] = [];
 
-  for (const message of messages) if (message.role === "user" && message.promptContext) contexts.push(message.promptContext);
+  for (const message of messages) if (isPromptMessage(message) && message.promptContext) contexts.push(message.promptContext);
 
   return contexts;
 }
@@ -513,13 +513,13 @@ function ConversationTurn(componentProps: ConversationTurnProps) {
   const [retryError, setRetryError] = createSignal<string>();
   const [workOpen, setWorkOpen] = createSignal(false);
   const [retrying, setRetrying] = createSignal(false); const retryingRef = createRef(false);
-  const userIndex = createMemo(() => (componentProps.messages.findIndex((message) => message.role === "user")));
+  const userIndex = createMemo(() => (componentProps.messages.findIndex(isPromptMessage)));
 
   const finalIndex = createMemo(() => (finalResponseIndex(componentProps.messages)));
   const finalThinking = createMemo(() => (finalIndex() >= 0 ? thinkingOf(componentProps.messages[finalIndex()].content) : ""));
 
   const intermediate = createMemo(() => (componentProps.messages.flatMap((message, index): ChatMessage[] => {
-    if (message.role === "user" || isContextInjection(message) || (message.role === "system" && message.customType !== "compaction")) return [];
+    if (isPromptMessage(message) || isContextInjection(message) || (message.role === "system" && message.customType !== "compaction")) return [];
 
     if (index !== finalIndex()) return [message];
 
@@ -529,7 +529,7 @@ function ConversationTurn(componentProps: ConversationTurnProps) {
     return [{ ...reasoningMessage, id: `${message.id}:reasoning`, content: [{ type: "thinking", thinking: finalThinking() }], stopReason: undefined, errorMessage: undefined }];
   })));
 
-  const userMessages = createMemo(() => (componentProps.messages.filter((message) => message.role === "user")));
+  const userMessages = createMemo(() => (componentProps.messages.filter(isPromptMessage)));
   const hasWork = createMemo(() => (intermediate().some((message) => !invisibleAssistant(message))));
   const reasoningOnly = createMemo(() => (compactCompletedTools(intermediate()).every(({ message }) => message.role === "assistant" && hasVisibleText(thinkingOf(message.content)) && !hasVisibleText(textOf(message.content)) && message.stopReason !== "error" && message.stopReason !== "aborted")));
   const finalSource = createMemo(() => (finalIndex() >= 0 ? componentProps.messages[finalIndex()] : undefined));
@@ -568,7 +568,7 @@ function ConversationTurn(componentProps: ConversationTurnProps) {
     {retryError() && <div class="message-failure retry-error" role="alert">Retry failed: {(retryError())}</div>}
     <MessageList messages={componentProps.messages.filter(message => message.role === "system" && message.customType !== "compaction")} expanded={false} />
   </>)}>
-    <div class="active-work-content"><MessageList messages={componentProps.messages.filter(message => message.role !== "user" && !isContextInjection(message))} expanded compact={false} debug={componentProps.debug} paused={componentProps.paused} showActions={false} />{componentProps.active && !componentProps.paused && !componentProps.messages.some(message => message.role === "assistant" && message.streaming && !invisibleAssistant(message)) && <WorkingIndicator />}</div>
+    <div class="active-work-content"><MessageList messages={componentProps.messages.filter(message => !isPromptMessage(message) && !isContextInjection(message))} expanded compact={false} debug={componentProps.debug} paused={componentProps.paused} showActions={false} />{componentProps.active && !componentProps.paused && !componentProps.messages.some(message => message.role === "assistant" && message.streaming && !invisibleAssistant(message)) && <WorkingIndicator />}</div>
   </Show>);
 
   return <section class="conversation-turn">

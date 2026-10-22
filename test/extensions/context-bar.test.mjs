@@ -134,3 +134,26 @@ test('the real input token count from OpenAI is shown for the turn that used it'
   chat.emit('provider_stream_event', usage(99));
   assert.equal(chat.panel().inputTokens, 1234, 'later requests in the same turn do not replace it');
 });
+
+test('a turn started by another agent session gets its own snapshot, linked by the delivery', () => {
+  const chat = session();
+  chat.say('hi');
+  chat.turn();
+  chat.branch.push({ type: 'custom_message', customType: 'piop-agent-message', content: 'Build is green', display: true, details: { notificationId: 'n1' } });
+  chat.turn();
+  const saved = chat.branch.filter(entry => entry.customType === 'piop-context').map(entry => entry.data);
+  assert.equal(saved.length, 2);
+  assert.equal(saved[1].agentNotificationId, 'n1');
+  assert.equal(saved[1].userTimestamp, undefined);
+});
+
+test('a turn started by a subagent result gets its own snapshot, linked by the delivery', () => {
+  const chat = session();
+  chat.say('hi');
+  chat.turn();
+  chat.branch.push({ type: 'custom_message', customType: 'piop-subagent-result', content: 'Subagent finished', display: true, details: { runs: [], notificationId: 'r1' } });
+  chat.turn();
+  const saved = chat.branch.filter(entry => entry.customType === 'piop-context').map(entry => entry.data);
+  assert.equal(saved.length, 2);
+  assert.equal(saved[1].agentNotificationId, 'r1');
+});

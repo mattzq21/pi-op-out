@@ -6,7 +6,7 @@ import { pauseStateSchema, promptContextSchema, resumeContentSchema, resumeMarke
 const SYSTEM_MESSAGES = new Set(["pi-desktop-mcp-status"]);
 
 export function isContextInjection(message: { role?: string; customType?: string }) {
-  return message.role === "custom" && (pluginMessageMetadata(message.customType)?.contextInjection ?? (!SYSTEM_MESSAGES.has(message.customType ?? "") && !["piop-subagent-result", "piop-session-operation"].includes(message.customType ?? "")));
+  return message.role === "custom" && (pluginMessageMetadata(message.customType)?.contextInjection ?? (!SYSTEM_MESSAGES.has(message.customType ?? "") && !["piop-subagent-result", "piop-session-operation", "piop-agent-message"].includes(message.customType ?? "")));
 }
 
 export type PiEntry = { type: string; id: string; parentId: string | null; message?: Partial<WireMessage>; customType?: string; details?: unknown; content?: ChatMessage["content"]; data?: unknown; display?: boolean; timestamp?: string; tokensBefore?: number };
@@ -34,10 +34,18 @@ export function isResumeMessage(message: { role?: unknown; content?: unknown }, 
   return markers.has(text);
 }
 
+/** A message that starts a turn: one the user sent, or a message or subagent result from another agent session. */
+export const isPromptMessage = (message: ChatMessage) => message.role === "user" || (message.role === "custom" && (message.customType === "piop-agent-message" || message.customType === "piop-subagent-result"));
+
+/** Whether a prompt context snapshot belongs to this message. */
+export const promptContextAnchors = (message: ChatMessage, context: { userTimestamp?: number; agentNotificationId?: string }) => message.role === "user"
+  ? context.userTimestamp !== undefined && message.timestamp === context.userTimestamp
+  : context.agentNotificationId !== undefined && isPromptMessage(message) && (message.details as { notificationId?: unknown } | undefined)?.notificationId === context.agentNotificationId;
+
 function latestUser(messages: ChatMessage[]) {
   let index = messages.length - 1;
 
-  while (index >= 0 && messages[index].role !== "user") index--;
+  while (index >= 0 && !isPromptMessage(messages[index])) index--;
 
   return index;
 }

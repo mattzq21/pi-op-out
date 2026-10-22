@@ -25,8 +25,8 @@
 .agent-subagent-limits span { white-space: nowrap; }
 .agent-subagent-limits input { width: 80px; min-width: 0; }
 .agent-access { grid-column: 1 / -1; margin-top: 10px; }
-.agent-allowlist .agent-access label.field { display: flex; align-items: center; gap: 8px; margin: 0 0 8px; }
-.agent-access span { white-space: nowrap; }
+.agent-access-row { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; color: var(--muted); font-size: calc(12px + var(--settings-font-offset, 0px)); white-space: nowrap; }
+.agent-access .segmented-control { margin-bottom: 0; }
 .agent-usage { display: flex; flex-wrap: wrap; gap: 10px 24px; margin-top: 12px; }
 .agent-usage-option { display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: calc(12px + var(--settings-font-offset, 0px)); }
 .agent-codemode { flex: none; margin-right: 8px; min-height: 22px; padding: 0 9px; border: 1px solid var(--line); border-radius: 999px; background: transparent; color: var(--muted); font: 600 calc(11px + var(--settings-font-offset, 0px)) "DM Sans", sans-serif; cursor: pointer; transition: background-color .12s, border-color .12s, color .12s; }

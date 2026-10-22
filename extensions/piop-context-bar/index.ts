@@ -199,6 +199,11 @@ function requestTools(payload: unknown): RequestTool[] | undefined {
   return tools;
 }
 
+/** Messages from other agent sessions that start a turn: orchestration messages and subagent results. */
+const AGENT_MESSAGES = new Set(["piop-agent-message", "piop-subagent-result"]);
+
+const agentMessageDetails = Type.Object({ notificationId: Type.String() });
+
 export default function contextBar(pi: ExtensionAPI) {
   let promptOptions: BuildSystemPromptOptions | undefined;
   let publishInputTokens: ((tokens: number, ctx: ExtensionContext) => void) | undefined;
@@ -212,10 +217,12 @@ export default function contextBar(pi: ExtensionAPI) {
       return entry.type === "custom" && entry.customType === "pi-desktop-resume" && Check(resumeSchema, entry.data) ? [entry.data.message] : [];
     }));
 
-    const userIndex = branch.findLastIndex((entry) => entry.type === "message" && entry.message.role === "user" && !resumeMessages.has(textContent(entry.message.content)));
+    // A turn starts with a user message, or with a message or result from another agent session.
+    const userIndex = branch.findLastIndex((entry) => (entry.type === "message" && entry.message.role === "user" && !resumeMessages.has(textContent(entry.message.content))) || (entry.type === "custom_message" && AGENT_MESSAGES.has(entry.customType)));
     const user = branch[userIndex];
+    const anchor = user?.type === "message" ? { userTimestamp: user.message.timestamp } : user?.type === "custom_message" && Check(agentMessageDetails, user.details) ? { agentNotificationId: user.details.notificationId } : undefined;
 
-    if (!user || user.type !== "message") return;
+    if (!anchor) return;
 
     if (branch.slice(userIndex + 1).some((entry) => entry.type === "custom" && [ENTRY_TYPE, STATUS_KEY].includes(entry.customType))) return;
     const systemPrompt = ctx.getSystemPrompt();
@@ -241,7 +248,7 @@ export default function contextBar(pi: ExtensionAPI) {
     const skillTokens = { defined: estimate(skillPrompt), invoked: invokedSkills.reduce((sum, skill) => sum + estimate(skill.content), 0) };
 
     const snapshot = {
-      userTimestamp: user.message.timestamp,
+      ...anchor,
       systemPrompt,
       instructions,
       tools,

@@ -12,7 +12,7 @@ import { chatSessionEventSchema, pendingMessagesSchema, type ChatSessionEvent } 
 import { promptContextSchema, wireMessageSchema, type WireMessage } from "./messageSchemas";
 import { contextUsageAfterCompaction } from "./contextUsage";
 import { CONTEXT_CAP_STATUS_KEY } from "../../../extensions/piop-context-window-cap/interface";
-import { appendQueuedProjectContext, applyAssistantMessageEvent, branchMessages, checkpointLatestUser, isContextInjection, isResumeMessage, normalizeMessage, resumeMarker, type PiEntry } from "./messages";
+import { appendQueuedProjectContext, applyAssistantMessageEvent, branchMessages, checkpointLatestUser, isContextInjection, isResumeMessage, normalizeMessage, promptContextAnchors, resumeMarker, type PiEntry } from "./messages";
 import type { NativeTransport } from "./nativeTransport";
 import { useSessionMemory } from "./sessionMemory";
 import { matchesSubmittedMessage, reconcileMessages, reconcilePendingMessages, sameUserContent, upsertLiveMessage } from "./reconcileMessages";
@@ -105,6 +105,8 @@ function createChatSession(transport: Accessor<Pick<NativeTransport, "command" |
   };
 
   const refreshCapabilities = () => {
+    // A read-only view cannot ask the session for its choices. Taking ownership applies settings, which loads them.
+    if (transport().ownsConversation?.() === false) { capabilityRequest.current++; capabilityKey.current = undefined; setCapabilityErrors([]); setCapabilitiesLoading(false); return; }
     const key = `${sessionEpoch.current}:${session.state.sessionId}`;
 
     if (capabilityKey.current === key) return;
@@ -382,6 +384,8 @@ function createChatSession(transport: Accessor<Pick<NativeTransport, "command" |
       capabilityRequest.current += 1;
     }
 
+    if (event.type === "ownership_acquired") refreshCapabilities();
+
     if (bufferedEvents.current) { bufferedEvents.current.push(event);
 
     return; }
@@ -405,9 +409,9 @@ function createChatSession(transport: Accessor<Pick<NativeTransport, "command" |
         try {
           const context = promptContextSchema.parse(JSON.parse(event.statusText.slice(5)));
 
-          if (context.userTimestamp !== undefined) {
+          if (context.userTimestamp !== undefined || context.agentNotificationId !== undefined) {
             liveRevision.current += 1;
-            session.setMessages((current) => current.map((message) => message.role === "user" && message.timestamp === context.userTimestamp && (!message.promptContext || (message.promptContext.inputTokens === undefined && context.inputTokens !== undefined)) ? { ...message, promptContext: context } : message));
+            session.setMessages((current) => current.map((message) => promptContextAnchors(message, context) && (!message.promptContext || (message.promptContext.inputTokens === undefined && context.inputTokens !== undefined)) ? { ...message, promptContext: context } : message));
           }
         } catch { }
       }
