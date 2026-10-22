@@ -269,19 +269,19 @@ describe("Conversation acceptance", () => {
     const history = {
       entries: [
         { type: "message", id: "branch-user", parentId: null, message: { role: "user", content: "Establish the branch point", timestamp: 1 } },
-        { type: "message", id: "branch-assistant", parentId: "branch-user", message: { role: "assistant", content: "This response can be branched.", timestamp: 2 } },
+        { type: "message", id: "branch-assistant", parentId: "branch-user", message: { role: "assistant", content: "This response can be branched.", stopReason: "stop", timestamp: 2 } },
       ],
       leafId: "branch-assistant",
     };
 
     const { sessionId, cwd } = await startTemporaryConversation({
       "pi_command:get_entries": history,
-      "pi_command:fork_after": {},
+      "pi_command:copy_after": {},
     });
     await updateBackendResponse("pi_command:get_state", { ...connectedSessionResponses(sessionId)["pi_command:get_state"], sessionFile: `${cwd}/session.jsonl`, messageCount: 2 });
 
     try {
-      await emitPiEvent({ type: "session_switched" });
+      await emitPiEvent({ type: "session_info_changed" });
       const branch = $(".assistant-message").$('button[aria-label="Fork"]');
       await expect(branch).toBeEnabled();
       await browser.execute(() => {
@@ -291,8 +291,8 @@ describe("Conversation acceptance", () => {
         element.click();
       });
 
-      await browser.waitUntil(async () => (await backendCalls()).some(({ args }) => args.command?.type === "fork_after"));
-      expect((await backendCalls()).find(({ args }) => args.command?.type === "fork_after")?.args.command).toMatchObject({ type: "fork_after", entryId: "branch-assistant" });
+      await browser.waitUntil(async () => (await backendCalls()).some(({ args }) => args.command?.type === "copy_after"));
+      expect((await backendCalls()).find(({ args }) => args.command?.type === "copy_after")?.args.command).toMatchObject({ type: "copy_after", entryId: "branch-assistant" });
       await expect($(".user-message .message-body")).toHaveText("Establish the branch point");
       await expect($(".assistant-message .markdown-content p")).toHaveText("This response can be branched.");
     } finally {
