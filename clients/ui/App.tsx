@@ -21,7 +21,7 @@ import { MissingDirectoryDialog } from "./components/MissingDirectoryDialog";
 import { hasVisibleText } from "./lib/content";
 import { NativeTransport } from "./lib/nativeTransport";
 import { isMobile } from "./lib/platform";
-import { SubagentNavigationContext } from "./lib/subagentNavigation";
+import { SessionLinkContext, SubagentNavigationContext, type SessionLinks } from "./lib/subagentNavigation";
 import type { SessionSummary } from "./types";
 
 export { formatCodexReset,normalizeCodexUsage,normalizeOpencodeGoUsage,usageWindowsDescription } from "./appSupport";
@@ -160,7 +160,13 @@ export default function App(props: { suppressConnectionNotices?: boolean } = {})
   const workspaceLabel = () => connected() && !error() ? "Conversation workspace ready" : "Conversation workspace connecting";
   const renderSplitFind = () => splitPane() && <Rerun on={() => splitSessionId()}>{(_key) => <FindInPage selector=".split-chat .chat-shell" scopeKey={splitSessionId()} onActivate={() => setActivePane("split")} active={activePane() === "split"} enabled={view() === "chat"} />}</Rerun>;
 
-  return <SubagentNavigationContext.Provider value={openSubagent}>{!settings() ? (<AppLoading error={error()} />) : (<div role="region" aria-label={workspaceLabel()} class={`app ${panelOpen() && view() === "chat" ? "mobile-panel-open" : ""}`}>
+  const listedSession = (hostId: string, sessionId: string) => sessions().find(session => session.id === sessionId && (session.hostId ?? "local") === hostId);
+  const sessionLinks: SessionLinks = {
+    name: (hostId, sessionId) => listedSession(hostId, sessionId)?.name,
+    open: (hostId, sessionId) => { const session = listedSession(hostId, sessionId); if (session) selectSession(session); else addNotice({ title: "Could not open the session", message: "It is archived or deleted." }); },
+  };
+
+  return <SessionLinkContext.Provider value={sessionLinks}><SubagentNavigationContext.Provider value={openSubagent}>{!settings() ? (<AppLoading error={error()} />) : (<div role="region" aria-label={workspaceLabel()} class={`app ${panelOpen() && view() === "chat" ? "mobile-panel-open" : ""}`}>
     {!mobileSidebarOpen() && renderMobileSidebarToggle()}
     {renderMobileSidebarBackdrop()}
     {renderSidebar()}
@@ -185,7 +191,7 @@ export default function App(props: { suppressConnectionNotices?: boolean } = {})
 
       if (required((capturedRenameSession)).session.id === capturedSession.state.sessionId && (required((capturedRenameSession)).session.hostId ?? "local") === capturedActiveHostId) capturedSession.setState((current) => ({ ...current, sessionName: name })); await syncSessionIndex(); setRenameSession(undefined); }} />}</Rerun>}
     {renderMissingDirectoryDialog()}
-  </div>)}</SubagentNavigationContext.Provider>;
+  </div>)}</SubagentNavigationContext.Provider></SessionLinkContext.Provider>;
 }
 
 import { BranchActivity } from "./components/BranchActivity";

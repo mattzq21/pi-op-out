@@ -178,6 +178,10 @@ kbd { font: 11px "DM Sans"; border: 1px solid var(--line); padding: 2px 4px; bor
 .markdown-content { display: contents; }
 :is(.reasoning-text, .work-group-content .message-body, .active-work-content .message-body) > .markdown-content > :is(p, h1, h2, h3, h4, h5, h6, ul, ol, blockquote) { margin-top: 0; margin-bottom: 3px; }
 .message-actions { margin-top: 0; height: 25px; display: flex; align-items: center; gap: 1px; opacity: .55; transition: .15s; }.message:hover .message-actions { opacity: 1; }.message-actions .icon-button { width: 27px; height: 25px; }
+.agent-delivery .message-body { background: #3a2c14; border-color: #6b4f1f; }
+.agent-delivery-source { margin: 0 2px 4px; padding: 0; border: 0; background: none; color: #d9a441; font: inherit; font-size: calc(12px + var(--settings-font-offset, 0px)); }
+button.agent-delivery-source { cursor: pointer; }
+button.agent-delivery-source:hover { color: #f0bd55; text-decoration: underline; }
 .user-message .message-actions { margin-top: 4px; opacity: 0; pointer-events: none; }
 .user-message:hover .message-actions, .user-message:focus-within .message-actions { opacity: 1; pointer-events: auto; }
 .assistant-message .message-actions { opacity: 0; pointer-events: none; }
