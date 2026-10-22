@@ -278,7 +278,7 @@ export default function codexWebSearch(pi: ExtensionAPI) {
   pi.registerTool({
     name: "web_search",
     label: "Web search",
-    description: "Search the web via Codex and return a concise answer with source URLs. Use for current information and research; cite the returned sources. Optionally restrict searches to domains. Requires Pi's Codex login.",
+    description: "Search the web and return a concise answer with source URLs. Use for current information and research; cite the returned sources. Optionally restrict searches to domains.",
     parameters: Type.Object({
       query: Type.String({ minLength: 1, description: "Search question, including any desired dates or recency." }),
       domains: Type.Optional(Type.Array(Type.String({ minLength: 1 }), { maxItems: 100, description: "Only search these domains (includes subdomains)." })),
