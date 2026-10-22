@@ -11,7 +11,7 @@ afterAll(async () => { await agents?.close(); });
 const jobs: Array<() => Promise<void>> = [];
 afterEach(async () => { for (const close of jobs.splice(0)) await close(); });
 
-test('a child agent\'s final answer reaches its parent, which continues with it', async () => {
+test.concurrent('a child agent\'s final answer reaches its parent, which continues with it', async () => {
   agents.scripts.set('Read the README for me', messages => {
     const last = messages.at(-1);
     if (last.role === 'user' && text(last).includes('Read the README for me')) return { tool: 'spawn_agent', arguments: { task_name: 'reader', message: 'Summarize the README' } };
@@ -60,7 +60,7 @@ const delegating = (name: string, task: string) => (messages: any[]) => {
   return { text: delivered ? delivered[0] : 'Waiting for ' + name + '.' };
 };
 
-test('a grandchild cannot start its own child, and its parents hear why', async () => {
+test.concurrent('a grandchild cannot start its own child, and its parents hear why', async () => {
   agents.scripts.set('Start a chain', delegating('child', 'Delegate further'));
   agents.scripts.set('Delegate further', delegating('grandchild', 'Delegate once more'));
   agents.scripts.set('Delegate once more', messages => {
@@ -75,7 +75,7 @@ test('a grandchild cannot start its own child, and its parents hear why', async 
   expect(agents.model.requests.some(request => JSON.stringify(request.messages).includes('Unreachable task') && !JSON.stringify(request.messages).includes('Delegate once more'))).toBe(false);
 }, 120000);
 
-test('a follow-up task goes to the same child, which still remembers its earlier work', async () => {
+test.concurrent('a follow-up task goes to the same child, which still remembers its earlier work', async () => {
   agents.scripts.set('Use a memory helper', messages => {
     const last = text(messages.at(-1));
     if (!called(messages, 'spawn_agent')) return { tool: 'spawn_agent', arguments: { task_name: 'memory', message: 'Remember the word apple' } };
@@ -118,7 +118,7 @@ test('a child paused by a model failure is reported to its parent at once and ca
   expect(rootRequests.some(request => /failed[\s\S]*model overloaded/.test(JSON.stringify(request.messages.at(-1))))).toBe(true);
 }, 120000);
 
-test('interrupting a busy child cancels its work, tells the parent, and the child takes a follow-up', async () => {
+test.concurrent('interrupting a busy child cancels its work, tells the parent, and the child takes a follow-up', async () => {
   let releaseSlow!: (reply: { text: string }) => void;
   const slowReply = new Promise<{ text: string }>(resolve => { releaseSlow = resolve; });
   agents.scripts.set('Start a slow helper', messages => {
@@ -143,7 +143,7 @@ test('interrupting a busy child cancels its work, tells the parent, and the chil
   expect((await agents.daemon.invoke('list_sessions')).filter((session: any) => session.subagentParentId === root.sessionId).length).toBe(1);
 }, 120000);
 
-test('a parent sees its busy child in its agent list and can send the child an update it acts on', async () => {
+test.concurrent('a parent sees its busy child in its agent list and can send the child an update it acts on', async () => {
   let releaseFirst!: (reply: { text: string }) => void;
   const firstReply = new Promise<{ text: string }>(resolve => { releaseFirst = resolve; });
   const toolResult = (messages: any[], tool: string) => {
@@ -175,7 +175,7 @@ test('a parent sees its busy child in its agent list and can send the child an u
   expect(JSON.stringify(childSaw.at(-1).messages)).toContain('Feature built.');
 }, 120000);
 
-test('a child can send its parent a progress update before its final answer', async () => {
+test.concurrent('a child can send its parent a progress update before its final answer', async () => {
   agents.scripts.set('Run a long survey', messages => {
     const last = text(messages.at(-1));
     if (!called(messages, 'spawn_agent')) return { tool: 'spawn_agent', arguments: { task_name: 'surveyor', message: 'Survey the modules' } };
@@ -190,18 +190,27 @@ test('a child can send its parent a progress update before its final answer', as
   expect(messages.filter(message => message.role === 'assistant').map(text).filter(Boolean)).toEqual(['Waiting.', 'Noted the progress.', 'Relay: surveyed']);
 }, 120000);
 
-test('a batch of children runs at once, waiting for all ends only after each answered, and every answer reaches the parent', async () => {
+test.concurrent('a batch of children runs at once, waiting for all ends only after each answered, and every answer reaches the parent', async () => {
   const answered = new Map<string, number>();
+  const started = new Set<string>();
+  const bothStarted = Promise.withResolvers<void>();
+  let order = 0;
   agents.scripts.set('Count the fruit', messages => {
     const last = messages.at(-1);
     if (!called(messages, 'subagent')) return { tool: 'subagent', arguments: { tasks: [{ name: 'apples', task: 'Count apples' }, { name: 'pears', task: 'Count pears' }] } };
     if (!called(messages, 'await_subagents')) return { tool: 'await_subagents' };
-    if (last.role === 'tool' && !answered.has('awaited')) answered.set('awaited', Date.now());
+    if (last.role === 'tool' && !answered.has('awaited')) answered.set('awaited', ++order);
     const counts = JSON.stringify(messages).match(/Relay: \d+ \w+/g) ?? [];
     return { text: counts.length ? 'Counts: ' + [...new Set(counts)].sort().join(', ') : 'Waiting.' };
   });
   for (const [task, answer] of [['Count apples', 'Relay: 3 apples'], ['Count pears', 'Relay: 5 pears']]) {
-    agents.scripts.set(task, async () => { await Bun.sleep(300); answered.set(task, Date.now()); return { text: answer }; });
+    agents.scripts.set(task, async () => {
+      started.add(task);
+      if (started.size === 2) bothStarted.resolve();
+      await bothStarted.promise;
+      answered.set(task, ++order);
+      return { text: answer };
+    });
   }
   const root = await agents.rootChat();
   await root.command({ type: 'prompt', message: 'Count the fruit' });
