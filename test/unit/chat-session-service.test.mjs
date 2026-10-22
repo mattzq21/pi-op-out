@@ -198,6 +198,19 @@ test('a failed tool payload read leaves the tool unloaded and a retry loads the 
   assert.equal(tool().content, 'persisted');
 });
 
+test('a read-only view does not ask for the chat choices, so it shows no errors for them', { timeout: 30000 }, async t => {
+  const asked = [];
+  const { hook, client } = await sessionView(t, [
+    { type: 'message', id: 'question', parentId: null, message: { role: 'user', content: 'hello', timestamp: 99 } },
+  ], { async afterReply(command, args) { if (command === 'pi_command') asked.push(args.command.type); } });
+  assert.equal(client.ownsConversation(), false);
+  await act(() => hook.current.refresh());
+  // The choices load after the refresh, without being awaited by it.
+  await act(() => new Promise(resolve => setTimeout(resolve, 500)));
+  assert.deepEqual(hook.current.capabilityErrors, []);
+  assert.deepEqual(asked.filter(type => ['get_available_models', 'get_available_thinking_levels', 'get_commands'].includes(type)), []);
+});
+
 test('failed refresh replays buffered live events and allows a later retry', async t => {
   const received = Promise.withResolvers(), release = Promise.withResolvers();
   t.after(() => release.resolve());
@@ -314,6 +327,8 @@ test('a chat refresh failure does not report a choices failure after lists load'
   const { hook, client } = await sessionView(t);
   await act(() => hook.current.refresh());
   await whenReactive(() => !hook.current.capabilitiesLoading);
+  // The choices load after the refresh, without being awaited by it.
+  await act(() => new Promise(resolve => setTimeout(resolve, 500)));
   assert.deepEqual(hook.current.capabilityErrors, []);
   const command = client.command.bind(client);
   client.command = (request, schema) => request.type === 'get_session_revision'

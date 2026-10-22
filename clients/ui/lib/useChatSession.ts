@@ -105,6 +105,8 @@ function createChatSession(transport: Accessor<Pick<NativeTransport, "command" |
   };
 
   const refreshCapabilities = () => {
+    // A read-only view cannot ask the session for its choices. Taking ownership applies settings, which loads them.
+    if (transport().ownsConversation?.() === false) { capabilityRequest.current++; capabilityKey.current = undefined; setCapabilityErrors([]); setCapabilitiesLoading(false); return; }
     const key = `${sessionEpoch.current}:${session.state.sessionId}`;
 
     if (capabilityKey.current === key) return;
@@ -381,6 +383,8 @@ function createChatSession(transport: Accessor<Pick<NativeTransport, "command" |
       capabilityKey.current = undefined;
       capabilityRequest.current += 1;
     }
+
+    if (event.type === "ownership_acquired") refreshCapabilities();
 
     if (bufferedEvents.current) { bufferedEvents.current.push(event);
 
