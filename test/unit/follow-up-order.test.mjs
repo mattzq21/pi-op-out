@@ -106,3 +106,11 @@ test('B does not show directly under A after a snapshot refresh while B waits fo
   chat.check();
 });
 
+
+test('a message sent after a task that ended without a reply shows at once', async t => {
+  const chat = await harness(t);
+  await startA(chat);
+  await chat.events('A ends without a reply', { type: 'agent_end' }, { type: 'agent_settled' });
+  await chat.submit('B submitted while idle', 'submission-b', 'Message B');
+  assert.equal(chat.steps.at(-1).transcript, 'user A | user B');
+});

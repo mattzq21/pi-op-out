@@ -90,7 +90,7 @@ export function ChatView(props: Props & { transcriptActions?: JSXElement; follow
   const touchY = createRef<number | undefined>(undefined);
   const composerStack = createRef<HTMLDivElement>(null);
   const messages = () => props.messages;
-  const turns = createMemo<ConversationGroup[]>(previous => groupTurns(messages(), previous), []);
+  const turns = createMemo<ConversationGroup[]>(previous => groupTurns(messages(), props.state.isStreaming, previous), []);
 
   const responses = createMemo(() => turns().flatMap(turn => {
     const message = turn.messages[finalResponseIndex(turn.messages)];
@@ -376,10 +376,11 @@ function associateQueuedContext(messages: ChatMessage[]) {
 }
 
 /**
- * The transcript messages. A sent message waits outside the transcript while the daemon has not queued it and an earlier user message has no reply yet.
+ * The transcript messages. A sent message waits outside the transcript while the daemon has not queued it and an earlier user message still waits for its reply.
  * Pi delivers it only after that reply, so it must not show directly under the earlier message. The queue above the message box shows it once the daemon queued it.
+ * An earlier user message waits for its reply while it is still being sent, or while the agent works. A message whose task ended without a reply does not wait.
  */
-function transcriptMessages(messages: ChatMessage[]) {
+function transcriptMessages(messages: ChatMessage[], working: boolean) {
   let waiting = false;
 
   return messages.filter(message => {
@@ -388,15 +389,15 @@ function transcriptMessages(messages: ChatMessage[]) {
     if (message.role === "assistant") waiting = false;
     else if (message.role === "user") {
       if (message.submissionId && waiting) return false;
-      waiting = true;
+      waiting = working || Boolean(message.submissionId);
     }
 
     return true;
   });
 }
 
-function groupTurns(messages: ChatMessage[], previous: ConversationGroup[] = []) {
-  messages = associateQueuedContext(transcriptMessages(messages));
+function groupTurns(messages: ChatMessage[], working: boolean, previous: ConversationGroup[] = []) {
+  messages = associateQueuedContext(transcriptMessages(messages, working));
   const prefix = reusableTurns(messages, previous);
 
   if (prefix.start === messages.length && prefix.count === previous.length) return previous;
