@@ -20,6 +20,8 @@ export function registerGoalTools(pi: ExtensionAPI, core: GoalCore) {
 
   pi.registerTool({
     name: "update_goal", label: "Update goal", description: goalToolDescription,
+    // The model calls it directly; codemode scripts cannot.
+    exposure: "model-only",
     parameters: Type.Object({ status: Type.Union([Type.Literal("complete"), Type.Literal("paused")]) }, { additionalProperties: false }),
     async execute(_id, params, signal, _update, ctx) {
       return core.coordination.run(ctx, () => {
