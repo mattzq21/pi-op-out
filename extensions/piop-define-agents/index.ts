@@ -118,7 +118,7 @@ function normalize(value: Omit<Partial<Config>, "agents"> & { agents?: StoredAge
     fastMode: agent.fastMode, contextWindowCap: agent.contextWindowCap, codemode: agent.codemode, extensions: extensionPaths(agent.extensions),
     max_subagents: subagentLimit(agent.max_subagents, agent.name, "max_subagents"), max_sub_subagents: subagentLimit(agent.max_sub_subagents, agent.name, "max_sub_subagents"),
     path_systemprompt: promptPath(agent), path_agent_prompt: Check(Type.String(), agent.path_agent_prompt) ? agent.path_agent_prompt.trim() : "",
-    tools: Array.isArray(agent.tools) ? agent.tools.filter((item): item is string => Check(Type.String(), item)).flatMap(item => item === "goal" ? ["get_goal", "update_goal"] : [item]) : generalAgent(pi).tools, skills: Array.isArray(agent.skills) ? agent.skills.filter((item): item is string => Check(Type.String(), item)) : [], mcpServers: mcpServers(agent.mcpServers),
+    tools: Array.isArray(agent.tools) ? agent.tools.filter((item): item is string => Check(Type.String(), item)).flatMap(item => item === "goal" ? ["update_goal"] : [item]) : generalAgent(pi).tools, skills: Array.isArray(agent.skills) ? agent.skills.filter((item): item is string => Check(Type.String(), item)) : [], mcpServers: mcpServers(agent.mcpServers),
   })) : [];
 
   if (!supplied.some((agent) => agent.name === "general")) {
