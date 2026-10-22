@@ -4,7 +4,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { agentDaemon, text } from './agent-chats';
 
-for (const withHistory of [false, true]) test(`current model and thinking survive reopening ${withHistory ? 'with' : 'without'} messages`, async () => {
+for (const withHistory of [false, true]) test.concurrent(`current model and thinking survive reopening ${withHistory ? 'with' : 'without'} messages`, async () => {
   const agents = await agentDaemon();
   try {
     agents.scripts.set('First question', () => ({ text: 'First answer' }));

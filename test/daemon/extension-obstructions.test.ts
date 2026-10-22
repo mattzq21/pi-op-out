@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { startDaemon } from './harness';
 
-test('opening a chat preserves a file that blocks an extension folder and can retry after it is removed', async () => {
+test.concurrent('opening a chat preserves a file that blocks an extension folder and can retry after it is removed', async () => {
   const daemon = await startDaemon();
   try {
     const chat = JSON.parse(execFileSync('node', [fileURLToPath(new URL('../fixtures/publish-chat.mjs', import.meta.url))], {
@@ -26,7 +26,7 @@ test('opening a chat preserves a file that blocks an extension folder and can re
   } finally { await daemon.stop(); }
 }, 60000);
 
-test('opening a chat preserves directories that block extension files and can retry after they are removed', async () => {
+test.concurrent('opening a chat preserves directories that block extension files and can retry after they are removed', async () => {
   const daemon = await startDaemon();
   try {
     const chat = JSON.parse(execFileSync('node', [fileURLToPath(new URL('../fixtures/publish-chat.mjs', import.meta.url))], {
