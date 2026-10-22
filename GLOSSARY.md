@@ -22,4 +22,5 @@
 **Anchor host** - the one Host that the mobile app connects to. The phone uses the anchor's added hosts through it.  
 **Host script** - a piop script that runs on a Host to read or change its stored data.  
 **Restore receipt** - the saved result of a committed restore, used to answer a repeated restore of the same archived session tree.  
-**Project tooling** - bun, cargo, uv, jest. Don't confuse with agent tools.
+**Project tooling** - bun, cargo, uv, jest. Don't confuse with agent tools.  
+**Composer** - area around the prompt input.
