@@ -14,6 +14,12 @@ const pending = (runtimeId: string): Array<{ id: string; message: string; behavi
 
 const userTexts = (messages: any[]) => messages.filter(message => message.role === 'user').map(text);
 
+const nextSettlement = (runtimeId: string) => {
+  const seen = new Set(agents.daemon.events.map(event => event.payload));
+  return () => agents.daemon.waitEvent('pi://event', payload => !seen.has(payload)
+    && payload.runtimeId === runtimeId && payload.event?.type === 'agent_settled');
+};
+
 test('the chat list shows a chat as running while its agent works, and tells clients when it finishes', async () => {
   const busy = held<{ text: string }>();
   agents.scripts.set('Index the repository', () => busy.promise);
@@ -84,12 +90,13 @@ test('pausing stops the running response and holds waiting messages until the ch
   const chat = await agents.rootChat();
   await chat.command({ type: 'prompt', message: 'Paused job' });
   await chat.until(() => agents.model.requests.some(request => text(request.messages.at(-1)) === 'Paused job'));
+  const settled = nextSettlement(chat.runtimeId);
   await chat.command({ type: 'pause' });
   busy.release({ text: 'too late' });
   await chat.command({ type: 'follow_up', message: 'Next task' });
   const paused = await chat.until(history => history.some(message => message.role === 'assistant' && message.errorMessage === 'Response paused'));
   expect(paused.findLast(message => message.role === 'assistant')).toMatchObject({ stopReason: 'aborted', errorMessage: 'Response paused' });
-  await Bun.sleep(1500);
+  await settled();
   expect((await chat.command({ type: 'get_state' })).isPaused).toBe(true);
   expect(userTexts(await chat.history())).toEqual(['Paused job']);
   await chat.command({ type: 'resume' });
@@ -104,10 +111,11 @@ test('stopping a response keeps waiting messages back, and the next message the 
   await chat.command({ type: 'prompt', message: 'Stopped job' });
   await chat.until(() => agents.model.requests.some(request => text(request.messages.at(-1)) === 'Stopped job'));
   await chat.command({ type: 'follow_up', message: 'Waiting task' });
+  const settled = nextSettlement(chat.runtimeId);
   await chat.command({ type: 'abort' });
   busy.release({ text: 'too late' });
   await chat.until(history => history.at(-1)?.role === 'assistant' && history.at(-1).stopReason === 'aborted');
-  await Bun.sleep(1500);
+  await settled();
   expect(userTexts(await chat.history())).toEqual(['Stopped job']);
   expect((await chat.command({ type: 'get_state' })).pendingMessages.map((item: any) => item.message)).toEqual(['Waiting task']);
   await chat.command({ type: 'follow_up', message: 'New request' });
@@ -127,9 +135,10 @@ test('stopping a paused chat ends the pause: a new message is answered, and mess
   await chat.command({ type: 'abort' });
   busy.release({ text: 'too late' });
   expect((await chat.command({ type: 'get_state' })).isPaused).toBe(false);
+  const settled = nextSettlement(chat.runtimeId);
   await chat.command({ type: 'follow_up', message: 'After the stop' });
   await chat.until(history => text(history.at(-1)) === 'Answer to After the stop');
-  await Bun.sleep(1500);
+  await settled();
   expect(userTexts(await chat.history())).toEqual(['Paused then stopped', 'After the stop']);
   const [waiting] = (await chat.command({ type: 'get_state' })).pendingMessages;
   expect(waiting).toMatchObject({ message: 'Held by the pause', retry: true });

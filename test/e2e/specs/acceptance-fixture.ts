@@ -162,7 +162,7 @@ export const updateBackendResponse = async <T,>(command: string, response: T) =>
 export const resetBackend = async () => {
   const prompts = (await backendCalls()).filter(call => call.mocked && isUserPrompt(call.args.command));
 
-  for (const prompt of prompts) await emitPiEvent({ type: "message_start", message: { role: "user", content: promptSchema.parse(prompt.args.command).message, timestamp: Date.now() } });
+  for (const prompt of prompts) await emitPiEvent({ type: "message_start", message: { role: "user", content: promptSchema.parse(prompt.args.command).message, piopSubmissionId: prompt.args.command?.goalSubmissionId, timestamp: Date.now() } });
   agentEvent = undefined;
   await setBridgeValue("E2E calls", "[]");
   await setBridgeValue("E2E responses", JSON.stringify(isolatedUsageResponses));
@@ -325,20 +325,23 @@ export const startTemporaryConversation = async (responses: BackendResponses) =>
   await app.prepareMessage("Start the test conversation");
   await app.sendMessageButton.click();
   await browser.waitUntil(async () => (await backendCalls()).some(call => call.command === "pi_command" && call.args.command?.type === "prompt"));
-  const runtimeId = (await backendCalls()).find(call => call.command === "pi_command" && call.args.command?.type === "prompt")?.args.runtimeId;
-  if (typeof runtimeId !== "string") throw new Error("The sent conversation did not start a runtime");
-  await browser.execute(async (id) => {
+  const prompt = (await backendCalls()).find(call => call.command === "pi_command" && call.args.command?.type === "prompt");
+  const runtimeId = prompt?.args.runtimeId;
+  const submissionId = prompt?.args.command?.goalSubmissionId;
+  if (typeof runtimeId !== "string" || typeof submissionId !== "string") throw new Error("The sent conversation has no runtime or submission identity");
+  const message = { role: "user", content: [{ type: "text", text: "Start the test conversation" }], timestamp: Date.now(), piopSubmissionId: submissionId };
+  await browser.execute(async ({ id, message }) => {
     for (const event of [
       { type: "settings_applied" },
-      { type: "message_start", message: { role: "user", content: [{ type: "text", text: "Start the test conversation" }], timestamp: Date.now() } },
+      { type: "message_start", message },
       { type: "agent_end", messages: [] },
       { type: "agent_settled" },
     ]) await window.__TAURI_INTERNALS__.invoke("plugin:event|emit", { event: "pi://event", payload: { runtimeId: id, event } });
     return null;
-  }, runtimeId);
+  }, { id: runtimeId, message });
   await app.composer.waitForEnabled();
   await updateBackendResponse("pi_command:get_state", { model: { provider: "e2e", id: "acceptance" }, thinkingLevel: "high", isStreaming: false, sessionId, messageCount: 1, pendingMessageCount: 0 });
-  await updateBackendResponse("pi_command:get_entries", { entries: [{ type: "message", id: "initial-prompt", parentId: null, message: { role: "user", content: [{ type: "text", text: "Start the test conversation" }], timestamp: Date.now() } }], leafId: "initial-prompt" });
+  await updateBackendResponse("pi_command:get_entries", responses["pi_command:get_entries"] ?? { entries: [{ type: "message", id: "initial-prompt", parentId: null, message }], leafId: "initial-prompt" });
   await updateBackendResponse("list_sessions", [{ id: sessionId, path: `${cwd}/session.jsonl`, name, project: "Terminal project", preview: "Start the test conversation", cwd, hostId: "local", messageCount: 1 }]);
   await browser.execute(async () => {
     await window.__TAURI_INTERNALS__.invoke("plugin:event|emit", { event: "pi://sessions-changed", payload: {} });
