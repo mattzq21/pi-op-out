@@ -301,7 +301,8 @@ test('a new session whose default agent uses another model than the runtime star
     realFastMode: { agentFirst: true, catalog: [{ slug: 'initial', service_tiers: [{ id: 'priority' }] }, { slug: 'chosen', service_tiers: [{ id: 'priority' }] }] },
   });
   await f.load();
-  const started = await Promise.race([f.start().then(() => true), new Promise(resolve => setTimeout(() => resolve(false), 2000))]);
+  let timer;
+  const started = await Promise.race([f.start().then(() => true), new Promise(resolve => { timer = setTimeout(() => resolve(false), 2000); })]).finally(() => clearTimeout(timer));
   assert.equal(started, true);
   assert.deepEqual(f.modelSelections.map(model => model.id), ['chosen']);
   assert.equal(f.capability().active, 'chosen');

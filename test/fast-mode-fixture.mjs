@@ -1,8 +1,21 @@
 import { build } from 'esbuild';
+import { writeFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { storageSchemaImports } from '../scripts/storage-schema-plugin.mjs';
+
+let bundle;
+function compiledFastMode() {
+  return bundle ??= build({
+    entryPoints: ['extensions/piop-openai-fast-mode/src/index.ts'], write: false,
+    bundle: true, format: 'esm', platform: 'node', target: 'node22', logLevel: 'silent',
+    plugins: [storageSchemaImports(), { name: 'external-pi-sdk', setup(builder) {
+      builder.onResolve({ filter: /^@earendil-works\/pi-coding-agent$/ }, () => ({ path: 'sdk', namespace: 'fixture' }));
+      builder.onLoad({ filter: /.*/, namespace: 'fixture' }, () => ({ contents: `import { dirname } from 'node:path'; import { fileURLToPath } from 'node:url'; export const getAgentDir = () => dirname(fileURLToPath(import.meta.url));` }));
+    } }],
+  }).then(result => result.outputFiles[0].contents);
+}
 
 export async function installFastMode(t, { dir, pi, ctx, models, catalog, fastModels }) {
   const server = createServer((request, response) => {
@@ -25,14 +38,7 @@ export async function installFastMode(t, { dir, pi, ctx, models, catalog, fastMo
     if (previous[index] === undefined) delete process.env[key]; else process.env[key] = previous[index];
   }));
   const outfile = join(dir, 'real-fast-mode.mjs');
-  await build({
-    entryPoints: ['extensions/piop-openai-fast-mode/src/index.ts'], outfile,
-    bundle: true, format: 'esm', platform: 'node', target: 'node22', logLevel: 'silent',
-    plugins: [storageSchemaImports(), { name: 'external-pi-sdk', setup(builder) {
-      builder.onResolve({ filter: /^@earendil-works\/pi-coding-agent$/ }, () => ({ path: 'sdk', namespace: 'fixture' }));
-      builder.onLoad({ filter: /.*/, namespace: 'fixture' }, () => ({ contents: `export const getAgentDir = () => ${JSON.stringify(dir)};` }));
-    } }],
-  });
+  await writeFile(outfile, await compiledFastMode());
   const { createPiFastModeExtension } = await import(pathToFileURL(outfile));
   const register = () => createPiFastModeExtension({ extensionDir: dir, agentDir: dir })(pi);
   register();

@@ -1,9 +1,41 @@
-import { registerHooks } from 'node:module';
-import { readFileSync } from 'node:fs';
+import { createRequire, registerHooks } from 'node:module';
+import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { createHash, randomUUID } from 'node:crypto';
+import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { transformSync } from '@babel/core';
-import solid from 'babel-preset-solid';
-import typescript from '@babel/preset-typescript';
+const require = createRequire(import.meta.url);
+let compiler, cacheDirectory;
+
+function converted(source, filename) {
+  const root = process.env.PIOP_TEST_TRANSFORM_CACHE_DIR;
+  if (!root) return transform(source, filename).code;
+  if (!cacheDirectory) {
+    const version = createHash('sha256').update(readFileSync(new URL('./register-typescript.mjs', import.meta.url)))
+      .update(readFileSync(new URL('../bun.lock', import.meta.url))).update(process.version).digest('hex');
+    cacheDirectory = join(root, version);
+    mkdirSync(cacheDirectory, { recursive: true, mode: 0o700 });
+  }
+  const key = createHash('sha256').update(filename).update('\0').update(source).digest('hex');
+  const target = join(cacheDirectory, key + '.js');
+  try { return readFileSync(target, 'utf8'); }
+  catch (error) { if (error.code !== 'ENOENT') throw error; }
+  const code = transform(source, filename).code;
+  const temporary = target + '.' + randomUUID();
+  try {
+    writeFileSync(temporary, code, { flag: 'wx', mode: 0o600 });
+    renameSync(temporary, target);
+  } finally { rmSync(temporary, { force: true }); }
+  return code;
+}
+
+function transform(source, filename) {
+  compiler ??= {
+    transformSync: require('@babel/core').transformSync,
+    solid: require('babel-preset-solid'),
+    typescript: require('@babel/preset-typescript').default,
+  };
+  return compiler.transformSync(source, { filename, babelrc: false, configFile: false, presets: [[compiler.solid, { generate: 'dom', hydratable: false, delegateEvents: false }], [compiler.typescript, { onlyRemoveTypeImports: false }]], sourceMaps: 'inline' });
+}
 
 registerHooks({
   load(url, context, nextLoad) {
@@ -15,9 +47,9 @@ registerHooks({
 
     if (/\.tsx?$/.test(pathname) && !pathname.includes('/node_modules/')) {
       const source = readFileSync(new URL(url), 'utf8').replaceAll('import.meta.env', '({ MODE: globalThis.__PIOP_TEST_MODE__ ?? "test", DEV: globalThis.__PIOP_TEST_MODE__ === "development" })').replaceAll('import.meta.hot', 'globalThis.__PIOP_TEST_HOT__');
-      const result = transformSync(source, { filename: fileURLToPath(url), babelrc: false, configFile: false, presets: [[solid, { generate: 'dom', hydratable: false, delegateEvents: false }], [typescript, { onlyRemoveTypeImports: false }]], sourceMaps: 'inline' });
+      const code = converted(source, fileURLToPath(url));
 
-      return { format: 'module', source: result.code, shortCircuit: true };
+      return { format: 'module', source: code, shortCircuit: true };
     }
 
     const result = nextLoad(url, context);

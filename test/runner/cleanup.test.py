@@ -32,15 +32,21 @@ time.sleep(300)
 class Cleanup(unittest.TestCase):
     def test_disk_storage_and_shared_cache(self):
         script = '''
-import json, os, pathlib, tempfile
+import json, os, pathlib, subprocess, tempfile
 folder = pathlib.Path(tempfile.mkdtemp())
 assert not str(folder).startswith(('/tmp/', '/run/')), folder
 assert folder.parent == pathlib.Path(os.environ['CACHE_DIRECTORY'])
 cache = pathlib.Path(os.environ['BUN_INSTALL_CACHE_DIR'])
 transpiler = pathlib.Path(os.environ['BUN_RUNTIME_TRANSPILER_CACHE_PATH'])
+transforms = pathlib.Path(os.environ['PIOP_TEST_TRANSFORM_CACHE_DIR'])
+compiled = pathlib.Path(os.environ['NODE_COMPILE_CACHE'])
 assert not cache.is_relative_to(folder.parent)
 assert not transpiler.is_relative_to(folder.parent)
-print(json.dumps([str(folder), str(cache), str(transpiler)]))
+assert not transforms.is_relative_to(folder.parent)
+assert not compiled.is_relative_to(folder.parent)
+active = subprocess.check_output(['node', '--input-type=module', '-e', "import { getCompileCacheDir } from 'node:module'; console.log(getCompileCacheDir());"], text=True).strip()
+assert pathlib.Path(active).is_relative_to(compiled), active
+print(json.dumps([str(folder), str(cache), str(transpiler), str(transforms), str(compiled)]))
 '''
         paths = []
         for _ in range(2):

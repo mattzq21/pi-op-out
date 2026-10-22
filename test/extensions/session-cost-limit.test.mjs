@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { execFileSync } from 'node:child_process';
 import { existsSync, readFileSync, realpathSync } from 'node:fs';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { pathToFileURL } from 'node:url';
@@ -27,13 +27,18 @@ const { SessionManager } = await sdk('session-manager');
 const { ModelRuntime } = await sdk('model-runtime');
 const usage = total => ({ input: 1, output: 1, cacheRead: 0, cacheWrite: 0, totalTokens: 2, cost: { input: 0, output: total, cacheRead: 0, cacheWrite: 0, total } });
 
+let bundle;
+function compiledCost() {
+  return bundle ??= build({ stdin: { contents: 'export { default } from "./daemon/plugins/cost/index.ts"; export { default as hooksExtended } from "./daemon/resources/hooks-extended/index.ts";', resolveDir: process.cwd() }, write: false, bundle: true, format: 'esm', platform: 'node', logLevel: 'silent' }).then(result => result.outputFiles[0].contents);
+}
+
 async function fixture(t, { toolCost = 0, responseCost = 1, toolCalls = false, dir, sessionManager, extraExtensions = [], keepRecentTokens = 20000 } = {}) {
   if (!dir) {
     dir = await mkdtemp(join(tmpdir(), 'piop-cost-test-'));
     t.after(() => rm(dir, { recursive: true, force: true }));
   }
   const outfile = join(dir, 'cost.mjs');
-  await build({ stdin: { contents: 'export { default } from "./daemon/plugins/cost/index.ts"; export { default as hooksExtended } from "./daemon/resources/hooks-extended/index.ts";', resolveDir: process.cwd() }, outfile, bundle: true, format: 'esm', platform: 'node', logLevel: 'silent' });
+  await writeFile(outfile, await compiledCost());
   const { default: costLimit, hooksExtended } = await import(pathToFileURL(outfile));
   const settingsManager = SettingsManager.inMemory({ compaction: { enabled: false, keepRecentTokens }, retry: { enabled: false } });
   const modelRuntime = await ModelRuntime.create({ authPath: join(dir, 'auth.json'), modelsPath: null, refreshOnCreate: false });

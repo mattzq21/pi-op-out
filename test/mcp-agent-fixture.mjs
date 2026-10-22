@@ -3,6 +3,17 @@ import { writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
+let bundle;
+function compiledBridge() {
+  return bundle ??= build({
+    entryPoints: ['daemon/resources/mcp-bridge.ts'], write: false,
+    bundle: true, format: 'esm', platform: 'node', target: 'node22', logLevel: 'silent',
+    plugins: [{ name: 'external-mcp-sdk', setup(builder) {
+      builder.onResolve({ filter: /^@earendil-works\/pi-coding-agent$/ }, () => ({ path: './external-mcp-sdk.mjs', external: true }));
+    } }],
+  }).then(result => result.outputFiles[0].contents);
+}
+
 export async function installAgentMcp({ dir, pi, tools, servers: catalog = {}, start, registrationError, deferToolsUntilStart = false }) {
   const sdkPath = join(dir, 'external-mcp-sdk.mjs');
   await writeFile(sdkPath, 'let setup; export const setSetup = value => { setup = value; }; export const createMcpExtension = () => pi => setup(pi);');
@@ -37,13 +48,7 @@ export async function installAgentMcp({ dir, pi, tools, servers: catalog = {}, s
     pi.setActiveTools(pi.getActiveTools().filter(name => !removed.has(name)));
   };
   const outfile = join(dir, 'real-agent-mcp.mjs');
-  await build({
-    entryPoints: ['daemon/resources/mcp-bridge.ts'], outfile,
-    bundle: true, format: 'esm', platform: 'node', target: 'node22', logLevel: 'silent',
-    plugins: [{ name: 'external-mcp-sdk', setup(builder) {
-      builder.onResolve({ filter: /^@earendil-works\/pi-coding-agent$/ }, () => ({ path: sdkPath, external: true }));
-    } }],
-  });
+  await writeFile(outfile, await compiledBridge());
   const { default: register } = await import(pathToFileURL(outfile));
   register(pi);
   return { registered };

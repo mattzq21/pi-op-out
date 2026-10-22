@@ -7,10 +7,10 @@ import { storageSchemaImports } from '../scripts/storage-schema-plugin.mjs';
 
 const root = new URL('../extensions/piop-define-agents/', import.meta.url);
 const entries = ['index', 'prompts', 'extension-loader'];
-let outputs;
+const outputs = new Map();
 
 async function bundled(filesystemAdapter = false) {
-  if (!filesystemAdapter && outputs) return outputs;
+  if (outputs.has(filesystemAdapter)) return outputs.get(filesystemAdapter);
   const result = build({
     entryPoints: Object.fromEntries(entries.map(name => [name, fileURLToPath(new URL(`${name}.ts`, root))])),
     bundle: true, platform: 'node', format: 'esm', target: 'node22', write: false, outdir: '/agent-fixture',
@@ -22,7 +22,7 @@ async function bundled(filesystemAdapter = false) {
     }] : [])], external: ['@earendil-works/*'], logLevel: 'silent',
   }).then(result => result.outputFiles.map(file => [file.path.replace('/agent-fixture/', '').replace(/\.js$/, '.mjs'), file.contents]));
 
-  if (!filesystemAdapter) outputs = result;
+  outputs.set(filesystemAdapter, result);
   return result;
 }
 

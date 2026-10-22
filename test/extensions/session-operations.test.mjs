@@ -13,6 +13,17 @@ const home = await mkdtemp(join(tmpdir(), 'piop-session-operations-home-'));
 process.env.HOME = home;
 after(() => rm(home, { recursive: true, force: true }));
 
+let compiled;
+function compiledControls() {
+  return compiled ??= build({
+    stdin: { contents: 'export { default as controls } from "./daemon/resources/piop-controls/index.ts";', resolveDir: process.cwd() },
+    bundle: true, write: false, platform: 'node', format: 'esm', target: 'node22', logLevel: 'silent',
+    external: ['@earendil-works/*'],
+    banner: { js: "import { createRequire as __fixtureRequire } from 'node:module'; const require = __fixtureRequire(import.meta.url);" },
+    plugins: [storageSchemaImports()],
+  });
+}
+
 async function fixture(t) {
   const dir = await mkdtemp(join(home, 'storage-'));
   process.env.PIOP_STORAGE_DIRECTORY = basename(dir);
@@ -47,13 +58,7 @@ async function fixture(t) {
     }
   });
 
-  const bundle = await build({
-    stdin: { contents: 'export { default as controls } from "./daemon/resources/piop-controls/index.ts";', resolveDir: process.cwd() },
-    bundle: true, write: false, platform: 'node', format: 'esm', target: 'node22', logLevel: 'silent',
-    external: ['@earendil-works/*'],
-    banner: { js: "import { createRequire as __fixtureRequire } from 'node:module'; const require = __fixtureRequire(import.meta.url);" },
-    plugins: [storageSchemaImports()],
-  });
+  const bundle = await compiledControls();
 
   await writeFile(join(dir, 'broker.mjs'), bundle.outputFiles[0].contents);
   const module = await import(pathToFileURL(join(dir, 'broker.mjs')));

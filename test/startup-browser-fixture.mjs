@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { after } from 'node:test';
 import { readFile } from 'node:fs/promises';
 import { basename, resolve } from 'node:path';
 import { createServer } from 'node:http';
@@ -9,6 +10,25 @@ import typescript from '@babel/preset-typescript';
 import { chromium } from 'playwright-core';
 
 const bundles = new Map();
+const browsers = new Map();
+after(async () => {
+  const results = await Promise.allSettled([...browsers.values()].map(async pending => (await pending).close()));
+  browsers.clear();
+  const failures = results.filter(result => result.status === 'rejected').map(result => result.reason);
+  if (failures.length) throw new AggregateError(failures, 'Could not close test browsers');
+});
+
+function testBrowser(executablePath, args) {
+  const key = JSON.stringify([executablePath, args]);
+  if (!browsers.has(key)) {
+    const pending = chromium.launch({ executablePath, headless: true, args }).catch(error => {
+      browsers.delete(key);
+      throw error;
+    });
+    browsers.set(key, pending);
+  }
+  return browsers.get(key);
+}
 
 function browserFiles(entryPoint, mode) {
   const key = JSON.stringify([resolve(entryPoint), mode]);
@@ -42,11 +62,11 @@ export async function startupPage(t, mode, { entryPoint = 'test/fixtures/startup
     res.setHeader('Content-Type', /\.m?js$/.test(req.url ?? '') ? 'text/javascript' : req.url?.endsWith('.css') ? 'text/css' : req.url?.endsWith('.wasm') ? 'application/wasm' : 'text/html');
     res.end(files.get(req.url) ?? '<html><link rel="stylesheet" href="/startup.css"><div id="root"></div><aside id="sample"></aside><script type="module" src="/startup.js"></script></html>');
   });
-  let browser;
-  t.after(async () => { await browser?.close(); await new Promise(resolve => server.close(resolve)); });
+  let context;
+  t.after(async () => { try { await context?.close(); } finally { await new Promise(resolve => server.close(resolve)); } });
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
-  browser = await chromium.launch({ executablePath: executablePath ?? process.env.CHROME_BIN ?? chromium.executablePath(), headless: true, args: browserArgs });
-  const context = await browser.newContext();
+  const browser = await testBrowser(executablePath ?? process.env.CHROME_BIN ?? chromium.executablePath(), browserArgs);
+  context = await browser.newContext();
   const page = await context.newPage();
   page.setDefaultTimeout(10000);
   const errors = [];

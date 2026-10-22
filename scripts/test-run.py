@@ -34,7 +34,9 @@ def service(owner, started, command):
         cache = directory.parent / 'cache'
         env = {**os.environ, 'TMPDIR': str(directory),
                'BUN_INSTALL_CACHE_DIR': str(cache / 'packages'),
-               'BUN_RUNTIME_TRANSPILER_CACHE_PATH': str(cache / 'transpiled')}
+               'BUN_RUNTIME_TRANSPILER_CACHE_PATH': str(cache / 'transpiled'),
+               'PIOP_TEST_TRANSFORM_CACHE_DIR': str(cache / 'node-transformed'),
+               'NODE_COMPILE_CACHE': str(cache / 'node-compiled')}
         for key in ('BUN_INSTALL_CACHE_DIR', 'BUN_RUNTIME_TRANSPILER_CACHE_PATH'):
             Path(env[key]).mkdir(parents=True, exist_ok=True)
         child = subprocess.Popen(command, env=env)
