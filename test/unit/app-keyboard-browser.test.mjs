@@ -1,8 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { appBrowser } from '../app-browser-fixture.mjs';
-import { mkdir, writeFile } from 'node:fs/promises';
-import { join } from 'node:path';
 
 test('configured Alt shortcut opens settings while editing a message', async t => {
   const page = await appBrowser(t, { keybindings: { openSettings: 'Alt+J' } });
@@ -164,19 +162,13 @@ test('an open project dialog blocks the settings shortcut until the dialog is cl
 });
 
 async function openShell(page) {
-  const home = await page.evaluate(() => window.nativeCommand('daemon_invoke', { command: 'home_directory', args: { hostId: 'local' } }));
-  await mkdir(join(home, '.piop'), { recursive: true });
-  await writeFile(join(home, '.piop', 'models.json'), JSON.stringify({ providers: { 'offline-test': {
-    baseUrl: 'http://127.0.0.1:1/v1', api: 'openai-completions', apiKey: 'unused-test-key', models: [{ id: 'offline', name: 'Offline' }],
-  } } }));
-  await page.reload();
   const editor = page.getByRole('textbox', { name: 'Message piop', exact: true });
   await editor.waitFor();
   await page.getByRole('button', { name: 'Model', exact: true }).click();
-  await page.getByRole('option', { name: /Offline/ }).click();
+  await page.getByRole('option', { name: /scripted-model/ }).click();
   await editor.fill('Start the conversation');
   await page.keyboard.press('Enter');
-  await page.getByText('Response failed: Connection error.', { exact: true }).waitFor();
+  await page.getByText('Reply to Start the conversation', { exact: true }).waitFor();
   await page.getByRole('button', { name: 'Open terminal', exact: true }).click();
   const terminal = page.getByRole('region', { name: 'Session terminal', exact: true });
   await terminal.locator('.xterm-rows').getByText('$').waitFor();
@@ -184,7 +176,7 @@ async function openShell(page) {
 }
 
 test('Ctrl U in a focused terminal clears the shell line instead of opening settings', async t => {
-  const page = await appBrowser(t, { keybindings: { openSettings: 'Ctrl+U' } });
+  const page = await appBrowser(t, { model: 'echo', keybindings: { openSettings: 'Ctrl+U' } });
   const { editor, terminal } = await openShell(page);
   await terminal.locator('.xterm-screen').click();
   await page.keyboard.type('echo discarded');

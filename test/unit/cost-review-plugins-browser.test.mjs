@@ -31,5 +31,4 @@ for (const width of [1280, 412]) test(`cost and review commands retain their ful
   await review.getByRole('button', { name: 'Close split pane' }).click();
   await review.waitFor({ state: 'detached' });
   await page.getByRole('button', { name: 'Stop piop', exact: true }).waitFor({ state: 'detached', timeout: 30000 });
-  await page.close();
 });
