@@ -52,67 +52,25 @@ test('shortcut recording captures a function key and asks for a modifier before 
   assert.equal(await page.getByRole('button', { name: 'Save changes', exact: true }).first().isDisabled(), true);
 });
 
-test('shortcut recording ignores Meta alone', async t => {
+test('shortcut recording leaves unsupported input unchanged', async t => {
   const { page, input } = await recorder(t);
-  await page.keyboard.press('Meta');
-  assert.equal(await input.inputValue(), 'Ctrl+N');
-  assert.equal(await page.getByRole('button', { name: 'Save changes', exact: true }).first().isDisabled(), true);
-});
-
-test('shortcut recording ignores Control alone', async t => {
-  const { page, input } = await recorder(t);
-  await page.keyboard.press('Control');
-  assert.equal(await input.inputValue(), 'Ctrl+N');
-  assert.equal(await page.getByRole('button', { name: 'Save changes', exact: true }).first().isDisabled(), true);
-});
-
-test('shortcut recording ignores Alt alone', async t => {
-  const { page, input } = await recorder(t);
-  await page.keyboard.press('Alt');
-  assert.equal(await input.inputValue(), 'Ctrl+N');
-  assert.equal(await page.getByRole('button', { name: 'Save changes', exact: true }).first().isDisabled(), true);
-});
-
-test('shortcut recording ignores Shift alone', async t => {
-  const { page, input } = await recorder(t);
-  await page.keyboard.press('Shift');
-  assert.equal(await input.inputValue(), 'Ctrl+N');
-  assert.equal(await page.getByRole('button', { name: 'Save changes', exact: true }).first().isDisabled(), true);
-});
-
-test('shortcut recording leaves ordinary typing unchanged', async t => {
-  const { page, input } = await recorder(t);
-  await page.keyboard.press('a');
-  assert.equal(await input.inputValue(), 'Ctrl+N');
-  assert.equal(await page.getByRole('button', { name: 'Save changes', exact: true }).first().isDisabled(), true);
-});
-
-test('shortcut recording ignores Tab alone', async t => {
-  const { page, input } = await recorder(t);
-  await page.keyboard.press('Tab');
-  assert.equal(await input.inputValue(), 'Ctrl+N');
-  assert.equal(await page.getByRole('button', { name: 'Save changes', exact: true }).first().isDisabled(), true);
-});
-
-test('shortcut recording ignores Escape', async t => {
-  const { page, input } = await recorder(t);
-  await page.keyboard.press('Escape');
-  assert.equal(await input.inputValue(), 'Ctrl+N');
-  assert.equal(await page.getByRole('button', { name: 'Save changes', exact: true }).first().isDisabled(), true);
-});
-
-test('shortcut recording ignores emoji typing', async t => {
-  const { page, input } = await recorder(t);
-  await page.keyboard.insertText('🦆');
-  assert.equal(await input.inputValue(), 'Ctrl+N');
-  assert.equal(await page.getByRole('button', { name: 'Save changes', exact: true }).first().isDisabled(), true);
-});
-
-test('shortcut recording ignores shifted typing', async t => {
-  const { page, input } = await recorder(t);
-  await page.keyboard.press('Shift+a');
-  assert.equal(await input.inputValue(), 'Ctrl+N');
-  assert.equal(await page.getByRole('button', { name: 'Save changes', exact: true }).first().isDisabled(), true);
+  for (const [name, key, text] of [
+    ['ignores Meta alone', 'Meta'],
+    ['ignores Control alone', 'Control'],
+    ['ignores Alt alone', 'Alt'],
+    ['ignores Shift alone', 'Shift'],
+    ['leaves ordinary typing unchanged', 'a'],
+    ['ignores Tab alone', 'Tab'],
+    ['ignores Escape', 'Escape'],
+    ['ignores emoji typing', null, '🦆'],
+    ['ignores shifted typing', 'Shift+a'],
+  ]) await t.test(`shortcut recording ${name}`, async () => {
+    await input.focus();
+    if (text) await page.keyboard.insertText(text);
+    else await page.keyboard.press(key);
+    assert.equal(await input.inputValue(), 'Ctrl+N');
+    assert.equal(await page.getByRole('button', { name: 'Save changes', exact: true }).first().isDisabled(), true);
+  });
 });
 
 test('shortcut recording detects collisions, allows clearing, and restores defaults', async t => {
