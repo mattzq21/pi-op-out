@@ -64,7 +64,7 @@ export function registerGoals(pi: ExtensionAPI): { session: GoalSession; core: G
     assertAvailable(ctx);
     starting = true;
     pendingStart = true;
-    pi.sendUserMessage("Continue working toward the active conversation goal.", { deliverAs: "followUp" });
+    pi.sendUserMessage("Continue working toward the current conversation goal.", { deliverAs: "followUp" });
   };
 
   const changed = (ctx: ExtensionContext, prompt = goalChangedPrompt(state.goal)) => {
@@ -112,7 +112,7 @@ export function registerGoals(pi: ExtensionAPI): { session: GoalSession; core: G
   pi.on("input", (event, ctx) => coordination.run(ctx, (): InputEventResult | void => {
     starting = false;
 
-    if (event.source === "extension" && pendingStart && event.text === "Continue working toward the active conversation goal.") {
+    if (event.source === "extension" && pendingStart && event.text === "Continue working toward the current conversation goal.") {
       pendingStart = false;
 
       if (state.goal?.status !== "active") return { action: "handled" };

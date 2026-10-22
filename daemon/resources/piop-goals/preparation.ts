@@ -19,7 +19,7 @@ export type GoalCore = {
 };
 
 /** The user message that starts work toward a prepared objective. */
-export const objectivePrompt = (objective: string) => `Work toward the conversation goal:\n\n${objective}`;
+export const objectivePrompt = (objective: string) => `Current goal set:\n\n${objective}`;
 
 function snapshot(ctx: ExtensionContext, core: GoalCore) {
   const goal = core.state.goal;
