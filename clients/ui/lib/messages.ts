@@ -6,7 +6,7 @@ import { pauseStateSchema, promptContextSchema, resumeContentSchema, resumeMarke
 const SYSTEM_MESSAGES = new Set(["pi-desktop-mcp-status"]);
 
 export function isContextInjection(message: { role?: string; customType?: string }) {
-  return message.role === "custom" && (pluginMessageMetadata(message.customType)?.contextInjection ?? (!SYSTEM_MESSAGES.has(message.customType ?? "") && !["piop-subagent-result", "piop-goal-summary", "piop-session-operation"].includes(message.customType ?? "")));
+  return message.role === "custom" && (pluginMessageMetadata(message.customType)?.contextInjection ?? (!SYSTEM_MESSAGES.has(message.customType ?? "") && !["piop-subagent-result", "piop-session-operation"].includes(message.customType ?? "")));
 }
 
 export type PiEntry = { type: string; id: string; parentId: string | null; message?: Partial<WireMessage>; customType?: string; details?: unknown; content?: ChatMessage["content"]; data?: unknown; display?: boolean; timestamp?: string; tokensBefore?: number };

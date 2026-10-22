@@ -23,10 +23,9 @@ test('an active goal stops with the daemon and goes on when its chat is opened a
     expect(turns).toBeGreaterThanOrEqual(atStop + 2);
     const command = (value: any) => second!.invoke('pi_command', { runtimeId: 'reopened', command: value });
     await command({ type: 'follow_up', message: '/goal pause', goalSubmissionId: crypto.randomUUID() });
-    await command({ type: 'follow_up', message: '/goal', goalSubmissionId: crypto.randomUUID() });
-    let summary = '';
-    for (let tries = 0; !summary.startsWith('Goal paused') && tries < 50; tries++, await Bun.sleep(100)) summary = (await command({ type: 'get_entries' })).entries.filter((entry: any) => entry.customType === 'piop-goal-summary').map((entry: any) => text(entry)).at(-1) ?? '';
-    expect(summary).toStartWith('Goal paused\n\nGoal across a restart');
+    let goal: any = null;
+    for (let tries = 0; goal?.status !== 'paused' && tries < 50; tries++, await Bun.sleep(100)) { const status = second.events.filter((event: any) => event.payload?.runtimeId === 'reopened' && event.payload.event?.statusKey === 'piop-goal').at(-1)?.payload.event.statusText; goal = status ? JSON.parse(status) : null; }
+    expect(goal).toMatchObject({ status: 'paused', objective: 'Goal across a restart' });
   } finally { await second?.stop(); await agents.model.close(); }
 }, 90000);
 

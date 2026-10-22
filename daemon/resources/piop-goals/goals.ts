@@ -173,7 +173,6 @@ export function registerGoals(pi: ExtensionAPI): { session: GoalSession; core: G
   });
 
   const session: GoalSession = {
-    report: ctx => commit(ctx, () => undefined, false),
     pause: ctx => commit(ctx, () => { state.setStatus(ctx, "paused"); changed(ctx, null); }),
     resume: ctx => commit(ctx, () => { assertAvailable(ctx); state.setStatus(ctx, "active"); resumedInTask = !ctx.isIdle(); changed(ctx, null); }),
     clear: ctx => commit(ctx, () => { state.clear(ctx); changed(ctx); }),
@@ -193,7 +192,7 @@ export function registerGoals(pi: ExtensionAPI): { session: GoalSession; core: G
     if (state.goal?.status === "active" && !allowed()) state.setStatus(ctx, "paused");
     // Earlier continuation prompts give way to the current one. Change notices stay where they happened, as system messages.
     const messages = event.messages.flatMap(message => message.role !== "custom" ? [message]
-      : ["piop-goal-summary", GOAL_CONTEXT].includes(message.customType) ? []
+      : message.customType === GOAL_CONTEXT ? []
       : message.customType === GOAL_CHANGE ? [{ role: "system" as const, content: message.content, timestamp: message.timestamp }]
       : [message]);
 

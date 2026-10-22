@@ -5,7 +5,6 @@ export type GoalView = { id: string; sessionId: string; objective: string; statu
 export type GoalReport = { goal: GoalView | null };
 
 export interface GoalSession {
-  report(ctx: ExtensionContext): Promise<GoalReport>;
   pause(ctx: ExtensionContext): Promise<GoalReport>;
   resume(ctx: ExtensionContext): Promise<GoalReport>;
   clear(ctx: ExtensionContext): Promise<GoalReport>;

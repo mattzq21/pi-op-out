@@ -3,9 +3,9 @@ import { Type as Schema, type Static } from "typebox";
 import { Parse } from "typebox/value";
 import { goalImagesSchema, goalPreparationView } from "../piop-storage/goal-files.ts";
 import { objectivePrompt, prepareGoal, resumePreparedGoal, type GoalCore } from "./preparation.ts";
-import type { GoalReport, GoalSession } from "./interface.ts";
+import type { GoalSession } from "./interface.ts";
 
-const USAGE = "/goal [objective|edit|pause|resume|clear]";
+const USAGE = "/goal <objective|edit|pause|resume|clear>";
 
 const promptSchema = Schema.Object({ message: Schema.String(), goalSubmissionId: Schema.Optional(Schema.String()), images: Schema.Optional(goalImagesSchema), prepared: Schema.Optional(Schema.Boolean()) });
 
@@ -23,20 +23,14 @@ function promptGoalObjective(message: string, images: Static<typeof goalImagesSc
   return goalObjective(message) ?? (images.length && message.trim() === "/goal" ? "" : undefined);
 }
 
-function goalSummary({ goal }: GoalReport) {
-  if (!goal) return `No goal is set. ${USAGE}`;
-  return `Goal ${goal.status}\n\n${goal.objective}\n\n${USAGE}`;
-}
-
-/** Runs /goal arguments other than a new objective. */
-async function runGoalCommand(value: string, ctx: ExtensionContext, session: GoalSession, core: GoalCore): Promise<GoalReport | undefined> {
+/** Runs /goal arguments other than a new objective. /goal without an argument is an error. */
+async function runGoalCommand(value: string, ctx: ExtensionContext, session: GoalSession, core: GoalCore) {
   switch (value) {
-    case "": return session.report(ctx);
-    case "edit": return (await prepareGoal(value, ctx, core, true))?.report;
-    case "clear": return session.clear(ctx);
-    case "pause": return session.pause(ctx);
-    case "resume": return session.resume(ctx);
-    default: throw new Error(USAGE);
+    case "edit": await prepareGoal(value, ctx, core, true); return;
+    case "clear": await session.clear(ctx); return;
+    case "pause": await session.pause(ctx); return;
+    case "resume": await session.resume(ctx); return;
+    default: throw new Error(`Write an objective or an action after /goal. Usage: ${USAGE}`);
   }
 }
 
@@ -87,7 +81,7 @@ export function registerGoalCommands(pi: ExtensionAPI, session: GoalSession, cor
   });
   pi.registerCommand("goal", {
     description: `Persistent conversation goal. ${USAGE}`,
-    getArgumentCompletions: prefix => [...(prefix.trim() ? [] : [{ value: "", label: "[objective|edit|pause|resume|clear]" }]), ...["edit", "pause", "resume", "clear"].flatMap(value => value.startsWith(prefix.trim()) ? [{ value, label: value }] : [])],
+    getArgumentCompletions: prefix => [...(prefix.trim() ? [] : [{ value: "", label: "<objective|edit|pause|resume|clear>" }]), ...["edit", "pause", "resume", "clear"].flatMap(value => value.startsWith(prefix.trim()) ? [{ value, label: value }] : [])],
     async handler(args, ctx) {
       try {
         const value = args.trim();
@@ -98,10 +92,7 @@ export function registerGoalCommands(pi: ExtensionAPI, session: GoalSession, cor
           return;
         }
 
-        const report = await runGoalCommand(value, ctx, session, core);
-
-        // Only /goal without arguments shows the goal card. Pause, resume and edit show in the goal bar.
-        if (report && value === "") pi.sendMessage({ customType: "piop-goal-summary", content: goalSummary(report), display: true }, { triggerTurn: false });
+        await runGoalCommand(value, ctx, session, core);
       } catch (error) { ctx.ui.notify(error instanceof Error ? error.message : String(error), "error"); }
     },
   });

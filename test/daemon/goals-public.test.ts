@@ -10,6 +10,9 @@ afterAll(async () => { await agents?.close(); });
 const send = (chat: Awaited<ReturnType<typeof agents.rootChat>>, message: string) => chat.command({ type: 'follow_up', message, goalSubmissionId: crypto.randomUUID() });
 const goalRoles: string[] = [];
 const turnsSoFar = (messages: any[]) => messages.filter(message => message.role === 'assistant' && text(message) === 'Still writing.').length;
+/** The goal that the chat shows last, from the goal bar status. */
+const shownGoal = (runtimeId: string) => { const status = agents.daemon.events.filter(event => event.payload?.runtimeId === runtimeId && event.payload.event?.method === 'setStatus' && event.payload.event.statusKey === 'piop-goal').at(-1)?.payload.event.statusText; return status ? JSON.parse(status) : null; };
+const untilGoal = async (runtimeId: string, status: string) => { for (let tries = 0; shownGoal(runtimeId)?.status !== status && tries < 50; tries++) await Bun.sleep(100); return shownGoal(runtimeId); };
 const notices = (runtimeId: string) => agents.daemon.events.filter(event => event.payload?.runtimeId === runtimeId && event.payload.event?.method === 'notify').map(event => event.payload.event.message);
 
 test('a goal needs the goal tools, and without them the user is told how to enable them', async () => {
@@ -73,13 +76,6 @@ test('Stop during a goal ends its turns at once and marks it paused, and resumin
   agents.scripts.set('Never-ending goal', async () => { calls++; await Bun.sleep(300); return { text: 'Working.' }; });
   const chat = await agents.rootChat();
   const entries = async () => (await chat.command({ type: 'get_entries' })).entries;
-  const summary = async () => {
-    const before = (await entries()).filter((entry: any) => entry.customType === 'piop-goal-summary').length;
-    await send(chat, '/goal');
-    let latest: any[] = [];
-    for (let tries = 0; latest.length <= before && tries < 50; tries++, await Bun.sleep(100)) latest = (await entries()).filter((entry: any) => entry.customType === 'piop-goal-summary');
-    return text(latest.at(-1));
-  };
   const working = (history: any[]) => history.filter(message => text(message) === 'Working.').length;
   await send(chat, '/goal Never-ending goal');
   await chat.until(history => working(history) >= 2);
@@ -87,12 +83,12 @@ test('Stop during a goal ends its turns at once and marks it paused, and resumin
   const stoppedAt = calls;
   await Bun.sleep(2000);
   expect(calls).toBe(stoppedAt);
-  expect(await summary()).toStartWith('Goal paused\n\nNever-ending goal');
+  expect(await untilGoal(chat.runtimeId, 'paused')).toMatchObject({ status: 'paused', objective: 'Never-ending goal' });
   const done = working(await chat.history());
   await send(chat, '/goal resume');
   await chat.until(history => working(history) >= done + 2);
   await send(chat, '/goal pause');
-  expect(await summary()).toStartWith('Goal paused');
+  expect((await untilGoal(chat.runtimeId, 'paused')).status).toBe('paused');
 }, 120000);
 
 
@@ -127,10 +123,7 @@ test('a goal whose model keeps refusing for a rate limit is retried, then its go
   await Bun.sleep(3000);
   expect(calls).toBe(4);
   expect((await chat.command({ type: 'get_state' })).isPaused).toBe(true);
-  await send(chat, '/goal');
-  let summary = '';
-  for (let tries = 0; !summary && tries < 50; tries++, await Bun.sleep(100)) summary = (await entries()).filter((entry: any) => entry.customType === 'piop-goal-summary').map((entry: any) => text(entry)).at(-1) ?? '';
-  expect(summary).toStartWith('Goal paused\n\nBeat the rate limit');
+  expect(await untilGoal(chat.runtimeId, 'paused')).toMatchObject({ status: 'paused', objective: 'Beat the rate limit' });
   expect(calls).toBe(4);
 }, 120000);
 
