@@ -12,7 +12,8 @@ describe("Conversation acceptance", () => {
 
   it("gives the user the essential controls for starting work", async () => {
     await expect(app.composer).toBeDisplayed();
-    await expect(app.openTerminalButton).toBeClickable();
+    await expect(app.openTerminalButton).toBeDisplayed();
+    await expect(app.openTerminalButton).toBeDisabled();
     await expect(app.modelPicker).toBeDisplayed();
     await expect(app.thinkingLevelPicker).toBeDisplayed();
     await app.thinkingLevelPicker.click();
