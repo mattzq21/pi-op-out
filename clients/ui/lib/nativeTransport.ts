@@ -85,6 +85,8 @@ export class NativeTransport {
   private archived = false;
   isArchived() { return this.archived; }
   ownsConversation() { return this.owns; }
+  /** True while Pi runs for this view. A detached view has no Pi to read from. */
+  isConnected() { return this.running; }
   hasConfirmedOwnership() { return this.running && this.owns; }
   async takeOwnership() {
     if (this.readOnly) throw new Error("This view is read-only");

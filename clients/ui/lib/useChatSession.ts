@@ -40,7 +40,7 @@ function messagePositions(messages: ChatMessage[]) {
   };
 }
 
-export function useChatSession(transport: Accessor<Pick<NativeTransport, "command" | "subscribe"> & Partial<Pick<NativeTransport, "ownsConversation" | "promptControls" | "currentHostId">>>, initialState: Accessor<AgentState> = () => emptyState, options: { poll?: boolean } = {}) {
+export function useChatSession(transport: Accessor<Pick<NativeTransport, "command" | "subscribe"> & Partial<Pick<NativeTransport, "ownsConversation" | "isConnected" | "promptControls" | "currentHostId">>>, initialState: Accessor<AgentState> = () => emptyState, options: { poll?: boolean } = {}) {
   const runtime = createMemo(() => {
     const current = transport();
 
@@ -57,7 +57,7 @@ export function useChatSession(transport: Accessor<Pick<NativeTransport, "comman
   };
 }
 
-function createChatSession(transport: Accessor<Pick<NativeTransport, "command" | "subscribe"> & Partial<Pick<NativeTransport, "ownsConversation" | "promptControls" | "currentHostId">>>, initialState: Accessor<AgentState>, options: { poll?: boolean }) {
+function createChatSession(transport: Accessor<Pick<NativeTransport, "command" | "subscribe"> & Partial<Pick<NativeTransport, "ownsConversation" | "isConnected" | "promptControls" | "currentHostId">>>, initialState: Accessor<AgentState>, options: { poll?: boolean }) {
   const session = useSessionMemory(() => (transport()), () => (initialState()));
   const owner = createRef<ReturnType<typeof transport> | undefined>(transport());
   const loading = new AbortController();
@@ -340,7 +340,10 @@ function createChatSession(transport: Accessor<Pick<NativeTransport, "command" |
 
     if (options.poll === false) return;
     let stopped = false;
-    let viewing = capturedTransport.ownsConversation?.() === false;
+    setRefreshError(undefined);
+    // Only a running Pi that another view owns needs reading. A detached view has no Pi, so reading it fails until the view connects again.
+    const viewable = () => capturedTransport.ownsConversation?.() === false && capturedTransport.isConnected?.() !== false;
+    let viewing = viewable();
     let pending = false;
     let dirty = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
@@ -356,9 +359,9 @@ function createChatSession(transport: Accessor<Pick<NativeTransport, "command" |
     };
 
     const unsubscribe = capturedTransport.subscribe((event) => {
-      if (event.type === "ownership_acquired" || event.type === "disconnected") { viewing = false; clearTimeout(timer); return; }
+      if (event.type === "ownership_acquired" || event.type === "disconnected") { viewing = false; clearTimeout(timer); if (event.type === "ownership_acquired") setRefreshError(undefined); return; }
 
-      if (event.type === "ownership_lost") viewing = true;
+      if (event.type === "ownership_lost") viewing = viewable();
 
       if (viewing && ["ownership_lost", "connection_restored", "session_info_changed", "session_switched", "settings_applied", "entry_appended", "message_end", "agent_settled", "runtime_presence"].includes(event.type)) void update();
     });
