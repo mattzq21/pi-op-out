@@ -375,8 +375,28 @@ function associateQueuedContext(messages: ChatMessage[]) {
   });
 }
 
+/**
+ * The transcript messages. A sent message waits outside the transcript while the daemon has not queued it and an earlier user message has no reply yet.
+ * Pi delivers it only after that reply, so it must not show directly under the earlier message. The queue above the message box shows it once the daemon queued it.
+ */
+function transcriptMessages(messages: ChatMessage[]) {
+  let waiting = false;
+
+  return messages.filter(message => {
+    if (message.submissionId && message.piopQueueId) return false;
+
+    if (message.role === "assistant") waiting = false;
+    else if (message.role === "user") {
+      if (message.submissionId && waiting) return false;
+      waiting = true;
+    }
+
+    return true;
+  });
+}
+
 function groupTurns(messages: ChatMessage[], previous: ConversationGroup[] = []) {
-  messages = associateQueuedContext(messages.filter(message => !message.submissionId || !message.piopQueueId));
+  messages = associateQueuedContext(transcriptMessages(messages));
   const prefix = reusableTurns(messages, previous);
 
   if (prefix.start === messages.length && prefix.count === previous.length) return previous;
