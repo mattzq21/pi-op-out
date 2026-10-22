@@ -338,6 +338,7 @@ export const startTemporaryConversation = async (responses: BackendResponses) =>
   }, runtimeId);
   await app.composer.waitForEnabled();
   await updateBackendResponse("pi_command:get_state", { model: { provider: "e2e", id: "acceptance" }, thinkingLevel: "high", isStreaming: false, sessionId, messageCount: 1, pendingMessageCount: 0 });
+  await updateBackendResponse("pi_command:get_entries", { entries: [{ type: "message", id: "initial-prompt", parentId: null, message: { role: "user", content: [{ type: "text", text: "Start the test conversation" }], timestamp: Date.now() } }], leafId: "initial-prompt" });
   await updateBackendResponse("list_sessions", [{ id: sessionId, path: `${cwd}/session.jsonl`, name, project: "Terminal project", preview: "Start the test conversation", cwd, hostId: "local", messageCount: 1 }]);
   await browser.execute(async () => {
     await window.__TAURI_INTERNALS__.invoke("plugin:event|emit", { event: "pi://sessions-changed", payload: {} });
