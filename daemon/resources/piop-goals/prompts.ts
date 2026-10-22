@@ -14,14 +14,11 @@ function render(template: string, goal: Goal) {
 
 export const goalPrompt = (goal: Goal) => render(continuation, goal);
 
-export const goalInactivePrompt = (goal: Goal) => `The saved goal is inactive (${goal.status}). Other user requests are independent of it.`;
-
 export const goalSetPrompt = "Work toward the current goal. Completion criteria are expected to be met.";
 
-export const goalResumedPrompt = "The user resumed the thread goal. Continue working toward it.";
-
+/** The notice for a running agent after the user changed the goal, or null when the change needs none: a paused or complete goal gets no notice. */
 export function goalChangedPrompt(goal: Goal | null) {
   if (!goal) return "The goal has been cleared. Follow next instructions, the goal is in the past now.";
 
-  return goal.status === "active" ? render(objectiveUpdated, goal) : goalInactivePrompt(goal);
+  return goal.status === "active" ? render(objectiveUpdated, goal) : null;
 }

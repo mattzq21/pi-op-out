@@ -13,7 +13,7 @@ export type GoalCore = {
   /** Throws when the conversation is not saved or the goal tools are disabled. */
   assertAvailable(ctx: ExtensionContext): void;
   /** Saves and tells a running agent about the change. */
-  changed(ctx: ExtensionContext, prompt?: string): void;
+  changed(ctx: ExtensionContext, prompt?: string | null): void;
   /** Starts goal work when the goal is active and Pi is idle. */
   start(ctx: ExtensionContext): void;
 };

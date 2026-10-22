@@ -46,7 +46,7 @@ test('pausing a goal stops the extra turns, and resuming starts them again', asy
   let finish = false;
   const noticeRoles: string[] = [];
   agents.scripts.set('Keep polishing', async messages => {
-    noticeRoles.splice(0, noticeRoles.length, ...messages.filter((message: any) => /The saved goal is inactive|The user resumed the thread goal/.test(text(message))).map((message: any) => message.role));
+    noticeRoles.splice(0, noticeRoles.length, ...messages.filter((message: any) => /The saved goal is inactive|The user resumed the thread goal|Continue working toward the current thread goal/.test(text(message))).map((message: any) => message.role));
     await Bun.sleep(200);
     if (called(messages, 'update_goal_status')) return { text: 'Polished.' };
     return finish ? { tool: 'update_goal_status', arguments: { status: 'complete' } } : { text: 'Polishing.' };
@@ -63,9 +63,8 @@ test('pausing a goal stops the extra turns, and resuming starts them again', asy
   finish = true;
   await send(chat, '/goal resume');
   await chat.until(history => text(history.at(-1)) === 'Polished.');
-  // Change notices reach the model as system messages.
-  expect(noticeRoles.length).toBeGreaterThan(0);
-  expect(new Set(noticeRoles)).toEqual(new Set(['system']));
+  // Pause and resume add no notices; the resumed goal gets only its continuation prompt, as a user message.
+  expect(new Set(noticeRoles)).toEqual(new Set(['user']));
 }, 120000);
 
 test('Stop during a goal ends its turns at once and marks it paused, and resuming the goal starts them again', async () => {

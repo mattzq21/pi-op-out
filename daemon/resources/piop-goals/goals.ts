@@ -2,7 +2,7 @@ import { extendedHooks } from "../hooks-extended/interface.ts";
 import { restoreGoalAttachments } from "../piop-storage/goal-files.ts";
 import type { ExtensionAPI, ExtensionContext, AgentBeforeSettleEventResult, InputEventResult } from "@earendil-works/pi-coding-agent";
 import { GoalState, GOAL_CONTEXT } from "./state.ts";
-import { goalChangedPrompt, goalPrompt, goalResumedPrompt } from "./prompts.ts";
+import { goalChangedPrompt, goalPrompt } from "./prompts.ts";
 import { GoalCoordination } from "./coordination.ts";
 import type { GoalSession } from "./interface.ts";
 import type { GoalCore } from "./preparation.ts";
@@ -73,11 +73,15 @@ export function registerGoals(pi: ExtensionAPI): { session: GoalSession; core: G
     pi.sendUserMessage(CONTINUE_TEXT, { deliverAs: "followUp" });
   };
 
-  const changed = (ctx: ExtensionContext, prompt = goalChangedPrompt(state.goal)) => {
+  /** Saves the goal. A running agent gets the notice, unless it is null. */
+  const changed = (ctx: ExtensionContext, prompt: string | null = goalChangedPrompt(state.goal)) => {
     state.save(ctx);
 
-    if (!ctx.isIdle()) steering(prompt);
+    if (prompt !== null && !ctx.isIdle()) steering(prompt);
   };
+
+  /** True from a resume during a task until that task ends. The continuation prompt waits until then. */
+  let resumedInTask = false;
 
   const core: GoalCore = { state, coordination, assertAvailable, changed, start };
 
@@ -131,6 +135,7 @@ export function registerGoals(pi: ExtensionAPI): { session: GoalSession; core: G
   }));
 
   pi.on("agent_before_settle", (event, ctx) => coordination.run(ctx, (): AgentBeforeSettleEventResult | void => {
+    resumedInTask = false;
     if (event.outcome !== "completed") {
       if (state.goal?.status === "active") state.setStatus(ctx, "paused");
       if (event.outcome === "error") pause(ctx);
@@ -150,7 +155,7 @@ export function registerGoals(pi: ExtensionAPI): { session: GoalSession; core: G
     return { continue: true, entries: [{ type: "custom_message", customType: GOAL_CONTEXT, content: goalPrompt(state.goal), display: false, details: { goalId: state.goal.id } }] };
   }));
   pi.on("agent_settled", (_event, ctx) => coordination.run(ctx, () => {
-    starting = false;
+    starting = false; resumedInTask = false;
 
     if (state.goal?.status === "active" && runSignal?.aborted) state.setStatus(ctx, "paused");
     state.save(ctx);
@@ -169,8 +174,8 @@ export function registerGoals(pi: ExtensionAPI): { session: GoalSession; core: G
 
   const session: GoalSession = {
     report: ctx => commit(ctx, () => undefined, false),
-    pause: ctx => commit(ctx, () => { state.setStatus(ctx, "paused"); changed(ctx); }),
-    resume: ctx => commit(ctx, () => { assertAvailable(ctx); state.setStatus(ctx, "active"); changed(ctx, goalResumedPrompt); }),
+    pause: ctx => commit(ctx, () => { state.setStatus(ctx, "paused"); changed(ctx, null); }),
+    resume: ctx => commit(ctx, () => { assertAvailable(ctx); state.setStatus(ctx, "active"); resumedInTask = !ctx.isIdle(); changed(ctx, null); }),
     clear: ctx => commit(ctx, () => { state.clear(ctx); changed(ctx); }),
     pauseWithSession: ctx => coordination.run(ctx, () => {
       if (state.goal?.status === "active") state.setStatus(ctx, "paused");
@@ -192,10 +197,9 @@ export function registerGoals(pi: ExtensionAPI): { session: GoalSession; core: G
       : message.customType === GOAL_CHANGE ? [{ role: "system" as const, content: message.content, timestamp: message.timestamp }]
       : [message]);
 
+    // An active goal adds its continuation prompt as a user message. A paused or complete goal adds nothing.
     if (state.goal) {
-      const content = currentPrompt(state);
-      // The continuation prompt of an active goal reaches the model as a user message; other goal states as a system message.
-      messages.push(state.goal.status === "active" ? { role: "custom", customType: GOAL_CONTEXT, content, display: false, timestamp: Date.now() } : { role: "system", content, timestamp: Date.now() });
+      if (state.goal.status === "active" && !resumedInTask) messages.push({ role: "custom", customType: GOAL_CONTEXT, content: goalPrompt(state.goal), display: false, timestamp: Date.now() });
     } else if (event.messages.some(message => message.role === "custom" && message.customType === GOAL_CONTEXT)) {
       messages.push({ role: "system", content: goalChangedPrompt(null), timestamp: Date.now() });
     }
@@ -209,12 +213,4 @@ export function registerGoals(pi: ExtensionAPI): { session: GoalSession; core: G
   }));
 
   return { session, core };
-}
-
-function currentPrompt(state: GoalState) {
-  const goal = state.require();
-
-  if (goal.status === "active") return goalPrompt(goal);
-
-  return goalChangedPrompt(goal);
 }
