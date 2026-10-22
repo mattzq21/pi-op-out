@@ -12,8 +12,8 @@ test('stopping a response keeps its finished text, never runs its unfinished too
     ? { text: 'Continued.' } : { text: 'Here is the first part.', stall: 'bash' });
   const chat = await agents.rootChat();
   await chat.command({ type: 'prompt', message: 'Write and then run' });
-  for (let tries = 0; agents.model.requests.length === 0 && tries < 100; tries++) await Bun.sleep(100);
-  await Bun.sleep(1000);
+  await agents.daemon.waitEvent('pi://event', payload => payload.runtimeId === chat.runtimeId
+    && payload.event?.type === 'message_update' && payload.event.assistantMessageEvent?.type === 'toolcall_delta');
   await chat.command({ type: 'abort' });
   const stopped = await chat.until(history => history.some(message => message.role === 'assistant' && message.stopReason === 'aborted'));
   const answer = stopped.findLast(message => message.role === 'assistant');
