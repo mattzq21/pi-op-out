@@ -46,45 +46,7 @@ function requireDelegation(ctx: ExtensionContext) {
   return scope;
 }
 
-type SubagentTask = { task: string; name: string; agent?: string; sessionId?: string; fork_turns?: string };
-
-function validateFork(task: SubagentTask) {
-  const forkTurns = task.fork_turns ?? "none";
-
-  if (forkTurns !== "none" && forkTurns !== "all" && !/^[1-9]\d*$/.test(forkTurns)) throw new Error("fork_turns must be none, all, or a positive turn count");
-
-  return forkTurns;
-}
-
-function completedHistory(ctx: ExtensionContext) {
-  const branch = structuredClone(ctx.sessionManager.getBranch()).filter(entry => entry.type !== "custom");
-  const pending = new Map<string, number>();
-  branch.forEach((entry, index) => {
-    if (entry.type !== "message") return;
-
-    if (entry.message.role === "assistant") {
-      for (const part of entry.message.content) if (part.type === "toolCall") pending.set(part.id, index);
-    }
-
-    if (entry.message.role === "toolResult") pending.delete(entry.message.toolCallId);
-  });
-
-  return branch.slice(0, Math.min(branch.length, ...pending.values()));
-}
-
-function inheritedHistory(ctx: ExtensionContext, task: SubagentTask) {
-  const forkTurns = validateFork(task);
-  let retained = forkTurns === "none" ? [] : completedHistory(ctx);
-
-  if (task.agent) retained = retained.filter(entry => entry.type !== "model_change" && entry.type !== "thinking_level_change");
-
-  if (forkTurns !== "all" && forkTurns !== "none") {
-    const starts = retained.flatMap((entry, index) => entry.type === "message" && entry.message.role === "user" ? [index] : []);
-    retained = retained.slice(starts[Math.max(0, starts.length - Number(forkTurns))] ?? 0);
-  }
-
-  return retained;
-}
+type SubagentTask = { task: string; name: string; agent?: string; sessionId?: string };
 
 function resumeSubagent(runs: SubagentRun[], parentSessionId: string, task: SubagentTask, toolCallId: string): SubagentRun {
   if (task.agent) throw new Error("A resumed subagent keeps its original agent profile");
@@ -117,13 +79,9 @@ async function createSubagent(pi: ExtensionAPI, ctx: ExtensionContext, task: Sub
   const sessionId = await reserveSessionId();
   const timestamp = new Date().toISOString();
   const sessionPath = join(ctx.sessionManager.getSessionDir(), `${timestamp.replace(/[:.]/g, "-")}_${sessionId}.jsonl`);
-  let retained = inheritedHistory(ctx, task);
   const workspace = { cwd: ctx.cwd };
   const run: SubagentRun = { version: 1, toolCallId, parentSessionId, sessionId, sessionPath, hostId: currentHost(), name: task.name, task: task.task, taskPath: `${scope.taskPath}/${task.name}`, agent: profile.active, status: "running", startedAt: Date.now(), runId: randomUUID(), submission: "prepared", ...workspace };
   let parentId: string | null = null;
-  retained = retained.map(item => { const next = { ...item, parentId }; parentId = next.id;
-
-  return next; });
 
   const entry = (value: CustomEntryDraft | { type: "session_info"; name: string }) => { const id = randomUUID(); const result = { ...value, id, parentId, timestamp }; parentId = id;
 
@@ -131,7 +89,6 @@ async function createSubagent(pi: ExtensionAPI, ctx: ExtensionContext, task: Sub
 
   try { await writeSessionFile(sessionPath, [
     { type: "session", version: header.version, id: sessionId, timestamp, cwd: workspace.cwd },
-    ...retained,
     entry({ type: "session_info", name: `Subagent: ${task.name}` }),
     entry({ type: "custom", customType: SUBAGENT_PARENT, data: { version: 1, sessionId, hostId: currentHost(), parentSessionId, parentHostId: currentHost(), parentSessionPath: ctx.sessionManager.getSessionFile(), toolCallId, task: task.task, depth: scope.depth + 1, taskPath: run.taskPath, parentTaskPath: scope.taskPath, max_subagents: subagentLimits(pi, ctx).max_sub_subagents } }),
     entry({ type: "custom", customType: "pi-define-agents-state", data: profile }),
@@ -313,9 +270,9 @@ export function registerSubagents(pi: ExtensionAPI, mailbox = registerSubagentMa
   pi.on("session_shutdown", unsubscribeTools);
   pi.registerTool({
     name: "spawn_agent", label: "Spawn agent", exposure: "model-only",
-    description: "Start one background child and return its session ID and agent profile. Use list_agent_profiles to discover exact agent names. Passing agent uses that profile's prompts, model, effort, tools, skills, extensions and MCP configuration; omitting it inherits the caller's profile and overrides. Profile choice is independent of fork_turns: none (default), all, or a positive number of recent user turns. Concurrent children are limited by the caller's max_subagents (default eight). A child is also capped by its parent's max_sub_subagents (default eight); zero disables delegation at that level. Delegation has at most two levels: root → child → grandchild; grandchildren cannot delegate. Children share the caller's working directory. Final results start a new parent turn immediately if idle, or after the parent agent settles. Use followup_task for more work and send_message for updates. Finish your current run when waiting for mailbox delivery. Children are cancelled on parent close/switch and time out after ten minutes.",
-    parameters: Type.Object({ task_name: Type.String({ pattern: "^[a-z][a-z0-9_]{0,63}$" }), message: Type.String({ minLength: 1, maxLength: 100_000 }), agent: Type.Optional(Type.String({ minLength: 1, description: "Exact configured profile name from list_agent_profiles; omit to inherit the caller" })), fork_turns: Type.Optional(Type.String()) }),
-    async execute(id, params, signal, _update, ctx) { return start({ name: params.task_name, task: params.message, agent: params.agent, fork_turns: params.fork_turns }, id, ctx, signal); },
+    description: "Start one background child and return its session ID and agent profile. Use list_agent_profiles to discover exact agent names. Passing agent uses that profile's prompts, model, effort, tools, skills, extensions and MCP configuration; omitting it inherits the caller's profile and overrides. A child starts with a fresh history and none of the caller's context, so give it everything it needs in message. Concurrent children are limited by the caller's max_subagents (default eight). A child is also capped by its parent's max_sub_subagents (default eight); zero disables delegation at that level. Delegation has at most two levels: root → child → grandchild; grandchildren cannot delegate. Children share the caller's working directory. Final results start a new parent turn immediately if idle, or after the parent agent settles. Use followup_task for more work and send_message for updates. Finish your current run when waiting for mailbox delivery. Children are cancelled on parent close/switch and time out after ten minutes.",
+    parameters: Type.Object({ task_name: Type.String({ pattern: "^[a-z][a-z0-9_]{0,63}$" }), message: Type.String({ minLength: 1, maxLength: 100_000 }), agent: Type.Optional(Type.String({ minLength: 1, description: "Exact configured profile name from list_agent_profiles; omit to inherit the caller" })) }),
+    async execute(id, params, signal, _update, ctx) { return start({ name: params.task_name, task: params.message, agent: params.agent }, id, ctx, signal); },
   });
   pi.registerTool({
     name: "list_agents", label: "List child agents", exposure: "model-only", description: "List this parent's saved child sessions, task paths and current status. Returned paths (such as /root/child/grandchild), local task names and session IDs address children. Independent chats are listed by list_threads.",
