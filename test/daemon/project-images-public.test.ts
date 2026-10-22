@@ -47,7 +47,7 @@ test('files that are not images, or are over 10 MB, are refused with the reason'
 // A real 1x1 PNG image.
 const PNG = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==';
 
-test('an image read that failed for a missing, folder or non-image path succeeds with the exact bytes once the path holds an image', async () => {
+test.concurrent('an image read that failed for a missing, folder or non-image path succeeds with the exact bytes once the path holds an image', async () => {
   const daemon = await startDaemon();
   try {
     const cwd = join(daemon.home, 'project');
@@ -64,7 +64,7 @@ test('an image read that failed for a missing, folder or non-image path succeeds
   } finally { await daemon.stop(); }
 }, 60_000);
 
-test('an image read rejects a sibling folder that shares the project name prefix and a link that leaves the project, and accepts a link to an image in the project', async () => {
+test.concurrent('an image read rejects a sibling folder that shares the project name prefix and a link that leaves the project, and accepts a link to an image in the project', async () => {
   const daemon = await startDaemon();
   try {
     const cwd = join(daemon.home, 'project');
@@ -83,7 +83,7 @@ test('an image read rejects a sibling folder that shares the project name prefix
   } finally { await daemon.stop(); }
 }, 60_000);
 
-test('an image read accepts a PNG of exactly 10 MiB with all its bytes, rejects one byte more, and then reads a small image at the same path', async () => {
+test.concurrent('an image read accepts a PNG of exactly 10 MiB with all its bytes, rejects one byte more, and then reads a small image at the same path', async () => {
   const daemon = await startDaemon();
   try {
     const cwd = join(daemon.home, 'project');
@@ -108,7 +108,7 @@ test('an image read accepts a PNG of exactly 10 MiB with all its bytes, rejects 
   } finally { await daemon.stop(); }
 }, 60_000);
 
-test('after the project folder is gone, an image read still gives goal attachment images from active and archived storage, and rejects other stored images', async () => {
+test.concurrent('after the project folder is gone, an image read still gives goal attachment images from active and archived storage, and rejects other stored images', async () => {
   const daemon = await startDaemon();
   try {
     const cwd = join(daemon.home, 'deleted-project');
@@ -133,7 +133,7 @@ test('after the project folder is gone, an image read still gives goal attachmen
   } finally { await daemon.stop(); }
 }, 60_000);
 
-test('an image read for a remote machine whose project folder is gone gives a goal attachment image from the storage of that machine, which the local machine rejects', async () => {
+test.concurrent('an image read for a remote machine whose project folder is gone gives a goal attachment image from the storage of that machine, which the local machine rejects', async () => {
   const daemon = await startDaemon();
   try {
     const server = await remoteMachine(daemon, 'server', 'Server');

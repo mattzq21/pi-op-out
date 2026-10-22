@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { startDaemon } from './harness';
 
-test('temporary folder cleanup keeps a referenced directory until the saved chat moves away', async () => {
+test.concurrent('temporary folder cleanup keeps a referenced directory until the saved chat moves away', async () => {
   const daemon = await startDaemon();
   try {
     const temporary = await daemon.invoke('create_temporary_chat', { hostId: 'local' });
@@ -30,7 +30,7 @@ test('temporary folder cleanup keeps a referenced directory until the saved chat
   } finally { await daemon.stop(); }
 }, 60_000);
 
-test('closing an unused temporary chat keeps files of a saved chat working in its subfolder', async () => {
+test.concurrent('closing an unused temporary chat keeps files of a saved chat working in its subfolder', async () => {
   const daemon = await startDaemon();
   const runtimeId = 'unused-temporary';
   try {
@@ -40,7 +40,7 @@ test('closing an unused temporary chat keeps files of a saved chat working in it
     writeFileSync(join(project, 'notes.txt'), 'saved work');
     const saved = JSON.parse(execFileSync('node', [fileURLToPath(new URL('../fixtures/publish-chat.mjs', import.meta.url))], {
       encoding: 'utf8', timeout: 30_000,
-      input: JSON.stringify({ home: daemon.home, cwd: project, content: '' }),
+      input: JSON.stringify({ home: daemon.home, cwd: project, content: JSON.stringify({ type: 'message', id: 'request', parentId: null, message: { role: 'user', content: 'Saved work', timestamp: 1 } }) + '\n' }),
     }));
     await daemon.invoke('start_pi', { runtimeId, clientId: 'temporary-client', cwd: temporary.cwd, sessionId: temporary.sessionId });
     await daemon.waitEvent('pi://event', packet => packet.runtimeId === runtimeId
@@ -53,7 +53,7 @@ test('closing an unused temporary chat keeps files of a saved chat working in it
   } finally { await daemon.stop(); }
 }, 60_000);
 
-test('closing an unused temporary chat keeps the subfolder of an archived chat restorable', async () => {
+test.concurrent('closing an unused temporary chat keeps the subfolder of an archived chat restorable', async () => {
   const daemon = await startDaemon();
   const runtimeId = 'unused-temporary-archived';
   try {
@@ -92,13 +92,13 @@ test('closing an unused temporary chat keeps the subfolder of an archived chat r
   } finally { await daemon.stop(); }
 }, 60_000);
 
-test('temporary folder cleanup waits for a damaged chat header to be repaired', async () => {
+test.concurrent('temporary folder cleanup waits for a damaged chat header to be repaired', async () => {
   const daemon = await startDaemon();
   try {
     const temporary = await daemon.invoke('create_temporary_chat', { hostId: 'local' });
     const saved = JSON.parse(execFileSync('node', [fileURLToPath(new URL('../fixtures/publish-chat.mjs', import.meta.url))], {
       encoding: 'utf8', timeout: 30_000,
-      input: JSON.stringify({ home: daemon.home, cwd: daemon.home, content: '' }),
+      input: JSON.stringify({ home: daemon.home, cwd: daemon.home, content: JSON.stringify({ type: 'message', id: 'request', parentId: null, message: { role: 'user', content: 'Saved work', timestamp: 1 } }) + '\n' }),
     }));
     const original = readFileSync(saved.path, 'utf8');
     writeFileSync(saved.path, 'damaged header\n');

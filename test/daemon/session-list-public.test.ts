@@ -10,7 +10,7 @@ function publicChat(home: string, content: string): { id: string; path: string }
   }));
 }
 
-test('session summaries identify the host despite conflicting transcript fields', async () => {
+test.concurrent('session summaries identify the host despite conflicting transcript fields', async () => {
   const fresh = await startDaemon();
   try {
     const chat = publicChat(fresh.home, [
@@ -26,7 +26,7 @@ test('session summaries identify the host despite conflicting transcript fields'
   } finally { await fresh.stop(); }
 }, 60000);
 
-test('an empty session list shows a newly published chat', async () => {
+test.concurrent('an empty session list shows a newly published chat', async () => {
   const fresh = await startDaemon();
   try {
     expect(await fresh.invoke('list_sessions')).toEqual([]);
@@ -40,7 +40,7 @@ test('an empty session list shows a newly published chat', async () => {
   } finally { await fresh.stop(); }
 }, 60000);
 
-test('a chat at the filesystem root uses the default project name', async () => {
+test.concurrent('a chat at the filesystem root uses the default project name', async () => {
   const fresh = await startDaemon();
   try {
     const chat = publicChat(fresh.home, JSON.stringify({ type: 'message', message: { role: 'user', content: 'Root project' } }) + '\n');
@@ -52,7 +52,7 @@ test('a chat at the filesystem root uses the default project name', async () => 
 }, 60000);
 
 
-test('session ordering uses file change times instead of transcript fields', async () => {
+test.concurrent('session ordering uses file change times instead of transcript fields', async () => {
   const fresh = await startDaemon();
   try {
     const older = publicChat(fresh.home, JSON.stringify({ type: 'message', message: { role: 'user', content: 'Older' } }) + '\n');
@@ -66,7 +66,7 @@ test('session ordering uses file change times instead of transcript fields', asy
   } finally { await fresh.stop(); }
 }, 60000);
 
-test('a chat renamed in a running agent keeps one row with the new name for other clients and after restart, and leaves the list when archived', async () => {
+test.concurrent('a chat renamed in a running agent keeps one row with the new name for other clients and after restart, and leaves the list when archived', async () => {
   let daemon = await startDaemon();
   try {
     const chat = publicChat(daemon.home, JSON.stringify({ type: 'message', id: 'question', parentId: null, message: { role: 'user', content: 'Original question' } }) + '\n');
@@ -91,7 +91,7 @@ test('a chat renamed in a running agent keeps one row with the new name for othe
   } finally { await daemon.stop(); }
 }, 60000);
 
-test('a blank rename in a running agent is rejected, keeps the custom name for other clients, and a valid retry shows for other clients and after restart', async () => {
+test.concurrent('a blank rename in a running agent is rejected, keeps the custom name for other clients, and a valid retry shows for other clients and after restart', async () => {
   let daemon = await startDaemon();
   try {
     const chat = publicChat(daemon.home, [
