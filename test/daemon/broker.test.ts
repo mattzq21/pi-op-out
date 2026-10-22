@@ -10,7 +10,7 @@ import { fakeProgram, startDaemon, type TestDaemon } from './harness';
 function publicSession(): { id: string; path: string } {
   return JSON.parse(execFileSync('node', [fileURLToPath(new URL('../fixtures/publish-chat.mjs', import.meta.url))], {
     encoding: 'utf8', timeout: 30000,
-    input: JSON.stringify({ home: daemon.home, cwd: daemon.home, folder: 'broker', content: '' }),
+    input: JSON.stringify({ home: daemon.home, cwd: daemon.home, folder: 'broker', content: JSON.stringify({ type: 'message', id: 'request', parentId: null, message: { role: 'user', content: 'Hello', timestamp: 1 } }) + '\n' }),
   }));
 }
 
