@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { startupPage } from '../startup-browser-fixture.mjs';
+import { savePanelSize } from '../panel-size-save.mjs';
 
 const open = async t => {
   const page = await startupPage(t, 'development', { entryPoint: 'test/fixtures/terminal-panel-browser.tsx', ready: '[aria-label="Terminal panel height"]', holdStorage: false });
@@ -33,8 +34,7 @@ test('the terminal panel resizes by dragging and by keys, within its limits, and
   assert.equal(await height(page), 600, 'it never grows past the limit');
 
   await page.keyboard.press('Home');
-  await page.keyboard.press('Shift+ArrowUp');
-  await page.waitForTimeout(200);
+  await savePanelSize(page, 'pi-desktop-terminal-height', 190, () => page.keyboard.press('Shift+ArrowUp'));
   await page.reload();
   await handle(page).waitFor();
   await page.waitForFunction(() => Math.round(document.querySelector('[aria-label="Session terminal"]').getBoundingClientRect().height) === 190);
