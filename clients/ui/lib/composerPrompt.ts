@@ -71,6 +71,7 @@ const escapeAttribute = (value: string) => value.replace(/[&<>"']/g, (character)
 export function buildComposerPrompt(value: string, uploads: ComposerUpload[], commands: SlashCommand[]) {
   const prompt = expandSkillReference(expandInlineCommand(value.trim(), commands), commands);
 
+  if (prompt === "/goal") throw new Error("Write an objective or an action after /goal. Usage: /goal <objective|edit|pause|resume|clear>");
   if (/^\/goal(?:\s|$)/.test(prompt) && uploads.length) throw new Error("Goals do not accept attachments. Remove the files and images before sending.");
   const textFiles = uploads.filter((upload) => upload.kind === "text");
   const escapeFileContent = (text: string) => text.replace(/<\/file>/gi, "<\\/file>");

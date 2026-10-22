@@ -33,5 +33,6 @@ test('a goal refuses attachments, while other prompts keep their images', () => 
   const image = { kind: 'image', name: 'shot.png', image: { type: 'image', data: 'AAAA', mimeType: 'image/png' } };
   assert.throws(() => send('/goal ship the release', [image]), /Goals do not accept attachments/);
   assert.throws(() => send('ship it /goal', [image]), /Goals do not accept attachments/);
+  assert.throws(() => send('  /goal  ', []), /Write an objective or an action after \/goal/);
   assert.deepEqual(send('/goals are nice', [image]), { message: '/goals are nice', images: [image.image] });
 });
