@@ -2,6 +2,7 @@ import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { GoalState, Goal } from "./state.ts";
 import { goalImagesSchema, loadMaterializedGoal, materializeGoal, readGoalPreparation } from "../piop-storage/goal-files.ts";
 import type { GoalCoordination } from "./coordination.ts";
+import { goalSetPrompt } from "./prompts.ts";
 import type { Static } from "typebox";
 import { randomUUID } from "node:crypto";
 
@@ -12,7 +13,7 @@ export type GoalCore = {
   /** Throws when the conversation is not saved or the goal tools are disabled. */
   assertAvailable(ctx: ExtensionContext): void;
   /** Saves and tells a running agent about the change. */
-  changed(ctx: ExtensionContext): void;
+  changed(ctx: ExtensionContext, prompt?: string): void;
   /** Starts goal work when the goal is active and Pi is idle. */
   start(ctx: ExtensionContext): void;
 };
@@ -135,9 +136,9 @@ function applyDraft(ctx: ExtensionContext, core: GoalCore, target: Goal, objecti
     goal.objective = objective;
 
     if (goal.status === "complete") core.state.setStatus(ctx, "active");
+    core.changed(ctx);
   } else {
     core.state.goal = target;
+    core.changed(ctx, goalSetPrompt);
   }
-
-  core.changed(ctx);
 }
