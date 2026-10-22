@@ -34,10 +34,18 @@ export function isResumeMessage(message: { role?: unknown; content?: unknown }, 
   return markers.has(text);
 }
 
+/** A message that starts a turn: one the user sent, or one from another agent session. */
+export const isPromptMessage = (message: ChatMessage) => message.role === "user" || (message.role === "custom" && message.customType === "piop-agent-message");
+
+/** Whether a prompt context snapshot belongs to this message. */
+export const promptContextAnchors = (message: ChatMessage, context: { userTimestamp?: number; agentNotificationId?: string }) => message.role === "user"
+  ? context.userTimestamp !== undefined && message.timestamp === context.userTimestamp
+  : context.agentNotificationId !== undefined && isPromptMessage(message) && (message.details as { notificationId?: unknown } | undefined)?.notificationId === context.agentNotificationId;
+
 function latestUser(messages: ChatMessage[]) {
   let index = messages.length - 1;
 
-  while (index >= 0 && messages[index].role !== "user") index--;
+  while (index >= 0 && !isPromptMessage(messages[index])) index--;
 
   return index;
 }
