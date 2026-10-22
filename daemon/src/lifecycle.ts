@@ -17,6 +17,7 @@ import { loadAppSettings } from './settings';
 import { prepareDefinedAgentsExtension } from './extensions';
 import { errorText } from './util/sync';
 import { shutdownHostOperations } from './host_operations';
+import { startTray } from './tray';
 
 let failureListener: ((line: string) => void) | undefined;
 
@@ -57,6 +58,7 @@ async function runBackend(): Promise<void> {
   const signalled = watchSignals(app);
   const stoppedEarly = Symbol('stopped during startup');
   const step = async (operation: () => Promise<unknown> | unknown) => { if (app.clients.closing()) throw stoppedEarly; await operation(); };
+  let removeTray = () => {};
   try {
     let settings: Awaited<ReturnType<typeof loadAppSettings>> | undefined;
     // Before the broker recovers message output, so files still held by workers of a dead daemon are free again.
@@ -69,12 +71,14 @@ async function runBackend(): Promise<void> {
     await step(() => daemonRestart.initializeCandidate(app));
     await step(() => mobile.start(app));
     await step(() => daemonRestart.ready());
+    // Quit in the tray menu stops this daemon the same way as piopd stop.
+    await step(async () => { removeTray = await startTray(() => app.clients.stop()); });
     await Promise.race([signalled.stopped, app.clients.waitForShutdown(app).catch(error => console.error('Shutdown wait failed:', error))]);
   } catch (error) {
     if (error !== stoppedEarly) throw error;
   } finally {
     // The signal handlers stay installed during shutdown, so a repeated signal cannot end the process before cleanup finishes.
-    try { await shutdownBackend(app); }
+    try { removeTray(); await shutdownBackend(app); }
     finally {
       signalled.release();
       failureListener = undefined;

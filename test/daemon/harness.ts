@@ -26,7 +26,7 @@ export function daemonExecutable(options: BuildOptions = {}): Promise<string> {
     const placeholder = 'piop-build-' + randomBytes(32).toString('hex');
     await build({
       entryPoints: [join(root, 'daemon/src/main.ts')],
-      outfile, bundle: true, platform: 'node', format: 'esm', target: 'esnext', external: ['bun', 'bun:*'],
+      outfile, bundle: true, platform: 'node', format: 'esm', target: 'esnext', external: ['bun', 'bun:*', 'x11', 'usocket'],
       banner: { js: "#!/usr/bin/env bun\nimport { createRequire as __piopCreateRequire } from 'node:module';\nconst require = __piopCreateRequire(import.meta.url);\nif (process.argv[2] === '--build-id') { process.stdout.write(" + JSON.stringify(placeholder) + " + '\\n'); process.exit(0); }" },
       define: { __PIOP_BUILD_ID__: JSON.stringify(placeholder), __PIOP_DEVELOPMENT__: JSON.stringify(development), __PIOP_PROJECT_DIR__: JSON.stringify(project) },
       keepNames: true, legalComments: 'none', logLevel: 'error', sourcemap: development ? 'inline' : false,
@@ -247,7 +247,7 @@ export async function startDaemon(options: BuildOptions & { home?: string; env?:
   mkdirSync(bin, { recursive: true });
   fakeProgram(bin, 'ssh', FAKE_SSH);
   // A daemon of a test that fails before it stops the daemon stops by itself after 5 minutes without clients.
-  const env = { ...process.env, HOME: home, PATH: bin + ':' + process.env.PATH, PIOP_MOBILE_BIND: '127.0.0.1:0', PIOP_UNUSED_STOP_MS: '300000', ...options.env };
+  const env = { ...process.env, HOME: home, PATH: bin + ':' + process.env.PATH, PIOP_MOBILE_BIND: '127.0.0.1:0', PIOP_UNUSED_STOP_MS: '300000', PIOP_DAEMON_ORIGIN: 'test', ...options.env };
   const directory = daemonDirectory(home, options);
   const daemonLog = join(directory, 'daemon.log');
   const clients: Client[] = [];

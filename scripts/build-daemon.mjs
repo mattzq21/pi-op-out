@@ -59,7 +59,7 @@ try {
     platform: 'node',
     format: 'esm',
     target: 'esnext',
-    external: ['bun', 'bun:*'],
+    external: ['bun', 'bun:*', 'x11', 'usocket'], // dbus-next loads these optional modules only for bus addresses Piop does not use.
     banner: { js: "#!/usr/bin/env bun\nimport { createRequire as __piopCreateRequire } from 'node:module';\nconst require = __piopCreateRequire(import.meta.url);\nif (process.argv[2] === '--build-id') { process.stdout.write(" + JSON.stringify(buildIdPlaceholder) + " + '\\n'); process.exit(0); }" },
     define: {
       __PIOP_BUILD_ID__: JSON.stringify(buildIdPlaceholder),
