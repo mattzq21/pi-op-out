@@ -16,6 +16,8 @@ export type GoalCore = {
   changed(ctx: ExtensionContext, prompt?: string | null): void;
   /** Starts goal work when the goal is active and Pi is idle. */
   start(ctx: ExtensionContext): void;
+  /** The edit notice when the user changed the objective after the model's last request, so the model has not seen the current objective. Else undefined. */
+  unseenEdit(): string | undefined;
 };
 
 /** The user message that starts work toward a prepared objective: the /goal command as the user wrote it. */

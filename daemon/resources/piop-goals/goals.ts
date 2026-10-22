@@ -83,7 +83,12 @@ export function registerGoals(pi: ExtensionAPI): { session: GoalSession; core: G
   /** True from a resume during a task until that task ends. The continuation prompt waits until then. */
   let resumedInTask = false;
 
-  const core: GoalCore = { state, coordination, assertAvailable, changed, start };
+  /** The objective in the continuation prompt of the model's last request. */
+  let seenObjective: string | undefined;
+
+  const unseenEdit = () => state.goal && seenObjective !== undefined && seenObjective !== state.goal.objective ? goalChangedPrompt({ ...state.goal, status: "active" }) ?? undefined : undefined;
+
+  const core: GoalCore = { state, coordination, assertAvailable, changed, start, unseenEdit };
 
   const restore = async (ctx: ExtensionContext) => {
     context = ctx; starting = false; pendingStart = false;
@@ -198,7 +203,10 @@ export function registerGoals(pi: ExtensionAPI): { session: GoalSession; core: G
 
     // An active goal adds its continuation prompt as a user message. A paused or complete goal adds nothing.
     if (state.goal) {
-      if (state.goal.status === "active" && !resumedInTask) messages.push({ role: "custom", customType: GOAL_CONTEXT, content: goalPrompt(state.goal), display: false, timestamp: Date.now() });
+      if (state.goal.status === "active" && !resumedInTask) {
+        seenObjective = state.goal.objective;
+        messages.push({ role: "custom", customType: GOAL_CONTEXT, content: goalPrompt(state.goal), display: false, timestamp: Date.now() });
+      }
     } else if (event.messages.some(message => message.role === "custom" && message.customType === GOAL_CONTEXT)) {
       messages.push({ role: "system", content: goalChangedPrompt(null), timestamp: Date.now() });
     }

@@ -26,6 +26,10 @@ export function registerGoalTools(pi: ExtensionAPI, core: GoalCore) {
     async execute(_id, params, signal, _update, ctx) {
       return core.coordination.run(ctx, () => {
       signal?.throwIfAborted(); core.assertAvailable(ctx);
+      // The model cannot complete an objective it has not seen. The error gives it the edited objective.
+      const edit = params.status === "complete" ? core.unseenEdit() : undefined;
+
+      if (edit) throw new Error(edit);
       core.state.setStatus(ctx, params.status);
 
       return result(ctx, params.status === "complete");
