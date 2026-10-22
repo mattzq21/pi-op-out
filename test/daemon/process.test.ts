@@ -34,7 +34,7 @@ setInterval(() => {}, 1 << 30);
 const state = { sessionFile, sessionId, isStreaming: false, messageCount: 0, pendingMessageCount: 0, model: null, thinkingLevel: 'medium' };
 require('node:readline').createInterface({ input: process.stdin }).on('line', line => {
   const request = JSON.parse(line);
-  process.stdout.write(JSON.stringify({ type: 'response', id: request.id, command: request.type, success: true, data: request.type === 'get_state' ? state : null }) + '\\n');
+  process.stdout.write(JSON.stringify({ type: 'response', id: request.id, command: request.type, success: true, data: request.type === 'get_state' ? state : request.type === 'get_entries' ? { entries: sessionFile ? fs.readFileSync(sessionFile, 'utf8').trim().split('\\n').filter(Boolean).map(line => JSON.parse(line)) : [] } : null }) + '\\n');
 });
 `);
 }

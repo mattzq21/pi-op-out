@@ -9,7 +9,7 @@ import { startHost, type TestHost } from './host-fixture';
 function publicSession(home: string, folder = 'host'): { id: string; path: string } {
   return JSON.parse(execFileSync('node', [fileURLToPath(new URL('../fixtures/publish-chat.mjs', import.meta.url))], {
     encoding: 'utf8', timeout: 30_000,
-    input: JSON.stringify({ home, cwd: home, folder, content: '' }),
+    input: JSON.stringify({ home, cwd: home, folder, content: JSON.stringify({ type: 'message', id: 'request', parentId: null, message: { role: 'user', content: 'Hello', timestamp: 1 } }) + '\n' }),
   }));
 }
 
@@ -74,7 +74,7 @@ require('node:readline').createInterface({ input: process.stdin }).on('line', li
     cleared = true;
     return;
   }
-  const data = request.type === 'get_state' ? state : null;
+  const data = request.type === 'get_state' ? state : request.type === 'get_entries' ? { entries: sessionFile ? fs.readFileSync(sessionFile, 'utf8').trim().split('\\n').filter(Boolean).map(line => JSON.parse(line)) : [] } : null;
   process.stdout.write(JSON.stringify({ type: 'response', id: request.id, command: request.type, success: true, data }) + '\\n');
 });
 `);

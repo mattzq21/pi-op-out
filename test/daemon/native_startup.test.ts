@@ -4,7 +4,7 @@ import { startDaemon } from './harness';
 // Real Pi, normal launch: this regression must retain the startup failure even when
 // unrelated E2E tests use pi-ready-launcher.cjs to work around the bridge race.
 for (let attempt = 1; attempt <= 3; attempt++) {
-  test(`native Pi startup answers agent configuration without a readiness workaround (${attempt}/3)`, async () => {
+  test.concurrent(`native Pi startup answers agent configuration without a readiness workaround (${attempt}/3)`, async () => {
     const daemon = await startDaemon();
     let timer: ReturnType<typeof setTimeout> | undefined;
     try {
