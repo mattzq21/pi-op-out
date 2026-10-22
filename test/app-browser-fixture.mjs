@@ -44,6 +44,7 @@ export async function appBrowser(t, { remotes = [], keybindings = {}, nativeFail
     },
   });
   t.after(async () => { page = undefined; await Promise.allSettled([...deliveries]); assert.deepEqual(errors, []); });
+  if (model) await browserPage.locator('[aria-label="Model"]:enabled').waitFor({ timeout: 30000 });
   await browserPage.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
   return browserPage;
 }
