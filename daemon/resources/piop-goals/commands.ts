@@ -42,6 +42,8 @@ async function runGoalCommand(value: string, ctx: ExtensionContext, session: Goa
 
 /** Connects the /goal command and Piop goal input requests to the goal feature. */
 export function registerGoalCommands(pi: ExtensionAPI, session: GoalSession, core: GoalCore) {
+  /** Goal messages that were prepared and may now reach the model. Each passes the input check once. */
+  const prepared = new Set<string>();
   const preparePrompt = async (message: string, ctx: ExtensionContext, submissionId?: string, images: Static<typeof goalImagesSchema> = [], saved = false) => {
     if (/^\/goal(?:\s|$)/.test(message.trimStart()) && images.length) throw new Error("Goals do not accept attachments. Remove the files and images before sending.");
     const value = promptGoalObjective(message, images);
@@ -49,11 +51,14 @@ export function registerGoalCommands(pi: ExtensionAPI, session: GoalSession, cor
     if (value === undefined && !saved) return { message };
 
     try {
-      const prepared = saved ? await resumePreparedGoal(message, ctx, core, submissionId) : await prepareGoal(value ?? "", ctx, core, false, false, submissionId, images);
+      const result = saved ? await resumePreparedGoal(message, ctx, core, submissionId) : await prepareGoal(value ?? "", ctx, core, false, false, submissionId, images);
 
-      if (!prepared) throw new Error("Goal submission cancelled. The objective was not submitted.");
+      if (!result) throw new Error("Goal submission cancelled. The objective was not submitted.");
 
-      return { message: objectivePrompt(prepared.objective), goalSubmissionId: prepared.goalSubmissionId, accept: prepared.accept };
+      const goalMessage = objectivePrompt(result.objective);
+      prepared.add(goalMessage);
+
+      return { message: goalMessage, goalSubmissionId: result.goalSubmissionId, accept: result.accept };
     } catch (error) { ctx.ui.notify(error instanceof Error ? error.message : String(error), "error"); throw error; }
   };
 
@@ -74,7 +79,7 @@ export function registerGoalCommands(pi: ExtensionAPI, session: GoalSession, cor
     })();
   });
   pi.on("input", (event, ctx) => {
-    if (goalObjective(event.text) === undefined) return;
+    if (goalObjective(event.text) === undefined || prepared.delete(event.text)) return;
 
     ctx.ui.notify("Goal input was not prepared before dispatch. Restore the objective from saved input recovery and retry.", "error");
 

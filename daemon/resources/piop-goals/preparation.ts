@@ -18,8 +18,8 @@ export type GoalCore = {
   start(ctx: ExtensionContext): void;
 };
 
-/** The user message that starts work toward a prepared objective. */
-export const objectivePrompt = (objective: string) => `Current goal set:\n\n${objective}`;
+/** The user message that starts work toward a prepared objective: the /goal command as the user wrote it. */
+export const objectivePrompt = (objective: string) => `/goal ${objective}`;
 
 function snapshot(ctx: ExtensionContext, core: GoalCore) {
   const goal = core.state.goal;

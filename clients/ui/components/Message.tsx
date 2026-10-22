@@ -29,6 +29,9 @@ function cacheTokenDigits(tokens: number) {
 }
 
 function userMessageParts(content: string) {
+  const goal = content.match(/^\/goal(?:\s+([\s\S]*))?$/);
+
+  if (goal) return { command: "goal", skills: [] satisfies string[], text: (goal[1] ?? "").trim(), literalSkill: false };
   const invocation = content.match(/^<skill\s+name="([^"]+)"\s+location="[^"]+">\nReferences are relative to [^\n]+\.\n\n[\s\S]*?<\/skill>(?:\n\n([\s\S]*))?$/i);
 
   if (!invocation) return { skills: [] satisfies string[], text: content, literalSkill: /<\/?skill\b/i.test(content) };
@@ -237,8 +240,8 @@ export function Message(componentProps: Props) {
 
     return <><article class={`message user-message${componentProps.message.deliveryBehavior === "steer" ? " steering-message" : ""}`}>
       {images().length > 0 && <div class="user-message-images"><Index each={images()}>{part => <ZoomableImage src={`data:${part().mimeType};base64,${part().data}`} alt="Sent attachment" />}</Index></div>}
-      {(parts().text || parts().skills.length > 0) && <div class="message-body">
-      {<Key each={parts().skills} by={(skill) => skill}>{(skill, _index) => <span class="skill-reference" >${skill()}</span>}</Key>}{parts().text && (parts().literalSkill ? <span class="literal-skill-content">{parts().text}</span> : <Markdown>{parts().text}</Markdown>)}
+      {(parts().text || parts().skills.length > 0 || parts().command) && <div class="message-body">
+      <Show when={parts().command}>{command => <span class="skill-reference command-reference">/{command()}</span>}</Show>{<Key each={parts().skills} by={(skill) => skill}>{(skill, _index) => <span class="skill-reference" >${skill()}</span>}</Key>}{parts().text && (parts().literalSkill ? <span class="literal-skill-content">{parts().text}</span> : <Markdown>{parts().text}</Markdown>)}
       </div>}
       <div class="message-actions">
         {sentTime() && <span class="message-time">{required(sentTime()).short}</span>}
