@@ -16,7 +16,7 @@ export const goalPrompt = (goal: Goal) => render(continuation, goal);
 
 export const goalInactivePrompt = (goal: Goal) => `The saved goal is inactive (${goal.status}). Other user requests are independent of it.`;
 
-export const goalSetPrompt = "The user set a new thread goal. It replaces any previous goal. The objective follows in the next user message.";
+export const goalSetPrompt = "Work toward the current goal. Completion criteria are expected to be met.";
 
 export const goalResumedPrompt = "The user resumed the thread goal. Continue working toward it.";
 
