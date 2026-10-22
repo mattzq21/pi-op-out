@@ -21,7 +21,7 @@ export const goalSetPrompt = "Work toward the current goal. Completion criteria 
 export const goalResumedPrompt = "The user resumed the thread goal. Continue working toward it.";
 
 export function goalChangedPrompt(goal: Goal | null) {
-  if (!goal) return "The user cleared the goal. Do not continue pursuing the removed goal automatically.";
+  if (!goal) return "The goal has been cleared. Follow next instructions, the goal is in the past now.";
 
   return goal.status === "active" ? render(objectiveUpdated, goal) : goalInactivePrompt(goal);
 }
