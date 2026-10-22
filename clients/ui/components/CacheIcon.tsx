@@ -6,7 +6,7 @@ export function CacheIcon(props: { rate: number }) {
 
   return <svg class="cache-icon" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
     <defs><clipPath id={clipId}><path d="M4 6C4 10 20 10 20 6V19C20 23 4 23 4 19Z" /></clipPath></defs>
-    <rect x="4" y={22 - coverage() * 14} width="16" height={coverage() * 14} clip-path={`url(#${clipId})`} fill="var(--accent)" fill-opacity=".3" stroke="none" />
+    <rect x="4" y={22 - coverage() * 14} width="16" height={coverage() * 14} clip-path={`url(#${clipId})`} fill="var(--accent)" fill-opacity=".75" stroke="none" />
     <ellipse cx="12" cy="6" rx="8" ry="3" />
     <path d="M4 6V19C4 23 20 23 20 19V6M4 12C4 13 5 13.5 6.5 13.8M17.5 13.8C19 13.5 20 13 20 12M4 17C4 18 5 18.5 6.5 18.8M17.5 18.8C19 18.5 20 18 20 17" />
     <g stroke="#000000" stroke-width="1.7">
