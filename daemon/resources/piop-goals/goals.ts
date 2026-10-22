@@ -73,10 +73,11 @@ export function registerGoals(pi: ExtensionAPI): { session: GoalSession; core: G
     pi.sendUserMessage(CONTINUE_TEXT, { deliverAs: "followUp" });
   };
 
-  const changed = (ctx: ExtensionContext, prompt = goalChangedPrompt(state.goal)) => {
+  /** Saves the goal. A running agent also gets the notice, unless it is null. */
+  const changed = (ctx: ExtensionContext, prompt: string | null = goalChangedPrompt(state.goal)) => {
     state.save(ctx);
 
-    if (!ctx.isIdle()) steering(prompt);
+    if (prompt !== null && !ctx.isIdle()) steering(prompt);
   };
 
   const core: GoalCore = { state, coordination, assertAvailable, changed, start };

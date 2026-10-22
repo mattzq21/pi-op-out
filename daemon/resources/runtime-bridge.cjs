@@ -280,8 +280,9 @@ async function prepareGoalPrompt(text, session, goalSubmissionId, images, prepar
   } catch (error) { throw new GoalPreparationError(error instanceof Error ? error.message : String(error)); }
 }
 
-function acceptGoalPrompt(prepared) {
-  try { prepared.accept(); }
+/** notify: the goal message waits behind a running task, so the agent gets a notice of the new goal now. */
+function acceptGoalPrompt(prepared, notify) {
+  try { prepared.accept(notify); }
   catch (error) { throw new GoalPreparationError(error instanceof Error ? error.message : String(error)); }
 }
 
@@ -291,7 +292,7 @@ function installGoalAcceptance(AgentSession) {
     AgentSession.prototype[name] = async function (...args) {
       const scope = goalPromptContext.getStore();
 
-      if (scope?.session === this) acceptGoalPrompt(scope.prepared);
+      if (scope?.session === this) acceptGoalPrompt(scope.prepared, name === "_queueFollowUp");
 
       const result = await queue.apply(this, args);
 
@@ -309,7 +310,7 @@ function installGoalAcceptance(AgentSession) {
     const preflightResult = disposition => {
       if (goal) {
         if (disposition === "handled") throw new GoalPreparationError("The prepared goal prompt was handled before submission. Restore the objective from saved input recovery.");
-        acceptGoalPrompt(prepared);
+        acceptGoalPrompt(prepared, false);
       }
 
       options?.preflightResult?.(disposition, goal ? prepared.message : undefined);
