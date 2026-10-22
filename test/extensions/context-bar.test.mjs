@@ -146,3 +146,14 @@ test('a turn started by another agent session gets its own snapshot, linked by t
   assert.equal(saved[1].agentNotificationId, 'n1');
   assert.equal(saved[1].userTimestamp, undefined);
 });
+
+test('a turn started by a subagent result gets its own snapshot, linked by the delivery', () => {
+  const chat = session();
+  chat.say('hi');
+  chat.turn();
+  chat.branch.push({ type: 'custom_message', customType: 'piop-subagent-result', content: 'Subagent finished', display: true, details: { runs: [], notificationId: 'r1' } });
+  chat.turn();
+  const saved = chat.branch.filter(entry => entry.customType === 'piop-context').map(entry => entry.data);
+  assert.equal(saved.length, 2);
+  assert.equal(saved[1].agentNotificationId, 'r1');
+});
