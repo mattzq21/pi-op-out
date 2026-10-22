@@ -10,16 +10,12 @@ beforeAll(async () => { daemon = await startDaemon(); }, 60000);
 afterAll(async () => { await daemon?.stop(); });
 
 type Chat = { id: string; path: string };
-const fixture = (name: string, input: unknown): Chat => JSON.parse(execFileSync('node', [fileURLToPath(new URL('../fixtures/' + name, import.meta.url))], { encoding: 'utf8', timeout: 60000, input: JSON.stringify(input) }));
+const fixture = (input: unknown): { root: Chat; child: Chat; grandchild: Chat; other: Chat } => JSON.parse(execFileSync('node', [fileURLToPath(new URL('../fixtures/publish-session-tree.mjs', import.meta.url))], { encoding: 'utf8', timeout: 60000, input: JSON.stringify(input) }));
 
 /** A chat with a subagent that has its own subagent, plus an unrelated chat in the same project. */
 function sessionTree(project: string) {
   const cwd = join(daemon.home, project); mkdirSync(cwd, { recursive: true });
-  const root = fixture('publish-chat.mjs', { home: daemon.home, content: JSON.stringify({ type: 'message', id: 'request', parentId: null, message: { role: 'user', content: 'Saved chat', timestamp: 1 } }) + '\n', cwd, folder: project });
-  const child = fixture('publish-subagent.mjs', { home: daemon.home, parent: root, name: 'researcher' });
-  const grandchild = fixture('publish-subagent.mjs', { home: daemon.home, parent: child, name: 'reader' });
-  const other = fixture('publish-chat.mjs', { home: daemon.home, content: JSON.stringify({ type: 'message', id: 'request', parentId: null, message: { role: 'user', content: 'Saved chat', timestamp: 1 } }) + '\n', cwd, folder: project });
-  return { root, child, grandchild, other };
+  return fixture({ home: daemon.home, cwd, folder: project });
 }
 
 const listedIds = async () => new Set((await daemon.invoke('list_sessions')).map((session: any) => session.id));
