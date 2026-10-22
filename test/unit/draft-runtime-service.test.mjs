@@ -6,7 +6,7 @@ import { DraftRuntime, clearDraftCatalogs } from '../../clients/ui/lib/draftRunt
 import { decodeAgentValue } from '../../clients/ui/lib/agentProtocol.ts';
 
 const agent = (name, extra = {}) => ({ name, model: '', effort: '', path_systemprompt: 'prompt.md', path_agent_prompt: '', tools: [], skills: [], mcpServers: {}, ...extra });
-const models = [{ provider: 'p', id: 'plain' }, { provider: 'p', id: 'fast' }];
+const models = [{ provider: 'p', id: 'plain' }, { provider: 'p', id: 'fast', reasoning: true }, { provider: 'p', id: 'thinker', reasoning: true }];
 const generalDefault = { agents: [agent('general', { isDefault: true, model: 'p/plain' }), agent('chosen', { model: 'p/fast', effort: 'low', fastMode: true }), agent('bare')] };
 const chosenDefault = { agents: [agent('general', { model: 'p/plain' }), agent('chosen', { isDefault: true, model: 'p/fast', effort: 'low', fastMode: true })] };
 
@@ -18,7 +18,7 @@ function hostDraft(t) {
   mockIPC(async (command, args) => {
     assert.equal(command, 'daemon_invoke');
     assert.equal(args.args.request.action, 'draft_catalog');
-    return { config: structuredClone(host.config), models, initialModel: host.initialModel ?? null, commands: [], commandDetails: [] };
+    return { config: structuredClone(host.config), models, initialModel: host.initialModel ?? null, initialThinking: host.initialThinking ?? 'medium', commands: [], commandDetails: [] };
   });
   const events = [];
   const draft = new DraftRuntime(() => 'local', event => events.push(event));
@@ -51,6 +51,20 @@ test('a default agent without its own model shows the model Pi starts with on th
   host.initialModel = 'p/fast';
   await draft.applyDefaults('medium', false);
   assert.equal((await draft.command({ type: 'get_state' })).model?.id, 'fast');
+});
+
+test('a default agent without its own effort shows the level Pi starts with, limited to what the model supports', async t => {
+  const { draft, host } = hostDraft(t);
+  host.config = { agents: [agent('general', { isDefault: true, model: 'p/plain' })] };
+  host.initialThinking = 'high';
+  await draft.applyDefaults('', false);
+  assert.equal((await draft.command({ type: 'get_state' })).thinkingLevel, 'off', 'a model without reasoning runs with thinking off');
+  host.config = { agents: [agent('general', { isDefault: true, model: 'p/thinker' })] };
+  clearDraftCatalogs();
+  await draft.applyDefaults('', false);
+  assert.equal((await draft.command({ type: 'get_state' })).thinkingLevel, 'high');
+  await draft.applyDefaults('low', false);
+  assert.equal((await draft.command({ type: 'get_state' })).thinkingLevel, 'low', 'the default thinking level from Settings comes first');
 });
 
 test('choosing an agent without its own model or effort starts the chat with the model and effort the composer shows', async t => {

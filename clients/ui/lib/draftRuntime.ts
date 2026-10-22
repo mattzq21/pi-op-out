@@ -1,4 +1,4 @@
-import { modelLevels } from "./promptControls";
+import { clampEffort, modelLevels } from "./promptControls";
 import { z } from "zod";
 import { nativeCall } from "./nativeCall";
 import { captureDaemonTransport } from "./platform";
@@ -7,7 +7,7 @@ import { modelSchema } from "./responseSchemas";
 import { encodeAgentValue, DEFINED_AGENTS_STATUS_KEY } from "./agentProtocol";
 import type { AgentState, RpcCommand, RpcEvent } from "../types";
 
-const catalogSchema = z.object({ config: agentConfigSchema, models: z.array(modelSchema), initialModel: z.string().nullable(), commands: z.array(z.string()), commandDetails: z.array(z.object({ name: z.string(), description: z.string().optional(), options: z.array(z.object({ value: z.string(), label: z.string(), description: z.string().optional() })).optional() })) });
+const catalogSchema = z.object({ config: agentConfigSchema, models: z.array(modelSchema), initialModel: z.string().nullable(), initialThinking: z.string(), commands: z.array(z.string()), commandDetails: z.array(z.object({ name: z.string(), description: z.string().optional(), options: z.array(z.object({ value: z.string(), label: z.string(), description: z.string().optional() })).optional() })) });
 
 const catalogs = new Map<string, Promise<z.infer<typeof catalogSchema>>>();
 
@@ -105,7 +105,9 @@ export class DraftRuntime {
     // An agent without its own model uses the model Pi starts with on this host.
     const name = agent.model || this.catalog?.initialModel;
     const model = this.catalog?.models.find(model => `${model.provider}/${model.id}` === name) ?? null;
-    this.state = { ...this.state, model, thinkingLevel: agent.effort || thinking };
+    // Piop starts Pi with the default thinking level from Settings when it has one; else Pi uses its own. Pi then limits the level to what the model supports.
+    const level = agent.effort || thinking || this.catalog?.initialThinking || "medium";
+    this.state = { ...this.state, model, thinkingLevel: model ? clampEffort(level, model) : "off" };
     this.fast = agent.fastMode ?? fastMode;
     this.changes.delete("set_model"); this.changes.delete("set_thinking_level");
     this.changes.set("select_agent", { type: "select_agent", agent: agent.name }); this.revision++;

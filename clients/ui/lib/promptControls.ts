@@ -13,7 +13,8 @@ export function modelLevels(model: Model) {
   return effortLevels.filter(level => model.thinkingLevelMap?.[level] !== null && (!(level === "xhigh" || level === "max") || model.thinkingLevelMap?.[level] !== undefined));
 }
 
-function clampEffort(level: string, model?: Model) {
+/** The nearest thinking level that the model supports, as Pi chooses it: the same or the next higher level, else the next lower one. */
+export function clampEffort(level: string, model?: Model) {
   if (!model) return level;
   const levels = modelLevels(model);
   const index = effortLevels.indexOf(level);
