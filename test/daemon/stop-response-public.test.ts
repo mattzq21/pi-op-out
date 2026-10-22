@@ -1,7 +1,7 @@
 import { afterAll, afterEach, beforeAll, expect, test } from 'bun:test';
 import { existsSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
-import { createServer, type Socket } from 'node:net';
+import { stoppedJob } from './stopped-job';
 import { agentDaemon, called, text } from './agent-chats';
 
 let agents: Awaited<ReturnType<typeof agentDaemon>>;
@@ -11,33 +11,6 @@ afterAll(async () => { await agents?.close(); });
 const jobs: Array<() => Promise<void>> = [];
 afterEach(async () => { for (const close of jobs.splice(0)) await close(); });
 
-async function stoppedJob(file: string) {
-  const started = Promise.withResolvers<void>();
-  const ended = Promise.withResolvers<void>();
-  const sockets = new Set<Socket>();
-  const server = createServer(socket => {
-    sockets.add(socket);
-    socket.once('data', () => started.resolve());
-    socket.once('end', () => ended.resolve());
-    socket.on('error', error => { started.reject(error); ended.reject(error); });
-  });
-  // Both promises can fail before the test starts waiting for them.
-  void started.promise.catch(() => {}); void ended.promise.catch(() => {});
-  jobs.push(async () => { for (const socket of sockets) socket.destroy(); await new Promise<void>(resolve => server.close(() => resolve())); });
-  await new Promise<void>((resolve, reject) => { server.once('error', reject); server.listen(0, '127.0.0.1', resolve); });
-  const { port } = server.address() as { port: number };
-  const within = async (promise: Promise<void>, description: string) => {
-    let timer: ReturnType<typeof setTimeout>;
-    try { await Promise.race([promise, new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new Error(description)), 5000); })]); }
-    finally { clearTimeout(timer!); }
-  };
-  return {
-    // The shell and sleep both hold the connection. It ends only after both release it.
-    command: `exec 3<>/dev/tcp/127.0.0.1/${port}; sleep 300 & child=$!; printf ready >&3; wait "$child"; echo done > ${file}`,
-    started: () => within(started.promise, 'The shell command did not start'),
-    stopped: () => within(ended.promise, 'The shell or its child is still running'),
-  };
-}
 
 test('stopping a response keeps its finished text, never runs its unfinished tool call, and the next turn knows it was stopped', async () => {
   agents.scripts.set('Write and then run', messages => messages.some((message: any) => message.role === 'user' && text(message) === 'Go on')
@@ -60,7 +33,7 @@ test('stopping a response keeps its finished text, never runs its unfinished too
 }, 60000);
 
 test('pausing while a command runs ends the command, and resuming tells the agent the command was cut off and the run was paused', async () => {
-  const job = await stoppedJob('finished.txt');
+  const job = await stoppedJob('finished.txt', jobs);
   agents.scripts.set('Run the slow job', messages => called(messages, 'bash') ? { text: 'Checked the job.' } : { tool: 'bash', arguments: { command: job.command } });
   const chat = await agents.rootChat();
   await chat.command({ type: 'prompt', message: 'Run the slow job' });
@@ -80,7 +53,7 @@ test('pausing while a command runs ends the command, and resuming tells the agen
 }, 60000);
 
 test('archiving a chat while its agent runs a command ends the command, and the restored chat goes on from where it stopped', async () => {
-  const job = await stoppedJob('late.txt');
+  const job = await stoppedJob('late.txt', jobs);
   agents.scripts.set('Archived job', messages => called(messages, 'bash')
     ? { text: 'Seen: ' + JSON.stringify(messages.slice(1).map((message: any) => [message.role, text(message)])) }
     : { tool: 'bash', arguments: { command: job.command } });
@@ -103,7 +76,7 @@ test('archiving a chat while its agent runs a command ends the command, and the 
 }, 60000);
 
 test('moving a running chat stops its worker before changing the saved directory', async () => {
-  const job = await stoppedJob('moved-late.txt');
+  const job = await stoppedJob('moved-late.txt', jobs);
   agents.scripts.set('Busy before the move', () => ({ tool: 'bash', arguments: { command: job.command } }));
   const chat = await agents.rootChat();
   await chat.command({ type: 'prompt', message: 'Busy before the move' });
@@ -119,7 +92,7 @@ test('moving a running chat stops its worker before changing the saved directory
 }, 60000);
 
 test('deleting a running chat stops its worker before removing its saved data', async () => {
-  const job = await stoppedJob('deleted-late.txt');
+  const job = await stoppedJob('deleted-late.txt', jobs);
   agents.scripts.set('Busy before deletion', () => ({ tool: 'bash', arguments: { command: job.command } }));
   const chat = await agents.rootChat();
   await chat.command({ type: 'prompt', message: 'Busy before deletion' });

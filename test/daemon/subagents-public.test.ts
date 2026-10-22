@@ -1,12 +1,15 @@
-import { afterAll, beforeAll, expect, test } from 'bun:test';
+import { afterAll, afterEach, beforeAll, expect, test } from 'bun:test';
 import { Database } from 'bun:sqlite';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { agentDaemon, called, text } from './agent-chats';
+import { stoppedJob } from './stopped-job';
 
 let agents: Awaited<ReturnType<typeof agentDaemon>>;
-beforeAll(async () => { agents = await agentDaemon(); }, 60000);
+beforeAll(async () => { agents = await agentDaemon(); await agents.enableAgentTools('subagent'); }, 60000);
 afterAll(async () => { await agents?.close(); });
+const jobs: Array<() => Promise<void>> = [];
+afterEach(async () => { for (const close of jobs.splice(0)) await close(); });
 
 test('a child agent\'s final answer reaches its parent, which continues with it', async () => {
   agents.scripts.set('Read the README for me', messages => {
@@ -247,8 +250,8 @@ test('waiting for subagents ends early when the user sends a new message, which 
   });
   const root = await agents.rootChat();
   await root.command({ type: 'prompt', message: 'Wait for news' });
-  await root.until(history => history.some(message => message.role === 'assistant' && message.content?.some((part: any) => part.name === 'wait_agent')));
-  await Bun.sleep(2000);
+  await agents.daemon.waitEvent('pi://event', payload => payload.runtimeId === root.runtimeId
+    && payload.event?.type === 'tool_execution_start' && payload.event.toolName === 'wait_agent');
   const sent = Date.now();
   await root.command({ type: 'follow_up', message: 'Here is the news' });
   const messages = await root.until(history => text(history.at(-1)) === 'Handled: Here is the news');
@@ -257,40 +260,40 @@ test('waiting for subagents ends early when the user sends a new message, which 
 }, 120000);
 
 test('archiving a parent while its child runs a command ends the child\'s command and the child makes no more model calls', async () => {
+  const job = await stoppedJob('child-late.txt', jobs);
   agents.scripts.set('Delegate a slow job', messages => called(messages, 'spawn_agent') ? { text: 'Waiting.' } : { tool: 'spawn_agent', arguments: { task_name: 'slow', message: 'Slow child job' } });
-  agents.scripts.set('Slow child job', messages => called(messages, 'bash') ? { text: 'Child done.' } : { tool: 'bash', arguments: { command: 'sleep 3; echo done > child-late.txt' } });
+  agents.scripts.set('Slow child job', messages => called(messages, 'bash') ? { text: 'Child done.' } : { tool: 'bash', arguments: { command: job.command } });
   const root = await agents.rootChat();
   await root.command({ type: 'prompt', message: 'Delegate a slow job' });
-  const childCalls = () => agents.model.requests.filter(request => JSON.stringify(request.messages).includes('Slow child job') && text(request.messages.at(-1)).startsWith('Untrusted agent content'));
-  for (let tries = 0; !childCalls().length && tries < 200; tries++) await Bun.sleep(100);
-  await Bun.sleep(800);
+  await job.started();
   const { sessionFile } = await root.command({ type: 'get_state' });
   await agents.daemon.invoke('archive_session', { hostId: 'local', sessionPath: sessionFile, terminalIds: [], clientId: 'laptop' });
   const calls = agents.model.requests.length;
-  await Bun.sleep(4500);
+  await job.stopped();
   expect(existsSync(join(root.cwd, 'child-late.txt'))).toBe(false);
   expect(agents.model.requests.length).toBe(calls);
 }, 60000);
 
 test('stopping a parent that waits for its child stops both at once, and the parent makes no more model calls', async () => {
+  const job = await stoppedJob('patient-late.txt', jobs);
   agents.scripts.set('Wait for a slow child', messages => called(messages, 'wait_agent') ? { text: 'Kept going after stop.' }
     : called(messages, 'spawn_agent') ? { tool: 'wait_agent', arguments: { targets: ['patient'] } } : { tool: 'spawn_agent', arguments: { task_name: 'patient', message: 'Patient child job' } });
-  agents.scripts.set('Patient child job', messages => called(messages, 'bash') ? { text: 'Child done.' } : { tool: 'bash', arguments: { command: 'sleep 3; echo done > patient-late.txt' } });
+  agents.scripts.set('Patient child job', messages => called(messages, 'bash') ? { text: 'Child done.' } : { tool: 'bash', arguments: { command: job.command } });
   const root = await agents.rootChat();
   await root.command({ type: 'prompt', message: 'Wait for a slow child' });
-  const parentWaits = () => agents.model.requests.some(request => text(request.messages[1]) === 'Wait for a slow child' && called(request.messages, 'spawn_agent'));
-  const childCalls = () => agents.model.requests.filter(request => JSON.stringify(request.messages).includes('Patient child job') && text(request.messages.at(-1)).startsWith('Untrusted agent content'));
-  for (let tries = 0; !(parentWaits() && childCalls().length) && tries < 200; tries++) await Bun.sleep(100);
-  await Bun.sleep(800);
+  await job.started();
+  await agents.daemon.waitEvent('pi://event', payload => payload.runtimeId === root.runtimeId
+    && payload.event?.type === 'tool_execution_start' && payload.event.toolName === 'wait_agent');
   const calls = agents.model.requests.length;
   await root.command({ type: 'abort' });
-  await Bun.sleep(4500);
+  await job.stopped();
   expect(existsSync(join(root.cwd, 'patient-late.txt'))).toBe(false);
   expect(agents.model.requests.length).toBe(calls);
   expect((await root.history()).some(message => text(message) === 'Kept going after stop.')).toBe(false);
 }, 60000);
 
 test('pausing a parent cancels its busy child, and after resume the parent hears of it and the child takes the task again', async () => {
+  const job = await stoppedJob('paused-late.txt', jobs);
   agents.scripts.set('Pause while a child works', messages => {
     const last = text(messages.at(-1));
     const relay = last.match(/Relay: \w+/);
@@ -300,13 +303,12 @@ test('pausing a parent cancels its busy child, and after resume the parent hears
     return called(messages, 'spawn_agent') ? { text: 'Waiting.' } : { tool: 'spawn_agent', arguments: { task_name: 'patience', message: 'Paused child job' } };
   });
   agents.scripts.set('Paused child job', messages => JSON.stringify(messages).includes('Try the slow job again') ? { text: 'Relay: retried' }
-    : called(messages, 'bash') ? { text: 'Relay: first' } : { tool: 'bash', arguments: { command: 'sleep 3' } });
+    : called(messages, 'bash') ? { text: 'Relay: first' } : { tool: 'bash', arguments: { command: job.command } });
   const root = await agents.rootChat();
   await root.command({ type: 'prompt', message: 'Pause while a child works' });
-  const childStarted = () => agents.model.requests.some(request => JSON.stringify(request.messages).includes('Paused child job') && text(request.messages.at(-1)).startsWith('Untrusted agent content'));
-  for (let tries = 0; !childStarted() && tries < 200; tries++) await Bun.sleep(100);
-  await Bun.sleep(800);
+  await job.started();
   await root.command({ type: 'pause' });
+  await job.stopped();
   await root.until(history => history.at(-1)?.stopReason === 'aborted');
   await root.command({ type: 'resume' });
   const messages = await root.until(history => text(history.at(-1)) === 'Relay: retried');
@@ -315,18 +317,17 @@ test('pausing a parent cancels its busy child, and after resume the parent hears
 }, 90000);
 
 test('deleting a parent while its child runs a command stops the child and deletes both chats', async () => {
+  const job = await stoppedJob('doomed-late.txt', jobs);
   agents.scripts.set('Delegate a doomed job', messages => called(messages, 'spawn_agent') ? { text: 'Waiting.' } : { tool: 'spawn_agent', arguments: { task_name: 'doomed', message: 'Doomed child job' } });
-  agents.scripts.set('Doomed child job', messages => called(messages, 'bash') ? { text: 'Child done.' } : { tool: 'bash', arguments: { command: 'sleep 3; echo done > doomed-late.txt' } });
+  agents.scripts.set('Doomed child job', messages => called(messages, 'bash') ? { text: 'Child done.' } : { tool: 'bash', arguments: { command: job.command } });
   const root = await agents.rootChat();
   await root.command({ type: 'prompt', message: 'Delegate a doomed job' });
-  const childCalls = () => agents.model.requests.filter(request => JSON.stringify(request.messages).includes('Doomed child job') && text(request.messages.at(-1)).startsWith('Untrusted agent content'));
-  for (let tries = 0; !childCalls().length && tries < 200; tries++) await Bun.sleep(100);
-  await Bun.sleep(800);
+  await job.started();
   const { sessionFile } = await root.command({ type: 'get_state' });
   const deleted = await agents.daemon.invoke('delete_session', { hostId: 'local', sessionPath: sessionFile, clientId: 'laptop' });
   expect(deleted).toHaveLength(2);
   const calls = agents.model.requests.length;
-  await Bun.sleep(4500);
+  await job.stopped();
   expect(existsSync(join(root.cwd, 'doomed-late.txt'))).toBe(false);
   expect(agents.model.requests.length).toBe(calls);
   const listed = (await agents.daemon.invoke('list_sessions')).map((session: any) => session.path);
