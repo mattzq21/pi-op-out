@@ -153,7 +153,7 @@ function subagentReviewTask(state: SessionAgentState, delegation: ReviewDelegati
 
   const count = delegation === "auto" ? "a proportionate number of" : String(delegation);
 
-  return `${prompt}\n\nFor this review: Spawn ${count} review subagents. Split the scope between them, and report one consolidated review.`;
+  return `${prompt}\n\nSpawn ${count} review subagents. Split the scope between them, and report one consolidated review.`;
 }
 
 async function reviewProfile(pi: ExtensionAPI, agent: string) {
