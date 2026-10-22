@@ -19,7 +19,7 @@ async function archivePanel(t) {
   const archived = {};
   for (const project of ['alpha', 'beta']) {
     const cwd = join(home, 'work', project); mkdirSync(cwd, { recursive: true });
-    const chat = JSON.parse(execFileSync('node', [fileURLToPath(new URL('../fixtures/publish-chat.mjs', import.meta.url))], { encoding: 'utf8', timeout: 30000, input: JSON.stringify({ home, cwd, folder: project, content: '' }) }));
+    const chat = JSON.parse(execFileSync('node', [fileURLToPath(new URL('../fixtures/publish-chat.mjs', import.meta.url))], { encoding: 'utf8', timeout: 30000, input: JSON.stringify({ home, cwd, folder: project, content: JSON.stringify({ type: 'message', id: 'request', parentId: null, message: { role: 'user', content: 'Work on ' + project, timestamp: 1 } }) + '\n' }) }));
     await daemon.invoke('archive_session', { sessionPath: chat.path, hostId: 'local', terminalIds: [], clientId: 'archive-test' });
     archived[project] = { ...chat, cwd };
   }

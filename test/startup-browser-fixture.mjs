@@ -4,13 +4,20 @@ import { readFile } from 'node:fs/promises';
 import { basename, resolve } from 'node:path';
 import { createServer } from 'node:http';
 import { build } from 'esbuild';
-import { transformSync } from '@babel/core';
-import solid from 'babel-preset-solid';
-import typescript from '@babel/preset-typescript';
+import { createRequire } from 'node:module';
 import { chromium } from 'playwright-core';
 import { cachedTransform } from './transform-cache.mjs';
 
-const convert = cachedTransform(new URL(import.meta.url), (source, filename) => transformSync(source, { filename, babelrc: false, configFile: false, presets: [[solid, { generate: 'dom' }], [typescript, { onlyRemoveTypeImports: true }]] }).code);
+const require = createRequire(import.meta.url);
+let compiler;
+const convert = cachedTransform(new URL(import.meta.url), (source, filename) => {
+  compiler ??= {
+    transformSync: require('@babel/core').transformSync,
+    solid: require('babel-preset-solid'),
+    typescript: require('@babel/preset-typescript').default,
+  };
+  return compiler.transformSync(source, { filename, babelrc: false, configFile: false, presets: [[compiler.solid, { generate: 'dom' }], [compiler.typescript, { onlyRemoveTypeImports: true }]] }).code;
+});
 
 const bundles = new Map();
 const browsers = new Map();
