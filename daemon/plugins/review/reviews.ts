@@ -151,11 +151,9 @@ function subagentReviewTask(state: SessionAgentState, delegation: ReviewDelegati
   if (!tools.includes("subagent")) tools.push("subagent");
   state.locked = true;
 
-  const instruction = delegation === "auto"
-    ? "First assess the scope, complexity, and risk of the requested review, then choose a proportionate number of review subagents. Use only as many subagents as the task warrants, avoiding redundant work."
-    : `You must spawn exactly ${delegation} review subagents.`;
+  const count = delegation === "auto" ? "a proportionate number of" : String(delegation);
 
-  return `${prompt}\n\nFor this review: ${instruction} Spawn them using spawn_agent with unique task names. Omit agent to inherit your reviewer profile. Divide the review into complementary scopes and give each child the review instructions above, including the files and behavior to inspect. Children must not delegate further, modify files, or run tests. Launch children concurrently, with at most ${limit} active at once; for larger counts, launch the remaining children as slots become available. Collect every subagent's results before giving your final review. Verify and deduplicate their findings, then report one consolidated review.`;
+  return `${prompt}\n\nFor this review: Spawn ${count} review subagents. Split the scope between them, and report one consolidated review.`;
 }
 
 async function reviewProfile(pi: ExtensionAPI, agent: string) {

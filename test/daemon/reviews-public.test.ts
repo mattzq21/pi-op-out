@@ -45,12 +45,12 @@ test('/rs takes an optional subagent count, then an optional scope; a count that
   expect(notices()).toEqual(Array(2).fill('Usage: /rs [n] [scope] — n is a positive number of review subagents'));
   expect(uiRequests(chat.runtimeId, 'input').filter(request => request.title === '__pi_desktop_review__')).toEqual([]);
   const counted = await openReview(chat, '/rs 2 src/parser.ts');
-  expect(counted.task).toContain('You must spawn exactly 2 review subagents.');
+  expect(counted.task).toContain('Spawn 2 review subagents.');
   expect(counted.task).toContain('src/parser.ts');
   const scoped = await openReview(chat, '/rs the lexer');
-  expect(scoped.task).toContain('choose a proportionate number of review subagents');
+  expect(scoped.task).toContain('Spawn a proportionate number of review subagents.');
   expect(scoped.task).toContain('the lexer');
-  expect((await openReview(chat, '/rs')).task).toContain('choose a proportionate number of review subagents');
+  expect((await openReview(chat, '/rs')).task).toContain('Spawn a proportionate number of review subagents.');
 }, 60000);
 
 test('a review opens a separate code review chat in the side pane, linked to the conversation and kept out of the chat list', async () => {
