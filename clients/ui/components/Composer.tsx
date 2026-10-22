@@ -696,7 +696,7 @@ export function Composer(props: Props) {
     {composer().pendingMessages.length > 0 && <div class="pending-messages" aria-label="Pending messages">{<Key each={composer().pendingMessages.filter((message) => pendingMessageIdentitySchema.safeParse(message).success)} by={(message) => message.id}>{(message, _index) => {
       const text = createMemo(() => String(message().message ?? ""));
       const change = (action: import("../types").PendingMessageAction) => changePending(message().id, action);
-      const disabled = createMemo(() => (composer().controlsDisabled || changingPending() || composer().pausing));
+      const disabled = createMemo(() => (composer().controlsDisabled || changingPending() || composer().pausing || Boolean(message().sending)));
       const queue = createMemo(() => pendingQueues().get(message().behavior));
       const peerCount = createMemo(() => queue()?.length ?? 0);
       const position = createMemo(() => queue()?.positions.get(message().id) ?? -1);

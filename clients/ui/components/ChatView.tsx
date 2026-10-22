@@ -90,7 +90,10 @@ export function ChatView(props: Props & { transcriptActions?: JSXElement; follow
   const touchY = createRef<number | undefined>(undefined);
   const composerStack = createRef<HTMLDivElement>(null);
   const messages = () => props.messages;
-  const turns = createMemo<ConversationGroup[]>(previous => groupTurns(messages(), props.state.isStreaming, previous), []);
+  const split = createMemo(() => splitTranscript(messages(), props.state.isStreaming));
+  const turns = createMemo<ConversationGroup[]>(previous => groupTurns(split().transcript, previous), []);
+  /** The queued messages, then the sent messages that the daemon has not queued yet. */
+  const pendingMessages = createMemo<import("../types").PendingMessage[]>(() => [...props.state.pendingMessages ?? [], ...split().sending.map(message => ({ id: message.id, message: textOf(message.content), behavior: message.deliveryBehavior ?? "followUp", sending: true }))]);
 
   const responses = createMemo(() => turns().flatMap(turn => {
     const message = turn.messages[finalResponseIndex(turn.messages)];
@@ -136,7 +139,7 @@ export function ChatView(props: Props & { transcriptActions?: JSXElement; follow
 
     const durable = staged ?? await stageSubmission({ rawText: text, uploads: draftUploadsFromImages(images), consume: props.draft === text && !props.uploads?.length });
 
-    return trackChatSubmission(durable.owner(), text, images, durable, () => Promise.resolve(capturedOnSend(text, behavior, images, durable)), props.controlsDisabled ? "Getting ready..." : "Sending message…");
+    return trackChatSubmission(durable.owner(), text, images, durable, () => Promise.resolve(capturedOnSend(text, behavior, images, durable)), props.controlsDisabled ? "Getting ready..." : "Sending message…", behavior);
   };
 
   const actions = createRef({ onSend: send, onBranch: props.onBranch, onFork: props.onFork, onForkAndForget: props.onForkAndForget });
@@ -282,7 +285,7 @@ export function ChatView(props: Props & { transcriptActions?: JSXElement; follow
       const selectionDisabled = () => props.controlsDisabled || !ownsConversation() || Boolean(pendingSubmission());
       const renderNewChatProject = () => (<Show when={!messages().length && props.state.messageCount === 0}><div class="new-chat-project">{props.hosts && props.onChooseHost && <div class="host-picker"><ContainedPicker label="Host" value={props.transport?.currentHostId() ?? "local"} disabled={Boolean(pendingSubmission())} menuMinWidth={140} anchorLeft icon={<Monitor size={14} />} options={props.hosts.map(host => ({ value: host.id, label: host.name, disabled: host.disabled }))} onChange={hostId => props.onChooseHost?.(hostId)} /></div>}<div class="project-picker"><button type="button" class={projectName() ? "selected" : undefined} aria-label={projectName() ? `Selected project: ${required((projectName()))}` : "Choose project"} data-tooltip={displayedProjectCwd()} disabled={selectionDisabled()} onClick={props.onOpenProject}><Folder size={14} />{projectName() ?? "Choose project"}</button>{projectName() && props.onClearProject && <button type="button" class="clear-project" aria-label="Clear project" data-tooltip="Clear project" disabled={selectionDisabled()} onClick={props.onClearProject}><X size={14} /></button>}</div><Show when={props.transport?.newChatWorktreeOptions()}>{options => <NewChatWorktreePicker options={options()} value={props.transport?.newChatBaseBranch()} disabled={selectionDisabled()} onChange={branch => props.transport?.setNewChatBranch(branch)} />}</Show></div></Show>);
       const renderConversationOwnershipBanner = () => ((takingOwnership() || ownershipError()) && <div class="conversation-ownership-banner"><div>{takingOwnership() && <p role="status">Taking ownership…</p>}{ownershipError() && <p role="alert">{ownershipError()}</p>}</div></div>);
-      const ComposerInteraction = () => (<div class="composer-interaction"><Composer recentPrompts={() => props.messages.filter(message => message.role === "user").map(message => textOf(message.content))} submissionDisabled={!ownsConversation() || Boolean(pendingSubmission())} ownershipRequired={!ownsConversation()} onTakeOwnership={takeOwnership} toolbar={renderNewChatProject()} streaming={props.state.isStreaming} compacting={props.state.isCompacting} paused={props.state.isPaused} pausing={props.state.isPausing} queued={props.state.pendingMessageCount} pendingMessages={props.state.pendingMessages} onChangePending={props.onChangePending} refreshError={props.refreshError} capabilityErrors={props.capabilityErrors} capabilitiesLoading={props.capabilitiesLoading} onRetryCapabilities={props.onRetryCapabilities} commands={props.commands} agents={props.agents ?? []} activeAgent={props.activeAgent} agentLocked={props.agentLocked} agentSaved={props.agentSaved} agentUnavailable={props.agentUnavailable} modelAliases={props.modelAliases} models={props.models} model={props.state.model} fastModeStatus={fastModeStatus()} thinkingLevel={props.state.thinkingLevel} thinkingLevels={props.thinkingLevels} sessionCache={props.debug ? sessionCache() : undefined} contextUsage={props.state.contextUsage} controlsDisabled={props.controlsDisabled || !ownsConversation() || Boolean(pendingSubmission())} draft={props.draft} onDraftChange={props.onDraftChange} focusRequest={props.focusRequest} uploads={props.uploads} onUploadsChange={props.onUploadsChange} restoredDraft={abortedTurn() ? { id: `${required((abortedTurn())).assistant.timestamp ?? required((abortedTurn())).assistant.id}:${required((abortedTurn())).prompt}`, value: required((abortedTurn())).prompt } : undefined} onStageSubmission={stageSubmission} onSend={send} onAbort={stopResponse} onPause={props.onPause} onResume={props.onResume} terminalDisabled={!terminalAvailable()} onOpenTerminal={props.onOpenTerminal} agentHostLabel={agentDefinitionHost()} agentReloadScope={agentReloadScope()} onReloadAgents={props.transport ? reloadAgentDefinitions : undefined} onAgent={props.onAgent ?? (() => undefined)} onModel={props.onModel} onToggleFastMode={props.onToggleFastMode} onThinking={props.onThinking} /></div>);
+      const ComposerInteraction = () => (<div class="composer-interaction"><Composer recentPrompts={() => props.messages.filter(message => message.role === "user").map(message => textOf(message.content))} submissionDisabled={!ownsConversation() || Boolean(pendingSubmission())} ownershipRequired={!ownsConversation()} onTakeOwnership={takeOwnership} toolbar={renderNewChatProject()} streaming={props.state.isStreaming} compacting={props.state.isCompacting} paused={props.state.isPaused} pausing={props.state.isPausing} queued={props.state.pendingMessageCount} pendingMessages={pendingMessages()} onChangePending={props.onChangePending} refreshError={props.refreshError} capabilityErrors={props.capabilityErrors} capabilitiesLoading={props.capabilitiesLoading} onRetryCapabilities={props.onRetryCapabilities} commands={props.commands} agents={props.agents ?? []} activeAgent={props.activeAgent} agentLocked={props.agentLocked} agentSaved={props.agentSaved} agentUnavailable={props.agentUnavailable} modelAliases={props.modelAliases} models={props.models} model={props.state.model} fastModeStatus={fastModeStatus()} thinkingLevel={props.state.thinkingLevel} thinkingLevels={props.thinkingLevels} sessionCache={props.debug ? sessionCache() : undefined} contextUsage={props.state.contextUsage} controlsDisabled={props.controlsDisabled || !ownsConversation() || Boolean(pendingSubmission())} draft={props.draft} onDraftChange={props.onDraftChange} focusRequest={props.focusRequest} uploads={props.uploads} onUploadsChange={props.onUploadsChange} restoredDraft={abortedTurn() ? { id: `${required((abortedTurn())).assistant.timestamp ?? required((abortedTurn())).assistant.id}:${required((abortedTurn())).prompt}`, value: required((abortedTurn())).prompt } : undefined} onStageSubmission={stageSubmission} onSend={send} onAbort={stopResponse} onPause={props.onPause} onResume={props.onResume} terminalDisabled={!terminalAvailable()} onOpenTerminal={props.onOpenTerminal} agentHostLabel={agentDefinitionHost()} agentReloadScope={agentReloadScope()} onReloadAgents={props.transport ? reloadAgentDefinitions : undefined} onAgent={props.onAgent ?? (() => undefined)} onModel={props.onModel} onToggleFastMode={props.onToggleFastMode} onThinking={props.onThinking} /></div>);
 
       return (<Show when={!props.readOnly}><div ref={element => { composerStack.current = element; }} class="composer-stack"><GoalBar value={props.statuses["piop-goal"]} disabled={Boolean(props.controlsDisabled || !ownsConversation() || !props.transport)} onCommand={action => required(props.transport).command({ type: "prompt", message: `/goal ${action}` })} />{props.widgets.length > 0 && <div class="extension-widget">{<Index each={stringsSchema.parse(props.widgets)}>{(line, _index) => <div >{line()}</div>}</Index>}</div>} {activity() && <div class="runtime-activity" role="status">{(activity())}</div>}{renderConversationOwnershipBanner()}<ComposerInteraction /></div></Show>);
     };
@@ -376,28 +379,30 @@ function associateQueuedContext(messages: ChatMessage[]) {
 }
 
 /**
- * The transcript messages. A sent message waits outside the transcript while the daemon has not queued it and an earlier user message still waits for its reply.
- * Pi delivers it only after that reply, so it must not show directly under the earlier message. The queue above the message box shows it once the daemon queued it.
+ * Splits the messages into the transcript and the sent messages that wait for the daemon's queue.
+ * A sent message that the daemon has not queued yet waits in the queue above the message box while an earlier user message still waits for its reply: Pi delivers it only after that reply.
  * An earlier user message waits for its reply while it is still being sent, or while the agent works. A message whose task ended without a reply does not wait.
  */
-function transcriptMessages(messages: ChatMessage[], working: boolean) {
+function splitTranscript(messages: ChatMessage[], working: boolean) {
   let waiting = false;
-
-  return messages.filter(message => {
+  const sending: ChatMessage[] = [];
+  const transcript = messages.filter(message => {
     if (message.submissionId && message.piopQueueId) return false;
 
     if (message.role === "assistant") waiting = false;
     else if (message.role === "user") {
-      if (message.submissionId && waiting) return false;
+      if (message.submissionId && waiting) { sending.push(message); return false; }
       waiting = working || Boolean(message.submissionId);
     }
 
     return true;
   });
+
+  return { transcript, sending };
 }
 
-function groupTurns(messages: ChatMessage[], working: boolean, previous: ConversationGroup[] = []) {
-  messages = associateQueuedContext(transcriptMessages(messages, working));
+function groupTurns(messages: ChatMessage[], previous: ConversationGroup[] = []) {
+  messages = associateQueuedContext(messages);
   const prefix = reusableTurns(messages, previous);
 
   if (prefix.start === messages.length && prefix.count === previous.length) return previous;

@@ -17,8 +17,8 @@ export function updateChatPreparation(owner: NativeTransport, status: string) {
   setSubmissions(current => current.map(item => item.owner === owner ? { ...item, status } : item));
 }
 
-export async function trackChatSubmission<T>(owner: NativeTransport, text: string, images: ImageAttachment[], durable: DraftSubmissionHandle, work: () => Promise<T>, initialStatus = "Sending message…") {
-  const message: ChatMessage = { id: durable.id, role: "user", content: [{ type: "text", text }, ...images] };
+export async function trackChatSubmission<T>(owner: NativeTransport, text: string, images: ImageAttachment[], durable: DraftSubmissionHandle, work: () => Promise<T>, initialStatus = "Sending message…", behavior?: "steer" | "followUp") {
+  const message: ChatMessage = { id: durable.id, role: "user", content: [{ type: "text", text }, ...images], deliveryBehavior: behavior };
   setSubmissions(current => [...current, { owner, message, durable, status: initialStatus }]);
   retainSubmittedMessage(owner, message);
   ownDraftSubmission(durable);

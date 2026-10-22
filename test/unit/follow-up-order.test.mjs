@@ -23,14 +23,17 @@ async function harness(t, responses = new Map()) {
   const steps = [];
   const record = async label => {
     await dom.flushFrames();
-    const props = { readOnly: true, state: hook.current.state, messages: hook.current.messages, models: [], commands: [], thinkingLevels: [], widgets: [], statuses: {} };
+    const noop = () => {};
+    const props = { readOnly: false, onSend: noop, onAbort: noop, onPause: noop, onResume: noop, onOpenProject: noop, onBranch: noop, onModel: noop, onToggleFastMode: noop, onThinking: noop, onChangePending: async () => {}, state: hook.current.state, messages: hook.current.messages, models: [], commands: [], thinkingLevels: [], widgets: [], statuses: {} };
     if (view) await view.rerender(props); else view = await renderComponent(ChatView, props);
     const shown = [];
     for (const turn of view.container.querySelectorAll('.conversation-turn')) {
       for (const item of turn.querySelectorAll('.user-message')) shown.push(item.textContent.includes('Message B') ? 'user B' : 'user A');
       if (turn.querySelector('.assistant-message')) shown.push('reply');
     }
-    steps.push({ step: label, transcript: shown.join(' | ') });
+    const queue = [...view.container.querySelectorAll('.pending-message-text')].map(item => item.textContent);
+    const locked = [...view.container.querySelectorAll('.pending-message button')].every(button => button.disabled);
+    steps.push({ step: label, transcript: shown.join(' | '), queue, locked });
   };
   const events = async (label, ...items) => { await act(() => items.forEach(event => hook.current.handleEvent(event))); await record(label); };
   const submit = async (label, id, content) => { await act(() => retainSubmittedMessage(transport, { id, role: 'user', content: text(content), submissionId: id })); await record(label); };
@@ -63,6 +66,8 @@ for (const behavior of ['followUp', 'steer']) {
     const chat = await harness(t);
     await startA(chat);
     await chat.submit('B submitted as ' + behavior + ' (waits for the daemon)', 'submission-b', 'Message B');
+    assert.deepEqual(chat.steps.at(-1).queue, ['Message B'], 'B waits in the queue above the message box');
+    assert.equal(chat.steps.at(-1).locked, true, 'B cannot be changed before the daemon queued it');
     await chat.events('daemon queue_update with B', { type: 'queue_update', steering: behavior === 'steer' ? ['Message B'] : [], followUp: behavior === 'followUp' ? ['Message B'] : [], pendingMessages: [queued(behavior)] });
     await chat.events('assistant message_start for A', assistant('message_start', 'Reply to A', 200));
     await finish(chat, behavior);
