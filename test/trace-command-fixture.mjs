@@ -12,7 +12,13 @@ import { randomUUID } from 'node:crypto';
 import { build } from 'esbuild';
 import { storageSchemaImports } from '../scripts/storage-schema-plugin.mjs';
 
-export async function publishedTrace(t, traceReader, content, { folder = '', home: existingHome, cwd } = {}) {
+export async function buildTraceControls(outfile) {
+  await build({ entryPoints: ['daemon/resources/piop-controls/index.ts'], outfile, bundle: true, platform: 'node', format: 'esm', target: 'node22', logLevel: 'silent', external: ['@earendil-works/*'], plugins: [storageSchemaImports()],
+    banner: { js: "import { createRequire } from 'node:module'; const require = createRequire(import.meta.url);" },
+  });
+}
+
+export async function publishedTrace(t, traceReader, content, { folder = '', home: existingHome, cwd, controlsBundle } = {}) {
   const home = existingHome ?? await mkdtemp(join(tmpdir(), 'piop-public-trace-'));
   const buildDirectory = await mkdtemp(join(home, 'publication-test-'));
   const sessions = join(home, '.piop', 'sessions', folder);
@@ -34,10 +40,8 @@ export async function publishedTrace(t, traceReader, content, { folder = '', hom
   await writeFile(source, JSON.stringify(header) + '\n' + JSON.stringify(user) + '\n');
   const sourceDb = open(join(home, '.piop'));
   try { bind(sourceDb, id, source); } finally { sourceDb.close(); }
-  const outfile = join(buildDirectory, 'operations.mjs');
-  await build({ entryPoints: ['daemon/resources/piop-controls/index.ts'], outfile, bundle: true, platform: 'node', format: 'esm', target: 'node22', logLevel: 'silent', external: ['@earendil-works/*'], plugins: [storageSchemaImports()],
-    banner: { js: "import { createRequire } from 'node:module'; const require = createRequire(import.meta.url);" },
-  });
+  const outfile = controlsBundle ?? join(buildDirectory, 'operations.mjs');
+  if (!controlsBundle) await buildTraceControls(outfile);
   const previousBroker = [process.env.PI_DESKTOP_BROKER_URL, process.env.PI_DESKTOP_BROKER_TOKEN];
   const server = createServer(async (request, response) => {
     if (request.method !== 'POST' || request.url !== '/session-identity' || request.headers.authorization !== 'Bearer fixture') {

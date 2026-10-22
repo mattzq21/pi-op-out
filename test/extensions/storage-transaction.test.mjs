@@ -5,6 +5,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { spawnSync, execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import { buildTraceControls } from '../trace-command-fixture.mjs';
 import { goalCommand } from '../goal-command-fixture.mjs';
 import { daemonClient } from '../daemon-client.mjs';
 import { build } from 'esbuild';
@@ -19,6 +20,8 @@ const maxCrashes = 200;
 const bundleDirectory = mkdtempSync(join(tmpdir(), 'piop-storage-transaction-bundle-'));
 after(() => rmSync(bundleDirectory, { recursive: true, force: true }));
 const entry = join(bundleDirectory, 'storage-transaction.mjs');
+const controlsBundle = join(bundleDirectory, 'controls.mjs');
+await buildTraceControls(controlsBundle);
 
 await build({
   stdin: { contents: `
@@ -147,7 +150,7 @@ test('restore fully happens or fully rolls back after a crash at any write', asy
   const outcomes = new Set();
   const content = JSON.stringify({ type: 'message', id: 'question', parentId: null, message: { role: 'user', content: 'Keep this restored chat' } }) + '\n';
   const publish = () => JSON.parse(execFileSync('node', [fileURLToPath(new URL('../fixtures/publish-chat.mjs', import.meta.url))], {
-    encoding: 'utf8', timeout: 30000, input: JSON.stringify({ home, content }),
+    encoding: 'utf8', timeout: 30000, input: JSON.stringify({ home, content, controlsBundle }),
   }));
   const other = publish();
   await daemon.invoke('archive_session', { hostId: 'local', sessionPath: other.path, terminalIds: [], clientId: 'restore-crash-test' });
@@ -394,7 +397,7 @@ test('restore with goal folders fully happens or fully rolls back after a crash 
   const outcomes = new Set();
   const content = JSON.stringify({ type: 'message', id: 'question', parentId: null, message: { role: 'user', content: 'Keep this restored chat' } }) + '\n';
   const publish = () => JSON.parse(execFileSync('node', [fileURLToPath(new URL('../fixtures/publish-chat.mjs', import.meta.url))], {
-    encoding: 'utf8', timeout: 30000, input: JSON.stringify({ home, content }),
+    encoding: 'utf8', timeout: 30000, input: JSON.stringify({ home, content, controlsBundle }),
   }));
   const other = publish();
   await daemon.invoke('archive_session', { hostId: 'local', sessionPath: other.path, terminalIds: [], clientId: 'restore-crash-test' });
@@ -468,7 +471,7 @@ test('restore that rejects a later attachment leaves all attachment ownership un
   const chats = [];
   for (const objective of ['First objective. '.repeat(300).trim(), 'Second objective. '.repeat(300).trim()]) {
     const chat = JSON.parse(execFileSync('node', [fileURLToPath(new URL('../fixtures/publish-chat.mjs', import.meta.url))], {
-      encoding: 'utf8', timeout: 30000, input: JSON.stringify({ home, content: '' }),
+      encoding: 'utf8', timeout: 30000, input: JSON.stringify({ home, content: '', controlsBundle }),
     }));
     const prepared = await prepareGoal(chat.path, objective);
     const goalPath = prepared.message.match(/Read the goal objective file at (.+?) before continuing\./)[1];
