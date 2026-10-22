@@ -16,6 +16,8 @@ export const goalPrompt = (goal: Goal) => render(continuation, goal);
 
 export const goalInactivePrompt = (goal: Goal) => `The saved goal is inactive (${goal.status}). Other user requests are independent of it.`;
 
+export const goalResumedPrompt = "The user resumed the thread goal. Continue working toward it.";
+
 export function goalChangedPrompt(goal: Goal | null) {
   if (!goal) return "The user cleared the goal. Do not continue pursuing the removed goal automatically.";
 

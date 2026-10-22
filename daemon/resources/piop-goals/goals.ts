@@ -2,7 +2,7 @@ import { extendedHooks } from "../hooks-extended/interface.ts";
 import { restoreGoalAttachments } from "../piop-storage/goal-files.ts";
 import type { ExtensionAPI, ExtensionContext, AgentBeforeSettleEventResult, InputEventResult } from "@earendil-works/pi-coding-agent";
 import { GoalState, GOAL_CONTEXT } from "./state.ts";
-import { goalChangedPrompt, goalPrompt } from "./prompts.ts";
+import { goalChangedPrompt, goalPrompt, goalResumedPrompt } from "./prompts.ts";
 import { GoalCoordination } from "./coordination.ts";
 import type { GoalSession } from "./interface.ts";
 import type { GoalCore } from "./preparation.ts";
@@ -67,10 +67,10 @@ export function registerGoals(pi: ExtensionAPI): { session: GoalSession; core: G
     pi.sendUserMessage("Continue working toward the active conversation goal.", { deliverAs: "followUp" });
   };
 
-  const changed = (ctx: ExtensionContext) => {
+  const changed = (ctx: ExtensionContext, prompt = goalChangedPrompt(state.goal)) => {
     state.save(ctx);
 
-    if (!ctx.isIdle()) steering(goalChangedPrompt(state.goal));
+    if (!ctx.isIdle()) steering(prompt);
   };
 
   const core: GoalCore = { state, coordination, assertAvailable, changed, start };
@@ -164,7 +164,7 @@ export function registerGoals(pi: ExtensionAPI): { session: GoalSession; core: G
   const session: GoalSession = {
     report: ctx => commit(ctx, () => undefined, false),
     pause: ctx => commit(ctx, () => { state.setStatus(ctx, "paused"); changed(ctx); }),
-    resume: ctx => commit(ctx, () => { assertAvailable(ctx); state.setStatus(ctx, "active"); changed(ctx); }),
+    resume: ctx => commit(ctx, () => { assertAvailable(ctx); state.setStatus(ctx, "active"); changed(ctx, goalResumedPrompt); }),
     clear: ctx => commit(ctx, () => { state.clear(ctx); changed(ctx); }),
     pauseWithSession: ctx => coordination.run(ctx, () => {
       if (state.goal?.status === "active") state.setStatus(ctx, "paused");
