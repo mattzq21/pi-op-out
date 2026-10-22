@@ -18,28 +18,19 @@ async function recorder(t) {
   } };
 }
 
-test('shortcut recording saves Control Space with a readable key name', async t => {
+test('shortcut recording saves key combinations across reloads', async t => {
   const { page, input, saveAndReload } = await recorder(t);
-  await page.keyboard.press('Control+Space');
-  assert.equal(await input.inputValue(), 'Ctrl+Space');
-  await saveAndReload();
-  assert.equal(await input.inputValue(), 'Ctrl+Space');
-});
-
-test('shortcut recording saves every modifier on a key combination', async t => {
-  const { page, input, saveAndReload } = await recorder(t);
-  await page.keyboard.press('Control+Meta+Alt+Shift+n');
-  assert.equal(await input.inputValue(), 'Ctrl+Meta+Alt+Shift+N');
-  await saveAndReload();
-  assert.equal(await input.inputValue(), 'Ctrl+Meta+Alt+Shift+N');
-});
-
-test('shortcut recording saves modified Tab as a shortcut', async t => {
-  const { page, input, saveAndReload } = await recorder(t);
-  await page.keyboard.press('Alt+Tab');
-  assert.equal(await input.inputValue(), 'Alt+Tab');
-  await saveAndReload();
-  assert.equal(await input.inputValue(), 'Alt+Tab');
+  for (const [name, key, expected] of [
+    ['saves Control Space with a readable key name', 'Control+Space', 'Ctrl+Space'],
+    ['saves every modifier on a key combination', 'Control+Meta+Alt+Shift+n', 'Ctrl+Meta+Alt+Shift+N'],
+    ['saves modified Tab as a shortcut', 'Alt+Tab', 'Alt+Tab'],
+  ]) await t.test(`shortcut recording ${name}`, async () => {
+    await input.focus();
+    await page.keyboard.press(key);
+    assert.equal(await input.inputValue(), expected);
+    await saveAndReload();
+    assert.equal(await input.inputValue(), expected);
+  });
 });
 
 test('shortcut recording captures a function key and asks for a modifier before saving', async t => {
