@@ -7,7 +7,7 @@ import { modelSchema } from "./responseSchemas";
 import { encodeAgentValue, DEFINED_AGENTS_STATUS_KEY } from "./agentProtocol";
 import type { AgentState, RpcCommand, RpcEvent } from "../types";
 
-const catalogSchema = z.object({ config: agentConfigSchema, models: z.array(modelSchema), commands: z.array(z.string()), commandDetails: z.array(z.object({ name: z.string(), description: z.string().optional(), options: z.array(z.object({ value: z.string(), label: z.string(), description: z.string().optional() })).optional() })) });
+const catalogSchema = z.object({ config: agentConfigSchema, models: z.array(modelSchema), initialModel: z.string().nullable(), commands: z.array(z.string()), commandDetails: z.array(z.object({ name: z.string(), description: z.string().optional(), options: z.array(z.object({ value: z.string(), label: z.string(), description: z.string().optional() })).optional() })) });
 
 const catalogs = new Map<string, Promise<z.infer<typeof catalogSchema>>>();
 
@@ -102,7 +102,9 @@ export class DraftRuntime {
 
     if (!agent) throw new Error("This host has no default agent");
     this.agent = agent.name;
-    const model = this.catalog?.models.find(model => `${model.provider}/${model.id}` === agent.model) ?? null;
+    // An agent without its own model uses the model Pi starts with on this host.
+    const name = agent.model || this.catalog?.initialModel;
+    const model = this.catalog?.models.find(model => `${model.provider}/${model.id}` === name) ?? null;
     this.state = { ...this.state, model, thinkingLevel: agent.effort || thinking };
     this.fast = agent.fastMode ?? fastMode;
     this.changes.delete("set_model"); this.changes.delete("set_thinking_level");

@@ -46,6 +46,8 @@ test('a new chat starts as the flagged agent and calls its model with its thinki
 test('the agent list for a chat that is not started yet shows which agent is the default', async () => {
   const catalog = await agents.daemon.invoke('provider_auth', { hostId: 'local', request: { action: 'draft_catalog', reload: true } });
   expect(catalog.config.agents.filter((agent: any) => agent.isDefault).map((agent: any) => agent.name)).toEqual(['deep-thinker']);
+  // An agent without its own model runs the model Pi starts with, as the general child below does.
+  expect(catalog.initialModel).toBe('scripted/scripted-model');
 }, 60000);
 
 test('a child asked for the general agent runs general, while its parent runs the default agent', async () => {

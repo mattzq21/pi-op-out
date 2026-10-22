@@ -18,14 +18,14 @@ function hostDraft(t) {
   mockIPC(async (command, args) => {
     assert.equal(command, 'daemon_invoke');
     assert.equal(args.args.request.action, 'draft_catalog');
-    return { config: structuredClone(host.config), models, commands: [], commandDetails: [] };
+    return { config: structuredClone(host.config), models, initialModel: host.initialModel ?? null, commands: [], commandDetails: [] };
   });
   const events = [];
   const draft = new DraftRuntime(() => 'local', event => events.push(event));
   const shown = () => decodeAgentValue(events.filter(event => event.statusKey === 'pi-define-agents').at(-1).statusText.slice(5)).active;
   /** Changes the host's default agent and reloads the definitions, as Settings does after a save. */
   const changeDefault = async () => { host.config = chosenDefault; clearDraftCatalogs(); await draft.reload(() => true); };
-  return { draft, shown, changeDefault };
+  return { draft, shown, changeDefault, host };
 }
 
 test('a draft records the default agent it shows, so sending starts that agent even after the host default changes', async t => {
@@ -43,6 +43,14 @@ test('an unchanged draft shows the new default agent with its model, thinking le
   assert.deepEqual([...draft.changes.values()], [{ type: 'select_agent', agent: 'chosen' }]);
   const state = await draft.command({ type: 'get_state' });
   assert.deepEqual([state.model?.id, state.thinkingLevel, draft.fastMode], ['fast', 'low', true]);
+});
+
+test('a default agent without its own model shows the model Pi starts with on the host', async t => {
+  const { draft, host } = hostDraft(t);
+  host.config = { agents: [agent('general', { isDefault: true })] };
+  host.initialModel = 'p/fast';
+  await draft.applyDefaults('medium', false);
+  assert.equal((await draft.command({ type: 'get_state' })).model?.id, 'fast');
 });
 
 test('choosing an agent without its own model or effort starts the chat with the model and effort the composer shows', async t => {

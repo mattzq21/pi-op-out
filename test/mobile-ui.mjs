@@ -63,7 +63,7 @@ try {
    const data={stop_pi:true,load_app_settings:settings,load_settings_change:{settings},plugin_status:{enabled:[],configured:[],revision:'plugins',error:null},create_temporary_chat:{cwd:'/tmp/project',sessionId:'mobile-test'},list_sessions:[],load_session_groups:{version:1,groups:[],assignments:{}},codex_usage:{remainingPercent:80},opencode_go_usage:{rolling:{status:'ok',remainingPercent:70},weekly:{status:'ok',remainingPercent:45},monthly:{status:'ok',remainingPercent:30}},start_pi:{attached:true},home_directory:'/home/test',is_git_repository:false};
    let result=Object.hasOwn(data,m.command)?data[m.command]:undefined;
 
-   if(m.command==='provider_auth'&&m.args.request.action==='draft_catalog') result={config:{agents:[{name:'default',isDefault:true,model:'test/model',effort:'high',path_systemprompt:'',path_agent_prompt:'',tools:[],skills:[],mcpServers:{}}]},models:[state.model],commands:[],commandDetails:[]};
+   if(m.command==='provider_auth'&&m.args.request.action==='draft_catalog') result={config:{agents:[{name:'default',isDefault:true,model:'test/model',effort:'high',path_systemprompt:'',path_agent_prompt:'',tools:[],skills:[],mcpServers:{}}]},models:[state.model],initialModel:null,commands:[],commandDetails:[]};
 
    if(m.command==='pi_command') {
    const responses={get_session_revision:{revision:'changed'},get_snapshot:{revision:'snapshot',state,history:{entries:[],leafId:null},queue:{type:'queue_state',pendingMessages:[]},liveTools:[],sequence:0,epoch:'mobile-test'},get_state:state,get_available_models:{models:[state.model]},get_available_thinking_levels:{levels:['high']},get_commands:{commands:[]},get_session_stats:{}};

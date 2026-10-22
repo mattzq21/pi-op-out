@@ -13,7 +13,7 @@ describe('session runtime pool', () => {
     calls = []; errors = [];
     responses = new Map([['start_pi', { attached: false }], ['stop_pi', true], ['pi_command:get_state', { model: null, thinkingLevel: 'off', isStreaming: false, sessionId: 'session', sessionFile: '/session', messageCount: 0, pendingMessageCount: 0 }],
       ['broker_request', ({ body }) => ({ sessionId: body.sessionId, sessionPath: '/session', cwd: '/repo', archived: false, revision: '1' })],
-      ['provider_auth', { config: { agents: [] }, models: [], commands: [], commandDetails: [] }],
+      ['provider_auth', { config: { agents: [] }, models: [], initialModel: null, commands: [], commandDetails: [] }],
       ['pi_command:get_commands', { commands: [{ name: 'fast', source: 'extension', sourceInfo: { path: '/extensions/piop-openai-fast-mode/index.ts' } }] }]]);
     mockIPC((command, args) => {
       calls.push({ command, args });

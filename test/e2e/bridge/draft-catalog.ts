@@ -9,5 +9,6 @@ export const draftCatalog = {
     { provider: "e2e", id: "alternate", name: "Alternate model", reasoning: true },
   ],
   commands: ["fast"],
+  initialModel: null,
   commandDetails: [],
 };
