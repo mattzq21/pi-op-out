@@ -101,7 +101,7 @@ function goalOwners(root, directory) {
 
 const deletion = fixture => ({ action: 'delete', targets: [{ path: fixture.target, area: 'sessions', root: fixture.sessions }], activeSessionIds: [] });
 
-describe('storage transactions', { concurrency: 4 }, () => {
+describe('storage transactions', { concurrency: 6 }, () => {
 test('delete fully happens or fully rolls back after a crash at any write', async t => {
   const outcomes = new Set();
 
