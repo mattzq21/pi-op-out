@@ -739,6 +739,11 @@ export default async function defineAgents(pi: ExtensionAPI) {
       const { configuration: supplied } = Parse(schema, request.payload);
       const stored = await loadConfig(configRuntime);
       const next = normalize({ ...stored, ...supplied }, configRuntime);
+      if (supplied.agents) {
+        next.sessionToolsDefaultApplied = true;
+        next.subagentsDefaultApplied = true;
+        next.webSearchDefaultApplied = true;
+      }
 
       for (const agent of next.agents) mcpServersSchema.parse(agent.mcpServers);
       await requireReadablePrompts(next.agents);
