@@ -3,7 +3,7 @@ import { agentDaemon, called, text } from './agent-chats';
 import { startDaemon } from './harness';
 import { stoppedJob } from './stopped-job';
 
-test('an active goal stops with the daemon and goes on when its chat is opened after the restart', async () => {
+test.concurrent('an active goal stops with the daemon and goes on when its chat is opened after the restart', async () => {
   const agents = await agentDaemon();
   const third = Promise.withResolvers<void>();
   const resumed = Promise.withResolvers<void>();
@@ -39,7 +39,7 @@ test('an active goal stops with the daemon and goes on when its chat is opened a
   } finally { await second?.stop(); await agents.daemon.stop(); held.resolve({ text: 'Stopped' }); await agents.model.close(); }
 }, 90000);
 
-test('a child cut off by a daemon restart is reported to its parent as cancelled once the parent is opened again', async () => {
+test.concurrent('a child cut off by a daemon restart is reported to its parent as cancelled once the parent is opened again', async () => {
   const agents = await agentDaemon();
   const jobs: Array<() => Promise<void>> = [];
   let second: Awaited<ReturnType<typeof startDaemon>> | undefined;
