@@ -1,14 +1,32 @@
 import { Notify, sleep } from './util/sync';
 import * as daemonRestart from './daemon_restart';
 import type { App } from './app';
+import { DEVELOPMENT } from './config';
+
+/**
+ * How long a daemon without clients keeps running before it stops, when it does not stop at once.
+ * Debug builds and test daemons (PIOP_UNUSED_STOP_MS) use it, so a daemon of a closed app, a deleted worktree or a failed test does not run on.
+ * Release daemons that "piopd start" made persistent never stop by themselves.
+ */
+function unusedStopDelay(): number | undefined {
+  const value = process.env.PIOP_UNUSED_STOP_MS;
+  if (value !== undefined) {
+    const delay = Number(value);
+    if (!Number.isSafeInteger(delay) || delay <= 0) throw new Error('PIOP_UNUSED_STOP_MS must be a positive whole number of milliseconds');
+    return delay;
+  }
+  return DEVELOPMENT ? 5 * 60_000 : undefined;
+}
 
 /** Counts connected clients and decides when an unattended daemon may stop. */
 export class DaemonClients {
-  constructor(private readonly onStop: () => void, private readonly onLastDisconnect: () => void) {}
+  constructor(private readonly onStop: () => void, private readonly onLastDisconnect: () => void, private readonly unusedDelay = unusedStopDelay()) {}
 
   private count = 0;
   private closingFlag = false;
   private automaticFlag = process.argv.includes('--exit-on-disconnect') || process.env.PIOP_RESTART_AUTOMATIC !== undefined;
+  /** When the last client left, or when the daemon started. */
+  private unusedSince = Date.now();
   private stopped = new Notify();
   private requests = 0;
   private drained = new Set<() => void>();
@@ -66,8 +84,9 @@ export class DaemonClients {
         released = true;
         this.count -= 1;
         if (this.count === 0) {
+          this.unusedSince = Date.now();
           try { this.onLastDisconnect(); }
-          finally { if (this.automaticFlag) this.stopped.notifyOne(); }
+          finally { if (this.automaticFlag || this.unusedDelay !== undefined) this.stopped.notifyOne(); }
         }
       },
     };
@@ -75,7 +94,15 @@ export class DaemonClients {
 
   closing(): boolean { return this.closingFlag; }
 
-  private unattended(): boolean { return this.automaticFlag && this.count === 0; }
+  /** Milliseconds until a daemon without clients may stop: 0 when it may stop now, undefined when only a client change or stop() can change it. */
+  private untilUnattended(): number | undefined {
+    if (this.count > 0) return undefined;
+    if (this.automaticFlag) return 0;
+    if (this.unusedDelay === undefined) return undefined;
+    return Math.max(0, this.unusedSince + this.unusedDelay - Date.now());
+  }
+
+  private unattended(): boolean { return this.untilUnattended() === 0; }
 
   private wait(ms?: number): Promise<void> {
     if (ms === undefined) return this.stopped.notified();
@@ -84,23 +111,26 @@ export class DaemonClients {
   }
 
   /**
-   * Resolves when the daemon should stop. Wakes on stop() and on the last client leaving. A short retry timer runs only
-   * while an unattended automatic daemon still has work (a running terminal, agent or plugin) that keeps it from stopping.
+   * Resolves when the daemon should stop. Wakes on stop(), on the last client leaving and when the unused delay ends. A short retry timer runs only
+   * while an unattended daemon still has work (a running terminal, agent or plugin) that keeps it from stopping.
    */
-  async waitForShutdown(app: App): Promise<void> {
-    await this.wait(30_000);
+  async waitForShutdown(app: App, ensureIdle: () => Promise<void> = () => daemonRestart.ensureLocalIdle(app)): Promise<void> {
+    // A daemon that stops at its last disconnect first gives its first client time to connect. The unused delay already counts from the start.
+    if (this.automaticFlag) await this.wait(30_000);
     for (;;) {
       if (this.closingFlag) return;
-      if (this.unattended() && await this.stopIfIdle(app)) return;
-      await this.wait(this.unattended() ? 1000 : undefined);
+      if (this.unattended() && await this.stopIfIdle(app, ensureIdle)) return;
+      // An unattended daemon that still has work tries again each second; otherwise it wakes when its unused delay ends.
+      const remaining = this.untilUnattended();
+      await this.wait(remaining === 0 ? 1000 : remaining);
     }
   }
 
-  private async stopIfIdle(app: App): Promise<boolean> {
+  private async stopIfIdle(app: App, ensureIdle: () => Promise<void>): Promise<boolean> {
     const release = app.restart.gate.tryWrite();
     if (!release) return false;
     try {
-      try { await daemonRestart.ensureLocalIdle(app); } catch { return false; }
+      try { await ensureIdle(); } catch { return false; }
       if (this.unattended()) { this.stop(); return true; }
       return false;
     } finally { release(); }

@@ -246,7 +246,8 @@ export async function startDaemon(options: BuildOptions & { home?: string; env?:
   const bin = join(home, '.test-bin');
   mkdirSync(bin, { recursive: true });
   fakeProgram(bin, 'ssh', FAKE_SSH);
-  const env = { ...process.env, HOME: home, PATH: bin + ':' + process.env.PATH, PIOP_MOBILE_BIND: '127.0.0.1:0', ...options.env };
+  // A daemon of a test that fails before it stops the daemon stops by itself after 5 minutes without clients.
+  const env = { ...process.env, HOME: home, PATH: bin + ':' + process.env.PATH, PIOP_MOBILE_BIND: '127.0.0.1:0', PIOP_UNUSED_STOP_MS: '300000', ...options.env };
   const directory = daemonDirectory(home, options);
   const daemonLog = join(directory, 'daemon.log');
   const clients: Client[] = [];
