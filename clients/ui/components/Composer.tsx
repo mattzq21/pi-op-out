@@ -20,6 +20,7 @@ import { hasVisibleText } from "../lib/content";
 import { usePendingMessageDrag } from "../lib/usePendingMessageDrag";
 import type { AgentProfile,ComposerUpload,ContextUsage,ImageAttachment,Model,PendingMessage,SlashCommand } from "../types";
 import { IconButton } from "./IconButton";
+import { PendingImages } from "./PendingImages";
 import { z } from "zod";
 import { splitPaneCommand } from "../plugins";
 
@@ -64,6 +65,8 @@ interface Props {
   restoredDraft?: { id: string; value: string };
   focusRequest?: number;
   pendingMessages?: import("../types").PendingMessage[];
+  /** Loads an image of a queued message for its preview. */
+  loadPendingImage?: import("./PendingImages").PendingImageLoader;
   onChangePending?: (id: string, behavior: import("../types").PendingMessageAction) => Promise<void>;
   onStageSubmission?: StageDraftSubmission;
   onSend: (message: string, behavior?: "steer" | "followUp", images?: ImageAttachment[], submission?: DraftSubmissionHandle) => void | boolean | Promise<void | boolean>;
@@ -716,6 +719,7 @@ export function Composer(props: Props) {
 
       return <div data-pending-id={message().id} class={pendingMessageClass(message().id, expandedPending(), pendingDrag.drop)} >
         {renderPendingDragHandle()}
+        <PendingImages message={message()} load={props.loadPendingImage} />
         <span class="pending-message-text" data-tooltip={message().recovered ? "This saved answer may not have reached the model. Check the conversation before retrying." : text()} onDblClick={() => setExpandedPending((current) => current === message().id ? undefined : message().id)}>{message().retry && <small>{message().recovered ? "Saved answer · " : "Retry needed · "}</small>}{text()}</span>
         {renderPendingMessageActions()}
       </div>;

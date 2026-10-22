@@ -459,6 +459,7 @@ export class Session {
     switch (kind(command)) {
       case 'get_session_revision': return { revision: this.revision() };
       case 'get_tool_payload': return this.collectToolPayload(command);
+      case 'get_queued_image': return this.queuedImage(command);
       case 'get_snapshot': return this.collectSnapshot();
       case 'get_entries': { const snapshot = await this.collectSnapshot(); return snapshot?.history ?? null; }
       case 'get_state': return this.collectState(command);
@@ -500,6 +501,14 @@ export class Session {
     // The chat list shows the name, so every client reloads it.
     if (['set_session_name', 'fork_and_forget'].includes(kind(command))) this.host.output({ type: 'sessions_changed' });
     return result;
+  }
+
+  /** The data of one image of a queued message. The queue view leaves image data out, so clients ask for it when they show the image. */
+  private queuedImage(command: any): { data: string; mimeType: string } {
+    const item = this.queue.pending().find(entry => entry?.id === text(command, 'id'));
+    const image = Array.isArray(item?.images) ? item.images[Number(command.index)] : undefined;
+    if (typeof image?.data !== 'string' || typeof image?.mimeType !== 'string') throw new Error('The image of this queued message is no longer available');
+    return { data: image.data, mimeType: image.mimeType };
   }
 
   private async collectToolPayload(command: any): Promise<any> {
