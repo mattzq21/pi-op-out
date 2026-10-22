@@ -1,46 +1,58 @@
 import { expect, test } from 'bun:test';
 import { agentDaemon, called, text } from './agent-chats';
 import { startDaemon } from './harness';
+import { stoppedJob } from './stopped-job';
 
 test('an active goal stops with the daemon and goes on when its chat is opened after the restart', async () => {
   const agents = await agentDaemon();
+  const third = Promise.withResolvers<void>();
+  const resumed = Promise.withResolvers<void>();
+  const held = Promise.withResolvers<{ text: string }>();
   let second: Awaited<ReturnType<typeof startDaemon>> | undefined;
   try {
     await agents.enableAgentTools('update_goal_status');
     let turns = 0;
-    agents.scripts.set('Goal across a restart', async () => { turns++; await Bun.sleep(300); return { text: 'Turn ' + turns }; });
+    agents.scripts.set('Goal across a restart', () => {
+      turns++;
+      if (turns === 3) { third.resolve(); return held.promise; }
+      if (turns === 5) { resumed.resolve(); return held.promise; }
+      return { text: 'Turn ' + turns };
+    });
     const chat = await agents.rootChat();
     await chat.command({ type: 'follow_up', message: '/goal Goal across a restart', goalSubmissionId: crypto.randomUUID() });
-    for (let tries = 0; turns < 3 && tries < 100; tries++) await Bun.sleep(100);
+    await third.promise;
     await agents.daemon.stop();
     const atStop = turns;
     second = await startDaemon({ home: agents.daemon.home });
-    await Bun.sleep(2000);
+    expect(await second.invoke('check_daemon_idle')).toBeNull();
     expect(turns).toBe(atStop);
     const path = (await second.invoke('list_sessions')).find((session: any) => session.id === chat.sessionId).path;
     await second.invoke('start_pi', { runtimeId: 'reopened', clientId: 'laptop', cwd: chat.cwd, sessionPath: path });
-    for (let tries = 0; turns < atStop + 2 && tries < 100; tries++) await Bun.sleep(100);
+    await resumed.promise;
     expect(turns).toBeGreaterThanOrEqual(atStop + 2);
     const command = (value: any) => second!.invoke('pi_command', { runtimeId: 'reopened', command: value });
     await command({ type: 'follow_up', message: '/goal pause', goalSubmissionId: crypto.randomUUID() });
-    let goal: any = null;
-    for (let tries = 0; goal?.status !== 'paused' && tries < 50; tries++, await Bun.sleep(100)) { const status = second.events.filter((event: any) => event.payload?.runtimeId === 'reopened' && event.payload.event?.statusKey === 'piop-goal').at(-1)?.payload.event.statusText; goal = status ? JSON.parse(status) : null; }
+    const event = await second.waitEvent('pi://event', payload => payload.runtimeId === 'reopened'
+      && payload.event?.statusKey === 'piop-goal' && JSON.parse(payload.event.statusText).status === 'paused');
+    const goal = JSON.parse(event.event.statusText);
     expect(goal).toMatchObject({ status: 'paused', objective: 'Goal across a restart' });
-  } finally { await second?.stop(); await agents.model.close(); }
+  } finally { await second?.stop(); await agents.daemon.stop(); held.resolve({ text: 'Stopped' }); await agents.model.close(); }
 }, 90000);
 
 test('a child cut off by a daemon restart is reported to its parent as cancelled once the parent is opened again', async () => {
   const agents = await agentDaemon();
+  const jobs: Array<() => Promise<void>> = [];
   let second: Awaited<ReturnType<typeof startDaemon>> | undefined;
   try {
+    await agents.enableAgentTools('subagent');
+    const job = await stoppedJob('survivor-late.txt', jobs);
     agents.scripts.set('Delegate across a restart', messages => called(messages, 'spawn_agent') ? { text: 'Parent saw: ' + text(messages.at(-1)) } : { tool: 'spawn_agent', arguments: { task_name: 'survivor', message: 'Survivor job' } });
-    agents.scripts.set('Survivor job', messages => called(messages, 'bash') ? { text: 'Relay: survived' } : { tool: 'bash', arguments: { command: 'sleep 4' } });
+    agents.scripts.set('Survivor job', messages => called(messages, 'bash') ? { text: 'Relay: survived' } : { tool: 'bash', arguments: { command: job.command } });
     const root = await agents.rootChat();
     await root.command({ type: 'prompt', message: 'Delegate across a restart' });
-    const childStarted = () => agents.model.requests.some(request => JSON.stringify(request.messages).includes('Survivor job') && text(request.messages.at(-1)).startsWith('Untrusted agent content'));
-    for (let tries = 0; !childStarted() && tries < 200; tries++) await Bun.sleep(100);
-    await Bun.sleep(800);
+    await job.started();
     await agents.daemon.stop();
+    await job.stopped();
     second = await startDaemon({ home: agents.daemon.home });
     const path = (await second.invoke('list_sessions')).find((session: any) => session.id === root.sessionId).path;
     await second.invoke('start_pi', { runtimeId: 'reopened', clientId: 'laptop', cwd: root.cwd, sessionPath: path });
@@ -50,5 +62,5 @@ test('a child cut off by a daemon restart is reported to its parent as cancelled
     }
     expect(last).toStartWith('Parent saw: Untrusted agent content delivered by piop:\nsurvivor: cancelled');
     expect(agents.model.requests.some(request => text(request.messages.at(-1)).includes('Relay: survived'))).toBe(false);
-  } finally { await second?.stop(); await agents.model.close(); }
+  } finally { await second?.stop(); await agents.daemon.stop(); await agents.model.close(); for (const close of jobs) await close(); }
 }, 90000);
