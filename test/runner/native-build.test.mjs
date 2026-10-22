@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { existsSync } from 'node:fs';
 import { execFile } from 'node:child_process';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -15,6 +16,7 @@ async function fixture(t, fail) {
   const directory = await mkdtemp(join(tmpdir(), 'piop-native-build-'));
   t.after(() => rm(directory, { recursive: true, force: true }));
   const log = join(directory, 'builds');
+  const controls = join(directory, 'controls');
   const binary = join(directory, 'native-test');
   await writeFile(join(directory, 'cargo'), `#!${process.execPath}
 import { appendFileSync } from 'node:fs';
@@ -33,22 +35,31 @@ ${fail === 'daemon' ? "console.error('daemon build failed'); process.exit(19);" 
     await writeFile(file, `import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { nativeTestExecutable } from ${JSON.stringify(helper)};
+import { appendFileSync, existsSync } from 'node:fs';
 test('child ${index} uses this run\\'s build', async () => {
   assert.equal(await nativeTestExecutable(), ${JSON.stringify(binary)});
   assert.equal(process.env.PIOP_TEST_DAEMON_EXECUTABLE, ${JSON.stringify(daemonBinary)});
+  const bundle = process.env.PIOP_TEST_CONTROLS_BUNDLE;
+  assert.ok(bundle && existsSync(bundle));
+  assert.notEqual(bundle, '/stale/controls');
+  appendFileSync(${JSON.stringify(controls)}, bundle + '\\n');
 });`);
     files.push(file);
   }
-  const env = { ...process.env, PATH: directory + ':' + process.env.PATH, PIOP_TEST_NATIVE_EXECUTABLE: '/stale/previous-build', PIOP_TEST_DAEMON_EXECUTABLE: '/stale/daemon' };
+  const env = { ...process.env, PATH: directory + ':' + process.env.PATH, PIOP_TEST_NATIVE_EXECUTABLE: '/stale/previous-build', PIOP_TEST_DAEMON_EXECUTABLE: '/stale/daemon', PIOP_TEST_CONTROLS_BUNDLE: '/stale/controls' };
   delete env.NODE_TEST_CONTEXT;
   const run = () => execute(process.execPath, [runner, ...files], { env });
-  return { run, log };
+  return { run, log, controls };
 }
 
 test('fresh native and daemon builds are shared by separate test processes', async t => {
-  const { run, log } = await fixture(t);
+  const { run, log, controls } = await fixture(t);
   const result = await run();
   assert.match(result.stdout, /pass 3/);
+  const bundles = (await readFile(controls, 'utf8')).trim().split('\n');
+  assert.equal(bundles.length, 3);
+  assert.equal(new Set(bundles).size, 1);
+  assert.equal(existsSync(bundles[0]), false, 'the shared build is removed after the tests');
   assert.deepEqual((await readFile(log, 'utf8')).trim().split('\n').sort(), ['build', 'daemon']);
 });
 

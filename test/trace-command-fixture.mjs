@@ -18,7 +18,7 @@ export async function buildTraceControls(outfile) {
   });
 }
 
-export async function publishedTrace(t, traceReader, content, { folder = '', home: existingHome, cwd, controlsBundle } = {}) {
+export async function publishedTrace(t, traceReader, content, { folder = '', home: existingHome, cwd, controlsBundle = process.env.PIOP_TEST_CONTROLS_BUNDLE } = {}) {
   const home = existingHome ?? await mkdtemp(join(tmpdir(), 'piop-public-trace-'));
   const buildDirectory = await mkdtemp(join(home, 'publication-test-'));
   const sessions = join(home, '.piop', 'sessions', folder);
