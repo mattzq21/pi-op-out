@@ -2,7 +2,7 @@ import { afterAll, beforeAll, expect, test } from 'bun:test';
 import { agentDaemon, called, text } from './agent-chats';
 
 let agents: Awaited<ReturnType<typeof agentDaemon>>;
-beforeAll(async () => { agents = await agentDaemon(); }, 60000);
+beforeAll(async () => { agents = await agentDaemon(); await agents.enableAgentTools('send_message_to_thread', 'subagent'); }, 60000);
 afterAll(async () => { await agents?.close(); });
 
 const toolResult = (messages: any[], tool: string) => {
@@ -10,13 +10,12 @@ const toolResult = (messages: any[], tool: string) => {
   return call && JSON.parse(text(messages.find(message => message.role === 'tool' && message.tool_call_id === call.id)));
 };
 
-test('a chat can message another chat, wait for its answer and read it', async () => {
+test.concurrent('a chat can message another chat, wait for its answer and read it', async () => {
   const worker = await agents.rootChat();
   agents.scripts.set('You are the worker', messages => ({ text: text(messages.at(-1)).includes('What is the build status?') ? 'Worker status: green' : 'Ready.' }));
   await worker.command({ type: 'prompt', message: 'You are the worker' });
   await worker.until(history => text(history.at(-1)) === 'Ready.');
 
-  await agents.enableAgentTools('send_message_to_thread');
   const coordinator = await agents.rootChat();
   agents.scripts.set('Check on the worker', messages => {
     if (!called(messages, 'send_message_to_thread')) return { tool: 'send_message_to_thread', arguments: { threadId: worker.sessionId, prompt: 'What is the build status?' } };
@@ -35,10 +34,10 @@ test('a chat can message another chat, wait for its answer and read it', async (
   expect(delivered).toMatchObject({ sourceSessionId: coordinator.sessionId, sourceHostId: 'local', message: 'What is the build status?' });
 }, 120000);
 
-test('chat tools list and read only root chats, never subagent chats', async () => {
-  await agents.enableAgentTools('send_message_to_thread');
+test.concurrent('chat tools list and read only root chats, never subagent chats', async () => {
   const coordinator = await agents.rootChat();
   let childId = '';
+  const childKnown = Promise.withResolvers<void>();
   agents.scripts.set('Delegate, then look around', messages => {
     const last = text(messages.at(-1));
     if (!called(messages, 'spawn_agent')) return { tool: 'spawn_agent', arguments: { task_name: 'helper', message: 'Helper task' } };
@@ -47,10 +46,11 @@ test('chat tools list and read only root chats, never subagent chats', async () 
     if (!called(messages, 'read_thread')) return { tool: 'read_thread', arguments: { threadId: childId } };
     return { text: 'Relay: ' + last };
   });
-  agents.scripts.set('Helper task', () => ({ text: 'helped' }));
+  agents.scripts.set('Helper task', async () => { await childKnown.promise; return { text: 'helped' }; });
   await coordinator.command({ type: 'prompt', message: 'Delegate, then look around' });
   await coordinator.until(history => history.some(message => message.role === 'toolResult' && message.toolName === 'spawn_agent'));
   childId = (await agents.daemon.invoke('list_sessions')).find((session: any) => session.subagentParentId === coordinator.sessionId).id;
+  childKnown.resolve();
   const messages = await coordinator.until(history => text(history.at(-1)).startsWith('Relay: '));
   expect(text(messages.at(-1))).toBe('Relay: Chat orchestration can only target root agents; use the subagent tools for delegated work');
   const seen = agents.model.requests.findLast(request => JSON.stringify(request.messages).includes('Delegate, then look around')).messages;
@@ -58,8 +58,7 @@ test('chat tools list and read only root chats, never subagent chats', async () 
   expect([listed.includes(coordinator.sessionId), listed.includes(childId)]).toEqual([true, false]);
 }, 120000);
 
-test('a chat can start a new independent chat that works on its prompt', async () => {
-  await agents.enableAgentTools('send_message_to_thread');
+test.concurrent('a chat can start a new independent chat that works on its prompt', async () => {
   const coordinator = await agents.rootChat();
   agents.scripts.set('Open a release chat', messages => {
     if (!called(messages, 'create_thread')) return { tool: 'create_thread', arguments: { title: 'Release notes', prompt: 'Draft the release notes' } };
@@ -82,8 +81,7 @@ test('a chat can start a new independent chat that works on its prompt', async (
 /** A promise that the test settles later, to keep an agent's model reply waiting. */
 const held = <T>() => { let release!: (value: T) => void; const promise = new Promise<T>(resolve => { release = resolve; }); return { promise, release }; };
 
-test('a chat can stop another chat\'s running work, which keeps its history and stays usable', async () => {
-  await agents.enableAgentTools('send_message_to_thread');
+test.concurrent('a chat can stop another chat\'s running work, which keeps its history and stays usable', async () => {
   const worker = await agents.rootChat();
   const longReply = held<{ text: string }>();
   agents.scripts.set('Long job', messages => text(messages.at(-1)).includes('Are you still there?') ? { text: 'Still here.' } : longReply.promise);
@@ -105,8 +103,7 @@ test('a chat can stop another chat\'s running work, which keeps its history and 
   expect(text((await worker.history()).at(-1))).toBe('Still here.');
 }, 120000);
 
-test('a message to a busy chat waits until its current work finishes, then starts a new turn', async () => {
-  await agents.enableAgentTools('send_message_to_thread');
+test.concurrent('a message to a busy chat waits until its current work finishes, then starts a new turn', async () => {
   const worker = await agents.rootChat();
   const longReply = held<{ text: string }>();
   agents.scripts.set('Busy job', messages => text(messages.at(-1)).includes('Queued question') ? { text: 'Answer to the queued question.' } : longReply.promise);
@@ -127,8 +124,7 @@ test('a message to a busy chat waits until its current work finishes, then start
   expect(answers).toEqual([['Busy job done.', 'stop'], ['Answer to the queued question.', 'stop']]);
 }, 120000);
 
-test('a chat that tries to message itself is told to choose another chat, and nothing is delivered', async () => {
-  await agents.enableAgentTools('send_message_to_thread');
+test.concurrent('a chat that tries to message itself is told to choose another chat, and nothing is delivered', async () => {
   const chat = await agents.rootChat();
   agents.scripts.set('Message myself', messages => called(messages, 'send_message_to_thread') ? { text: 'Told: ' + text(messages.at(-1)) } : { tool: 'send_message_to_thread', arguments: { threadId: chat.sessionId, prompt: 'Hello me' } });
   await chat.command({ type: 'prompt', message: 'Message myself' });
@@ -139,8 +135,7 @@ test('a chat that tries to message itself is told to choose another chat, and no
   expect((await chat.history()).filter(message => message.role === 'user').map(text)).toEqual(['Message myself']);
 }, 60000);
 
-test('messaging or waiting for a chat that does not exist tells the agent so in plain words', async () => {
-  await agents.enableAgentTools('send_message_to_thread');
+test.concurrent('messaging or waiting for a chat that does not exist tells the agent so in plain words', async () => {
   const missing = '11111111-2222-3333-4444-555555555555';
   agents.scripts.set('Message a missing chat', messages => called(messages, 'send_message_to_thread') ? { text: 'Told: ' + text(messages.at(-1)) } : { tool: 'send_message_to_thread', arguments: { threadId: missing, prompt: 'Hello?' } });
   agents.scripts.set('Wait for a missing chat', messages => called(messages, 'wait_threads') ? { text: 'Told: ' + text(messages.at(-1)) } : { tool: 'wait_threads', arguments: { targets: [{ threadId: missing }], timeoutMs: 2000 } });
@@ -154,9 +149,7 @@ test('messaging or waiting for a chat that does not exist tells the agent so in 
 }, 60000);
 
 test('list_agent_profiles follows the tool groups and lists the descriptions of agents that can start', async () => {
-  // The first load after a save runs the one-time tool setup, which adds tools; so the agents are saved twice.
-  const setTools = async (tools: string[]) => { await saveTools(tools); await saveTools(tools); };
-  const saveTools = async (tools: string[]) => {
+  const setTools = async (tools: string[]) => {
     const chat = await agents.rootChat();
     const configuration = await chat.command({ type: 'get_agent_configuration' });
     const general = configuration.agents.find((agent: any) => agent.name === 'general');
