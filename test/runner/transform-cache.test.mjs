@@ -37,3 +37,26 @@ test('parallel test processes share complete conversions and source edits invali
   await assert.rejects(run(), /Unexpected token/);
   assert.equal((await readdir(join(cache, version))).length, 2, 'failed conversions are not cached');
 });
+
+test('different compiler settings never share cached output', async t => {
+  const directory = await mkdtemp(join(tmpdir(), 'piop-transform-modes-'));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const helper = new URL('../transform-cache.mjs', import.meta.url).href;
+  const source = join(directory, 'component.tsx');
+  const implementation = join(directory, 'compiler.mjs');
+  const cache = join(directory, 'cache');
+  const run = () => execute(process.execPath, ['--input-type=module', '-e',
+    `import { cachedTransform } from ${JSON.stringify(helper)};
+     import { readFileSync } from 'node:fs';
+     const implementation = new URL(${JSON.stringify(pathToFileURL(implementation).href)});
+     const convert = cachedTransform(implementation, text => readFileSync(implementation, 'utf8') + text);
+     console.log(convert('source', ${JSON.stringify(source)}));`],
+  { env: { ...process.env, PIOP_TEST_TRANSFORM_CACHE_DIR: cache } });
+  await writeFile(implementation, 'browser:');
+  assert.equal((await run()).stdout.trim(), 'browser:source');
+  await writeFile(implementation, 'node:');
+  assert.equal((await run()).stdout.trim(), 'node:source');
+  await writeFile(implementation, 'browser:');
+  assert.equal((await run()).stdout.trim(), 'browser:source');
+  assert.equal((await readdir(cache)).length, 2);
+});

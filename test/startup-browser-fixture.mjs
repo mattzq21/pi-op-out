@@ -8,6 +8,9 @@ import { transformSync } from '@babel/core';
 import solid from 'babel-preset-solid';
 import typescript from '@babel/preset-typescript';
 import { chromium } from 'playwright-core';
+import { cachedTransform } from './transform-cache.mjs';
+
+const convert = cachedTransform(new URL(import.meta.url), (source, filename) => transformSync(source, { filename, babelrc: false, configFile: false, presets: [[solid, { generate: 'dom' }], [typescript, { onlyRemoveTypeImports: true }]] }).code);
 
 const bundles = new Map();
 const browsers = new Map();
@@ -50,7 +53,7 @@ async function buildBrowserFiles(entryPoint, mode) {
       api.onLoad({ filter: /.*/, namespace: 'asset' }, async ({ path }) => ({ contents: await readFile(path), loader: 'file' }));
       api.onResolve({ filter: /\?raw$/ }, args => ({ path: new URL(args.path.replace(/\?raw$/, ''), 'file://' + args.resolveDir + '/').pathname, namespace: 'raw' }));
       api.onLoad({ filter: /.*/, namespace: 'raw' }, async ({ path }) => ({ contents: await readFile(path, 'utf8'), loader: 'text' }));
-      api.onLoad({ filter: /\.tsx$/ }, async ({ path }) => ({ contents: transformSync(await readFile(path, 'utf8'), { filename: path, babelrc: false, configFile: false, presets: [[solid, { generate: 'dom' }], [typescript, { onlyRemoveTypeImports: true }]] }).code, loader: 'js' }));
+      api.onLoad({ filter: /\.tsx$/ }, async ({ path }) => ({ contents: convert(await readFile(path, 'utf8'), path), loader: 'js' }));
     } }],
   });
   return new Map(bundle.outputFiles.map(file => ['/' + basename(file.path), file.contents]));
