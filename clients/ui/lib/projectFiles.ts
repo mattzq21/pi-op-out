@@ -49,5 +49,5 @@ export function looksLikeFile(value: string) {
   const path = reference.path;
 
   return /(?:^|\/)(?:[\w@+.-]+\.[a-z\d_-]+|\.[\w.-]+|Dockerfile|Makefile|Justfile|LICENSE|README|AGENTS\.md)$/i.test(path)
-    || /^(?:\.{0,2}\/|[\w@.-]+\/)[\w@./+~-]+$/.test(path);
+    || /^(?:\.{0,2}\/|~\/|[\w@.-]+\/)[\w@./+~-]+$/.test(path);
 }

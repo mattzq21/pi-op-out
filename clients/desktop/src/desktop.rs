@@ -115,7 +115,11 @@ async fn open_rollout_file(path: String, host_id: Option<String>) -> Result<(), 
 #[tauri::command(async)]
 async fn open_local_file(path: String, host_id: Option<String>) -> Result<(), String> {
     if std::env::var_os("PIOP_DAEMON_URL").is_some() || host_id.as_deref().unwrap_or("local") != "local" { return Err("This file is on another host. Piop can open only files on this computer".into()); }
-    let path = PathBuf::from(path);
+    // A path that starts with ~ is in the home directory of this computer.
+    let path = match path.strip_prefix('~') {
+        Some(rest) if rest.is_empty() || rest.starts_with('/') => PathBuf::from(std::env::var_os("HOME").ok_or("HOME is not set, thus ~ cannot be found")?).join(rest.trim_start_matches('/')),
+        _ => PathBuf::from(path),
+    };
     if !path.is_absolute() { return Err(format!("File path is not absolute: {}", path.display())); }
     if !path.exists() { return Err(format!("File does not exist: {}", path.display())); }
     tokio::task::spawn_blocking(move || open_system_resource(path.as_os_str())).await.map_err(|error| error.to_string())?

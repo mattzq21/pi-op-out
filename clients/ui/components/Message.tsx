@@ -275,7 +275,7 @@ export function Message(componentProps: Props) {
     };
 
     const renderMessageBody = () => {
-      const renderResponse = () => <Markdown imageProject={imageProject()} streaming={streaming()}>{output()}</Markdown>;
+      const renderResponse = () => <Markdown imageProject={imageProject()} fileLinks streaming={streaming()}>{output()}</Markdown>;
       const renderMessageFailure = () => (failureState().failure && <div class="message-failure" role="status"><CircleAlert size={14} /><span>{(failureState().failure)}</span>{componentProps.onRetry && <button disabled={(componentProps.retrying === undefined ? false : componentProps.retrying)} onClick={(componentProps.onRetry)}>{(componentProps.retrying === undefined ? false : componentProps.retrying) ? "Retrying…" : "Retry"}</button>}</div>);
       const renderStreamCaret = () => (streaming() && !componentProps.paused && <WorkingIndicator />);
 
