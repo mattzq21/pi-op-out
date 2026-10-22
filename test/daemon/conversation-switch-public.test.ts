@@ -9,7 +9,7 @@ afterAll(async () => { await agents?.close(); });
 
 const held = <T>() => { let release!: (value: T) => void; const promise = new Promise<T>(resolve => { release = resolve; }); return { promise, release }; };
 
-test('a new conversation cannot start while the agent works, and afterwards starts empty while the old one keeps its history', async () => {
+test.concurrent('a new conversation cannot start while the agent works, and afterwards starts empty while the old one keeps its history', async () => {
   const busy = held<{ text: string }>();
   agents.scripts.set('Draft the plan', messages => text(messages.at(-1)) === 'Draft the plan' ? busy.promise : { text: 'Fresh start.' });
   agents.scripts.set('Start fresh', () => ({ text: 'Fresh start.' }));
@@ -32,7 +32,7 @@ test('a new conversation cannot start while the agent works, and afterwards star
   expect(old).toMatchObject({ name: 'Draft the plan', preview: 'Plan drafted.', isRunning: false });
 }, 60000);
 
-test('switching back to an earlier conversation shows its history and continues it', async () => {
+test.concurrent('switching back to an earlier conversation shows its history and continues it', async () => {
   agents.scripts.set('Name the project', messages => ({ text: text(messages.at(-1)) === 'Name the project' ? 'Call it Comet.' : 'We called it Comet.' }));
   agents.scripts.set('Unrelated question', () => ({ text: 'Unrelated answer.' }));
   const chat = await agents.rootChat();
@@ -51,7 +51,7 @@ test('switching back to an earlier conversation shows its history and continues 
   expect(messages.filter(message => message.role === 'user').map(text)).toEqual(['Name the project', 'What did we call it?']);
 }, 60000);
 
-test('switching to a conversation another device has open only watches it, and cannot send to it', async () => {
+test.concurrent('switching to a conversation another device has open only watches it, and cannot send to it', async () => {
   agents.scripts.set('Phone conversation', () => ({ text: 'Phone answer.' }));
   const phone = await agents.daemon.connect();
   try {
@@ -71,7 +71,7 @@ test('switching to a conversation another device has open only watches it, and c
   } finally { phone.close(); }
 }, 60000);
 
-test('branching after an answer opens a new conversation with the history up to that answer and leaves the original intact', async () => {
+test.concurrent('branching after an answer opens a new conversation with the history up to that answer and leaves the original intact', async () => {
   agents.scripts.set('First question', messages => ({ text: 'Answer to ' + text(messages.at(-1)) }));
   const chat = await agents.rootChat({ repository: true });
   await chat.command({ type: 'prompt', message: 'First question' });
@@ -93,7 +93,7 @@ test('branching after an answer opens a new conversation with the history up to 
   expect(sessions.find((session: any) => session.id === original.sessionId).forkSourceId).toBeUndefined();
 }, 60000);
 
-test('copying after an answer outside a Git repository opens a new conversation in the same folder, without a worktree', async () => {
+test.concurrent('copying after an answer outside a Git repository opens a new conversation in the same folder, without a worktree', async () => {
   agents.scripts.set('Copy question', messages => ({ text: 'Copy answer to ' + text(messages.at(-1)) }));
   const chat = await agents.rootChat();
   await chat.command({ type: 'prompt', message: 'Copy question' });
@@ -119,7 +119,7 @@ test('copying after an answer outside a Git repository opens a new conversation 
   expect(sessions.find((session: any) => session.id === copy.sessionId).forkSourceId).toBe(original.sessionId);
 }, 60000);
 
-test('fork and forget goes back to an earlier answer in the same conversation, and the model no longer sees what came after', async () => {
+test.concurrent('fork and forget goes back to an earlier answer in the same conversation, and the model no longer sees what came after', async () => {
   agents.scripts.set('Pick a color', messages => ({ text: 'Reply to ' + text(messages.at(-1)) }));
   const chat = await agents.rootChat();
   await chat.command({ type: 'prompt', message: 'Pick a color' });
@@ -133,12 +133,13 @@ test('fork and forget goes back to an earlier answer in the same conversation, a
   expect((await chat.history()).filter(message => message.role !== 'system').map(text)).toEqual(['Pick a color', 'Reply to Pick a color']);
   await chat.command({ type: 'prompt', message: 'Pick a shade' });
   await chat.until(history => text(history.at(-1)) === 'Reply to Pick a shade');
-  const sent = JSON.stringify(agents.model.requests.at(-1).messages);
+  const request = agents.model.requests.findLast(request => request.messages.some((message: any) => message.role === 'user' && text(message) === 'Pick a shade'));
+  const sent = JSON.stringify(request.messages);
   expect(sent).toContain('Reply to Pick a color');
   expect(sent).not.toContain('Forgotten detour');
 }, 60000);
 
-test('after fork and forget, the chat list shows the chat as it is now, without what came after the earlier answer', async () => {
+test.concurrent('after fork and forget, the chat list shows the chat as it is now, without what came after the earlier answer', async () => {
   agents.scripts.set('Choose a fruit', messages => ({ text: 'Reply to ' + text(messages.at(-1)) }));
   const chat = await agents.rootChat();
   await chat.command({ type: 'prompt', message: 'Choose a fruit' });
