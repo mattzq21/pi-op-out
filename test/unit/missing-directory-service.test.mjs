@@ -13,7 +13,7 @@ async function appWithMissingFolder(t) {
   const app = await appService(t, { beforeMount: async ({ daemon }) => {
     const home = await daemon.invoke('home_directory', { hostId: 'local' });
     cwd = join(home, 'work', 'deleted-project'); mkdirSync(cwd, { recursive: true });
-    chat = JSON.parse(execFileSync('node', [fileURLToPath(new URL('../fixtures/publish-chat.mjs', import.meta.url))], { encoding: 'utf8', timeout: 30000, input: JSON.stringify({ home, cwd, folder: 'deleted', content: '' }) }));
+    chat = JSON.parse(execFileSync('node', [fileURLToPath(new URL('../fixtures/publish-chat.mjs', import.meta.url))], { encoding: 'utf8', timeout: 30000, input: JSON.stringify({ home, cwd, folder: 'deleted', content: JSON.stringify({ type: 'message', id: 'request', parentId: null, message: { role: 'user', content: 'Work in this folder', timestamp: 1 } }) + '\n' }) }));
     rmSync(cwd, { recursive: true });
   } });
   const row = await untilDom(() => document.querySelector(`[data-session-key="local:${chat.id}"] .session-main`), 10000);

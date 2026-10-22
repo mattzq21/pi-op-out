@@ -157,10 +157,10 @@ test('steering messages use the smaller shaded message style', async t => {
       element = element.parentElement;
     }
   };
-  assert.equal(getComputedStyle(shadedText()).backgroundColor, 'rgb(223, 220, 212)');
+  assert.equal(getComputedStyle(shadedText()).backgroundColor, 'rgb(25, 24, 21)');
   assert.equal(getComputedStyle(shadedText()).fontSize, '12px');
   await view.rerender({ message: { ...message, deliveryBehavior: undefined } });
-  assert.notEqual(getComputedStyle(shadedText()).backgroundColor, 'rgb(223, 220, 212)');
+  assert.notEqual(getComputedStyle(shadedText()).backgroundColor, 'rgb(25, 24, 21)');
 });
 
 const mixedContent = [
