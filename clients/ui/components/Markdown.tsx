@@ -2,7 +2,7 @@ import { required } from "../lib/required";
 import DOMPurify from "dompurify";
 import { Copy } from "lucide-solid";
 import { Marked } from "marked";
-import { createEffect, createSignal, onCleanup, Show } from "solid-js";
+import { createEffect, createSignal, onCleanup, Show, useContext } from "solid-js";
 import { Portal } from "solid-js/web";
 import { openExternalUrl } from "../lib/nativeTransport";
 import { fileReference, type FileProject } from "../lib/projectFiles";
@@ -14,6 +14,7 @@ import { streamingMarkdown } from "./streamingMarkdown";
 import { imageFileReference, markdownImages } from "./markdownImages";
 import { markdownHooks, markdownTokenizer } from "../lib/markdownTokenizer";
 import { copyText } from "../lib/clipboard";
+import { canOpenFileLinks, fileLinkTooltip, MessageFileContext, openMessageFile } from "../lib/messageFiles";
 
 const escapeHtml = (text: string) => text.replace(/[&<>"']/g, character => required(({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[character]));
 
@@ -33,7 +34,9 @@ const parser = new Marked({
       const text = this.parser.parseInline(tokens);
       const url = webUrl(href);
 
-      return url ? `<a class="message-link" href="${escapeHtml(url)}">${text}</a>` : `<span class="message-link"${fileReference(href) ? ` data-file-reference="${escapeHtml(href)}"` : ""}>${text}</span>`;
+      if (url) return `<a class="message-link" href="${escapeHtml(url)}">${text}</a>`;
+
+      return fileReference(href) ? `<span class="message-link" data-file-reference="${escapeHtml(href)}">${text}</span>` : `<span class="message-link">${text}</span>`;
     },
     code({ text, lang, raw }) {
       const language = lang?.split(/\s/)[0];
@@ -71,6 +74,7 @@ type LinkMenu = { href: string; x: number; y: number; returnFocus?: HTMLElement 
 export function Markdown(props: { children: string; streaming?: boolean; imageProject?: FileProject }) {
   const renderMarkdown = streamingMarkdown(parser, (html, streaming, detectFiles) => sanitizeMarkdown(html, streaming, detectFiles, value => Boolean(imageFileReference(value))));
   const [error, setError] = createSignal<string>();
+  const fileScope = useContext(MessageFileContext);
   const [menu, setMenu] = createSignal<LinkMenu>();
   const timers = new Set<ReturnType<typeof setTimeout>>();
   let root: HTMLDivElement | undefined;
@@ -116,6 +120,18 @@ export function Markdown(props: { children: string; streaming?: boolean; imagePr
 
     imageBlocks = nextBlocks;
     blocks.update(root, html);
+  });
+  createEffect(() => {
+    void props.children;
+    const cwd = fileScope?.cwd();
+
+    if (!canOpenFileLinks || !root) return;
+
+    for (const link of root.querySelectorAll<HTMLElement>(".message-link[data-file-reference], button.file-link")) {
+      const tooltip = fileLinkTooltip(required(link.dataset.fileReference), cwd);
+
+      if (link.dataset.tooltip !== tooltip) link.dataset.tooltip = tooltip;
+    }
   });
   onCleanup(() => { images.dispose(); blocks.dispose(); });
   const [menuElement, setMenuElement] = createSignal<HTMLDivElement>();
@@ -174,6 +190,16 @@ export function Markdown(props: { children: string; streaming?: boolean; imagePr
     timers.add(timer);
   };
 
+  const openFile = (href: string) => {
+    setError(undefined);
+    void openMessageFile(href, fileScope).catch((reason: unknown) => {
+      const message = reason instanceof Error ? reason.message : String(reason);
+
+      if (fileScope?.notify) fileScope.notify("Could not open file", message);
+      else setError(`Could not open file: ${message}`);
+    });
+  };
+
   const openFileLink = (link: HTMLButtonElement) => {
     const reference = fileReference(link.dataset.fileReference ?? "");
 
@@ -182,6 +208,15 @@ export function Markdown(props: { children: string; streaming?: boolean; imagePr
 
   const click = (event: MouseEvent) => {
     if (!(event.target instanceof Element)) return;
+    const fileTarget = canOpenFileLinks && event.button === 0 ? event.target.closest<HTMLElement>(".message-link[data-file-reference], button.file-link") : null;
+
+    if (fileTarget) {
+      event.preventDefault();
+      openFile(required(fileTarget.dataset.fileReference));
+
+      return;
+    }
+
     const fileLink = event.target.closest<HTMLButtonElement>("button.file-link");
 
     if (fileLink) {

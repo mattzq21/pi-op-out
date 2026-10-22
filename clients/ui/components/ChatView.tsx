@@ -28,6 +28,7 @@ import { ConversationImageProject } from "./markdownImages";
 import { WorkingIndicator } from "./WorkingIndicator";
 import { PromptContextBar } from "./PromptContextBar";
 import { ConversationHostContext } from "../lib/subagentNavigation";
+import { MessageFileContext } from "../lib/messageFiles";
 
 interface Props { refreshError?: string; capabilityErrors?: string[]; capabilitiesLoading?: boolean; onRetryCapabilities?: () => void; transport?: NativeTransport; agentHostLabel?: string; state: AgentState; messages: ChatMessage[]; debug?: boolean; agents?: AgentProfile[]; activeAgent?: string; agentLocked?: boolean; agentSaved?: boolean; agentUnavailable?: boolean; modelAliases?: Record<string, string>; models: Model[]; commands: SlashCommand[]; thinkingLevels: string[]; widgets: string[]; statuses: Record<string, string>; projectCwd?: string; readOnly?: boolean; controlsDisabled?: boolean; draft?: string; onDraftChange?: (value: StateUpdate<string>) => void; focusRequest?: number; onActivate?: () => void; uploads?: ComposerUpload[]; onUploadsChange?: (uploads: StateUpdate<ComposerUpload[]>) => void; onSend: (text: string, behavior?: "steer" | "followUp", images?: ImageAttachment[], submission?: DraftSubmissionHandle) => void | boolean | Promise<void | boolean>; onChangePending?: (id: string, behavior: import("../types").PendingMessageAction) => Promise<void>; onAbort: () => void | Promise<void>; onPause: () => void | Promise<void>; onResume: () => void | Promise<void>; onOpenTerminal?: () => void; hosts?: Array<{ id: string; name: string; disabled?: boolean }>; onChooseHost?: (hostId: string) => void; onOpenProject: () => void; onClearProject?: () => void; onBranch: (message: ChatMessage) => void; onFork?: (message: ChatMessage) => void | Promise<void>; onForkAndForget?: (message: ChatMessage) => void | Promise<void>; forkSourceName?: string; onOpenForkSource?: (source: ForkSource) => void; revealEntryId?: string; onEntryRevealed?: () => void; onAgent?: (name: string) => void; onModel: (model: Model) => void; onToggleFastMode: () => void | Promise<void>; onThinking: (level: string) => void; }
 
@@ -35,9 +36,11 @@ function canRetry(props: Props, ownsConversation: boolean) {
   return ownsConversation && !props.readOnly && !props.controlsDisabled && !props.state.isStreaming && !props.state.isPaused && !props.state.isPausing;
 }
 
-export function ChatView(props: Props & { transcriptActions?: JSXElement; followConversation?: () => Accessor<PluginConversation> }) {
+export function ChatView(props: Props & { transcriptActions?: JSXElement; followConversation?: () => Accessor<PluginConversation>; onNotice?: (title: string, message: string) => void }) {
+  const projectCwd = () => props.projectCwd ?? (props.state.sessionId ? props.transport?.currentCwd() : undefined);
+
   const imageProject = () => {
-    const cwd = props.projectCwd ?? (props.state.sessionId ? props.transport?.currentCwd() : undefined);
+    const cwd = projectCwd();
 
     return cwd ? { cwd, hostId: props.transport?.currentHostId() ?? "local" } : undefined;
   };
@@ -297,7 +300,9 @@ export function ChatView(props: Props & { transcriptActions?: JSXElement; follow
     <TranscriptPlugins messages={() => messagesRef.current} source={() => ({ hostId: props.transport?.currentHostId() ?? "local", sessionId: props.state.sessionId, title: props.state.sessionName || "Current conversation", messageCount: props.state.messageCount, messages: [...props.messages], follow: props.followConversation })} />
   </main>;
 
-  return <ConversationHostContext.Provider value={() => props.transport?.currentHostId() ?? "local"}><PluginMessageContext.Provider value={{ sessionId: () => props.state.sessionId, command: async command => { if (!props.transport) throw new Error("Conversation is unavailable"); return props.transport.command(command); } }}><ConversationShell /></PluginMessageContext.Provider></ConversationHostContext.Provider>;
+  const conversationHost = () => props.transport?.currentHostId() ?? "local";
+
+  return <ConversationHostContext.Provider value={conversationHost}><MessageFileContext.Provider value={{ hostId: conversationHost, cwd: projectCwd, get notify() { return props.onNotice; } }}><PluginMessageContext.Provider value={{ sessionId: () => props.state.sessionId, command: async command => { if (!props.transport) throw new Error("Conversation is unavailable"); return props.transport.command(command); } }}><ConversationShell /></PluginMessageContext.Provider></MessageFileContext.Provider></ConversationHostContext.Provider>;
 }
 
 type ConversationGroup = { messages: ChatMessage[]; promptContexts: PromptContextInfo[] };

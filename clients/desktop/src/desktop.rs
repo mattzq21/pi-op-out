@@ -112,6 +112,15 @@ async fn open_rollout_file(path: String, host_id: Option<String>) -> Result<(), 
     tokio::task::spawn_blocking(move || open_system_resource(path.as_os_str())).await.map_err(|error| error.to_string())?
 }
 
+#[tauri::command(async)]
+async fn open_local_file(path: String, host_id: Option<String>) -> Result<(), String> {
+    if std::env::var_os("PIOP_DAEMON_URL").is_some() || host_id.as_deref().unwrap_or("local") != "local" { return Err("This file is on another host. Piop can open only files on this computer".into()); }
+    let path = PathBuf::from(path);
+    if !path.is_absolute() { return Err(format!("File path is not absolute: {}", path.display())); }
+    if !path.exists() { return Err(format!("File does not exist: {}", path.display())); }
+    tokio::task::spawn_blocking(move || open_system_resource(path.as_os_str())).await.map_err(|error| error.to_string())?
+}
+
 const LOAD_ERROR_HTML: &str = r#"<!doctype html>
 <html lang="en">
 <head>
@@ -199,7 +208,7 @@ pub fn run() {
             window.show()?;
         }
         Ok(())
-    }).invoke_handler(tauri::generate_handler![daemon_invoke, daemon_log_statuses, reload_development_window, load_client_settings, save_client_settings, sync_prompt_history, new_window, open_project_directory, open_rollout_file, open_external_url, read_dropped_file, read_clipboard_image]).build(context).expect("error while building piop").run(|app, event| {
+    }).invoke_handler(tauri::generate_handler![daemon_invoke, daemon_log_statuses, reload_development_window, load_client_settings, save_client_settings, sync_prompt_history, new_window, open_project_directory, open_rollout_file, open_local_file, open_external_url, read_dropped_file, read_clipboard_image]).build(context).expect("error while building piop").run(|app, event| {
         if let tauri::RunEvent::WindowEvent { label, event: tauri::WindowEvent::Destroyed, .. } = &event {
             let app = app.clone(); let label = label.clone();
             tauri::async_runtime::spawn(async move { app.state::<desktop_daemon::DesktopDaemon>().close_window(&app, &label).await; });
