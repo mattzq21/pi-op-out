@@ -5,13 +5,13 @@ import { join } from 'node:path';
 import { agentDaemon, called, text } from './agent-chats';
 
 let agents: Awaited<ReturnType<typeof agentDaemon>>;
-beforeAll(async () => { agents = await agentDaemon(); }, 60000);
+beforeAll(async () => { agents = await agentDaemon(); await agents.enableAgentTools('spawn_subagents'); }, 60000);
 afterAll(async () => { await agents?.close(); });
 
 test('a child agent\'s final answer reaches its parent, which continues with it', async () => {
   agents.scripts.set('Read the README for me', messages => {
     const last = messages.at(-1);
-    if (last.role === 'user' && text(last).includes('Read the README for me')) return { tool: 'spawn_agent', arguments: { task_name: 'reader', message: 'Summarize the README' } };
+    if (last.role === 'user' && text(last).includes('Read the README for me')) return { tool: 'spawn_subagents', arguments: { tasks: [{ name: 'reader', task: 'Summarize the README' }] } };
     const delivered = text(last).match(/README is about \w+/);
     return { text: delivered ? 'The reader says: ' + delivered[0] : 'Waiting for the reader.' };
   });
@@ -52,7 +52,7 @@ test('a child agent\'s final answer reaches its parent, which continues with it'
 /** An agent that delegates task to a child named name, then answers with what the child delivered. */
 const delegating = (name: string, task: string) => (messages: any[]) => {
   const last = messages.at(-1);
-  if (!called(messages, 'spawn_agent')) return { tool: 'spawn_agent', arguments: { task_name: name, message: task } };
+  if (!called(messages, 'spawn_subagents')) return { tool: 'spawn_subagents', arguments: { tasks: [{ name: name, task: task }] } };
   const delivered = text(last).match(/Relay: [^"\\]*/);
   return { text: delivered ? delivered[0] : 'Waiting for ' + name + '.' };
 };
@@ -62,7 +62,7 @@ test('a grandchild cannot start its own child, and its parents hear why', async 
   agents.scripts.set('Delegate further', delegating('grandchild', 'Delegate once more'));
   agents.scripts.set('Delegate once more', messages => {
     const last = messages.at(-1);
-    if (!called(messages, 'spawn_agent')) return { tool: 'spawn_agent', arguments: { task_name: 'too_deep', message: 'Unreachable task' } };
+    if (!called(messages, 'spawn_subagents')) return { tool: 'spawn_subagents', arguments: { tasks: [{ name: 'too_deep', task: 'Unreachable task' }] } };
     return { text: 'Relay: ' + text(last) };
   });
   const root = await agents.rootChat();
@@ -75,8 +75,8 @@ test('a grandchild cannot start its own child, and its parents hear why', async 
 test('a follow-up task goes to the same child, which still remembers its earlier work', async () => {
   agents.scripts.set('Use a memory helper', messages => {
     const last = text(messages.at(-1));
-    if (!called(messages, 'spawn_agent')) return { tool: 'spawn_agent', arguments: { task_name: 'memory', message: 'Remember the word apple' } };
-    if (last.includes('Relay: remembered') && !called(messages, 'followup_task')) return { tool: 'followup_task', arguments: { target: 'memory', message: 'Which word did I give you?' } };
+    if (!called(messages, 'spawn_subagents')) return { tool: 'spawn_subagents', arguments: { tasks: [{ name: 'memory', task: 'Remember the word apple' }] } };
+    if (last.includes('Relay: remembered') && !called(messages, 'message_subagent')) return { tool: 'message_subagent', arguments: { name: 'memory', message: 'Which word did I give you?' } };
     const answer = last.match(/Relay: word is \w+/);
     return { text: answer ? answer[0] : 'Waiting.' };
   });
@@ -96,8 +96,8 @@ test('a follow-up task goes to the same child, which still remembers its earlier
 test('a child paused by a model failure is reported to its parent at once and can still take a follow-up', async () => {
   agents.scripts.set('Ask a flaky helper', messages => {
     const last = text(messages.at(-1));
-    if (!called(messages, 'spawn_agent')) return { tool: 'spawn_agent', arguments: { task_name: 'flaky', message: 'Flaky task' } };
-    if (last.includes('model overloaded') && !called(messages, 'followup_task')) return { tool: 'followup_task', arguments: { target: 'flaky', message: 'Try again' } };
+    if (!called(messages, 'spawn_subagents')) return { tool: 'spawn_subagents', arguments: { tasks: [{ name: 'flaky', task: 'Flaky task' }] } };
+    if (last.includes('model overloaded') && !called(messages, 'message_subagent')) return { tool: 'message_subagent', arguments: { name: 'flaky', message: 'Try again' } };
     const answer = last.match(/Relay: \w+/);
     return { text: answer ? answer[0] : 'Waiting.' };
   });
@@ -108,7 +108,7 @@ test('a child paused by a model failure is reported to its parent at once and ca
   const root = await agents.rootChat();
   const started = Date.now();
   await root.command({ type: 'prompt', message: 'Ask a flaky helper' });
-  await root.until(history => history.some(message => message.role === 'assistant' && message.content?.some((part: any) => part.name === 'followup_task')));
+  await root.until(history => history.some(message => message.role === 'assistant' && message.content?.some((part: any) => part.name === 'message_subagent')));
   expect(Date.now() - started).toBeLessThan(30000);
   await root.until(history => text(history.at(-1)) === 'Relay: recovered');
   const rootRequests = agents.model.requests.filter(request => JSON.stringify(request.messages).includes('Ask a flaky helper'));
@@ -120,9 +120,9 @@ test('interrupting a busy child cancels its work, tells the parent, and the chil
   const slowReply = new Promise<{ text: string }>(resolve => { releaseSlow = resolve; });
   agents.scripts.set('Start a slow helper', messages => {
     const last = text(messages.at(-1));
-    if (!called(messages, 'spawn_agent')) return { tool: 'spawn_agent', arguments: { task_name: 'slow', message: 'Slow task' } };
-    if (last.includes('Stop the slow helper')) return { tool: 'interrupt_agent', arguments: { target: 'slow' } };
-    if (last.includes('stopped by interrupt_agent')) return { tool: 'followup_task', arguments: { target: 'slow', message: 'Quick task' } };
+    if (!called(messages, 'spawn_subagents')) return { tool: 'spawn_subagents', arguments: { tasks: [{ name: 'slow', task: 'Slow task' }] } };
+    if (last.includes('Stop the slow helper')) return { tool: 'stop_subagent', arguments: { name: 'slow' } };
+    if (last.includes('stopped by stop_subagent')) return { tool: 'message_subagent', arguments: { name: 'slow', message: 'Quick task' } };
     const answer = last.match(/Relay: \w+/);
     return { text: answer ? answer[0] : 'Waiting.' };
   });
@@ -136,7 +136,7 @@ test('interrupting a busy child cancels its work, tells the parent, and the chil
     await root.until(history => text(history.at(-1)) === 'Relay: quick');
   } finally { releaseSlow({ text: 'Relay: late' }); }
   const rootRequests = agents.model.requests.filter(request => JSON.stringify(request.messages).includes('Start a slow helper'));
-  expect(rootRequests.some(request => /slow: cancelled[\s\S]*Subagent stopped by interrupt_agent/.test(text(request.messages.at(-1))))).toBe(true);
+  expect(rootRequests.some(request => /slow \([^)]*\): cancelled[\s\S]*Subagent stopped by stop_subagent/.test(text(request.messages.at(-1))))).toBe(true);
   expect((await agents.daemon.invoke('list_sessions')).filter((session: any) => session.subagentParentId === root.sessionId).length).toBe(1);
 }, 120000);
 
@@ -149,9 +149,9 @@ test('a parent sees its busy child in its agent list and can send the child an u
   };
   agents.scripts.set('Delegate to a worker', messages => {
     const last = messages.at(-1);
-    if (!called(messages, 'spawn_agent')) return { tool: 'spawn_agent', arguments: { task_name: 'worker', message: 'Build the feature' } };
-    if (text(last).includes('Check on the worker') && !called(messages, 'list_agents')) return { tool: 'list_agents' };
-    if (last.role === 'tool' && called(messages, 'list_agents') && !called(messages, 'send_message')) return { tool: 'send_message', arguments: { target: 'worker', message: 'Also check the tests' } };
+    if (!called(messages, 'spawn_subagents')) return { tool: 'spawn_subagents', arguments: { tasks: [{ name: 'worker', task: 'Build the feature' }] } };
+    if (text(last).includes('Check on the worker') && !called(messages, 'list_subagents')) return { tool: 'list_subagents' };
+    if (last.role === 'tool' && called(messages, 'list_subagents') && !called(messages, 'message_subagent')) return { tool: 'message_subagent', arguments: { name: 'worker', message: 'Also check the tests' } };
     return { text: 'Waiting.' };
   });
   agents.scripts.set('Build the feature', messages => JSON.stringify(messages).includes('Also check the tests') ? { text: 'Tests checked.' } : firstReply);
@@ -160,39 +160,24 @@ test('a parent sees its busy child in its agent list and can send the child an u
     await root.command({ type: 'prompt', message: 'Delegate to a worker' });
     await root.until(() => agents.model.requests.some(request => JSON.stringify(request.messages).includes('Build the feature') && !JSON.stringify(request.messages).includes('Delegate to a worker')));
     await root.command({ type: 'prompt', message: 'Check on the worker' });
-    await root.until(history => history.some(message => message.role === 'toolResult' && message.toolName === 'send_message'));
+    await root.until(history => history.some(message => message.role === 'toolResult' && message.toolName === 'message_subagent'));
   } finally { releaseFirst({ text: 'Feature built.' }); }
-  const rootSeen = agents.model.requests.findLast(request => JSON.stringify(request.messages).includes('Delegate to a worker') && called(request.messages, 'send_message')).messages;
-  const listed = JSON.parse(toolResult(rootSeen, 'list_agents'));
-  expect(listed).toEqual([expect.objectContaining({ task_name: expect.stringMatching(/worker$/), status: 'running' })]);
-  expect(JSON.parse(toolResult(rootSeen, 'send_message'))).toMatchObject({ accepted: true });
+  const rootSeen = agents.model.requests.findLast(request => JSON.stringify(request.messages).includes('Delegate to a worker') && called(request.messages, 'message_subagent')).messages;
+  const listed = JSON.parse(toolResult(rootSeen, 'list_subagents'));
+  expect(listed).toEqual([expect.objectContaining({ name: expect.stringMatching(/worker$/), status: 'running' })]);
+  expect(JSON.parse(toolResult(rootSeen, 'message_subagent'))).toMatchObject({ accepted: true });
   for (let tries = 0; tries < 100 && !agents.model.requests.some(request => JSON.stringify(request.messages).includes('Also check the tests') && !JSON.stringify(request.messages).includes('Delegate to a worker')); tries++) await Bun.sleep(100);
   const childSaw = agents.model.requests.filter(request => JSON.stringify(request.messages).includes('Build the feature') && !JSON.stringify(request.messages).includes('Delegate to a worker'));
   expect(JSON.stringify(childSaw.at(-1).messages)).toContain('Also check the tests');
   expect(JSON.stringify(childSaw.at(-1).messages)).toContain('Feature built.');
 }, 120000);
 
-test('a child can send its parent a progress update before its final answer', async () => {
-  agents.scripts.set('Run a long survey', messages => {
-    const last = text(messages.at(-1));
-    if (!called(messages, 'spawn_agent')) return { tool: 'spawn_agent', arguments: { task_name: 'surveyor', message: 'Survey the modules' } };
-    if (last.includes('Halfway through the modules')) return { text: 'Noted the progress.' };
-    const answer = last.match(/Relay: \w+/);
-    return { text: answer ? answer[0] : 'Waiting.' };
-  });
-  agents.scripts.set('Survey the modules', messages => called(messages, 'send_message') ? { text: 'Relay: surveyed' } : { tool: 'send_message', arguments: { target: 'parent', message: 'Halfway through the modules' } });
-  const root = await agents.rootChat();
-  await root.command({ type: 'prompt', message: 'Run a long survey' });
-  const messages = await root.until(history => text(history.at(-1)) === 'Relay: surveyed');
-  expect(messages.filter(message => message.role === 'assistant').map(text).filter(Boolean)).toEqual(['Waiting.', 'Noted the progress.', 'Relay: surveyed']);
-}, 120000);
-
 test('a batch of children runs at once, waiting for all ends only after each answered, and every answer reaches the parent', async () => {
   const answered = new Map<string, number>();
   agents.scripts.set('Count the fruit', messages => {
     const last = messages.at(-1);
-    if (!called(messages, 'subagent')) return { tool: 'subagent', arguments: { tasks: [{ name: 'apples', task: 'Count apples' }, { name: 'pears', task: 'Count pears' }] } };
-    if (!called(messages, 'await_subagents')) return { tool: 'await_subagents' };
+    if (!called(messages, 'spawn_subagents')) return { tool: 'spawn_subagents', arguments: { tasks: [{ name: 'apples', task: 'Count apples' }, { name: 'pears', task: 'Count pears' }] } };
+    if (!called(messages, 'wait_subagents')) return { tool: 'wait_subagents' };
     if (last.role === 'tool' && !answered.has('awaited')) answered.set('awaited', Date.now());
     const counts = JSON.stringify(messages).match(/Relay: \d+ \w+/g) ?? [];
     return { text: counts.length ? 'Counts: ' + [...new Set(counts)].sort().join(', ') : 'Waiting.' };
@@ -219,9 +204,10 @@ test('an agent limited to one subagent cannot start a second while the first is 
   const firstReply = new Promise<{ text: string }>(resolve => { releaseFirst = resolve; });
   agents.scripts.set('Use one helper', messages => {
     const last = messages.at(-1);
-    if (!called(messages, 'subagent')) return { tool: 'subagent', arguments: { tasks: [{ name: 'one', task: 'Limited first task' }, { name: 'two', task: 'Limited second task' }] } };
-    if (!called(messages, 'spawn_agent')) return { tool: 'spawn_agent', arguments: { task_name: 'first', message: 'Limited first task' } };
-    if (called(messages, 'spawn_agent') && messages.filter((message: any) => message.tool_calls?.some((call: any) => call.function.name === 'spawn_agent')).length < 2 && last.role === 'tool') return { tool: 'spawn_agent', arguments: { task_name: 'second', message: 'Limited second task' } };
+    const spawns = messages.filter((message: any) => message.tool_calls?.some((call: any) => call.function.name === 'spawn_subagents')).length;
+    if (spawns === 0) return { tool: 'spawn_subagents', arguments: { tasks: [{ name: 'one', task: 'Limited first task' }, { name: 'two', task: 'Limited second task' }] } };
+    if (spawns === 1 && last.role === 'tool') return { tool: 'spawn_subagents', arguments: { tasks: [{ name: 'first', task: 'Limited first task' }] } };
+    if (spawns === 2 && last.role === 'tool') return { tool: 'spawn_subagents', arguments: { tasks: [{ name: 'second', task: 'Limited second task' }] } };
     return { text: 'Done trying.' };
   });
   agents.scripts.set('Limited first task', () => firstReply);
@@ -231,7 +217,7 @@ test('an agent limited to one subagent cannot start a second while the first is 
     await root.command({ type: 'prompt', message: 'Use one helper' });
     const messages = await root.until(history => text(history.at(-1)) === 'Done trying.');
     const results = messages.filter(message => message.role === 'toolResult').map(message => [message.toolName, message.isError]);
-    expect(results).toEqual([['subagent', true], ['spawn_agent', false], ['spawn_agent', true]]);
+    expect(results).toEqual([['spawn_subagents', true], ['spawn_subagents', false], ['spawn_subagents', true]]);
     const seen = agents.model.requests.findLast(request => JSON.stringify(request.messages).includes('Use one helper')).messages.filter((message: any) => message.role === 'tool').map(text);
     expect(seen[0]).toBe('This agent allows at most 1 concurrent subagents; 0 slots are occupied');
     expect(seen[2]).toBe('This agent allows at most 1 concurrent subagents; 1 slots are occupied');
@@ -239,25 +225,31 @@ test('an agent limited to one subagent cannot start a second while the first is 
 }, 120000);
 
 test('waiting for subagents ends early when the user sends a new message, which is handled next', async () => {
+  let releaseChild!: (reply: { text: string }) => void;
+  const childReply = new Promise<{ text: string }>(resolve => { releaseChild = resolve; });
   agents.scripts.set('Wait for news', messages => {
     const last = messages.at(-1);
-    if (!called(messages, 'wait_agent')) return { tool: 'wait_agent', arguments: { timeout_ms: 60000 } };
+    if (!called(messages, 'spawn_subagents')) return { tool: 'spawn_subagents', arguments: { tasks: [{ name: 'sleeper', task: 'Sleep a while' }] } };
+    if (!called(messages, 'wait_subagents')) return { tool: 'wait_subagents' };
     if (last.role === 'tool') return { text: 'Wait ended: ' + text(last) };
     return { text: 'Handled: ' + text(last) };
   });
+  agents.scripts.set('Sleep a while', () => childReply);
   const root = await agents.rootChat();
-  await root.command({ type: 'prompt', message: 'Wait for news' });
-  await root.until(history => history.some(message => message.role === 'assistant' && message.content?.some((part: any) => part.name === 'wait_agent')));
-  await Bun.sleep(2000);
-  const sent = Date.now();
-  await root.command({ type: 'follow_up', message: 'Here is the news' });
-  const messages = await root.until(history => text(history.at(-1)) === 'Handled: Here is the news');
-  expect(messages.filter(message => message.role === 'assistant').map(text).filter(Boolean)).toEqual(['Wait ended: Wait interrupted by new input.', 'Handled: Here is the news']);
-  expect(Date.now() - sent).toBeLessThan(8000);
+  try {
+    await root.command({ type: 'prompt', message: 'Wait for news' });
+    await root.until(history => history.some(message => message.role === 'assistant' && message.content?.some((part: any) => part.name === 'wait_subagents')));
+    await Bun.sleep(2000);
+    const sent = Date.now();
+    await root.command({ type: 'follow_up', message: 'Here is the news' });
+    const messages = await root.until(history => text(history.at(-1)) === 'Handled: Here is the news');
+    expect(messages.filter(message => message.role === 'assistant').map(text).filter(Boolean)).toEqual(['Wait ended: The user sent a new message. Subagents are still running.', 'Handled: Here is the news']);
+    expect(Date.now() - sent).toBeLessThan(8000);
+  } finally { releaseChild({ text: 'Slept.' }); }
 }, 120000);
 
 test('archiving a parent while its child runs a command ends the child\'s command and the child makes no more model calls', async () => {
-  agents.scripts.set('Delegate a slow job', messages => called(messages, 'spawn_agent') ? { text: 'Waiting.' } : { tool: 'spawn_agent', arguments: { task_name: 'slow', message: 'Slow child job' } });
+  agents.scripts.set('Delegate a slow job', messages => called(messages, 'spawn_subagents') ? { text: 'Waiting.' } : { tool: 'spawn_subagents', arguments: { tasks: [{ name: 'slow', task: 'Slow child job' }] } });
   agents.scripts.set('Slow child job', messages => called(messages, 'bash') ? { text: 'Child done.' } : { tool: 'bash', arguments: { command: 'sleep 3; echo done > child-late.txt' } });
   const root = await agents.rootChat();
   await root.command({ type: 'prompt', message: 'Delegate a slow job' });
@@ -273,12 +265,12 @@ test('archiving a parent while its child runs a command ends the child\'s comman
 }, 60000);
 
 test('stopping a parent that waits for its child stops both at once, and the parent makes no more model calls', async () => {
-  agents.scripts.set('Wait for a slow child', messages => called(messages, 'wait_agent') ? { text: 'Kept going after stop.' }
-    : called(messages, 'spawn_agent') ? { tool: 'wait_agent', arguments: { targets: ['patient'] } } : { tool: 'spawn_agent', arguments: { task_name: 'patient', message: 'Patient child job' } });
+  agents.scripts.set('Wait for a slow child', messages => called(messages, 'wait_subagents') ? { text: 'Kept going after stop.' }
+    : called(messages, 'spawn_subagents') ? { tool: 'wait_subagents' } : { tool: 'spawn_subagents', arguments: { tasks: [{ name: 'patient', task: 'Patient child job' }] } });
   agents.scripts.set('Patient child job', messages => called(messages, 'bash') ? { text: 'Child done.' } : { tool: 'bash', arguments: { command: 'sleep 3; echo done > patient-late.txt' } });
   const root = await agents.rootChat();
   await root.command({ type: 'prompt', message: 'Wait for a slow child' });
-  const parentWaits = () => agents.model.requests.some(request => text(request.messages[1]) === 'Wait for a slow child' && called(request.messages, 'spawn_agent'));
+  const parentWaits = () => agents.model.requests.some(request => text(request.messages[1]) === 'Wait for a slow child' && called(request.messages, 'spawn_subagents'));
   const childCalls = () => agents.model.requests.filter(request => JSON.stringify(request.messages).includes('Patient child job') && text(request.messages.at(-1)).startsWith('Untrusted agent content'));
   for (let tries = 0; !(parentWaits() && childCalls().length) && tries < 200; tries++) await Bun.sleep(100);
   await Bun.sleep(800);
@@ -295,9 +287,9 @@ test('pausing a parent cancels its busy child, and after resume the parent hears
     const last = text(messages.at(-1));
     const relay = last.match(/Relay: \w+/);
     if (relay) return { text: relay[0] };
-    if (/patience: cancelled/.test(last) && !called(messages, 'followup_task')) return { tool: 'followup_task', arguments: { target: 'patience', message: 'Try the slow job again' } };
-    if (called(messages, 'spawn_agent') && !called(messages, 'wait_agent')) return { tool: 'wait_agent', arguments: { targets: ['patience'] } };
-    return called(messages, 'spawn_agent') ? { text: 'Waiting.' } : { tool: 'spawn_agent', arguments: { task_name: 'patience', message: 'Paused child job' } };
+    if (/patience \([^)]*\): cancelled/.test(last) && !called(messages, 'message_subagent')) return { tool: 'message_subagent', arguments: { name: 'patience', message: 'Try the slow job again' } };
+    if (called(messages, 'spawn_subagents') && !called(messages, 'wait_subagents')) return { tool: 'wait_subagents' };
+    return called(messages, 'spawn_subagents') ? { text: 'Waiting.' } : { tool: 'spawn_subagents', arguments: { tasks: [{ name: 'patience', task: 'Paused child job' }] } };
   });
   agents.scripts.set('Paused child job', messages => JSON.stringify(messages).includes('Try the slow job again') ? { text: 'Relay: retried' }
     : called(messages, 'bash') ? { text: 'Relay: first' } : { tool: 'bash', arguments: { command: 'sleep 3' } });
@@ -311,11 +303,11 @@ test('pausing a parent cancels its busy child, and after resume the parent hears
   await root.command({ type: 'resume' });
   const messages = await root.until(history => text(history.at(-1)) === 'Relay: retried');
   expect(messages.some(message => text(message) === 'Relay: first')).toBe(false);
-  expect(messages.some(message => message.role === 'assistant' && message.content?.some((part: any) => part.name === 'followup_task'))).toBe(true);
+  expect(messages.some(message => message.role === 'assistant' && message.content?.some((part: any) => part.name === 'message_subagent'))).toBe(true);
 }, 90000);
 
 test('deleting a parent while its child runs a command stops the child and deletes both chats', async () => {
-  agents.scripts.set('Delegate a doomed job', messages => called(messages, 'spawn_agent') ? { text: 'Waiting.' } : { tool: 'spawn_agent', arguments: { task_name: 'doomed', message: 'Doomed child job' } });
+  agents.scripts.set('Delegate a doomed job', messages => called(messages, 'spawn_subagents') ? { text: 'Waiting.' } : { tool: 'spawn_subagents', arguments: { tasks: [{ name: 'doomed', task: 'Doomed child job' }] } });
   agents.scripts.set('Doomed child job', messages => called(messages, 'bash') ? { text: 'Child done.' } : { tool: 'bash', arguments: { command: 'sleep 3; echo done > doomed-late.txt' } });
   const root = await agents.rootChat();
   await root.command({ type: 'prompt', message: 'Delegate a doomed job' });

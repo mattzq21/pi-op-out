@@ -123,7 +123,7 @@ test('configuration edits normalize duplicate profiles and prompt paths', async 
 test('first run creates private defaults and preserves existing prompts (production)', async t => {
   const development = false;
   const env = development ? { PIOP_STORAGE_DIRECTORY: '.piop-dev' } : {};
-  const allTools = ['read', 'bash', 'edit', 'write', 'grep', 'find', 'ls', 'web_search', 'subagent'];
+  const allTools = ['read', 'bash', 'edit', 'write', 'grep', 'find', 'ls', 'web_search', 'spawn_subagents'];
   const f = await agentFixture(t, { config: null, env, runtime: { enabledTools: allTools }, tools: allTools, files: { 'home/.agents/AGENTS.md': 'Personal instructions' } });
   await f.load(); const config = await f.configuration();
   const expected = { name: 'general', model: '', effort: development ? 'medium' : 'high', extensions: [], max_subagents: 8, max_sub_subagents: 8, path_systemprompt: '~/.agents/prompts/system/default.md', path_agent_prompt: '~/.agents/AGENTS.md', tools: allTools, skills: [], mcpServers: {} };
@@ -140,7 +140,7 @@ test('first run creates private defaults and preserves existing prompts (product
 test('first run creates private defaults and preserves existing prompts (development)', async t => {
   const development = true;
   const env = development ? { PIOP_STORAGE_DIRECTORY: '.piop-dev' } : {};
-  const allTools = ['read', 'bash', 'edit', 'write', 'grep', 'find', 'ls', 'web_search', 'subagent'];
+  const allTools = ['read', 'bash', 'edit', 'write', 'grep', 'find', 'ls', 'web_search', 'spawn_subagents'];
   const f = await agentFixture(t, { config: null, env, runtime: { enabledTools: allTools }, tools: allTools, files: { 'home/.agents/AGENTS.md': 'Personal instructions' } });
   await f.load(); const config = await f.configuration();
   const expected = { name: 'general', model: '', effort: development ? 'medium' : 'high', extensions: [], max_subagents: 8, max_sub_subagents: 8, path_systemprompt: '~/.agents/prompts/system/default.md', path_agent_prompt: '~/.agents/AGENTS.md', tools: allTools, skills: [], mcpServers: {} };
@@ -419,12 +419,12 @@ test('fresh sessions recognize conversational history but ignore tool messages a
 });
 
 test('tool migration adds missing defaults without removing explicit builtin choices', async t => {
-  const runtime = { enabledTools: ['web_search', 'subagent'] };
+  const runtime = { enabledTools: ['web_search', 'spawn_subagents'] };
   const f = await agentFixture(t, { runtime, config: { agents: [profile('general', { tools: ['read'] }), profile('reviewer', { tools: ['web_search'] })] } });
   await f.load();
   const saved = await f.configuration();
-  assert.deepEqual(saved.agents[0].tools, ['read', 'subagent', 'web_search']);
-  assert.deepEqual(saved.agents[1].tools, ['web_search', 'subagent']);
+  assert.deepEqual(saved.agents[0].tools, ['read', 'spawn_subagents', 'web_search']);
+  assert.deepEqual(saved.agents[1].tools, ['web_search', 'spawn_subagents']);
 });
 
 test('an unreadable inherited agent prompt does not silently become an empty prompt', async t => {
@@ -538,11 +538,11 @@ test('agent RPC uses exact names and rejects encoded or unknown names without ex
 });
 
 test('new default profiles retain available session tools after one-time migrations are finished', async t => {
-  const tools = ['read', 'bash', 'edit', 'write', 'grep', 'find', 'ls', 'web_search', 'subagent'];
+  const tools = ['read', 'bash', 'edit', 'write', 'grep', 'find', 'ls', 'web_search', 'spawn_subagents'];
   const model = { provider: 'openai', id: 'gpt-5.4', api: 'openai-responses' };
   const f = await agentFixture(t, { config: null, runtime: { enabledTools: tools }, tools, model, models: [model], realFastMode: { catalog: [] } });
   await f.load(); await f.start(); await f.configure({ agents: [] });
-  assert.deepEqual((await f.configuration()).agents[0].tools, ['read', 'bash', 'edit', 'write', 'grep', 'find', 'ls', 'web_search', 'subagent']);
+  assert.deepEqual((await f.configuration()).agents[0].tools, ['read', 'bash', 'edit', 'write', 'grep', 'find', 'ls', 'web_search', 'spawn_subagents']);
 });
 
 
@@ -1087,10 +1087,10 @@ test('removed agent refresh leaves externally enabled tools unchanged', async t 
 });
 
 test('clearing migrated tools remains effective after reload and selection', async t => {
-  const tools = ['read', 'web_search', 'subagent'];
+  const tools = ['read', 'web_search', 'spawn_subagents'];
   const f = await agentFixture(t, { runtime: { enabledTools: tools }, tools, config: { agents: [profile()] } });
   await f.load(); await f.start();
-  assert.deepEqual(f.pi.getActiveTools(), ['read', 'subagent', 'web_search']);
+  assert.deepEqual(f.pi.getActiveTools(), ['read', 'spawn_subagents', 'web_search']);
   await f.configure({ agents: [profile('general', { tools: [] })] });
   await f.reloadExtensions(); await f.select('general');
   assert.deepEqual(f.pi.getActiveTools(), []);

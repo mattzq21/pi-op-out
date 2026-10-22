@@ -298,7 +298,9 @@ export function SettingsView(props: SettingsViewProps) {
   const renamedAccess = (items: AgentProfile[], from: string, to?: string) => items.map(item => {
     const rename = (access: AgentAccess | undefined) => Array.isArray(access) && access.includes(from) ? access.flatMap(name => name !== from ? [name] : to ? [to] : []) : access;
 
-    return { ...item, allowed_subagents: rename(item.allowed_subagents), allowed_threads: rename(item.allowed_threads) };
+    const subagents = rename(item.allowed_subagents); const threads = rename(item.allowed_threads);
+
+    return subagents === item.allowed_subagents && threads === item.allowed_threads ? item : { ...item, allowed_subagents: subagents, allowed_threads: threads };
   });
 
   const renameAgent = (name: string) => { if (!agent() || (!isBuiltInAgent(agent()) && name.trim().toLowerCase() === "general")) return;

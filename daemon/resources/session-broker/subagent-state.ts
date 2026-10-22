@@ -71,7 +71,7 @@ export function saveRun(pi: ExtensionAPI, ctx: ExtensionContext, run: SubagentRu
 }
 
 export function subagentPayload(runs: SubagentRun[]): AgentToolResult<{ version: 1; runs: SubagentRun[] }> {
-  return { content: [{ type: "text", text: runs.map((run) => `${run.name}: ${run.status}\nAgent profile: ${run.agent ?? "original profile"}\nSession: ${run.hostId}/${run.sessionId}\nWorkspace: ${run.cwd ?? "original working directory"}\nTranscript: ${run.sessionPath}${run.output ? `\n${run.output}` : ""}`).join("\n\n") }], details: { version: 1, runs: structuredClone(runs) } };
+  return { content: [{ type: "text", text: runs.map((run) => `${run.name} (${run.agent ?? "your agent"}): ${run.status}${run.output ? `\n${run.output}` : ""}`).join("\n\n") }], details: { version: 1, runs: structuredClone(runs) } };
 }
 
 const notificationSchema = Schema.Object({ notificationId: Schema.String() });

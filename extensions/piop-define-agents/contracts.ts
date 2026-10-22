@@ -33,7 +33,7 @@ export type SessionAgentState = { snapshot?: AgentSnapshot; active?: string; loc
 /** purpose: set when the profile starts a subagent or thread, so the agent access rules apply. */
 export interface SubagentProfileRequest { agent?: string; purpose?: AgentStartPurpose; state?: SessionAgentState; error?: string; ready?: Promise<void> }
 
-export interface AgentProfileSummary { name: string; description?: string; model: string; effort: string; fastMode?: boolean; max_subagents?: number; max_sub_subagents?: number; tools: string[]; skills: string[]; mcpServers: string[] }
+export interface AgentProfileSummary { name: string; description?: string; model: string; tools: string[]; skills: string[] }
 
 export interface SubagentLimitsRequest { max_subagents?: number; max_sub_subagents?: number }
 

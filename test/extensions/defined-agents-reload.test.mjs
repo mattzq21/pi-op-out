@@ -4,9 +4,9 @@ import { agentFixture, profile, configured } from '../defined-agent-fixture.mjs'
 
 test('session tools migrate once and later per-agent exclusions survive reload', async t => {
   const config = configured([profile('general', { tools: [] })]); config.sessionToolsDefaultApplied = false;
-  const f = await agentFixture(t, { config, tools: ['subagent'], runtime: { enabledTools: ['subagent'] } });
+  const f = await agentFixture(t, { config, tools: ['spawn_subagents'], runtime: { enabledTools: ['spawn_subagents'] } });
   await f.load(); await f.start();
-  assert.deepEqual(f.pi.getActiveTools(), ['subagent']);
+  assert.deepEqual(f.pi.getActiveTools(), ['spawn_subagents']);
   await f.configure({ agents: [profile('general', { tools: [] })] });
   await f.reloadExtensions(); await f.select('general');
   assert.deepEqual((await f.configuration()).agents[0].tools, []);

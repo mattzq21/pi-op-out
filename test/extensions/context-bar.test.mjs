@@ -82,16 +82,16 @@ test('the context panel lists project instructions, the working directory and sk
 test('the panel lists the tools the provider request declares, and marks the ones codemode scripts can call', () => {
   const tools = [
     { name: 'read', description: 'Read files', parameters: {}, exposure: 'direct' },
-    { name: 'spawn_agent', description: 'Start a child', parameters: {}, exposure: 'model-only' },
+    { name: 'spawn_subagents', description: 'Start a child', parameters: {}, exposure: 'model-only' },
     { name: 'codemode', description: 'Run scripts', parameters: {}, exposure: 'direct' },
   ];
   const sent = names => ({ tools: names.map(name => ({ type: 'function', name, description: name === 'codemode' ? 'Run scripts\n\nNested tools:\n\n### read' : tools.find(tool => tool.name === name).description, parameters: {} })) });
   const panel = (mode, payload) => { const chat = session({ tools, settings: { codemode: { mode } } }); chat.say('hi'); chat.turn(payload); return chat.panel(); };
-  const only = panel('only', sent(['spawn_agent', 'codemode']));
-  assert.deepEqual(only.tools.map(tool => [tool.name, tool.codemode]), [['spawn_agent', false], ['codemode', undefined]]);
+  const only = panel('only', sent(['spawn_subagents', 'codemode']));
+  assert.deepEqual(only.tools.map(tool => [tool.name, tool.codemode]), [['spawn_subagents', false], ['codemode', undefined]]);
   assert.match(only.tools[1].description, /Nested tools:/, 'the codemode description as sent, with the declarations of the tools it calls');
-  const on = panel('on', sent(['read', 'spawn_agent', 'codemode']));
-  assert.deepEqual(on.tools.map(tool => [tool.name, tool.codemode]), [['read', true], ['spawn_agent', false], ['codemode', undefined]]);
+  const on = panel('on', sent(['read', 'spawn_subagents', 'codemode']));
+  assert.deepEqual(on.tools.map(tool => [tool.name, tool.codemode]), [['read', true], ['spawn_subagents', false], ['codemode', undefined]]);
 });
 
 test('request tools are read from Anthropic and Google request shapes too', () => {

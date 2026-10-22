@@ -5,9 +5,10 @@ import { agentDaemon, called, text } from './agent-chats';
 test('archiving a worktree chat and its child releases its worktree', async () => {
  const agents=await agentDaemon();
  try {
+  await agents.enableAgentTools('spawn_subagents');
   agents.scripts.set('Initial question', messages => {
    if (!messages.some(m=>m.role==='user' && text(m)==='Delegate now')) return {text:'Initial answer'};
-   if (!called(messages,'spawn_agent')) return {tool:'spawn_agent', arguments:{task_name:'helper',message:'Child task'}};
+   if (!called(messages,'spawn_subagents')) return {tool:'spawn_subagents', arguments:{tasks:[{name:'helper',task:'Child task'}]}};
    return {text:text(messages.at(-1)).includes('Child finished')?'All finished':'Waiting'};
   });
   agents.scripts.set('Child task',()=>({text:'Child finished'}));

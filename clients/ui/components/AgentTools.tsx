@@ -6,8 +6,8 @@ import "./agent-tools.css";
 /** Groups for related tools, by tool name. Other tools are grouped by the extension that registered them. */
 const toolGroups = [
   { name: "Goal", tools: ["update_goal_status"] },
-  { name: "Subagents", tools: ["subagent", "spawn_agent", "followup_task", "interrupt_agent", "list_agents", "send_message", "wait_agent", "await_subagents"] },
-  { name: "Orchestration", tools: ["send_message_to_thread", "receive_agent_message", "create_thread", "list_threads", "read_thread", "wait_threads", "stop_thread"] },
+  { name: "Subagents", tools: ["spawn_subagents", "message_subagent", "stop_subagent", "list_subagents", "wait_subagents"] },
+  { name: "Orchestration", tools: ["create_thread", "message_thread", "stop_thread", "list_threads", "read_thread", "wait_threads"] },
 ];
 
 /** Tools that have their own setting. codemode follows the agent's Codemode switch; list_agent_profiles is on when the Subagents or Orchestration group is. */
@@ -91,7 +91,7 @@ export function AgentTools(props: { tools: ToolConfig[]; query: string; selected
     <For each={shown().filter(tool => toolGroup(tool) === undefined && matches(tool.name, props.query))}>{tool => <ItemCheckbox item={item(tool)} selected={props.selected} onToggle={toggle} />}</For>
     <For each={groups()}>{group =>
       <AllowGroup name={group.name} kind="tools" items={group.items} selected={props.selected} onToggle={toggle}>
-        <Show when={group.name === "Subagents" && props.selected.includes("subagent")}>
+        <Show when={group.name === "Subagents" && props.selected.includes("spawn_subagents")}>
           <div class="agent-subagent-limits">
             <label class="field"><span>Max subagents</span><input type="number" aria-label="Max subagents" min="0" max={Number.MAX_SAFE_INTEGER} step="1" value={props.agent.max_subagents ?? 8} onInput={event => props.onLimitsChange({ max_subagents: event.currentTarget.valueAsNumber })} /></label>
             <label class="field"><span>Max 2nd level subagents</span><input type="number" aria-label="Max 2nd level subagents" min="0" max={Number.MAX_SAFE_INTEGER} step="1" value={props.agent.max_sub_subagents ?? 8} onInput={event => props.onLimitsChange({ max_sub_subagents: event.currentTarget.valueAsNumber })} /></label>

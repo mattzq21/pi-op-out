@@ -20,7 +20,19 @@ export type { Agent } from "./contracts.ts";
 
 const STATUS_KEY = "pi-define-agents";
 
-const sessionTools = ["subagent"];
+const sessionTools = ["spawn_subagents"];
+
+/** Old subagent and chat tool names, and the tools that replaced them. */
+const renamedTools: Record<string, string> = {
+  subagent: "spawn_subagents", spawn_agent: "spawn_subagents", followup_task: "message_subagent", send_message: "message_subagent",
+  interrupt_agent: "stop_subagent", list_agents: "list_subagents", wait_agent: "wait_subagents", await_subagents: "wait_subagents",
+  send_message_to_thread: "message_thread",
+};
+
+/** The agent's tools with old names replaced. The agent's tool groups decide if it has list_agent_profiles, so it is never configured directly. */
+function configuredTools(tools: string[]) {
+  return [...new Set(tools.filter(tool => tool !== "list_agent_profiles" && tool !== "receive_agent_message").map(tool => renamedTools[tool] ?? tool))];
+}
 
 export type Config = { revision?: string; agents: Agent[]; webSearchDefaultApplied?: boolean; sessionToolsDefaultApplied?: boolean; subagentsDefaultApplied?: boolean; workhorseDefaultApplied?: boolean; };
 
@@ -120,8 +132,7 @@ function normalize(value: Omit<Partial<Config>, "agents"> & { agents?: StoredAge
     allow_as_subagent: agentFlag(agent.allow_as_subagent, agent.name, "allow_as_subagent"), allow_as_thread: agentFlag(agent.allow_as_thread, agent.name, "allow_as_thread"),
     allowed_subagents: agentAccess(agent.allowed_subagents, agent.name, "allowed_subagents"), allowed_threads: agentAccess(agent.allowed_threads, agent.name, "allowed_threads"),
     path_systemprompt: promptPath(agent), path_agent_prompt: Check(Type.String(), agent.path_agent_prompt) ? agent.path_agent_prompt.trim() : "",
-    // The agent's subagent and thread tools decide if it has list_agent_profiles, so it is never configured directly.
-    tools: Array.isArray(agent.tools) ? agent.tools.filter((item): item is string => Check(Type.String(), item) && item !== "list_agent_profiles") : generalAgent(pi).tools, skills: Array.isArray(agent.skills) ? agent.skills.filter((item): item is string => Check(Type.String(), item)) : [], mcpServers: mcpServers(agent.mcpServers),
+    tools: Array.isArray(agent.tools) ? configuredTools(agent.tools.filter((item): item is string => Check(Type.String(), item))) : generalAgent(pi).tools, skills: Array.isArray(agent.skills) ? agent.skills.filter((item): item is string => Check(Type.String(), item)) : [], mcpServers: mcpServers(agent.mcpServers),
   })) : [];
 
   if (!supplied.some((agent) => agent.name === "general")) {
@@ -174,8 +185,8 @@ function migrateSessionTools(config: Config, pi: ConfigRuntime) {
 }
 
 function migrateSubagents(config: Config, pi: ConfigRuntime) {
-  if (!config.subagentsDefaultApplied && enabledTools(pi)?.includes("subagent")) {
-    for (const agent of config.agents) if (!agent.tools.includes("subagent")) agent.tools.push("subagent");
+  if (!config.subagentsDefaultApplied && enabledTools(pi)?.includes("spawn_subagents")) {
+    for (const agent of config.agents) if (!agent.tools.includes("spawn_subagents")) agent.tools.push("spawn_subagents");
     config.subagentsDefaultApplied = true;
 
     return true;
@@ -362,12 +373,15 @@ export default async function defineAgents(pi: ExtensionAPI) {
   const stopProfileCatalog = pi.events.on("piop:agents:profiles", request => {
     const caller = currentAgent();
     request.active = caller?.name;
-    request.profiles = config.agents.filter(agent => !startRefusal(caller, agent, request.purpose)).map(agent => ({ name: agent.name, ...(agent.description ? { description: agent.description } : {}), model: agent.model, effort: agent.effort, fastMode: agent.fastMode, max_subagents: agent.max_subagents ?? 8, max_sub_subagents: agent.max_sub_subagents ?? 8, tools: [...agent.tools], skills: [...agent.skills], mcpServers: Object.keys(agent.mcpServers) }));
+    request.profiles = config.agents.filter(agent => !startRefusal(caller, agent, request.purpose)).map(agent => ({ name: agent.name, ...(agent.description ? { description: agent.description } : {}), model: agent.model || "default", tools: [...agent.tools], skills: agent.skills.map(skillName) }));
   });
 
   const stopContextCap = pi.events.on("piop:agents:context-cap", request => {
     request.cap = currentAgent()?.contextWindowCap;
   });
+
+  /** A skill's folder name, from its path to a SKILL.md file or to its folder. */
+  const skillName = (path: string) => { const parts = path.split("/").filter(Boolean); return (parts.at(-1) === "SKILL.md" ? parts.at(-2) : parts.at(-1)) ?? path; };
 
   const restoredAgentName = (name: string | undefined) => !name || (name === "default" && !findAgent("default")) ? "general" : name;
 

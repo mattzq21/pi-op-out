@@ -16,10 +16,10 @@ test('a chat can message another chat, wait for its answer and read it', async (
   await worker.command({ type: 'prompt', message: 'You are the worker' });
   await worker.until(history => text(history.at(-1)) === 'Ready.');
 
-  await agents.enableAgentTools('send_message_to_thread');
+  await agents.enableAgentTools('message_thread');
   const coordinator = await agents.rootChat();
   agents.scripts.set('Check on the worker', messages => {
-    if (!called(messages, 'send_message_to_thread')) return { tool: 'send_message_to_thread', arguments: { threadId: worker.sessionId, prompt: 'What is the build status?' } };
+    if (!called(messages, 'message_thread')) return { tool: 'message_thread', arguments: { threadId: worker.sessionId, message: 'What is the build status?' } };
     if (!called(messages, 'wait_threads')) return { tool: 'wait_threads', arguments: { targets: [{ threadId: worker.sessionId }], timeoutMs: 60000 } };
     if (!called(messages, 'read_thread')) return { tool: 'read_thread', arguments: { threadId: worker.sessionId, limit: 2 } };
     return { text: 'Relay: ' + toolResult(messages, 'read_thread').items.at(-1).text };
@@ -28,7 +28,7 @@ test('a chat can message another chat, wait for its answer and read it', async (
   const messages = await coordinator.until(history => text(history.at(-1)).startsWith('Relay: '));
   expect(text(messages.at(-1))).toBe('Relay: Worker status: green');
   const seen = agents.model.requests.findLast(request => JSON.stringify(request.messages).includes('Check on the worker')).messages;
-  expect(toolResult(seen, 'send_message_to_thread')).toMatchObject({ sessionId: worker.sessionId, accepted: true });
+  expect(toolResult(seen, 'message_thread')).toMatchObject({ sessionId: worker.sessionId, accepted: true });
   expect(toolResult(seen, 'wait_threads')).toMatchObject({ timedOut: false, wake: { id: worker.sessionId, status: 'idle' }, polls: [{ latestAssistantMessage: { text: 'Worker status: green' } }] });
   const delivered = JSON.parse(toolResult(seen, 'read_thread').items[0].text);
   // The chat view shows the sender from sourceHostId and sourceSessionId.
@@ -36,12 +36,12 @@ test('a chat can message another chat, wait for its answer and read it', async (
 }, 120000);
 
 test('chat tools list and read only root chats, never subagent chats', async () => {
-  await agents.enableAgentTools('send_message_to_thread');
+  await agents.enableAgentTools('message_thread');
   const coordinator = await agents.rootChat();
   let childId = '';
   agents.scripts.set('Delegate, then look around', messages => {
     const last = text(messages.at(-1));
-    if (!called(messages, 'spawn_agent')) return { tool: 'spawn_agent', arguments: { task_name: 'helper', message: 'Helper task' } };
+    if (!called(messages, 'spawn_subagents')) return { tool: 'spawn_subagents', arguments: { tasks: [{ name: 'helper', task: 'Helper task' }] } };
     if (!last.includes('helped') && !called(messages, 'list_threads')) return { text: 'Waiting.' };
     if (!called(messages, 'list_threads')) return { tool: 'list_threads' };
     if (!called(messages, 'read_thread')) return { tool: 'read_thread', arguments: { threadId: childId } };
@@ -49,20 +49,20 @@ test('chat tools list and read only root chats, never subagent chats', async () 
   });
   agents.scripts.set('Helper task', () => ({ text: 'helped' }));
   await coordinator.command({ type: 'prompt', message: 'Delegate, then look around' });
-  await coordinator.until(history => history.some(message => message.role === 'toolResult' && message.toolName === 'spawn_agent'));
+  await coordinator.until(history => history.some(message => message.role === 'toolResult' && message.toolName === 'spawn_subagents'));
   childId = (await agents.daemon.invoke('list_sessions')).find((session: any) => session.subagentParentId === coordinator.sessionId).id;
   const messages = await coordinator.until(history => text(history.at(-1)).startsWith('Relay: '));
-  expect(text(messages.at(-1))).toBe('Relay: Chat orchestration can only target root agents; use the subagent tools for delegated work');
+  expect(text(messages.at(-1))).toBe('Relay: This is a subagent chat; use the subagent tools for it');
   const seen = agents.model.requests.findLast(request => JSON.stringify(request.messages).includes('Delegate, then look around')).messages;
   const listed = JSON.stringify(toolResult(seen, 'list_threads'));
   expect([listed.includes(coordinator.sessionId), listed.includes(childId)]).toEqual([true, false]);
 }, 120000);
 
 test('a chat can start a new independent chat that works on its prompt', async () => {
-  await agents.enableAgentTools('send_message_to_thread');
+  await agents.enableAgentTools('message_thread');
   const coordinator = await agents.rootChat();
   agents.scripts.set('Open a release chat', messages => {
-    if (!called(messages, 'create_thread')) return { tool: 'create_thread', arguments: { title: 'Release notes', prompt: 'Draft the release notes' } };
+    if (!called(messages, 'create_thread')) return { tool: 'create_thread', arguments: { title: 'Release notes', message: 'Draft the release notes' } };
     const created = toolResult(messages, 'create_thread');
     if (!called(messages, 'wait_threads')) return { tool: 'wait_threads', arguments: { targets: [{ threadId: created.threadId }], timeoutMs: 60000 } };
     return { text: 'Relay: ' + toolResult(messages, 'wait_threads').polls[0].latestAssistantMessage.text };
@@ -83,7 +83,7 @@ test('a chat can start a new independent chat that works on its prompt', async (
 const held = <T>() => { let release!: (value: T) => void; const promise = new Promise<T>(resolve => { release = resolve; }); return { promise, release }; };
 
 test('a chat can stop another chat\'s running work, which keeps its history and stays usable', async () => {
-  await agents.enableAgentTools('send_message_to_thread');
+  await agents.enableAgentTools('message_thread');
   const worker = await agents.rootChat();
   const longReply = held<{ text: string }>();
   agents.scripts.set('Long job', messages => text(messages.at(-1)).includes('Are you still there?') ? { text: 'Still here.' } : longReply.promise);
@@ -92,7 +92,7 @@ test('a chat can stop another chat\'s running work, which keeps its history and 
   const coordinator = await agents.rootChat();
   agents.scripts.set('Stop the worker', messages => {
     if (!called(messages, 'stop_thread')) return { tool: 'stop_thread', arguments: { threadId: worker.sessionId } };
-    if (!called(messages, 'send_message_to_thread')) return { tool: 'send_message_to_thread', arguments: { threadId: worker.sessionId, prompt: 'Are you still there?' } };
+    if (!called(messages, 'message_thread')) return { tool: 'message_thread', arguments: { threadId: worker.sessionId, message: 'Are you still there?' } };
     return { text: 'Relay: done' };
   });
   try {
@@ -106,16 +106,16 @@ test('a chat can stop another chat\'s running work, which keeps its history and 
 }, 120000);
 
 test('a message to a busy chat waits until its current work finishes, then starts a new turn', async () => {
-  await agents.enableAgentTools('send_message_to_thread');
+  await agents.enableAgentTools('message_thread');
   const worker = await agents.rootChat();
   const longReply = held<{ text: string }>();
   agents.scripts.set('Busy job', messages => text(messages.at(-1)).includes('Queued question') ? { text: 'Answer to the queued question.' } : longReply.promise);
   await worker.command({ type: 'prompt', message: 'Busy job' });
   await worker.until(() => agents.model.requests.some(request => JSON.stringify(request.messages).includes('Busy job')));
   const coordinator = await agents.rootChat();
-  agents.scripts.set('Ask the busy worker', messages => called(messages, 'send_message_to_thread')
-    ? { text: 'Relay: ' + JSON.stringify(toolResult(messages, 'send_message_to_thread')) }
-    : { tool: 'send_message_to_thread', arguments: { threadId: worker.sessionId, prompt: 'Queued question' } });
+  agents.scripts.set('Ask the busy worker', messages => called(messages, 'message_thread')
+    ? { text: 'Relay: ' + JSON.stringify(toolResult(messages, 'message_thread')) }
+    : { tool: 'message_thread', arguments: { threadId: worker.sessionId, message: 'Queued question' } });
   try {
     await coordinator.command({ type: 'prompt', message: 'Ask the busy worker' });
     const receipt = JSON.parse(text((await coordinator.until(history => text(history.at(-1)).startsWith('Relay: '))).at(-1)).slice('Relay: '.length));
@@ -128,9 +128,9 @@ test('a message to a busy chat waits until its current work finishes, then start
 }, 120000);
 
 test('a chat that tries to message itself is told to choose another chat, and nothing is delivered', async () => {
-  await agents.enableAgentTools('send_message_to_thread');
+  await agents.enableAgentTools('message_thread');
   const chat = await agents.rootChat();
-  agents.scripts.set('Message myself', messages => called(messages, 'send_message_to_thread') ? { text: 'Told: ' + text(messages.at(-1)) } : { tool: 'send_message_to_thread', arguments: { threadId: chat.sessionId, prompt: 'Hello me' } });
+  agents.scripts.set('Message myself', messages => called(messages, 'message_thread') ? { text: 'Told: ' + text(messages.at(-1)) } : { tool: 'message_thread', arguments: { threadId: chat.sessionId, message: 'Hello me' } });
   await chat.command({ type: 'prompt', message: 'Message myself' });
   const history = await chat.until(messages => text(messages.at(-1)).startsWith('Told: '));
   expect(text(history.at(-1))).toBe('Told: Choose another conversation as the recipient');
@@ -139,9 +139,9 @@ test('a chat that tries to message itself is told to choose another chat, and no
 }, 60000);
 
 test('messaging or waiting for a chat that does not exist tells the agent so in plain words', async () => {
-  await agents.enableAgentTools('send_message_to_thread');
+  await agents.enableAgentTools('message_thread');
   const missing = '11111111-2222-3333-4444-555555555555';
-  agents.scripts.set('Message a missing chat', messages => called(messages, 'send_message_to_thread') ? { text: 'Told: ' + text(messages.at(-1)) } : { tool: 'send_message_to_thread', arguments: { threadId: missing, prompt: 'Hello?' } });
+  agents.scripts.set('Message a missing chat', messages => called(messages, 'message_thread') ? { text: 'Told: ' + text(messages.at(-1)) } : { tool: 'message_thread', arguments: { threadId: missing, message: 'Hello?' } });
   agents.scripts.set('Wait for a missing chat', messages => called(messages, 'wait_threads') ? { text: 'Told: ' + text(messages.at(-1)) } : { tool: 'wait_threads', arguments: { targets: [{ threadId: missing }], timeoutMs: 2000 } });
   const sender = await agents.rootChat();
   await sender.command({ type: 'prompt', message: 'Message a missing chat' });
@@ -175,12 +175,12 @@ test('list_agent_profiles follows the tool groups and lists the descriptions of 
   const threads = await listed('List thread agents', {});
   expect(threads.tool.parameters.properties).toEqual({});
   // helper is not usable as a thread.
-  expect(JSON.parse(threads.answer).profiles.map((profile: any) => profile.name)).not.toContain('helper');
+  expect(JSON.parse(threads.answer).map((profile: any) => profile.name)).not.toContain('helper');
 
   await setTools(['read', 'subagent', 'create_thread']);
   const both = await listed('List subagent agents', { for: 'subagent' });
   expect(both.tool.parameters.required).toEqual(['for']);
-  expect(JSON.parse(both.answer).profiles.find((profile: any) => profile.name === 'helper')).toMatchObject({ description: 'Finds files.' });
+  expect(JSON.parse(both.answer).find((profile: any) => profile.name === 'helper')).toMatchObject({ description: 'Finds files.' });
 
   await setTools(['read']);
   agents.scripts.set('No agent tools', () => ({ text: 'Done' }));

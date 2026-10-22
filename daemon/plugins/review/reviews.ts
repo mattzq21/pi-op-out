@@ -148,7 +148,7 @@ function subagentReviewTask(state: SessionAgentState, delegation: ReviewDelegati
   if (!limit) throw new Error("The review agent's max_subagents must be greater than zero to use /rs");
   const tools = state.snapshot.definition.tools;
 
-  if (!tools.includes("subagent")) tools.push("subagent");
+  if (!tools.includes("spawn_subagents")) tools.push("spawn_subagents");
   state.locked = true;
 
   const count = delegation === "auto" ? "a proportionate number of" : String(delegation);

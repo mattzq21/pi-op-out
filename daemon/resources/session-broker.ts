@@ -2,7 +2,6 @@ import type { AppRequest } from "../../extensions/piop-define-agents/contracts.t
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { extendedHooks } from "./hooks-extended/interface.ts";
 import { registerSubagents } from "./session-broker/subagents.ts";
-import { registerSubagentMailbox } from "./session-broker/subagent-mailbox.ts";
 import { registerConversationClient } from "./session-broker/client.ts";
 import { registerOrchestration } from "./session-broker/orchestration.ts";
 import { registerInputHold } from "./session-broker/input-hold.ts";
@@ -37,8 +36,7 @@ export default function sessionBroker(pi: ExtensionAPI) {
   pi.on("session_shutdown", unsubscribeTaskSuccess);
   registerInputHold(pi);
   registerConversationClient(pi);
-  const mailbox = registerSubagentMailbox(pi);
   registerOrchestration(pi);
-  registerSubagents(pi, mailbox);
+  registerSubagents(pi);
   registerToolInventory(pi);
 }

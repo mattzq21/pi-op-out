@@ -10,13 +10,21 @@ import { join } from "node:path";
 import { currentHost } from "./client.ts";
 import { writeSessionFile } from "../piop-storage/session-file.ts";
 import { activeConversation } from "./conversation-location.ts";
-import { registerSubagentMailbox } from "./subagent-mailbox.ts";
 import { interruptSession, sendSessionMessage, sessionSnapshot, snapshotStatus } from "./orchestration.ts";
 import { SUBAGENT_PARENT, latestRuns, ownedRuns, saveRun, subagentParent, subagentPayload, registerSubagentResults, type SubagentRun } from "./subagent-state.ts";
 import { acceptedSubmission, cancelSubagent, finishRun, observeSubagent, subagentReceiptSchema, SubagentCancellation, type ActiveSubagent } from "./subagent-reconciliation.ts";
 import { savedSubagentRuns } from "../piop-storage/subagent-results.ts";
 
 const MAX_DELEGATION_DEPTH = 2;
+
+interface RequiredToolsRequest { ctx: ExtensionContext; tools: string[]; availableTools?: string[] }
+
+declare module "@earendil-works/pi-coding-agent" {
+  interface EventBus {
+    on(channel: "piop:required-tools", handler: (request: RequiredToolsRequest) => void): () => void;
+    emit(channel: "piop:required-tools", request: RequiredToolsRequest): void;
+  }
+}
 
 function subagentLimits(pi: ExtensionAPI, ctx: ExtensionContext) {
   const limits: SubagentLimitsRequest = {};
@@ -213,7 +221,7 @@ async function recoverPreviousRuns(sessionId: string, execution: Omit<SubagentEx
   }
 }
 
-export function registerSubagents(pi: ExtensionAPI, mailbox = registerSubagentMailbox(pi)) {
+export function registerSubagents(pi: ExtensionAPI) {
   const resultsDelivery = registerSubagentResults(pi);
   const active = new Map<string, ActiveSubagent>();
   const pending = new Set<Promise<void>>();
@@ -224,7 +232,7 @@ export function registerSubagents(pi: ExtensionAPI, mailbox = registerSubagentMa
   const targetRun = (ctx: ExtensionContext, target: string) => {
     const runs = latestRuns(ctx).filter(run => run.sessionId === target || run.name === target || taskPath(ctx, run) === target);
 
-    if (runs.length !== 1) throw new Error("Use a unique child session ID or task name from list_agents");
+    if (runs.length !== 1) throw new Error("No subagent has this name; list_subagents shows their names");
 
     return runs[0];
   };
@@ -235,11 +243,9 @@ export function registerSubagents(pi: ExtensionAPI, mailbox = registerSubagentMa
     requireDelegation(ctx);
     reconcile(ctx);
 
-    if (task.sessionId && latestRuns(ctx).some(run => run.sessionId === task.sessionId && run.status === "running")) throw new Error("This child's previous task is unresolved; observe or interrupt it before starting another run");
+    if (latestRuns(ctx).some(run => run.sessionId === task.sessionId && run.status === "running")) throw new Error("This subagent's previous task is unresolved; stop it with stop_subagent first");
 
     requireSubagentSlots(pi, ctx, pending.size, 1);
-
-    if (!task.sessionId && latestRuns(ctx).some(run => run.name === task.name)) throw new Error("Task name already exists; use followup_task to reuse the child");
     const results: SubagentRun[] = [];
     const backgroundSignal = controller.signal;
     await launchSubagent(task, { pi, ctx, toolCallId, active, results, signal: backgroundSignal, publish(run) {
@@ -258,9 +264,8 @@ export function registerSubagents(pi: ExtensionAPI, mailbox = registerSubagentMa
     const subagents = allowed.some(tool => SUBAGENT_TOOLS.includes(tool));
     const threads = !child && !reviewer && allowed.some(tool => THREAD_TOOLS.includes(tool));
 
-    if (allowed.includes("subagent") || latestRuns(ctx).length) tools.push("spawn_agent", "followup_task", "interrupt_agent", "list_agents", "send_message", "wait_agent", "await_subagents");
-
-    if (child) tools.push("send_message", "wait_agent");
+    // Saved children stay reachable after their tools are turned off.
+    if (subagents || latestRuns(ctx).length) tools.push(...SUBAGENT_TOOLS);
 
     if (threads) tools.push(...THREAD_TOOLS);
 
@@ -269,45 +274,26 @@ export function registerSubagents(pi: ExtensionAPI, mailbox = registerSubagentMa
 
   pi.on("session_shutdown", unsubscribeTools);
   pi.registerTool({
-    name: "spawn_agent", label: "Spawn agent", exposure: "model-only",
-    description: "Start one background child and return its session ID and agent profile. Use list_agent_profiles to discover exact agent names. Passing agent uses that profile's prompts, model, effort, tools, skills, extensions and MCP configuration; omitting it inherits the caller's profile and overrides. A child starts with a fresh history and none of the caller's context, so give it everything it needs in message. Concurrent children are limited by the caller's max_subagents (default eight). A child is also capped by its parent's max_sub_subagents (default eight); zero disables delegation at that level. Delegation has at most two levels: root → child → grandchild; grandchildren cannot delegate. Children share the caller's working directory. Final results start a new parent turn immediately if idle, or after the parent agent settles. Use followup_task for more work and send_message for updates. Finish your current run when waiting for mailbox delivery. Children are cancelled on parent close/switch and time out after ten minutes.",
-    parameters: Type.Object({ task_name: Type.String({ pattern: "^[a-z][a-z0-9_]{0,63}$" }), message: Type.String({ minLength: 1, maxLength: 100_000 }), agent: Type.Optional(Type.String({ minLength: 1, description: "Exact configured profile name from list_agent_profiles; omit to inherit the caller" })) }),
-    async execute(id, params, signal, _update, ctx) { return start({ name: params.task_name, task: params.message, agent: params.agent }, id, ctx, signal); },
-  });
-  pi.registerTool({
-    name: "list_agents", label: "List child agents", exposure: "model-only", description: "List this parent's saved child sessions, task paths and current status. Returned paths (such as /root/child/grandchild), local task names and session IDs address children. Independent chats are listed by list_threads.",
+    name: "list_subagents", label: "List subagents", exposure: "model-only", description: "List your subagents with their names, agents and status.",
     parameters: Type.Object({}),
     async execute(_id, _params, signal, _update, ctx) {
-      const agents = await Promise.all(latestRuns(ctx).map(async run => {
-        try { const snapshot = await sessionSnapshot(run.sessionId, run.hostId, signal);
-        const latest = latestRuns(ctx).find(item => item.sessionId === run.sessionId) ?? run;
-        const status = snapshotStatus(snapshot);
+      const subagents = await Promise.all(latestRuns(ctx).map(async run => {
+        const name = taskPath(ctx, run);
 
-        return { sessionId: run.sessionId, task_name: taskPath(ctx, run), agent: run.agent, cwd: run.cwd, status: latest.status === "running" && status === "idle" ? "observing" : status, lastRunStatus: latest.status }; }
-        catch (error) { return { sessionId: run.sessionId, task_name: taskPath(ctx, run), cwd: run.cwd, status: "unavailable", error: error instanceof Error ? error.message : String(error) }; }
+        if (run.status !== "running") return { name, agent: run.agent, status: run.status };
+
+        try { return { name, agent: run.agent, status: snapshotStatus(await sessionSnapshot(run.sessionId, run.hostId, signal)) === "idle" ? "finishing" : "running" }; }
+        catch (error) { return { name, agent: run.agent, status: "unavailable", error: error instanceof Error ? error.message : String(error) }; }
       }));
 
-      return { content: [{ type: "text", text: JSON.stringify(agents) }], details: { agents } };
+      return { content: [{ type: "text", text: JSON.stringify(subagents) }], details: { subagents } };
     },
   });
   pi.registerTool({
-    name: "send_message", label: "Message agent", exposure: "model-only", description: "Deliver an update to a child by session ID or task name, or to parent from a child. Starts an idle recipient immediately; a busy recipient queues the message until its agent settles, then starts a new turn. Returns acceptance, not a reply. Use send_message_to_thread for independent chats.",
-    parameters: Type.Object({ target: Type.String(), message: Type.String({ minLength: 1, maxLength: 100_000 }) }),
-    async execute(_id, params, signal, _update, ctx) {
-      const parent = subagentParent(ctx);
-      const parentTargets = parent ? ["parent", parent.parentTaskPath ?? "/root", parent.parentSessionId] : [];
-      const id = parent && parentTargets.includes(params.target) ? parent.parentSessionId : targetRun(ctx, params.target).sessionId;
-      const host = parent && parentTargets.includes(params.target) ? parent.parentHostId ?? currentHost() : targetRun(ctx, params.target).hostId;
-      const data = await sendSessionMessage(ctx, id, host, params.message, true, signal);
-
-      return { content: [{ type: "text", text: JSON.stringify(data) }], details: data };
-    },
-  });
-  pi.registerTool({
-    name: "followup_task", label: "Follow up with agent", exposure: "model-only", description: "Give an existing child more work. Starts an idle child or steers a running child. Preserves the child's directory, profile and history. Its final response is delivered through the parent mailbox.",
-    parameters: Type.Object({ target: Type.String(), message: Type.String({ minLength: 1, maxLength: 100_000 }) }),
+    name: "message_subagent", label: "Message subagent", exposure: "model-only", description: "Send a subagent a message. A running subagent reads it during its task; a finished one starts a new task with its own earlier history. Its answer arrives as a new message.",
+    parameters: Type.Object({ name: Type.String({ minLength: 1 }), message: Type.String({ minLength: 1, maxLength: 100_000 }) }),
     async execute(id, params, signal, _update, ctx) {
-      const run = targetRun(ctx, params.target);
+      const run = targetRun(ctx, params.name);
       reconcile(ctx);
 
       const running = active.get(run.sessionId);
@@ -319,36 +305,37 @@ export function registerSubagents(pi: ExtensionAPI, mailbox = registerSubagentMa
         await running.done;
       }
 
-      if (latestRuns(ctx).some(item => item.sessionId === run.sessionId && item.status === "running")) throw new Error("This child's previous task remains unresolved; interrupt it before starting another run");
+      if (latestRuns(ctx).some(item => item.sessionId === run.sessionId && item.status === "running")) throw new Error("This subagent's previous task is unresolved; stop it with stop_subagent first");
 
       return start({ name: run.name, task: params.message, sessionId: run.sessionId }, id, ctx, signal);
     },
   });
   pi.registerTool({
-    name: "interrupt_agent", label: "Interrupt agent", exposure: "model-only", description: "Stop a child's current turn without deleting its conversation. The child remains available for followup_task.",
-    parameters: Type.Object({ target: Type.String() }),
+    name: "stop_subagent", label: "Stop subagent", exposure: "model-only", description: "Stop a subagent's current task. It keeps its history and can get more work with message_subagent.",
+    parameters: Type.Object({ name: Type.String({ minLength: 1 }) }),
     async execute(_id, params, signal, _update, ctx) {
       reconcile(ctx);
-      const run = targetRun(ctx, params.target);
+      const run = targetRun(ctx, params.name);
       const running = active.get(run.sessionId);
+      const stopped = { content: [{ type: "text" as const, text: `Subagent ${run.name} stopped.` }], details: { name: run.name } };
 
       if (running) {
-        cancelSubagent(pi, ctx, running, "Subagent stopped by interrupt_agent");
+        cancelSubagent(pi, ctx, running, "Subagent stopped by stop_subagent");
         await running.done;
 
         if (latestRuns(ctx).find(item => item.sessionId === run.sessionId)?.status === "running") throw new Error("Subagent cancellation is not yet confirmed");
 
-        return { content: [{ type: "text", text: "Child launch and delegated work stopped." }], details: { sessionId: run.sessionId, completed: true } };
+        return stopped;
       }
 
       run.cancelRequested = true;
-      run.cancelReason = "Subagent stopped by interrupt_agent";
+      run.cancelReason = "Subagent stopped by stop_subagent";
       saveRun(pi, ctx, run);
-      const data = await interruptSession(run.sessionId, run.hostId, signal);
+      await interruptSession(run.sessionId, run.hostId, signal);
 
       if (run.status === "running") { run.status = "cancelled"; finishRun(pi, ctx, run); resultsDelivery.publish(ctx, run); }
 
-      return { content: [{ type: "text", text: JSON.stringify(data) }], details: data };
+      return stopped;
     },
   });
 
@@ -365,7 +352,6 @@ export function registerSubagents(pi: ExtensionAPI, mailbox = registerSubagentMa
     }
 
     controller.abort(intentional ? new SubagentCancellation("Subagent cancelled with its parent") : new Error("Subagent observation interrupted"));
-    mailbox.reset();
     stopping = Promise.allSettled([...pending]).then(() => {
       controller = new AbortController();
       stopping = undefined;
@@ -455,38 +441,56 @@ export function registerSubagents(pi: ExtensionAPI, mailbox = registerSubagentMa
   });
   pi.on("session_before_switch", () => stop());
   pi.on("session_shutdown", async (event) => { detachAbort(); unsubscribeCancellation(); await stop(event.reason !== "reload"); });
+  const inputListeners = new Set<() => void>();
+  pi.on("input", event => { if (event.source !== "extension") for (const listener of [...inputListeners]) listener(); });
   pi.registerTool({
-    name: "await_subagents", label: "Await all subagents", exposure: "model-only",
-    description: "Wait until every pending subagent has finished, successfully or with an error. No parameters, timeout, or early return on input or cancellation. Returns immediately if no subagents are pending. Finish your current run afterward; queued results are delivered in a new turn after the parent agent settles.",
+    name: "wait_subagents", label: "Wait for subagents", exposure: "model-only",
+    description: "Wait until all your subagents finish, or until the user sends a new message. Then end your turn: their answers arrive as new messages.",
     parameters: Type.Object({}),
-    async execute(_id, _params, _signal, _update, ctx) {
+    async execute(_id, _params, signal, _update, ctx) {
       reconcile(ctx);
 
-      while (pending.size) { await Promise.allSettled([...pending]); reconcile(ctx); }
+      if (!pending.size) return { content: [{ type: "text", text: "No subagent is running." }], details: { finished: true } };
+      let onInput = () => {};
+      const input = new Promise<"input">(resolve => { onInput = () => resolve("input"); inputListeners.add(onInput); });
+      const aborted = new Promise<"aborted">(resolve => { if (signal?.aborted) resolve("aborted"); signal?.addEventListener("abort", () => resolve("aborted"), { once: true }); });
+
+      try {
+        while (pending.size) {
+          if (ctx.hasPendingMessages()) return { content: [{ type: "text", text: "The user sent a new message. Subagents are still running." }], details: { finished: false } };
+          const outcome = await Promise.race([Promise.allSettled([...pending]).then(() => "settled" as const), input, aborted]);
+
+          if (outcome === "aborted") signal?.throwIfAborted();
+
+          if (outcome === "input") return { content: [{ type: "text", text: "The user sent a new message. Subagents are still running." }], details: { finished: false } };
+          reconcile(ctx);
+        }
+      } finally { inputListeners.delete(onInput); }
 
       if (latestRuns(ctx).some(run => run.status === "running")) throw new Error("Subagent work remains unresolved; completion has not been confirmed");
 
-      return { content: [{ type: "text", text: "All subagents have finished. Finish your current run so queued results can be delivered in a new turn." }], details: {} };
+      return { content: [{ type: "text", text: "All subagents have finished. End your turn to receive their answers." }], details: { finished: true } };
     },
   });
   pi.registerTool({
-    name: "subagent", label: "Subagents",
+    name: "spawn_subagents", label: "Spawn subagents",
     exposure: "model-only",
-    description: "Delegate 1–8 independent tasks per call in the background, subject to the caller's max_subagents and the parent's max_sub_subagents concurrency limits (both default eight; zero disables delegation). Returns child session IDs once created, without waiting for results. Completion or failure starts a new parent turn immediately if idle, or after the parent agent settles. Continue independent work while children run; finish your current run when waiting for mailbox delivery. Call await_subagents to wait until all children finish. Each child has a fresh context, a saved transcript visible in piop, and shares the caller's working directory. Supply all necessary context in task. Defaults to the current agent profile and model; agent selects a named piop profile. Resume a finished child with its returned sessionId. Delegation has at most two levels: root → child → grandchild; grandchildren cannot delegate. Avoid overlapping edits. Runs are cancelled when the parent session closes or switches and time out after ten minutes.",
-    parameters: Type.Object({ tasks: Type.Array(Type.Object({ name: Type.String({ minLength: 1, maxLength: 120 }), task: Type.String({ minLength: 1, maxLength: 100_000 }), agent: Type.Optional(Type.String({ minLength: 1 })), sessionId: Type.Optional(Type.String({ minLength: 1 })) }), { minItems: 1, maxItems: 8 }) }),
+    description: "Start 1–8 subagents in the background, each with its own task. A subagent starts with no history and none of your context, so give it everything it needs in task. It works in your directory; avoid giving two subagents overlapping edits. agent picks a profile from list_agent_profiles; omit it to use your own. Each answer arrives as a new message when that subagent finishes. A subagent can start its own subagents, but they cannot go deeper.",
+    parameters: Type.Object({ tasks: Type.Array(Type.Object({ name: Type.String({ pattern: "^[a-z][a-z0-9_]{0,63}$", description: "Unique name, used to address this subagent" }), task: Type.String({ minLength: 1, maxLength: 100_000 }), agent: Type.Optional(Type.String({ minLength: 1 })) }), { minItems: 1, maxItems: 8 }) }),
     async execute(toolCallId, params, signal, onUpdate, ctx) {
       signal?.throwIfAborted();
 
       requireDelegation(ctx);
 
-      if (!params.tasks.length || params.tasks.length > 8 || params.tasks.some((task) => !task.task.trim() || !task.name.trim())) throw new Error("Provide 1–8 named, nonempty tasks");
+      if (!params.tasks.length || params.tasks.length > 8 || params.tasks.some((task) => !task.task.trim())) throw new Error("Provide 1–8 named, nonempty tasks");
+
+      if (new Set(params.tasks.map(task => task.name)).size !== params.tasks.length) throw new Error("Give each subagent a different name");
 
       reconcile(ctx);
 
-      requireSubagentSlots(pi, ctx, pending.size, params.tasks.length);
-      const resumed = params.tasks.flatMap((task) => task.sessionId ? [task.sessionId] : []);
+      if (params.tasks.some(task => latestRuns(ctx).some(run => run.name === task.name))) throw new Error("A subagent with this name exists; use message_subagent to give it more work");
 
-      if (new Set(resumed).size !== resumed.length) throw new Error("A child can only receive one task at a time");
+      requireSubagentSlots(pi, ctx, pending.size, params.tasks.length);
       const results: SubagentRun[] = [];
       const backgroundSignal = controller.signal;
 
@@ -501,7 +505,6 @@ export function registerSubagents(pi: ExtensionAPI, mailbox = registerSubagentMa
       };
 
       await Promise.all(params.tasks.map((task) => launchSubagent(task, { pi, ctx, toolCallId, active, results, signal: backgroundSignal, publish }, pending)));
-      pi.setActiveTools([...new Set([...pi.getActiveTools(), "wait_agent", "await_subagents"])]);
 
       return { ...subagentPayload(results), isError: results.some((run) => run.status === "failed" || run.status === "cancelled") };
     },

@@ -33,7 +33,8 @@ test('a child cut off by a daemon restart is reported to its parent as cancelled
   const agents = await agentDaemon();
   let second: Awaited<ReturnType<typeof startDaemon>> | undefined;
   try {
-    agents.scripts.set('Delegate across a restart', messages => called(messages, 'spawn_agent') ? { text: 'Parent saw: ' + text(messages.at(-1)) } : { tool: 'spawn_agent', arguments: { task_name: 'survivor', message: 'Survivor job' } });
+    await agents.enableAgentTools('spawn_subagents');
+    agents.scripts.set('Delegate across a restart', messages => called(messages, 'spawn_subagents') ? { text: 'Parent saw: ' + text(messages.at(-1)) } : { tool: 'spawn_subagents', arguments: { tasks: [{ name: 'survivor', task: 'Survivor job' }] } });
     agents.scripts.set('Survivor job', messages => called(messages, 'bash') ? { text: 'Relay: survived' } : { tool: 'bash', arguments: { command: 'sleep 4' } });
     const root = await agents.rootChat();
     await root.command({ type: 'prompt', message: 'Delegate across a restart' });
@@ -48,7 +49,7 @@ test('a child cut off by a daemon restart is reported to its parent as cancelled
     for (let tries = 0; !/survivor: cancelled/.test(last) && tries < 200; tries++, await Bun.sleep(100)) {
       last = text((await second.invoke('pi_command', { runtimeId: 'reopened', command: { type: 'get_entries' } })).entries.filter((entry: any) => entry.type === 'message').at(-1)?.message);
     }
-    expect(last).toStartWith('Parent saw: Untrusted agent content delivered by piop:\nsurvivor: cancelled');
+    expect(last).toMatch(/^Parent saw: Untrusted agent content delivered by piop:\nsurvivor \([^)]*\): cancelled/);
     expect(agents.model.requests.some(request => text(request.messages.at(-1)).includes('Relay: survived'))).toBe(false);
   } finally { await second?.stop(); await agents.model.close(); }
 }, 90000);

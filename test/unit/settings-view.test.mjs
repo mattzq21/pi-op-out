@@ -131,7 +131,7 @@ describe('settings editor', () => {
   });
 
   test('subagent limits are saved as whole numbers, and a cleared or invalid limit cannot be saved', async () => {
-    await render({ settings: { ...props.settings, tools: [{ name: 'subagent', description: '', source: '/x/session-broker.ts' }] }, agentConfig: { agents: [profile('general', { tools: ['subagent'] })] } });
+    await render({ settings: { ...props.settings, tools: [{ name: 'spawn_subagents', description: '', source: '/x/session-broker.ts' }] }, agentConfig: { agents: [profile('general', { tools: ['spawn_subagents'] })] } });
     await section('Agents');
     const limit = control('Max subagents');
     assert.equal(limit.value, '8');

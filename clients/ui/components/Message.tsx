@@ -141,8 +141,8 @@ function ToolPayload(componentProps: { message: ChatMessage; loading: boolean; e
 }
 
 function ToolResult(componentProps: Pick<Props, "message" | "toolCount" | "debug"> & { status?: "running" | "done" | "error" | "unfinished" }) {
-  const isSubagent = () => componentProps.message.toolName === "subagent";
-  const runs = createMemo(() => componentProps.message.toolName === "subagent" ? subagentRuns(componentProps.message.details) : []);
+  const isSubagent = () => componentProps.message.toolName === "spawn_subagents";
+  const runs = createMemo(() => componentProps.message.toolName === "spawn_subagents" ? subagentRuns(componentProps.message.details) : []);
   const [open, setOpen] = createSignal(false);
   const [loading, setLoading] = createSignal(false);
   const [error, setError] = createSignal<string>();

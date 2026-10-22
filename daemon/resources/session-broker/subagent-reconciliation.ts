@@ -89,7 +89,7 @@ function finish(run: SubagentRun, last: Static<typeof assistantSchema>) {
   run.status = ["error", "aborted"].includes(last.stopReason) ? "failed" : "completed";
   const text = last.content.flatMap(part => Check(textSchema, part) ? [part.text] : []).join("\n");
   const output = run.status === "failed" ? last.errorMessage || `Subagent ${last.stopReason}` : text || "(No text returned; inspect the saved transcript.)";
-  run.output = output.length > 16_000 ? `${output.slice(0, 16_000)}\n[Result truncated. Full conversation is saved in the child transcript.]` : output;
+  run.output = output.length > 16_000 ? `${output.slice(0, 16_000)}\n[Answer truncated.]` : output;
   prepareResult(run);
 }
 
