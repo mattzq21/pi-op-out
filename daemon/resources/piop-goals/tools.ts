@@ -5,7 +5,7 @@ import type { GoalCore } from "./preparation.ts";
 
 const goalToolDescription = "Update the existing goal. Set status to `paused` only at the user's explicit request. Report the returned status and stop goal work. Set status to `complete` only when the objective has actually been achieved and no required work remains. This tool cannot resume a goal.";
 
-/** Registers update_goal. The user sets goals with /goal, and the goal context tells the agent the objective and status. */
+/** Registers update_goal_status. The user sets goals with /goal, and the goal context tells the agent the objective and status. */
 export function registerGoalTools(pi: ExtensionAPI, core: GoalCore) {
   /** The goal as the agent sees it: its objective and status. */
   const result = (ctx: ExtensionContext, completed = false): AgentToolResult<{ goal: Pick<Goal, "objective" | "status"> | null }> => {
@@ -19,7 +19,7 @@ export function registerGoalTools(pi: ExtensionAPI, core: GoalCore) {
   };
 
   pi.registerTool({
-    name: "update_goal", label: "Update goal", description: goalToolDescription,
+    name: "update_goal_status", label: "Update goal", description: goalToolDescription,
     // The model calls it directly; codemode scripts cannot.
     exposure: "model-only",
     parameters: Type.Object({ status: Type.Union([Type.Literal("complete"), Type.Literal("paused")]) }, { additionalProperties: false }),

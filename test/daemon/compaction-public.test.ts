@@ -95,7 +95,7 @@ test('compacting while the agent works is refused with how to do it, and the run
 test('a goal goes on working after its chat is compacted by itself between two turns', async () => {
   const agents = await agentDaemon();
   try {
-    await agents.enableAgentTools('update_goal');
+    await agents.enableAgentTools('update_goal_status');
     const settings = await agents.daemon.invoke('load_app_settings');
     await agents.daemon.invoke('save_app_settings', { settings: { ...settings, contextWindowCap: 100_000, contextWindowCapEnabled: true, autoCompaction: true } });
     let turns = 0;

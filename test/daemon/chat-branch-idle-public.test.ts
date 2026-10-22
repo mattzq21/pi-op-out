@@ -8,15 +8,15 @@ import { agentDaemon, called, text } from './agent-chats';
 for (const [mode, repository] of [['fork_after', true], ['copy_after', true], ['copy_after', false]] as const) test(`${mode} (${repository ? 'repository' : 'plain folder'}) keeps an active goal idle until user input`, async () => {
   const agents = await agentDaemon();
   try {
-    await agents.enableAgentTools('update_goal');
+    await agents.enableAgentTools('update_goal_status');
     let finish = false;
     agents.scripts.set('Idle branch question', async messages => {
       await Bun.sleep(150);
-      if (called(messages, 'update_goal')) return { text: 'Goal done.' };
+      if (called(messages, 'update_goal_status')) return { text: 'Goal done.' };
       if (messages.filter(message => message.role === 'user').length === 1) return { text: 'First answer.' };
       const prompt = messages.findIndex(message => message.role === 'user' && text(message) === 'Branch prompt');
       if (prompt >= 0 && !messages.slice(prompt).some(message => message.role === 'assistant')) return { text: 'Branch answer.' };
-      return finish ? { tool: 'update_goal', arguments: { status: 'complete' } } : { text: 'Goal turn.' };
+      return finish ? { tool: 'update_goal_status', arguments: { status: 'complete' } } : { text: 'Goal turn.' };
     });
     const source = await agents.rootChat({ repository });
     await source.command({ type: 'prompt', message: 'Idle branch question' });
@@ -47,7 +47,7 @@ for (const [mode, repository] of [['fork_after', true], ['copy_after', true], ['
       const replies = messages.filter(message => ['user', 'assistant'].includes(message.role)).map(text);
       // The user's message runs first; the still active goal then continues on its own until the agent completes it.
       expect(replies.slice(0, 4)).toEqual(['Idle branch question', 'First answer.', 'Branch prompt', 'Branch answer.']);
-      expect(messages.slice(4).some(message => message.role === 'assistant' && message.content.some((part: any) => part.type === 'toolCall' && part.name === 'update_goal'))).toBe(true);
+      expect(messages.slice(4).some(message => message.role === 'assistant' && message.content.some((part: any) => part.type === 'toolCall' && part.name === 'update_goal_status'))).toBe(true);
       expect(hold()).toBe(false);
       expect(goal()).toBeNull();
     } finally { db.close(); }
