@@ -3,7 +3,6 @@ import { CirclePause, CirclePlay, Pencil, Trash2 } from "lucide-solid";
 import { z } from "zod";
 import "./goal-bar.css";
 
-const labels = { active: "Pursuing goal", paused: "Goal paused", complete: "Goal complete" };
 
 const goalSchema = z.object({
   objective: z.string(), status: z.enum(["active", "paused", "complete"]),
@@ -42,7 +41,7 @@ export function GoalBar<T>(props: { value?: string; disabled: boolean; onCommand
   return <><Show when={read().error}>{message => <section class="goal-bar" aria-label="Conversation goal"><div class="goal-bar-error" role="alert">{message()}</div></section>}</Show>
   <Show when={goal()}>{current => <section class="goal-bar" aria-label="Conversation goal">
     <div class="goal-bar-row">
-      <span class="goal-bar-status" data-tooltip={labels[current().status]}>/goal</span>
+      <span class="goal-bar-status">/goal</span>
       <span class="goal-bar-objective">{current().objective}</span>
       <button type="button" data-tooltip="Clear goal" aria-label="Clear goal" disabled={props.disabled || busy()} onClick={() => void run("clear")}><Trash2 size={14} /></button>
       <Show when={current().status !== "complete"}>
