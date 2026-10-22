@@ -1,17 +1,22 @@
 import { build } from 'esbuild';
-import { mkdtemp, rm, readFile } from 'node:fs/promises';
+import { mkdtemp, rm, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { storageSchemaImports } from '../scripts/storage-schema-plugin.mjs';
 
+let compiled;
+function compileGoal() {
+  return compiled ??= build({ stdin: { contents: 'export { default } from "./daemon/resources/piop-goals/index.ts"; export { default as hooksExtended } from "./daemon/resources/hooks-extended/index.ts";', resolveDir: process.cwd() }, write: false, bundle: true, platform: 'node', format: 'esm', target: 'node22', logLevel: 'silent', plugins: [storageSchemaImports(), { name: 'external-pi-sdk', setup(api) { api.onResolve({ filter: /^@earendil-works\/pi-ai$/ }, () => ({ path: 'pi-ai', namespace: 'sdk' })); api.onLoad({ filter: /.*/, namespace: 'sdk' }, () => ({ contents: 'export { Type } from \"@sinclair/typebox\";', resolveDir: process.cwd() })); } }],
+    banner: { js: "import { createRequire } from 'node:module'; const require = createRequire(import.meta.url);" },
+  }).then(result => result.outputFiles[0].contents);
+}
+
 export async function goalCommand(t) {
   const directory = await mkdtemp(join(tmpdir(), 'piop-goal-command-'));
   t.after(() => rm(directory, { recursive: true, force: true }));
   const outfile = join(directory, 'broker.mjs');
-  await build({ stdin: { contents: 'export { default } from "./daemon/resources/piop-goals/index.ts"; export { default as hooksExtended } from "./daemon/resources/hooks-extended/index.ts";', resolveDir: process.cwd() }, outfile, bundle: true, platform: 'node', format: 'esm', target: 'node22', logLevel: 'silent', plugins: [storageSchemaImports(), { name: 'external-pi-sdk', setup(api) { api.onResolve({ filter: /^@earendil-works\/pi-ai$/ }, () => ({ path: 'pi-ai', namespace: 'sdk' })); api.onLoad({ filter: /.*/, namespace: 'sdk' }, () => ({ contents: 'export { Type } from \"@sinclair/typebox\";', resolveDir: process.cwd() })); } }],
-    banner: { js: "import { createRequire } from 'node:module'; const require = createRequire(import.meta.url);" },
-  });
+  await writeFile(outfile, await compileGoal());
   const { default: broker, hooksExtended } = await import(pathToFileURL(outfile));
   return async (sessionPath, objective) => {
     const entries = (await readFile(sessionPath, 'utf8')).trim().split('\n').map(JSON.parse);
