@@ -18,6 +18,8 @@ export type GoalCore = {
   start(ctx: ExtensionContext): void;
   /** The edit notice when the user changed the objective after the model's last request, so the model has not seen the current objective. Else undefined. */
   unseenEdit(): string | undefined;
+  /** Records that the model got the current objective, for example in a tool error. */
+  markSeen(): void;
 };
 
 /** The user message that starts work toward a prepared objective: the /goal command as the user wrote it. */

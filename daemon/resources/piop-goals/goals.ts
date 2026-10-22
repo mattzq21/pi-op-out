@@ -88,7 +88,9 @@ export function registerGoals(pi: ExtensionAPI): { session: GoalSession; core: G
 
   const unseenEdit = () => state.goal && seenObjective !== undefined && seenObjective !== state.goal.objective ? goalChangedPrompt({ ...state.goal, status: "active" }) ?? undefined : undefined;
 
-  const core: GoalCore = { state, coordination, assertAvailable, changed, start, unseenEdit };
+  const markSeen = () => { if (state.goal) seenObjective = state.goal.objective; };
+
+  const core: GoalCore = { state, coordination, assertAvailable, changed, start, unseenEdit, markSeen };
 
   const restore = async (ctx: ExtensionContext) => {
     context = ctx; starting = false; pendingStart = false;
@@ -200,6 +202,11 @@ export function registerGoals(pi: ExtensionAPI): { session: GoalSession; core: G
       : message.customType === GOAL_CONTEXT ? []
       : message.customType === GOAL_CHANGE ? [{ role: "system" as const, content: message.content, timestamp: message.timestamp }]
       : [message]);
+
+    // The edit notice for the current objective gives the model that objective.
+    const editNotice = state.goal && goalChangedPrompt({ ...state.goal, status: "active" });
+
+    if (editNotice && messages.some(message => message.role === "system" && message.content === editNotice)) markSeen();
 
     // An active goal adds its continuation prompt as a user message. A paused or complete goal adds nothing.
     if (state.goal) {

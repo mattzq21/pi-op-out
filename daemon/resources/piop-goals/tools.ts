@@ -29,7 +29,7 @@ export function registerGoalTools(pi: ExtensionAPI, core: GoalCore) {
       // The model cannot complete or pause an objective it has not seen. The error gives it the edited objective.
       const edit = core.unseenEdit();
 
-      if (edit) throw new Error(edit);
+      if (edit) { core.markSeen(); throw new Error(edit); }
       core.state.setStatus(ctx, params.status);
 
       return result(ctx, params.status === "complete");
