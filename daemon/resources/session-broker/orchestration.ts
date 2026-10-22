@@ -6,7 +6,7 @@ import { Check, Parse } from "typebox/value";
 import { createHash, randomUUID } from "node:crypto";
 import { setTimeout as delay } from "node:timers/promises";
 import { BrokerRequestError, currentHost, request } from "./client.ts";
-import { createProfileSession, registerAgentProfiles } from "./agent-profiles.ts";
+import { createProfileSession } from "./agent-profiles.ts";
 import { durableMailbox } from "../piop-storage/durable-mailbox.ts";
 import { activeConversation } from "./conversation-location.ts";
 
@@ -323,7 +323,6 @@ function registerDelivery(pi: ExtensionAPI) {
 
 export function registerOrchestration(pi: ExtensionAPI) {
   registerDelivery(pi);
-  registerAgentProfiles(pi);
   let inputRevision = 0;
   const inputListeners = new Set<() => void>();
   const newInput = () => { inputRevision++; for (const listener of inputListeners) listener(); };

@@ -1,5 +1,5 @@
 import { readAgentResources, resourcePath, type AgentResources } from "./resources.ts";
-import { STATE_ENTRY, DEFAULTS_ENV, DRAFT_STATE_ENV, type RuntimeDefaults, agentSchema, agentThinkingLevels, persistedAgentIdentity, storedRuntimeDefaults, sessionIsLocked, readAgentState, subagentLimit, registerSubagentLimits, agentFlag, agentAccess, startRefusal } from "./state.ts";
+import { STATE_ENTRY, DEFAULTS_ENV, DRAFT_STATE_ENV, type RuntimeDefaults, agentSchema, agentThinkingLevels, persistedAgentIdentity, storedRuntimeDefaults, sessionIsLocked, readAgentState, subagentLimit, registerSubagentLimits, agentFlag, agentAccess, agentDescription, startRefusal } from "./state.ts";
 import { Type } from "typebox";
 import { Check, Errors, Parse } from "typebox/value";
 import { configPath, DEFAULT_PROMPT_PATH, DEFAULT_SYSTEM_PROMPT, resolvePromptPath, ensurePromptFile, snapshotPrompts, ensureDefaultAgentPrompt, readPrompt, readConfigDocument, writeConfig } from "./prompts.ts";
@@ -114,13 +114,14 @@ function normalize(value: Omit<Partial<Config>, "agents"> & { agents?: StoredAge
   }
 
   const supplied = Array.isArray(value.agents) ? value.agents.filter((agent) => Check(Type.Object({ name: Type.String({ minLength: 1 }) }), agent)).map((agent) => ({
-    name: agent.name, ...(agent.isDefault === true ? { isDefault: true } : {}), model: Check(Type.String(), agent.model) ? agent.model : "", effort: Check(Type.String(), agent.effort) ? agent.effort : fallbackConfig.agents[0].effort,
+    name: agent.name, ...(agent.isDefault === true ? { isDefault: true } : {}), description: agentDescription(agent.description, agent.name), model: Check(Type.String(), agent.model) ? agent.model : "", effort: Check(Type.String(), agent.effort) ? agent.effort : fallbackConfig.agents[0].effort,
     fastMode: agent.fastMode, contextWindowCap: agent.contextWindowCap, codemode: agent.codemode, extensions: extensionPaths(agent.extensions),
     max_subagents: subagentLimit(agent.max_subagents, agent.name, "max_subagents"), max_sub_subagents: subagentLimit(agent.max_sub_subagents, agent.name, "max_sub_subagents"),
     allow_as_subagent: agentFlag(agent.allow_as_subagent, agent.name, "allow_as_subagent"), allow_as_thread: agentFlag(agent.allow_as_thread, agent.name, "allow_as_thread"),
     allowed_subagents: agentAccess(agent.allowed_subagents, agent.name, "allowed_subagents"), allowed_threads: agentAccess(agent.allowed_threads, agent.name, "allowed_threads"),
     path_systemprompt: promptPath(agent), path_agent_prompt: Check(Type.String(), agent.path_agent_prompt) ? agent.path_agent_prompt.trim() : "",
-    tools: Array.isArray(agent.tools) ? agent.tools.filter((item): item is string => Check(Type.String(), item)) : generalAgent(pi).tools, skills: Array.isArray(agent.skills) ? agent.skills.filter((item): item is string => Check(Type.String(), item)) : [], mcpServers: mcpServers(agent.mcpServers),
+    // The agent's subagent and thread tools decide if it has list_agent_profiles, so it is never configured directly.
+    tools: Array.isArray(agent.tools) ? agent.tools.filter((item): item is string => Check(Type.String(), item) && item !== "list_agent_profiles") : generalAgent(pi).tools, skills: Array.isArray(agent.skills) ? agent.skills.filter((item): item is string => Check(Type.String(), item)) : [], mcpServers: mcpServers(agent.mcpServers),
   })) : [];
 
   if (!supplied.some((agent) => agent.name === "general")) {
@@ -150,7 +151,7 @@ async function readConfig(pi: ConfigRuntime, supplied: StoredConfig | undefined,
     const stored = supplied ?? await readConfigDocument();
     const config = await migratePrompts(stored, pi, storage);
 
-    if (Array.isArray(stored.agents) && stored.agents.some((agent: StoredAgent) => agent && (Array.isArray(agent.mcpServers) || agent.name === "default" && !stored.agents.some((item: StoredAgent) => item?.name === "general") || agent.path_systemprompt === undefined || agent.path_agent_prompt === undefined || ["description", "path_agentprompt", "ignoreGeneralAgentsMd", "agentsMd", "systemPrompt", "developerPrompt"].some(key => key in agent)))) await storage.writeConfig(config);
+    if (Array.isArray(stored.agents) && stored.agents.some((agent: StoredAgent) => agent && (Array.isArray(agent.mcpServers) || agent.name === "default" && !stored.agents.some((item: StoredAgent) => item?.name === "general") || agent.path_systemprompt === undefined || agent.path_agent_prompt === undefined || ["path_agentprompt", "ignoreGeneralAgentsMd", "agentsMd", "systemPrompt", "developerPrompt"].some(key => key in agent)))) await storage.writeConfig(config);
 
     return config;
   }
@@ -359,8 +360,9 @@ export default async function defineAgents(pi: ExtensionAPI) {
   });
 
   const stopProfileCatalog = pi.events.on("piop:agents:profiles", request => {
-    request.active = currentAgent()?.name;
-    request.profiles = config.agents.map(agent => ({ name: agent.name, model: agent.model, effort: agent.effort, fastMode: agent.fastMode, max_subagents: agent.max_subagents ?? 8, max_sub_subagents: agent.max_sub_subagents ?? 8, allow_as_subagent: agent.allow_as_subagent !== false, allow_as_thread: agent.allow_as_thread !== false, allowed_subagents: agent.allowed_subagents ?? "all", allowed_threads: agent.allowed_threads ?? "all", tools: [...agent.tools], skills: [...agent.skills], mcpServers: Object.keys(agent.mcpServers), path_systemprompt: agent.path_systemprompt, path_agent_prompt: agent.path_agent_prompt }));
+    const caller = currentAgent();
+    request.active = caller?.name;
+    request.profiles = config.agents.filter(agent => !startRefusal(caller, agent, request.purpose)).map(agent => ({ name: agent.name, ...(agent.description ? { description: agent.description } : {}), model: agent.model, effort: agent.effort, fastMode: agent.fastMode, max_subagents: agent.max_subagents ?? 8, max_sub_subagents: agent.max_sub_subagents ?? 8, tools: [...agent.tools], skills: [...agent.skills], mcpServers: Object.keys(agent.mcpServers) }));
   });
 
   const stopContextCap = pi.events.on("piop:agents:context-cap", request => {

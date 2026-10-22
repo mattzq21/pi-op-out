@@ -21,7 +21,7 @@ const accessSchema = Type.Union([Type.Literal("all"), Type.Literal("none"), Type
 export const agentSchema = Type.Object({
   max_subagents: Type.Optional(Type.Integer({ minimum: 0, maximum: Number.MAX_SAFE_INTEGER })), max_sub_subagents: Type.Optional(Type.Integer({ minimum: 0, maximum: Number.MAX_SAFE_INTEGER })),
   allow_as_subagent: Type.Optional(Type.Boolean()), allow_as_thread: Type.Optional(Type.Boolean()), allowed_subagents: Type.Optional(accessSchema), allowed_threads: Type.Optional(accessSchema),
-  name: Type.String(), isDefault: Type.Optional(Type.Boolean()), model: Type.String(), effort: Type.String(), fastMode: Type.Optional(Type.Boolean()),
+  name: Type.String(), description: Type.Optional(Type.String()), isDefault: Type.Optional(Type.Boolean()), model: Type.String(), effort: Type.String(), fastMode: Type.Optional(Type.Boolean()),
   contextWindowCap: Type.Optional(Type.Union([Type.Null(), Type.Integer({ minimum: MIN_CAP, maximum: MAX_CAP })])), codemode: Type.Optional(Type.Union([Type.Literal("on"), Type.Literal("off")])), extensions: Type.Optional(Type.Array(Type.String())),
   path_systemprompt: Type.String(), path_agent_prompt: Type.String(), tools: Type.Array(Type.String()), skills: Type.Array(Type.String()), mcpServers: nativeMcpSchema,
 });
@@ -41,6 +41,20 @@ export function registerSubagentLimits(pi: ExtensionAPI, currentAgent: () => Age
   });
 
   pi.on("session_shutdown", stop);
+}
+
+export const MAX_DESCRIPTION = 500;
+
+/** The agent's description, trimmed. An empty description is left out. */
+export function agentDescription(value: unknown, name: string): string | undefined {
+  if (value === undefined) return undefined;
+
+  if (typeof value !== "string") throw new Error(`Agent "${name}" description must be text`);
+  const text = value.trim();
+
+  if (text.length > MAX_DESCRIPTION) throw new Error(`Agent "${name}" description is ${text.length} characters; the limit is ${MAX_DESCRIPTION}`);
+
+  return text || undefined;
 }
 
 export function agentFlag(value: unknown, name: string, field: string): boolean | undefined {

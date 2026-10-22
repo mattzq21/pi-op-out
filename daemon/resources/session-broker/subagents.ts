@@ -3,7 +3,7 @@ import type { AgentToolResult, ExtensionAPI, ExtensionContext, CustomEntryDraft 
 import type { SubagentLimitsRequest } from "../../../extensions/piop-define-agents/contracts.ts";
 import { Type } from "@earendil-works/pi-ai";
 import { Parse } from "typebox/value";
-import { resolveAgentProfile } from "./agent-profiles.ts";
+import { agentProfilesTool, resolveAgentProfile, SUBAGENT_TOOLS, THREAD_TOOLS } from "./agent-profiles.ts";
 import { childFastModeEntry } from "./fast-mode.ts";
 import { randomUUID } from "node:crypto";
 import { join } from "node:path";
@@ -293,16 +293,21 @@ export function registerSubagents(pi: ExtensionAPI, mailbox = registerSubagentMa
     return { ...subagentPayload(results), isError: results.some(run => run.status === "failed" || run.status === "cancelled") };
   };
 
+  const useProfilesTool = agentProfilesTool(pi);
   const unsubscribeTools = pi.events.on("piop:required-tools", ({ ctx, tools, availableTools }) => {
     const allowed = availableTools ?? pi.getActiveTools();
     const child = subagentParent(ctx);
     const reviewer = ctx.sessionManager.getEntries().some(entry => entry.type === "custom" && entry.customType === "piop-review-parent");
+    const subagents = allowed.some(tool => SUBAGENT_TOOLS.includes(tool));
+    const threads = !child && !reviewer && allowed.some(tool => THREAD_TOOLS.includes(tool));
 
-    if (allowed.includes("subagent") || latestRuns(ctx).length) tools.push("spawn_agent", "followup_task", "interrupt_agent", "list_agents", "list_agent_profiles", "send_message", "wait_agent", "await_subagents");
+    if (allowed.includes("subagent") || latestRuns(ctx).length) tools.push("spawn_agent", "followup_task", "interrupt_agent", "list_agents", "send_message", "wait_agent", "await_subagents");
 
     if (child) tools.push("send_message", "wait_agent");
 
-    if (!child && !reviewer && allowed.includes("send_message")) tools.push("send_message_to_thread", "stop_thread", "read_thread", "wait_threads", "list_threads", "create_thread", "list_agent_profiles");
+    if (threads) tools.push(...THREAD_TOOLS);
+
+    if (useProfilesTool(subagents, threads)) tools.push("list_agent_profiles");
   });
 
   pi.on("session_shutdown", unsubscribeTools);

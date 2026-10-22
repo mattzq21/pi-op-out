@@ -24,7 +24,7 @@ export type AgentStartPurpose = "subagent" | "thread";
  * allow_as_subagent and allow_as_thread: false stops other agents from starting this agent that way. Missing means allowed.
  * allowed_subagents and allowed_threads: the agents this agent may start that way.
  */
-export type Agent = { name: string; isDefault?: boolean; model: string; effort: string; fastMode?: boolean; contextWindowCap?: number | null; codemode?: CodemodeChoice; extensions?: string[]; max_subagents?: number; max_sub_subagents?: number; allow_as_subagent?: boolean; allow_as_thread?: boolean; allowed_subagents?: AgentAccess; allowed_threads?: AgentAccess; path_systemprompt: string; path_agent_prompt: string; tools: string[]; skills: string[]; mcpServers: McpServers };
+export type Agent = { name: string; description?: string; isDefault?: boolean; model: string; effort: string; fastMode?: boolean; contextWindowCap?: number | null; codemode?: CodemodeChoice; extensions?: string[]; max_subagents?: number; max_sub_subagents?: number; allow_as_subagent?: boolean; allow_as_thread?: boolean; allowed_subagents?: AgentAccess; allowed_threads?: AgentAccess; path_systemprompt: string; path_agent_prompt: string; tools: string[]; skills: string[]; mcpServers: McpServers };
 
 export type AgentSnapshot = ({ version: 2; definition: Agent } | { version: 1; definition: Agent; systemPrompt: string; agentPrompt: string }) & { resources?: AgentResources };
 
@@ -33,11 +33,12 @@ export type SessionAgentState = { snapshot?: AgentSnapshot; active?: string; loc
 /** purpose: set when the profile starts a subagent or thread, so the agent access rules apply. */
 export interface SubagentProfileRequest { agent?: string; purpose?: AgentStartPurpose; state?: SessionAgentState; error?: string; ready?: Promise<void> }
 
-export interface AgentProfileSummary { name: string; model: string; effort: string; fastMode?: boolean; max_subagents?: number; max_sub_subagents?: number; allow_as_subagent: boolean; allow_as_thread: boolean; allowed_subagents: AgentAccess; allowed_threads: AgentAccess; tools: string[]; skills: string[]; mcpServers: string[]; path_systemprompt: string; path_agent_prompt: string }
+export interface AgentProfileSummary { name: string; description?: string; model: string; effort: string; fastMode?: boolean; max_subagents?: number; max_sub_subagents?: number; tools: string[]; skills: string[]; mcpServers: string[] }
 
 export interface SubagentLimitsRequest { max_subagents?: number; max_sub_subagents?: number }
 
-export interface AgentProfilesRequest { active?: string; profiles?: AgentProfileSummary[] }
+/** Lists the agents the current agent can start for purpose. */
+export interface AgentProfilesRequest { purpose: AgentStartPurpose; active?: string; profiles?: AgentProfileSummary[] }
 
 /** The current agent's context cap default. cap stays undefined when the agent inherits. */
 export interface AgentContextCapRequest { cap?: number | null }

@@ -164,7 +164,7 @@ test('legacy prompts retain their content in editable prompt files', async t => 
   assert.match(await readFile(join(f.dir, config.agents[1].path_systemprompt), 'utf8'), /^You are an expert coding assistant[\s\S]*\n\nDeveloper$/);
   for (const agent of config.agents.slice(0, 2)) {
     assert.equal(await readFile(join(f.dir, agent.path_agent_prompt), 'utf8'), 'Agent notes');
-    for (const field of ['description', 'systemPrompt', 'developerPrompt', 'agentsMd']) assert.equal(field in agent, false);
+    for (const field of ['systemPrompt', 'developerPrompt', 'agentsMd']) assert.equal(field in agent, false);
   }
 });
 
@@ -731,12 +731,12 @@ test('a denied storage write preserves the original error and the saved agent co
   assert.equal((await f.configuration()).agents[0].effort, 'low');
 });
 
-test("legacy description is removed from the published profile without changing prompt paths", async t => {
-  const f = await agentFixture(t, { config: configured([profile('general', { description: 'old value' })]) });
+test("an agent description is saved trimmed, and one over 500 characters is rejected", async t => {
+  const f = await agentFixture(t, { config: configured([profile('general', { description: '  Finds files.  ' })]) });
   await f.load(); const saved = await f.configuration();
-  assert.equal('description' in saved.agents[0], false);
-  assert.equal(saved.agents[0].path_systemprompt, 'prompt.md');
-  assert.equal(saved.agents[0].path_agent_prompt, '');
+  assert.equal(saved.agents[0].description, 'Finds files.');
+  await assert.rejects(f.configure(configured([profile('general', { description: 'x'.repeat(501) })])), /description is 501 characters; the limit is 500/);
+  assert.equal((await f.configuration()).agents[0].description, 'Finds files.');
 });
 
 test("legacy systemPrompt is removed from the published profile without changing prompt paths", async t => {

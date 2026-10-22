@@ -77,7 +77,9 @@ function profilesTool(pi: ExtensionAPI, mode: AgentProfilesMode) {
 
 /** Keeps list_agent_profiles in the shape for the agent's tool groups, and returns whether the agent has it. */
 export function agentProfilesTool(pi: ExtensionAPI) {
-  let registered: AgentProfilesMode | undefined;
+  // Registered at load, so the tool exists before an agent's tools are checked.
+  let registered: AgentProfilesMode = "both";
+  pi.registerTool(profilesTool(pi, registered));
 
   return (subagents: boolean, threads: boolean) => {
     const mode: AgentProfilesMode | undefined = subagents && threads ? "both" : subagents ? "subagent" : threads ? "thread" : undefined;

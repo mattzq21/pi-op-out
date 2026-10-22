@@ -6,12 +6,12 @@ import "./agent-tools.css";
 /** Groups for related tools, by tool name. Other tools are grouped by the extension that registered them. */
 const toolGroups = [
   { name: "Goal", tools: ["update_goal_status"] },
-  { name: "Subagents", tools: ["subagent", "spawn_agent", "followup_task", "interrupt_agent", "list_agents", "list_agent_profiles", "wait_agent", "await_subagents"] },
-  { name: "Orchestration", tools: ["send_message", "send_message_to_thread", "receive_agent_message", "create_thread", "list_threads", "read_thread", "wait_threads", "stop_thread"] },
+  { name: "Subagents", tools: ["subagent", "spawn_agent", "followup_task", "interrupt_agent", "list_agents", "send_message", "wait_agent", "await_subagents"] },
+  { name: "Orchestration", tools: ["send_message_to_thread", "receive_agent_message", "create_thread", "list_threads", "read_thread", "wait_threads", "stop_thread"] },
 ];
 
-/** Tools that have their own setting. codemode follows the agent's Codemode switch. */
-const HIDDEN_TOOLS = new Set(["codemode"]);
+/** Tools that have their own setting. codemode follows the agent's Codemode switch; list_agent_profiles is on when the Subagents or Orchestration group is. */
+const HIDDEN_TOOLS = new Set(["codemode", "list_agent_profiles"]);
 
 /** The name of the extension that registered a tool, from its source path, or undefined for a Pi built-in. */
 function sourceName(source: string): string | undefined {
