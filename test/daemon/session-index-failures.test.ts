@@ -11,7 +11,7 @@ test('session listing excludes unregistered transcripts', async () => {
   const daemon = await startDaemon();
   try {
     const publish = () => JSON.parse(execFileSync('node', [fileURLToPath(new URL('../fixtures/publish-chat.mjs', import.meta.url))], {
-      encoding: 'utf8', input: JSON.stringify({ home: daemon.home, content: '' }), timeout: 30000,
+      encoding: 'utf8', input: JSON.stringify({ home: daemon.home, content: JSON.stringify({ type: 'message', id: 'prompt', parentId: null, message: { role: 'user', content: 'Hello', timestamp: 1000 } }) + '\n' }), timeout: 30000,
     }));
     const first = publish();
     expect((await daemon.invoke('list_sessions')).find((row: any) => row.path === first.path)).toMatchObject({ id: first.id });
@@ -23,9 +23,19 @@ test('session listing excludes unregistered transcripts', async () => {
     expect(rows).toHaveLength(2);
     expect(rows.some((row: any) => row.path === injected)).toBe(false);
     for (const expected of [first, chat]) {
-      expect(rows.find((row: any) => row.path === expected.path)).toMatchObject({ id: expected.id, name: 'Untitled session' });
+      expect(rows.find((row: any) => row.path === expected.path)).toMatchObject({ id: expected.id, name: 'Hello' });
     }
     expect(readFileSync(injected, 'utf8')).toBe(body);
+  } finally { await daemon.stop(); }
+}, 60000);
+
+test('session listing leaves out a transcript with no user message or name', async () => {
+  const daemon = await startDaemon();
+  try {
+    const chat = JSON.parse(execFileSync('node', [fileURLToPath(new URL('../fixtures/publish-chat.mjs', import.meta.url))], {
+      encoding: 'utf8', input: JSON.stringify({ home: daemon.home, content: '' }), timeout: 30000,
+    }));
+    expect((await daemon.invoke('list_sessions')).some((row: any) => row.path === chat.path)).toBe(false);
   } finally { await daemon.stop(); }
 }, 60000);
 
@@ -38,14 +48,16 @@ test('session listing rejects an invalid cost total and succeeds after the trans
     const second = JSON.stringify({ type: 'message', id: 'second', parentId: 'first',
       message: { role: 'assistant', content: 'Second answer', timestamp: 2000, usage: { cost: { total: 1e308 } } },
     }) + '\n';
+    // A transcript with no user message is listed only when it has a name.
+    const name = JSON.stringify({ type: 'session_info', id: 'name', parentId: null, name: 'Costs' }) + '\n';
     const chat = JSON.parse(execFileSync('node', [fileURLToPath(new URL('../fixtures/publish-chat.mjs', import.meta.url))], {
-      encoding: 'utf8', input: JSON.stringify({ home: daemon.home, content: first + second }), timeout: 30000,
+      encoding: 'utf8', input: JSON.stringify({ home: daemon.home, content: name + first + second }), timeout: 30000,
     }));
     const original = readFileSync(chat.path, 'utf8');
     expect(await daemon.failure('list_sessions')).toContain('gave an invalid result');
     expect(readFileSync(chat.path, 'utf8')).toBe(original);
 
-    writeFileSync(chat.path, original.split('\n')[0] + '\n' + first);
+    writeFileSync(chat.path, original.replace(second, ''));
     expect((await daemon.invoke('list_sessions')).find((row: any) => row.path === chat.path)).toMatchObject({
       id: chat.id, messageCount: 1, preview: 'First answer', apiCost: 1e308,
     });

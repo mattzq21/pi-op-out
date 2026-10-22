@@ -23,7 +23,8 @@ import { reserveSessionId } from './pi_runtime';
 import type { SessionSummary } from './types';
 import type { App } from './app';
 
-export interface CachedSession { fingerprint: string; summary: SessionSummary }
+/** blank: the transcript has no user message and no name yet, as when Pi runs for a draft. The sidebar leaves it out. */
+export interface CachedSession { fingerprint: string; summary: SessionSummary; blank?: boolean }
 type SessionCandidate = [path: string, fingerprint: string, modifiedAt: number, size: number];
 
 export class SessionIndexRuntime {
@@ -97,7 +98,7 @@ async function readSummaryBatch(candidates: SessionCandidate[]): Promise<Map<str
       modifiedAt: item[2], preview: value.preview, messageCount: value.messageCount, lastMessageAt: value.lastMessageAt, apiCost: value.apiCost,
       hostId: 'local', hostName: 'Local',
     };
-    result.set(value.path, { fingerprint: item[1], summary });
+    result.set(value.path, { fingerprint: item[1], summary, blank: !value.hasUserMessage && !value.explicitlyNamed });
   }
   return result;
 }
@@ -121,7 +122,7 @@ async function cachedLocalSessions(index: SessionIndexRuntime, root: string): Pr
       throw error;
     }
     if (needsSave) sidebarStorage.persist(index.sidebar, cache);
-    return [...cache.values()].map(cached => ({ ...cached.summary }));
+    return [...cache.values()].filter(cached => !cached.blank).map(cached => ({ ...cached.summary }));
   });
 }
 

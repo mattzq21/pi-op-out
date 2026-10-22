@@ -30,6 +30,8 @@ export function save(connection: Database, cache: Map<string, CachedSession>): v
             WHERE session_sidebar.fingerprint != excluded.fingerprint OR session_sidebar.summary_json != excluded.summary_json`);
     const seen = connection.prepare('INSERT OR IGNORE INTO sidebar_seen VALUES (?)');
     for (const cached of cache.values()) {
+      // A saved entry loads as listed, so a blank transcript is read again after a restart.
+      if (cached.blank) continue;
       const summary = cached.summary;
       const value = serializeSession(summary);
       delete value.id; delete value.path;
