@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, expect, test } from 'bun:test';
+import { afterAll, beforeAll, expect, test } from 'bun:test';
 import { execFileSync } from 'node:child_process';
 import { readFileSync, writeFileSync, symlinkSync, chmodSync, statSync, unlinkSync } from 'node:fs';
 import { join, dirname } from 'node:path';
@@ -7,14 +7,14 @@ import { startDaemon, waitForSessions, remoteMachine, useRemotes, type TestDaemo
 
 let daemon: TestDaemon;
 let remote: RemoteMachine;
-beforeEach(async () => {
+beforeAll(async () => {
   daemon = await startDaemon();
   remote = await remoteMachine(daemon, crypto.randomUUID(), 'Archive server');
   await useRemotes(daemon, [remote]);
   publish('Active chat');
 }, 60000);
 
-afterEach(async () => { await remote?.stop(); await daemon?.stop(); }, 60000);
+afterAll(async () => { await remote?.stop(); await daemon?.stop(); }, 60000);
 
 function publish(content: string, folder = "nested ' 日本語"): { id: string; path: string } {
   return JSON.parse(execFileSync('node', [fileURLToPath(new URL('../fixtures/publish-chat.mjs', import.meta.url))], {
@@ -78,8 +78,10 @@ test('remote archiving refuses a symbolic link to a file outside chat storage', 
   writeFileSync(outside, 'precious');
   const alias = join(dirname(chat.path), 'outside-link.jsonl');
   symlinkSync(outside, alias);
-  await expect(archive(alias)).rejects.toThrow('Only piop session files');
-  expect(readFileSync(outside, 'utf8')).toBe('precious');
+  try {
+    await expect(archive(alias)).rejects.toThrow('Only piop session files');
+    expect(readFileSync(outside, 'utf8')).toBe('precious');
+  } finally { unlinkSync(alias); }
 });
 
 test('remote archiving refuses the filesystem root', async () => {
