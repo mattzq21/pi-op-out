@@ -17,7 +17,7 @@ export function daemonOrigin(): 'test' | 'dev' | 'release' {
 function label(): string {
   const origin = daemonOrigin();
   const project = PROJECT_DIR ? ' · ' + join(basename(dirname(PROJECT_DIR)), basename(PROJECT_DIR)) : '';
-  return 'Piop daemon (' + origin + ')' + project;
+  return origin + project;
 }
 
 const COLORS = { release: '#d46a24', dev: '#d7b84d', test: '#8f8b83' };
