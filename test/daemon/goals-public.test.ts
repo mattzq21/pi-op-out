@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, expect, test } from 'bun:test';
+import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { existsSync, readFileSync } from 'node:fs';
 import { agentDaemon, called, text } from './agent-chats';
 
@@ -23,15 +23,17 @@ test('a goal needs the goal tools, and without them the user is told how to enab
   expect(await chat.history()).toEqual([]);
 }, 60000);
 
+describe('goals with update_goal_status enabled', () => {
+  beforeAll(() => agents.enableAgentTools('update_goal_status'), 60000);
+
 test('a goal keeps the agent working turn after turn until the agent marks it complete', async () => {
-  await agents.enableAgentTools('update_goal_status');
   agents.scripts.set('Write the report', messages => {
     goalRoles.push(...messages.filter((message: any) => text(message).includes('Continue working toward the current thread goal')).map((message: any) => message.role));
     if (called(messages, 'update_goal_status')) return { text: 'Report finished.' };
     return turnsSoFar(messages) < 2 ? { text: 'Still writing.' } : { tool: 'update_goal_status', arguments: { status: 'complete' } };
   });
   const chat = await agents.rootChat();
-  await send(chat, '/goal Write the report');
+  expect(await send(chat, '/goal Write the report')).not.toBe(false);
   const messages = await chat.until(history => text(history.at(-1)) === 'Report finished.');
   expect(messages.filter(message => message.role === 'assistant').map(text).filter(Boolean)).toEqual(['Still writing.', 'Still writing.', 'Report finished.']);
   expect(goalRoles.length).toBeGreaterThan(0);
@@ -46,7 +48,6 @@ test('a goal keeps the agent working turn after turn until the agent marks it co
 }, 120000);
 
 test('pausing a goal stops the extra turns, and resuming starts them again', async () => {
-  await agents.enableAgentTools('update_goal_status');
   let finish = false;
   const noticeRoles: string[] = [];
   agents.scripts.set('Keep polishing', async messages => {
@@ -72,7 +73,6 @@ test('pausing a goal stops the extra turns, and resuming starts them again', asy
 }, 120000);
 
 test('Stop during a goal ends its turns at once and marks it paused, and resuming the goal starts them again', async () => {
-  await agents.enableAgentTools('update_goal_status');
   let calls = 0;
   agents.scripts.set('Never-ending goal', async () => { calls++; await Bun.sleep(300); return { text: 'Working.' }; });
   const chat = await agents.rootChat();
@@ -94,7 +94,6 @@ test('Stop during a goal ends its turns at once and marks it paused, and resumin
 
 
 test('a goal continues through empty replies and large usage until completed', async () => {
-  await agents.enableAgentTools('update_goal_status');
   let calls = 0;
   agents.scripts.set('Keep going without limits', messages => {
     if (called(messages, 'update_goal_status')) return { text: 'Finished without limits.' };
@@ -114,7 +113,6 @@ test('a goal continues through empty replies and large usage until completed', a
 }, 120000);
 
 test('a goal whose model keeps refusing for a rate limit is retried, then its goal and chat are paused', async () => {
-  await agents.enableAgentTools('update_goal_status');
   let calls = 0;
   agents.scripts.set('Beat the rate limit', () => { calls++; throw new Error('Rate limit exceeded'); });
   const chat = await agents.rootChat();
@@ -128,7 +126,6 @@ test('a goal whose model keeps refusing for a rate limit is retried, then its go
 }, 120000);
 
 test('a goal continues after repeated tool failures', async () => {
-  await agents.enableAgentTools('update_goal_status');
   agents.scripts.set('Read the missing file', messages => {
     if (called(messages, 'update_goal_status')) return { text: 'Failure handled.' };
     if (messages.filter((message: any) => text(message) === 'Could not read it.').length >= 7) return { tool: 'update_goal_status', arguments: { status: 'complete' } };
@@ -143,7 +140,6 @@ test('a goal continues after repeated tool failures', async () => {
 }, 120000);
 
 test('a long goal is saved to a file the agent reads, which stays while any chat still uses it', async () => {
-  await agents.enableAgentTools('update_goal_status');
   const objective = 'Translate the long brief. ' + 'Every line matters. '.repeat(300);
   let file = '';
   agents.scripts.set('Read the goal objective file at', messages => {
@@ -167,3 +163,5 @@ test('a long goal is saved to a file the agent reads, which stays while any chat
   await remove(fork.sessionFile);
   expect(existsSync(file)).toBe(false);
 }, 120000);
+
+});
