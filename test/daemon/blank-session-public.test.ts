@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url';
 import { randomUUID } from 'node:crypto';
 import { join } from 'node:path';
 
-test('closing an unused new conversation removes its header-only transcript', async () => {
+test.concurrent('closing an unused new conversation removes its header-only transcript', async () => {
   const daemon = await startDaemon();
   const runtimeId = 'unused-conversation';
   try {
@@ -31,7 +31,7 @@ test('closing an unused new conversation removes its header-only transcript', as
   } finally { await daemon.stop(); }
 }, 30_000);
 
-test('closing keeps a transcript whose header ID changed after opening', async () => {
+test.concurrent('closing keeps a transcript whose header ID changed after opening', async () => {
   const daemon = await startDaemon();
   const runtimeId = 'changed-header';
   try {
@@ -55,7 +55,7 @@ test('closing keeps a transcript whose header ID changed after opening', async (
   } finally { await daemon.stop(); }
 }, 30_000);
 
-test('closing keeps a conversation that already contains a message', async () => {
+test.concurrent('closing keeps a conversation that already contains a message', async () => {
   const daemon = await startDaemon();
   const runtimeId = 'saved-message';
   const message = JSON.stringify({ type: 'message', id: 'first-message', parentId: null,
@@ -77,7 +77,7 @@ test('closing keeps a conversation that already contains a message', async () =>
   } finally { await daemon.stop(); }
 }, 30_000);
 
-test('closing keeps a transcript with an incomplete final line', async () => {
+test.concurrent('closing keeps a transcript with an incomplete final line', async () => {
   const daemon = await startDaemon();
   const runtimeId = 'incomplete-transcript';
   try {
@@ -99,7 +99,7 @@ test('closing keeps a transcript with an incomplete final line', async () => {
   } finally { await daemon.stop(); }
 }, 30_000);
 
-test('closing keeps a conversation after a prompt was submitted', async () => {
+test.concurrent('closing keeps a conversation after a prompt was submitted', async () => {
   const daemon = await startDaemon();
   const runtimeId = 'submitted-prompt';
   const provider = Bun.serve({
@@ -134,7 +134,7 @@ test('closing keeps a conversation after a prompt was submitted', async () => {
   }
 }, 30_000);
 
-test('new worktree chat starts on the selected branch and removes its unused worktree on close', async () => {
+test.concurrent('new worktree chat starts on the selected branch and removes its unused worktree on close', async () => {
   const daemon = await startDaemon();
   const runtimeId = 'new-worktree';
   const repo = join(daemon.home, 'project');
