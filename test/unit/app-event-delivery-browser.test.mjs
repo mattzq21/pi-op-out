@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { deliverAppEvent } from '../app-browser-fixture.mjs';
+import { appBrowser, deliverAppEvent } from '../app-browser-fixture.mjs';
 import { startupPage } from '../startup-browser-fixture.mjs';
 
 const pageForEvents = t => startupPage(t, 'development', {
@@ -31,4 +31,21 @@ test('event handler errors are reported even when their text matches a navigatio
   }
   await page.close();
   await assert.rejects(deliverAppEvent(page, 'test', {}), /closed/);
+});
+
+
+test('app cleanup closes its browser before stopping the services', async () => {
+  const cleanup = [];
+  let next = 0;
+  try {
+    const page = await appBrowser({ after: action => cleanup.push(action) });
+    await cleanup[next++]();
+    assert.equal(page.isClosed(), true);
+  } finally {
+    const failures = [];
+    while (next < cleanup.length) {
+      try { await cleanup[next++](); } catch (error) { failures.push(error); }
+    }
+    if (failures.length) throw new AggregateError(failures, 'App cleanup failed');
+  }
 });

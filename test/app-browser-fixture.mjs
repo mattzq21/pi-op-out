@@ -21,6 +21,12 @@ export async function deliverAppEvent(page, event, payload) {
 export async function appBrowser(t, { remotes = [], keybindings = {}, nativeFailures = {}, model } = {}) {
   let page;
   const deliveries = new Set(), errors = [];
+  t.after(async () => {
+    const context = page?.context();
+    page = undefined;
+    await Promise.allSettled([...deliveries]);
+    await context?.close();
+  });
   const daemon = await daemonClient(t, (event, payload) => {
     if (!page) return;
     const delivery = Promise.allSettled(page.context().pages().map(target => deliverAppEvent(target, event, payload))).then(results => {
@@ -43,7 +49,7 @@ export async function appBrowser(t, { remotes = [], keybindings = {}, nativeFail
       });
     },
   });
-  t.after(async () => { page = undefined; await Promise.allSettled([...deliveries]); assert.deepEqual(errors, []); });
+  t.after(() => assert.deepEqual(errors, []));
   if (model) await browserPage.locator('[aria-label="Model"]:enabled').waitFor({ timeout: 30000 });
   await browserPage.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
   return browserPage;
