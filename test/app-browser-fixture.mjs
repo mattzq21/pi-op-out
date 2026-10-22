@@ -20,7 +20,7 @@ export async function deliverAppEvent(page, event, payload) {
 /** The app on a real daemon. nativeFailures maps a native command to the error message it fails with. model 'echo' gives the daemon a model that echoes each message. */
 export async function appBrowser(t, { remotes = [], keybindings = {}, nativeFailures = {}, model } = {}) {
   let page;
-  const deliveries = new Set(), requests = new Set(), errors = [];
+  const deliveries = new Set(), errors = [];
   const daemon = await daemonClient(t, (event, payload) => {
     if (!page) return;
     const delivery = Promise.allSettled(page.context().pages().map(target => deliverAppEvent(target, event, payload))).then(results => {
@@ -39,17 +39,12 @@ export async function appBrowser(t, { remotes = [], keybindings = {}, nativeFail
       page.context().on('page', next => next.on('pageerror', error => errors.push(error.message)));
       await page.context().exposeFunction('nativeCommand', async (command, args) => {
         if (Object.hasOwn(nativeFailures, command)) throw new Error(nativeFailures[command]);
-        const request = command === 'daemon_invoke' ? daemon.invoke(args.command, args.args) : native.invoke(command, args);
-        requests.add(request);
-        try { return await request; } finally { requests.delete(request); }
+        return command === 'daemon_invoke' ? daemon.invoke(args.command, args.args) : native.invoke(command, args);
       });
     },
   });
   t.after(async () => { page = undefined; await Promise.allSettled([...deliveries]); assert.deepEqual(errors, []); });
-  do {
-    await Promise.allSettled([...requests]);
-    await browserPage.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
-  } while (requests.size);
+  await browserPage.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
   return browserPage;
 }
 
