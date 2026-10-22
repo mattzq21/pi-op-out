@@ -18,7 +18,6 @@ test('a child agent\'s final answer reaches its parent, which continues with it'
   agents.scripts.set('Summarize the README', () => ({ text: 'The README is about cats.' }));
   const root = await agents.rootChat();
   await root.command({ type: 'prompt', message: 'Read the README for me' });
-  await Bun.sleep(3000); console.log('DBG', JSON.stringify(agents.model.requests.map((request: any) => request.messages.filter((message: any) => message.role === 'tool'))).slice(0, 3000));
   const messages = await root.until(history => history.some(message => message.role === 'assistant' && text(message).startsWith('The reader says')));
   expect(text(messages.findLast(message => message.role === 'assistant'))).toBe('The reader says: README is about cats');
   const sessions = await agents.daemon.invoke('list_sessions');
