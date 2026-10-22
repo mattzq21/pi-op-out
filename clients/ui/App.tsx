@@ -126,7 +126,7 @@ export default function App(props: { suppressConnectionNotices?: boolean } = {})
           {renderChatView()}
         </div>
         {renderSplitChatPane()}
-        <Show when={subagentPane()} keyed>{(target) => <SubagentPane target={target} onClose={closeSplitPane} onActivate={() => setActivePane("split")} onShowArchive={() => { setArchivesOpen(true); setPanelOpen(true); }} />}</Show>
+        <Show when={subagentPane()} keyed>{(target) => <SubagentPane target={target} debug={required(settings()).debugMode} onClose={closeSplitPane} onActivate={() => setActivePane("split")} onShowArchive={() => { setArchivesOpen(true); setPanelOpen(true); }} />}</Show>
         {pluginPane.panel()}
       </div>);
     };
