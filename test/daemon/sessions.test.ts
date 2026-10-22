@@ -22,14 +22,14 @@ const listed = async (path: string) => (await daemon.invoke('list_sessions')).fi
 
 test('session list shows new transcripts, refreshes changed ones and drops deleted ones', async () => {
   const { id, path } = publicSession(daemon.home, { cwd: daemon.home });
-  const [first] = await listed(path);
-  expect(first).toMatchObject({ id, name: 'Untitled session', cwdExists: true, messageCount: 0, hostId: 'local', hostName: 'Local' });
+  // A transcript with no user message and no name, as Pi writes for a draft, is not listed.
+  expect(await listed(path)).toEqual([]);
   execFileSync('node', [fileURLToPath(new URL('../fixtures/append-chat.mjs', import.meta.url))], {
     encoding: 'utf8', timeout: 30_000,
     input: JSON.stringify({ home: daemon.home, path, message: { role: 'user', content: 'New question', timestamp: 1 } }),
   });
   const [updated] = await listed(path);
-  expect(updated).toMatchObject({ id, name: 'New question', messageCount: 1 });
+  expect(updated).toMatchObject({ id, name: 'New question', cwdExists: true, messageCount: 1, hostId: 'local', hostName: 'Local' });
   expect(await daemon.invoke('delete_session', { sessionPath: path, hostId: 'local', clientId: 'test-client' })).toEqual([path]);
   expect(await daemon.waitEvent('pi://session-removed', payload => payload.sessionPath === path)).toEqual({ hostId: 'local', sessionPath: path, sessionId: id });
   expect(existsSync(path)).toBe(false);
@@ -213,10 +213,10 @@ const settingsDatabase = () => join(daemon.home, '.piop/sessions.sqlite');
 test('session list takes machine and file time from the daemon and gives defaults for missing transcript fields', async () => {
   const { id, path } = publicSession(daemon.home, { cwd: daemon.home, folder: 'defaults' });
   const header = JSON.parse(readFileSync(path, 'utf8').split('\n')[0]!);
-  writeFileSync(path, JSON.stringify({ ...header, cwd: '', hostId: 'untrusted', hostName: 'Untrusted', modifiedAt: 999, fingerprint: 'untrusted' }) + '\n');
+  writeFileSync(path, JSON.stringify({ ...header, cwd: '', hostId: 'untrusted', hostName: 'Untrusted', modifiedAt: 999, fingerprint: 'untrusted' }) + '\n' + JSON.stringify({ type: 'message', message: { role: 'user', content: '' } }) + '\n');
   const [row] = await listed(path);
   // The list does not send file times; recency order shows them (remote_sessions.test.ts).
-  expect(row).toMatchObject({ id, path, name: 'Untitled session', preview: '', project: 'Unknown project', cwd: 'Unknown project', cwdExists: false, messageCount: 0, lastMessageAt: 0, apiCost: 0, hostId: 'local', hostName: 'Local' });
+  expect(row).toMatchObject({ id, path, name: 'Untitled session', preview: '', project: 'Unknown project', cwd: 'Unknown project', cwdExists: false, messageCount: 1, lastMessageAt: 0, apiCost: 0, hostId: 'local', hostName: 'Local' });
   expect(row).not.toHaveProperty('fingerprint');
 });
 
@@ -236,7 +236,7 @@ test('session list is empty without the local machine and remote machines', asyn
 });
 
 test('session list fails when it cannot read session groups, and works again after', async () => {
-  const { path } = publicSession(daemon.home, { cwd: daemon.home, folder: 'locked' });
+  const { path } = publicSession(daemon.home, { cwd: daemon.home, folder: 'locked', entries: [{ type: 'message', message: { role: 'user', content: 'Locked' } }] });
   expect(await listed(path)).toHaveLength(1);
   const other = new Database(settingsDatabase());
   other.exec('BEGIN IMMEDIATE');

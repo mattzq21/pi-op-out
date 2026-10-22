@@ -14,7 +14,8 @@ beforeAll(async () => {
 }, 60_000);
 afterAll(() => daemon?.stop());
 
-function publicSession(home: string, cwd: string, folder: string, content = ''): { id: string; path: string } {
+/** A listed chat needs a user message or a name, so the default content has one user message. */
+function publicSession(home: string, cwd: string, folder: string, content = JSON.stringify({ type: 'message', message: { role: 'user', content: 'Hello' } }) + '\n'): { id: string; path: string } {
   return JSON.parse(execFileSync('node', [fileURLToPath(new URL('../fixtures/publish-chat.mjs', import.meta.url))], {
     encoding: 'utf8', timeout: 30000,
     input: JSON.stringify({ home, cwd, folder, content }),
@@ -130,7 +131,7 @@ test('session list skips unreadable transcripts without losing valid ones', asyn
   const valid = publicSession(daemon.home, daemon.home, 'damaged');
   writeFileSync(valid.path, readFileSync(valid.path, 'utf8') + 'malformed line\n');
   const sessions = await listed([...damaged, missing.path, valid.path]);
-  expect(sessions).toEqual([expect.objectContaining({ id: valid.id, name: 'Untitled session', messageCount: 0, apiCost: 0 })]);
+  expect(sessions).toEqual([expect.objectContaining({ id: valid.id, name: 'Hello', messageCount: 1, apiCost: 0 })]);
 });
 
 test('session list follows its project folder appearing and disappearing', async () => {
