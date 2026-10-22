@@ -3,7 +3,7 @@ import { mkdirSync, symlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { remoteMachine, startDaemon, useRemotes } from './harness';
 
-test('project selection rejects links into app storage but accepts similarly named folders', async () => {
+test.concurrent('project selection rejects links into app storage but accepts similarly named folders', async () => {
   const daemon = await startDaemon();
   try {
     for (const name of ['.piop', '.piop-dev']) {
@@ -23,7 +23,7 @@ test('project selection rejects links into app storage but accepts similarly nam
   } finally { await daemon.stop(); }
 }, 60_000);
 
-test('a remote machine rejects its own app storage as a project even where the local machine accepts the same path', async () => {
+test.concurrent('a remote machine rejects its own app storage as a project even where the local machine accepts the same path', async () => {
   const daemon = await startDaemon();
   const server = await remoteMachine(daemon, 'server', 'Server');
   try {
@@ -50,7 +50,7 @@ test('a remote machine rejects its own app storage as a project even where the l
   } finally { await server.stop(); await daemon.stop(); }
 }, 60_000);
 
-test('project selection rejects folders reached through the real location of a linked app storage folder', async () => {
+test.concurrent('project selection rejects folders reached through the real location of a linked app storage folder', async () => {
   const daemon = await startDaemon();
   try {
     const relocated = join(daemon.home, 'relocated-storage');
@@ -64,7 +64,7 @@ test('project selection rejects folders reached through the real location of a l
   } finally { await daemon.stop(); }
 }, 60_000);
 
-test('allowing app storage accepts a temporary chat folder but still rejects files and missing paths', async () => {
+test.concurrent('allowing app storage accepts a temporary chat folder but still rejects files and missing paths', async () => {
   const daemon = await startDaemon();
   try {
     const chat = await daemon.invoke('create_temporary_chat', { hostId: 'local' });

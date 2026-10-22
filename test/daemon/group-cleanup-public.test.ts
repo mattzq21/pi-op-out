@@ -15,7 +15,7 @@ afterAll(async () => { await server?.stop(); await daemon?.stop(); }, 60_000);
 
 function publicSession(home: string): { id: string; path: string } {
   return JSON.parse(execFileSync('node', [fileURLToPath(new URL('../fixtures/publish-chat.mjs', import.meta.url))], {
-    encoding: 'utf8', timeout: 30000, input: JSON.stringify({ home, cwd: home, folder: 'cleanup', content: '' }),
+    encoding: 'utf8', timeout: 30000, input: JSON.stringify({ home, cwd: home, folder: 'cleanup', content: JSON.stringify({ type: 'message', id: 'request', parentId: null, message: { role: 'user', content: 'Group test chat', timestamp: 1 } }) + '\n' }),
   }));
 }
 

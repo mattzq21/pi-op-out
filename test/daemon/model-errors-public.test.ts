@@ -24,7 +24,7 @@ test('with automatic retry turned off in Settings, also for a chat already open,
   try {
     await chat.command({ type: 'prompt', message: 'Answer without retries' });
     await chat.until(history => history.at(-1)?.stopReason === 'error');
-    await Bun.sleep(3000);
+    await agents.daemon.waitEvent('pi://event', payload => payload.runtimeId === chat.runtimeId && payload.event?.type === 'agent_settled');
     expect(calls).toBe(1);
     expect((await chat.command({ type: 'get_state' })).isPaused).toBe(true);
     await chat.command({ type: 'resume' });

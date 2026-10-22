@@ -1,6 +1,6 @@
 import { test, expect } from 'bun:test';
 import { agentDaemon, text } from './agent-chats';
-for (const mode of ['copy_after', 'fork_after']) test(mode + ' switches both requesting views', async () => {
+for (const mode of ['copy_after', 'fork_after']) test.concurrent(mode + ' switches both requesting views', async () => {
  const agents=await agentDaemon();
  try {
   agents.scripts.set('Question', () => ({text:'Answer'}));
