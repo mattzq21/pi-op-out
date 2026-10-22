@@ -1,6 +1,6 @@
 import { required } from "../lib/required";
 import { Key } from "@solid-primitives/keyed";
-import { createMemo, createSignal, onCleanup } from "solid-js";
+import { createMemo, createSignal, onCleanup, Show } from "solid-js";
 import { Check, CircleAlert, Copy } from "lucide-solid";
 import { IconButton } from "./IconButton";
 import { ContextTokenDiagram } from "./ContextTokenDiagram";
@@ -13,7 +13,7 @@ import { copyText } from "../lib/clipboard";
 
 type Section = "system" | "instructions" | "tools" | "skills";
 
-function ContextCopyButton(props: { content: () => string }) {
+function ContextCopyButton(props: { content: () => string; label?: string; class?: string }) {
   const [state, setState] = createSignal<"idle" | "copied" | "error">("idle");
   let timer: ReturnType<typeof setTimeout> | undefined;
   let disposed = false;
@@ -30,7 +30,12 @@ function ContextCopyButton(props: { content: () => string }) {
     if (!disposed) timer = setTimeout(() => setState("idle"), 1800);
   };
 
-  return <IconButton class="prompt-context-copy" label={state() === "copied" ? "Copied" : state() === "error" ? "Copy failed" : "Copy tab content"} onClick={copy}>{state() === "copied" ? <Check size={14} /> : state() === "error" ? <CircleAlert size={14} /> : <Copy size={14} />}</IconButton>;
+  return <IconButton class={props.class ?? "prompt-context-copy"} label={state() === "copied" ? "Copied" : state() === "error" ? "Copy failed" : props.label ?? "Copy tab content"} onClick={copy}>{state() === "copied" ? <Check size={14} /> : state() === "error" ? <CircleAlert size={14} /> : <Copy size={14} />}</IconButton>;
+}
+
+/** The copy button of one item: a tool with its JSON, an instruction file or a skill. */
+function ItemCopy(props: { name?: string; content: () => string }) {
+  return <ContextCopyButton class="prompt-context-copy prompt-context-item-copy" label={`Copy ${props.name ?? "item"}`} content={props.content} />;
 }
 
 function shares(values: { system: number; instructions: number; tools: number; skills: number }) {
@@ -85,7 +90,6 @@ export const PromptContextBar = function PromptContextBar(componentProps: { cont
   const sections = createMemo(() => (contextSections(context())));
   const visibleSkills = (): NonNullable<PromptContextInfo["userInvokedSkills"]> => skillTab() === "model" ? sections().skills : sections().userInvokedSkills;
   const emptySkills = () => skillTab() === "model" ? "No defined skills" : "No skills invoked in this context";
-  const copySkills = () => skillTab() === "tax" ? taxText() : visibleSkills().map((item) => [item.name ?? item.filePath, item.description, item.filePath, item.content].filter(Boolean).join("\n")).join("\n\n") || emptySkills();
   const skillPercent = createMemo(() => skillPercentages(context()));
   const tokens = createMemo(() => contextTokens(context()));
   const percent = createMemo(() => shares(tokens()));
@@ -93,24 +97,15 @@ export const PromptContextBar = function PromptContextBar(componentProps: { cont
   const toggle = (section: Section) => setActive((current) => current === section ? undefined : section);
 
   const renderSkillContents = () => (skillTab() === "tax" ? <pre>{taxText()}</pre> : visibleSkills().length ? <Key each={visibleSkills()} by={(skill) => skill.id ?? skill.filePath}>{(skill, _index) => skillTab() === "user"
-        ? <details class="prompt-skill-invocation"><summary>{skill().name}</summary><small>{skill().filePath}</small><pre>{skill().content ?? "Skill body was not recorded in this snapshot."}</pre></details>
-        : <div><strong>{skill().name}</strong>{skill().description && <p>{skill().description}</p>}<small>{skill().filePath}</small></div>}</Key> : <p>{emptySkills()}</p>);
+        ? <div class="prompt-context-item"><ItemCopy name={skill().name} content={() => [skill().name, skill().filePath, skill().content].filter(Boolean).join("\n")} /><details class="prompt-skill-invocation"><summary>{skill().name}</summary><small>{skill().filePath}</small><pre>{skill().content ?? "Skill body was not recorded in this snapshot."}</pre></details></div>
+        : <div class="prompt-context-item"><ItemCopy name={skill().name} content={() => [skill().name, skill().description, skill().filePath].filter(Boolean).join("\n")} /><strong>{skill().name}</strong>{skill().description && <p>{skill().description}</p>}<small>{skill().filePath}</small></div>}</Key> : <p>{emptySkills()}</p>);
 
   const renderPromptContextContent = () => (active() && <div class={`prompt-context-content ${required((active()))}`}>
-    <ContextCopyButton content={() => {
-      const section = sections();
-
-      switch (active()) {
-        case "system": return section.systemPrompt || "No system prompt";
-        case "instructions": return section.instructions.map((item) => `${item.path}\n${item.content ?? ""}`).join("\n\n") || "No project instructions";
-        case "tools": return section.tools.map((item) => [item.name, item.description, JSON.stringify(item.parameters, null, 2)].filter(Boolean).join("\n")).join("\n\n") || "No active tools";
-        case "skills": return copySkills();
-        default: return "";
-      }
-    }} />
+    <Show when={active() === "system" || (active() === "skills" && skillTab() === "tax")}><ContextCopyButton content={() => active() === "system" ? sections().systemPrompt || "No system prompt" : taxText()} /></Show>
     {required((active())) === "system" && <pre>{sections().systemPrompt || "No system prompt"}</pre>}
-    {required((active())) === "instructions" && (sections().instructions.length ? <Key each={sections().instructions} by={(instruction) => instruction.path}>{(instruction, _index) => <div ><strong>{instruction().path}</strong><pre>{instruction().content}</pre></div>}</Key> : <p>No project instructions</p>)}
-    {required((active())) === "tools" && (sections().tools.length ? <Key each={sections().tools} by={(tool) => tool.name}>{(tool, _index) => <div ><strong>{tool().name}</strong>{tool().codemode && <span class="prompt-context-codemode">CM</span>}{tool().description && <p>{tool().description}</p>}<details class="prompt-context-tool-json"><summary>JSON</summary><pre>{JSON.stringify(tool().parameters, null, 2)}</pre></details></div>}</Key> : <p>No active tools</p>)}
+    {required((active())) === "instructions" && (sections().instructions.length ? <Key each={sections().instructions} by={(instruction) => instruction.path}>{(instruction, _index) => <div class="prompt-context-item"><ItemCopy name={instruction().path} content={() => `${instruction().path}
+${instruction().content ?? ""}`} /><strong>{instruction().path}</strong><pre>{instruction().content}</pre></div>}</Key> : <p>No project instructions</p>)}
+    {required((active())) === "tools" && (sections().tools.length ? <Key each={sections().tools} by={(tool) => tool.name}>{(tool, _index) => <div class="prompt-context-item"><ItemCopy name={tool().name} content={() => [tool().name, tool().description, JSON.stringify(tool().parameters, null, 2)].filter(Boolean).join("\n")} /><strong>{tool().name}</strong>{tool().codemode && <span class="prompt-context-codemode">CM</span>}{tool().description && <p>{tool().description}</p>}<details class="prompt-context-tool-json"><summary>JSON</summary><pre>{JSON.stringify(tool().parameters, null, 2)}</pre></details></div>}</Key> : <p>No active tools</p>)}
     {required((active())) === "skills" && <>
       <nav class="prompt-skills-tabs" aria-label="Skill categories">
         <button type="button" aria-pressed={skillTab() === "model"} data-tooltip="Share of total estimated context used by skill definitions" onClick={() => setSkillTab("model")}>Defined <small>{skillPercent().defined}%</small></button>

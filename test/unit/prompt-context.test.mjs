@@ -122,3 +122,18 @@ test('empty skills display zero shares for defined, invoked and shared instructi
     'Defined 0%', 'Invoked 0%', 'Tax 0%',
   ]);
 });
+
+test('each tool, instruction and skill has its own copy button, and a tool copies its JSON too', async () => {
+  const copied = [];
+  Object.defineProperty(navigator, 'clipboard', { value: { writeText: async text => { copied.push(text); } }, configurable: true });
+  view = await renderComponent(PromptContextBar, { context: context(), inputTokens: 3 });
+  const copy = async label => { const node = document.querySelector('[aria-label="' + label + '"]'); assert.ok(node, label); await act(async () => { node.click(); await new Promise(resolve => setTimeout(resolve, 0)); }); };
+  await act(() => button('Tools').click());
+  assert.equal(document.querySelector('[aria-label="Copy tab content"]'), null);
+  await copy('Copy read');
+  await act(() => button('Instructions').click());
+  await copy('Copy /AGENTS.md');
+  await act(() => button('Skills').click());
+  await copy('Copy skill');
+  assert.deepEqual(copied, ['read\nRead file\n{\n  "type": "object"\n}', '/AGENTS.md\nInstructions content', 'skill\nSkill description\n/SKILL.md']);
+});
