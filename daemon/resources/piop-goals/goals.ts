@@ -9,6 +9,12 @@ import type { GoalCore } from "./preparation.ts";
 import { sessionControls } from "../piop-controls/interface.ts";
 import { inputHold } from "../session-broker/input-hold.ts";
 
+/** The user message that starts goal work when Pi is idle. */
+const CONTINUE_TEXT = "Continue working toward the current conversation goal.";
+
+/** A notice that the user changed the goal while the agent worked. The model gets it as a system message at its place in the history. */
+const GOAL_CHANGE = "piop-goal-change";
+
 interface AgentsReady { ctx: ExtensionContext }
 
 declare module "@earendil-works/pi-coding-agent" {
@@ -57,14 +63,14 @@ export function registerGoals(pi: ExtensionAPI): { session: GoalSession; core: G
     if (!allowed()) throw new Error("Enable get_goal, create_goal and update_goal for this agent under Settings → Agents → Tools before starting a goal.");
   };
 
-  const steering = (content: string) => pi.sendMessage({ customType: GOAL_CONTEXT, content, display: false, details: { goalId: state.goal?.id } }, { triggerTurn: false });
+  const steering = (content: string) => pi.sendMessage({ customType: GOAL_CHANGE, content, display: false, details: { goalId: state.goal?.id } }, { triggerTurn: false });
 
   const start = (ctx: ExtensionContext) => {
     if (starting || state.goal?.status !== "active" || !ctx.isIdle() || ctx.hasPendingMessages()) return;
     assertAvailable(ctx);
     starting = true;
     pendingStart = true;
-    pi.sendUserMessage("Continue working toward the current conversation goal.", { deliverAs: "followUp" });
+    pi.sendUserMessage(CONTINUE_TEXT, { deliverAs: "followUp" });
   };
 
   const changed = (ctx: ExtensionContext, prompt = goalChangedPrompt(state.goal)) => {
@@ -112,7 +118,7 @@ export function registerGoals(pi: ExtensionAPI): { session: GoalSession; core: G
   pi.on("input", (event, ctx) => coordination.run(ctx, (): InputEventResult | void => {
     starting = false;
 
-    if (event.source === "extension" && pendingStart && event.text === "Continue working toward the current conversation goal.") {
+    if (event.source === "extension" && pendingStart && event.text === CONTINUE_TEXT) {
       pendingStart = false;
 
       if (state.goal?.status !== "active") return { action: "handled" };
@@ -180,13 +186,18 @@ export function registerGoals(pi: ExtensionAPI): { session: GoalSession; core: G
 
   pi.on("context", (event, ctx) => coordination.run(ctx, () => {
     if (state.goal?.status === "active" && !allowed()) state.setStatus(ctx, "paused");
-    const messages = event.messages.filter(message => message.role !== "custom" || !["piop-goal-summary", GOAL_CONTEXT].includes(message.customType));
+    // Earlier continuation prompts give way to the current one. Change notices stay where they happened, as system messages.
+    const messages = event.messages.flatMap(message => message.role !== "custom" ? [message]
+      : ["piop-goal-summary", GOAL_CONTEXT].includes(message.customType) ? []
+      : message.customType === GOAL_CHANGE ? [{ role: "system" as const, content: message.content, timestamp: message.timestamp }]
+      : [message]);
 
     if (state.goal) {
       const content = currentPrompt(state);
-      messages.push({ role: "custom", customType: GOAL_CONTEXT, content, display: false, timestamp: Date.now() });
+      // The continuation prompt of an active goal reaches the model as a user message; other goal states as a system message.
+      messages.push(state.goal.status === "active" ? { role: "custom", customType: GOAL_CONTEXT, content, display: false, timestamp: Date.now() } : { role: "system", content, timestamp: Date.now() });
     } else if (event.messages.some(message => message.role === "custom" && message.customType === GOAL_CONTEXT)) {
-      messages.push({ role: "custom", customType: GOAL_CONTEXT, content: goalChangedPrompt(null), display: false, timestamp: Date.now() });
+      messages.push({ role: "system", content: goalChangedPrompt(null), timestamp: Date.now() });
     }
 
     return { messages };

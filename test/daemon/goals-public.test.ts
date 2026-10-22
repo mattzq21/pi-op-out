@@ -8,6 +8,7 @@ afterAll(async () => { await agents?.close(); });
 
 /** Sends a message the way the composer does: through the queue, with the draft's submission ID. */
 const send = (chat: Awaited<ReturnType<typeof agents.rootChat>>, message: string) => chat.command({ type: 'follow_up', message, goalSubmissionId: crypto.randomUUID() });
+const goalRoles: string[] = [];
 const turnsSoFar = (messages: any[]) => messages.filter(message => message.role === 'assistant' && text(message) === 'Still writing.').length;
 const notices = (runtimeId: string) => agents.daemon.events.filter(event => event.payload?.runtimeId === runtimeId && event.payload.event?.method === 'notify').map(event => event.payload.event.message);
 
@@ -21,6 +22,7 @@ test('a goal needs the goal tools, and without them the user is told how to enab
 test('a goal keeps the agent working turn after turn until the agent marks it complete', async () => {
   await agents.enableAgentTools('get_goal', 'create_goal', 'update_goal');
   agents.scripts.set('Write the report', messages => {
+    goalRoles.push(...messages.filter((message: any) => text(message).includes('Continue working toward the current thread goal')).map((message: any) => message.role));
     if (called(messages, 'update_goal')) return { text: 'Report finished.' };
     return turnsSoFar(messages) < 2 ? { text: 'Still writing.' } : { tool: 'update_goal', arguments: { status: 'complete' } };
   });
@@ -28,6 +30,8 @@ test('a goal keeps the agent working turn after turn until the agent marks it co
   await send(chat, '/goal Write the report');
   const messages = await chat.until(history => text(history.at(-1)) === 'Report finished.');
   expect(messages.filter(message => message.role === 'assistant').map(text).filter(Boolean)).toEqual(['Still writing.', 'Still writing.', 'Report finished.']);
+  expect(goalRoles.length).toBeGreaterThan(0);
+  expect(new Set(goalRoles)).toEqual(new Set(['user']));
   // The goal bar in the app reads these fields from the published goal status.
   const published = agents.daemon.events.filter(event => event.payload?.runtimeId === chat.runtimeId && event.payload.event?.method === 'setStatus' && event.payload.event.statusKey === 'piop-goal' && event.payload.event.statusText)
     .map(event => JSON.parse(event.payload.event.statusText));
@@ -40,7 +44,9 @@ test('a goal keeps the agent working turn after turn until the agent marks it co
 test('pausing a goal stops the extra turns, and resuming starts them again', async () => {
   await agents.enableAgentTools('get_goal', 'create_goal', 'update_goal');
   let finish = false;
+  const noticeRoles: string[] = [];
   agents.scripts.set('Keep polishing', async messages => {
+    noticeRoles.splice(0, noticeRoles.length, ...messages.filter((message: any) => /The saved goal is inactive|The user resumed the thread goal/.test(text(message))).map((message: any) => message.role));
     await Bun.sleep(200);
     if (called(messages, 'update_goal')) return { text: 'Polished.' };
     return finish ? { tool: 'update_goal', arguments: { status: 'complete' } } : { text: 'Polishing.' };
@@ -57,6 +63,9 @@ test('pausing a goal stops the extra turns, and resuming starts them again', asy
   finish = true;
   await send(chat, '/goal resume');
   await chat.until(history => text(history.at(-1)) === 'Polished.');
+  // Change notices reach the model as system messages.
+  expect(noticeRoles.length).toBeGreaterThan(0);
+  expect(new Set(noticeRoles)).toEqual(new Set(['system']));
 }, 120000);
 
 test('Stop during a goal ends its turns at once and marks it paused, and resuming the goal starts them again', async () => {
