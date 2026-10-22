@@ -25,12 +25,28 @@ async function openSettingsWithShortcut(t, binding, key) {
   return page;
 }
 
-test('a Mod shortcut opens settings with Ctrl while editing', async t => {
-  await openSettingsWithShortcut(t, 'Mod+K', 'Control+k');
-});
-
-test('a Mod shortcut opens settings with Meta while editing', async t => {
-  await openSettingsWithShortcut(t, 'Mod+K', 'Meta+k');
+test('a Mod shortcut accepts either primary modifier and requires one', async t => {
+  const page = await appBrowser(t, { keybindings: { openSettings: 'Mod+K' } });
+  const editor = page.getByRole('textbox', { name: 'Message piop', exact: true });
+  const goBack = page.getByRole('button', { name: 'Go back', exact: true });
+  await t.test('a Mod binding requires a primary modifier', async () => {
+    await editor.fill('Keep this draft');
+    await page.keyboard.press('k');
+    assert.equal(await goBack.count(), 0);
+    assert.equal(await editor.isVisible(), true);
+    assert.equal(await editor.inputValue(), 'Keep this draftk');
+  });
+  for (const [name, key] of [['Ctrl', 'Control+k'], ['Meta', 'Meta+k']]) {
+    await t.test(`a Mod shortcut opens settings with ${name} while editing`, async () => {
+      await editor.fill('Keep this draft');
+      assert.equal(await goBack.count(), 0);
+      await page.keyboard.press(key);
+      await page.getByRole('textbox', { name: 'Open settings shortcut', exact: true }).waitFor();
+      await goBack.click();
+      await editor.waitFor();
+      assert.equal(await editor.inputValue(), 'Keep this draft');
+    });
+  }
 });
 
 test('a shortcut accepts spaces and lower-case key names in saved preferences', async t => {
@@ -53,10 +69,6 @@ async function ignoreSettingsShortcut(t, binding, key, expectedDraft = 'Keep thi
 
 test('an unassigned settings shortcut does not react to Ctrl K', async t => {
   await ignoreSettingsShortcut(t, '', 'Control+k');
-});
-
-test('a Mod binding requires a primary modifier', async t => {
-  await ignoreSettingsShortcut(t, 'Mod+K', 'k', 'Keep this draftk');
 });
 
 test('an extra Alt modifier prevents a Ctrl shortcut', async t => {
