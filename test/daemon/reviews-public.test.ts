@@ -112,7 +112,7 @@ test('a review uses the built-in review prompt and the agent from Settings → A
   try {
     const chat = await agents.rootChat({ visible: true });
     const review = await openReview(chat, '/review README.md');
-    expect(review.task).toMatch(/^You are the dedicated code review agent[\s\S]*\n\nReview scope supplied by the user:\nREADME\.md$/);
+    expect(review.task).toMatch(/^You are the dedicated code review agent[\s\S]*\n\nREADME\.md$/);
 
     await save({ reviewAgent: 'no-such-agent' });
     const missing = await agents.rootChat({ visible: true });

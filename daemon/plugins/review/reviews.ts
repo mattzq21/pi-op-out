@@ -193,10 +193,8 @@ export function registerReviews(pi: ExtensionAPI): ReviewSession {
       const profile = await reviewProfile(pi, settings.agent);
       signal?.throwIfAborted();
 
-      const prompt = request.scope?.trim() ? `${settings.prompt}
-
-Review scope supplied by the user:
-${request.scope.trim()}` : settings.prompt;
+      // The user scope, or else the changes since the branch point, follows the prompt as its last paragraph.
+      const prompt = `${settings.prompt.trimEnd()}\n\n${request.scope?.trim() || "Review the scope affected since last branch off."}`;
 
       const task = subagentReviewTask(profile, request.delegation, prompt);
       const { record, publication } = await createReview(pi, ctx, profile, signal);
