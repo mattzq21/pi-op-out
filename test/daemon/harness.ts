@@ -16,6 +16,9 @@ export interface BuildOptions { development?: boolean; projectRoot?: string; fak
 /** Bundles the daemon the same way scripts/build-daemon.mjs does, without compiling a release build to a binary. */
 export function daemonExecutable(options: BuildOptions = {}): Promise<string> {
   const development = options.development === true;
+  if (!development && !options.fakeTailscale && process.env.PIOP_TEST_DAEMON_EXECUTABLE) {
+    return Promise.resolve(process.env.PIOP_TEST_DAEMON_EXECUTABLE);
+  }
   const project = development ? (options.projectRoot ?? root).replace(/[\\/]+$/, '') : '';
   const key = development + '\0' + project + '\0' + Boolean(options.fakeTailscale);
   let bundled = bundles.get(key);
