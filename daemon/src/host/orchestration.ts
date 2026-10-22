@@ -4,6 +4,7 @@ import { ownershipError } from './ownership';
 import { isUuid } from './protocol';
 import { attach } from './attachment';
 import { queueCommand } from './session_commands';
+import * as storageTransactions from '../storage_transactions';
 import type { Host } from './controller';
 import type { Session } from './session';
 
@@ -116,7 +117,21 @@ export class Orchestration {
     }
   }
 
+  /**
+   * discardOnFailure marks a new chat: when its first message cannot be delivered, the chat is stopped and deleted, so creating it is all or nothing.
+   * deleteBlank keeps a transcript that holds a message or queued input, so a message that did arrive is never lost.
+   */
   private async send(packet: any, existing: Session | undefined): Promise<any> {
+    const discard = flag(packet, 'discardOnFailure');
+    try { return await this.sendNow(packet, existing, discard); } catch (error) {
+      const id = text(packet, 'sessionKey');
+      const session = this.host.findSession(id);
+      if (discard && (!session || session.closed())) await storageTransactions.deleteBlank({ path: text(packet, 'sessionPath'), id });
+      throw error;
+    }
+  }
+
+  private async sendNow(packet: any, existing: Session | undefined, discard: boolean): Promise<any> {
     const id = text(packet, 'sessionKey');
     const source = text(packet, 'sourceSessionId');
     if (!source || source === id) throw new Error('Choose another conversation as the recipient');
@@ -132,7 +147,7 @@ export class Orchestration {
       let failure: unknown;
       try { result = await this.deliver(packet); } catch (error) { failure = error ?? new Error('Delivery failed'); }
       if (attached) {
-        try { await this.detach(runtime); } catch (error) { if (failure === undefined) throw error; }
+        try { await this.detach(runtime, discard && failure !== undefined); } catch (error) { if (failure === undefined) throw error; }
       }
       if (failure !== undefined) throw failure;
       return result;
@@ -151,9 +166,9 @@ export class Orchestration {
       sourceHostId: packet.sourceHostId ?? null, message: packet.message ?? null, wake: packet.wake ?? null });
   }
 
-  private async detach(runtime: string): Promise<any> {
+  private async detach(runtime: string, discardBlank = false): Promise<any> {
     this.host.attachments.delete(runtime);
     const session = this.host.subscriptions.get(runtime);
-    return session ? this.host.detach({ preserveRunning: true }, runtime, session) : null;
+    return session ? this.host.detach(discardBlank ? { discardBlank: true } : { preserveRunning: true }, runtime, session) : null;
   }
 }

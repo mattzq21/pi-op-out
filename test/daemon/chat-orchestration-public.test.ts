@@ -73,7 +73,7 @@ test('a chat can start a new independent chat that works on its prompt', async (
   expect(text(messages.at(-1))).toBe('Relay: Notes drafted.');
   const seen = agents.model.requests.findLast(request => JSON.stringify(request.messages).includes('Open a release chat')).messages;
   const created = toolResult(seen, 'create_thread');
-  expect(created.submitted).toBe(true);
+  expect(created.error).toBeUndefined();
   const session = (await agents.daemon.invoke('list_sessions')).find((item: any) => item.id === created.threadId);
   expect(session).toMatchObject({ name: 'Release notes' });
   expect(session.subagentParentId).toBeUndefined();

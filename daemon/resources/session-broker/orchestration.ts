@@ -5,6 +5,7 @@ import { Type as Schema, type Static } from "typebox";
 import { Check, Parse } from "typebox/value";
 import { createHash, randomUUID } from "node:crypto";
 import { setTimeout as delay } from "node:timers/promises";
+import { existsSync } from "node:fs";
 import { BrokerRequestError, currentHost, request } from "./client.ts";
 import { createProfileSession } from "./agent-profiles.ts";
 import { durableMailbox } from "../piop-storage/durable-mailbox.ts";
@@ -86,11 +87,12 @@ export async function sessionSnapshot(sessionId: string, hostId: string, signal?
   return Parse(snapshotSchema, await request("/orchestration", { action: "read", sessionId, hostId }, signal, 30_000));
 }
 
-export async function sendSessionMessage(ctx: ExtensionContext, sessionId: string, hostId: string, message: string, wake: boolean, signal?: AbortSignal, deliveryId = randomUUID()) {
+/** discardOnFailure: the recipient is a new chat that is deleted when the message cannot be delivered. */
+export async function sendSessionMessage(ctx: ExtensionContext, sessionId: string, hostId: string, message: string, wake: boolean, signal?: AbortSignal, deliveryId = randomUUID(), discardOnFailure = false) {
   if (sessionId === ctx.sessionManager.getSessionId() && hostId === currentHost()) throw new Error("Choose another conversation as the recipient");
   await activeConversation(sessionId, hostId, signal);
 
-  return request("/orchestration", { action: "send", sessionId, hostId, message, wake, deliveryId, sourceSessionId: ctx.sessionManager.getSessionId(), sourceHostId: currentHost() }, signal, 60_000);
+  return request("/orchestration", { action: "send", sessionId, hostId, message, wake, deliveryId, discardOnFailure, sourceSessionId: ctx.sessionManager.getSessionId(), sourceHostId: currentHost() }, signal, 60_000);
 }
 
 function executionStopped(snapshot: Awaited<ReturnType<typeof sessionSnapshot>>) {
@@ -331,7 +333,7 @@ export function registerOrchestration(pi: ExtensionAPI) {
   pi.on("session_shutdown", unsubscribeMail);
   pi.registerTool({
     name: "create_thread", label: "Create chat",
-    description: "Create and start an independent chat on the caller's host in the same working directory. Use only when the user requests a new chat; use spawn_agent for delegated child work. agent selects an exact profile from list_agent_profiles, including its prompts, model, tools, skills, extensions and MCP configuration. Omit agent to inherit the caller's profile and overrides. Returns the new thread identity and submission status, not its final response. Use read_thread/wait_threads to follow progress. Files are shared; the new chat has a fresh history and persists independently of the caller.",
+    description: "Create and start an independent chat on the caller's host in the same working directory. Use only when the user requests a new chat; use spawn_agent for delegated child work. agent selects an exact profile from list_agent_profiles, including its prompts, model, tools, skills, extensions and MCP configuration. Omit agent to inherit the caller's profile and overrides. The chat is created only together with its prompt: on failure no chat exists and the call can be retried. Returns the new thread identity, not its final response. Use read_thread/wait_threads to follow progress. Files are shared; the new chat has a fresh history and persists independently of the caller.",
     parameters: Type.Object({ title: Type.String({ minLength: 1, maxLength: 120 }), prompt: Type.String({ minLength: 1, maxLength: 100_000 }), agent: Type.Optional(Type.String({ minLength: 1, description: "Exact configured profile name from list_agent_profiles" })) }),
     async execute(_id, params, signal, _update, ctx) {
       requireRootCaller(ctx);
@@ -339,11 +341,16 @@ export function registerOrchestration(pi: ExtensionAPI) {
       const created = await createProfileSession(pi, ctx, params.title, params.agent);
 
       try {
-        await sendSessionMessage(ctx, created.threadId, created.hostId, params.prompt, true, signal);
+        await sendSessionMessage(ctx, created.threadId, created.hostId, params.prompt, true, signal, randomUUID(), true);
 
-        return result({ ...created, submitted: true });
+        return result(created);
       } catch (error) {
-        return { ...result({ ...created, submitted: false, error: error instanceof Error ? error.message : String(error), message: "Chat was created. Inspect it before retrying delivery; do not create another chat." }), isError: true };
+        const reason = error instanceof Error ? error.message : String(error);
+
+        // The daemon deletes the new chat unless the prompt reached it. A chat that is left over is reported, so it is not created twice.
+        if (!existsSync(created.sessionPath)) throw new Error(`The chat was not created: ${reason}`);
+
+        return { ...result({ ...created, error: reason, message: "The chat exists, but its prompt may not have arrived. Inspect it with read_thread before sending the prompt again; do not create another chat." }), isError: true };
       }
     },
   });
