@@ -247,7 +247,7 @@ export const acceptanceAgents = (): DefinedAgentsCapability => ({
   active: "general",
   config: {
     agents: [
-      { name: "general", model: "", effort: "high", path_systemprompt: "~/.agents/prompts/system/default.md", path_agent_prompt: "", tools: ["read"], skills: [], mcpServers: {} },
+      { name: "general", isDefault: true, model: "", effort: "high", path_systemprompt: "~/.agents/prompts/system/default.md", path_agent_prompt: "", tools: ["read"], skills: [], mcpServers: {} },
       { name: "reviewer", model: "", effort: "off", path_systemprompt: "~/.agents/prompts/system/default.md", path_agent_prompt: "", tools: ["read"], skills: [], mcpServers: {} },
     ],
   },

@@ -134,7 +134,8 @@ test('a chat that tries to message itself is told to choose another chat, and no
   await chat.command({ type: 'prompt', message: 'Message myself' });
   const history = await chat.until(messages => text(messages.at(-1)).startsWith('Told: '));
   expect(text(history.at(-1))).toBe('Told: Choose another conversation as the recipient');
-  await Bun.sleep(1500);
+  await agents.daemon.waitEvent('pi://event', payload => payload.runtimeId === chat.runtimeId && payload.event?.type === 'agent_settled');
+  expect((await chat.command({ type: 'get_state' })).pendingMessageCount).toBe(0);
   expect((await chat.history()).filter(message => message.role === 'user').map(text)).toEqual(['Message myself']);
 }, 60000);
 

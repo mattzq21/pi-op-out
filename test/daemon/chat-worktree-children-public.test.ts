@@ -5,6 +5,7 @@ import { agentDaemon, called, text } from './agent-chats';
 test('archiving a worktree chat and its child releases its worktree', async () => {
  const agents=await agentDaemon();
  try {
+  await agents.enableAgentTools("subagent");
   agents.scripts.set('Initial question', messages => {
    if (!messages.some(m=>m.role==='user' && text(m)==='Delegate now')) return {text:'Initial answer'};
    if (!called(messages,'spawn_agent')) return {tool:'spawn_agent', arguments:{task_name:'helper',message:'Child task'}};

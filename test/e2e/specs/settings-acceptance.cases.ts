@@ -122,6 +122,7 @@ describe("Settings acceptance", () => {
   it("can prepare an MCP server without saving it", async () => {
     await app.openSettings();
     await app.openSettingsSection("Agents");
+    await $('button[aria-label="Edit MCP servers as JSON"]').click();
     const editor = $('textarea[aria-label="MCP server configuration"]');
     const original = await editor.getValue();
     const servers = { acceptance: { command: "node", args: ["server.js", "--quiet"] } };
@@ -129,6 +130,7 @@ describe("Settings acceptance", () => {
 
     await app.openSettingsSection("General");
     await app.openSettingsSection("Agents");
+    if (!await editor.isExisting()) await $('button[aria-label="Edit MCP servers as JSON"]').click();
     expect(JSON.parse(await editor.getValue())).toEqual(servers);
     await expect($(".mcp-error")).not.toBeExisting();
     await editor.setValue(original);
@@ -139,11 +141,13 @@ describe("Settings acceptance", () => {
   it("can prepare an HTTP MCP server with headers without saving it", async () => {
     await app.openSettings();
     await app.openSettingsSection("Agents");
+    await $('button[aria-label="Edit MCP servers as JSON"]').click();
     const editor = $('textarea[aria-label="MCP server configuration"]');
     const original = await editor.getValue();
     const servers = { acceptance: { url: "https://mcp.example.test/api", headers: { Authorization: "Bearer acceptance" } } };
     await editor.setValue(JSON.stringify(servers));
 
+    if (!await editor.isExisting()) await $('button[aria-label="Edit MCP servers as JSON"]').click();
     expect(JSON.parse(await editor.getValue())).toEqual(servers);
     await expect($(".mcp-error")).not.toBeExisting();
     await editor.setValue('{"acceptance":{"url":"file:///tmp/server"}}');
