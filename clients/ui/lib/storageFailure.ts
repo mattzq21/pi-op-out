@@ -1,3 +1,5 @@
+import { commandRejection } from "./commandRejected";
+
 export type StorageFailureState = "rolled-back" | "pending" | "unknown";
 export type StorageAction = "archive" | "delete" | "restore";
 
@@ -13,6 +15,9 @@ export class StorageTransactionError extends Error {
 /** Turns a daemon error that carries a storage transaction state back into a typed error. Other errors pass through unchanged. */
 export function daemonError(reason: unknown): unknown {
   const text = typeof reason === "string" ? reason : reason instanceof Error ? reason.message : undefined;
+  const rejected = text === undefined ? undefined : commandRejection(text);
+
+  if (rejected) return rejected;
   const match = text === undefined ? null : STATE_MARK.exec(text);
 
   return match ? new StorageTransactionError(match[1] as StorageFailureState, text!.slice(match[0].length)) : reason;

@@ -3,6 +3,7 @@ import type { NativeTransport } from "./nativeTransport";
 import type { ChatMessage, ImageAttachment } from "../types";
 import { ownDraftSubmission, releaseDraftSubmission, type DraftSubmissionHandle } from "./draftSubmission";
 import { discardSubmittedMessage, retainSubmittedMessage } from "./sessionMemory";
+import { CommandRejectedError } from "./commandRejected";
 
 type Submission = { owner: NativeTransport; message: ChatMessage; status: string; durable: DraftSubmissionHandle };
 
@@ -35,9 +36,11 @@ export async function trackChatSubmission<T>(owner: NativeTransport, text: strin
   } catch (reason) {
     const error = reason instanceof Error ? reason.message : String(reason);
 
-    if (durable.wasDispatched()) await durable.uncertain(error);
+    const uncertain = durable.wasDispatched() && !(reason instanceof CommandRejectedError);
+
+    if (uncertain) await durable.uncertain(error);
     else await durable.reject(error);
-    retain = durable.wasDispatched() && !text.trimStart().startsWith("/");
+    retain = uncertain && !text.trimStart().startsWith("/");
     throw reason;
   } finally {
     releaseDraftSubmission(durable, owner);

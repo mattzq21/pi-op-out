@@ -7,6 +7,7 @@ import { commandSessionSchema, runtimeEventSchema, runtimeStderrSchema, type Com
 import { discardSubmittedMessage, forgetSession, retainSessionResource } from "./sessionMemory";
 import { PromptControls } from "./promptControls";
 import { nativeCall as call } from "./nativeCall";
+import { CommandRejectedError } from "./commandRejected";
 import { NativeSettings } from "./nativeSettings";
 import { locateConversation } from "./conversationLookup";
 import { nativeTerminals } from "./nativeTerminals";
@@ -569,6 +570,7 @@ export class NativeTransport {
     }
   }
   private commandError(cause: unknown) {
+    if (cause instanceof CommandRejectedError) return cause;
     const message = cause instanceof Error ? cause.message : String(cause);
     const diagnostics = this.stderrLines.join("\n");
 

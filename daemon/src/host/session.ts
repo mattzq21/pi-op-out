@@ -16,6 +16,7 @@ import { IdleStop } from './session_idle';
 import { LiveOutput } from './session_live';
 import { SessionSettings } from './session_settings';
 import { PromptErrors } from './prompt_errors';
+import { PiRejectedError } from '../pi_rejection';
 import { ToolPayload, type ToolPayloadCache } from './tool_payload';
 import type { RuntimeEvent, RuntimeEventSource } from './runtime_events';
 import { RuntimeWorker, type Request, type WorkerObserver } from './worker';
@@ -549,7 +550,7 @@ export class Session {
 
   private async response(event: any, request: Request): Promise<any> {
     const goal = await this.rejectGoalPreparation(event, request);
-    if (goal) { if ('error' in goal) throw new Error(goal.error); return goal.value; }
+    if (goal) { if ('error' in goal) throw new PiRejectedError(goal.error); return goal.value; }
     try { this.responseError(event, request); } catch (error) {
       if (flag(request.command, 'discardOnRejection')) await this.queue.rejected(text(request.command, 'queueId'));
       throw error;
@@ -563,7 +564,7 @@ export class Session {
 
   private responseError(event: any, request: Request): void {
     if (request.requestType === 'prompt' || request.requestType === 'queue_prompt') this.promptErrors.check(request.command, event?.data?.submittedText);
-    if (!flag(event, 'success')) throw new Error(typeof event?.error === 'string' ? event.error : 'Pi command failed');
+    if (!flag(event, 'success')) throw new PiRejectedError(typeof event?.error === 'string' ? event.error : 'Pi command failed');
   }
 
   private async rejectGoalPreparation(event: any, request: Request): Promise<{ value: any } | { error: string } | undefined> {
