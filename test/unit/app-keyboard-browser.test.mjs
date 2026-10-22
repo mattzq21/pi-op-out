@@ -57,38 +57,37 @@ test('Alt+Space opens settings while editing when configured', async t => {
   await openSettingsWithShortcut(t, 'Alt+Space', 'Alt+Space');
 });
 
-async function ignoreSettingsShortcut(t, binding, key, expectedDraft = 'Keep this draft') {
-  const page = await appBrowser(t, { keybindings: { openSettings: binding } });
+test('unmatched settings shortcuts leave the composer unchanged', async t => {
+  const page = await appBrowser(t);
   const editor = page.getByRole('textbox', { name: 'Message piop', exact: true });
-  await editor.fill('Keep this draft');
-  await page.keyboard.press(key);
-  assert.equal(await page.getByRole('button', { name: 'Go back', exact: true }).count(), 0);
-  assert.equal(await editor.isVisible(), true);
-  assert.equal(await editor.inputValue(), expectedDraft);
-}
-
-test('an unassigned settings shortcut does not react to Ctrl K', async t => {
-  await ignoreSettingsShortcut(t, '', 'Control+k');
-});
-
-test('an extra Alt modifier prevents a Ctrl shortcut', async t => {
-  await ignoreSettingsShortcut(t, 'Ctrl+K', 'Control+Alt+k');
-});
-
-test('an Alt binding does not react to Ctrl K', async t => {
-  await ignoreSettingsShortcut(t, 'Alt+K', 'Control+k');
-});
-
-test('a Meta binding does not react to Ctrl K', async t => {
-  await ignoreSettingsShortcut(t, 'Meta+K', 'Control+k');
-});
-
-test('a shifted binding requires Shift', async t => {
-  await ignoreSettingsShortcut(t, 'Ctrl+Shift+K', 'Control+k');
-});
-
-test('a configured shortcut requires its assigned key', async t => {
-  await ignoreSettingsShortcut(t, 'Ctrl+U', 'Control+k');
+  for (const [name, binding, key] of [
+    ['an unassigned settings shortcut does not react to Ctrl K', '', 'Control+k'],
+    ['an extra Alt modifier prevents a Ctrl shortcut', 'Ctrl+K', 'Control+Alt+k'],
+    ['an Alt binding does not react to Ctrl K', 'Alt+K', 'Control+k'],
+    ['a Meta binding does not react to Ctrl K', 'Meta+K', 'Control+k'],
+    ['a shifted binding requires Shift', 'Ctrl+Shift+K', 'Control+k'],
+    ['a configured shortcut requires its assigned key', 'Ctrl+U', 'Control+k'],
+  ]) await t.test(name, async () => {
+    await page.evaluate(async binding => {
+      const { settings } = await window.nativeCommand('load_client_settings');
+      await window.nativeCommand('save_client_settings', {
+        settings: { ...settings, keybindings: { ...settings.keybindings, openSettings: binding } },
+        baseline: settings,
+      });
+    }, binding);
+    await page.reload();
+    await editor.waitFor();
+    await page.getByRole('button', { name: 'Settings', exact: true }).click();
+    const field = page.getByRole('textbox', { name: 'Open settings shortcut', exact: true });
+    if (!await field.isVisible()) await page.getByRole('button', { name: 'Keybinds' }).click();
+    assert.equal(await field.inputValue(), binding);
+    await page.getByRole('button', { name: 'Go back', exact: true }).click();
+    await editor.fill('Keep this draft');
+    await page.keyboard.press(key);
+    assert.equal(await page.getByRole('button', { name: 'Go back', exact: true }).count(), 0);
+    assert.equal(await editor.isVisible(), true);
+    assert.equal(await editor.inputValue(), 'Keep this draft');
+  });
 });
 
 test('holding the conversations shortcut toggles the conversation panel once', async t => {
