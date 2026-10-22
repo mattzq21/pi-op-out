@@ -104,7 +104,7 @@ describe("Conversation acceptance", () => {
       if (await enableDebug.isExisting()) await enableDebug.click();
       await expect($(".cache-hit-rate")).toHaveAttribute("aria-label", "Cache 75%, 3000/4000");
       await expect($(".session-cache-hit")).toBeDisplayed();
-      await expect($(".session-cache-hit")).toHaveAttribute("aria-label", "Cache 75%, 3000/4000");
+      await expect($(".session-cache-hit")).toHaveAttribute("aria-label", "Cache 75%, 3000/4000 tokens");
     } finally {
       await resetBackend();
       await app.refreshForReset();
@@ -314,9 +314,11 @@ describe("Conversation acceptance", () => {
       });
 
       await expect(app.composer).toHaveValue("");
-      await emitPiEvent({ type: "queue_update", steering: ["Focus on the acceptance criteria"], followUp: [], pendingMessages: [{ id: "steer-criteria", message: "Focus on the acceptance criteria", behavior: "steer" }] });
-      await expect($$(".pending-message")).toBeElementsArrayOfSize(1);
       await browser.waitUntil(async () => (await backendCalls()).some(({ args }) => args.command?.type === "steer"));
+      const submitted = (await backendCalls()).find(({ args }) => args.command?.type === "steer")!.args.command!;
+      expect(submitted.goalSubmissionId).toEqual(expect.any(String));
+      await emitPiEvent({ type: "queue_update", steering: ["Focus on the acceptance criteria"], followUp: [], pendingMessages: [{ id: "steer-criteria", goalSubmissionId: submitted.goalSubmissionId, message: "Focus on the acceptance criteria", behavior: "steer" }] });
+      await expect($$(".pending-message")).toBeElementsArrayOfSize(1);
       expect((await backendCalls()).find(({ args }) => args.command?.type === "steer")?.args.command).toMatchObject({ type: "steer", message: "Focus on the acceptance criteria" });
     } finally {
       await emitPiEvent({ type: "queue_update", steering: [], followUp: [], pendingMessages: [] });
@@ -332,11 +334,13 @@ describe("Conversation acceptance", () => {
     try {
       await emitPiEvent({ type: "agent_start" });
       await app.prepareMessage("Check this after the current response");
-      await emitPiEvent({ type: "queue_update", steering: [], followUp: [pending.message], pendingMessages: [pending] });
       await browser.keys("Enter");
 
       await expect(app.composer).toHaveValue("");
-      await emitPiEvent({ type: "queue_update", steering: [], followUp: [pending.message], pendingMessages: [pending] });
+      await browser.waitUntil(async () => (await backendCalls()).some(({ args }) => args.command?.type === "follow_up"));
+      const submitted = (await backendCalls()).find(({ args }) => args.command?.type === "follow_up")!.args.command!;
+      expect(submitted.goalSubmissionId).toEqual(expect.any(String));
+      await emitPiEvent({ type: "queue_update", steering: [], followUp: [pending.message], pendingMessages: [{ ...pending, goalSubmissionId: submitted.goalSubmissionId }] });
       await expect($$(".pending-message")).toBeElementsArrayOfSize(1);
       await $('button[aria-label="Stop piop"]').click();
       await browser.waitUntil(async () => (await backendCalls()).filter(({ args }) => ["follow_up", "abort"].includes(String(args.command?.type))).length === 2);
