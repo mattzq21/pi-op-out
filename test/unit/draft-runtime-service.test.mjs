@@ -7,7 +7,7 @@ import { decodeAgentValue } from '../../clients/ui/lib/agentProtocol.ts';
 
 const agent = (name, extra = {}) => ({ name, model: '', effort: '', path_systemprompt: 'prompt.md', path_agent_prompt: '', tools: [], skills: [], mcpServers: {}, ...extra });
 const models = [{ provider: 'p', id: 'plain' }, { provider: 'p', id: 'fast' }];
-const generalDefault = { agents: [agent('general', { isDefault: true, model: 'p/plain' }), agent('chosen', { model: 'p/fast', effort: 'low', fastMode: true })] };
+const generalDefault = { agents: [agent('general', { isDefault: true, model: 'p/plain' }), agent('chosen', { model: 'p/fast', effort: 'low', fastMode: true }), agent('bare')] };
 const chosenDefault = { agents: [agent('general', { model: 'p/plain' }), agent('chosen', { isDefault: true, model: 'p/fast', effort: 'low', fastMode: true })] };
 
 /** A draft on a host whose agent definitions the test can change. */
@@ -43,6 +43,16 @@ test('an unchanged draft shows the new default agent with its model, thinking le
   assert.deepEqual([...draft.changes.values()], [{ type: 'select_agent', agent: 'chosen' }]);
   const state = await draft.command({ type: 'get_state' });
   assert.deepEqual([state.model?.id, state.thinkingLevel, draft.fastMode], ['fast', 'low', true]);
+});
+
+test('choosing an agent without its own model or effort starts the chat with the model and effort the composer shows', async t => {
+  const { draft } = hostDraft(t);
+  await draft.applyDefaults('medium', false);
+  await draft.command({ type: 'select_agent', agent: 'general' });
+  await draft.command({ type: 'select_agent', agent: 'bare' });
+  const state = await draft.command({ type: 'get_state' });
+  assert.equal(state.model?.id, 'plain');
+  assert.deepEqual([...draft.changes.values()], [{ type: 'select_agent', agent: 'bare' }, { type: 'set_model', provider: 'p', modelId: 'plain' }, { type: 'set_thinking_level', level: state.thinkingLevel }]);
 });
 
 for (const [choice, change] of [
