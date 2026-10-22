@@ -367,15 +367,9 @@ export function createAppConversations(preloadChat: () => void) {
 
     if (splitPaneCommand(text)) commandImages.set(capturedTransport, images);
 
-    try {
-      if (behavior) { const result = await submitDraftPrompt(ownerTransport, { type: behavior === "steer" ? "steer" : "follow_up", message: text, ...imagePayload });
+    if (behavior) return promptWasAccepted(await submitDraftPrompt(ownerTransport, { type: behavior === "steer" ? "steer" : "follow_up", message: text, ...imagePayload }));
 
-        return promptWasAccepted(result); }
-
-      const result = await submitDraftPrompt(capturedTransport, { type: "prompt", message: text, ...imagePayload });
-
-      return promptWasAccepted(result);
-    } catch (reason) { addNotice({ title: "Could not send message", message: reason instanceof Error ? reason.message : String(reason) }); throw reason; }
+    return promptWasAccepted(await submitDraftPrompt(capturedTransport, { type: "prompt", message: text, ...imagePayload }));
   };
 
   const respondToSplitRequest = (requestId: string, response: { value?: string; cancelled?: boolean }) => {

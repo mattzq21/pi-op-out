@@ -128,7 +128,8 @@ export class Session {
       // inOrder already reports a failed event; the returned promise only tells the worker when the event is done.
       event: event => this.inOrder(() => this.receive(event)).then(() => {}, () => {}),
       runtimeEvent: event => this.inOrder(() => this.receiveRuntimeEvent(event)),
-      response: (event, request) => this.inOrder(() => this.response(event, request)),
+      // The requester receives a failed response, so it is not also reported as a diagnostic.
+      response: (event, request) => this.inOrder(() => this.response(event, request), false),
       stderr: line => {
         if (this.stderrTail.push(line) > 20) this.stderrTail.shift();
         for (const [runtime] of [...this.viewsList]) this.host.output({ type: 'stderr', runtimeId: runtime, line });
@@ -148,9 +149,10 @@ export class Session {
     return message;
   }
 
-  private inOrder<T>(operation: () => Promise<T>): Promise<T> {
+  private inOrder<T>(operation: () => Promise<T>, report = true): Promise<T> {
     const result = this.events.then(operation);
     this.events = result.then(() => {}, error => {
+      if (!report) return;
       console.error('Session event failed for ' + this.key + ': ' + errorText(error));
       this.host.output({ type: 'diagnostic', line: 'Session event failed for ' + this.key + ': ' + errorText(error) });
     });
