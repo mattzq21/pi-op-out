@@ -5,7 +5,7 @@ import type { GoalCore } from "./preparation.ts";
 
 const goalToolDescription = "Update the existing goal. Set status to `paused` only at the user's explicit request. Report the returned status and stop goal work. Set status to `complete` only when the objective has actually been achieved and no required work remains. This tool cannot resume a goal.";
 
-/** Registers get_goal, create_goal and update_goal. */
+/** Registers get_goal and update_goal. The user sets goals with /goal. */
 export function registerGoalTools(pi: ExtensionAPI, core: GoalCore) {
   /** The goal as the agent sees it: its objective and status. */
   const result = (ctx: ExtensionContext, completed = false): AgentToolResult<{ goal: Pick<Goal, "objective" | "status"> | null }> => {
@@ -25,18 +25,6 @@ export function registerGoalTools(pi: ExtensionAPI, core: GoalCore) {
       return core.coordination.run(ctx, () => { signal?.throwIfAborted(); core.assertAvailable(ctx);
 
       return result(ctx); });
-    },
-  });
-  pi.registerTool({
-    name: "create_goal", label: "Create goal", description: "Create a goal only when explicitly requested by the user or system/developer instructions; never infer goals from ordinary tasks. Fails if an unfinished goal exists; use update_goal only for status.",
-    parameters: Type.Object({ objective: Type.String() }, { additionalProperties: false }),
-    async execute(_id, params, signal, _update, ctx) {
-      return core.coordination.run(ctx, () => {
-      signal?.throwIfAborted(); core.assertAvailable(ctx);
-      core.state.create(ctx, params.objective);
-
-      return result(ctx);
-      });
     },
   });
   pi.registerTool({

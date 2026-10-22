@@ -15,12 +15,12 @@ const notices = (runtimeId: string) => agents.daemon.events.filter(event => even
 test('a goal needs the goal tools, and without them the user is told how to enable them', async () => {
   const chat = await agents.rootChat();
   expect(await send(chat, '/goal Write the report')).toBe(false);
-  expect(notices(chat.runtimeId)).toContain('Enable get_goal, create_goal and update_goal for this agent under Settings → Agents → Tools before starting a goal.');
+  expect(notices(chat.runtimeId)).toContain('Enable get_goal and update_goal for this agent under Settings → Agents → Tools before starting a goal.');
   expect(await chat.history()).toEqual([]);
 }, 60000);
 
 test('a goal keeps the agent working turn after turn until the agent marks it complete', async () => {
-  await agents.enableAgentTools('get_goal', 'create_goal', 'update_goal');
+  await agents.enableAgentTools('get_goal', 'update_goal');
   agents.scripts.set('Write the report', messages => {
     goalRoles.push(...messages.filter((message: any) => text(message).includes('Continue working toward the current thread goal')).map((message: any) => message.role));
     if (called(messages, 'update_goal')) return { text: 'Report finished.' };
@@ -42,7 +42,7 @@ test('a goal keeps the agent working turn after turn until the agent marks it co
 }, 120000);
 
 test('pausing a goal stops the extra turns, and resuming starts them again', async () => {
-  await agents.enableAgentTools('get_goal', 'create_goal', 'update_goal');
+  await agents.enableAgentTools('get_goal', 'update_goal');
   let finish = false;
   const noticeRoles: string[] = [];
   agents.scripts.set('Keep polishing', async messages => {
@@ -69,7 +69,7 @@ test('pausing a goal stops the extra turns, and resuming starts them again', asy
 }, 120000);
 
 test('Stop during a goal ends its turns at once and marks it paused, and resuming the goal starts them again', async () => {
-  await agents.enableAgentTools('get_goal', 'create_goal', 'update_goal');
+  await agents.enableAgentTools('get_goal', 'update_goal');
   let calls = 0;
   agents.scripts.set('Never-ending goal', async () => { calls++; await Bun.sleep(300); return { text: 'Working.' }; });
   const chat = await agents.rootChat();
@@ -98,7 +98,7 @@ test('Stop during a goal ends its turns at once and marks it paused, and resumin
 
 
 test('a goal continues through empty replies and large usage until completed', async () => {
-  await agents.enableAgentTools('get_goal', 'create_goal', 'update_goal');
+  await agents.enableAgentTools('get_goal', 'update_goal');
   let calls = 0;
   agents.scripts.set('Keep going without limits', messages => {
     if (called(messages, 'update_goal')) return { text: 'Finished without limits.' };
@@ -118,7 +118,7 @@ test('a goal continues through empty replies and large usage until completed', a
 }, 120000);
 
 test('a goal whose model keeps refusing for a rate limit is retried, then its goal and chat are paused', async () => {
-  await agents.enableAgentTools('get_goal', 'create_goal', 'update_goal');
+  await agents.enableAgentTools('get_goal', 'update_goal');
   let calls = 0;
   agents.scripts.set('Beat the rate limit', () => { calls++; throw new Error('Rate limit exceeded'); });
   const chat = await agents.rootChat();
@@ -136,7 +136,7 @@ test('a goal whose model keeps refusing for a rate limit is retried, then its go
 }, 120000);
 
 test('a goal continues after repeated tool failures', async () => {
-  await agents.enableAgentTools('get_goal', 'create_goal', 'update_goal');
+  await agents.enableAgentTools('get_goal', 'update_goal');
   agents.scripts.set('Read the missing file', async messages => {
     await Bun.sleep(100);
     if (called(messages, 'update_goal')) return { text: 'Failure handled.' };
@@ -152,7 +152,7 @@ test('a goal continues after repeated tool failures', async () => {
 }, 120000);
 
 test('a long goal is saved to a file the agent reads, which stays while any chat still uses it', async () => {
-  await agents.enableAgentTools('get_goal', 'create_goal', 'update_goal');
+  await agents.enableAgentTools('get_goal', 'update_goal');
   const objective = 'Translate the long brief. ' + 'Every line matters. '.repeat(300);
   let file = '';
   agents.scripts.set('Read the goal objective file at', messages => {

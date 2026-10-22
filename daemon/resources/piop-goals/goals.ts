@@ -55,12 +55,12 @@ export function registerGoals(pi: ExtensionAPI): { session: GoalSession; core: G
   let restored = false;
   let runSignal: AbortSignal | undefined;
 
-  const allowed = () => ["get_goal", "create_goal", "update_goal"].every(name => pi.getActiveTools().includes(name));
+  const allowed = () => ["get_goal", "update_goal"].every(name => pi.getActiveTools().includes(name));
 
   const assertAvailable = (ctx: ExtensionContext) => {
     if (!persistent(ctx)) throw new Error("Goals require a saved conversation.");
 
-    if (!allowed()) throw new Error("Enable get_goal, create_goal and update_goal for this agent under Settings → Agents → Tools before starting a goal.");
+    if (!allowed()) throw new Error("Enable get_goal and update_goal for this agent under Settings → Agents → Tools before starting a goal.");
   };
 
   const steering = (content: string) => pi.sendMessage({ customType: GOAL_CHANGE, content, display: false, details: { goalId: state.goal?.id } }, { triggerTurn: false });

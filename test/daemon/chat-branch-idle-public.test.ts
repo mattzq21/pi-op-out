@@ -8,7 +8,7 @@ import { agentDaemon, called, text } from './agent-chats';
 for (const [mode, repository] of [['fork_after', true], ['copy_after', true], ['copy_after', false]] as const) test(`${mode} (${repository ? 'repository' : 'plain folder'}) keeps an active goal idle until user input`, async () => {
   const agents = await agentDaemon();
   try {
-    await agents.enableAgentTools('get_goal', 'create_goal', 'update_goal');
+    await agents.enableAgentTools('get_goal', 'update_goal');
     let finish = false;
     agents.scripts.set('Idle branch question', async messages => {
       await Bun.sleep(150);

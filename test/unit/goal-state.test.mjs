@@ -24,9 +24,15 @@ function fixture(t) {
   return { root, file, entries, ctx, state: new GoalState(pi), reopen: () => new GoalState(pi) };
 }
 
+/** Sets a new active goal, as /goal does. */
+function setGoal(f, objective) {
+  f.state.goal = { id: crypto.randomUUID(), sessionId: 'chat-1', objective, status: 'active' };
+  f.state.save(f.ctx);
+}
+
 test('goal changes and clearing survive reload without transcript entries', t => {
   const f = fixture(t);
-  f.state.create(f.ctx, 'Finish the task');
+  setGoal(f, 'Finish the task');
   const id = f.state.goal.id;
   f.state.setStatus(f.ctx, 'paused');
   const restored = f.reopen();
@@ -41,7 +47,7 @@ test('goal changes and clearing survive reload without transcript entries', t =>
 
 test('forks copy current goal with independent identity and state', t => {
   const f = fixture(t);
-  f.state.create(f.ctx, 'First objective');
+  setGoal(f, 'First objective');
   const target = join(f.root, 'sessions', 'fork.jsonl');
   const db = database.open(f.root);
   db.prepare('INSERT INTO sessions VALUES (?, ?)').run('chat-2', target);
@@ -57,7 +63,7 @@ test('forks copy current goal with independent identity and state', t => {
 
 test('a failed save restores the last saved in-memory state', t => {
   const f = fixture(t);
-  f.state.create(f.ctx, 'Keep working');
+  setGoal(f, 'Keep working');
   const db = database.open(f.root);
   db.exec("CREATE TRIGGER reject_goal BEFORE UPDATE ON session_goals BEGIN SELECT RAISE(ABORT, 'Save failed'); END");
   db.close();
@@ -68,7 +74,7 @@ test('a failed save restores the last saved in-memory state', t => {
 
 test('archive and restore keep goals; deletion removes them', t => {
   const f = fixture(t);
-  f.state.create(f.ctx, 'Keep working');
+  setGoal(f, 'Keep working');
   const archived = join(f.root, 'archived', 'chat.jsonl');
   const db = database.open(f.root);
   db.prepare('UPDATE sessions SET session_path=? WHERE session_id=?').run(archived, 'chat-1');
@@ -83,7 +89,7 @@ test('archive and restore keep goals; deletion removes them', t => {
 test('invalid or mismatched goals are rejected', t => {
   const f = fixture(t);
   assert.throws(() => goals.write(f.file, 'chat-1', { status: 'blocked' }), /Invalid saved goal/);
-  f.state.create(f.ctx, 'Finish');
+  setGoal(f, 'Finish');
   assert.throws(() => goals.write(f.file, 'chat-1', { ...f.state.goal, sessionId: 'other' }), /another conversation/);
 });
 

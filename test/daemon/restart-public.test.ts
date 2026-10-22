@@ -6,7 +6,7 @@ test('an active goal stops with the daemon and goes on when its chat is opened a
   const agents = await agentDaemon();
   let second: Awaited<ReturnType<typeof startDaemon>> | undefined;
   try {
-    await agents.enableAgentTools('get_goal', 'create_goal', 'update_goal');
+    await agents.enableAgentTools('get_goal', 'update_goal');
     let turns = 0;
     agents.scripts.set('Goal across a restart', async () => { turns++; await Bun.sleep(300); return { text: 'Turn ' + turns }; });
     const chat = await agents.rootChat();

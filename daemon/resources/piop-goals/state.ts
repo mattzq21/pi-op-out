@@ -30,12 +30,6 @@ export class GoalState {
     return sessionStorage(this.pi).knownGoal(file, ctx.sessionManager.getSessionId(), goalId);
   }
 
-  create(ctx: ExtensionContext, objective: string) {
-    if (this.goal && this.goal.status !== "complete") throw new Error("This conversation has an unfinished goal. Use /goal edit or /goal clear first.");
-    this.goal = { id: randomUUID(), sessionId: ctx.sessionManager.getSessionId(), objective: validateObjective(objective), status: "active" };
-    this.save(ctx);
-  }
-
   setStatus(ctx: ExtensionContext, status: GoalStatus) {
     this.goal = { ...this.require(), status };
     this.save(ctx);
