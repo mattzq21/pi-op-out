@@ -86,6 +86,15 @@ test('streaming batches deltas and finalizes a stable assistant message without 
     assert.equal(hook.current.messages.length, 1);
   });
 
+  test('a live prompt context attaches to the agent message that started the turn', async t => {
+    const { hook, send } = await sessionView(t);
+    const delivery = { role: 'custom', customType: 'piop-agent-message', display: true, details: { notificationId: 'n1' }, content: 'Draw a smile', timestamp: 100 };
+    await send({ type: 'message_start', message: delivery }, { type: 'message_end', message: delivery });
+    const context = promptContext({ system: 42 }, { agentNotificationId: 'n1' });
+    await send({ type: 'extension_ui_request', method: 'setStatus', statusKey: 'pi-desktop-prompt-context', statusText: 'json:' + JSON.stringify(context) });
+    assert.deepEqual(hook.current.messages[0].promptContext, context);
+  });
+
   test('full-message updates allocate one identity and pending work can be discarded', async t => {
     const { dom, hook, send } = await sessionView(t);
     const message = (type, role, content, extra = {}) => ({ type, message: { role, content, timestamp: 100, ...extra } });
