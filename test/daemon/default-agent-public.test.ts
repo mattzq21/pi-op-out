@@ -6,6 +6,7 @@ beforeAll(async () => {
   agents = await agentDaemon();
   const chat = await agents.rootChat();
   const configuration = await chat.command({ type: 'get_agent_configuration' });
+  configuration.agents = configuration.agents.map((agent: any) => ({ ...agent, tools: [...new Set([...(agent.tools ?? []), 'subagent'])] }));
   const general = configuration.agents.find((agent: any) => agent.name === 'general');
   const others = configuration.agents.filter((agent: any) => agent.name !== 'general').map(({ isDefault: _isDefault, ...agent }: any) => agent);
   const { isDefault: _isDefault, ...plain } = general;
@@ -34,7 +35,7 @@ const plainChat = async (runtimeId: string, extra: Record<string, unknown> = {})
   return { ...chat, runtimeId, command };
 };
 
-test('a new chat starts as the flagged agent and calls its model with its thinking level', async () => {
+test.concurrent('a new chat starts as the flagged agent and calls its model with its thinking level', async () => {
   agents.scripts.set('Default chat task', () => ({ text: 'Done.' }));
   const chat = await plainChat('default-chat');
   expect(activeAgent('default-chat')).toBe('deep-thinker');
@@ -43,14 +44,14 @@ test('a new chat starts as the flagged agent and calls its model with its thinki
   expect(callFor('Default chat task')).toEqual({ model: 'scripted-thinker', effort: 'low' });
 }, 60000);
 
-test('the agent list for a chat that is not started yet shows which agent is the default', async () => {
+test.concurrent('the agent list for a chat that is not started yet shows which agent is the default', async () => {
   const catalog = await agents.daemon.invoke('provider_auth', { hostId: 'local', request: { action: 'draft_catalog', reload: true } });
   expect(catalog.config.agents.filter((agent: any) => agent.isDefault).map((agent: any) => agent.name)).toEqual(['deep-thinker']);
   // An agent without its own model runs the model Pi starts with, as the general child below does.
   expect(catalog.initialModel).toBe('scripted/scripted-model');
 }, 60000);
 
-test('a child asked for the general agent runs general, while its parent runs the default agent', async () => {
+test.concurrent('a child asked for the general agent runs general, while its parent runs the default agent', async () => {
   agents.scripts.set('Ask general for help', messages => called(messages, 'spawn_agent') ? { text: 'Asked.' } : { tool: 'spawn_agent', arguments: { task_name: 'helper', message: 'General child task', agent: 'general' } });
   agents.scripts.set('General child task', () => ({ text: 'Child done.' }));
   const chat = await plainChat('default-parent');
@@ -60,7 +61,7 @@ test('a child asked for the general agent runs general, while its parent runs th
   expect(callFor('General child task')).toEqual({ model: 'scripted-model', effort: undefined });
 }, 60000);
 
-test('a review chat runs the review agent, while its chat runs the default agent', async () => {
+test.concurrent('a review chat runs the review agent, while its chat runs the default agent', async () => {
   agents.scripts.set('Write the tokenizer', () => ({ text: 'Tokenizer done.' }));
   const chat = await plainChat('default-reviewed', { presence: { visible: true, focused: true } });
   await chat.command({ type: 'prompt', message: 'Write the tokenizer' });
