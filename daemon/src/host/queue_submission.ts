@@ -1,4 +1,5 @@
 import { clone, text } from './json';
+import { CommandRefusedError } from '../pi_rejection';
 import { validateItem } from './queue_storage';
 import { durableMessages, sortHeld } from './queue_state';
 import type { QueueDelivery } from './queue_delivery';
@@ -32,13 +33,13 @@ function submissionPayload(command: any, id: string, name: string): any {
  */
 export async function enqueue(queue: QueueDelivery, command: any, name: string): Promise<any> {
   const state = queue.state;
-  if (state.durableMessages().length >= 100) throw new Error('Queue is full');
+  if (state.durableMessages().length >= 100) throw new CommandRefusedError('Queue is full', 'daemon');
   const prepared = await prepareSubmission(queue, command);
   if (prepared === undefined) return false;
   const id = queue.record.nextId();
   const pending = submissionPayload(prepared, id, name);
   // A bad item would stay queued and make every later save fail, so it is rejected before the queue changes.
-  validateItem(pending);
+  try { validateItem(pending); } catch (error) { throw new CommandRefusedError(error instanceof Error ? error.message : String(error), 'daemon'); }
   if (await saveSubmission(queue, id, pending)) {
     await queue.reportStorageError(() => queue.publish());
     return null;
@@ -61,7 +62,7 @@ export async function enqueue(queue: QueueDelivery, command: any, name: string):
 /** Sends a prompt while the queue is paused, as a follow-up that Pi discards when it rejects it. */
 export async function executeHeldPrompt(queue: QueueDelivery, original: any): Promise<any> {
   const state = queue.state;
-  if (durableMessages(state).length >= 100) throw new Error('Queue is full');
+  if (durableMessages(state).length >= 100) throw new CommandRefusedError('Queue is full', 'daemon');
   const command = clone(original);
   const id = queue.record.nextId();
   const item: any = { id, message: command.message ?? null, behavior: 'followUp', deliveryStarted: true };
@@ -92,7 +93,7 @@ async function prepareSubmission(queue: QueueDelivery, original: any): Promise<a
   for (const field of ['images', 'goalSubmissionId']) if (command[field] !== undefined) request[field] = clone(command[field]);
   const prepared = await queue.execute(request);
   if (prepared === false) return undefined;
-  if (typeof prepared?.message !== 'string') throw new Error('Goal prompt preparation did not produce an objective');
+  if (typeof prepared?.message !== 'string') throw new CommandRefusedError('Goal prompt preparation did not produce an objective', 'daemon');
   command.message = prepared.message;
   command.goalSubmissionId = prepared.goalSubmissionId ?? null;
   command.goalPrepared = true;
@@ -102,7 +103,7 @@ async function prepareSubmission(queue: QueueDelivery, original: any): Promise<a
 
 async function saveSubmission(queue: QueueDelivery, id: string, pending: any): Promise<boolean> {
   const state = queue.state;
-  if (durableMessages(state).length >= 100) throw new Error('Queue is full');
+  if (durableMessages(state).length >= 100) throw new CommandRefusedError('Queue is full', 'daemon');
   state.pending.push(clone(pending));
   const held = state.held !== null;
   if (state.held) {

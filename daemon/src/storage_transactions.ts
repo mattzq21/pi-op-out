@@ -1,5 +1,5 @@
 import { HostOperationError, hostOperation, runHostOperation, STORAGE_TIMEOUT } from './host_operations';
-import { PiRejectedError, REJECTION_MARK } from './pi_rejection';
+import { CommandRefusedError, refusalText } from './pi_rejection';
 
 export interface ArchivedSession { sessionId: string; sourcePath: string; sessionPath: string }
 export interface RestoredSession extends ArchivedSession { path: string }
@@ -22,7 +22,7 @@ export class StorageTransactionError extends Error {
 
 export function responseErrorText(error: unknown): string {
   if (error instanceof StorageTransactionError) return `${STATE_MARK}${error.state}\n${error.message}`;
-  if (error instanceof PiRejectedError) return REJECTION_MARK + error.message;
+  if (error instanceof CommandRefusedError) return refusalText(error.message, error.by);
   return error instanceof Error ? error.message : String(error);
 }
 

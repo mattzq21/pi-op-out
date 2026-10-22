@@ -23,6 +23,7 @@ import { IconButton } from "./IconButton";
 import { PendingImages } from "./PendingImages";
 import { z } from "zod";
 import { splitPaneCommand } from "../plugins";
+import { isDaemonRefusal } from "../lib/commandRejected";
 
 const pastedImageSchema = z.object({ data: z.string().optional(), mimeType: z.string().optional(), error: z.string().optional() });
 
@@ -454,7 +455,7 @@ export function Composer(props: Props) {
       rememberPrompt(submittedValue);
       clearUnstaged(submission);
     } catch (reason) {
-      setUploadError(reason instanceof Error ? reason.message : String(reason));
+      if (!isDaemonRefusal(reason)) setUploadError(reason instanceof Error ? reason.message : String(reason));
     } finally { setSending(false); }
   };
 

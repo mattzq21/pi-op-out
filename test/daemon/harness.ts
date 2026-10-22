@@ -180,7 +180,8 @@ async function openClient(url: string, token: string, scope = 'client'): Promise
     if (packet.type === 'error') { ready.reject(new Error('Daemon rejected the connection: ' + packet.error)); return; }
     if (typeof packet.id === 'number' && pending.has(packet.id)) {
       const entry = pending.get(packet.id)!; pending.delete(packet.id);
-      if (typeof packet.error === 'string') entry.reject(new Error(packet.error)); else entry.resolve(packet.result);
+      // The client reads the refusal mark; tests compare the message.
+      if (typeof packet.error === 'string') entry.reject(new Error(packet.error.replace(/^piop-refused:(pi|daemon)\n/, ''))); else entry.resolve(packet.result);
       return;
     }
     if (typeof packet.event === 'string') { events.push(packet); for (const wake of [...waiters]) wake(); return; }

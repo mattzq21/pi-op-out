@@ -16,7 +16,7 @@ import { IdleStop } from './session_idle';
 import { LiveOutput } from './session_live';
 import { SessionSettings } from './session_settings';
 import { PromptErrors } from './prompt_errors';
-import { PiRejectedError } from '../pi_rejection';
+import { CommandRefusedError } from '../pi_rejection';
 import { ToolPayload, type ToolPayloadCache } from './tool_payload';
 import type { RuntimeEvent, RuntimeEventSource } from './runtime_events';
 import { RuntimeWorker, type Request, type WorkerObserver } from './worker';
@@ -365,9 +365,9 @@ export class Session {
   }
 
   private async rawAs(command: any, requestType: string, snapshot: any): Promise<any> {
-    if (this.closed()) throw new Error(this.startupError ?? 'Pi is not running');
+    if (this.closed()) throw new CommandRefusedError(this.startupError ?? 'Pi is not running', 'daemon');
     if (requestType === 'prompt' || requestType === 'queue_prompt') this.promptErrors.reset();
-    if (!this.worker) throw new Error('Pi is not running');
+    if (!this.worker) throw new CommandRefusedError('Pi is not running', 'daemon');
     if (!this.idleStop.checking() || !requestType.startsWith('get_')) this.idleStop.cancel();
     this.pendingRequests += 1;
     try { return await this.worker.request(command, requestType, snapshot); }
@@ -469,7 +469,7 @@ export class Session {
       case 'force_stop': await this.stop(); return null;
       case 'get_available_models': await this.refreshProviders(); break;
       // Pi stops the running response before it compacts, even when there is nothing to compact.
-      case 'compact': if (this.working()) throw new Error('Stop or pause piop before running /compact.'); break;
+      case 'compact': if (this.working()) throw new CommandRefusedError('Stop or pause piop before running /compact.', 'daemon'); break;
     }
     return this.executeWorker(command);
   }
@@ -550,7 +550,7 @@ export class Session {
 
   private async response(event: any, request: Request): Promise<any> {
     const goal = await this.rejectGoalPreparation(event, request);
-    if (goal) { if ('error' in goal) throw new PiRejectedError(goal.error); return goal.value; }
+    if (goal) { if ('error' in goal) throw new CommandRefusedError(goal.error); return goal.value; }
     try { this.responseError(event, request); } catch (error) {
       if (flag(request.command, 'discardOnRejection')) await this.queue.rejected(text(request.command, 'queueId'));
       throw error;
@@ -564,7 +564,7 @@ export class Session {
 
   private responseError(event: any, request: Request): void {
     if (request.requestType === 'prompt' || request.requestType === 'queue_prompt') this.promptErrors.check(request.command, event?.data?.submittedText);
-    if (!flag(event, 'success')) throw new PiRejectedError(typeof event?.error === 'string' ? event.error : 'Pi command failed');
+    if (!flag(event, 'success')) throw new CommandRefusedError(typeof event?.error === 'string' ? event.error : 'Pi command failed');
   }
 
   private async rejectGoalPreparation(event: any, request: Request): Promise<{ value: any } | { error: string } | undefined> {

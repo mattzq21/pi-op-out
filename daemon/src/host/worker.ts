@@ -4,6 +4,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { createInterface } from 'node:readline';
 import { join } from 'node:path';
 import { ensurePrivateDir } from '../private_fs';
+import { CommandRefusedError } from '../pi_rejection';
 import { descendantProcesses, killVerified, newProcessTag, PROCESS_TAG, signalProcessGroup, taggedProcesses } from '../process_cleanup';
 import { kind, type LaunchSpec, wireCommand } from './protocol';
 import { isRuntimeEvent, parseRuntimeEvent, runtimeEventResult, type RuntimeEvent } from './runtime_events';
@@ -200,14 +201,14 @@ export class RuntimeWorker {
   isClosed(): boolean { return this.exited; }
 
   private write(packet: any): Promise<void> {
-    if (this.isClosed()) return Promise.reject(new Error('Pi is not running'));
+    if (this.isClosed()) return Promise.reject(new CommandRefusedError('Pi is not running', 'daemon'));
     return new Promise((resolve, reject) => {
       this.child.stdin!.write(JSON.stringify(packet) + '\n', error => error ? reject(new Error(error.message)) : resolve());
     });
   }
 
   async request(command: any, requestType: string, snapshotState: any): Promise<any> {
-    if (this.isClosed()) throw new Error('Pi is not running');
+    if (this.isClosed()) throw new CommandRefusedError('Pi is not running', 'daemon');
     const id = randomUUID();
     const wire = wireCommand(command, id);
     const abort = kind(command) === 'abort';

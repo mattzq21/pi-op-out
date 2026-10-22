@@ -34,6 +34,7 @@ import type { AppSettings, ChatMessage, ComposerUpload, ForkSource, ImageAttachm
 import { useAppEvents } from "./useAppEvents";
 import { useAppKeyboard } from "./useAppKeyboard";
 import { useAppUsage } from "./useAppUsage";
+import { isDaemonRefusal } from "./lib/commandRejected";
 
 export { formatCodexReset,normalizeCodexUsage,normalizeOpencodeGoUsage,usageWindowsDescription } from "./appSupport";
 
@@ -367,9 +368,14 @@ export function createAppConversations(preloadChat: () => void) {
 
     if (splitPaneCommand(text)) commandImages.set(capturedTransport, images);
 
-    if (behavior) return promptWasAccepted(await submitDraftPrompt(ownerTransport, { type: behavior === "steer" ? "steer" : "follow_up", message: text, ...imagePayload }));
+    try {
+      if (behavior) return promptWasAccepted(await submitDraftPrompt(ownerTransport, { type: behavior === "steer" ? "steer" : "follow_up", message: text, ...imagePayload }));
 
-    return promptWasAccepted(await submitDraftPrompt(capturedTransport, { type: "prompt", message: text, ...imagePayload }));
+      return promptWasAccepted(await submitDraftPrompt(capturedTransport, { type: "prompt", message: text, ...imagePayload }));
+    } catch (reason) {
+      if (isDaemonRefusal(reason)) addNotice({ title: "Could not send message", message: (reason as Error).message });
+      throw reason;
+    }
   };
 
   const respondToSplitRequest = (requestId: string, response: { value?: string; cancelled?: boolean }) => {

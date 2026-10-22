@@ -12,6 +12,7 @@ import * as daemonRestart from './daemon_restart';
 import * as records from './settings_records';
 import * as mobileCommands from './mobile_commands';
 import { responseErrorText } from './storage_transactions';
+import { refusalText } from './pi_rejection';
 import { detachOwner } from './lifecycle';
 import { ensurePrivateDir, setPrivateFilePermissions } from './private_fs';
 import { acceptUpgrade, reject, type WebSocketConnection } from './ws_server';
@@ -329,7 +330,7 @@ async function serveClient(shared: Shared, ws: WebSocketConnection, peer: boolea
       const id: number = request.id;
       const command: string = request.command;
       const args = request.args === undefined ? {} : request.args;
-      if (app.clients.closing()) { send(JSON.stringify({ id, error: 'Piop daemon is shutting down' })); continue; }
+      if (app.clients.closing()) { send(JSON.stringify({ id, error: refusalText('Piop daemon is shutting down', 'daemon') })); continue; }
       // Stop, abort and cleanup commands may use reserved slots, so a busy host still frees resources.
       const control = command === 'stop_pi' || command === 'close_terminal'
         || (command === 'pi_command' && args?.command?.type === 'abort')

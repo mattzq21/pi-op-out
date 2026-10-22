@@ -1,9 +1,11 @@
-/** Pi answered a command with a failure, so the command had no effect. Daemon replies carry errors as text, so a first line marks it for the client. */
-export const REJECTION_MARK = 'piop-rejected:\n';
+/** A command was refused, so it had no effect. Pi refused it, or the daemon refused it before Pi got it. Daemon replies carry errors as text, so a first line marks it for the client. */
+export type Refuser = 'pi' | 'daemon';
 
-export class PiRejectedError extends Error {
-  constructor(message: string) {
+export class CommandRefusedError extends Error {
+  constructor(message: string, readonly by: Refuser = 'pi') {
     super(message);
-    this.name = 'PiRejectedError';
+    this.name = 'CommandRefusedError';
   }
 }
+
+export const refusalText = (message: string, by: Refuser) => 'piop-refused:' + by + '\n' + message;
