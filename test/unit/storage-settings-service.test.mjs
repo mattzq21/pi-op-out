@@ -226,7 +226,9 @@ test('storage shows archive sizes in bytes and kibibytes', async t => {
   const archives = report.hosts.find(host => host.hostId === 'local').archives;
   for (const [name, bytes] of [['Small chat', 1023], ['Larger chat', 2048]]) {
     const archive = archives.find(chat => chat.name === name);
-    const content = readFileSync(archive.path);
+    const header = JSON.parse(readFileSync(archive.path, 'utf8').split('\n')[0]);
+    const content = Buffer.from(JSON.stringify({ type: 'session', version: header.version, id: header.id, cwd: header.cwd }) + '\n'
+      + JSON.stringify({ type: 'message', id: 'question', parentId: null, message: { role: 'user', content: name } }) + '\n');
     assert.ok(content.length < bytes, 'Fixture transcript must fit in its intended size');
     writeFileSync(archive.path, Buffer.concat([content, Buffer.alloc(bytes - content.length, ' ')]));
   }

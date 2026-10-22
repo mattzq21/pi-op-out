@@ -66,7 +66,7 @@ async function buildBrowserFiles(entryPoint, mode) {
   return new Map(bundle.outputFiles.map(file => ['/' + basename(file.path), file.contents]));
 }
 
-export async function startupPage(t, mode, { entryPoint = 'test/fixtures/startup.tsx', ready = '[role="status"]', holdStorage = true, prepare = async () => {}, browserArgs = [], executablePath } = {}) {
+export async function startupPage(t, mode, { entryPoint = 'test/fixtures/startup.tsx', ready = '[role="status"]', readyTimeout = 10000, holdStorage = true, prepare = async () => {}, browserArgs = [], executablePath } = {}) {
   const files = await browserFiles(entryPoint, mode);
   const server = createServer((req, res) => {
     res.setHeader('Content-Type', /\.m?js$/.test(req.url ?? '') ? 'text/javascript' : req.url?.endsWith('.css') ? 'text/css' : req.url?.endsWith('.wasm') ? 'application/wasm' : 'text/html');
@@ -89,6 +89,6 @@ export async function startupPage(t, mode, { entryPoint = 'test/fixtures/startup
   await page.route('https://fonts.googleapis.com/**', route => route.fulfill({ contentType: 'text/css', body: '' }));
   await prepare(page);
   await page.goto(`http://127.0.0.1:${server.address().port}`);
-  await page.locator(ready).waitFor();
+  await page.locator(ready).waitFor({ timeout: readyTimeout });
   return page;
 }
