@@ -43,7 +43,7 @@ export function GoalBar<T>(props: { value?: string; disabled: boolean; onCommand
   <Show when={goal()}>{current => <section class="goal-bar" aria-label="Conversation goal">
     <div class="goal-bar-row">
       <span class="goal-bar-status" data-tooltip={labels[current().status]}>/goal</span>
-      <span class="goal-bar-objective" data-tooltip={current().objective}>{current().objective}</span>
+      <span class="goal-bar-objective">{current().objective}</span>
       <button type="button" data-tooltip="Clear goal" aria-label="Clear goal" disabled={props.disabled || busy()} onClick={() => void run("clear")}><Trash2 size={14} /></button>
       <Show when={current().status !== "complete"}>
         <button type="button" data-tooltip={current().status === "active" ? "Pause goal" : "Resume goal"} aria-label={current().status === "active" ? "Pause goal" : "Resume goal"} disabled={props.disabled || busy()} onClick={() => void run(current().status === "active" ? "pause" : "resume")}>
