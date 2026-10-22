@@ -79,6 +79,8 @@ test('context menus close on Escape, Tab, scrolling and outside clicks and keep 
   await page.mouse.wheel(0, 250);
   await page.getByRole('menu').waitFor({ state: 'detached' });
   assert.ok(await page.getByRole('main').evaluate(node => node.scrollTop) > 0);
+  await link.scrollIntoViewIfNeeded();
+  await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
   await link.click({ button: 'right' });
   await page.getByRole('menu').waitFor();
   await page.getByRole('button', { name: 'Outside message', exact: true }).click();
