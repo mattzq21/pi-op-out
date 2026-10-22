@@ -1,10 +1,19 @@
 import assert from 'node:assert/strict';
-import { readdir } from 'node:fs/promises';
+import { mkdtemp, readdir, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { test } from 'node:test';
 import { daemonClient } from '../daemon-client.mjs';
 
-test('UI fixtures release their homes and builds before the next fixture', async () => {
+test('UI fixtures release their homes and builds before the next fixture', async t => {
+  const directory = await mkdtemp(join(tmpdir(), 'piop-storage-check-'));
+  const previous = process.env.TMPDIR;
+  process.env.TMPDIR = directory;
+  t.after(async () => {
+    if (previous === undefined) delete process.env.TMPDIR;
+    else process.env.TMPDIR = previous;
+    await rm(directory, { recursive: true, force: true });
+  });
   const initial = (await readdir(tmpdir())).sort();
   for (let run = 0; run < 2; run++) {
     const cleanup = [];
