@@ -446,8 +446,8 @@ export default function contextWindowCap(pi: ExtensionAPI) {
   const stopModels = pi.events.on("piop:models-refreshed", ({ ctx }) => { if (!closed) modelChanged(ctx.model); });
 
   pi.registerCommand("cap", {
-    description: "Set this conversation's context cap. Usage: /cap [500k|0.75m|reset|model_default]",
-    getArgumentCompletions: prefix => [...(prefix.trim() ? [] : [{ value: "", label: "[500k|0.75m|reset|model_default]" }]), ...["reset", "model_default"].filter(value => value.startsWith(prefix.trim())).map(value => ({ value, label: value }))],
+    description: "Set this conversation's context cap. Usage: /cap [500k | 0.75m | reset | model_default]",
+    getArgumentCompletions: prefix => [...(prefix.trim() ? [] : [{ value: "", label: "[500k | 0.75m | reset | model_default]" }]), ...["reset", "model_default"].filter(value => value.startsWith(prefix.trim())).map(value => ({ value, label: value }))],
     // Report errors to the user here. A thrown error is an extension failure, and the client then treats the command as a failed message.
     handler: async (args, ctx) => {
       try {

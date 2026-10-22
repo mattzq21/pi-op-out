@@ -169,7 +169,7 @@ export default async function sessionCostLimit(pi: ExtensionAPI) {
 
   pi.registerCommand("cost", {
     description: "Set or clear this conversation's API cost limit. Usage: /cost <amount in USD> or /cost clear",
-    getArgumentCompletions: (prefix: string) => [...(prefix.trim() ? [] : [{ value: "", label: "[amount|clear]" }]), ...("clear".startsWith(prefix.trim().toLowerCase()) ? [{ value: "clear", label: "clear" }] : [])],
+    getArgumentCompletions: (prefix: string) => [...(prefix.trim() ? [] : [{ value: "", label: "[amount | clear]" }]), ...("clear".startsWith(prefix.trim().toLowerCase()) ? [{ value: "clear", label: "clear" }] : [])],
     handler: async (args: string, ctx: ExtensionCommandContext) => {
       try {
         const raw = args.trim();

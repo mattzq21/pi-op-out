@@ -174,7 +174,7 @@ test('the command and its arguments stay above the message box while the command
   assert.equal(await rs.textContent(), '/rs [n] [scope]');
   await editor.fill('/fast o');
   const fast = page.getByLabel('/fast arguments');
-  assert.equal(await fast.textContent(), '/fast [on|off|toggle]');
+  assert.equal(await fast.textContent(), '/fast [on | off | toggle]');
   assert.equal(await page.getByRole('listbox', { name: 'piop commands' }).count(), 0);
   await editor.fill('/fast off');
   await page.keyboard.press('Enter');

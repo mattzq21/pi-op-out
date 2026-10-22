@@ -104,7 +104,7 @@ function commandUsage(command: SlashCommand) {
   const hints = options.filter(option => !option.value).map(option => option.label);
   const choices = options.filter(option => option.value).map(option => option.value);
 
-  return (hints.length ? hints.join(" ") : choices.length ? `[${choices.join("|")}]` : "") || undefined;
+  return (hints.length ? hints.join(" ") : choices.length ? `[${choices.join(" | ")}]` : "") || undefined;
 }
 
 function skillMatches(commands: SlashCommand[], query: string) {

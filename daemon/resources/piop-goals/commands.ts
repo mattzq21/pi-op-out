@@ -5,7 +5,7 @@ import { goalImagesSchema, goalPreparationView } from "../piop-storage/goal-file
 import { objectivePrompt, prepareGoal, resumePreparedGoal, type GoalCore } from "./preparation.ts";
 import type { GoalSession } from "./interface.ts";
 
-const USAGE = "/goal <objective|edit|pause|resume|clear>";
+const USAGE = "/goal <objective | edit | pause | resume | clear>";
 
 const promptSchema = Schema.Object({ message: Schema.String(), goalSubmissionId: Schema.Optional(Schema.String()), images: Schema.Optional(goalImagesSchema), prepared: Schema.Optional(Schema.Boolean()) });
 
@@ -81,7 +81,7 @@ export function registerGoalCommands(pi: ExtensionAPI, session: GoalSession, cor
   });
   pi.registerCommand("goal", {
     description: `Persistent conversation goal. ${USAGE}`,
-    getArgumentCompletions: prefix => [...(prefix.trim() ? [] : [{ value: "", label: "<objective|edit|pause|resume|clear>" }]), ...["edit", "pause", "resume", "clear"].flatMap(value => value.startsWith(prefix.trim()) ? [{ value, label: value }] : [])],
+    getArgumentCompletions: prefix => [...(prefix.trim() ? [] : [{ value: "", label: "<objective | edit | pause | resume | clear>" }]), ...["edit", "pause", "resume", "clear"].flatMap(value => value.startsWith(prefix.trim()) ? [{ value, label: value }] : [])],
     async handler(args, ctx) {
       try {
         const value = args.trim();
