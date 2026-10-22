@@ -26,7 +26,7 @@ async function reset(): Promise<any> {
 function publicSession(cwd = daemon.home): { id: string; path: string } {
   return JSON.parse(execFileSync('node', [fileURLToPath(new URL('../fixtures/publish-chat.mjs', import.meta.url))], {
     encoding: 'utf8', timeout: 30000,
-    input: JSON.stringify({ home: daemon.home, cwd, folder: 'groups', content: '' }),
+    input: JSON.stringify({ home: daemon.home, cwd, folder: 'groups', content: JSON.stringify({ type: 'message', message: { role: 'user', content: 'Hello' } }) + '\n' }),
   }));
 }
 
@@ -72,7 +72,7 @@ test('the session list shows the group of each session by machine and session', 
   expect(group(shared.id)).toBe(first);
   expect(group(ungrouped.id)).toBeNull();
   expect(group(unknown.id)).toBeNull();
-  expect(listed.find((row: any) => row.id === shared.id)).toMatchObject({ hostId: 'local', name: 'Untitled session' });
+  expect(listed.find((row: any) => row.id === shared.id)).toMatchObject({ hostId: 'local', name: 'Hello' });
   state = await load();
   expect(state.assignments['local:' + shared.id]).toBe(first);
 });
