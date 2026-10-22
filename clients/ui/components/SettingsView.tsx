@@ -19,7 +19,7 @@ import { Bot, Check, CircleGauge, CirclePlus, Clipboard, Cpu, HardDrive, Keyboar
 import { uid } from "../lib/content";
 import { defaultKeybindings, keybindDefinitions, shortcutError, shortcutFromEvent, shortcutsConflict, type KeybindAction } from "../lib/keybindings";
 import { isMobile } from "../lib/platform";
-import type { AgentConfig, AgentProfile, AppSettings, Model, RemoteHost, SessionSummary } from "../types";
+import type { AgentAccess, AgentConfig, AgentProfile, AppSettings, Model, RemoteHost, SessionSummary } from "../types";
 import { IconButton } from "./IconButton";
 import { ProviderSettings } from "./ProviderSettings";
 import { pluginSettingsEnabled, pluginSettingsSections } from "../plugins/settings";
@@ -294,9 +294,16 @@ export function SettingsView(props: SettingsViewProps) {
   const agentFastModeEnabled = createMemo(() => (agent()?.fastMode ?? draft().defaultFastMode));
   const updateAgent = (value: Partial<AgentProfile>) => setAgentDrafts((current) => current.map((item, index) => index === agentIndex() ? { ...item, ...value } : item));
 
+  /** Changes one agent name in every agent's subagent and thread allowlists. A missing name removes it. */
+  const renamedAccess = (items: AgentProfile[], from: string, to?: string) => items.map(item => {
+    const rename = (access: AgentAccess | undefined) => Array.isArray(access) && access.includes(from) ? access.flatMap(name => name !== from ? [name] : to ? [to] : []) : access;
+
+    return { ...item, allowed_subagents: rename(item.allowed_subagents), allowed_threads: rename(item.allowed_threads) };
+  });
+
   const renameAgent = (name: string) => { if (!agent() || (!isBuiltInAgent(agent()) && name.trim().toLowerCase() === "general")) return;
 
-  updateAgent({ name }); };
+  const previous = agent().name; updateAgent({ name }); setAgentDrafts(current => renamedAccess(current, previous, name)); };
 
   const defaultAgentName = createMemo(() => agentDrafts().find(item => item.isDefault)?.name);
   const setDefaultAgent = (name: string) => setAgentDrafts(current => current.map(({ isDefault: _isDefault, ...item }) => item.name === name ? { ...item, isDefault: true } : item));
@@ -307,7 +314,7 @@ export function SettingsView(props: SettingsViewProps) {
 
   const removeAgent = () => { if (!agent() || isBuiltInAgent(agent())) return;
 
-  const removedDefault = agent().isDefault; const next = agentDrafts().filter((_, index) => index !== agentIndex()).map(item => removedDefault && isBuiltInAgent(item) ? { ...item, isDefault: true } : item); setMcpDrafts(current => Array.from(current).filter((_, index) => index !== agentIndex())); setAgentDrafts(next); setAgentIndex(firstAgentIndex(next)); };
+  const removedDefault = agent().isDefault; const next = renamedAccess(agentDrafts().filter((_, index) => index !== agentIndex()), agent().name).map(item => removedDefault && isBuiltInAgent(item) ? { ...item, isDefault: true } : item); setMcpDrafts(current => Array.from(current).filter((_, index) => index !== agentIndex())); setAgentDrafts(next); setAgentIndex(firstAgentIndex(next)); };
 
   const agentLevels = (item: AgentProfile) => {
     const model = settingsProps().models.find((model) => `${model.provider}/${model.id}` === (item.model));
@@ -491,9 +498,10 @@ export function SettingsView(props: SettingsViewProps) {
 
             return (<Show when={agent()}><div class="agent-fields">{renderAgentNameRow()}
               {renderAgentDefaults()}
+              <div class="agent-usage"><div class="agent-usage-option"><span>Usable as subagent</span><Toggle label="Usable as subagent" checked={agent().allow_as_subagent !== false} onChange={allow_as_subagent => updateAgent({ allow_as_subagent })} /></div><div class="agent-usage-option"><span>Usable as thread</span><Toggle label="Usable as thread" checked={agent().allow_as_thread !== false} onChange={allow_as_thread => updateAgent({ allow_as_thread })} /></div></div>
               {renderAgentPromptFiles()}<label class="field"><span>Agent prompt file</span><input aria-label="Agent prompt file" placeholder="Optional path to an agent prompt file" value={agent().path_agent_prompt ?? ""} onInput={(event) => updateAgent({ path_agent_prompt: event.target.value })} /></label>
               <AgentExtensions paths={agent().extensions ?? []} onChange={extensions => updateAgent({ extensions })} />
-              <AgentAllowlist title="Tools" query={toolQuery()} onQuery={setToolQuery} titleAction={<><RefreshTools hostId={providerHostId()} onChange={tools => patch({ tools })} /><button type="button" class="agent-codemode" data-mode={agent().codemode ?? "on"} aria-label={"Codemode " + (agent().codemode ?? "on").toUpperCase()} data-tooltip={CODEMODE_HINTS[agent().codemode ?? "on"]} onClick={() => updateAgent({ codemode: NEXT_CODEMODE[agent().codemode ?? "on"] })}>Codemode {(agent().codemode ?? "on").toUpperCase()}</button></>}><AgentTools tools={draft().tools} query={toolQuery()} selected={agent().tools} agent={agent()} onChange={tools => updateAgent({ tools })} onLimitsChange={updateAgent} /></AgentAllowlist><AgentAllowlist title="Skills" query={skillQuery()} onQuery={setSkillQuery} titleAction={<RefreshSkills hostId={providerHostId()} skills={draft().skills} onChange={skills => patch({ skills })} />}><AgentSkills skills={draft().skills} query={skillQuery()} selected={agent().skills} onChange={skills => updateAgent({ skills })} /></AgentAllowlist><McpSettings value={agent().mcpServers} draft={mcpDrafts()[agentIndex()]} onDraft={value => setMcpDrafts(current => agentDrafts().map((_, index) => index === agentIndex() ? value : current[index]))} onChange={mcpServers => updateAgent({ mcpServers })} />
+              <AgentAllowlist title="Tools" query={toolQuery()} onQuery={setToolQuery} titleAction={<><RefreshTools hostId={providerHostId()} onChange={tools => patch({ tools })} /><button type="button" class="agent-codemode" data-mode={agent().codemode ?? "on"} aria-label={"Codemode " + (agent().codemode ?? "on").toUpperCase()} data-tooltip={CODEMODE_HINTS[agent().codemode ?? "on"]} onClick={() => updateAgent({ codemode: NEXT_CODEMODE[agent().codemode ?? "on"] })}>Codemode {(agent().codemode ?? "on").toUpperCase()}</button></>}><AgentTools tools={draft().tools} query={toolQuery()} selected={agent().tools} agent={agent()} agentNames={agentDrafts().map(item => item.name)} onChange={tools => updateAgent({ tools })} onLimitsChange={updateAgent} /></AgentAllowlist><AgentAllowlist title="Skills" query={skillQuery()} onQuery={setSkillQuery} titleAction={<RefreshSkills hostId={providerHostId()} skills={draft().skills} onChange={skills => patch({ skills })} />}><AgentSkills skills={draft().skills} query={skillQuery()} selected={agent().skills} onChange={skills => updateAgent({ skills })} /></AgentAllowlist><McpSettings value={agent().mcpServers} draft={mcpDrafts()[agentIndex()]} onDraft={value => setMcpDrafts(current => agentDrafts().map((_, index) => index === agentIndex() ? value : current[index]))} onChange={mcpServers => updateAgent({ mcpServers })} />
             </div></Show>);
           };
 

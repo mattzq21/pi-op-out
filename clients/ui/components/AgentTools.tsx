@@ -1,5 +1,5 @@
 import { createMemo, For, Show, type JSXElement } from "solid-js";
-import type { AgentProfile, SkillConfig, ToolConfig } from "../types";
+import type { AgentAccess, AgentProfile, SkillConfig, ToolConfig } from "../types";
 import { createDependencyEffect, createRef } from "../lib/solid";
 import "./agent-tools.css";
 
@@ -60,7 +60,17 @@ function AllowGroup(props: { name: string; kind: string; items: Item[]; selected
   </section>;
 }
 
-export function AgentTools(props: { tools: ToolConfig[]; query: string; selected: string[]; onChange: (tools: string[]) => void; agent: AgentProfile; onLimitsChange: (limits: Partial<AgentProfile>) => void }) {
+/** Chooses which agents this agent may start: all, none, or the checked ones. */
+function AgentAccessPicker(props: { label: string; value: AgentAccess | undefined; names: string[]; onChange: (value: AgentAccess) => void }) {
+  const list = () => Array.isArray(props.value) ? props.value : undefined;
+
+  return <div class="agent-access">
+    <label class="field"><span>{props.label}</span><select aria-label={props.label} value={list() ? "list" : props.value ?? "all"} onChange={event => { const mode = event.currentTarget.value; props.onChange(mode === "list" ? [] : mode === "none" ? "none" : "all"); }}><option value="all">All agents</option><option value="none">No agents</option><option value="list">Only these</option></select></label>
+    <Show when={list()}>{selected => <div class="agent-tool-group-members"><For each={props.names}>{name => <ItemCheckbox item={{ key: name, label: name }} selected={selected()} onToggle={(keys, enabled) => props.onChange(toggled(selected(), keys, enabled))} />}</For></div>}</Show>
+  </div>;
+}
+
+export function AgentTools(props: { tools: ToolConfig[]; query: string; selected: string[]; onChange: (tools: string[]) => void; agent: AgentProfile; agentNames: string[]; onLimitsChange: (limits: Partial<AgentProfile>) => void }) {
   const toggle = (names: string[], enabled: boolean) => props.onChange(toggled(props.selected, names, enabled));
   const item = (tool: ToolConfig): Item => ({ key: tool.name, label: tool.name });
   const shown = createMemo(() => props.tools.filter(tool => !HIDDEN_TOOLS.has(tool.name)));
@@ -84,6 +94,10 @@ export function AgentTools(props: { tools: ToolConfig[]; query: string; selected
             <label class="field"><span>Max subagents</span><input type="number" aria-label="Max subagents" min="0" max={Number.MAX_SAFE_INTEGER} step="1" value={props.agent.max_subagents ?? 8} onInput={event => props.onLimitsChange({ max_subagents: event.currentTarget.valueAsNumber })} /></label>
             <label class="field"><span>Max 2nd level subagents</span><input type="number" aria-label="Max 2nd level subagents" min="0" max={Number.MAX_SAFE_INTEGER} step="1" value={props.agent.max_sub_subagents ?? 8} onInput={event => props.onLimitsChange({ max_sub_subagents: event.currentTarget.valueAsNumber })} /></label>
           </div>
+          <AgentAccessPicker label="Can start as subagents" value={props.agent.allowed_subagents} names={props.agentNames} onChange={allowed_subagents => props.onLimitsChange({ allowed_subagents })} />
+        </Show>
+        <Show when={group.name === "Orchestration" && props.selected.includes("create_thread")}>
+          <AgentAccessPicker label="Can start as threads" value={props.agent.allowed_threads} names={props.agentNames} onChange={allowed_threads => props.onLimitsChange({ allowed_threads })} />
         </Show>
       </AllowGroup>}</For>
   </>;

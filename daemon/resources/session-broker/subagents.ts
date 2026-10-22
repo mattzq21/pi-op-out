@@ -112,7 +112,7 @@ async function createSubagent(pi: ExtensionAPI, ctx: ExtensionContext, task: Sub
   const header = ctx.sessionManager.getHeader();
 
   if (!header || !ctx.sessionManager.getSessionFile()) throw new Error("Save this conversation before delegating work");
-  const profile = await resolveAgentProfile(pi, task.agent);
+  const profile = await resolveAgentProfile(pi, "subagent", task.agent);
   const fastMode = await childFastModeEntry(pi, profile, Boolean(task.agent));
   const sessionId = await reserveSessionId();
   const timestamp = new Date().toISOString();

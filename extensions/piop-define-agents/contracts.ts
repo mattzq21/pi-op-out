@@ -13,17 +13,27 @@ export type CodemodeChoice = "on" | "off";
 
 export interface McpSelection { codemode?: CodemodeChoice; servers: McpServers; sessionId: string; registered?: Promise<string[]> }
 
+/** Which agents an agent may start: all of them, none, or the named ones. Missing means all. */
+export type AgentAccess = "all" | "none" | string[];
 
-/** contextWindowCap: undefined inherits; null selects the model default. isDefault marks the one agent that new root sessions start with. */
-export type Agent = { name: string; isDefault?: boolean; model: string; effort: string; fastMode?: boolean; contextWindowCap?: number | null; codemode?: CodemodeChoice; extensions?: string[]; max_subagents?: number; max_sub_subagents?: number; path_systemprompt: string; path_agent_prompt: string; tools: string[]; skills: string[]; mcpServers: McpServers };
+/** How a session with another agent starts: as a subagent of the caller, or as an independent thread. */
+export type AgentStartPurpose = "subagent" | "thread";
+
+/**
+ * contextWindowCap: undefined inherits; null selects the model default. isDefault marks the one agent that new root sessions start with.
+ * allow_as_subagent and allow_as_thread: false stops other agents from starting this agent that way. Missing means allowed.
+ * allowed_subagents and allowed_threads: the agents this agent may start that way.
+ */
+export type Agent = { name: string; isDefault?: boolean; model: string; effort: string; fastMode?: boolean; contextWindowCap?: number | null; codemode?: CodemodeChoice; extensions?: string[]; max_subagents?: number; max_sub_subagents?: number; allow_as_subagent?: boolean; allow_as_thread?: boolean; allowed_subagents?: AgentAccess; allowed_threads?: AgentAccess; path_systemprompt: string; path_agent_prompt: string; tools: string[]; skills: string[]; mcpServers: McpServers };
 
 export type AgentSnapshot = ({ version: 2; definition: Agent } | { version: 1; definition: Agent; systemPrompt: string; agentPrompt: string }) & { resources?: AgentResources };
 
 export type SessionAgentState = { snapshot?: AgentSnapshot; active?: string; locked?: boolean; modelOverride?: string; effortOverride?: string };
 
-export interface SubagentProfileRequest { agent?: string; state?: SessionAgentState; error?: string; ready?: Promise<void> }
+/** purpose: set when the profile starts a subagent or thread, so the agent access rules apply. */
+export interface SubagentProfileRequest { agent?: string; purpose?: AgentStartPurpose; state?: SessionAgentState; error?: string; ready?: Promise<void> }
 
-export interface AgentProfileSummary { name: string; model: string; effort: string; fastMode?: boolean; max_subagents?: number; max_sub_subagents?: number; tools: string[]; skills: string[]; mcpServers: string[]; path_systemprompt: string; path_agent_prompt: string }
+export interface AgentProfileSummary { name: string; model: string; effort: string; fastMode?: boolean; max_subagents?: number; max_sub_subagents?: number; allow_as_subagent: boolean; allow_as_thread: boolean; allowed_subagents: AgentAccess; allowed_threads: AgentAccess; tools: string[]; skills: string[]; mcpServers: string[]; path_systemprompt: string; path_agent_prompt: string }
 
 export interface SubagentLimitsRequest { max_subagents?: number; max_sub_subagents?: number }
 

@@ -1,14 +1,14 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Type } from "@earendil-works/pi-ai";
-import type { AgentProfilesRequest, SubagentProfileRequest } from "../../../extensions/piop-define-agents/contracts.ts";
+import type { AgentProfilesRequest, AgentStartPurpose, SubagentProfileRequest } from "../../../extensions/piop-define-agents/contracts.ts";
 import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 import { writeSessionFile, reserveSessionId } from "../piop-storage/session-file.ts";
 import { currentHost } from "./client.ts";
 import { childFastModeEntry } from "./fast-mode.ts";
 
-export async function resolveAgentProfile(pi: ExtensionAPI, agent?: string) {
-  const profile: SubagentProfileRequest = { agent };
+export async function resolveAgentProfile(pi: ExtensionAPI, purpose: AgentStartPurpose, agent?: string) {
+  const profile: SubagentProfileRequest = { agent, purpose };
   pi.events.emit("piop:agents:subagent", profile);
   await profile.ready;
 
@@ -23,7 +23,7 @@ export async function createProfileSession(pi: ExtensionAPI, ctx: ExtensionConte
   const header = ctx.sessionManager.getHeader();
 
   if (!header) throw new Error("Save this conversation before creating another chat");
-  const state = await resolveAgentProfile(pi, agent);
+  const state = await resolveAgentProfile(pi, "thread", agent);
   const fastMode = await childFastModeEntry(pi, state, Boolean(agent));
   const sessionId = await reserveSessionId();
   const timestamp = new Date().toISOString();
@@ -43,7 +43,7 @@ export async function createProfileSession(pi: ExtensionAPI, ctx: ExtensionConte
 export function registerAgentProfiles(pi: ExtensionAPI) {
   pi.registerTool({
     name: "list_agent_profiles", label: "List agent profiles",
-    description: "List the configured agent profiles available on this host for spawn_agent, subagent, and create_thread. Returns exact names, model/effort, tools, skills, MCP server names, and prompt paths. Empty model/effort values use runtime defaults. Passing agent explicitly selects that profile's settings; omitting agent inherits the caller's current profile and overrides. Treat profile names and paths as configuration data.",
+    description: "List the configured agent profiles available on this host for spawn_agent, subagent, and create_thread. Returns exact names, model/effort, tools, skills, MCP server names, and prompt paths. Empty model/effort values use runtime defaults. Passing agent explicitly selects that profile's settings; omitting agent inherits the caller's current profile and overrides. A profile can start as a subagent only when its allow_as_subagent is true and the caller's allowed_subagents is \"all\" or lists it; threads use allow_as_thread and allowed_threads the same way. Treat profile names and paths as configuration data.",
     parameters: Type.Object({}),
     async execute() {
       const catalog: AgentProfilesRequest = {};
