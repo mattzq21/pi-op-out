@@ -13,7 +13,7 @@ export type GoalCore = {
   /** Throws when the conversation is not saved or the goal tools are disabled. */
   assertAvailable(ctx: ExtensionContext): void;
   /** Saves and tells a running agent about the change. */
-  changed(ctx: ExtensionContext, prompt?: string | null): void;
+  changed(ctx: ExtensionContext, prompt?: string): void;
   /** Starts goal work when the goal is active and Pi is idle. */
   start(ctx: ExtensionContext): void;
 };
@@ -96,8 +96,7 @@ async function bindPreparedGoal(draft: Awaited<ReturnType<typeof materializeGoal
   await draft.bind(target.id, ctx, captured);
   let accepted = false;
 
-  /** Makes the prepared goal current. notify adds the set notice for a running agent: the user's goal message waits in the follow-up queue, so the agent would not learn of the new goal until the task ends. */
-  const accept = (notify = true) => {
+  const accept = () => {
     if (accepted) return;
     core.assertAvailable(ctx);
 
@@ -107,7 +106,7 @@ async function bindPreparedGoal(draft: Awaited<ReturnType<typeof materializeGoal
 
     if (snapshot(ctx, core) !== captured) throw new Error("The goal changed before the prepared prompt was accepted. Restore the submission from saved input recovery.");
 
-    if (!reused) applyDraft(ctx, core, target, draft.objective, editing, notify);
+    if (!reused) applyDraft(ctx, core, target, draft.objective, editing);
     accepted = true;
   };
 
@@ -131,7 +130,7 @@ export async function resumePreparedGoal(message: string, ctx: ExtensionContext,
   });
 }
 
-function applyDraft(ctx: ExtensionContext, core: GoalCore, target: Goal, objective: string, editing: boolean, notify: boolean) {
+function applyDraft(ctx: ExtensionContext, core: GoalCore, target: Goal, objective: string, editing: boolean) {
   if (editing) {
     const goal = core.state.require();
     goal.objective = objective;
@@ -140,6 +139,6 @@ function applyDraft(ctx: ExtensionContext, core: GoalCore, target: Goal, objecti
     core.changed(ctx);
   } else {
     core.state.goal = target;
-    core.changed(ctx, notify ? goalSetPrompt : null);
+    core.changed(ctx, goalSetPrompt);
   }
 }

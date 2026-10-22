@@ -280,9 +280,8 @@ async function prepareGoalPrompt(text, session, goalSubmissionId, images, prepar
   } catch (error) { throw new GoalPreparationError(error instanceof Error ? error.message : String(error)); }
 }
 
-/** notify: the goal message waits behind a running task, so the agent gets a notice of the new goal now. */
-function acceptGoalPrompt(prepared, notify) {
-  try { prepared.accept(notify); }
+function acceptGoalPrompt(prepared) {
+  try { prepared.accept(); }
   catch (error) { throw new GoalPreparationError(error instanceof Error ? error.message : String(error)); }
 }
 
@@ -292,7 +291,7 @@ function installGoalAcceptance(AgentSession) {
     AgentSession.prototype[name] = async function (...args) {
       const scope = goalPromptContext.getStore();
 
-      if (scope?.session === this) acceptGoalPrompt(scope.prepared, name === "_queueFollowUp");
+      if (scope?.session === this) acceptGoalPrompt(scope.prepared);
 
       const result = await queue.apply(this, args);
 
@@ -310,7 +309,10 @@ function installGoalAcceptance(AgentSession) {
     const preflightResult = disposition => {
       if (goal) {
         if (disposition === "handled") throw new GoalPreparationError("The prepared goal prompt was handled before submission. Restore the objective from saved input recovery.");
-        acceptGoalPrompt(prepared, false);
+        acceptGoalPrompt(prepared);
+
+        // A goal message that starts a run is accepted after Pi flushed the messages held while the run started. Flush the set notice now, so it lands before the goal message. No run exists yet, so it cannot split a tool call from its result.
+        if (disposition === "started") this._flushPendingCustomMessages();
       }
 
       options?.preflightResult?.(disposition, goal ? prepared.message : undefined);
