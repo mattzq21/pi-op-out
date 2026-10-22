@@ -2,6 +2,7 @@ import { execFile, spawn } from 'node:child_process';
 import { readdir } from 'node:fs/promises';
 import { parseArgs, promisify } from 'node:util';
 
+const started = performance.now();
 const { values, positionals } = parseArgs({
   allowPositionals: true,
   options: { jobs: { type: 'string', default: '3' }, filter: { type: 'string' } },
@@ -40,5 +41,5 @@ async function run(file) {
 await Promise.all(Array.from({ length: Math.min(jobs, files.length) }, async () => {
   while (next < files.length) await run(files[next++]);
 }));
-console.log(`Daemon files: ${files.length - failed} passed, ${failed} failed.`);
+console.log(`Daemon files: ${files.length - failed} passed, ${failed} failed. Time: ${((performance.now() - started) / 1000).toFixed(2)}s.`);
 process.exitCode = failed ? 1 : 0;
