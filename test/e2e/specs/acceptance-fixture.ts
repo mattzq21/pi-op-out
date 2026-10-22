@@ -325,7 +325,7 @@ export const startTemporaryConversation = async (responses: BackendResponses) =>
   await app.prepareMessage("Start the test conversation");
   await app.sendMessageButton.click();
   await browser.waitUntil(async () => (await backendCalls()).some(call => call.command === "pi_command" && call.args.command?.type === "prompt"));
-  const runtimeId = (await backendCalls()).filter(call => call.command === "start_pi").at(-1)?.args.runtimeId;
+  const runtimeId = (await backendCalls()).find(call => call.command === "pi_command" && call.args.command?.type === "prompt")?.args.runtimeId;
   if (typeof runtimeId !== "string") throw new Error("The sent conversation did not start a runtime");
   await browser.execute(async (id) => {
     for (const event of [

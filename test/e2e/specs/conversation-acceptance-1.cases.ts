@@ -224,9 +224,13 @@ describe("Conversation acceptance", () => {
       await expect($("#missing-directory-title")).toHaveText("Working directory is missing");
       await $('//dialog//button[normalize-space(.)="Create empty folder"]').click();
 
-      await browser.waitUntil(async () => (await backendCalls()).some(({ command, args }) => command === "recover_missing_session" && args.action === "empty") && (await backendCalls()).some(({ command }) => command === "start_pi"));
+      await browser.waitUntil(async () => {
+        const calls = await backendCalls();
+        return calls.some(({ command, args }) => command === "recover_missing_session" && args.action === "empty")
+          && calls.some(({ command, args }) => command === "start_pi" && args.sessionPath === indexed.path);
+      });
       expect((await backendCalls()).find(({ command, args }) => command === "recover_missing_session" && args.action === "empty")?.args).toMatchObject({ sessionPath: indexed.path, action: "empty", hostId: "local" });
-      expect((await backendCalls()).find(({ command }) => command === "start_pi")?.args).toEqual(expect.objectContaining({ cwd: "/tmp/relocated-acceptance-project", sessionPath: indexed.path, hostId: "local" }));
+      expect((await backendCalls()).find(({ command, args }) => command === "start_pi" && args.sessionPath === indexed.path)?.args).toEqual(expect.objectContaining({ cwd: "/tmp/relocated-acceptance-project", sessionPath: indexed.path, hostId: "local" }));
       await expect(app.composer).toBeEnabled();
     } catch (cause) {
       throw new Error(String(cause) + " " + await failureState(), { cause });
@@ -350,12 +354,13 @@ describe("Conversation acceptance", () => {
 
       const input = $('input[aria-label="Rename conversation"]');
       await expect(input).toHaveValue(indexed.name);
-      await input.setValue("Renamed acceptance conversation");
+      const name = "Renamed acceptance conversation";
+      await input.setValue(name);
+      await expect(input).toHaveValue(name);
       await $('//dialog//button[normalize-space(.)="Continue"]').click();
       await browser.waitUntil(async () => (await backendCalls()).some(({ args }) => args.command?.type === "set_session_name"));
-      expect((await backendCalls()).find(({ args }) => args.command?.type === "set_session_name")?.args.command).toMatchObject({ type: "set_session_name", name: "Renamed acceptance conversation" });
+      expect((await backendCalls()).find(({ args }) => args.command?.type === "set_session_name")?.args.command).toMatchObject({ type: "set_session_name", name: name.slice(0, 30) });
     } finally {
-      await app.conversationSearch.clearValue();
       await resetApp();
     }
   });

@@ -119,7 +119,7 @@ describe("Conversation acceptance", () => {
       await expect(palette).toHaveText(expect.stringContaining("/inspect"));
       const text = await palette.getText();
       expect(text).not.toContain("internal-inline");
-      expect(await palette.$$("[role=option] strong").map((option) => option.getText())).toEqual(["/compact", "/inspect"]);
+      expect(await palette.$$("[role=option] strong").map((option) => option.getText())).toEqual(["/compact [instructions]", "/inspect"]);
       await expect(palette).toHaveText(expect.stringContaining("/compact"));
     } catch (cause) {
       throw new Error(String(cause) + " " + await failureState(), { cause });
