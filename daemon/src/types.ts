@@ -11,6 +11,8 @@ export interface SessionSummary {
   project: string;
   cwd: string;
   cwdExists: boolean;
+  /** True when the folder is a linked Git worktree, not the main worktree of its repository. */
+  linkedWorktree?: boolean;
   /** Not sent to clients. */
   modifiedAt: number;
   preview: string;
@@ -30,6 +32,7 @@ export function serializeSession(session: SessionSummary): Record<string, unknow
     groupId: session.groupId ?? null, path: session.path, name: session.name, project: session.project, cwd: session.cwd, cwdExists: session.cwdExists,
     preview: session.preview, messageCount: session.messageCount, lastMessageAt: session.lastMessageAt, apiCost: session.apiCost, hostId: session.hostId, hostName: session.hostName,
   });
+  if (session.linkedWorktree) result.linkedWorktree = true;
   return result;
 }
 
@@ -43,7 +46,7 @@ export function parseSession(value: any): SessionSummary {
     forkSourceId: typeof value.forkSourceId === 'string' && value.forkSourceId ? value.forkSourceId : undefined,
     groupId: typeof value.groupId === 'string' ? value.groupId : null, path: text('path'), name: text('name'), project: text('project'), cwd: text('cwd'),
     cwdExists: value.cwdExists, modifiedAt: 0, preview: text('preview'), messageCount: number('messageCount'), lastMessageAt: number('lastMessageAt'),
-    apiCost: number('apiCost'), hostId: text('hostId'), hostName: text('hostName'),
+    apiCost: number('apiCost'), hostId: text('hostId'), hostName: text('hostName'), linkedWorktree: value.linkedWorktree === true || undefined,
   };
 }
 

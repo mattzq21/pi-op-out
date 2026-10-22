@@ -6,7 +6,7 @@ import { Mutex } from './util/sync';
 
 const MAX_AGE = 15_000;
 
-interface ProjectDetails { exists: boolean; checked: number }
+interface ProjectDetails { exists: boolean; linkedWorktree: boolean; checked: number }
 
 function fresh(details: ProjectDetails, cwd: string, local: boolean): boolean {
   return Date.now() - details.checked < MAX_AGE && (!local || details.exists === isDirectory(cwd));
@@ -49,10 +49,10 @@ export class ProjectMetadataCache {
       }
       await inspect(pending);
       for (const cwd of [...cache.entries.keys()]) if (!seen.has(cwd)) cache.entries.delete(cwd);
-      for (const session of pending) cache.entries.set(session.cwd, { exists: session.cwdExists, checked: Date.now() });
+      for (const session of pending) cache.entries.set(session.cwd, { exists: session.cwdExists, linkedWorktree: session.linkedWorktree === true, checked: Date.now() });
       for (const session of sessions) {
         const details = cache.entries.get(session.cwd);
-        if (details) session.cwdExists = details.exists;
+        if (details) { session.cwdExists = details.exists; session.linkedWorktree = details.linkedWorktree; }
       }
     });
   }

@@ -7,7 +7,7 @@ import { createDependencyEffect,createMemoFields,createRef,cssPixels,type Keyboa
 import { AppWindow,Archive,ChevronDown,Copy,Ellipsis,FileText,Folder,FolderOpen,LoaderCircle,MessageSquarePlus,Pencil,Search,Trash2 } from "lucide-solid";
 import { openGroupDirectory } from "../lib/nativeTransport";
 import { isMobile } from "../lib/platform";
-import { DIRLESS_KEY, type SessionGroup } from "../lib/sessionGroups";
+import { DIRLESS_KEY, isTemporaryChatCwd, type SessionGroup } from "../lib/sessionGroups";
 import { groupLayoutToken,isFixedGroup,RECENT_KEY,sessionKey,sessionLayoutToken,type DraggedSession,type SidebarState } from "../lib/sidebarState";
 import type { SessionSummary } from "../types";
 import { GroupProjectPicker, type GroupProject } from "./GroupProjectPicker";
@@ -16,6 +16,10 @@ import type { AppSettings } from "../types";
 import { RemoveGroupDialog } from "./RemoveGroupDialog";
 
 export type SessionAction = "split" | "new-window" | "rename" | "open-directory" | "archive" | "copy-id" | "open-rollout";
+
+
+/** A chat in a project folder that the user picked, in the main worktree. A chat without a project has a temporary folder from Piop. */
+const pickedProject = (session: SessionSummary) => Boolean(session.cwd) && !isTemporaryChatCwd(session.cwd) && !session.linkedWorktree;
 
 interface Props { transport: NativeTransport; settings: AppSettings; isArchiving: (session: SessionSummary) => boolean; debug?: boolean; sidebar: SidebarState; activeId?: string; activeHostId?: string; runningSessions?: ReadonlySet<string>; unseenSessions?: ReadonlySet<string>; recoverySessions?: ReadonlySet<string>; query: string; onQuery: (query: string) => void; onSelect: (session: SessionSummary) => NativeTransport | undefined; onAction: (session: SessionSummary, action: SessionAction) => void; onNewChat: (group: SessionGroup) => void; createGroupRequest?: number; onCreateGroupHandled?: () => void; newChatRequest?: number; }
 
@@ -511,7 +515,7 @@ export function SessionPanel(props: Props) {
 
         return; }
 
-      panel().onSelect(session()); }}><span class="session-copy"><span class="session-title-row"><Show when={session().cwd}><Folder class="session-leading-icon" size={14} aria-hidden="true" /></Show><strong classList={{ "session-recovery": needsRecovery() }} data-tooltip={needsRecovery() ? "Interrupted message needs attention" : undefined}>{session().name}</strong><span class="session-api-cost" data-tooltip="Would-be API cost">{formatApiCost(session().apiCost)}</span></span></span></button>);
+      panel().onSelect(session()); }}><span class="session-copy"><span class="session-title-row"><Show when={pickedProject(session())}><Folder class="session-leading-icon" size={14} aria-hidden="true" /></Show><strong classList={{ "session-recovery": needsRecovery() }} data-tooltip={needsRecovery() ? "Interrupted message needs attention" : undefined}>{session().name}</strong><span class="session-api-cost" data-tooltip="Would-be API cost">{formatApiCost(session().apiCost)}</span></span></span></button>);
 
     const renderArchiveButton = () => (<button class="session-archive" aria-busy={archiving()} aria-label={`${archiving() ? "Archiving" : "Archive"} ${session().name}`} data-tooltip={!isSavedSession(session()) ? "Send a message before archiving this draft" : `${archiving() ? "Archiving" : "Archive"} ${session().name}`} disabled={archiving() || !isSavedSession(session())} onClick={() => void archive()}><Show when={archiving()} fallback={<Archive size={14} />}><LoaderCircle size={14} class="spinning" /></Show></button>);
 
