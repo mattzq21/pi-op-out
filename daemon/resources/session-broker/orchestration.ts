@@ -378,6 +378,9 @@ function registerDelivery(pi: ExtensionAPI) {
 /** How long wait_peers waits when the agent gives no timeoutMs. */
 const DEFAULT_WAIT_MS = 5 * 60_000;
 
+/** The longest wait_peers waits, whatever timeoutMs asks for. The tool definition leaves it out. */
+const MAX_WAIT_MS = 6 * 60 * 60_000;
+
 export function registerOrchestration(pi: ExtensionAPI) {
   registerDelivery(pi);
   /** The last answer each wait returned, by waiting chat and target chat. */
@@ -481,14 +484,14 @@ export function registerOrchestration(pi: ExtensionAPI) {
     },
   });
   pi.registerTool({
-    name: "wait_peers", label: "Wait for peers", description: "Wait until one of the given peers finishes its work or needs input, until a new user message arrives, or until timeoutMs passes (default 300000; 0 returns at once). Returns the new answers of the peers that finished.",
+    name: "wait_peers", label: "Wait for peers", description: "Wait until one of the given peers finishes its work or needs input, until a new user message arrives, or until timeoutMs passes (default 300000). Returns the new answers of the peers that finished.",
     parameters: Type.Object({ targets: Type.Array(Type.Object(address), { minItems: 1 }), timeoutMs: Type.Optional(Type.Integer({ minimum: 0 })) }),
     async execute(_id, params, signal, _update, ctx) {
       requireRootCaller(ctx);
       validateTargets(params.targets, ctx);
       const key = (target: Target) => [ctx.sessionManager.getSessionId(), target.hostId ?? currentHost(), target.peerId].join("\0");
       const targets = params.targets.map(target => ({ ...target, afterCursor: seenAnswers.get(key(target)) }));
-      const timeoutMs = params.timeoutMs ?? DEFAULT_WAIT_MS;
+      const timeoutMs = Math.min(params.timeoutMs ?? DEFAULT_WAIT_MS, MAX_WAIT_MS);
       const deadline = Date.now() + timeoutMs;
       const revision = inputRevision;
       const stop = new AbortController();
