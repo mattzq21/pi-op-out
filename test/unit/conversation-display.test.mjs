@@ -82,7 +82,7 @@ const twoTurns = () => [
 test('streaming leaves the earlier answer settled and shows work on the latest prompt', async t => {
   const messages = twoTurns();
   delete messages[3].stopReason;
-  const view = await conversation(t, { messages, state: { isStreaming: true, messageCount: 4 } });
+  const view = await conversation(t, { readOnly: false, messages, state: { model: null, thinkingLevel: 'off', isStreaming: true, messageCount: 4 } });
   assert.ok(view.container.textContent.includes('Earlier question'));
   assert.ok(view.container.textContent.includes('Earlier answer'));
   assert.ok(view.container.textContent.includes('Next question'));
@@ -91,7 +91,7 @@ test('streaming leaves the earlier answer settled and shows work on the latest p
   assert.ok(reasoning);
   assert.equal(reasoning.parentElement.open, false);
   assert.ok(!view.container.textContent.includes('Earlier reasoning'));
-  assert.deepEqual([...view.container.querySelectorAll('[role="status"]')].map(element => element.textContent), ['piop is working']);
+  assert.deepEqual([...view.container.querySelectorAll('[role="status"]')].map(element => element.getAttribute('aria-label')), ['piop is working']);
 });
 
 test('pausing shows a paused status on the latest response without offering retry', async t => {

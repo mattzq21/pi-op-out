@@ -15,7 +15,6 @@ import { CacheIcon } from "./CacheIcon";
 import type { ChatMessage } from "../types";
 import { IconButton } from "./IconButton";
 import { Markdown } from "./Markdown";
-import { WorkingIndicator } from "./WorkingIndicator";
 import { ZoomableImage } from "./ZoomableImage";
 import { SubagentResults, subagentRuns } from "./SubagentResults";
 import { copyText } from "../lib/clipboard";
@@ -290,7 +289,6 @@ export function Message(componentProps: Props) {
     const renderMessageBody = () => {
       const renderResponse = () => <Markdown imageProject={imageProject()} fileLinks streaming={streaming()}>{output()}</Markdown>;
       const renderMessageFailure = () => (failureState().failure && <div class="message-failure" role="status"><CircleAlert size={14} /><span>{(failureState().failure)}</span>{componentProps.onRetry && <button disabled={(componentProps.retrying === undefined ? false : componentProps.retrying)} onClick={(componentProps.onRetry)}>{(componentProps.retrying === undefined ? false : componentProps.retrying) ? "Retrying…" : "Retry"}</button>}</div>);
-      const renderStreamCaret = () => (streaming() && !componentProps.paused && <WorkingIndicator />);
 
       const renderMessageActions = () => {
         const renderCopyResponse = () => (<IconButton title="Copy" label={copyState() === "copied" ? `${metadata().responseLabel} copied` : copyState() === "error" ? `Copy failed for ${metadata().responseLabel.toLowerCase()}` : `Copy ${metadata().responseLabel.toLowerCase()}`} onClick={() => void copy()}>{copyState() === "copied" ? <Check size={14} /> : copyState() === "error" ? <CircleAlert size={14} /> : <Copy size={14} />}</IconButton>);
@@ -318,7 +316,6 @@ export function Message(componentProps: Props) {
         {renderResponse()}
         {renderMessageFailure()}
         {failureState().pausedResponse && <div class="message-paused" role="status"><Pause size={14} /><span>Response paused</span></div>}
-        {renderStreamCaret()}
         {renderMessageActions()}
       </div>);
     };

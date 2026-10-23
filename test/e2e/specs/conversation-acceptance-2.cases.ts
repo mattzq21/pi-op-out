@@ -303,17 +303,17 @@ describe("Conversation acceptance", () => {
     try {
       await emitPiEvent({ type: "message_start", message: { role: "user", content: "Start the live acceptance response", timestamp: Date.now() } });
       await emitPiEvent({ type: "agent_start" });
-      await expect($(".response-working")).toHaveText(expect.stringContaining("piop is working"));
+      await expect($(".working-dots")).toBeDisplayed();
       await expect($('button[aria-label="Stop piop"]')).toBeDisplayed();
 
       const message = { id: "acceptance-stream", role: "assistant", content: "Streaming acceptance response", timestamp: Date.now() };
       await emitPiEvent({ type: "message_start", message });
       await expect($(".assistant-message")).toHaveText(expect.stringContaining("Streaming acceptance response"));
-      await expect($(".stream-caret")).toBeDisplayed();
+      await expect($(".working-dots")).toBeDisplayed();
 
       await emitPiEvent({ type: "message_end", message });
       await emitPiEvent({ type: "agent_end" });
-      await expect($(".response-working")).not.toBeExisting();
+      await expect($(".working-dots")).not.toBeExisting();
     } catch (cause) {
       throw new Error(String(cause) + " " + await failureState(), { cause });
     } finally {
@@ -339,11 +339,11 @@ describe("Conversation acceptance", () => {
       await emitPiEvent({ type: "message_update", assistantMessageEvent: { type: "text_delta", contentIndex: 0, delta: "Incremental " } });
       await emitPiEvent({ type: "message_update", assistantMessageEvent: { type: "text_delta", contentIndex: 0, delta: "answer" } });
       await expect($('//article[contains(@class,"assistant-message")][contains(.,"Incremental answer")]')).toBeDisplayed();
-      await expect($(".stream-caret")).toBeDisplayed();
+      await expect($(".working-dots")).toBeDisplayed();
 
       await emitPiEvent({ type: "message_end", message: { role: "assistant", content: "Incremental answer", timestamp: 200 } });
       await emitPiEvent({ type: "agent_end" });
-      await expect($(".stream-caret")).not.toBeExisting();
+      await expect($(".working-dots")).not.toBeExisting();
       await expect($('//article[contains(@class,"assistant-message")][contains(.,"Incremental answer")]').$('button[aria-label^="Copy assistant response"]')).toBeEnabled();
     } finally {
       await emitPiEvent({ type: "agent_end" });

@@ -27,7 +27,6 @@ import { noDebug, type DebugView } from "../lib/debugFeatures";
 import { ResponseNavigator, type ResponseDestination } from "./ResponseNavigator";
 import { Message } from "./Message";
 import { ConversationImageProject } from "./markdownImages";
-import { WorkingIndicator } from "./WorkingIndicator";
 import { PromptContextBar } from "./PromptContextBar";
 import { ConversationHostContext } from "../lib/subagentNavigation";
 import { OLDER_HISTORY, olderHistory } from "../lib/historyWindow";
@@ -644,7 +643,7 @@ function ConversationTurn(componentProps: ConversationTurnProps) {
     {retryError() && <div class="message-failure retry-error" role="alert">Retry failed: {(retryError())}</div>}
     <MessageList messages={componentProps.messages.filter(message => message.role === "system" && message.customType !== "compaction")} expanded={false} />
   </>)}>
-    <div class="active-work-content"><MessageList messages={componentProps.messages.filter(message => !isPromptMessage(message) && !isContextInjection(message))} expanded compact={false} debug={componentProps.debug} paused={componentProps.paused} showActions={false} />{componentProps.active && !componentProps.paused && !componentProps.messages.some(message => message.role === "assistant" && message.streaming && !invisibleAssistant(message)) && <WorkingIndicator />}</div>
+    <div class="active-work-content"><MessageList messages={componentProps.messages.filter(message => !isPromptMessage(message) && !isContextInjection(message))} expanded compact={false} debug={componentProps.debug} paused={componentProps.paused} showActions={false} /></div>
   </Show>);
 
   return <section class="conversation-turn" classList={{ "latest-turn": componentProps.latest === true }}>

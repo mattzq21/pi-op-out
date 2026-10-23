@@ -96,7 +96,6 @@ test('a pending fork prevents another action until it finishes', async t => {
 
 test('streaming responses show work in progress and hide completed response actions', async t => {
   await renderMessage(t, { role: 'assistant', content: 'partial answer', streaming: true }, { onFork: () => {}, onBranch: () => {}, onForkAndForget: () => {} });
-  assert.match(document.querySelector('[role=status]').textContent, /piop is working/);
   assert.equal(control('Fork'), null);
   assert.equal(forgetControl(), null);
   assert.equal(copyResponse(), null);
