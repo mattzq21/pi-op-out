@@ -1,10 +1,11 @@
 import assert from 'node:assert/strict';
-import { test } from 'node:test';
+import { describe, test } from 'node:test';
 import { writeFile, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { startupPage } from '../startup-browser-fixture.mjs';
 import { daemonClient } from '../daemon-client.mjs';
 
+describe('terminal input ownership', { concurrency: 4 }, () => {
 for (const interaction of ['none', 'typing', 'paste', 'composition']) {
   test(`startup cursor reply does not count as user input: ${interaction}`, { timeout: 30000 }, async t => {
     let page;
@@ -57,3 +58,4 @@ for (const interaction of ['none', 'typing', 'paste', 'composition']) {
     else assert.doesNotThrow(() => process.kill(pid, 0));
   });
 }
+});
