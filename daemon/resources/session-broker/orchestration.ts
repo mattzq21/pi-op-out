@@ -14,7 +14,7 @@ const messageSchema = Schema.Object({ role: Schema.String(), content: Schema.Opt
 
 const entrySchema = Schema.Object({ id: Schema.String(), name: Schema.Optional(Schema.String()), parentId: Schema.Optional(Schema.Union([Schema.String(), Schema.Null()])), type: Schema.String(), message: Schema.Optional(messageSchema), customType: Schema.Optional(Schema.String()), content: Schema.Optional(Schema.Unknown()), details: Schema.Optional(Schema.Unknown()), timestamp: Schema.Optional(Schema.Union([Schema.String(), Schema.Number()])) });
 
-const stateSchema = Schema.Object({ sessionFile: Schema.Optional(Schema.String()), isPaused: Schema.Optional(Schema.Boolean()), isPausing: Schema.Optional(Schema.Boolean()), isStreaming: Schema.Optional(Schema.Boolean()), isCompacting: Schema.Optional(Schema.Boolean()), needsInput: Schema.Optional(Schema.Boolean()), pendingMessageCount: Schema.Optional(Schema.Number()) });
+const stateSchema = Schema.Object({ sessionFile: Schema.Optional(Schema.String()), isPaused: Schema.Optional(Schema.Boolean()), isPausing: Schema.Optional(Schema.Boolean()), isStreaming: Schema.Optional(Schema.Boolean()), isCompacting: Schema.Optional(Schema.Boolean()), pendingMessageCount: Schema.Optional(Schema.Number()) });
 
 const snapshotSchema = Schema.Object({ revision: Schema.String(), state: stateSchema, history: Schema.Object({ entries: Schema.Array(entrySchema), leafId: Schema.Optional(Schema.Union([Schema.String(), Schema.Null()])) }) });
 
@@ -176,8 +176,6 @@ export function snapshotStatus(snapshot: Awaited<ReturnType<typeof sessionSnapsh
 
   if (state.isPaused || state.isPausing) return "paused";
 
-  if (state.needsInput) return "needs_input";
-
   return state.isStreaming || state.isCompacting || (state.pendingMessageCount ?? 0) > 0 ? "running" : "idle";
 }
 
@@ -225,7 +223,7 @@ async function waitSnapshot(targets: Target[], signal: AbortSignal | undefined, 
   return { polls, errors, wake: polls.find(item => item.peer.status !== "running" && item.changed)?.peer };
 }
 
-const STATUS_NOTES: Record<string, string> = { needs_input: " (needs input)", paused: " (paused)" };
+const STATUS_NOTES: Record<string, string> = { paused: " (paused)" };
 
 /** The new answers of the chats that finished, each in a <peer_message> tag with the chat's name on the first line. */
 function peerAnswers(snapshot: Awaited<ReturnType<typeof waitSnapshot>>, interrupted: boolean) {
@@ -482,7 +480,7 @@ export function registerOrchestration(pi: ExtensionAPI) {
     },
   });
   pi.registerTool({
-    name: "wait_peers", label: "Wait for peers", exposure: "model-only", description: "Wait until one of the given peers finishes its work or needs input, until a new user message arrives, or until timeoutMs passes (default 300000). Returns the new answers of the peers that finished.",
+    name: "wait_peers", label: "Wait for peers", exposure: "model-only", description: "Wait until one of the given peers finishes its work, until a new user message arrives, or until timeoutMs passes (default 300000). Returns the new answers of the peers that finished.",
     parameters: Type.Object({ targets: Type.Array(Type.Object(address), { minItems: 1 }), timeoutMs: Type.Optional(Type.Integer({ minimum: 0 })) }),
     async execute(_id, params, signal, _update, ctx) {
       requireRootCaller(ctx);
