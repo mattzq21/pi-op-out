@@ -502,7 +502,8 @@ export function createAppConversations(preloadChat: () => void) {
 
   const newDraftKey = (hostId: string, previous?: string) => `${hostId}:${previous ? previous.slice(previous.indexOf(":") + 1) : `draft-${crypto.randomUUID()}`}`;
 
-  const createNewSessionDraft = async (clearProject: boolean, group?: SessionGroup, project?: { cwd: string; hostId: string }, host?: string) => {
+/** fresh: forget the draft being reused, its text, attachments and chosen settings, so the new chat starts with the defaults. */
+  const createNewSessionDraft = async (clearProject: boolean, group?: SessionGroup, project?: { cwd: string; hostId: string }, host?: string, fresh = false) => {
     closeMobileSidebar();
     setArchivesOpen(false);
     const ownerTransport = transport(); const ownerKey = activeConversationKeyRef.current;
@@ -513,7 +514,7 @@ export function createAppConversations(preloadChat: () => void) {
     const { hostId } = target;
     let projectCwd = target.projectCwd;
     const source = reusableDraftSource();
-    const conversationKey = newDraftKey(hostId, source?.key);
+    const conversationKey = newDraftKey(hostId, fresh ? undefined : source?.key);
     let nextTransport: NativeTransport | undefined;
     let activated = false;
 
@@ -540,7 +541,8 @@ export function createAppConversations(preloadChat: () => void) {
       if (!isCurrent()) return;
       transportConversationKeys.current.set(nextTransport, conversationKey);
 
-      if (source) drafts.rekeyDraft(source.key, conversationKey);
+      if (source && fresh) drafts.discard(source.owner, source.key);
+      else if (source) drafts.rekeyDraft(source.key, conversationKey);
       drafts.bindTransport(nextTransport, conversationKey);
       assignNewSessionGroup(nextTransport, group);
       batch(() => {
@@ -567,19 +569,20 @@ export function createAppConversations(preloadChat: () => void) {
 
   const currentSessionHasSavedMessages = () => sessions().some(session => session.messageCount > 0 && (session.hostId ?? "local") === activeHostId() && session.path === transport().currentSessionPath());
 
-  const startNewSession = async (clearProject = false, group?: SessionGroup, project?: { cwd: string; hostId: string }, host?: string) => {
+  const startNewSession = async (clearProject = false, group?: SessionGroup, project?: { cwd: string; hostId: string }, host?: string, fresh = false) => {
     if (!canStartNewSession()) return;
     newSessionPending.current = true;
 
     try {
       closeMobileSidebar(); setArchivesOpen(false);
 
-      return await createNewSessionDraft(clearProject, group, project, host);
+      return await createNewSessionDraft(clearProject, group, project, host, fresh);
     } catch (reason) { addNotice({ title: "Could not open the draft", message: reason instanceof Error ? reason.message : String(reason) }); }
     finally { newSessionPending.current = false; setMainComposerFocusRequest(request => request + 1); }
   };
 
-  const newSession = async () => { setNewChatRequest(value => value + 1); await startNewSession(); };
+  // New conversation while a new draft is already open starts over: the draft is forgotten and the defaults come back.
+  const newSession = async () => { const fresh = currentSessionIsDraft(); setNewChatRequest(value => value + 1); await startNewSession(false, undefined, undefined, undefined, fresh); };
 
   const clearChatProject = () => startNewSession(true);
   /** Projects belong to one host, so a new host starts a draft without a project. */
