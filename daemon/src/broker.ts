@@ -11,6 +11,7 @@ import * as peers from './peers';
 import * as providerAuth from './provider_auth';
 import * as daemonRestart from './daemon_restart';
 import * as daemon from './daemon';
+import * as sessionGroups from './session_groups';
 import type { App } from './app';
 import type { AgentAddress, SessionSummary } from './types';
 
@@ -168,6 +169,11 @@ async function respondBrokerRequest(app: App, broker: BrokerRuntime, method: str
       return null;
     }
     throw new Error('Invalid session identity request');
+  }
+  if (method === 'POST' && path === '/peer-project') {
+    const value = parseJson(body, 'Invalid peer project request');
+    if (typeof value?.name !== 'string' || !isUuid(value.sessionId) || typeof value.cwd !== 'string') throw new Error('Invalid peer project request');
+    return { cwd: await sessionGroups.peerProjectFolder(value.name, 'local:' + value.sessionId, value.cwd) };
   }
   if (method === 'POST' && path === '/fast-models') {
     const value = parseJson(body, 'Invalid fast model request');

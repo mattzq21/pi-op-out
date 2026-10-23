@@ -1,5 +1,7 @@
 import { afterAll, beforeAll, expect, test } from 'bun:test';
 import { execFileSync } from 'node:child_process';
+import { mkdirSync } from 'node:fs';
+import { join } from 'node:path';
 import { agentDaemon, called, text } from './agent-chats';
 
 let agents: Awaited<ReturnType<typeof agentDaemon>>;
@@ -145,6 +147,27 @@ test.concurrent('branchoff_peer is offered only in a chat whose folder is a Git 
   expect(await offered(true, 'Check tools in a repository')).toBe(true);
   expect(await offered(false, 'Check tools outside a repository')).toBe(false);
 }, 60000);
+
+test.concurrent('create_peer starts the peer in another registered project and refuses the own or an unknown project', async () => {
+  const other = join(agents.daemon.home, 'peer-target'); mkdirSync(other, { recursive: true });
+  await agents.daemon.invoke('load_session_groups', { seeds: [] });
+  await agents.daemon.invoke('change_session_groups', { change: { type: 'project', project: { id: 'local:' + other, name: 'Target', cwd: other, hostId: 'local', hostName: null }, key: null } });
+  const coordinator = await agents.rootChat();
+  await agents.daemon.invoke('change_session_groups', { change: { type: 'project', project: { id: 'local:' + coordinator.cwd, name: 'Home', cwd: coordinator.cwd, hostId: 'local', hostName: null }, key: null } });
+  const attempts = [['Target', 'Project target'], ['Home', 'Project home'], ['Nowhere', 'Project nowhere']];
+  agents.scripts.set('Try projects', messages => {
+    const tried = messages.filter((message: any) => message.role === 'tool').length;
+    if (tried < attempts.length) return { tool: 'create_peer', arguments: { title: attempts[tried][1], message: 'Hello ' + attempts[tried][0], project: attempts[tried][0] } };
+    return { text: 'Done.' };
+  });
+  agents.scripts.set('Hello Target', () => ({ text: 'Hi.' }));
+  await coordinator.command({ type: 'prompt', message: 'Try projects' });
+  await coordinator.until(history => text(history.at(-1)) === 'Done.');
+  const results = agents.model.requests.findLast(request => startedWith(request, 'Try projects')).messages.filter((message: any) => message.role === 'tool').map(text);
+  const created = JSON.parse(results[0]);
+  expect((await agents.daemon.invoke('list_sessions')).find((item: any) => item.id === created.peerId).cwd).toBe(other);
+  expect(results.slice(1)).toEqual(['Home is your own project; omit project to use it', 'Piop has no project named Nowhere']);
+}, 120000);
 
 /** A promise that the test settles later, to keep an agent's model reply waiting. */
 const held = <T>() => { let release!: (value: T) => void; const promise = new Promise<T>(resolve => { release = resolve; }); return { promise, release }; };

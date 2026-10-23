@@ -19,7 +19,8 @@ export async function resolveAgentProfile(pi: ExtensionAPI, purpose: AgentStartP
   return profile.state;
 }
 
-export async function createProfileSession(pi: ExtensionAPI, ctx: ExtensionContext, title: string, agent?: string) {
+/** cwd: the new chat's folder, the caller's by default. */
+export async function createProfileSession(pi: ExtensionAPI, ctx: ExtensionContext, title: string, agent?: string, cwd = ctx.cwd) {
   const header = ctx.sessionManager.getHeader();
 
   if (!header) throw new Error("Save this conversation before creating another chat");
@@ -31,11 +32,11 @@ export async function createProfileSession(pi: ExtensionAPI, ctx: ExtensionConte
   const nameId = randomUUID();
   const stateId = randomUUID();
   await writeSessionFile(sessionPath, [
-    { type: "session", version: header.version, id: sessionId, timestamp, cwd: ctx.cwd },
+    { type: "session", version: header.version, id: sessionId, timestamp, cwd },
     { type: "session_info", id: nameId, parentId: null, timestamp, name: title },
     { type: "custom", id: stateId, parentId: nameId, timestamp, customType: "pi-define-agents-state", data: { ...state, locked: true } },
     ...fastMode ? [{ ...fastMode, id: randomUUID(), parentId: stateId, timestamp }] : [],
-  ], { dependencies: { workspace: { path: ctx.cwd, kind: "existing" } } });
+  ], { dependencies: { workspace: { path: cwd, kind: "existing" } } });
 
   return { peerId: sessionId, hostId: currentHost(), sessionPath, agent: state.active };
 }

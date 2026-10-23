@@ -182,6 +182,23 @@ function changeKey(change: GroupChange): string | undefined {
   return undefined;
 }
 
+/**
+ * The folder of the registered project named name on this machine, for a new peer of the chat sessionKey in folder cwd.
+ * Fails when no such project is registered or when it is the chat's own project.
+ */
+export async function peerProjectFolder(name: string, sessionKey: string, cwd: string): Promise<string> {
+  const state = await STORAGE_LOCK.run(() => read(storagePath()));
+  const projects = (state?.groups ?? []).filter(group => group.cwd !== null && group.hostId === 'local');
+  const wanted = name.trim().toLowerCase();
+  const project = projects.find(group => group.name.trim().toLowerCase() === wanted);
+  if (!project) throw new Error('Piop has no project named ' + name);
+  const assigned = state?.assignments.get(sessionKey);
+  const own = projects.find(group => group.id === assigned) ?? projects.find(group => group.cwd === cwd);
+  if (own?.id === project.id) throw new Error(name + ' is your own project; omit project to use it');
+  if (!isDirectory(project.cwd!)) throw new Error('The folder of project ' + name + ' no longer exists: ' + project.cwd);
+  return project.cwd!;
+}
+
 export async function attachAssignments(sessions: SessionSummary[]): Promise<void> {
   await STORAGE_LOCK.run(() => {
     const state = read(storagePath());
