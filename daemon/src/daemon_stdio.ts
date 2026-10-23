@@ -150,6 +150,7 @@ async function controlSocket(action: string): Promise<Socket | undefined> {
   while (Date.now() < deadline) {
     opened = await tryOpen('control');
     if (opened) return opened[0];
+    if (action === 'stop' && claimed()) return undefined;
     await sleep(100);
   }
   throw new Error('Could not contact the daemon. See ' + join(endpoint.directory(), 'daemon.log'));
