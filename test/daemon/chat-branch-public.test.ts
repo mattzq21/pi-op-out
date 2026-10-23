@@ -55,6 +55,7 @@ test('branch copies selected history and committed files, archive restores last 
     const history = (await command({ type: 'get_entries' })).entries.filter((e: any) => e.type === 'message' && ['user', 'assistant'].includes(e.message.role)).map((e: any) => text(e.message));
     expect(history).toEqual(['First branch question', 'Answer: First branch question']);
     after = agents.daemon.events.length;
+    writeFileSync(join(branch.cwd, 'tracked.txt'), 'branch work');
     await command({ type: 'prompt', message: 'Save branch files' });
     await settled(after);
     expect(git(branch.cwd, 'log', '-1', '--format=%s')).toBe('Piop saving progress');
@@ -71,7 +72,7 @@ test('branch copies selected history and committed files, archive restores last 
     await agents.daemon.invoke('restore_archived_session', { sessionPath: archived.sessionPath ?? archived.path, hostId: 'local', clientId: 'laptop' });
     const restored = (await agents.daemon.invoke('list_sessions')).find((s: any) => s.id === branch.sessionId);
     expect(restored).toBeTruthy();
-    expect(readFileSync(join(restored.cwd, 'tracked.txt'), 'utf8')).toBe('initial');
+    expect(readFileSync(join(restored.cwd, 'tracked.txt'), 'utf8')).toBe('branch work');
     expect(git(restored.cwd, 'branch', '--show-current')).toBe('piop/' + short(branch.sessionId));
   } finally { await agents.close(); }
 }, 120000);
