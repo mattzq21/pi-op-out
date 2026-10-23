@@ -16,7 +16,7 @@ const entrySchema = Schema.Object({ id: Schema.String(), name: Schema.Optional(S
 
 const stateSchema = Schema.Object({ sessionFile: Schema.Optional(Schema.String()), isPaused: Schema.Optional(Schema.Boolean()), isPausing: Schema.Optional(Schema.Boolean()), isStreaming: Schema.Optional(Schema.Boolean()), isCompacting: Schema.Optional(Schema.Boolean()), pendingMessageCount: Schema.Optional(Schema.Number()) });
 
-const snapshotSchema = Schema.Object({ revision: Schema.String(), state: stateSchema, history: Schema.Object({ entries: Schema.Array(entrySchema), leafId: Schema.Optional(Schema.Union([Schema.String(), Schema.Null()])) }) });
+const snapshotSchema = Schema.Object({ revision: Schema.String(), stateKey: Schema.Optional(Schema.String()), state: stateSchema, history: Schema.Object({ entries: Schema.Array(entrySchema), leafId: Schema.Optional(Schema.Union([Schema.String(), Schema.Null()])) }) });
 
 const deliverySchema = Schema.Object({ id: Schema.String(), deliveryId: Schema.String({ minLength: 1 }), sourceSessionId: Schema.String(), sourceHostId: Schema.String(), sourceName: Schema.Optional(Schema.String()), message: Schema.String({ minLength: 1 }), wake: Schema.Optional(Schema.Boolean()), deliverAs: Schema.Optional(Schema.Union([Schema.Literal("steer"), Schema.Literal("followUp")])) });
 
@@ -192,7 +192,7 @@ async function poll(target: Target, signal?: AbortSignal) {
   const name = snapshot.history.entries.findLast(entry => entry.type === "session_info" && entry.name)?.name ?? target.peerId;
   const answer = text || message?.errorMessage || (message ? "(No text in the answer.)" : "(No answer yet.)");
 
-  return { peer: { id: target.peerId, hostId, status }, name, answer, cursor, changed,
+  return { peer: { id: target.peerId, hostId, status }, stateKey: snapshot.stateKey ?? null, name, answer, cursor, changed,
     latestAssistantMessage: changed && last ? { id: last.id, text: text.slice(0, 2000), truncated: text.length > 2000, stopReason: message?.stopReason, error: message?.errorMessage } : undefined };
 }
 
@@ -210,6 +210,19 @@ function readItem(entry: Static<typeof entrySchema>, includeOutputs: boolean, ca
 
   return { id: entry.id, role: message.role, toolName: message.toolName, customType: message.customType, text: text.slice(0, cap), truncated: text.length > cap,
     stopReason: message.stopReason, error: message.errorMessage };
+}
+
+/**
+ * Waits until the state of one of the peers that were read changes after its snapshot, or until waitMs passes. Each
+ * watch request returns after at most a few minutes; the caller reads the peers again and waits again.
+ */
+async function nextChange(polls: Awaited<ReturnType<typeof poll>>[], waitMs: number, signal: AbortSignal) {
+  if (!polls.length) { await delay(waitMs, undefined, { signal }); return; }
+  const local = new AbortController();
+  const round = AbortSignal.any([signal, local.signal]);
+  try {
+    await Promise.race(polls.map(item => request("/orchestration", { action: "watch", sessionId: item.peer.id, hostId: item.peer.hostId, stateKey: item.stateKey, waitMs }, round, waitMs + 30_000)));
+  } finally { local.abort(); }
 }
 
 /** all: wake only when every target finished with a new answer or failed; otherwise when any one finished. */
@@ -521,7 +534,7 @@ export function registerOrchestration(pi: ExtensionAPI) {
 
           if (done) return done;
 
-          try { await delay(Math.min(1000, Math.max(0, deadline - Date.now())), undefined, { signal: signal ? AbortSignal.any([signal, stop.signal]) : stop.signal }); }
+          try { await nextChange(snapshot.polls, Math.max(0, deadline - Date.now()), signal ? AbortSignal.any([signal, stop.signal]) : stop.signal); }
           catch (error) {
             signal?.throwIfAborted();
 

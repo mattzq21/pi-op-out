@@ -143,6 +143,8 @@ export class Host implements SessionHost {
     return null;
   }
 
+  stateChanged(identity: string): void { this.orchestration.stateChanged(identity); }
+
   findSession(identity: string): Session | undefined {
     for (const session of this.sessions.values()) if (session.identity === identity && !session.closed()) return session;
     return undefined;
@@ -195,6 +197,7 @@ export class Host implements SessionHost {
       try { session = await Session.spawn(launch, structuredClone(pending), this, this.home, this.toolPayloads, () => this.assertRunning()); }
       catch (error) { if (pending.length) this.pending.set(key, pending); throw error; }
       this.sessions.set(key, session);
+      this.stateChanged(session.identity);
       return session;
     } finally { release(); }
   }

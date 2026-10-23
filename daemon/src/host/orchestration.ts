@@ -15,6 +15,8 @@ import type { Host } from './controller';
 import type { Session } from './session';
 
 const CANCELLED_DELIVERY_TTL_MS = 10 * 60_000;
+/** The longest one watch request waits. A reader that waits longer sends another. */
+const MAX_WATCH_MS = 5 * 60_000;
 
 /**
  * Orchestration requests for conversations on this host: locate, read, send a message, and interrupt.
@@ -25,11 +27,37 @@ export class Orchestration {
   /** First messages of new chats that are being delivered, by delivery ID. Each ends with the chat kept or removed. */
   private firstDeliveries = new Map<string, Promise<boolean>>();
   private cancelledDeliveries = new Map<string, number>();
+  /** Readers that wait for the next state change of a conversation, by conversation ID. */
+  private watchers = new Map<string, Set<() => void>>();
 
   constructor(private host: Host) {}
 
   /** True while a message is being delivered to the conversation. */
   delivering(id: string): boolean { return Boolean(this.deliveries.get(id)?.size); }
+
+  /** Wakes the readers that wait for a state change of the conversation id. */
+  stateChanged(id: string): void {
+    const waiting = this.watchers.get(id);
+    if (!waiting) return;
+    this.watchers.delete(id);
+    for (const wake of waiting) wake();
+  }
+
+  /**
+   * Returns once the state of the conversation differs from stateKey, the key of the reader's last snapshot (null when
+   * it was not running), or after waitMs. changed tells which.
+   */
+  private watch(id: string, stateKey: string | null, waitMs: number): Promise<{ changed: boolean }> {
+    const current = () => this.host.findSession(id)?.stateKey() ?? null;
+    if (current() !== stateKey) return Promise.resolve({ changed: true });
+    return new Promise(resolve => {
+      let waiting = this.watchers.get(id);
+      if (!waiting) { waiting = new Set(); this.watchers.set(id, waiting); }
+      const wake = () => { clearTimeout(timer); resolve({ changed: true }); };
+      const timer = setTimeout(() => { this.watchers.get(id)?.delete(wake); if (!this.watchers.get(id)?.size) this.watchers.delete(id); resolve({ changed: false }); }, Math.min(Math.max(waitMs, 0), MAX_WATCH_MS));
+      waiting.add(wake);
+    });
+  }
 
   /** True while any message is being delivered. */
   busy(): boolean { return this.deliveries.size > 0; }
@@ -39,6 +67,7 @@ export class Orchestration {
     const id = text(packet, 'sessionKey');
     const action = text(packet, 'action');
     if (action === 'locate') return host.ownership().lookup(id);
+    if (action === 'watch') return this.watch(id, typeof packet.stateKey === 'string' ? packet.stateKey : null, typeof packet.waitMs === 'number' ? packet.waitMs : 0);
     if (action === 'branch_off') return this.branchOff(id);
     if (action === 'settle_first_message') return this.settleFirstMessage(packet);
     if (action === 'interrupt') {

@@ -34,6 +34,8 @@ export interface SessionHost {
   maintenance(key: string): void;
   canStopIdle(session: Session): boolean;
   refreshProviders(): Promise<number>;
+  /** Called when the state of the conversation identity changes, starts or stops. */
+  stateChanged(identity: string): void;
   /** Handles an event that Pi waits on. Pi continues when the promise settles; a rejection is reported to the chat. */
   runtimeEvent(source: RuntimeEventSource, event: RuntimeEvent): Promise<void>;
 }
@@ -192,6 +194,8 @@ export class Session {
   submitted(): boolean { return this.isSubmitted; }
   views(): Array<[string, any]> { return this.viewsList.map(([id, view]) => [id, clone(view)]); }
   revision(): string { return this.epoch + ':' + this.contentRevision; }
+  /** Changes with each state change, and with each start of Pi. */
+  stateKey(): string { return this.epoch + ':' + this.stateRevision; }
 
   private visibleViewers(): number { return this.viewsList.filter(([, view]) => flag(view, 'visible')).length; }
 
@@ -245,7 +249,7 @@ export class Session {
   private stampEvent(event: any, name: string, target: string | null): [string, string[]] | undefined {
     const previous = this.epoch + ':' + this.contentRevision;
     if (name === 'session_info_changed') this.toolPayloadRevision += 1;
-    if (stateChange(name)) this.stateRevision += 1;
+    if (stateChange(name)) { this.stateRevision += 1; this.host.stateChanged(this.identity); }
     if (stateChange(name) || ['message_update', 'tool_execution_start', 'tool_execution_update', 'tool_execution_end', 'queue_update', 'settings_applied', 'extension_ui_request'].includes(name)) this.contentRevision += 1;
     if (this.isTransient) return undefined;
     this.sequence += 1;
@@ -339,6 +343,7 @@ export class Session {
   private finish(): void {
     if (this.isClosed) return;
     this.isClosed = true;
+    this.host.stateChanged(this.identity);
     this.idleStop.cancel();
     this.dialogs.stopTimers();
     this.queue.close();
@@ -544,7 +549,8 @@ export class Session {
       const snapshot = await this.rawAs({ type: 'get_entries' }, 'get_snapshot_entries', state);
       const current = snapshot?.stateRevision;
       if (snapshot && typeof snapshot === 'object') delete snapshot.stateRevision;
-      if (current === revision) return snapshot;
+      // stateKey lets a reader wait for the next state change after this snapshot.
+      if (current === revision) { if (snapshot && typeof snapshot === 'object') snapshot.stateKey = this.stateKey(); return snapshot; }
       if (Date.now() >= deadline) throw new Error('Session kept changing while collecting its snapshot');
     }
   }

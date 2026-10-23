@@ -204,10 +204,10 @@ async function brokerOrchestration(app: App, broker: BrokerRuntime, value: any):
   const [id, action] = orchestrationTarget(value);
   if (action === 'branch_off') return brokerBranchOff(app, broker, value, host, id);
   if (action === 'settle_first_message') return brokerSettleFirstMessage(app, broker, value, host, id);
-  if (action === 'interrupt' || action === 'locate' || action === 'read') {
+  if (action === 'interrupt' || action === 'locate' || action === 'read' || action === 'watch') {
     const settings = await loadAppSettings(app);
     const connection = await daemon.connect(app, app.pi, broker, settings, host);
-    const result = await connection.request({ type: 'orchestration', action, sessionKey: id, deliveryId: value.deliveryId ?? null });
+    const result = await connection.request({ type: 'orchestration', action, sessionKey: id, deliveryId: value.deliveryId ?? null, stateKey: value.stateKey ?? null, waitMs: value.waitMs ?? null });
     return brokerInterruptionStatus(broker, value, result);
   }
   return brokerConversationOperation(app, broker, value, host, id, action);
@@ -287,6 +287,6 @@ function brokerInterruptionStatus(broker: BrokerRuntime, request: any, result: a
 function orchestrationTarget(value: any): [string, string] {
   if (typeof value?.sessionId !== 'string') throw new Error('sessionId is required');
   if (typeof value?.action !== 'string') throw new Error('action is required');
-  if (!['read', 'send', 'interrupt', 'locate', 'branch_off', 'settle_first_message'].includes(value.action)) throw new Error('Unknown orchestration action');
+  if (!['read', 'send', 'interrupt', 'locate', 'watch', 'branch_off', 'settle_first_message'].includes(value.action)) throw new Error('Unknown orchestration action');
   return [value.sessionId, value.action];
 }
