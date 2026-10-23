@@ -454,8 +454,8 @@ export function registerOrchestration(pi: ExtensionAPI) {
     },
   });
   pi.registerTool({
-    name: "wait_threads", label: "Wait for chats", description: "Wait until one of 1–8 chats finishes its work or needs input, until a new user message arrives, or until timeoutMs passes (default and maximum 120000; 0 returns at once). Returns the new answers of the chats that finished.",
-    parameters: Type.Object({ targets: Type.Array(Type.Object(address), { minItems: 1, maxItems: 8 }), timeoutMs: Type.Optional(Type.Integer({ minimum: 0, maximum: 120_000 })) }),
+    name: "wait_threads", label: "Wait for chats", description: "Wait until one of the given chats finishes its work or needs input, until a new user message arrives, or until timeoutMs passes (default and maximum 120000; 0 returns at once). Returns the new answers of the chats that finished.",
+    parameters: Type.Object({ targets: Type.Array(Type.Object(address), { minItems: 1 }), timeoutMs: Type.Optional(Type.Integer({ minimum: 0, maximum: 120_000 })) }),
     async execute(_id, params, signal, _update, ctx) {
       requireRootCaller(ctx);
       validateTargets(params.targets, ctx);
