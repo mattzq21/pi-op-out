@@ -22,31 +22,31 @@ async function appWithMissingFolder(t) {
   return { ...app, chat, cwd, row, dialog, button };
 }
 
-test('opening a chat whose folder is gone asks first, and cancelling leaves everything as it was', async t => {
-  const { row, dialog, button, cwd, settle } = await appWithMissingFolder(t);
-  await act(async () => row.click());
-  await untilDom(() => dialog()?.open, 10000);
-  assert.match(dialog().textContent, /Working directory is missing/);
-  assert.equal(dialog().querySelector('.missing-directory-path').textContent, cwd);
-  await act(async () => button('Cancel').click());
-  await settle();
-  assert.equal(dialog(), null);
-  assert.equal(existsSync(cwd), false);
-});
-
-test('creating an empty folder opens the same chat in a new empty folder', async t => {
+test('missing project folder recovery', { timeout: 60000 }, async t => {
   const { row, dialog, button, cwd, daemon, chat, root, settle } = await appWithMissingFolder(t);
-  await act(async () => row.click());
-  await untilDom(() => dialog()?.open, 10000);
-  await act(async () => button('Create empty folder').click());
-  await untilDom(() => !dialog(), 15000);
-  await settle();
-  const recovered = (await daemon.invoke('list_sessions')).find(session => session.id === chat.id);
-  assert.ok(existsSync(recovered.cwd), 'the chat has a folder again');
-  assert.deepEqual(readdirSync(recovered.cwd), [], 'the new folder is empty');
-  assert.notEqual(recovered.cwd, cwd);
-  await untilDom(() => document.querySelector(`[data-session-key="local:${chat.id}"] .session-main`)?.getAttribute('aria-current') === 'page', 10000);
-  const history = readFileSync(recovered.path, 'utf8').trim().split('\n').map(line => JSON.parse(line));
-  assert.deepEqual([history[0].id, history[0].cwd], [chat.id, recovered.cwd], 'the same chat file now names the new folder');
-  void root;
+  await t.test('opening a chat whose folder is gone asks first, and cancelling leaves everything as it was', { timeout: 30000 }, async () => {
+    await act(async () => row.click());
+    await untilDom(() => dialog()?.open, 10000);
+    assert.match(dialog().textContent, /Working directory is missing/);
+    assert.equal(dialog().querySelector('.missing-directory-path').textContent, cwd);
+    await act(async () => button('Cancel').click());
+    await settle();
+    assert.equal(dialog(), null);
+    assert.equal(existsSync(cwd), false);
+  });
+  await t.test('creating an empty folder opens the same chat in a new empty folder', { timeout: 30000 }, async () => {
+    await act(async () => row.click());
+    await untilDom(() => dialog()?.open, 10000);
+    await act(async () => button('Create empty folder').click());
+    await untilDom(() => !dialog(), 15000);
+    await settle();
+    const recovered = (await daemon.invoke('list_sessions')).find(session => session.id === chat.id);
+    assert.ok(existsSync(recovered.cwd), 'the chat has a folder again');
+    assert.deepEqual(readdirSync(recovered.cwd), [], 'the new folder is empty');
+    assert.notEqual(recovered.cwd, cwd);
+    await untilDom(() => document.querySelector(`[data-session-key="local:${chat.id}"] .session-main`)?.getAttribute('aria-current') === 'page', 10000);
+    const history = readFileSync(recovered.path, 'utf8').trim().split('\n').map(line => JSON.parse(line));
+    assert.deepEqual([history[0].id, history[0].cwd], [chat.id, recovered.cwd], 'the same chat file now names the new folder');
+    void root;
+  });
 });
