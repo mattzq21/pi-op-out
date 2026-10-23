@@ -62,14 +62,14 @@ function profilesTool(pi: ExtensionAPI, mode: AgentProfilesMode) {
   };
 
   if (mode === "both") return {
-    name: "list_agent_profiles", label: "List agent profiles",
+    name: "list_agent_profiles", label: "List agent profiles", exposure: "model-only" as const,
     description: `List the agents you can start: for "subagent" with spawn_subagents, for "peer" with create_peer. ${COMMON}`,
     parameters: Type.Object({ for: Type.Union([Type.Literal("subagent"), Type.Literal("peer")]) }),
     execute: (_id: string, params: { for: "subagent" | "peer" }) => list(params.for),
   };
 
   return {
-    name: "list_agent_profiles", label: "List agent profiles",
+    name: "list_agent_profiles", label: "List agent profiles", exposure: "model-only" as const,
     description: `List the agents you can start with ${mode === "subagent" ? "spawn_subagents" : "create_peer"}. ${COMMON}`,
     parameters: Type.Object({}),
     execute: () => list(mode),

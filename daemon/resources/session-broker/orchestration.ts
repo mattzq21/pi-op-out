@@ -391,7 +391,7 @@ export function registerOrchestration(pi: ExtensionAPI) {
   const unsubscribeMail = pi.events.on("piop:agent-mail", newInput);
   pi.on("session_shutdown", unsubscribeMail);
   pi.registerTool({
-    name: "create_peer", label: "Create peer",
+    name: "create_peer", label: "Create peer", exposure: "model-only",
     description: "Start a new chat/session with its first message. Pick an agent profile or omit it to use your own. The peer starts with no history and runs on its own.",
     parameters: Type.Object({ title: Type.String({ minLength: 1, maxLength: 120 }), message: Type.String({ minLength: 1 }), agent: Type.Optional(Type.String({ minLength: 1 })), project: Type.Optional(Type.String({ minLength: 1 })) }),
     async execute(_id, params, signal, _update, ctx) {
@@ -416,7 +416,7 @@ export function registerOrchestration(pi: ExtensionAPI) {
     },
   });
   pi.registerTool({
-    name: "list_peers", label: "List peers", description: "List peers with their IDs, hosts and names.",
+    name: "list_peers", label: "List peers", exposure: "model-only", description: "List peers with their IDs, hosts and names.",
     parameters: Type.Object({}),
     async execute(_id, _params, signal, _update, ctx) {
       requireRootCaller(ctx);
@@ -427,7 +427,7 @@ export function registerOrchestration(pi: ExtensionAPI) {
     },
   });
   pi.registerTool({
-    name: "branchoff_peer", label: "Branch off peer",
+    name: "branchoff_peer", label: "Branch off peer", exposure: "model-only",
     description: "Start a chat/session in a new worktree, branched off from last commit here. It keeps your agent and your history through your last finished answer, then gets message.",
     parameters: Type.Object({ message: Type.String({ minLength: 1 }) }),
     async execute(_id, params, signal, _update, ctx) {
@@ -440,7 +440,7 @@ export function registerOrchestration(pi: ExtensionAPI) {
     },
   });
   pi.registerTool({
-    name: "message_peer", label: "Message peer", description: "Send a message to a peer. An idle peer starts at once; a busy one reads it after its current work. Returns when the message is accepted, not the answer; use wait_peers. Message a peer only when the user asked you to.",
+    name: "message_peer", label: "Message peer", exposure: "model-only", description: "Send a message to a peer. An idle peer starts at once; a busy one reads it after its current work. Returns when the message is accepted, not the answer; use wait_peers. Message a peer only when the user asked you to.",
     parameters: Type.Object({ ...address, message: Type.String({ minLength: 1 }) }),
     async execute(_id, params, signal, _update, ctx) {
       requireRootCaller(ctx);
@@ -452,7 +452,7 @@ export function registerOrchestration(pi: ExtensionAPI) {
     },
   });
   pi.registerTool({
-    name: "stop_peer", label: "Stop peer", description: "Stop a peer's current work. It keeps its history and can get new messages. Stop a peer only when the user asked you to.",
+    name: "stop_peer", label: "Stop peer", exposure: "model-only", description: "Stop a peer's current work. It keeps its history and can get new messages. Stop a peer only when the user asked you to.",
     parameters: Type.Object({ ...address }),
     async execute(_id, params, signal, _update, ctx) {
       requireRootCaller(ctx);
@@ -465,7 +465,7 @@ export function registerOrchestration(pi: ExtensionAPI) {
     },
   });
   pi.registerTool({
-    name: "read_peer", label: "Read peer", description: "Read the last messages of a peer. To read older messages, pass nextCursor as cursor. includeOutputs adds tool outputs.",
+    name: "read_peer", label: "Read peer", exposure: "model-only", description: "Read the last messages of a peer. To read older messages, pass nextCursor as cursor. includeOutputs adds tool outputs.",
     parameters: Type.Object({ ...address, cursor: Type.Optional(Type.String()), limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 100 })), includeOutputs: Type.Optional(Type.Boolean()) }),
     async execute(_id, params, signal, _update, ctx) {
       requireRootCaller(ctx);
@@ -482,7 +482,7 @@ export function registerOrchestration(pi: ExtensionAPI) {
     },
   });
   pi.registerTool({
-    name: "wait_peers", label: "Wait for peers", description: "Wait until one of the given peers finishes its work or needs input, until a new user message arrives, or until timeoutMs passes (default 300000). Returns the new answers of the peers that finished.",
+    name: "wait_peers", label: "Wait for peers", exposure: "model-only", description: "Wait until one of the given peers finishes its work or needs input, until a new user message arrives, or until timeoutMs passes (default 300000). Returns the new answers of the peers that finished.",
     parameters: Type.Object({ targets: Type.Array(Type.Object(address), { minItems: 1 }), timeoutMs: Type.Optional(Type.Integer({ minimum: 0 })) }),
     async execute(_id, params, signal, _update, ctx) {
       requireRootCaller(ctx);
