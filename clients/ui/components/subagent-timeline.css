@@ -1,4 +1,4 @@
-.subagent-timeline { margin: 0; color: var(--muted); font-size: 12px; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+.subagent-timeline { margin: 0; color: var(--muted); font-size: 12px; min-width: 0; display: flex; flex-direction: row; flex-wrap: wrap; gap: 3px 14px; }
 .subagent-timeline button { display: inline-flex; align-items: center; gap: 4px; min-width: 0; border: 0; background: transparent; color: var(--muted); font: inherit; text-align: left; padding: 0; border-radius: 4px; cursor: pointer; }
 .subagent-timeline button:hover:not(:disabled) { color: var(--ink); background: var(--panel); }
 .subagent-timeline button:disabled { cursor: default; }
