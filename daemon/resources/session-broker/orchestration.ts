@@ -94,6 +94,13 @@ export async function sessionSnapshot(sessionId: string, hostId: string, signal?
   return Parse(snapshotSchema, await request("/orchestration", { action: "read", sessionId, hostId }, signal, 30_000));
 }
 
+/** The longest message a chat or subagent may get from message_thread, create_thread or message_subagent. The tool definitions leave it out. */
+export const MAX_MESSAGE_LENGTH = 100_000;
+
+export function requireMessageLength(message: string) {
+  if (message.length > MAX_MESSAGE_LENGTH) throw new Error(`The message is ${message.length} characters; the limit is ${MAX_MESSAGE_LENGTH}`);
+}
+
 /** discardOnFailure: the recipient is a new chat that is deleted when the message cannot be delivered. deliverAs: how a busy recipient gets it. */
 export async function sendSessionMessage(ctx: ExtensionContext, sessionId: string, hostId: string, message: string, wake: boolean, signal?: AbortSignal, deliveryId: string = randomUUID(), discardOnFailure = false, deliverAs?: "steer" | "followUp") {
   if (sessionId === ctx.sessionManager.getSessionId() && hostId === currentHost()) throw new Error("Choose another conversation as the recipient");
@@ -381,9 +388,10 @@ export function registerOrchestration(pi: ExtensionAPI) {
   pi.registerTool({
     name: "create_thread", label: "Create chat",
     description: "Start a new chat with its first message, in your working directory. Use it only when the user asks for a new chat; for delegated work use spawn_subagents. Pick an agent profile from list_agent_profiles or omit it to use your own. The chat starts with no history and runs on its own; follow it with wait_threads. If this fails, no chat was created.",
-    parameters: Type.Object({ title: Type.String({ minLength: 1, maxLength: 120 }), message: Type.String({ minLength: 1, maxLength: 100_000 }), agent: Type.Optional(Type.String({ minLength: 1 })) }),
+    parameters: Type.Object({ title: Type.String({ minLength: 1, maxLength: 120 }), message: Type.String({ minLength: 1 }), agent: Type.Optional(Type.String({ minLength: 1 })) }),
     async execute(_id, params, signal, _update, ctx) {
       requireRootCaller(ctx);
+      requireMessageLength(params.message);
       signal?.throwIfAborted();
       const created = await createProfileSession(pi, ctx, params.title, params.agent);
 
@@ -414,9 +422,10 @@ export function registerOrchestration(pi: ExtensionAPI) {
   });
   pi.registerTool({
     name: "message_thread", label: "Message chat", description: "Send a message to another chat. An idle chat starts at once; a busy one reads it after its current work. Returns when the message is accepted, not the answer; use wait_threads. Message a chat only when the user asked you to.",
-    parameters: Type.Object({ ...address, message: Type.String({ minLength: 1, maxLength: 100_000 }) }),
+    parameters: Type.Object({ ...address, message: Type.String({ minLength: 1 }) }),
     async execute(_id, params, signal, _update, ctx) {
       requireRootCaller(ctx);
+      requireMessageLength(params.message);
       const hostId = params.hostId ?? currentHost();
       await rootSnapshot(params.threadId, hostId, signal);
 

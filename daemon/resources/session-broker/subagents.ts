@@ -10,7 +10,7 @@ import { join } from "node:path";
 import { currentHost } from "./client.ts";
 import { writeSessionFile } from "../piop-storage/session-file.ts";
 import { activeConversation } from "./conversation-location.ts";
-import { interruptSession, sendSessionMessage, sessionSnapshot, snapshotStatus, subagentResponses } from "./orchestration.ts";
+import { interruptSession, requireMessageLength, sendSessionMessage, sessionSnapshot, snapshotStatus, subagentResponses } from "./orchestration.ts";
 import { SUBAGENT_PARENT, latestRuns, ownedRuns, saveRun, subagentParent, subagentPayload, registerSubagentResults, type SubagentRun } from "./subagent-state.ts";
 import { acceptedSubmission, cancelSubagent, finishRun, observeSubagent, subagentReceiptSchema, SubagentCancellation, type ActiveSubagent } from "./subagent-reconciliation.ts";
 import { savedSubagentRuns } from "../piop-storage/subagent-results.ts";
@@ -295,8 +295,9 @@ export function registerSubagents(pi: ExtensionAPI) {
   });
   pi.registerTool({
     name: "message_subagent", label: "Message subagent", exposure: "model-only", description: "Send a subagent a message. A busy subagent gets it as a follow-up after its current work, or during it with delivery: \"steer\". A finished one starts a new task with its own earlier history. Its answer arrives as a new message.",
-    parameters: Type.Object({ name: Type.String({ minLength: 1 }), message: Type.String({ minLength: 1, maxLength: 100_000 }), delivery: Type.Optional(Type.Union([Type.Literal("follow_up"), Type.Literal("steer")])) }),
+    parameters: Type.Object({ name: Type.String({ minLength: 1 }), message: Type.String({ minLength: 1 }), delivery: Type.Optional(Type.Union([Type.Literal("follow_up"), Type.Literal("steer")])) }),
     async execute(id, params, signal, _update, ctx) {
+      requireMessageLength(params.message);
       const run = targetRun(ctx, params.name);
       reconcile(ctx);
 
