@@ -62,7 +62,7 @@ export function ChatView(props: Props & { transcriptActions?: JSXElement; follow
   };
 
   const [ownsConversation, setOwnsConversation] = createSignal((() => props.transport?.ownsConversation() !== false)());
-  const [terminalAvailable, setTerminalAvailable] = createSignal(false);
+  const [terminalAvailable, setTerminalAvailable] = createSignal((() => props.transport?.hasSentMessage() ?? false)());
   const [takingOwnership, setTakingOwnership] = createSignal(false);
   const [ownershipError, setOwnershipError] = createSignal<string>();
   createDependencyEffect(() => { const capturedTransport0 = props.transport;
@@ -198,7 +198,7 @@ export function ChatView(props: Props & { transcriptActions?: JSXElement; follow
     return status ?? knownFastMode.get(transport);
   });
   /** True for a short time after the controls become unavailable, so a chat switch that reconnects at once does not dim them. */
-  const [settling, setSettling] = createSignal(false);
+  const [settling, setSettling] = createSignal((() => Boolean(props.controlsDisabled))());
   createDependencyEffect(() => {
     if (!props.controlsDisabled) { setSettling(false); return; }
     setSettling(true);
