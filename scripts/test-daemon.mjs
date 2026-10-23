@@ -1,8 +1,9 @@
 import { execFile, spawn } from 'node:child_process';
-import { mkdtemp, readdir, rm, stat } from 'node:fs/promises';
+import { mkdtemp, readdir, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { parseArgs, promisify } from 'node:util';
+import { daemonTestTimings } from './daemon-test-timings.mjs';
 
 const started = performance.now();
 const { values, positionals } = parseArgs({
@@ -12,10 +13,6 @@ const { values, positionals } = parseArgs({
 const jobs = Number(values.jobs);
 if (!Number.isSafeInteger(jobs) || jobs < 1 || jobs > 16) throw new Error('--jobs must be a whole number from 1 to 16');
 const files = positionals.length ? positionals : (await readdir('test/daemon', { recursive: true })).filter(file => file.endsWith('.test.ts')).sort().map(file => 'test/daemon/' + file);
-if (!positionals.length) {
-  const sizes = new Map(await Promise.all(files.map(async file => [file, (await stat(file)).size])));
-  files.sort((a, b) => sizes.get(b) - sizes.get(a) || a.localeCompare(b));
-}
 if (!files.length) throw new Error('No daemon test files found');
 if (new Set(files).size !== files.length) throw new Error('Each test file must be listed once');
 
@@ -35,32 +32,18 @@ async function main() {
     const executable = builds[0].value.stdout.trim();
     if (!executable) throw new Error('Daemon test executable was not built');
     const env = { ...process.env, PIOP_TEST_DAEMON_EXECUTABLE: executable, PIOP_TEST_CONTROLS_BUNDLE: controlsBundle };
-    let next = 0;
-    let failed = 0;
-
-    async function run(file) {
-      return await new Promise(resolve => {
-        let output = '';
-        const child = spawn('bun', ['test', '--timeout', '60000', ...(values.filter ? ['-t', values.filter] : []), file], { env, stdio: ['ignore', 'pipe', 'pipe'] });
-        child.stdout.on('data', chunk => { output += chunk; });
-        child.stderr.on('data', chunk => { output += chunk; });
-        child.on('error', error => { output += error.stack + '\n'; });
-        child.on('close', (code, signal) => {
-          process.stdout.write(output);
-          if (code !== 0) {
-            failed++;
-            process.stderr.write(`${file}: ${signal ? 'stopped by ' + signal : 'exited with ' + code}\n`);
-          }
-          resolve();
-        });
-      });
-    }
-
-    await Promise.all(Array.from({ length: Math.min(jobs, files.length) }, async () => {
-      while (next < files.length) await run(files[next++]);
-    }));
-    console.log(`Daemon files: ${files.length - failed} passed, ${failed} failed. Time: ${((performance.now() - started) / 1000).toFixed(2)}s.`);
-    return failed ? 1 : 0;
+    const timings = join(directory, 'timings.json');
+    const saveTimings = await daemonTestTimings(files, timings, 'target/test-cache/daemon-timings.json');
+    const result = await new Promise((resolve, reject) => {
+      const child = spawn('bun', ['test', '--parallel=' + jobs, '--parallel-delay=0', '--timeout', '60000',
+        '--timings=' + timings, '--update-timings', ...(values.filter ? ['-t', values.filter] : []), ...files], { env, stdio: 'inherit' });
+      child.once('error', reject);
+      child.once('close', (code, signal) => resolve({ code, signal }));
+    });
+    if (result.signal) throw new Error('Daemon tests stopped by ' + result.signal);
+    if (result.code === 0 && !values.filter) await saveTimings();
+    console.log(`Daemon suite: ${result.code === 0 ? 'passed' : 'failed'}. Time: ${((performance.now() - started) / 1000).toFixed(2)}s.`);
+    return result.code ?? 1;
   } finally { await rm(directory, { recursive: true, force: true }); }
 }
 
