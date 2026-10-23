@@ -1,3 +1,4 @@
+import { retainSettingsResources } from "./lib/settingsResources";
 import { capSessionName } from "./lib/sessionName";
 import { ComposerPluginsContext } from "./plugins/composer";
 import { localHostLabel } from "./lib/mobileHosts";
@@ -53,6 +54,7 @@ const SplitChatPane = lazy(() => import("./components/SplitChatPane").then(modul
 const SubagentPane = lazy(() => import("./components/SubagentPane").then(module => ({ default: module.SubagentPane })));
 
 export default function App(props: { suppressConnectionNotices?: boolean } = {}) {
+  onCleanup(retainSettingsResources());
  const { modelVisibility, drafts, archiveReplacedSession, isArchiving, missingDirectoryDialog, archivesOpen, setArchivesOpen, runtimePool, transport, view, setView, activeConversationKey, chatViewKey, runningSessions, unseenSessions, pendingSettingsCount, chatSession, sessions, settings, settingsSaving, debugModeSaving, setSettingsDirty, panelOpen, setPanelOpen, query, setQuery, connected, error, setError, createGroupRequest, setCreateGroupRequest, handleCreateGroup, newChatRequest, activeHostId, codexUsage, usageClock, opencodeGoBadge, codexUsageError, opencodeGoUsageError, setDialogs, notices, setNotices, addNotice, queueExtensionDialog, resolveExtensionDialog, closeTransportDialogs, releaseSplitTransport, statuses, renameSession, setRenameSession, projectOpen, setProjectOpen, projectOpenRef, uploadsByTransport, setComposerUploads, splitPane, setSplitPane, subagentPane, hasSidePane, mainComposerFocusRequest, splitComposerFocusRequest, activePane, setActivePane, terminals, terminalOpen, terminalLocationState, startTerminal, addTerminal, selectTerminal, deleteTerminal, reconnectPending, splitSessionId, composerState, terminalViewKey, syncSessionIndex, composerControls, resolveHomeDirectory, send, respondToSplitRequest, closeSplitPane, openSubagent, canLeaveSettings, rekeyConversationUi, branch, forkAndForget, forkSourceName, openForkSource, revealEntryId, entryRevealed, startNewSession, newSession, clearChatProject, chooseChatHost, selectSession, setModel, setThinking, abortInteraction, pauseInteraction, resumeInteraction, saveSettings, setAgent, openProject, chooseChatProject, sessionAction, draftChangeFor, uploadsChangeFor, toggleComposerTerminal, toggleDebugMode, reconnectMain, extensionStateIsCurrent, activeDialog, projectCwd, mobileSidebarOpen, sidebar, chatAgentProps, chatModels, chatCommands, chatWidgets } = createAppConversations(() => { void ChatView.preload().catch(() => undefined); });
 
 

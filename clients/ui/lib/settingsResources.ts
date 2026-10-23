@@ -15,6 +15,27 @@ export type SettingsResources = { config: AgentConfig; models: Model[]; levels: 
  */
 const cache = new Map<string, Promise<SettingsResources>>();
 let listening = false;
+let owners = 0;
+let generation = 0;
+let reloadTimer: ReturnType<typeof setTimeout> | undefined;
+let subscriptions: Array<Promise<() => void>> = [];
+
+export function retainSettingsResources() {
+  owners++;
+  let released = false;
+  return () => {
+    if (released) return;
+    released = true;
+    if (--owners) return;
+    generation++;
+    clearTimeout(reloadTimer);
+    reloadTimer = undefined;
+    cache.clear();
+    listening = false;
+    for (const pending of subscriptions) void pending.then(unlisten => unlisten(), () => undefined);
+    subscriptions = [];
+  };
+}
 const RELOAD_DELAY_MS = 2000;
 
 async function load(hostId: string): Promise<SettingsResources> {
@@ -44,15 +65,23 @@ function changed(hostId: string) {
   cache.delete(hostId);
 
   // Loaded again shortly after, so the next opening of the settings does not wait for Pi.
-  if (hostId === "local") setTimeout(() => { if (!cache.has("local")) void start("local").catch(() => undefined); }, RELOAD_DELAY_MS);
+  if (hostId === "local" && owners && reloadTimer === undefined) reloadTimer = setTimeout(() => {
+    reloadTimer = undefined;
+    if (owners && !cache.has("local")) void start("local").catch(() => undefined);
+  }, RELOAD_DELAY_MS);
 }
 
 function listenForChanges() {
   if (listening) return;
   listening = true;
-  void listen("pi://provider-auth-changed", ({ payload }) => changed(payload.hostId), z.object({ hostId: z.string() }));
-  void listen("pi://settings-changed", () => changed("local"), z.unknown());
-  void listen("pi://host-settings-changed", ({ payload }) => changed(payload.hostId), z.object({ hostId: z.string() }).loose());
+  const current = generation;
+  const receive = (hostId: string) => { if (current === generation) changed(hostId); };
+  subscriptions = [
+    listen("pi://provider-auth-changed", ({ payload }) => receive(payload.hostId), z.object({ hostId: z.string() })),
+    listen("pi://settings-changed", () => receive("local"), z.unknown()),
+    listen("pi://host-settings-changed", ({ payload }) => receive(payload.hostId), z.object({ hostId: z.string() }).loose()),
+  ];
+  for (const pending of subscriptions) void pending.catch(reason => console.error("Could not listen for settings resource changes:", reason));
 }
 
 /** The host's settings resources, from the cache when they are still current. */
