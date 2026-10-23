@@ -10,7 +10,7 @@
 **Folder-project session** - A session assigned to a folder that is not a Git repository root.  
 **Repository-project session** - A session assigned to a Git repository root, including a linked worktree root. It can use either the main worktree or a linked worktree.  
 **Main-worktree session** - A repository-project session assigned to the main worktree created by `git init` or `git clone`.  
-**Subagents** - root agent and (grand/)children agents, have nicknames.  
+**Subagents** - root agent and (grand/)children agents.  
 **Turn** - what's commonly known as agent turn: a reasoning, tool call etc.  
 **Task** - from agent prompted to final response. One task has at least one turn.
 **Idle** - the session state before a task starts or after the agent responds. Work can still be queued, and a goal can remain active.  
