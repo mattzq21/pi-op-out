@@ -112,6 +112,28 @@ test.concurrent('branchoff_peer starts a peer in a new worktree that keeps the a
   expect(peerSaw).toEqual(['Branch me', 'Base answer.', '<peer_message>\nPeer ' + (coordinator.name ?? coordinator.sessionId) + ':\nContinue in the branch\n</peer_message>']);
 }, 120000);
 
+test.concurrent('branchoff_peer removes the peer, its worktree and its branch when the first message does not arrive', async () => {
+  const coordinator = await agents.rootChat({ repository: true });
+  const git = (...args: string[]) => execFileSync('git', ['-C', coordinator.cwd, ...args], { encoding: 'utf8' }).trim();
+  const before = { worktrees: git('worktree', 'list'), branches: git('branch', '--list') };
+  const sessionsBefore = (await agents.daemon.invoke('list_sessions')).map((item: any) => item.id);
+  agents.scripts.set('Fail a branch', messages => {
+    const last = text(messages.at(-1));
+    if (last === 'Fail a branch') return { text: 'Base answer.' };
+    // A message of only spaces passes the tool's schema but is refused by the daemon before delivery.
+    return called(messages, 'branchoff_peer') ? { text: 'Told: ' + last } : { tool: 'branchoff_peer', arguments: { message: '   ' } };
+  });
+  await coordinator.command({ type: 'prompt', message: 'Fail a branch' });
+  await coordinator.until(history => text(history.at(-1)) === 'Base answer.');
+  await coordinator.command({ type: 'prompt', message: 'Now branch off' });
+  const told = text((await coordinator.until(history => text(history.at(-1)).startsWith('Told: '))).at(-1));
+  expect(told).toStartWith('Told: The peer was not created');
+  expect({ worktrees: git('worktree', 'list'), branches: git('branch', '--list') }).toEqual(before);
+  const sessionsAfter = (await agents.daemon.invoke('list_sessions')).map((item: any) => item.id);
+  // The calling chat is listed once it has messages, so only it is new.
+  expect(sessionsAfter.filter((id: string) => !sessionsBefore.includes(id))).toEqual([coordinator.sessionId]);
+}, 120000);
+
 /** A promise that the test settles later, to keep an agent's model reply waiting. */
 const held = <T>() => { let release!: (value: T) => void; const promise = new Promise<T>(resolve => { release = resolve; }); return { promise, release }; };
 
