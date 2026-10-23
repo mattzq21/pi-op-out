@@ -35,6 +35,8 @@ export class PromptControls {
     return selected !== this.applied && (Boolean(selected.model) || selected.thinkingLevel !== undefined || selected.fastMode !== undefined);
   }
   reset() { this.selection[1]({}); this.applied = undefined; }
+  /** True when the user chose no model, thinking level or fast mode. */
+  untouched() { const selected = this.selection[0](); return selected.model === undefined && selected.thinkingLevel === undefined && selected.fastMode === undefined; }
   /** Show no model until the user chooses one. */
   clearModel() { this.effectiveModel[1](null); this.selection[1](current => ({ ...current, model: null })); }
   useEffectiveModel(model: Model | null) { this.effectiveModel[1](model); if (model && this.selection[0]().model === null) this.selection[1](current => ({ ...current, model: undefined })); }

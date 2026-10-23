@@ -582,7 +582,17 @@ export function createAppConversations(preloadChat: () => void) {
   };
 
   // New conversation while a new draft is already open starts over: the draft is forgotten and the defaults come back.
-  const newSession = async () => { const fresh = currentSessionIsDraft(); setNewChatRequest(value => value + 1); await startNewSession(false, undefined, undefined, undefined, fresh); };
+  /** The open draft already has the defaults: no text, attachments, project, chosen agent or chosen prompt settings. */
+  const draftHasDefaults = () => {
+    const agents = definedAgents(); const owner = transport();
+
+    return currentSessionIsDraft() && !transportHasDraft(owner, activeConversationKey()) && owner.isTemporaryChat() && owner.promptControls.untouched() && Boolean(agents) && agents?.active === agents?.config.agents.find(agent => agent.isDefault)?.name;
+  };
+  const newSession = async () => {
+    const fresh = currentSessionIsDraft(); setNewChatRequest(value => value + 1);
+    if (fresh && draftHasDefaults()) { closeMobileSidebar(); setArchivesOpen(false); setView("chat"); closeSplitPane(); setMainComposerFocusRequest(request => request + 1); return; }
+    await startNewSession(fresh, undefined, undefined, undefined, fresh);
+  };
 
   const clearChatProject = () => startNewSession(true);
   /** Projects belong to one host, so a new host starts a draft without a project. */
