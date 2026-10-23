@@ -67,7 +67,7 @@ export function createSidebarState(source: Accessor<SessionSummary[]>, query: Ac
     return source().filter(session => !session.subagentParentId || !parents.has(`${session.hostId ?? "local"}:${session.subagentParentId}`));
   });
 
-  const storedGroups = projects ?? useSessionProjects(sessions);
+  const storedGroups = projects ?? useSessionProjects();
   const savedGroups = createMemo(() => storedGroups.state?.groups ?? []);
   const savedGroupsById = createMemo(() => new Map(savedGroups().map((group): [string, SessionGroup] => [group.id, group]).reverse()));
   const customGroups = createMemo(() => savedGroups().filter(group => !group.cwd && group.id !== DIRLESS_KEY));

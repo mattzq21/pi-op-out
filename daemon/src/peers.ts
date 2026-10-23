@@ -340,6 +340,7 @@ export async function allSummaries(app: App, index: SessionIndexRuntime, waitFor
   const canonical = new Map<string, string>();
   for (const [hostId, list] of lists) if (!canonical.has(list.daemonId)) canonical.set(list.daemonId, hostId);
   for (const [hostId, list] of lists) if (canonical.get(list.daemonId) === hostId) sessions.push(...list.rows.map(row => ({ ...row })));
+  await sessionGroups.registerProjects(app, sessions);
   await sessionGroups.attachAssignments(sessions);
   sessions.sort((left, right) => right.modifiedAt - left.modifiedAt);
   return sessions;

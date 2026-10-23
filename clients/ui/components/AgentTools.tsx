@@ -7,7 +7,7 @@ import "./agent-tools.css";
 const toolGroups = [
   { name: "Goal", tools: ["update_goal_status"] },
   { name: "Subagents", tools: ["spawn_subagents", "message_subagent", "stop_subagent", "list_subagents", "await_subagents"] },
-  { name: "Orchestration", tools: ["create_peer", "message_peer", "stop_peer", "list_peers", "read_peer", "wait_peers"] },
+  { name: "Orchestration", tools: ["create_peer", "branchoff_peer", "message_peer", "stop_peer", "list_peers", "read_peer", "wait_peers"] },
 ];
 
 /** Tools that have their own setting. codemode follows the agent's Codemode switch; list_agent_profiles is on when the Subagents or Orchestration group is. */

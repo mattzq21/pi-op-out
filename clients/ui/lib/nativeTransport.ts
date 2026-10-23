@@ -16,7 +16,7 @@ import { listen, type UnlistenFn } from "./platform";
 import { restoredSessionTarget, targetedWindowSession } from "./sessionResume";
 import { recoverSessionDirectory } from "./sessionRecovery";
 import { ConversationChangedError } from "./conversationChanged";
-import type { GroupChange, SessionGroupSeed } from "./sessionGroups";
+import type { GroupChange } from "./sessionGroups";
 import type { AppSettings, RpcCommand, RpcEvent } from "../types";
 
 export const openSessionWindow = (target: NativeConnectionTarget & { sessionId: string }) => call("new_window", { target }, z.string());
@@ -30,7 +30,7 @@ export function initialWindowTarget(): NativeConnectionTarget {
 
 export interface NativeConnectionTarget { cwd?: string; sessionPath?: string; sessionId?: string; hostId?: string; readOnly?: boolean; draftKey?: string; }
 
-export const loadSessionGroups = (seeds: SessionGroupSeed[]) => call("load_session_groups", { seeds }, sessionGroupsSchema);
+export const loadSessionGroups = () => call("load_session_groups", { seeds: [] }, sessionGroupsSchema);
 
 export const changeSessionGroups = (change: GroupChange) => call("change_session_groups", { change }, sessionGroupsSchema);
 

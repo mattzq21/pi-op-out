@@ -1,6 +1,6 @@
 import { sessionGroupsSchema } from "./responseSchemas";
 import { z } from "zod";
-import { type Accessor, createMemo, createSignal } from "solid-js";
+import { createSignal } from "solid-js";
 import { createDependencyEffect, createRef } from "./solid";
 
 import type { SessionSummary } from "../types";
@@ -13,9 +13,6 @@ export interface SessionGroup { id: string; name: string; cwd?: string | null; h
 export const DIRLESS_KEY = "__pi-desktop-dirless__";
 
 export interface SessionGroups { groups: SessionGroup[]; parents: Record<string, string>; assignments: Record<string, string | null>; removedProjects: string[]; }
-
-/** parentKey names the chat this one was branched from; the daemon then gives the branch that chat's group. */
-export interface SessionGroupSeed { sessionKey: string; project: SessionGroup; parentKey?: string; }
 
 export type GroupChange = { type: "move"; id: string; parent: string | null } | { type: "relocate"; project: SessionGroup; key: string } | { type: "create"; name: string } | { type: "project"; project: SessionGroup; key?: string } | { type: "rename"; id: string; name: string } | { type: "remove"; id: string } | { type: "assign"; key: string; group: string | null };
 
@@ -33,7 +30,7 @@ return state; }
 
 export function updateSessionGroups(update: GroupChange) {
   return enqueue(async () => {
-    await loadSessionGroups([]);
+    await loadSessionGroups();
     const revision = eventRevision;
     const state = await changeSessionGroups(update);
 
@@ -54,33 +51,7 @@ export function projectGroupId(session: SessionSummary) {
   return `${session.hostId ?? "local"}:${session.cwd}`;
 }
 
-function sessionGroupSeed(session: SessionSummary): SessionGroupSeed {
-  const hostId = session.hostId ?? "local";
-  const cwd = session.cwd;
-
-  return {
-    sessionKey: `${hostId}:${session.id}`,
-    project: { id: projectGroupId(session), name: session.project, cwd, hostId, hostName: session.hostName ?? session.hostId ?? "Local" },
-    ...(session.forkSourceId ? { parentKey: `${hostId}:${session.forkSourceId}` } : {}),
-  };
-}
-
-function sessionGroupSeedInputs(session: SessionSummary) {
-  return [session.id, session.hostId, session.cwd, session.cwdExists, session.project, session.hostName, session.forkSourceId];
-}
-
-function sessionGroupSeeds(sessions: Accessor<SessionSummary[]>) {
-  return createMemo((previous: { inputs: ReturnType<typeof sessionGroupSeedInputs>[]; json: string } | undefined) => {
-    const eligible = sessions().filter(session => !session.isDraft && session.messageCount > 0 && session.cwdExists !== false && !isTemporaryChatCwd(session.cwd));
-    const inputs = eligible.map(sessionGroupSeedInputs);
-
-    if (previous && inputs.length === previous.inputs.length && inputs.every((input, index) => input.every((value, field) => value === previous.inputs[index][field]))) return previous;
-
-    return { inputs, json: JSON.stringify(eligible.map(sessionGroupSeed).sort((a, b) => a.sessionKey.localeCompare(b.sessionKey))) };
-  });
-}
-
-export function useSessionGroups(sessions: Accessor<SessionSummary[]>) {
+export function useSessionGroups() {
   const [state, setState] = createSignal<SessionGroups | undefined>(restoreSessionGroups());
   const [error, setError] = createSignal<string>();
   const mounted = createRef(false);
@@ -93,18 +64,15 @@ export function useSessionGroups(sessions: Accessor<SessionSummary[]>) {
 
     return () => { mounted.current = false; listeners.delete(listener); void stop.then((unlisten) => unlisten()); };
   }, () => []);
-  const seeds = sessionGroupSeeds(sessions);
-  const seedsJson = createMemo(() => seeds().json);
-  const reload = (capturedSeedsJson: string) => {
-    const seeds: SessionGroupSeed[] = JSON.parse(capturedSeedsJson);
-    void enqueue(async () => { const revision = eventRevision; const state = await loadSessionGroups(seeds);
+  const reload = () => {
+    void enqueue(async () => { const revision = eventRevision; const state = await loadSessionGroups();
 
     if (revision === eventRevision) publish(state); }).catch((reason) => { if (mounted.current) setError((reason instanceof Error ? reason.message : String(reason))); });
   };
-  createDependencyEffect(() => { reload(seedsJson()); }, () => [seedsJson()]);
+  reload();
   // Group events sent while the phone was offline are lost, so a restored connection loads the groups again.
   createDependencyEffect(() => {
-    const stop = listen("pi://event", ({ payload }) => { if (payload.type === "connection_restored") reload(seedsJson()); }, z.object({ type: z.string().optional() }).catch({}));
+    const stop = listen("pi://event", ({ payload }) => { if (payload.type === "connection_restored") reload(); }, z.object({ type: z.string().optional() }).catch({}));
 
     return () => { void stop.then((unlisten) => unlisten()); };
   }, () => []);

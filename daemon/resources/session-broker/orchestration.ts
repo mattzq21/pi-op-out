@@ -421,6 +421,19 @@ export function registerOrchestration(pi: ExtensionAPI) {
     },
   });
   pi.registerTool({
+    name: "branchoff_peer", label: "Branch off peer",
+    description: "Start a peer in a new Git worktree, on a new branch with your current files. It keeps your agent and your history through your last finished answer, then gets message. Use it only when the user asks for it; follow it with wait_peers. If this fails, no peer was created.",
+    parameters: Type.Object({ message: Type.String({ minLength: 1 }) }),
+    async execute(_id, params, signal, _update, ctx) {
+      requireRootCaller(ctx);
+      requireMessageLength(params.message);
+      const created = Parse(Schema.Object({ peerId: Schema.String() }), await request("/orchestration", { action: "branch_off", sessionId: ctx.sessionManager.getSessionId(), hostId: currentHost(),
+        message: params.message, wake: true, deliveryId: randomUUID(), sourceSessionId: ctx.sessionManager.getSessionId(), sourceHostId: currentHost(), sourceName: ctx.sessionManager.getSessionName() }, signal, 180_000));
+
+      return result({ peerId: created.peerId });
+    },
+  });
+  pi.registerTool({
     name: "message_peer", label: "Message peer", description: "Send a message to a peer. An idle peer starts at once; a busy one reads it after its current work. Returns when the message is accepted, not the answer; use wait_peers. Message a peer only when the user asked you to.",
     parameters: Type.Object({ ...address, message: Type.String({ minLength: 1 }) }),
     async execute(_id, params, signal, _update, ctx) {

@@ -4,7 +4,7 @@ import { fileURLToPath } from 'node:url';
 import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { Database } from 'bun:sqlite';
-import { startDaemon, type TestDaemon } from './harness';
+import { startDaemon, waitForSessions, type TestDaemon } from './harness';
 
 let daemon: TestDaemon;
 
@@ -42,6 +42,17 @@ test('concurrent group changes keep every update and tell clients each saved sta
   await daemon.waitEvent('pi://groups-changed', payload => payload.groups.length === 12);
   const notified = daemon.events.slice(start).filter(event => event.event === 'pi://groups-changed').map(event => event.payload.groups.length);
   expect(notified).toEqual(Array.from({ length: 12 }, (_, index) => index + 1));
+});
+
+test('listing a chat in an unseen folder registers its project without a client', async () => {
+  await reset();
+  const folder = join(daemon.home, 'unseen-project'); mkdirSync(folder, { recursive: true });
+  const chat = publicSession(folder);
+  const rows = await waitForSessions(daemon, rows => rows.some(row => row.id === chat.id));
+  console.log(JSON.stringify(rows.find(row => row.id === chat.id)), JSON.stringify(await load()));
+  const notified = await daemon.waitEvent('pi://groups-changed', payload => payload.groups.some((group: any) => group.cwd === folder));
+  expect(notified.groups.find((group: any) => group.cwd === folder)).toEqual(project('local:' + folder, 'unseen-project', folder, 'local', 'Local'));
+  expect((await load()).assignments['local:' + chat.id]).toBe('local:' + folder);
 });
 
 test('failed group changes do not notify and do not change saved groups', async () => {

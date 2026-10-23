@@ -145,7 +145,7 @@ async function enqueueOrchestration(app: App, broker: BrokerRuntime, response: S
   }
   catch (error: any) { respond(response, 400, { error: error.message }); return; }
   // Only turns that run an agent take a worker slot. Interrupt, read and locate must still get through when every worker is busy.
-  const worker = value?.action === 'send';
+  const worker = value?.action === 'send' || value?.action === 'branch_off';
   if ((worker && broker.messageCount >= BROKER_WORKERS) || broker.closing) { delivery?.(); respond(response, 503, { error: 'Session broker is busy' }); return; }
   if (worker) broker.messageCount += 1;
   try {
@@ -196,6 +196,7 @@ async function brokerOrchestration(app: App, broker: BrokerRuntime, value: any):
     return brokerInterruptionStatus(broker, value, result);
   }
   const [id, action] = orchestrationTarget(value);
+  if (action === 'branch_off') return brokerBranchOff(app, broker, value, host, id);
   if (action === 'interrupt' || action === 'locate' || action === 'read') {
     const settings = await loadAppSettings(app);
     const connection = await daemon.connect(app, app.pi, broker, settings, host);
@@ -203,6 +204,27 @@ async function brokerOrchestration(app: App, broker: BrokerRuntime, value: any):
     return brokerInterruptionStatus(broker, value, result);
   }
   return brokerConversationOperation(app, broker, value, host, id, action);
+}
+
+/**
+ * Branches the conversation id off into a new peer in its own worktree and sends the peer its first message.
+ * All or nothing: when the message does not arrive, the peer, its worktree and its branch are removed.
+ */
+async function brokerBranchOff(app: App, broker: BrokerRuntime, value: any, host: string, id: string): Promise<{ peerId: string }> {
+  const settings = await loadAppSettings(app);
+  const connection = await daemon.connect(app, app.pi, broker, settings, host);
+  const created = await connection.request({ type: 'orchestration', action: 'branch_off', sessionKey: id });
+  const peerId = created?.sessionId;
+  if (!isUuid(peerId) || typeof created?.sessionPath !== 'string') throw new Error('Branch-off returned no peer');
+  try { await brokerConversationOperation(app, broker, { ...value, discardOnFailure: true }, host, peerId, 'send'); }
+  catch (error: any) {
+    const reason = error?.message ?? String(error);
+    let kept: boolean;
+    try { kept = (await connection.request({ type: 'orchestration', action: 'abandon_branch', sessionKey: peerId, sessionPath: created.sessionPath }))?.kept === true; }
+    catch (cleanup: any) { throw new Error(`The peer ${peerId} was created, but its first message failed and cleanup failed: ${reason}; ${cleanup?.message ?? cleanup}`); }
+    throw new Error(kept ? `The peer ${peerId} exists, but its first message may not have arrived: ${reason}` : `The peer was not created: ${reason}`);
+  }
+  return { peerId };
 }
 
 async function brokerConversationOperation(app: App, broker: BrokerRuntime, value: any, host: string, id: string, action: string): Promise<any> {
@@ -241,6 +263,6 @@ function brokerInterruptionStatus(broker: BrokerRuntime, request: any, result: a
 function orchestrationTarget(value: any): [string, string] {
   if (typeof value?.sessionId !== 'string') throw new Error('sessionId is required');
   if (typeof value?.action !== 'string') throw new Error('action is required');
-  if (!['read', 'send', 'interrupt', 'locate'].includes(value.action)) throw new Error('Unknown orchestration action');
+  if (!['read', 'send', 'interrupt', 'locate', 'branch_off'].includes(value.action)) throw new Error('Unknown orchestration action');
   return [value.sessionId, value.action];
 }

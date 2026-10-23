@@ -1,10 +1,16 @@
 import { randomUUID } from 'node:crypto';
+import { existsSync } from 'node:fs';
 import { flag, text } from './json';
 import { ownershipError } from './ownership';
 import { isUuid } from './protocol';
 import { attach } from './attachment';
 import { queueCommand } from './session_commands';
 import * as storageTransactions from '../storage_transactions';
+import * as Worktrees from '../chat_worktree_records';
+import * as Registry from '../session_registry';
+import { detectRepository } from '../chat_worktrees';
+import { publishBranchHistory } from '../chat_branch_operations';
+import { rememberProjectRepository } from '../project_repositories';
 import type { Host } from './controller';
 import type { Session } from './session';
 
@@ -31,6 +37,8 @@ export class Orchestration {
     const id = text(packet, 'sessionKey');
     const action = text(packet, 'action');
     if (action === 'locate') return host.ownership().lookup(id);
+    if (action === 'branch_off') return this.branchOff(id);
+    if (action === 'abandon_branch') return this.abandonBranch(id, text(packet, 'sessionPath'));
     if (action === 'interrupt') {
       if (this.cancelDeliveries(id, typeof packet.deliveryId === 'string' ? packet.deliveryId : undefined)) return { sessionId: id, completed: false };
       return this.cancel(id);
@@ -123,12 +131,63 @@ export class Orchestration {
    */
   private async send(packet: any, existing: Session | undefined): Promise<any> {
     const discard = flag(packet, 'discardOnFailure');
-    try { return await this.sendNow(packet, existing, discard); } catch (error) {
-      const id = text(packet, 'sessionKey');
+    const id = text(packet, 'sessionKey');
+    try {
+      const result = await this.sendNow(packet, existing, discard);
+      // A branched-off peer keeps its worktree once its first message arrived.
+      if (discard && Worktrees.read(id, this.host.storageRoot())?.state === 'preparing') Worktrees.activate(id, this.host.storageRoot());
+      return result;
+    } catch (error) {
       const session = this.host.findSession(id);
       if (discard && (!session || session.closed())) await storageTransactions.deleteBlank({ path: text(packet, 'sessionPath'), id });
       throw error;
     }
+  }
+
+  /**
+   * Makes a new worktree on a new branch from the current files of the conversation id, and a new conversation there
+   * with its agent and its history through its last finished answer. The worktree stays preparing until the first
+   * message arrives; abandonBranch or recovery undoes it otherwise.
+   */
+  private async branchOff(id: string): Promise<{ sessionId: string; sessionPath: string }> {
+    const host = this.host;
+    const root = host.storageRoot();
+    const session = host.findSession(id);
+    if (!session || session.closed()) throw new Error('This conversation is not running');
+    const cwd = session.cwd;
+    const repository = cwd ? await detectRepository(cwd) : null;
+    if (!cwd || !repository) throw new Error('This folder is not a Git repository');
+    const state = await session.execute({ type: 'get_state' });
+    const sourcePath = typeof state?.sessionFile === 'string' ? state.sessionFile : '';
+    if (!sourcePath) throw new Error('The conversation has no session file');
+    const snapshot = await session.execute({ type: 'get_snapshot' });
+    const entries: any[] = snapshot.history.entries;
+    const leafId: string | null = snapshot.history.leafId ?? entries.at(-1)?.id ?? null;
+    const entryId = lastFinishedAnswer(entries, leafId);
+    if (!entryId) throw new Error('This conversation has no finished answer to branch off from');
+    const sessionId = Registry.reserve(root);
+    try {
+      const created = await Worktrees.create({ sourceCwd: cwd, chatId: sessionId, home: host.home, repository }, root);
+      rememberProjectRepository(root, created.worktree, { root: created.worktree, gitDir: created.gitCommonDir });
+      const published = await publishBranchHistory({ root, sourcePath, sessionId, cwd: created.worktree, entries, leafId, entryId,
+        name: state.sessionName ? state.sessionName + ' (branch)' : undefined });
+      return { sessionId, sessionPath: published.sessionPath };
+    } catch (error) {
+      await Worktrees.abandonCreation(sessionId, null, root);
+      throw error;
+    }
+  }
+
+  /** Undoes a branch-off whose first message did not arrive. One that did arrive, or still runs, is kept. Returns whether it was kept. */
+  private async abandonBranch(id: string, sessionPath: string): Promise<{ kept: boolean }> {
+    const root = this.host.storageRoot();
+    const record = Worktrees.read(id, root);
+    if (record?.state !== 'preparing') return { kept: record !== null };
+    const session = this.host.findSession(id);
+    const arrived = Boolean(session && !session.closed()) || existsSync(sessionPath.replace(/\.jsonl$/, '.snapshots/mailbox'));
+    if (arrived) { Worktrees.activate(id, root); return { kept: true }; }
+    await Worktrees.abandonCreation(id, sessionPath, root);
+    return { kept: false };
   }
 
   private async sendNow(packet: any, existing: Session | undefined, discard: boolean): Promise<any> {
@@ -172,4 +231,16 @@ export class Orchestration {
     const session = this.host.subscriptions.get(runtime);
     return session ? this.host.detach(discardBlank ? { discardBlank: true } : { preserveRunning: true }, runtime, session) : null;
   }
+}
+
+/** The last finished final answer on the branch that ends at leafId. */
+function lastFinishedAnswer(entries: any[], leafId: string | null): string | null {
+  const byId = new Map(entries.map(entry => [entry.id, entry]));
+  const seen = new Set<string>();
+  for (let id = leafId; id && !seen.has(id); id = byId.get(id)?.parentId ?? null) {
+    seen.add(id);
+    const message = byId.get(id)?.type === 'message' ? byId.get(id).message : null;
+    if (message?.role === 'assistant' && message.stopReason === 'stop' && Array.isArray(message.content) && !message.content.some((part: any) => part?.type === 'toolCall')) return id;
+  }
+  return null;
 }

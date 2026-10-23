@@ -193,7 +193,27 @@ export async function attachAssignments(sessions: SessionSummary[]): Promise<voi
 export async function loadSessionGroups(app: App, seeds: SessionSeed[]): Promise<SessionGroups> {
   const path = storagePath();
   await refreshDeletionsAt(path, app, seeds, undefined);
-  return STORAGE_LOCK.run(() => loadAt(path, seeds));
+  return STORAGE_LOCK.run(async () => (await loadAt(path, seeds)).state);
+}
+
+const TEMPORARY_CHAT_CWD = /(?:^|\/)\.piop(?:-dev)?\/tmp\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\/?$/i;
+
+/** A listed chat in an existing project folder. Temporary chat folders and chats with no message are not projects. */
+function projectSeed(session: SessionSummary): SessionSeed | undefined {
+  if (session.messageCount === 0 || !session.cwdExists || !session.cwd || TEMPORARY_CHAT_CWD.test(session.cwd)) return undefined;
+  return {
+    sessionKey: `${session.hostId}:${session.id}`,
+    project: { id: `${session.hostId}:${session.cwd}`, name: session.project, cwd: session.cwd, hostId: session.hostId, hostName: session.hostName },
+    ...(session.forkSourceId ? { parentKey: `${session.hostId}:${session.forkSourceId}` } : {}),
+  };
+}
+
+/** Registers the project of each listed chat that has no group yet, and reports a change to clients. */
+export async function registerProjects(app: App, sessions: SessionSummary[]): Promise<void> {
+  const seeds = sessions.map(projectSeed).filter((seed): seed is SessionSeed => seed !== undefined);
+  if (!seeds.length) return;
+  const result = await STORAGE_LOCK.run(() => loadAt(storagePath(), seeds));
+  if (result.dirty) app.emit('pi://groups-changed', serializeGroups(result.state));
 }
 
 function updateSeedMetadata(state: SessionGroups, seed: SessionSeed): boolean {
@@ -236,7 +256,7 @@ function hasMissingLocalFolder(seed: SessionSeed): boolean {
   return seed.project.hostId === 'local' && typeof seed.project.cwd === 'string' && !isDirectory(seed.project.cwd);
 }
 
-async function loadAt(path: string, allSeeds: SessionSeed[]): Promise<SessionGroups> {
+async function loadAt(path: string, allSeeds: SessionSeed[]): Promise<{ state: SessionGroups; dirty: boolean }> {
   const seeds = allSeeds.filter(seed => !hasMissingLocalFolder(seed));
   const lock = await lockStorage(path);
   try {
@@ -254,7 +274,7 @@ async function loadAt(path: string, allSeeds: SessionSeed[]): Promise<SessionGro
       if (destination !== null && (destination === DIRLESS_KEY || !ids.has(destination))) { state.assignments.set(key, null); dirty = true; }
     }
     if (dirty) write(path, state);
-    return state;
+    return { state, dirty };
   } finally { lock.release(); }
 }
 

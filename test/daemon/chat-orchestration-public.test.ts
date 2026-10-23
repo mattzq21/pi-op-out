@@ -1,4 +1,5 @@
 import { afterAll, beforeAll, expect, test } from 'bun:test';
+import { execFileSync } from 'node:child_process';
 import { agentDaemon, called, text } from './agent-chats';
 
 let agents: Awaited<ReturnType<typeof agentDaemon>>;
@@ -84,6 +85,31 @@ test.concurrent('a chat can start a new independent chat that works on its promp
   const session = (await agents.daemon.invoke('list_sessions')).find((item: any) => item.id === created.peerId);
   expect(session).toMatchObject({ name: 'Release notes' });
   expect(session.subagentParentId).toBeUndefined();
+}, 120000);
+
+test.concurrent('branchoff_peer starts a peer in a new worktree that keeps the agent and the history', async () => {
+  const coordinator = await agents.rootChat({ repository: true });
+  agents.scripts.set('Branch me', messages => {
+    const last = text(messages.at(-1));
+    if (last.includes('Continue in the branch')) return { text: 'Branch working.' };
+    if (last === 'Branch me') return { text: 'Base answer.' };
+    return called(messages, 'branchoff_peer') ? { text: 'Done.' } : { tool: 'branchoff_peer', arguments: { message: 'Continue in the branch' } };
+  });
+  await coordinator.command({ type: 'prompt', message: 'Branch me' });
+  await coordinator.until(history => text(history.at(-1)) === 'Base answer.');
+  await coordinator.command({ type: 'prompt', message: 'Now branch off' });
+  await coordinator.until(history => text(history.at(-1)) === 'Done.');
+  const created = toolResult(agents.model.requests.findLast(request => called(request.messages, 'branchoff_peer')).messages, 'branchoff_peer');
+  expect(Object.keys(created)).toEqual(['peerId']);
+  const session = (await agents.daemon.invoke('list_sessions')).find((item: any) => item.id === created.peerId);
+  const git = (cwd: string, ...args: string[]) => execFileSync('git', ['-C', cwd, ...args], { encoding: 'utf8' }).trim();
+  expect(session.cwd).not.toBe(coordinator.cwd);
+  expect(git(session.cwd, 'rev-parse', 'HEAD')).toBe(git(coordinator.cwd, 'rev-parse', 'HEAD'));
+  expect(git(session.cwd, 'symbolic-ref', '--short', 'HEAD')).not.toBe(git(coordinator.cwd, 'symbolic-ref', '--short', 'HEAD'));
+  // The peer's model sees the history through the last finished answer, then the message.
+  for (const deadline = Date.now() + 60000; !agents.model.requests.some(request => text(request.messages.at(-1)).includes('Continue in the branch')) && Date.now() < deadline;) await Bun.sleep(100);
+  const peerSaw = agents.model.requests.find(request => text(request.messages.at(-1)).includes('Continue in the branch')).messages.filter((message: any) => !['system', 'developer'].includes(message.role)).map(text);
+  expect(peerSaw).toEqual(['Branch me', 'Base answer.', '<peer_message>\nPeer ' + (coordinator.name ?? coordinator.sessionId) + ':\nContinue in the branch\n</peer_message>']);
 }, 120000);
 
 /** A promise that the test settles later, to keep an agent's model reply waiting. */
