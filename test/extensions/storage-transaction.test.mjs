@@ -8,6 +8,7 @@ import { fileURLToPath } from 'node:url';
 import { buildTraceControls } from '../trace-command-fixture.mjs';
 import { goalCommand } from '../goal-command-fixture.mjs';
 import { daemonClient } from '../daemon-client.mjs';
+import { chatPublisher } from '../chat-publisher-fixture.mjs';
 import { build } from 'esbuild';
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, readdirSync, lstatSync, rmSync, existsSync, renameSync, symlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -156,10 +157,8 @@ test('restore fully happens or fully rolls back after a crash at any write', asy
   const profile = join(home, '.piop');
   const outcomes = new Set();
   const content = JSON.stringify({ type: 'message', id: 'question', parentId: null, message: { role: 'user', content: 'Keep this restored chat' } }) + '\n';
-  const publish = () => JSON.parse(execFileSync('node', [fileURLToPath(new URL('../fixtures/publish-chat.mjs', import.meta.url))], {
-    encoding: 'utf8', timeout: 30000, input: JSON.stringify({ home, content, controlsBundle }),
-  }));
-  const other = publish();
+  const publish = chatPublisher(t, { home, content, controlsBundle });
+  const other = await publish();
   await daemon.invoke('archive_session', { hostId: 'local', sessionPath: other.path, terminalIds: [], clientId: 'restore-crash-test' });
   const initial = await daemon.invoke('storage_report');
   const otherPath = initial.hosts.find(host => host.hostId === 'local').archives.find(row => row.id === other.id).path;
@@ -168,7 +167,7 @@ test('restore fully happens or fully rolls back after a crash at any write', asy
 
   for (let crashAfter = 0; ; crashAfter += 1) {
     assert.ok(crashAfter < maxCrashes, 'no committed run within ' + maxCrashes + ' crash points');
-    const chat = publish();
+    const chat = await publish();
     const snapshots = chat.path.replace(/\.jsonl$/, '.snapshots');
     mkdirSync(snapshots);
     writeFileSync(join(snapshots, 'one.json'), '{}');
@@ -403,10 +402,8 @@ test('restore with goal folders fully happens or fully rolls back after a crash 
   const profile = join(home, '.piop');
   const outcomes = new Set();
   const content = JSON.stringify({ type: 'message', id: 'question', parentId: null, message: { role: 'user', content: 'Keep this restored chat' } }) + '\n';
-  const publish = () => JSON.parse(execFileSync('node', [fileURLToPath(new URL('../fixtures/publish-chat.mjs', import.meta.url))], {
-    encoding: 'utf8', timeout: 30000, input: JSON.stringify({ home, content, controlsBundle }),
-  }));
-  const other = publish();
+  const publish = chatPublisher(t, { home, content, controlsBundle });
+  const other = await publish();
   await daemon.invoke('archive_session', { hostId: 'local', sessionPath: other.path, terminalIds: [], clientId: 'restore-crash-test' });
   const initial = await daemon.invoke('storage_report');
   const otherPath = initial.hosts.find(host => host.hostId === 'local').archives.find(row => row.id === other.id).path;
@@ -415,7 +412,7 @@ test('restore with goal folders fully happens or fully rolls back after a crash 
 
   for (let crashAfter = 0; ; crashAfter += 1) {
     assert.ok(crashAfter < maxCrashes, 'no committed run within ' + maxCrashes + ' crash points');
-    const chat = publish();
+    const chat = await publish();
     const prepared = await prepareGoal(chat.path, objective);
     const goalPath = prepared.message.match(/Read the goal objective file at (.+?) before continuing\./)?.[1];
     assert.ok(goalPath, 'prepared prompt must name the saved objective file');
