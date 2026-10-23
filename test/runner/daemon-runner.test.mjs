@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
 import { createServer } from 'node:net';
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
-import { readFileSync } from 'node:fs';
+import { readFileSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -47,14 +47,14 @@ async function fixture(t, failing = false, discover = false) {
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   t.after(async () => { for (const socket of waiting) socket.destroy(); await new Promise(resolve => server.close(resolve)); });
   await writeFile(join(directory, 'bun'), `#!${process.execPath}
-import { appendFileSync } from 'node:fs';
+import { appendFileSync, existsSync } from 'node:fs';
 import { createConnection } from 'node:net';
 if (process.argv[2] === 'test/daemon/build.ts') {
   appendFileSync(${JSON.stringify(builds)}, 'build\\n');
   console.log('/fresh/daemon');
 } else {
   const socket = createConnection(${server.address().port}, '127.0.0.1', () => {
-    socket.write(JSON.stringify({ file: process.argv.at(-1), args: process.argv.slice(2), executable: process.env.PIOP_TEST_DAEMON_EXECUTABLE }) + '\\n');
+    socket.write(JSON.stringify({ file: process.argv.at(-1), args: process.argv.slice(2), executable: process.env.PIOP_TEST_DAEMON_EXECUTABLE, controls: process.env.PIOP_TEST_CONTROLS_BUNDLE, controlsExists: existsSync(process.env.PIOP_TEST_CONTROLS_BUNDLE ?? '') }) + '\\n');
   });
   socket.on('data', () => {
     console.log('finished ' + process.argv.at(-1));
@@ -62,7 +62,7 @@ if (process.argv[2] === 'test/daemon/build.ts') {
   });
 }
 `, { mode: 0o755 });
-  const env = { ...process.env, PATH: directory + ':' + process.env.PATH, PIOP_TEST_DAEMON_EXECUTABLE: '/stale/daemon' };
+  const env = { ...process.env, PATH: directory + ':' + process.env.PATH, PIOP_TEST_DAEMON_EXECUTABLE: '/stale/daemon', PIOP_TEST_CONTROLS_BUNDLE: '/stale/controls' };
   return { files, started, builds, childCounts, maximum: () => maximum, run: () => {
     const pending = execute(process.execPath, [fileURLToPath(new URL('../../scripts/test-daemon.mjs', import.meta.url)), '--jobs', '2', '--filter', 'selected case', ...(discover ? [] : files)], { env, cwd: discover ? directory : process.cwd(), timeout: 10000 });
     runnerPid = pending.child.pid;
@@ -82,8 +82,12 @@ for (const [failing, discover] of [[false, false], [true, false], [false, true]]
   assert.ok(f.childCounts.every(count => count <= 2));
   assert.equal(f.childCounts[0], 2);
   assert.equal(await readFile(f.builds, 'utf8'), 'build\n');
+  assert.equal(existsSync(f.started[0].controls), false);
   for (const item of f.started) {
     assert.equal(item.executable, '/fresh/daemon');
+    assert.equal(item.controlsExists, true);
+    assert.notEqual(item.controls, '/stale/controls');
+    assert.equal(item.controls, f.started[0].controls);
     assert.deepEqual(item.args.slice(0, -1), ['test', '--timeout', '60000', '-t', 'selected case']);
   }
 });
