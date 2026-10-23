@@ -7,7 +7,7 @@ import "./agent-tools.css";
 const toolGroups = [
   { name: "Goal", tools: ["update_goal_status"] },
   { name: "Subagents", tools: ["spawn_subagents", "message_subagent", "stop_subagent", "list_subagents", "await_subagents"] },
-  { name: "Orchestration", tools: ["create_thread", "message_thread", "stop_thread", "list_threads", "read_thread", "wait_threads"] },
+  { name: "Orchestration", tools: ["create_peer", "message_peer", "stop_peer", "list_peers", "read_peer", "wait_peers"] },
 ];
 
 /** Tools that have their own setting. codemode follows the agent's Codemode switch; list_agent_profiles is on when the Subagents or Orchestration group is. */
@@ -98,7 +98,7 @@ export function AgentTools(props: { tools: ToolConfig[]; query: string; selected
           </div>
           <AgentAccessPicker label="Callable subagents" value={props.agent.allowed_subagents} names={props.agentNames} onChange={allowed_subagents => props.onLimitsChange({ allowed_subagents })} />
         </Show>
-        <Show when={group.name === "Orchestration" && props.selected.includes("create_thread")}>
+        <Show when={group.name === "Orchestration" && props.selected.includes("create_peer")}>
           <AgentAccessPicker label="Callable threads" value={props.agent.allowed_threads} names={props.agentNames} onChange={allowed_threads => props.onLimitsChange({ allowed_threads })} />
         </Show>
       </AllowGroup>}</For>

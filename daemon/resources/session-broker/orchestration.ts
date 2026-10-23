@@ -21,15 +21,15 @@ const snapshotSchema = Schema.Object({ revision: Schema.String(), state: stateSc
 
 const deliverySchema = Schema.Object({ id: Schema.String(), deliveryId: Schema.String({ minLength: 1 }), sourceSessionId: Schema.String(), sourceHostId: Schema.String(), sourceName: Schema.Optional(Schema.String()), message: Schema.String({ minLength: 1 }), wake: Schema.Optional(Schema.Boolean()), deliverAs: Schema.Optional(Schema.Union([Schema.Literal("steer"), Schema.Literal("followUp")])) });
 
-const address = { threadId: Type.String({ minLength: 1 }), hostId: Type.Optional(Type.String({ minLength: 1 })) };
+const address = { peerId: Type.String({ minLength: 1 }), hostId: Type.Optional(Type.String({ minLength: 1 })) };
 
-type Target = { threadId: string; hostId?: string; afterCursor?: string };
+type Target = { peerId: string; hostId?: string; afterCursor?: string };
 
 const parentTypes = new Set(["piop-subagent-parent", "piop-review-parent"]);
 
 function requireRootCaller(ctx: ExtensionContext) {
   if (ctx.sessionManager.getEntries().some(entry => entry.type === "custom" && parentTypes.has(entry.customType))) {
-    throw new Error("Subagents and reviewers cannot use chat tools");
+    throw new Error("Subagents and reviewers cannot use peer tools");
   }
 }
 
@@ -37,7 +37,7 @@ async function rootSnapshot(sessionId: string, hostId: string, signal?: AbortSig
   const snapshot = await sessionSnapshot(sessionId, hostId, signal);
 
   if (snapshot.history.entries.some(entry => entry.type === "custom" && parentTypes.has(entry.customType ?? ""))) {
-    throw new Error("This is a subagent chat; use the subagent tools for it");
+    throw new Error("This is a subagent, not a peer; use the subagent tools for it");
   }
 
   return snapshot;
@@ -94,7 +94,7 @@ export async function sessionSnapshot(sessionId: string, hostId: string, signal?
   return Parse(snapshotSchema, await request("/orchestration", { action: "read", sessionId, hostId }, signal, 30_000));
 }
 
-/** The longest message or task a chat or subagent may get from message_thread, create_thread, message_subagent or spawn_subagents. The tool definitions leave it out. */
+/** The longest message or task a chat or subagent may get from message_peer, create_peer, message_subagent or spawn_subagents. The tool definitions leave it out. */
 export const MAX_MESSAGE_LENGTH = 100_000;
 
 export function requireMessageLength(message: string) {
@@ -184,18 +184,18 @@ export function snapshotStatus(snapshot: Awaited<ReturnType<typeof sessionSnapsh
 
 async function poll(target: Target, signal?: AbortSignal) {
   const hostId = target.hostId ?? currentHost();
-  const snapshot = await rootSnapshot(target.threadId, hostId, signal);
+  const snapshot = await rootSnapshot(target.peerId, hostId, signal);
   const messages = branchEntries(snapshot).filter(entry => entry.type === "message");
   const last = messages.findLast(entry => entry.message?.role === "assistant");
   const status = snapshotStatus(snapshot);
   const message = last?.message;
   const text = message ? messageText(message) : "";
-  const cursor = createHash("sha256").update(JSON.stringify([hostId, target.threadId, snapshot.revision, status, last?.id, text])).digest("hex");
+  const cursor = createHash("sha256").update(JSON.stringify([hostId, target.peerId, snapshot.revision, status, last?.id, text])).digest("hex");
   const changed = cursor !== target.afterCursor;
-  const name = snapshot.history.entries.findLast(entry => entry.type === "session_info" && entry.name)?.name ?? target.threadId;
+  const name = snapshot.history.entries.findLast(entry => entry.type === "session_info" && entry.name)?.name ?? target.peerId;
   const answer = text || message?.errorMessage || (message ? "(No text in the answer.)" : "(No answer yet.)");
 
-  return { thread: { id: target.threadId, hostId, status }, name, answer, cursor, changed,
+  return { thread: { id: target.peerId, hostId, status }, name, answer, cursor, changed,
     latestAssistantMessage: changed && last ? { id: last.id, text: text.slice(0, 2000), truncated: text.length > 2000, stopReason: message?.stopReason, error: message?.errorMessage } : undefined };
 }
 
@@ -228,23 +228,23 @@ async function waitSnapshot(targets: Target[], signal: AbortSignal | undefined, 
 
 const STATUS_NOTES: Record<string, string> = { needs_input: " (needs input)", paused: " (paused)" };
 
-/** The new answers of the chats that finished, each in a <thread_message> tag with the chat's name on the first line. */
-function threadAnswers(snapshot: Awaited<ReturnType<typeof waitSnapshot>>, interrupted: boolean) {
+/** The new answers of the chats that finished, each in a <peer_message> tag with the chat's name on the first line. */
+function peerAnswers(snapshot: Awaited<ReturnType<typeof waitSnapshot>>, interrupted: boolean) {
   const answers = snapshot.polls.filter(item => item.thread.status !== "running" && item.changed).map(item => {
     const answer = item.answer.length > 16_000 ? item.answer.slice(0, 16_000) + "\n[Answer truncated.]" : item.answer;
 
-    return "<thread_message>\nThread " + item.name + (STATUS_NOTES[item.thread.status] ?? "") + ":\n" + answer + "\n</thread_message>";
+    return "<peer_message>\nPeer " + item.name + (STATUS_NOTES[item.thread.status] ?? "") + ":\n" + answer + "\n</peer_message>";
   });
-  const errors = snapshot.errors.map(item => "Thread " + item.threadId + ": " + item.error);
+  const errors = snapshot.errors.map(item => "Peer " + item.peerId + ": " + item.error);
   const parts = [...answers, ...errors];
 
   if (interrupted) parts.push("The user sent a new message.");
 
-  return parts.length ? parts.join("\n\n") : "No chat finished before the wait ended.";
+  return parts.length ? parts.join("\n\n") : "No peer finished before the wait ended.";
 }
 
 function validateTargets(targets: Target[], ctx: ExtensionContext) {
-  const keys = targets.map(target => `${target.hostId ?? currentHost()}\0${target.threadId}`);
+  const keys = targets.map(target => `${target.hostId ?? currentHost()}\0${target.peerId}`);
 
   if (new Set(keys).size !== keys.length || keys.includes(`${currentHost()}\0${ctx.sessionManager.getSessionId()}`)) throw new Error("Wait targets must be distinct conversations other than this one");
 }
@@ -263,9 +263,9 @@ function agentMessage(content: string) {
   try { const value = JSON.parse(content); return Check(parentMessageSchema, value) ? value : undefined; } catch { return undefined; }
 }
 
-/** A chat sees a message from another chat in a <thread_message> tag, with the sender's chat name on the first line. */
-function threadMessage(value: Static<typeof parentMessageSchema>) {
-  return "<thread_message>\nThread " + (value.sourceName || value.sourceSessionId || "unknown") + ":\n" + value.message + "\n</thread_message>";
+/** A chat sees a message from another chat in a <peer_message> tag, with the sender's chat name on the first line. */
+function peerMessage(value: Static<typeof parentMessageSchema>) {
+  return "<peer_message>\nPeer " + (value.sourceName || value.sourceSessionId || "unknown") + ":\n" + value.message + "\n</peer_message>";
 }
 
 function registerDelivery(pi: ExtensionAPI) {
@@ -363,8 +363,8 @@ function registerDelivery(pi: ExtensionAPI) {
       if (Check(mailboxMessageSchema, message)) mailbox.consume(ctx, message.details.notificationId);
       const sent = message.role === "custom" && message.customType === "piop-agent-message" ? agentMessage(messageText(message)) : undefined;
 
-      // A subagent sees only the text its parent wrote; a chat sees a message from another chat as a <thread_message>.
-      if (sent) return [{ role: "user", content: [{ type: "text", text: subagent ? sent.message : threadMessage(sent) }], timestamp: message.timestamp }];
+      // A subagent sees only the text its parent wrote; a chat sees a message from another chat as a <peer_message>.
+      if (sent) return [{ role: "user", content: [{ type: "text", text: subagent ? sent.message : peerMessage(sent) }], timestamp: message.timestamp }];
 
       if (message.role === "custom" && message.customType === "piop-subagent-result" && Check(resultDetailsSchema, message.details)) {
         return [{ role: "user", content: [{ type: "text", text: subagentResponses(message.details.runs) }], timestamp: message.timestamp }];
@@ -386,8 +386,8 @@ export function registerOrchestration(pi: ExtensionAPI) {
   const unsubscribeMail = pi.events.on("piop:agent-mail", newInput);
   pi.on("session_shutdown", unsubscribeMail);
   pi.registerTool({
-    name: "create_thread", label: "Create chat",
-    description: "Start a new chat with its first message, in your working directory. Use it only when the user asks for a new chat; for delegated work use spawn_subagents. Pick an agent profile from list_agent_profiles or omit it to use your own. The chat starts with no history and runs on its own; follow it with wait_threads. If this fails, no chat was created.",
+    name: "create_peer", label: "Create peer",
+    description: "Start a new peer with its first message, in your working directory. Use it only when the user asks for a new peer; for delegated work use spawn_subagents. Pick an agent profile from list_agent_profiles or omit it to use your own. The peer starts with no history and runs on its own; follow it with wait_peers. If this fails, no peer was created.",
     parameters: Type.Object({ title: Type.String({ minLength: 1, maxLength: 120 }), message: Type.String({ minLength: 1 }), agent: Type.Optional(Type.String({ minLength: 1 })) }),
     async execute(_id, params, signal, _update, ctx) {
       requireRootCaller(ctx);
@@ -398,59 +398,59 @@ export function registerOrchestration(pi: ExtensionAPI) {
       try {
         await sendSessionMessage(ctx, created.threadId, created.hostId, params.message, true, signal, randomUUID(), true);
 
-        return result({ threadId: created.threadId, agent: created.agent });
+        return result({ peerId: created.threadId, agent: created.agent });
       } catch (error) {
         const reason = error instanceof Error ? error.message : String(error);
 
         // The daemon deletes the new chat unless the prompt reached it. A chat that is left over is reported, so it is not created twice.
-        if (!existsSync(created.sessionPath)) throw new Error(`The chat was not created: ${reason}`);
+        if (!existsSync(created.sessionPath)) throw new Error(`The peer was not created: ${reason}`);
 
-        return { ...result({ threadId: created.threadId, agent: created.agent, error: reason, message: "The chat exists, but its first message may not have arrived. Check it with read_thread before you send the message again; do not create another chat." }), isError: true };
+        return { ...result({ peerId: created.threadId, agent: created.agent, error: reason, message: "The peer exists, but its first message may not have arrived. Check it with read_peer before you send the message again; do not create another peer." }), isError: true };
       }
     },
   });
   pi.registerTool({
-    name: "list_threads", label: "List chats", description: "List chats with their IDs, hosts and names. Subagent chats are not listed.",
+    name: "list_peers", label: "List peers", description: "List peers with their IDs, hosts and names.",
     parameters: Type.Object({}),
     async execute(_id, _params, signal, _update, ctx) {
       requireRootCaller(ctx);
 
       const chats = await request("/agents", undefined, signal);
 
-      return result(Array.isArray(chats) ? chats.map(chat => ({ threadId: chat.sessionId, hostId: chat.hostId, name: chat.name, project: chat.project, active: chat.active })) : chats);
+      return result(Array.isArray(chats) ? chats.map(chat => ({ peerId: chat.sessionId, hostId: chat.hostId, name: chat.name, project: chat.project, active: chat.active })) : chats);
     },
   });
   pi.registerTool({
-    name: "message_thread", label: "Message chat", description: "Send a message to another chat. An idle chat starts at once; a busy one reads it after its current work. Returns when the message is accepted, not the answer; use wait_threads. Message a chat only when the user asked you to.",
+    name: "message_peer", label: "Message peer", description: "Send a message to a peer. An idle peer starts at once; a busy one reads it after its current work. Returns when the message is accepted, not the answer; use wait_peers. Message a peer only when the user asked you to.",
     parameters: Type.Object({ ...address, message: Type.String({ minLength: 1 }) }),
     async execute(_id, params, signal, _update, ctx) {
       requireRootCaller(ctx);
       requireMessageLength(params.message);
       const hostId = params.hostId ?? currentHost();
-      await rootSnapshot(params.threadId, hostId, signal);
+      await rootSnapshot(params.peerId, hostId, signal);
 
-      return result(await sendSessionMessage(ctx, params.threadId, hostId, params.message, true, signal));
+      return result(await sendSessionMessage(ctx, params.peerId, hostId, params.message, true, signal));
     },
   });
   pi.registerTool({
-    name: "stop_thread", label: "Stop chat", description: "Stop another chat's current work. It keeps its history and can get new messages. Stop a chat only when the user asked you to.",
+    name: "stop_peer", label: "Stop peer", description: "Stop a peer's current work. It keeps its history and can get new messages. Stop a peer only when the user asked you to.",
     parameters: Type.Object({ ...address }),
     async execute(_id, params, signal, _update, ctx) {
       requireRootCaller(ctx);
       const hostId = params.hostId ?? currentHost();
 
-      if (params.threadId === ctx.sessionManager.getSessionId() && hostId === currentHost()) throw new Error("Choose another conversation to stop");
-      await rootSnapshot(params.threadId, hostId, signal);
+      if (params.peerId === ctx.sessionManager.getSessionId() && hostId === currentHost()) throw new Error("Choose another peer to stop");
+      await rootSnapshot(params.peerId, hostId, signal);
 
-      return result(await interruptSession(params.threadId, hostId, signal));
+      return result(await interruptSession(params.peerId, hostId, signal));
     },
   });
   pi.registerTool({
-    name: "read_thread", label: "Read chat", description: "Read the last messages of a chat. To read older messages, pass nextCursor as cursor. includeOutputs adds tool outputs.",
+    name: "read_peer", label: "Read peer", description: "Read the last messages of a peer. To read older messages, pass nextCursor as cursor. includeOutputs adds tool outputs.",
     parameters: Type.Object({ ...address, cursor: Type.Optional(Type.String()), limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 100 })), includeOutputs: Type.Optional(Type.Boolean()) }),
     async execute(_id, params, signal, _update, ctx) {
       requireRootCaller(ctx);
-      const snapshot = await rootSnapshot(params.threadId, params.hostId ?? currentHost(), signal);
+      const snapshot = await rootSnapshot(params.peerId, params.hostId ?? currentHost(), signal);
       const entries = branchEntries(snapshot).filter(entry => entry.type === "message" || entry.type === "custom_message");
       const end = params.cursor ? entries.findIndex(entry => entry.id === params.cursor) : entries.length;
 
@@ -459,16 +459,16 @@ export function registerOrchestration(pi: ExtensionAPI) {
       const cap = 4000;
       const items = entries.slice(start, end).map(entry => readItem(entry, params.includeOutputs ?? false, cap));
 
-      return result({ threadId: params.threadId, hostId: params.hostId ?? currentHost(), status: snapshotStatus(snapshot), items, nextCursor: start ? entries[start].id : null });
+      return result({ peerId: params.peerId, hostId: params.hostId ?? currentHost(), status: snapshotStatus(snapshot), items, nextCursor: start ? entries[start].id : null });
     },
   });
   pi.registerTool({
-    name: "wait_threads", label: "Wait for chats", description: "Wait until one of the given chats finishes its work or needs input, until a new user message arrives, or until timeoutMs passes if you give it (0 returns at once). Returns the new answers of the chats that finished.",
+    name: "wait_peers", label: "Wait for peers", description: "Wait until one of the given peers finishes its work or needs input, until a new user message arrives, or until timeoutMs passes if you give it (0 returns at once). Returns the new answers of the peers that finished.",
     parameters: Type.Object({ targets: Type.Array(Type.Object(address), { minItems: 1 }), timeoutMs: Type.Optional(Type.Integer({ minimum: 0 })) }),
     async execute(_id, params, signal, _update, ctx) {
       requireRootCaller(ctx);
       validateTargets(params.targets, ctx);
-      const key = (target: Target) => [ctx.sessionManager.getSessionId(), target.hostId ?? currentHost(), target.threadId].join("\0");
+      const key = (target: Target) => [ctx.sessionManager.getSessionId(), target.hostId ?? currentHost(), target.peerId].join("\0");
       const targets = params.targets.map(target => ({ ...target, afterCursor: seenAnswers.get(key(target)) }));
       // Without timeoutMs the wait has no time limit.
       const deadline = params.timeoutMs === undefined ? Infinity : Date.now() + params.timeoutMs;
@@ -486,9 +486,9 @@ export function registerOrchestration(pi: ExtensionAPI) {
         if (!actionable && !stop.signal.aborted && Date.now() < deadline) return undefined;
 
         // An answer returned once is not returned again by a later wait.
-        for (const item of snapshot.polls) if (item.thread.status !== "running" && item.changed) seenAnswers.set(key({ threadId: item.thread.id, hostId: item.thread.hostId }), item.cursor);
+        for (const item of snapshot.polls) if (item.thread.status !== "running" && item.changed) seenAnswers.set(key({ peerId: item.thread.id, hostId: item.thread.hostId }), item.cursor);
 
-        return { content: [{ type: "text" as const, text: threadAnswers(snapshot, interrupted) }], details: { interrupted, ...snapshot } };
+        return { content: [{ type: "text" as const, text: peerAnswers(snapshot, interrupted) }], details: { interrupted, ...snapshot } };
       };
 
       try {

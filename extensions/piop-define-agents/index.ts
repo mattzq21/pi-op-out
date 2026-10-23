@@ -26,7 +26,7 @@ const sessionTools = ["spawn_subagents"];
 const renamedTools: Record<string, string> = {
   subagent: "spawn_subagents", spawn_agent: "spawn_subagents", followup_task: "message_subagent", send_message: "message_subagent",
   interrupt_agent: "stop_subagent", list_agents: "list_subagents", wait_agent: "await_subagents", wait_subagents: "await_subagents",
-  send_message_to_thread: "message_thread",
+  send_message_to_thread: "message_peer", create_thread: "create_peer", message_thread: "message_peer", stop_thread: "stop_peer", list_threads: "list_peers", read_thread: "read_peer", wait_threads: "wait_peers",
 };
 
 /** The agent's tools with old names replaced. The agent's tool groups decide if it has list_agent_profiles, so it is never configured directly. */

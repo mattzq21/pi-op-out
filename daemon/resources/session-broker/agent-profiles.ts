@@ -42,7 +42,7 @@ export async function createProfileSession(pi: ExtensionAPI, ctx: ExtensionConte
 
 /** The tools that make a tool group on for an agent. One tool of a group is enough. */
 export const SUBAGENT_TOOLS = ["spawn_subagents", "message_subagent", "stop_subagent", "list_subagents", "await_subagents"];
-export const THREAD_TOOLS = ["create_thread", "message_thread", "stop_thread", "list_threads", "read_thread", "wait_threads"];
+export const THREAD_TOOLS = ["create_peer", "message_peer", "stop_peer", "list_peers", "read_peer", "wait_peers"];
 
 /** Which agents list_agent_profiles lists: for one start purpose, or for both, chosen by an argument. */
 export type AgentProfilesMode = AgentStartPurpose | "both";
@@ -55,21 +55,21 @@ function profilesTool(pi: ExtensionAPI, mode: AgentProfilesMode) {
     pi.events.emit("piop:agents:profiles", catalog);
 
     if (!catalog.profiles) throw new Error("Agent profiles are unavailable");
-    const text = catalog.profiles.length ? JSON.stringify(catalog.profiles) : `You cannot start any agent as a ${purpose}.`;
+    const text = catalog.profiles.length ? JSON.stringify(catalog.profiles) : `You cannot start any agent as a ${purpose === "thread" ? "peer" : purpose}.`;
 
     return { content: [{ type: "text" as const, text }], details: catalog };
   };
 
   if (mode === "both") return {
     name: "list_agent_profiles", label: "List agent profiles",
-    description: `List the agents you can start: for "subagent" with spawn_subagents, for "thread" with create_thread. ${COMMON}`,
-    parameters: Type.Object({ for: Type.Union([Type.Literal("subagent"), Type.Literal("thread")]) }),
-    execute: (_id: string, params: { for: AgentStartPurpose }) => list(params.for),
+    description: `List the agents you can start: for "subagent" with spawn_subagents, for "peer" with create_peer. ${COMMON}`,
+    parameters: Type.Object({ for: Type.Union([Type.Literal("subagent"), Type.Literal("peer")]) }),
+    execute: (_id: string, params: { for: "subagent" | "peer" }) => list(params.for === "peer" ? "thread" : "subagent"),
   };
 
   return {
     name: "list_agent_profiles", label: "List agent profiles",
-    description: `List the agents you can start with ${mode === "subagent" ? "spawn_subagents" : "create_thread"}. ${COMMON}`,
+    description: `List the agents you can start with ${mode === "subagent" ? "spawn_subagents" : "create_peer"}. ${COMMON}`,
     parameters: Type.Object({}),
     execute: () => list(mode),
   };

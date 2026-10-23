@@ -2,7 +2,7 @@ import { afterAll, beforeAll, expect, test } from 'bun:test';
 import { agentDaemon, called, text } from './agent-chats';
 
 let agents: Awaited<ReturnType<typeof agentDaemon>>;
-beforeAll(async () => { agents = await agentDaemon(); await agents.enableAgentTools('message_thread', 'spawn_subagents'); }, 60000);
+beforeAll(async () => { agents = await agentDaemon(); await agents.enableAgentTools('message_peer', 'spawn_subagents'); }, 60000);
 afterAll(async () => { await agents?.close(); });
 
 const startedWith = (request: any, prompt: string) => text(request.messages.find((message: any) => message.role === 'user')) === prompt;
@@ -12,8 +12,8 @@ const toolText = (messages: any[], tool: string) => {
   return call && text(messages.find(message => message.role === 'tool' && message.tool_call_id === call.id));
 };
 const toolResult = (messages: any[], tool: string) => JSON.parse(toolText(messages, tool));
-/** The answer in a wait_threads result. */
-const threadAnswer = (result: string) => result.match(/^<thread_message>\nThread [^\n]+:\n([\s\S]*)\n<\/thread_message>$/)?.[1];
+/** The answer in a wait_peers result. */
+const threadAnswer = (result: string) => result.match(/^<peer_message>\nPeer [^\n]+:\n([\s\S]*)\n<\/peer_message>$/)?.[1];
 
 test.concurrent('a chat can message another chat, wait for its answer and read it', async () => {
   const worker = await agents.rootChat();
@@ -23,23 +23,23 @@ test.concurrent('a chat can message another chat, wait for its answer and read i
 
   const coordinator = await agents.rootChat();
   agents.scripts.set('Check on the worker', messages => {
-    if (!called(messages, 'message_thread')) return { tool: 'message_thread', arguments: { threadId: worker.sessionId, message: 'What is the build status?' } };
-    if (!called(messages, 'wait_threads')) return { tool: 'wait_threads', arguments: { targets: [{ threadId: worker.sessionId }], timeoutMs: 60000 } };
-    if (!called(messages, 'read_thread')) return { tool: 'read_thread', arguments: { threadId: worker.sessionId, limit: 2 } };
-    return { text: 'Relay: ' + toolResult(messages, 'read_thread').items.at(-1).text };
+    if (!called(messages, 'message_peer')) return { tool: 'message_peer', arguments: { peerId: worker.sessionId, message: 'What is the build status?' } };
+    if (!called(messages, 'wait_peers')) return { tool: 'wait_peers', arguments: { targets: [{ peerId: worker.sessionId }], timeoutMs: 60000 } };
+    if (!called(messages, 'read_peer')) return { tool: 'read_peer', arguments: { peerId: worker.sessionId, limit: 2 } };
+    return { text: 'Relay: ' + toolResult(messages, 'read_peer').items.at(-1).text };
   });
   await coordinator.command({ type: 'prompt', message: 'Check on the worker' });
   const messages = await coordinator.until(history => text(history.at(-1)).startsWith('Relay: '));
   expect(text(messages.at(-1))).toBe('Relay: Worker status: green');
   const seen = agents.model.requests.findLast(request => startedWith(request, 'Check on the worker')).messages;
-  expect(toolResult(seen, 'message_thread')).toMatchObject({ sessionId: worker.sessionId, accepted: true });
-  expect(toolText(seen, 'wait_threads')).toBe('<thread_message>\nThread ' + worker.sessionId + ':\nWorker status: green\n</thread_message>');
-  const delivered = JSON.parse(toolResult(seen, 'read_thread').items[0].text);
+  expect(toolResult(seen, 'message_peer')).toMatchObject({ sessionId: worker.sessionId, accepted: true });
+  expect(toolText(seen, 'wait_peers')).toBe('<peer_message>\nPeer ' + worker.sessionId + ':\nWorker status: green\n</peer_message>');
+  const delivered = JSON.parse(toolResult(seen, 'read_peer').items[0].text);
   // The chat view shows the sender from sourceHostId and sourceSessionId.
   expect(delivered).toMatchObject({ sourceSessionId: coordinator.sessionId, sourceHostId: 'local', message: 'What is the build status?' });
-  // The worker's model sees only a <thread_message> tag with the sender's chat name and the text.
+  // The worker's model sees only a <peer_message> tag with the sender's chat name and the text.
   const workerSaw = agents.model.requests.findLast(request => startedWith(request, 'You are the worker')).messages.at(-1);
-  expect([workerSaw.role, text(workerSaw)]).toEqual(['user', '<thread_message>\nThread ' + (coordinator.name ?? coordinator.sessionId) + ':\nWhat is the build status?\n</thread_message>']);
+  expect([workerSaw.role, text(workerSaw)]).toEqual(['user', '<peer_message>\nPeer ' + (coordinator.name ?? coordinator.sessionId) + ':\nWhat is the build status?\n</peer_message>']);
 }, 120000);
 
 test.concurrent('chat tools list and read only root chats, never subagent chats', async () => {
@@ -49,9 +49,9 @@ test.concurrent('chat tools list and read only root chats, never subagent chats'
   agents.scripts.set('Delegate, then look around', messages => {
     const last = text(messages.at(-1));
     if (!called(messages, 'spawn_subagents')) return { tool: 'spawn_subagents', arguments: { tasks: [{ nickname: 'Helper', task: 'Helper task' }] } };
-    if (!last.includes('helped') && !called(messages, 'list_threads')) return { text: 'Waiting.' };
-    if (!called(messages, 'list_threads')) return { tool: 'list_threads' };
-    if (!called(messages, 'read_thread')) return { tool: 'read_thread', arguments: { threadId: childId } };
+    if (!last.includes('helped') && !called(messages, 'list_peers')) return { text: 'Waiting.' };
+    if (!called(messages, 'list_peers')) return { tool: 'list_peers' };
+    if (!called(messages, 'read_peer')) return { tool: 'read_peer', arguments: { peerId: childId } };
     return { text: 'Relay: ' + last };
   });
   agents.scripts.set('Helper task', async () => { await childKnown.promise; return { text: 'helped' }; });
@@ -60,28 +60,28 @@ test.concurrent('chat tools list and read only root chats, never subagent chats'
   childId = (await agents.daemon.invoke('list_sessions')).find((session: any) => session.subagentParentId === coordinator.sessionId).id;
   childKnown.resolve();
   const messages = await coordinator.until(history => text(history.at(-1)).startsWith('Relay: '));
-  expect(text(messages.at(-1))).toBe('Relay: This is a subagent chat; use the subagent tools for it');
+  expect(text(messages.at(-1))).toBe('Relay: This is a subagent, not a peer; use the subagent tools for it');
   const seen = agents.model.requests.findLast(request => startedWith(request, 'Delegate, then look around')).messages;
-  const listed = JSON.stringify(toolResult(seen, 'list_threads'));
+  const listed = JSON.stringify(toolResult(seen, 'list_peers'));
   expect([listed.includes(coordinator.sessionId), listed.includes(childId)]).toEqual([true, false]);
 }, 120000);
 
 test.concurrent('a chat can start a new independent chat that works on its prompt', async () => {
   const coordinator = await agents.rootChat();
   agents.scripts.set('Open a release chat', messages => {
-    if (!called(messages, 'create_thread')) return { tool: 'create_thread', arguments: { title: 'Release notes', message: 'Draft the release notes' } };
-    const created = toolResult(messages, 'create_thread');
-    if (!called(messages, 'wait_threads')) return { tool: 'wait_threads', arguments: { targets: [{ threadId: created.threadId }], timeoutMs: 60000 } };
-    return { text: 'Relay: ' + threadAnswer(toolText(messages, 'wait_threads')) };
+    if (!called(messages, 'create_peer')) return { tool: 'create_peer', arguments: { title: 'Release notes', message: 'Draft the release notes' } };
+    const created = toolResult(messages, 'create_peer');
+    if (!called(messages, 'wait_peers')) return { tool: 'wait_peers', arguments: { targets: [{ peerId: created.peerId }], timeoutMs: 60000 } };
+    return { text: 'Relay: ' + threadAnswer(toolText(messages, 'wait_peers')) };
   });
   agents.scripts.set('Draft the release notes', () => ({ text: 'Notes drafted.' }));
   await coordinator.command({ type: 'prompt', message: 'Open a release chat' });
   const messages = await coordinator.until(history => text(history.at(-1)).startsWith('Relay: '));
   expect(text(messages.at(-1))).toBe('Relay: Notes drafted.');
   const seen = agents.model.requests.findLast(request => startedWith(request, 'Open a release chat')).messages;
-  const created = toolResult(seen, 'create_thread');
+  const created = toolResult(seen, 'create_peer');
   expect(created.error).toBeUndefined();
-  const session = (await agents.daemon.invoke('list_sessions')).find((item: any) => item.id === created.threadId);
+  const session = (await agents.daemon.invoke('list_sessions')).find((item: any) => item.id === created.peerId);
   expect(session).toMatchObject({ name: 'Release notes' });
   expect(session.subagentParentId).toBeUndefined();
 }, 120000);
@@ -97,8 +97,8 @@ test.concurrent('a chat can stop another chat\'s running work, which keeps its h
   await worker.until(() => agents.model.requests.some(request => startedWith(request, 'Long job')));
   const coordinator = await agents.rootChat();
   agents.scripts.set('Stop the worker', messages => {
-    if (!called(messages, 'stop_thread')) return { tool: 'stop_thread', arguments: { threadId: worker.sessionId } };
-    if (!called(messages, 'message_thread')) return { tool: 'message_thread', arguments: { threadId: worker.sessionId, message: 'Are you still there?' } };
+    if (!called(messages, 'stop_peer')) return { tool: 'stop_peer', arguments: { peerId: worker.sessionId } };
+    if (!called(messages, 'message_peer')) return { tool: 'message_peer', arguments: { peerId: worker.sessionId, message: 'Are you still there?' } };
     return { text: 'Relay: done' };
   });
   try {
@@ -118,9 +118,9 @@ test.concurrent('a message to a busy chat waits until its current work finishes,
   await worker.command({ type: 'prompt', message: 'Busy job' });
   await worker.until(() => agents.model.requests.some(request => startedWith(request, 'Busy job')));
   const coordinator = await agents.rootChat();
-  agents.scripts.set('Ask the busy worker', messages => called(messages, 'message_thread')
-    ? { text: 'Relay: ' + JSON.stringify(toolResult(messages, 'message_thread')) }
-    : { tool: 'message_thread', arguments: { threadId: worker.sessionId, message: 'Queued question' } });
+  agents.scripts.set('Ask the busy worker', messages => called(messages, 'message_peer')
+    ? { text: 'Relay: ' + JSON.stringify(toolResult(messages, 'message_peer')) }
+    : { tool: 'message_peer', arguments: { peerId: worker.sessionId, message: 'Queued question' } });
   try {
     await coordinator.command({ type: 'prompt', message: 'Ask the busy worker' });
     const receipt = JSON.parse(text((await coordinator.until(history => text(history.at(-1)).startsWith('Relay: '))).at(-1)).slice('Relay: '.length));
@@ -134,7 +134,7 @@ test.concurrent('a message to a busy chat waits until its current work finishes,
 
 test.concurrent('a chat that tries to message itself is told to choose another chat, and nothing is delivered', async () => {
   const chat = await agents.rootChat();
-  agents.scripts.set('Message myself', messages => called(messages, 'message_thread') ? { text: 'Told: ' + text(messages.at(-1)) } : { tool: 'message_thread', arguments: { threadId: chat.sessionId, message: 'Hello me' } });
+  agents.scripts.set('Message myself', messages => called(messages, 'message_peer') ? { text: 'Told: ' + text(messages.at(-1)) } : { tool: 'message_peer', arguments: { peerId: chat.sessionId, message: 'Hello me' } });
   await chat.command({ type: 'prompt', message: 'Message myself' });
   const history = await chat.until(messages => text(messages.at(-1)).startsWith('Told: '));
   expect(text(history.at(-1))).toBe('Told: Choose another conversation as the recipient');
@@ -145,15 +145,15 @@ test.concurrent('a chat that tries to message itself is told to choose another c
 
 test.concurrent('messaging or waiting for a chat that does not exist tells the agent so in plain words', async () => {
   const missing = '11111111-2222-3333-4444-555555555555';
-  agents.scripts.set('Message a missing chat', messages => called(messages, 'message_thread') ? { text: 'Told: ' + text(messages.at(-1)) } : { tool: 'message_thread', arguments: { threadId: missing, message: 'Hello?' } });
-  agents.scripts.set('Wait for a missing chat', messages => called(messages, 'wait_threads') ? { text: 'Told: ' + text(messages.at(-1)) } : { tool: 'wait_threads', arguments: { targets: [{ threadId: missing }], timeoutMs: 2000 } });
+  agents.scripts.set('Message a missing chat', messages => called(messages, 'message_peer') ? { text: 'Told: ' + text(messages.at(-1)) } : { tool: 'message_peer', arguments: { peerId: missing, message: 'Hello?' } });
+  agents.scripts.set('Wait for a missing chat', messages => called(messages, 'wait_peers') ? { text: 'Told: ' + text(messages.at(-1)) } : { tool: 'wait_peers', arguments: { targets: [{ peerId: missing }], timeoutMs: 2000 } });
   const sender = await agents.rootChat();
   await sender.command({ type: 'prompt', message: 'Message a missing chat' });
   expect(text((await sender.until(messages => text(messages.at(-1)).startsWith('Told: '))).at(-1))).toBe('Told: Conversation was not found in active or archived storage');
   const waiter = await agents.rootChat();
   await waiter.command({ type: 'prompt', message: 'Wait for a missing chat' });
   const told = text((await waiter.until(messages => text(messages.at(-1)).startsWith('Told: '))).at(-1));
-  expect(told).toBe('Told: Thread ' + missing + ': Conversation was not found in active or archived storage');
+  expect(told).toBe('Told: Peer ' + missing + ': Conversation was not found in active or archived storage');
 }, 60000);
 
 test('list_agent_profiles follows the tool groups and lists the descriptions of agents that can start', async () => {
@@ -173,13 +173,13 @@ test('list_agent_profiles follows the tool groups and lists the descriptions of 
     return { tool: profilesTool(prompt), answer };
   };
 
-  await setTools(['read', 'create_thread']);
+  await setTools(['read', 'create_peer']);
   const threads = await listed('List thread agents', {});
   expect(threads.tool.parameters.properties).toEqual({});
   // helper is not usable as a thread.
   expect(JSON.parse(threads.answer).map((profile: any) => profile.name)).not.toContain('helper');
 
-  await setTools(['read', 'spawn_subagents', 'create_thread']);
+  await setTools(['read', 'spawn_subagents', 'create_peer']);
   const both = await listed('List subagent agents', { for: 'subagent' });
   expect(both.tool.parameters.required).toEqual(['for']);
   expect(JSON.parse(both.answer).find((profile: any) => profile.name === 'helper')).toMatchObject({ description: 'Finds files.' });
