@@ -19,5 +19,5 @@
 .subagent-finished .subagent-failed + .subagent-name::after { content: " failed"; }
 .subagent-finished .subagent-cancelled + .subagent-name::after { content: " cancelled"; }
 .subagent-finished::before { content: "·"; margin: 0 6px; }
-.subagent-finished-line { color: var(--muted); font-size: 12px; margin-bottom: 8px; }
+.subagent-finished-line { color: var(--muted); font-size: 12px; margin: 0 0 10px; padding-bottom: 6px; border-bottom: 1px solid var(--line); }
 .subagent-finished-line .subagent-finished::before { content: none; }
