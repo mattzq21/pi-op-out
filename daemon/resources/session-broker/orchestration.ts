@@ -430,7 +430,7 @@ export function registerOrchestration(pi: ExtensionAPI) {
   });
   pi.registerTool({
     name: "branchoff_peer", label: "Branch off peer",
-    description: "Start a peer in a new Git worktree, on a new branch with your current files. It keeps your agent and your history through your last finished answer, then gets message. Use it only when the user asks for it; follow it with wait_peers. If this fails, no peer was created.",
+    description: "Start a chat/session in a new worktree, branched off from last commit here. It keeps your agent and your history through your last finished answer, then gets message.",
     parameters: Type.Object({ message: Type.String({ minLength: 1 }) }),
     async execute(_id, params, signal, _update, ctx) {
       requireRootCaller(ctx);
