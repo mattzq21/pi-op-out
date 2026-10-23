@@ -9,11 +9,13 @@
 .subagent-completed { color: var(--green); }
 .subagent-running { color: var(--running); }
 .subagent-failed { color: #d77865; }
-/* Finished subagents start a turn, so they show as a centred divider between two thin lines. */
-.conversation-turn > .subagent-timeline { flex-direction: row; flex-wrap: wrap; align-items: center; justify-content: center; gap: 4px 14px; margin-top: 4px; font-size: 12px; }
-.conversation-turn > .subagent-timeline::before, .conversation-turn > .subagent-timeline::after { content: ""; flex: 1 1 40px; height: 1px; background: var(--line); }
-.conversation-turn > .subagent-timeline::before { order: -1; }
-.conversation-turn > .subagent-timeline .subagent-name { color: var(--muted); }
-.conversation-turn > .subagent-timeline .subagent-completed + .subagent-name::after { content: " finished"; }
-.conversation-turn > .subagent-timeline .subagent-failed + .subagent-name::after { content: " failed"; }
-.conversation-turn > .subagent-timeline .subagent-cancelled + .subagent-name::after { content: " cancelled"; }
+/* Finished subagents that start a turn share one line with the turn's "Worked for" label. */
+.subagent-finished { display: inline-flex; align-items: center; min-width: 0; }
+.subagent-finished .subagent-timeline { flex-direction: row; flex-wrap: wrap; gap: 2px 10px; font-size: inherit; }
+.subagent-finished .subagent-name { color: var(--muted); }
+.subagent-finished .subagent-completed + .subagent-name::after { content: " finished"; }
+.subagent-finished .subagent-failed + .subagent-name::after { content: " failed"; }
+.subagent-finished .subagent-cancelled + .subagent-name::after { content: " cancelled"; }
+.subagent-finished::after { content: "·"; margin: 0 6px; }
+.subagent-finished-line { color: var(--muted); font-size: 12px; margin-bottom: 8px; }
+.subagent-finished-line .subagent-finished::after { content: none; }

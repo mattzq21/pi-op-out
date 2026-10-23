@@ -18,6 +18,7 @@ import { findReplaceableAbortedTurn } from "../lib/abortedTurn";
 import { markStoppedPrompt, wasPromptStopped } from "../lib/stoppedPrompt";
 import { hasVisibleText, textOf, thinkingOf } from "../lib/content";
 import { cacheHitStats, isContextInjection, isPromptMessage } from "../lib/messages";
+import { SubagentResults, subagentRuns } from "./SubagentResults";
 import type { AgentProfile, AgentState, ChatMessage, ComposerUpload, ForkSource, ImageAttachment, Model, PromptContextInfo, SlashCommand } from "../types";
 import { branchingAvailable, canBranchFrom } from "../lib/branching";
 import { Composer, ContainedPicker } from "./Composer";
@@ -529,7 +530,11 @@ function ConversationTurn(componentProps: ConversationTurnProps) {
     return [{ ...reasoningMessage, id: `${message.id}:reasoning`, content: [{ type: "thinking", thinking: finalThinking() }], stopReason: undefined, errorMessage: undefined }];
   })));
 
-  const userMessages = createMemo(() => (componentProps.messages.filter(isPromptMessage)));
+  const userMessages = createMemo(() => (componentProps.messages.filter(message => isPromptMessage(message) && message.customType !== "piop-subagent-result")));
+  /** Subagents whose answers started this turn. They show on the turn's "Worked for" line instead of as a message. */
+  const finishedSubagents = createMemo(() => componentProps.messages.filter(message => isPromptMessage(message) && message.customType === "piop-subagent-result").flatMap(message => subagentRuns(message.details)));
+  // A click on a subagent opens its chat and must not open or close the work group around it.
+  const renderFinishedSubagents = () => finishedSubagents().length > 0 && <span class="subagent-finished" onClick={event => event.preventDefault()}><SubagentResults runs={finishedSubagents()} /></span>;
   const hasWork = createMemo(() => (intermediate().some((message) => !invisibleAssistant(message))));
   const reasoningOnly = createMemo(() => (compactCompletedTools(intermediate()).every(({ message }) => message.role === "assistant" && hasVisibleText(thinkingOf(message.content)) && !hasVisibleText(textOf(message.content)) && message.stopReason !== "error" && message.stopReason !== "aborted")));
   const finalSource = createMemo(() => (finalIndex() >= 0 ? componentProps.messages[finalIndex()] : undefined));
@@ -560,7 +565,7 @@ function ConversationTurn(componentProps: ConversationTurnProps) {
   });
 
   const renderPromptContextBar = () => (<Show when={componentProps.debug && firstResponseInputTokens()}>{inputTokens => <Index each={componentProps.promptContexts}>{context => <PromptContextBar context={context()} inputTokens={inputTokens()} />}</Index>}</Show>);
-  const renderWorkGroup = () => hasWork() && <details class="work-group" open={workOpen()} onToggle={(event) => setWorkOpen(event.currentTarget.open)}><summary>{reasoningOnly() ? "Reasoning" : workedFor() ? `Worked for ${workedFor()}` : "Work"}<ChevronRight size={12} class="work-group-chevron" aria-hidden="true" /></summary>{workOpen() && <div class={`work-group-content${reasoningOnly() ? " reasoning-group-content" : ""}`}><MessageList messages={intermediate()} expanded debug={componentProps.debug} paused={componentProps.paused} showActions={false} /></div>}</details>;
+  const renderWorkGroup = () => hasWork() && <details class="work-group" open={workOpen()} onToggle={(event) => setWorkOpen(event.currentTarget.open)}><summary>{renderFinishedSubagents()}{reasoningOnly() ? "Reasoning" : workedFor() ? `Worked for ${workedFor()}` : "Work"}<ChevronRight size={12} class="work-group-chevron" aria-hidden="true" /></summary>{workOpen() && <div class={`work-group-content${reasoningOnly() ? " reasoning-group-content" : ""}`}><MessageList messages={intermediate()} expanded debug={componentProps.debug} paused={componentProps.paused} showActions={false} /></div>}</details>;
 
   const renderActiveWorkContent = () => (<Show when={componentProps.active || componentProps.paused} fallback={required(<>
     {renderWorkGroup()}
@@ -573,6 +578,7 @@ function ConversationTurn(componentProps: ConversationTurnProps) {
 
   return <section class="conversation-turn" classList={{ "latest-turn": componentProps.latest === true }}>
     {<Key each={userMessages()} by={(message) => message.id}>{(message, _index) => <Message  message={message()} debug={componentProps.debug} />}</Key>}
+    {!hasWork() && finishedSubagents().length > 0 && <div class="subagent-finished-line">{renderFinishedSubagents()}</div>}
     {renderPromptContextBar()}
     {componentProps.debug && <MessageList messages={componentProps.messages.filter(isContextInjection)} expanded={false} debug={componentProps.debug} />}
     {renderActiveWorkContent()}
