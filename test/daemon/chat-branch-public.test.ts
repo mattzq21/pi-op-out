@@ -40,6 +40,8 @@ test('branch copies selected history and committed files, archive restores last 
     await settled(after);
     writeFileSync(join(cwd, 'tracked.txt'), 'current dirty files');
     writeFileSync(join(cwd, 'untracked.txt'), 'omit me');
+    writeFileSync(join(cwd, 'staged.txt'), 'omit me');
+    git(cwd, 'add', 'staged.txt');
     writeFileSync(join(cwd, 'ignored.txt'), 'omit me');
     await command({ type: 'fork_after', entryId: first.id });
     const branch = await command({ type: 'get_state' });
@@ -50,6 +52,9 @@ test('branch copies selected history and committed files, archive restores last 
     // The branch has only the committed files.
     expect(readFileSync(join(branch.cwd, 'tracked.txt'), 'utf8')).toBe('initial');
     expect(existsSync(join(branch.cwd, 'untracked.txt'))).toBe(false);
+    expect(existsSync(join(branch.cwd, 'staged.txt'))).toBe(false);
+    expect(git(branch.cwd, 'status', '--porcelain')).toBe('');
+    expect(readFileSync(join(cwd, 'untracked.txt'), 'utf8')).toBe('omit me');
     expect(existsSync(join(branch.cwd, 'ignored.txt'))).toBe(false);
     expect(git(cwd, 'status', '--porcelain')).toContain('tracked.txt');
     const history = (await command({ type: 'get_entries' })).entries.filter((e: any) => e.type === 'message' && ['user', 'assistant'].includes(e.message.role)).map((e: any) => text(e.message));

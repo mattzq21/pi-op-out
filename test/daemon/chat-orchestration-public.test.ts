@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, expect, test } from 'bun:test';
 import { execFileSync } from 'node:child_process';
-import { mkdirSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { agentDaemon, called, text } from './agent-chats';
 
@@ -89,7 +89,7 @@ test.concurrent('a chat can start a new independent chat that works on its promp
   expect(session.subagentParentId).toBeUndefined();
 }, 120000);
 
-test.concurrent('branchoff_peer starts a peer in a new worktree that keeps the agent and the history', async () => {
+test.concurrent('branchoff_peer starts a peer in a new worktree with only the committed files, the agent and the history', async () => {
   const coordinator = await agents.rootChat({ repository: true });
   agents.scripts.set('Branch me', messages => {
     const last = text(messages.at(-1));
@@ -99,6 +99,12 @@ test.concurrent('branchoff_peer starts a peer in a new worktree that keeps the a
   });
   await coordinator.command({ type: 'prompt', message: 'Branch me' });
   await coordinator.until(history => text(history.at(-1)) === 'Base answer.');
+  writeFileSync(join(coordinator.cwd, 'README.md'), 'uncommitted\n');
+  writeFileSync(join(coordinator.cwd, 'staged.txt'), 'staged\n');
+  execFileSync('git', ['-C', coordinator.cwd, 'add', 'staged.txt']);
+  // The coordinator commits its files when it answers, so the commit to branch from is the one before this turn.
+  const baseCommit = execFileSync('git', ['-C', coordinator.cwd, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
+  writeFileSync(join(coordinator.cwd, 'untracked.txt'), 'untracked\n');
   await coordinator.command({ type: 'prompt', message: 'Now branch off' });
   await coordinator.until(history => text(history.at(-1)) === 'Done.');
   const created = toolResult(agents.model.requests.findLast(request => called(request.messages, 'branchoff_peer')).messages, 'branchoff_peer');
@@ -107,8 +113,14 @@ test.concurrent('branchoff_peer starts a peer in a new worktree that keeps the a
   const git = (cwd: string, ...args: string[]) => execFileSync('git', ['-C', cwd, ...args], { encoding: 'utf8' }).trim();
   expect(session.cwd).not.toBe(coordinator.cwd);
   expect(session.forkSourceId).toBe(coordinator.sessionId);
-  expect(git(session.cwd, 'rev-parse', 'HEAD')).toBe(git(coordinator.cwd, 'rev-parse', 'HEAD'));
+  expect(git(session.cwd, 'rev-parse', 'HEAD')).toBe(baseCommit);
   expect(git(session.cwd, 'symbolic-ref', '--short', 'HEAD')).not.toBe(git(coordinator.cwd, 'symbolic-ref', '--short', 'HEAD'));
+  // Uncommitted, staged and untracked files stay in the source folder.
+  expect(readFileSync(join(session.cwd, 'README.md'), 'utf8')).toBe('start\n');
+  expect(existsSync(join(session.cwd, 'staged.txt'))).toBe(false);
+  expect(existsSync(join(session.cwd, 'untracked.txt'))).toBe(false);
+  expect(git(session.cwd, 'status', '--porcelain')).toBe('');
+  expect(readFileSync(join(coordinator.cwd, 'untracked.txt'), 'utf8')).toBe('untracked\n');
   // The peer's model sees the history through the last finished answer, then the message.
   for (const deadline = Date.now() + 60000; !agents.model.requests.some(request => text(request.messages.at(-1)).includes('Continue in the branch')) && Date.now() < deadline;) await Bun.sleep(100);
   const peerSaw = agents.model.requests.find(request => text(request.messages.at(-1)).includes('Continue in the branch')).messages.filter((message: any) => !['system', 'developer'].includes(message.role)).map(text);
