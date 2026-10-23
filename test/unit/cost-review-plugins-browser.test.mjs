@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict';
-import { test } from 'node:test';
+import { describe, test } from 'node:test';
 import { appBrowser } from '../app-browser-fixture.mjs';
 
+describe('cost and review at desktop and phone widths', { concurrency: 2 }, () => {
 for (const width of [1280, 412]) test(`cost and review commands retain their full chat flow at width ${width}`, { timeout: 120000 }, async t => {
   const page = await appBrowser(t, { model: 'echo' });
   await page.setViewportSize({ width, height: 900 });
@@ -31,4 +32,5 @@ for (const width of [1280, 412]) test(`cost and review commands retain their ful
   await review.getByRole('button', { name: 'Close split pane' }).click();
   await review.waitFor({ state: 'detached' });
   await page.getByRole('button', { name: 'Stop piop', exact: true }).waitFor({ state: 'detached', timeout: 30000 });
+});
 });
