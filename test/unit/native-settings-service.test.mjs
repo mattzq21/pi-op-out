@@ -1,3 +1,4 @@
+import { cleanupScope } from '../cleanup-scope.mjs';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { join } from 'node:path';
@@ -9,6 +10,7 @@ import { nativeFileCommand } from '../native-file-command.mjs';
 import { NativeTransport } from '../../clients/ui/lib/nativeTransport.ts';
 
 async function settingsClient(t, options = {}) {
+  t = cleanupScope(t);
   const dom = installDom();
   const storage = trackStorage(indexedDB);
   const requests = new Set();

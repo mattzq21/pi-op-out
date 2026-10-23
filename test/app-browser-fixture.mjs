@@ -1,3 +1,4 @@
+import { cleanupScope } from './cleanup-scope.mjs';
 import { startupPage } from './startup-browser-fixture.mjs';
 import { daemonClient } from './daemon-client.mjs';
 import { nativeFileCommand } from './native-file-command.mjs';
@@ -19,13 +20,15 @@ export async function deliverAppEvent(page, event, payload) {
 
 /** The app on a real daemon. nativeFailures maps a native command to the error message it fails with. model 'echo' gives the daemon a model that echoes each message. */
 export async function appBrowser(t, { remotes = [], keybindings = {}, nativeFailures = {}, model } = {}) {
+  t = cleanupScope(t);
   let page;
-  const deliveries = new Set(), errors = [];
+  const deliveries = new Set(), requests = new Set(), errors = [];
   t.after(async () => {
     const context = page?.context();
     page = undefined;
     await Promise.allSettled([...deliveries]);
     await context?.close();
+    await Promise.allSettled([...requests]);
   });
   const daemon = await daemonClient(t, (event, payload) => {
     if (!page) return;
@@ -45,7 +48,9 @@ export async function appBrowser(t, { remotes = [], keybindings = {}, nativeFail
       page.context().on('page', next => next.on('pageerror', error => errors.push(error.message)));
       await page.context().exposeFunction('nativeCommand', async (command, args) => {
         if (Object.hasOwn(nativeFailures, command)) throw new Error(nativeFailures[command]);
-        return command === 'daemon_invoke' ? daemon.invoke(args.command, args.args) : native.invoke(command, args);
+        const request = command === 'daemon_invoke' ? daemon.invoke(args.command, args.args) : native.invoke(command, args);
+        requests.add(request);
+        try { return await request; } finally { requests.delete(request); }
       });
     },
   });

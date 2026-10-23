@@ -1,3 +1,4 @@
+import { cleanupScope } from './cleanup-scope.mjs';
 import assert from 'node:assert/strict';
 import { mockIPC, mockWindows, clearMocks } from '@tauri-apps/api/mocks';
 import { emit } from '@tauri-apps/api/event';
@@ -7,6 +8,7 @@ import { nativeFileCommand } from './native-file-command.mjs';
 import { trackStorage } from './storage-idle.mjs';
 
 export async function appService(t, { keybindings = {}, remotes = [], beforeMount = async () => {} } = {}) {
+  t = cleanupScope(t);
   const dom = installDom();
   const storage = trackStorage(indexedDB);
   const requests = new Set();
