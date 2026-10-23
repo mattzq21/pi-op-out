@@ -1,4 +1,5 @@
 import ctypes
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import select
 import json
 import os
@@ -8,6 +9,7 @@ import shlex
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -146,4 +148,22 @@ print(json.dumps([str(folder), str(cache), str(transpiler), str(transforms), str
     def test_parent_killed(self): self.run_case('parent-killed')
     def test_owner_killed(self): self.run_case('owner-killed')
 
-if __name__ == '__main__': unittest.main()
+if __name__ == '__main__':
+    if len(sys.argv) > 1:
+        unittest.main()
+    else:
+        started = time.monotonic()
+        names = unittest.defaultTestLoader.getTestCaseNames(Cleanup)
+        failed = 0
+        def run(name):
+            return subprocess.run([sys.executable, __file__, 'Cleanup.' + name], capture_output=True, text=True)
+        with ThreadPoolExecutor(max_workers=4) as workers:
+            pending = {workers.submit(run, name): name for name in names}
+            for future in as_completed(pending):
+                result = future.result()
+                print(pending[future] + ':', 'PASS' if result.returncode == 0 else 'FAIL', flush=True)
+                if result.stdout: print(result.stdout, end='', flush=True)
+                if result.stderr: print(result.stderr, end='', file=sys.stderr, flush=True)
+                failed += result.returncode != 0
+        print(f'Cleanup tests: {len(names) - failed} passed, {failed} failed. Time: {time.monotonic() - started:.2f}s.')
+        sys.exit(1 if failed else 0)
