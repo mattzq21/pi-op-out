@@ -153,7 +153,7 @@ kbd { font: 11px "DM Sans"; border: 1px solid var(--line); padding: 2px 4px; bor
 .link-context-menu { position: fixed; right: auto; z-index: 30; }
 .select-control { height: 31px; border: 1px solid var(--line); border-radius: 7px; display: flex; align-items: center; padding: 0 7px; gap: 4px; border-color: var(--line); background: var(--dark-control); color: var(--ink); }
 .select-control span { font: 10px "DM Sans"; color: var(--faint); text-transform: uppercase; }.select-control select { max-width: 130px; border: 0; outline: 0; appearance: none; font-size: 12px; font-weight: 500; background: transparent; }.select-control.thinking select { max-width: 70px; }
-.messages { position: absolute; inset: 0; min-height: 0; overflow-y: auto; overflow-x: hidden; padding-bottom: calc(var(--composer-height, 0px) + 22px); scroll-padding-bottom: calc(var(--composer-height, 0px) + 22px); }
+.messages { position: absolute; inset: 0; min-height: 0; overflow-y: auto; overflow-x: hidden; padding-top: 5vh; padding-bottom: calc(var(--composer-height, 0px) + 22px); scroll-padding-bottom: calc(var(--composer-height, 0px) + 22px); }
 .messages { display: flex; flex-direction: column; }
 .conversation, .composer-wrap { width: min(740px, calc(100% - 72px)); margin: 0 auto; }
 .messages > .conversation { flex-shrink: 0; margin-top: auto; }
