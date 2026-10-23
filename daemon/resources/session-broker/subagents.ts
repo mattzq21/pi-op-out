@@ -478,13 +478,13 @@ export function registerSubagents(pi: ExtensionAPI) {
     name: "spawn_subagents", label: "Spawn subagents",
     exposure: "model-only",
     description: "Start subagents in the background, each with its own task. A subagent starts with no history and none of your context, so give it everything it needs in task. Avoid giving two subagents overlapping edits. Agent picks a profile from list_agent_profiles; omit it to use your own.",
-    parameters: Type.Object({ tasks: Type.Array(Type.Object({ name: Type.String({ pattern: "^[a-z][a-z0-9_]{0,63}$", description: "Unique name, used to address this subagent" }), task: Type.String({ minLength: 1, maxLength: 100_000 }), agent: Type.Optional(Type.String({ minLength: 1 })) }), { minItems: 1, maxItems: 8 }) }),
+    parameters: Type.Object({ tasks: Type.Array(Type.Object({ name: Type.String({ pattern: "^[a-z][a-z0-9_]{0,63}$", description: "Unique name, used to address this subagent" }), task: Type.String({ minLength: 1, maxLength: 100_000 }), agent: Type.Optional(Type.String({ minLength: 1 })) }), { minItems: 1 }) }),
     async execute(toolCallId, params, signal, onUpdate, ctx) {
       signal?.throwIfAborted();
 
       requireDelegation(ctx);
 
-      if (!params.tasks.length || params.tasks.length > 8 || params.tasks.some((task) => !task.task.trim())) throw new Error("Provide 1–8 named, nonempty tasks");
+      if (!params.tasks.length || params.tasks.some((task) => !task.task.trim())) throw new Error("Provide at least one named, nonempty task");
 
       if (new Set(params.tasks.map(task => task.name)).size !== params.tasks.length) throw new Error("Give each subagent a different name");
 
