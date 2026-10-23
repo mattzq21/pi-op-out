@@ -236,7 +236,7 @@ button.agent-delivery-source:hover { color: var(--accent-soft); text-decoration:
 .tool-event.error > .tool-summary { color: #d99e91; }
 .tool-chevron { flex: 0 0 auto; transition: transform .15s; }
 .tool-event[open] > .tool-summary > .tool-chevron { transform: rotate(90deg); }
-.work-group { margin: 0 0 8px; color: var(--muted); }
+.work-group { margin: 0 0 10px; padding-bottom: 6px; border-bottom: 1px solid var(--line); color: var(--muted); }
 .work-group > summary { display: flex; align-items: center; gap: 4px; width: fit-content; padding: 0; min-height: 20px; list-style: none; cursor: pointer; font: 12px/18px "DM Sans"; }
 .work-group > summary::-webkit-details-marker { display: none; }
 .work-group > summary:hover { color: var(--ink); }
