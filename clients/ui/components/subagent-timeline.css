@@ -16,6 +16,6 @@
 .subagent-finished .subagent-completed + .subagent-name::after { content: " finished"; }
 .subagent-finished .subagent-failed + .subagent-name::after { content: " failed"; }
 .subagent-finished .subagent-cancelled + .subagent-name::after { content: " cancelled"; }
-.subagent-finished::after { content: "·"; margin: 0 6px; }
+.subagent-finished::before { content: "·"; margin: 0 6px; }
 .subagent-finished-line { color: var(--muted); font-size: 12px; margin-bottom: 8px; }
-.subagent-finished-line .subagent-finished::after { content: none; }
+.subagent-finished-line .subagent-finished::before { content: none; }
