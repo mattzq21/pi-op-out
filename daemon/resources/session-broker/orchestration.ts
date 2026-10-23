@@ -212,7 +212,8 @@ function readItem(entry: Static<typeof entrySchema>, includeOutputs: boolean, ca
     stopReason: message.stopReason, error: message.errorMessage };
 }
 
-async function waitSnapshot(targets: Target[], signal: AbortSignal | undefined, stop: AbortSignal) {
+/** all: wake only when every target finished with a new answer or failed; otherwise when any one finished. */
+async function waitSnapshot(targets: Target[], signal: AbortSignal | undefined, stop: AbortSignal, all: boolean) {
   const round = signal ? AbortSignal.any([signal, stop]) : stop;
   const settled = await Promise.allSettled(targets.map(target => poll(target, round)));
   signal?.throwIfAborted();
@@ -220,7 +221,10 @@ async function waitSnapshot(targets: Target[], signal: AbortSignal | undefined, 
   const stopped = (reason: unknown) => stop.aborted && reason === stop.reason;
   const errors = settled.flatMap((item, index) => item.status === "rejected" && !stopped(item.reason) ? [{ ...targets[index], error: item.reason instanceof Error ? item.reason.message : String(item.reason) }] : []);
 
-  return { polls, errors, wake: polls.find(item => item.peer.status !== "running" && item.changed)?.peer };
+  const finished = polls.filter(item => item.peer.status !== "running" && item.changed);
+  const wake = all ? finished.length + errors.length === targets.length && finished.length > 0 : finished.length > 0;
+
+  return { polls, errors, wake };
 }
 
 const STATUS_NOTES: Record<string, string> = { paused: " (paused)" };
@@ -480,8 +484,8 @@ export function registerOrchestration(pi: ExtensionAPI) {
     },
   });
   pi.registerTool({
-    name: "wait_peers", label: "Wait for peers", exposure: "model-only", description: "Wait until one of the given peers finishes its work, until a new user message arrives, or until timeoutMs passes (default 300000). Returns the new answers of the peers that finished.",
-    parameters: Type.Object({ targets: Type.Array(Type.Object(address), { minItems: 1 }), timeoutMs: Type.Optional(Type.Integer({ minimum: 0 })) }),
+    name: "wait_peers", label: "Wait for peers", exposure: "model-only", description: "Wait until any of the given peers finishes its work (for: \"any\", the default) or until all of them finish (for: \"all\"), until a new user message arrives, or until timeoutMs passes (default 300000). Returns the new answers of the peers that finished.",
+    parameters: Type.Object({ targets: Type.Array(Type.Object(address), { minItems: 1 }), for: Type.Optional(Type.Union([Type.Literal("any"), Type.Literal("all")])), timeoutMs: Type.Optional(Type.Integer({ minimum: 0 })) }),
     async execute(_id, params, signal, _update, ctx) {
       requireRootCaller(ctx);
       validateTargets(params.targets, ctx);
@@ -497,7 +501,9 @@ export function registerOrchestration(pi: ExtensionAPI) {
 
       const finish = (snapshot: Awaited<ReturnType<typeof waitSnapshot>>) => {
         const interrupted = inputRevision !== revision || ctx.hasPendingMessages();
-        const actionable = Boolean(snapshot.wake || snapshot.errors.length || interrupted);
+        // With for: "all", a peer that cannot be read counts as done, so the wait still ends when the others finish.
+        const failed = params.for === "all" ? snapshot.errors.length === params.targets.length : snapshot.errors.length > 0;
+        const actionable = Boolean(snapshot.wake || failed || interrupted);
 
         if (!actionable && !stop.signal.aborted && Date.now() < deadline) return undefined;
 
@@ -510,7 +516,7 @@ export function registerOrchestration(pi: ExtensionAPI) {
       try {
         while (true) {
           signal?.throwIfAborted();
-          const snapshot = await waitSnapshot(targets, signal, stop.signal);
+          const snapshot = await waitSnapshot(targets, signal, stop.signal, params.for === "all");
           const done = finish(snapshot);
 
           if (done) return done;

@@ -45,6 +45,34 @@ test.concurrent('a chat can message another chat, wait for its answer and read i
   expect([workerSaw.role, text(workerSaw)]).toEqual(['user', '<peer_message>\nPeer ' + (coordinator.name ?? coordinator.sessionId) + ':\nWhat is the build status?\n</peer_message>']);
 }, 120000);
 
+test.concurrent('wait_peers with for: "all" waits until every listed peer has finished', async () => {
+  const fast = await agents.rootChat();
+  const slow = await agents.rootChat();
+  agents.scripts.set('You are fast', messages => ({ text: text(messages.at(-1)).includes('Report') ? 'Fast done' : 'Ready.' }));
+  agents.scripts.set('You are slow', async messages => {
+    if (!text(messages.at(-1)).includes('Report')) return { text: 'Ready.' };
+    await Bun.sleep(1500);
+    return { text: 'Slow done' };
+  });
+  for (const [chat, prompt] of [[fast, 'You are fast'], [slow, 'You are slow']] as const) {
+    await chat.command({ type: 'prompt', message: prompt });
+    await chat.until(history => text(history.at(-1)) === 'Ready.');
+  }
+  const coordinator = await agents.rootChat();
+  agents.scripts.set('Wait for both', messages => {
+    if (!called(messages, 'message_peer')) return { tool: 'message_peer', arguments: { peerId: fast.sessionId, message: 'Report' } };
+    if (messages.filter((message: any) => message.role === 'tool').length < 2) return { tool: 'message_peer', arguments: { peerId: slow.sessionId, message: 'Report' } };
+    if (!called(messages, 'wait_peers')) return { tool: 'wait_peers', arguments: { targets: [{ peerId: fast.sessionId }, { peerId: slow.sessionId }], for: 'all', timeoutMs: 60000 } };
+    return { text: 'Waited.' };
+  });
+  await coordinator.command({ type: 'prompt', message: 'Wait for both' });
+  await coordinator.until(history => text(history.at(-1)) === 'Waited.');
+  const seen = agents.model.requests.findLast(request => startedWith(request, 'Wait for both')).messages;
+  const waited = toolText(seen, 'wait_peers');
+  expect(waited).toContain('Fast done');
+  expect(waited).toContain('Slow done');
+}, 120000);
+
 test.concurrent('chat tools list and read only root chats, never subagent chats', async () => {
   const coordinator = await agents.rootChat();
   let childId = '';
