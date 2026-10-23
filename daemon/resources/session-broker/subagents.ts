@@ -268,6 +268,16 @@ export function registerSubagents(pi: ExtensionAPI) {
   };
 
   const useProfilesTool = agentProfilesTool(pi);
+  /** Whether the session's folder is in a Git repository, checked once per session. */
+  let repository: { sessionId: string; inside: boolean } | undefined;
+  const sessionInRepository = (ctx: ExtensionContext) => {
+    const sessionId = ctx.sessionManager.getSessionId();
+
+    if (repository?.sessionId !== sessionId) repository = { sessionId, inside: inGitRepository(ctx.cwd) };
+
+    return repository.inside;
+  };
+  pi.on("session_start", (_event, ctx) => { sessionInRepository(ctx); });
   const unsubscribeTools = pi.events.on("piop:required-tools", ({ ctx, tools, availableTools }) => {
     const allowed = availableTools ?? pi.getActiveTools();
     const child = subagentParent(ctx);
@@ -279,7 +289,7 @@ export function registerSubagents(pi: ExtensionAPI) {
     if (subagents || latestRuns(ctx).length) tools.push(...SUBAGENT_TOOLS);
 
     // branchoff_peer makes a Git worktree, so only a chat in a Git repository gets it.
-    if (peers) tools.push(...PEER_TOOLS.filter(tool => tool !== "branchoff_peer" || inGitRepository(ctx.cwd)));
+    if (peers) tools.push(...PEER_TOOLS.filter(tool => tool !== "branchoff_peer" || sessionInRepository(ctx)));
 
     if (useProfilesTool(subagents, peers)) tools.push("list_agent_profiles");
   });
