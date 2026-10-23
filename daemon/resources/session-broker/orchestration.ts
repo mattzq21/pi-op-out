@@ -225,6 +225,15 @@ function validateTargets(targets: Target[], ctx: ExtensionContext) {
 
 const parentMessageSchema = Schema.Object({ message: Schema.String() });
 
+const resultDetailsSchema = Schema.Object({ runs: Schema.Array(Schema.Object({ name: Schema.String(), status: Schema.String(), agent: Schema.Optional(Schema.String()), output: Schema.Optional(Schema.String()) })) });
+
+const attribute = (value: string) => value.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;");
+
+/** A parent sees each finished subagent as a <subagent_response> tag holding its answer. */
+function subagentResponses(runs: Static<typeof resultDetailsSchema>["runs"]) {
+  return runs.map(run => `<subagent_response name="${attribute(run.name)}"${run.agent ? ` agent="${attribute(run.agent)}"` : ""} status="${attribute(run.status)}">\n${run.output ?? ""}\n</subagent_response>`).join("\n\n");
+}
+
 /** The text the parent wrote, from a delivered agent message. */
 function parentPrompt(content: string) {
   try { const value = JSON.parse(content); return Check(parentMessageSchema, value) ? value.message : undefined; } catch { return undefined; }
@@ -329,6 +338,10 @@ function registerDelivery(pi: ExtensionAPI) {
 
       // A subagent sees its parent's messages as plain user messages that hold only the text the parent wrote.
       if (prompt !== undefined) return [{ role: "user", content: [{ type: "text", text: prompt }], timestamp: message.timestamp }];
+
+      if (message.role === "custom" && message.customType === "piop-subagent-result" && Check(resultDetailsSchema, message.details)) {
+        return [{ role: "user", content: [{ type: "text", text: subagentResponses(message.details.runs) }], timestamp: message.timestamp }];
+      }
       const toolCallId = `agent_delivery_${createHash("sha256").update(JSON.stringify([message.timestamp, message.content])).digest("hex").slice(0, 24)}`;
 
       return [

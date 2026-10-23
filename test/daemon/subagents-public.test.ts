@@ -59,7 +59,7 @@ test.concurrent('a child agent\'s final answer reaches its parent, which continu
 const delegating = (name: string, task: string) => (messages: any[]) => {
   const last = messages.at(-1);
   if (!called(messages, 'spawn_subagents')) return { tool: 'spawn_subagents', arguments: { tasks: [{ name: name, task: task }] } };
-  const delivered = text(last).match(/Relay: [^"\\]*/);
+  const delivered = text(last).match(/Relay: [^"\\\n]*/);
   return { text: delivered ? delivered[0] : 'Waiting for ' + name + '.' };
 };
 
@@ -168,7 +168,7 @@ test.concurrent('interrupting a busy child cancels its work, tells the parent, a
     await root.until(history => text(history.at(-1)) === 'Relay: quick');
   } finally { releaseSlow({ text: 'Relay: late' }); }
   const rootRequests = agents.model.requests.filter(request => JSON.stringify(request.messages).includes('Start a slow helper'));
-  expect(rootRequests.some(request => /slow \([^)]*\): cancelled[\s\S]*Subagent stopped by stop_subagent/.test(text(request.messages.at(-1))))).toBe(true);
+  expect(rootRequests.some(request => /<subagent_response name="slow"[^>]* status="cancelled">\n[\s\S]*Subagent stopped by stop_subagent/.test(text(request.messages.at(-1))))).toBe(true);
   expect((await agents.daemon.invoke('list_sessions')).filter((session: any) => session.subagentParentId === root.sessionId).length).toBe(1);
 }, 120000);
 
@@ -328,7 +328,7 @@ test('pausing a parent cancels its busy child, and after resume the parent hears
     const last = text(messages.at(-1));
     const relay = last.match(/Relay: \w+/);
     if (relay) return { text: relay[0] };
-    if (/patience \([^)]*\): cancelled/.test(last) && !called(messages, 'message_subagent')) return { tool: 'message_subagent', arguments: { name: 'patience', message: 'Try the slow job again' } };
+    if (/<subagent_response name="patience"[^>]* status="cancelled">/.test(last) && !called(messages, 'message_subagent')) return { tool: 'message_subagent', arguments: { name: 'patience', message: 'Try the slow job again' } };
     if (called(messages, 'spawn_subagents') && !called(messages, 'wait_subagents')) return { tool: 'wait_subagents' };
     return called(messages, 'spawn_subagents') ? { text: 'Waiting.' } : { tool: 'spawn_subagents', arguments: { tasks: [{ name: 'patience', task: 'Paused child job' }] } };
   });

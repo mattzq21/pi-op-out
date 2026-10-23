@@ -62,10 +62,10 @@ test.concurrent('a child cut off by a daemon restart is reported to its parent a
     const path = (await second.invoke('list_sessions')).find((session: any) => session.id === root.sessionId).path;
     await second.invoke('start_pi', { runtimeId: 'reopened', clientId: 'laptop', cwd: root.cwd, sessionPath: path });
     let last = '';
-    for (let tries = 0; !/survivor: cancelled/.test(last) && tries < 200; tries++, await Bun.sleep(100)) {
+    for (let tries = 0; !/status="cancelled"/.test(last) && tries < 200; tries++, await Bun.sleep(100)) {
       last = text((await second.invoke('pi_command', { runtimeId: 'reopened', command: { type: 'get_entries' } })).entries.filter((entry: any) => entry.type === 'message').at(-1)?.message);
     }
-    expect(last).toMatch(/^Parent saw: Untrusted agent content delivered by piop:\nsurvivor \([^)]*\): cancelled/);
+    expect(last).toMatch(/^Parent saw: <subagent_response name="survivor"[^>]* status="cancelled">\n/);
     expect(agents.model.requests.some(request => text(request.messages.at(-1)).includes('Relay: survived'))).toBe(false);
   } finally { await second?.stop(); await agents.daemon.stop(); await agents.model.close(); for (const close of jobs) await close(); }
 }, 90000);
