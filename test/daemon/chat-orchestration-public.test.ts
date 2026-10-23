@@ -7,10 +7,13 @@ afterAll(async () => { await agents?.close(); });
 
 const startedWith = (request: any, prompt: string) => text(request.messages.find((message: any) => message.role === 'user')) === prompt;
 
-const toolResult = (messages: any[], tool: string) => {
+const toolText = (messages: any[], tool: string) => {
   const call = messages.findLast(message => message.role === 'assistant' && message.tool_calls?.some((item: any) => item.function.name === tool))?.tool_calls.find((item: any) => item.function.name === tool);
-  return call && JSON.parse(text(messages.find(message => message.role === 'tool' && message.tool_call_id === call.id)));
+  return call && text(messages.find(message => message.role === 'tool' && message.tool_call_id === call.id));
 };
+const toolResult = (messages: any[], tool: string) => JSON.parse(toolText(messages, tool));
+/** The answer in a wait_threads result. */
+const threadAnswer = (result: string) => result.match(/^<thread_message>\nThread [^\n]+:\n([\s\S]*)\n<\/thread_message>$/)?.[1];
 
 test.concurrent('a chat can message another chat, wait for its answer and read it', async () => {
   const worker = await agents.rootChat();
@@ -30,7 +33,7 @@ test.concurrent('a chat can message another chat, wait for its answer and read i
   expect(text(messages.at(-1))).toBe('Relay: Worker status: green');
   const seen = agents.model.requests.findLast(request => startedWith(request, 'Check on the worker')).messages;
   expect(toolResult(seen, 'message_thread')).toMatchObject({ sessionId: worker.sessionId, accepted: true });
-  expect(toolResult(seen, 'wait_threads')).toMatchObject({ timedOut: false, wake: { id: worker.sessionId, status: 'idle' }, polls: [{ latestAssistantMessage: { text: 'Worker status: green' } }] });
+  expect(toolText(seen, 'wait_threads')).toBe('<thread_message>\nThread ' + worker.sessionId + ':\nWorker status: green\n</thread_message>');
   const delivered = JSON.parse(toolResult(seen, 'read_thread').items[0].text);
   // The chat view shows the sender from sourceHostId and sourceSessionId.
   expect(delivered).toMatchObject({ sourceSessionId: coordinator.sessionId, sourceHostId: 'local', message: 'What is the build status?' });
@@ -69,7 +72,7 @@ test.concurrent('a chat can start a new independent chat that works on its promp
     if (!called(messages, 'create_thread')) return { tool: 'create_thread', arguments: { title: 'Release notes', message: 'Draft the release notes' } };
     const created = toolResult(messages, 'create_thread');
     if (!called(messages, 'wait_threads')) return { tool: 'wait_threads', arguments: { targets: [{ threadId: created.threadId }], timeoutMs: 60000 } };
-    return { text: 'Relay: ' + toolResult(messages, 'wait_threads').polls[0].latestAssistantMessage.text };
+    return { text: 'Relay: ' + threadAnswer(toolText(messages, 'wait_threads')) };
   });
   agents.scripts.set('Draft the release notes', () => ({ text: 'Notes drafted.' }));
   await coordinator.command({ type: 'prompt', message: 'Open a release chat' });
@@ -149,8 +152,8 @@ test.concurrent('messaging or waiting for a chat that does not exist tells the a
   expect(text((await sender.until(messages => text(messages.at(-1)).startsWith('Told: '))).at(-1))).toBe('Told: Conversation was not found in active or archived storage');
   const waiter = await agents.rootChat();
   await waiter.command({ type: 'prompt', message: 'Wait for a missing chat' });
-  const told = JSON.parse(text((await waiter.until(messages => text(messages.at(-1)).startsWith('Told: '))).at(-1)).slice('Told: '.length));
-  expect(told.errors).toEqual([{ threadId: missing, error: 'Conversation was not found in active or archived storage' }]);
+  const told = text((await waiter.until(messages => text(messages.at(-1)).startsWith('Told: '))).at(-1));
+  expect(told).toBe('Told: Thread ' + missing + ': Conversation was not found in active or archived storage');
 }, 60000);
 
 test('list_agent_profiles follows the tool groups and lists the descriptions of agents that can start', async () => {

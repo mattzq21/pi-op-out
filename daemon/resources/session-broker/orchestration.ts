@@ -13,7 +13,7 @@ import { activeConversation } from "./conversation-location.ts";
 
 const messageSchema = Schema.Object({ role: Schema.String(), content: Schema.Optional(Schema.Unknown()), toolName: Schema.Optional(Schema.String()), customType: Schema.Optional(Schema.String()), details: Schema.Optional(Schema.Unknown()), stopReason: Schema.Optional(Schema.String()), errorMessage: Schema.Optional(Schema.String()) });
 
-const entrySchema = Schema.Object({ id: Schema.String(), parentId: Schema.Optional(Schema.Union([Schema.String(), Schema.Null()])), type: Schema.String(), message: Schema.Optional(messageSchema), customType: Schema.Optional(Schema.String()), content: Schema.Optional(Schema.Unknown()), details: Schema.Optional(Schema.Unknown()), timestamp: Schema.Optional(Schema.Union([Schema.String(), Schema.Number()])) });
+const entrySchema = Schema.Object({ id: Schema.String(), name: Schema.Optional(Schema.String()), parentId: Schema.Optional(Schema.Union([Schema.String(), Schema.Null()])), type: Schema.String(), message: Schema.Optional(messageSchema), customType: Schema.Optional(Schema.String()), content: Schema.Optional(Schema.Unknown()), details: Schema.Optional(Schema.Unknown()), timestamp: Schema.Optional(Schema.Union([Schema.String(), Schema.Number()])) });
 
 const stateSchema = Schema.Object({ sessionFile: Schema.Optional(Schema.String()), isPaused: Schema.Optional(Schema.Boolean()), isPausing: Schema.Optional(Schema.Boolean()), isStreaming: Schema.Optional(Schema.Boolean()), isCompacting: Schema.Optional(Schema.Boolean()), needsInput: Schema.Optional(Schema.Boolean()), pendingMessageCount: Schema.Optional(Schema.Number()) });
 
@@ -185,8 +185,10 @@ async function poll(target: Target, signal?: AbortSignal) {
   const text = message ? messageText(message) : "";
   const cursor = createHash("sha256").update(JSON.stringify([hostId, target.threadId, snapshot.revision, status, last?.id, text])).digest("hex");
   const changed = cursor !== target.afterCursor;
+  const name = snapshot.history.entries.findLast(entry => entry.type === "session_info" && entry.name)?.name ?? target.threadId;
+  const answer = text || message?.errorMessage || (message ? "(No text in the answer.)" : "(No answer yet.)");
 
-  return { thread: { id: target.threadId, hostId, status }, cursor, changed,
+  return { thread: { id: target.threadId, hostId, status }, name, answer, cursor, changed,
     latestAssistantMessage: changed && last ? { id: last.id, text: text.slice(0, 2000), truncated: text.length > 2000, stopReason: message?.stopReason, error: message?.errorMessage } : undefined };
 }
 
@@ -215,6 +217,23 @@ async function waitSnapshot(targets: Target[], signal: AbortSignal | undefined, 
   const errors = settled.flatMap((item, index) => item.status === "rejected" && !stopped(item.reason) ? [{ ...targets[index], error: item.reason instanceof Error ? item.reason.message : String(item.reason) }] : []);
 
   return { polls, errors, wake: polls.find(item => item.thread.status !== "running" && item.changed)?.thread };
+}
+
+const STATUS_NOTES: Record<string, string> = { needs_input: " (needs input)", paused: " (paused)" };
+
+/** The new answers of the chats that finished, each in a <thread_message> tag with the chat's name on the first line. */
+function threadAnswers(snapshot: Awaited<ReturnType<typeof waitSnapshot>>, interrupted: boolean) {
+  const answers = snapshot.polls.filter(item => item.thread.status !== "running" && item.changed).map(item => {
+    const answer = item.answer.length > 16_000 ? item.answer.slice(0, 16_000) + "\n[Answer truncated.]" : item.answer;
+
+    return "<thread_message>\nThread " + item.name + (STATUS_NOTES[item.thread.status] ?? "") + ":\n" + answer + "\n</thread_message>";
+  });
+  const errors = snapshot.errors.map(item => "Thread " + item.threadId + ": " + item.error);
+  const parts = [...answers, ...errors];
+
+  if (interrupted) parts.push("The user sent a new message.");
+
+  return parts.length ? parts.join("\n\n") : "No chat finished before the wait ended.";
 }
 
 function validateTargets(targets: Target[], ctx: ExtensionContext) {
@@ -351,6 +370,8 @@ function registerDelivery(pi: ExtensionAPI) {
 
 export function registerOrchestration(pi: ExtensionAPI) {
   registerDelivery(pi);
+  /** The last answer each wait returned, by waiting chat and target chat. */
+  const seenAnswers = new Map<string, string>();
   let inputRevision = 0;
   const inputListeners = new Set<() => void>();
   const newInput = () => { inputRevision++; for (const listener of inputListeners) listener(); };
@@ -433,11 +454,13 @@ export function registerOrchestration(pi: ExtensionAPI) {
     },
   });
   pi.registerTool({
-    name: "wait_threads", label: "Wait for chats", description: "Wait until one of 1–8 chats finishes its work or needs input, until a new user message arrives, or until timeoutMs passes (default and maximum 120000; 0 returns at once). Pass a returned cursor as afterCursor to skip answers you have already seen.",
-    parameters: Type.Object({ targets: Type.Array(Type.Object({ ...address, afterCursor: Type.Optional(Type.String()) }), { minItems: 1, maxItems: 8 }), timeoutMs: Type.Optional(Type.Integer({ minimum: 0, maximum: 120_000 })) }),
+    name: "wait_threads", label: "Wait for chats", description: "Wait until one of 1–8 chats finishes its work or needs input, until a new user message arrives, or until timeoutMs passes (default and maximum 120000; 0 returns at once). Returns the new answers of the chats that finished.",
+    parameters: Type.Object({ targets: Type.Array(Type.Object(address), { minItems: 1, maxItems: 8 }), timeoutMs: Type.Optional(Type.Integer({ minimum: 0, maximum: 120_000 })) }),
     async execute(_id, params, signal, _update, ctx) {
       requireRootCaller(ctx);
       validateTargets(params.targets, ctx);
+      const key = (target: Target) => [ctx.sessionManager.getSessionId(), target.hostId ?? currentHost(), target.threadId].join("\0");
+      const targets = params.targets.map(target => ({ ...target, afterCursor: seenAnswers.get(key(target)) }));
       const deadline = Date.now() + (params.timeoutMs ?? 120_000);
       const revision = inputRevision;
       const stop = new AbortController();
@@ -449,13 +472,18 @@ export function registerOrchestration(pi: ExtensionAPI) {
         const interrupted = inputRevision !== revision || ctx.hasPendingMessages();
         const actionable = Boolean(snapshot.wake || snapshot.errors.length || interrupted);
 
-        return actionable || stop.signal.aborted || Date.now() >= deadline ? result({ timedOut: !actionable && params.timeoutMs !== 0, interrupted, ...snapshot }) : undefined;
+        if (!actionable && !stop.signal.aborted && Date.now() < deadline) return undefined;
+
+        // An answer returned once is not returned again by a later wait.
+        for (const item of snapshot.polls) if (item.thread.status !== "running" && item.changed) seenAnswers.set(key({ threadId: item.thread.id, hostId: item.thread.hostId }), item.cursor);
+
+        return { content: [{ type: "text" as const, text: threadAnswers(snapshot, interrupted) }], details: { interrupted, ...snapshot } };
       };
 
       try {
         while (true) {
           signal?.throwIfAborted();
-          const snapshot = await waitSnapshot(params.targets, signal, stop.signal);
+          const snapshot = await waitSnapshot(targets, signal, stop.signal);
           const done = finish(snapshot);
 
           if (done) return done;
