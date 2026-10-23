@@ -454,17 +454,19 @@ export function registerOrchestration(pi: ExtensionAPI) {
     },
   });
   pi.registerTool({
-    name: "wait_threads", label: "Wait for chats", description: "Wait until one of the given chats finishes its work or needs input, until a new user message arrives, or until timeoutMs passes (default and maximum 120000; 0 returns at once). Returns the new answers of the chats that finished.",
-    parameters: Type.Object({ targets: Type.Array(Type.Object(address), { minItems: 1 }), timeoutMs: Type.Optional(Type.Integer({ minimum: 0, maximum: 120_000 })) }),
+    name: "wait_threads", label: "Wait for chats", description: "Wait until one of the given chats finishes its work or needs input, until a new user message arrives, or until timeoutMs passes if you give it (0 returns at once). Returns the new answers of the chats that finished.",
+    parameters: Type.Object({ targets: Type.Array(Type.Object(address), { minItems: 1 }), timeoutMs: Type.Optional(Type.Integer({ minimum: 0 })) }),
     async execute(_id, params, signal, _update, ctx) {
       requireRootCaller(ctx);
       validateTargets(params.targets, ctx);
       const key = (target: Target) => [ctx.sessionManager.getSessionId(), target.hostId ?? currentHost(), target.threadId].join("\0");
       const targets = params.targets.map(target => ({ ...target, afterCursor: seenAnswers.get(key(target)) }));
-      const deadline = Date.now() + (params.timeoutMs ?? 120_000);
+      // Without timeoutMs the wait has no time limit.
+      const deadline = params.timeoutMs === undefined ? Infinity : Date.now() + params.timeoutMs;
       const revision = inputRevision;
       const stop = new AbortController();
-      const timer = params.timeoutMs === 0 ? undefined : setTimeout(() => stop.abort(new Error("Wait timed out")), deadline - Date.now());
+      // A timer longer than setTimeout allows is left to the loop, which checks the deadline every second.
+      const timer = !params.timeoutMs || params.timeoutMs > 0x7fffffff ? undefined : setTimeout(() => stop.abort(new Error("Wait timed out")), deadline - Date.now());
       const onInput = () => stop.abort(new Error("Wait interrupted by new input"));
       inputListeners.add(onInput);
 
