@@ -273,7 +273,8 @@ test('the session list combines reachable machines, skips failing ones, sorts by
     const byId = new Map(rows.map((row: any) => [row.id, row]));
     expect(byId.get(recent.id)).toMatchObject({ hostName: 'Server', groupId: serverGroup });
     expect(byId.get(local.id)).toMatchObject({ hostName: 'Local', groupId: localGroup });
-    expect(byId.get(old.id)).toMatchObject({ groupId: null });
+    // A listed chat that nobody assigned joins the project of its folder.
+    expect(byId.get(old.id)).toMatchObject({ groupId: 'server:' + server.home });
     expect(await daemon.waitEvent('pi://daemon-error', payload => payload.hostId === 'offline')).toMatchObject({ line: expect.stringContaining('Could not attach to Offline') });
   } finally { await useRemotes(daemon, [server]); await empty.stop(); }
 });

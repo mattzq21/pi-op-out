@@ -3,6 +3,9 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { readFile } from 'node:fs/promises';
 import { Message } from '../../clients/ui/components/Message.tsx';
+import { debugView } from '../../clients/ui/lib/debugFeatures.ts';
+
+const allDebug = debugView({ debugMode: true });
 
 async function renderMessage(t, message, extra = {}) {
   const dom = installDom();
@@ -26,7 +29,7 @@ test('compact tool results show their count and status without raw input or outp
 });
 
 test('running tools keep their input and output closed until requested', async t => {
-  await renderMessage(t, { role: 'tool', toolName: 'read', toolStatus: 'running', content: 'private output' }, { debug: true });
+  await renderMessage(t, { role: 'tool', toolName: 'read', toolStatus: 'running', content: 'private output' }, { debug: allDebug });
   assert.match(document.body.textContent, /Running/);
   assert.equal(document.querySelector('details').open, false);
   assert.equal(control('Tool output'), null);
@@ -205,7 +208,7 @@ test('a failed tool payload load shows its error and retry loads the input and o
   let calls = 0;
   const message = { id: 'tool-id', role: 'tool', toolName: 'read', content: '', deferredToolPayload: 'payload-ref', toolPayloadVersion: 1,
     loadToolPayload: () => { calls++; if (calls === 2) secondCall.resolve(); return pendingLoads.shift().promise; } };
-  const view = await renderMessage(t, message, { debug: true });
+  const view = await renderMessage(t, message, { debug: allDebug });
   await click(document.querySelector('summary'));
   await untilDom(() => /Loading tool input and output/.test(document.querySelector('[role=status]')?.textContent));
   await act(() => firstLoad.reject(new Error('payload unavailable')));
@@ -214,7 +217,7 @@ test('a failed tool payload load shows its error and retry loads the input and o
   await click(button('Retry'));
   let timer;
   await Promise.race([secondCall.promise, new Promise((_, reject) => { timer = setTimeout(() => reject(new Error('Retry did not load the tool payload again')), 2000); })]).finally(() => clearTimeout(timer));
-  await view.rerender({ debug: true, message: { ...message, content: 'file contents', toolInput: { path: '/repo/a' }, toolPayloadLoaded: true, loadedToolPayloadVersion: 1 } });
+  await view.rerender({ debug: allDebug, message: { ...message, content: 'file contents', toolInput: { path: '/repo/a' }, toolPayloadLoaded: true, loadedToolPayloadVersion: 1 } });
   await act(() => secondLoad.resolve());
   assert.equal(calls, 2);
   assert.equal(document.querySelector('[role=alert]'), null);
@@ -226,10 +229,10 @@ test('a failed tool payload load shows its error and retry loads the input and o
 test('a stale tool payload failure does not replace the newer loaded input and output', async t => {
   const oldLoad = Promise.withResolvers();
   const message = { id: 'tool-id', role: 'tool', toolName: 'read', content: '', deferredToolPayload: 'payload-ref', toolPayloadVersion: 1, loadToolPayload: () => oldLoad.promise };
-  const view = await renderMessage(t, message, { debug: true });
+  const view = await renderMessage(t, message, { debug: allDebug });
   await click(document.querySelector('summary'));
   await untilDom(() => /Loading tool input and output/.test(document.querySelector('[role=status]')?.textContent));
-  await view.rerender({ debug: true, message: { ...message, content: 'new contents', toolInput: { path: '/repo/new' }, toolPayloadVersion: 2, toolPayloadLoaded: true, loadedToolPayloadVersion: 2 } });
+  await view.rerender({ debug: allDebug, message: { ...message, content: 'new contents', toolInput: { path: '/repo/new' }, toolPayloadVersion: 2, toolPayloadLoaded: true, loadedToolPayloadVersion: 2 } });
   await act(() => oldLoad.reject(new Error('old payload unavailable')));
   await act(() => new Promise(resolve => setTimeout(resolve, 0)));
   assert.equal(document.querySelector('[role=alert]'), null);

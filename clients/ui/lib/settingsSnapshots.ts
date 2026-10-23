@@ -23,7 +23,8 @@ export function stableSnapshot(value: SettingsSnapshotValue) {
 export function settingsSnapshot(settings: AppSettings, agentConfig?: AgentConfig) {
   const { settingsRevision: _settingsRevision, clientSettingsRevision: _clientSettingsRevision, settingsDurabilityError: _settingsDurabilityError, clientSettingsDurabilityError: _clientSettingsDurabilityError, tools: _tools, ...value } = settings;
 
-  return stableSnapshot({ settings: value, agentConfig: agentConfig && { ...agentConfig, revision: undefined } });
+  // Daemon settings carry no debug feature choices; no list means no feature is off.
+  return stableSnapshot({ settings: { ...value, debugFeaturesOff: value.debugFeaturesOff ?? [] }, agentConfig: agentConfig && { ...agentConfig, revision: undefined } });
 }
 
 export function agentEditsSnapshot(config?: AgentConfig) {

@@ -34,5 +34,5 @@ test('a message from an unlisted or unparsable source still shows its text', asy
   const article = document.querySelector('[aria-label="Message from another agent"]');
   assert.match(article.textContent, /plain words/);
   assert.equal(article.querySelector('.agent-delivery-source').textContent, 'Unknown session');
-  assert.equal(article.querySelector('button'), null);
+  assert.equal(article.querySelector('button.agent-delivery-source'), null);
 });

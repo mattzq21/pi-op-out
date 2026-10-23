@@ -47,7 +47,8 @@ async function panelPage(t, { extra = 0, cwd = process.cwd(), recent = false, co
         IDBDatabase.prototype.transaction = function (...args) { return track(transaction.apply(this, args), 'complete'); };
         window.settlePanelStorage = async () => { while (pending.size) await Promise.all([...pending]); };
       });
-      await page.exposeFunction('panelSessions', () => sessions);
+      // The panel gets the chats as listed by the daemon, which registers their projects.
+      await page.exposeFunction('panelSessions', async () => { await service.listChats(sessions); return sessions; });
       await page.exposeFunction('panelActiveId', () => sessions.find(session => session.name === activeName)?.id);
       const invoke = (command, args) => command === 'open_project_directory' && native ? native.invoke(command, args) : service.invoke(command, args);
       await page.exposeFunction('panelCommand', (command, args) => {
@@ -635,6 +636,8 @@ test('a recreated project does not restore a forgotten group conversation order'
   await forgetBrowserGroup(page, 'repo');
   const chat = await service.invoke('create_temporary_chat', { hostId: 'local' });
   sessions.push({ id: chat.sessionId, name: 'Chat 3', path: `/sessions/${chat.sessionId}.jsonl`, cwd: process.cwd(), project: 'repo', messageCount: 1 });
+  // A forgotten project stays forgotten when its chats are listed, so the user makes the group from its folder again.
+  await service.invoke('change_session_groups', { change: { type: 'project', project: { id: 'local:' + process.cwd(), name: 'repo', cwd: process.cwd(), hostId: 'local', hostName: 'Local' }, key: 'local:' + chat.sessionId } });
   await page.getByRole('button', { name: 'Refresh conversation list', exact: true }).click();
   await page.getByRole('button', { name: 'Group actions for repo', exact: true }).waitFor();
   const state = await service.invoke('load_session_groups', { seeds: [] });
@@ -655,6 +658,8 @@ test('a recreated project does not restore a forgotten collapse setting', async 
   await forgetBrowserGroup(page, 'repo');
   const chat = await service.invoke('create_temporary_chat', { hostId: 'local' });
   sessions.push({ id: chat.sessionId, name: 'Chat 3', path: `/sessions/${chat.sessionId}.jsonl`, cwd: process.cwd(), project: 'repo', messageCount: 1 });
+  // A forgotten project stays forgotten when its chats are listed, so the user makes the group from its folder again.
+  await service.invoke('change_session_groups', { change: { type: 'project', project: { id: 'local:' + process.cwd(), name: 'repo', cwd: process.cwd(), hostId: 'local', hostName: 'Local' }, key: 'local:' + chat.sessionId } });
   await page.getByRole('button', { name: 'Refresh conversation list', exact: true }).click();
   await page.getByRole('button', { name: 'Collapse repo', exact: true }).waitFor();
   await conversation(page, 'Chat 3').waitFor();

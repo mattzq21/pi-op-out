@@ -164,12 +164,12 @@ test('the first branch on a machine that fails before its worktree exists cleans
     await agents.daemon.waitEvent('pi://event', p => !seen.has(p) && p.runtimeId === runtimeId && p.event?.type === 'agent_settled', 60000);
     const reply = (await command({ type: 'get_entries' })).entries.filter((entry: any) => entry.message?.role === 'assistant').at(-1);
     const state = await command({ type: 'get_state' });
-    // Git cannot read this file, so copying the current files fails before the worktree folder exists.
-    writeFileSync(join(cwd, 'unreadable.txt'), 'secret');
-    chmodSync(join(cwd, 'unreadable.txt'), 0o000);
+    // A required Git filter that always fails stops the checkout of this file, so the branch fails before its worktree exists.
+    git(cwd, 'config', 'filter.broken.smudge', 'false');
+    git(cwd, 'config', 'filter.broken.required', 'true');
+    writeFileSync(join(cwd, '.git/info/attributes'), 'tracked.txt filter=broken\n');
     const failure = await command({ type: 'fork_after', entryId: reply.id }).then(() => 'branch was created', error => String(error?.message ?? error));
-    chmodSync(join(cwd, 'unreadable.txt'), 0o644);
-    expect(failure).toContain('unreadable.txt');
+    expect(failure).toContain('tracked.txt');
     expect(failure).not.toContain('cleanup failed');
     expect(failure).not.toContain('ENOENT');
     expect((await command({ type: 'get_state' })).sessionId).toBe(state.sessionId);

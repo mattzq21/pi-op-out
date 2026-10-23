@@ -39,6 +39,7 @@ async function sidebar(t) {
     const chat = await daemon.invoke('create_temporary_chat', { hostId: 'local' });
     sessions.push({ id: chat.sessionId, name: `Chat ${String(i).padStart(2, '0')}`, path: chat.path, cwd: process.cwd(), project: 'Project', messageCount: 1 });
   }
+  await daemon.listChats(sessions);
   context = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
   const page = await context.newPage();
   page.setDefaultTimeout(5000);

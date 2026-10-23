@@ -57,7 +57,7 @@ export async function daemonClient(t, onEvent = () => {}, { remotes = [], model 
   }
   await connect();
   let nextId = 1;
-  return {
+  const client = {
     async disconnect() {
       if (socket.readyState === WebSocket.CLOSED) return;
       await new Promise(resolve => { socket.addEventListener('close', resolve, { once: true }); socket.close(); });
@@ -74,5 +74,28 @@ export async function daemonClient(t, onEvent = () => {}, { remotes = [], model 
         socket.send(JSON.stringify({ id, command, args }));
       });
     },
+    /**
+     * Registers the projects of chats that the test lists in place of the daemon, as the daemon does for chats it lists:
+     * a chat with a message in an existing, non-temporary folder joins that folder's project, and a branch joins its listed source.
+     */
+    async listChats(sessions) {
+      if (!sessions.length) return;
+      const before = await client.invoke('load_session_groups', { seeds: [] });
+      const listed = new Set(sessions.map(session => `${session.hostId ?? 'local'}:${session.id}`));
+      const seeds = sessions.filter(session => !session.isDraft && session.messageCount > 0 && session.cwdExists !== false && session.cwd && !TEMPORARY_CHAT_CWD.test(session.cwd))
+        .filter(session => !Object.hasOwn(before.assignments, `${session.hostId ?? 'local'}:${session.id}`))
+        .map(session => {
+          const hostId = session.hostId ?? 'local';
+          const parentKey = session.forkSourceId ? `${hostId}:${session.forkSourceId}` : undefined;
+          return { sessionKey: `${hostId}:${session.id}`, project: { id: `${hostId}:${session.cwd}`, name: session.project, cwd: session.cwd, hostId, hostName: session.hostName ?? 'Local' }, ...(parentKey && listed.has(parentKey) ? { parentKey } : {}) };
+        }).sort((a, b) => a.sessionKey.localeCompare(b.sessionKey));
+      if (!seeds.length) return;
+      const after = await client.invoke('load_session_groups', { seeds });
+      if (JSON.stringify(after) !== JSON.stringify(before)) await onEvent('pi://groups-changed', after);
+    },
   };
+  return client;
 }
+
+/** Temporary chat folders are named with a random (version 4) UUID. */
+const TEMPORARY_CHAT_CWD = /(?:^|\/)\.piop(?:-dev)?\/tmp\/[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\/?$/i;

@@ -5,6 +5,9 @@ import { nativeFileCommand } from '../native-file-command.mjs';
 import { mockIPC, clearMocks } from '../mock-ipc.mjs';
 import { trackStorage } from '../storage-idle.mjs';
 import { ChatView } from '../../clients/ui/components/ChatView.tsx';
+import { debugView } from '../../clients/ui/lib/debugFeatures.ts';
+
+const allDebug = debugView({ debugMode: true });
 
 async function conversation(t, extra = {}) {
   const dom = installDom();
@@ -53,22 +56,22 @@ test('loading MCP servers replaces the empty conversation message', async t => {
 
 test('debug view names the MCP server that is loading', async t => {
   const view = await conversation(t, { statuses: { 'pi-desktop-mcp-loading': 'Loading database' } });
-  await view.update({ debug: true });
+  await view.update({ debug: allDebug });
   assert.equal(view.container.querySelector('[role="status"]').textContent, 'Loading database');
 });
 
 test('debug loading status displays valid server names from a mixed server list', async t => {
-  const view = await conversation(t, { debug: true, statuses: { 'pi-desktop-mcp-loading': 'json:[{"id":"a","name":"search"},null,{"id":2,"name":"invalid"}]' } });
+  const view = await conversation(t, { debug: allDebug, statuses: { 'pi-desktop-mcp-loading': 'json:[{"id":"a","name":"search"},null,{"id":2,"name":"invalid"}]' } });
   assert.equal(view.container.querySelector('[role="status"]').textContent, 'Loading search');
 });
 
 test('debug loading status does not display malformed JSON as a server name', async t => {
-  const view = await conversation(t, { debug: true, statuses: { 'pi-desktop-mcp-loading': 'json:{broken' } });
+  const view = await conversation(t, { debug: allDebug, statuses: { 'pi-desktop-mcp-loading': 'json:{broken' } });
   assert.equal(view.container.querySelector('[role="status"]').textContent, '');
 });
 
 test('debug loading status does not display a JSON object as a server list', async t => {
-  const view = await conversation(t, { debug: true, statuses: { 'pi-desktop-mcp-loading': 'json:{}' } });
+  const view = await conversation(t, { debug: allDebug, statuses: { 'pi-desktop-mcp-loading': 'json:{}' } });
   assert.equal(view.container.querySelector('[role="status"]').textContent, '');
 });
 
@@ -294,7 +297,7 @@ test('a turn started by another agent session shows the message once and its con
     content: JSON.stringify({ notificationId: 'n1', sourceSessionId: 'chat-7', sourceHostId: 'local', message: 'Draw a smile' }),
     promptContext: { systemPrompt: '', instructions: [], tools: [], skills: [], tokens: { system: 10, instructions: 0, tools: 0, skills: 0 }, agentNotificationId: 'n1', inputTokens: 100 } };
   const reply = { id: 'reply', role: 'assistant', content: [{ type: 'text', text: 'Done' }], stopReason: 'stop', timestamp: 2 };
-  const view = await conversation(t, { debug: true, messages: [delivery, reply] });
+  const view = await conversation(t, { debug: allDebug, messages: [delivery, reply] });
   assert.equal(view.container.querySelectorAll('[aria-label="Message from another agent"]').length, 1);
   assert.match(view.container.textContent, /System prompt/);
 });
@@ -304,7 +307,7 @@ test('a turn started by a subagent result shows the result once and its context 
     details: { notificationId: 'r1', runs: [{ name: 'painter', task: 'Draw', status: 'completed', sessionId: 's1', sessionPath: '/s1.jsonl', hostId: 'local' }] },
     promptContext: { systemPrompt: '', instructions: [], tools: [], skills: [], tokens: { system: 10, instructions: 0, tools: 0, skills: 0 }, agentNotificationId: 'r1', inputTokens: 100 } };
   const reply = { id: 'reply', role: 'assistant', content: [{ type: 'text', text: 'Done' }], stopReason: 'stop', timestamp: 2 };
-  const view = await conversation(t, { debug: true, messages: [result, reply] });
+  const view = await conversation(t, { debug: allDebug, messages: [result, reply] });
   assert.equal(view.container.querySelectorAll('[aria-label="Delegated work"]').length, 1);
   assert.match(view.container.textContent, /System prompt/);
 });

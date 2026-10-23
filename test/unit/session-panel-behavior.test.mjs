@@ -58,6 +58,7 @@ async function fixture(t, props, group = 'repo', native, beforeMount, options = 
     }
     for (const item of input.sessions ?? []) if (item.subagentParentId) item.subagentParentId = sessionIds.get(item.subagentParentId) ?? item.subagentParentId;
     for (const item of input.sessions ?? []) if (item.forkSourceId) item.forkSourceId = sessionIds.get(item.forkSourceId) ?? item.forkSourceId;
+    await daemon.listChats(input.sessions ?? []);
     const mapped = { ...input };
     if (mapped.activeId) mapped.activeId = sessionIds.get(mapped.activeId) ?? mapped.activeId;
     for (const field of ['runningSessions', 'unseenSessions']) if (mapped[field]) mapped[field] = new Set([...mapped[field]].map(key => key.startsWith('local:') ? 'local:' + (sessionIds.get(key.slice(6)) ?? key.slice(6)) : key));

@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { nativeFileCommand } from '../native-file-command.mjs';
 
-const start = { keybindings: { openSettings: 'Ctrl+,', toggleTerminal: 'Ctrl+J' }, debugMode: false };
+const start = { keybindings: { openSettings: 'Ctrl+,', toggleTerminal: 'Ctrl+J' }, debugMode: false, debugFeaturesOff: [] };
 const edited = keybindings => ({ ...start, keybindings: { ...start.keybindings, ...keybindings } });
 
 async function preferences(t) {
@@ -19,7 +19,7 @@ test('two windows that change different shortcuts both keep their change', async
   const store = await preferences(t);
   await store.save(edited({ toggleTerminal: 'Alt+T' }));
   await store.save({ ...edited({ openSettings: 'Alt+S' }), debugMode: true });
-  assert.deepEqual(await store.stored(), { keybindings: { openSettings: 'Alt+S', toggleTerminal: 'Alt+T' }, debugMode: true });
+  assert.deepEqual(await store.stored(), { keybindings: { openSettings: 'Alt+S', toggleTerminal: 'Alt+T' }, debugMode: true, debugFeaturesOff: [] });
 });
 
 test('two windows that change one shortcut differently cannot overwrite each other', async t => {

@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { nativeFileCommand } from '../native-file-command.mjs';
 
-const initial = { keybindings: { newConversation: 'Mod+N', openSettings: 'Mod+,' }, debugMode: false };
+const initial = { keybindings: { newConversation: 'Mod+N', openSettings: 'Mod+,' }, debugMode: false, debugFeaturesOff: [] };
 
 async function storedPreferences(t) {
   const native = await nativeFileCommand(t, { desktop: true });
@@ -19,14 +19,14 @@ test('a window that initializes preferences from a stale empty read keeps the pr
 
   await native.invoke('save_client_settings', { settings: local, baseline: initial, initialize: true });
   await native.invoke('save_client_settings', { settings: { ...local, debugMode: false, keybindings: { ...local.keybindings, newConversation: 'Mod+Shift+N' } }, baseline: local });
-  const latest = { keybindings: { newConversation: 'Mod+Shift+N', openSettings: 'Mod+,' }, debugMode: false };
+  const latest = { keybindings: { newConversation: 'Mod+Shift+N', openSettings: 'Mod+,' }, debugMode: false, debugFeaturesOff: [] };
 
   const late = await native.invoke('save_client_settings', { settings: local, baseline: initial, initialize: true });
   assert.deepEqual(late.settings, latest);
   assert.deepEqual(await native.invoke('load_client_settings'), { settings: latest, revision: late.revision });
 
   await native.invoke('save_client_settings', { settings: { ...late.settings, keybindings: { ...late.settings.keybindings, openSettings: 'Mod+;' } }, baseline: late.settings });
-  assert.deepEqual((await native.invoke('load_client_settings')).settings, { keybindings: { newConversation: 'Mod+Shift+N', openSettings: 'Mod+;' }, debugMode: false });
+  assert.deepEqual((await native.invoke('load_client_settings')).settings, { keybindings: { newConversation: 'Mod+Shift+N', openSettings: 'Mod+;' }, debugMode: false, debugFeaturesOff: [] });
 });
 
 test('a save from an older window keeps the shortcut another window saved', async t => {
@@ -59,8 +59,8 @@ test('older windows that each pick the same effective shortcut for different act
 
   await assert.rejects(native.invoke('save_client_settings', { settings: { ...stale, debugMode: true, keybindings: { ...stale.keybindings, openSettings: ' ctrl + SHIFT + k' } }, baseline: stale }),
     /^Error: Client preference conflict at keybindings\.(newConversation|openSettings): shortcut .+ is assigned more than once\./);
-  assert.deepEqual((await native.invoke('load_client_settings')).settings, { keybindings: { newConversation: 'Mod+Shift+K', openSettings: 'Mod+,' }, debugMode: false });
+  assert.deepEqual((await native.invoke('load_client_settings')).settings, { keybindings: { newConversation: 'Mod+Shift+K', openSettings: 'Mod+,' }, debugMode: false, debugFeaturesOff: [] });
 
   await native.invoke('save_client_settings', { settings: { ...stale, debugMode: true, keybindings: { ...stale.keybindings, openSettings: 'Ctrl+Shift+L' } }, baseline: stale });
-  assert.deepEqual((await native.invoke('load_client_settings')).settings, { keybindings: { newConversation: 'Mod+Shift+K', openSettings: 'Ctrl+Shift+L' }, debugMode: true });
+  assert.deepEqual((await native.invoke('load_client_settings')).settings, { keybindings: { newConversation: 'Mod+Shift+K', openSettings: 'Ctrl+Shift+L' }, debugMode: true, debugFeaturesOff: [] });
 });

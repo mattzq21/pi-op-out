@@ -3,6 +3,9 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { readFile } from 'node:fs/promises';
 import { Message } from '../../clients/ui/components/Message.tsx';
+import { debugView } from '../../clients/ui/lib/debugFeatures.ts';
+
+const allDebug = debugView({ debugMode: true });
 
 async function renderCache(t, usage, extra = {}) {
   const dom = installDom();
@@ -11,7 +14,7 @@ async function renderCache(t, usage, extra = {}) {
   const style = document.createElement('style');
   style.textContent = await readFile(new URL('../../clients/ui/styles.css', import.meta.url), 'utf8');
   document.head.append(style);
-  view = await renderComponent(Message, { message: { id: 'response', role: 'assistant', content: 'Answer', usage }, debug: true, ...extra });
+  view = await renderComponent(Message, { message: { id: 'response', role: 'assistant', content: 'Answer', usage }, debug: allDebug, ...extra });
   return document.querySelector('[aria-label^="Cache "]');
 }
 

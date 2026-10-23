@@ -592,8 +592,17 @@ export function createAppConversations(preloadChat: () => void) {
     else if (!owner.promptControls.untouched()) owner.promptControls.reset();
     return true;
   };
+  /** The open new chat has nothing to start over: no text, attachments, project, chosen agent or chosen prompt settings. */
+  const openDraftUntouched = () => {
+    const owner = transport(); const agents = definedAgents();
+
+    return !projectCwd() && !transportHasDraft(owner, activeConversationKey()) && owner.promptControls.untouched() && agents?.active === agents?.config.agents.find(agent => agent.isDefault)?.name;
+  };
   const newSession = async () => {
     const fresh = currentSessionIsDraft(); setNewChatRequest(value => value + 1);
+    // From an untouched new chat, New conversation reopens the newest unsent chat, which is not listed anywhere else.
+    const unsent = existingSessionDraft();
+    if (fresh && unsent && !isSelectedSession(unsent) && openDraftUntouched()) { await startNewSession(); return; }
     if (fresh && await resetDraftInPlace()) { closeMobileSidebar(); setArchivesOpen(false); setView("chat"); closeSplitPane(); setMainComposerFocusRequest(request => request + 1); return; }
     await startNewSession(fresh, undefined, undefined, undefined, fresh);
   };

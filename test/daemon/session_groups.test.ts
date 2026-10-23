@@ -71,6 +71,15 @@ test('listing a chat in an unseen folder registers its project without a client'
   expect((await load()).assignments['local:' + chat.id]).toBe('local:' + folder);
 });
 
+test('a folder named like a temporary chat folder but without a random UUID is a project', async () => {
+  await reset();
+  const folder = join(daemon.home, '.piop/tmp/12345678-1234-1123-8123-123456789abc'); mkdirSync(folder, { recursive: true });
+  const chat = publicSession(folder);
+  await waitForSessions(daemon, rows => rows.some(row => row.id === chat.id));
+  await daemon.waitEvent('pi://groups-changed', payload => payload.groups.some((group: any) => group.cwd === folder));
+  expect((await load()).assignments['local:' + chat.id]).toBe('local:' + folder);
+});
+
 test('failed group changes do not notify and do not change saved groups', async () => {
   const fresh = await startDaemon();
   try {
