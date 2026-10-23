@@ -232,7 +232,7 @@ export class Orchestration {
     if (!entryId) throw new Error('This conversation has no finished answer to branch off from');
     const sessionId = Registry.reserve(root);
     try {
-      const created = await Worktrees.create({ sourceCwd: cwd, chatId: sessionId, home: host.home, repository, committedOnly: true }, root);
+      const created = await Worktrees.create({ sourceCwd: cwd, chatId: sessionId, home: host.home, repository }, root);
       rememberProjectRepository(root, created.worktree, { root: created.worktree, gitDir: created.gitCommonDir });
       const published = await publishBranchHistory({ root, sourcePath, sessionId, cwd: created.worktree, entries, leafId, entryId,
         name: state.sessionName ? state.sessionName + ' (branch)' : undefined });

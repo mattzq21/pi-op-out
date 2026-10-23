@@ -60,7 +60,7 @@ export function activate(chatId: string, root = profileRoot()): ChatWorktreeReco
  * Creates the worktree of a new chat: claims the shortest free folder and branch name, recording each name before its
  * folder exists, then checks it out. Recovery undoes a creation that stops part way.
  */
-export async function create(input: { sourceCwd: string; chatId: string; home: string; repository: Repository; baseBranch?: string; committedOnly?: boolean }, root = profileRoot()): Promise<CreatedWorktree> {
+export async function create(input: { sourceCwd: string; chatId: string; home: string; repository: Repository; baseBranch?: string }, root = profileRoot()): Promise<CreatedWorktree> {
   let record: ChatWorktreeRecord | null = null;
   const claimed = await claimWorktree({ chatId: input.chatId, home: input.home, gitCommonDir: input.repository.gitCommonDir, save: (worktree, branch) => {
     record = record === null ? prepare({ chatId: input.chatId, ...input.repository, worktree, branch }, root) : replace(record, { ...record, worktree, branch }, root);

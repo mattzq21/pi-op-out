@@ -110,7 +110,7 @@ test('saves progress with git add . from the root, skips empty commits, and repo
   expect(git(repo, 'rev-list', '--count', 'HEAD')).toBe('2');
 });
 
-test('creates a chat worktree at the source commit with the current files as uncommitted changes, leaving the source unchanged', async () => {
+test('creates a chat worktree at the source commit with only the committed files, leaving the source unchanged', async () => {
   const { repo, home } = repository();
   makeDirty(repo);
   const before = { head: git(repo, 'rev-parse', 'HEAD'), status: status(repo), files: files(repo), index: git(repo, 'ls-files', '--stage') };
@@ -121,11 +121,10 @@ test('creates a chat worktree at the source commit with the current files as unc
   expect(created).toEqual({ repository: repo, gitCommonDir: join(repo, '.git'), chatId, worktree, branch: 'piop/' + short(chatId), commit: before.head });
   expect(git(worktree, 'rev-parse', 'HEAD')).toBe(before.head);
   expect(git(worktree, 'branch', '--show-current')).toBe('piop/' + short(chatId));
-  const copied = { ...before.files };
-  delete copied['debug.log'];
-  expect(files(worktree)).toEqual(copied);
+  expect(git(worktree, 'ls-files').split('\n').sort()).toEqual(git(repo, 'ls-tree', '-r', '--name-only', 'HEAD').split('\n').sort());
   expect(existsSync(join(worktree, 'debug.log'))).toBe(false);
-  expect(status(worktree).split('\n').sort()).toEqual([' D gone.txt', ' M tracked.txt', '?? dir/new.txt', '?? staged.txt']);
+  expect(existsSync(join(worktree, 'dir/new.txt'))).toBe(false);
+  expect(status(worktree)).toBe('');
   expect({ head: git(repo, 'rev-parse', 'HEAD'), status: status(repo), files: files(repo), index: git(repo, 'ls-files', '--stage') }).toEqual(before);
 });
 

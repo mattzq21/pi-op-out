@@ -170,7 +170,7 @@ class Branch {
     const repository = { repository: savedRepository.root, gitCommonDir: savedRepository.gitDir };
     const sessionId = Registry.reserve(this.host.storageRoot());
     this.managedId = sessionId;
-    const created = await Worktrees.create({ sourceCwd: cwd, chatId: sessionId, home: this.host.home, repository, committedOnly: true }, this.host.storageRoot());
+    const created = await Worktrees.create({ sourceCwd: cwd, chatId: sessionId, home: this.host.home, repository }, this.host.storageRoot());
     rememberProjectRepository(this.host.storageRoot(), created.worktree, { root: created.worktree, gitDir: created.gitCommonDir });
     const result = await publishBranchHistory({ root: this.host.storageRoot(), sourcePath: this.path, sessionId, cwd: created.worktree, entries, leafId: snapshot.history.leafId, entryId, name: this.state.sessionName ? this.state.sessionName + ' (branch)' : undefined });
     this.managedPath = result.sessionPath;

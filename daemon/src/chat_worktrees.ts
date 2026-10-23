@@ -1,7 +1,6 @@
 import { execFile } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { chmod, lstat, mkdir, mkdtemp, readdir, realpath, rename, rm, rmdir, stat } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { chmod, lstat, mkdir, readdir, realpath, rename, rm, rmdir, stat } from 'node:fs/promises';
 import { basename, dirname, join } from 'node:path';
 
 /*
@@ -198,22 +197,6 @@ export async function saveProgress(cwd: string, repository?: Repository): Promis
   });
 }
 
-/**
- * Writes the current files of `root` as a tree through a private index, so the source keeps its files, index and
- * HEAD. Includes tracked changes, deletions and untracked files that are not ignored.
- */
-async function currentTree(root: string, parent: string | null): Promise<string> {
-  const scratch = await mkdtemp(join(tmpdir(), 'piop-snapshot-'));
-  try {
-    const env = { GIT_INDEX_FILE: join(scratch, 'index') };
-    if (parent) await git(root, ['read-tree', parent], { env });
-    await git(root, ['add', '--all', '.'], { env });
-    return (await git(root, ['write-tree'], { env })).stdout.trim();
-  } finally {
-    await rm(scratch, { recursive: true, force: true });
-  }
-}
-
 /** Checks out into `worktree`, an empty folder that the caller claimed with mkdir. */
 async function checkOut(gitCommonDir: string, worktree: string, args: string[]): Promise<string> {
   if ((await readdir(worktree)).length) throw new Error(`Worktree folder is not empty: ${worktree}`);
@@ -222,12 +205,11 @@ async function checkOut(gitCommonDir: string, worktree: string, args: string[]):
 }
 
 /**
- * Checks out the folder that `claimWorktree` claimed, on its new branch at the source HEAD, then copies the current
- * files of the worktree at `sourceCwd` in as uncommitted changes: modified, deleted and untracked files, without
- * ignored files. The source keeps its files, index and HEAD. Refuses an existing branch. On failure, removes the folder
+ * Checks out the folder that `claimWorktree` claimed, on its new branch at the source HEAD or at baseBranch. Only committed
+ * files are copied; the source keeps its files, index and HEAD. Refuses an existing branch. On failure, removes the folder
  * and branch; later steps undo it with `removeCreatedWorktree`.
  */
-export async function createWorktree(input: { sourceCwd: string; chatId: string; home: string; worktree: string; branch: string; repository?: Repository; baseBranch?: string; committedOnly?: boolean }): Promise<CreatedWorktree> {
+export async function createWorktree(input: { sourceCwd: string; chatId: string; home: string; worktree: string; branch: string; repository?: Repository; baseBranch?: string }): Promise<CreatedWorktree> {
   const { worktree, branch } = input;
   requireOwnedFolder(input.home, input.chatId, worktree);
   requireOwnedBranch(input.chatId, branch);
@@ -246,13 +228,7 @@ export async function createWorktree(input: { sourceCwd: string; chatId: string;
       }
       const commit = await commitOf(root, ref);
       if (!commit) throw new Error(`Cannot branch a chat from ${ref}: no commit found`);
-      // committedOnly leaves out uncommitted changes; otherwise a branch from HEAD copies the current files.
-      const tree = input.baseBranch === undefined && !input.committedOnly ? await currentTree(root, commit) : null;
       const made = await checkOut(repository.gitCommonDir, worktree, ['-b', branch, worktree, commit]);
-      if (tree !== null) {
-        await git(made, ['read-tree', '-u', '--reset', tree]);
-        await git(made, ['reset', '--quiet']);
-      }
       return { ...repository, chatId: input.chatId, worktree: made, branch, commit };
     } catch (error) {
       try {
