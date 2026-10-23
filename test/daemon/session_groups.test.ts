@@ -48,8 +48,7 @@ test('listing a chat in an unseen folder registers its project without a client'
   await reset();
   const folder = join(daemon.home, 'unseen-project'); mkdirSync(folder, { recursive: true });
   const chat = publicSession(folder);
-  const rows = await waitForSessions(daemon, rows => rows.some(row => row.id === chat.id));
-  console.log(JSON.stringify(rows.find(row => row.id === chat.id)), JSON.stringify(await load()));
+  await waitForSessions(daemon, rows => rows.some(row => row.id === chat.id));
   const notified = await daemon.waitEvent('pi://groups-changed', payload => payload.groups.some((group: any) => group.cwd === folder));
   expect(notified.groups.find((group: any) => group.cwd === folder)).toEqual(project('local:' + folder, 'unseen-project', folder, 'local', 'Local'));
   expect((await load()).assignments['local:' + chat.id]).toBe('local:' + folder);
@@ -82,7 +81,7 @@ test('the session list shows the group of each session by machine and session', 
   const group = (id: string) => listed.find((row: any) => row.id === id).groupId;
   expect(group(shared.id)).toBe(first);
   expect(group(ungrouped.id)).toBeNull();
-  expect(group(unknown.id)).toBeNull();
+  expect(group(unknown.id)).toBe('local:' + daemon.home);
   expect(listed.find((row: any) => row.id === shared.id)).toMatchObject({ hostId: 'local', name: 'Hello' });
   state = await load();
   expect(state.assignments['local:' + shared.id]).toBe(first);

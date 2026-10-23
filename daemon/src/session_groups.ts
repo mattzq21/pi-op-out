@@ -198,19 +198,24 @@ export async function loadSessionGroups(app: App, seeds: SessionSeed[]): Promise
 
 const TEMPORARY_CHAT_CWD = /(?:^|\/)\.piop(?:-dev)?\/tmp\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\/?$/i;
 
-/** A listed chat in an existing project folder. Temporary chat folders and chats with no message are not projects. */
-function projectSeed(session: SessionSummary): SessionSeed | undefined {
+/**
+ * A listed chat in an existing project folder. Temporary chat folders and chats with no message are not projects.
+ * A branch takes its source's group; a branch whose source is not listed is a chat of its own.
+ */
+function projectSeed(session: SessionSummary, listed: Set<string>): SessionSeed | undefined {
   if (session.messageCount === 0 || !session.cwdExists || !session.cwd || TEMPORARY_CHAT_CWD.test(session.cwd)) return undefined;
+  const parentKey = session.forkSourceId ? `${session.hostId}:${session.forkSourceId}` : undefined;
   return {
     sessionKey: `${session.hostId}:${session.id}`,
     project: { id: `${session.hostId}:${session.cwd}`, name: session.project, cwd: session.cwd, hostId: session.hostId, hostName: session.hostName },
-    ...(session.forkSourceId ? { parentKey: `${session.hostId}:${session.forkSourceId}` } : {}),
+    ...(parentKey && listed.has(parentKey) ? { parentKey } : {}),
   };
 }
 
 /** Registers the project of each listed chat that has no group yet, and reports a change to clients. */
 export async function registerProjects(app: App, sessions: SessionSummary[]): Promise<void> {
-  const seeds = sessions.map(projectSeed).filter((seed): seed is SessionSeed => seed !== undefined);
+  const listed = new Set(sessions.map(session => `${session.hostId}:${session.id}`));
+  const seeds = sessions.map(session => projectSeed(session, listed)).filter((seed): seed is SessionSeed => seed !== undefined);
   if (!seeds.length) return;
   const result = await STORAGE_LOCK.run(() => loadAt(storagePath(), seeds));
   if (result.dirty) app.emit('pi://groups-changed', serializeGroups(result.state));
