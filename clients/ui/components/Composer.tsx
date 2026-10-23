@@ -75,6 +75,7 @@ interface Props {
   onPause: () => void | Promise<void>;
   onResume: () => void | Promise<void>;
   onOpenTerminal?: () => void;
+  onJumpToLatest?: () => void;
   terminalDisabled?: boolean;
   onAgent: (name: string) => void;
   onReloadAgents?: () => Promise<void>;
@@ -548,7 +549,7 @@ export function Composer(props: Props) {
     const statusText = () => stopping() ? "Stopping…" : controlAction() === "resume" ? "Resuming…" : composer().pausing || controlAction() === "pause" ? "Pausing…" : composer().compacting ? "Compacting context…" : composer().paused ? "Paused · Completed turns saved" : undefined;
     const renderStreamStatus = () => (<span class="stream-status" role="status">{composer().paused ? <Pause size={11} /> : <span class="pulse" />}{statusText()}</span>);
 
-    return (<Show when={statusText()} fallback={composer().streaming && <div class="working-dots" role="status" aria-label="piop is working"><span /><span /><span /></div>}><div class={`stream-banner${composer().paused ? " paused" : ""}`}>
+    return (<Show when={statusText()} fallback={composer().streaming && <button type="button" class="working-dots" role="status" aria-label="piop is working" data-tooltip="Scroll to latest" onClick={() => props.onJumpToLatest?.()}><span /><span /><span /></button>}><div class={`stream-banner${composer().paused ? " paused" : ""}`}>
       {renderStreamStatus()}
     </div></Show>);
   };
