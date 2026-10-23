@@ -91,64 +91,67 @@ test('unmatched settings shortcuts leave the composer unchanged', async t => {
   });
 });
 
-test('holding the conversations shortcut toggles the conversation panel once', async t => {
-  const page = await appBrowser(t, { keybindings: { toggleConversations: 'Ctrl+B' } });
-  const editor = page.getByRole('textbox', { name: 'Message piop', exact: true });
-  const search = page.getByRole('textbox', { name: 'Search conversations', exact: true });
-  await editor.fill('Keep this draft');
-  const wasOpen = await search.isVisible();
-  await page.keyboard.down('Control');
-  for (let press = 0; press < 4; press++) await page.keyboard.down('b');
-  await page.keyboard.up('b');
-  await page.keyboard.up('Control');
-  await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
-  assert.equal(await search.isVisible(), !wasOpen);
-  assert.equal(await editor.inputValue(), 'Keep this draft');
-});
+test('shared app shortcut actions', { timeout: 90000 }, async t => {
+  const page = await appBrowser(t, { keybindings: { toggleConversations: 'Ctrl+B', newConversation: 'Alt+N' } });
+  await t.test('holding the conversations shortcut toggles the conversation panel once', { timeout: 30000 }, async () => {
+    const editor = page.getByRole('textbox', { name: 'Message piop', exact: true });
+    const search = page.getByRole('textbox', { name: 'Search conversations', exact: true });
+    await editor.fill('Keep this draft');
+    const wasOpen = await search.isVisible();
+    await page.keyboard.down('Control');
+    for (let press = 0; press < 4; press++) await page.keyboard.down('b');
+    await page.keyboard.up('b');
+    await page.keyboard.up('Control');
+    await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+    assert.equal(await search.isVisible(), !wasOpen);
+    assert.equal(await editor.inputValue(), 'Keep this draft');
+    await page.keyboard.press('Control+b');
+    await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+    assert.equal(await search.isVisible(), wasOpen);
+  });
 
-test('a shortcut field captures an assigned app shortcut without running it', async t => {
-  const page = await appBrowser(t, { keybindings: { newConversation: 'Alt+N' } });
-  const editor = page.getByRole('textbox', { name: 'Message piop', exact: true });
-  await editor.fill('Keep this draft');
-  await page.getByRole('button', { name: 'Settings', exact: true }).click();
-  const binding = page.getByRole('textbox', { name: 'Toggle conversations shortcut', exact: true });
-  if (!await binding.isVisible()) await page.getByRole('button', { name: 'Keybinds' }).click();
-  await binding.focus();
-  await page.keyboard.press('Alt+n');
-  assert.equal(await binding.inputValue(), 'Alt+N');
-  assert.equal(await page.getByRole('button', { name: 'Go back', exact: true }).isVisible(), true);
-  page.once('dialog', dialog => dialog.accept());
-  await page.getByRole('button', { name: 'Go back', exact: true }).click();
-  await editor.waitFor();
-  assert.equal(await editor.inputValue(), 'Keep this draft');
-});
+  await t.test('a shortcut field captures an assigned app shortcut without running it', { timeout: 30000 }, async () => {
+    const editor = page.getByRole('textbox', { name: 'Message piop', exact: true });
+    await editor.fill('Keep this draft');
+    await page.getByRole('button', { name: 'Settings', exact: true }).click();
+    const binding = page.getByRole('textbox', { name: 'Toggle conversations shortcut', exact: true });
+    if (!await binding.isVisible()) await page.getByRole('button', { name: 'Keybinds' }).click();
+    await binding.focus();
+    await page.keyboard.press('Alt+n');
+    assert.equal(await binding.inputValue(), 'Alt+N');
+    assert.equal(await page.getByRole('button', { name: 'Go back', exact: true }).isVisible(), true);
+    page.once('dialog', dialog => dialog.accept());
+    await page.getByRole('button', { name: 'Go back', exact: true }).click();
+    await editor.waitFor();
+    assert.equal(await editor.inputValue(), 'Keep this draft');
+  });
 
-test('Ctrl G asks before discarding unsaved settings and focuses conversation search only after discard', async t => {
-  const page = await appBrowser(t);
-  const editor = page.getByRole('textbox', { name: 'Message piop', exact: true });
-  const goBack = page.getByRole('button', { name: 'Go back', exact: true });
-  const search = page.getByRole('textbox', { name: 'Search conversations', exact: true });
-  await editor.fill('Keep this draft');
-  await page.getByRole('button', { name: 'Settings', exact: true }).click();
-  const retry = page.getByRole('switch', { name: 'Automatic retry', exact: true });
-  await page.getByRole('navigation', { name: 'Settings', exact: true }).getByRole('button', { name: 'Local', exact: true }).click();
-  const edited = String(await retry.getAttribute('aria-checked') !== 'true');
-  await retry.click();
-  assert.equal(await retry.getAttribute('aria-checked'), edited);
-  const messages = [];
-  page.once('dialog', dialog => { messages.push(dialog.message()); return dialog.dismiss(); });
-  await page.keyboard.press('Control+g');
-  await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
-  assert.deepEqual(messages, ['Discard unsaved settings changes?']);
-  assert.equal(await goBack.isVisible(), true);
-  assert.equal(await retry.getAttribute('aria-checked'), edited);
-  page.once('dialog', dialog => { messages.push(dialog.message()); return dialog.accept(); });
-  await page.keyboard.press('Control+g');
-  await search.waitFor();
-  await page.waitForFunction(() => document.activeElement?.getAttribute('aria-label') === 'Search conversations');
-  assert.deepEqual(messages, ['Discard unsaved settings changes?', 'Discard unsaved settings changes?']);
-  assert.equal(await goBack.count(), 0);
-  assert.equal(await editor.inputValue(), 'Keep this draft');
+  await t.test('Ctrl G asks before discarding unsaved settings and focuses conversation search only after discard', { timeout: 30000 }, async () => {
+    const editor = page.getByRole('textbox', { name: 'Message piop', exact: true });
+    const goBack = page.getByRole('button', { name: 'Go back', exact: true });
+    const search = page.getByRole('textbox', { name: 'Search conversations', exact: true });
+    await editor.fill('Keep this draft');
+    await page.getByRole('button', { name: 'Settings', exact: true }).click();
+    const retry = page.getByRole('switch', { name: 'Automatic retry', exact: true });
+    await page.getByRole('navigation', { name: 'Settings', exact: true }).getByRole('button', { name: 'Local', exact: true }).click();
+    const edited = String(await retry.getAttribute('aria-checked') !== 'true');
+    await retry.click();
+    assert.equal(await retry.getAttribute('aria-checked'), edited);
+    const messages = [];
+    page.once('dialog', dialog => { messages.push(dialog.message()); return dialog.dismiss(); });
+    await page.keyboard.press('Control+g');
+    await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+    assert.deepEqual(messages, ['Discard unsaved settings changes?']);
+    assert.equal(await goBack.isVisible(), true);
+    assert.equal(await retry.getAttribute('aria-checked'), edited);
+    page.once('dialog', dialog => { messages.push(dialog.message()); return dialog.accept(); });
+    await page.keyboard.press('Control+g');
+    await search.waitFor();
+    await page.waitForFunction(() => document.activeElement?.getAttribute('aria-label') === 'Search conversations');
+    assert.deepEqual(messages, ['Discard unsaved settings changes?', 'Discard unsaved settings changes?']);
+    assert.equal(await goBack.count(), 0);
+    assert.equal(await editor.inputValue(), 'Keep this draft');
+  });
 });
 
 test('an open project dialog blocks the settings shortcut until the dialog is closed', async t => {
