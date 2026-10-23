@@ -73,6 +73,35 @@ test.concurrent('await_peers with for: "all" waits until every listed peer has f
   expect(waited).toContain('Slow done');
 }, 120000);
 
+test.concurrent('a message from another chat ends an await_peers wait, and the result says a peer message arrived', async () => {
+  let release!: () => void;
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  const busy = await agents.rootChat();
+  agents.scripts.set('Stay busy', async () => { await gate; return { text: 'Busy done' }; });
+  await busy.command({ type: 'prompt', message: 'Stay busy' });
+
+  let waiting!: () => void;
+  const started = new Promise<void>(resolve => { waiting = resolve; });
+  const coordinator = await agents.rootChat();
+  agents.scripts.set('Wait on the busy chat', messages => {
+    if (called(messages, 'await_peers')) return { text: 'Waited.' };
+    waiting();
+    return { tool: 'await_peers', arguments: { targets: [{ peerId: busy.sessionId }], timeoutMs: 60000 } };
+  });
+  try {
+    await coordinator.command({ type: 'prompt', message: 'Wait on the busy chat' });
+    await started;
+    // Let the wait begin before the message arrives.
+    await Bun.sleep(1000);
+    const sender = await agents.rootChat();
+    agents.scripts.set('Tell the coordinator', messages => called(messages, 'message_peer') ? { text: 'Sent.' } : { tool: 'message_peer', arguments: { peerId: coordinator.sessionId, message: 'Status?' } });
+    await sender.command({ type: 'prompt', message: 'Tell the coordinator' });
+    await coordinator.until(history => history.some(message => text(message) === 'Waited.'));
+    const seen = agents.model.requests.find(request => startedWith(request, 'Wait on the busy chat') && called(request.messages, 'await_peers')).messages;
+    expect(toolText(seen, 'await_peers')).toBe('A message from a peer arrived.');
+  } finally { release(); }
+}, 120000);
+
 test.concurrent('chat tools list and read only root chats, never subagent chats', async () => {
   const coordinator = await agents.rootChat();
   let childId = '';

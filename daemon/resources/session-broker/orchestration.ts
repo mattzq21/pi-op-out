@@ -80,6 +80,8 @@ function queueAgentMailbox(pi: ExtensionAPI, ctx: ExtensionContext, message: Mai
   const queued = mailboxes.get(pi) ?? [];
   queued.push(mail);
   mailboxes.set(pi, queued);
+  // A message from a peer ends a wait in the running turn, so the turn can finish and the agent reads the message.
+  if (!defer && message.customType === "piop-agent-message") pi.events.emit("piop:agent-mail", { notificationId });
 }
 
 export async function sendAgentMailbox(pi: ExtensionAPI, ctx: ExtensionContext, message: Mail["message"], notificationId: string, deliverAs?: "steer" | "followUp") {
