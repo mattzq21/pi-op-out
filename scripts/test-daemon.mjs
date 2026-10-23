@@ -1,5 +1,5 @@
 import { execFile, spawn } from 'node:child_process';
-import { mkdtemp, readdir, rm } from 'node:fs/promises';
+import { mkdtemp, readdir, rm, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { parseArgs, promisify } from 'node:util';
@@ -12,6 +12,10 @@ const { values, positionals } = parseArgs({
 const jobs = Number(values.jobs);
 if (!Number.isSafeInteger(jobs) || jobs < 1 || jobs > 16) throw new Error('--jobs must be a whole number from 1 to 16');
 const files = positionals.length ? positionals : (await readdir('test/daemon', { recursive: true })).filter(file => file.endsWith('.test.ts')).sort().map(file => 'test/daemon/' + file);
+if (!positionals.length) {
+  const sizes = new Map(await Promise.all(files.map(async file => [file, (await stat(file)).size])));
+  files.sort((a, b) => sizes.get(b) - sizes.get(a) || a.localeCompare(b));
+}
 if (!files.length) throw new Error('No daemon test files found');
 if (new Set(files).size !== files.length) throw new Error('Each test file must be listed once');
 

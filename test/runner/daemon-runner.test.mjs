@@ -16,7 +16,7 @@ async function fixture(t, failing = false, discover = false) {
   t.after(() => rm(directory, { recursive: true, force: true }));
   const files = Array.from({ length: 5 }, (_, index) => discover ? `test/daemon/${index % 2 ? 'nested/' : ''}case-${index}.test.ts` : join(directory, `case-${index}.test.ts`));
   if (discover) {
-    for (const file of files) { const path = join(directory, file); await mkdir(dirname(path), { recursive: true }); await writeFile(path, ''); }
+    for (const file of files) { const path = join(directory, file); await mkdir(dirname(path), { recursive: true }); await writeFile(path, 'x'.repeat(files.indexOf(file) + 1)); }
     await writeFile(join(directory, 'test/daemon/helper.ts'), '');
   }
   const builds = join(directory, 'builds');
@@ -78,6 +78,7 @@ for (const [failing, discover] of [[false, false], [true, false], [false, true]]
   } else output = (await f.run()).stdout;
   assert.match(output, failing ? /4 passed, 1 failed/ : /5 passed, 0 failed/);
   assert.deepEqual(f.started.map(item => item.file).sort(), [...f.files].sort());
+  if (discover) assert.deepEqual(f.started.slice(0, 2).map(item => item.file).sort(), f.files.slice(-2).sort());
   assert.equal(f.maximum(), 2);
   assert.ok(f.childCounts.every(count => count <= 2));
   assert.equal(f.childCounts[0], 2);
