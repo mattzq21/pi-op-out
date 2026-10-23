@@ -186,6 +186,8 @@ button.agent-delivery-source:hover { color: var(--accent-soft); text-decoration:
 .user-message:hover .message-actions, .user-message:focus-within .message-actions { opacity: 1; pointer-events: auto; }
 .assistant-message .message-actions { opacity: 0; pointer-events: none; }
 .assistant-message:hover .message-actions, .assistant-message:focus-within .message-actions { opacity: 1; pointer-events: auto; }
+/* The actions under the last response stay visible. */
+.latest-turn .assistant-message .message-actions { opacity: 1; pointer-events: auto; }
 @media (hover: none), (pointer: coarse) { .assistant-message .message-actions { opacity: 1; pointer-events: auto; } }
 @media (hover: none) { .user-message .message-actions { opacity: 1; pointer-events: auto; } }
 .message-time { margin-left: 6px; color: var(--muted); font: 500 11px "DM Sans", sans-serif; white-space: nowrap; opacity: 0; transition: opacity .15s; cursor: default; }
