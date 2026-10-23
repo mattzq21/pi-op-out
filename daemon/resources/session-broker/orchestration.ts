@@ -19,7 +19,7 @@ const stateSchema = Schema.Object({ sessionFile: Schema.Optional(Schema.String()
 
 const snapshotSchema = Schema.Object({ revision: Schema.String(), state: stateSchema, history: Schema.Object({ entries: Schema.Array(entrySchema), leafId: Schema.Optional(Schema.Union([Schema.String(), Schema.Null()])) }) });
 
-const deliverySchema = Schema.Object({ id: Schema.String(), deliveryId: Schema.String({ minLength: 1 }), sourceSessionId: Schema.String(), sourceHostId: Schema.String(), sourceName: Schema.Optional(Schema.String()), message: Schema.String({ minLength: 1, maxLength: 100_000 }), wake: Schema.Optional(Schema.Boolean()), deliverAs: Schema.Optional(Schema.Union([Schema.Literal("steer"), Schema.Literal("followUp")])) });
+const deliverySchema = Schema.Object({ id: Schema.String(), deliveryId: Schema.String({ minLength: 1 }), sourceSessionId: Schema.String(), sourceHostId: Schema.String(), sourceName: Schema.Optional(Schema.String()), message: Schema.String({ minLength: 1 }), wake: Schema.Optional(Schema.Boolean()), deliverAs: Schema.Optional(Schema.Union([Schema.Literal("steer"), Schema.Literal("followUp")])) });
 
 const address = { threadId: Type.String({ minLength: 1 }), hostId: Type.Optional(Type.String({ minLength: 1 })) };
 

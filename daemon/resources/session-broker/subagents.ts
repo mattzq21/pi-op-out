@@ -494,7 +494,7 @@ export function registerSubagents(pi: ExtensionAPI) {
     name: "spawn_subagents", label: "Spawn subagents",
     exposure: "model-only",
     description: "Start subagents in the background, each with its own task. A subagent starts with no context, so fill him in just enough to complete the handoff. Avoid giving two subagents overlapping edits. Pick an agent profile from list_agent_profiles or omit it to use your own.",
-    parameters: Type.Object({ tasks: Type.Array(Type.Object({ name: Type.String({ pattern: NICKNAME, description: "Unique nickname, used to address this subagent" }), task: Type.String({ minLength: 1, maxLength: 100_000 }), agent: Type.Optional(Type.String({ minLength: 1 })) }), { minItems: 1 }) }),
+    parameters: Type.Object({ tasks: Type.Array(Type.Object({ name: Type.String({ pattern: NICKNAME, description: "Unique nickname, used to address this subagent" }), task: Type.String({ minLength: 1 }), agent: Type.Optional(Type.String({ minLength: 1 })) }), { minItems: 1 }) }),
     async execute(toolCallId, params, signal, onUpdate, ctx) {
       signal?.throwIfAborted();
 

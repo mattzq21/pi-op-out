@@ -136,7 +136,7 @@ export class Orchestration {
     const source = text(packet, 'sourceSessionId');
     if (!source || source === id) throw new Error('Choose another conversation as the recipient');
     const message = text(packet, 'message');
-    if (!message.trim() || Buffer.byteLength(message) > 100_000) throw new Error('Message must contain 1–100000 bytes');
+    if (!message.trim()) throw new Error('Message must not be empty');
     const delivery = text(packet, 'deliveryId');
     this.reserveDelivery(id, delivery);
     try {
