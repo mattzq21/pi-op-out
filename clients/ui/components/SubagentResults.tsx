@@ -18,23 +18,26 @@ export const subagentRuns = z.object({
   runs: z.array(runSchema.optional().catch(undefined)).catch([]),
 }).transform(details => details.runs.flatMap(run => run ? [run] : [])).catch([]).parse;
 
-/** Same string hash the ChatGPT app uses to pick a subagent avatar from its seed. */
+/** The ChatGPT app's string hash, then a mix step so that similar seeds such as "Svg4" and "Svg5" land far apart. */
 function seedHash(seed: string) {
   let hash = 0;
   for (let index = 0; index < seed.length; index += 1) hash = (hash * 31 + seed.charCodeAt(index)) % 2147483647;
-  return hash;
+  hash = Math.imul(hash ^ (hash >>> 16), 0x85ebca6b);
+  hash = Math.imul(hash ^ (hash >>> 13), 0xc2b2ae35);
+  return (hash ^ (hash >>> 16)) >>> 0;
 }
 
-const AVATAR_HUES = [18, 38, 52, 88, 140, 168, 192, 214, 246, 276, 308, 340];
-const AVATAR_PETALS = [3, 4, 5, 6];
+/** Hues far enough apart to tell apart at 14px. */
+const AVATAR_HUES = [0, 40, 95, 160, 200, 235, 280, 320];
+const AVATAR_PETALS = [3, 4, 6];
 
 /** A fixed avatar per subagent session: the hue and petal count come from the session ID, so every row of one subagent looks the same. */
 function SubagentAvatar(props: { seed: string; status: string; label: string }) {
   const look = createMemo(() => {
     const hash = seedHash(props.seed);
     const hue = AVATAR_HUES[hash % AVATAR_HUES.length]!;
-    const petals = AVATAR_PETALS[Math.floor(hash / AVATAR_HUES.length) % AVATAR_PETALS.length]!;
-    return { fill: `hsl(${hue} 70% 62%)`, stroke: `hsl(${hue} 60% 38%)`, angles: Array.from({ length: petals }, (_, index) => index * 360 / petals + (hash % 45)) };
+    const petals = AVATAR_PETALS[(hash >>> 8) % AVATAR_PETALS.length]!;
+    return { fill: `hsl(${hue} 75% 60%)`, stroke: `hsl(${hue} 65% 35%)`, angles: Array.from({ length: petals }, (_, index) => index * 360 / petals + ((hash >>> 16) % 45)) };
   });
   return <span class={`subagent-state subagent-${props.status}`} data-tooltip={props.label} role="img" aria-label={props.label}>
     <svg class="subagent-avatar" width="14" height="14" viewBox="0 0 16 16" aria-hidden="true">

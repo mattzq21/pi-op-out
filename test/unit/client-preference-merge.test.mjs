@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { mergeClientPreferences } from '../../clients/ui/lib/clientPreferenceMerge.ts';
 
-const start = { keybindings: { openSettings: 'Ctrl+,', toggleTerminal: 'Ctrl+J' }, debugMode: false };
+const start = { keybindings: { openSettings: 'Ctrl+,', toggleTerminal: 'Ctrl+J' }, debugMode: false, debugFeaturesOff: [] };
 const edit = changes => ({ ...structuredClone(start), ...changes, keybindings: { ...start.keybindings, ...changes.keybindings } });
 
 test('changes made in two windows to different settings are both kept', () => {
@@ -10,7 +10,7 @@ test('changes made in two windows to different settings are both kept', () => {
   const thisWindow = edit({ keybindings: { openSettings: 'Alt+S' }, debugMode: true });
   assert.deepEqual(mergeClientPreferences(otherWindow, start, thisWindow), {
     conflicts: [],
-    preferences: { keybindings: { openSettings: 'Alt+S', toggleTerminal: 'Alt+T' }, debugMode: true },
+    preferences: { keybindings: { openSettings: 'Alt+S', toggleTerminal: 'Alt+T' }, debugMode: true, debugFeaturesOff: [] },
   });
 });
 

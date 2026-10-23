@@ -46,7 +46,7 @@ export function mergeClientPreferences(latest: ClientPreferences, baseline: Clie
   return { preferences, conflicts };
 }
 
-const sameList = (left: readonly string[], right: readonly string[]) => left.length === right.length && left.every((item, index) => item === right[index]);
+const sameList = (left: readonly string[] = [], right: readonly string[] = []) => left.length === right.length && left.every((item, index) => item === right[index]);
 
 export function applyClientPreferences(settings: AppSettings, preferences: ClientPreferences): AppSettings {
   return { ...settings, ...preferences, keybindings: { ...settings.keybindings, ...preferences.keybindings } };

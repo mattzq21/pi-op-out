@@ -19,8 +19,9 @@ import { WorkingIndicator } from "./WorkingIndicator";
 import { ZoomableImage } from "./ZoomableImage";
 import { SubagentResults, subagentRuns } from "./SubagentResults";
 import { copyText } from "../lib/clipboard";
+import type { DebugView } from "../lib/debugFeatures";
 
-interface Props { message: ChatMessage; turnCacheUsage?: { input: number; cacheRead: number }; expanded?: boolean; showActions?: boolean; toolCount?: number; debug?: boolean; paused?: boolean; onBranch?: (message: ChatMessage) => void | Promise<void>; onFork?: (message: ChatMessage) => void | Promise<void>; onForkAndForget?: (message: ChatMessage) => void | Promise<void>; onRetry?: () => void; retrying?: boolean; }
+interface Props { message: ChatMessage; turnCacheUsage?: { input: number; cacheRead: number }; expanded?: boolean; showActions?: boolean; toolCount?: number; debug?: DebugView; paused?: boolean; onBranch?: (message: ChatMessage) => void | Promise<void>; onFork?: (message: ChatMessage) => void | Promise<void>; onForkAndForget?: (message: ChatMessage) => void | Promise<void>; onRetry?: () => void; retrying?: boolean; }
 
 function cacheTokenDigits(tokens: number) {
   const groups = String(tokens).match(/\d{1,3}(?=(?:\d{3})*$)/g) ?? [];
@@ -140,7 +141,7 @@ function ToolPayload(componentProps: { message: ChatMessage; loading: boolean; e
   </>;
 }
 
-function ToolResult(componentProps: Pick<Props, "message" | "toolCount" | "debug"> & { status?: "running" | "done" | "error" | "unfinished" }) {
+function ToolResult(componentProps: Pick<Props, "message" | "toolCount"> & { debug?: boolean;  status?: "running" | "done" | "error" | "unfinished" }) {
   const isSubagent = () => componentProps.message.toolName === "spawn_subagents";
   // spawn_subagents shows the subagents it started; await_subagents shows the ones whose answers it returned.
   const runs = createMemo(() => ["spawn_subagents", "await_subagents"].includes(componentProps.message.toolName ?? "") ? subagentRuns(componentProps.message.details) : []);
@@ -296,7 +297,7 @@ export function Message(componentProps: Props) {
         const renderForkAction = () => (componentProps.onFork && <button class="branch-button" aria-label="Fork" data-tooltip="Fork" disabled={branching() || forgetting()} onClick={() => void branch()}><Split size={14} /></button>);
         const renderBranchAction = () => (componentProps.onBranch && <button class="branch-button" aria-label="Branch off" data-tooltip="Branch off" disabled={branching() || forgetting()} onClick={() => void branch(true)}><GitBranch size={14} /></button>);
         const renderForkAndForgetAction = () => (componentProps.onForkAndForget && <button class="branch-button fork-and-forget-button" aria-label={`Fork and forget from ${metadata().responseLabel.toLowerCase()}`} data-tooltip="Fork and forget" disabled={branching() || forgetting()} onClick={() => void forkAndForget()}><Undo2 size={14} /></button>);
-        const renderCacheHitRate = () => ((componentProps.debug ?? false) && metadata().cache && <span class={`cache-hit-rate${required((metadata().cache)).low ? " low" : ""}`} tabIndex={0} aria-label={`Cache ${required((metadata().cache)).rate}%, ${required((metadata().cache)).cachedTokens}/${required((metadata().cache)).promptTokens}`}><CacheIcon rate={required((metadata().cache)).rate} />{required((metadata().cache)).rate}%<span class="cache-fraction-tooltip" aria-hidden="true"><span>{cacheTokenDigits(required((metadata().cache)).cachedTokens)}</span><span>{cacheTokenDigits(required((metadata().cache)).promptTokens)}</span></span></span>);
+        const renderCacheHitRate = () => ((componentProps.debug?.cacheHitRate ?? false) && metadata().cache && <span class={`cache-hit-rate${required((metadata().cache)).low ? " low" : ""}`} tabIndex={0} aria-label={`Cache ${required((metadata().cache)).rate}%, ${required((metadata().cache)).cachedTokens}/${required((metadata().cache)).promptTokens}`}><CacheIcon rate={required((metadata().cache)).rate} />{required((metadata().cache)).rate}%<span class="cache-fraction-tooltip" aria-hidden="true"><span>{cacheTokenDigits(required((metadata().cache)).cachedTokens)}</span><span>{cacheTokenDigits(required((metadata().cache)).promptTokens)}</span></span></span>);
 
         const showActions = () => (componentProps.showActions === undefined ? true : componentProps.showActions) && !streaming() && (output().trim().length > 0 || componentProps.message.stopReason === "aborted" || componentProps.onForkAndForget);
 
@@ -327,7 +328,7 @@ export function Message(componentProps: Props) {
     </article>);
   };
 
-  const renderToolMessage = () => (<ToolResult message={componentProps.message} toolCount={(componentProps.toolCount === undefined ? 1 : componentProps.toolCount)} debug={(componentProps.debug === undefined ? false : componentProps.debug)} />);
+  const renderToolMessage = () => (<ToolResult message={componentProps.message} toolCount={(componentProps.toolCount === undefined ? 1 : componentProps.toolCount)} debug={componentProps.debug?.toolDetails ?? false} />);
 
   return <>{componentProps.message.customType === "piop-agent-message" ? <AgentDelivery message={componentProps.message} actions={renderSentActions} /> : isContextInjection(componentProps.message) ? <ContextInjection title={componentProps.message.customType === "pi-project-files-watch" ? "Project files changed" : "Context added"} content={textOf(componentProps.message.content)} /> : componentProps.message.customType === "piop-subagent-result" ? <SubagentResults runs={subagentRuns(componentProps.message.details)} /> : pluginMessageRenderer(componentProps.message.customType) ? <Dynamic component={pluginMessageRenderer(componentProps.message.customType)} details={componentProps.message.details} /> : componentProps.message.role === "system" ? (<div class="command-result" role="status">{textOf(componentProps.message.content)}</div>) : componentProps.message.role === "tool" ? renderToolMessage() : componentProps.message.role === "user" ? (<UserMessage />) : (renderAssistantMessage())}</>;
 }
