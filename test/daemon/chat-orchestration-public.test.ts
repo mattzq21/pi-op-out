@@ -106,6 +106,7 @@ test.concurrent('branchoff_peer starts a peer in a new worktree that keeps the a
   const session = (await agents.daemon.invoke('list_sessions')).find((item: any) => item.id === created.peerId);
   const git = (cwd: string, ...args: string[]) => execFileSync('git', ['-C', cwd, ...args], { encoding: 'utf8' }).trim();
   expect(session.cwd).not.toBe(coordinator.cwd);
+  expect(session.forkSourceId).toBe(coordinator.sessionId);
   expect(git(session.cwd, 'rev-parse', 'HEAD')).toBe(git(coordinator.cwd, 'rev-parse', 'HEAD'));
   expect(git(session.cwd, 'symbolic-ref', '--short', 'HEAD')).not.toBe(git(coordinator.cwd, 'symbolic-ref', '--short', 'HEAD'));
   // The peer's model sees the history through the last finished answer, then the message.
@@ -118,7 +119,6 @@ test.concurrent('branchoff_peer removes the peer, its worktree and its branch wh
   const coordinator = await agents.rootChat({ repository: true });
   const git = (...args: string[]) => execFileSync('git', ['-C', coordinator.cwd, ...args], { encoding: 'utf8' }).trim();
   const before = { worktrees: git('worktree', 'list'), branches: git('branch', '--list') };
-  const sessionsBefore = (await agents.daemon.invoke('list_sessions')).map((item: any) => item.id);
   agents.scripts.set('Fail a branch', messages => {
     const last = text(messages.at(-1));
     if (last === 'Fail a branch') return { text: 'Base answer.' };
@@ -131,9 +131,8 @@ test.concurrent('branchoff_peer removes the peer, its worktree and its branch wh
   const told = text((await coordinator.until(history => text(history.at(-1)).startsWith('Told: '))).at(-1));
   expect(told).toStartWith('Told: The peer was not created');
   expect({ worktrees: git('worktree', 'list'), branches: git('branch', '--list') }).toEqual(before);
-  const sessionsAfter = (await agents.daemon.invoke('list_sessions')).map((item: any) => item.id);
-  // The calling chat is listed once it has messages, so only it is new.
-  expect(sessionsAfter.filter((id: string) => !sessionsBefore.includes(id))).toEqual([coordinator.sessionId]);
+  // Other tests make chats at the same time, so only branches of this chat count.
+  expect((await agents.daemon.invoke('list_sessions')).filter((item: any) => item.forkSourceId === coordinator.sessionId)).toEqual([]);
 }, 120000);
 
 test.concurrent('branchoff_peer is offered only in a chat whose folder is a Git repository', async () => {
