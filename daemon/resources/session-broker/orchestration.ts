@@ -393,7 +393,7 @@ export function registerOrchestration(pi: ExtensionAPI) {
   pi.on("session_shutdown", unsubscribeMail);
   pi.registerTool({
     name: "create_peer", label: "Create peer",
-    description: "Start a new peer with its first message, in your working directory or in the registered project named project. Use it only when the user asks for a new peer; for delegated work use spawn_subagents. Pick an agent profile from list_agent_profiles or omit it to use your own. The peer starts with no history and runs on its own; follow it with wait_peers. If this fails, no peer was created.",
+    description: "Start a new chat/session with its first message. Pick an agent profile or omit it to use your own. The peer starts with no history and runs on its own.",
     parameters: Type.Object({ title: Type.String({ minLength: 1, maxLength: 120 }), message: Type.String({ minLength: 1 }), agent: Type.Optional(Type.String({ minLength: 1 })), project: Type.Optional(Type.String({ minLength: 1 })) }),
     async execute(_id, params, signal, _update, ctx) {
       requireRootCaller(ctx);
