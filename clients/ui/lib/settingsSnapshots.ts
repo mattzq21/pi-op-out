@@ -31,5 +31,5 @@ export function agentEditsSnapshot(config?: AgentConfig) {
 }
 
 export const settingKeys: Array<keyof AppSettings> = [
-  "localEnabled", ...pluginSettingKeys, "modelAliases", "hiddenModels", "knownModels", "defaultThinking", "defaultFastMode", "contextWindowCap", "contextWindowCapEnabled", "modelContextWindowCaps", "autoRetry", "debugMode", "keybindings", "skills", "hosts",
+  "localEnabled", ...pluginSettingKeys, "modelAliases", "hiddenModels", "knownModels", "defaultThinking", "defaultFastMode", "contextWindowCap", "contextWindowCapEnabled", "modelContextWindowCaps", "autoRetry", "debugMode", "debugFeaturesOff", "keybindings", "skills", "hosts",
 ];

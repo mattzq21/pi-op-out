@@ -13,6 +13,7 @@ import { createHostModelVisibility } from "./lib/hostModelVisibility";
 import { clearDraftCatalogs } from "./lib/draftRuntime";
 import { NativeTransport } from "./lib/nativeTransport";
 import { listen } from "./lib/platform";
+import type { DebugFeature } from "./lib/debugFeatures";
 import { SessionRuntimePool } from "./lib/sessionRuntimePool";
 import { SettingsPublication } from "./lib/settingsPublication";
 import { createDependencyEffect,createRef } from "./lib/solid";
@@ -205,5 +206,13 @@ export function createAppSettings({ transport, runtimePool, chatSession, addNoti
     void saveClientSettings(next, baseline).then(committed => publishPreferences(baseline, committed)).catch((reason) => addNotice({ title: "Could not change debug mode", message: reason instanceof Error ? reason.message : String(reason) })).finally(() => { debugModePending.current = false; setDebugModeSaving(false); });
   };
 
- return { modelVisibility, settings, setSettings, runtimeSettings, applyRuntimeSettings, settingsSavePending, settingsSaving, setSettingsSaving, debugModeSaving, setDebugModeSaving, debugModePending, settingsDirty, setSettingsDirty, loadSettings, saveSettings, applySettings, toggleDebugMode };
+  const toggleDebugFeature = (feature: DebugFeature) => {
+    if (!settings() || debugModePending.current || settingsSavePending.current) return; debugModePending.current = true; setDebugModeSaving(true);
+    const baseline = required(settings());
+    const off = baseline.debugFeaturesOff ?? [];
+    const next = { ...baseline, debugFeaturesOff: off.includes(feature) ? off.filter(item => item !== feature) : [...off, feature] };
+    void saveClientSettings(next, baseline).then(committed => publishPreferences(baseline, committed)).catch((reason) => addNotice({ title: "Could not change debug features", message: reason instanceof Error ? reason.message : String(reason) })).finally(() => { debugModePending.current = false; setDebugModeSaving(false); });
+  };
+
+ return { modelVisibility, settings, setSettings, runtimeSettings, applyRuntimeSettings, settingsSavePending, settingsSaving, setSettingsSaving, debugModeSaving, setDebugModeSaving, debugModePending, settingsDirty, setSettingsDirty, loadSettings, saveSettings, applySettings, toggleDebugMode, toggleDebugFeature };
 }

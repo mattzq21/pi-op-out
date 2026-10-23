@@ -12,6 +12,8 @@ pub(crate) const CLIENT_SETTINGS_CHANGED: &str = "pi://client-settings-changed";
 pub(crate) struct ClientSettings {
     keybindings: HashMap<String, String>,
     debug_mode: bool,
+    #[serde(default)]
+    debug_features_off: Vec<String>,
 }
 
 fn storage_path() -> Result<PathBuf, String> {
@@ -64,6 +66,7 @@ fn validate_keybindings(keybindings: &HashMap<String, String>) -> Result<(), Str
 fn merge_preferences(mut latest: ClientSettings, baseline: &ClientSettings, intended: &ClientSettings) -> Result<ClientSettings, String> {
     merge_keybindings(&mut latest.keybindings, &baseline.keybindings, &intended.keybindings)?;
     if intended.debug_mode != baseline.debug_mode { latest.debug_mode = intended.debug_mode; }
+    if intended.debug_features_off != baseline.debug_features_off { latest.debug_features_off = intended.debug_features_off.clone(); }
     Ok(latest)
 }
 

@@ -151,6 +151,8 @@ kbd { font: 11px "DM Sans"; border: 1px solid var(--line); padding: 2px 4px; bor
 .session-context-menu { position: fixed; right: auto; z-index: 30; }
 .conversation-menu button:disabled { opacity: .45; cursor: default; pointer-events: none; }
 .link-context-menu { position: fixed; right: auto; z-index: 30; }
+.debug-features-menu { width: 220px; }
+.debug-feature-check { display: inline-flex; width: 14px; flex: none; }
 .select-control { height: 31px; border: 1px solid var(--line); border-radius: 7px; display: flex; align-items: center; padding: 0 7px; gap: 4px; border-color: var(--line); background: var(--dark-control); color: var(--ink); }
 .select-control span { font: 10px "DM Sans"; color: var(--faint); text-transform: uppercase; }.select-control select { max-width: 130px; border: 0; outline: 0; appearance: none; font-size: 12px; font-weight: 500; background: transparent; }.select-control.thinking select { max-width: 70px; }
 .messages { position: absolute; inset: 0; min-height: 0; overflow-y: auto; overflow-x: hidden; padding-top: 5vh; padding-bottom: calc(var(--composer-height, 0px) + 22px); scroll-padding-bottom: calc(var(--composer-height, 0px) + 22px); }

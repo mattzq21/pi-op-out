@@ -11,6 +11,7 @@ let durabilityFailure: { revision: string; error: string } | undefined;
 const coreClientSettingsSchema = z.object({
   keybindings: z.record(z.string(), z.string()).optional().catch(undefined),
   debugMode: z.boolean().optional().catch(undefined),
+  debugFeaturesOff: z.array(z.string()).optional().catch(undefined),
 }).catch({});
 
 const clientSettingsSchema = coreClientSettingsSchema;
@@ -38,6 +39,7 @@ function mergeClientSettings(settings: AppSettings, stored: StoredPreferences): 
   return { ...settings,
     keybindings: stored.keybindings ? { ...settings.keybindings, ...stored.keybindings } : settings.keybindings,
     debugMode: stored.debugMode ?? settings.debugMode,
+    debugFeaturesOff: stored.debugFeaturesOff ?? settings.debugFeaturesOff ?? [],
   };
 }
 

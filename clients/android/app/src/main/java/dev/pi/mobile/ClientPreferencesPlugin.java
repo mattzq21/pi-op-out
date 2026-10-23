@@ -9,6 +9,7 @@ import java.util.Iterator;
 import java.util.LinkedHashSet;
 import java.util.Objects;
 import java.util.Set;
+import org.json.JSONArray;
 import org.json.JSONException;
 import org.json.JSONObject;
 
@@ -38,6 +39,9 @@ public class ClientPreferencesPlugin extends Plugin {
             if (!(shortcuts.get(keys.next()) instanceof String)) throw new JSONException("Invalid client preference keybindings");
         }
         if (!(settings.get("debugMode") instanceof Boolean)) throw new JSONException("Invalid client preference debugMode");
+        Object off = settings.opt("debugFeaturesOff");
+        if (off != null && !(off instanceof JSONArray)) throw new JSONException("Invalid client preference debugFeaturesOff");
+        if (off != null) for (int index = 0; index < ((JSONArray) off).length(); index++) if (!(((JSONArray) off).get(index) instanceof String)) throw new JSONException("Invalid client preference debugFeaturesOff");
     }
 
     private static void mergeKeybindings(JSONObject latest, JSONObject baseline, JSONObject intended) throws JSONException {
@@ -63,6 +67,8 @@ public class ClientPreferencesPlugin extends Plugin {
     private static JSONObject merge(JSONObject latest, JSONObject baseline, JSONObject intended) throws JSONException {
         mergeKeybindings(latest, baseline, intended);
         if (!intended.get("debugMode").equals(baseline.get("debugMode"))) latest.put("debugMode", intended.get("debugMode"));
+        String intendedOff = String.valueOf(intended.opt("debugFeaturesOff"));
+        if (!intendedOff.equals(String.valueOf(baseline.opt("debugFeaturesOff")))) latest.put("debugFeaturesOff", intended.opt("debugFeaturesOff"));
         return latest;
     }
 
