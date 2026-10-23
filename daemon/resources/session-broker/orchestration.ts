@@ -375,6 +375,9 @@ function registerDelivery(pi: ExtensionAPI) {
   });
 }
 
+/** How long wait_peers waits when the agent gives no timeoutMs. */
+const DEFAULT_WAIT_MS = 5 * 60_000;
+
 export function registerOrchestration(pi: ExtensionAPI) {
   registerDelivery(pi);
   /** The last answer each wait returned, by waiting chat and target chat. */
@@ -478,19 +481,19 @@ export function registerOrchestration(pi: ExtensionAPI) {
     },
   });
   pi.registerTool({
-    name: "wait_peers", label: "Wait for peers", description: "Wait until one of the given peers finishes its work or needs input, until a new user message arrives, or until timeoutMs passes if you give it (0 returns at once). Returns the new answers of the peers that finished.",
+    name: "wait_peers", label: "Wait for peers", description: "Wait until one of the given peers finishes its work or needs input, until a new user message arrives, or until timeoutMs passes (default 300000; 0 returns at once). Returns the new answers of the peers that finished.",
     parameters: Type.Object({ targets: Type.Array(Type.Object(address), { minItems: 1 }), timeoutMs: Type.Optional(Type.Integer({ minimum: 0 })) }),
     async execute(_id, params, signal, _update, ctx) {
       requireRootCaller(ctx);
       validateTargets(params.targets, ctx);
       const key = (target: Target) => [ctx.sessionManager.getSessionId(), target.hostId ?? currentHost(), target.peerId].join("\0");
       const targets = params.targets.map(target => ({ ...target, afterCursor: seenAnswers.get(key(target)) }));
-      // Without timeoutMs the wait has no time limit.
-      const deadline = params.timeoutMs === undefined ? Infinity : Date.now() + params.timeoutMs;
+      const timeoutMs = params.timeoutMs ?? DEFAULT_WAIT_MS;
+      const deadline = Date.now() + timeoutMs;
       const revision = inputRevision;
       const stop = new AbortController();
       // A timer longer than setTimeout allows is left to the loop, which checks the deadline every second.
-      const timer = !params.timeoutMs || params.timeoutMs > 0x7fffffff ? undefined : setTimeout(() => stop.abort(new Error("Wait timed out")), deadline - Date.now());
+      const timer = !timeoutMs || timeoutMs > 0x7fffffff ? undefined : setTimeout(() => stop.abort(new Error("Wait timed out")), deadline - Date.now());
       const onInput = () => stop.abort(new Error("Wait interrupted by new input"));
       inputListeners.add(onInput);
 
