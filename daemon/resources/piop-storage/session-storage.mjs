@@ -454,7 +454,9 @@ export function installSessionStorage(SessionManager, recordReferences) {
   prototype.getBranch = function (...args) {
     const current = currentEntries(this);
     const selection = entry => ["model_change", "thinking_level_change"].includes(entry.type);
-    return [...current.filter(entry => !selection(entry)), ...getBranch.apply(this, args), ...current.filter(selection)];
+    const branch = [...current.filter(entry => !selection(entry)), ...getBranch.apply(this, args)];
+    for (const entry of current.filter(selection)) branch.push({ ...entry, parentId: branch.at(-1)?.id ?? null });
+    return branch;
   };
   const buildProjection = prototype.buildSessionProjection;
   prototype.buildSessionProjection = function (...args) {

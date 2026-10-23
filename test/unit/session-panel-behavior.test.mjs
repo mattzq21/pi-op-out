@@ -144,25 +144,34 @@ test('a remote child is hidden only by its parent on the same machine', { timeou
   assert.deepEqual(actions, [[child, 'archive']]);
 });
 
-test('conversation names sort naturally', async t => {
-  await fixture(t, { sessions: [session('b', 'Chat 10'), session('a', 'Chat 2')] });
-  assert.deepEqual([...document.querySelectorAll('.session-main strong')].map(element => element.textContent), ['Chat 2', 'Chat 10']);
-});
+test('conversation list interactions', async t => {
+  const selected = [], actions = [], queries = [];
+  const first = session('a', 'Chat 2'), target = session('b', 'Chat 10');
+  const panel = await fixture(t, { sessions: [target, first], onSelect: value => selected.push(value), onAction: (...args) => actions.push(args), onQuery: query => queries.push(query) });
+  await t.test('conversation names sort naturally', async () => {
+    assert.deepEqual([...document.querySelectorAll('.session-main strong')].map(element => element.textContent), ['Chat 2', 'Chat 10']);
+  });
 
-test('selecting a conversation returns that conversation to the caller', async t => {
-  const selected = [];
-  const first = session('a', 'Chat 2');
-  await fixture(t, { sessions: [session('b', 'Chat 10'), first], onSelect: value => selected.push(value) });
-  await click(row('a'));
-  assert.deepEqual(selected, [first]);
-});
+  await t.test('selecting a conversation returns that conversation to the caller', async () => {
+    await click(row('a'));
+    assert.deepEqual(selected, [first]);
+  });
 
-test('archiving a conversation returns the selected conversation and action', async t => {
-  const actions = [];
-  const target = session('b', 'Chat 10');
-  await fixture(t, { sessions: [target, session('a', 'Chat 2')], onAction: (...args) => actions.push(args) });
-  await click(control('Archive Chat 10'));
-  assert.deepEqual(actions, [[target, 'archive']]);
+  await t.test('archiving a conversation returns the selected conversation and action', async () => {
+    await click(control('Archive Chat 10'));
+    assert.deepEqual(actions, [[target, 'archive']]);
+  });
+
+  await t.test('typing a conversation search returns the query to the caller', async () => {
+    await enterText(control('Search conversations'), 'Chat 2');
+    assert.deepEqual(queries, ['Chat 2']);
+  });
+
+  await t.test('a search without matching conversations shows an empty result message', async () => {
+    await panel.render({ query: 'missing' });
+    assert.deepEqual(names(), []);
+    assert.match(document.body.textContent, /No conversations match/);
+  });
 });
 
 test('the selected conversation is marked as the current page', async t => {
@@ -184,20 +193,6 @@ test('conversation activity labels follow running and unseen activity', async t 
 });
 
 const menuAction = text => [...document.querySelectorAll('[role=menuitem]')].find(element => element.textContent === text);
-
-test('typing a conversation search returns the query to the caller', async t => {
-  const queries = [];
-  await fixture(t, { sessions: [session('a', 'Chat 2'), session('b', 'Chat 10')], onQuery: query => queries.push(query) });
-  await enterText(control('Search conversations'), 'Chat 2');
-  assert.deepEqual(queries, ['Chat 2']);
-});
-
-test('a search without matching conversations shows an empty result message', async t => {
-  const panel = await fixture(t, { sessions: [session('a', 'Chat 2'), session('b', 'Chat 10')] });
-  await panel.render({ query: 'missing' });
-  assert.deepEqual(names(), []);
-  assert.match(document.body.textContent, /No conversations match/);
-});
 
 test('new chat uses the selected project group', async t => {
   const chats = [];

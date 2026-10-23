@@ -23,7 +23,7 @@ class AppPage {
   get settingsButton() { return $('button[aria-label="Settings"]'); }
   get settingsHeading() { return $("h1"); }
   get settingsSectionHeading() { return $(".settings-content h2"); }
-  get saveSettingsButton() { return $(".settings-save > button"); }
+  get saveSettingsButton() { return $(".settings-save > button.primary-button"); }
   get projectDialogHeading() { return $("#project-dialog-title"); }
   get extensionDialogHeading() { return $('dialog.extension-dialog:not([aria-labelledby="project-dialog-title"]) h2'); }
   get projectDirectory() { return $('.directory-palette input[role="combobox"]'); }

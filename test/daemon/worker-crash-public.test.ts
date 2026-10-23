@@ -14,10 +14,14 @@ test('when a chat\'s Pi process dies mid-answer, the app is told, and reopening 
   });
   try {
     let calls = 0;
-    agents.scripts.set('Think slowly', messages => ++calls === 1 ? new Promise(() => {}) : { text: 'Answered: ' + text(messages.at(-1)) });
+    const started = Promise.withResolvers<void>();
+    agents.scripts.set('Think slowly', messages => {
+      if (++calls === 1) { started.resolve(); return new Promise(() => {}); }
+      return { text: 'Answered: ' + text(messages.at(-1)) };
+    });
     const chat = await agents.rootChat();
     await chat.command({ type: 'prompt', message: 'Think slowly' });
-    await chat.until(() => calls === 1);
+    await started.promise;
     expect(workers()).toHaveLength(1);
 
     const lost = agents.daemon.waitEvent('pi://event', payload => payload.runtimeId === chat.runtimeId && payload.event?.type === 'disconnected');
@@ -31,7 +35,7 @@ test('when a chat\'s Pi process dies mid-answer, the app is told, and reopening 
     const history = async () => (await reopened({ type: 'get_entries' })).entries.filter((entry: any) => entry.type === 'message').map((entry: any) => entry.message);
     expect((await history()).filter((message: any) => message.role === 'user').map(text)).toEqual(['Think slowly']);
     await reopened({ type: 'prompt', message: 'Try again' });
-    for (let tries = 0; text((await history()).at(-1)) !== 'Answered: Try again' && tries < 100; tries++) await Bun.sleep(100);
+    await agents.daemon.waitEvent('pi://event', payload => payload.runtimeId === 'reopened' && payload.event?.type === 'agent_settled');
     expect(text((await history()).at(-1))).toBe('Answered: Try again');
   } finally { await agents.close(); }
 }, 120000);

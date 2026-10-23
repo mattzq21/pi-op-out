@@ -2,11 +2,13 @@ import { historyContract } from '../../daemon/resources/piop-storage/goal-assets
 import conversationStorage from '../../daemon/resources/conversation-storage.cjs';
 import { DatabaseSync } from 'node:sqlite';
 import assert from 'node:assert/strict';
-import { test } from 'node:test';
-import { spawnSync, execFileSync } from 'node:child_process';
+import { describe, test } from 'node:test';
+import { execFile, execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import { buildTraceControls } from '../trace-command-fixture.mjs';
 import { goalCommand } from '../goal-command-fixture.mjs';
 import { daemonClient } from '../daemon-client.mjs';
+import { chatPublisher } from '../chat-publisher-fixture.mjs';
 import { build } from 'esbuild';
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, readdirSync, lstatSync, rmSync, existsSync, renameSync, symlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -19,6 +21,8 @@ const maxCrashes = 200;
 const bundleDirectory = mkdtempSync(join(tmpdir(), 'piop-storage-transaction-bundle-'));
 after(() => rmSync(bundleDirectory, { recursive: true, force: true }));
 const entry = join(bundleDirectory, 'storage-transaction.mjs');
+const controlsBundle = join(bundleDirectory, 'controls.mjs');
+await buildTraceControls(controlsBundle);
 
 await build({
   stdin: { contents: `
@@ -74,12 +78,18 @@ function tree(directory, prefix = '') {
   });
 }
 
-function run(request, environment = {}) {
-  const result = spawnSync(bun, [entry], {
-    input: JSON.stringify(request), encoding: 'utf8', timeout: 30000, killSignal: 'SIGKILL',
-    env: { ...process.env, BUN_BE_BUN: '1', ...environment },
+async function run(request, environment = {}) {
+  const result = await new Promise((resolve, reject) => {
+    const child = execFile(bun, [entry], {
+      encoding: 'utf8', timeout: 30000, killSignal: 'SIGKILL',
+      env: { ...process.env, BUN_BE_BUN: '1', ...environment },
+    }, (error, stdout, stderr) => {
+      if (error && (error.killed || (!error.signal && typeof error.code !== 'number'))) { reject(error); return; }
+      resolve({ status: error ? (typeof error.code === 'number' ? error.code : null) : 0, signal: error?.signal, stdout, stderr });
+    });
+    child.stdin.on('error', reject);
+    child.stdin.end(JSON.stringify(request));
   });
-  if (result.error) throw result.error;
   const reply = result.stdout ? JSON.parse(result.stdout) : undefined;
   return { ...result, reply, outcome: reply && (reply.ok ? reply.result : { state: reply.state, error: reply.error }) };
 }
@@ -92,7 +102,8 @@ function goalOwners(root, directory) {
 
 const deletion = fixture => ({ action: 'delete', targets: [{ path: fixture.target, area: 'sessions', root: fixture.sessions }], activeSessionIds: [] });
 
-test('delete fully happens or fully rolls back after a crash at any write', t => {
+describe('storage transactions', { concurrency: 6 }, () => {
+test('delete fully happens or fully rolls back after a crash at any write', async t => {
   const outcomes = new Set();
 
   for (let crashAfter = 0; ; crashAfter += 1) {
@@ -100,24 +111,24 @@ test('delete fully happens or fully rolls back after a crash at any write', t =>
     const current = fixture(t);
     const before = tree(current.sessions);
     const after = before.filter(line => line.startsWith('other.jsonl'));
-    const result = run(deletion(current), { PIOP_STORAGE_TRANSACTION_CRASH_AFTER: String(crashAfter) });
+    const result = await run(deletion(current), { PIOP_STORAGE_TRANSACTION_CRASH_AFTER: String(crashAfter) });
 
     if (result.status === 0) {
       assert.equal(result.outcome.state, 'committed');
       assert.deepEqual(tree(current.sessions), after);
-      const recovery = run({ action: 'recover', root: current.profile });
+      const recovery = await run({ action: 'recover', root: current.profile });
       assert.equal(recovery.status, 0, recovery.stdout + recovery.stderr);
       assert.deepEqual(tree(current.sessions), after);
       break;
     }
 
     assert.equal(result.stdout, '', 'crash ' + crashAfter + ' wrote a result: ' + result.stderr);
-    const recovery = run({ action: 'recover', root: current.profile });
+    const recovery = await run({ action: 'recover', root: current.profile });
     assert.equal(recovery.status, 0, recovery.stdout + recovery.stderr);
     const state = tree(current.sessions);
     assert.ok([before, after].some(expected => JSON.stringify(expected) === JSON.stringify(state)), 'crash ' + crashAfter + ' left ' + state.join(', '));
     outcomes.add(JSON.stringify(state) === JSON.stringify(before) ? 'before' : 'after');
-    const repeatedRecovery = run({ action: 'recover', root: current.profile });
+    const repeatedRecovery = await run({ action: 'recover', root: current.profile });
     assert.equal(repeatedRecovery.status, 0, repeatedRecovery.stdout + repeatedRecovery.stderr);
     assert.deepEqual(tree(current.sessions), state, 'repeated recovery must preserve the recovered files');
   }
@@ -125,16 +136,16 @@ test('delete fully happens or fully rolls back after a crash at any write', t =>
   assert.deepEqual([...outcomes].sort(), ['after', 'before']);
 });
 
-test('rejected delete leaves storage unchanged', t => {
+test('rejected delete leaves storage unchanged', async t => {
   const current = fixture(t);
   const before = tree(current.sessions);
-  const result = run({ ...deletion(current), activeSessionIds: [sessionId] });
+  const result = await run({ ...deletion(current), activeSessionIds: [sessionId] });
 
   assert.equal(result.status, 1);
   assert.equal(result.outcome.state, 'rolled-back');
   assert.equal(result.outcome.error, 'Deletion failed: Close the session before deleting it');
   assert.deepEqual(tree(current.sessions), before);
-  const retry = run(deletion(current));
+  const retry = await run(deletion(current));
   assert.equal(retry.status, 0, retry.stdout + retry.stderr);
   assert.equal(retry.outcome.state, 'committed');
   assert.deepEqual(tree(current.sessions), before.filter(line => line.startsWith('other.jsonl')));
@@ -146,10 +157,8 @@ test('restore fully happens or fully rolls back after a crash at any write', asy
   const profile = join(home, '.piop');
   const outcomes = new Set();
   const content = JSON.stringify({ type: 'message', id: 'question', parentId: null, message: { role: 'user', content: 'Keep this restored chat' } }) + '\n';
-  const publish = () => JSON.parse(execFileSync('node', [fileURLToPath(new URL('../fixtures/publish-chat.mjs', import.meta.url))], {
-    encoding: 'utf8', timeout: 30000, input: JSON.stringify({ home, content }),
-  }));
-  const other = publish();
+  const publish = chatPublisher(t, { home, content, controlsBundle });
+  const other = await publish();
   await daemon.invoke('archive_session', { hostId: 'local', sessionPath: other.path, terminalIds: [], clientId: 'restore-crash-test' });
   const initial = await daemon.invoke('storage_report');
   const otherPath = initial.hosts.find(host => host.hostId === 'local').archives.find(row => row.id === other.id).path;
@@ -158,7 +167,7 @@ test('restore fully happens or fully rolls back after a crash at any write', asy
 
   for (let crashAfter = 0; ; crashAfter += 1) {
     assert.ok(crashAfter < maxCrashes, 'no committed run within ' + maxCrashes + ' crash points');
-    const chat = publish();
+    const chat = await publish();
     const snapshots = chat.path.replace(/\.jsonl$/, '.snapshots');
     mkdirSync(snapshots);
     writeFileSync(join(snapshots, 'one.json'), '{}');
@@ -174,25 +183,25 @@ test('restore fully happens or fully rolls back after a crash at any write', asy
     const before = { active: false, archived: true, activeSnapshots: false, archivedSnapshots: true };
     const after = { active: true, archived: false, activeSnapshots: true, archivedSnapshots: false };
     assert.deepEqual(observe(), before);
-    const result = run({ action: 'restore', paths: [archived], root: profile }, { PIOP_STORAGE_TRANSACTION_CRASH_AFTER: String(crashAfter) });
+    const result = await run({ action: 'restore', paths: [archived], root: profile }, { PIOP_STORAGE_TRANSACTION_CRASH_AFTER: String(crashAfter) });
     if (result.status !== 0) assert.equal(result.stdout, '', 'crash ' + crashAfter + ' wrote a result: ' + result.stderr);
     else {
       assert.equal(result.outcome.state, 'committed');
       assert.deepEqual(result.outcome.result.sessions, [{ path: home, sessionPath: chat.path, sessionId: chat.id, sourcePath: archived }]);
     }
-    const recovered = run({ action: 'recover', root: profile });
+    const recovered = await run({ action: 'recover', root: profile });
     assert.equal(recovered.status, 0, recovered.stdout + recovered.stderr);
     const state = observe();
     assert.ok([before, after].some(expected => JSON.stringify(expected) === JSON.stringify(state)), 'crash ' + crashAfter + ' left ' + JSON.stringify(state));
     assert.equal(readFileSync(state.active ? chat.path : archived, 'utf8'), original);
     assert.deepEqual(tree(state.active ? snapshots : archivedSnapshots), ['one.json={}']);
-    const repeated = run({ action: 'recover', root: profile });
+    const repeated = await run({ action: 'recover', root: profile });
     assert.equal(repeated.status, 0, repeated.stdout + repeated.stderr);
     assert.deepEqual(observe(), state);
     assert.equal(readFileSync(otherPath, 'utf8'), otherContent);
     if (result.status === 0) {
       assert.deepEqual(state, after);
-      const receipt = run({ action: 'result', path: archived, root: profile });
+      const receipt = await run({ action: 'result', path: archived, root: profile });
       assert.equal(receipt.status, 0, receipt.stdout + receipt.stderr);
       assert.deepEqual(receipt.outcome.result, result.outcome.result);
       break;
@@ -202,15 +211,15 @@ test('restore fully happens or fully rolls back after a crash at any write', asy
   assert.deepEqual([...outcomes].sort(), ['after', 'before']);
 });
 
-test('rejected restore preserves the archive and the existing destination', t => {
+test('rejected restore preserves the archive and the existing destination', async t => {
   const current = fixture(t);
-  const archived = run({ action: 'archive', paths: [current.target], root: current.profile });
+  const archived = await run({ action: 'archive', paths: [current.target], root: current.profile });
   assert.equal(archived.status, 0, archived.stdout + archived.stderr);
   const path = archived.outcome.result.sessions[0].sessionPath;
   const content = readFileSync(path, 'utf8');
   writeFileSync(current.target, 'taken');
   const before = tree(current.sessions);
-  const result = run({ action: 'restore', paths: [path], root: current.profile });
+  const result = await run({ action: 'restore', paths: [path], root: current.profile });
 
   assert.equal(result.status, 1);
   assert.equal(result.outcome.state, 'rolled-back');
@@ -220,7 +229,7 @@ test('rejected restore preserves the archive and the existing destination', t =>
   assert.equal(readFileSync(path.replace(/\.jsonl$/, '.snapshots/one.json'), 'utf8'), '{}');
 });
 
-test('archive fully happens or fully rolls back after a crash at any write', t => {
+test('archive fully happens or fully rolls back after a crash at any write', async t => {
   const outcomes = new Set();
   const message = { type: 'message', id: 'question', parentId: null, message: { role: 'user', content: 'Keep this message after recovery' } };
   const observe = current => ({
@@ -245,7 +254,7 @@ test('archive fully happens or fully rolls back after a crash at any write', t =
       otherArchivedFiles: [],
       archives: [{ id: sessionId, cwd: dirname(current.profile), entries: [message], snapshots: ['one.json={}'] }],
     };
-    const result = run({ action: 'archive', paths: [current.target], root: current.profile }, { PIOP_STORAGE_TRANSACTION_CRASH_AFTER: String(crashAfter) });
+    const result = await run({ action: 'archive', paths: [current.target], root: current.profile }, { PIOP_STORAGE_TRANSACTION_CRASH_AFTER: String(crashAfter) });
 
     if (result.status === 0) {
       assert.equal(result.outcome.state, 'committed');
@@ -257,12 +266,12 @@ test('archive fully happens or fully rolls back after a crash at any write', t =
     }
 
     assert.equal(result.stdout, '', 'crash ' + crashAfter + ' wrote a result: ' + result.stderr);
-    const recovery = run({ action: 'recover', root: current.profile });
+    const recovery = await run({ action: 'recover', root: current.profile });
     assert.equal(recovery.status, 0, recovery.stdout + recovery.stderr);
     const state = observe(current);
     assert.ok([before, after].some(expected => JSON.stringify(expected) === JSON.stringify(state)), 'crash ' + crashAfter + ' left ' + JSON.stringify(state));
     outcomes.add(JSON.stringify(state) === JSON.stringify(before) ? 'before' : 'after');
-    const repeated = run({ action: 'recover', root: current.profile });
+    const repeated = await run({ action: 'recover', root: current.profile });
     assert.equal(repeated.status, 0, repeated.stdout + repeated.stderr);
     assert.deepEqual(observe(current), state);
   }
@@ -270,10 +279,10 @@ test('archive fully happens or fully rolls back after a crash at any write', t =
   assert.deepEqual([...outcomes].sort(), ['after', 'before']);
 });
 
-test('rejected archive preserves the source and the existing destination', t => {
+test('rejected archive preserves the source and the existing destination', async t => {
   const current = fixture(t);
   const source = readFileSync(current.target, 'utf8');
-  const first = run({ action: 'archive', paths: [current.target], root: current.profile });
+  const first = await run({ action: 'archive', paths: [current.target], root: current.profile });
   assert.equal(first.status, 0, first.stdout + first.stderr);
   const destination = first.outcome.result.sessions[0].sessionPath;
   const archived = readFileSync(destination, 'utf8');
@@ -282,7 +291,7 @@ test('rejected archive preserves the source and the existing destination', t => 
   writeFileSync(join(current.sessions, 'target.snapshots', 'one.json'), '{}');
   const before = tree(current.sessions);
 
-  const result = run({ action: 'archive', paths: [current.target], root: current.profile });
+  const result = await run({ action: 'archive', paths: [current.target], root: current.profile });
   assert.equal(result.status, 1);
   assert.equal(result.outcome.state, 'rolled-back');
   assert.equal(result.outcome.error, 'Archive failed: Archive destination already exists: ' + destination);
@@ -314,10 +323,10 @@ test('archive with goal folders fully happens or fully rolls back after a crash 
     const archived = join(current.profile, 'archived');
     mkdirSync(archived);
     const other = readFileSync(join(current.sessions, 'other.jsonl'), 'utf8');
-    const result = run({ action: 'archive', paths: [current.target], root: current.profile }, { PIOP_STORAGE_TRANSACTION_CRASH_AFTER: String(crashAfter) });
+    const result = await run({ action: 'archive', paths: [current.target], root: current.profile }, { PIOP_STORAGE_TRANSACTION_CRASH_AFTER: String(crashAfter) });
     if (result.status !== 0) assert.equal(result.stdout, '', result.stderr);
     else assert.equal(result.outcome.state, 'committed');
-    const recover = run({ action: 'recover', root: current.profile });
+    const recover = await run({ action: 'recover', root: current.profile });
     assert.equal(recover.status, 0, recover.stdout + recover.stderr);
     const archivedFiles = readdirSync(archived).filter(name => name.endsWith('.jsonl'));
     const moved = !existsSync(current.target);
@@ -333,10 +342,10 @@ test('archive with goal folders fully happens or fully rolls back after a crash 
     assert.deepEqual(goalOwners(current.profile, goal), ownersBeforeMove, 'archive must not change attachment ownership');
     assert.equal(readFileSync(join(current.sessions, 'other.jsonl'), 'utf8'), other);
     const beforeRetry = { sessions: tree(current.sessions), archived: tree(archived), goal: tree(goal) };
-    const repeated = run({ action: 'recover', root: current.profile });
+    const repeated = await run({ action: 'recover', root: current.profile });
     assert.equal(repeated.status, 0, repeated.stdout + repeated.stderr);
     assert.deepEqual({ sessions: tree(current.sessions), archived: tree(archived), goal: tree(goal) }, beforeRetry);
-    const deleted = run({ action: 'delete', targets: [{ path: surviving, area: moved ? 'archived' : 'sessions', root: moved ? archived : current.sessions }], activeSessionIds: [] });
+    const deleted = await run({ action: 'delete', targets: [{ path: surviving, area: moved ? 'archived' : 'sessions', root: moved ? archived : current.sessions }], activeSessionIds: [] });
     assert.equal(deleted.status, 0, deleted.stdout + deleted.stderr);
     assert.equal(existsSync(surviving), false);
     assert.equal(existsSync(goal), false, 'deleting the last chat must release its goal folder');
@@ -365,7 +374,7 @@ test('archive that rejects a later attachment leaves all attachment ownership un
   const displaced = secondGoal + '-displaced';
   renameSync(secondGoal, displaced);
   symlinkSync(displaced, secondGoal);
-  const result = run({ action: 'archive', paths: [current.target, second], root: current.profile });
+  const result = await run({ action: 'archive', paths: [current.target, second], root: current.profile });
   assert.equal(result.status, 1);
   assert.equal(result.outcome.state, 'rolled-back');
   assert.match(result.outcome.error, /goal/i);
@@ -376,10 +385,10 @@ test('archive that rejects a later attachment leaves all attachment ownership un
   assert.deepEqual(tree(join(current.profile, 'archived')), []);
   rmSync(secondGoal);
   renameSync(displaced, secondGoal);
-  const recovered = run({ action: 'recover', root: current.profile });
+  const recovered = await run({ action: 'recover', root: current.profile });
   assert.equal(recovered.status, 0, recovered.stdout + recovered.stderr);
   for (const [path, goal] of [[current.target, firstGoal], [second, secondGoal]]) {
-    const deleted = run({ action: 'delete', targets: [{ path, area: 'sessions', root: current.sessions }], activeSessionIds: [] });
+    const deleted = await run({ action: 'delete', targets: [{ path, area: 'sessions', root: current.sessions }], activeSessionIds: [] });
     assert.equal(deleted.status, 0, deleted.stdout + deleted.stderr);
     assert.equal(existsSync(goal), false, 'failed moves must not retain deleted goal files');
   }
@@ -393,10 +402,8 @@ test('restore with goal folders fully happens or fully rolls back after a crash 
   const profile = join(home, '.piop');
   const outcomes = new Set();
   const content = JSON.stringify({ type: 'message', id: 'question', parentId: null, message: { role: 'user', content: 'Keep this restored chat' } }) + '\n';
-  const publish = () => JSON.parse(execFileSync('node', [fileURLToPath(new URL('../fixtures/publish-chat.mjs', import.meta.url))], {
-    encoding: 'utf8', timeout: 30000, input: JSON.stringify({ home, content }),
-  }));
-  const other = publish();
+  const publish = chatPublisher(t, { home, content, controlsBundle });
+  const other = await publish();
   await daemon.invoke('archive_session', { hostId: 'local', sessionPath: other.path, terminalIds: [], clientId: 'restore-crash-test' });
   const initial = await daemon.invoke('storage_report');
   const otherPath = initial.hosts.find(host => host.hostId === 'local').archives.find(row => row.id === other.id).path;
@@ -405,7 +412,7 @@ test('restore with goal folders fully happens or fully rolls back after a crash 
 
   for (let crashAfter = 0; ; crashAfter += 1) {
     assert.ok(crashAfter < maxCrashes, 'no committed run within ' + maxCrashes + ' crash points');
-    const chat = publish();
+    const chat = await publish();
     const prepared = await prepareGoal(chat.path, objective);
     const goalPath = prepared.message.match(/Read the goal objective file at (.+?) before continuing\./)?.[1];
     assert.ok(goalPath, 'prepared prompt must name the saved objective file');
@@ -428,26 +435,26 @@ test('restore with goal folders fully happens or fully rolls back after a crash 
     const before = { active: false, archived: true, activeSnapshots: false, archivedSnapshots: true };
     const after = { active: true, archived: false, activeSnapshots: true, archivedSnapshots: false };
     assert.deepEqual(observe(), before);
-    const result = run({ action: 'restore', paths: [archived], root: profile }, { PIOP_STORAGE_TRANSACTION_CRASH_AFTER: String(crashAfter) });
+    const result = await run({ action: 'restore', paths: [archived], root: profile }, { PIOP_STORAGE_TRANSACTION_CRASH_AFTER: String(crashAfter) });
     if (result.status !== 0) assert.equal(result.stdout, '', 'crash ' + crashAfter + ' wrote a result: ' + result.stderr);
     else {
       assert.equal(result.outcome.state, 'committed');
       assert.deepEqual(result.outcome.result.sessions, [{ path: home, sessionPath: chat.path, sessionId: chat.id, sourcePath: archived }]);
     }
-    const recovered = run({ action: 'recover', root: profile });
+    const recovered = await run({ action: 'recover', root: profile });
     assert.equal(recovered.status, 0, recovered.stdout + recovered.stderr);
     const state = observe();
     assert.ok([before, after].some(expected => JSON.stringify(expected) === JSON.stringify(state)), 'crash ' + crashAfter + ' left ' + JSON.stringify(state));
     assert.equal(readFileSync(state.active ? chat.path : archived, 'utf8'), original);
     assert.deepEqual(tree(state.active ? snapshots : archivedSnapshots), ['one.json={}']);
-    const repeated = run({ action: 'recover', root: profile });
+    const repeated = await run({ action: 'recover', root: profile });
     assert.equal(repeated.status, 0, repeated.stdout + repeated.stderr);
     assert.deepEqual(observe(), state);
     assert.equal(readFileSync(otherPath, 'utf8'), otherContent);
     assert.equal(readFileSync(goalPath, 'utf8'), objective);
     assert.deepEqual(goalOwners(profile, goal), ownersBeforeMove, 'moving a chat must not change attachment ownership');
     const surviving = state.active ? chat.path : archived;
-    const deleted = run({ action: 'delete', targets: [{ path: surviving, area: state.active ? 'sessions' : 'archived', root: join(profile, state.active ? 'sessions' : 'archived') }], activeSessionIds: [] });
+    const deleted = await run({ action: 'delete', targets: [{ path: surviving, area: state.active ? 'sessions' : 'archived', root: join(profile, state.active ? 'sessions' : 'archived') }], activeSessionIds: [] });
     assert.equal(deleted.status, 0, deleted.stdout + deleted.stderr);
     assert.equal(existsSync(goal), false, 'deleting the last chat releases its goal folder');
     assert.equal(readFileSync(otherPath, 'utf8'), otherContent);
@@ -468,7 +475,7 @@ test('restore that rejects a later attachment leaves all attachment ownership un
   const chats = [];
   for (const objective of ['First objective. '.repeat(300).trim(), 'Second objective. '.repeat(300).trim()]) {
     const chat = JSON.parse(execFileSync('node', [fileURLToPath(new URL('../fixtures/publish-chat.mjs', import.meta.url))], {
-      encoding: 'utf8', timeout: 30000, input: JSON.stringify({ home, content: '' }),
+      encoding: 'utf8', timeout: 30000, input: JSON.stringify({ home, content: '', controlsBundle }),
     }));
     const prepared = await prepareGoal(chat.path, objective);
     const goalPath = prepared.message.match(/Read the goal objective file at (.+?) before continuing\./)[1];
@@ -487,7 +494,7 @@ test('restore that rejects a later attachment leaves all attachment ownership un
   const displaced = chats[1].goal + '-displaced';
   renameSync(chats[1].goal, displaced);
   symlinkSync(displaced, chats[1].goal);
-  const result = run({ action: 'restore', paths: chats.map(chat => chat.archived), root: profile });
+  const result = await run({ action: 'restore', paths: chats.map(chat => chat.archived), root: profile });
   assert.equal(result.status, 1);
   assert.equal(result.outcome.state, 'rolled-back');
   assert.ok(result.outcome.error.includes(chats[1].goal), result.outcome.error);
@@ -498,10 +505,10 @@ test('restore that rejects a later attachment leaves all attachment ownership un
   }
   rmSync(chats[1].goal);
   renameSync(displaced, chats[1].goal);
-  const recovered = run({ action: 'recover', root: profile });
+  const recovered = await run({ action: 'recover', root: profile });
   assert.equal(recovered.status, 0, recovered.stdout + recovered.stderr);
   for (const chat of chats) {
-    const deleted = run({ action: 'delete', targets: [{ path: chat.archived, area: 'archived', root: join(profile, 'archived') }], activeSessionIds: [] });
+    const deleted = await run({ action: 'delete', targets: [{ path: chat.archived, area: 'archived', root: join(profile, 'archived') }], activeSessionIds: [] });
     assert.equal(deleted.status, 0, deleted.stdout + deleted.stderr);
     assert.equal(existsSync(chat.goal), false, 'failed moves must not retain deleted goal files');
   }
@@ -529,7 +536,7 @@ function own(current) {
   conversationStorage.writeRecord(current.profile, conversationStorage.key(sessionId), JSON.stringify({ path: current.target, deleted: false, client: null }));
 }
 
-test('restore with a moved worktree folder rewrites the folder atomically after a crash at any write', t => {
+test('restore with a moved worktree folder rewrites the folder atomically after a crash at any write', async t => {
   const outcomes = new Set();
 
   for (let crashAfter = 0; ; crashAfter += 1) {
@@ -539,7 +546,7 @@ test('restore with a moved worktree folder rewrites the folder atomically after 
     const from = dirname(current.profile);
     const to = join(from, 'restored-worktree');
     mkdirSync(to);
-    const archived = run({ action: 'archive', paths: [current.target], root: current.profile });
+    const archived = await run({ action: 'archive', paths: [current.target], root: current.profile });
     assert.equal(archived.status, 0, archived.stdout + archived.stderr);
     const path = archived.outcome.result.sessions[0].sessionPath;
     const [header, ...rest] = readFileSync(path, 'utf8').split('\n');
@@ -552,17 +559,17 @@ test('restore with a moved worktree folder rewrites the folder atomically after 
     const before = { active: false, archived: true, cwd: from, body: rest.join('\n'), snapshots: ['one.json={}'] };
     const after = { ...before, active: true, archived: false, cwd: to };
     assert.equal(JSON.parse(header).cwd, from);
-    const result = run({ action: 'restore', paths: [path], root: current.profile, cwdMoves: [{ from, to }] }, { PIOP_STORAGE_TRANSACTION_CRASH_AFTER: String(crashAfter) });
+    const result = await run({ action: 'restore', paths: [path], root: current.profile, cwdMoves: [{ from, to }] }, { PIOP_STORAGE_TRANSACTION_CRASH_AFTER: String(crashAfter) });
     if (result.status !== 0) assert.equal(result.stdout, '', 'crash ' + crashAfter + ' wrote a result: ' + result.stderr);
     else assert.deepEqual(result.outcome.result.sessions, [{ path: to, sessionPath: current.target, sessionId, sourcePath: path }]);
-    const recovered = run({ action: 'recover', root: current.profile });
+    const recovered = await run({ action: 'recover', root: current.profile });
     assert.equal(recovered.status, 0, recovered.stdout + recovered.stderr);
     const state = observe();
     assert.ok([before, after].some(expected => JSON.stringify(expected) === JSON.stringify(state)), 'crash ' + crashAfter + ' left ' + JSON.stringify(state));
     assert.deepEqual(readdirSync(join(current.profile, 'storage-transactions')), []);
     if (result.status === 0) {
       assert.deepEqual(state, after);
-      const receipt = run({ action: 'result', path, root: current.profile });
+      const receipt = await run({ action: 'result', path, root: current.profile });
       assert.equal(receipt.status, 0, receipt.stdout + receipt.stderr);
       assert.deepEqual(receipt.outcome.result, result.outcome.result);
       break;
@@ -572,18 +579,20 @@ test('restore with a moved worktree folder rewrites the folder atomically after 
   assert.ok(outcomes.has('before'));
 });
 
-test('restore rejects a moved folder that does not exist and leaves the archive unchanged', t => {
+test('restore rejects a moved folder that does not exist and leaves the archive unchanged', async t => {
   const current = fixture(t);
   own(current);
-  const archived = run({ action: 'archive', paths: [current.target], root: current.profile });
+  const archived = await run({ action: 'archive', paths: [current.target], root: current.profile });
   assert.equal(archived.status, 0, archived.stdout + archived.stderr);
   const path = archived.outcome.result.sessions[0].sessionPath;
   const content = readFileSync(path, 'utf8');
   const missing = join(dirname(current.profile), 'missing');
-  const result = run({ action: 'restore', paths: [path], root: current.profile, cwdMoves: [{ from: dirname(current.profile), to: missing }] });
+  const result = await run({ action: 'restore', paths: [path], root: current.profile, cwdMoves: [{ from: dirname(current.profile), to: missing }] });
   assert.equal(result.status, 1);
   assert.equal(result.outcome.state, 'rolled-back');
   assert.equal(result.outcome.error, 'Restore failed: Restored folder does not exist: ' + missing);
   assert.equal(readFileSync(path, 'utf8'), content);
   assert.equal(existsSync(current.target), false);
+});
+
 });

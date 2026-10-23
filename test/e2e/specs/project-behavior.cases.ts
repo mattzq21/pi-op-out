@@ -107,13 +107,13 @@ describe("Project behavior", () => {
       await expect(app.projectDialogHeading).not.toBeExisting();
       await expect($('button[aria-label="Selected project: tmp"]')).toHaveAttribute("data-tooltip", "/tmp");
       await expect($(".error-toast")).not.toBeExisting();
-      expect((await backendCalls()).filter(({ command }) => command === "start_pi")).toHaveLength(0);
+      expect((await backendCalls()).filter(({ command, args }) => command === "start_pi" && args.cwd === "/tmp")).toHaveLength(0);
       await app.chooseComposerOption("Model", "Acceptance model");
       await app.prepareMessage("Activate the selected project");
       await app.sendMessageButton.click();
       await browser.waitUntil(async () => (await backendCalls()).some(({ command, args }) => command === "pi_command" && args.command?.type === "prompt" && args.command.message === "Activate the selected project"));
-      expect((await backendCalls()).filter(({ command }) => command === "start_pi")).toHaveLength(1);
-      expect((await backendCalls()).find(({ command }) => command === "start_pi")?.args.cwd).toBe("/tmp");
+      expect((await backendCalls()).filter(({ command, args }) => command === "start_pi" && args.cwd === "/tmp")).toHaveLength(1);
+      expect((await backendCalls()).find(({ command, args }) => command === "start_pi" && args.cwd === "/tmp")?.args.cwd).toBe("/tmp");
     } finally {
       await resetBackend();
       await app.refreshForReset();
@@ -153,7 +153,7 @@ describe("Project behavior", () => {
       await emitPiEvent({ type: "agent_end", messages: [] });
       await expect(app.composer).toHaveValue("");
       await expect(app.composer).toBeEnabled();
-      expect((await backendCalls()).filter(({ command }) => command === "start_pi")).toHaveLength(1);
+      expect((await backendCalls()).filter(({ command, args }) => command === "start_pi" && args.cwd === "/tmp")).toHaveLength(1);
       await expect(app.modelPicker).toHaveAttribute("data-options", expect.stringContaining("e2e/alternate"));
       await expect(app.modelPicker).toBeEnabled();
       await setBridgeValue("E2E calls", "[]");
@@ -167,7 +167,7 @@ describe("Project behavior", () => {
       await app.prepareMessage("Use the selected model and effort");
       await app.sendMessageButton.click();
       await browser.waitUntil(async () => (await backendCalls()).some(({ command, args }) => command === "pi_command" && args.command?.type === "prompt" && args.command.message === "Use the selected model and effort"));
-      expect((await backendCalls()).filter(({ command }) => command === "start_pi")).toHaveLength(0);
+      expect((await backendCalls()).filter(({ command, args }) => command === "start_pi" && args.cwd === "/tmp")).toHaveLength(0);
       expect((await backendCalls()).filter(({ args }) => ["set_model", "set_thinking_level"].includes(String(args.command?.type))).map(({ args }) => args.command)).toMatchObject([
         { type: "set_model", provider: "e2e", modelId: "alternate" }, { type: "set_thinking_level", level: "off" },
       ]);
@@ -203,7 +203,7 @@ describe("Project behavior", () => {
   });
 
   it("reports a backend connection failure without trapping the user in the chooser", async () => {
-    await mockBackend({ ...connectedSessionResponses("project-failure"), load_app_settings: defaultSettings, stop_pi: false, start_pi: { error: "Project runtime unavailable" }, validate_project_directory: "/tmp/acceptance-project", list_directories: { path: "/tmp/acceptance-project", parent: "/tmp", directories: [] } });
+    await mockBackend({ ...connectedSessionResponses("project-failure"), load_app_settings: defaultSettings, stop_pi: false, start_pi: { error: "Project runtime unavailable" }, validate_project_directory: "/tmp/acceptance-project", new_chat_branches: null, list_directories: { path: "/tmp/acceptance-project", parent: "/tmp", directories: [] } });
 
     try {
       await app.openProjectChooser();
@@ -211,14 +211,14 @@ describe("Project behavior", () => {
       await app.openProjectButton.click();
 
       await expect(app.projectDialogHeading).not.toBeExisting();
-      expect((await backendCalls()).filter(({ command }) => command === "start_pi")).toHaveLength(0);
+      expect((await backendCalls()).filter(({ command, args }) => command === "start_pi" && args.cwd === "/tmp/acceptance-project")).toHaveLength(0);
       await app.chooseComposerOption("Model", "Acceptance model");
       await app.prepareMessage("Try the selected project");
       await app.sendMessageButton.click();
       await expect($(".upload-error")).toHaveText(expect.stringContaining("Project runtime unavailable"));
       await expect(app.composer).toBeDisplayed();
-      expect((await backendCalls()).filter(({ command }) => command === "start_pi")).toHaveLength(1);
-      expect((await backendCalls()).find(({ command }) => command === "start_pi")?.args.cwd).toBe("/tmp/acceptance-project");
+      expect((await backendCalls()).filter(({ command, args }) => command === "start_pi" && args.cwd === "/tmp/acceptance-project")).toHaveLength(1);
+      expect((await backendCalls()).find(({ command, args }) => command === "start_pi" && args.cwd === "/tmp/acceptance-project")?.args.cwd).toBe("/tmp/acceptance-project");
     } finally {
       await resetBackend();
     }

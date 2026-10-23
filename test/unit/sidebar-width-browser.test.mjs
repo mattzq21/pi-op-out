@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { startupPage } from '../startup-browser-fixture.mjs';
+import { savePanelSize } from '../panel-size-save.mjs';
 
 const open = async t => {
   const page = await startupPage(t, 'development', { entryPoint: 'test/fixtures/sidebar-width-browser.tsx', ready: '[aria-label="Sidebar width"]', holdStorage: false });
@@ -35,8 +36,7 @@ test('the sidebar resizes by dragging and by keys, within its limits, and keeps 
   assert.equal(await width(page), 600, 'it never grows past half the window');
 
   await page.keyboard.press('Home');
-  await page.keyboard.press('Shift+ArrowRight');
-  await page.waitForTimeout(200);
+  await savePanelSize(page, 'pi-desktop-sidebar-width', 250, () => page.keyboard.press('Shift+ArrowRight'));
   await page.reload();
   await handle(page).waitFor();
   await page.waitForFunction(() => document.querySelector('[aria-label="Sidebar width"]').getAttribute('aria-valuenow') === '250');

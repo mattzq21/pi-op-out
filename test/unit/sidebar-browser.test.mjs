@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { after, before, test } from 'node:test';
+import { after, before, describe, test } from 'node:test';
 import { createServer } from 'node:http';
 import { readFile } from 'node:fs/promises';
 import { build } from 'esbuild';
@@ -74,156 +74,158 @@ async function openSidebar(t, { storageUnavailable = false } = {}) {
   return page;
 }
 
-test('sidebar width survives a browser reload', async t => {
-  const page = await openSidebar(t);
-  const separator = page.getByRole('separator', { name: 'Sidebar width' });
-  await separator.press('Home');
-  await separator.press('Shift+ArrowRight');
-  await separator.press('ArrowRight');
-  assert.equal(await separator.getAttribute('aria-valuenow'), '260');
-  await page.evaluate(() => window.settleStorage());
-  await page.setViewportSize({ width: 1000, height: 700 });
-  await page.reload();
-  await separator.waitFor();
-  await page.evaluate(() => window.settleStorage());
-  assert.equal(await separator.getAttribute('aria-valuenow'), '260');
-});
-
-test("sidebar keyboard resizing uses small and large steps within its limits", async t => {
-  const page = await openSidebar(t);
-  const separator = page.getByRole('separator', { name: 'Sidebar width' });
-  await separator.press('Home');
-  await separator.press('ArrowRight');
-  assert.equal(await separator.getAttribute('aria-valuenow'), '210');
-  await separator.press('Shift+ArrowRight');
-  assert.equal(await separator.getAttribute('aria-valuenow'), '260');
-  await separator.press('Shift+ArrowLeft');
-  assert.equal(await separator.getAttribute('aria-valuenow'), '210');
-  await separator.press('Home'); await separator.press('ArrowLeft');
-  assert.equal(await separator.getAttribute('aria-valuenow'), '200');
-  await separator.press('a');
-  assert.equal(await separator.getAttribute('aria-valuenow'), '200');
-  await separator.press('End'); await separator.press('ArrowRight');
-  assert.equal(await separator.getAttribute('aria-valuenow'), '600');
-  await page.evaluate(() => window.settleStorage());
-});
-
-test("a narrower viewport keeps the sidebar within its new width limit", async t => {
-  const page = await openSidebar(t);
-  const separator = page.getByRole('separator', { name: 'Sidebar width' });
-  await separator.press('End');
-  assert.equal(await separator.getAttribute('aria-valuenow'), '600');
-  await page.setViewportSize({ width: 400, height: 700 });
-  await separator.evaluate(element => new Promise(resolve => {
-    if (element.getAttribute('aria-valuenow') === '200') { resolve(); return; }
-    const observer = new MutationObserver(() => {
-      if (element.getAttribute('aria-valuenow') !== '200') return;
-      observer.disconnect(); resolve();
-    });
-    observer.observe(element, { attributes: true, attributeFilter: ['aria-valuenow'] });
-  }));
-  assert.equal(await separator.getAttribute('aria-valuenow'), '200');
-  await page.evaluate(() => window.settleStorage());
-});
-
-test("double clicking the sidebar handle restores the viewport default", async t => {
-  const page = await openSidebar(t);
-  const separator = page.getByRole('separator', { name: 'Sidebar width' });
-  await separator.press('End'); await separator.dblclick();
-  assert.equal(await separator.getAttribute('aria-valuenow'), '320');
-  await page.setViewportSize({ width: 1000, height: 700 });
-  await separator.dblclick();
-  assert.equal(await separator.getAttribute('aria-valuenow'), '280');
-  await page.evaluate(() => window.settleStorage());
-});
-
-test("a compact sidebar has no resize handle", async t => {
-  const page = await openSidebar(t);
-  const separator = page.getByRole('separator', { name: 'Sidebar width' });
-  assert.equal(await separator.count(), 1);
-  await page.getByRole('button', { name: 'Toggle compact sidebar' }).click();
-  assert.equal(await separator.count(), 0);
-  assert.ok(await page.getByText('Sessions', { exact: true }).isVisible());
-});
-
-test('sidebar dragging ignores other pointers and restores text selection on release', async t => {
-  const page = await openSidebar(t);
-  const separator = page.getByRole('separator', { name: 'Sidebar width' });
-  const box = await separator.boundingBox();
-  const initial = Number(await separator.getAttribute('aria-valuenow'));
-  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
-  await page.mouse.down({ button: 'right' });
-  await page.mouse.move(box.x + 50, box.y + box.height / 2);
-  await page.mouse.up({ button: 'right' });
-  await page.keyboard.press('Escape');
-  assert.equal(Number(await separator.getAttribute('aria-valuenow')), initial);
-  const current = await separator.boundingBox();
-  await page.mouse.move(current.x + current.width / 2, current.y + current.height / 2);
-  await page.mouse.down();
-  await page.evaluate(() => new Promise(resolve => requestAnimationFrame(resolve)));
-  assert.equal(await page.evaluate(() => getComputedStyle(document.body).userSelect), 'none');
-  await separator.dispatchEvent('pointermove', { pointerId: 999, clientX: 800, isPrimary: false });
-  await separator.dispatchEvent('pointerup', { pointerId: 999 });
-  assert.equal(Number(await separator.getAttribute('aria-valuenow')), initial);
-  await page.mouse.move(current.x + current.width / 2 + 50, current.y + current.height / 2);
-  assert.equal(Number(await separator.getAttribute('aria-valuenow')), initial + 50);
-  await page.mouse.up();
-  assert.equal(await page.evaluate(() => getComputedStyle(document.body).cursor), 'default');
-  assert.notEqual(await page.evaluate(() => getComputedStyle(document.body).userSelect), 'none');
-});
-
-test('sidebar dragging keeps the application cursor', async t => {
-  const page = await openSidebar(t);
-  const separator = page.getByRole('separator', { name: 'Sidebar width' });
-  await separator.hover();
-  await page.mouse.down();
-  try {
-    assert.equal(await separator.evaluate(element => getComputedStyle(element).cursor), 'default');
-  } finally { await page.mouse.up(); }
-});
-
-test('cancelling a sidebar drag restores text selection', async t => {
-  const page = await openSidebar(t);
-  const separator = page.getByRole('separator', { name: 'Sidebar width' });
-  await separator.hover();
-  await page.mouse.down();
-  assert.equal(await page.evaluate(() => getComputedStyle(document.body).userSelect), 'none');
-  await separator.dispatchEvent('pointercancel');
-  assert.notEqual(await page.evaluate(() => getComputedStyle(document.body).userSelect), 'none');
-  await page.mouse.up();
-});
-
-test('losing pointer capture ends a sidebar drag and permits resetting its width', async t => {
-  const page = await openSidebar(t);
-  const separator = page.getByRole('separator', { name: 'Sidebar width' });
-  await separator.evaluate(element => element.addEventListener('pointerdown', event => { window.sidebarPointerId = event.pointerId; }, { once: true }));
-  await separator.hover();
-  await page.mouse.down();
-  await page.mouse.move(350, 45);
-  assert.equal(await page.evaluate(() => getComputedStyle(document.body).userSelect), 'none');
-  const width = await separator.getAttribute('aria-valuenow');
-  await separator.evaluate(element => {
-    window.sidebarCaptureLost = new Promise(resolve => element.addEventListener('lostpointercapture', resolve, { once: true }));
-    element.releasePointerCapture(window.sidebarPointerId);
+describe('sidebar behavior', { concurrency: 4 }, () => {
+  test('sidebar width survives a browser reload', async t => {
+    const page = await openSidebar(t);
+    const separator = page.getByRole('separator', { name: 'Sidebar width' });
+    await separator.press('Home');
+    await separator.press('Shift+ArrowRight');
+    await separator.press('ArrowRight');
+    assert.equal(await separator.getAttribute('aria-valuenow'), '260');
+    await page.evaluate(() => window.settleStorage());
+    await page.setViewportSize({ width: 1000, height: 700 });
+    await page.reload();
+    await separator.waitFor();
+    await page.evaluate(() => window.settleStorage());
+    assert.equal(await separator.getAttribute('aria-valuenow'), '260');
   });
-  await page.mouse.move(450, 45);
-  await page.evaluate(() => window.sidebarCaptureLost);
-  assert.notEqual(await page.evaluate(() => getComputedStyle(document.body).userSelect), 'none');
-  assert.equal(await separator.getAttribute('aria-valuenow'), width);
-  await page.mouse.up();
-  await page.setViewportSize({ width: 1000, height: 700 });
-  await separator.dblclick();
-  assert.equal(await separator.getAttribute('aria-valuenow'), '280');
-});
 
-test('sidebar resizing remains usable when browser storage is unavailable', async t => {
-  const page = await openSidebar(t, { storageUnavailable: true });
-  const separator = page.getByRole('separator', { name: 'Sidebar width' });
-  assert.equal(await separator.getAttribute('aria-valuenow'), '320');
-  const savedFailure = page.waitForEvent('console', message => message.type() === 'error' && message.text().includes('Could not save panel sizes'));
-  await separator.press('Shift+ArrowRight');
-  assert.equal(await separator.getAttribute('aria-valuenow'), '370');
-  await savedFailure;
-  await separator.dblclick();
-  assert.equal(await separator.getAttribute('aria-valuenow'), '320');
+  test("sidebar keyboard resizing uses small and large steps within its limits", async t => {
+    const page = await openSidebar(t);
+    const separator = page.getByRole('separator', { name: 'Sidebar width' });
+    await separator.press('Home');
+    await separator.press('ArrowRight');
+    assert.equal(await separator.getAttribute('aria-valuenow'), '210');
+    await separator.press('Shift+ArrowRight');
+    assert.equal(await separator.getAttribute('aria-valuenow'), '260');
+    await separator.press('Shift+ArrowLeft');
+    assert.equal(await separator.getAttribute('aria-valuenow'), '210');
+    await separator.press('Home'); await separator.press('ArrowLeft');
+    assert.equal(await separator.getAttribute('aria-valuenow'), '200');
+    await separator.press('a');
+    assert.equal(await separator.getAttribute('aria-valuenow'), '200');
+    await separator.press('End'); await separator.press('ArrowRight');
+    assert.equal(await separator.getAttribute('aria-valuenow'), '600');
+    await page.evaluate(() => window.settleStorage());
+  });
+
+  test("a narrower viewport keeps the sidebar within its new width limit", async t => {
+    const page = await openSidebar(t);
+    const separator = page.getByRole('separator', { name: 'Sidebar width' });
+    await separator.press('End');
+    assert.equal(await separator.getAttribute('aria-valuenow'), '600');
+    await page.setViewportSize({ width: 400, height: 700 });
+    await separator.evaluate(element => new Promise(resolve => {
+      if (element.getAttribute('aria-valuenow') === '200') { resolve(); return; }
+      const observer = new MutationObserver(() => {
+        if (element.getAttribute('aria-valuenow') !== '200') return;
+        observer.disconnect(); resolve();
+      });
+      observer.observe(element, { attributes: true, attributeFilter: ['aria-valuenow'] });
+    }));
+    assert.equal(await separator.getAttribute('aria-valuenow'), '200');
+    await page.evaluate(() => window.settleStorage());
+  });
+
+  test("double clicking the sidebar handle restores the viewport default", async t => {
+    const page = await openSidebar(t);
+    const separator = page.getByRole('separator', { name: 'Sidebar width' });
+    await separator.press('End'); await separator.dblclick();
+    assert.equal(await separator.getAttribute('aria-valuenow'), '320');
+    await page.setViewportSize({ width: 1000, height: 700 });
+    await separator.dblclick();
+    assert.equal(await separator.getAttribute('aria-valuenow'), '280');
+    await page.evaluate(() => window.settleStorage());
+  });
+
+  test("a compact sidebar has no resize handle", async t => {
+    const page = await openSidebar(t);
+    const separator = page.getByRole('separator', { name: 'Sidebar width' });
+    assert.equal(await separator.count(), 1);
+    await page.getByRole('button', { name: 'Toggle compact sidebar' }).click();
+    assert.equal(await separator.count(), 0);
+    assert.ok(await page.getByText('Sessions', { exact: true }).isVisible());
+  });
+
+  test('sidebar dragging ignores other pointers and restores text selection on release', async t => {
+    const page = await openSidebar(t);
+    const separator = page.getByRole('separator', { name: 'Sidebar width' });
+    const box = await separator.boundingBox();
+    const initial = Number(await separator.getAttribute('aria-valuenow'));
+    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+    await page.mouse.down({ button: 'right' });
+    await page.mouse.move(box.x + 50, box.y + box.height / 2);
+    await page.mouse.up({ button: 'right' });
+    await page.keyboard.press('Escape');
+    assert.equal(Number(await separator.getAttribute('aria-valuenow')), initial);
+    const current = await separator.boundingBox();
+    await page.mouse.move(current.x + current.width / 2, current.y + current.height / 2);
+    await page.mouse.down();
+    await page.evaluate(() => new Promise(resolve => requestAnimationFrame(resolve)));
+    assert.equal(await page.evaluate(() => getComputedStyle(document.body).userSelect), 'none');
+    await separator.dispatchEvent('pointermove', { pointerId: 999, clientX: 800, isPrimary: false });
+    await separator.dispatchEvent('pointerup', { pointerId: 999 });
+    assert.equal(Number(await separator.getAttribute('aria-valuenow')), initial);
+    await page.mouse.move(current.x + current.width / 2 + 50, current.y + current.height / 2);
+    assert.equal(Number(await separator.getAttribute('aria-valuenow')), initial + 50);
+    await page.mouse.up();
+    assert.equal(await page.evaluate(() => getComputedStyle(document.body).cursor), 'default');
+    assert.notEqual(await page.evaluate(() => getComputedStyle(document.body).userSelect), 'none');
+  });
+
+  test('sidebar dragging keeps the application cursor', async t => {
+    const page = await openSidebar(t);
+    const separator = page.getByRole('separator', { name: 'Sidebar width' });
+    await separator.hover();
+    await page.mouse.down();
+    try {
+      assert.equal(await separator.evaluate(element => getComputedStyle(element).cursor), 'default');
+    } finally { await page.mouse.up(); }
+  });
+
+  test('cancelling a sidebar drag restores text selection', async t => {
+    const page = await openSidebar(t);
+    const separator = page.getByRole('separator', { name: 'Sidebar width' });
+    await separator.hover();
+    await page.mouse.down();
+    assert.equal(await page.evaluate(() => getComputedStyle(document.body).userSelect), 'none');
+    await separator.dispatchEvent('pointercancel');
+    assert.notEqual(await page.evaluate(() => getComputedStyle(document.body).userSelect), 'none');
+    await page.mouse.up();
+  });
+
+  test('losing pointer capture ends a sidebar drag and permits resetting its width', async t => {
+    const page = await openSidebar(t);
+    const separator = page.getByRole('separator', { name: 'Sidebar width' });
+    await separator.evaluate(element => element.addEventListener('pointerdown', event => { window.sidebarPointerId = event.pointerId; }, { once: true }));
+    await separator.hover();
+    await page.mouse.down();
+    await page.mouse.move(350, 45);
+    assert.equal(await page.evaluate(() => getComputedStyle(document.body).userSelect), 'none');
+    const width = await separator.getAttribute('aria-valuenow');
+    await separator.evaluate(element => {
+      window.sidebarCaptureLost = new Promise(resolve => element.addEventListener('lostpointercapture', resolve, { once: true }));
+      element.releasePointerCapture(window.sidebarPointerId);
+    });
+    await page.mouse.move(450, 45);
+    await page.evaluate(() => window.sidebarCaptureLost);
+    assert.notEqual(await page.evaluate(() => getComputedStyle(document.body).userSelect), 'none');
+    assert.equal(await separator.getAttribute('aria-valuenow'), width);
+    await page.mouse.up();
+    await page.setViewportSize({ width: 1000, height: 700 });
+    await separator.dblclick();
+    assert.equal(await separator.getAttribute('aria-valuenow'), '280');
+  });
+
+  test('sidebar resizing remains usable when browser storage is unavailable', async t => {
+    const page = await openSidebar(t, { storageUnavailable: true });
+    const separator = page.getByRole('separator', { name: 'Sidebar width' });
+    assert.equal(await separator.getAttribute('aria-valuenow'), '320');
+    const savedFailure = page.waitForEvent('console', message => message.type() === 'error' && message.text().includes('Could not save panel sizes'));
+    await separator.press('Shift+ArrowRight');
+    assert.equal(await separator.getAttribute('aria-valuenow'), '370');
+    await savedFailure;
+    await separator.dblclick();
+    assert.equal(await separator.getAttribute('aria-valuenow'), '320');
+  });
 });

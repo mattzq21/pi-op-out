@@ -9,15 +9,18 @@ const MAX = 10 * 1024 * 1024;
 /** Feeds text to the daemon log collector for a folder, as the daemon feeds it its output, and returns the status lines it reports. */
 async function collect(directory: string, chunks: string[]) {
   const child = spawn(await daemonExecutable(), ['--daemon-log-sink', directory], { stdio: ['pipe', 'pipe', 'pipe'] });
+  const ready = Promise.withResolvers<void>();
   const closed = new Promise<number | null>(resolve => child.once('close', resolve));
   let stdout = '', stderr = '';
-  child.stdout.on('data', data => { stdout += data; });
+  child.stdout.on('data', data => { stdout += data; if (stdout.includes('ready\n')) ready.resolve(); });
   child.stderr.on('data', data => { stderr += data; });
+  child.once('error', ready.reject);
   child.stdin.on('error', () => {});
-  let exited = false;
-  void closed.then(() => { exited = true; });
-  for (let tries = 0; !stdout.includes('ready\n') && !exited && tries < 200; tries++) await Bun.sleep(25);
-  if (!exited) { for (const chunk of chunks) child.stdin.write(chunk); child.stdin.end(); }
+  const timeout = setTimeout(() => { ready.reject(new Error('Log collector did not become ready: ' + stderr)); child.kill('SIGKILL'); }, 5000);
+  try {
+    const started = await Promise.race([ready.promise.then(() => true), closed.then(() => false)]);
+    if (started) { for (const chunk of chunks) child.stdin.write(chunk); child.stdin.end(); }
+  } finally { clearTimeout(timeout); }
   const code = await closed;
   const statuses = stdout.split('\n').filter(line => line.startsWith('{')).map(line => JSON.parse(line));
   return { code, statuses, stderr };

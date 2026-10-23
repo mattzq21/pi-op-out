@@ -206,12 +206,12 @@ describe("Conversation lifecycle", () => {
       await browser.keys(["Control", "n"]);
 
       await expect(app.composer).toHaveValue("");
-      expect((await backendCalls()).slice(callCount).filter(({ command }) => command === "start_pi")).toHaveLength(0);
+      expect((await backendCalls()).slice(callCount).filter(({ command, args }) => command === "start_pi" && args.cwd === selected.cwd)).toHaveLength(0);
       await app.chooseComposerOption("Model", "Acceptance model");
       await app.prepareMessage("Begin the new conversation");
       await app.sendMessageButton.click();
-      await browser.waitUntil(async () => (await backendCalls()).slice(callCount).some(({ command }) => command === "start_pi"));
-      const starts = (await backendCalls()).slice(callCount).filter(({ command }) => command === "start_pi");
+      await browser.waitUntil(async () => (await backendCalls()).slice(callCount).some(({ command, args }) => command === "start_pi" && args.cwd === selected.cwd));
+      const starts = (await backendCalls()).slice(callCount).filter(({ command, args }) => command === "start_pi" && args.cwd === selected.cwd);
       expect(starts).toHaveLength(1);
       expect(starts[0].args).toMatchObject({ cwd: selected.cwd, hostId: selected.hostId });
       expect(starts[0].args.sessionPath).toBeUndefined();

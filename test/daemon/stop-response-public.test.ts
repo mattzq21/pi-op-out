@@ -1,19 +1,24 @@
-import { afterAll, beforeAll, expect, test } from 'bun:test';
+import { afterAll, afterEach, beforeAll, expect, test } from 'bun:test';
 import { existsSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
+import { stoppedJob } from './stopped-job';
 import { agentDaemon, called, text } from './agent-chats';
 
 let agents: Awaited<ReturnType<typeof agentDaemon>>;
 beforeAll(async () => { agents = await agentDaemon(); }, 60000);
 afterAll(async () => { await agents?.close(); });
 
+const jobs: Array<() => Promise<void>> = [];
+afterEach(async () => { for (const close of jobs.splice(0)) await close(); });
+
+
 test('stopping a response keeps its finished text, never runs its unfinished tool call, and the next turn knows it was stopped', async () => {
   agents.scripts.set('Write and then run', messages => messages.some((message: any) => message.role === 'user' && text(message) === 'Go on')
     ? { text: 'Continued.' } : { text: 'Here is the first part.', stall: 'bash' });
   const chat = await agents.rootChat();
   await chat.command({ type: 'prompt', message: 'Write and then run' });
-  for (let tries = 0; agents.model.requests.length === 0 && tries < 100; tries++) await Bun.sleep(100);
-  await Bun.sleep(1000);
+  await agents.daemon.waitEvent('pi://event', payload => payload.runtimeId === chat.runtimeId
+    && payload.event?.type === 'message_update' && payload.event.assistantMessageEvent?.type === 'toolcall_delta');
   await chat.command({ type: 'abort' });
   const stopped = await chat.until(history => history.some(message => message.role === 'assistant' && message.stopReason === 'aborted'));
   const answer = stopped.findLast(message => message.role === 'assistant');
@@ -28,13 +33,14 @@ test('stopping a response keeps its finished text, never runs its unfinished too
 }, 60000);
 
 test('pausing while a command runs ends the command, and resuming tells the agent the command was cut off and the run was paused', async () => {
-  agents.scripts.set('Run the slow job', messages => called(messages, 'bash') ? { text: 'Checked the job.' } : { tool: 'bash', arguments: { command: 'sleep 3; echo done > finished.txt' } });
+  const job = await stoppedJob('finished.txt', jobs);
+  agents.scripts.set('Run the slow job', messages => called(messages, 'bash') ? { text: 'Checked the job.' } : { tool: 'bash', arguments: { command: job.command } });
   const chat = await agents.rootChat();
   await chat.command({ type: 'prompt', message: 'Run the slow job' });
-  await chat.until(history => history.some(message => message.role === 'assistant' && message.stopReason === 'toolUse'));
+  await job.started();
   await chat.command({ type: 'pause' });
   await chat.until(history => history.at(-1)?.role === 'assistant' && history.at(-1).stopReason === 'aborted');
-  await Bun.sleep(4000);
+  await job.stopped();
   expect(existsSync(join(chat.cwd, 'finished.txt'))).toBe(false);
   expect((await chat.command({ type: 'get_state' })).isPaused).toBe(true);
   await chat.command({ type: 'resume' });
@@ -47,15 +53,16 @@ test('pausing while a command runs ends the command, and resuming tells the agen
 }, 60000);
 
 test('archiving a chat while its agent runs a command ends the command, and the restored chat goes on from where it stopped', async () => {
+  const job = await stoppedJob('late.txt', jobs);
   agents.scripts.set('Archived job', messages => called(messages, 'bash')
     ? { text: 'Seen: ' + JSON.stringify(messages.slice(1).map((message: any) => [message.role, text(message)])) }
-    : { tool: 'bash', arguments: { command: 'sleep 3; echo done > late.txt' } });
+    : { tool: 'bash', arguments: { command: job.command } });
   const chat = await agents.rootChat();
   await chat.command({ type: 'prompt', message: 'Archived job' });
-  await chat.until(history => history.some(message => message.stopReason === 'toolUse'));
+  await job.started();
   const { sessionFile } = await chat.command({ type: 'get_state' });
   await agents.daemon.invoke('archive_session', { hostId: 'local', sessionPath: sessionFile, terminalIds: [], clientId: 'laptop' });
-  await Bun.sleep(4000);
+  await job.stopped();
   expect(existsSync(join(chat.cwd, 'late.txt'))).toBe(false);
   expect(agents.model.requests.filter(request => text(request.messages[1]) === 'Archived job')).toHaveLength(1);
   const archive = (await agents.daemon.invoke('storage_report')).hosts[0].archives.find((item: any) => item.id === chat.sessionId);
@@ -69,28 +76,30 @@ test('archiving a chat while its agent runs a command ends the command, and the 
 }, 60000);
 
 test('moving a running chat stops its worker before changing the saved directory', async () => {
-  agents.scripts.set('Busy before the move', () => ({ tool: 'bash', arguments: { command: 'sleep 3; echo done > moved-late.txt' } }));
+  const job = await stoppedJob('moved-late.txt', jobs);
+  agents.scripts.set('Busy before the move', () => ({ tool: 'bash', arguments: { command: job.command } }));
   const chat = await agents.rootChat();
   await chat.command({ type: 'prompt', message: 'Busy before the move' });
-  await chat.until(history => history.some(message => message.stopReason === 'toolUse'));
+  await job.started();
   const { sessionFile } = await chat.command({ type: 'get_state' });
   const target = join(agents.daemon.home, 'move-target');
   mkdirSync(target);
   await agents.daemon.invoke('relocate_session', { hostId: 'local', sessionPath: sessionFile, cwd: target, clientId: 'laptop' });
-  await Bun.sleep(4000);
+  await job.stopped();
   expect(existsSync(join(chat.cwd, 'moved-late.txt'))).toBe(false);
   const moved = (await agents.daemon.invoke('list_sessions')).find((session: any) => session.id === chat.sessionId);
   expect(moved.cwd).toBe(target);
 }, 60000);
 
 test('deleting a running chat stops its worker before removing its saved data', async () => {
-  agents.scripts.set('Busy before deletion', () => ({ tool: 'bash', arguments: { command: 'sleep 3; echo done > deleted-late.txt' } }));
+  const job = await stoppedJob('deleted-late.txt', jobs);
+  agents.scripts.set('Busy before deletion', () => ({ tool: 'bash', arguments: { command: job.command } }));
   const chat = await agents.rootChat();
   await chat.command({ type: 'prompt', message: 'Busy before deletion' });
-  await chat.until(history => history.some(message => message.stopReason === 'toolUse'));
+  await job.started();
   const { sessionFile } = await chat.command({ type: 'get_state' });
   await agents.daemon.invoke('delete_session', { hostId: 'local', sessionPath: sessionFile, clientId: 'laptop' });
-  await Bun.sleep(4000);
+  await job.stopped();
   expect(existsSync(join(chat.cwd, 'deleted-late.txt'))).toBe(false);
   expect(existsSync(sessionFile)).toBe(false);
   expect((await agents.daemon.invoke('list_sessions')).some((session: any) => session.id === chat.sessionId)).toBe(false);

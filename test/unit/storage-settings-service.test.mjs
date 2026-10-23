@@ -50,59 +50,56 @@ async function storagePanel(t, offline = false, archiveNames = [], options = {})
   } };
 }
 
-test('storage settings shows a connection failure when the service is unavailable', async t => {
-  const { view } = await storagePanel(t, true);
-  const alert = await untilDom(() => view.container.querySelector('[role="alert"]'));
-  assert.match(alert.textContent, /connection is not open/);
-  const refresh = [...view.container.querySelectorAll('button')].find(button => button.textContent === 'Refresh');
-  assert.ok(refresh);
-  assert.equal(refresh.disabled, false);
-});
-
-test('Refresh loads the storage report after the service reconnects', async t => {
-  const { daemon, view, settle } = await storagePanel(t, true);
-  await untilDom(() => view.container.querySelector('[role="alert"]'));
-  await daemon.reconnect();
-  const refresh = [...view.container.querySelectorAll('button')].find(button => button.textContent === 'Refresh');
-  await act(() => refresh.click());
-  await settle();
-  assert.equal(view.container.querySelector('[role="alert"]'), null);
-  assert.ok(view.container.textContent.includes('Local'));
-  assert.ok(view.container.textContent.includes('General and shared history'));
-  assert.equal(refresh.disabled, false);
-});
-
-test('Refresh shows a newly created no-project working directory', async t => {
-  const { daemon, view, settle, temporary } = await storagePanel(t);
-  await settle();
-  const chat = await daemon.invoke('create_temporary_chat', { hostId: 'local' });
-  temporary.push(chat.cwd);
-  await act(() => [...view.container.querySelectorAll('button')].find(button => button.textContent === 'Refresh').click());
-  await settle();
-  assert.ok(view.container.textContent.includes('No-project workdirs'));
-  assert.ok(view.container.textContent.includes('1 directory'));
-  assert.equal(view.container.querySelector('[role="alert"]'), null);
-});
-
-test('Refresh removes a deleted no-project directory from the storage count', async t => {
-  const { daemon, view, settle, temporary } = await storagePanel(t);
-  await settle();
-  const chat = await daemon.invoke('create_temporary_chat', { hostId: 'local' });
-  temporary.push(chat.cwd);
-  const refresh = async () => {
+test('storage refresh follows connection and directory changes', { timeout: 120000 }, async t => {
+  const { daemon, view, settle, temporary } = await storagePanel(t, true);
+  await t.test('storage settings shows a connection failure when the service is unavailable', { timeout: 30000 }, async () => {
+    const alert = await untilDom(() => view.container.querySelector('[role="alert"]'));
+    assert.match(alert.textContent, /connection is not open/);
+    const refresh = [...view.container.querySelectorAll('button')].find(button => button.textContent === 'Refresh');
+    assert.ok(refresh);
+    assert.equal(refresh.disabled, false);
+  });
+  await t.test('Refresh loads the storage report after the service reconnects', { timeout: 30000 }, async () => {
+    await untilDom(() => view.container.querySelector('[role="alert"]'));
+    await daemon.reconnect();
+    const refresh = [...view.container.querySelectorAll('button')].find(button => button.textContent === 'Refresh');
+    await act(() => refresh.click());
+    await settle();
+    assert.equal(view.container.querySelector('[role="alert"]'), null);
+    assert.ok(view.container.textContent.includes('Local'));
+    assert.ok(view.container.textContent.includes('General and shared history'));
+    assert.equal(refresh.disabled, false);
+  });
+  await t.test('Refresh shows a newly created no-project working directory', { timeout: 30000 }, async () => {
+    await settle();
+    const chat = await daemon.invoke('create_temporary_chat', { hostId: 'local' });
+    temporary.push(chat.cwd);
     await act(() => [...view.container.querySelectorAll('button')].find(button => button.textContent === 'Refresh').click());
     await settle();
-  };
-  await refresh();
-  assert.ok(view.container.textContent.includes('1 directory'));
-  await daemon.invoke('remove_temporary_chat', { path: chat.cwd, hostId: 'local' });
-  temporary.splice(temporary.indexOf(chat.cwd), 1);
-  await refresh();
-  assert.ok(!view.container.textContent.includes('1 directory'));
-  assert.ok(view.container.textContent.includes('No-project workdirs'));
-  assert.equal(view.container.querySelector('[role="alert"]'), null);
+    assert.ok(view.container.textContent.includes('No-project workdirs'));
+    assert.ok(view.container.textContent.includes('1 directory'));
+    assert.equal(view.container.querySelector('[role="alert"]'), null);
+    await daemon.invoke('remove_temporary_chat', { path: chat.cwd, hostId: 'local' });
+    temporary.splice(temporary.indexOf(chat.cwd), 1);
+  });
+  await t.test('Refresh removes a deleted no-project directory from the storage count', { timeout: 30000 }, async () => {
+    await settle();
+    const chat = await daemon.invoke('create_temporary_chat', { hostId: 'local' });
+    temporary.push(chat.cwd);
+    const refresh = async () => {
+      await act(() => [...view.container.querySelectorAll('button')].find(button => button.textContent === 'Refresh').click());
+      await settle();
+    };
+    await refresh();
+    assert.ok(view.container.textContent.includes('1 directory'));
+    await daemon.invoke('remove_temporary_chat', { path: chat.cwd, hostId: 'local' });
+    temporary.splice(temporary.indexOf(chat.cwd), 1);
+    await refresh();
+    assert.ok(!view.container.textContent.includes('1 directory'));
+    assert.ok(view.container.textContent.includes('No-project workdirs'));
+    assert.equal(view.container.querySelector('[role="alert"]'), null);
+  });
 });
-
 
 test('cancelling single archive deletion keeps the chat available', async t => {
   const { daemon, view, settle } = await storagePanel(t, false, ['Old chat']);
@@ -226,7 +223,9 @@ test('storage shows archive sizes in bytes and kibibytes', async t => {
   const archives = report.hosts.find(host => host.hostId === 'local').archives;
   for (const [name, bytes] of [['Small chat', 1023], ['Larger chat', 2048]]) {
     const archive = archives.find(chat => chat.name === name);
-    const content = readFileSync(archive.path);
+    const header = JSON.parse(readFileSync(archive.path, 'utf8').split('\n')[0]);
+    const content = Buffer.from(JSON.stringify({ type: 'session', version: header.version, id: header.id, cwd: header.cwd }) + '\n'
+      + JSON.stringify({ type: 'message', id: 'question', parentId: null, message: { role: 'user', content: name } }) + '\n');
     assert.ok(content.length < bytes, 'Fixture transcript must fit in its intended size');
     writeFileSync(archive.path, Buffer.concat([content, Buffer.alloc(bytes - content.length, ' ')]));
   }

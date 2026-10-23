@@ -8,6 +8,7 @@ beforeAll(async () => {
   agents = await agentDaemon();
   const chat = await agents.rootChat();
   const configuration = await chat.command({ type: 'get_agent_configuration' });
+  configuration.agents = configuration.agents.map((agent: any) => ({ ...agent, tools: [...new Set([...(agent.tools ?? []), 'spawn_subagents'])] }));
   const { isDefault: _isDefault, ...general } = configuration.agents.find((agent: any) => agent.name === 'general');
   const thinker = { ...general, name: 'deep-thinker', model: 'scripted/scripted-thinker', effort: 'low' };
   const reader = { ...general, name: 'reader', model: 'scripted/scripted-model', tools: ['read'] };
@@ -31,7 +32,7 @@ const profileChat = async (agent: string) => {
   return { cwd: chat.cwd as string, command };
 };
 
-test('an agent limited to reading cannot run commands, directly or from code mode, and is told why', async () => {
+test.concurrent('an agent limited to reading cannot run commands, directly or from code mode, and is told why', async () => {
   const tries: Record<string, any> = {
     direct: { tool: 'bash', arguments: { command: 'touch direct.txt' } },
     'code mode': { tool: 'codemode', arguments: { code: 'try { await tools.bash({ command: "touch code.txt" }); return "ran"; } catch (error) { return "refused: " + error.message; }' } },
@@ -50,7 +51,7 @@ test('an agent limited to reading cannot run commands, directly or from code mod
   }
 }, 60000);
 
-test('a chat on an agent profile calls the profile\'s model with the profile\'s thinking level', async () => {
+test.concurrent('a chat on an agent profile calls the profile\'s model with the profile\'s thinking level', async () => {
   agents.scripts.set('Think it over', () => ({ text: 'Thought it over.' }));
   const chat = await agents.daemon.invoke('create_temporary_chat', { hostId: 'local' });
   const runtimeId = 'profile-chat';
@@ -62,7 +63,7 @@ test('a chat on an agent profile calls the profile\'s model with the profile\'s 
   expect(callFor('Think it over')).toEqual({ model: 'scripted-thinker', effort: 'low' });
 }, 60000);
 
-test('a child started with an agent profile uses that profile\'s model and thinking level', async () => {
+test.concurrent('a child started with an agent profile uses that profile\'s model and thinking level', async () => {
   agents.scripts.set('Ask a deep thinker', messages => called(messages, 'spawn_subagents') ? { text: 'Asked.' } : { tool: 'spawn_subagents', arguments: { tasks: [{ name: 'thinker', task: 'Deep child task', agent: 'deep-thinker' }] } });
   agents.scripts.set('Deep child task', () => ({ text: 'Child done.' }));
   const root = await agents.rootChat();
@@ -72,7 +73,7 @@ test('a child started with an agent profile uses that profile\'s model and think
   expect(callFor('Ask a deep thinker')).toEqual({ model: 'scripted-model', effort: undefined });
 }, 60000);
 
-test('a child started without a profile keeps the model and thinking level its parent chose by hand', async () => {
+test.concurrent('a child started without a profile keeps the model and thinking level its parent chose by hand', async () => {
   agents.scripts.set('Ask a copy of me', messages => called(messages, 'spawn_subagents') ? { text: 'Asked.' } : { tool: 'spawn_subagents', arguments: { tasks: [{ name: 'copy', task: 'Copy child task' }] } });
   agents.scripts.set('Copy child task', () => ({ text: 'Child done.' }));
   const root = await agents.rootChat();

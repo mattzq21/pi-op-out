@@ -9,7 +9,7 @@ import { startHost, type TestHost } from './host-fixture';
 function publicSession(home: string, folder = 'host'): { id: string; path: string } {
   return JSON.parse(execFileSync('node', [fileURLToPath(new URL('../fixtures/publish-chat.mjs', import.meta.url))], {
     encoding: 'utf8', timeout: 30_000,
-    input: JSON.stringify({ home, cwd: home, folder, content: '' }),
+    input: JSON.stringify({ home, cwd: home, folder, content: JSON.stringify({ type: 'message', id: 'request', parentId: null, message: { role: 'user', content: 'Hello', timestamp: 1 } }) + '\n' }),
   }));
 }
 
@@ -74,7 +74,7 @@ require('node:readline').createInterface({ input: process.stdin }).on('line', li
     cleared = true;
     return;
   }
-  const data = request.type === 'get_state' ? state : null;
+  const data = request.type === 'get_state' ? state : request.type === 'get_entries' ? { entries: sessionFile ? fs.readFileSync(sessionFile, 'utf8').trim().split('\\n').filter(Boolean).map(line => JSON.parse(line)) : [] } : null;
   process.stdout.write(JSON.stringify({ type: 'response', id: request.id, command: request.type, success: true, data }) + '\\n');
 });
 `);
@@ -512,10 +512,12 @@ async function attachHostSession(host: TestHost, path: string, sessionId: string
 }
 
 test('a replacement host rejects the previous host’s released ownership until the client claims again', async () => {
-  const first = await startHost();
+  const bootstrap = await startDaemon();
+  await bootstrap.stop();
+  const session = publicSession(bootstrap.home);
+  const first = await startHost({ home: bootstrap.home });
   let second: TestHost | undefined;
   try {
-    const session = publicSession(first.home);
     const clientId = 'replacement-client';
     const owner = { type: 'conversation_owner', sessionId: session.id, clientId, allowReleased: true };
     const runtimeId = await attachHostSession(first, session.path, session.id, clientId);

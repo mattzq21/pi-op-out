@@ -23,7 +23,7 @@ async function backgroundSleep(agents: Awaited<ReturnType<typeof agentDaemon>>, 
   return processes('sleep ' + marker);
 }
 
-test('programs an agent left running are stopped when the next daemon starts after a crash, and other daemons keep theirs', async () => {
+test.concurrent('programs an agent left running are stopped when the next daemon starts after a crash, and other daemons keep theirs', async () => {
   const agents = await agentDaemon();
   const running = await agentDaemon();
   const marker = '6000.' + Math.floor(Math.random() * 1e6);
@@ -54,7 +54,7 @@ test('programs an agent left running are stopped when the next daemon starts aft
   }
 }, 120000);
 
-test('a clean daemon stop also stops the programs its agents left running', async () => {
+test.concurrent('a clean daemon stop also stops the programs its agents left running', async () => {
   const agents = await agentDaemon();
   const marker = '6200.' + Math.floor(Math.random() * 1e6);
   try {
@@ -68,7 +68,7 @@ test('a clean daemon stop also stops the programs its agents left running', asyn
   }
 }, 120000);
 
-test('stopping an agent while its command runs ends that command and the turn, without asking the model again', async () => {
+test.concurrent('stopping an agent while its command runs ends that command and the turn, without asking the model again', async () => {
   const agents = await agentDaemon();
   const marker = '6500.' + Math.floor(Math.random() * 1e6);
   try {
@@ -83,7 +83,7 @@ test('stopping an agent while its command runs ends that command and the turn, w
     expect(processes('sleep ' + marker)).toEqual([]);
     const history = await chat.until(messages => messages.at(-1)?.role === 'assistant' && messages.at(-1).stopReason === 'aborted');
     expect(history.some(message => text(message) === 'Build done.')).toBe(false);
-    await Bun.sleep(500);
+    await agents.daemon.waitEvent('pi://event', payload => payload.runtimeId === chat.runtimeId && payload.event?.type === 'agent_settled');
     expect(agents.model.requests.length).toBe(asked);
   } finally {
     for (const { pid } of processes('sleep ' + marker)) process.kill(pid, 'SIGKILL');

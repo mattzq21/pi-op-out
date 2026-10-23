@@ -14,22 +14,27 @@ async function messagePage(t, kind = 'source') {
 
 test('message copying preserves source text and reports unavailable clipboard access', async t => {
   const page = await messagePage(t);
+  await page.clock.install();
   await page.getByRole('button', { name: 'Copy message', exact: true }).click();
   await page.getByRole('button', { name: 'Message copied', exact: true }).waitFor();
   assert.equal(await page.evaluate(() => navigator.clipboard.readText()), '**source**');
+  await page.clock.runFor(1800);
   await page.getByRole('button', { name: 'Copy message', exact: true }).waitFor();
   await page.evaluate(() => { Object.defineProperty(navigator, 'clipboard', { configurable: true, value: undefined }); document.execCommand = () => false; });
   await page.getByRole('button', { name: 'Copy message', exact: true }).click();
   const error = page.getByRole('status').filter({ hasText: 'Could not copy message' });
   await error.waitFor();
+  await page.clock.runFor(1800);
   await error.waitFor({ state: 'detached' });
 });
 
 test('fenced code copying omits the trailing newline and handles write failures', async t => {
   const page = await messagePage(t, 'code');
+  await page.clock.install();
   await page.getByRole('button', { name: 'Copy code', exact: true }).click();
   await page.getByRole('button', { name: 'Code copied', exact: true }).waitFor();
   assert.equal(await page.evaluate(() => navigator.clipboard.readText()), 'const answer = 42;');
+  await page.clock.runFor(1800);
   await page.getByRole('button', { name: 'Copy code', exact: true }).waitFor();
   await page.evaluate(() => { navigator.clipboard.writeText = async () => { throw new DOMException('denied', 'NotAllowedError'); }; document.execCommand = () => false; });
   await page.getByRole('button', { name: 'Copy code', exact: true }).click();
@@ -74,6 +79,8 @@ test('context menus close on Escape, Tab, scrolling and outside clicks and keep 
   await page.mouse.wheel(0, 250);
   await page.getByRole('menu').waitFor({ state: 'detached' });
   assert.ok(await page.getByRole('main').evaluate(node => node.scrollTop) > 0);
+  await link.scrollIntoViewIfNeeded();
+  await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
   await link.click({ button: 'right' });
   await page.getByRole('menu').waitFor();
   await page.getByRole('button', { name: 'Outside message', exact: true }).click();

@@ -1,14 +1,14 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { existsSync } from 'node:fs';
-import { join } from 'node:path';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { WebSocketServer } from 'ws';
 import { nativeFileCommand } from '../native-file-command.mjs';
 
 const REPOSITORY = fileURLToPath(new URL('../..', import.meta.url));
-const BUNDLED_DAEMON = join(REPOSITORY, 'target/debug/piopd');
+let executable;
+const bundledDaemon = () => executable ??= process.env.PIOP_TEST_DAEMON_EXECUTABLE
+  ?? execFileSync('bun', ['test/daemon/build.ts'], { cwd: REPOSITORY, encoding: 'utf8' }).trim();
 const TOKEN = 'test-token-0123456789abcdef0123456789';
 
 /**
@@ -16,8 +16,7 @@ const TOKEN = 'test-token-0123456789abcdef0123456789';
  * and connects to the daemon named by PIOP_DAEMON_URL.
  */
 async function bundledBuild() {
-  const daemon = BUNDLED_DAEMON;
-  assert.ok(existsSync(daemon), 'Build the development daemon first: bun scripts/build-daemon.mjs --debug');
+  const daemon = bundledDaemon();
   return execFileSync(daemon, ['--build-id'], { encoding: 'utf8' }).trim();
 }
 
@@ -46,7 +45,7 @@ async function fakeDaemon(t, { buildId, answer = () => null }) {
 }
 
 async function desktop(t, url, env = {}) {
-  const native = await nativeFileCommand(t, { desktop: true, bundledDaemon: BUNDLED_DAEMON, env: { PIOP_DAEMON_URL: url, PIOP_DAEMON_TOKEN: TOKEN, PIOP_PREBUILT_DAEMON_FOR: REPOSITORY.replace(/\/$/, ''), ...env } });
+  const native = await nativeFileCommand(t, { desktop: true, bundledDaemon: bundledDaemon(), env: { PIOP_DAEMON_URL: url, PIOP_DAEMON_TOKEN: TOKEN, PIOP_PREBUILT_DAEMON_FOR: REPOSITORY.replace(/\/$/, ''), ...env } });
   return {
     invoke: (command, args = {}) => native.invoke('daemon_invoke', { daemonCommand: command, args }),
     failure: (command, args = {}) => native.invoke('daemon_invoke', { daemonCommand: command, args }).then(() => 'succeeded', error => error.message),

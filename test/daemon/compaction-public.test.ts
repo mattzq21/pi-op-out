@@ -1,7 +1,7 @@
 import { expect, test } from 'bun:test';
 import { agentDaemon, text } from './agent-chats';
 
-test('compacting a chat replaces its oldest part with a summary, tells the app, and the summary is still used after reopening', async () => {
+test.concurrent('compacting a chat replaces its oldest part with a summary, tells the app, and the summary is still used after reopening', async () => {
   const agents = await agentDaemon();
   try {
     agents.scripts.set('My favourite animal is the otter', messages => /context summarization assistant/.test(text(messages[0]))
@@ -55,9 +55,10 @@ async function longChat(cap: { contextWindowCap: number; contextWindowCapEnabled
   await chat.command({ type: 'set_auto_compaction', enabled: true });
   // Compaction keeps the most recent part, so the turns carry enough text to leave an older part to summarize.
   for (const turn of [1, 2, 3]) {
+    const seen = new Set(agents.daemon.events.map(event => event.payload));
     await chat.command({ type: 'prompt', message: turn === 1 ? 'Long project' : `Continue ${turn} ` + 'filler '.repeat(12000) });
     await chat.until(history => history.filter(message => message.role === 'assistant' && text(message).startsWith('Step')).length >= turn);
-    await Bun.sleep(1000);
+    await agents.daemon.waitEvent('pi://event', payload => !seen.has(payload) && payload.runtimeId === chat.runtimeId && payload.event?.type === 'agent_settled', 60000);
   }
   const entries = (await chat.command({ type: 'get_entries' })).entries;
   const reasons = agents.daemon.events.filter(event => event.payload?.runtimeId === chat.runtimeId && event.payload.event?.type === 'compaction_end').map(event => event.payload.event.reason);
@@ -65,7 +66,7 @@ async function longChat(cap: { contextWindowCap: number; contextWindowCapEnabled
   return { summaries: entries.filter((entry: any) => entry.type === 'compaction').map((entry: any) => entry.summary), reasons };
 }
 
-test('a chat that reaches the context cap from Settings is compacted by itself, and without the cap the same chat is not', async () => {
+test.concurrent('a chat that reaches the context cap from Settings is compacted by itself, and without the cap the same chat is not', async () => {
   const capped = await longChat({ contextWindowCap: 100_000, contextWindowCapEnabled: true });
   expect(capped.summaries.length).toBeGreaterThan(0);
   expect(capped.summaries.every((summary: string) => summary === 'Summary of Long project: earlier steps are done.')).toBe(true);
@@ -76,7 +77,7 @@ test('a chat that reaches the context cap from Settings is compacted by itself, 
   expect(uncapped.summaries).toEqual([]);
 }, 240000);
 
-test('compacting while the agent works is refused with how to do it, and the running response goes on', async () => {
+test.concurrent('compacting while the agent works is refused with how to do it, and the running response goes on', async () => {
   const agents = await agentDaemon();
   try {
     let release!: (reply: { text: string }) => void;
@@ -92,7 +93,7 @@ test('compacting while the agent works is refused with how to do it, and the run
   } finally { await agents.close(); }
 }, 60000);
 
-test('a goal goes on working after its chat is compacted by itself between two turns', async () => {
+test.concurrent('a goal goes on working after its chat is compacted by itself between two turns', async () => {
   const agents = await agentDaemon();
   try {
     await agents.enableAgentTools('update_goal_status');

@@ -5,7 +5,7 @@ import { writeFileSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { agentDaemon, called, text } from './agent-chats';
 
-for (const [mode, repository] of [['fork_after', true], ['copy_after', true], ['copy_after', false]] as const) test(`${mode} (${repository ? 'repository' : 'plain folder'}) keeps an active goal idle until user input`, async () => {
+for (const [mode, repository] of [['fork_after', true], ['copy_after', true], ['copy_after', false]] as const) test.concurrent(`${mode} (${repository ? 'repository' : 'plain folder'}) keeps an active goal idle until user input`, async () => {
   const agents = await agentDaemon();
   try {
     await agents.enableAgentTools('update_goal_status');
@@ -55,7 +55,7 @@ for (const [mode, repository] of [['fork_after', true], ['copy_after', true], ['
 }, 120000);
 
 
-test('a chat in a repository subfolder uses normal forking and does not save Git commits', async () => {
+test.concurrent('a chat in a repository subfolder uses normal forking and does not save Git commits', async () => {
   const agents = await agentDaemon();
   try {
     agents.scripts.set('Subfolder chat', () => ({ text: 'Ready.' }));

@@ -212,6 +212,22 @@ test('model and thinking selections stay current across messages, navigation and
   } finally { db.close(); }
 });
 
+test('current model settings preserve the history used for compaction', async t => {
+  const f = await fixture(t);
+  const { prepareCompaction } = await import(pathToFileURL(join(sdk, 'dist/core/compaction/compaction.js')));
+  f.manager.appendModelChange('provider', 'model');
+  f.manager.appendThinkingLevelChange('high');
+  f.manager.appendMessage({ role: 'user', content: 'Remember the otter.', timestamp: 1 });
+  f.manager.appendMessage({ role: 'user', content: 'Later task '.repeat(100), timestamp: 2 });
+  const leaf = f.manager.getLeafId();
+  for (const manager of [f.manager, f.SessionManager.open(f.file)]) {
+    const prepared = prepareCompaction(manager.getBranch(), { enabled: true, reserveTokens: 100, keepRecentTokens: 10 });
+    assert.ok(prepared);
+    assert.ok(prepared.messagesToSummarize.some(message => message.content === 'Remember the otter.'));
+    assert.equal(manager.getLeafId(), leaf);
+  }
+});
+
 test('the chat preview and reopened session follow a branch choice without a transcript write', async t => {
   const f = await fixture(t);
   const bundle = join(f.home, 'index.mjs');

@@ -1,7 +1,7 @@
 import { expect, test } from 'bun:test';
 import { startDaemon, synchronizationFinished, temporaryDirectory, type TestDaemon } from './harness';
 
-test('separate development daemons notify their clients when shared settings change', async () => {
+test.concurrent('separate development daemons notify their clients when shared settings change', async () => {
   const home = temporaryDirectory('piop-settings-shared-');
   const running: TestDaemon[] = [];
   try {
@@ -32,7 +32,7 @@ test('separate development daemons notify their clients when shared settings cha
   } finally { await Promise.all(running.map(daemon => daemon.stop())); }
 }, 60_000);
 
-test('separate development daemons sharing settings accept one simultaneous save and let the other retry after reloading', async () => {
+test.concurrent('separate development daemons sharing settings accept one simultaneous save and let the other retry after reloading', async () => {
   const home = temporaryDirectory('piop-settings-race-');
   const running: TestDaemon[] = [];
   try {
@@ -80,7 +80,7 @@ test('separate development daemons sharing settings accept one simultaneous save
   } finally { await Promise.all(running.map(daemon => daemon.stop())); }
 }, 60_000);
 
-test('saved settings survive a daemon restart and the saved version remains editable', async () => {
+test.concurrent('saved settings survive a daemon restart and the saved version remains editable', async () => {
   let daemon = await startDaemon();
   try {
     const settings = await daemon.invoke('load_app_settings');
@@ -103,7 +103,7 @@ test('saved settings survive a daemon restart and the saved version remains edit
   } finally { await daemon.stop(); }
 }, 60_000);
 
-test('simultaneous settings saves accept one client and let the other retry after reloading', async () => {
+test.concurrent('simultaneous settings saves accept one client and let the other retry after reloading', async () => {
   const daemon = await startDaemon();
   try {
     const other = await daemon.connect();
@@ -128,7 +128,7 @@ test('simultaneous settings saves accept one client and let the other retry afte
   } finally { await daemon.stop(); }
 }, 60_000);
 
-test('another connected client receives saved settings and can edit that received version', async () => {
+test.concurrent('another connected client receives saved settings and can edit that received version', async () => {
   const daemon = await startDaemon();
   try {
     const other = await daemon.connect();
@@ -150,7 +150,7 @@ test('another connected client receives saved settings and can edit that receive
   } finally { await daemon.stop(); }
 }, 60_000);
 
-test('a save that edits one setting keeps every other saved setting across a daemon restart', async () => {
+test.concurrent('a save that edits one setting keeps every other saved setting across a daemon restart', async () => {
   let daemon = await startDaemon();
   try {
     const settings = await daemon.invoke('load_app_settings');
@@ -182,7 +182,7 @@ test('a save that edits one setting keeps every other saved setting across a dae
   } finally { await daemon.stop(); }
 }, 60_000);
 
-test('invalid per-model context caps are rejected and the saved settings stay unchanged after a restart', async () => {
+test.concurrent('invalid per-model context caps are rejected and the saved settings stay unchanged after a restart', async () => {
   let daemon = await startDaemon();
   try {
     const settings = await daemon.invoke('load_app_settings');
@@ -206,7 +206,7 @@ test('invalid per-model context caps are rejected and the saved settings stay un
   } finally { await daemon.stop(); }
 }, 60_000);
 
-test('a rejected settings save preserves the revision and permits a corrected retry', async () => {
+test.concurrent('a rejected settings save preserves the revision and permits a corrected retry', async () => {
   const daemon = await startDaemon();
   try {
     const other = await daemon.connect();
@@ -230,7 +230,7 @@ test('a rejected settings save preserves the revision and permits a corrected re
   } finally { await daemon.stop(); }
 }, 60_000);
 
-test('removed settings entries stay removed when a client with older settings reloads and saves', async () => {
+test.concurrent('removed settings entries stay removed when a client with older settings reloads and saves', async () => {
   let daemon = await startDaemon();
   try {
     const other = await daemon.connect();

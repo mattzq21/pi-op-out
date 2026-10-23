@@ -14,7 +14,7 @@ beforeEach(() => {
   responses = new Map([
     ['start_pi', { attached: false }], ['stop_pi', true],
     ['create_temporary_chat', { cwd: '/tmp/chat', sessionId: 'temporary' }],
-    ['provider_auth', { config: { agents: [] }, models: [], commands: [] }],
+    ['provider_auth', { config: { agents: [] }, models: [], initialModel: null, initialThinking: 'off', commands: [], commandDetails: [] }],
     ['load_client_settings', { settings: {}, revision: '1' }],
   ]);
   mockIPC((command, args) => {
@@ -44,7 +44,7 @@ test('a draft agent reload that finishes after the first message does not replac
   const client = transport({});
   await client.connect();
   let finishReload;
-  responses.set('provider_auth', args => args.request.reload ? new Promise(resolve => { finishReload = () => resolve({ config: { agents: [{ name: 'general', model: '', effort: 'high', path_systemprompt: 'p.md', path_agent_prompt: '', tools: [], skills: [], mcpServers: {} }] }, models: [], commands: [] }); }) : { config: { agents: [] }, models: [], commands: [] });
+  responses.set('provider_auth', args => args.request.reload ? new Promise(resolve => { finishReload = () => resolve({ config: { agents: [{ name: 'general', model: '', effort: 'high', path_systemprompt: 'p.md', path_agent_prompt: '', tools: [], skills: [], mcpServers: {} }] }, models: [], initialModel: null, initialThinking: 'off', commands: [], commandDetails: [] }); }) : { config: { agents: [] }, models: [], initialModel: null, initialThinking: 'off', commands: [], commandDetails: [] });
   responses.set('pi_command:get_state', { sessionId: 'temporary', sessionFile: '/tmp/chat/session.jsonl' });
   responses.set('pi_command:set_fast_mode', {});
   const statuses = [];

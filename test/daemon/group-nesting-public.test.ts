@@ -10,7 +10,7 @@ async function create(daemon: TestDaemon, name: string): Promise<string> {
   return state.groups.find((group: { name: string }) => group.name === name).id;
 }
 
-test('moving a group inside its descendant fails without changing the saved structure', async () => {
+test.concurrent('moving a group inside its descendant fails without changing the saved structure', async () => {
   const daemon = await startDaemon();
   try {
     await load(daemon);
@@ -31,7 +31,7 @@ test('moving a group inside its descendant fails without changing the saved stru
   } finally { await daemon.stop(); }
 }, 60_000);
 
-test('removing a parent keeps its children and preserves unrelated nesting after restart', async () => {
+test.concurrent('removing a parent keeps its children and preserves unrelated nesting after restart', async () => {
   let daemon = await startDaemon();
   try {
     await load(daemon);
@@ -57,7 +57,7 @@ test('removing a parent keeps its children and preserves unrelated nesting after
   } finally { await daemon.stop(); }
 }, 60_000);
 
-test('moving a group checks the depth of its children before saving', async () => {
+test.concurrent('moving a group checks the depth of its children before saving', async () => {
   const daemon = await startDaemon();
   try {
     await load(daemon);
@@ -80,11 +80,11 @@ test('moving a group checks the depth of its children before saving', async () =
 
 function publicSession(daemon: TestDaemon): string {
   return JSON.parse(execFileSync('node', [fileURLToPath(new URL('../fixtures/publish-chat.mjs', import.meta.url))], {
-    encoding: 'utf8', timeout: 30000, input: JSON.stringify({ home: daemon.home, cwd: daemon.home, folder: 'nesting', content: '' }),
+    encoding: 'utf8', timeout: 30000, input: JSON.stringify({ home: daemon.home, cwd: daemon.home, folder: 'nesting', content: JSON.stringify({ type: 'message', id: 'request', parentId: null, message: { role: 'user', content: 'Group test chat', timestamp: 1 } }) + '\n' }),
   })).id;
 }
 
-test('removing a nested parent ungroups only its own chats and tells other clients', async () => {
+test.concurrent('removing a nested parent ungroups only its own chats and tells other clients', async () => {
   const daemon = await startDaemon();
   try {
     const other = await daemon.connect();

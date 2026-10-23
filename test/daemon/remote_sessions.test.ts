@@ -15,10 +15,10 @@ beforeAll(async () => {
 }, 60_000);
 afterAll(async () => { await server?.stop(); await daemon?.stop(); }, 60_000);
 
-function publicSession(home: string, options: { cwd: string; folder: string }): { id: string; path: string } {
+function publicSession(home: string, options: { cwd: string; folder: string; content?: string }): { id: string; path: string } {
   return JSON.parse(execFileSync('node', [fileURLToPath(new URL('../fixtures/publish-chat.mjs', import.meta.url))], {
     encoding: 'utf8', timeout: 30000,
-    input: JSON.stringify({ home, ...options, content: '' }),
+    input: JSON.stringify({ home, content: '', ...options }),
   }));
 }
 
@@ -255,9 +255,10 @@ test('the session list combines reachable machines, skips failing ones, sorts by
   const empty = await remoteMachine(daemon, 'empty', 'Empty');
   try {
     await useRemotes(daemon, [server, empty, { id: 'offline', name: 'Offline', target: 'offline', unreachable: true }]);
-    const local = publicSession(daemon.home, { cwd: daemon.home, folder: 'aggregate' });
-    const recent = publicSession(server.home, { cwd: server.home, folder: 'aggregate' });
-    const old = publicSession(server.home, { cwd: server.home, folder: 'aggregate' });
+    const content = JSON.stringify({ type: 'message', id: 'request', parentId: null, message: { role: 'user', content: 'Keep this listed chat' } }) + '\n';
+    const local = publicSession(daemon.home, { cwd: daemon.home, folder: 'aggregate', content });
+    const recent = publicSession(server.home, { cwd: server.home, folder: 'aggregate', content });
+    const old = publicSession(server.home, { cwd: server.home, folder: 'aggregate', content });
     utimesSync(local.path, 20, 20); utimesSync(recent.path, 30, 30); utimesSync(old.path, 10, 10);
     let groups = await daemon.invoke('load_session_groups', { seeds: [] });
     groups = await daemon.invoke('change_session_groups', { change: { type: 'create', name: 'Local group' } });

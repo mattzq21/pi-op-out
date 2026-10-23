@@ -1,10 +1,11 @@
 import assert from 'node:assert/strict';
-import { test } from 'node:test';
+import { describe, test } from 'node:test';
 import { writeFile, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { startupPage } from '../startup-browser-fixture.mjs';
 import { daemonClient } from '../daemon-client.mjs';
 
+describe('terminal input ownership', { concurrency: 4 }, () => {
 for (const interaction of ['none', 'typing', 'paste', 'composition']) {
   test(`startup cursor reply does not count as user input: ${interaction}`, { timeout: 30000 }, async t => {
     let page;
@@ -21,7 +22,7 @@ for (const interaction of ['none', 'typing', 'paste', 'composition']) {
     await writeFile(join(home, '.bashrc'), 'exec bash --norc ./.terminal-script\n');
     await writeFile(join(chat.cwd, '.terminal-script'), "echo $$ > shell.pid\nstty -echo\nprintf '\\033[6n'\nIFS= read -r -d R reply\nprintf 'CURSOR-REPLY:%sR\\n' \"$reply\"\nwhile IFS= read -r line; do printf 'INPUT:%s\\n' \"$line\"; done\n");
     page = await startupPage(t, 'development', {
-      entryPoint: 'test/fixtures/terminal-unused-browser.tsx', ready: '.xterm-screen', holdStorage: false,
+      entryPoint: 'test/fixtures/terminal-unused-browser.tsx', ready: '.xterm-screen', readyTimeout: 30000, holdStorage: false,
       prepare: async browserPage => {
         page = browserPage;
         await page.exposeFunction('terminalChat', () => chat);
@@ -57,3 +58,4 @@ for (const interaction of ['none', 'typing', 'paste', 'composition']) {
     else assert.doesNotThrow(() => process.kill(pid, 0));
   });
 }
+});

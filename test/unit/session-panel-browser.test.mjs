@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { test } from 'node:test';
+import { describe, test } from 'node:test';
 import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -78,6 +78,7 @@ const waitForFocus = locator => locator.evaluate(node => new Promise(resolve => 
   else node.addEventListener('focus', resolve, { once: true });
 }));
 
+describe('session panel', { concurrency: 6 }, () => {
 test('small pointer movement keeps the conversation order and permits selection', async t => {
   const { page, sessions } = await panelPage(t);
   const first = conversation(page, 'Chat 2');
@@ -731,4 +732,6 @@ test('a new group can be made from a project folder, is named after the folder, 
   await page.evaluate(() => window.settlePanelStorage());
   await reload();
   assert.equal(await page.getByRole('button', { name: 'Group actions for billing-service', exact: true }).count(), 1);
+});
+
 });

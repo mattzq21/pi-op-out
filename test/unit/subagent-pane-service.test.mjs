@@ -12,7 +12,8 @@ async function pane(t) {
   const dom = installDom();
   HTMLElement.prototype.scrollIntoView = () => {};
   let view;
-  t.after(async () => { await view?.unmount(); clearMocks(); dom.restore(); });
+  const close = async () => { await view?.unmount(); view = undefined; };
+  t.after(async () => { await close(); clearMocks(); dom.restore(); });
   const daemon = await daemonClient(t);
   const home = await daemon.invoke('home_directory', { hostId: 'local' });
   const chat = JSON.parse(execFileSync('node', [fileURLToPath(new URL('../fixtures/publish-chat.mjs', import.meta.url))], { encoding: 'utf8', timeout: 30000, input: JSON.stringify({ home, content: '' }) }));
@@ -21,27 +22,28 @@ async function pane(t) {
   const closed = [], archives = [];
   const open = async target => { view = await renderComponent(SubagentPane, { target: { name: 'reader', hostId: 'local', ...target }, onClose: () => closed.push(1), onActivate: () => {}, onShowArchive: () => archives.push(1) }); };
   const region = () => document.querySelector('[aria-label="Subagent conversation: reader"]');
-  return { daemon, chat, open, region, closed, archives };
+  return { daemon, chat, open, close, region, closed, archives };
 }
 
-test('a subagent chat opens read-only, without a message box, and closes', async t => {
-  const { chat, open, region, closed } = await pane(t);
-  await open({ sessionId: chat.id, sessionPath: chat.path });
-  await untilDom(() => !region().querySelector('.split-pane-status') && region().querySelector('.chat-shell, .conversation'), 15000);
-  assert.equal(region().querySelector('[aria-label="Message piop"]'), null, 'there is no message box');
-  assert.equal(region().querySelector('[role="alert"]'), null);
-  await act(async () => region().querySelector('[aria-label="Close subagent conversation"]').click());
-  assert.equal(closed.length, 1);
-});
-
-test('an archived subagent chat says so and links to the archive', async t => {
-  const { daemon, chat, open, region, archives } = await pane(t);
-  await daemon.invoke('archive_session', { sessionPath: chat.path, hostId: 'local', terminalIds: [], clientId: 'archive-test' });
-  const archived = (await daemon.invoke('storage_report')).hosts[0].archives.find(item => item.id === chat.id);
-  await open({ sessionId: chat.id, sessionPath: archived.path });
-  const status = await untilDom(() => [...region().querySelectorAll('[role="status"]')].find(item => /archived and read-only/.test(item.textContent)), 15000);
-  await act(async () => status.querySelector('button').click());
-  assert.equal(archives.length, 1);
+test('active and archived subagent views', { timeout: 60000 }, async t => {
+  const { daemon, chat, open, close, region, closed, archives } = await pane(t);
+  await t.test('a subagent chat opens read-only, without a message box, and closes', { timeout: 30000 }, async () => {
+    await open({ sessionId: chat.id, sessionPath: chat.path });
+    await untilDom(() => !region().querySelector('.split-pane-status') && region().querySelector('.chat-shell, .conversation'), 15000);
+    assert.equal(region().querySelector('[aria-label="Message piop"]'), null, 'there is no message box');
+    assert.equal(region().querySelector('[role="alert"]'), null);
+    await act(async () => region().querySelector('[aria-label="Close subagent conversation"]').click());
+    assert.equal(closed.length, 1);
+  });
+  await t.test('an archived subagent chat says so and links to the archive', { timeout: 30000 }, async () => {
+    await close();
+    await daemon.invoke('archive_session', { sessionPath: chat.path, hostId: 'local', terminalIds: [], clientId: 'archive-test' });
+    const archived = (await daemon.invoke('storage_report')).hosts[0].archives.find(item => item.id === chat.id);
+    await open({ sessionId: chat.id, sessionPath: archived.path });
+    const status = await untilDom(() => [...region().querySelectorAll('[role="status"]')].find(item => /archived and read-only/.test(item.textContent)), 15000);
+    await act(async () => status.querySelector('button').click());
+    assert.equal(archives.length, 1);
+  });
 });
 
 test('a subagent chat that was deleted shows why it cannot load, with Retry', async t => {

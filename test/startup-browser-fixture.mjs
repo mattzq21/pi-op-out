@@ -4,10 +4,20 @@ import { readFile } from 'node:fs/promises';
 import { basename, resolve } from 'node:path';
 import { createServer } from 'node:http';
 import { build } from 'esbuild';
-import { transformSync } from '@babel/core';
-import solid from 'babel-preset-solid';
-import typescript from '@babel/preset-typescript';
+import { createRequire } from 'node:module';
 import { chromium } from 'playwright-core';
+import { cachedTransform } from './transform-cache.mjs';
+
+const require = createRequire(import.meta.url);
+let compiler;
+const convert = cachedTransform(new URL(import.meta.url), (source, filename) => {
+  compiler ??= {
+    transformSync: require('@babel/core').transformSync,
+    solid: require('babel-preset-solid'),
+    typescript: require('@babel/preset-typescript').default,
+  };
+  return compiler.transformSync(source, { filename, babelrc: false, configFile: false, presets: [[compiler.solid, { generate: 'dom' }], [compiler.typescript, { onlyRemoveTypeImports: true }]] }).code;
+});
 
 const bundles = new Map();
 const browsers = new Map();
@@ -50,13 +60,13 @@ async function buildBrowserFiles(entryPoint, mode) {
       api.onLoad({ filter: /.*/, namespace: 'asset' }, async ({ path }) => ({ contents: await readFile(path), loader: 'file' }));
       api.onResolve({ filter: /\?raw$/ }, args => ({ path: new URL(args.path.replace(/\?raw$/, ''), 'file://' + args.resolveDir + '/').pathname, namespace: 'raw' }));
       api.onLoad({ filter: /.*/, namespace: 'raw' }, async ({ path }) => ({ contents: await readFile(path, 'utf8'), loader: 'text' }));
-      api.onLoad({ filter: /\.tsx$/ }, async ({ path }) => ({ contents: transformSync(await readFile(path, 'utf8'), { filename: path, babelrc: false, configFile: false, presets: [[solid, { generate: 'dom' }], [typescript, { onlyRemoveTypeImports: true }]] }).code, loader: 'js' }));
+      api.onLoad({ filter: /\.tsx$/ }, async ({ path }) => ({ contents: convert(await readFile(path, 'utf8'), path), loader: 'js' }));
     } }],
   });
   return new Map(bundle.outputFiles.map(file => ['/' + basename(file.path), file.contents]));
 }
 
-export async function startupPage(t, mode, { entryPoint = 'test/fixtures/startup.tsx', ready = '[role="status"]', holdStorage = true, prepare = async () => {}, browserArgs = [], executablePath } = {}) {
+export async function startupPage(t, mode, { entryPoint = 'test/fixtures/startup.tsx', ready = '[role="status"]', readyTimeout = 10000, holdStorage = true, prepare = async () => {}, browserArgs = [], executablePath } = {}) {
   const files = await browserFiles(entryPoint, mode);
   const server = createServer((req, res) => {
     res.setHeader('Content-Type', /\.m?js$/.test(req.url ?? '') ? 'text/javascript' : req.url?.endsWith('.css') ? 'text/css' : req.url?.endsWith('.wasm') ? 'application/wasm' : 'text/html');
@@ -79,6 +89,6 @@ export async function startupPage(t, mode, { entryPoint = 'test/fixtures/startup
   await page.route('https://fonts.googleapis.com/**', route => route.fulfill({ contentType: 'text/css', body: '' }));
   await prepare(page);
   await page.goto(`http://127.0.0.1:${server.address().port}`);
-  await page.locator(ready).waitFor();
+  await page.locator(ready).waitFor({ timeout: readyTimeout });
   return page;
 }

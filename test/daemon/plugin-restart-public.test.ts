@@ -16,7 +16,7 @@ async function restartResult(restartId: string, target: TestDaemon = daemon) {
   throw new Error('The daemon restart never ended');
 }
 
-test('a plugin change waits for an open terminal and the current setup, then restarts the daemon with only the chosen plugins', async () => {
+test.concurrent('a plugin change waits for an open terminal and the current setup, then restarts the daemon with only the chosen plugins', async () => {
   const before = await daemon.invoke('plugin_status', { hostId: 'local' });
   expect(before).toMatchObject({ enabled: ['cost', 'review'], error: null });
 
@@ -35,7 +35,7 @@ test('a plugin change waits for an open terminal and the current setup, then res
   expect(after.revision).not.toBe(before.revision);
 }, 180_000);
 
-test('a restart waits for a reply in progress, and the finished chat is still there after the restart', async () => {
+test.concurrent('a restart waits for a reply in progress, and the finished chat is still there after the restart', async () => {
   const agents = await agentDaemon();
   try {
     const reply = Promise.withResolvers<{ text: string }>();

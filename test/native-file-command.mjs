@@ -9,6 +9,7 @@ import { fileURLToPath } from 'node:url';
 
 let executable;
 export function nativeTestExecutable() {
+  if (process.env.PIOP_TEST_NATIVE_EXECUTABLE) return Promise.resolve(process.env.PIOP_TEST_NATIVE_EXECUTABLE);
   return executable ??= promisify(execFile)('cargo', ['test', '--locked', '-p', 'piop-desktop', '--lib', '--no-run', '--message-format=json'], {
     cwd: fileURLToPath(new URL('..', import.meta.url)),
     env: { ...process.env, TAURI_CONFIG: '{"bundle":{"externalBin":[]}}' }, maxBuffer: 32 * 1024 * 1024,

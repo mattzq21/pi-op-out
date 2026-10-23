@@ -5,44 +5,28 @@ import { test } from 'node:test';
 import { appService } from '../app-service-fixture.mjs';
 import { enterText } from '../dom.mjs';
 
-test('a window with malformed target JSON opens an editable fresh chat', async t => {
-  const { root, editor } = await appService(t, { beforeMount() {
-    window.history.replaceState(null, '', '/?target=%7B');
+test('invalid window targets open editable fresh chats', { timeout: 120000 }, async t => {
+  const cases = [
+    ['a window with malformed target JSON opens an editable fresh chat', '/?target=%7B', 'Fresh chat after a damaged link'],
+    ['a null window target opens an editable fresh chat', '/?target=null', 'Fresh chat'],
+    ['a number window target opens an editable fresh chat', '/?target=42', 'Fresh chat'],
+    ['a missing window target opens an editable fresh chat', '/', 'Fresh chat'],
+  ];
+  const app = await appService(t, { beforeMount() {
+    window.history.replaceState(null, '', cases[0][1]);
   } });
-  assert.equal(editor.value, '');
-  await enterText(editor, 'Fresh chat after a damaged link');
-  assert.equal(editor.value, 'Fresh chat after a damaged link');
-  assert.ok(root.querySelector('[aria-label="Choose project"]'));
-});
-
-test('a null window target opens an editable fresh chat', async t => {
-  const { root, editor } = await appService(t, { beforeMount() {
-    window.history.replaceState(null, '', '/?target=null');
-  } });
-  assert.equal(editor.value, '');
-  await enterText(editor, 'Fresh chat');
-  assert.equal(editor.value, 'Fresh chat');
-  assert.ok(root.querySelector('[aria-label="Choose project"]'));
-});
-
-test('a number window target opens an editable fresh chat', async t => {
-  const { root, editor } = await appService(t, { beforeMount() {
-    window.history.replaceState(null, '', '/?target=42');
-  } });
-  assert.equal(editor.value, '');
-  await enterText(editor, 'Fresh chat');
-  assert.equal(editor.value, 'Fresh chat');
-  assert.ok(root.querySelector('[aria-label="Choose project"]'));
-});
-
-test('a missing window target opens an editable fresh chat', async t => {
-  const { root, editor } = await appService(t, { beforeMount() {
-    window.history.replaceState(null, '', '/');
-  } });
-  assert.equal(editor.value, '');
-  await enterText(editor, 'Fresh chat');
-  assert.equal(editor.value, 'Fresh chat');
-  assert.ok(root.querySelector('[aria-label="Choose project"]'));
+  for (const [index, [name, path, draft]] of cases.entries()) await t.test(name, { timeout: 30000 }, async () => {
+    if (index) {
+      await enterText(app.root.querySelector('[aria-label="Message piop"]'), '');
+      window.history.replaceState(null, '', path);
+      await app.remount();
+    }
+    const editor = app.root.querySelector('[aria-label="Message piop"]');
+    assert.equal(editor.value, '');
+    await enterText(editor, draft);
+    assert.equal(editor.value, draft);
+    assert.ok(app.root.querySelector('[aria-label="Choose project"]'));
+  });
 });
 
 test('a valid window target selects its remote host and project', async t => {

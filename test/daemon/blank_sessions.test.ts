@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, expect, test } from 'bun:test';
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fakeProgram, startDaemon, type TestDaemon } from './harness';
 
@@ -19,7 +19,7 @@ beforeAll(async () => {
     "const args = process.argv.slice(2); const flag = name => args[args.lastIndexOf(name) + 1];",
     "const mode = JSON.parse(fs.readFileSync(path.join(os.homedir(), 'pi-mode.json'), 'utf8'));",
     "if (args.includes('--session')) { const sessionFile = flag('--session'); const state = { sessionFile, sessionId: 'opened', isStreaming: false, messageCount: 0, pendingMessageCount: 0, model: null, thinkingLevel: 'medium' };",
-    "  require('node:readline').createInterface({ input: process.stdin }).on('line', line => { const request = JSON.parse(line); process.stdout.write(JSON.stringify({ type: 'response', id: request.id, command: request.type, success: true, data: request.type === 'get_state' ? state : null }) + '\\n'); });",
+    "  require('node:readline').createInterface({ input: process.stdin }).on('line', line => { const request = JSON.parse(line); process.stdout.write(JSON.stringify({ type: 'response', id: request.id, command: request.type, success: true, data: request.type === 'get_state' ? state : request.type === 'get_entries' ? { entries: [] } : null }) + '\\n'); });",
     "} else {",
     "const id = flag('--session-id'); const root = path.join(os.homedir(), '.piop');",
     "const directory = mode.outside ? path.join(os.homedir(), 'outside') : flag('--session-dir'); fs.mkdirSync(directory, { recursive: true });",
@@ -29,37 +29,22 @@ beforeAll(async () => {
     "fs.writeFileSync(path.join(os.homedir(), 'pi-file.txt'), sessionFile);",
     "const state = { sessionFile, sessionId: id, isStreaming: false, messageCount: 0, pendingMessageCount: 0, model: null, thinkingLevel: 'medium' };",
     "require('node:readline').createInterface({ input: process.stdin }).on('line', line => { const request = JSON.parse(line);",
-    "  process.stdout.write(JSON.stringify({ type: 'response', id: request.id, command: request.type, success: true, data: request.type === 'get_state' ? state : null }) + '\\n'); });",
+    "  process.stdout.write(JSON.stringify({ type: 'response', id: request.id, command: request.type, success: true, data: request.type === 'get_state' ? state : request.type === 'get_entries' ? { entries: [] } : null }) + '\\n'); });",
     "}",
   ].join('\n'));
 }, 60_000);
 afterAll(() => daemon?.stop());
 
-let runtimes = 0;
-/** Starts a new conversation, optionally submits a prompt, closes it with discardBlank and returns its transcript path. */
-async function closeNewConversation(mode: { headerId?: string; tail?: string; outside?: boolean }, submit = false): Promise<string> {
-  writeFileSync(join(daemon.home, 'pi-mode.json'), JSON.stringify(mode));
-  const runtimeId = 'blank-' + ++runtimes;
-  // A new runtime counts as in use until the app has applied its runtime settings.
+test('closing never deletes a transcript outside the session store', async () => {
+  writeFileSync(join(daemon.home, 'pi-mode.json'), JSON.stringify({ outside: true }));
+  const runtimeId = 'outside-chat';
   const applied = daemon.waitEvent('pi://event', payload => payload.runtimeId === runtimeId && payload.event?.type === 'settings_pending' && payload.event.pending === false);
   await daemon.invoke('start_pi', { runtimeId, clientId: 'client', cwd: daemon.home });
   await applied;
   await daemon.invoke('pi_command', { runtimeId, command: { type: 'get_state' } });
-  if (submit) await daemon.invoke('pi_command', { runtimeId, command: { type: 'prompt', message: 'Keep this' } });
   const file = readFileSync(join(daemon.home, 'pi-file.txt'), 'utf8');
-  // A conversation with a sent prompt is not blank: closing only detaches the view and leaves Pi running.
-  expect(await daemon.invoke('stop_pi', { runtimeId, discardBlank: true })).toBe(!submit);
-  return file;
-}
-
-const listedPaths = async () => (await daemon.invoke('list_sessions')).map((session: any) => session.path);
-
-
-
-
-
-test('closing never deletes a transcript outside the session store', async () => {
-  const file = await closeNewConversation({ outside: true });
+  await expect(daemon.invoke('stop_pi', { runtimeId, discardBlank: true }))
+    .rejects.toThrow('Conversation is outside session storage');
   expect(file.startsWith(join(daemon.home, 'outside'))).toBe(true);
   expect(existsSync(file)).toBe(true);
 }, 30_000);

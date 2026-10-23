@@ -269,19 +269,19 @@ describe("Conversation acceptance", () => {
     const history = {
       entries: [
         { type: "message", id: "branch-user", parentId: null, message: { role: "user", content: "Establish the branch point", timestamp: 1 } },
-        { type: "message", id: "branch-assistant", parentId: "branch-user", message: { role: "assistant", content: "This response can be branched.", timestamp: 2 } },
+        { type: "message", id: "branch-assistant", parentId: "branch-user", message: { role: "assistant", content: "This response can be branched.", stopReason: "stop", timestamp: 2 } },
       ],
       leafId: "branch-assistant",
     };
 
     const { sessionId, cwd } = await startTemporaryConversation({
       "pi_command:get_entries": history,
-      "pi_command:fork_after": {},
+      "pi_command:copy_after": {},
     });
     await updateBackendResponse("pi_command:get_state", { ...connectedSessionResponses(sessionId)["pi_command:get_state"], sessionFile: `${cwd}/session.jsonl`, messageCount: 2 });
 
     try {
-      await emitPiEvent({ type: "session_switched" });
+      await emitPiEvent({ type: "session_info_changed" });
       const branch = $(".assistant-message").$('button[aria-label="Fork"]');
       await expect(branch).toBeEnabled();
       await browser.execute(() => {
@@ -291,8 +291,8 @@ describe("Conversation acceptance", () => {
         element.click();
       });
 
-      await browser.waitUntil(async () => (await backendCalls()).some(({ args }) => args.command?.type === "fork_after"));
-      expect((await backendCalls()).find(({ args }) => args.command?.type === "fork_after")?.args.command).toMatchObject({ type: "fork_after", entryId: "branch-assistant" });
+      await browser.waitUntil(async () => (await backendCalls()).some(({ args }) => args.command?.type === "copy_after"));
+      expect((await backendCalls()).find(({ args }) => args.command?.type === "copy_after")?.args.command).toMatchObject({ type: "copy_after", entryId: "branch-assistant" });
       await expect($(".user-message .message-body")).toHaveText("Establish the branch point");
       await expect($(".assistant-message .markdown-content p")).toHaveText("This response can be branched.");
     } finally {
@@ -314,9 +314,11 @@ describe("Conversation acceptance", () => {
       });
 
       await expect(app.composer).toHaveValue("");
-      await emitPiEvent({ type: "queue_update", steering: ["Focus on the acceptance criteria"], followUp: [], pendingMessages: [{ id: "steer-criteria", message: "Focus on the acceptance criteria", behavior: "steer" }] });
-      await expect($$(".pending-message")).toBeElementsArrayOfSize(1);
       await browser.waitUntil(async () => (await backendCalls()).some(({ args }) => args.command?.type === "steer"));
+      const submitted = (await backendCalls()).find(({ args }) => args.command?.type === "steer")!.args.command!;
+      expect(submitted.goalSubmissionId).toEqual(expect.any(String));
+      await emitPiEvent({ type: "queue_update", steering: ["Focus on the acceptance criteria"], followUp: [], pendingMessages: [{ id: "steer-criteria", goalSubmissionId: submitted.goalSubmissionId, message: "Focus on the acceptance criteria", behavior: "steer" }] });
+      await expect($$(".pending-message")).toBeElementsArrayOfSize(1);
       expect((await backendCalls()).find(({ args }) => args.command?.type === "steer")?.args.command).toMatchObject({ type: "steer", message: "Focus on the acceptance criteria" });
     } finally {
       await emitPiEvent({ type: "queue_update", steering: [], followUp: [], pendingMessages: [] });
@@ -332,11 +334,13 @@ describe("Conversation acceptance", () => {
     try {
       await emitPiEvent({ type: "agent_start" });
       await app.prepareMessage("Check this after the current response");
-      await emitPiEvent({ type: "queue_update", steering: [], followUp: [pending.message], pendingMessages: [pending] });
       await browser.keys("Enter");
 
       await expect(app.composer).toHaveValue("");
-      await emitPiEvent({ type: "queue_update", steering: [], followUp: [pending.message], pendingMessages: [pending] });
+      await browser.waitUntil(async () => (await backendCalls()).some(({ args }) => args.command?.type === "follow_up"));
+      const submitted = (await backendCalls()).find(({ args }) => args.command?.type === "follow_up")!.args.command!;
+      expect(submitted.goalSubmissionId).toEqual(expect.any(String));
+      await emitPiEvent({ type: "queue_update", steering: [], followUp: [pending.message], pendingMessages: [{ ...pending, goalSubmissionId: submitted.goalSubmissionId }] });
       await expect($$(".pending-message")).toBeElementsArrayOfSize(1);
       await $('button[aria-label="Stop piop"]').click();
       await browser.waitUntil(async () => (await backendCalls()).filter(({ args }) => ["follow_up", "abort"].includes(String(args.command?.type))).length === 2);

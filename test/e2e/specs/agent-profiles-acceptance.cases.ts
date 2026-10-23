@@ -8,6 +8,7 @@ import { mockBackend, backendCalls, resetBackend, resetApp, emitPiEvent, default
 const agentCapability = () => {
   const capability = acceptanceAgents();
   capability.config.revision = "acceptance-agent-revision";
+  capability.config.agents.find(agent => agent.name === "general")!.tools = ["read", "bash"];
   return capability;
 };
 
@@ -35,7 +36,11 @@ async function nativeAgentConfiguration(agents?: ReturnType<typeof agentConfigSc
 describe("Agent profiles acceptance", () => {
   beforeEach(async () => {
     await resetApp();
-    await mockBackend({ ...connectedSessionResponses("agents"), load_app_settings: defaultSettings, "pi_command:get_agent_configuration": agentCapability().config });
+    const settings = { ...defaultSettings, tools: ["read", "bash"].map(name => ({ name, description: name, source: "built-in" })) };
+    await mockBackend({ ...connectedSessionResponses("agents"), load_app_settings: settings, "pi_command:get_agent_configuration": agentCapability().config });
+    await browser.execute(async settings => {
+      await window.__TAURI_INTERNALS__.invoke("plugin:event|emit", { event: "pi://settings-changed", payload: { settings } });
+    }, settings);
     await enableAgents(agentCapability());
   });
   afterEach(async () => {

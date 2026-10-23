@@ -60,7 +60,7 @@ test('branch copies selected history and current files, archive restores last co
     expect(existsSync(branch.cwd)).toBe(false);
     expect(existsSync(cwd)).toBe(true);
     expect(git(cwd, 'rev-parse', 'refs/piop/archives/' + branch.sessionId)).toBe(saved);
-    git(cwd, 'branch', '-D', 'piop/' + branch.sessionId);
+    expect(git(cwd, 'branch', '--list', 'piop/' + branch.sessionId)).toBe('');
     const report = await agents.daemon.invoke('storage_report');
     const archived = report.hosts.flatMap((h: any) => h.archives).find((a: any) => a.sessionId === branch.sessionId || a.id === branch.sessionId);
     expect(archived).toBeTruthy();
@@ -68,7 +68,7 @@ test('branch copies selected history and current files, archive restores last co
     const restored = (await agents.daemon.invoke('list_sessions')).find((s: any) => s.id === branch.sessionId);
     expect(restored).toBeTruthy();
     expect(readFileSync(join(restored.cwd, 'tracked.txt'), 'utf8')).toBe('current dirty files');
-    expect(git(restored.cwd, 'branch', '--show-current')).toMatch(new RegExp('^piop/' + branch.sessionId + '-[a-f0-9-]{36}$'));
+    expect(git(restored.cwd, 'branch', '--show-current')).toBe('piop/' + branch.sessionId);
   } finally { await agents.close(); }
 }, 120000);
 

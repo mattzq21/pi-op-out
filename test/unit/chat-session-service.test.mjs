@@ -205,8 +205,7 @@ test('a read-only view does not ask for the chat choices, so it shows no errors 
   ], { async afterReply(command, args) { if (command === 'pi_command') asked.push(args.command.type); } });
   assert.equal(client.ownsConversation(), false);
   await act(() => hook.current.refresh());
-  // The choices load after the refresh, without being awaited by it.
-  await act(() => new Promise(resolve => setTimeout(resolve, 500)));
+  assert.equal(hook.current.capabilitiesLoading, false);
   assert.deepEqual(hook.current.capabilityErrors, []);
   assert.deepEqual(asked.filter(type => ['get_available_models', 'get_available_thinking_levels', 'get_commands'].includes(type)), []);
 });
@@ -327,8 +326,6 @@ test('a chat refresh failure does not report a choices failure after lists load'
   const { hook, client } = await sessionView(t);
   await act(() => hook.current.refresh());
   await whenReactive(() => !hook.current.capabilitiesLoading);
-  // The choices load after the refresh, without being awaited by it.
-  await act(() => new Promise(resolve => setTimeout(resolve, 500)));
   assert.deepEqual(hook.current.capabilityErrors, []);
   const command = client.command.bind(client);
   client.command = (request, schema) => request.type === 'get_session_revision'

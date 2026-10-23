@@ -54,3 +54,18 @@ test('ending an agent session clears its published definitions', async t => {
   await f.emit('session_shutdown');
   assert.equal(f.statuses.get('pi-define-agents'), undefined);
 });
+
+test('explicit tool exclusions survive tools becoming available after the settings save', async t => {
+  const config = configured([profile()]);
+  config.sessionToolsDefaultApplied = false;
+  config.subagentsDefaultApplied = false;
+  config.webSearchDefaultApplied = false;
+  const runtime = { enabledTools: ['read'] };
+  const f = await agentFixture(t, { config, runtime, tools: ['read', 'subagent', 'web_search'] });
+  await f.load(); await f.start();
+  await f.configure({ agents: [profile()] });
+  runtime.enabledTools.push('subagent', 'web_search');
+  await f.reloadExtensions(); await f.select('general');
+  assert.deepEqual((await f.configuration()).agents[0].tools, ['read']);
+  assert.deepEqual(f.pi.getActiveTools(), ['read']);
+});

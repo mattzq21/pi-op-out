@@ -1,3 +1,4 @@
+import { cleanupScope } from '../cleanup-scope.mjs';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { join } from 'node:path';
@@ -9,14 +10,15 @@ import { nativeFileCommand } from '../native-file-command.mjs';
 import { NativeTransport } from '../../clients/ui/lib/nativeTransport.ts';
 
 async function settingsClient(t, options = {}) {
+  t = cleanupScope(t);
   const dom = installDom();
   const storage = trackStorage(indexedDB);
   const requests = new Set();
   let client;
   const settle = async () => { do { await storage.settled(); await act(() => Promise.allSettled([...requests])); } while (requests.size); };
   t.after(async () => { await client?.dispose(); await settle(); storage.restore(); clearMocks(); dom.restore(); });
-  const daemon = await daemonClient(t, () => {}, options);
   const native = await nativeFileCommand(t, { desktop: true });
+  const daemon = await daemonClient(t, () => {}, options);
   mockIPC(async (command, args) => {
     const request = ['load_client_settings', 'save_client_settings'].includes(command) ? native.invoke(command, args) : daemon.invoke(command, args);
     requests.add(request);
@@ -81,6 +83,7 @@ test('concurrent disposal notifies the consumer once and prevents reconnection',
 
 test('queued settings wait for a command before moving a removed host to local', async t => {
   const { client } = await settingsClient(t, { target: { hostId: 'remote' }, remotes: [{ id: 'remote', name: 'Remote', target: 'before' }] });
+  await client.connect();
   const applied = Promise.withResolvers();
   const timer = setTimeout(() => applied.reject(new Error('Settings were not applied')), 15000);
   t.after(() => clearTimeout(timer));
@@ -95,8 +98,7 @@ test('queued settings wait for a command before moving a removed host to local',
   assert.equal(client.hasPendingSettings(), true);
   assert.equal(client.currentHostId(), 'remote');
 
-  await command;
-  await applied.promise;
+  await Promise.all([command, applied.promise]);
   assert.equal(receivedApplied, true);
   assert.equal(client.currentHostId(), 'local');
   assert.equal(client.currentCwd(), undefined);

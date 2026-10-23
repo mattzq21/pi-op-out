@@ -1,11 +1,10 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { execFileSync } from 'node:child_process';
 import { readFileSync, writeFileSync, unlinkSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
 import { installDom, renderComponent, act, attributeBecomes, untilDom } from '../dom.mjs';
 import { mockIPC, mockWindows, clearMocks } from '@tauri-apps/api/mocks';
 import { daemonClient } from '../daemon-client.mjs';
+import { chatPublisher } from '../chat-publisher-fixture.mjs';
 import { trackStorage } from '../storage-idle.mjs';
 import { ArchivedSessionPanel } from '../../clients/ui/components/ArchivedSessionPanel.tsx';
 
@@ -45,14 +44,13 @@ async function archivedPanel(t, archives, { remotes, initial } = {}) {
     }
   };
   const chats = {};
+  const publishers = new Map();
   for (const archive of archives) {
     const { name, hostId, key = name, customType } = typeof archive === 'string' ? { name: archive, hostId: 'local' } : archive;
     assert.equal(Object.hasOwn(chats, key), false, `Archive fixture key ${key} is used twice`);
     const home = await daemon.invoke('home_directory', { hostId });
-    chats[key] = JSON.parse(execFileSync('node', [fileURLToPath(new URL('../fixtures/publish-chat.mjs', import.meta.url))], {
-      encoding: 'utf8', timeout: 30000,
-      input: JSON.stringify({ home, content: JSON.stringify({ type: 'message', id: 'question', parentId: null, message: { role: 'user', content: name } }) + '\n' + (customType ? JSON.stringify({ type: 'custom', id: 'parent-marker', parentId: 'question', customType, data: { parentSessionId: 'root' } }) + '\n' : '') }),
-    }));
+    if (!publishers.has(home)) publishers.set(home, chatPublisher(t, { home }));
+    chats[key] = await publishers.get(home)({ content: JSON.stringify({ type: 'message', id: 'question', parentId: null, message: { role: 'user', content: name } }) + '\n' + (customType ? JSON.stringify({ type: 'custom', id: 'parent-marker', parentId: 'question', customType, data: { parentSessionId: 'root' } }) + '\n' : '') });
     await daemon.invoke('archive_session', { hostId, sessionPath: chats[key].path, terminalIds: [], clientId: 'archived-panel-test' });
   }
   const held = initial?.(gate);

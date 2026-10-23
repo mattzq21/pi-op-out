@@ -14,22 +14,31 @@ const pending = (runtimeId: string): Array<{ id: string; message: string; behavi
 
 const userTexts = (messages: any[]) => messages.filter(message => message.role === 'user').map(text);
 
-test('the chat list shows a chat as running while its agent works, and tells clients when it finishes', async () => {
-  const busy = held<{ text: string }>();
-  agents.scripts.set('Index the repository', () => busy.promise);
-  const chat = await agents.rootChat();
-  const listed = async () => (await agents.daemon.invoke('list_sessions')).find((session: any) => session.id === chat.sessionId)?.isRunning;
-  await chat.command({ type: 'prompt', message: 'Index the repository' });
-  await chat.until(() => agents.model.requests.some(request => text(request.messages.at(-1)) === 'Index the repository'));
-  let mark = 0;
-  try { expect(await listed()).toBe(true); mark = agents.daemon.events.length; } finally { busy.release({ text: 'Indexed.' }); }
-  await chat.until(history => text(history.at(-1)) === 'Indexed.');
-  for (let tries = 0; !agents.daemon.events.slice(mark).some(event => event.event === 'pi://sessions-changed') && tries < 50; tries++) await Bun.sleep(100);
-  expect(agents.daemon.events.slice(mark).some(event => event.event === 'pi://sessions-changed')).toBe(true);
-  expect(await listed()).toBe(false);
+const nextSettlement = (runtimeId: string) => {
+  const seen = new Set(agents.daemon.events.map(event => event.payload));
+  return () => agents.daemon.waitEvent('pi://event', payload => !seen.has(payload)
+    && payload.runtimeId === runtimeId && payload.event?.type === 'agent_settled');
+};
+
+test.concurrent('the chat list shows a chat as running while its agent works, and tells clients when it finishes', async () => {
+  const agents = await agentDaemon();
+  try {
+    const busy = held<{ text: string }>();
+    agents.scripts.set('Index the repository', () => busy.promise);
+    const chat = await agents.rootChat();
+    const listed = async () => (await agents.daemon.invoke('list_sessions')).find((session: any) => session.id === chat.sessionId)?.isRunning;
+    await chat.command({ type: 'prompt', message: 'Index the repository' });
+    await chat.until(() => agents.model.requests.some(request => text(request.messages.at(-1)) === 'Index the repository'));
+    let mark = 0;
+    try { expect(await listed()).toBe(true); mark = agents.daemon.events.length; } finally { busy.release({ text: 'Indexed.' }); }
+    await chat.until(history => text(history.at(-1)) === 'Indexed.');
+    for (let tries = 0; !agents.daemon.events.slice(mark).some(event => event.event === 'pi://sessions-changed') && tries < 50; tries++) await Bun.sleep(100);
+    expect(agents.daemon.events.slice(mark).some(event => event.event === 'pi://sessions-changed')).toBe(true);
+    expect(await listed()).toBe(false);
+  } finally { await agents.close(); }
 }, 60000);
 
-test('messages sent while the agent works wait their turn, and a removed one never reaches the agent', async () => {
+test.concurrent('messages sent while the agent works wait their turn, and a removed one never reaches the agent', async () => {
   const busy = held<{ text: string }>();
   agents.scripts.set('Long build', messages => {
     const last = text(messages.at(-1));
@@ -52,7 +61,7 @@ test('messages sent while the agent works wait their turn, and a removed one nev
   expect(messages.filter(message => message.role === 'assistant').map(text)).toEqual(['Build done.', 'Handled: Then deploy']);
 }, 60000);
 
-test('a steering message reaches the agent within its running turn, before waiting follow-ups', async () => {
+test.concurrent('a steering message reaches the agent within its running turn, before waiting follow-ups', async () => {
   const busy = held<{ tool: string; arguments: Record<string, unknown> }>();
   agents.scripts.set('Install packages', messages => {
     const last = messages.at(-1);
@@ -73,7 +82,7 @@ test('a steering message reaches the agent within its running turn, before waiti
   expect(userTexts(messages)).toEqual(['Install packages', 'Use pnpm instead', 'Afterwards, update the README']);
 }, 60000);
 
-test('pausing stops the running response and holds waiting messages until the chat is resumed', async () => {
+test.concurrent('pausing stops the running response and holds waiting messages until the chat is resumed', async () => {
   const busy = held<{ text: string }>();
   agents.scripts.set('Paused job', messages => {
     const last = messages.at(-1);
@@ -84,12 +93,13 @@ test('pausing stops the running response and holds waiting messages until the ch
   const chat = await agents.rootChat();
   await chat.command({ type: 'prompt', message: 'Paused job' });
   await chat.until(() => agents.model.requests.some(request => text(request.messages.at(-1)) === 'Paused job'));
+  const settled = nextSettlement(chat.runtimeId);
   await chat.command({ type: 'pause' });
   busy.release({ text: 'too late' });
   await chat.command({ type: 'follow_up', message: 'Next task' });
   const paused = await chat.until(history => history.some(message => message.role === 'assistant' && message.errorMessage === 'Response paused'));
   expect(paused.findLast(message => message.role === 'assistant')).toMatchObject({ stopReason: 'aborted', errorMessage: 'Response paused' });
-  await Bun.sleep(1500);
+  await settled();
   expect((await chat.command({ type: 'get_state' })).isPaused).toBe(true);
   expect(userTexts(await chat.history())).toEqual(['Paused job']);
   await chat.command({ type: 'resume' });
@@ -97,17 +107,18 @@ test('pausing stops the running response and holds waiting messages until the ch
   expect(messages.filter(message => message.role === 'assistant').map(text).filter(Boolean)).toEqual(['Resumed work.', 'Next task done.']);
 }, 60000);
 
-test('stopping a response keeps waiting messages back, and the next message the user sends from the composer goes first, then the waiting ones', async () => {
+test.concurrent('stopping a response keeps waiting messages back, and the next message the user sends from the composer goes first, then the waiting ones', async () => {
   const busy = held<{ text: string }>();
   agents.scripts.set('Stopped job', messages => text(messages.at(-1)) === 'Stopped job' ? busy.promise : { text: 'Answer to ' + text(messages.at(-1)) });
   const chat = await agents.rootChat();
   await chat.command({ type: 'prompt', message: 'Stopped job' });
   await chat.until(() => agents.model.requests.some(request => text(request.messages.at(-1)) === 'Stopped job'));
   await chat.command({ type: 'follow_up', message: 'Waiting task' });
+  const settled = nextSettlement(chat.runtimeId);
   await chat.command({ type: 'abort' });
   busy.release({ text: 'too late' });
   await chat.until(history => history.at(-1)?.role === 'assistant' && history.at(-1).stopReason === 'aborted');
-  await Bun.sleep(1500);
+  await settled();
   expect(userTexts(await chat.history())).toEqual(['Stopped job']);
   expect((await chat.command({ type: 'get_state' })).pendingMessages.map((item: any) => item.message)).toEqual(['Waiting task']);
   await chat.command({ type: 'follow_up', message: 'New request' });
@@ -116,7 +127,7 @@ test('stopping a response keeps waiting messages back, and the next message the 
   expect((await chat.command({ type: 'get_state' })).pendingMessages).toEqual([]);
 }, 60000);
 
-test('stopping a paused chat ends the pause: a new message is answered, and messages the pause held wait until the user sends them again', async () => {
+test.concurrent('stopping a paused chat ends the pause: a new message is answered, and messages the pause held wait until the user sends them again', async () => {
   const busy = held<{ text: string }>();
   agents.scripts.set('Paused then stopped', messages => text(messages.at(-1)) === 'Paused then stopped' ? busy.promise : { text: 'Answer to ' + text(messages.at(-1)) });
   const chat = await agents.rootChat();
@@ -127,9 +138,10 @@ test('stopping a paused chat ends the pause: a new message is answered, and mess
   await chat.command({ type: 'abort' });
   busy.release({ text: 'too late' });
   expect((await chat.command({ type: 'get_state' })).isPaused).toBe(false);
+  const settled = nextSettlement(chat.runtimeId);
   await chat.command({ type: 'follow_up', message: 'After the stop' });
   await chat.until(history => text(history.at(-1)) === 'Answer to After the stop');
-  await Bun.sleep(1500);
+  await settled();
   expect(userTexts(await chat.history())).toEqual(['Paused then stopped', 'After the stop']);
   const [waiting] = (await chat.command({ type: 'get_state' })).pendingMessages;
   expect(waiting).toMatchObject({ message: 'Held by the pause', retry: true });

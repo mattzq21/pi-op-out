@@ -23,7 +23,7 @@ async function replyPage(t, content) {
   return { page, reads };
 }
 
-test('project images named in a reply show inside it, a missing one says so, and the named path opens the image', async t => {
+test('project images named in a reply show inside it, a missing one says so, and the thumbnail opens the image while the remote file link reports its host', async t => {
   const { page, reads } = await replyPage(t, 'The result is in `shots/ok.png`. Before: ![old run](shots/missing.png) ![](shots/gone.png). Code: `src/main.ts`.');
   await page.locator('img').waitFor();
   assert.equal(await page.locator('img').getAttribute('src'), PIXEL);
@@ -35,5 +35,7 @@ test('project images named in a reply show inside it, a missing one says so, and
   assert.equal(await page.getByRole('button', { name: 'src/main.ts' }).count(), 0, 'paths to other files stay plain text');
 
   await page.getByRole('button', { name: 'shots/ok.png', exact: true }).click();
+  await page.getByRole('alert').filter({ hasText: 'This file is on the host "server"' }).waitFor();
+  await page.getByRole('button', { name: 'Enlarge image: shots/ok.png', exact: true }).click();
   await page.getByRole('dialog', { name: 'shots/ok.png' }).waitFor();
 });

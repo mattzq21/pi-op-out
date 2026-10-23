@@ -1,12 +1,11 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { execFileSync } from 'node:child_process';
 import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { installDom, renderComponent, act, enterText, untilDom } from '../dom.mjs';
 import { mockIPC, mockWindows, clearMocks } from '@tauri-apps/api/mocks';
 import { daemonClient } from '../daemon-client.mjs';
+import { chatPublisher } from '../chat-publisher-fixture.mjs';
 import { ArchivedSessionPanel } from '../../clients/ui/components/ArchivedSessionPanel.tsx';
 
 /** The archived chats panel against a real test daemon holding two archived chats, from the alpha and beta projects. */
@@ -17,9 +16,10 @@ async function archivePanel(t) {
   const daemon = await daemonClient(t);
   const home = await daemon.invoke('home_directory', { hostId: 'local' });
   const archived = {};
+  const publish = chatPublisher(t, { home });
   for (const project of ['alpha', 'beta']) {
     const cwd = join(home, 'work', project); mkdirSync(cwd, { recursive: true });
-    const chat = JSON.parse(execFileSync('node', [fileURLToPath(new URL('../fixtures/publish-chat.mjs', import.meta.url))], { encoding: 'utf8', timeout: 30000, input: JSON.stringify({ home, cwd, folder: project, content: '' }) }));
+    const chat = await publish({ home, cwd, folder: project, content: JSON.stringify({ type: 'message', id: 'request', parentId: null, message: { role: 'user', content: 'Work on ' + project, timestamp: 1 } }) + '\n' });
     await daemon.invoke('archive_session', { sessionPath: chat.path, hostId: 'local', terminalIds: [], clientId: 'archive-test' });
     archived[project] = { ...chat, cwd };
   }

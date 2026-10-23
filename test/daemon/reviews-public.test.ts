@@ -8,20 +8,17 @@ let agents: Awaited<ReturnType<typeof agentDaemon>>;
 beforeAll(async () => { agents = await agentDaemon(); }, 60000);
 afterAll(async () => { await agents?.close(); });
 
-const uiRequests = (runtimeId: string, method: string) => agents.daemon.events.filter(event => event.payload?.runtimeId === runtimeId && event.payload.event?.type === 'extension_ui_request' && event.payload.event.method === method).map(event => event.payload.event);
+const uiRequests = (runtimeId: string, method: string, host = agents) => host.daemon.events.filter(event => event.payload?.runtimeId === runtimeId && event.payload.event?.type === 'extension_ui_request' && event.payload.event.method === method).map(event => event.payload.event);
 
 /** Starts a review from chat and returns what the side pane receives. */
-async function openReview(chat: Awaited<ReturnType<typeof agents.rootChat>>, command: string) {
-  const before = uiRequests(chat.runtimeId, 'input').length;
+async function openReview(chat: Awaited<ReturnType<typeof agents.rootChat>>, command: string, host = agents) {
+  const seen = new Set(host.daemon.events.map(event => event.payload));
   await chat.command({ type: 'follow_up', message: command });
-  for (let tries = 0; tries < 100; tries++, await Bun.sleep(100)) {
-    const open = uiRequests(chat.runtimeId, 'input').slice(before).find(request => request.title === '__pi_desktop_review__');
-    if (open) return JSON.parse(open.placeholder);
-  }
-  throw new Error('The review never opened');
+  const opened = await host.daemon.waitEvent('pi://event', payload => !seen.has(payload) && payload.runtimeId === chat.runtimeId && payload.event?.method === 'input' && payload.event.title === '__pi_desktop_review__');
+  return JSON.parse(opened.event.placeholder);
 }
 
-test('review findings sent to the main chat start a turn there, and only that chat\'s own reviews may send them', async () => {
+test.concurrent('review findings sent to the main chat start a turn there, and only that chat\'s own reviews may send them', async () => {
   agents.scripts.set('Write the lexer', messages => ({ text: text(messages.at(-1)).includes('Missing EOF token') ? 'Fixed the EOF token.' : 'Lexer done.' }));
   const chat = await agents.rootChat({ visible: true });
   await chat.command({ type: 'prompt', message: 'Write the lexer' });
@@ -37,7 +34,7 @@ test('review findings sent to the main chat start a turn there, and only that ch
   expect(feedback.map((entry: any) => [entry.content, entry.details.sessionId])).toEqual([['Missing EOF token', review.sessionId]]);
 }, 60000);
 
-test('/rs takes an optional subagent count, then an optional scope; a count that is not positive only shows how to use it', async () => {
+test.concurrent('/rs takes an optional subagent count, then an optional scope; a count that is not positive only shows how to use it', async () => {
   const chat = await agents.rootChat({ visible: true });
   for (const command of ['/rs 0', '/rs -1 src']) await chat.command({ type: 'follow_up', message: command });
   const notices = () => agents.daemon.events.filter(event => event.payload?.runtimeId === chat.runtimeId && event.payload.event?.method === 'notify').map(event => event.payload.event.message);
@@ -53,7 +50,7 @@ test('/rs takes an optional subagent count, then an optional scope; a count that
   expect((await openReview(chat, '/rs')).task).toContain('Spawn a proportionate number of review subagents.');
 }, 60000);
 
-test('a review opens a separate code review chat in the side pane, linked to the conversation and kept out of the chat list', async () => {
+test.concurrent('a review opens a separate code review chat in the side pane, linked to the conversation and kept out of the chat list', async () => {
   agents.scripts.set('Implement the parser', () => ({ text: 'Parser done.' }));
   const chat = await agents.rootChat({ visible: true });
   await chat.command({ type: 'prompt', message: 'Implement the parser' });
@@ -89,10 +86,10 @@ test('a review opens a separate code review chat in the side pane, linked to the
   expect(entries.find((entry: any) => entry.customType === 'piop-review-link')?.details).toMatchObject({ sessionId: review.sessionId, parentSessionId: chat.sessionId });
 }, 60000);
 
-test('a dialog waits until a window shows the chat, then goes to that window', async () => {
-  agents.scripts.set('Write the lexer', () => ({ text: 'Lexer done.' }));
+test.concurrent('a dialog waits until a window shows the chat, then goes to that window', async () => {
+  agents.scripts.set('Write the hidden lexer', () => ({ text: 'Lexer done.' }));
   const chat = await agents.rootChat();
-  await chat.command({ type: 'prompt', message: 'Write the lexer' });
+  await chat.command({ type: 'prompt', message: 'Write the hidden lexer' });
   await chat.until(history => text(history.at(-1)) === 'Lexer done.');
   await chat.command({ type: 'follow_up', message: '/review' });
   const dialog = () => uiRequests(chat.runtimeId, 'input').find(request => request.title === '__pi_desktop_review__');
@@ -105,24 +102,25 @@ test('a dialog waits until a window shows the chat, then goes to that window', a
   expect(JSON.parse(dialog().placeholder).parentSessionId).toBe(chat.sessionId);
 }, 60000);
 
-test('a review uses the built-in review prompt and the agent from Settings → Agents, and says what is wrong when the agent is missing', async () => {
-  const original = await agents.daemon.invoke('load_app_settings');
+test.concurrent('a review uses the built-in review prompt and the agent from Settings → Agents, and says what is wrong when the agent is missing', async () => {
+  const isolated = await agentDaemon();
+  const original = await isolated.daemon.invoke('load_app_settings');
   /** Saves on top of the latest settings, as the settings view does after each save. */
-  const save = async (patch: any) => agents.daemon.invoke('save_app_settings', { settings: { ...await agents.daemon.invoke('load_app_settings'), reviewAgent: original.reviewAgent, ...patch } });
+  const save = async (patch: any) => isolated.daemon.invoke('save_app_settings', { settings: { ...await isolated.daemon.invoke('load_app_settings'), reviewAgent: original.reviewAgent, ...patch } });
   try {
-    const chat = await agents.rootChat({ visible: true });
-    const review = await openReview(chat, '/review README.md');
+    const chat = await isolated.rootChat({ visible: true });
+    const review = await openReview(chat, '/review README.md', isolated);
     expect(review.task).toMatch(/^You are the dedicated code review agent[\s\S]*\n\nReview README\.md$/);
 
     await save({ reviewAgent: 'no-such-agent' });
-    const missing = await agents.rootChat({ visible: true });
+    const missing = await isolated.rootChat({ visible: true });
     const failure = (chat: any) => chat.command({ type: 'follow_up', message: '/review' }).then(() => 'sent', (error: Error) => error.message);
     expect(await failure(missing)).toContain('no-such-agent');
-    expect(uiRequests(missing.runtimeId, 'input').filter(request => request.title === '__pi_desktop_review__')).toEqual([]);
-  } finally { await save({}); }
+    expect(uiRequests(missing.runtimeId, 'input', isolated).filter(request => request.title === '__pi_desktop_review__')).toEqual([]);
+  } finally { await isolated.close(); }
 }, 60000);
 
-test('a review submitted during a reply waits for that reply and is not sent to the model', async () => {
+test.concurrent('a review submitted during a reply waits for that reply and is not sent to the model', async () => {
   const started = Promise.withResolvers<void>();
   const finish = Promise.withResolvers<{ text: string }>();
   agents.scripts.set('Prepare queued review', () => { started.resolve(); return finish.promise; });
@@ -140,7 +138,8 @@ test('a review submitted during a reply waits for that reply and is not sent to 
   expect(requests.some(request => request.messages.some((message: any) => text(message).includes('/review queued.ts')))).toBe(false);
 }, 60000);
 
-test('review commands held by pause keep their follow-up behavior and run after resume', async () => {
+test.concurrent('review commands held by pause keep their follow-up behavior and run after resume', async () => {
+  agents.scripts.set('Continue the previous task', () => ({ text: 'Ready for review.' }));
   const chat = await agents.rootChat({ visible: true });
   await chat.command({ type: 'pause' });
   await chat.command({ type: 'follow_up', message: '/review paused.ts' });
@@ -152,4 +151,5 @@ test('review commands held by pause keep their follow-up behavior and run after 
   await chat.command({ type: 'resume' });
   const opened = await agents.daemon.waitEvent('pi://event', payload => payload.runtimeId === chat.runtimeId && payload.event?.title === '__pi_desktop_review__', 30000);
   expect(JSON.parse(opened.event.placeholder).task).toContain('paused.ts');
+  expect(agents.model.requests.filter(request => request.messages.some((message: any) => text(message).startsWith('Continue the previous task')))).toHaveLength(1);
 }, 60000);

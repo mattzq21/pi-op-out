@@ -1,3 +1,4 @@
+import { cleanupScope } from './cleanup-scope.mjs';
 import assert from 'node:assert/strict';
 import { mockIPC, mockWindows, clearMocks } from '@tauri-apps/api/mocks';
 import { emit } from '@tauri-apps/api/event';
@@ -7,6 +8,7 @@ import { nativeFileCommand } from './native-file-command.mjs';
 import { trackStorage } from './storage-idle.mjs';
 
 export async function appService(t, { keybindings = {}, remotes = [], beforeMount = async () => {} } = {}) {
+  t = cleanupScope(t);
   const dom = installDom();
   const storage = trackStorage(indexedDB);
   const requests = new Set();
@@ -19,12 +21,12 @@ export async function appService(t, { keybindings = {}, remotes = [], beforeMoun
     dom.restore();
     assert.deepEqual(eventErrors, []);
   });
+  const native = await nativeFileCommand(t, { desktop: true });
   const daemon = await daemonClient(t, (event, payload) => {
     if (!bridgeLive) return;
     const delivery = emit(event, payload); requests.add(delivery);
     void delivery.catch(error => eventErrors.push(error.message)).finally(() => requests.delete(delivery));
   }, { remotes });
-  const native = await nativeFileCommand(t, { desktop: true });
   const preferences = (await native.invoke('load_client_settings')).settings ?? { keybindings: (await daemon.invoke('load_app_settings')).keybindings, debugMode: false };
   await native.invoke('save_client_settings', { settings: { ...preferences, keybindings: { ...preferences.keybindings, ...keybindings } }, baseline: preferences });
   await beforeMount({ daemon, native });

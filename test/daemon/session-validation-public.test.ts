@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { join } from 'node:path';
 import { startDaemon } from './harness';
 
-test('opening an unregistered transcript rejects it without changing the file', async () => {
+test.concurrent('opening an unregistered transcript rejects it without changing the file', async () => {
   const daemon = await startDaemon();
   try {
     const directory = join(daemon.home, '.piop', 'sessions', 'unregistered');
@@ -31,17 +31,17 @@ async function rejectsHeader(header: string, reason: string) {
   } finally { await daemon.stop(); }
 }
 
-test('opening a transcript without an identity rejects it and preserves its contents', () => rejectsHeader('{}', 'Missing session identity'), 60000);
+test.concurrent('opening a transcript without an identity rejects it and preserves its contents', () => rejectsHeader('{}', 'Missing session identity'), 60000);
 
-test('opening a transcript with numeric identity rejects it without changing the file', () => rejectsHeader('{"type":"session","id":42}', 'Missing session identity'), 60000);
+test.concurrent('opening a transcript with numeric identity rejects it without changing the file', () => rejectsHeader('{"type":"session","id":42}', 'Missing session identity'), 60000);
 
-test('opening a transcript with invalid JSON rejects it without changing the file', () => rejectsHeader('not json', 'JSON Parse error'), 60000);
+test.concurrent('opening a transcript with invalid JSON rejects it without changing the file', () => rejectsHeader('not json', 'JSON Parse error'), 60000);
 
-test('opening a transcript with empty header rejects it without changing the file', () => rejectsHeader('', 'JSON Parse error'), 60000);
+test.concurrent('opening a transcript with empty header rejects it without changing the file', () => rejectsHeader('', 'JSON Parse error'), 60000);
 
-test('opening a transcript with oversized header rejects it without changing the file', () => rejectsHeader(JSON.stringify({ type: 'session', id: crypto.randomUUID(), padding: 'x'.repeat(64 * 1024) }), 'JSON Parse error'), 60000);
+test.concurrent('opening a transcript with oversized header rejects it without changing the file', () => rejectsHeader(JSON.stringify({ type: 'session', id: crypto.randomUUID(), padding: 'x'.repeat(64 * 1024) }), 'JSON Parse error'), 60000);
 
-test('opening a registered transcript accepts a header of exactly 64 KiB', async () => {
+test.concurrent('opening a registered transcript accepts a header of exactly 64 KiB', async () => {
   const daemon = await startDaemon();
   try {
     const chat = JSON.parse(execFileSync('node', [fileURLToPath(new URL('../fixtures/publish-chat.mjs', import.meta.url))], {
@@ -59,7 +59,7 @@ test('opening a registered transcript accepts a header of exactly 64 KiB', async
   } finally { await daemon.stop(); }
 }, 60000);
 
-test('opening a registered transcript with a damaged body reports the bad line, preserves the file and leaves the runtime free for a retry', async () => {
+test.concurrent('opening a registered transcript with a damaged body reports the bad line, preserves the file and leaves the runtime free for a retry', async () => {
   const daemon = await startDaemon();
   try {
     const chat = JSON.parse(execFileSync('node', [fileURLToPath(new URL('../fixtures/publish-chat.mjs', import.meta.url))], {
@@ -82,7 +82,7 @@ test('opening a registered transcript with a damaged body reports the bad line, 
   } finally { await daemon.stop(); }
 }, 60000);
 
-test('a failed open of a damaged transcript by one client does not block another connected client from opening the repaired chat', async () => {
+test.concurrent('a failed open of a damaged transcript by one client does not block another connected client from opening the repaired chat', async () => {
   const daemon = await startDaemon();
   try {
     const chat = JSON.parse(execFileSync('node', [fileURLToPath(new URL('../fixtures/publish-chat.mjs', import.meta.url))], {

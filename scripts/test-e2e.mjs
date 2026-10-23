@@ -74,7 +74,7 @@ if (values.list) {
   console.log(selected.join('\n'));
 } else {
   let failed = false;
-  const batchSize = 5;
+  const batchSize = 10;
 
   for (let start = 0; start < selected.length; start += batchSize) {
     const batch = selected.slice(start, start + batchSize);

@@ -1,3 +1,4 @@
+import { retainSettingsResources } from "./lib/settingsResources";
 import { capSessionName } from "./lib/sessionName";
 import { ComposerPluginsContext } from "./plugins/composer";
 import { localHostLabel } from "./lib/mobileHosts";
@@ -8,7 +9,7 @@ import { required } from "./lib/required";
 import { trackToastMessage, trackToastNotices } from "./lib/toastHistory";
 import { Key,Rerun } from "@solid-primitives/keyed";
 import { Archive,ArrowLeft,Bug,FolderPlus,MessageSquare,Server,Settings } from "lucide-solid";
-import { batch,createEffect,createMemo,lazy,Show } from "solid-js";
+import { batch,createComponent,createEffect,createMemo,lazy,onCleanup,Show } from "solid-js";
 import { createAppConversations } from "./appConversations";
 import { AppLoading,LimitBadge,splitConversationKey } from "./appSupport";
 import { FindInPage } from "./components/FindInPage";
@@ -30,20 +31,19 @@ const LocalSettingsView = lazy(() => import("./components/LocalSettingsView").th
 
 const TerminalView = lazy(() => import("./components/TerminalView").then(module => ({ default: module.TerminalView })));
 
-let settingsPreloaded = false;
-
-/** Once the chat view is loaded, loads the settings page and the local host's settings data in the background, so settings open without waiting. */
 function preloadSettings() {
-  if (settingsPreloaded) return;
-  settingsPreloaded = true;
-  // A short delay lets the chat view finish its own startup first.
-  setTimeout(() => {
+  let disposed = false;
+  const timer = setTimeout(() => {
     void import("./components/LocalSettingsView").catch(reason => console.error("Could not preload the settings page:", reason));
-    void import("./lib/settingsResources").then(module => module.preloadSettingsResources(), reason => console.error("Could not preload the settings data:", reason));
+    void import("./lib/settingsResources").then(module => { if (!disposed) module.preloadSettingsResources(); }, reason => console.error("Could not preload the settings data:", reason));
   }, 1000);
+  onCleanup(() => { disposed = true; clearTimeout(timer); });
 }
 
-const ChatView = lazy(() => import("./components/ChatView").then(module => { preloadSettings(); return { default: module.ChatView }; }));
+const ChatView = lazy(() => import("./components/ChatView").then(module => ({ default: (props: Parameters<typeof module.ChatView>[0]) => {
+  preloadSettings();
+  return createComponent(module.ChatView, props);
+} })));
 
 const ExtensionDialog = lazy(() => import("./components/ExtensionDialog").then(module => ({ default: module.ExtensionDialog })));
 
@@ -54,6 +54,7 @@ const SplitChatPane = lazy(() => import("./components/SplitChatPane").then(modul
 const SubagentPane = lazy(() => import("./components/SubagentPane").then(module => ({ default: module.SubagentPane })));
 
 export default function App(props: { suppressConnectionNotices?: boolean } = {}) {
+  onCleanup(retainSettingsResources());
  const { modelVisibility, drafts, archiveReplacedSession, isArchiving, missingDirectoryDialog, archivesOpen, setArchivesOpen, runtimePool, transport, view, setView, activeConversationKey, chatViewKey, runningSessions, unseenSessions, pendingSettingsCount, chatSession, sessions, settings, settingsSaving, debugModeSaving, setSettingsDirty, panelOpen, setPanelOpen, query, setQuery, connected, error, setError, createGroupRequest, setCreateGroupRequest, handleCreateGroup, newChatRequest, activeHostId, codexUsage, usageClock, opencodeGoBadge, codexUsageError, opencodeGoUsageError, setDialogs, notices, setNotices, addNotice, queueExtensionDialog, resolveExtensionDialog, closeTransportDialogs, releaseSplitTransport, statuses, renameSession, setRenameSession, projectOpen, setProjectOpen, projectOpenRef, uploadsByTransport, setComposerUploads, splitPane, setSplitPane, subagentPane, hasSidePane, mainComposerFocusRequest, splitComposerFocusRequest, activePane, setActivePane, terminals, terminalOpen, terminalLocationState, startTerminal, addTerminal, selectTerminal, deleteTerminal, reconnectPending, splitSessionId, composerState, terminalViewKey, syncSessionIndex, composerControls, resolveHomeDirectory, send, respondToSplitRequest, closeSplitPane, openSubagent, canLeaveSettings, rekeyConversationUi, branch, forkAndForget, forkSourceName, openForkSource, revealEntryId, entryRevealed, startNewSession, newSession, clearChatProject, chooseChatHost, selectSession, setModel, setThinking, abortInteraction, pauseInteraction, resumeInteraction, saveSettings, setAgent, openProject, chooseChatProject, sessionAction, draftChangeFor, uploadsChangeFor, toggleComposerTerminal, toggleDebugMode, reconnectMain, extensionStateIsCurrent, activeDialog, projectCwd, mobileSidebarOpen, sidebar, chatAgentProps, chatModels, chatCommands, chatWidgets } = createAppConversations(() => { void ChatView.preload().catch(() => undefined); });
 
 
