@@ -5,7 +5,7 @@ import { parseArgs, promisify } from 'node:util';
 const started = performance.now();
 const { values, positionals } = parseArgs({
   allowPositionals: true,
-  options: { jobs: { type: 'string', default: '3' }, filter: { type: 'string' } },
+  options: { jobs: { type: 'string', default: '4' }, filter: { type: 'string' } },
 });
 const jobs = Number(values.jobs);
 if (!Number.isSafeInteger(jobs) || jobs < 1 || jobs > 16) throw new Error('--jobs must be a whole number from 1 to 16');
