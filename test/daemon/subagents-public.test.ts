@@ -75,6 +75,32 @@ test.concurrent('a grandchild cannot start its own child, and its parents hear w
   expect(agents.model.requests.some(request => JSON.stringify(request.messages).includes('Unreachable task') && !JSON.stringify(request.messages).includes('Delegate once more'))).toBe(false);
 }, 120000);
 
+for (const delivery of ['steer', 'follow_up']) test.concurrent('a message to a busy child arrives ' + (delivery === 'steer' ? 'before its next model call when steered' : 'after its current work as a follow-up'), async () => {
+  const prompt = 'Busy helper ' + delivery, task = 'Steerable job ' + delivery;
+  const firstReply = Promise.withResolvers<any>();
+  agents.scripts.set(prompt, messages => {
+    const last = text(messages.at(-1));
+    if (!called(messages, 'spawn_subagents')) return { tool: 'spawn_subagents', arguments: { tasks: [{ name: 'busy', task }] } };
+    if (last === 'Change the plan' && !called(messages, 'message_subagent')) return { tool: 'message_subagent', arguments: { name: 'busy', message: 'Change of plan', delivery } };
+    const relay = last.match(/Relay: [\w ]+/);
+    return { text: relay ? relay[0] : 'Waiting.' };
+  });
+  agents.scripts.set(task, messages => {
+    if (!called(messages, 'bash')) return firstReply.promise;
+    if (text(messages.at(-1)).includes('Change of plan')) return { text: JSON.stringify(messages).includes('First task done.') ? 'Relay: followed up' : 'Relay: steered early' };
+    return { text: 'First task done.' };
+  });
+  const root = await agents.rootChat();
+  await root.command({ type: 'prompt', message: prompt });
+  await root.until(() => agents.model.requests.some(request => JSON.stringify(request.messages).includes(task)));
+  await root.until(history => history.some(message => message.role === 'toolResult' && message.toolName === 'spawn_subagents'));
+  await root.command({ type: 'follow_up', message: 'Change the plan' });
+  await root.until(history => history.some(message => message.role === 'toolResult' && message.toolName === 'message_subagent'));
+  firstReply.resolve({ tool: 'bash', arguments: { command: 'true' } });
+  const messages = await root.until(history => /Relay: (steered early|followed up)/.test(text(history.at(-1))));
+  expect(text(messages.at(-1))).toBe(delivery === 'steer' ? 'Relay: steered early' : 'Relay: followed up');
+}, 120000);
+
 test.concurrent('a follow-up task goes to the same child, which still remembers its earlier work', async () => {
   agents.scripts.set('Use a memory helper', messages => {
     const last = text(messages.at(-1));

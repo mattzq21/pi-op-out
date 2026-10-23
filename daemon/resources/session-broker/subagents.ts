@@ -107,7 +107,7 @@ async function createSubagent(pi: ExtensionAPI, ctx: ExtensionContext, task: Sub
   return run;
 }
 
-async function deliverFollowup(pi: ExtensionAPI, ctx: ExtensionContext, run: SubagentRun, lifecycle: ActiveSubagent, message: string, signal?: AbortSignal): Promise<AgentToolResult<unknown>> {
+async function deliverFollowup(pi: ExtensionAPI, ctx: ExtensionContext, run: SubagentRun, lifecycle: ActiveSubagent, message: string, deliverAs: "steer" | "followUp", signal?: AbortSignal): Promise<AgentToolResult<unknown>> {
   lifecycle.controller.signal.throwIfAborted();
   signal?.throwIfAborted();
 
@@ -126,7 +126,7 @@ async function deliverFollowup(pi: ExtensionAPI, ctx: ExtensionContext, run: Sub
   saveRun(pi, ctx, observed);
 
   try {
-    const data = await sendSessionMessage(ctx, run.sessionId, run.hostId, message, true, signal, deliveryId);
+    const data = await sendSessionMessage(ctx, run.sessionId, run.hostId, message, true, signal, deliveryId, false, deliverAs);
     acceptedSubmission(observed, Parse(subagentReceiptSchema, data));
     saveRun(pi, ctx, observed);
 
@@ -290,8 +290,8 @@ export function registerSubagents(pi: ExtensionAPI) {
     },
   });
   pi.registerTool({
-    name: "message_subagent", label: "Message subagent", exposure: "model-only", description: "Send a subagent a message. A running subagent reads it during its task; a finished one starts a new task with its own earlier history. Its answer arrives as a new message.",
-    parameters: Type.Object({ name: Type.String({ minLength: 1 }), message: Type.String({ minLength: 1, maxLength: 100_000 }) }),
+    name: "message_subagent", label: "Message subagent", exposure: "model-only", description: "Send a subagent a message. A busy subagent gets it as a follow-up after its current work, or during it with delivery: \"steer\". A finished one starts a new task with its own earlier history. Its answer arrives as a new message.",
+    parameters: Type.Object({ name: Type.String({ minLength: 1 }), message: Type.String({ minLength: 1, maxLength: 100_000 }), delivery: Type.Optional(Type.Union([Type.Literal("follow_up"), Type.Literal("steer")])) }),
     async execute(id, params, signal, _update, ctx) {
       const run = targetRun(ctx, params.name);
       reconcile(ctx);
@@ -301,7 +301,7 @@ export function registerSubagents(pi: ExtensionAPI) {
       if (running) {
         await running.ready;
 
-        if (!running.closing) return deliverFollowup(pi, ctx, run, running, params.message, signal);
+        if (!running.closing) return deliverFollowup(pi, ctx, run, running, params.message, params.delivery === "steer" ? "steer" : "followUp", signal);
         await running.done;
       }
 

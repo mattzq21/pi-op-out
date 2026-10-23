@@ -19,7 +19,7 @@ const stateSchema = Schema.Object({ sessionFile: Schema.Optional(Schema.String()
 
 const snapshotSchema = Schema.Object({ revision: Schema.String(), state: stateSchema, history: Schema.Object({ entries: Schema.Array(entrySchema), leafId: Schema.Optional(Schema.Union([Schema.String(), Schema.Null()])) }) });
 
-const deliverySchema = Schema.Object({ id: Schema.String(), deliveryId: Schema.String({ minLength: 1 }), sourceSessionId: Schema.String(), sourceHostId: Schema.String(), message: Schema.String({ minLength: 1, maxLength: 100_000 }), wake: Schema.Optional(Schema.Boolean()) });
+const deliverySchema = Schema.Object({ id: Schema.String(), deliveryId: Schema.String({ minLength: 1 }), sourceSessionId: Schema.String(), sourceHostId: Schema.String(), message: Schema.String({ minLength: 1, maxLength: 100_000 }), wake: Schema.Optional(Schema.Boolean()), deliverAs: Schema.Optional(Schema.Union([Schema.Literal("steer"), Schema.Literal("followUp")])) });
 
 const address = { threadId: Type.String({ minLength: 1 }), hostId: Type.Optional(Type.String({ minLength: 1 })) };
 
@@ -64,10 +64,17 @@ function deliverMailbox(pi: ExtensionAPI, mail: Mail[]) {
   }
 }
 
-function queueAgentMailbox(pi: ExtensionAPI, ctx: ExtensionContext, message: Mail["message"], notificationId: string, defer = false) {
+/** deliverAs: a busy recipient gets the message in Pi's steering or follow-up queue. Without it, the message waits in the mailbox until the agent settles. */
+function queueAgentMailbox(pi: ExtensionAPI, ctx: ExtensionContext, message: Mail["message"], notificationId: string, defer = false, deliverAs?: "steer" | "followUp") {
   const mail = { message, notificationId };
 
   if (!defer && ctx.isIdle()) { deliverMailbox(pi, [mail]);
+
+    return; }
+
+  if (!defer && deliverAs) {
+    pi.sendMessage(message, { triggerTurn: true, deliverAs });
+    pi.events.emit("piop:agent-mail", { notificationId });
 
     return; }
 
@@ -76,10 +83,10 @@ function queueAgentMailbox(pi: ExtensionAPI, ctx: ExtensionContext, message: Mai
   mailboxes.set(pi, queued);
 }
 
-export async function sendAgentMailbox(pi: ExtensionAPI, ctx: ExtensionContext, message: Mail["message"], notificationId: string) {
+export async function sendAgentMailbox(pi: ExtensionAPI, ctx: ExtensionContext, message: Mail["message"], notificationId: string, deliverAs?: "steer" | "followUp") {
   const generation = mailboxGenerations.get(pi);
   await durableMailbox(pi).send(ctx, message, notificationId, item => {
-    if (generation === mailboxGenerations.get(pi)) queueAgentMailbox(pi, ctx, item, notificationId);
+    if (generation === mailboxGenerations.get(pi)) queueAgentMailbox(pi, ctx, item, notificationId, false, deliverAs);
   });
 }
 
@@ -87,12 +94,12 @@ export async function sessionSnapshot(sessionId: string, hostId: string, signal?
   return Parse(snapshotSchema, await request("/orchestration", { action: "read", sessionId, hostId }, signal, 30_000));
 }
 
-/** discardOnFailure: the recipient is a new chat that is deleted when the message cannot be delivered. */
-export async function sendSessionMessage(ctx: ExtensionContext, sessionId: string, hostId: string, message: string, wake: boolean, signal?: AbortSignal, deliveryId = randomUUID(), discardOnFailure = false) {
+/** discardOnFailure: the recipient is a new chat that is deleted when the message cannot be delivered. deliverAs: how a busy recipient gets it. */
+export async function sendSessionMessage(ctx: ExtensionContext, sessionId: string, hostId: string, message: string, wake: boolean, signal?: AbortSignal, deliveryId = randomUUID(), discardOnFailure = false, deliverAs?: "steer" | "followUp") {
   if (sessionId === ctx.sessionManager.getSessionId() && hostId === currentHost()) throw new Error("Choose another conversation as the recipient");
   await activeConversation(sessionId, hostId, signal);
 
-  return request("/orchestration", { action: "send", sessionId, hostId, message, wake, deliveryId, discardOnFailure, sourceSessionId: ctx.sessionManager.getSessionId(), sourceHostId: currentHost() }, signal, 60_000);
+  return request("/orchestration", { action: "send", sessionId, hostId, message, wake, deliveryId, discardOnFailure, deliverAs, sourceSessionId: ctx.sessionManager.getSessionId(), sourceHostId: currentHost() }, signal, 60_000);
 }
 
 function executionStopped(snapshot: Awaited<ReturnType<typeof sessionSnapshot>>) {
@@ -186,7 +193,7 @@ async function poll(target: Target, signal?: AbortSignal) {
 async function deliver(pi: ExtensionAPI, ctx: ExtensionContext, delivery: Static<typeof deliverySchema>) {
   const notificationId = delivery.deliveryId;
   const content = JSON.stringify({ notificationId, sourceSessionId: delivery.sourceSessionId, sourceHostId: delivery.sourceHostId, message: delivery.message });
-  await sendAgentMailbox(pi, ctx, { customType: "piop-agent-message", content, display: true, details: { notificationId } }, notificationId);
+  await sendAgentMailbox(pi, ctx, { customType: "piop-agent-message", content, display: true, details: { notificationId } }, notificationId, delivery.deliverAs);
 
   return { sessionId: ctx.sessionManager.getSessionId(), accepted: true, notificationId };
 }
