@@ -48,8 +48,6 @@ export const PEER_TOOLS = ["create_peer", "branchoff_peer", "message_peer", "sto
 /** Which agents list_agent_profiles lists: for one start purpose, or for both, chosen by an argument. */
 export type AgentProfilesMode = AgentStartPurpose | "both";
 
-const COMMON = "Shows each agent's name and description.";
-
 function profilesTool(pi: ExtensionAPI, mode: AgentProfilesMode) {
   const list = async (purpose: AgentStartPurpose) => {
     const catalog: AgentProfilesRequest = { purpose };
@@ -63,14 +61,14 @@ function profilesTool(pi: ExtensionAPI, mode: AgentProfilesMode) {
 
   if (mode === "both") return {
     name: "list_agent_profiles", label: "List agent profiles", exposure: "model-only" as const,
-    description: `List the agents you can start: for "subagent" with spawn_subagents, for "peer" with create_peer. ${COMMON}`,
+    description: `List the agents you can start: for "subagent" with spawn_subagents, for "peer" with create_peer.`,
     parameters: Type.Object({ for: Type.Union([Type.Literal("subagent"), Type.Literal("peer")]) }),
     execute: (_id: string, params: { for: "subagent" | "peer" }) => list(params.for),
   };
 
   return {
     name: "list_agent_profiles", label: "List agent profiles", exposure: "model-only" as const,
-    description: `List the agents you can start with ${mode === "subagent" ? "spawn_subagents" : "create_peer"}. ${COMMON}`,
+    description: `List the agents you can start with ${mode === "subagent" ? "spawn_subagents" : "create_peer"}.`,
     parameters: Type.Object({}),
     execute: () => list(mode),
   };
