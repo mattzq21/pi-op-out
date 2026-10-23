@@ -227,9 +227,9 @@ const parentMessageSchema = Schema.Object({ message: Schema.String() });
 
 const resultDetailsSchema = Schema.Object({ runs: Schema.Array(Schema.Object({ name: Schema.String(), status: Schema.String(), agent: Schema.Optional(Schema.String()), output: Schema.Optional(Schema.String()) })) });
 
-/** A parent sees each finished subagent's name, then its answer in a <subagent_response> tag. */
+/** A parent sees each finished subagent's name and answer in a <subagent_response> tag. */
 function subagentResponses(runs: Static<typeof resultDetailsSchema>["runs"]) {
-  return runs.map(run => "Subagent " + run.name + ":\n<subagent_response>\n" + (run.output ?? "") + "\n</subagent_response>").join("\n\n");
+  return runs.map(run => "<subagent_response>\nSubagent " + run.name + ":\n" + (run.output ?? "") + "\n</subagent_response>").join("\n\n");
 }
 
 /** The text the parent wrote, from a delivered agent message. */
