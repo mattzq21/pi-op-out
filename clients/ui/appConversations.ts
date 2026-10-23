@@ -582,15 +582,19 @@ export function createAppConversations(preloadChat: () => void) {
   };
 
   // New conversation while a new draft is already open starts over: the draft is forgotten and the defaults come back.
-  /** The open draft already has the defaults: no text, attachments, project, chosen agent or chosen prompt settings. */
-  const draftHasDefaults = () => {
-    const agents = definedAgents(); const owner = transport();
-
-    return currentSessionIsDraft() && !transportHasDraft(owner, activeConversationKey()) && owner.isTemporaryChat() && owner.promptControls.untouched() && Boolean(agents) && agents?.active === agents?.config.agents.find(agent => agent.isDefault)?.name;
+  /** Resets only what differs from the defaults in the open draft. A project needs a new chat; text, attachments, agent and prompt settings reset in place. */
+  const resetDraftInPlace = async () => {
+    const owner = transport(); const key = activeConversationKey(); const agents = definedAgents();
+    if (!owner.isTemporaryChat() || !agents) return false;
+    const defaultAgent = agents.config.agents.find(agent => agent.isDefault)?.name;
+    if (transportHasDraft(owner, key)) drafts.discard(owner, key);
+    if (defaultAgent && agents.active !== defaultAgent) await setAgent(defaultAgent);
+    else if (!owner.promptControls.untouched()) owner.promptControls.reset();
+    return true;
   };
   const newSession = async () => {
     const fresh = currentSessionIsDraft(); setNewChatRequest(value => value + 1);
-    if (fresh && draftHasDefaults()) { closeMobileSidebar(); setArchivesOpen(false); setView("chat"); closeSplitPane(); setMainComposerFocusRequest(request => request + 1); return; }
+    if (fresh && await resetDraftInPlace()) { closeMobileSidebar(); setArchivesOpen(false); setView("chat"); closeSplitPane(); setMainComposerFocusRequest(request => request + 1); return; }
     await startNewSession(fresh, undefined, undefined, undefined, fresh);
   };
 
