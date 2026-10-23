@@ -23,6 +23,9 @@ test.concurrent('a child agent\'s final answer reaches its parent, which continu
   await root.command({ type: 'prompt', message: 'Read the README for me' });
   const messages = await root.until(history => history.some(message => message.role === 'assistant' && text(message).startsWith('The reader says')));
   expect(text(messages.findLast(message => message.role === 'assistant'))).toBe('The reader says: README is about cats');
+  // The child sees only the text its parent wrote, as a plain user message.
+  const childRequest = agents.model.requests.find(request => text(request.messages.find((message: any) => message.role === 'user')) === 'Summarize the README');
+  expect(childRequest.messages.filter((message: any) => message.role !== 'system').map((message: any) => [message.role, text(message)])).toEqual([['user', 'Summarize the README']]);
   const sessions = await agents.daemon.invoke('list_sessions');
   const child = sessions.find((session: any) => session.subagentParentId === root.sessionId);
   expect(child).toMatchObject({ name: 'Subagent: reader' });

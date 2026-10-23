@@ -223,6 +223,13 @@ function validateTargets(targets: Target[], ctx: ExtensionContext) {
   if (new Set(keys).size !== keys.length || keys.includes(`${currentHost()}\0${ctx.sessionManager.getSessionId()}`)) throw new Error("Wait targets must be distinct conversations other than this one");
 }
 
+const parentMessageSchema = Schema.Object({ message: Schema.String() });
+
+/** The text the parent wrote, from a delivered agent message. */
+function parentPrompt(content: string) {
+  try { const value = JSON.parse(content); return Check(parentMessageSchema, value) ? value.message : undefined; } catch { return undefined; }
+}
+
 function registerDelivery(pi: ExtensionAPI) {
   const mailbox = durableMailbox(pi);
   let generation = 0;
@@ -309,6 +316,7 @@ function registerDelivery(pi: ExtensionAPI) {
   pi.on("context", (event, ctx) => {
     if (!ctx.model) return;
     const model = ctx.model;
+    const subagent = ctx.sessionManager.getEntries().some(entry => entry.type === "custom" && entry.customType === "piop-subagent-parent");
 
     return { messages: event.messages.flatMap<ContextEvent["messages"][number]>(message => {
       const delivered = message.role === "user" && Check(deliveredSchema, message);
@@ -317,6 +325,10 @@ function registerDelivery(pi: ExtensionAPI) {
       if (!delivered && !custom) return [message];
 
       if (Check(mailboxMessageSchema, message)) mailbox.consume(ctx, message.details.notificationId);
+      const prompt = subagent && message.role === "custom" && message.customType === "piop-agent-message" ? parentPrompt(messageText(message)) : undefined;
+
+      // A subagent sees its parent's messages as plain user messages that hold only the text the parent wrote.
+      if (prompt !== undefined) return [{ role: "user", content: [{ type: "text", text: prompt }], timestamp: message.timestamp }];
       const toolCallId = `agent_delivery_${createHash("sha256").update(JSON.stringify([message.timestamp, message.content])).digest("hex").slice(0, 24)}`;
 
       return [
