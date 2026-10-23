@@ -9,5 +9,11 @@
 .subagent-completed { color: var(--green); }
 .subagent-running { color: var(--running); }
 .subagent-failed { color: #d77865; }
-/* Finished subagents start a turn, so they show on the right in a bubble like a user message. */
-.conversation-turn > .subagent-timeline { align-self: flex-end; width: fit-content; max-width: min(82%, 600px); margin-left: auto; padding: 8px 12px; border: 1px solid #393732; border-radius: 12px 4px 12px 12px; background: #24231f; font-size: 13px; }
+/* Finished subagents start a turn, so they show as a centred divider between two thin lines. */
+.conversation-turn > .subagent-timeline { flex-direction: row; flex-wrap: wrap; align-items: center; justify-content: center; gap: 4px 14px; margin-top: 4px; font-size: 12px; }
+.conversation-turn > .subagent-timeline::before, .conversation-turn > .subagent-timeline::after { content: ""; flex: 1 1 40px; height: 1px; background: var(--line); }
+.conversation-turn > .subagent-timeline::before { order: -1; }
+.conversation-turn > .subagent-timeline .subagent-name { color: var(--muted); }
+.conversation-turn > .subagent-timeline .subagent-completed + .subagent-name::after { content: " finished"; }
+.conversation-turn > .subagent-timeline .subagent-failed + .subagent-name::after { content: " failed"; }
+.conversation-turn > .subagent-timeline .subagent-cancelled + .subagent-name::after { content: " cancelled"; }
