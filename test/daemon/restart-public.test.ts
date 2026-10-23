@@ -47,7 +47,7 @@ test.concurrent('a child cut off by a daemon restart is reported to its parent a
     await agents.enableAgentTools('spawn_subagents');
     const job = await stoppedJob('survivor-late.txt', jobs);
     const childReady = Promise.withResolvers<void>();
-    agents.scripts.set('Delegate across a restart', messages => called(messages, 'spawn_subagents') ? { text: 'Parent saw: ' + text(messages.at(-1)) } : { tool: 'spawn_subagents', arguments: { tasks: [{ name: 'survivor', task: 'Survivor job' }] } });
+    agents.scripts.set('Delegate across a restart', messages => called(messages, 'spawn_subagents') ? { text: 'Parent saw: ' + text(messages.at(-1)) } : { tool: 'spawn_subagents', arguments: { tasks: [{ name: 'Survivor', task: 'Survivor job' }] } });
     agents.scripts.set('Survivor job', messages => {
       childReady.resolve();
       return called(messages, 'bash') ? { text: 'Relay: survived' } : { tool: 'bash', arguments: { command: job.command } };
@@ -62,10 +62,10 @@ test.concurrent('a child cut off by a daemon restart is reported to its parent a
     const path = (await second.invoke('list_sessions')).find((session: any) => session.id === root.sessionId).path;
     await second.invoke('start_pi', { runtimeId: 'reopened', clientId: 'laptop', cwd: root.cwd, sessionPath: path });
     let last = '';
-    for (let tries = 0; !/^Parent saw: <subagent_response>\nSubagent survivor:/.test(last) && tries < 200; tries++, await Bun.sleep(100)) {
+    for (let tries = 0; !/^Parent saw: <subagent_response>\nSubagent Survivor:/.test(last) && tries < 200; tries++, await Bun.sleep(100)) {
       last = text((await second.invoke('pi_command', { runtimeId: 'reopened', command: { type: 'get_entries' } })).entries.filter((entry: any) => entry.type === 'message').at(-1)?.message);
     }
-    expect(last).toMatch(/^Parent saw: <subagent_response>\nSubagent survivor:\n/);
+    expect(last).toMatch(/^Parent saw: <subagent_response>\nSubagent Survivor:\n/);
     expect(agents.model.requests.some(request => text(request.messages.at(-1)).includes('Relay: survived'))).toBe(false);
   } finally { await second?.stop(); await agents.daemon.stop(); await agents.model.close(); for (const close of jobs) await close(); }
 }, 90000);

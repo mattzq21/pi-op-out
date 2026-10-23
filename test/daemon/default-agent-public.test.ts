@@ -52,7 +52,7 @@ test.concurrent('the agent list for a chat that is not started yet shows which a
 }, 60000);
 
 test.concurrent('a child asked for the general agent runs general, while its parent runs the default agent', async () => {
-  agents.scripts.set('Ask general for help', messages => called(messages, 'spawn_subagents') ? { text: 'Asked.' } : { tool: 'spawn_subagents', arguments: { tasks: [{ name: 'helper', task: 'General child task', agent: 'general' }] } });
+  agents.scripts.set('Ask general for help', messages => called(messages, 'spawn_subagents') ? { text: 'Asked.' } : { tool: 'spawn_subagents', arguments: { tasks: [{ name: 'Helper', task: 'General child task', agent: 'general' }] } });
   agents.scripts.set('General child task', () => ({ text: 'Child done.' }));
   const chat = await plainChat('default-parent');
   await chat.command({ type: 'prompt', message: 'Ask general for help' });

@@ -15,8 +15,8 @@ import { SUBAGENT_PARENT, latestRuns, ownedRuns, saveRun, subagentParent, subage
 import { acceptedSubmission, cancelSubagent, finishRun, observeSubagent, subagentReceiptSchema, SubagentCancellation, type ActiveSubagent } from "./subagent-reconciliation.ts";
 import { savedSubagentRuns } from "../piop-storage/subagent-results.ts";
 
-/** A subagent nickname: 1–8 letters a–z or A–Z. */
-const NICKNAME = "^[a-zA-Z]{1,8}$";
+/** A subagent nickname: 1–8 letters, the first upper case and the rest lower case. */
+const NICKNAME = "^[A-Z][a-z]{0,7}$";
 
 const MAX_DELEGATION_DEPTH = 2;
 
@@ -503,7 +503,7 @@ export function registerSubagents(pi: ExtensionAPI) {
       if (!params.tasks.length || params.tasks.some((task) => !task.task.trim())) throw new Error("Provide at least one named, nonempty task");
 
       // A nickname is shown on its own line, as in "Subagent <name>:", so it cannot hold a line break.
-      if (params.tasks.some(task => !new RegExp(NICKNAME).test(task.name))) throw new Error("Give each subagent a nickname of 1–8 letters a–z or A–Z");
+      if (params.tasks.some(task => !new RegExp(NICKNAME).test(task.name))) throw new Error("Give each subagent a nickname of 1–8 letters, the first upper case and the rest lower case");
 
       if (new Set(params.tasks.map(task => task.name)).size !== params.tasks.length) throw new Error("Give each subagent a different name");
 

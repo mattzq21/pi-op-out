@@ -48,7 +48,7 @@ test.concurrent('chat tools list and read only root chats, never subagent chats'
   const childKnown = Promise.withResolvers<void>();
   agents.scripts.set('Delegate, then look around', messages => {
     const last = text(messages.at(-1));
-    if (!called(messages, 'spawn_subagents')) return { tool: 'spawn_subagents', arguments: { tasks: [{ name: 'helper', task: 'Helper task' }] } };
+    if (!called(messages, 'spawn_subagents')) return { tool: 'spawn_subagents', arguments: { tasks: [{ name: 'Helper', task: 'Helper task' }] } };
     if (!last.includes('helped') && !called(messages, 'list_threads')) return { text: 'Waiting.' };
     if (!called(messages, 'list_threads')) return { tool: 'list_threads' };
     if (!called(messages, 'read_thread')) return { tool: 'read_thread', arguments: { threadId: childId } };
