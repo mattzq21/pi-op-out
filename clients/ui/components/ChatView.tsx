@@ -70,7 +70,8 @@ export function ChatView(props: Props & { transcriptActions?: JSXElement; follow
 
     const unsubscribe = capturedTransport0?.subscribe((event) => {
       setTerminalAvailable(capturedTransport0.hasSentMessage());
-      if (event.type === "ownership_lost") setOwnsConversation(false);
+      // A local disconnect also reports ownership_lost; only a real loss changes ownsConversation.
+      if (event.type === "ownership_lost") setOwnsConversation(capturedTransport0.ownsConversation() !== false);
 
       if (event.type === "ownership_acquired") { setOwnsConversation(true); setOwnershipError(undefined); }
     });

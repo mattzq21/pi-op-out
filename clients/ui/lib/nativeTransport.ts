@@ -370,7 +370,8 @@ export class NativeTransport {
     this.settings.afterEvent(event);
   }
   private connectionLost() {
-    ++this.connectionVersion; this.connectPromise = undefined; this.running = false; this.owns = false;
+    // Ownership stays as last known: losing the connection does not mean another client took the conversation.
+    ++this.connectionVersion; this.connectPromise = undefined; this.running = false;
     this.retainedStatuses.clear(); this.retainedWidgets.clear(); this.retainedRequests.clear();
     this.presenceCleanup?.(); this.presenceCleanup = undefined;
   }
@@ -493,7 +494,7 @@ export class NativeTransport {
     this.owns = owns;
     this.emit({ type: this.owns ? "ownership_acquired" : "ownership_lost" });
   }
-  async disconnect(discardBlank = false) { const owned = this.hasConfirmedOwnership(); ++this.connectionVersion; this.connectPromise = undefined; this.running = false; this.owns = false; this.presenceCleanup?.(); this.presenceCleanup = undefined; this.unlisten?.(); this.stderrUnlisten?.(); this.unlisten = undefined; this.stderrUnlisten = undefined; this.retainedStatuses.clear(); this.retainedWidgets.clear(); this.retainedRequests.clear();
+  async disconnect(discardBlank = false) { const owned = this.hasConfirmedOwnership(); ++this.connectionVersion; this.connectPromise = undefined; this.running = false; this.presenceCleanup?.(); this.presenceCleanup = undefined; this.unlisten?.(); this.stderrUnlisten?.(); this.unlisten = undefined; this.stderrUnlisten = undefined; this.retainedStatuses.clear(); this.retainedWidgets.clear(); this.retainedRequests.clear();
 
     if (owned) this.emit({ type: "ownership_lost" });
 
