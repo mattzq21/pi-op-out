@@ -502,6 +502,7 @@ export function registerSubagents(pi: ExtensionAPI) {
       requireDelegation(ctx);
 
       if (!params.tasks.length || params.tasks.some((task) => !task.task.trim())) throw new Error("Provide at least one named, nonempty task");
+      for (const task of params.tasks) requireMessageLength(task.task);
 
       // A nickname is shown on its own line, as in "Subagent <name>:", so it cannot hold a line break.
       if (params.tasks.some(task => !new RegExp(NICKNAME).test(task.name))) throw new Error("Give each subagent a nickname of 1–8 letters, the first upper case and the rest lower case");

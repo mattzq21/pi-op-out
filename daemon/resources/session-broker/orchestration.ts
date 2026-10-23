@@ -94,7 +94,7 @@ export async function sessionSnapshot(sessionId: string, hostId: string, signal?
   return Parse(snapshotSchema, await request("/orchestration", { action: "read", sessionId, hostId }, signal, 30_000));
 }
 
-/** The longest message a chat or subagent may get from message_thread, create_thread or message_subagent. The tool definitions leave it out. */
+/** The longest message or task a chat or subagent may get from message_thread, create_thread, message_subagent or spawn_subagents. The tool definitions leave it out. */
 export const MAX_MESSAGE_LENGTH = 100_000;
 
 export function requireMessageLength(message: string) {
