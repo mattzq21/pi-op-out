@@ -294,13 +294,13 @@ export function SettingsView(props: SettingsViewProps) {
   const agentFastModeEnabled = createMemo(() => (agent()?.fastMode ?? draft().defaultFastMode));
   const updateAgent = (value: Partial<AgentProfile>) => setAgentDrafts((current) => current.map((item, index) => index === agentIndex() ? { ...item, ...value } : item));
 
-  /** Changes one agent name in every agent's subagent and thread allowlists. A missing name removes it. */
+  /** Changes one agent name in every agent's subagent and peer allowlists. A missing name removes it. */
   const renamedAccess = (items: AgentProfile[], from: string, to?: string) => items.map(item => {
     const rename = (access: AgentAccess | undefined) => Array.isArray(access) && access.includes(from) ? access.flatMap(name => name !== from ? [name] : to ? [to] : []) : access;
 
-    const subagents = rename(item.allowed_subagents); const threads = rename(item.allowed_threads);
+    const subagents = rename(item.allowed_subagents); const peers = rename(item.allowed_peers);
 
-    return subagents === item.allowed_subagents && threads === item.allowed_threads ? item : { ...item, allowed_subagents: subagents, allowed_threads: threads };
+    return subagents === item.allowed_subagents && peers === item.allowed_peers ? item : { ...item, allowed_subagents: subagents, allowed_peers: peers };
   });
 
   const renameAgent = (name: string) => { if (!agent() || (!isBuiltInAgent(agent()) && name.trim().toLowerCase() === "general")) return;
@@ -501,7 +501,7 @@ export function SettingsView(props: SettingsViewProps) {
             return (<Show when={agent()}><div class="agent-fields">{renderAgentNameRow()}
               <label class="field"><span>Description</span><textarea class="agent-description" aria-label="Agent description" maxLength={500} rows={2} placeholder="What this agent is for. Other agents see it when they choose an agent to start." value={agent().description ?? ""} onInput={(event) => updateAgent({ description: event.currentTarget.value || undefined })} /></label>
               {renderAgentDefaults()}
-              <div class="agent-usage"><div class="agent-usage-option"><span>Usable as subagent</span><Toggle label="Usable as subagent" checked={agent().allow_as_subagent !== false} onChange={allow_as_subagent => updateAgent({ allow_as_subagent })} /></div><div class="agent-usage-option"><span>Usable as thread</span><Toggle label="Usable as thread" checked={agent().allow_as_thread !== false} onChange={allow_as_thread => updateAgent({ allow_as_thread })} /></div></div>
+              <div class="agent-usage"><div class="agent-usage-option"><span>Usable as subagent</span><Toggle label="Usable as subagent" checked={agent().allow_as_subagent !== false} onChange={allow_as_subagent => updateAgent({ allow_as_subagent })} /></div><div class="agent-usage-option"><span>Usable as peer</span><Toggle label="Usable as peer" checked={agent().allow_as_peer !== false} onChange={allow_as_peer => updateAgent({ allow_as_peer })} /></div></div>
               {renderAgentPromptFiles()}<label class="field"><span>Agent prompt file</span><input aria-label="Agent prompt file" placeholder="Optional path to an agent prompt file" value={agent().path_agent_prompt ?? ""} onInput={(event) => updateAgent({ path_agent_prompt: event.target.value })} /></label>
               <AgentExtensions paths={agent().extensions ?? []} onChange={extensions => updateAgent({ extensions })} />
               <AgentAllowlist title="Tools" query={toolQuery()} onQuery={setToolQuery} titleAction={<><RefreshTools hostId={providerHostId()} onChange={tools => patch({ tools })} /><button type="button" class="agent-codemode" data-mode={agent().codemode ?? "on"} aria-label={"Codemode " + (agent().codemode ?? "on").toUpperCase()} data-tooltip={CODEMODE_HINTS[agent().codemode ?? "on"]} onClick={() => updateAgent({ codemode: NEXT_CODEMODE[agent().codemode ?? "on"] })}>Codemode {(agent().codemode ?? "on").toUpperCase()}</button></>}><AgentTools tools={draft().tools} query={toolQuery()} selected={agent().tools} agent={agent()} agentNames={agentDrafts().map(item => item.name)} onChange={tools => updateAgent({ tools })} onLimitsChange={updateAgent} /></AgentAllowlist><AgentAllowlist title="Skills" query={skillQuery()} onQuery={setSkillQuery} titleAction={<RefreshSkills hostId={providerHostId()} skills={draft().skills} onChange={skills => patch({ skills })} />}><AgentSkills skills={draft().skills} query={skillQuery()} selected={agent().skills} onChange={skills => updateAgent({ skills })} /></AgentAllowlist><McpSettings value={agent().mcpServers} draft={mcpDrafts()[agentIndex()]} onDraft={value => setMcpDrafts(current => agentDrafts().map((_, index) => index === agentIndex() ? value : current[index]))} onChange={mcpServers => updateAgent({ mcpServers })} />

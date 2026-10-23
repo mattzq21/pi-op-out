@@ -99,7 +99,7 @@ export function AgentTools(props: { tools: ToolConfig[]; query: string; selected
           <AgentAccessPicker label="Callable subagents" value={props.agent.allowed_subagents} names={props.agentNames} onChange={allowed_subagents => props.onLimitsChange({ allowed_subagents })} />
         </Show>
         <Show when={group.name === "Orchestration" && props.selected.includes("create_peer")}>
-          <AgentAccessPicker label="Callable threads" value={props.agent.allowed_threads} names={props.agentNames} onChange={allowed_threads => props.onLimitsChange({ allowed_threads })} />
+          <AgentAccessPicker label="Callable peers" value={props.agent.allowed_peers} names={props.agentNames} onChange={allowed_peers => props.onLimitsChange({ allowed_peers })} />
         </Show>
       </AllowGroup>}</For>
   </>;

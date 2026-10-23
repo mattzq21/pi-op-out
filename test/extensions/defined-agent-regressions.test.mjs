@@ -217,15 +217,15 @@ test("an unknown subagent profile reports the available profiles without returni
   assert.equal(request.state, undefined);
 });
 
-test("agent access rules decide which subagents and threads can start", async t => {
+test("agent access rules decide which subagents and peers can start", async t => {
   const f = await agentFixture(t, { config: null }); await f.load();
-  await f.configure(configured([profile('general', { allowed_subagents: ['helper'], allowed_threads: 'none' }), profile('helper'), profile('private', { allow_as_subagent: false })]));
+  await f.configure(configured([profile('general', { allowed_subagents: ['helper'], allowed_peers: 'none' }), profile('helper'), profile('private', { allow_as_subagent: false })]));
   await f.start();
   const start = async (agent, purpose) => { const request = { agent, purpose }; f.pi.events.emit('piop:agents:subagent', request); await request.ready; return request; };
   assert.equal((await start('helper', 'subagent')).state.active, 'helper');
   assert.equal((await start('private', 'subagent')).error, 'Agent private cannot be used as a subagent');
   assert.equal((await start(undefined, 'subagent')).error, 'Agent general cannot start agent general as a subagent');
-  assert.equal((await start('helper', 'thread')).error, 'Agent general cannot start agent helper as a thread');
+  assert.equal((await start('helper', 'peer')).error, 'Agent general cannot start agent helper as a peer');
   assert.equal((await start('private')).state.active, 'private');
 });
 

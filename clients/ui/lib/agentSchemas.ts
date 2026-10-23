@@ -9,7 +9,7 @@ const agentAccessSchema = z.union([z.literal("all"), z.literal("none"), z.array(
 
 export const agentProfileSchema = z.object({
   max_subagents: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER).optional(), max_sub_subagents: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER).optional(),
-  allow_as_subagent: z.boolean().optional(), allow_as_thread: z.boolean().optional(), allowed_subagents: agentAccessSchema.optional(), allowed_threads: agentAccessSchema.optional(),
+  allow_as_subagent: z.boolean().optional(), allow_as_peer: z.boolean().optional(), allowed_subagents: agentAccessSchema.optional(), allowed_peers: agentAccessSchema.optional(),
   name: z.string(), description: z.string().optional(), isDefault: z.boolean().optional(), model: z.string(), effort: z.string(), fastMode: z.boolean().optional(), contextWindowCap: z.number().int().min(MIN_CAP).max(MAX_CAP).nullable().optional(), codemode: z.enum(["on", "off"]).optional(), extensions: z.array(z.string()).optional(),
   path_systemprompt: z.string(), path_agent_prompt: z.string(), tools: z.array(z.string()), skills: z.array(z.string()),
   mcpServers: mcpServersSchema,

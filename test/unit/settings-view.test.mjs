@@ -31,7 +31,7 @@ describe('settings editor', () => {
   const section = async name => click([...document.querySelectorAll('nav button')].find(item => item.textContent === name));
   const select = async (label, value) => act(async () => { control(label).value = value; control(label).dispatchEvent(new Event('change', { bubbles: true })); });
   const selectAgent = async name => click([...document.querySelectorAll('.agent-list button')].find(item => item.textContent === name));
-  const profile = (name, extra = {}) => ({ name, ...(name === 'general' ? { isDefault: true } : {}), model: '', effort: '', path_systemprompt: 'system.md', path_agent_prompt: '', tools: [], skills: [], mcpServers: {}, allowed_subagents: 'all', allowed_threads: 'all', ...extra });
+  const profile = (name, extra = {}) => ({ name, ...(name === 'general' ? { isDefault: true } : {}), model: '', effort: '', path_systemprompt: 'system.md', path_agent_prompt: '', tools: [], skills: [], mcpServers: {}, allowed_subagents: 'all', allowed_peers: 'all', ...extra });
 
   test('model aliases save with stable model IDs and appear in agent choices', async () => {
     await render({ models: [{ provider: 'p', id: 'model', name: 'Original' }], agentConfig: { agents: [profile('general', { model: 'p/model' })] } });

@@ -23,7 +23,7 @@ export async function createProfileSession(pi: ExtensionAPI, ctx: ExtensionConte
   const header = ctx.sessionManager.getHeader();
 
   if (!header) throw new Error("Save this conversation before creating another chat");
-  const state = await resolveAgentProfile(pi, "thread", agent);
+  const state = await resolveAgentProfile(pi, "peer", agent);
   const fastMode = await childFastModeEntry(pi, state, Boolean(agent));
   const sessionId = await reserveSessionId();
   const timestamp = new Date().toISOString();
@@ -37,12 +37,12 @@ export async function createProfileSession(pi: ExtensionAPI, ctx: ExtensionConte
     ...fastMode ? [{ ...fastMode, id: randomUUID(), parentId: stateId, timestamp }] : [],
   ], { dependencies: { workspace: { path: ctx.cwd, kind: "existing" } } });
 
-  return { threadId: sessionId, hostId: currentHost(), sessionPath, agent: state.active };
+  return { peerId: sessionId, hostId: currentHost(), sessionPath, agent: state.active };
 }
 
 /** The tools that make a tool group on for an agent. One tool of a group is enough. */
 export const SUBAGENT_TOOLS = ["spawn_subagents", "message_subagent", "stop_subagent", "list_subagents", "await_subagents"];
-export const THREAD_TOOLS = ["create_peer", "message_peer", "stop_peer", "list_peers", "read_peer", "wait_peers"];
+export const PEER_TOOLS = ["create_peer", "message_peer", "stop_peer", "list_peers", "read_peer", "wait_peers"];
 
 /** Which agents list_agent_profiles lists: for one start purpose, or for both, chosen by an argument. */
 export type AgentProfilesMode = AgentStartPurpose | "both";
@@ -55,7 +55,7 @@ function profilesTool(pi: ExtensionAPI, mode: AgentProfilesMode) {
     pi.events.emit("piop:agents:profiles", catalog);
 
     if (!catalog.profiles) throw new Error("Agent profiles are unavailable");
-    const text = catalog.profiles.length ? JSON.stringify(catalog.profiles) : `You cannot start any agent as a ${purpose === "thread" ? "peer" : purpose}.`;
+    const text = catalog.profiles.length ? JSON.stringify(catalog.profiles) : `You cannot start any agent as a ${purpose}.`;
 
     return { content: [{ type: "text" as const, text }], details: catalog };
   };
@@ -64,7 +64,7 @@ function profilesTool(pi: ExtensionAPI, mode: AgentProfilesMode) {
     name: "list_agent_profiles", label: "List agent profiles",
     description: `List the agents you can start: for "subagent" with spawn_subagents, for "peer" with create_peer. ${COMMON}`,
     parameters: Type.Object({ for: Type.Union([Type.Literal("subagent"), Type.Literal("peer")]) }),
-    execute: (_id: string, params: { for: "subagent" | "peer" }) => list(params.for === "peer" ? "thread" : "subagent"),
+    execute: (_id: string, params: { for: "subagent" | "peer" }) => list(params.for),
   };
 
   return {
@@ -81,8 +81,8 @@ export function agentProfilesTool(pi: ExtensionAPI) {
   let registered: AgentProfilesMode = "both";
   pi.registerTool(profilesTool(pi, registered));
 
-  return (subagents: boolean, threads: boolean) => {
-    const mode: AgentProfilesMode | undefined = subagents && threads ? "both" : subagents ? "subagent" : threads ? "thread" : undefined;
+  return (subagents: boolean, peers: boolean) => {
+    const mode: AgentProfilesMode | undefined = subagents && peers ? "both" : subagents ? "subagent" : peers ? "peer" : undefined;
 
     if (mode && mode !== registered) { pi.registerTool(profilesTool(pi, mode)); registered = mode; }
 

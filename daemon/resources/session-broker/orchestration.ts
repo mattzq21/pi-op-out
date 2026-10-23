@@ -195,7 +195,7 @@ async function poll(target: Target, signal?: AbortSignal) {
   const name = snapshot.history.entries.findLast(entry => entry.type === "session_info" && entry.name)?.name ?? target.peerId;
   const answer = text || message?.errorMessage || (message ? "(No text in the answer.)" : "(No answer yet.)");
 
-  return { thread: { id: target.peerId, hostId, status }, name, answer, cursor, changed,
+  return { peer: { id: target.peerId, hostId, status }, name, answer, cursor, changed,
     latestAssistantMessage: changed && last ? { id: last.id, text: text.slice(0, 2000), truncated: text.length > 2000, stopReason: message?.stopReason, error: message?.errorMessage } : undefined };
 }
 
@@ -223,17 +223,17 @@ async function waitSnapshot(targets: Target[], signal: AbortSignal | undefined, 
   const stopped = (reason: unknown) => stop.aborted && reason === stop.reason;
   const errors = settled.flatMap((item, index) => item.status === "rejected" && !stopped(item.reason) ? [{ ...targets[index], error: item.reason instanceof Error ? item.reason.message : String(item.reason) }] : []);
 
-  return { polls, errors, wake: polls.find(item => item.thread.status !== "running" && item.changed)?.thread };
+  return { polls, errors, wake: polls.find(item => item.peer.status !== "running" && item.changed)?.peer };
 }
 
 const STATUS_NOTES: Record<string, string> = { needs_input: " (needs input)", paused: " (paused)" };
 
 /** The new answers of the chats that finished, each in a <peer_message> tag with the chat's name on the first line. */
 function peerAnswers(snapshot: Awaited<ReturnType<typeof waitSnapshot>>, interrupted: boolean) {
-  const answers = snapshot.polls.filter(item => item.thread.status !== "running" && item.changed).map(item => {
+  const answers = snapshot.polls.filter(item => item.peer.status !== "running" && item.changed).map(item => {
     const answer = item.answer.length > 16_000 ? item.answer.slice(0, 16_000) + "\n[Answer truncated.]" : item.answer;
 
-    return "<peer_message>\nPeer " + item.name + (STATUS_NOTES[item.thread.status] ?? "") + ":\n" + answer + "\n</peer_message>";
+    return "<peer_message>\nPeer " + item.name + (STATUS_NOTES[item.peer.status] ?? "") + ":\n" + answer + "\n</peer_message>";
   });
   const errors = snapshot.errors.map(item => "Peer " + item.peerId + ": " + item.error);
   const parts = [...answers, ...errors];
@@ -396,16 +396,16 @@ export function registerOrchestration(pi: ExtensionAPI) {
       const created = await createProfileSession(pi, ctx, params.title, params.agent);
 
       try {
-        await sendSessionMessage(ctx, created.threadId, created.hostId, params.message, true, signal, randomUUID(), true);
+        await sendSessionMessage(ctx, created.peerId, created.hostId, params.message, true, signal, randomUUID(), true);
 
-        return result({ peerId: created.threadId, agent: created.agent });
+        return result({ peerId: created.peerId, agent: created.agent });
       } catch (error) {
         const reason = error instanceof Error ? error.message : String(error);
 
         // The daemon deletes the new chat unless the prompt reached it. A chat that is left over is reported, so it is not created twice.
         if (!existsSync(created.sessionPath)) throw new Error(`The peer was not created: ${reason}`);
 
-        return { ...result({ peerId: created.threadId, agent: created.agent, error: reason, message: "The peer exists, but its first message may not have arrived. Check it with read_peer before you send the message again; do not create another peer." }), isError: true };
+        return { ...result({ peerId: created.peerId, agent: created.agent, error: reason, message: "The peer exists, but its first message may not have arrived. Check it with read_peer before you send the message again; do not create another peer." }), isError: true };
       }
     },
   });
@@ -486,7 +486,7 @@ export function registerOrchestration(pi: ExtensionAPI) {
         if (!actionable && !stop.signal.aborted && Date.now() < deadline) return undefined;
 
         // An answer returned once is not returned again by a later wait.
-        for (const item of snapshot.polls) if (item.thread.status !== "running" && item.changed) seenAnswers.set(key({ peerId: item.thread.id, hostId: item.thread.hostId }), item.cursor);
+        for (const item of snapshot.polls) if (item.peer.status !== "running" && item.changed) seenAnswers.set(key({ peerId: item.peer.id, hostId: item.peer.hostId }), item.cursor);
 
         return { content: [{ type: "text" as const, text: peerAnswers(snapshot, interrupted) }], details: { interrupted, ...snapshot } };
       };

@@ -13,7 +13,7 @@ const toolText = (messages: any[], tool: string) => {
 };
 const toolResult = (messages: any[], tool: string) => JSON.parse(toolText(messages, tool));
 /** The answer in a wait_peers result. */
-const threadAnswer = (result: string) => result.match(/^<peer_message>\nPeer [^\n]+:\n([\s\S]*)\n<\/peer_message>$/)?.[1];
+const peerAnswer = (result: string) => result.match(/^<peer_message>\nPeer [^\n]+:\n([\s\S]*)\n<\/peer_message>$/)?.[1];
 
 test.concurrent('a chat can message another chat, wait for its answer and read it', async () => {
   const worker = await agents.rootChat();
@@ -72,7 +72,7 @@ test.concurrent('a chat can start a new independent chat that works on its promp
     if (!called(messages, 'create_peer')) return { tool: 'create_peer', arguments: { title: 'Release notes', message: 'Draft the release notes' } };
     const created = toolResult(messages, 'create_peer');
     if (!called(messages, 'wait_peers')) return { tool: 'wait_peers', arguments: { targets: [{ peerId: created.peerId }], timeoutMs: 60000 } };
-    return { text: 'Relay: ' + threadAnswer(toolText(messages, 'wait_peers')) };
+    return { text: 'Relay: ' + peerAnswer(toolText(messages, 'wait_peers')) };
   });
   agents.scripts.set('Draft the release notes', () => ({ text: 'Notes drafted.' }));
   await coordinator.command({ type: 'prompt', message: 'Open a release chat' });
@@ -161,7 +161,7 @@ test('list_agent_profiles follows the tool groups and lists the descriptions of 
   const setTools = async (tools: string[]) => {
     const configuration = await setup.command({ type: 'get_agent_configuration' });
     const general = configuration.agents.find((agent: any) => agent.name === 'general');
-    const helper = { ...general, name: 'helper', isDefault: undefined, description: 'Finds files.', allow_as_thread: false, tools: ['read'] };
+    const helper = { ...general, name: 'helper', isDefault: undefined, description: 'Finds files.', allow_as_peer: false, tools: ['read'] };
     await setup.command({ type: 'configure_agents', configuration: { revision: configuration.revision, agents: [...configuration.agents.filter((agent: any) => !['general', 'helper'].includes(agent.name)), { ...general, tools }, helper] } });
   };
   const profilesTool = (prompt: string) => agents.model.requests.find(request => startedWith(request, prompt)).tools?.find((tool: any) => tool.function.name === 'list_agent_profiles')?.function;
@@ -174,10 +174,10 @@ test('list_agent_profiles follows the tool groups and lists the descriptions of 
   };
 
   await setTools(['read', 'create_peer']);
-  const threads = await listed('List thread agents', {});
-  expect(threads.tool.parameters.properties).toEqual({});
-  // helper is not usable as a thread.
-  expect(JSON.parse(threads.answer).map((profile: any) => profile.name)).not.toContain('helper');
+  const peers = await listed('List peer agents', {});
+  expect(peers.tool.parameters.properties).toEqual({});
+  // helper is not usable as a peer.
+  expect(JSON.parse(peers.answer).map((profile: any) => profile.name)).not.toContain('helper');
 
   await setTools(['read', 'spawn_subagents', 'create_peer']);
   const both = await listed('List subagent agents', { for: 'subagent' });
