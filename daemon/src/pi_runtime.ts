@@ -1,4 +1,4 @@
-import { createWorktree, detectRepository, worktreePath } from './chat_worktrees';
+import { detectRepository } from './chat_worktrees';
 import * as ChatWorktrees from './chat_worktree_records';
 import { rememberProjectRepository } from './project_repositories';
 import { spawn } from 'node:child_process';
@@ -120,8 +120,7 @@ async function preparePiStart(app: App, owner: string, runtime: PiRuntime, broke
       const repository = await detectRepository(options.cwd);
       if (!repository) throw new Error('This folder is not a Git repository');
       const root = join(homeDir(), STORAGE_DIRECTORY);
-      ChatWorktrees.prepare({ chatId: sessionId!, ...repository, worktree: worktreePath(homeDir(), sessionId!) }, root);
-      const created = await createWorktree({ sourceCwd: repository.repository, chatId: sessionId!, home: homeDir(), repository, baseBranch: options.baseBranch });
+      const created = await ChatWorktrees.create({ sourceCwd: repository.repository, chatId: sessionId!, home: homeDir(), repository, baseBranch: options.baseBranch }, root);
       rememberProjectRepository(root, created.worktree, { root: created.worktree, gitDir: created.gitCommonDir });
       options = { ...options, cwd: created.worktree };
       assertNotCancelled();

@@ -42,6 +42,9 @@ async function asHome<T>(home: string, fn: () => Promise<T> | T): Promise<T> {
   try { return await fn(); } finally { process.env.HOME = saved; }
 }
 
+/** The first n hex digits of the chat ID: the worktree folder and branch name Piop tries first. */
+const short = (chatId: string, n = 4) => chatId.replaceAll('-', '').slice(0, n);
+
 interface Scene { daemon: TestDaemon; home: string; profile: string; repo: string; chat: { id: string; path: string }; worktree: string }
 
 /** A daemon with a project repository and one chat that works in a Piop worktree, created the way branching does. */
@@ -52,9 +55,7 @@ async function scene(): Promise<Scene> {
   const repo = realpathSync(gitRepository(join(home, 'project')));
   const chat = publish(home, repo);
   const repository = (await Git.detectRepository(repo))!;
-  const worktree = join(Git.worktreesRoot(home), chat.id);
-  Records.prepare({ chatId: chat.id, ...repository, worktree }, profile);
-  await Git.createWorktree({ sourceCwd: repo, chatId: chat.id, home, repository });
+  const { worktree } = await Records.create({ sourceCwd: repo, chatId: chat.id, home, repository }, profile);
   rememberProjectRepository(profile, worktree, { root: worktree, gitDir: repository.gitCommonDir });
   Records.activate(chat.id, profile);
   await daemon.invoke('relocate_session', { hostId: 'local', sessionPath: chat.path, cwd: worktree, clientId: 'lifecycle-test' });
@@ -100,7 +101,7 @@ test('archive saves the last commit, removes the worktree and branch, and restor
   writeFileSync(join(worktree, 'work.txt'), 'after the last commit');
   await archive(daemon, chat.path);
   expect(existsSync(worktree)).toBe(false);
-  expect(tryGit(repo, 'rev-parse', '--verify', '--quiet', 'refs/heads/piop/' + chat.id)).toBeNull();
+  expect(tryGit(repo, 'rev-parse', '--verify', '--quiet', 'refs/heads/piop/' + short(chat.id))).toBeNull();
   expect(git(repo, 'rev-parse', Records.archiveRef(chat.id))).toBe(saved);
   expect(Records.read(chat.id, profile)).toMatchObject({ state: 'archived', archive: { commit: saved } });
   const path = await archivedPath(daemon, chat.id);
@@ -109,10 +110,10 @@ test('archive saves the last commit, removes the worktree and branch, and restor
   expect((await activeChat(daemon, chat.id))?.cwd).toBe(worktree);
   expect(readFileSync(join(worktree, 'work.txt'), 'utf8')).toBe('saved work');
   expect(git(worktree, 'status', '--porcelain')).toBe('');
-  expect(git(worktree, 'branch', '--show-current')).toBe('piop/' + chat.id);
+  expect(git(worktree, 'branch', '--show-current')).toBe('piop/' + short(chat.id));
   expect(tryGit(repo, 'rev-parse', '--verify', '--quiet', Records.archiveRef(chat.id))).toBeNull();
-  expect(git(repo, 'worktree', 'list', '--porcelain').split('\n').filter(line => line.startsWith('worktree ') && line.includes(chat.id))).toEqual(['worktree ' + worktree]);
-  expect(Records.read(chat.id, profile)).toMatchObject({ state: 'active', archive: null, worktree, branch: 'piop/' + chat.id });
+  expect(git(repo, 'worktree', 'list', '--porcelain').split('\n').filter(line => line.startsWith('worktree ') && line.includes(worktree))).toEqual(['worktree ' + worktree]);
+  expect(Records.read(chat.id, profile)).toMatchObject({ state: 'active', archive: null, worktree, branch: 'piop/' + short(chat.id) });
 }, 120000);
 
 test('restore into an occupied folder and a moved branch uses fresh names and points the chat at the new folder', async () => {
@@ -120,11 +121,11 @@ test('restore into an occupied folder and a moved branch uses fresh names and po
   await archive(daemon, chat.path);
   mkdirSync(worktree);
   writeFileSync(join(worktree, 'someone.txt'), 'not Piop');
-  git(repo, 'branch', '-f', 'piop/' + chat.id, 'HEAD');
+  git(repo, 'branch', '-f', 'piop/' + short(chat.id), 'HEAD');
   await restore(daemon, await archivedPath(daemon, chat.id));
   const record = Records.read(chat.id, profile)!;
-  expect(record.worktree).toMatch(new RegExp('^' + Git.worktreesRoot(home) + '/' + chat.id + '-[0-9a-f-]{36}$'));
-  expect(record.branch).toBe('piop/' + record.worktree.slice(-73));
+  expect(record.worktree).toBe(join(Git.worktreesRoot(home), short(chat.id, 5)));
+  expect(record.branch).toBe('piop/' + short(chat.id, 5));
   const active = await activeChat(daemon, chat.id);
   expect(active.cwd).toBe(record.worktree);
   expect(transcriptCwd(active.path)).toBe(record.worktree);
@@ -200,8 +201,7 @@ test('startup recovery finishes an archive whose transcript was archived and und
 
   const orphan = crypto.randomUUID();
   const repository = (await Git.detectRepository(repo))!;
-  Records.prepare({ chatId: orphan, ...repository, worktree: join(Git.worktreesRoot(home), orphan) }, profile);
-  await Git.createWorktree({ sourceCwd: repo, chatId: orphan, home, repository });
+  const orphaned = await Records.create({ sourceCwd: repo, chatId: orphan, home, repository }, profile);
   const db = new DatabaseSync(join(profile, 'sessions.sqlite'));
   try { db.prepare('UPDATE chat_worktrees SET record_json=json_set(record_json, \'$.owner\', \'1:0\') WHERE chat_id=?').run(orphan); }
   finally { db.close(); }
@@ -210,8 +210,8 @@ test('startup recovery finishes an archive whose transcript was archived and und
   expect(existsSync(worktree)).toBe(false);
   expect(Records.read(chat.id, profile)?.state).toBe('archived');
   expect(Records.read(orphan, profile)).toBeNull();
-  expect(existsSync(join(Git.worktreesRoot(home), orphan))).toBe(false);
-  expect(tryGit(repo, 'rev-parse', '--verify', '--quiet', 'refs/heads/piop/' + orphan)).toBeNull();
+  expect(existsSync(orphaned.worktree)).toBe(false);
+  expect(tryGit(repo, 'rev-parse', '--verify', '--quiet', 'refs/heads/' + orphaned.branch)).toBeNull();
 }, 180000);
 
 test('a failed worktree removal after archive keeps the archive reference, is reported, and is finished on the next start', async () => {
@@ -295,7 +295,7 @@ test('archive and deletion retain a shared worktree and its saved state until th
   expect(existsSync(worktree)).toBe(false);
   expect(Records.read(chat.id, profile)).toBeNull();
   expect(tryGit(repo, 'rev-parse', '--verify', '--quiet', Records.archiveRef(chat.id))).toBeNull();
-  expect(tryGit(repo, 'rev-parse', '--verify', '--quiet', 'piop/' + chat.id)).toBeNull();
+  expect(tryGit(repo, 'rev-parse', '--verify', '--quiet', 'piop/' + short(chat.id))).toBeNull();
   expect(getProjectRepository(profile, worktree)).toBeNull();
 }, 120000);
 
@@ -345,7 +345,7 @@ test('restart removes archive trash even when the original worktree folder is ab
   const { daemon, home, chat, worktree } = await scene();
   await archive(daemon, chat.path);
   await daemon.stop();
-  const trash = join(worktree, '..', '.removing-' + chat.id + '-11111111-1111-4111-8111-111111111111');
+  const trash = join(worktree, '..', '.removing-' + short(chat.id) + '-11111111-1111-4111-8111-111111111111');
   mkdirSync(trash);
   writeFileSync(join(trash, 'leftover.txt'), 'Interrupted removal');
   await start(home);

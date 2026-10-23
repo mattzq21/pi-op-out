@@ -1,6 +1,5 @@
 import { basename, isAbsolute, join } from 'node:path';
 import { getProjectRepository, rememberProjectRepository } from '../project_repositories';
-import { createWorktree } from '../chat_worktrees';
 import * as Worktrees from '../chat_worktree_records';
 import { publishBranchHistory } from '../chat_branch_operations';
 import * as Registry from '../session_registry';
@@ -171,8 +170,7 @@ class Branch {
     const repository = { repository: savedRepository.root, gitCommonDir: savedRepository.gitDir };
     const sessionId = Registry.reserve(this.host.storageRoot());
     this.managedId = sessionId;
-    Worktrees.prepare({ chatId: sessionId, ...repository, worktree: join(this.host.home, '.local/share/piop/worktrees', sessionId) }, this.host.storageRoot());
-    const created = await createWorktree({ sourceCwd: cwd, chatId: sessionId, home: this.host.home, repository });
+    const created = await Worktrees.create({ sourceCwd: cwd, chatId: sessionId, home: this.host.home, repository }, this.host.storageRoot());
     rememberProjectRepository(this.host.storageRoot(), created.worktree, { root: created.worktree, gitDir: created.gitCommonDir });
     const result = await publishBranchHistory({ root: this.host.storageRoot(), sourcePath: this.path, sessionId, cwd: created.worktree, entries, leafId: snapshot.history.leafId, entryId, name: this.state.sessionName ? this.state.sessionName + ' (branch)' : undefined });
     this.managedPath = result.sessionPath;

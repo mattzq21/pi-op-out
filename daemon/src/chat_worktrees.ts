@@ -1,6 +1,6 @@
 import { execFile } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { chmod, lstat, mkdir, mkdtemp, readdir, realpath, rename, rm, stat } from 'node:fs/promises';
+import { chmod, lstat, mkdir, mkdtemp, readdir, realpath, rename, rm, rmdir, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
 
@@ -15,6 +15,8 @@ import { basename, dirname, join } from 'node:path';
 export const SAVE_MESSAGE = 'Piop saving progress';
 const UUID = '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}';
 const CHAT_ID = new RegExp(`^${UUID}$`);
+/** A worktree folder and branch name: the shortest free start of the chat ID, 4 to 32 hex digits. Older chats used the full ID. */
+const NAME = new RegExp(`^([0-9a-f]{4,32}|${UUID}(-${UUID})?)$`);
 const COMMIT = /^[0-9a-f]{40}([0-9a-f]{24})?$/;
 
 /** `repository` is the main worktree top folder; `gitCommonDir` is the shared Git storage. Both are real paths. */
@@ -73,14 +75,39 @@ export function worktreesRoot(home: string): string {
   return join(home, '.local', 'share', 'piop', 'worktrees');
 }
 
-/** The folder of a chat worktree: `<home>/.local/share/piop/worktrees/<chatId>`, or `<chatId>-<restoreId>`. */
-export function worktreePath(home: string, id: string, restoreId?: string): string {
-  return join(worktreesRoot(home), restoreId ? `${chatId(id)}-${chatId(restoreId)}` : chatId(id));
+/** Names to try for a chat worktree, shortest first: the first 4, 5, … 32 hex digits of the chat ID. */
+function names(id: string): string[] {
+  const hex = chatId(id).replaceAll('-', '');
+  return Array.from({ length: hex.length - 3 }, (_, index) => hex.slice(0, index + 4));
 }
 
-/** The branch of a chat: `piop/<chatId>`, or `piop/<chatId>-<restoreId>`. */
-export function branchName(id: string, restoreId?: string): string {
-  return restoreId ? `piop/${chatId(id)}-${chatId(restoreId)}` : `piop/${chatId(id)}`;
+/** The first name whose folder and branch `piop/<name>` are both free, or null. Read only. */
+async function freeName(id: string, home: string, gitCommonDir: string, skip = new Set<string>()): Promise<string | null> {
+  for (const name of names(id)) {
+    if (skip.has(name) || await exists(join(worktreesRoot(home), name)) || await commitOf(gitCommonDir, `refs/heads/piop/${name}`)) continue;
+    return name;
+  }
+  return null;
+}
+
+/**
+ * Claims a folder and branch name for a new chat worktree: the shortest free start of the chat ID. `save` records the
+ * name before the folder exists, so recovery can remove it. The folder is then made with mkdir, which fails when another
+ * process made it first; then the next name is tried. Returns the empty folder and the branch to create.
+ */
+export async function claimWorktree(input: { chatId: string; home: string; gitCommonDir: string; save: (worktree: string, branch: string) => void }): Promise<{ worktree: string; branch: string }> {
+  return serialized(input.gitCommonDir, async () => {
+    await mkdir(worktreesRoot(input.home), { recursive: true, mode: 0o700 });
+    const taken = new Set<string>();
+    for (let name = await freeName(input.chatId, input.home, input.gitCommonDir); name !== null; name = await freeName(input.chatId, input.home, input.gitCommonDir, taken)) {
+      const worktree = join(worktreesRoot(input.home), name);
+      const branch = `piop/${name}`;
+      input.save(worktree, branch);
+      try { await mkdir(worktree, { mode: 0o700 }); return { worktree, branch }; }
+      catch (error) { if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error; taken.add(name); }
+    }
+    throw new Error(`No free worktree name for chat ${input.chatId}`);
+  });
 }
 
 export function archiveRef(id: string): string {
@@ -93,16 +120,13 @@ export async function archivedCommit(input: { chatId: string; gitCommonDir: stri
   return serialized(input.gitCommonDir, () => commitOf(input.gitCommonDir, ref));
 }
 
-function ownedName(id: string, name: string, prefix = ''): boolean {
-  return new RegExp(`^${prefix}${chatId(id)}(-${UUID})?$`).test(name);
-}
-
+/** The chat worktree record names the folder; this checks that it is a Piop worktree folder name in the Piop worktrees folder. */
 function requireOwnedFolder(home: string, id: string, worktree: string): void {
-  if (dirname(worktree) !== worktreesRoot(home) || !ownedName(id, basename(worktree))) throw new Error(`Not a worktree folder of chat ${id} in ${worktreesRoot(home)}: ${worktree}`);
+  if (dirname(worktree) !== worktreesRoot(home) || !NAME.test(basename(worktree))) throw new Error(`Not a worktree folder of chat ${id} in ${worktreesRoot(home)}: ${worktree}`);
 }
 
 function requireOwnedBranch(id: string, branch: string): void {
-  if (!ownedName(id, branch, 'piop/')) throw new Error(`Not a branch of chat ${id}: ${branch}`);
+  if (!branch.startsWith('piop/') || !NAME.test(branch.slice(5))) throw new Error(`Not a branch of chat ${id}: ${branch}`);
 }
 
 /** Finds the repository that holds `cwd`. Returns null outside Git; throws for any other Git failure. */
@@ -190,37 +214,39 @@ async function currentTree(root: string, parent: string | null): Promise<string>
   }
 }
 
+/** Checks out into `worktree`, an empty folder that the caller claimed with mkdir. */
 async function checkOut(gitCommonDir: string, worktree: string, args: string[]): Promise<string> {
-  if (await exists(worktree)) throw new Error(`Worktree folder already exists: ${worktree}`);
-  await mkdir(dirname(worktree), { recursive: true, mode: 0o700 });
+  if ((await readdir(worktree)).length) throw new Error(`Worktree folder is not empty: ${worktree}`);
   await git(gitCommonDir, ['worktree', 'add', '--quiet', ...args]);
   return realpath(worktree);
 }
 
 /**
- * Checks out `worktreePath(home, chatId)` on a new branch `piop/<chatId>` at the source HEAD, then copies the current
+ * Checks out the folder that `claimWorktree` claimed, on its new branch at the source HEAD, then copies the current
  * files of the worktree at `sourceCwd` in as uncommitted changes: modified, deleted and untracked files, without
- * ignored files. The source keeps its files, index and HEAD. Refuses an existing folder or branch. On failure, removes
- * the folder and branch it made; later steps undo it with `removeCreatedWorktree`.
+ * ignored files. The source keeps its files, index and HEAD. Refuses an existing branch. On failure, removes the folder
+ * and branch; later steps undo it with `removeCreatedWorktree`.
  */
-export async function createWorktree(input: { sourceCwd: string; chatId: string; home: string; repository?: Repository; baseBranch?: string }): Promise<CreatedWorktree> {
-  const worktree = worktreePath(input.home, input.chatId);
-  const branch = branchName(input.chatId);
+export async function createWorktree(input: { sourceCwd: string; chatId: string; home: string; worktree: string; branch: string; repository?: Repository; baseBranch?: string }): Promise<CreatedWorktree> {
+  const { worktree, branch } = input;
+  requireOwnedFolder(input.home, input.chatId, worktree);
+  requireOwnedBranch(input.chatId, branch);
   const repository = await required(input.sourceCwd, input.repository, 'branch a chat');
   return serialized(repository.gitCommonDir, async () => {
-    if (await commitOf(repository.gitCommonDir, `refs/heads/${branch}`)) throw new Error(`Branch already exists: ${branch}`);
-    if (await exists(worktree)) throw new Error(`Worktree folder already exists: ${worktree}`);
-    const root = await topLevel(input.sourceCwd);
-    let ref = 'HEAD';
-    if (input.baseBranch !== undefined) {
-      const branches = (await git(repository.gitCommonDir, ['for-each-ref', '--format=%(refname:short)', 'refs/heads/', 'refs/remotes/'])).stdout.trim().split('\n');
-      if (!branches.includes(input.baseBranch)) throw new Error(`Branch does not exist: ${input.baseBranch}`);
-      ref = input.baseBranch;
-    }
-    const commit = await commitOf(root, ref);
-    if (!commit) throw new Error(`Cannot branch a chat from ${ref}: no commit found`);
-    const tree = input.baseBranch === undefined ? await currentTree(root, commit) : null;
+    // The branch is someone else's, so only the claimed folder is removed.
+    if (await commitOf(repository.gitCommonDir, `refs/heads/${branch}`)) { await removeFolder(repository.gitCommonDir, input.home, input.chatId, worktree); throw new Error(`Branch already exists: ${branch}`); }
+    // The claimed folder exists from here on, so every failure below removes it.
     try {
+      const root = await topLevel(input.sourceCwd);
+      let ref = 'HEAD';
+      if (input.baseBranch !== undefined) {
+        const branches = (await git(repository.gitCommonDir, ['for-each-ref', '--format=%(refname:short)', 'refs/heads/', 'refs/remotes/'])).stdout.trim().split('\n');
+        if (!branches.includes(input.baseBranch)) throw new Error(`Branch does not exist: ${input.baseBranch}`);
+        ref = input.baseBranch;
+      }
+      const commit = await commitOf(root, ref);
+      if (!commit) throw new Error(`Cannot branch a chat from ${ref}: no commit found`);
+      const tree = input.baseBranch === undefined ? await currentTree(root, commit) : null;
       const made = await checkOut(repository.gitCommonDir, worktree, ['-b', branch, worktree, commit]);
       if (tree !== null) {
         await git(made, ['read-tree', '-u', '--reset', tree]);
@@ -248,6 +274,8 @@ export async function createWorktree(input: { sourceCwd: string; chatId: string;
  */
 async function removeFolder(gitCommonDir: string, home: string, id: string, worktree: string): Promise<void> {
   requireOwnedFolder(home, id, worktree);
+  // A claimed folder that Git never checked out into is still empty.
+  if (await exists(worktree) && !(await readdir(worktree)).length) await rmdir(worktree);
   if (await exists(worktree)) {
     const real = await realpath(worktree);
     const listed = await worktrees(gitCommonDir);
@@ -315,12 +343,12 @@ async function both(first: () => Promise<void>, second: () => Promise<void>): Pr
   if (failures.length) throw new AggregateError(failures, (failures as Error[]).map(error => error.message).join('; '));
 }
 
-/** Undoes `createWorktree`: removes its folder and `piop/<chatId>`. Idempotent. */
-export async function removeCreatedWorktree(input: { chatId: string; gitCommonDir: string; home: string }): Promise<void> {
+/** Undoes `claimWorktree` and `createWorktree`: removes the claimed folder and branch. Idempotent. */
+export async function removeCreatedWorktree(input: { chatId: string; gitCommonDir: string; home: string; worktree: string; branch: string }): Promise<void> {
   const { chatId: id, gitCommonDir, home } = input;
   await serialized(gitCommonDir, () => both(
-    () => removeFolder(gitCommonDir, home, id, worktreePath(home, id)),
-    () => removeBranch(gitCommonDir, id, branchName(id)),
+    () => removeFolder(gitCommonDir, home, id, input.worktree),
+    () => removeBranch(gitCommonDir, id, input.branch),
   ));
 }
 
@@ -357,9 +385,9 @@ export async function removeArchivedWorktree(input: { archive: ChatArchive; home
 }
 
 /**
- * Decides where a restore puts the worktree, without changing anything. Reuses the branch when it still points to the
- * archived commit and no worktree has it; otherwise `branchName(chatId, restoreId)`. Reuses the previous folder when
- * free; otherwise `worktreePath(home, chatId, restoreId)`.
+ * Decides where a restore puts the worktree, without changing anything. Keeps the previous folder name when it is free,
+ * and the branch when no worktree has it and it is gone or still points to the archived commit. Otherwise takes the
+ * shortest free start of the chat ID, as `claimWorktree` does. `restoreWorktree` claims the folder with mkdir.
  */
 export async function planRestore(input: { archive: ChatArchive; home: string; retainShared?: boolean }): Promise<RestorePlan> {
   const { archive, home } = input;
@@ -375,13 +403,12 @@ export async function planRestore(input: { archive: ChatArchive; home: string; r
     const inUse = (await worktrees(archive.gitCommonDir)).some(item => item.branch === archive.branch);
     const branchCommit = await commitOf(archive.gitCommonDir, `refs/heads/${archive.branch}`);
     const reuse = !inUse && branchCommit === archive.commit;
-    const preferred = worktreePath(home, archive.chatId);
-    return {
-      restoreId,
-      worktree: await exists(preferred) ? worktreePath(home, archive.chatId, restoreId) : preferred,
-      branch: !inUse && (!branchCommit || reuse) ? archive.branch : branchName(archive.chatId, restoreId),
-      reuse,
-    };
+    const keepBranch = !inUse && (!branchCommit || reuse);
+    const keepFolder = !await exists(archive.worktree);
+    if (keepFolder && keepBranch) return { restoreId, worktree: archive.worktree, branch: archive.branch, reuse };
+    const name = await freeName(archive.chatId, home, archive.gitCommonDir);
+    if (name === null) throw new Error(`No free worktree name for chat ${archive.chatId}`);
+    return { restoreId, worktree: keepFolder ? archive.worktree : join(worktreesRoot(home), name), branch: keepBranch ? archive.branch : `piop/${name}`, reuse: keepBranch && reuse };
   });
 }
 
@@ -408,6 +435,9 @@ export async function restoreWorktree(input: { archive: ChatArchive; home: strin
     if (plan.reuse) {
       if (plan.branch !== archive.branch || await commitOf(archive.gitCommonDir, `refs/heads/${plan.branch}`) !== archive.commit) throw new Error(`Branch ${plan.branch} no longer points to ${archive.commit}`);
     } else if (await commitOf(archive.gitCommonDir, `refs/heads/${plan.branch}`)) throw new Error(`Branch already exists: ${plan.branch}`);
+    await mkdir(worktreesRoot(home), { recursive: true, mode: 0o700 });
+    try { await mkdir(plan.worktree, { mode: 0o700 }); }
+    catch (error) { if ((error as NodeJS.ErrnoException).code === 'EEXIST') throw new Error(`Worktree folder was taken by another chat; restore again: ${plan.worktree}`); throw error; }
     const made = await checkOut(archive.gitCommonDir, plan.worktree, plan.reuse ? [plan.worktree, plan.branch] : ['-b', plan.branch, plan.worktree, archive.commit]);
     return { repository: archive.repository, gitCommonDir: archive.gitCommonDir, chatId: archive.chatId, worktree: made, branch: plan.branch };
   });

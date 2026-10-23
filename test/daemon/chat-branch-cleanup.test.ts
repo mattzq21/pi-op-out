@@ -84,8 +84,7 @@ async function unfinishedBranch() {
     const source = await sourceChat(profile, repo);
     const id = database.reserve(profile);
     const repository = (await Git.detectRepository(repo))!;
-    Records.prepare({ chatId: id, ...repository, worktree: Git.worktreePath(home, id) }, profile);
-    const created = await Git.createWorktree({ sourceCwd: repo, chatId: id, home, repository });
+    const created = await Records.create({ sourceCwd: repo, chatId: id, home, repository }, profile);
     rememberProjectRepository(profile, created.worktree, { root: created.worktree, gitDir: created.gitCommonDir });
     const published = await History.publishBranchHistory({ root: profile, sourcePath: source.path, sessionId: id, cwd: created.worktree, entries: source.entries, leafId: 'a1', entryId: 'a1' });
     return { source, id, created, published };

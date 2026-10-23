@@ -1,5 +1,5 @@
 import * as Records from '../resources/chat-worktree-records.cjs';
-import { removeCreatedWorktree } from './chat_worktrees';
+import { claimWorktree, createWorktree, removeCreatedWorktree, type CreatedWorktree, type Repository } from './chat_worktrees';
 import { forgetProjectRepository } from './project_repositories';
 import { discardBranchHistory } from './chat_branch_operations';
 import { homeDir } from './environment';
@@ -34,7 +34,7 @@ export interface ChatWorktreeRecord {
   lastError?: string;
 }
 
-export interface NewChatWorktree { chatId: string; repository: string; gitCommonDir: string; worktree: string }
+export interface NewChatWorktree { chatId: string; repository: string; gitCommonDir: string; worktree: string; branch: string }
 
 export const archiveRef: (chatId: string) => string = Records.archiveRef;
 
@@ -56,6 +56,18 @@ export function prepare(fields: NewChatWorktree, root = profileRoot()): ChatWork
 /** Call when the new chat is complete. Until then recovery undoes the creation. */
 export function activate(chatId: string, root = profileRoot()): ChatWorktreeRecord { return Records.activate(root, chatId); }
 
+/**
+ * Creates the worktree of a new chat: claims the shortest free folder and branch name, recording each name before its
+ * folder exists, then checks it out. Recovery undoes a creation that stops part way.
+ */
+export async function create(input: { sourceCwd: string; chatId: string; home: string; repository: Repository; baseBranch?: string }, root = profileRoot()): Promise<CreatedWorktree> {
+  let record: ChatWorktreeRecord | null = null;
+  const claimed = await claimWorktree({ chatId: input.chatId, home: input.home, gitCommonDir: input.repository.gitCommonDir, save: (worktree, branch) => {
+    record = record === null ? prepare({ chatId: input.chatId, ...input.repository, worktree, branch }, root) : replace(record, { ...record, worktree, branch }, root);
+  } });
+  return createWorktree({ ...input, ...claimed });
+}
+
 /** Owner of a creation whose cleanup failed. No process has this token, so the next recovery run takes it over. */
 export const RECOVERY_OWNER = 'recovery';
 
@@ -75,7 +87,7 @@ export async function abandonCreation(chatId: string, sessionPath: string | null
   try {
     await discardBranchHistory(root, chatId, sessionPath);
     if (record !== null) {
-      await removeCreatedWorktree({ chatId, gitCommonDir: record.gitCommonDir, home: homeDir() });
+      await removeCreatedWorktree({ chatId, gitCommonDir: record.gitCommonDir, home: homeDir(), worktree: record.worktree, branch: record.branch });
       forgetProjectRepository(root, record.worktree);
     }
     Registry.releaseReservation(root, chatId);

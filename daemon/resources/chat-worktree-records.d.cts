@@ -1,7 +1,6 @@
 import type { ChatWorktreeRecord, NewChatWorktree } from '../src/chat_worktree_records';
 
 export function archiveRef(chatId: string): string;
-export function branchName(chatId: string, restoreId?: string): string;
 export function check(record: unknown): ChatWorktreeRecord;
 export function read(root: string, chatId: string): ChatWorktreeRecord | null;
 export function list(root: string): ChatWorktreeRecord[];

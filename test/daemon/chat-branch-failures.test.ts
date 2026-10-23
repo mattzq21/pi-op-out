@@ -15,6 +15,9 @@ const git = (cwd: string, ...args: string[]) => execFileSync('git', ['-C', cwd, 
 const worktreesRoot = (home: string) => join(home, '.local/share/piop/worktrees');
 const piopBranches = (cwd: string) => git(cwd, 'for-each-ref', '--format=%(refname)', 'refs/heads/piop').split('\n').filter(Boolean);
 const worktreeFolders = (home: string) => existsSync(worktreesRoot(home)) ? readdirSync(worktreesRoot(home)) : [];
+
+/** The first n hex digits of the chat ID: the worktree folder and branch name Piop tries first. */
+const short = (chatId: string, n = 4) => chatId.replaceAll('-', '').slice(0, n);
 /** Folders under the Piop worktrees folder that the project repository cache still knows. */
 function cachedWorktrees(home: string): string[] {
   const database = new Database(join(home, '.piop', 'sessions.sqlite'), { readonly: true });
@@ -85,8 +88,8 @@ test('simultaneous duplicate Branch from here requests make one branch and leave
 
     const branch = await command({ type: 'get_state' });
     expect(branch.sessionId).not.toBe(original.sessionId);
-    expect(worktreeFolders(agents.daemon.home)).toEqual([branch.sessionId]);
-    expect(piopBranches(cwd)).toEqual(['refs/heads/piop/' + branch.sessionId]);
+    expect(worktreeFolders(agents.daemon.home)).toEqual([short(branch.sessionId)]);
+    expect(piopBranches(cwd)).toEqual(['refs/heads/piop/' + short(branch.sessionId)]);
     expect(git(cwd, 'worktree', 'list', '--porcelain').split('\n').filter(line => line.startsWith('worktree ')).length).toBe(2);
     const sessions = await agents.daemon.invoke('list_sessions');
     expect(sessions.length).toBe(sessionsBefore + 1);
@@ -131,7 +134,7 @@ test('a branch that fails after its worktree exists removes the worktree, branch
     await command({ type: 'fork_after', entryId: reply.id });
     const branch = await command({ type: 'get_state' });
     expect(branch.sessionId).not.toBe(state.sessionId);
-    expect(worktreeFolders(agents.daemon.home)).toEqual([branch.sessionId]);
+    expect(worktreeFolders(agents.daemon.home)).toEqual([short(branch.sessionId)]);
     expect(readFileSync(join(branch.cwd, 'tracked.txt'), 'utf8')).toBe('dirty');
     expect(cachedWorktrees(agents.daemon.home)).toEqual([branch.cwd]);
   } finally {
@@ -189,7 +192,7 @@ test('a branch of a branch survives archiving its parent and restores from share
 
     await command({ type: 'fork_after', entryId: parentReply.id });
     const child = await command({ type: 'get_state' });
-    expect(child.cwd).toBe(join(worktreesRoot(agents.daemon.home), child.sessionId));
+    expect(child.cwd).toBe(join(worktreesRoot(agents.daemon.home), short(child.sessionId)));
     expect(readFileSync(join(child.cwd, 'parent.txt'), 'utf8')).toBe('from parent');
     writeFileSync(join(child.cwd, 'child.txt'), 'from child');
     await ask('Question three');
