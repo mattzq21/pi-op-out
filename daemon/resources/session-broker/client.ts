@@ -17,7 +17,7 @@ export function registerConversationClient(pi: ExtensionAPI) {
 interface BrokerRequest {
   action?: string; sourceSessionId?: string; sourceHostId?: string; sourceName?: string; wake?: boolean;
   hostId?: string; sessionId?: string; id?: string; cwd?: string; name?: string;
-  message?: string; deliveryId?: string; discardOnFailure?: boolean; deliverAs?: "steer" | "followUp";
+  message?: string; deliveryId?: string; sessionPath?: string; discardOnFailure?: boolean; deliverAs?: "steer" | "followUp";
   recoveryDepth?: number; data?: Record<string, unknown>;
 }
 

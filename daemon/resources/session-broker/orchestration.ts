@@ -5,7 +5,6 @@ import { Type as Schema, type Static } from "typebox";
 import { Check, Parse } from "typebox/value";
 import { createHash, randomUUID } from "node:crypto";
 import { setTimeout as delay } from "node:timers/promises";
-import { existsSync } from "node:fs";
 import { BrokerRequestError, currentHost, request } from "./client.ts";
 import { createProfileSession } from "./agent-profiles.ts";
 import { durableMailbox } from "../piop-storage/durable-mailbox.ts";
@@ -403,18 +402,17 @@ export function registerOrchestration(pi: ExtensionAPI) {
         : Parse(Schema.Object({ cwd: Schema.String() }), await request("/peer-project", { name: params.project, sessionId: ctx.sessionManager.getSessionId(), cwd: ctx.cwd }, signal)).cwd;
       const created = await createProfileSession(pi, ctx, params.title, params.agent, cwd);
 
-      try {
-        await sendSessionMessage(ctx, created.peerId, created.hostId, params.message, true, signal, randomUUID(), true);
-
-        return result({ peerId: created.peerId, agent: created.agent });
-      } catch (error) {
+      const deliveryId = randomUUID();
+      try { await sendSessionMessage(ctx, created.peerId, created.hostId, params.message, true, signal, deliveryId, true); }
+      catch (error) {
         const reason = error instanceof Error ? error.message : String(error);
-
-        // The daemon deletes the new chat unless the prompt reached it. A chat that is left over is reported, so it is not created twice.
-        if (!existsSync(created.sessionPath)) throw new Error(`The peer was not created: ${reason}`);
-
-        return { ...result({ peerId: created.peerId, agent: created.agent, error: reason, message: "The peer exists, but its first message may not have arrived. Check it with read_peer before you send the message again; do not create another peer." }), isError: true };
+        // The sender may have lost the answer; Piop then keeps the peer if the message arrived and removes it otherwise.
+        const settled = await request("/orchestration", { action: "settle_first_message", sessionId: created.peerId, hostId: created.hostId, sessionPath: created.sessionPath, deliveryId }, undefined, 180_000)
+          .catch(settle => { throw new Error(`The first message of peer ${created.peerId} failed, and Piop could not settle it: ${reason}; ${settle instanceof Error ? settle.message : String(settle)}`); });
+        if (Parse(Schema.Object({ arrived: Schema.Boolean() }), settled).arrived !== true) throw new Error(`The peer was not created: ${reason}`);
       }
+
+      return result({ peerId: created.peerId, agent: created.agent });
     },
   });
   pi.registerTool({

@@ -203,6 +203,7 @@ async function brokerOrchestration(app: App, broker: BrokerRuntime, value: any):
   }
   const [id, action] = orchestrationTarget(value);
   if (action === 'branch_off') return brokerBranchOff(app, broker, value, host, id);
+  if (action === 'settle_first_message') return brokerSettleFirstMessage(app, broker, value, host, id);
   if (action === 'interrupt' || action === 'locate' || action === 'read') {
     const settings = await loadAppSettings(app);
     const connection = await daemon.connect(app, app.pi, broker, settings, host);
@@ -225,12 +226,29 @@ async function brokerBranchOff(app: App, broker: BrokerRuntime, value: any, host
   try { await brokerConversationOperation(app, broker, { ...value, discardOnFailure: true }, host, peerId, 'send'); }
   catch (error: any) {
     const reason = error?.message ?? String(error);
-    let kept: boolean;
-    try { kept = (await connection.request({ type: 'orchestration', action: 'abandon_branch', sessionKey: peerId, sessionPath: created.sessionPath, deliveryId: value.deliveryId }))?.kept === true; }
-    catch (cleanup: any) { throw new Error(`The peer ${peerId} was created, but its first message failed and cleanup failed: ${reason}; ${cleanup?.message ?? cleanup}`); }
-    throw new Error(kept ? `The peer ${peerId} exists, but its first message may not have arrived: ${reason}` : `The peer was not created: ${reason}`);
+    let arrived: boolean;
+    try { arrived = (await brokerSettleFirstMessage(app, broker, { ...value, sessionPath: created.sessionPath }, host, peerId)).arrived; }
+    catch (settle: any) { throw new Error(`The first message of peer ${peerId} failed, and Piop could not settle it: ${reason}; ${settle?.message ?? settle}`); }
+    if (!arrived) throw new Error(`The peer was not created: ${reason}`);
   }
   return { peerId };
+}
+
+/**
+ * Settles the first message of a new chat whose sender lost the answer: the chat is kept when the message arrived and
+ * removed otherwise. A chat that has no location any more was already removed.
+ */
+async function brokerSettleFirstMessage(app: App, broker: BrokerRuntime, value: any, host: string, id: string): Promise<{ arrived: boolean }> {
+  if (typeof value.sessionPath !== 'string') throw new Error('sessionPath is required');
+  const settings = await loadAppSettings(app);
+  const connection = await daemon.connect(app, app.pi, broker, settings, host);
+  const location = await connection.request({ type: 'orchestration', action: 'locate', sessionKey: id }).catch(() => null);
+  const packet: any = { type: 'orchestration', action: 'settle_first_message', sessionKey: id, sessionPath: value.sessionPath, deliveryId: value.deliveryId ?? null, clientId: value.clientId ?? null };
+  if (typeof location?.cwd === 'string' && typeof location?.sessionPath === 'string') {
+    packet.spec = launchSpec(buildPiCommand(broker, settings, host, { kind: 'rpc', cwd: location.cwd, sessionPath: location.sessionPath }, connection.remotePort));
+    packet.cwd = location.cwd;
+  }
+  return { arrived: (await connection.request(packet))?.arrived === true };
 }
 
 async function brokerConversationOperation(app: App, broker: BrokerRuntime, value: any, host: string, id: string, action: string): Promise<any> {
@@ -269,6 +287,6 @@ function brokerInterruptionStatus(broker: BrokerRuntime, request: any, result: a
 function orchestrationTarget(value: any): [string, string] {
   if (typeof value?.sessionId !== 'string') throw new Error('sessionId is required');
   if (typeof value?.action !== 'string') throw new Error('action is required');
-  if (!['read', 'send', 'interrupt', 'locate', 'branch_off'].includes(value.action)) throw new Error('Unknown orchestration action');
+  if (!['read', 'send', 'interrupt', 'locate', 'branch_off', 'settle_first_message'].includes(value.action)) throw new Error('Unknown orchestration action');
   return [value.sessionId, value.action];
 }

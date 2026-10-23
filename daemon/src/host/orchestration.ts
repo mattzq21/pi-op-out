@@ -1,11 +1,11 @@
 import { randomUUID } from 'node:crypto';
+import { existsSync, readFileSync } from 'node:fs';
 import { flag, text } from './json';
 import { ownershipError } from './ownership';
 import { isUuid } from './protocol';
 import { attach } from './attachment';
 import { queueCommand } from './session_commands';
 import * as storageTransactions from '../storage_transactions';
-import { CommandRefusedError } from '../pi_rejection';
 import * as Worktrees from '../chat_worktree_records';
 import * as Registry from '../session_registry';
 import { detectRepository } from '../chat_worktrees';
@@ -22,8 +22,8 @@ const CANCELLED_DELIVERY_TTL_MS = 10 * 60_000;
  */
 export class Orchestration {
   private deliveries = new Map<string, Set<string>>();
-  /** What became of each first message of a branched-off peer: given to Pi, accepted by it, or refused by it. */
-  private branchDeliveries = new Map<string, 'dispatched' | 'accepted' | 'refused'>();
+  /** First messages of new chats that are being delivered, by delivery ID. Each ends with the chat kept or removed. */
+  private firstDeliveries = new Map<string, Promise<boolean>>();
   private cancelledDeliveries = new Map<string, number>();
 
   constructor(private host: Host) {}
@@ -40,7 +40,7 @@ export class Orchestration {
     const action = text(packet, 'action');
     if (action === 'locate') return host.ownership().lookup(id);
     if (action === 'branch_off') return this.branchOff(id);
-    if (action === 'abandon_branch') return this.abandonBranch(id, text(packet, 'sessionPath'), text(packet, 'deliveryId'));
+    if (action === 'settle_first_message') return this.settleFirstMessage(packet);
     if (action === 'interrupt') {
       if (this.cancelDeliveries(id, typeof packet.deliveryId === 'string' ? packet.deliveryId : undefined)) return { sessionId: id, completed: false };
       return this.cancel(id);
@@ -128,22 +128,85 @@ export class Orchestration {
   }
 
   /**
-   * discardOnFailure marks a new chat: when its first message cannot be delivered, the chat is stopped and deleted, so creating it is all or nothing.
-   * deleteBlank keeps a transcript that holds a message or queued input, so a message that did arrive is never lost.
+   * discardOnFailure marks a new chat: creating it is all or nothing. When the delivery fails, Piop finds out from storage
+   * whether the first message arrived: the chat is kept and the send succeeds, or the chat is removed and the send fails.
    */
   private async send(packet: any, existing: Session | undefined): Promise<any> {
-    const discard = flag(packet, 'discardOnFailure');
-    const id = text(packet, 'sessionKey');
+    if (!flag(packet, 'discardOnFailure')) return this.sendNow(packet, existing);
+    const id = text(packet, 'sessionKey'); const path = text(packet, 'sessionPath'); const delivery = text(packet, 'deliveryId');
+    let failure: unknown;
+    let result: any;
+    const settled = (async () => {
+      try { result = await this.sendNow(packet, existing); return await this.keepNewChat(id, packet, false); }
+      catch (error) { failure = error; }
+      if (await this.firstMessageArrived(id, path, delivery)) return this.keepNewChat(id, packet, true);
+      await this.removeNewChat(id, path);
+      return false;
+    })();
+    this.firstDeliveries.set(delivery, settled);
     try {
-      const result = await this.sendNow(packet, existing, discard);
-      // A branched-off peer keeps its worktree once its first message arrived.
-      if (discard && Worktrees.read(id, this.host.storageRoot())?.state === 'preparing') Worktrees.activate(id, this.host.storageRoot());
-      return result;
-    } catch (error) {
-      const session = this.host.findSession(id);
-      if (discard && (!session || session.closed())) await storageTransactions.deleteBlank({ path: text(packet, 'sessionPath'), id });
-      throw error;
+      if (await settled) return result ?? { sessionId: id, accepted: true, notificationId: delivery };
+      throw failure;
+    } finally { if (this.firstDeliveries.get(delivery) === settled) this.firstDeliveries.delete(delivery); }
+  }
+
+  /**
+   * Called when the sender of a first message lost the answer: waits for the delivery to end, then tells whether the chat
+   * was kept. A delivery that never reached this host is cancelled, and the chat is removed.
+   */
+  private async settleFirstMessage(packet: any): Promise<{ arrived: boolean }> {
+    const id = text(packet, 'sessionKey'); const path = text(packet, 'sessionPath'); const delivery = text(packet, 'deliveryId');
+    if (!isUuid(delivery)) throw new Error('A valid deliveryId is required');
+    const pending = this.firstDeliveries.get(delivery);
+    if (pending) return { arrived: await pending };
+    this.cancelledDeliveries.set(delivery, Date.now());
+    if (await this.firstMessageArrived(id, path, delivery)) return { arrived: await this.keepNewChat(id, packet, true) };
+    await this.removeNewChat(id, path);
+    return { arrived: false };
+  }
+
+  /** Reads storage once nothing can write the message any more: Pi stopped, or Pi has the message. */
+  private async firstMessageArrived(id: string, path: string, delivery: string): Promise<boolean> {
+    if (this.stored(id, path, delivery)) return true;
+    const session = this.host.findSession(id);
+    if (session && !session.closed()) { await session.stop(); this.host.maintenance(session.key); }
+    return this.stored(id, path, delivery);
+  }
+
+  /** True when the message waits in the chat's mailbox or is in its transcript. */
+  private stored(id: string, path: string, delivery: string): boolean {
+    const database = Registry.open(this.host.storageRoot());
+    try { if (database.prepare('SELECT 1 FROM session_mailbox WHERE session_id=? AND delivery_id=?').get(id, delivery)) return true; }
+    finally { database.close(); }
+    if (!path || !existsSync(path)) return false;
+    return readFileSync(path, 'utf8').split('\n').some(line => {
+      if (!line.includes(delivery)) return false;
+      try { const entry = JSON.parse(line); return entry?.customType === 'piop-agent-message' && entry?.details?.notificationId === delivery; }
+      catch { return false; }
+    });
+  }
+
+  /** Keeps a chat whose first message arrived. A stopped one is started again with the launch spec of packet, so it reads the message. */
+  private async keepNewChat(id: string, packet: any, restart: boolean): Promise<true> {
+    const root = this.host.storageRoot();
+    if (Worktrees.read(id, root)?.state === 'preparing') Worktrees.activate(id, root);
+    const session = this.host.findSession(id);
+    if (restart && (!session || session.closed())) {
+      if (!packet.spec) throw new Error('The first message arrived, but the chat could not be started again: no launch spec');
+      const runtime = 'orchestration-' + randomUUID();
+      await this.attachHidden(packet, runtime, id);
+      await this.detach(runtime);
     }
+    return true;
+  }
+
+  /** Removes a new chat whose first message did not arrive: its transcript, and for a branched-off chat its worktree and branch. */
+  private async removeNewChat(id: string, path: string): Promise<void> {
+    const session = this.host.findSession(id);
+    if (session && !session.closed()) { await session.stop(); this.host.maintenance(session.key); }
+    const root = this.host.storageRoot();
+    if (Worktrees.read(id, root)) await Worktrees.abandonCreation(id, path, root);
+    else await storageTransactions.deleteBlank({ path, id });
   }
 
   /**
@@ -180,24 +243,7 @@ export class Orchestration {
     }
   }
 
-  /**
-   * Undoes a branch-off whose first message did not arrive. Returns whether it was kept. The message counts as arrived
-   * when Pi accepted it, and also when it was given to Pi without an answer, since it may still be there.
-   */
-  private async abandonBranch(id: string, sessionPath: string, delivery: string): Promise<{ kept: boolean }> {
-    const outcome = this.branchDeliveries.get(delivery);
-    this.branchDeliveries.delete(delivery);
-    const root = this.host.storageRoot();
-    const record = Worktrees.read(id, root);
-    if (record?.state !== 'preparing') return { kept: record !== null };
-    const session = this.host.findSession(id);
-    const arrived = Boolean(session && !session.closed()) || outcome === 'accepted' || outcome === 'dispatched';
-    if (arrived) { Worktrees.activate(id, root); return { kept: true }; }
-    await Worktrees.abandonCreation(id, sessionPath, root);
-    return { kept: false };
-  }
-
-  private async sendNow(packet: any, existing: Session | undefined, discard: boolean): Promise<any> {
+  private async sendNow(packet: any, existing: Session | undefined): Promise<any> {
     const id = text(packet, 'sessionKey');
     const source = text(packet, 'sourceSessionId');
     if (!source || source === id) throw new Error('Choose another conversation as the recipient');
@@ -213,7 +259,7 @@ export class Orchestration {
       let failure: unknown;
       try { result = await this.deliver(packet); } catch (error) { failure = error ?? new Error('Delivery failed'); }
       if (attached) {
-        try { await this.detach(runtime, discard && failure !== undefined); } catch (error) { if (failure === undefined) throw error; }
+        try { await this.detach(runtime); } catch (error) { if (failure === undefined) throw error; }
       }
       if (failure !== undefined) throw failure;
       return result;
@@ -229,17 +275,7 @@ export class Orchestration {
     if (error !== null) throw new Error(error);
     const delivery = text(packet, 'deliveryId');
     if (this.deliveryCancelled(delivery)) throw new Error('Agent delivery was cancelled');
-    const branch = Worktrees.read(text(packet, 'sessionKey'), this.host.storageRoot())?.state === 'preparing';
-    if (!branch) return this.queue(session, packet);
-    this.branchDeliveries.set(delivery, 'dispatched');
-    try {
-      const result = await this.queue(session, packet);
-      this.branchDeliveries.set(delivery, 'accepted');
-      return result;
-    } catch (error) {
-      if (error instanceof CommandRefusedError) this.branchDeliveries.set(delivery, 'refused');
-      throw error;
-    }
+    return this.queue(session, packet);
   }
 
   private queue(session: Session, packet: any): Promise<any> {
@@ -248,10 +284,10 @@ export class Orchestration {
       ...(typeof packet.sourceName === 'string' ? { sourceName: packet.sourceName } : {}) });
   }
 
-  private async detach(runtime: string, discardBlank = false): Promise<any> {
+  private async detach(runtime: string): Promise<any> {
     this.host.attachments.delete(runtime);
     const session = this.host.subscriptions.get(runtime);
-    return session ? this.host.detach(discardBlank ? { discardBlank: true } : { preserveRunning: true }, runtime, session) : null;
+    return session ? this.host.detach({ preserveRunning: true }, runtime, session) : null;
   }
 }
 
