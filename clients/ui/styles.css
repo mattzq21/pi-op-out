@@ -592,3 +592,4 @@ textarea::placeholder { color: var(--faint); }
 .worktree-picker .composer-picker-menu button[aria-selected="true"] span { color: var(--accent); }
 .worktree-picker .composer-picker-menu button[aria-selected="true"]::after { content: ""; position: absolute; top: 50%; right: 11px; width: 4px; height: 8px; border: solid var(--accent); border-width: 0 1.5px 1.5px 0; transform: translateY(-65%) rotate(45deg); }
 @media (max-width: 600px) { .app .new-chat-project .worktree-picker .composer-picker-trigger { max-width: 132px; } }
+.composer-settling .composer-tools .composer-terminal:disabled:not([data-unavailable]), .composer-settling .fast-mode-indicator:disabled { opacity: 1; }
