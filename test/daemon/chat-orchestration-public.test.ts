@@ -134,6 +134,18 @@ test.concurrent('branchoff_peer removes the peer, its worktree and its branch wh
   expect(sessionsAfter.filter((id: string) => !sessionsBefore.includes(id))).toEqual([coordinator.sessionId]);
 }, 120000);
 
+test.concurrent('branchoff_peer is offered only in a chat whose folder is a Git repository', async () => {
+  const offered = async (repository: boolean, prompt: string) => {
+    agents.scripts.set(prompt, () => ({ text: 'Done.' }));
+    const chat = await agents.rootChat({ repository });
+    await chat.command({ type: 'prompt', message: prompt });
+    await chat.until(history => text(history.at(-1)) === 'Done.');
+    return agents.model.requests.find(request => startedWith(request, prompt)).tools.some((tool: any) => tool.function.name === 'branchoff_peer');
+  };
+  expect(await offered(true, 'Check tools in a repository')).toBe(true);
+  expect(await offered(false, 'Check tools outside a repository')).toBe(false);
+}, 60000);
+
 /** A promise that the test settles later, to keep an agent's model reply waiting. */
 const held = <T>() => { let release!: (value: T) => void; const promise = new Promise<T>(resolve => { release = resolve; }); return { promise, release }; };
 

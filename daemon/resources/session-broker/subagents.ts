@@ -6,6 +6,7 @@ import { Parse } from "typebox/value";
 import { agentProfilesTool, resolveAgentProfile, SUBAGENT_TOOLS, PEER_TOOLS } from "./agent-profiles.ts";
 import { childFastModeEntry } from "./fast-mode.ts";
 import { randomUUID } from "node:crypto";
+import { execFileSync } from "node:child_process";
 import { join } from "node:path";
 import { currentHost } from "./client.ts";
 import { writeSessionFile } from "../piop-storage/session-file.ts";
@@ -19,6 +20,12 @@ import { savedSubagentRuns } from "../piop-storage/subagent-results.ts";
 const NICKNAME = "^[A-Z][a-z]{0,7}$";
 
 const MAX_DELEGATION_DEPTH = 2;
+
+/** Whether folder is inside a Git work tree. */
+function inGitRepository(folder: string) {
+  try { return execFileSync("git", ["-C", folder, "rev-parse", "--is-inside-work-tree"], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], timeout: 5000 }).trim() === "true"; }
+  catch { return false; }
+}
 
 interface RequiredToolsRequest { ctx: ExtensionContext; tools: string[]; availableTools?: string[] }
 
@@ -271,7 +278,8 @@ export function registerSubagents(pi: ExtensionAPI) {
     // Saved children stay reachable after their tools are turned off.
     if (subagents || latestRuns(ctx).length) tools.push(...SUBAGENT_TOOLS);
 
-    if (peers) tools.push(...PEER_TOOLS);
+    // branchoff_peer makes a Git worktree, so only a chat in a Git repository gets it.
+    if (peers) tools.push(...PEER_TOOLS.filter(tool => tool !== "branchoff_peer" || inGitRepository(ctx.cwd)));
 
     if (useProfilesTool(subagents, peers)) tools.push("list_agent_profiles");
   });
