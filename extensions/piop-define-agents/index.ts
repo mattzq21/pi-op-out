@@ -22,18 +22,6 @@ const STATUS_KEY = "pi-define-agents";
 
 const sessionTools = ["spawn_subagents"];
 
-/** Old subagent and chat tool names, and the tools that replaced them. */
-const renamedTools: Record<string, string> = {
-  subagent: "spawn_subagents", spawn_agent: "spawn_subagents", followup_task: "message_subagent", send_message: "message_subagent",
-  interrupt_agent: "stop_subagent", list_agents: "list_subagents", wait_agent: "await_subagents", wait_subagents: "await_subagents",
-  send_message_to_thread: "message_peer", create_thread: "create_peer", message_thread: "message_peer", stop_thread: "stop_peer", list_threads: "list_peers", read_thread: "read_peer", wait_threads: "wait_peers",
-};
-
-/** The agent's tools with old names replaced. The agent's tool groups decide if it has list_agent_profiles, so it is never configured directly. */
-function configuredTools(tools: string[]) {
-  return [...new Set(tools.filter(tool => tool !== "list_agent_profiles" && tool !== "receive_agent_message").map(tool => renamedTools[tool] ?? tool))];
-}
-
 export type Config = { revision?: string; agents: Agent[]; webSearchDefaultApplied?: boolean; sessionToolsDefaultApplied?: boolean; subagentsDefaultApplied?: boolean; workhorseDefaultApplied?: boolean; };
 
 type ConfigRuntime = { enabledTools?: readonly string[] };
@@ -132,7 +120,7 @@ function normalize(value: Omit<Partial<Config>, "agents"> & { agents?: StoredAge
     allow_as_subagent: agentFlag(agent.allow_as_subagent, agent.name, "allow_as_subagent"), allow_as_peer: agentFlag(agent.allow_as_peer, agent.name, "allow_as_peer"),
     allowed_subagents: agentAccess(agent.allowed_subagents, agent.name, "allowed_subagents"), allowed_peers: agentAccess(agent.allowed_peers, agent.name, "allowed_peers"),
     path_systemprompt: promptPath(agent), path_agent_prompt: Check(Type.String(), agent.path_agent_prompt) ? agent.path_agent_prompt.trim() : "",
-    tools: Array.isArray(agent.tools) ? configuredTools(agent.tools.filter((item): item is string => Check(Type.String(), item))) : generalAgent(pi).tools, skills: Array.isArray(agent.skills) ? agent.skills.filter((item): item is string => Check(Type.String(), item)) : [], mcpServers: mcpServers(agent.mcpServers),
+    tools: Array.isArray(agent.tools) ? agent.tools.filter((item): item is string => Check(Type.String(), item)) : generalAgent(pi).tools, skills: Array.isArray(agent.skills) ? agent.skills.filter((item): item is string => Check(Type.String(), item)) : [], mcpServers: mcpServers(agent.mcpServers),
   })) : [];
 
   if (!supplied.some((agent) => agent.name === "general")) {

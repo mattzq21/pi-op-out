@@ -238,12 +238,6 @@ test("agent shutdown releases the subagent profile service", async t => {
   assert.deepEqual(after, {});
 });
 
-test('old subagent and chat tool names are replaced by the current tools', async t => {
-  const f = await agentFixture(t, { config: configured([profile('general', { tools: ['read', 'subagent', 'spawn_agent', 'followup_task', 'send_message_to_thread', 'list_agent_profiles'] })]) });
-  await f.load();
-  assert.deepEqual((await f.configuration()).agents[0].tools, ['read', 'spawn_subagents', 'message_subagent', 'message_peer']);
-});
-
 test('removing the migrated subagent tool remains effective after reload', async t => {
   const config = configured([profile()]); delete config.subagentsDefaultApplied;
   const f = await agentFixture(t, { config, runtime: { enabledTools: ['read', 'spawn_subagents'] }, tools: ['read', 'spawn_subagents'] });
