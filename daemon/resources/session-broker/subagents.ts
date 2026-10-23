@@ -446,33 +446,45 @@ export function registerSubagents(pi: ExtensionAPI) {
   pi.on("input", event => { if (event.source !== "extension") for (const listener of [...inputListeners]) listener(); });
   pi.registerTool({
     name: "await_subagents", label: "Await subagents", exposure: "model-only",
-    description: "Wait until all your subagents finish, or until the user sends a new message. Returns the answers of the subagents that finished.",
-    parameters: Type.Object({}),
-    async execute(_id, _params, signal, _update, ctx) {
+    description: "Wait until any of your subagents finishes (for: \"any\", the default) or until all of them finish (for: \"all\"), or until the user sends a new message. Returns the answers of the subagents that finished.",
+    parameters: Type.Object({ for: Type.Optional(Type.Union([Type.Literal("any"), Type.Literal("all")])) }),
+    async execute(_id, params, signal, _update, ctx) {
       reconcile(ctx);
+      const all = params.for === "all";
+      const userMessage = { content: [{ type: "text" as const, text: "The user sent a new message. Subagents are still running." }], details: { finished: false } };
 
-      const answers = () => { const finished = resultsDelivery.claim(ctx); return finished.length ? subagentResponses(finished) : "No subagent answers are waiting."; };
+      const answers = () => {
+        const finished = resultsDelivery.claim(ctx);
+        const text = finished.length ? subagentResponses(finished) : "No subagent answers are waiting.";
 
-      if (!pending.size) return { content: [{ type: "text", text: answers() }], details: { finished: true } };
+        return { content: [{ type: "text" as const, text: pending.size ? text + "\n\nOther subagents are still running." : text }], details: { finished: !pending.size } };
+      };
+
+      // An answer that is already waiting ends a wait for any subagent at once.
+      if (!pending.size || (!all && resultsDelivery.waiting(ctx))) return answers();
       let onInput = () => {};
       const input = new Promise<"input">(resolve => { onInput = () => resolve("input"); inputListeners.add(onInput); });
       const aborted = new Promise<"aborted">(resolve => { if (signal?.aborted) resolve("aborted"); signal?.addEventListener("abort", () => resolve("aborted"), { once: true }); });
 
       try {
         while (pending.size) {
-          if (ctx.hasPendingMessages()) return { content: [{ type: "text", text: "The user sent a new message. Subagents are still running." }], details: { finished: false } };
-          const outcome = await Promise.race([Promise.allSettled([...pending]).then(() => "settled" as const), input, aborted]);
+          if (ctx.hasPendingMessages()) return userMessage;
+          const running = [...pending];
+          const settled = (all ? Promise.allSettled(running) : Promise.race(running.map(item => item.then(() => {}, () => {})))).then(() => "settled" as const);
+          const outcome = await Promise.race([settled, input, aborted]);
 
           if (outcome === "aborted") signal?.throwIfAborted();
 
-          if (outcome === "input") return { content: [{ type: "text", text: "The user sent a new message. Subagents are still running." }], details: { finished: false } };
+          if (outcome === "input") return userMessage;
           reconcile(ctx);
+
+          if (!all && resultsDelivery.waiting(ctx)) return answers();
         }
       } finally { inputListeners.delete(onInput); }
 
       if (latestRuns(ctx).some(run => run.status === "running")) throw new Error("Subagent work remains unresolved; completion has not been confirmed");
 
-      return { content: [{ type: "text", text: answers() }], details: { finished: true } };
+      return answers();
     },
   });
   pi.registerTool({

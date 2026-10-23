@@ -137,16 +137,22 @@ export function registerSubagentResults(pi: ExtensionAPI) {
       .catch(error => { outstanding.delete(id); ctx.ui.notify(`Subagent result delivery remains pending: ${(error instanceof Error ? error.message : String(error))}`, "error"); });
   };
 
+  const claimable = (ctx: ExtensionContext, run: SubagentRun) => {
+    const id = run.resultNotificationId;
+
+    return run.status !== "running" && run.resultDelivery === "pending" && !(id && (outstanding.has(id) || delivered(ctx, id)));
+  };
+
   return {
     reset() { outstanding.clear(); },
+    /** True when a finished run's result was not sent yet, so claim would return it. */
+    waiting(ctx: ExtensionContext) { return ownedRuns(ctx).some(run => claimable(ctx, run)); },
     /** Marks finished runs whose results were not sent yet as delivered and returns them, so the caller hands them to the model itself. */
     claim(ctx: ExtensionContext) {
       const claimed: SubagentRun[] = [];
 
       for (const run of ownedRuns(ctx)) {
-        const id = run.resultNotificationId;
-
-        if (run.status === "running" || run.resultDelivery !== "pending" || (id && (outstanding.has(id) || delivered(ctx, id)))) continue;
+        if (!claimable(ctx, run)) continue;
         run.resultDelivery = "delivered";
         saveRun(pi, ctx, run);
         claimed.push(run);

@@ -212,7 +212,7 @@ test.concurrent('a batch of children runs at once, waiting for all ends only aft
   agents.scripts.set('Count the fruit', messages => {
     const last = messages.at(-1);
     if (!called(messages, 'spawn_subagents')) return { tool: 'spawn_subagents', arguments: { tasks: [{ name: 'apples', task: 'Count apples' }, { name: 'pears', task: 'Count pears' }] } };
-    if (!called(messages, 'await_subagents')) return { tool: 'await_subagents' };
+    if (!called(messages, 'await_subagents')) return { tool: 'await_subagents', arguments: { for: 'all' } };
     if (last.role === 'tool' && !answered.has('awaited')) answered.set('awaited', ++order);
     const counts = JSON.stringify(messages).match(/Relay: \d+ \w+/g) ?? [];
     return { text: counts.length ? 'Counts: ' + [...new Set(counts)].sort().join(', ') : 'Waiting.' };
@@ -237,6 +237,23 @@ test.concurrent('a batch of children runs at once, waiting for all ends only aft
   expect(seen.filter((message: any) => message.role === 'user' && text(message).includes('<subagent_response>'))).toEqual([]);
   const children = (await agents.daemon.invoke('list_sessions')).filter((session: any) => session.subagentParentId === root.sessionId).map((session: any) => session.name).sort();
   expect(children).toEqual(['Subagent: apples', 'Subagent: pears']);
+}, 120000);
+
+test.concurrent('awaiting any subagent returns when the first one finishes, while the other keeps running', async () => {
+  const slow = Promise.withResolvers<{ text: string }>();
+  agents.scripts.set('Race two helpers', messages => {
+    if (!called(messages, 'spawn_subagents')) return { tool: 'spawn_subagents', arguments: { tasks: [{ name: 'quick', task: 'Quick race job' }, { name: 'slowpoke', task: 'Slow race job' }] } };
+    if (!called(messages, 'await_subagents')) return { tool: 'await_subagents' };
+    return { text: 'Got: ' + text(messages.at(-1)) };
+  });
+  agents.scripts.set('Quick race job', () => ({ text: 'Quick done.' }));
+  agents.scripts.set('Slow race job', () => slow.promise);
+  const root = await agents.rootChat();
+  try {
+    await root.command({ type: 'prompt', message: 'Race two helpers' });
+    const messages = await root.until(history => text(history.at(-1)).startsWith('Got: '));
+    expect(text(messages.at(-1))).toBe('Got: <subagent_response>\nSubagent quick:\nQuick done.\n</subagent_response>\n\nOther subagents are still running.');
+  } finally { slow.resolve({ text: 'Slow done.' }); }
 }, 120000);
 
 test('an agent limited to one subagent cannot start a second while the first is still working', async () => {
