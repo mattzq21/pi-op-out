@@ -135,7 +135,7 @@ test('a branch that fails after its worktree exists removes the worktree, branch
     const branch = await command({ type: 'get_state' });
     expect(branch.sessionId).not.toBe(state.sessionId);
     expect(worktreeFolders(agents.daemon.home)).toEqual([short(branch.sessionId)]);
-    expect(readFileSync(join(branch.cwd, 'tracked.txt'), 'utf8')).toBe('dirty');
+    expect(readFileSync(join(branch.cwd, 'tracked.txt'), 'utf8')).toBe('initial');
     expect(cachedWorktrees(agents.daemon.home)).toEqual([branch.cwd]);
   } finally {
     chmodSync(sessionFolder(), 0o755);
