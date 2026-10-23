@@ -227,7 +227,7 @@ async function checkOut(gitCommonDir: string, worktree: string, args: string[]):
  * ignored files. The source keeps its files, index and HEAD. Refuses an existing branch. On failure, removes the folder
  * and branch; later steps undo it with `removeCreatedWorktree`.
  */
-export async function createWorktree(input: { sourceCwd: string; chatId: string; home: string; worktree: string; branch: string; repository?: Repository; baseBranch?: string }): Promise<CreatedWorktree> {
+export async function createWorktree(input: { sourceCwd: string; chatId: string; home: string; worktree: string; branch: string; repository?: Repository; baseBranch?: string; committedOnly?: boolean }): Promise<CreatedWorktree> {
   const { worktree, branch } = input;
   requireOwnedFolder(input.home, input.chatId, worktree);
   requireOwnedBranch(input.chatId, branch);
@@ -246,7 +246,8 @@ export async function createWorktree(input: { sourceCwd: string; chatId: string;
       }
       const commit = await commitOf(root, ref);
       if (!commit) throw new Error(`Cannot branch a chat from ${ref}: no commit found`);
-      const tree = input.baseBranch === undefined ? await currentTree(root, commit) : null;
+      // committedOnly leaves out uncommitted changes; otherwise a branch from HEAD copies the current files.
+      const tree = input.baseBranch === undefined && !input.committedOnly ? await currentTree(root, commit) : null;
       const made = await checkOut(repository.gitCommonDir, worktree, ['-b', branch, worktree, commit]);
       if (tree !== null) {
         await git(made, ['read-tree', '-u', '--reset', tree]);

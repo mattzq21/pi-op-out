@@ -210,7 +210,7 @@ export class Orchestration {
   }
 
   /**
-   * Makes a new worktree on a new branch from the current files of the conversation id, and a new conversation there
+   * Makes a new worktree on a new branch from the last commit of the conversation id, and a new conversation there
    * with its agent and its history through its last finished answer. The worktree stays preparing until the first
    * message arrives; abandonBranch or recovery undoes it otherwise.
    */
@@ -232,7 +232,7 @@ export class Orchestration {
     if (!entryId) throw new Error('This conversation has no finished answer to branch off from');
     const sessionId = Registry.reserve(root);
     try {
-      const created = await Worktrees.create({ sourceCwd: cwd, chatId: sessionId, home: host.home, repository }, root);
+      const created = await Worktrees.create({ sourceCwd: cwd, chatId: sessionId, home: host.home, repository, committedOnly: true }, root);
       rememberProjectRepository(root, created.worktree, { root: created.worktree, gitDir: created.gitCommonDir });
       const published = await publishBranchHistory({ root, sourcePath, sessionId, cwd: created.worktree, entries, leafId, entryId,
         name: state.sessionName ? state.sessionName + ' (branch)' : undefined });
