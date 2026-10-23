@@ -8,7 +8,7 @@ const RECENT_TEXT = 5000;
 const PROMPT_CONTEXTS = new Set(['piop-context', 'pi-desktop-prompt-context']);
 const PROMPT_CUSTOM_MESSAGES = new Set(['piop-agent-message', 'piop-subagent-result']);
 
-type History = { entries: any[]; leafId: string | null; before?: string | null };
+type History = { entries: any[]; leafId: string | null; before?: string | null; olderUsage?: any };
 
 function role(entry: any): string | undefined { return entry?.type === 'message' ? entry.message?.role : undefined; }
 
@@ -106,17 +106,17 @@ function view(branch: any[], start: number, end: number, keepLastTurn: boolean):
   }
   close(true);
   resolvePromptContext(branch, start, entries);
-  return linked(entries, start > 0 ? branch[start].id : null);
+  const result = linked(entries, start > 0 ? branch[start].id : null);
+  let usage: any;
+  for (let index = 0; index < start; index++) if (role(branch[index]) === 'assistant') usage = addUsage(usage, branch[index].message.usage);
+  if (usage) result.olderUsage = usage;
+  return result;
 }
 
 /** The newest part of a chat's history that the client shows when it opens the chat. */
 export function recentHistory(history: any, working: boolean): any {
   const branch = branchEntries(history);
-  const { entries, leafId, before } = view(branch, windowStart(branch, branch.length), branch.length, working);
-  history.entries = entries;
-  history.leafId = leafId;
-  history.before = before;
-  return history;
+  return Object.assign(history, view(branch, windowStart(branch, branch.length), branch.length, working));
 }
 
 function position(branch: any[], id: unknown): number {

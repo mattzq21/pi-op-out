@@ -53,6 +53,11 @@ const nestedCallsSchema = z.object({
   complete: z.boolean(),
 });
 
+export const usageSchema = z.looseObject({
+  input: z.number(), output: z.number(), cacheRead: z.number(), cacheWrite: z.number(),
+  reasoning: z.number().optional(), totalTokens: z.number(),
+});
+
 export const wireMessageSchema = z.looseObject({
   id: z.string().optional().catch(undefined),
   role: z.enum(["user", "assistant", "tool", "system", "custom", "toolResult"]).optional(),
@@ -65,10 +70,8 @@ export const wireMessageSchema = z.looseObject({
   toolInput: z.unknown().optional(), details: z.unknown().optional(),
   promptContext: promptContextSchema.optional(), contextCheckpoint: z.boolean().optional(),
   nestedCalls: nestedCallsSchema.optional(),
-  usage: z.looseObject({
-    input: z.number(), output: z.number(), cacheRead: z.number(), cacheWrite: z.number(),
-    reasoning: z.number().optional(), totalTokens: z.number(),
-  }).optional(),
+  usage: usageSchema.optional(),
+  deferredWork: z.object({ reasoningOnly: z.boolean(), usage: usageSchema.optional(), firstUsage: usageSchema.optional() }).optional(),
   deferredToolPayload: z.string().optional(), toolPayloadLoaded: z.boolean().optional(),
   toolPayloadVersion: z.number().optional(), loadedToolPayloadVersion: z.number().optional(),
   deliveryBehavior: z.enum(["steer", "followUp"]).optional(),

@@ -2,6 +2,7 @@ import { pluginSettingsSchema } from "../plugins/settingsSchema";
 import { z } from "zod";
 import { rpcEventSchema, rpcCommandSchema } from "./rpcSchemas";
 import { entrySchema, pendingMessageSchema } from "./chatSessionEventSchema";
+import { usageSchema } from "./messageSchemas";
 
 export { rpcEventSchema, rpcCommandSchema, entrySchema, pendingMessageSchema };
 
@@ -65,7 +66,10 @@ export const agentStateSchema = z.object({ canFork: z.boolean().optional(), view
 
 export const forkAfterResultSchema = z.object({ cancelled: z.boolean().optional(), state: z.object({ cwd: z.union([z.string(), z.null()]).optional() }).optional() });
 
-export const sessionSnapshotSchema = z.object({ revision: z.string(), state: agentStateSchema, history: z.object({ entries: z.array(entrySchema), leafId: z.union([z.string(), z.null()]), omittedEntries: z.number().optional(), incomplete: z.boolean().optional(), damagedLines: z.array(z.number().int().positive()).optional() }), sequence: z.number(), epoch: z.string(), liveTools: z.array(rpcEventSchema), queue: rpcEventSchema });
+/** A part of a chat's history: before is the first entry left out of older history, if any. */
+export const historyViewSchema = z.object({ entries: z.array(entrySchema), leafId: z.union([z.string(), z.null()]), before: z.string().nullable().optional(), olderUsage: usageSchema.optional() });
+
+export const sessionSnapshotSchema = z.object({ revision: z.string(), state: agentStateSchema, history: historyViewSchema.extend({ omittedEntries: z.number().optional(), incomplete: z.boolean().optional(), damagedLines: z.array(z.number().int().positive()).optional() }), sequence: z.number(), epoch: z.string(), liveTools: z.array(rpcEventSchema), queue: rpcEventSchema });
 
 export const slashCommandSchema = z.object({ name: z.string(), description: z.string().optional(), source: z.union([z.literal("builtin"), z.literal("extension"), z.literal("prompt"), z.literal("skill")]), sourceInfo: z.object({ source: z.string().optional() }).optional(), options: z.array(z.object({ value: z.string(), label: z.string(), description: z.string().optional() })).optional() });
 
