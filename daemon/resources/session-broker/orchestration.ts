@@ -440,7 +440,7 @@ export function registerOrchestration(pi: ExtensionAPI) {
     },
   });
   pi.registerTool({
-    name: "message_peer", label: "Message peer", exposure: "model-only", description: "Send a message to a peer. An idle peer starts at once; a busy one reads it after its current work. Returns when the message is accepted, not the answer; use wait_peers. Message a peer only when the user asked you to.",
+    name: "message_peer", label: "Message peer", exposure: "model-only", description: "Send a message to a peer. An idle peer starts at once; a busy one reads it after its current work. Returns when the message is accepted.",
     parameters: Type.Object({ ...address, message: Type.String({ minLength: 1 }) }),
     async execute(_id, params, signal, _update, ctx) {
       requireRootCaller(ctx);
