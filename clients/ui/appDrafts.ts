@@ -80,7 +80,8 @@ export function createConversationDrafts(reportStorageError: (message: string) =
       batch(() => {
         if (nextRecords.length !== records().size || nextRecords.some(item => records().get(item.key) !== item)) {
           setRecords(new Map(nextRecords.map(item => [item.key, item])));
-          destinations.clear();
+          const boundKeys = new Set([...owners.values()].map(keyFor));
+          for (const key of destinations.keys()) if (!boundKeys.has(key)) destinations.delete(key);
           for (const record of nextRecords) if (record.destination) destinations.set(record.key, record.destination);
           publishUploads();
         }

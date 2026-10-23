@@ -72,3 +72,23 @@ test('branching, copying, and discarding cannot resurrect persisted drafts', asy
   leavePage();
   await restoredDrafts({ 'local:next': 'Keep this draft' });
 });
+
+test('another window saving a draft preserves an empty composer destination', async () => {
+  const first = openWindow();
+  const second = openWindow();
+  await Promise.all([loaded(first), loaded(second)]);
+  first.bindTransport(new NativeTransport({ hostId: 'local', draftKey: 'local:first' }), 'local:first');
+  second.bindTransport(new NativeTransport({ hostId: 'local', draftKey: 'local:second' }), 'local:second');
+  second.setComposerDraft('local:second', 'Second window draft');
+  leavePage();
+  await whenDrafts(first, value => value['local:second'] === 'Second window draft', 'the other window draft');
+
+  first.setComposerDraft('local:first', 'First window draft');
+  assert.equal(first.records()['local:first'].target?.draftKey, 'local:first');
+  assert.equal(first.draftSummaries().find(draft => draft.id === 'first')?.preview, 'First window draft');
+  leavePage();
+  await restoredDrafts({ 'local:first': 'First window draft', 'local:second': 'Second window draft' });
+  const fresh = openWindow();
+  await loaded(fresh);
+  assert.equal(fresh.records()['local:first'].target?.draftKey, 'local:first');
+});
