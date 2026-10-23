@@ -34,6 +34,9 @@ test.concurrent('a chat can message another chat, wait for its answer and read i
   const delivered = JSON.parse(toolResult(seen, 'read_thread').items[0].text);
   // The chat view shows the sender from sourceHostId and sourceSessionId.
   expect(delivered).toMatchObject({ sourceSessionId: coordinator.sessionId, sourceHostId: 'local', message: 'What is the build status?' });
+  // The worker's model sees only a <thread_message> tag with the sender's chat name and the text.
+  const workerSaw = agents.model.requests.findLast(request => startedWith(request, 'You are the worker')).messages.at(-1);
+  expect([workerSaw.role, text(workerSaw)]).toEqual(['user', '<thread_message>\nThread ' + (coordinator.name ?? coordinator.sessionId) + ':\nWhat is the build status?\n</thread_message>']);
 }, 120000);
 
 test.concurrent('chat tools list and read only root chats, never subagent chats', async () => {

@@ -163,7 +163,8 @@ export class Orchestration {
     if (error !== null) throw new Error(error);
     if (this.deliveryCancelled(text(packet, 'deliveryId'))) throw new Error('Agent delivery was cancelled');
     return queueCommand(session, { type: 'orchestration_message', deliveryId: packet.deliveryId ?? null, sourceSessionId: packet.sourceSessionId ?? null,
-      sourceHostId: packet.sourceHostId ?? null, message: packet.message ?? null, wake: packet.wake ?? null, ...(packet.deliverAs ? { deliverAs: packet.deliverAs } : {}) });
+      sourceHostId: packet.sourceHostId ?? null, message: packet.message ?? null, wake: packet.wake ?? null, ...(packet.deliverAs ? { deliverAs: packet.deliverAs } : {}),
+      ...(typeof packet.sourceName === 'string' ? { sourceName: packet.sourceName } : {}) });
   }
 
   private async detach(runtime: string, discardBlank = false): Promise<any> {

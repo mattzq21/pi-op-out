@@ -216,7 +216,7 @@ async function brokerConversationOperation(app: App, broker: BrokerRuntime, valu
   if (typeof cwd !== 'string') throw new Error('Conversation lookup returned no working directory');
   const field = (key: string) => value[key] ?? null;
   const packet: any = { type: 'orchestration', action, sessionKey: id, sessionPath: path,
-    sourceSessionId: field('sourceSessionId'), sourceHostId: field('sourceHostId'), message: field('message'), wake: field('wake'), clientId: field('clientId'),
+    sourceSessionId: field('sourceSessionId'), sourceHostId: field('sourceHostId'), sourceName: field('sourceName'), message: field('message'), wake: field('wake'), clientId: field('clientId'),
     deliveryId: field('deliveryId'), discardOnFailure: field('discardOnFailure'), deliverAs: field('deliverAs') };
   if (action === 'send') {
     const command = buildPiCommand(broker, settings, host, { kind: 'rpc', cwd, sessionPath: path }, connection.remotePort);

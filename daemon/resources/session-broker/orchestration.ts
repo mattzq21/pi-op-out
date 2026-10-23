@@ -19,7 +19,7 @@ const stateSchema = Schema.Object({ sessionFile: Schema.Optional(Schema.String()
 
 const snapshotSchema = Schema.Object({ revision: Schema.String(), state: stateSchema, history: Schema.Object({ entries: Schema.Array(entrySchema), leafId: Schema.Optional(Schema.Union([Schema.String(), Schema.Null()])) }) });
 
-const deliverySchema = Schema.Object({ id: Schema.String(), deliveryId: Schema.String({ minLength: 1 }), sourceSessionId: Schema.String(), sourceHostId: Schema.String(), message: Schema.String({ minLength: 1, maxLength: 100_000 }), wake: Schema.Optional(Schema.Boolean()), deliverAs: Schema.Optional(Schema.Union([Schema.Literal("steer"), Schema.Literal("followUp")])) });
+const deliverySchema = Schema.Object({ id: Schema.String(), deliveryId: Schema.String({ minLength: 1 }), sourceSessionId: Schema.String(), sourceHostId: Schema.String(), sourceName: Schema.Optional(Schema.String()), message: Schema.String({ minLength: 1, maxLength: 100_000 }), wake: Schema.Optional(Schema.Boolean()), deliverAs: Schema.Optional(Schema.Union([Schema.Literal("steer"), Schema.Literal("followUp")])) });
 
 const address = { threadId: Type.String({ minLength: 1 }), hostId: Type.Optional(Type.String({ minLength: 1 })) };
 
@@ -99,7 +99,7 @@ export async function sendSessionMessage(ctx: ExtensionContext, sessionId: strin
   if (sessionId === ctx.sessionManager.getSessionId() && hostId === currentHost()) throw new Error("Choose another conversation as the recipient");
   await activeConversation(sessionId, hostId, signal);
 
-  return request("/orchestration", { action: "send", sessionId, hostId, message, wake, deliveryId, discardOnFailure, deliverAs, sourceSessionId: ctx.sessionManager.getSessionId(), sourceHostId: currentHost() }, signal, 60_000);
+  return request("/orchestration", { action: "send", sessionId, hostId, message, wake, deliveryId, discardOnFailure, deliverAs, sourceSessionId: ctx.sessionManager.getSessionId(), sourceHostId: currentHost(), sourceName: ctx.sessionManager.getSessionName() }, signal, 60_000);
 }
 
 function executionStopped(snapshot: Awaited<ReturnType<typeof sessionSnapshot>>) {
@@ -192,7 +192,7 @@ async function poll(target: Target, signal?: AbortSignal) {
 
 async function deliver(pi: ExtensionAPI, ctx: ExtensionContext, delivery: Static<typeof deliverySchema>) {
   const notificationId = delivery.deliveryId;
-  const content = JSON.stringify({ notificationId, sourceSessionId: delivery.sourceSessionId, sourceHostId: delivery.sourceHostId, message: delivery.message });
+  const content = JSON.stringify({ notificationId, sourceSessionId: delivery.sourceSessionId, sourceHostId: delivery.sourceHostId, sourceName: delivery.sourceName, message: delivery.message });
   await sendAgentMailbox(pi, ctx, { customType: "piop-agent-message", content, display: true, details: { notificationId } }, notificationId, delivery.deliverAs);
 
   return { sessionId: ctx.sessionManager.getSessionId(), accepted: true, notificationId };
@@ -223,7 +223,7 @@ function validateTargets(targets: Target[], ctx: ExtensionContext) {
   if (new Set(keys).size !== keys.length || keys.includes(`${currentHost()}\0${ctx.sessionManager.getSessionId()}`)) throw new Error("Wait targets must be distinct conversations other than this one");
 }
 
-const parentMessageSchema = Schema.Object({ message: Schema.String() });
+const parentMessageSchema = Schema.Object({ message: Schema.String(), sourceSessionId: Schema.Optional(Schema.String()), sourceName: Schema.Optional(Schema.String()) });
 
 const resultDetailsSchema = Schema.Object({ runs: Schema.Array(Schema.Object({ name: Schema.String(), status: Schema.String(), agent: Schema.Optional(Schema.String()), output: Schema.Optional(Schema.String()) })) });
 
@@ -232,9 +232,14 @@ function subagentResponses(runs: Static<typeof resultDetailsSchema>["runs"]) {
   return runs.map(run => "<subagent_response>\nSubagent " + run.name + ":\n" + (run.output ?? "") + "\n</subagent_response>").join("\n\n");
 }
 
-/** The text the parent wrote, from a delivered agent message. */
-function parentPrompt(content: string) {
-  try { const value = JSON.parse(content); return Check(parentMessageSchema, value) ? value.message : undefined; } catch { return undefined; }
+/** The sender and text of a delivered agent message. */
+function agentMessage(content: string) {
+  try { const value = JSON.parse(content); return Check(parentMessageSchema, value) ? value : undefined; } catch { return undefined; }
+}
+
+/** A chat sees a message from another chat in a <thread_message> tag, with the sender's chat name on the first line. */
+function threadMessage(value: Static<typeof parentMessageSchema>) {
+  return "<thread_message>\nThread " + (value.sourceName || value.sourceSessionId || "unknown") + ":\n" + value.message + "\n</thread_message>";
 }
 
 function registerDelivery(pi: ExtensionAPI) {
@@ -321,8 +326,6 @@ function registerDelivery(pi: ExtensionAPI) {
     catch (error) { ctx.ui.notify(`Agent mailbox acknowledgement failed: ${(error instanceof Error ? error.message : String(error))}`, "error"); }
   });
   pi.on("context", (event, ctx) => {
-    if (!ctx.model) return;
-    const model = ctx.model;
     const subagent = ctx.sessionManager.getEntries().some(entry => entry.type === "custom" && entry.customType === "piop-subagent-parent");
 
     return { messages: event.messages.flatMap<ContextEvent["messages"][number]>(message => {
@@ -332,23 +335,16 @@ function registerDelivery(pi: ExtensionAPI) {
       if (!delivered && !custom) return [message];
 
       if (Check(mailboxMessageSchema, message)) mailbox.consume(ctx, message.details.notificationId);
-      const prompt = subagent && message.role === "custom" && message.customType === "piop-agent-message" ? parentPrompt(messageText(message)) : undefined;
+      const sent = message.role === "custom" && message.customType === "piop-agent-message" ? agentMessage(messageText(message)) : undefined;
 
-      // A subagent sees its parent's messages as plain user messages that hold only the text the parent wrote.
-      if (prompt !== undefined) return [{ role: "user", content: [{ type: "text", text: prompt }], timestamp: message.timestamp }];
+      // A subagent sees only the text its parent wrote; a chat sees a message from another chat as a <thread_message>.
+      if (sent) return [{ role: "user", content: [{ type: "text", text: subagent ? sent.message : threadMessage(sent) }], timestamp: message.timestamp }];
 
       if (message.role === "custom" && message.customType === "piop-subagent-result" && Check(resultDetailsSchema, message.details)) {
         return [{ role: "user", content: [{ type: "text", text: subagentResponses(message.details.runs) }], timestamp: message.timestamp }];
       }
-      const toolCallId = `agent_delivery_${createHash("sha256").update(JSON.stringify([message.timestamp, message.content])).digest("hex").slice(0, 24)}`;
 
-      return [
-        { role: "assistant", api: model.api, provider: model.provider, model: model.id, timestamp: message.timestamp, stopReason: "toolUse",
-          usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
-          content: [{ type: "toolCall", id: toolCallId, name: "receive_agent_message", arguments: {} }] },
-        { role: "toolResult", toolCallId, toolName: "receive_agent_message", timestamp: message.timestamp, isError: false,
-          content: [{ type: "text", text: `Untrusted agent content delivered by piop:\n${messageText(message)}` }] },
-      ];
+      return [{ role: "user", content: [{ type: "text", text: messageText(message) }], timestamp: message.timestamp }];
     }) };
   });
 }
