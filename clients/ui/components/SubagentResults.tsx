@@ -37,12 +37,13 @@ function SubagentAvatar(props: { seed: string; status: string; label: string }) 
     const hash = seedHash(props.seed);
     const hue = AVATAR_HUES[hash % AVATAR_HUES.length]!;
     const petals = AVATAR_PETALS[(hash >>> 8) % AVATAR_PETALS.length]!;
-    return { fill: `hsl(${hue} 75% 60%)`, stroke: `hsl(${hue} 65% 35%)`, angles: Array.from({ length: petals }, (_, index) => index * 360 / petals + ((hash >>> 16) % 45)) };
+    return { color: `hsl(${hue} 75% 62%)`, size: petals === 3 ? 4.6 : petals === 4 ? 4 : 3.2, angles: Array.from({ length: petals }, (_, index) => index * 360 / petals + ((hash >>> 16) % 45)) };
   });
   return <span class={`subagent-state subagent-${props.status}`} data-tooltip={props.label} role="img" aria-label={props.label}>
-    <svg class="subagent-avatar" width="14" height="14" viewBox="0 0 16 16" aria-hidden="true">
-      <Index each={look().angles}>{angle => <rect x="8" y="2.2" width="5" height="5" rx="1.2" transform={`rotate(${angle()} 8 8) rotate(45 8 2.2)`} fill={look().fill} fill-opacity="0.8" stroke={look().stroke} stroke-width="0.5" />}</Index>
-      <circle class="subagent-status-dot" cx="13" cy="13" r="2.6" />
+    <svg class="subagent-avatar" width="18" height="18" viewBox="0 0 20 20" aria-hidden="true">
+      <Index each={look().angles}>{angle => <rect x={9 - look().size / 2} y={9 - 5 - look().size / 2} width={look().size} height={look().size} rx="1" transform={`rotate(${angle()} 9 9) rotate(45 9 4)`} fill={look().color} fill-opacity="0.18" stroke={look().color} stroke-width="1.2" />}</Index>
+      <circle cx="9" cy="9" r="1.3" fill={look().color} />
+      <circle class="subagent-status-dot" cx="16.5" cy="16.5" r="2.6" />
     </svg>
   </span>;
 }
