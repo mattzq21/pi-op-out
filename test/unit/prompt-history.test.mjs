@@ -4,34 +4,32 @@ import { createPromptHistoryNavigation } from '../../clients/ui/lib/promptHistor
 
 const sentPrompts = ['fix the build', 'add a test', 'commit'];
 
-test('up recalls older prompts and down past the newest restores the unsent draft', () => {
+test('up in an empty composer recalls older prompts and down past the newest empties it again', () => {
   const history = createPromptHistoryNavigation(() => sentPrompts);
-  assert.equal(history.move('older', 'half typed', true), 'commit');
-  assert.equal(history.move('older', 'commit', true), 'add a test');
-  assert.equal(history.move('older', 'add a test', true), 'fix the build');
-  assert.equal(history.move('older', 'fix the build', true), 'fix the build');
-  assert.equal(history.move('newer', 'fix the build', true), 'add a test');
-  assert.equal(history.move('newer', 'add a test', true), 'commit');
-  assert.equal(history.move('newer', 'commit', true), 'half typed');
-  assert.equal(history.move('newer', 'half typed', true), undefined);
+  assert.equal(history.move('older', ''), 'commit');
+  assert.equal(history.move('older', 'commit'), 'add a test');
+  assert.equal(history.move('older', 'add a test'), 'fix the build');
+  assert.equal(history.move('older', 'fix the build'), 'fix the build');
+  assert.equal(history.move('newer', 'fix the build'), 'add a test');
+  assert.equal(history.move('newer', 'add a test'), 'commit');
+  assert.equal(history.move('newer', 'commit'), '');
+  assert.equal(history.move('newer', ''), undefined);
 });
 
-test('up below the first line of a draft moves the cursor instead of recalling a prompt', () => {
+test('up in a composer with text does nothing', () => {
   const history = createPromptHistoryNavigation(() => sentPrompts);
-  assert.equal(history.move('older', 'line one\nline two', false), undefined);
-  assert.equal(history.move('newer', 'line one\nline two', true), undefined);
+  assert.equal(history.move('older', 'half typed'), undefined);
 });
 
-test('editing a recalled prompt keeps the edit as the draft to return to', () => {
+test('editing a recalled prompt ends the navigation', () => {
   const history = createPromptHistoryNavigation(() => sentPrompts);
-  history.move('older', '', true);
-  history.move('older', 'commit', true);
-  assert.equal(history.move('older', 'add a test for parsing', true), 'commit');
-  assert.equal(history.move('newer', 'commit', true), 'add a test for parsing');
+  assert.equal(history.move('older', ''), 'commit');
+  assert.equal(history.move('older', 'commit!'), undefined);
 });
 
-test('blank prompts are skipped and an empty history leaves the arrow keys alone', () => {
-  assert.equal(createPromptHistoryNavigation(() => []).move('older', 'draft', true), undefined);
+test('a conversation without prompts recalls nothing and blank prompts are skipped', () => {
+  assert.equal(createPromptHistoryNavigation(() => []).move('older', ''), undefined);
   const history = createPromptHistoryNavigation(() => ['first', '   ', '']);
-  assert.equal(history.move('older', '', true), 'first');
+  assert.equal(history.move('older', ''), 'first');
+  assert.equal(history.move('older', 'first'), 'first');
 });

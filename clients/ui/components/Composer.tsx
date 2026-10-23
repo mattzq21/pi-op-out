@@ -433,8 +433,6 @@ export function Composer(props: Props) {
     const { message, images } = prompt;
 
     if (!canSubmit(message, images)) return;
-    const rememberPrompt = promptHistory.captureRemember();
-
     setSending(true); setUploadError(undefined);
     const submittedValue = capturedValue; const submittedUploads = capturedUploads;
     const changeDraft = capturedComposer.onDraftChange ?? setLocalValue;
@@ -452,7 +450,6 @@ export function Composer(props: Props) {
 
       if (accepted === false) throw new Error("Message was not submitted");
 
-      rememberPrompt(submittedValue);
       clearUnstaged(submission);
     } catch (reason) {
       if (!isDaemonRefusal(reason)) setUploadError(reason instanceof Error ? reason.message : String(reason));

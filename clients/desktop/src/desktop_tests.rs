@@ -107,11 +107,6 @@ fn attachment_command_bridge() {
             Some("new_window") => new_window(
                 handle.as_ref().expect("desktop test app").clone(), request["target"].clone(),
             ).map(Value::String),
-            Some("sync_prompt_history") => tauri::async_runtime::block_on(sync_prompt_history(
-                handle.as_ref().expect("desktop test app").clone(),
-                serde_json::from_value(request["entries"].clone()).expect("history entries"),
-                serde_json::from_value(request["legacy"].clone()).expect("legacy prompts"),
-            )).map(|history| json!(history)),
             Some("read_dropped_file") => tauri::async_runtime::block_on(read_dropped_file(request["path"].as_str().expect("file path").to_owned())),
             Some("open_external_url") => tauri::async_runtime::block_on(open_external_url(
                 request["url"].as_str().expect("web URL").to_owned(),
