@@ -39,7 +39,7 @@ function SubagentAvatar(props: { seed: string; status: string; label: string }) 
     const petals = AVATAR_PETALS[(hash >>> 8) % AVATAR_PETALS.length]!;
     return { color: `hsl(${hue} 75% 62%)`, size: petals === 3 ? 4.6 : petals === 4 ? 4 : 3.2, angles: Array.from({ length: petals }, (_, index) => index * 360 / petals + ((hash >>> 16) % 45)) };
   });
-  return <span class={`subagent-state subagent-${props.status}`} data-tooltip={props.label} role="img" aria-label={props.label}>
+  return <span class={`subagent-state subagent-${props.status}`} role="img" aria-label={props.label}>
     <svg class="subagent-avatar" width="18" height="18" viewBox="0 0 20 20" aria-hidden="true">
       <Index each={look().angles}>{angle => <rect x={9 - look().size / 2} y={9 - 5 - look().size / 2} width={look().size} height={look().size} rx="1" transform={`rotate(${angle()} 9 9) rotate(45 9 4)`} fill={look().color} fill-opacity="0.18" stroke={look().color} stroke-width="1.2" />}</Index>
       <circle cx="9" cy="9" r="1.3" fill={look().color} />
