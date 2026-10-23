@@ -15,8 +15,8 @@ import { SUBAGENT_PARENT, latestRuns, ownedRuns, saveRun, subagentParent, subage
 import { acceptedSubmission, cancelSubagent, finishRun, observeSubagent, subagentReceiptSchema, SubagentCancellation, type ActiveSubagent } from "./subagent-reconciliation.ts";
 import { savedSubagentRuns } from "../piop-storage/subagent-results.ts";
 
-/** Emoji characters, flag letters and the marks that turn other characters into emojis. */
-const EMOJI = /[\p{Extended_Pictographic}\p{Regional_Indicator}\u{FE0F}\u{20E3}]/u;
+/** A subagent nickname: 1–8 characters on one line, not only spaces, and no emojis, flag letters or the marks that turn characters into emojis. Shown to the model as the name pattern. */
+const NICKNAME = String.raw`^(?=.*\S)[^\r\n\p{Extended_Pictographic}\p{Regional_Indicator}\u{FE0F}\u{20E3}]{1,8}$`;
 
 const MAX_DELEGATION_DEPTH = 2;
 
@@ -494,7 +494,7 @@ export function registerSubagents(pi: ExtensionAPI) {
     name: "spawn_subagents", label: "Spawn subagents",
     exposure: "model-only",
     description: "Start subagents in the background, each with its own task. A subagent starts with no history and none of your context, so give it everything it needs in task. Avoid giving two subagents overlapping edits. Agent picks a profile from list_agent_profiles; omit it to use your own.",
-    parameters: Type.Object({ tasks: Type.Array(Type.Object({ name: Type.String({ minLength: 1, maxLength: 8, pattern: "\\S", description: "Unique nickname of up to 8 characters without emojis, used to address this subagent" }), task: Type.String({ minLength: 1, maxLength: 100_000 }), agent: Type.Optional(Type.String({ minLength: 1 })) }), { minItems: 1 }) }),
+    parameters: Type.Object({ tasks: Type.Array(Type.Object({ name: Type.String({ pattern: NICKNAME, description: "Unique nickname of up to 8 characters without emojis, used to address this subagent" }), task: Type.String({ minLength: 1, maxLength: 100_000 }), agent: Type.Optional(Type.String({ minLength: 1 })) }), { minItems: 1 }) }),
     async execute(toolCallId, params, signal, onUpdate, ctx) {
       signal?.throwIfAborted();
 
@@ -503,7 +503,7 @@ export function registerSubagents(pi: ExtensionAPI) {
       if (!params.tasks.length || params.tasks.some((task) => !task.task.trim())) throw new Error("Provide at least one named, nonempty task");
 
       // A nickname is shown on its own line, as in "Subagent <name>:", so it cannot hold a line break.
-      if (params.tasks.some(task => [...task.name].length > 8 || !task.name.trim() || /[\r\n]/.test(task.name) || EMOJI.test(task.name))) throw new Error("Give each subagent a nickname of 1–8 characters on one line, without emojis");
+      if (params.tasks.some(task => !new RegExp(NICKNAME, "u").test(task.name))) throw new Error("Give each subagent a nickname of 1–8 characters on one line, without emojis");
 
       if (new Set(params.tasks.map(task => task.name)).size !== params.tasks.length) throw new Error("Give each subagent a different name");
 
