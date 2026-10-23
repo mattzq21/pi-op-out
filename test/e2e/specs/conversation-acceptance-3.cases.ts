@@ -104,7 +104,7 @@ describe("Conversation acceptance", () => {
       if (await enableDebug.isExisting()) await enableDebug.click();
       await expect($(".cache-hit-rate")).toHaveAttribute("aria-label", "Cache 75%, 3000/4000");
       await expect($(".session-cache-hit")).toBeDisplayed();
-      await expect($(".session-cache-hit")).toHaveAttribute("aria-label", "Cache 75%, 3000/4000 tokens");
+      await expect($(".session-cache-hit")).toHaveAttribute("aria-label", "Cache 75%, 3000/4000");
     } finally {
       await resetBackend();
       await app.refreshForReset();
