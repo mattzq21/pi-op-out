@@ -68,7 +68,7 @@ test.concurrent('a grandchild cannot start its own child, and its parents hear w
   agents.scripts.set('Delegate further', delegating('grandkid', 'Delegate once more'));
   agents.scripts.set('Delegate once more', messages => {
     const last = messages.at(-1);
-    if (!called(messages, 'spawn_subagents')) return { tool: 'spawn_subagents', arguments: { tasks: [{ name: 'too_deep', task: 'Unreachable task' }] } };
+    if (!called(messages, 'spawn_subagents')) return { tool: 'spawn_subagents', arguments: { tasks: [{ name: 'toodeep', task: 'Unreachable task' }] } };
     return { text: 'Relay: ' + text(last) };
   });
   const root = await agents.rootChat();
