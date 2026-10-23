@@ -227,11 +227,9 @@ const parentMessageSchema = Schema.Object({ message: Schema.String() });
 
 const resultDetailsSchema = Schema.Object({ runs: Schema.Array(Schema.Object({ name: Schema.String(), status: Schema.String(), agent: Schema.Optional(Schema.String()), output: Schema.Optional(Schema.String()) })) });
 
-const attribute = (value: string) => value.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;");
-
-/** A parent sees each finished subagent as a <subagent_response> tag holding its answer. */
+/** A parent sees each finished subagent's answer, and nothing else, in a <subagent_response> tag. */
 function subagentResponses(runs: Static<typeof resultDetailsSchema>["runs"]) {
-  return runs.map(run => `<subagent_response name="${attribute(run.name)}"${run.agent ? ` agent="${attribute(run.agent)}"` : ""} status="${attribute(run.status)}">\n${run.output ?? ""}\n</subagent_response>`).join("\n\n");
+  return runs.map(run => "<subagent_response>\n" + (run.output ?? "") + "\n</subagent_response>").join("\n\n");
 }
 
 /** The text the parent wrote, from a delivered agent message. */
