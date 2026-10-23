@@ -237,30 +237,36 @@ test('another client can archive a chat open by its owner, which stops the owner
 
 
 
-function publishedChat(content: string): { id: string; path: string } {
+function publishedChat(daemon: TestDaemon, content: string): { id: string; path: string } {
   return JSON.parse(execFileSync('node', [fileURLToPath(new URL('../fixtures/publish-chat.mjs', import.meta.url))], {
     encoding: 'utf8', timeout: 30000,
     input: JSON.stringify({ home: daemon.home, content: JSON.stringify({ type: 'message', id: 'question', parentId: null, message: { role: 'user', content } }) + '\n' }),
   }));
 }
 
-test('deleting an active chat removes it from the list and preserves another chat', async () => {
-  const target = publishedChat('Delete active chat');
-  const other = publishedChat('Keep active chat');
-  expect(await daemon.invoke('delete_session', { sessionPath: target.path, hostId: 'local', clientId: 'test-client' })).toEqual([target.path]);
-  expect(await daemon.waitEvent('pi://session-removed', payload => payload.sessionPath === target.path)).toEqual({ hostId: 'local', sessionPath: target.path, sessionId: target.id });
-  const rows = await daemon.invoke('list_sessions');
-  expect(rows.filter((row: any) => [target.id, other.id].includes(row.id)).map((row: any) => row.id)).toEqual([other.id]);
+test.concurrent('deleting an active chat removes it from the list and preserves another chat', async () => {
+  const daemon = await startDaemon();
+  try {
+    const target = publishedChat(daemon, 'Delete active chat');
+    const other = publishedChat(daemon, 'Keep active chat');
+    expect(await daemon.invoke('delete_session', { sessionPath: target.path, hostId: 'local', clientId: 'test-client' })).toEqual([target.path]);
+    expect(await daemon.waitEvent('pi://session-removed', payload => payload.sessionPath === target.path)).toEqual({ hostId: 'local', sessionPath: target.path, sessionId: target.id });
+    const rows = await daemon.invoke('list_sessions');
+    expect(rows.filter((row: any) => [target.id, other.id].includes(row.id)).map((row: any) => row.id)).toEqual([other.id]);
+  } finally { await daemon.stop(); }
 }, 60000);
 
-test('deleting an archived chat removes it from the report and preserves another archive', async () => {
-  const target = publishedChat('Delete archived chat');
-  const other = publishedChat('Keep archived chat');
-  for (const chat of [target, other]) await daemon.invoke('archive_session', { sessionPath: chat.path, hostId: 'local', terminalIds: [], clientId: 'test-client' });
-  const before = (await daemon.invoke('storage_report')).hosts.find((host: any) => host.hostId === 'local');
-  const path = before.archives.find((row: any) => row.id === target.id).path;
-  expect(await daemon.invoke('delete_archived_session', { sessionPath: path, hostId: 'local', clientId: 'test-client' })).toEqual([path]);
-  expect(await daemon.waitEvent('pi://session-removed', payload => payload.sessionPath === path)).toEqual({ hostId: 'local', sessionPath: path, sessionId: target.id });
-  const after = (await daemon.invoke('storage_report')).hosts.find((host: any) => host.hostId === 'local');
-  expect(after.archives.filter((row: any) => [target.id, other.id].includes(row.id)).map((row: any) => row.name)).toEqual(['Keep archived chat']);
+test.concurrent('deleting an archived chat removes it from the report and preserves another archive', async () => {
+  const daemon = await startDaemon();
+  try {
+    const target = publishedChat(daemon, 'Delete archived chat');
+    const other = publishedChat(daemon, 'Keep archived chat');
+    for (const chat of [target, other]) await daemon.invoke('archive_session', { sessionPath: chat.path, hostId: 'local', terminalIds: [], clientId: 'test-client' });
+    const before = (await daemon.invoke('storage_report')).hosts.find((host: any) => host.hostId === 'local');
+    const path = before.archives.find((row: any) => row.id === target.id).path;
+    expect(await daemon.invoke('delete_archived_session', { sessionPath: path, hostId: 'local', clientId: 'test-client' })).toEqual([path]);
+    expect(await daemon.waitEvent('pi://session-removed', payload => payload.sessionPath === path)).toEqual({ hostId: 'local', sessionPath: path, sessionId: target.id });
+    const after = (await daemon.invoke('storage_report')).hosts.find((host: any) => host.hostId === 'local');
+    expect(after.archives.filter((row: any) => [target.id, other.id].includes(row.id)).map((row: any) => row.name)).toEqual(['Keep archived chat']);
+  } finally { await daemon.stop(); }
 }, 60000);
