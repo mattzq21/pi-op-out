@@ -5,6 +5,9 @@ import { randomUUID } from "node:crypto";
 import { setTimeout as delay } from "node:timers/promises";
 import { branchEntries, interruptSession, sendSessionMessage, sessionSnapshot, snapshotStatus } from "./orchestration.ts";
 import { saveRun, type SubagentRun } from "./subagent-state.ts";
+
+/** How long one subagent run may take before it is stopped. */
+const SUBAGENT_RUN_LIMIT_MS = 60 * 60_000;
 import { activeConversation } from "./conversation-location.ts";
 
 const assistantSchema = Schema.Object({ role: Schema.Literal("assistant"), stopReason: Schema.String(), errorMessage: Schema.Optional(Schema.String()), content: Schema.Array(Schema.Unknown()) });
@@ -152,7 +155,7 @@ class SubagentObserver {
     const deliveryId = this.run.deliveryIds?.at(-1);
 
     if (!deliveryId) throw new Error("Submitted subagent task has no saved delivery ID");
-    const remaining = this.run.startedAt + 600_000 - Date.now();
+    const remaining = this.run.startedAt + SUBAGENT_RUN_LIMIT_MS - Date.now();
 
     if (remaining <= 0) throw new Error("Subagent task delivery timed out");
     const signal = AbortSignal.any([this.observation.signal, AbortSignal.timeout(remaining)]);
@@ -223,9 +226,9 @@ class SubagentObserver {
 
       signal.throwIfAborted();
 
-      if ((this.polled || this.run.submission === "submitted") && Date.now() >= this.run.startedAt + 600_000) {
+      if ((this.polled || this.run.submission === "submitted") && Date.now() >= this.run.startedAt + SUBAGENT_RUN_LIMIT_MS) {
         this.run.cancelRequested = true;
-        this.run.cancelReason = "Subagent timed out after ten minutes";
+        this.run.cancelReason = "Subagent timed out after 60 minutes";
         this.save();
         continue;
       }
