@@ -8,7 +8,7 @@ import { required } from "./lib/required";
 import { trackToastMessage, trackToastNotices } from "./lib/toastHistory";
 import { Key,Rerun } from "@solid-primitives/keyed";
 import { Archive,ArrowLeft,Bug,FolderPlus,MessageSquare,Server,Settings } from "lucide-solid";
-import { batch,createEffect,createMemo,lazy,Show } from "solid-js";
+import { batch,createComponent,createEffect,createMemo,lazy,onCleanup,Show } from "solid-js";
 import { createAppConversations } from "./appConversations";
 import { AppLoading,LimitBadge,splitConversationKey } from "./appSupport";
 import { FindInPage } from "./components/FindInPage";
@@ -30,20 +30,19 @@ const LocalSettingsView = lazy(() => import("./components/LocalSettingsView").th
 
 const TerminalView = lazy(() => import("./components/TerminalView").then(module => ({ default: module.TerminalView })));
 
-let settingsPreloaded = false;
-
-/** Once the chat view is loaded, loads the settings page and the local host's settings data in the background, so settings open without waiting. */
 function preloadSettings() {
-  if (settingsPreloaded) return;
-  settingsPreloaded = true;
-  // A short delay lets the chat view finish its own startup first.
-  setTimeout(() => {
+  let disposed = false;
+  const timer = setTimeout(() => {
     void import("./components/LocalSettingsView").catch(reason => console.error("Could not preload the settings page:", reason));
-    void import("./lib/settingsResources").then(module => module.preloadSettingsResources(), reason => console.error("Could not preload the settings data:", reason));
+    void import("./lib/settingsResources").then(module => { if (!disposed) module.preloadSettingsResources(); }, reason => console.error("Could not preload the settings data:", reason));
   }, 1000);
+  onCleanup(() => { disposed = true; clearTimeout(timer); });
 }
 
-const ChatView = lazy(() => import("./components/ChatView").then(module => { preloadSettings(); return { default: module.ChatView }; }));
+const ChatView = lazy(() => import("./components/ChatView").then(module => ({ default: (props: Parameters<typeof module.ChatView>[0]) => {
+  preloadSettings();
+  return createComponent(module.ChatView, props);
+} })));
 
 const ExtensionDialog = lazy(() => import("./components/ExtensionDialog").then(module => ({ default: module.ExtensionDialog })));
 
