@@ -376,10 +376,10 @@ function registerDelivery(pi: ExtensionAPI) {
   });
 }
 
-/** How long wait_peers waits when the agent gives no timeoutMs. */
+/** How long await_peers waits when the agent gives no timeoutMs. */
 const DEFAULT_WAIT_MS = 5 * 60_000;
 
-/** The longest wait_peers waits, whatever timeoutMs asks for. The tool definition leaves it out. */
+/** The longest await_peers waits, whatever timeoutMs asks for. The tool definition leaves it out. */
 const MAX_WAIT_MS = 6 * 60 * 60_000;
 
 export function registerOrchestration(pi: ExtensionAPI) {
@@ -484,7 +484,7 @@ export function registerOrchestration(pi: ExtensionAPI) {
     },
   });
   pi.registerTool({
-    name: "wait_peers", label: "Wait for peers", exposure: "model-only", description: "Wait until any of the given peers finishes its work (for: \"any\", the default) or until all of them finish (for: \"all\"), until a new user message arrives, or until timeoutMs passes (default 300000). Returns the new answers of the peers that finished.",
+    name: "await_peers", label: "Await peers", exposure: "model-only", description: "Wait until any of the given peers finishes its work (for: \"any\", the default) or until all of them finish (for: \"all\"), until a new user message arrives, or until timeoutMs passes (default 300000). Returns the new answers of the peers that finished.",
     parameters: Type.Object({ targets: Type.Array(Type.Object(address), { minItems: 1 }), for: Type.Optional(Type.Union([Type.Literal("any"), Type.Literal("all")])), timeoutMs: Type.Optional(Type.Integer({ minimum: 0 })) }),
     async execute(_id, params, signal, _update, ctx) {
       requireRootCaller(ctx);

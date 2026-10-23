@@ -15,7 +15,7 @@ const toolText = (messages: any[], tool: string) => {
   return call && text(messages.find(message => message.role === 'tool' && message.tool_call_id === call.id));
 };
 const toolResult = (messages: any[], tool: string) => JSON.parse(toolText(messages, tool));
-/** The answer in a wait_peers result. */
+/** The answer in an await_peers result. */
 const peerAnswer = (result: string) => result.match(/^<peer_message>\nPeer [^\n]+:\n([\s\S]*)\n<\/peer_message>$/)?.[1];
 
 test.concurrent('a chat can message another chat, wait for its answer and read it', async () => {
@@ -27,7 +27,7 @@ test.concurrent('a chat can message another chat, wait for its answer and read i
   const coordinator = await agents.rootChat();
   agents.scripts.set('Check on the worker', messages => {
     if (!called(messages, 'message_peer')) return { tool: 'message_peer', arguments: { peerId: worker.sessionId, message: 'What is the build status?' } };
-    if (!called(messages, 'wait_peers')) return { tool: 'wait_peers', arguments: { targets: [{ peerId: worker.sessionId }], timeoutMs: 60000 } };
+    if (!called(messages, 'await_peers')) return { tool: 'await_peers', arguments: { targets: [{ peerId: worker.sessionId }], timeoutMs: 60000 } };
     if (!called(messages, 'read_peer')) return { tool: 'read_peer', arguments: { peerId: worker.sessionId, limit: 2 } };
     return { text: 'Relay: ' + toolResult(messages, 'read_peer').items.at(-1).text };
   });
@@ -36,7 +36,7 @@ test.concurrent('a chat can message another chat, wait for its answer and read i
   expect(text(messages.at(-1))).toBe('Relay: Worker status: green');
   const seen = agents.model.requests.findLast(request => startedWith(request, 'Check on the worker')).messages;
   expect(toolResult(seen, 'message_peer')).toMatchObject({ sessionId: worker.sessionId, accepted: true });
-  expect(toolText(seen, 'wait_peers')).toBe('<peer_message>\nPeer ' + worker.sessionId + ':\nWorker status: green\n</peer_message>');
+  expect(toolText(seen, 'await_peers')).toBe('<peer_message>\nPeer ' + worker.sessionId + ':\nWorker status: green\n</peer_message>');
   const delivered = JSON.parse(toolResult(seen, 'read_peer').items[0].text);
   // The chat view shows the sender from sourceHostId and sourceSessionId.
   expect(delivered).toMatchObject({ sourceSessionId: coordinator.sessionId, sourceHostId: 'local', message: 'What is the build status?' });
@@ -45,7 +45,7 @@ test.concurrent('a chat can message another chat, wait for its answer and read i
   expect([workerSaw.role, text(workerSaw)]).toEqual(['user', '<peer_message>\nPeer ' + (coordinator.name ?? coordinator.sessionId) + ':\nWhat is the build status?\n</peer_message>']);
 }, 120000);
 
-test.concurrent('wait_peers with for: "all" waits until every listed peer has finished', async () => {
+test.concurrent('await_peers with for: "all" waits until every listed peer has finished', async () => {
   const fast = await agents.rootChat();
   const slow = await agents.rootChat();
   agents.scripts.set('You are fast', messages => ({ text: text(messages.at(-1)).includes('Report') ? 'Fast done' : 'Ready.' }));
@@ -62,13 +62,13 @@ test.concurrent('wait_peers with for: "all" waits until every listed peer has fi
   agents.scripts.set('Wait for both', messages => {
     if (!called(messages, 'message_peer')) return { tool: 'message_peer', arguments: { peerId: fast.sessionId, message: 'Report' } };
     if (messages.filter((message: any) => message.role === 'tool').length < 2) return { tool: 'message_peer', arguments: { peerId: slow.sessionId, message: 'Report' } };
-    if (!called(messages, 'wait_peers')) return { tool: 'wait_peers', arguments: { targets: [{ peerId: fast.sessionId }, { peerId: slow.sessionId }], for: 'all', timeoutMs: 60000 } };
+    if (!called(messages, 'await_peers')) return { tool: 'await_peers', arguments: { targets: [{ peerId: fast.sessionId }, { peerId: slow.sessionId }], for: 'all', timeoutMs: 60000 } };
     return { text: 'Waited.' };
   });
   await coordinator.command({ type: 'prompt', message: 'Wait for both' });
   await coordinator.until(history => text(history.at(-1)) === 'Waited.');
   const seen = agents.model.requests.findLast(request => startedWith(request, 'Wait for both')).messages;
-  const waited = toolText(seen, 'wait_peers');
+  const waited = toolText(seen, 'await_peers');
   expect(waited).toContain('Fast done');
   expect(waited).toContain('Slow done');
 }, 120000);
@@ -102,8 +102,8 @@ test.concurrent('a chat can start a new independent chat that works on its promp
   agents.scripts.set('Open a release chat', messages => {
     if (!called(messages, 'create_peer')) return { tool: 'create_peer', arguments: { title: 'Release notes', message: 'Draft the release notes' } };
     const created = toolResult(messages, 'create_peer');
-    if (!called(messages, 'wait_peers')) return { tool: 'wait_peers', arguments: { targets: [{ peerId: created.peerId }], timeoutMs: 60000 } };
-    return { text: 'Relay: ' + peerAnswer(toolText(messages, 'wait_peers')) };
+    if (!called(messages, 'await_peers')) return { tool: 'await_peers', arguments: { targets: [{ peerId: created.peerId }], timeoutMs: 60000 } };
+    return { text: 'Relay: ' + peerAnswer(toolText(messages, 'await_peers')) };
   });
   agents.scripts.set('Draft the release notes', () => ({ text: 'Notes drafted.' }));
   await coordinator.command({ type: 'prompt', message: 'Open a release chat' });
@@ -268,7 +268,7 @@ test.concurrent('a chat that tries to message itself is told to choose another c
 test.concurrent('messaging or waiting for a chat that does not exist tells the agent so in plain words', async () => {
   const missing = '11111111-2222-3333-4444-555555555555';
   agents.scripts.set('Message a missing chat', messages => called(messages, 'message_peer') ? { text: 'Told: ' + text(messages.at(-1)) } : { tool: 'message_peer', arguments: { peerId: missing, message: 'Hello?' } });
-  agents.scripts.set('Wait for a missing chat', messages => called(messages, 'wait_peers') ? { text: 'Told: ' + text(messages.at(-1)) } : { tool: 'wait_peers', arguments: { targets: [{ peerId: missing }], timeoutMs: 2000 } });
+  agents.scripts.set('Wait for a missing chat', messages => called(messages, 'await_peers') ? { text: 'Told: ' + text(messages.at(-1)) } : { tool: 'await_peers', arguments: { targets: [{ peerId: missing }], timeoutMs: 2000 } });
   const sender = await agents.rootChat();
   await sender.command({ type: 'prompt', message: 'Message a missing chat' });
   expect(text((await sender.until(messages => text(messages.at(-1)).startsWith('Told: '))).at(-1))).toBe('Told: Conversation was not found in active or archived storage');

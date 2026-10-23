@@ -43,7 +43,7 @@ export async function createProfileSession(pi: ExtensionAPI, ctx: ExtensionConte
 
 /** The tools that make a tool group on for an agent. One tool of a group is enough. */
 export const SUBAGENT_TOOLS = ["spawn_subagents", "message_subagent", "stop_subagent", "list_subagents", "await_subagents"];
-export const PEER_TOOLS = ["create_peer", "branchoff_peer", "message_peer", "stop_peer", "list_peers", "read_peer", "wait_peers"];
+export const PEER_TOOLS = ["create_peer", "branchoff_peer", "message_peer", "stop_peer", "list_peers", "read_peer", "await_peers"];
 
 /** Which agents list_agent_profiles lists: for one start purpose, or for both, chosen by an argument. */
 export type AgentProfilesMode = AgentStartPurpose | "both";
