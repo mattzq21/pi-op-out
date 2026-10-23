@@ -1,4 +1,4 @@
-import { spawn } from 'node:child_process';
+import { createServer } from 'vite';
 import { mkdtemp } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -9,18 +9,13 @@ const screenshots = await mkdtemp(join(tmpdir(), 'piop-mobile-ui-'));
 
 const chromePath = process.env.CHROME_PATH || chromium.executablePath();
 
-const server = spawn(process.execPath, ['node_modules/vite/bin/vite.js', '--mode', 'mobile', '--host', '127.0.0.1', '--port', '1424', '--strictPort'], { stdio: 'ignore' });
+const server = await createServer({ mode: 'mobile', server: { host: '127.0.0.1', port: 0, strictPort: true } });
 
 let browser, page;
 const unknownCommands = new Set();
 
 try {
- for (let attempt = 0; attempt < 60; attempt++) {
-  try { if ((await fetch('http://127.0.0.1:1424')).ok) break; } catch { }
-
-  await new Promise(resolve => setTimeout(resolve, 250));
- }
-
+ await server.listen();
  browser = await chromium.launch({ executablePath: chromePath, headless: true, args: ['--no-sandbox'] });
  page = await browser.newPage({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
  const errors=[]; page.on('pageerror', error=>errors.push(error.stack));
@@ -77,7 +72,7 @@ try {
    ws.send(JSON.stringify({id:m.id,result}));
   });
  });
- await page.goto('http://127.0.0.1:1424');
+ await page.goto(server.resolvedUrls.local[0]);
  await page.getByLabel('Anchor host address').fill('wss://piop.example.test');
  await page.getByLabel('Host name').fill('Test workspace');
  await page.screenshot({path:join(screenshots,'pairing.png')});
@@ -138,4 +133,6 @@ try {
   console.error(await page?.locator('body').innerText({timeout:2000}));
  } catch (diagnosticError) { console.error('Could not collect failure diagnostics:', diagnosticError); }
  throw error;
-} finally {await browser?.close(); server.kill();}
+} finally {
+ try { await browser?.close(); } finally { await server.close(); }
+}
