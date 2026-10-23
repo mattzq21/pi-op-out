@@ -152,6 +152,7 @@ test('Ctrl G asks before discarding unsaved settings and focuses conversation se
 
 test('an open project dialog blocks the settings shortcut until the dialog is closed', async t => {
   const page = await appBrowser(t, { keybindings: { openSettings: 'Alt+J' } });
+  await page.getByRole('region', { name: 'Conversation workspace ready', exact: true }).waitFor({ timeout: 30000 });
   const editor = page.getByRole('textbox', { name: 'Message piop', exact: true });
   const goBack = page.getByRole('button', { name: 'Go back', exact: true });
   await editor.fill('Keep this draft');
