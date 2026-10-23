@@ -9,3 +9,5 @@
 .subagent-completed { color: var(--green); }
 .subagent-running { color: var(--running); }
 .subagent-failed { color: #d77865; }
+/* Finished subagents start a turn, so they show on the right in a bubble like a user message. */
+.conversation-turn > .subagent-timeline { align-self: flex-end; width: fit-content; max-width: min(82%, 600px); margin-left: auto; padding: 8px 12px; border: 1px solid #393732; border-radius: 12px 4px 12px 12px; background: #24231f; font-size: 13px; }
