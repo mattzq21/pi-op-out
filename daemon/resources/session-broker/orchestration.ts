@@ -495,8 +495,7 @@ export function registerOrchestration(pi: ExtensionAPI) {
       const deadline = Date.now() + timeoutMs;
       const revision = inputRevision;
       const stop = new AbortController();
-      // A timer longer than setTimeout allows is left to the loop, which checks the deadline every second.
-      const timer = !timeoutMs || timeoutMs > 0x7fffffff ? undefined : setTimeout(() => stop.abort(new Error("Wait timed out")), deadline - Date.now());
+      const timer = timeoutMs === 0 ? undefined : setTimeout(() => stop.abort(new Error("Wait timed out")), deadline - Date.now());
       const onInput = () => stop.abort(new Error("Wait interrupted by new input"));
       inputListeners.add(onInput);
 
