@@ -243,7 +243,10 @@ async function waitSnapshot(targets: Target[], signal: AbortSignal | undefined, 
 const STATUS_NOTES: Record<string, string> = { paused: " (paused)" };
 
 /** The new answers of the chats that finished, each in a <peer_message> tag with the chat's name on the first line. */
-function peerAnswers(snapshot: Awaited<ReturnType<typeof waitSnapshot>>, interrupted: boolean) {
+/** What ended a wait besides the peers: a message from the user, or a message from another chat. */
+type Interruption = "user" | "mail" | undefined;
+
+function peerAnswers(snapshot: Awaited<ReturnType<typeof waitSnapshot>>, interruption: Interruption) {
   const answers = snapshot.polls.filter(item => item.peer.status !== "running" && item.changed).map(item => {
     const answer = item.answer.length > 16_000 ? item.answer.slice(0, 16_000) + "\n[Answer truncated.]" : item.answer;
 
@@ -252,7 +255,8 @@ function peerAnswers(snapshot: Awaited<ReturnType<typeof waitSnapshot>>, interru
   const errors = snapshot.errors.map(item => "Peer " + item.peerId + ": " + item.error);
   const parts = [...answers, ...errors];
 
-  if (interrupted) parts.push("The user sent a new message.");
+  if (interruption === "user") parts.push("The user sent a new message.");
+  if (interruption === "mail") parts.push("A message from a peer arrived.");
 
   return parts.length ? parts.join("\n\n") : "No peer finished before the wait ended.";
 }
@@ -399,11 +403,11 @@ export function registerOrchestration(pi: ExtensionAPI) {
   registerDelivery(pi);
   /** The last answer each wait returned, by waiting chat and target chat. */
   const seenAnswers = new Map<string, string>();
-  let inputRevision = 0;
+  const revisions = { user: 0, mail: 0 };
   const inputListeners = new Set<() => void>();
-  const newInput = () => { inputRevision++; for (const listener of inputListeners) listener(); };
-  pi.on("input", event => { if (event.source !== "extension") newInput(); });
-  const unsubscribeMail = pi.events.on("piop:agent-mail", newInput);
+  const newInput = (kind: "user" | "mail") => { revisions[kind]++; for (const listener of inputListeners) listener(); };
+  pi.on("input", event => { if (event.source !== "extension") newInput("user"); });
+  const unsubscribeMail = pi.events.on("piop:agent-mail", () => newInput("mail"));
   pi.on("session_shutdown", unsubscribeMail);
   pi.registerTool({
     name: "create_peer", label: "Create peer", exposure: "model-only",
@@ -506,14 +510,17 @@ export function registerOrchestration(pi: ExtensionAPI) {
       const targets = params.targets.map(target => ({ ...target, afterCursor: seenAnswers.get(key(target)) }));
       const timeoutMs = Math.min(params.timeoutMs ?? DEFAULT_WAIT_MS, MAX_WAIT_MS);
       const deadline = Date.now() + timeoutMs;
-      const revision = inputRevision;
+      const start = { ...revisions };
       const stop = new AbortController();
       const timer = timeoutMs === 0 ? undefined : setTimeout(() => stop.abort(new Error("Wait timed out")), deadline - Date.now());
       const onInput = () => stop.abort(new Error("Wait interrupted by new input"));
       inputListeners.add(onInput);
 
       const finish = (snapshot: Awaited<ReturnType<typeof waitSnapshot>>) => {
-        const interrupted = inputRevision !== revision || ctx.hasPendingMessages();
+        // Mail also waits as a pending message, so pending messages count as the user's only when no mail came.
+        const mail = revisions.mail !== start.mail;
+        const interruption: Interruption = revisions.user !== start.user || (!mail && ctx.hasPendingMessages()) ? "user" : mail ? "mail" : undefined;
+        const interrupted = interruption !== undefined;
         // With for: "all", a peer that cannot be read counts as done, so the wait still ends when the others finish.
         const failed = params.for === "all" ? snapshot.errors.length === params.targets.length : snapshot.errors.length > 0;
         const actionable = Boolean(snapshot.wake || failed || interrupted);
@@ -523,7 +530,7 @@ export function registerOrchestration(pi: ExtensionAPI) {
         // An answer returned once is not returned again by a later wait.
         for (const item of snapshot.polls) if (item.peer.status !== "running" && item.changed) seenAnswers.set(key({ peerId: item.peer.id, hostId: item.peer.hostId }), item.cursor);
 
-        return { content: [{ type: "text" as const, text: peerAnswers(snapshot, interrupted) }], details: { interrupted, ...snapshot } };
+        return { content: [{ type: "text" as const, text: peerAnswers(snapshot, interruption) }], details: { interrupted, ...snapshot } };
       };
 
       try {
