@@ -212,10 +212,15 @@ function projectSeed(session: SessionSummary, listed: Set<string>): SessionSeed 
   };
 }
 
-/** Registers the project of each listed chat that has no group yet, and reports a change to clients. */
+/**
+ * Registers the project of each listed chat that has no assignment yet, and reports a change to clients.
+ * The groups file is locked and written only when such a chat shows up. A removed project stays removed.
+ */
 export async function registerProjects(app: App, sessions: SessionSummary[]): Promise<void> {
   const listed = new Set(sessions.map(session => `${session.hostId}:${session.id}`));
-  const seeds = sessions.map(session => projectSeed(session, listed)).filter((seed): seed is SessionSeed => seed !== undefined);
+  const known = await STORAGE_LOCK.run(() => read(storagePath())?.assignments);
+  const seeds = sessions.filter(session => !known?.has(`${session.hostId}:${session.id}`))
+    .map(session => projectSeed(session, listed)).filter((seed): seed is SessionSeed => seed !== undefined);
   if (!seeds.length) return;
   const result = await STORAGE_LOCK.run(() => loadAt(storagePath(), seeds));
   if (result.dirty) app.emit('pi://groups-changed', serializeGroups(result.state));
@@ -268,7 +273,6 @@ async function loadAt(path: string, allSeeds: SessionSeed[]): Promise<{ state: S
     const stored = read(path);
     let dirty = stored === undefined;
     const state = stored ?? emptyGroups();
-    dirty = restoreSuppressedProjects(state, seeds) || dirty;
     for (const seed of seeds) {
       dirty = updateSeedMetadata(state, seed) || dirty;
       if (seed.parentKey === undefined) dirty = assignSeed(state, seed) || dirty;
@@ -281,16 +285,6 @@ async function loadAt(path: string, allSeeds: SessionSeed[]): Promise<{ state: S
     if (dirty) write(path, state);
     return { state, dirty };
   } finally { lock.release(); }
-}
-
-function restoreSuppressedProjects(state: SessionGroups, seeds: SessionSeed[]): boolean {
-  if (state.removedProjects.size === 0) return false;
-  for (const seed of seeds) {
-    if (state.removedProjects.has(seed.project.id) && state.assignments.has(seed.sessionKey) && state.assignments.get(seed.sessionKey) === null) state.assignments.delete(seed.sessionKey);
-  }
-  const previous = state.removedProjects.size;
-  for (const seed of seeds) state.removedProjects.delete(seed.project.id);
-  return state.removedProjects.size !== previous;
 }
 
 export async function changeSessionGroups(app: App, change: GroupChange): Promise<SessionGroups> {
@@ -375,8 +369,11 @@ function renameGroup(state: SessionGroups, id: string, raw: string): void {
   group.name = name;
 }
 
+/** Removing a project group keeps it removed: chats listed later in its folder get no group until the user adds the project again. */
 function removeGroup(state: SessionGroups, id: string): void {
-  if (!state.groups.some(group => group.id === id)) throw new Error('Group no longer exists');
+  const removed = state.groups.find(group => group.id === id);
+  if (!removed) throw new Error('Group no longer exists');
+  if (removed.cwd) state.removedProjects.add(id);
   state.groups = state.groups.filter(group => group.id !== id);
   for (const [child, parent] of [...state.parents]) if (child === id || parent === id) state.parents.delete(child);
   for (const [key, destination] of state.assignments) if (destination === id) state.assignments.set(key, null);

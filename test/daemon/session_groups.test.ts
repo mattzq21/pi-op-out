@@ -15,11 +15,13 @@ const load = (seeds: any[] = []) => daemon.invoke('load_session_groups', { seeds
 const change = (value: any) => daemon.invoke('change_session_groups', { change: value });
 const project = (id: string, name: string, cwd: string | null, hostId: string | null = 'local', hostName: string | null = null) => ({ id, name, cwd, hostId, hostName });
 const names = (state: any) => state.groups.map((group: any) => group.name);
-/** Deletes every group so each test starts from an empty but loaded state. */
+/** Deletes every group, and forgets removed projects, so each test starts from an empty but loaded state. */
 async function reset(): Promise<any> {
   let state = await load();
   for (const group of state.groups) state = await change({ type: 'remove', id: group.id });
-  return state;
+  const db = new Database(join(daemon.home, '.piop/sessions.sqlite'));
+  try { db.exec('DELETE FROM session_group_removed_projects'); } finally { db.close(); }
+  return load();
 }
 
 // Assignments of sessions that do not exist on their machine are cleaned up, so tests use real session IDs.
@@ -42,6 +44,21 @@ test('concurrent group changes keep every update and tell clients each saved sta
   await daemon.waitEvent('pi://groups-changed', payload => payload.groups.length === 12);
   const notified = daemon.events.slice(start).filter(event => event.event === 'pi://groups-changed').map(event => event.payload.groups.length);
   expect(notified).toEqual(Array.from({ length: 12 }, (_, index) => index + 1));
+});
+
+test('a removed project is not registered again when its chats are listed', async () => {
+  await reset();
+  const folder = join(daemon.home, 'removed-project'); mkdirSync(folder, { recursive: true });
+  const first = publicSession(folder);
+  await waitForSessions(daemon, rows => rows.some(row => row.id === first.id));
+  await daemon.waitEvent('pi://groups-changed', payload => payload.groups.some((group: any) => group.cwd === folder));
+  const removed = await change({ type: 'remove', id: 'local:' + folder });
+  expect(removed.groups.some((group: any) => group.cwd === folder)).toBe(false);
+  const second = publicSession(folder);
+  await waitForSessions(daemon, rows => rows.some(row => row.id === second.id));
+  const after = await daemon.invoke('load_session_groups', { seeds: [] });
+  expect(after.groups.some((group: any) => group.cwd === folder)).toBe(false);
+  expect(after.assignments['local:' + second.id]).toBeNull();
 });
 
 test('listing a chat in an unseen folder registers its project without a client', async () => {
@@ -87,22 +104,22 @@ test('the session list shows the group of each session by machine and session', 
   expect(state.assignments['local:' + shared.id]).toBe(first);
 });
 
-test('removing a project ungroups its sessions but lets new sessions discover it again', async () => {
+test('removing a project ungroups its sessions and keeps it removed until it is added again', async () => {
   await reset();
   const repo = join(daemon.home, 'repo'); mkdirSync(repo, { recursive: true });
   const first = publicSession(repo); const second = publicSession(repo);
   const repository = () => project('local:' + repo, 'Repository', repo);
   await change({ type: 'project', project: repository(), key: 'local:' + first.id });
   const removed = await change({ type: 'remove', id: 'local:' + repo });
-  expect(removed.groups).toEqual([]); expect(removed.removedProjects).toEqual([]);
+  expect(removed.groups).toEqual([]); expect(removed.removedProjects).toEqual(['local:' + repo]);
   expect(removed.assignments['local:' + first.id]).toBeNull();
   const discovered = await load([{ sessionKey: 'local:' + second.id, project: repository() }]);
-  expect(discovered.groups).toHaveLength(1);
-  expect(discovered.assignments['local:' + second.id]).toBe('local:' + repo);
+  expect(discovered.groups).toHaveLength(0);
+  expect(discovered.assignments['local:' + second.id]).toBeNull();
+  await change({ type: 'assign', key: 'local:' + second.id, group: null });
   const restored = await change({ type: 'project', project: repository(), key: 'local:' + first.id });
   expect(restored.groups).toHaveLength(1); expect(restored.removedProjects).toEqual([]);
   expect(restored.assignments['local:' + first.id]).toBe('local:' + repo);
-  expect(restored.assignments['local:' + second.id]).toBe('local:' + repo);
   await change({ type: 'assign', key: 'local:' + first.id, group: null });
   const reloaded = await load([{ sessionKey: 'local:' + first.id, project: repository() }]);
   expect(reloaded.assignments['local:' + first.id]).toBeNull();
@@ -138,11 +155,11 @@ test('loading assigns new sessions to their projects and keeps explicit ungroupi
     { sessionKey: 'local:' + created.id, project: project('local:' + fresh, 'New', fresh) },
     { sessionKey: 'local:' + returned.id, project: project('local:' + forgotten, 'Forgotten', forgotten) },
   ]);
-  expect(names(state)).toEqual(['Forgotten', 'New', 'repo']);
+  expect(names(state)).toEqual(['New', 'repo']);
   expect(state.assignments['local:' + created.id]).toBe('local:' + fresh);
   expect(state.assignments['local:' + ungrouped.id]).toBeNull();
-  expect(state.assignments['local:' + returned.id]).toBe('local:' + forgotten);
-  expect(state.removedProjects).toEqual([]);
+  expect(state.assignments['local:' + returned.id]).toBeNull();
+  expect(state.removedProjects).toEqual(['local:' + forgotten]);
   expect(await load()).toEqual(state);
 });
 

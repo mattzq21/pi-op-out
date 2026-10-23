@@ -1,11 +1,11 @@
 import { randomUUID } from 'node:crypto';
-import { existsSync } from 'node:fs';
 import { flag, text } from './json';
 import { ownershipError } from './ownership';
 import { isUuid } from './protocol';
 import { attach } from './attachment';
 import { queueCommand } from './session_commands';
 import * as storageTransactions from '../storage_transactions';
+import { CommandRefusedError } from '../pi_rejection';
 import * as Worktrees from '../chat_worktree_records';
 import * as Registry from '../session_registry';
 import { detectRepository } from '../chat_worktrees';
@@ -22,6 +22,8 @@ const CANCELLED_DELIVERY_TTL_MS = 10 * 60_000;
  */
 export class Orchestration {
   private deliveries = new Map<string, Set<string>>();
+  /** What became of each first message of a branched-off peer: given to Pi, accepted by it, or refused by it. */
+  private branchDeliveries = new Map<string, 'dispatched' | 'accepted' | 'refused'>();
   private cancelledDeliveries = new Map<string, number>();
 
   constructor(private host: Host) {}
@@ -38,7 +40,7 @@ export class Orchestration {
     const action = text(packet, 'action');
     if (action === 'locate') return host.ownership().lookup(id);
     if (action === 'branch_off') return this.branchOff(id);
-    if (action === 'abandon_branch') return this.abandonBranch(id, text(packet, 'sessionPath'));
+    if (action === 'abandon_branch') return this.abandonBranch(id, text(packet, 'sessionPath'), text(packet, 'deliveryId'));
     if (action === 'interrupt') {
       if (this.cancelDeliveries(id, typeof packet.deliveryId === 'string' ? packet.deliveryId : undefined)) return { sessionId: id, completed: false };
       return this.cancel(id);
@@ -178,13 +180,18 @@ export class Orchestration {
     }
   }
 
-  /** Undoes a branch-off whose first message did not arrive. One that did arrive, or still runs, is kept. Returns whether it was kept. */
-  private async abandonBranch(id: string, sessionPath: string): Promise<{ kept: boolean }> {
+  /**
+   * Undoes a branch-off whose first message did not arrive. Returns whether it was kept. The message counts as arrived
+   * when Pi accepted it, and also when it was given to Pi without an answer, since it may still be there.
+   */
+  private async abandonBranch(id: string, sessionPath: string, delivery: string): Promise<{ kept: boolean }> {
+    const outcome = this.branchDeliveries.get(delivery);
+    this.branchDeliveries.delete(delivery);
     const root = this.host.storageRoot();
     const record = Worktrees.read(id, root);
     if (record?.state !== 'preparing') return { kept: record !== null };
     const session = this.host.findSession(id);
-    const arrived = Boolean(session && !session.closed()) || existsSync(sessionPath.replace(/\.jsonl$/, '.snapshots/mailbox'));
+    const arrived = Boolean(session && !session.closed()) || outcome === 'accepted' || outcome === 'dispatched';
     if (arrived) { Worktrees.activate(id, root); return { kept: true }; }
     await Worktrees.abandonCreation(id, sessionPath, root);
     return { kept: false };
@@ -220,7 +227,22 @@ export class Orchestration {
     await session.settings.reconcile(false);
     const error = session.settings.error();
     if (error !== null) throw new Error(error);
-    if (this.deliveryCancelled(text(packet, 'deliveryId'))) throw new Error('Agent delivery was cancelled');
+    const delivery = text(packet, 'deliveryId');
+    if (this.deliveryCancelled(delivery)) throw new Error('Agent delivery was cancelled');
+    const branch = Worktrees.read(text(packet, 'sessionKey'), this.host.storageRoot())?.state === 'preparing';
+    if (!branch) return this.queue(session, packet);
+    this.branchDeliveries.set(delivery, 'dispatched');
+    try {
+      const result = await this.queue(session, packet);
+      this.branchDeliveries.set(delivery, 'accepted');
+      return result;
+    } catch (error) {
+      if (error instanceof CommandRefusedError) this.branchDeliveries.set(delivery, 'refused');
+      throw error;
+    }
+  }
+
+  private queue(session: Session, packet: any): Promise<any> {
     return queueCommand(session, { type: 'orchestration_message', deliveryId: packet.deliveryId ?? null, sourceSessionId: packet.sourceSessionId ?? null,
       sourceHostId: packet.sourceHostId ?? null, message: packet.message ?? null, wake: packet.wake ?? null, ...(packet.deliverAs ? { deliverAs: packet.deliverAs } : {}),
       ...(typeof packet.sourceName === 'string' ? { sourceName: packet.sourceName } : {}) });

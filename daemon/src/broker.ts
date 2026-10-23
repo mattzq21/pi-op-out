@@ -220,7 +220,7 @@ async function brokerBranchOff(app: App, broker: BrokerRuntime, value: any, host
   catch (error: any) {
     const reason = error?.message ?? String(error);
     let kept: boolean;
-    try { kept = (await connection.request({ type: 'orchestration', action: 'abandon_branch', sessionKey: peerId, sessionPath: created.sessionPath }))?.kept === true; }
+    try { kept = (await connection.request({ type: 'orchestration', action: 'abandon_branch', sessionKey: peerId, sessionPath: created.sessionPath, deliveryId: value.deliveryId }))?.kept === true; }
     catch (cleanup: any) { throw new Error(`The peer ${peerId} was created, but its first message failed and cleanup failed: ${reason}; ${cleanup?.message ?? cleanup}`); }
     throw new Error(kept ? `The peer ${peerId} exists, but its first message may not have arrived: ${reason}` : `The peer was not created: ${reason}`);
   }
