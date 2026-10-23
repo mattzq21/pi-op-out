@@ -157,7 +157,7 @@ if __name__ == '__main__':
         failed = 0
         def run(name):
             return subprocess.run([sys.executable, __file__, 'Cleanup.' + name], capture_output=True, text=True)
-        with ThreadPoolExecutor(max_workers=4) as workers:
+        with ThreadPoolExecutor(max_workers=8) as workers:
             pending = {workers.submit(run, name): name for name in names}
             for future in as_completed(pending):
                 result = future.result()
