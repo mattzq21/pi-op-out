@@ -46,10 +46,15 @@ test.concurrent('a child cut off by a daemon restart is reported to its parent a
   try {
     await agents.enableAgentTools('subagent');
     const job = await stoppedJob('survivor-late.txt', jobs);
+    const childReady = Promise.withResolvers<void>();
     agents.scripts.set('Delegate across a restart', messages => called(messages, 'spawn_agent') ? { text: 'Parent saw: ' + text(messages.at(-1)) } : { tool: 'spawn_agent', arguments: { task_name: 'survivor', message: 'Survivor job' } });
-    agents.scripts.set('Survivor job', messages => called(messages, 'bash') ? { text: 'Relay: survived' } : { tool: 'bash', arguments: { command: job.command } });
+    agents.scripts.set('Survivor job', messages => {
+      childReady.resolve();
+      return called(messages, 'bash') ? { text: 'Relay: survived' } : { tool: 'bash', arguments: { command: job.command } };
+    });
     const root = await agents.rootChat();
     await root.command({ type: 'prompt', message: 'Delegate across a restart' });
+    await childReady.promise;
     await job.started();
     await agents.daemon.stop();
     await job.stopped();

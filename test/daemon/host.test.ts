@@ -512,10 +512,12 @@ async function attachHostSession(host: TestHost, path: string, sessionId: string
 }
 
 test('a replacement host rejects the previous host’s released ownership until the client claims again', async () => {
-  const first = await startHost();
+  const bootstrap = await startDaemon();
+  await bootstrap.stop();
+  const session = publicSession(bootstrap.home);
+  const first = await startHost({ home: bootstrap.home });
   let second: TestHost | undefined;
   try {
-    const session = publicSession(first.home);
     const clientId = 'replacement-client';
     const owner = { type: 'conversation_owner', sessionId: session.id, clientId, allowReleased: true };
     const runtimeId = await attachHostSession(first, session.path, session.id, clientId);

@@ -76,7 +76,7 @@ const stopDriver = async () => {
   const exited = new Promise<void>(resolve => child.once("exit", () => resolve()));
   child.kill("SIGTERM");
 
-  if (!await Promise.race([exited.then(() => true), delay(3000).then(() => false)])) { child.kill("SIGKILL"); await exited; }
+  if (!await Promise.race([exited.then(() => true), delay(3000, undefined, { ref: false }).then(() => false)])) { child.kill("SIGKILL"); await exited; }
 };
 
 /** Stops app and daemon processes that still run with this run's test HOME, for example after a page froze and the driver could not close the app. */
