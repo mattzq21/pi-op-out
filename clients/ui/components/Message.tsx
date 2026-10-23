@@ -220,16 +220,27 @@ export function Message(componentProps: Props) {
   const [forgetting, setForgetting] = createSignal(false);
   const forgettingRef = createRef(false);
 
-  const copy = async () => { const capturedMessage0 = componentProps.message;
+  const copy = async (value?: string) => { const capturedMessage0 = componentProps.message;
 
     try {
-      await copyText(textOf(capturedMessage0.content));
+      await copyText(value ?? textOf(capturedMessage0.content));
       setCopyState("copied");
     } catch {
       setCopyState("error");
     }
 
     window.setTimeout(() => setCopyState("idle"), 1800);
+  };
+
+  /** The time and copy bar under a message from another agent, the same as under a user message. */
+  const renderSentActions = (sent: string) => {
+    const sentTime = formatMessageTime(componentProps.message.timestamp);
+
+    return <div class="message-actions">
+      {sentTime && <span class="message-time">{sentTime.short}</span>}
+      <Show when={hasVisibleText(sent)}><MessageCopyButton state={copyState()} copy={() => copy(sent)} /></Show>
+      {copyState() === "error" && <span class="copy-feedback" role="status">Could not copy message</span>}
+    </div>;
   };
 
   const UserMessage = () => {
@@ -245,7 +256,7 @@ export function Message(componentProps: Props) {
       </div>}
       <div class="message-actions">
         {sentTime() && <span class="message-time">{required(sentTime()).short}</span>}
-        <Show when={hasVisibleText(textOf(componentProps.message.content))}><MessageCopyButton state={copyState()} copy={copy} /></Show>
+        <Show when={hasVisibleText(textOf(componentProps.message.content))}><MessageCopyButton state={copyState()} copy={() => copy()} /></Show>
         {copyState() === "error" && <span class="copy-feedback" role="status">Could not copy message</span>}
       </div>
     </article>{imageContext().notes && <ContextInjection title="Image context" content={imageContext().notes} />}</>;
@@ -280,7 +291,7 @@ export function Message(componentProps: Props) {
       const renderStreamCaret = () => (streaming() && !componentProps.paused && <WorkingIndicator />);
 
       const renderMessageActions = () => {
-        const renderCopyResponse = () => (<IconButton title="Copy" label={copyState() === "copied" ? `${metadata().responseLabel} copied` : copyState() === "error" ? `Copy failed for ${metadata().responseLabel.toLowerCase()}` : `Copy ${metadata().responseLabel.toLowerCase()}`} onClick={copy}>{copyState() === "copied" ? <Check size={14} /> : copyState() === "error" ? <CircleAlert size={14} /> : <Copy size={14} />}</IconButton>);
+        const renderCopyResponse = () => (<IconButton title="Copy" label={copyState() === "copied" ? `${metadata().responseLabel} copied` : copyState() === "error" ? `Copy failed for ${metadata().responseLabel.toLowerCase()}` : `Copy ${metadata().responseLabel.toLowerCase()}`} onClick={() => void copy()}>{copyState() === "copied" ? <Check size={14} /> : copyState() === "error" ? <CircleAlert size={14} /> : <Copy size={14} />}</IconButton>);
         const renderForkAction = () => (componentProps.onFork && <button class="branch-button" aria-label="Fork" data-tooltip="Fork" disabled={branching() || forgetting()} onClick={() => void branch()}><Split size={14} /></button>);
         const renderBranchAction = () => (componentProps.onBranch && <button class="branch-button" aria-label="Branch off" data-tooltip="Branch off" disabled={branching() || forgetting()} onClick={() => void branch(true)}><GitBranch size={14} /></button>);
         const renderForkAndForgetAction = () => (componentProps.onForkAndForget && <button class="branch-button fork-and-forget-button" aria-label={`Fork and forget from ${metadata().responseLabel.toLowerCase()}`} data-tooltip="Fork and forget" disabled={branching() || forgetting()} onClick={() => void forkAndForget()}><Undo2 size={14} /></button>);
@@ -317,5 +328,5 @@ export function Message(componentProps: Props) {
 
   const renderToolMessage = () => (<ToolResult message={componentProps.message} toolCount={(componentProps.toolCount === undefined ? 1 : componentProps.toolCount)} debug={(componentProps.debug === undefined ? false : componentProps.debug)} />);
 
-  return <>{componentProps.message.customType === "piop-agent-message" ? <AgentDelivery message={componentProps.message} /> : isContextInjection(componentProps.message) ? <ContextInjection title={componentProps.message.customType === "pi-project-files-watch" ? "Project files changed" : "Context added"} content={textOf(componentProps.message.content)} /> : componentProps.message.customType === "piop-subagent-result" ? <SubagentResults runs={subagentRuns(componentProps.message.details)} /> : pluginMessageRenderer(componentProps.message.customType) ? <Dynamic component={pluginMessageRenderer(componentProps.message.customType)} details={componentProps.message.details} /> : componentProps.message.role === "system" ? (<div class="command-result" role="status">{textOf(componentProps.message.content)}</div>) : componentProps.message.role === "tool" ? renderToolMessage() : componentProps.message.role === "user" ? (<UserMessage />) : (renderAssistantMessage())}</>;
+  return <>{componentProps.message.customType === "piop-agent-message" ? <AgentDelivery message={componentProps.message} actions={renderSentActions} /> : isContextInjection(componentProps.message) ? <ContextInjection title={componentProps.message.customType === "pi-project-files-watch" ? "Project files changed" : "Context added"} content={textOf(componentProps.message.content)} /> : componentProps.message.customType === "piop-subagent-result" ? <SubagentResults runs={subagentRuns(componentProps.message.details)} /> : pluginMessageRenderer(componentProps.message.customType) ? <Dynamic component={pluginMessageRenderer(componentProps.message.customType)} details={componentProps.message.details} /> : componentProps.message.role === "system" ? (<div class="command-result" role="status">{textOf(componentProps.message.content)}</div>) : componentProps.message.role === "tool" ? renderToolMessage() : componentProps.message.role === "user" ? (<UserMessage />) : (renderAssistantMessage())}</>;
 }

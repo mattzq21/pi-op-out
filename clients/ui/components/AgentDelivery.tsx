@@ -1,4 +1,4 @@
-import { createMemo, Show, useContext } from "solid-js";
+import { createMemo, Show, useContext, type JSXElement } from "solid-js";
 import { z } from "zod";
 import type { ChatMessage } from "../types";
 import { textOf } from "../lib/content";
@@ -13,7 +13,8 @@ function parseDelivery(content: ChatMessage["content"]) {
 }
 
 /** A message from another agent session, shown like a sent message, with a link to the session that sent it. */
-export function AgentDelivery(props: { message: ChatMessage }) {
+/** actions: the time and copy bar under the message, given the text the sender wrote. */
+export function AgentDelivery(props: { message: ChatMessage; actions?: (text: string) => JSXElement }) {
   const delivery = createMemo(() => parseDelivery(props.message.content));
   const links = useContext(SessionLinkContext);
   const name = createMemo(() => links?.name(delivery().sourceHostId || "local", delivery().sourceSessionId));
@@ -21,5 +22,6 @@ export function AgentDelivery(props: { message: ChatMessage }) {
   return <article class="message user-message agent-delivery" aria-label="Message from another agent">
     <Show when={name()} fallback={<span class="agent-delivery-source">Unknown session</span>}>{sessionName => <button type="button" class="agent-delivery-source" onClick={() => links?.open(delivery().sourceHostId || "local", delivery().sourceSessionId)}>{sessionName()}</button>}</Show>
     <div class="message-body"><Markdown>{delivery().message}</Markdown></div>
+    {props.actions?.(delivery().message)}
   </article>;
 }
