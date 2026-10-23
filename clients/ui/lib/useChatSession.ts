@@ -15,9 +15,10 @@ import { CONTEXT_CAP_STATUS_KEY } from "../../../extensions/piop-context-window-
 import { appendQueuedProjectContext, applyAssistantMessageEvent, branchMessages, checkpointLatestUser, isContextInjection, isResumeMessage, normalizeMessage, promptContextAnchors, resumeMarker, type PiEntry } from "./messages";
 import type { NativeTransport } from "./nativeTransport";
 import { useSessionMemory } from "./sessionMemory";
+import { keepLoadedHistory, olderHistoryMarker } from "./historyWindow";
 import { matchesSubmittedMessage, reconcileMessages, reconcilePendingMessages, sameUserContent, upsertLiveMessage } from "./reconcileMessages";
 
-interface SessionSnapshot { revision: string; state: AgentState; history: { entries: PiEntry[]; leafId: string | null; omittedEntries?: number; incomplete?: boolean; damagedLines?: number[] }; sequence: number; epoch: string; liveTools: RpcEvent[]; queue: RpcEvent; }
+interface SessionSnapshot { revision: string; state: AgentState; history: { entries: PiEntry[]; leafId: string | null; before?: string | null; olderUsage?: ChatMessage["usage"]; omittedEntries?: number; incomplete?: boolean; damagedLines?: number[] }; sequence: number; epoch: string; liveTools: RpcEvent[]; queue: RpcEvent; }
 
 type MessageUpdate = (messages: ChatMessage[], positions: (id: string | undefined) => number[]) => boolean;
 
@@ -239,13 +240,14 @@ function createChatSession(transport: Accessor<Pick<NativeTransport, "command" |
       const cachedMessages = !cachedSession.state.sessionId || cachedSession.state.sessionId === snapshot.state.sessionId ? cachedSession.messages : [];
       const previous = new Map(cachedMessages.filter((message) => message.toolPayloadLoaded && message.toolStatus !== "running").map((message) => [message.deferredToolPayload, message]));
 
-      const nextMessages = branchMessages(snapshot.history.entries, snapshot.history.leafId).map((message) => {
+      const windowMessages = branchMessages(snapshot.history.entries, snapshot.history.leafId).map((message) => {
         const cached = previous.get(message.deferredToolPayload);
 
         return cached && cached.loadedToolPayloadVersion === message.toolPayloadVersion ? { ...message, content: cached.content, details: cached.details, toolInput: cached.toolInput, nestedCalls: cached.nestedCalls, toolPayloadLoaded: true, loadedToolPayloadVersion: cached.loadedToolPayloadVersion, loadToolPayload: cached.loadToolPayload } : message;
       });
 
-      if (snapshot.history.omittedEntries) nextMessages.unshift({ id: "client-memory-limit", role: "system", content: "Older history was omitted to fit this client's memory limit. The full conversation remains on the host." });
+      if (snapshot.history.omittedEntries) windowMessages.unshift({ id: "client-memory-limit", role: "system", content: "Older history was omitted to fit this client's memory limit. The full conversation remains on the host." });
+      const nextMessages = keepLoadedHistory(cachedMessages, [...olderHistoryMarker(snapshot.history.before, snapshot.history.olderUsage), ...windowMessages]);
       if (snapshot.history.incomplete) nextMessages.push({ id: `client-transcript-damage:${snapshot.state.sessionId}`, role: "system", content: `Chat history is incomplete. Damaged record lines: ${snapshot.history.damagedLines?.join(", ") ?? "unknown"}. Some messages may be missing.` });
       activeAssistantId.current = [...nextMessages].reverse().find((message) => message.role === "assistant" && message.streaming)?.id;
       activeMessageIds.current.clear();
@@ -290,7 +292,7 @@ function createChatSession(transport: Accessor<Pick<NativeTransport, "command" |
           return session.memory.getSnapshot().state;
         }
 
-        const snapshotRequest = load({ type: "get_snapshot" }, sessionSnapshotSchema);
+        const snapshotRequest = load({ type: "get_snapshot", recent: true }, sessionSnapshotSchema);
 
         const snapshot = await snapshotRequest;
 

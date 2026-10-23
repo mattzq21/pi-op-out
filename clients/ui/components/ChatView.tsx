@@ -30,6 +30,8 @@ import { ConversationImageProject } from "./markdownImages";
 import { WorkingIndicator } from "./WorkingIndicator";
 import { PromptContextBar } from "./PromptContextBar";
 import { ConversationHostContext } from "../lib/subagentNavigation";
+import { OLDER_HISTORY, olderHistory } from "../lib/historyWindow";
+import { loadOlderHistory } from "../lib/sessionMemory";
 import { MessageFileContext } from "../lib/messageFiles";
 
 interface Props { refreshError?: string; capabilityErrors?: string[]; capabilitiesLoading?: boolean; onRetryCapabilities?: () => void; transport?: NativeTransport; agentHostLabel?: string; state: AgentState; messages: ChatMessage[]; debug?: DebugView; agents?: AgentProfile[]; activeAgent?: string; agentLocked?: boolean; agentSaved?: boolean; agentUnavailable?: boolean; modelAliases?: Record<string, string>; models: Model[]; commands: SlashCommand[]; thinkingLevels: string[]; widgets: string[]; statuses: Record<string, string>; projectCwd?: string; readOnly?: boolean; controlsDisabled?: boolean; draft?: string; onDraftChange?: (value: StateUpdate<string>) => void; focusRequest?: number; onActivate?: () => void; uploads?: ComposerUpload[]; onUploadsChange?: (uploads: StateUpdate<ComposerUpload[]>) => void; onSend: (text: string, behavior?: "steer" | "followUp", images?: ImageAttachment[], submission?: DraftSubmissionHandle) => void | boolean | Promise<void | boolean>; onChangePending?: (id: string, behavior: import("../types").PendingMessageAction) => Promise<void>; onAbort: () => void | Promise<void>; onPause: () => void | Promise<void>; onResume: () => void | Promise<void>; onOpenTerminal?: () => void; hosts?: Array<{ id: string; name: string; disabled?: boolean }>; onChooseHost?: (hostId: string) => void; onOpenProject: () => void; onClearProject?: () => void; onBranch: (message: ChatMessage) => void; onFork?: (message: ChatMessage) => void | Promise<void>; onForkAndForget?: (message: ChatMessage) => void | Promise<void>; forkSourceName?: string; onOpenForkSource?: (source: ForkSource) => void; revealEntryId?: string; onEntryRevealed?: () => void; onAgent?: (name: string) => void; onModel: (model: Model) => void; onToggleFastMode: () => void | Promise<void>; onThinking: (level: string) => void; }
@@ -91,7 +93,29 @@ export function ChatView(props: Props & { transcriptActions?: JSXElement; follow
   const lastScrollTop = createRef(0);
   const touchY = createRef<number | undefined>(undefined);
   const composerStack = createRef<HTMLDivElement>(null);
-  const messages = () => props.messages;
+  /** The messages without the marker of the older history that is not loaded yet. */
+  const messages = createMemo(() => props.messages[0]?.id === OLDER_HISTORY ? props.messages.slice(1) : props.messages);
+  const older = createMemo(() => olderHistory(props.messages));
+  /** The distance from the bottom to keep while older history comes in above the view. */
+  const olderAnchor = createRef<number | undefined>(undefined);
+
+  const loadOlder = () => {
+    const element = messagesRef.current; const transport = props.transport;
+
+    if (!element || !transport || !older() || olderAnchor.current !== undefined) return;
+    olderAnchor.current = element.scrollHeight - element.scrollTop;
+    loadOlderHistory(transport).catch(reason => props.onNotice?.("Could not load older messages", reason instanceof Error ? reason.message : String(reason))).finally(() => requestAnimationFrame(() => {
+      const anchor = olderAnchor.current; olderAnchor.current = undefined;
+
+      if (anchor !== undefined && !followLatest.current) { element.scrollTop = element.scrollHeight - anchor; lastScrollTop.current = element.scrollTop; }
+      fillView();
+    }));
+  };
+
+  /** Loads older history while the loaded messages are too short to scroll. */
+  const fillView = () => { const element = messagesRef.current;
+
+    if (element && element.scrollHeight <= element.clientHeight) loadOlder(); };
   const split = createMemo(() => splitTranscript(messages(), props.state.isStreaming));
   const turns = createMemo<ConversationGroup[]>(previous => groupTurns(split().transcript, previous), []);
   /** The queued messages, then the sent messages that the daemon has not queued yet. */
@@ -110,10 +134,10 @@ export function ChatView(props: Props & { transcriptActions?: JSXElement; follow
   const sessionUsage = createMemo(() => {
     let input = 0, cacheRead = 0, cacheWrite = 0;
 
-    for (const message of props.messages) {
-      input += message.usage?.input ?? 0;
-      cacheRead += message.usage?.cacheRead ?? 0;
-      cacheWrite += message.usage?.cacheWrite ?? 0;
+    for (const usage of [older()?.usage, ...messages().flatMap(message => [message.usage, message.deferredWork?.usage])]) {
+      input += usage?.input ?? 0;
+      cacheRead += usage?.cacheRead ?? 0;
+      cacheWrite += usage?.cacheWrite ?? 0;
     }
 
     return { input, cacheRead, cacheWrite };
@@ -206,12 +230,15 @@ export function ChatView(props: Props & { transcriptActions?: JSXElement; follow
   onCleanup(() => { if (scrollFrame !== undefined) cancelAnimationFrame(scrollFrame); });
 
   createDependencyEffect(scrollToLatest, () => [scrollToLatest, messages(), props.state.isStreaming, mcpLoading(), pendingSubmission()]);
+  createDependencyEffect(() => { const frame = requestAnimationFrame(fillView);
+
+    return () => cancelAnimationFrame(frame); }, () => [older()]);
   createDependencyEffect(() => { const entryId = props.revealEntryId; const root = messagesRef.current;
 
     if (!entryId || !root) return;
     const turn = turns().find(candidate => candidate.messages.some(message => message.id === entryId));
 
-    if (!turn) return;
+    if (!turn) { loadOlder(); return; }
     followLatest.current = false;
     root.querySelector("[data-response-turn=\"" + CSS.escape(turn.messages[0]?.id ?? "") + "\"]")?.dispatchEvent(new CustomEvent("piop:reveal-turn"));
     const frame = requestAnimationFrame(() => {
@@ -274,6 +301,8 @@ export function ChatView(props: Props & { transcriptActions?: JSXElement; follow
         else if (element.scrollTop < lastScrollTop.current) followLatest.current = false;
         lastScrollTop.current = element.scrollTop;
         scrollToLatest();
+
+        if (element.scrollTop < element.clientHeight) loadOlder();
       }}><div class="conversation">
         {!messages().length && !mcpLoading() && !pendingSubmission() && <div class="empty-chat"><span>π<sup>op</sup></span></div>}
         {<Key each={turns()} by={turn => turn.messages[0]?.id ?? "empty"}>{(turn, index) => <DeferredTurn navigationId={turn().messages[0]?.id} scrollRoot={messagesRef} eager={index() >= turns().length - 3}><ConversationTurn latest={index() === turns().length - 1} messages={turn().messages} promptContexts={turn().promptContexts} cwd={props.projectCwd} debug={props.debug ?? noDebug} active={props.state.isStreaming && index() === turns().length - 1} retryable={retryable() && index() === turns().length - 1} paused={Boolean(props.state.isPaused || props.state.isPausing) && index() === turns().length - 1} onRetry={onRetry} onBranch={branchAction()} onFork={props.state.canFork !== false && props.onFork ? onFork : undefined} onForkAndForget={props.state.canFork !== false && props.onForkAndForget ? onForkAndForget : undefined} /><Show when={props.state.forkSource && turn().messages.some(message => (message.entryId ?? message.id) === props.state.forkSource?.entryId) ? props.state.forkSource : undefined}>{source => <ForkSourceLink source={source()} name={props.forkSourceName} onOpen={props.onOpenForkSource} />}</Show></DeferredTurn>}</Key>}
@@ -302,7 +331,7 @@ export function ChatView(props: Props & { transcriptActions?: JSXElement; follow
   const ConversationShell = () => <main class={`chat-shell${ownsConversation() ? "" : " conversation-unowned"}`} oncapture:focus={() => props.onActivate?.()} oncapture:pointerdown={() => props.onActivate?.()}>
     {props.transcriptActions}
     <ConversationContent />
-    <TranscriptPlugins messages={() => messagesRef.current} source={() => ({ hostId: props.transport?.currentHostId() ?? "local", sessionId: props.state.sessionId, title: props.state.sessionName || "Current conversation", messageCount: props.state.messageCount, messages: [...props.messages], follow: props.followConversation })} />
+    <TranscriptPlugins messages={() => messagesRef.current} source={() => ({ hostId: props.transport?.currentHostId() ?? "local", sessionId: props.state.sessionId, title: props.state.sessionName || "Current conversation", messageCount: props.state.messageCount, messages: [...messages()], follow: props.followConversation })} />
   </main>;
 
   const conversationHost = () => props.transport?.currentHostId() ?? "local";
@@ -543,15 +572,26 @@ function ConversationTurn(componentProps: ConversationTurnProps) {
   const finishedSubagents = createMemo(() => componentProps.messages.filter(message => isPromptMessage(message) && message.customType === "piop-subagent-result").flatMap(message => subagentRuns(message.details)));
   // A click on a subagent opens its chat and must not open or close the work group around it.
   const renderFinishedSubagents = () => finishedSubagents().length > 0 && <span class="subagent-finished" onClick={event => event.preventDefault()}><SubagentResults runs={finishedSubagents()} /></span>;
-  const hasWork = createMemo(() => (intermediate().some((message) => !invisibleAssistant(message))));
-  const reasoningOnly = createMemo(() => (compactCompletedTools(intermediate()).every(({ message }) => message.role === "assistant" && hasVisibleText(thinkingOf(message.content)) && !hasVisibleText(textOf(message.content)) && message.stopReason !== "error" && message.stopReason !== "aborted")));
+  /** The work that the daemon left out of this turn until the user opens it. */
+  const deferredWork = createMemo(() => finalIndex() >= 0 ? componentProps.messages[finalIndex()].deferredWork : undefined);
+  const [workError, setWorkError] = createSignal<string>();
+  const hasWork = createMemo(() => (Boolean(deferredWork()) || intermediate().some((message) => !invisibleAssistant(message))));
+  const openWork = (open: boolean) => {
+    setWorkOpen(open);
+    const load = open ? componentProps.messages[finalIndex()]?.loadWork : undefined;
+
+    if (!load) return;
+    setWorkError(undefined);
+    load().catch(reason => setWorkError(reason instanceof Error ? reason.message : String(reason)));
+  };
+  const reasoningOnly = createMemo(() => deferredWork() ? deferredWork()!.reasoningOnly : (compactCompletedTools(intermediate()).every(({ message }) => message.role === "assistant" && hasVisibleText(thinkingOf(message.content)) && !hasVisibleText(textOf(message.content)) && message.stopReason !== "error" && message.stopReason !== "aborted")));
   const finalSource = createMemo(() => (finalIndex() >= 0 ? componentProps.messages[finalIndex()] : undefined));
   const finalMessage = createMemo(() => (finalIndex() >= 0 ? { ...componentProps.messages[finalIndex()], content: textOf(componentProps.messages[finalIndex()].content) } : undefined));
 
   const turnCacheUsage = createMemo(() => (componentProps.messages.reduce((total, message) => {
-    if (message.role === "assistant" && message.usage) {
-      total.input += message.usage.input;
-      total.cacheRead += message.usage.cacheRead; total.cacheWrite += message.usage.cacheWrite ?? 0;
+    for (const usage of message.role === "assistant" ? [message.usage, message.deferredWork?.usage] : []) if (usage) {
+      total.input += usage.input;
+      total.cacheRead += usage.cacheRead; total.cacheWrite += usage.cacheWrite ?? 0;
     }
 
     return total;
@@ -569,11 +609,11 @@ function ConversationTurn(componentProps: ConversationTurnProps) {
     if (earlyTokens !== undefined) return earlyTokens;
     const response = componentProps.messages.find(message => message.role === "assistant");
 
-    return cacheHitStats(response?.usage)?.promptTokens;
+    return cacheHitStats(response?.deferredWork?.firstUsage ?? response?.usage)?.promptTokens;
   });
 
   const renderPromptContextBar = () => (<Show when={componentProps.debug.contextBar && firstResponseInputTokens()}>{inputTokens => <Index each={componentProps.promptContexts}>{context => <PromptContextBar context={context()} inputTokens={inputTokens()} />}</Index>}</Show>);
-  const renderWorkGroup = () => hasWork() && <details class="work-group" open={workOpen()} onToggle={(event) => setWorkOpen(event.currentTarget.open)}><summary>{reasoningOnly() ? "Reasoning" : workedFor() ? `Worked for ${workedFor()}` : "Work"}<ChevronRight size={12} class="work-group-chevron" aria-hidden="true" />{renderFinishedSubagents()}</summary>{workOpen() && <div class={`work-group-content${reasoningOnly() ? " reasoning-group-content" : ""}`}><MessageList messages={intermediate()} expanded debug={componentProps.debug} paused={componentProps.paused} showActions={false} /></div>}</details>;
+  const renderWorkGroup = () => hasWork() && <details class="work-group" open={workOpen()} onToggle={(event) => openWork(event.currentTarget.open)}><summary>{reasoningOnly() ? "Reasoning" : workedFor() ? `Worked for ${workedFor()}` : "Work"}<ChevronRight size={12} class="work-group-chevron" aria-hidden="true" />{renderFinishedSubagents()}</summary>{workOpen() && <div class={`work-group-content${reasoningOnly() ? " reasoning-group-content" : ""}`}>{deferredWork() ? workError() ? <div class="message-failure" role="alert">Could not load this work: {workError()}</div> : <div class="mcp-loading" role="status"><LoaderCircle class="mcp-loading-spinner" size={14} aria-hidden="true" /><span>Loading work</span></div> : <MessageList messages={intermediate()} expanded debug={componentProps.debug} paused={componentProps.paused} showActions={false} />}</div>}</details>;
 
   const renderActiveWorkContent = () => (<Show when={componentProps.active || componentProps.paused} fallback={required(<>
     {renderWorkGroup()}

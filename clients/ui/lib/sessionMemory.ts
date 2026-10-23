@@ -6,6 +6,9 @@ import type { NativeTransport } from "./nativeTransport";
 import { z } from "zod";
 import { wireMessageSchema } from "./messageSchemas";
 import { pluginMessageMetadata } from "../plugins/messageMetadata";
+import { branchMessages } from "./messages";
+import { historyViewSchema } from "./responseSchemas";
+import { OLDER_HISTORY, olderHistory, olderHistoryMarker } from "./historyWindow";
 
 type SessionResource = Array<RpcEvent | undefined>;
 
@@ -104,6 +107,8 @@ export class SessionMemory {
   private listeners = new Set<() => void>();
   private loaded = new Set<string>();
   private loading = new Map<string, Promise<void>>();
+  private workLoading = new Map<string, Promise<void>>();
+  private olderLoading?: Promise<void>;
   private toolPayloadTransfers: Promise<void> = Promise.resolve();
   private generation = 0;
   private omitted = 0;
@@ -228,6 +233,10 @@ export class SessionMemory {
   private decorateMessage(message: ChatMessage): ChatMessage {
     if (pluginMessageMetadata(message.customType)?.retainContent) return message;
 
+    if (message.deferredWork) { const entryId = message.entryId ?? message.id;
+
+    return { ...stripToolArguments(message), loadWork: message.loadWork ?? (() => this.loadWork(entryId)) }; }
+
     if (message.role !== "tool") return stripToolArguments(message);
     const id = message.deferredToolPayload ?? message.toolCallId ?? message.id;
     const loadToolPayload = message.loadToolPayload ?? (() => this.loadToolPayload(id));
@@ -253,6 +262,48 @@ export class SessionMemory {
 
     if (key === "messages") this.value = { ...this.value, messages: this.value.messages.map(message => this.decorate(message)) };
     this.commit();
+  }
+
+  /** Loads the work of a finished turn that the daemon left out, and puts it in front of the turn's final response. */
+  private loadWork(entryId: string) {
+    const previous = this.workLoading.get(entryId);
+
+    if (previous) return previous;
+    const generation = this.generation;
+    const request = this.transport.command({ type: "get_turn_work", entryId }, historyViewSchema).then(history => {
+      if (generation !== this.generation) return;
+      const loaded = branchMessages(history.entries, history.leafId);
+      this.set("messages", messages => {
+        const index = messages.findIndex(message => (message.entryId ?? message.id) === entryId && message.deferredWork);
+
+        if (index < 0) return messages;
+        const present = new Set(messages.map(message => message.entryId ?? message.id));
+        const work = loaded.flatMap(message => (message.entryId ?? message.id) === entryId ? [{ ...message, id: messages[index].id }] : present.has(message.entryId ?? message.id) ? [] : [message]);
+
+        return [...messages.slice(0, index), ...work, ...messages.slice(index + 1)];
+      });
+    }).finally(() => this.workLoading.delete(entryId));
+    this.workLoading.set(entryId, request);
+
+    return request;
+  }
+
+  /** Loads the part of the history just before the loaded messages. */
+  loadOlder() {
+    const older = olderHistory(this.value.messages);
+
+    if (!older) return Promise.resolve();
+
+    if (this.olderLoading) return this.olderLoading;
+    const generation = this.generation;
+    const request = this.transport.command({ type: "get_older_history", before: older.before }, historyViewSchema).then(history => {
+      if (generation !== this.generation) return;
+      const page = [...olderHistoryMarker(history.before, history.olderUsage), ...branchMessages(history.entries, history.leafId)];
+      this.set("messages", messages => olderHistory(messages)?.before === older.before ? [...page, ...messages.filter(message => message.id !== OLDER_HISTORY)] : messages);
+    }).finally(() => { this.olderLoading = undefined; });
+    this.olderLoading = request;
+
+    return request;
   }
 
   private toolPayloadVersion(id: string) { return this.value.messages.find((message) => message.deferredToolPayload === id)?.toolPayloadVersion; }
@@ -310,6 +361,10 @@ export class SessionMemory {
 
     return request;
   }
+}
+
+export function loadOlderHistory(transport: Transport) {
+  return memoryFor(transport).loadOlder();
 }
 
 export function forgetSession(transport: Transport) {
