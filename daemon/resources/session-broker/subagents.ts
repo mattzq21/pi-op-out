@@ -16,8 +16,8 @@ import { SUBAGENT_PARENT, latestRuns, ownedRuns, saveRun, subagentParent, subage
 import { acceptedSubmission, cancelSubagent, finishRun, observeSubagent, subagentReceiptSchema, SubagentCancellation, type ActiveSubagent } from "./subagent-reconciliation.ts";
 import { savedSubagentRuns } from "../piop-storage/subagent-results.ts";
 
-/** A subagent nickname: 1–8 letters, the first upper case and the rest lower case. */
-const NICKNAME = "^[A-Z][a-z]{0,7}$";
+/** A subagent nickname: 1–8 characters, an upper case letter first, then lower case letters or digits. */
+const NICKNAME = "^[A-Z][a-z0-9]{0,7}$";
 
 const MAX_DELEGATION_DEPTH = 2;
 
@@ -523,7 +523,7 @@ export function registerSubagents(pi: ExtensionAPI) {
       for (const task of params.tasks) requireMessageLength(task.task);
 
       // A nickname is shown on its own line, as in "Subagent <nickname>:".
-      if (params.tasks.some(task => !new RegExp(NICKNAME).test(task.nickname))) throw new Error("Give each subagent a nickname of 1–8 letters, the first upper case and the rest lower case");
+      if (params.tasks.some(task => !new RegExp(NICKNAME).test(task.nickname))) throw new Error("Give each subagent a nickname of 1–8 characters: an upper case letter, then lower case letters or digits");
 
       if (new Set(params.tasks.map(task => task.nickname)).size !== params.tasks.length) throw new Error("Give each subagent a different nickname");
 
