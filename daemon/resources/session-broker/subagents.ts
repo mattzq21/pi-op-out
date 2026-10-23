@@ -121,6 +121,7 @@ async function deliverFollowup(pi: ExtensionAPI, ctx: ExtensionContext, run: Sub
   observed.deliveryIds = [...lifecycle.deliveryIds];
   observed.task = message;
   observed.taskStartedAt = Date.now();
+  observed.activeMs = 0;
   observed.submission = "submitted";
   observed.taskNotificationId = undefined;
   saveRun(pi, ctx, observed);

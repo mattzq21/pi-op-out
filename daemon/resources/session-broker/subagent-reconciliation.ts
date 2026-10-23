@@ -8,6 +8,9 @@ import { saveRun, type SubagentRun } from "./subagent-state.ts";
 
 /** How long one subagent run may take before it is stopped. */
 const SUBAGENT_RUN_LIMIT_MS = 60 * 60_000;
+
+/** How often the time a run has been watched is saved, so a restart loses at most this much of it. */
+const ACTIVE_TIME_SAVE_MS = 30_000;
 import { activeConversation } from "./conversation-location.ts";
 
 const assistantSchema = Schema.Object({ role: Schema.Literal("assistant"), stopReason: Schema.String(), errorMessage: Schema.Optional(Schema.String()), content: Schema.Array(Schema.Unknown()) });
@@ -126,6 +129,8 @@ function interrupted(pi: ExtensionAPI, ctx: ExtensionContext, run: SubagentRun, 
 class SubagentObserver {
   private failures = 0;
   private polled = false;
+  private lastTick = performance.now();
+  private lastSaved = performance.now();
 
   constructor(private run: SubagentRun, private observation: Observation, private lifecycle: ActiveSubagent) {}
 
@@ -134,6 +139,20 @@ class SubagentObserver {
   }
 
   private save() { saveRun(this.observation.pi, this.observation.ctx, this.run); }
+
+  /**
+   * Adds the time since the last tick to the run's active time. Only time while Piop watches the run counts,
+   * so time while Piop was not running is left out. message_subagent sets the active time back to zero.
+   */
+  private tick() {
+    const now = performance.now();
+    this.run.activeMs = (this.run.activeMs ?? 0) + (now - this.lastTick);
+    this.lastTick = now;
+
+    if (now - this.lastSaved >= ACTIVE_TIME_SAVE_MS) { this.lastSaved = now; this.save(); }
+  }
+
+  private remaining() { return SUBAGENT_RUN_LIMIT_MS - (this.run.activeMs ?? 0); }
 
   async submit() {
     const { signal } = this.observation;
@@ -155,7 +174,7 @@ class SubagentObserver {
     const deliveryId = this.run.deliveryIds?.at(-1);
 
     if (!deliveryId) throw new Error("Submitted subagent task has no saved delivery ID");
-    const remaining = this.run.startedAt + SUBAGENT_RUN_LIMIT_MS - Date.now();
+    const remaining = this.remaining();
 
     if (remaining <= 0) throw new Error("Subagent task delivery timed out");
     const signal = AbortSignal.any([this.observation.signal, AbortSignal.timeout(remaining)]);
@@ -226,7 +245,9 @@ class SubagentObserver {
 
       signal.throwIfAborted();
 
-      if ((this.polled || this.run.submission === "submitted") && Date.now() >= this.run.startedAt + SUBAGENT_RUN_LIMIT_MS) {
+      this.tick();
+
+      if ((this.polled || this.run.submission === "submitted") && this.remaining() <= 0) {
         this.run.cancelRequested = true;
         this.run.cancelReason = "Subagent timed out after 60 minutes";
         this.save();
