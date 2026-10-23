@@ -48,7 +48,7 @@ export const PEER_TOOLS = ["create_peer", "branchoff_peer", "message_peer", "sto
 /** Which agents list_agent_profiles lists: for one start purpose, or for both, chosen by an argument. */
 export type AgentProfilesMode = AgentStartPurpose | "both";
 
-const COMMON = "Shows each agent's name, description, model, tools and skills.";
+const COMMON = "Shows each agent's name and description.";
 
 function profilesTool(pi: ExtensionAPI, mode: AgentProfilesMode) {
   const list = async (purpose: AgentStartPurpose) => {

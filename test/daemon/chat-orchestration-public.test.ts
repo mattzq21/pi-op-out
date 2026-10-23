@@ -276,7 +276,7 @@ test('list_agent_profiles follows the tool groups and lists the descriptions of 
   await setTools(['read', 'spawn_subagents', 'create_peer']);
   const both = await listed('List subagent agents', { for: 'subagent' });
   expect(both.tool.parameters.required).toEqual(['for']);
-  expect(JSON.parse(both.answer).find((profile: any) => profile.name === 'helper')).toMatchObject({ description: 'Finds files.' });
+  expect(JSON.parse(both.answer).find((profile: any) => profile.name === 'helper')).toEqual({ name: 'helper', description: 'Finds files.' });
 
   await setTools(['read']);
   agents.scripts.set('No agent tools', () => ({ text: 'Done' }));

@@ -361,15 +361,13 @@ export default async function defineAgents(pi: ExtensionAPI) {
   const stopProfileCatalog = pi.events.on("piop:agents:profiles", request => {
     const caller = currentAgent();
     request.active = caller?.name;
-    request.profiles = config.agents.filter(agent => !startRefusal(caller, agent, request.purpose)).map(agent => ({ name: agent.name, ...(agent.description ? { description: agent.description } : {}), model: agent.model || "default", tools: [...agent.tools], skills: agent.skills.map(skillName) }));
+    request.profiles = config.agents.filter(agent => !startRefusal(caller, agent, request.purpose)).map(agent => ({ name: agent.name, ...(agent.description ? { description: agent.description } : {})}));
   });
 
   const stopContextCap = pi.events.on("piop:agents:context-cap", request => {
     request.cap = currentAgent()?.contextWindowCap;
   });
 
-  /** A skill's folder name, from its path to a SKILL.md file or to its folder. */
-  const skillName = (path: string) => { const parts = path.split("/").filter(Boolean); return (parts.at(-1) === "SKILL.md" ? parts.at(-2) : parts.at(-1)) ?? path; };
 
   const restoredAgentName = (name: string | undefined) => !name || (name === "default" && !findAgent("default")) ? "general" : name;
 
