@@ -328,7 +328,7 @@ test('pausing a parent cancels its busy child, and after resume the parent hears
     const last = text(messages.at(-1));
     const relay = last.match(/Relay: \w+/);
     if (relay) return { text: relay[0] };
-    if (last.startsWith('<subagent_response>') && !called(messages, 'message_subagent')) return { tool: 'message_subagent', arguments: { name: 'patience', message: 'Try the slow job again' } };
+    if (last.startsWith('Subagent patience:\n<subagent_response>') && !called(messages, 'message_subagent')) return { tool: 'message_subagent', arguments: { name: 'patience', message: 'Try the slow job again' } };
     if (called(messages, 'spawn_subagents') && !called(messages, 'wait_subagents')) return { tool: 'wait_subagents' };
     return called(messages, 'spawn_subagents') ? { text: 'Waiting.' } : { tool: 'spawn_subagents', arguments: { tasks: [{ name: 'patience', task: 'Paused child job' }] } };
   });
