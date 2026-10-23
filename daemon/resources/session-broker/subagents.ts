@@ -445,7 +445,7 @@ export function registerSubagents(pi: ExtensionAPI) {
   const inputListeners = new Set<() => void>();
   pi.on("input", event => { if (event.source !== "extension") for (const listener of [...inputListeners]) listener(); });
   pi.registerTool({
-    name: "wait_subagents", label: "Wait for subagents", exposure: "model-only",
+    name: "await_subagents", label: "Await subagents", exposure: "model-only",
     description: "Wait until all your subagents finish, or until the user sends a new message. Returns the answers of the subagents that finished.",
     parameters: Type.Object({}),
     async execute(_id, _params, signal, _update, ctx) {

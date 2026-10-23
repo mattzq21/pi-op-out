@@ -6,7 +6,7 @@ import "./agent-tools.css";
 /** Groups for related tools, by tool name. Other tools are grouped by the extension that registered them. */
 const toolGroups = [
   { name: "Goal", tools: ["update_goal_status"] },
-  { name: "Subagents", tools: ["spawn_subagents", "message_subagent", "stop_subagent", "list_subagents", "wait_subagents"] },
+  { name: "Subagents", tools: ["spawn_subagents", "message_subagent", "stop_subagent", "list_subagents", "await_subagents"] },
   { name: "Orchestration", tools: ["create_thread", "message_thread", "stop_thread", "list_threads", "read_thread", "wait_threads"] },
 ];
 

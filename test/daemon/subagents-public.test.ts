@@ -212,7 +212,7 @@ test.concurrent('a batch of children runs at once, waiting for all ends only aft
   agents.scripts.set('Count the fruit', messages => {
     const last = messages.at(-1);
     if (!called(messages, 'spawn_subagents')) return { tool: 'spawn_subagents', arguments: { tasks: [{ name: 'apples', task: 'Count apples' }, { name: 'pears', task: 'Count pears' }] } };
-    if (!called(messages, 'wait_subagents')) return { tool: 'wait_subagents' };
+    if (!called(messages, 'await_subagents')) return { tool: 'await_subagents' };
     if (last.role === 'tool' && !answered.has('awaited')) answered.set('awaited', ++order);
     const counts = JSON.stringify(messages).match(/Relay: \d+ \w+/g) ?? [];
     return { text: counts.length ? 'Counts: ' + [...new Set(counts)].sort().join(', ') : 'Waiting.' };
@@ -230,7 +230,7 @@ test.concurrent('a batch of children runs at once, waiting for all ends only aft
   await root.command({ type: 'prompt', message: 'Count the fruit' });
   await root.until(history => text(history.at(-1)) === 'Counts: Relay: 3 apples, Relay: 5 pears');
   expect(answered.get('awaited')).toBeGreaterThan(Math.max(answered.get('Count apples')!, answered.get('Count pears')!));
-  // wait_subagents returns both answers itself, and they are not sent again as messages.
+  // await_subagents returns both answers itself, and they are not sent again as messages.
   const seen = agents.model.requests.findLast(request => JSON.stringify(request.messages).includes('Count the fruit')).messages;
   const waited = seen.find((message: any) => message.role === 'tool' && /Relay: 3 apples/.test(text(message)));
   expect(text(waited)).toMatch(/<subagent_response>\nSubagent (apples|pears):[\s\S]*<subagent_response>\nSubagent (apples|pears):/);
@@ -276,7 +276,7 @@ test('waiting for subagents ends early when the user sends a new message, which 
   agents.scripts.set('Wait for news', messages => {
     const last = messages.at(-1);
     if (!called(messages, 'spawn_subagents')) return { tool: 'spawn_subagents', arguments: { tasks: [{ name: 'sleeper', task: 'Sleep a while' }] } };
-    if (!called(messages, 'wait_subagents')) return { tool: 'wait_subagents' };
+    if (!called(messages, 'await_subagents')) return { tool: 'await_subagents' };
     if (last.role === 'tool') return { text: 'Wait ended: ' + text(last) };
     return { text: 'Handled: ' + text(last) };
   });
@@ -285,7 +285,7 @@ test('waiting for subagents ends early when the user sends a new message, which 
   try {
     await root.command({ type: 'prompt', message: 'Wait for news' });
     await agents.daemon.waitEvent('pi://event', payload => payload.runtimeId === root.runtimeId
-      && payload.event?.type === 'tool_execution_start' && payload.event.toolName === 'wait_subagents');
+      && payload.event?.type === 'tool_execution_start' && payload.event.toolName === 'await_subagents');
     const sent = Date.now();
     await root.command({ type: 'follow_up', message: 'Here is the news' });
     const messages = await root.until(history => text(history.at(-1)) === 'Handled: Here is the news');
@@ -311,14 +311,14 @@ test('archiving a parent while its child runs a command ends the child\'s comman
 
 test('stopping a parent that waits for its child stops both at once, and the parent makes no more model calls', async () => {
   const job = await stoppedJob('patient-late.txt', jobs);
-  agents.scripts.set('Wait for a slow child', messages => called(messages, 'wait_subagents') ? { text: 'Kept going after stop.' }
-    : called(messages, 'spawn_subagents') ? { tool: 'wait_subagents' } : { tool: 'spawn_subagents', arguments: { tasks: [{ name: 'patient', task: 'Patient child job' }] } });
+  agents.scripts.set('Wait for a slow child', messages => called(messages, 'await_subagents') ? { text: 'Kept going after stop.' }
+    : called(messages, 'spawn_subagents') ? { tool: 'await_subagents' } : { tool: 'spawn_subagents', arguments: { tasks: [{ name: 'patient', task: 'Patient child job' }] } });
   agents.scripts.set('Patient child job', messages => called(messages, 'bash') ? { text: 'Child done.' } : { tool: 'bash', arguments: { command: job.command } });
   const root = await agents.rootChat();
   await root.command({ type: 'prompt', message: 'Wait for a slow child' });
   await job.started();
   await agents.daemon.waitEvent('pi://event', payload => payload.runtimeId === root.runtimeId
-    && payload.event?.type === 'tool_execution_start' && payload.event.toolName === 'wait_subagents');
+    && payload.event?.type === 'tool_execution_start' && payload.event.toolName === 'await_subagents');
   const calls = agents.model.requests.length;
   await root.command({ type: 'abort' });
   await job.stopped();
@@ -334,7 +334,7 @@ test('pausing a parent cancels its busy child, and after resume the parent hears
     const relay = last.match(/Relay: \w+/);
     if (relay) return { text: relay[0] };
     if (last.startsWith('<subagent_response>\nSubagent patience:') && !called(messages, 'message_subagent')) return { tool: 'message_subagent', arguments: { name: 'patience', message: 'Try the slow job again' } };
-    if (called(messages, 'spawn_subagents') && !called(messages, 'wait_subagents')) return { tool: 'wait_subagents' };
+    if (called(messages, 'spawn_subagents') && !called(messages, 'await_subagents')) return { tool: 'await_subagents' };
     return called(messages, 'spawn_subagents') ? { text: 'Waiting.' } : { tool: 'spawn_subagents', arguments: { tasks: [{ name: 'patience', task: 'Paused child job' }] } };
   });
   agents.scripts.set('Paused child job', messages => JSON.stringify(messages).includes('Try the slow job again') ? { text: 'Relay: retried' }

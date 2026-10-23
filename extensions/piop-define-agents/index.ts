@@ -25,7 +25,7 @@ const sessionTools = ["spawn_subagents"];
 /** Old subagent and chat tool names, and the tools that replaced them. */
 const renamedTools: Record<string, string> = {
   subagent: "spawn_subagents", spawn_agent: "spawn_subagents", followup_task: "message_subagent", send_message: "message_subagent",
-  interrupt_agent: "stop_subagent", list_agents: "list_subagents", wait_agent: "wait_subagents", await_subagents: "wait_subagents",
+  interrupt_agent: "stop_subagent", list_agents: "list_subagents", wait_agent: "await_subagents", wait_subagents: "await_subagents",
   send_message_to_thread: "message_thread",
 };
 

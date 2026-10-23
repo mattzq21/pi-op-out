@@ -41,7 +41,7 @@ export async function createProfileSession(pi: ExtensionAPI, ctx: ExtensionConte
 }
 
 /** The tools that make a tool group on for an agent. One tool of a group is enough. */
-export const SUBAGENT_TOOLS = ["spawn_subagents", "message_subagent", "stop_subagent", "list_subagents", "wait_subagents"];
+export const SUBAGENT_TOOLS = ["spawn_subagents", "message_subagent", "stop_subagent", "list_subagents", "await_subagents"];
 export const THREAD_TOOLS = ["create_thread", "message_thread", "stop_thread", "list_threads", "read_thread", "wait_threads"];
 
 /** Which agents list_agent_profiles lists: for one start purpose, or for both, chosen by an argument. */
