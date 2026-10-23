@@ -477,7 +477,7 @@ export function registerSubagents(pi: ExtensionAPI) {
   pi.registerTool({
     name: "spawn_subagents", label: "Spawn subagents",
     exposure: "model-only",
-    description: "Start 1–8 subagents in the background, each with its own task. A subagent starts with no history and none of your context, so give it everything it needs in task. It works in your directory; avoid giving two subagents overlapping edits. agent picks a profile from list_agent_profiles; omit it to use your own. Each answer arrives as a new message when that subagent finishes. A subagent can start its own subagents, but they cannot go deeper.",
+    description: "Start subagents in the background, each with its own task. A subagent starts with no history and none of your context, so give it everything it needs in task. Avoid giving two subagents overlapping edits. Agent picks a profile from list_agent_profiles; omit it to use your own.",
     parameters: Type.Object({ tasks: Type.Array(Type.Object({ name: Type.String({ pattern: "^[a-z][a-z0-9_]{0,63}$", description: "Unique name, used to address this subagent" }), task: Type.String({ minLength: 1, maxLength: 100_000 }), agent: Type.Optional(Type.String({ minLength: 1 })) }), { minItems: 1, maxItems: 8 }) }),
     async execute(toolCallId, params, signal, onUpdate, ctx) {
       signal?.throwIfAborted();
