@@ -2,28 +2,37 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { appBrowser } from '../app-browser-fixture.mjs';
 
-test('configured Alt shortcut opens settings while editing a message', async t => {
+test('configured settings shortcuts open settings while editing', async t => {
   const page = await appBrowser(t, { keybindings: { openSettings: 'Alt+J' } });
   const editor = page.getByRole('textbox', { name: 'Message piop', exact: true });
-  await editor.fill('Keep this draft');
-  assert.equal(await page.getByRole('button', { name: 'Go back', exact: true }).count(), 0);
-  await page.keyboard.press('Alt+j');
-  const binding = page.getByRole('textbox', { name: 'Open settings shortcut', exact: true });
-  await binding.waitFor();
-  assert.equal(await binding.inputValue(), 'Alt+J');
-  await page.getByRole('button', { name: 'Go back', exact: true }).click();
-  await editor.waitFor();
-  assert.equal(await editor.inputValue(), 'Keep this draft');
+  const goBack = page.getByRole('button', { name: 'Go back', exact: true });
+  for (const [name, binding, key] of [
+    ['configured Alt shortcut opens settings while editing a message', 'Alt+J', 'Alt+j'],
+    ['a shortcut accepts spaces and lower-case key names in saved preferences', ' Ctrl + k ', 'Control+k'],
+    ['Alt+Space opens settings while editing when configured', 'Alt+Space', 'Alt+Space'],
+  ]) await t.test(name, async () => {
+    if (binding !== 'Alt+J') {
+      await page.evaluate(async binding => {
+        const { settings } = await window.nativeCommand('load_client_settings');
+        await window.nativeCommand('save_client_settings', {
+          settings: { ...settings, keybindings: { ...settings.keybindings, openSettings: binding } },
+          baseline: settings,
+        });
+      }, binding);
+      await page.reload();
+      await editor.waitFor();
+    }
+    await editor.fill('Keep this draft');
+    assert.equal(await goBack.count(), 0);
+    await page.keyboard.press(key);
+    const field = page.getByRole('textbox', { name: 'Open settings shortcut', exact: true });
+    await field.waitFor();
+    if (binding === 'Alt+J') assert.equal(await field.inputValue(), binding);
+    await goBack.click();
+    await editor.waitFor();
+    assert.equal(await editor.inputValue(), 'Keep this draft');
+  });
 });
-
-async function openSettingsWithShortcut(t, binding, key) {
-  const page = await appBrowser(t, { keybindings: { openSettings: binding } });
-  await page.getByRole('textbox', { name: 'Message piop', exact: true }).fill('Keep this draft');
-  assert.equal(await page.getByRole('button', { name: 'Go back', exact: true }).count(), 0);
-  await page.keyboard.press(key);
-  await page.getByRole('textbox', { name: 'Open settings shortcut', exact: true }).waitFor();
-  return page;
-}
 
 test('a Mod shortcut accepts either primary modifier and requires one', async t => {
   const page = await appBrowser(t, { keybindings: { openSettings: 'Mod+K' } });
@@ -47,14 +56,6 @@ test('a Mod shortcut accepts either primary modifier and requires one', async t 
       assert.equal(await editor.inputValue(), 'Keep this draft');
     });
   }
-});
-
-test('a shortcut accepts spaces and lower-case key names in saved preferences', async t => {
-  await openSettingsWithShortcut(t, ' Ctrl + k ', 'Control+k');
-});
-
-test('Alt+Space opens settings while editing when configured', async t => {
-  await openSettingsWithShortcut(t, 'Alt+Space', 'Alt+Space');
 });
 
 test('unmatched settings shortcuts leave the composer unchanged', async t => {
