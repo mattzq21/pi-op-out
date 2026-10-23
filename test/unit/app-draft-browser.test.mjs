@@ -4,6 +4,31 @@ import { appBrowser, appWindow, trackBrowserStorage } from '../app-browser-fixtu
 
 test('drafts survive reloads and keep the newest edits', { timeout: 90000 }, async t => {
   const page = await appBrowser(t);
+  await t.test('saving waits for database opens started before explicit storage tracking', async () => {
+    await page.evaluate(async () => {
+      const open = indexedDB.open('storage-open-probe', 1);
+      window.probeDatabase = await new Promise((resolve, reject) => { open.onsuccess = () => resolve(open.result); open.onerror = () => reject(open.error); });
+      const upgrade = indexedDB.open('storage-open-probe', 2);
+      window.probeUpgrade = new Promise((resolve, reject) => { upgrade.onsuccess = () => resolve(upgrade.result); upgrade.onerror = () => reject(upgrade.error); });
+      await new Promise(resolve => { upgrade.onblocked = resolve; });
+    });
+    try {
+      await trackBrowserStorage(page);
+      await page.evaluate(() => {
+        window.probeSaved = false;
+        window.probeSaving = window.savedDraft().then(() => { window.probeSaved = true; });
+      });
+      await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+      assert.equal(await page.evaluate(() => window.probeSaved), false, 'storage cannot be settled while an earlier database open is blocked');
+    } finally {
+      await page.evaluate(async () => {
+        window.probeDatabase.close();
+        (await window.probeUpgrade).close();
+        await window.probeSaving;
+      });
+    }
+  });
+
   await t.test('an unsent draft survives a full browser reload', { timeout: 30000 }, async () => {
     await trackBrowserStorage(page);
     await page.getByRole('textbox', { name: 'Message piop' }).fill('Saved across a full reload 日本語');

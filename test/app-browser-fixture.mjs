@@ -45,6 +45,7 @@ export async function appBrowser(t, { remotes = [], keybindings = {}, nativeFail
     entryPoint: 'test/fixtures/app-browser.tsx', ready: '[aria-label="Message piop"]', holdStorage: false,
     async prepare(value) {
       page = value;
+      await page.context().addInitScript(installBrowserStorageTracking);
       page.context().on('page', next => next.on('pageerror', error => errors.push(error.message)));
       await page.context().exposeFunction('nativeCommand', async (command, args) => {
         if (Object.hasOwn(nativeFailures, command)) throw new Error(nativeFailures[command]);
@@ -69,32 +70,38 @@ export async function appWindow(page) {
 }
 
 export async function trackBrowserStorage(page) {
-  await page.evaluate(() => {
-    const pending = new Set(), failures = [];
-    const transaction = IDBDatabase.prototype.transaction;
-    IDBDatabase.prototype.transaction = function (...args) {
-      const result = transaction.apply(this, args);
-      const complete = new Promise((resolve, reject) => {
-        result.addEventListener('complete', resolve, { once: true });
-        result.addEventListener('abort', () => reject(result.error), { once: true });
-      });
-      pending.add(complete);
-      complete.then(() => pending.delete(complete), error => { failures.push(error); pending.delete(complete); });
-      return result;
-    };
-    window.savedDraft = async () => {
-      const visibility = Object.getOwnPropertyDescriptor(document, 'visibilityState');
-      Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'hidden' });
-      try { document.dispatchEvent(new Event('visibilitychange')); }
-      finally {
-        if (visibility) Object.defineProperty(document, 'visibilityState', visibility);
-        else delete document.visibilityState;
-      }
-      do {
-        await Promise.all([...pending]);
-        await new Promise(resolve => requestAnimationFrame(resolve));
-      } while (pending.size);
-      if (failures.length) throw failures[0];
-    };
-  });
+  await page.evaluate(installBrowserStorageTracking);
+}
+
+function installBrowserStorageTracking() {
+  if (window.savedDraft) return;
+  const pending = new Set(), failures = [];
+  const track = (operation, event) => {
+    const complete = new Promise((resolve, reject) => {
+      operation.addEventListener(event, resolve, { once: true });
+      operation.addEventListener('error', () => reject(operation.error), { once: true });
+      operation.addEventListener('abort', () => reject(operation.error), { once: true });
+    });
+    pending.add(complete);
+    complete.then(() => pending.delete(complete), error => { failures.push(error); pending.delete(complete); });
+    return operation;
+  };
+  const open = IDBFactory.prototype.open;
+  IDBFactory.prototype.open = function (...args) { return track(open.apply(this, args), 'success'); };
+  const transaction = IDBDatabase.prototype.transaction;
+  IDBDatabase.prototype.transaction = function (...args) { return track(transaction.apply(this, args), 'complete'); };
+  window.savedDraft = async () => {
+    const visibility = Object.getOwnPropertyDescriptor(document, 'visibilityState');
+    Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'hidden' });
+    try { document.dispatchEvent(new Event('visibilitychange')); }
+    finally {
+      if (visibility) Object.defineProperty(document, 'visibilityState', visibility);
+      else delete document.visibilityState;
+    }
+    do {
+      await Promise.all([...pending]);
+      await new Promise(resolve => requestAnimationFrame(resolve));
+    } while (pending.size);
+    if (failures.length) throw failures[0];
+  };
 }
