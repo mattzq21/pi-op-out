@@ -11,7 +11,6 @@ function responseTarget(root: HTMLElement, response: ResponseDestination) {
 
 export function ResponseNavigator(props: { responses: ResponseDestination[]; scrollRoot: RefObject<HTMLDivElement | null>; onNavigate: () => void }) {
   const [active, setActive] = createSignal<string>();
-  const [bottom, setBottom] = createSignal("14px");
   const [overflowing, setOverflowing] = createSignal(false);
   const frame = createRef<number | undefined>(undefined);
   const navigationFrame = createRef<number | undefined>(undefined);
@@ -67,7 +66,6 @@ export function ResponseNavigator(props: { responses: ResponseDestination[]; scr
       }
 
       setActive(current);
-      setBottom(`calc(${root.style.getPropertyValue("--composer-height") || "0px"} + 14px)`);
     };
 
     const schedule = () => { if (frame.current === undefined) frame.current = requestAnimationFrame(update); };
@@ -115,7 +113,7 @@ export function ResponseNavigator(props: { responses: ResponseDestination[]; scr
     });
   };
 
-  return <Show when={visible()}><nav ref={element => { rail.current = element; }} class="response-navigator" aria-label="Agent responses" style={{ bottom: bottom() }}>
+  return <Show when={visible()}><nav ref={element => { rail.current = element; }} class="response-navigator" aria-label="Agent responses">
     <Key each={props.responses} by={response => response.messageId}>{(response, index) => <button type="button" class="response-navigator-marker" aria-label={`Go to agent response ${index() + 1}: ${response().preview}`} aria-current={active() === response().messageId ? "location" : undefined} title={`Response ${index() + 1}: ${response().preview}`} onClick={() => navigate(response())}><span /></button>}</Key>
   </nav></Show>;
 }
