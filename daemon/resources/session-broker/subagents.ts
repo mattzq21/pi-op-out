@@ -10,7 +10,7 @@ import { join } from "node:path";
 import { currentHost } from "./client.ts";
 import { writeSessionFile } from "../piop-storage/session-file.ts";
 import { activeConversation } from "./conversation-location.ts";
-import { interruptSession, sendSessionMessage, sessionSnapshot, snapshotStatus } from "./orchestration.ts";
+import { interruptSession, sendSessionMessage, sessionSnapshot, snapshotStatus, subagentResponses } from "./orchestration.ts";
 import { SUBAGENT_PARENT, latestRuns, ownedRuns, saveRun, subagentParent, subagentPayload, registerSubagentResults, type SubagentRun } from "./subagent-state.ts";
 import { acceptedSubmission, cancelSubagent, finishRun, observeSubagent, subagentReceiptSchema, SubagentCancellation, type ActiveSubagent } from "./subagent-reconciliation.ts";
 import { savedSubagentRuns } from "../piop-storage/subagent-results.ts";
@@ -445,12 +445,14 @@ export function registerSubagents(pi: ExtensionAPI) {
   pi.on("input", event => { if (event.source !== "extension") for (const listener of [...inputListeners]) listener(); });
   pi.registerTool({
     name: "wait_subagents", label: "Wait for subagents", exposure: "model-only",
-    description: "Wait until all your subagents finish, or until the user sends a new message. Then end your turn: their answers arrive as new messages.",
+    description: "Wait until all your subagents finish, or until the user sends a new message. Returns the answers of the subagents that finished.",
     parameters: Type.Object({}),
     async execute(_id, _params, signal, _update, ctx) {
       reconcile(ctx);
 
-      if (!pending.size) return { content: [{ type: "text", text: "No subagent is running." }], details: { finished: true } };
+      const answers = () => { const finished = resultsDelivery.claim(ctx); return finished.length ? subagentResponses(finished) : "No subagent answers are waiting."; };
+
+      if (!pending.size) return { content: [{ type: "text", text: answers() }], details: { finished: true } };
       let onInput = () => {};
       const input = new Promise<"input">(resolve => { onInput = () => resolve("input"); inputListeners.add(onInput); });
       const aborted = new Promise<"aborted">(resolve => { if (signal?.aborted) resolve("aborted"); signal?.addEventListener("abort", () => resolve("aborted"), { once: true }); });
@@ -469,7 +471,7 @@ export function registerSubagents(pi: ExtensionAPI) {
 
       if (latestRuns(ctx).some(run => run.status === "running")) throw new Error("Subagent work remains unresolved; completion has not been confirmed");
 
-      return { content: [{ type: "text", text: "All subagents have finished. End your turn to receive their answers." }], details: { finished: true } };
+      return { content: [{ type: "text", text: answers() }], details: { finished: true } };
     },
   });
   pi.registerTool({

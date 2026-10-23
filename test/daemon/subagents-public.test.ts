@@ -230,6 +230,11 @@ test.concurrent('a batch of children runs at once, waiting for all ends only aft
   await root.command({ type: 'prompt', message: 'Count the fruit' });
   await root.until(history => text(history.at(-1)) === 'Counts: Relay: 3 apples, Relay: 5 pears');
   expect(answered.get('awaited')).toBeGreaterThan(Math.max(answered.get('Count apples')!, answered.get('Count pears')!));
+  // wait_subagents returns both answers itself, and they are not sent again as messages.
+  const seen = agents.model.requests.findLast(request => JSON.stringify(request.messages).includes('Count the fruit')).messages;
+  const waited = seen.find((message: any) => message.role === 'tool' && /Relay: 3 apples/.test(text(message)));
+  expect(text(waited)).toMatch(/<subagent_response>\nSubagent (apples|pears):[\s\S]*<subagent_response>\nSubagent (apples|pears):/);
+  expect(seen.filter((message: any) => message.role === 'user' && text(message).includes('<subagent_response>'))).toEqual([]);
   const children = (await agents.daemon.invoke('list_sessions')).filter((session: any) => session.subagentParentId === root.sessionId).map((session: any) => session.name).sort();
   expect(children).toEqual(['Subagent: apples', 'Subagent: pears']);
 }, 120000);

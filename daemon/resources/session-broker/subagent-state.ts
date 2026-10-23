@@ -139,6 +139,21 @@ export function registerSubagentResults(pi: ExtensionAPI) {
 
   return {
     reset() { outstanding.clear(); },
+    /** Marks finished runs whose results were not sent yet as delivered and returns them, so the caller hands them to the model itself. */
+    claim(ctx: ExtensionContext) {
+      const claimed: SubagentRun[] = [];
+
+      for (const run of ownedRuns(ctx)) {
+        const id = run.resultNotificationId;
+
+        if (run.status === "running" || run.resultDelivery !== "pending" || (id && (outstanding.has(id) || delivered(ctx, id)))) continue;
+        run.resultDelivery = "delivered";
+        saveRun(pi, ctx, run);
+        claimed.push(run);
+      }
+
+      return claimed;
+    },
     publish,
     flush(ctx: ExtensionContext) { flush(ctx, false); },
   };
