@@ -15,8 +15,8 @@ async function settingsClient(t, options = {}) {
   let client;
   const settle = async () => { do { await storage.settled(); await act(() => Promise.allSettled([...requests])); } while (requests.size); };
   t.after(async () => { await client?.dispose(); await settle(); storage.restore(); clearMocks(); dom.restore(); });
-  const daemon = await daemonClient(t, () => {}, options);
   const native = await nativeFileCommand(t, { desktop: true });
+  const daemon = await daemonClient(t, () => {}, options);
   mockIPC(async (command, args) => {
     const request = ['load_client_settings', 'save_client_settings'].includes(command) ? native.invoke(command, args) : daemon.invoke(command, args);
     requests.add(request);
