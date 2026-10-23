@@ -279,7 +279,9 @@ button.agent-delivery-source:hover { color: var(--accent-soft); text-decoration:
 .image-input-toast > svg { flex-shrink: 0; }
 .image-input-toast button { display: grid; place-items: center; flex-shrink: 0; margin-left: 2px; padding: 0; border: 0; background: transparent; color: inherit; cursor: pointer; }
 .conversation-turn > .prompt-context { margin: 0 0 14px; }
-.conversation-turn > :is(.user-message, .prompt-context):has(+ .work-group) { margin-bottom: 8px; }
+.conversation-turn > :is(.user-message, .prompt-context, .subagent-timeline):has(+ .work-group) { margin-bottom: 8px; }
+/* Finished subagents start a turn like a user message, so they get the same space below them. */
+.conversation-turn > .subagent-timeline { margin-bottom: 14px; }
 .command-result { margin: 18px auto 28px; color: var(--muted); text-align: center; font-size: 12px; line-height: 1.6; white-space: pre-wrap; overflow-wrap: anywhere; }
 .context-injection { margin: 18px 0; color: var(--muted); font-size: 12px; line-height: 1.6; }
 .context-injection > summary { display: flex; align-items: center; justify-content: center; gap: 6px; cursor: pointer; list-style: none; }
