@@ -19,14 +19,49 @@ async function modelApp(t, overrides = {}) {
   } });
 }
 
-test('the first model report keeps every configured model available in the composer', async t => {
+test('model picker reports and applies settings changes', { timeout: 90000 }, async t => {
   const { root, daemon, settle } = await modelApp(t);
-  await act(() => root.querySelector('[aria-label="Model"]').click());
-  assert.deepEqual([...root.querySelectorAll('[role="listbox"][aria-label="Model options"] [role="option"]')].map(node => node.textContent), ['Knownvisibility-test', 'Othervisibility-test']);
-  await settle();
-  const settings = await daemon.invoke('load_app_settings');
-  assert.deepEqual(settings.knownModels, ['visibility-test/known', 'visibility-test/other']);
-  assert.deepEqual(settings.hiddenModels, []);
+  await t.test('the first model report keeps every configured model available in the composer', { timeout: 30000 }, async () => {
+    await act(() => root.querySelector('[aria-label="Model"]').click());
+    assert.deepEqual([...root.querySelectorAll('[role="listbox"][aria-label="Model options"] [role="option"]')].map(node => node.textContent), ['Knownvisibility-test', 'Othervisibility-test']);
+    await settle();
+    const settings = await daemon.invoke('load_app_settings');
+    assert.deepEqual(settings.knownModels, ['visibility-test/known', 'visibility-test/other']);
+    assert.deepEqual(settings.hiddenModels, []);
+  });
+  await t.test('saved aliases update an open model picker and can be cleared without changing model IDs', { timeout: 30000 }, async () => {
+    const options = () => [...root.querySelectorAll('[role="listbox"][aria-label="Model options"] [role="option"]')];
+    const saveAlias = async alias => {
+      const settings = await daemon.invoke('load_app_settings');
+      await act(async () => {
+        await daemon.invoke('save_host_settings', { hostId: 'local', agentsChanged: false, settings: { ...settings, modelAliases: { 'visibility-test/known': alias } } });
+        await settle();
+      });
+    };
+    await saveAlias('  My model  ');
+    assert.deepEqual(options().map(node => node.textContent), ['My modelvisibility-test', 'Othervisibility-test']);
+    assert.deepEqual((await daemon.invoke('load_app_settings')).modelAliases, { 'visibility-test/known': 'My model' });
+    await saveAlias('');
+    assert.deepEqual(options().map(node => node.textContent), ['Knownvisibility-test', 'Othervisibility-test']);
+  });
+  await t.test('saved model visibility updates an open model picker when a model is hidden and shown again', { timeout: 30000 }, async () => {
+    const options = () => [...root.querySelectorAll('[role="listbox"][aria-label="Model options"] [role="option"]')].map(node => node.textContent);
+    const saveHidden = async hiddenModels => {
+      const settings = await daemon.invoke('load_app_settings');
+      await act(async () => {
+        await daemon.invoke('save_host_settings', { hostId: 'local', agentsChanged: false, settings: { ...settings, hiddenModels } });
+        await settle();
+      });
+    };
+    assert.deepEqual(options(), ['Knownvisibility-test', 'Othervisibility-test']);
+    await saveHidden(['visibility-test/other']);
+    assert.deepEqual(options(), ['Knownvisibility-test']);
+    await saveHidden([]);
+    assert.deepEqual(options(), ['Knownvisibility-test', 'Othervisibility-test']);
+    const settings = await daemon.invoke('load_app_settings');
+    assert.deepEqual(settings.knownModels, ['visibility-test/known', 'visibility-test/other']);
+    assert.deepEqual(settings.hiddenModels, []);
+  });
 });
 
 test('a later model report hides new arrivals and keeps the known default visible', async t => {
@@ -55,43 +90,4 @@ test('reporting known models preserves the users visible model list', async t =>
   assert.equal(typeof before.settingsRevision, 'string');
   assert.ok(before.settingsRevision.length > 0);
   assert.equal(after.settingsRevision, before.settingsRevision);
-});
-
-test('saved aliases update an open model picker and can be cleared without changing model IDs', async t => {
-  const { root, daemon, settle } = await modelApp(t);
-  await act(() => root.querySelector('[aria-label="Model"]').click());
-  const options = () => [...root.querySelectorAll('[role="listbox"][aria-label="Model options"] [role="option"]')];
-  const saveAlias = async alias => {
-    const settings = await daemon.invoke('load_app_settings');
-    await act(async () => {
-      await daemon.invoke('save_host_settings', { hostId: 'local', agentsChanged: false, settings: { ...settings, modelAliases: { 'visibility-test/known': alias } } });
-      await settle();
-    });
-  };
-  await saveAlias('  My model  ');
-  assert.deepEqual(options().map(node => node.textContent), ['My modelvisibility-test', 'Othervisibility-test']);
-  assert.deepEqual((await daemon.invoke('load_app_settings')).modelAliases, { 'visibility-test/known': 'My model' });
-  await saveAlias('');
-  assert.deepEqual(options().map(node => node.textContent), ['Knownvisibility-test', 'Othervisibility-test']);
-});
-
-test('saved model visibility updates an open model picker when a model is hidden and shown again', { timeout: 30000 }, async t => {
-  const { root, daemon, settle } = await modelApp(t, { knownModels: ['visibility-test/known', 'visibility-test/other'] });
-  await act(() => root.querySelector('[aria-label="Model"]').click());
-  const options = () => [...root.querySelectorAll('[role="listbox"][aria-label="Model options"] [role="option"]')].map(node => node.textContent);
-  const saveHidden = async hiddenModels => {
-    const settings = await daemon.invoke('load_app_settings');
-    await act(async () => {
-      await daemon.invoke('save_host_settings', { hostId: 'local', agentsChanged: false, settings: { ...settings, hiddenModels } });
-      await settle();
-    });
-  };
-  assert.deepEqual(options(), ['Knownvisibility-test', 'Othervisibility-test']);
-  await saveHidden(['visibility-test/other']);
-  assert.deepEqual(options(), ['Knownvisibility-test']);
-  await saveHidden([]);
-  assert.deepEqual(options(), ['Knownvisibility-test', 'Othervisibility-test']);
-  const settings = await daemon.invoke('load_app_settings');
-  assert.deepEqual(settings.knownModels, ['visibility-test/known', 'visibility-test/other']);
-  assert.deepEqual(settings.hiddenModels, []);
 });
