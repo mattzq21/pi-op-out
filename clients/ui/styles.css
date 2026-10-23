@@ -216,9 +216,9 @@ button.agent-delivery-source:hover { color: var(--accent-soft); text-decoration:
 :is(.reasoning-text, .work-group-content .message-body, .active-work-content .message-body) > :is(p, h1, h2, h3, h4, h5, h6, ul, ol, blockquote) { margin-top: 0; margin-bottom: 3px; }
 :is(.reasoning-text, .work-group-content .message-body, .active-work-content .message-body) > :last-child { margin-bottom: 0; }
 .branch-button { border: 0; background: transparent; color: var(--muted); height: 25px; padding: 0 6px; border-radius: 5px; display: flex; gap: 5px; align-items: center; font-size: 11px; }.branch-button:hover { background: var(--dark-control-hover); color: var(--ink); }
-.working-dots { display: flex; align-items: center; justify-content: center; gap: 4px; margin: 0 auto 6px; padding: 6px 10px; border: 1px solid var(--line); border-radius: 999px; background: var(--paper); cursor: pointer; }
+.working-dots { display: flex; align-items: center; justify-content: center; gap: 6px; margin: 0 auto 8px; padding: 10px 16px; border: 1px solid var(--line); border-radius: 999px; background: var(--paper); cursor: pointer; }
 .working-dots:hover { border-color: var(--accent); background: var(--dark-control-hover); }
-.working-dots span { width: 5px; height: 5px; border-radius: 50%; background: var(--accent); animation: working-dot 1.2s ease-in-out infinite; }
+.working-dots span { width: 7px; height: 7px; border-radius: 50%; background: var(--accent); animation: working-dot 1.2s ease-in-out infinite; }
 .working-dots span:nth-child(2) { animation-delay: .2s; }
 .working-dots span:nth-child(3) { animation-delay: .4s; }
 @keyframes working-dot { 0%, 80%, 100% { opacity: .25; transform: translateY(0); } 40% { opacity: 1; transform: translateY(-2px); } }
