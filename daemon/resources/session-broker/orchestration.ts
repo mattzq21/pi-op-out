@@ -59,7 +59,7 @@ const mailboxMessageSchema = Schema.Object({ details: Schema.Object({ notificati
 function deliverMailbox(pi: ExtensionAPI, mail: Mail[]) {
   for (const [index, item] of mail.entries()) {
     pi.sendMessage(item.message, { triggerTurn: index === mail.length - 1 });
-    pi.events.emit("piop:agent-mail", { notificationId: item.notificationId });
+    pi.events.emit("piop:agent-mail", { notificationId: item.notificationId, customType: item.message.customType });
   }
 }
 
@@ -73,7 +73,7 @@ function queueAgentMailbox(pi: ExtensionAPI, ctx: ExtensionContext, message: Mai
 
   if (!defer && deliverAs) {
     pi.sendMessage(message, { triggerTurn: true, deliverAs });
-    pi.events.emit("piop:agent-mail", { notificationId });
+    pi.events.emit("piop:agent-mail", { notificationId, customType: message.customType });
 
     return; }
 
@@ -81,7 +81,7 @@ function queueAgentMailbox(pi: ExtensionAPI, ctx: ExtensionContext, message: Mai
   queued.push(mail);
   mailboxes.set(pi, queued);
   // A message from a peer ends a wait in the running turn, so the turn can finish and the agent reads the message.
-  if (!defer && message.customType === "piop-agent-message") pi.events.emit("piop:agent-mail", { notificationId });
+  if (!defer && message.customType === "piop-agent-message") pi.events.emit("piop:agent-mail", { notificationId, customType: message.customType });
 }
 
 export async function sendAgentMailbox(pi: ExtensionAPI, ctx: ExtensionContext, message: Mail["message"], notificationId: string, deliverAs?: "steer" | "followUp") {
@@ -245,8 +245,8 @@ async function waitSnapshot(targets: Target[], signal: AbortSignal | undefined, 
 const STATUS_NOTES: Record<string, string> = { paused: " (paused)" };
 
 /** The new answers of the chats that finished, each in a <peer_message> tag with the chat's name on the first line. */
-/** What ended a wait besides the peers: a message from the user, or a message from another chat. */
-type Interruption = "user" | "mail" | undefined;
+/** What ended a wait besides the peers: a message from the user, a message from another chat, or a subagent result. */
+type Interruption = "user" | "mail" | "subagent" | undefined;
 
 function peerAnswers(snapshot: Awaited<ReturnType<typeof waitSnapshot>>, interruption: Interruption) {
   const answers = snapshot.polls.filter(item => item.peer.status !== "running" && item.changed).map(item => {
@@ -259,6 +259,7 @@ function peerAnswers(snapshot: Awaited<ReturnType<typeof waitSnapshot>>, interru
 
   if (interruption === "user") parts.push("The user sent a new message.");
   if (interruption === "mail") parts.push("A message from a peer arrived.");
+  if (interruption === "subagent") parts.push("A subagent result arrived.");
 
   return parts.length ? parts.join("\n\n") : "No peer finished before the wait ended.";
 }
@@ -405,11 +406,11 @@ export function registerOrchestration(pi: ExtensionAPI) {
   registerDelivery(pi);
   /** The last answer each wait returned, by waiting chat and target chat. */
   const seenAnswers = new Map<string, string>();
-  const revisions = { user: 0, mail: 0 };
+  const revisions = { user: 0, mail: 0, subagent: 0 };
   const inputListeners = new Set<() => void>();
-  const newInput = (kind: "user" | "mail") => { revisions[kind]++; for (const listener of inputListeners) listener(); };
+  const newInput = (kind: "user" | "mail" | "subagent") => { revisions[kind]++; for (const listener of inputListeners) listener(); };
   pi.on("input", event => { if (event.source !== "extension") newInput("user"); });
-  const unsubscribeMail = pi.events.on("piop:agent-mail", () => newInput("mail"));
+  const unsubscribeMail = pi.events.on("piop:agent-mail", event => newInput(event.customType === "piop-subagent-result" ? "subagent" : "mail"));
   pi.on("session_shutdown", unsubscribeMail);
   pi.registerTool({
     name: "create_peer", label: "Create peer", exposure: "model-only",
@@ -520,8 +521,8 @@ export function registerOrchestration(pi: ExtensionAPI) {
 
       const finish = (snapshot: Awaited<ReturnType<typeof waitSnapshot>>) => {
         // Mail also waits as a pending message, so pending messages count as the user's only when no mail came.
-        const mail = revisions.mail !== start.mail;
-        const interruption: Interruption = revisions.user !== start.user || (!mail && ctx.hasPendingMessages()) ? "user" : mail ? "mail" : undefined;
+        const mail = revisions.mail !== start.mail; const subagent = revisions.subagent !== start.subagent;
+        const interruption: Interruption = revisions.user !== start.user || (!mail && !subagent && ctx.hasPendingMessages()) ? "user" : mail ? "mail" : subagent ? "subagent" : undefined;
         const interrupted = interruption !== undefined;
         // With for: "all", a peer that cannot be read counts as done, so the wait still ends when the others finish.
         const failed = params.for === "all" ? snapshot.errors.length === params.targets.length : snapshot.errors.length > 0;
@@ -562,7 +563,7 @@ export function registerOrchestration(pi: ExtensionAPI) {
 
 declare module "@earendil-works/pi-coding-agent" {
   interface EventBus {
-    on(channel: "piop:agent-mail", handler: (event: { notificationId: string }) => void): () => void;
-    emit(channel: "piop:agent-mail", event: { notificationId: string }): void;
+    on(channel: "piop:agent-mail", handler: (event: { notificationId: string; customType?: string }) => void): () => void;
+    emit(channel: "piop:agent-mail", event: { notificationId: string; customType?: string }): void;
   }
 }

@@ -319,7 +319,7 @@ export class DurableMailbox {
 
   private deliver(message: MailboxMessage) {
     this.pi.sendMessage(message, { triggerTurn: false });
-    this.pi.events.emit("piop:agent-mail", { notificationId: message.details.notificationId });
+    this.pi.events.emit("piop:agent-mail", { notificationId: message.details.notificationId, customType: message.customType });
   }
 
   send(ctx: ExtensionContext, message: SendMessage, deliveryId: string, send = (item: MailboxMessage) => this.deliver(item)) {
@@ -381,7 +381,7 @@ export class DurableMailbox {
           assertSameDelivery(fingerprint, record.message);
           this.queued.add(this.key(ctx, record.deliveryId));
 
-          if (branch.has(record.deliveryId)) this.pi.events.emit("piop:agent-mail", { notificationId: record.deliveryId });
+          if (branch.has(record.deliveryId)) this.pi.events.emit("piop:agent-mail", { notificationId: record.deliveryId, customType: record.message.customType });
           else this.consumed.add(this.key(ctx, record.deliveryId));
           continue;
         }

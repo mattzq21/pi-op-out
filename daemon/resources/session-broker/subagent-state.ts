@@ -124,7 +124,7 @@ export function registerSubagentResults(pi: ExtensionAPI) {
 
     if (outstanding.has(id)) return;
 
-    if (!boundary && !ctx.isIdle()) { pi.events.emit("piop:agent-mail", { notificationId: id });
+    if (!boundary && !ctx.isIdle()) { pi.events.emit("piop:agent-mail", { notificationId: id, customType: "piop-subagent-result" });
 
     return; }
 
