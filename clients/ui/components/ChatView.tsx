@@ -315,13 +315,20 @@ function startsTurn(message: ChatMessage | undefined) {
   return message !== undefined && isPromptMessage(message);
 }
 
+const isSubagentResult = (message: ChatMessage) => message.customType === "piop-subagent-result";
+
+/** A subagent result joins a turn that holds only subagent results, so results with no answer between them share one line. */
+function joinsTurn(turn: ChatMessage[], message: ChatMessage) {
+  return isSubagentResult(message) && turn.length > 0 && turn.every(isSubagentResult);
+}
+
 function sameTurn(turn: ConversationGroup, messages: ChatMessage[], start: number) {
   let context = 0;
 
   return turn.messages.every((previous, index) => {
     const message = messages[start + index];
 
-    if (message !== previous || (index > 0 && startsTurn(message))) return false;
+    if (message !== previous || (index > 0 && startsTurn(message) && !joinsTurn(turn.messages.slice(0, index), message))) return false;
 
     if (!isPromptMessage(message) || !message.promptContext) return true;
 
@@ -336,7 +343,7 @@ function reusableTurns(messages: ChatMessage[], previous: ConversationGroup[]) {
   for (const turn of previous) {
     const end = start + turn.messages.length;
 
-    if (!turn.messages.length || end > messages.length || (end < messages.length && !startsTurn(messages[end]))) break;
+    if (!turn.messages.length || end > messages.length || (end < messages.length && (!startsTurn(messages[end]) || joinsTurn(turn.messages, messages[end])))) break;
 
     if (!sameTurn(turn, messages, start)) break;
     start = end;
@@ -412,7 +419,7 @@ function groupTurns(messages: ChatMessage[], previous: ConversationGroup[] = [])
   for (let index = prefix.start; index < messages.length; index++) {
     const message = messages[index];
 
-    if (startsTurn(message) || groups.length === 0) groups.push([]);
+    if (groups.length === 0 || (startsTurn(message) && !joinsTurn(groups[groups.length - 1], message))) groups.push([]);
     groups[groups.length - 1].push(message);
   }
 
