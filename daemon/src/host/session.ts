@@ -5,6 +5,7 @@ import { getProjectRepository } from '../project_repositories';
 import * as Registry from '../session_registry';
 import { Mutex, errorText } from '../util/sync';
 import { array, clone, flag, kind, merge, setEntry, text, jsonEqual } from './json';
+import { olderHistory, recentHistory, turnWork } from './history_window';
 import { savedToolPayload } from './payload';
 import { readHeaderLine, argument, prepareSpec, specIdentity, type LaunchSpec, type SessionLaunch } from './protocol';
 import { SessionQueue } from './queue';
@@ -463,8 +464,10 @@ export class Session {
       case 'get_session_revision': return { revision: this.revision() };
       case 'get_tool_payload': return this.collectToolPayload(command);
       case 'get_queued_image': return this.queuedImage(command);
-      case 'get_snapshot': return this.collectSnapshot();
+      case 'get_snapshot': { const snapshot = await this.collectSnapshot(); if (flag(command, 'recent') && snapshot?.history) recentHistory(snapshot.history, this.isWorking); return snapshot; }
       case 'get_entries': { const snapshot = await this.collectSnapshot(); return snapshot?.history ?? null; }
+      case 'get_older_history': return olderHistory(await this.raw({ type: 'get_entries' }), command.before);
+      case 'get_turn_work': return turnWork(await this.raw({ type: 'get_entries' }), command.entryId);
       case 'get_state': return this.collectState(command);
       case 'force_stop': await this.stop(); return null;
       case 'get_available_models': await this.refreshProviders(); break;

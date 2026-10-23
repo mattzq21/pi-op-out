@@ -35,7 +35,7 @@ function deferToolResult(value: any): void {
   }
 }
 
-function branchEntries(history: any): any[] {
+export function branchEntries(history: any): any[] {
   const entries = new Map<string, any>();
   for (const entry of Array.isArray(history.entries) ? history.entries : []) if (typeof entry?.id === 'string') entries.set(entry.id, entry);
   const visited = new Set<string>();
