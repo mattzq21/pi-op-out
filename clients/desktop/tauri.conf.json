@@ -1,0 +1,29 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "piop",
+  "version": "0.1.0",
+  "identifier": "dev.pi.desktop",
+  "build": {
+    "beforeDevCommand": "bun scripts/build-daemon.mjs --debug && bun run dev",
+    "devUrl": "http://localhost:1423",
+    "beforeBuildCommand": "bun scripts/build.mjs",
+    "frontendDist": "../../dist"
+  },
+  "app": {
+    "windows": [{ "title": "piop", "width": 1280, "height": 800, "minWidth": 900, "minHeight": 640, "focus": true, "decorations": false, "transparent": false, "backgroundColor": "#181817", "dragDropEnabled": true }],
+    "security": { "csp": "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; media-src 'self' data: blob:; connect-src 'self' ipc: http://ipc.localhost data: blob:; worker-src 'self' blob:; frame-src 'self' about: data: blob:; object-src 'none'; base-uri 'none'; form-action 'none'", "dangerousDisableAssetCspModification": ["script-src", "style-src"] }
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["deb"],
+    "externalBin": ["binaries/piopd"],
+    "linux": { "deb": { "depends": ["libasound2t64", "libgstreamer1.0-0 (>= 1.28)", "libgstreamer-plugins-base1.0-0 (>= 1.28)", "gstreamer1.0-plugins-base", "gstreamer1.0-plugins-good"] } },
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ]
+  }
+}

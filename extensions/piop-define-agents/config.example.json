@@ -1,0 +1,23 @@
+{
+  "agents": [
+    {
+      "name": "default",
+      "model": "",
+      "effort": "high",
+      "path_systemprompt": "~/.agents/prompts/system/default.md",
+      "path_agent_prompt": "~/.agents/AGENTS.md",
+      "tools": [
+        "read",
+        "bash",
+        "edit",
+        "write",
+        "grep",
+        "find",
+        "ls"
+      ],
+      "skills": [],
+      "extensions": [],
+      "mcpServers": {}
+    }
+  ]
+}

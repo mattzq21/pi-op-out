@@ -1,0 +1,7 @@
+[workspace]
+members = ["clients/desktop", "clients/desktop/protocol"]
+default-members = ["clients/desktop"]
+resolver = "2"
+
+[profile.dev]
+debug = "line-tables-only"

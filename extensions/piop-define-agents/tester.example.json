@@ -1,0 +1,21 @@
+{
+  "agents": [
+    {
+      "name": "tester",
+      "model": "",
+      "effort": "high",
+      "path_systemprompt": "sysprompt/tester.example.md",
+      "path_agent_prompt": "",
+      "tools": [
+        "read",
+        "bash",
+        "grep",
+        "find",
+        "ls"
+      ],
+      "skills": [],
+      "extensions": [],
+      "mcpServers": {}
+    }
+  ]
+}

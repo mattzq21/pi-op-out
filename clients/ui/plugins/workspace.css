@@ -1,0 +1,32 @@
+.plugin-sidepane { position: relative; flex: 0 0 var(--plugin-width); width: var(--plugin-width); min-width: 0; min-height: 0; display: flex; flex-direction: column; border-left: 1px solid var(--line); background: var(--paper); }
+.plugin-sidepane[hidden], .plugin-panel[hidden] { display: none; }
+.plugin-pane-header { display: flex; align-items: center; gap: 8px; padding: 6px 9px; border-bottom: 1px solid var(--line); flex-shrink: 0; background: #141413; }
+.plugin-pane-header [role=tablist] { display: flex; min-width: 0; overflow-x: auto; gap: 4px; }
+.plugin-pane-header [role=tab] { border: 0; padding: 7px 28px 7px 10px; border-radius: 6px; background: transparent; color: var(--muted); font-size: 14px; white-space: nowrap; }
+.plugin-tab { position: relative; flex-shrink: 0; }
+.plugin-tab-remove { position: absolute; right: 4px; top: 50%; transform: translateY(-50%); display: grid; place-items: center; width: 20px; height: 20px; padding: 0; border: 0; border-radius: 4px; background: transparent; color: var(--muted); opacity: 0; pointer-events: none; cursor: pointer; }
+.plugin-tab:hover .plugin-tab-remove, .plugin-tab:focus-within .plugin-tab-remove { opacity: 1; pointer-events: auto; }
+.plugin-tab-remove:hover { color: var(--ink); background: var(--hover); }
+.plugin-tab-remove:focus-visible { outline: 2px solid var(--accent); }
+@media (hover: none) { .plugin-tab-remove { opacity: 1; pointer-events: auto; } }
+.plugin-pane-header [aria-selected=true] { color: var(--ink); background: var(--hover); }
+.plugin-pane-header [role=tab]:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.plugin-tab-picker { position: relative; flex-shrink: 0; }
+.plugin-tab-picker summary { list-style: none; cursor: pointer; }
+.plugin-tab-picker summary::-webkit-details-marker { display: none; }
+.plugin-tab-picker summary:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.plugin-tab-options { position: absolute; left: 0; top: calc(100% + 6px); z-index: 20; min-width: 150px; padding: 5px; border: 1px solid var(--line); border-radius: 10px; background: var(--dark-control); box-shadow: 0 10px 28px #0003; }
+.plugin-tab-options button { display: block; width: 100%; border: 0; border-radius: 6px; padding: 9px 10px; background: transparent; color: var(--ink); font: inherit; font-size: 13px; text-align: left; cursor: pointer; }
+.plugin-tab-options button:hover, .plugin-tab-options button:focus-visible { outline: 0; background: var(--accent-08); }
+.plugin-panel { display: flex; flex: 1; min-height: 0; min-width: 0; overflow: hidden; }
+.plugin-error { padding: 8px 12px; font-size: 12px; color: var(--ink); overflow-wrap: anywhere; }
+.open-plugins-button { position: absolute; right: 12px; top: 10px; z-index: 5; }
+.plugin-resizer { position: absolute; z-index: 5; top: 0; bottom: 0; left: -4px; width: 8px; cursor: col-resize; touch-action: none; user-select: none; }
+.plugin-resizer::after { content: ""; position: absolute; inset: 0 3px; background: transparent; }
+.plugin-resizer:hover::after, .plugin-resizer.dragging::after, .plugin-resizer:focus-visible::after { background: var(--accent); }
+@media (max-width: 700px) {
+  .chat-panes.split > .plugin-sidepane { width: 100%; flex: 0 0 100%; min-height: 0; border-left: 0; border-top: 1px solid var(--line); }
+  .plugin-pane-header { padding-left: 60px; }
+  .chat-shell > .open-plugins-button { top: 6px; right: max(12px, env(safe-area-inset-right)); min-height: 0; }
+  .plugin-resizer { display: none; }
+}

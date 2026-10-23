@@ -1,0 +1,2 @@
+.branch-activity { position: fixed; inset: 0; z-index: 150; display: grid; place-items: center; pointer-events: none; }
+.branch-activity > svg { box-sizing: content-box; padding: 36px; border: 1px solid var(--line); border-radius: 50%; background: var(--paper); color: var(--accent); opacity: .75; box-shadow: 0 4px 24px #0004; }

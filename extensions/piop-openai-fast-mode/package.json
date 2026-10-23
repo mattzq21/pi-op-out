@@ -1,0 +1,30 @@
+{
+  "name": "piop-openai-fast-mode",
+  "version": "0.3.0-piop.1",
+  "description": "Local piop fork of pi-openai-fast-mode with Astra support and Desktop status",
+  "license": "MIT",
+  "type": "module",
+  "keywords": [
+    "pi-package",
+    "pi-extension",
+    "openai",
+    "fast-mode"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/johncmunson/pi-openai-fast-mode"
+  },
+  "files": [
+    "src",
+    "README.md"
+  ],
+  "pi": {
+    "extensions": [
+      "./src/index.ts"
+    ]
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*"
+  },
+  "private": true
+}

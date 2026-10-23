@@ -1,0 +1,36 @@
+[package]
+name = "piop-desktop"
+version = "0.1.0"
+description = "piop: a native interface for the Pi coding agent"
+authors = ["piop contributors"]
+edition = "2021"
+default-run = "piop"
+
+[lib]
+name = "piop_desktop"
+crate-type = ["rlib"]
+
+[[bin]]
+name = "piop"
+path = "src/main.rs"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+rusqlite = { version = "0.37", features = ["bundled"] }
+piop-protocol = { path = "protocol" }
+libc = "0.2"
+tauri = { version = "2", features = [] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+base64 = "0.22"
+sha2 = "0.10"
+uuid = { version = "1", features = ["v4"] }
+tokio = { version = "1", features = ["io-util", "io-std", "macros", "process", "sync", "time", "net", "rt-multi-thread", "signal"] }
+tokio-tungstenite = { version = "0.26", features = ["rustls-tls-native-roots"] }
+futures-util = "0.3"
+
+[target.'cfg(target_os = "linux")'.dependencies]
+gtk = { version = "0.18" }
+webkit2gtk = { version = "2" }

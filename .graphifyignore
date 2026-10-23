@@ -1,0 +1,12 @@
+node_modules/
+dist/
+target/
+clients/desktop/voice-host/target/
+.git/
+.tld/
+graphify-out/
+*.bundle.mjs
+package-lock.json
+Cargo.lock
+*.tsbuildinfo
+test/
