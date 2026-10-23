@@ -479,7 +479,7 @@ export function registerSubagents(pi: ExtensionAPI) {
         const finished = resultsDelivery.claim(ctx);
         const text = finished.length ? subagentResponses(finished) : "No subagent answers are waiting.";
 
-        return { content: [{ type: "text" as const, text: pending.size ? text + "\n\nOther subagents are still running." : text }], details: { finished: !pending.size } };
+        return { content: [{ type: "text" as const, text: pending.size ? text + "\n\nOther subagents are still running." : text }], details: { finished: !pending.size, version: 1, runs: finished } };
       };
 
       // An answer that is already waiting ends a wait for any subagent at once.
