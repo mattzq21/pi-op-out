@@ -95,7 +95,7 @@ export async function sessionSnapshot(sessionId: string, hostId: string, signal?
 }
 
 /** discardOnFailure: the recipient is a new chat that is deleted when the message cannot be delivered. deliverAs: how a busy recipient gets it. */
-export async function sendSessionMessage(ctx: ExtensionContext, sessionId: string, hostId: string, message: string, wake: boolean, signal?: AbortSignal, deliveryId = randomUUID(), discardOnFailure = false, deliverAs?: "steer" | "followUp") {
+export async function sendSessionMessage(ctx: ExtensionContext, sessionId: string, hostId: string, message: string, wake: boolean, signal?: AbortSignal, deliveryId: string = randomUUID(), discardOnFailure = false, deliverAs?: "steer" | "followUp") {
   if (sessionId === ctx.sessionManager.getSessionId() && hostId === currentHost()) throw new Error("Choose another conversation as the recipient");
   await activeConversation(sessionId, hostId, signal);
 
