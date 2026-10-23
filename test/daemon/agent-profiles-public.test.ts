@@ -64,7 +64,7 @@ test.concurrent('a chat on an agent profile calls the profile\'s model with the 
 }, 60000);
 
 test.concurrent('a child started with an agent profile uses that profile\'s model and thinking level', async () => {
-  agents.scripts.set('Ask a deep thinker', messages => called(messages, 'spawn_subagents') ? { text: 'Asked.' } : { tool: 'spawn_subagents', arguments: { tasks: [{ name: 'Thinker', task: 'Deep child task', agent: 'deep-thinker' }] } });
+  agents.scripts.set('Ask a deep thinker', messages => called(messages, 'spawn_subagents') ? { text: 'Asked.' } : { tool: 'spawn_subagents', arguments: { tasks: [{ nickname: 'Thinker', task: 'Deep child task', agent: 'deep-thinker' }] } });
   agents.scripts.set('Deep child task', () => ({ text: 'Child done.' }));
   const root = await agents.rootChat();
   await root.command({ type: 'prompt', message: 'Ask a deep thinker' });
@@ -74,7 +74,7 @@ test.concurrent('a child started with an agent profile uses that profile\'s mode
 }, 60000);
 
 test.concurrent('a child started without a profile keeps the model and thinking level its parent chose by hand', async () => {
-  agents.scripts.set('Ask a copy of me', messages => called(messages, 'spawn_subagents') ? { text: 'Asked.' } : { tool: 'spawn_subagents', arguments: { tasks: [{ name: 'Copy', task: 'Copy child task' }] } });
+  agents.scripts.set('Ask a copy of me', messages => called(messages, 'spawn_subagents') ? { text: 'Asked.' } : { tool: 'spawn_subagents', arguments: { tasks: [{ nickname: 'Copy', task: 'Copy child task' }] } });
   agents.scripts.set('Copy child task', () => ({ text: 'Child done.' }));
   const root = await agents.rootChat();
   await root.command({ type: 'set_model', provider: 'scripted', modelId: 'scripted-thinker' });

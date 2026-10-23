@@ -236,7 +236,7 @@ export function registerSubagents(pi: ExtensionAPI) {
   const targetRun = (ctx: ExtensionContext, target: string) => {
     const runs = latestRuns(ctx).filter(run => run.sessionId === target || run.name === target || taskPath(ctx, run) === target);
 
-    if (runs.length !== 1) throw new Error("No subagent has this name; list_subagents shows their names");
+    if (runs.length !== 1) throw new Error("No subagent has this nickname; list_subagents shows their nicknames");
 
     return runs[0];
   };
@@ -278,16 +278,16 @@ export function registerSubagents(pi: ExtensionAPI) {
 
   pi.on("session_shutdown", unsubscribeTools);
   pi.registerTool({
-    name: "list_subagents", label: "List subagents", exposure: "model-only", description: "List your subagents with their names, agents and status.",
+    name: "list_subagents", label: "List subagents", exposure: "model-only", description: "List your subagents with their nicknames, agents and status.",
     parameters: Type.Object({}),
     async execute(_id, _params, signal, _update, ctx) {
       const subagents = await Promise.all(latestRuns(ctx).map(async run => {
-        const name = taskPath(ctx, run);
+        const nickname = run.name;
 
-        if (run.status !== "running") return { name, agent: run.agent, status: run.status };
+        if (run.status !== "running") return { nickname, agent: run.agent, status: run.status };
 
-        try { return { name, agent: run.agent, status: snapshotStatus(await sessionSnapshot(run.sessionId, run.hostId, signal)) === "idle" ? "finishing" : "running" }; }
-        catch (error) { return { name, agent: run.agent, status: "unavailable", error: error instanceof Error ? error.message : String(error) }; }
+        try { return { nickname, agent: run.agent, status: snapshotStatus(await sessionSnapshot(run.sessionId, run.hostId, signal)) === "idle" ? "finishing" : "running" }; }
+        catch (error) { return { nickname, agent: run.agent, status: "unavailable", error: error instanceof Error ? error.message : String(error) }; }
       }));
 
       return { content: [{ type: "text", text: JSON.stringify(subagents) }], details: { subagents } };
@@ -295,10 +295,10 @@ export function registerSubagents(pi: ExtensionAPI) {
   });
   pi.registerTool({
     name: "message_subagent", label: "Message subagent", exposure: "model-only", description: "Send a subagent a message. A busy subagent gets it as a follow-up after its current work, or during it with delivery: \"steer\". A finished one starts a new task with its own earlier history. Its answer arrives as a new message.",
-    parameters: Type.Object({ name: Type.String({ minLength: 1 }), message: Type.String({ minLength: 1 }), delivery: Type.Optional(Type.Union([Type.Literal("follow_up"), Type.Literal("steer")])) }),
+    parameters: Type.Object({ nickname: Type.String({ minLength: 1 }), message: Type.String({ minLength: 1 }), delivery: Type.Optional(Type.Union([Type.Literal("follow_up"), Type.Literal("steer")])) }),
     async execute(id, params, signal, _update, ctx) {
       requireMessageLength(params.message);
-      const run = targetRun(ctx, params.name);
+      const run = targetRun(ctx, params.nickname);
       reconcile(ctx);
 
       const running = active.get(run.sessionId);
@@ -317,10 +317,10 @@ export function registerSubagents(pi: ExtensionAPI) {
   });
   pi.registerTool({
     name: "stop_subagent", label: "Stop subagent", exposure: "model-only", description: "Stop a subagent's current task. It keeps its history and can get more work with message_subagent.",
-    parameters: Type.Object({ name: Type.String({ minLength: 1 }) }),
+    parameters: Type.Object({ nickname: Type.String({ minLength: 1 }) }),
     async execute(_id, params, signal, _update, ctx) {
       reconcile(ctx);
-      const run = targetRun(ctx, params.name);
+      const run = targetRun(ctx, params.nickname);
       const running = active.get(run.sessionId);
       const stopped = { content: [{ type: "text" as const, text: `Subagent ${run.name} stopped.` }], details: { name: run.name } };
 
@@ -495,23 +495,23 @@ export function registerSubagents(pi: ExtensionAPI) {
     name: "spawn_subagents", label: "Spawn subagents",
     exposure: "model-only",
     description: "Start subagents in the background, each with its own task. A subagent starts with no context, so fill him in just enough to complete the handoff. Avoid giving two subagents overlapping edits. Pick an agent profile from list_agent_profiles or omit it to use your own.",
-    parameters: Type.Object({ tasks: Type.Array(Type.Object({ name: Type.String({ pattern: NICKNAME, description: "Unique nickname, used to address this subagent" }), task: Type.String({ minLength: 1 }), agent: Type.Optional(Type.String({ minLength: 1 })) }), { minItems: 1 }) }),
+    parameters: Type.Object({ tasks: Type.Array(Type.Object({ nickname: Type.String({ pattern: NICKNAME, description: "Unique, used to address this subagent" }), task: Type.String({ minLength: 1 }), agent: Type.Optional(Type.String({ minLength: 1 })) }), { minItems: 1 }) }),
     async execute(toolCallId, params, signal, onUpdate, ctx) {
       signal?.throwIfAborted();
 
       requireDelegation(ctx);
 
-      if (!params.tasks.length || params.tasks.some((task) => !task.task.trim())) throw new Error("Provide at least one named, nonempty task");
+      if (!params.tasks.length || params.tasks.some((task) => !task.task.trim())) throw new Error("Provide at least one nonempty task");
       for (const task of params.tasks) requireMessageLength(task.task);
 
-      // A nickname is shown on its own line, as in "Subagent <name>:", so it cannot hold a line break.
-      if (params.tasks.some(task => !new RegExp(NICKNAME).test(task.name))) throw new Error("Give each subagent a nickname of 1–8 letters, the first upper case and the rest lower case");
+      // A nickname is shown on its own line, as in "Subagent <nickname>:".
+      if (params.tasks.some(task => !new RegExp(NICKNAME).test(task.nickname))) throw new Error("Give each subagent a nickname of 1–8 letters, the first upper case and the rest lower case");
 
-      if (new Set(params.tasks.map(task => task.name)).size !== params.tasks.length) throw new Error("Give each subagent a different name");
+      if (new Set(params.tasks.map(task => task.nickname)).size !== params.tasks.length) throw new Error("Give each subagent a different nickname");
 
       reconcile(ctx);
 
-      if (params.tasks.some(task => latestRuns(ctx).some(run => run.name === task.name))) throw new Error("A subagent with this name exists; use message_subagent to give it more work");
+      if (params.tasks.some(task => latestRuns(ctx).some(run => run.name === task.nickname))) throw new Error("A subagent with this nickname exists; use message_subagent to give it more work");
 
       requireSubagentSlots(pi, ctx, pending.size, params.tasks.length);
       const results: SubagentRun[] = [];
@@ -527,7 +527,7 @@ export function registerSubagents(pi: ExtensionAPI) {
         resultsDelivery.publish(ctx, run);
       };
 
-      await Promise.all(params.tasks.map((task) => launchSubagent(task, { pi, ctx, toolCallId, active, results, signal: backgroundSignal, publish }, pending)));
+      await Promise.all(params.tasks.map((task) => launchSubagent({ name: task.nickname, task: task.task, agent: task.agent }, { pi, ctx, toolCallId, active, results, signal: backgroundSignal, publish }, pending)));
 
       return { ...subagentPayload(results), isError: results.some((run) => run.status === "failed" || run.status === "cancelled") };
     },
