@@ -2,11 +2,9 @@ import { randomUUID } from 'node:crypto';
 import { join } from 'node:path';
 import { homeDir, isDirectory } from './environment';
 import { ensureDesktopSessionsDir } from './process_io';
-import { withExtension } from './settings_storage';
 import * as Registry from './session_registry';
 import * as peers from './peers';
 import { profileRoot } from './host_operations';
-import { lockFile } from './util/flock';
 import { Mutex } from './util/sync';
 import { transaction, type Database } from './util/db';
 import type { SessionSummary } from './types';
@@ -79,11 +77,6 @@ export function parseChange(value: any): GroupChange {
 
 function storagePath(): string { return join(ensureDesktopSessionsDir(homeDir()), 'groups.json'); }
 
-async function lockStorage(path: string) {
-  try { return await lockFile(withExtension(path, 'lock'), 0o644); }
-  catch (error: any) { throw new Error(`Could not lock session groups: ${error.message}`); }
-}
-
 function database(path: string): Database {
   const parent = join(path, '..');
   const root = parent.endsWith('/sessions') ? join(parent, '..') : parent;
@@ -97,8 +90,26 @@ function database(path: string): Database {
 
 function read(path: string): SessionGroups | undefined {
   const connection = database(path);
+  try { return transaction(connection, 'DEFERRED', () => readWith(connection)); }
+  finally { connection.close(); }
+}
+
+/**
+ * Reads the groups, lets change edit them, and saves what change returns as save, in one database transaction.
+ * The transaction keeps other writers out, so no lock file is needed.
+ */
+function update<T>(path: string, change: (stored: SessionGroups | undefined) => { save?: SessionGroups; value: T }): T {
+  const connection = database(path);
   try {
-    return transaction(connection, 'DEFERRED', () => {
+    return transaction(connection, 'IMMEDIATE', () => {
+      const { save, value } = change(readWith(connection));
+      if (save) writeWith(connection, save);
+      return value;
+    });
+  } finally { connection.close(); }
+}
+
+function readWith(connection: Database): SessionGroups | undefined {
       const state = connection.prepare('SELECT initialized FROM session_group_state WHERE id=1').get() as { initialized: number };
       if (!state.initialized) return undefined;
       const groups = (connection.prepare('SELECT group_id, name, cwd, host_id, host_name FROM session_groups ORDER BY position, group_id').all() as any[])
@@ -107,14 +118,9 @@ function read(path: string): SessionGroups | undefined {
       const removedProjects = new Set((connection.prepare('SELECT project_id FROM session_group_removed_projects').all() as any[]).map(row => row.project_id as string));
       const parents = new Map((connection.prepare('SELECT group_id, parent_id FROM session_group_parents').all() as any[]).map(row => [row.group_id as string, row.parent_id as string]));
       return { groups, parents, assignments, removedProjects };
-    });
-  } finally { connection.close(); }
 }
 
-function write(path: string, groups: SessionGroups): void {
-  const connection = database(path);
-  try {
-    transaction(connection, 'IMMEDIATE', () => {
+function writeWith(connection: Database, groups: SessionGroups): void {
       connection.exec('DELETE FROM session_groups; DELETE FROM session_group_parents; DELETE FROM session_group_assignments; DELETE FROM session_group_removed_projects;');
       const insertGroup = connection.prepare('INSERT INTO session_groups (group_id, position, name, cwd, host_id, host_name) VALUES (?, ?, ?, ?, ?, ?)');
       groups.groups.forEach((group, position) => insertGroup.run(group.id, position, group.name, group.cwd, group.hostId, group.hostName));
@@ -125,8 +131,6 @@ function write(path: string, groups: SessionGroups): void {
       const removed = connection.prepare('INSERT INTO session_group_removed_projects VALUES (?)');
       for (const project of groups.removedProjects) removed.run(project);
       connection.exec('UPDATE session_group_state SET initialized=1 WHERE id=1');
-    });
-  } finally { connection.close(); }
 }
 
 /** Returns the session IDs registered on the machine. Other machines answer through their Piop daemon. */
@@ -148,9 +152,7 @@ function hostOf(key: string): string | undefined { const index = key.lastIndexOf
  * hosts were asked can be removed, so a session created during the check keeps its assignment.
  */
 async function refreshDeletionsAt(path: string, app: App, seeds: SessionSeed[], key: string | undefined): Promise<void> {
-  let snapshot: SessionGroups;
-  const first = await lockStorage(path);
-  try { snapshot = read(path) ?? emptyGroups(); } finally { first.release(); }
+  const snapshot = read(path) ?? emptyGroups();
   const hosts = new Set<string>(['local']);
   for (const item of [...snapshot.assignments.keys(), ...seeds.map(seed => seed.sessionKey)]) { const host = hostOf(item); if (host !== undefined) hosts.add(host); }
   if (key !== undefined) { const host = hostOf(key); if (host !== undefined) hosts.add(host); }
@@ -166,14 +168,12 @@ async function refreshDeletionsAt(path: string, app: App, seeds: SessionSeed[], 
     if (ids && !ids.has(assignment.slice(host!.length + 1))) stale.push(assignment);
   }
   if (stale.length === 0) return;
-  const lock = await lockStorage(path);
-  try {
-    const state = read(path);
-    if (!state) return;
+  update(path, state => {
+    if (!state) return { value: undefined };
     let removed = false;
     for (const assignment of stale) removed = state.assignments.delete(assignment) || removed;
-    if (removed) write(path, state);
-  } finally { lock.release(); }
+    return { save: removed ? state : undefined, value: undefined };
+  });
 }
 
 function changeKey(change: GroupChange): string | undefined {
@@ -231,7 +231,7 @@ function projectSeed(session: SessionSummary, listed: Set<string>): SessionSeed 
 
 /**
  * Registers the project of each listed chat that has no assignment yet, and reports a change to clients.
- * The groups file is locked and written only when such a chat shows up. A removed project stays removed.
+ * The groups are written only when such a chat shows up. A removed project stays removed.
  */
 export async function registerProjects(app: App, sessions: SessionSummary[]): Promise<void> {
   const listed = new Set(sessions.map(session => `${session.hostId}:${session.id}`));
@@ -283,11 +283,9 @@ function hasMissingLocalFolder(seed: SessionSeed): boolean {
   return seed.project.hostId === 'local' && typeof seed.project.cwd === 'string' && !isDirectory(seed.project.cwd);
 }
 
-async function loadAt(path: string, allSeeds: SessionSeed[]): Promise<{ state: SessionGroups; dirty: boolean }> {
+function loadAt(path: string, allSeeds: SessionSeed[]): { state: SessionGroups; dirty: boolean } {
   const seeds = allSeeds.filter(seed => !hasMissingLocalFolder(seed));
-  const lock = await lockStorage(path);
-  try {
-    const stored = read(path);
+  return update(path, stored => {
     let dirty = stored === undefined;
     const state = stored ?? emptyGroups();
     for (const seed of seeds) {
@@ -299,9 +297,8 @@ async function loadAt(path: string, allSeeds: SessionSeed[]): Promise<{ state: S
     for (const [key, destination] of state.assignments) {
       if (destination !== null && (destination === DIRLESS_KEY || !ids.has(destination))) { state.assignments.set(key, null); dirty = true; }
     }
-    if (dirty) write(path, state);
-    return { state, dirty };
-  } finally { lock.release(); }
+    return { save: dirty ? state : undefined, value: { state, dirty } };
+  });
 }
 
 export async function changeSessionGroups(app: App, change: GroupChange): Promise<SessionGroups> {
@@ -323,16 +320,13 @@ export async function refreshDeletions(app: App, hostId: string): Promise<void> 
   });
 }
 
-async function changeAt(path: string, change: GroupChange): Promise<SessionGroups> {
-  const lock = await lockStorage(path);
-  try {
-    const state = read(path);
+function changeAt(path: string, change: GroupChange): SessionGroups {
+  return update(path, state => {
     if (!state) throw new Error('Session groups have not loaded yet');
     applyGroupChange(state, change);
     validateNesting(state);
-    write(path, state);
-    return state;
-  } finally { lock.release(); }
+    return { save: state, value: state };
+  });
 }
 
 function applyGroupChange(state: SessionGroups, change: GroupChange): void {

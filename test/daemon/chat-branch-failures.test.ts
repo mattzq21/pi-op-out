@@ -128,7 +128,7 @@ test('a branch that fails after its worktree exists removes the worktree, branch
     expect(await history(command)).toEqual(sourceHistory);
     expect(readFileSync(state.sessionFile, 'utf8')).toBe(transcript);
     expect((await agents.daemon.invoke('list_sessions')).map((session: any) => session.id).sort()).toEqual(sessionsBefore);
-    expect(readdirSync(dirname(state.sessionFile)).filter(name => !name.includes(state.sessionId) && !name.startsWith('groups.'))).toEqual([]);
+    expect(readdirSync(dirname(state.sessionFile)).filter(name => !name.includes(state.sessionId))).toEqual([]);
 
     // The failed attempt left nothing behind, so a retry makes a fresh, working branch.
     await command({ type: 'fork_after', entryId: reply.id });
