@@ -785,6 +785,24 @@ export function createAppConversations(preloadChat: () => void) {
     return { agents: (definedAgents()?.config.agents ?? []), activeAgent: definedAgents()?.active, agentLocked: definedAgents()?.locked, agentSaved: definedAgents()?.saved, agentUnavailable: definedAgents()?.unavailable }; };
 
   const chatModels = createMemo(() => modelVisibility.visibleModels(activeHostId(), chatSession().models));
+
+  /** While a chat loads, the composer keeps the values it shows, so that only the values that differ change when the chat is ready. */
+  const heldWhileLoading = <T,>(ready: () => boolean, live: () => T) => {
+    let last: { value: T } | undefined;
+
+    return createMemo(() => { const value = live(); if (ready() || !last) last = { value }; return last.value; });
+  };
+  const fastStatusKey = "pi-desktop-fast-mode";
+  const liveComposerState = () => composerControls.state(chatSession().state);
+  const heldPrompt = heldWhileLoading(connected, () => { const state = liveComposerState(); return { model: state.model, thinkingLevel: state.thinkingLevel, contextUsage: state.contextUsage }; });
+  const heldFastStatus = heldWhileLoading(connected, () => composerControls.statuses(extensionStateIsCurrent() ? statuses() : {}, liveComposerState().model)[fastStatusKey] as string | undefined);
+  const composerView = {
+    state: createMemo(() => { const state = liveComposerState(); const held = heldPrompt(); return connected() ? state : { ...state, ...held }; }),
+    agentProps: heldWhileLoading(() => connected() && extensionStateIsCurrent(), chatAgentProps),
+    models: heldWhileLoading(connected, chatModels),
+    thinkingLevels: heldWhileLoading(connected, () => composerControls.thinkingLevels(chatSession().thinkingLevels)),
+    statuses: createMemo(() => { const { [fastStatusKey]: _fast, ...rest } = composerControls.statuses(extensionStateIsCurrent() ? statuses() : {}, liveComposerState().model); const fast = heldFastStatus(); return fast === undefined ? rest : { ...rest, [fastStatusKey]: fast }; }),
+  };
   const chatCommands = createMemo<SlashCommand[]>(() => chatSession().commands);
   const chatWidgets = createMemo(() => extensionStateIsCurrent() ? Object.values(widgets()).flat() : []);
   const dirlessPending = new Set<string>();
@@ -817,6 +835,6 @@ export function createAppConversations(preloadChat: () => void) {
       } });
   };
 
- return { modelVisibility, drafts, archiveReplacedSession: (session: SessionSummary) => archives.archiveSession(session), isArchiving: archives.isPending, missingDirectoryDialog, archivesOpen, setArchivesOpen, runtimePool, transport, view, setView, activeConversationKey, chatViewKey, runningSessions, unseenSessions, pendingSettingsCount, chatSession, sessions, settings, settingsSaving, debugModeSaving, setSettingsDirty, panelOpen, setPanelOpen, query, setQuery, connected, error, setError, createGroupRequest, setCreateGroupRequest, handleCreateGroup, newChatRequest, activeHostId, codexUsage, usageClock, opencodeGoBadge, codexUsageError, opencodeGoUsageError, setDialogs, notices, setNotices, addNotice, queueExtensionDialog, resolveExtensionDialog, closeTransportDialogs, releaseSplitTransport, statuses, widgets, renameSession, setRenameSession, projectOpen, setProjectOpen, projectOpenRef, uploadsByTransport, setComposerDraft, setComposerUploads, splitPane, setSplitPane, subagentPane, hasSidePane, mainComposerFocusRequest, splitComposerFocusRequest, activePane, setActivePane, terminals, terminalOpen, terminalSessionId, terminalLocationState, startTerminal, addTerminal, selectTerminal, saveTerminalSnapshot, deleteTerminal, reconnectPending, splitSessionId, composerState, terminalViewKey, syncSessionIndex, composerControls, resolveHomeDirectory, send, respondToSplitRequest, closeSplitPane, openSubagent, canLeaveSettings, rekeyConversationUi, branch, forkAndForget, forkSourceName, openForkSource, revealEntryId, entryRevealed, startNewSession, newSession, clearChatProject, chooseChatHost, selectSession, setModel, setThinking, abortInteraction, pauseInteraction, resumeInteraction, saveSettings, setAgent, openProject, chooseChatProject, sessionAction, draftChangeFor, uploadsChangeFor, toggleComposerTerminal, toggleDebugMode, toggleDebugFeature, reconnectMain, extensionStateIsCurrent, activeDialog, projectCwd, mobileSidebarOpen, sidebar, chatAgentProps, chatModels, chatCommands, chatWidgets };
+ return { modelVisibility, drafts, archiveReplacedSession: (session: SessionSummary) => archives.archiveSession(session), isArchiving: archives.isPending, missingDirectoryDialog, archivesOpen, setArchivesOpen, runtimePool, transport, view, setView, activeConversationKey, chatViewKey, runningSessions, unseenSessions, pendingSettingsCount, chatSession, sessions, settings, settingsSaving, debugModeSaving, setSettingsDirty, panelOpen, setPanelOpen, query, setQuery, connected, error, setError, createGroupRequest, setCreateGroupRequest, handleCreateGroup, newChatRequest, activeHostId, codexUsage, usageClock, opencodeGoBadge, codexUsageError, opencodeGoUsageError, setDialogs, notices, setNotices, addNotice, queueExtensionDialog, resolveExtensionDialog, closeTransportDialogs, releaseSplitTransport, statuses, widgets, renameSession, setRenameSession, projectOpen, setProjectOpen, projectOpenRef, uploadsByTransport, setComposerDraft, setComposerUploads, splitPane, setSplitPane, subagentPane, hasSidePane, mainComposerFocusRequest, splitComposerFocusRequest, activePane, setActivePane, terminals, terminalOpen, terminalSessionId, terminalLocationState, startTerminal, addTerminal, selectTerminal, saveTerminalSnapshot, deleteTerminal, reconnectPending, splitSessionId, composerState, terminalViewKey, syncSessionIndex, composerControls, resolveHomeDirectory, send, respondToSplitRequest, closeSplitPane, openSubagent, canLeaveSettings, rekeyConversationUi, branch, forkAndForget, forkSourceName, openForkSource, revealEntryId, entryRevealed, startNewSession, newSession, clearChatProject, chooseChatHost, selectSession, setModel, setThinking, abortInteraction, pauseInteraction, resumeInteraction, saveSettings, setAgent, openProject, chooseChatProject, sessionAction, draftChangeFor, uploadsChangeFor, toggleComposerTerminal, toggleDebugMode, toggleDebugFeature, reconnectMain, extensionStateIsCurrent, activeDialog, projectCwd, mobileSidebarOpen, sidebar, chatAgentProps, chatModels, chatCommands, chatWidgets, composerView };
 
 }
