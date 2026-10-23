@@ -1,8 +1,7 @@
 import assert from 'node:assert/strict';
-import { describe, test } from 'node:test';
+import { test } from 'node:test';
 import { appBrowser } from '../app-browser-fixture.mjs';
 
-describe('app keyboard shortcuts', { concurrency: 3 }, () => {
 test('configured Alt shortcut opens settings while editing a message', async t => {
   const page = await appBrowser(t, { keybindings: { openSettings: 'Alt+J' } });
   const editor = page.getByRole('textbox', { name: 'Message piop', exact: true });
@@ -202,5 +201,4 @@ test('Ctrl U in a focused terminal clears the shell line instead of opening sett
   await editor.focus();
   await page.keyboard.press('Control+u');
   await page.getByRole('textbox', { name: 'Open settings shortcut', exact: true }).waitFor();
-});
 });
