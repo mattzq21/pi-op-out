@@ -16,8 +16,8 @@ const STATES = ['preparing', 'active', 'archiving', 'archived', 'restoring'];
 /** The Git reference that keeps the saved commit of an archived chat. */
 function archiveRef(chatId) { return 'refs/piop/archives/' + chatIdOf(chatId); }
 
-/** The branch for a chat: piop/<chatId>, or piop/<chatId>-<restoreId> after a restore could not reuse it. */
-function branchName(chatId, restoreId) { return restoreId ? `piop/${chatIdOf(chatId)}-${restoreId}` : 'piop/' + chatIdOf(chatId); }
+/** A chat branch: piop/ and the shortest free start of the chat ID. Older chats used the full ID. */
+const BRANCH = new RegExp(`^piop/([0-9a-f]{4,32}|${UUID}(-${UUID})?)$`);
 
 function chatIdOf(value) {
   if (typeof value !== 'string' || !CHAT_ID.test(value)) throw new Error('Invalid chat ID: ' + value);
@@ -32,7 +32,7 @@ function absolute(value, label) {
 }
 
 function branchOf(chatId, value) {
-  if (!new RegExp(`^piop/${chatId}(-${UUID})?$`).test(value ?? '')) throw new Error('Invalid chat branch: ' + value);
+  if (!BRANCH.test(value ?? '')) throw new Error('Invalid chat branch: ' + value);
 
   return value;
 }
@@ -140,7 +140,7 @@ function prepare(root, fields) {
 
   return replace(root, chatId, null, {
     version: 1, chatId, repository: fields.repository, gitCommonDir: fields.gitCommonDir, worktree: fields.worktree,
-    branch: branchName(chatId), state: 'preparing', archive: null, owner: processToken(),
+    branch: fields.branch, state: 'preparing', archive: null, owner: processToken(),
   });
 }
 
@@ -166,4 +166,4 @@ function fail(root, record, message) {
   return message;
 }
 
-module.exports = { archiveRef, branchName, check, read, list, replace, prepare, activate, fail, processToken, ownerAlive };
+module.exports = { archiveRef, check, read, list, replace, prepare, activate, fail, processToken, ownerAlive };

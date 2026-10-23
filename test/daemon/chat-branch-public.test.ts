@@ -1,4 +1,7 @@
 import { test, expect } from 'bun:test';
+
+/** The first n hex digits of the chat ID: the worktree folder and branch name Piop tries first. */
+const short = (chatId: string, n = 4) => chatId.replaceAll('-', '').slice(0, n);
 import { execFileSync } from 'node:child_process';
 import { mkdirSync, writeFileSync, readFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
@@ -41,9 +44,9 @@ test('branch copies selected history and current files, archive restores last co
     await command({ type: 'fork_after', entryId: first.id });
     const branch = await command({ type: 'get_state' });
     expect(branch.sessionId).not.toBe(original.sessionId);
-    expect(branch.cwd).toBe(join(agents.daemon.home, '.local/share/piop/worktrees', branch.sessionId));
+    expect(branch.cwd).toBe(join(agents.daemon.home, '.local/share/piop/worktrees', short(branch.sessionId)));
     expect(branch.forkSource).toMatchObject({ sessionId: original.sessionId, entryId: first.id });
-    expect(git(branch.cwd, 'branch', '--show-current')).toBe('piop/' + branch.sessionId);
+    expect(git(branch.cwd, 'branch', '--show-current')).toBe('piop/' + short(branch.sessionId));
     expect(readFileSync(join(branch.cwd, 'tracked.txt'), 'utf8')).toBe('current dirty files');
     expect(readFileSync(join(branch.cwd, 'untracked.txt'), 'utf8')).toBe('keep me');
     expect(existsSync(join(branch.cwd, 'ignored.txt'))).toBe(false);
@@ -60,7 +63,7 @@ test('branch copies selected history and current files, archive restores last co
     expect(existsSync(branch.cwd)).toBe(false);
     expect(existsSync(cwd)).toBe(true);
     expect(git(cwd, 'rev-parse', 'refs/piop/archives/' + branch.sessionId)).toBe(saved);
-    expect(git(cwd, 'branch', '--list', 'piop/' + branch.sessionId)).toBe('');
+    expect(git(cwd, 'branch', '--list', 'piop/' + short(branch.sessionId))).toBe('');
     const report = await agents.daemon.invoke('storage_report');
     const archived = report.hosts.flatMap((h: any) => h.archives).find((a: any) => a.sessionId === branch.sessionId || a.id === branch.sessionId);
     expect(archived).toBeTruthy();
@@ -68,7 +71,7 @@ test('branch copies selected history and current files, archive restores last co
     const restored = (await agents.daemon.invoke('list_sessions')).find((s: any) => s.id === branch.sessionId);
     expect(restored).toBeTruthy();
     expect(readFileSync(join(restored.cwd, 'tracked.txt'), 'utf8')).toBe('current dirty files');
-    expect(git(restored.cwd, 'branch', '--show-current')).toBe('piop/' + branch.sessionId);
+    expect(git(restored.cwd, 'branch', '--show-current')).toBe('piop/' + short(branch.sessionId));
   } finally { await agents.close(); }
 }, 120000);
 
