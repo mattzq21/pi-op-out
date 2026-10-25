@@ -235,17 +235,17 @@ test('forgetting a group moves its conversations to Recents after reopening', as
 test("temporary chat directories stay out of project groups", async t => {
   const root = await mkdtemp(join(tmpdir(), 'piop-panel-path-'));
   t.after(() => rm(root, { recursive: true, force: true }));
-  const directory = root + '/' + ".piop/tmp/12345678-1234-4123-8123-123456789abc";
+  const directory = root + '/' + ".piop/tmp/5cea";
   await mkdir(directory, { recursive: true });
   await fixture(t, { sessions: [session('a', 'Chat 2', { cwd: directory })] }, "Recents");
   assert.equal(control('Group actions for repo'), null);
   assert.ok(groupContents('Recents').contains(row('a')));
 });
 
-test("temporary chat paths accept uppercase UUIDs and a trailing slash", async t => {
+test("temporary chat paths accept uppercase digits and a trailing slash", async t => {
   const root = await mkdtemp(join(tmpdir(), 'piop-panel-path-'));
   t.after(() => rm(root, { recursive: true, force: true }));
-  const directory = root + '/' + ".piop/tmp/12345678-1234-4123-A123-123456789ABC/";
+  const directory = root + '/' + ".piop/tmp/10BA2F/";
   await mkdir(directory, { recursive: true });
   await fixture(t, { sessions: [session('a', 'Chat 2', { cwd: directory })] }, "Recents");
   assert.equal(control('Group actions for repo'), null);
@@ -262,10 +262,10 @@ test("ordinary tmp directories remain project groups", async t => {
   assert.ok(groupContents('repo').contains(row('a')));
 });
 
-test("non-v4 UUID directories remain project groups", async t => {
+test("tmp directories that are not named by a chat ID start remain project groups", async t => {
   const root = await mkdtemp(join(tmpdir(), 'piop-panel-path-'));
   t.after(() => rm(root, { recursive: true, force: true }));
-  const directory = root + '/' + ".piop/tmp/12345678-1234-1123-8123-123456789abc";
+  const directory = root + '/' + ".piop/tmp/abc";
   await mkdir(directory, { recursive: true });
   await fixture(t, { sessions: [session('a', 'Chat 2', { cwd: directory })] }, "repo");
   assert.ok(control('Group actions for repo'));
@@ -275,7 +275,7 @@ test("non-v4 UUID directories remain project groups", async t => {
 test("directories below a temporary chat remain project groups", async t => {
   const root = await mkdtemp(join(tmpdir(), 'piop-panel-path-'));
   t.after(() => rm(root, { recursive: true, force: true }));
-  const directory = root + '/' + ".piop/tmp/12345678-1234-4123-8123-123456789abc/file";
+  const directory = root + '/' + ".piop/tmp/5cea/file";
   await mkdir(directory, { recursive: true });
   await fixture(t, { sessions: [session('a', 'Chat 2', { cwd: directory })] }, "repo");
   assert.ok(control('Group actions for repo'));

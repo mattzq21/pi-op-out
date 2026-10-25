@@ -98,4 +98,4 @@ export async function daemonClient(t, onEvent = () => {}, { remotes = [], model 
 }
 
 /** Temporary chat folders are named with a random (version 4) UUID. */
-const TEMPORARY_CHAT_CWD = /(?:^|\/)\.piop(?:-dev)?\/tmp\/[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\/?$/i;
+const TEMPORARY_CHAT_CWD = /(?:^|\/)\.piop(?:-dev)?\/tmp\/[0-9a-f]{4,32}\/?$/i;

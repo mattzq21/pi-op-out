@@ -213,8 +213,8 @@ export async function loadSessionGroups(app: App, seeds: SessionSeed[]): Promise
   return STORAGE_LOCK.run(async () => (await loadAt(path, seeds)).state);
 }
 
-/** Temporary chat folders are named with a random (version 4) UUID. */
-const TEMPORARY_CHAT_CWD = /(?:^|\/)\.piop(?:-dev)?\/tmp\/[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\/?$/i;
+/** Temporary chat folders are named with the first 4 to 32 hex digits of the chat ID. */
+const TEMPORARY_CHAT_CWD = /(?:^|\/)\.piop(?:-dev)?\/tmp\/[0-9a-f]{4,32}\/?$/i;
 
 /**
  * A listed chat in an existing project folder. Temporary chat folders and chats with no message are not projects.
