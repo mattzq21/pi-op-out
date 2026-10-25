@@ -6,7 +6,6 @@ import { STORAGE_DIRECTORY, BROKER_BODY_BYTES, BROKER_HEADER_BYTES, BROKER_QUEUE
 import { buildPiCommand, launchSpec } from './pi_launch';
 import { homeDir } from './environment';
 import { loadAppSettings } from './settings';
-import { collectSessions } from './session_index';
 import * as peers from './peers';
 import * as providerAuth from './provider_auth';
 import * as daemonRestart from './daemon_restart';
@@ -187,7 +186,7 @@ async function respondBrokerRequest(app: App, broker: BrokerRuntime, method: str
 async function brokerAgents(app: App, broker: BrokerRuntime): Promise<any> {
   const active = [...app.pi.activeAgents.values()];
   const busy = new Set(broker.busy);
-  const sessions = await collectSessions(app, app.sessionIndex, true);
+  const sessions = await peers.localSummaries(app, app.sessionIndex);
   return sessions.filter(session => session.subagentParentId === undefined).map(session => ({
     hostId: session.hostId, sessionId: session.id, name: session.name, project: session.project, cwd: session.cwd,
     active: busy.has(`${session.hostId}\0${session.id}`) || active.some(agent => agentIsActive(session, agent)),

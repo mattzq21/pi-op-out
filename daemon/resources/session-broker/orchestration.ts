@@ -20,9 +20,9 @@ const snapshotSchema = Schema.Object({ revision: Schema.String(), stateKey: Sche
 
 const deliverySchema = Schema.Object({ id: Schema.String(), deliveryId: Schema.String({ minLength: 1 }), sourceSessionId: Schema.String(), sourceHostId: Schema.String(), sourceName: Schema.Optional(Schema.String()), message: Schema.String({ minLength: 1 }), wake: Schema.Optional(Schema.Boolean()), deliverAs: Schema.Optional(Schema.Union([Schema.Literal("steer"), Schema.Literal("followUp")])) });
 
-const address = { peerId: Type.String({ minLength: 1 }), hostId: Type.Optional(Type.String({ minLength: 1 })) };
+const address = { peerId: Type.String({ minLength: 1 }) };
 
-type Target = { peerId: string; hostId?: string; afterCursor?: string };
+type Target = { peerId: string; afterCursor?: string };
 
 const parentTypes = new Set(["piop-subagent-parent", "piop-review-parent"]);
 
@@ -182,7 +182,7 @@ export function snapshotStatus(snapshot: Awaited<ReturnType<typeof sessionSnapsh
 }
 
 async function poll(target: Target, signal?: AbortSignal) {
-  const hostId = target.hostId ?? currentHost();
+  const hostId = currentHost();
   const snapshot = await rootSnapshot(target.peerId, hostId, signal);
   const messages = branchEntries(snapshot).filter(entry => entry.type === "message");
   const last = messages.findLast(entry => entry.message?.role === "assistant");
@@ -265,9 +265,9 @@ function peerAnswers(snapshot: Awaited<ReturnType<typeof waitSnapshot>>, interru
 }
 
 function validateTargets(targets: Target[], ctx: ExtensionContext) {
-  const keys = targets.map(target => `${target.hostId ?? currentHost()}\0${target.peerId}`);
+  const ids = targets.map(target => target.peerId);
 
-  if (new Set(keys).size !== keys.length || keys.includes(`${currentHost()}\0${ctx.sessionManager.getSessionId()}`)) throw new Error("Wait targets must be distinct conversations other than this one");
+  if (new Set(ids).size !== ids.length || ids.includes(ctx.sessionManager.getSessionId())) throw new Error("Wait targets must be distinct conversations other than this one");
 }
 
 const parentMessageSchema = Schema.Object({ message: Schema.String(), sourceSessionId: Schema.Optional(Schema.String()), sourceName: Schema.Optional(Schema.String()) });
@@ -438,14 +438,14 @@ export function registerOrchestration(pi: ExtensionAPI) {
     },
   });
   pi.registerTool({
-    name: "list_peers", label: "List peers", exposure: "model-only", description: "List peers with their IDs, hosts and names.",
+    name: "list_peers", label: "List peers", exposure: "model-only", description: "List peers with their IDs and names.",
     parameters: Type.Object({}),
     async execute(_id, _params, signal, _update, ctx) {
       requireRootCaller(ctx);
 
       const chats = await request("/agents", undefined, signal);
 
-      return result(Array.isArray(chats) ? chats.map(chat => ({ peerId: chat.sessionId, hostId: chat.hostId, name: chat.name, project: chat.project, active: chat.active })) : chats);
+      return result(Array.isArray(chats) ? chats.map(chat => ({ peerId: chat.sessionId, name: chat.name, project: chat.project, active: chat.active })) : chats);
     },
   });
   pi.registerTool({
@@ -467,10 +467,9 @@ export function registerOrchestration(pi: ExtensionAPI) {
     async execute(_id, params, signal, _update, ctx) {
       requireRootCaller(ctx);
       requireMessageLength(params.message);
-      const hostId = params.hostId ?? currentHost();
-      await rootSnapshot(params.peerId, hostId, signal);
+      await rootSnapshot(params.peerId, currentHost(), signal);
 
-      return result(await sendSessionMessage(ctx, params.peerId, hostId, params.message, true, signal));
+      return result(await sendSessionMessage(ctx, params.peerId, currentHost(), params.message, true, signal));
     },
   });
   pi.registerTool({
@@ -478,12 +477,11 @@ export function registerOrchestration(pi: ExtensionAPI) {
     parameters: Type.Object({ ...address }),
     async execute(_id, params, signal, _update, ctx) {
       requireRootCaller(ctx);
-      const hostId = params.hostId ?? currentHost();
 
-      if (params.peerId === ctx.sessionManager.getSessionId() && hostId === currentHost()) throw new Error("Choose another peer to stop");
-      await rootSnapshot(params.peerId, hostId, signal);
+      if (params.peerId === ctx.sessionManager.getSessionId()) throw new Error("Choose another peer to stop");
+      await rootSnapshot(params.peerId, currentHost(), signal);
 
-      return result(await interruptSession(params.peerId, hostId, signal));
+      return result(await interruptSession(params.peerId, currentHost(), signal));
     },
   });
   pi.registerTool({
@@ -491,7 +489,7 @@ export function registerOrchestration(pi: ExtensionAPI) {
     parameters: Type.Object({ ...address, cursor: Type.Optional(Type.String()), limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 100 })), includeOutputs: Type.Optional(Type.Boolean()) }),
     async execute(_id, params, signal, _update, ctx) {
       requireRootCaller(ctx);
-      const snapshot = await rootSnapshot(params.peerId, params.hostId ?? currentHost(), signal);
+      const snapshot = await rootSnapshot(params.peerId, currentHost(), signal);
       const entries = branchEntries(snapshot).filter(entry => entry.type === "message" || entry.type === "custom_message");
       const end = params.cursor ? entries.findIndex(entry => entry.id === params.cursor) : entries.length;
 
@@ -500,7 +498,7 @@ export function registerOrchestration(pi: ExtensionAPI) {
       const cap = 4000;
       const items = entries.slice(start, end).map(entry => readItem(entry, params.includeOutputs ?? false, cap));
 
-      return result({ peerId: params.peerId, hostId: params.hostId ?? currentHost(), status: snapshotStatus(snapshot), items, nextCursor: start ? entries[start].id : null });
+      return result({ peerId: params.peerId, status: snapshotStatus(snapshot), items, nextCursor: start ? entries[start].id : null });
     },
   });
   pi.registerTool({
@@ -509,7 +507,7 @@ export function registerOrchestration(pi: ExtensionAPI) {
     async execute(_id, params, signal, _update, ctx) {
       requireRootCaller(ctx);
       validateTargets(params.targets, ctx);
-      const key = (target: Target) => [ctx.sessionManager.getSessionId(), target.hostId ?? currentHost(), target.peerId].join("\0");
+      const key = (target: Target) => [ctx.sessionManager.getSessionId(), target.peerId].join("\0");
       const targets = params.targets.map(target => ({ ...target, afterCursor: seenAnswers.get(key(target)) }));
       const timeoutMs = Math.min(params.timeoutMs ?? DEFAULT_WAIT_MS, MAX_WAIT_MS);
       const deadline = Date.now() + timeoutMs;
@@ -531,7 +529,7 @@ export function registerOrchestration(pi: ExtensionAPI) {
         if (!actionable && !stop.signal.aborted && Date.now() < deadline) return undefined;
 
         // An answer returned once is not returned again by a later wait.
-        for (const item of snapshot.polls) if (item.peer.status !== "running" && item.changed) seenAnswers.set(key({ peerId: item.peer.id, hostId: item.peer.hostId }), item.cursor);
+        for (const item of snapshot.polls) if (item.peer.status !== "running" && item.changed) seenAnswers.set(key({ peerId: item.peer.id }), item.cursor);
 
         return { content: [{ type: "text" as const, text: peerAnswers(snapshot, interruption) }], details: { interrupted, ...snapshot } };
       };

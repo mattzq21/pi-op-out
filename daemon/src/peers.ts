@@ -326,6 +326,15 @@ function refreshRemoteHost(app: App, host: RemoteHost): Promise<void> {
 }
 
 /** Lists local and remote sessions. Without waitForRemote, remote hosts give their last read list and are read again in the background. */
+/** The sessions of this host only, with their projects. */
+export async function localSummaries(app: App, index: SessionIndexRuntime): Promise<SessionSummary[]> {
+  const settings = await loadAppSettings(app);
+  const sessions = settings.localEnabled ? await listLocalSessions(index, ensureDesktopSessionsDir(homeDir())) : [];
+  await sessionGroups.registerProjects(app, sessions);
+  await sessionGroups.attachAssignments(sessions);
+  return sessions;
+}
+
 export async function allSummaries(app: App, index: SessionIndexRuntime, waitForRemote = false): Promise<SessionSummary[]> {
   const settings = await loadAppSettings(app);
   const sessions = settings.localEnabled ? await listLocalSessions(index, ensureDesktopSessionsDir(homeDir())) : [];
