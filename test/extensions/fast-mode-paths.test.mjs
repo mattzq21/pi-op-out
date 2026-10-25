@@ -121,3 +121,22 @@ test('project settings override user fast mode in provider requests', async t =>
   assert.equal(await f.fastEnabled(), false);
   assert.equal(await f.emit('before_provider_request', { payload: { input: 'hello' } }), undefined);
 });
+
+async function anthropicFastFixture(t, id) {
+  const model = { provider: 'anthropic', id, api: 'anthropic-messages' };
+  const f = await agentFixture(t, { model, models: [model] });
+  settings.write(join(f.dir, 'extensions/piop-openai-fast-mode/config.json'), JSON.stringify({ enabled: true }));
+  await installFastMode(t, { dir: f.dir, pi: f.pi, ctx: f.ctx, models: [model], catalog: [], fastModels: { ready: true, providers: { anthropic: { supportedModelIds: ['claude-opus-5-5', 'claude-opus-5', 'claude-opus-4-8'] } } } });
+  await f.start();
+  return f;
+}
+
+test('fast mode adds the Anthropic speed field, and the research preview beta only where a model needs it', async t => {
+  const opus = await anthropicFastFixture(t, 'claude-opus-5-5');
+  assert.deepEqual(await opus.emit('before_provider_request', { payload: { model: 'claude-opus-5-5' } }), { model: 'claude-opus-5-5', speed: 'fast' });
+  const preview = await anthropicFastFixture(t, 'claude-opus-5');
+  assert.deepEqual(await preview.emit('before_provider_request', { payload: { model: 'claude-opus-5', betas: ['interleaved-thinking-2025-05-14'] } }), { model: 'claude-opus-5', betas: ['interleaved-thinking-2025-05-14', 'fast-mode-2026-02-01'], speed: 'fast' });
+  const haiku = await anthropicFastFixture(t, 'claude-haiku-5-5');
+  assert.equal(await haiku.emit('before_provider_request', { payload: { model: 'claude-haiku-5-5' } }), undefined);
+});
+
