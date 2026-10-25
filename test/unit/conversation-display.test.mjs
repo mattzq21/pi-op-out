@@ -311,3 +311,18 @@ test('a turn started by a subagent result shows the result once and its context 
   assert.equal(view.container.querySelectorAll('[aria-label="Delegated work"]').length, 1);
   assert.match(view.container.textContent, /System\s*\d+%/);
 });
+
+test('image context follows the context injections debug feature', async t => {
+  const note = '[Image: original 1080x2400, displayed at 900x2000. Multiply coordinates by 1.20 to map to original image.]';
+  const message = { id: 'shot', role: 'user', timestamp: 1, content: [{ type: 'image', data: 'iVBORw0KGgo=', mimeType: 'image/png' }, { type: 'text', text: 'Look at this\n' + note }] };
+  const view = await conversation(t, { messages: [message] });
+  const shown = () => [...view.container.querySelectorAll('.context-injection summary')].some(summary => summary.textContent === 'Image context');
+  assert.equal(shown(), false, 'hidden while debug mode is off');
+  assert.ok(!view.container.textContent.includes('Multiply coordinates'));
+  await view.update({ debug: allDebug });
+  assert.equal(shown(), true);
+  await view.update({ debug: debugView({ debugMode: true, debugFeaturesOff: ['contextInjections'] }) });
+  assert.equal(shown(), false, 'hidden while context injections are off');
+  assert.ok(view.container.textContent.includes('Look at this'));
+});
+

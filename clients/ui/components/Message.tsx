@@ -260,7 +260,7 @@ export function Message(componentProps: Props) {
         <Show when={hasVisibleText(textOf(componentProps.message.content))}><MessageCopyButton state={copyState()} copy={() => copy()} /></Show>
         {copyState() === "error" && <span class="copy-feedback" role="status">Could not copy message</span>}
       </div>
-    </article>{imageContext().notes && <ContextInjection title="Image context" content={imageContext().notes} />}</>;
+    </article>{componentProps.debug?.contextInjections && imageContext().notes && <ContextInjection title="Image context" content={imageContext().notes} />}</>;
   };
 
   const renderAssistantMessage = () => {
