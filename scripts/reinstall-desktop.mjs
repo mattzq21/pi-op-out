@@ -1,7 +1,7 @@
 import { existsSync, readdirSync, statSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 
 /** Builds the release desktop app of this worktree and installs its .deb over the installed Piop. */
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
@@ -15,6 +15,11 @@ function run(command, args) {
 }
 
 try {
+  console.log('Installing needs sudo. Enter your password now, before the build starts.');
+  run('sudo', ['-v']);
+  // Keeps the sudo login fresh during a long build, so the install does not ask again.
+  const keepAlive = spawn('sh', ['-c', 'while sleep 60; do sudo -n -v || exit; done'], { stdio: 'ignore' });
+  process.on('exit', () => keepAlive.kill());
   const started = Date.now();
   console.log('Building the Piop release app in ' + root + '…');
   run(process.execPath, ['run', 'build']);
@@ -22,7 +27,7 @@ try {
   const newest = packages.sort((a, b) => statSync(b).mtimeMs - statSync(a).mtimeMs)[0];
 
   if (!newest || statSync(newest).mtimeMs < started) throw new Error('The build made no new .deb in ' + bundle);
-  console.log('Installing ' + newest + ' (sudo may ask for your password)…');
+  console.log('Installing ' + newest + '…');
   run('sudo', ['dpkg', '-i', newest]);
   console.log('Piop release installed. Restart Piop to use it. App data in ~/.piop is kept.');
 } catch (error) {
