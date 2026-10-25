@@ -73,13 +73,6 @@ describe('composer interactions', () => {
     assert.ok(control('Pause piop'));
   });
 
-  test('restored drafts apply once without replacing user edits', async () => {
-    await render({ restoredDraft: { id: 'a', value: 'Restore me' } }); assert.equal(editor().value, 'Restore me');
-    await enterText(editor(), 'Edited'); await render({ restoredDraft: { id: 'b', value: 'Other text' } }); assert.equal(editor().value, 'Edited');
-    await enterText(editor(), ''); await render({ restoredDraft: { id: 'b', value: 'Other text' } }); assert.equal(editor().value, '');
-    await render({ restoredDraft: { id: 'c', value: 'Fresh' } }); assert.equal(editor().value, 'Fresh');
-  });
-
   test('context indicators clamp percentages and describe unavailable usage', async () => {
     await render({ contextUsage: { tokens: 50, contextWindow: 200 } });
     assert.ok(control('25% of 200 context tokens used'));

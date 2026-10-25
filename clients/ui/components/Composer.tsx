@@ -63,7 +63,6 @@ interface Props {
   onDraftChange?: (value: StateUpdate<string>) => void;
   uploads?: ComposerUpload[];
   onUploadsChange?: (uploads: StateUpdate<ComposerUpload[]>) => void;
-  restoredDraft?: { id: string; value: string };
   focusRequest?: number;
   pendingMessages?: import("../types").PendingMessage[];
   /** Loads an image of a queued message for its preview. */
@@ -124,8 +123,8 @@ function skillMatches(commands: SlashCommand[], query: string) {
   return matches;
 }
 
-function composerDefaults({ streaming, compacting = false, paused = false, pausing = false, queued, pendingMessages = [], onChangePending, commands, agents, activeAgent, agentLocked = false, agentSaved = false, agentUnavailable = false, models, modelAliases, model, fastModeStatus, thinkingLevel, thinkingLevels, sessionCache, contextUsage, controlsDisabled = false, draft, onDraftChange, uploads: controlledUploads, onUploadsChange, restoredDraft, focusRequest, onSend, onStageSubmission, onAbort, onPause, onResume, onOpenTerminal, onAgent, onModel, onToggleFastMode, onThinking }: Props) {
-  return { streaming, compacting, paused, pausing, queued, pendingMessages, onChangePending, commands, agents, activeAgent, agentLocked, agentSaved, agentUnavailable, models, modelAliases, model, fastModeStatus, thinkingLevel, thinkingLevels, sessionCache, contextUsage, controlsDisabled, draft, onDraftChange, controlledUploads, onUploadsChange, restoredDraft, focusRequest, onSend, onStageSubmission, onAbort, onPause, onResume, onOpenTerminal, onAgent, onModel, onToggleFastMode, onThinking };
+function composerDefaults({ streaming, compacting = false, paused = false, pausing = false, queued, pendingMessages = [], onChangePending, commands, agents, activeAgent, agentLocked = false, agentSaved = false, agentUnavailable = false, models, modelAliases, model, fastModeStatus, thinkingLevel, thinkingLevels, sessionCache, contextUsage, controlsDisabled = false, draft, onDraftChange, uploads: controlledUploads, onUploadsChange, focusRequest, onSend, onStageSubmission, onAbort, onPause, onResume, onOpenTerminal, onAgent, onModel, onToggleFastMode, onThinking }: Props) {
+  return { streaming, compacting, paused, pausing, queued, pendingMessages, onChangePending, commands, agents, activeAgent, agentLocked, agentSaved, agentUnavailable, models, modelAliases, model, fastModeStatus, thinkingLevel, thinkingLevels, sessionCache, contextUsage, controlsDisabled, draft, onDraftChange, controlledUploads, onUploadsChange, focusRequest, onSend, onStageSubmission, onAbort, onPause, onResume, onOpenTerminal, onAgent, onModel, onToggleFastMode, onThinking };
 }
 
 function composerControlState(controlsDisabled: boolean, action: "pause" | "resume" | undefined, pausing: boolean, stopping: boolean) {
@@ -242,7 +241,6 @@ export function Composer(props: Props) {
   const selectedCommandRef = createRef<HTMLButtonElement>(null);
   const [draggingFiles, setDraggingFiles] = createSignal(false);
   const dragDepth = createRef(0);
-  const restoredDraftId = createRef<string | undefined>(undefined);
 
   const reference = createMemo(() => {
     const caret = selection();
@@ -368,12 +366,6 @@ export function Composer(props: Props) {
   createDependencyEffect(() => {
     if (props.ownershipRequired) ref.current?.blur();
   }, () => [props.ownershipRequired]);
-  createDependencyEffect(() => {
-    const capturedComposer = { ...composer() }; const capturedValue = value();
-
- if (capturedComposer.restoredDraft && (capturedComposer.restoredDraft).id !== restoredDraftId.current) { restoredDraftId.current = (capturedComposer.restoredDraft).id;
-
- if (!capturedValue) setValue((capturedComposer.restoredDraft).value); } }, () => [composer().restoredDraft]);
 
   const nativeDropRef = createRef({ inputDisabled: controls().inputDisabled, addPaths });
   createDependencyEffect(() => {
