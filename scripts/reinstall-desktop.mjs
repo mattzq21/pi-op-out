@@ -14,12 +14,13 @@ function run(command, args) {
   if (result.status !== 0) throw new Error(command + ' ' + args.join(' ') + ' failed');
 }
 
+let keepAlive;
+
 try {
   console.log('Installing needs sudo. Enter your password now, before the build starts.');
   run('sudo', ['-v']);
-  // Keeps the sudo login fresh during a long build, so the install does not ask again.
-  const keepAlive = spawn('sh', ['-c', 'while sleep 60; do sudo -n -v || exit; done'], { stdio: 'ignore' });
-  process.on('exit', () => keepAlive.kill());
+  // Keeps the sudo login fresh during a long build, so the install does not ask again. It has its own process group, so stopping it also stops its sleep.
+  keepAlive = spawn('sh', ['-c', 'while sleep 60; do sudo -n -v || exit; done'], { stdio: 'ignore', detached: true });
   const started = Date.now();
   console.log('Building the Piop release app in ' + root + '…');
   run(process.execPath, ['run', 'build']);
@@ -33,4 +34,6 @@ try {
 } catch (error) {
   console.error(error.message);
   process.exitCode = 1;
+} finally {
+  if (keepAlive?.exitCode === null) process.kill(-keepAlive.pid, 'SIGTERM');
 }
