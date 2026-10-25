@@ -30,6 +30,7 @@ describe('settings editor', () => {
   const save = () => document.querySelector('.settings-save > .primary-button');
   const section = async name => click([...document.querySelectorAll('nav button')].find(item => item.textContent === name));
   const select = async (label, value) => act(async () => { control(label).value = value; control(label).dispatchEvent(new Event('change', { bubbles: true })); });
+  const chooseModel = async value => { await click(control('Agent default model')); await click(document.querySelector(`.filter-select-menu [data-value="${value}"]`)); };
   const selectAgent = async name => click([...document.querySelectorAll('.agent-list button')].find(item => item.textContent === name));
   const profile = (name, extra = {}) => ({ name, ...(name === 'general' ? { isDefault: true } : {}), model: '', effort: '', path_systemprompt: 'system.md', path_agent_prompt: '', tools: [], skills: [], mcpServers: {}, allowed_subagents: 'all', allowed_peers: 'all', ...extra });
 
@@ -43,9 +44,23 @@ describe('settings editor', () => {
     await click(save());
     assert.deepEqual(saves[0][0].modelAliases, { 'p/model': 'My model' });
     await section('Agents');
-    assert.equal(control('Agent default model').value, 'p/model');
-    assert.equal(control('Agent default model').selectedOptions[0].textContent, 'My model');
+    assert.equal(control('Agent default model').dataset.value, 'p/model');
+    assert.equal(control('Agent default model').textContent, 'My model');
   });
+
+  test('the agent model list filters by model ID and shows display names', async () => {
+    await render({ models: [{ provider: 'p', id: 'model', name: 'Original' }, { provider: 'q', id: 'other', name: 'Other' }], agentConfig: { agents: [profile('general')] } });
+    await section('Agents');
+    assert.equal(control('Filter Agent default model'), null);
+    await click(control('Agent default model'));
+    await enterText(control('Filter Agent default model'), 'q/oth');
+    const options = [...document.querySelectorAll('.filter-select-menu [role=option]')];
+    assert.deepEqual(options.map(option => option.textContent), ['Other']);
+    await act(async () => control('Filter Agent default model').dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true })));
+    assert.equal(control('Agent default model').dataset.value, 'q/other');
+    assert.equal(control('Filter Agent default model'), null);
+  });
+
 
   test('save tracks dirty state, deduplicates requests and preserves edits made while saving', async () => {
     const pending = Promise.withResolvers();
@@ -220,7 +235,7 @@ describe('settings editor', () => {
     await section('Agents'); await selectAgent('review'); assert.equal(control('Agent name').value, 'review');
     await enterText(control('Agent name'), 'code review!'); assert.equal(control('Agent name').value, 'codereview');
     await enterText(control('Agent name'), 'general'); assert.equal(control('Agent name').value, 'codereview');
-    await select('Agent default model', 'p/model'); await select('Agent default effort', 'high'); await click(control('Agent fast mode'));
+    await chooseModel('p/model'); await select('Agent default effort', 'high'); await click(control('Agent fast mode'));
     await enterText(control('System prompt file'), 'review.md'); await enterText(control('Agent prompt file'), 'extra.md');
 
     for (const label of ['Allow read', 'Allow Research']) await click(control(label));
@@ -296,7 +311,7 @@ describe('settings editor', () => {
     await render({ agentConfig: { agents: [profile('general'), profile('review', { model: 'p/missing', effort: 'extreme', mcpServers: { existing: { command: 'cmd', args: [], enabled: true } } })] }, models: [{ provider: 'p', id: 'model', reasoning: true }], thinkingLevels: ['off', 'high'] });
     await click(control('Automatic retry'));
     await section('Agents'); await selectAgent('review'); assert.match(document.querySelector('[role=alert]').textContent, /model is unavailable/); assert.equal(save().disabled, true);
-    await select('Agent default model', 'p/model'); assert.match(document.querySelector('[role=alert]').textContent, /effort is unavailable/); assert.equal(save().disabled, true);
+    await chooseModel('p/model'); assert.match(document.querySelector('[role=alert]').textContent, /effort is unavailable/); assert.equal(save().disabled, true);
     await select('Agent default effort', 'high');
     await enterText(control('System prompt file'), ''); assert.match(document.querySelector('[role=alert]').textContent, /system prompt file is required/); assert.equal(save().disabled, true);
     await enterText(control('System prompt file'), 'system.md'); await click(control('Agent fast mode')); assert.match(document.querySelector('[role=alert]').textContent, /does not support fast mode/); assert.equal(save().disabled, true);

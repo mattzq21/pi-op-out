@@ -10,6 +10,7 @@ import { AgentExtensions } from "./AgentExtensions";
 import { agentProfileSchema } from "../lib/agentSchemas";
 import { McpSettings, type McpEditorDraft } from "./McpSettings";
 import { CapInput } from "./CapInput";
+import { FilterSelect } from "./FilterSelect";
 import { capRangeError } from "../../../extensions/piop-context-window-cap/interface";
 import { Key, Rerun } from "@solid-primitives/keyed";
 import { createComputed, createEffect, createMemo, createSignal, For, Index, Show } from "solid-js";
@@ -115,7 +116,6 @@ export function SettingsView(props: SettingsViewProps) {
   const [saveRevision, setSaveRevision] = createSignal(0);
   const [toolQuery, setToolQuery] = createSignal("");
   const [skillQuery, setSkillQuery] = createSignal("");
-  const [agentModelQuery, setAgentModelQuery] = createSignal("");
   const [mcpDrafts, setMcpDrafts] = createSignal<Array<McpEditorDraft | undefined>>([]);
   const mcpError = createMemo(() => mcpDrafts().find(item => item?.error)?.error);
   createDependencyEffect(() => {
@@ -489,11 +489,12 @@ export function SettingsView(props: SettingsViewProps) {
             const renderAgentNameRow = () => (<div class="agent-name-row"><label class="field"><span>Agent name</span><input aria-label="Agent name" aria-invalid={!isBuiltInAgent(agent()) && (!agent().name.trim() || agent().name.trim().toLowerCase() === "general" || nameValidation().duplicateAgentNames.has(agent().name.trim().toLowerCase()))} disabled={isBuiltInAgent(agent())} value={agent().name} onInput={(event) => { renameAgent(event.currentTarget.value.replace(/[^a-zA-Z0-9_-]/g, "")); event.currentTarget.value = agent().name; }} /></label><IconButton label={`Remove ${agent().name}`} disabled={isBuiltInAgent(agent())} onClick={removeAgent}><Trash2 size={15} /></IconButton></div>);
 
             const renderAgentDefaults = () => {
-              const agentModelChoices = () => {
-                const query = agentModelQuery().trim().toLocaleLowerCase();
-                return settingsProps().models.filter(model => { const id = `${model.provider}/${model.id}`; return !query || id === agent().model || id.toLocaleLowerCase().includes(query); });
-              };
-              const renderAgentModel = () => (<div class="field"><span>Default model</span><div class="agent-model-picker"><input aria-label="Filter models by ID" placeholder="Filter by ID" value={agentModelQuery()} onInput={(event) => setAgentModelQuery(event.currentTarget.value)} /><select aria-label="Agent default model" value={agent().model} onChange={(event) => updateAgent({ model: event.target.value })}><option value="">Use session model</option>{agent().model && !agentValidation().availableModelIds.has(agent().model) && <option value={agent().model} disabled>Unavailable: {agent().model}</option>}{<Key each={agentModelChoices()} by={(model) => `${model.provider}/${model.id}`}>{(model, _index) => <option  value={`${model().provider}/${model().id}`}>{draft().modelAliases?.[`${model().provider}/${model().id}`] || model().name || model().id}</option>}</Key>}</select></div></div>);
+              const agentModelOptions = () => [
+                { value: "", label: "Use session model", search: "" },
+                ...(agent().model && !agentValidation().availableModelIds.has(agent().model) ? [{ value: agent().model, label: `Unavailable: ${agent().model}`, search: agent().model, disabled: true }] : []),
+                ...settingsProps().models.map(model => { const id = `${model.provider}/${model.id}`; return { value: id, label: draft().modelAliases?.[id] || model.name || model.id, search: id }; }),
+              ];
+              const renderAgentModel = () => (<div class="field"><span>Default model</span><FilterSelect label="Agent default model" filterPlaceholder="Filter by ID" value={agent().model} options={agentModelOptions()} onChange={model => updateAgent({ model })} /></div>);
               const renderAgentFastMode = () => (<div class="field general-fast-mode" data-tooltip={agent().fastMode === undefined ? "Using the fallback fast mode setting" : "Fast mode default for this agent"}><span>Fast mode</span><div><button type="button" class={`fast-mode-indicator${agentFastModeEnabled() ? " active" : ""}`} aria-label="Agent fast mode" aria-description={agent().fastMode === undefined ? "Using fallback setting" : agentFastModeEnabled() ? "Fast mode on" : "Fast mode off"} aria-pressed={agentFastModeEnabled()} aria-invalid={agent().fastMode === true && !supportsFastMode(agent().model)} onClick={() => updateAgent({ fastMode: !agentFastModeEnabled() })}><Zap size={22} strokeWidth={1.5} fill={agentFastModeEnabled() ? "currentColor" : "none"} aria-hidden="true" /></button></div></div>);
               const renderAgentEffort = () => (<label class="field"><span>Default effort</span><select aria-label="Agent default effort" aria-invalid={Boolean(!agentValidation().thinkingDiscoveryUnavailable && agent().effort && !agentLevels(agent()).includes(agent().effort))} value={agent().effort} onChange={(event) => updateAgent({ effort: event.target.value })}><option value="">Use fallback ({draft().defaultThinking})</option>{agent().effort && !agentLevels(agent()).includes(agent().effort) && <option value={agent().effort} disabled>Unavailable: {agent().effort}</option>}{<Key each={agentLevels(agent())} by={(level) => level}>{(level, _index) => <option  value={level()}>{level().charAt(0).toUpperCase() + level().slice(1)}</option>}</Key>}</select></label>);
 
