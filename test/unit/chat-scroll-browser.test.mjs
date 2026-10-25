@@ -71,3 +71,25 @@ test('a growing streaming answer keeps its newest line in view until the reader 
   assert.ok(Math.abs(await messages.evaluate(element => element.scrollTop) - position) <= 2, 'the answer grows without moving the reader');
   assert.equal(await inView('Streamed line 13'), false, 'the reader stays in earlier text');
 });
+
+test('the arrow above the composer appears away from the latest message and jumps back to it', async t => {
+  const page = await startupPage(t, 'production', { entryPoint: 'test/fixtures/chat-jump-browser.tsx', ready: '.messages' });
+  const messages = page.locator('.messages');
+  const jump = page.getByRole('button', { name: 'Scroll to latest', exact: true });
+  const frames = () => page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+  const gap = () => messages.evaluate(element => element.scrollHeight - element.clientHeight - element.scrollTop);
+  await frames();
+  assert.equal(await jump.count(), 0, 'no arrow at the bottom');
+  await messages.hover();
+  await page.mouse.wheel(0, -400);
+  await frames();
+  await jump.waitFor();
+  await jump.click();
+  await frames();
+  assert.ok(await gap() <= 2, 'the arrow scrolls to the latest message');
+  assert.equal(await jump.count(), 0, 'the arrow hides at the bottom');
+  await page.evaluate(() => window.appendMessage());
+  await frames();
+  assert.ok(await gap() <= 2, 'new messages are followed again');
+});
+

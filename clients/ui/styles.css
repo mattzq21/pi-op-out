@@ -283,6 +283,7 @@ button.agent-delivery-source:hover { color: var(--accent-soft); text-decoration:
 .prompt-skill-invocation pre { white-space: pre-wrap; overflow-wrap: anywhere; }
 
 .composer-wrap { padding-bottom: 13px; }
+.jump-to-latest { position: absolute; left: 50%; bottom: calc(100% + 10px); z-index: 3; width: 34px; height: 34px; display: grid; place-items: center; padding: 0; border: 1px solid var(--line); border-radius: 50%; background: var(--dark-control); color: var(--ink); box-shadow: 0 6px 18px #0006; transform: translateX(-50%); cursor: pointer; }.jump-to-latest:hover { background: var(--dark-control-hover); }.jump-to-latest:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .composer-stack::after { content: ""; position: absolute; left: 0; right: 0; bottom: 0; height: 13px; background: var(--paper); pointer-events: none; }
 .image-input-toast { display: flex; align-items: center; gap: 9px; width: fit-content; max-width: 100%; box-sizing: border-box; margin: 0 0 10px; padding: 11px 13px; border: 1px solid #792b24; border-radius: 12px; background: #260d0b; color: #ff6557; font-size: 14px; line-height: 1.4; box-shadow: 0 4px 16px #0002; }
 .image-input-toast > svg { flex-shrink: 0; }
