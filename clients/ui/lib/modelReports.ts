@@ -1,4 +1,5 @@
 import type { Model } from "../types";
+import { isConversationChanged } from "./conversationChanged";
 
 type Report = (hostId: string, ids: string[]) => void | Promise<void>;
 const reports = new Set<Report>();
@@ -10,9 +11,10 @@ export async function reportModels(hostId: string, models: Model[]) { if (models
 export function observeModelConnections(listener: (hostId: string) => void) { connections.add(listener); return () => { connections.delete(listener); }; }
 export function hostModelConnected(hostId: string) { for (const listener of connections) listener(hostId); }
 export function registerModelSession(hostId: () => string, refresh: () => Promise<void>) { const session = { hostId, refresh }; sessions.add(session); return () => { sessions.delete(session); }; }
+/** Refreshes the open conversations of the host. A conversation that changed during its refresh has a new view that loads the models itself, so it is not an error. */
 export async function refreshHostModels(hostId: string) {
   const results = await Promise.allSettled([...sessions].filter(session => session.hostId() === hostId).map(session => session.refresh()));
-  const errors = results.filter(result => result.status === "rejected");
+  const errors = results.filter((result): result is PromiseRejectedResult => result.status === "rejected" && !isConversationChanged(result.reason));
 
   if (errors.length) throw new Error(errors.map(result => String(result.reason)).join("\n"));
 }
