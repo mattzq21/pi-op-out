@@ -11,6 +11,7 @@ import { draftUploadsFromImages, stageDraftSubmission, type DraftSubmissionHandl
 import { Key } from "@solid-primitives/keyed";
 import { createComputed, createMemo, createSignal, Index, onCleanup, Show, type Accessor } from "solid-js";
 import type { NativeTransport } from "../lib/nativeTransport";
+import { isDaemonRefusal } from "../lib/commandRejected";
 import { createDependencyEffect, createRef, type JSXElement, type StateUpdate } from "../lib/solid";
 
 import { ArrowDown, ChevronRight, Folder, LoaderCircle, Monitor, X } from "lucide-solid";
@@ -106,12 +107,32 @@ export function ChatView(props: Props & { transcriptActions?: JSXElement; follow
   /** The distance from the bottom to keep while older history comes in above the view. */
   const olderAnchor = createRef<number | undefined>(undefined);
 
+  /** The transport whose reconnection loads older history again, and the function that stops waiting for it. */
+  const olderRetry = createRef<{ transport: NativeTransport; stop: () => void } | undefined>(undefined);
+  onCleanup(() => olderRetry.current?.stop());
+
+  /** A load during a reconnect, such as a daemon restart, had no effect, so it runs again once the conversation is connected. */
+  const retryOlderAfterReconnect = (transport: NativeTransport) => {
+    if (olderRetry.current?.transport === transport) return;
+    olderRetry.current?.stop();
+    const stop = transport.subscribe(event => {
+      if (event.type !== "connection_restored") return;
+      stop();
+      if (olderRetry.current?.transport === transport) olderRetry.current = undefined;
+      if (props.transport === transport) loadOlder();
+    });
+    olderRetry.current = { transport, stop };
+  };
+
   const loadOlder = () => {
     const element = messagesRef.current; const transport = props.transport;
 
-    if (!element || !transport || !older() || olderAnchor.current !== undefined) return;
+    if (!element || !transport || !older() || olderAnchor.current !== undefined || olderRetry.current?.transport === transport) return;
     olderAnchor.current = element.scrollHeight - element.scrollTop;
-    loadOlderHistory(transport).catch(reason => props.onNotice?.("Could not load older messages", reason instanceof Error ? reason.message : String(reason))).finally(() => requestAnimationFrame(() => {
+    loadOlderHistory(transport).catch(reason => {
+      if (!transport.isConnected() || isDaemonRefusal(reason)) retryOlderAfterReconnect(transport);
+      else props.onNotice?.("Could not load older messages", reason instanceof Error ? reason.message : String(reason));
+    }).finally(() => requestAnimationFrame(() => {
       const anchor = olderAnchor.current; olderAnchor.current = undefined;
 
       if (anchor !== undefined && !followLatest.current) { element.scrollTop = element.scrollHeight - anchor; lastScrollTop.current = element.scrollTop; }

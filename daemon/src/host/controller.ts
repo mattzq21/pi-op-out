@@ -1,5 +1,6 @@
 import { read as readGoal } from "../../resources/piop-storage/goals.cjs";
 import { join } from 'node:path';
+import { CommandRefusedError } from '../pi_rejection';
 import { getProjectRepository, refreshProjectRepository } from '../project_repositories';
 import { saveProgress } from '../chat_worktrees';
 import * as Registry from '../session_registry';
@@ -427,7 +428,8 @@ export class Host implements SessionHost {
     const session = this.subscriptions.get(runtime);
     if (!session) {
       if (name === 'detach') return { stopped: false };
-      throw new Error('Pi is not running');
+      // An unknown runtime, for example a view from before a daemon restart that has not attached again. Nothing ran, so the client can retry.
+      throw new CommandRefusedError('Pi is not running', 'daemon');
     }
     if (name === 'detach') return this.detach(packet, runtime, session);
     if (name === 'presence') {
