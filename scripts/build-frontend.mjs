@@ -24,7 +24,7 @@ async function frontend() {
 
   const configuration = { root, mode, build: { outDir } };
 
-  const resolved = await resolveConfig(configuration, "build");
+  const resolved = await resolveConfig(configuration, "build", "production", "production");
 
   const files = (await readdir(root)).filter(path => /^(package\.json|bun\.lock|tsconfig.*\.json|\.env(?:\..*)?|.*(postcss|tailwind).*|vite\.config\.(ts|js|mts|mjs|cts|cjs))$/.test(path));
 
