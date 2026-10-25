@@ -473,7 +473,7 @@ textarea::placeholder { color: var(--faint); }
 .pending-message button:disabled { opacity: .4; cursor: default; }
 .pending-message .pending-icon-button { width: 24px; flex-shrink: 0; padding: 3px; }
 
-.user-message.steering-message .message-body { max-width: min(72%, 520px); padding: 7px 10px; font-size: 12px; font-weight: 400; background: #191815; border-color: #302e29; color: #c4beb3; }
+.user-message.steering-message .message-body { background: #191815; border-color: #302e29; color: #c4beb3; }
 
 .pending-order-actions { display: flex; align-items: center; gap: 0; }
 
