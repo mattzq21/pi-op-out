@@ -4,7 +4,7 @@ import { createDependencyEffect, createRef } from "../lib/solid";
 
 import { App as AndroidApp } from "@capacitor/app";
 import App from "../App";
-import { cachedMobileHost, forgetMobileHost, readMobileHosts, saveMobileAnchor, useDevelopmentAnchor, validateMobileAnchor, type MobileAnchor, type MobileHosts } from "../lib/mobileHosts";
+import { cachedMobileHost, forgetMobileHost, readMobileHosts, saveMobileAnchor, saveMobileHost, useDevelopmentAnchor, validateMobileAnchor, type MobileAnchor, type MobileHosts } from "../lib/mobileHosts";
 import { remoteClient, validateHost } from "../lib/remoteClient";
 import { loadMobileDebugConnection } from "../lib/mobileDebug";
 import { MobileTailscaleStatus } from "./MobileTailscaleStatus";
@@ -15,6 +15,7 @@ export function MobileApp() {
   const [savedHosts, setSavedHosts] = createSignal<MobileAnchor[]>([]);
   const [anchorReadFailed, setAnchorReadFailed] = createSignal(false);
   const [forgetting, setForgetting] = createSignal(false);
+  const [savingHost, setSavingHost] = createSignal(false);
   const pendingAnchorSave = createRef<Promise<MobileHosts> | undefined>(undefined);
   const [connected, setConnected] = createSignal(false);
   const [workspaceOpen, setWorkspaceOpen] = createSignal(false);
@@ -181,6 +182,19 @@ export function MobileApp() {
     editAddress(host?.url ?? ""); setName(host?.name ?? ""); setError("");
   };
 
+  /** Saves the host in the form without connecting. */
+  const saveHost = async () => {
+    if (savingHost()) return;
+    setSavingHost(true); setError("");
+
+    try {
+      const host = validateMobileAnchor(url(), name());
+      const hosts = await saveMobileHost(host.url, host.name);
+      setSavedHosts(hosts.saved); setAnchorReadFailed(false); setUrl(host.url); setName(host.name);
+    } catch (reason) { setError(reason instanceof Error ? reason.message : String(reason)); }
+    finally { setSavingHost(false); }
+  };
+
   /** Forgets the selected host, or every host when the saved hosts cannot be read. */
   const forgetHost = async () => {
     if (forgetting()) return;
@@ -207,11 +221,14 @@ export function MobileApp() {
     {savedHosts().length > 0 && <label>Saved hosts<select disabled={connecting() || forgetting()} value={selectedHost()?.url ?? ""} onChange={(event) => chooseHost(event.currentTarget.value)}><option value="">New host</option><For each={savedHosts()}>{host => <option value={host.url}>{host.name}</option>}</For></select></label>}
     <label>Anchor host address<input type="url" required disabled={connecting() || forgetting()} placeholder="wss://your-host.your-tailnet.ts.net" autoCapitalize="none" autocorrect="off" spellcheck={false} value={url()} onInput={(event) => editAddress(event.target.value)} /></label>
     <label>Host name<input required disabled={connecting() || forgetting()} value={name()} placeholder="My PC" onInput={(event) => setName(event.target.value)} /></label>
+    <div class="mobile-host-actions mobile-saved-host-actions">
+      {(selectedHost() || anchorReadFailed()) && <button type="button" disabled={connecting() || forgetting() || savingHost()} onClick={() => void forgetHost()}>Forget</button>}
+      <button type="button" disabled={connecting() || forgetting() || savingHost() || !url().trim() || !name().trim() || selectedHost()?.name === name().trim()} onClick={() => void saveHost()}>{savingHost() ? "Saving…" : "Save"}</button>
+    </div>
     <p class="mobile-connect-hint">Piop connects to this host. You can also use the hosts that this host has added. Connect this device and the host to the same Tailscale account, then enter the host’s Tailscale Serve wss:// address.</p>
     <MobileTailscaleStatus />
     {error() && <p role="alert">{error()}</p>}
     <button class="primary-button" disabled={connectDisabled()}>{connecting() ? "Connecting…" : "Connect"}</button>
     {connecting() && <button type="button" onClick={disconnect}>Cancel</button>}
-    {(selectedHost() || anchorReadFailed()) && !connecting() && <button type="button" disabled={forgetting()} onClick={() => void forgetHost()}>{anchorReadFailed() ? "Forget saved hosts" : "Forget this host"}</button>}
   </form></main>)}{((workspaceOpen() && showConnectionNotice()) || minimizeError()) && <div class="mobile-notices">{workspaceOpen() && renderConnectionNotice()}{minimizeError() && <div class="mobile-reconnect-banner"><div role="status">{minimizeError()}</div></div>}</div>}</>;
 }

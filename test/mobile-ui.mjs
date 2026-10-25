@@ -117,13 +117,13 @@ try {
  await page.getByRole('button',{name:'Toggle conversations'}).click();
  page.once('dialog', dialog => dialog.accept());
  await page.getByRole('button',{name:'Host',exact:true}).click();
- await page.getByRole('button',{name:'Forget this host',exact:true}).click();
- await page.getByRole('button',{name:'Forget this host',exact:true}).waitFor({state:'detached'});
+ await page.getByRole('button',{name:'Forget',exact:true}).click();
+ await page.getByRole('button',{name:'Forget',exact:true}).waitFor({state:'detached'});
  assert.equal(await page.getByLabel('Anchor host address').inputValue(),'');
  await page.reload();
  await page.getByLabel('Anchor host address').waitFor();
  assert.equal(await page.getByLabel('Anchor host address').inputValue(),'');
- assert.equal(await page.getByRole('button',{name:'Forget this host'}).count(),0);
+ assert.equal(await page.getByRole('button',{name:'Forget'}).count(),0);
  assert.deepEqual(errors,[]);
  console.log('PASS: phone connection, connected chat, usage badges with OpenCode Go above Codex, multiline entry, settings, drawer, disconnection, saved anchor reconnects after reload, forgotten anchor stays forgotten; no page errors or horizontal overflow');
  console.log(`Screenshots: ${screenshots}`);

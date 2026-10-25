@@ -5,7 +5,7 @@ import { IDBFactory, IDBObjectStore } from 'fake-indexeddb';
 
 const compiled = await build({ entryPoints: ['clients/ui/lib/mobileHosts.ts'], bundle: true, write: false, format: 'esm', platform: 'node', define: { 'import.meta.env.MODE': '"mobile"' } });
 
-const { readMobileHosts, saveMobileAnchor, forgetMobileHost, validateMobileAnchor, cachedMobileHost, localHostLabel, useDevelopmentAnchor } = await import(`data:text/javascript;base64,${Buffer.from(compiled.outputFiles[0].text).toString('base64')}`);
+const { readMobileHosts, saveMobileAnchor, saveMobileHost, forgetMobileHost, validateMobileAnchor, cachedMobileHost, localHostLabel, useDevelopmentAnchor } = await import(`data:text/javascript;base64,${Buffer.from(compiled.outputFiles[0].text).toString('base64')}`);
 
 const readMobileAnchor = async () => (await readMobileHosts()).anchor;
 
@@ -115,4 +115,14 @@ test('unreadable saved hosts can be cleared', async () => {
   await assert.rejects(readMobileHosts());
   await forgetMobileHost();
   assert.deepEqual(await readMobileHosts(), { anchor: undefined, saved: [] });
+});
+
+test('saving a host without connecting adds it and keeps the current anchor', async () => {
+  await saveMobileAnchor('wss://home.test', 'Home');
+  await saveMobileHost(' wss://OFFICE.test ', ' Office ');
+  assert.deepEqual(await readMobileHosts(), { anchor: { name: 'Home', url: 'wss://home.test/' }, saved: [{ name: 'Home', url: 'wss://home.test/' }, { name: 'Office', url: 'wss://office.test/' }] });
+  await saveMobileHost('wss://home.test', 'House');
+  assert.deepEqual(await readMobileHosts(), { anchor: { name: 'House', url: 'wss://home.test/' }, saved: [{ name: 'House', url: 'wss://home.test/' }, { name: 'Office', url: 'wss://office.test/' }] });
+  assert.equal(localHostLabel(), 'House');
+  assert.throws(() => saveMobileHost('wss://office.test', ' '), /host name/);
 });

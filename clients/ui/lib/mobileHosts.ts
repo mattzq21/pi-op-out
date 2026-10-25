@@ -106,11 +106,23 @@ export function validateMobileAnchor(address: string, name: string): MobileAncho
   return { url, name: label };
 }
 
-/** Makes the host the current anchor and saves it, replacing the saved name of the same address. */
+/** The saved hosts with the host added, or replacing the saved name of the same address. */
+function withHost(saved: MobileAnchor[], host: MobileAnchor) {
+  return saved.some(item => item.url === host.url) ? saved.map(item => item.url === host.url ? host : item) : [...saved, host];
+}
+
+/** Makes the host the current anchor and saves it. */
 export function saveMobileAnchor(address: string, name: string) {
   const anchor = validateMobileAnchor(address, name);
 
-  return hostsTransaction(current => ({ anchor, saved: current.saved.some(host => host.url === anchor.url) ? current.saved.map(host => host.url === anchor.url ? anchor : host) : [...current.saved, anchor] }));
+  return hostsTransaction(current => ({ anchor, saved: withHost(current.saved, anchor) }));
+}
+
+/** Saves the host without connecting. A saved current anchor takes the new name too. */
+export function saveMobileHost(address: string, name: string) {
+  const host = validateMobileAnchor(address, name);
+
+  return hostsTransaction(current => ({ anchor: current.anchor?.url === host.url ? host : current.anchor, saved: withHost(current.saved, host) }));
 }
 
 /** Uses a development connection for this run only, so it never replaces the saved anchor. */
