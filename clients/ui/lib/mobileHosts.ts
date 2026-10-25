@@ -5,7 +5,11 @@ import { z } from "zod";
 /** The one daemon that the phone connects to. Its added machines are reached through it. */
 export interface MobileAnchor { name: string; url: string }
 
+/** The current anchor and every anchor host that this device has saved. The current anchor is always in the saved list. */
+export interface MobileHosts { anchor?: MobileAnchor; saved: MobileAnchor[] }
+
 const anchorSchema = z.object({ name: z.string().trim().min(1), url: z.string() });
+const savedSchema = z.array(anchorSchema);
 const storageTimeoutMs = 10000;
 
 let anchorCache: MobileAnchor | undefined;
@@ -43,12 +47,20 @@ function openDatabase(): Promise<IDBDatabase> {
   });
 }
 
-async function anchorTransaction(change?: () => MobileAnchor | undefined): Promise<MobileAnchor | undefined> {
+function storedHosts(anchorValue: unknown, savedValue: unknown): MobileHosts {
+  const anchor = anchorValue === undefined ? undefined : anchorSchema.parse(anchorValue);
+  const saved = savedValue === undefined ? [] : savedSchema.parse(savedValue);
+
+  return { anchor, saved: anchor && !saved.some(host => host.url === anchor.url) ? [anchor, ...saved] : saved };
+}
+
+/** Reads the hosts, and with `change` replaces them in the same transaction. `"reset"` removes them without reading, so unreadable data can be cleared. */
+async function hostsTransaction(change?: ((current: MobileHosts) => MobileHosts) | "reset"): Promise<MobileHosts> {
   const database = await openDatabase();
   let timer: ReturnType<typeof setTimeout> | undefined;
 
   try {
-    const anchor = await new Promise<MobileAnchor | undefined>((resolve, reject) => {
+    const hosts = await new Promise<MobileHosts>((resolve, reject) => {
       const transaction = database.transaction("state", "readwrite", { durability: "strict" });
       timer = setTimeout(() => {
         try { transaction.abort(); }
@@ -56,30 +68,34 @@ async function anchorTransaction(change?: () => MobileAnchor | undefined): Promi
         reject(new Error("Accessing anchor host storage timed out"));
       }, storageTimeoutMs);
       const state = transaction.objectStore("state");
-      let result: MobileAnchor | undefined;
+      let result: MobileHosts = { saved: [] };
 
-      if (change) {
-        result = change();
+      if (change === "reset") { state.delete("anchor"); state.delete("saved"); }
+      else {
+        const anchorRequest = state.get("anchor");
+        const savedRequest = state.get("saved");
+        savedRequest.onsuccess = () => {
+          try {
+            const current = storedHosts(anchorRequest.result, savedRequest.result);
+            result = change ? change(current) : current;
 
-        if (result) state.put(result, "anchor"); else state.delete("anchor");
-      } else {
-        const request = state.get("anchor");
-        request.onsuccess = () => {
-          try { result = request.result === undefined ? undefined : anchorSchema.parse(request.result); }
-          catch (error) { transaction.abort(); reject(error); }
+            if (!change) return;
+            if (result.anchor) state.put(result.anchor, "anchor"); else state.delete("anchor");
+            state.put(result.saved, "saved");
+          } catch (error) { transaction.abort(); reject(error); }
         };
       }
       transaction.oncomplete = () => resolve(result);
       transaction.onabort = () => reject(transaction.error ?? new Error("Could not save the anchor host"));
       transaction.onerror = () => reject(transaction.error ?? new Error("Could not access anchor host storage"));
     });
-    anchorCache = anchor;
+    anchorCache = hosts.anchor;
 
-    return anchor;
+    return hosts;
   } finally { clearTimeout(timer); database.close(); }
 }
 
-export function readMobileAnchor() { return anchorTransaction(); }
+export function readMobileHosts() { return hostsTransaction(); }
 
 export function validateMobileAnchor(address: string, name: string): MobileAnchor {
   const url = validateHost({ url: address.trim() });
@@ -90,10 +106,11 @@ export function validateMobileAnchor(address: string, name: string): MobileAncho
   return { url, name: label };
 }
 
+/** Makes the host the current anchor and saves it, replacing the saved name of the same address. */
 export function saveMobileAnchor(address: string, name: string) {
   const anchor = validateMobileAnchor(address, name);
 
-  return anchorTransaction(() => anchor);
+  return hostsTransaction(current => ({ anchor, saved: current.saved.some(host => host.url === anchor.url) ? current.saved.map(host => host.url === anchor.url ? anchor : host) : [...current.saved, anchor] }));
 }
 
 /** Uses a development connection for this run only, so it never replaces the saved anchor. */
@@ -103,4 +120,7 @@ export function useDevelopmentAnchor(address: string) {
   return anchorCache;
 }
 
-export function forgetMobileAnchor() { return anchorTransaction(() => undefined); }
+/** Removes one saved host, or every host when `url` is undefined. Removing the current anchor clears it. */
+export function forgetMobileHost(url?: string) {
+  return hostsTransaction(url === undefined ? "reset" : current => ({ anchor: current.anchor?.url === url ? undefined : current.anchor, saved: current.saved.filter(host => host.url !== url) }));
+}

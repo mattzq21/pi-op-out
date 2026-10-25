@@ -5,7 +5,9 @@ import { IDBFactory, IDBObjectStore } from 'fake-indexeddb';
 
 const compiled = await build({ entryPoints: ['clients/ui/lib/mobileHosts.ts'], bundle: true, write: false, format: 'esm', platform: 'node', define: { 'import.meta.env.MODE': '"mobile"' } });
 
-const { readMobileAnchor, saveMobileAnchor, forgetMobileAnchor, validateMobileAnchor, cachedMobileHost, localHostLabel, useDevelopmentAnchor } = await import(`data:text/javascript;base64,${Buffer.from(compiled.outputFiles[0].text).toString('base64')}`);
+const { readMobileHosts, saveMobileAnchor, forgetMobileHost, validateMobileAnchor, cachedMobileHost, localHostLabel, useDevelopmentAnchor } = await import(`data:text/javascript;base64,${Buffer.from(compiled.outputFiles[0].text).toString('base64')}`);
+
+const readMobileAnchor = async () => (await readMobileHosts()).anchor;
 
 let previousStorage;
 beforeEach(async () => {
@@ -27,7 +29,7 @@ test('anchor validation rejects unsafe addresses and missing names', async () =>
   assert.deepEqual(validateMobileAnchor(' wss://WORK.test ', ' Work '), { name: 'Work', url: 'wss://work.test/' });
 });
 
-test('saving normalizes the anchor and replaces the previous machine', async () => {
+test('saving normalizes the anchor and makes it the current one', async () => {
   await saveMobileAnchor(' wss://WORK.test ', ' Office ');
   assert.deepEqual(await readMobileAnchor(), { name: 'Office', url: 'wss://work.test/' });
   await saveMobileAnchor('wss://home.test', 'Home');
@@ -39,10 +41,10 @@ test('saving normalizes the anchor and replaces the previous machine', async () 
 
 test('forgetting the anchor clears saved and cached connection details', async () => {
   await saveMobileAnchor('wss://home.test', 'Home');
-  await forgetMobileAnchor();
+  await forgetMobileHost();
   assert.equal(await readMobileAnchor(), undefined);
   assert.equal(cachedMobileHost(), '');
-  await forgetMobileAnchor();
+  await forgetMobileHost();
   assert.equal(await readMobileAnchor(), undefined);
 });
 
@@ -81,13 +83,36 @@ test('an aborted forget keeps the saved host, and a later forget can recover', a
     return request;
   });
 
-  await assert.rejects(forgetMobileAnchor());
+  await assert.rejects(forgetMobileHost());
   assert.equal(cachedMobileHost(), 'wss://home.test/');
   assert.equal(localHostLabel(), 'Home');
   assert.deepEqual(await readMobileAnchor(), { name: 'Home', url: 'wss://home.test/' });
 
   failure.mock.restore();
-  await forgetMobileAnchor();
+  await forgetMobileHost();
   assert.equal(await readMobileAnchor(), undefined);
   assert.equal(cachedMobileHost(), '');
+});
+
+test('saved hosts keep every anchor, update names by address and forget one host at a time', async () => {
+  await saveMobileAnchor('wss://office.test', 'Office');
+  await saveMobileAnchor('wss://home.test', 'Home');
+  await saveMobileAnchor('wss://office.test', 'Work');
+  assert.deepEqual(await readMobileHosts(), { anchor: { name: 'Work', url: 'wss://office.test/' }, saved: [{ name: 'Work', url: 'wss://office.test/' }, { name: 'Home', url: 'wss://home.test/' }] });
+  await forgetMobileHost('wss://home.test/');
+  assert.deepEqual(await readMobileHosts(), { anchor: { name: 'Work', url: 'wss://office.test/' }, saved: [{ name: 'Work', url: 'wss://office.test/' }] });
+  await saveMobileAnchor('wss://home.test', 'Home');
+  await forgetMobileHost('wss://home.test/');
+  assert.deepEqual(await readMobileHosts(), { anchor: undefined, saved: [{ name: 'Work', url: 'wss://office.test/' }] });
+  assert.equal(cachedMobileHost(), '');
+});
+
+test('unreadable saved hosts can be cleared', async () => {
+  await saveMobileAnchor('wss://home.test', 'Home');
+  const database = await new Promise((resolve, reject) => { const request = indexedDB.open('piop-mobile-anchor', 1); request.onsuccess = () => resolve(request.result); request.onerror = () => reject(request.error); });
+  await new Promise((resolve, reject) => { const transaction = database.transaction('state', 'readwrite'); transaction.objectStore('state').put([{ url: 7 }], 'saved'); transaction.oncomplete = resolve; transaction.onerror = () => reject(transaction.error); });
+  database.close();
+  await assert.rejects(readMobileHosts());
+  await forgetMobileHost();
+  assert.deepEqual(await readMobileHosts(), { anchor: undefined, saved: [] });
 });
