@@ -13,7 +13,7 @@ Branching creates an independent chat and Git worktree. Chat history stops at th
 - Use current settings. Give the new chat a clear name and a link to the original chat and selected message.
 - Create a separate worktree from current files, including uncommitted changes and untracked files. Exclude ignored files. Do not restore files to the time of the selected response.
 - Name the Git branch `piop/<chat-id>`, using a full UUID: 36 characters including hyphens. Do not generate descriptive branch text. The UI may display a shortened ID; Git uses the full ID. Renaming a chat does not rename its branch.
-- Put the worktree at `~/.local/share/piop/worktrees/<chat-id>/` on the machine holding the repository. No repository ID is needed in this path. Store the source repository location with the chat.
+- Put the worktree at `~/.piop/worktrees/<chat-id>/` on the machine holding the repository, inside Piop's storage folder; debug builds use `~/.piop-dev/worktrees/<chat-id>/`. No repository ID is needed in this path. Store the source repository location with the chat.
 - Treat repeated clicks or retries during creation as one request until both the chat and worktree exist. A failed attempt must clean up its own partial results, including any branch it created. Show cleanup failures; do not silently leave them for a retry. After cleanup, a retry starts a new attempt.
 - Share attachments between chats. Retain them until the last chat that uses them is permanently deleted. Archived chats still count.
 
