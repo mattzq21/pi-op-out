@@ -5,8 +5,11 @@ import { pauseStateSchema, promptContextSchema, resumeContentSchema, resumeMarke
 
 const SYSTEM_MESSAGES = new Set(["pi-desktop-mcp-status"]);
 
+/** The user message that a goal sends to continue its work. */
+export const GOAL_PROMPT = "piop-goal-context";
+
 export function isContextInjection(message: { role?: string; customType?: string }) {
-  return message.role === "custom" && (pluginMessageMetadata(message.customType)?.contextInjection ?? (!SYSTEM_MESSAGES.has(message.customType ?? "") && !["piop-subagent-result", "piop-session-operation", "piop-agent-message"].includes(message.customType ?? "")));
+  return message.role === "custom" && (pluginMessageMetadata(message.customType)?.contextInjection ?? (!SYSTEM_MESSAGES.has(message.customType ?? "") && !["piop-subagent-result", "piop-session-operation", "piop-agent-message", GOAL_PROMPT].includes(message.customType ?? "")));
 }
 
 export type PiEntry = { type: string; id: string; parentId: string | null; message?: Partial<WireMessage>; customType?: string; details?: unknown; content?: ChatMessage["content"]; data?: unknown; display?: boolean; timestamp?: string; tokensBefore?: number };
@@ -34,8 +37,8 @@ export function isResumeMessage(message: { role?: unknown; content?: unknown }, 
   return markers.has(text);
 }
 
-/** A message that starts a turn: one the user sent, or a message or subagent result from another agent session. */
-export const isPromptMessage = (message: ChatMessage) => message.role === "user" || (message.role === "custom" && (message.customType === "piop-agent-message" || message.customType === "piop-subagent-result"));
+/** A message that starts a turn: one the user sent, a goal prompt, or a message or subagent result from another agent session. */
+export const isPromptMessage = (message: ChatMessage) => message.role === "user" || (message.role === "custom" && (message.customType === "piop-agent-message" || message.customType === "piop-subagent-result" || message.customType === GOAL_PROMPT));
 
 /** Whether a prompt context snapshot belongs to this message. */
 export const promptContextAnchors = (message: ChatMessage, context: { userTimestamp?: number; agentNotificationId?: string }) => message.role === "user"

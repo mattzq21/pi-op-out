@@ -1,7 +1,7 @@
 import { extendedHooks } from "../hooks-extended/interface.ts";
 import { restoreGoalAttachments } from "../piop-storage/goal-files.ts";
-import type { ExtensionAPI, ExtensionContext, AgentBeforeSettleEventResult, InputEventResult } from "@earendil-works/pi-coding-agent";
-import { GoalState, GOAL_CONTEXT } from "./state.ts";
+import type { ExtensionAPI, ExtensionContext, AgentBeforeSettleEventResult } from "@earendil-works/pi-coding-agent";
+import { GoalState, GOAL_CONTEXT, type Goal } from "./state.ts";
 import { goalChangedPrompt, goalPrompt } from "./prompts.ts";
 import { GoalCoordination } from "./coordination.ts";
 import type { GoalSession } from "./interface.ts";
@@ -9,10 +9,7 @@ import type { GoalCore } from "./preparation.ts";
 import { sessionControls } from "../piop-controls/interface.ts";
 import { inputHold } from "../session-broker/input-hold.ts";
 
-/** The user message that starts goal work when Pi is idle. */
-const CONTINUE_TEXT = "Continue working toward the current conversation goal.";
-
-/** A notice that the user changed the goal while the agent worked. The model gets it as a system message at its place in the history. */
+/** A notice that the user changed the goal. It is saved where the change happened, and the model gets it there as a system message. */
 const GOAL_CHANGE = "piop-goal-change";
 
 interface AgentsReady { ctx: ExtensionContext }
@@ -51,7 +48,6 @@ export function registerGoals(pi: ExtensionAPI): { session: GoalSession; core: G
 
   let context: ExtensionContext | undefined;
   let starting = false;
-  let pendingStart = false;
   let restored = false;
   let runSignal: AbortSignal | undefined;
 
@@ -63,28 +59,32 @@ export function registerGoals(pi: ExtensionAPI): { session: GoalSession; core: G
     if (!allowed()) throw new Error("Enable update_goal_status for this agent under Settings → Agents → Tools before starting a goal.");
   };
 
-  const steering = (content: string) => pi.sendMessage({ customType: GOAL_CHANGE, content, display: false, details: { goalId: state.goal?.id } }, { triggerTurn: false });
+  /** Saves a change notice in the history. While the agent works, Pi adds it at the end of the current turn. */
+  const notice = (content: string) => pi.sendMessage({ customType: GOAL_CHANGE, content, display: false, details: { goalId: state.goal?.id } }, { triggerTurn: false });
+
+  /** The objective of the last goal prompt that the model got. */
+  let seenObjective: string | undefined;
+
+  /** The goal prompt: a saved user message that the chat shows as a goal message. It is added once, each time the goal queues more work. */
+  const promptMessage = (goal: Goal) => {
+    seenObjective = goal.objective;
+
+    return { customType: GOAL_CONTEXT, content: goalPrompt(goal), display: true, details: { goalId: goal.id } };
+  };
 
   const start = (ctx: ExtensionContext) => {
     if (starting || state.goal?.status !== "active" || !ctx.isIdle() || ctx.hasPendingMessages()) return;
     assertAvailable(ctx);
     starting = true;
-    pendingStart = true;
-    pi.sendUserMessage(CONTINUE_TEXT, { deliverAs: "followUp" });
+    pi.sendMessage(promptMessage(state.goal), { triggerTurn: true, deliverAs: "followUp" });
   };
 
-  /** Saves the goal. A running agent gets the notice, unless it is null. */
+  /** Saves the goal and the change notice, unless the notice is null. */
   const changed = (ctx: ExtensionContext, prompt: string | null = goalChangedPrompt(state.goal)) => {
     state.save(ctx);
 
-    if (prompt !== null && !ctx.isIdle()) steering(prompt);
+    if (prompt !== null) notice(prompt);
   };
-
-  /** True from a resume during a task until that task ends. The continuation prompt waits until then. */
-  let resumedInTask = false;
-
-  /** The objective in the continuation prompt of the model's last request. */
-  let seenObjective: string | undefined;
 
   const unseenEdit = () => state.goal && seenObjective !== undefined && seenObjective !== state.goal.objective ? goalChangedPrompt({ ...state.goal, status: "active" }) ?? undefined : undefined;
 
@@ -93,7 +93,7 @@ export function registerGoals(pi: ExtensionAPI): { session: GoalSession; core: G
   const core: GoalCore = { state, coordination, assertAvailable, changed, start, unseenEdit, markSeen };
 
   const restore = async (ctx: ExtensionContext) => {
-    context = ctx; starting = false; pendingStart = false;
+    context = ctx; starting = false;
 
     try {
       state.restore(ctx);
@@ -126,15 +126,6 @@ export function registerGoals(pi: ExtensionAPI): { session: GoalSession; core: G
     });
   });
 
-  pi.on("input", (event, ctx) => coordination.run(ctx, (): InputEventResult | void => {
-    starting = false;
-
-    if (event.source === "extension" && pendingStart && event.text === CONTINUE_TEXT) {
-      pendingStart = false;
-
-      if (state.goal?.status !== "active") return { action: "handled" };
-    }
-  }));
   pi.on("agent_start", (_event, ctx) => coordination.run(ctx, () => {
     context = ctx; starting = false;
     runSignal = ctx.signal;
@@ -142,7 +133,6 @@ export function registerGoals(pi: ExtensionAPI): { session: GoalSession; core: G
   }));
 
   pi.on("agent_before_settle", (event, ctx) => coordination.run(ctx, (): AgentBeforeSettleEventResult | void => {
-    resumedInTask = false;
     if (event.outcome !== "completed") {
       if (state.goal?.status === "active") state.setStatus(ctx, "paused");
       if (event.outcome === "error") pause(ctx);
@@ -160,10 +150,10 @@ export function registerGoals(pi: ExtensionAPI): { session: GoalSession; core: G
     ctx.ui.notify('[DEBUG-gq7] settle pending=' + ctx.hasPendingMessages() + ' context=' + event.context.pendingMessages.length, 'info');
     if (ctx.hasPendingMessages() || event.context.pendingMessages.length) return { continue: true };
 
-    return { continue: true, entries: [{ type: "custom_message", customType: GOAL_CONTEXT, content: goalPrompt(state.goal), display: false, details: { goalId: state.goal.id } }] };
+    return { continue: true, entries: [{ type: "custom_message", ...promptMessage(state.goal) }] };
   }));
   pi.on("agent_settled", (_event, ctx) => coordination.run(ctx, () => {
-    starting = false; resumedInTask = false;
+    starting = false;
 
     if (state.goal?.status === "active" && runSignal?.aborted) state.setStatus(ctx, "paused");
     state.save(ctx);
@@ -182,7 +172,7 @@ export function registerGoals(pi: ExtensionAPI): { session: GoalSession; core: G
 
   const session: GoalSession = {
     pause: ctx => commit(ctx, () => { state.setStatus(ctx, "paused"); changed(ctx, null); }),
-    resume: ctx => commit(ctx, () => { assertAvailable(ctx); state.setStatus(ctx, "active"); resumedInTask = !ctx.isIdle(); changed(ctx, null); }),
+    resume: ctx => commit(ctx, () => { assertAvailable(ctx); state.setStatus(ctx, "active"); changed(ctx, null); }),
     clear: ctx => commit(ctx, () => { state.clear(ctx); changed(ctx); }),
     pauseWithSession: ctx => coordination.run(ctx, () => {
       if (state.goal?.status === "active") state.setStatus(ctx, "paused");
@@ -198,26 +188,13 @@ export function registerGoals(pi: ExtensionAPI): { session: GoalSession; core: G
 
   pi.on("context", (event, ctx) => coordination.run(ctx, () => {
     if (state.goal?.status === "active" && !allowed()) state.setStatus(ctx, "paused");
-    // Earlier continuation prompts give way to the current one. Change notices stay where they happened, as system messages.
-    const messages = event.messages.flatMap(message => message.role !== "custom" ? [message]
-      : message.customType === GOAL_CONTEXT ? []
-      : message.customType === GOAL_CHANGE ? [{ role: "system" as const, content: message.content, timestamp: message.timestamp }]
-      : [message]);
+    // Change notices stay where they happened, as system messages. Goal prompts stay as the user messages they were saved as.
+    const messages = event.messages.map(message => message.role === "custom" && message.customType === GOAL_CHANGE ? { role: "system" as const, content: message.content, timestamp: message.timestamp } : message);
 
     // The edit notice for the current objective gives the model that objective.
     const editNotice = state.goal && goalChangedPrompt({ ...state.goal, status: "active" });
 
     if (editNotice && messages.some(message => message.role === "system" && message.content === editNotice)) markSeen();
-
-    // An active goal adds its continuation prompt as a user message. A paused or complete goal adds nothing.
-    if (state.goal) {
-      if (state.goal.status === "active" && !resumedInTask) {
-        seenObjective = state.goal.objective;
-        messages.push({ role: "custom", customType: GOAL_CONTEXT, content: goalPrompt(state.goal), display: false, timestamp: Date.now() });
-      }
-    } else if (event.messages.some(message => message.role === "custom" && message.customType === GOAL_CONTEXT)) {
-      messages.push({ role: "system", content: goalChangedPrompt(null), timestamp: Date.now() });
-    }
 
     return { messages };
   }));

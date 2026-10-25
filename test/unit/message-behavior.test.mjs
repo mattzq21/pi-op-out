@@ -145,7 +145,7 @@ test('a skill invocation without a user request shows only the skill name', asyn
   assert.equal(document.querySelector('article').textContent.trim(), '$research');
 });
 
-test('steering messages use the smaller shaded message style', async t => {
+test('steering messages are shaded and the same size as regular messages', async t => {
   const message = { id: 'steering', role: 'user', content: 'Steering request', deliveryBehavior: 'steer' };
   const view = await renderMessage(t, message);
   const style = document.createElement('style');
@@ -160,9 +160,10 @@ test('steering messages use the smaller shaded message style', async t => {
     }
   };
   assert.equal(getComputedStyle(shadedText()).backgroundColor, 'rgb(25, 24, 21)');
-  assert.equal(getComputedStyle(shadedText()).fontSize, '12px');
+  const steeringSize = getComputedStyle(shadedText()).fontSize;
   await view.rerender({ message: { ...message, deliveryBehavior: undefined } });
   assert.notEqual(getComputedStyle(shadedText()).backgroundColor, 'rgb(25, 24, 21)');
+  assert.equal(getComputedStyle(shadedText()).fontSize, steeringSize);
 });
 
 const mixedContent = [

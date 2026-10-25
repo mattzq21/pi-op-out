@@ -24,14 +24,16 @@ function goalAgent() {
   registerGoalTools(pi, core);
   core.state.goal = { id: 'goal-1', sessionId: 'chat', objective: 'Objective A', status: 'active' };
   const request = (messages = []) => handlers.get('context')({ messages }, ctx);
+  /** Ends a turn: an active goal queues its prompt for the next one. */
+  const settle = () => handlers.get('agent_before_settle')({ outcome: 'completed', context: { pendingMessages: [] } }, ctx);
   const complete = () => tools.get('update_goal_status').execute('call', { status: 'complete' }, undefined, undefined, ctx);
   const edit = objective => { core.state.goal.objective = objective; core.changed(ctx); };
-  return { core, session, ctx, request, complete, edit, notices };
+  return { core, session, ctx, request, settle, complete, edit, notices };
 }
 
 test('completing a goal edited after the last request fails once with the edit message, then succeeds', async () => {
   const agent = goalAgent();
-  await agent.request();
+  await agent.settle();
   await agent.session.pause(agent.ctx);
   agent.edit('Objective B');
   await agent.session.resume(agent.ctx);
@@ -43,12 +45,23 @@ test('completing a goal edited after the last request fails once with the edit m
 
 test('the edit notice in a request gives the model the new objective, so completion succeeds', async () => {
   const agent = goalAgent();
-  await agent.request();
-  // After a resume during a task, the continuation prompt waits for the task end, so the notice is the only source of the new objective.
+  await agent.settle();
+  // The next goal prompt comes at the end of the task, so the notice is the only source of the new objective.
   await agent.session.pause(agent.ctx);
   await agent.session.resume(agent.ctx);
   agent.edit('Objective B');
   await agent.request(agent.notices.map(message => ({ ...message, role: 'custom', timestamp: Date.now() })));
   await agent.complete();
   assert.equal(agent.core.state.goal, null);
+});
+
+test('an active goal queues its prompt once when a turn ends, as a shown message, and requests get no goal prompt added', async () => {
+  const agent = goalAgent();
+  const result = await agent.settle();
+  assert.equal(result.continue, true);
+  assert.equal(result.entries.length, 1);
+  assert.deepEqual({ ...result.entries[0], content: undefined }, { type: 'custom_message', customType: 'piop-goal-context', content: undefined, display: true, details: { goalId: 'goal-1' } });
+  assert.match(result.entries[0].content, /<objective>\nObjective A\n<\/objective>/);
+  const history = [{ role: 'user', content: 'Start', timestamp: 1 }, { role: 'custom', customType: 'piop-goal-context', content: result.entries[0].content, display: true, timestamp: 2 }];
+  assert.deepEqual((await agent.request(history)).messages, history, 'the saved goal prompt stays where it is, and nothing is appended');
 });

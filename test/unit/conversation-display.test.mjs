@@ -326,3 +326,16 @@ test('image context follows the context injections debug feature', async t => {
   assert.ok(view.container.textContent.includes('Look at this'));
 });
 
+
+test('a goal prompt shows as its own user message whose full text opens on request', async t => {
+  const goal = { id: 'goal-prompt', role: 'custom', customType: 'piop-goal-context', display: true, timestamp: 1, content: 'Continue working toward the current thread goal.\n\n<objective>\nShip it\n</objective>' };
+  const reply = { id: 'reply', role: 'assistant', content: [{ type: 'text', text: 'Working on it' }], stopReason: 'stop', timestamp: 2 };
+  const view = await conversation(t, { messages: [goal, reply] });
+  const prompt = view.container.querySelector('[aria-label="Goal prompt"]');
+  assert.ok(prompt);
+  assert.ok(!view.container.textContent.includes('Ship it'), 'the full prompt starts closed');
+  await act(() => prompt.querySelector('button').click());
+  assert.ok(prompt.textContent.includes('Ship it'));
+  assert.equal(view.container.querySelectorAll('.context-injection').length, 0);
+});
+

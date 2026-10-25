@@ -181,6 +181,10 @@ kbd { font: 11px "DM Sans"; border: 1px solid var(--line); padding: 2px 4px; bor
 :is(.reasoning-text, .work-group-content .message-body, .active-work-content .message-body) > .markdown-content > :is(p, h1, h2, h3, h4, h5, h6, ul, ol, blockquote) { margin-top: 0; margin-bottom: 3px; }
 .message-actions { margin-top: 0; height: 25px; display: flex; align-items: center; gap: 1px; opacity: .55; transition: .15s; }.message:hover .message-actions { opacity: 1; }.message-actions .icon-button { width: 27px; height: 25px; }
 .agent-delivery .message-body { background: color-mix(in srgb, var(--accent) 18%, #1d1c19); border-color: color-mix(in srgb, var(--accent) 45%, #1d1c19); }
+.goal-prompt .message-body { padding: 6px 10px; background: color-mix(in srgb, var(--accent) 10%, #1d1c19); border-color: color-mix(in srgb, var(--accent) 35%, #1d1c19); }
+.goal-prompt-toggle { display: flex; align-items: center; gap: 6px; padding: 0; border: 0; background: none; color: var(--accent); font: inherit; font-size: 13px; font-weight: 500; cursor: pointer; }
+.goal-prompt-chevron { transition: transform .15s ease; }.goal-prompt-toggle[aria-expanded="true"] .goal-prompt-chevron { transform: rotate(90deg); }
+.goal-prompt-text { margin-top: 8px; white-space: pre-wrap; font-size: 12px; font-weight: 400; line-height: 1.55; color: var(--muted); }
 .agent-delivery-source { margin: 0 2px 5px; padding: 0; border: 0; background: none; color: var(--accent); font: inherit; font-size: 14px; font-weight: 500; }
 button.agent-delivery-source { cursor: pointer; }
 button.agent-delivery-source:hover { color: var(--accent-soft); text-decoration: underline; }
