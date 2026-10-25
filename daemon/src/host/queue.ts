@@ -1,7 +1,7 @@
 import { array, CancelScope, clone, flag, jsonEqual, kind, text } from './json';
 import { Mutex, errorText } from '../util/sync';
 import type { QueueStorage } from './queue_storage';
-import { QueueState, heldMessages } from './queue_state';
+import { QueueState, goalStatus, heldMessages, sortHeld, type QueueGoal } from './queue_state';
 import { QueueRecord, track } from './queue_record';
 import { QueueDelivery, type Execution } from './queue_delivery';
 import { changePending } from './queue_changes';
@@ -53,9 +53,12 @@ export class SessionQueue {
     const state = this.s;
     let queueEvent: any;
     if (kind(event) === 'agent_start') state.inferenceRevision += 1;
+    const goal = goalStatus(event);
+    if (goal !== undefined) this.goalChanged(goal);
     if (kind(event) === 'disconnected') {
       state.pending = clone(state.durableMessages());
-      for (const item of state.pending) item.retry = true;
+      // Pi lost its queue. Follow-ups below the goal were never in it, so they keep waiting.
+      for (const item of state.pending) if (!flag(item, 'afterGoal')) item.retry = true;
       state.held = null;
       state.steering = [];
       state.followUp = [];
@@ -78,6 +81,33 @@ export class SessionQueue {
     state.tagMessage(event);
     if (kind(event) === 'agent_settled') state.awaitingSteering = [];
     this.delivery.announce(event);
+  }
+
+  /** Shows the goal entry while the goal is active. When the goal stops, the follow-ups below its entry go to Pi in order. */
+  private goalChanged(goal: QueueGoal | null): void {
+    const previous = this.s.goal;
+    this.s.goal = goal;
+    if (previous?.id === goal?.id && previous?.active === goal?.active && previous?.objective === goal?.objective) return;
+    track(this.operations, this.releaseWaiting()).catch(error => this.record.reportError(errorText(error)));
+  }
+
+  private async releaseWaiting(): Promise<void> {
+    const release = await this.gate.lock();
+    try {
+      const waiting = this.s.activeGoal() ? [] : this.s.waiting();
+      for (const item of waiting) item.afterGoal = false;
+      if (waiting.length && this.s.held) {
+        // While paused, they join the held items and go to Pi on resume.
+        this.s.held.push(...clone(waiting));
+        sortHeld(this.s.held);
+      } else {
+        await this.record.persist();
+        for (let index = 0; index < waiting.length; index += 1) {
+          try { await this.delivery.deliver(waiting[index], false); } catch (error) { this.s.markRetry(waiting.slice(index)); throw error; }
+        }
+      }
+      await this.delivery.publish();
+    } finally { release(); }
   }
 
   private async restore(): Promise<void> {
@@ -165,8 +195,9 @@ export class SessionQueue {
     const originals = clone(this.s.pending);
     const result = await this.delivery.execute(command);
     const removed = [
-      ...originals.filter(item => !flag(item, 'retry') && array(result, item.behavior === 'steer' ? 'steering' : 'followUp').some(message => jsonEqual(message, item.message))),
+      ...originals.filter(item => !flag(item, 'retry') && !flag(item, 'afterGoal') && array(result, item.behavior === 'steer' ? 'steering' : 'followUp').some(message => jsonEqual(message, item.message))),
       ...clone(this.s.heldItems()),
+      ...clone(this.s.waiting()),
     ];
     for (const item of removed) this.s.remove(text(item, 'id'));
     this.s.held = null;
@@ -194,7 +225,7 @@ export class SessionQueue {
     await this.delivery.execute({ type: 'force_stop' });
     const state = this.s;
     state.pending = clone(state.durableMessages());
-    for (const item of state.pending) item.retry = true;
+    for (const item of state.pending) if (!flag(item, 'afterGoal')) item.retry = true;
     state.held = null;
     state.changing = false; state.clearing = false;
     state.steering = []; state.followUp = []; state.awaitingSteering = [];
@@ -214,7 +245,8 @@ export class SessionQueue {
     if (state.held !== null) return;
     state.assertHoldable();
     state.changing = true;
-    const originals = clone(state.pending);
+    // Follow-ups below the goal are not in Pi's queue, so pausing leaves them waiting.
+    const originals = clone(state.pending).filter(item => !flag(item, 'afterGoal'));
     let active = true;
     const surviving = () => originals.filter(item => !this.record.durable || this.s.retained.some(retained => retained.id === item.id));
     const recover = () => {

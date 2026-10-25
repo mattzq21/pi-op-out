@@ -1,4 +1,3 @@
-const goalRecords = require("./piop-storage/goals.cjs");
 const { realpathSync, readFileSync, existsSync, openSync, closeSync, fsyncSync } = require("node:fs");
 const { dirname, join, isAbsolute } = require("node:path");
 const { pathToFileURL } = require("node:url");
@@ -11,10 +10,6 @@ const { randomUUID } = require("node:crypto");
 const queuePromptContext = new AsyncLocalStorage();
 
 const goalPromptContext = new AsyncLocalStorage();
-
-const releasedPromptContext = new AsyncLocalStorage();
-
-const goalQueueRelease = new WeakMap();
 
 const queuePromptScope = Symbol("piop.queue-prompt");
 
@@ -31,8 +26,6 @@ const configurationCommands = new Set(["context_cap_settings", "provider_auth_re
 let queueValidation;
 
 class GoalPreparationError extends Error {}
-
-class GoalQueueBlocked extends Error {}
 
 function promptError(command, error, output) {
   const response = { type: "response", id: command.id, command: command.command, success: false, error: error instanceof Error ? error.message : String(error) };
@@ -57,15 +50,6 @@ function isQueuedUserMessage(message) {
   return queueValidation.check(message);
 }
 
-function tagGoalPrompt(agent, name, message) {
-  const scope = goalPromptContext.getStore();
-
-  if (name !== "followUp" || scope?.session.agent !== agent) return;
-  const goal = currentGoal(scope.session);
-
-  if (goal && message?.role === "user") message.piopGoalId = goal.id;
-}
-
 async function queueContracts(root) {
   const runtimeRequire = createRequire(join(root, "package.json"));
 
@@ -87,7 +71,7 @@ function installQueueProtocol(session, output) {
       session[name] = function (...args) {
         const scope = name === "prompt" ? args[1]?.[queuePromptScope] : undefined;
 
-        return releasedPromptContext.run(undefined, () => queuePromptContext.run(scope?.session === this ? scope : undefined, () => submit.apply(this, args)));
+        return queuePromptContext.run(scope?.session === this ? scope : undefined, () => submit.apply(this, args));
       };
     }
 
@@ -112,8 +96,6 @@ function installQueueProtocol(session, output) {
             scope.tagged = true;
           }
         }
-
-        tagGoalPrompt(this, name, args[0]);
 
         return submit.apply(this, args);
       };
@@ -293,11 +275,7 @@ function installGoalAcceptance(AgentSession) {
 
       if (scope?.session === this) acceptGoalPrompt(scope.prepared);
 
-      const result = await queue.apply(this, args);
-
-      if (name === "_queueFollowUp" && scope?.session === this) goalQueueRelease.get(this)?.();
-
-      return result;
+      return queue.apply(this, args);
     };
   }
 
@@ -416,204 +394,12 @@ const queuedCommand = text => queuedCommands.has(commandName(text));
 
 const userText = message => message.role === "user" ? message.content.filter(part => part.type === "text").map(part => part.text).join("") : "";
 
-function currentGoal(session) {
-  const file = session.sessionManager.getSessionFile();
-  return file ? goalRecords.read(file, session.sessionManager.getSessionId()) : null;
-}
-
-const hasGoal = session => currentGoal(session) !== null;
-
-function goalBlocksRelease(session, scope) {
-  const goal = currentGoal(session);
-
-  return goal && (scope.goalId !== goal.id || goal.status !== "active");
-}
-
-function bindReleasedPromptPreparation(session) {
-  const streaming = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(session), "isStreaming").get;
-  Object.defineProperty(session, "isStreaming", { get() {
-    const scope = releasedPromptContext.getStore();
-
-    return scope?.session === this && scope.preparing ? false : streaming.call(this);
-  } });
-
-  const input = session._runInputHandlers;
-  session._runInputHandlers = function (text, images, ...args) {
-    const scope = releasedPromptContext.getStore();
-
-    if (scope?.session === this && scope.inputPending) {
-      scope.inputPending = false;
-
-      return Promise.resolve({ text, images });
-    }
-
-    return input.call(this, text, images, ...args);
-  };
-
-  const run = session._runAgentPrompt;
-  session._runAgentPrompt = function (messages) {
-    const scope = releasedPromptContext.getStore();
-
-    if (scope?.session === this && !scope.runRequested) {
-      if (this._agentRunAbortRequested) throw new Error("Released follow-up preparation was cancelled.");
-
-      if (goalBlocksRelease(this, scope)) throw new GoalQueueBlocked("A goal is holding released follow-ups.");
-      scope.preparing = false;
-      scope.runRequested = true;
-      messages = messages.flatMap(message => {
-        if (message.role !== "user") return [message];
-        const first = scope.messages[0];
-        scope.preparedMessage = first.role === "user" ? { ...first, content: message.content } : first;
-
-        return [scope.preparedMessage, ...scope.messages.slice(1)];
-      });
-    }
-
-    return run.call(this, messages);
-  };
-}
-
-function trackReleasedPrompt(session, scope) {
-  return session.subscribe(event => {
-    if (event.type === "agent_start" && scope.runRequested) scope.started = true;
-
-    if (event.type !== "message_start" || event.message !== scope.preparedMessage) return;
-    scope.started = true;
-    const original = userText(scope.messages[0]);
-
-    if (original === userText(event.message)) return;
-    const pending = session.getFollowUpMessages();
-    const index = pending.indexOf(original);
-
-    if (index !== -1) { pending.splice(index, 1); session._emitQueueUpdate(); }
-  });
-}
-
-async function releaseQueuedCommands(session, messages, prompt) {
-  await session._runAgentPrompt(messages);
-
-  if (!session._agentRunAbortRequested && session.isIdle && !hasGoal(session)) await releaseGoalQueue(session, prompt);
-}
-
-function restoreReleasedPrompt(session, scope) {
-  if (scope.started) return;
-  session.agent.followUpQueue.messages.unshift(...scope.messages);
-
-  if (session._pendingNextTurnMessages !== scope.nextTurnMessages) session._pendingNextTurnMessages.unshift(...scope.nextTurnMessages);
-}
-
-async function releaseGoalQueue(session, prompt, messages = session.agent.followUpQueue.drain()) {
-
-  if (!messages.length) return;
-  const first = messages[0];
-
-  if (queuedCommand(userText(first))) return releaseQueuedCommands(session, messages, prompt);
-  const images = first.role === "user" ? first.content.filter(part => part.type === "image") : [];
-  const scope = { session, messages, goalId: first.piopGoalId, nextTurnMessages: session._pendingNextTurnMessages, inputPending: true, preparing: true, runRequested: false, started: false };
-  const stopTracking = trackReleasedPrompt(session, scope);
-  session._agentRunAbortRequested = false;
-  session._isAgentRunActive = true;
-
-  try {
-    await releasedPromptContext.run(scope, () => prompt.call(session, userText(first), { images, source: "rpc", expandPromptTemplates: false }));
-  } catch (error) {
-    restoreReleasedPrompt(session, scope);
-
-    if (!(error instanceof GoalQueueBlocked)) session.extensionRunner.createContext().ui.notify(String(error), "error");
-  } finally {
-    stopTracking();
-
-    if (!scope.started && session._isAgentRunActive && !session.agent.activeRun) {
-      session._runSystemPromptOptions = undefined;
-      session._flushPendingBashMessages();
-      session._flushPendingCustomMessages();
-      await session._emitAgentSettled();
-    }
-  }
-}
-
-function peekQueuedGoalPrompt(session) {
-  const goal = currentGoal(session);
-
-  if (!goal) return undefined;
-
-  if (goal.status !== "active" || session._agentRunAbortRequested) return [];
-  const queue = session.agent.followUpQueue.messages;
-  const index = queue.findIndex(message => message.piopGoalId === goal.id);
-
-  return index < 0 ? [] : [queue[index]];
-}
-
-function takeQueuedGoalPrompt(session) {
-  const messages = peekQueuedGoalPrompt(session);
-
-  if (messages?.length) {
-    const queue = session.agent.followUpQueue.messages;
-    queue.splice(queue.indexOf(messages[0]), 1);
-  }
-
-  return messages;
-}
-
-function scheduleGoalQueueRelease(session, prompt) {
-  let pendingSessionId;
-
-  const schedule = () => setImmediate(() => {
-    if (!pendingSessionId) return;
-
-    if (session.sessionManager.getSessionId() !== pendingSessionId) {
-      pendingSessionId = undefined;
-
-      return;
-    }
-
-    if (!session.isIdle || session._isEmittingAgentSettled) return;
-    pendingSessionId = undefined;
-    const messages = takeQueuedGoalPrompt(session);
-
-    if (messages?.length === 0) return;
-    void releaseGoalQueue(session, prompt, messages);
-  });
-
-  session.subscribe(event => {
-    if (pendingSessionId && (event.type === "compaction_end" || event.type === "agent_settled")) schedule();
-  });
-
-  return () => { pendingSessionId = session.sessionManager.getSessionId(); schedule(); };
-}
-
-function bindGoalQueue(session, prompt) {
-  bindReleasedPromptPreparation(session);
-  const releaseQueue = scheduleGoalQueueRelease(session, prompt);
-  goalQueueRelease.set(session, releaseQueue);
-  const queue = session.agent.followUpQueue;
-
-  const hasItems = queue.hasItems;
-  queue.hasItems = function () {
-    const messages = peekQueuedGoalPrompt(session);
-
-    return messages === undefined ? hasItems.call(this) : messages.length > 0;
-  };
-
-  const peek = queue.peek;
-  queue.peek = function () {
-    return peekQueuedGoalPrompt(session) ?? peek.call(this);
-  };
-
-  process.on("piop:goal-cleared", sessionId => {
-    if (session.sessionManager.getSessionId() === sessionId) releaseQueue();
-  });
-}
-
 function bindFollowUpDrain(session) {
   const agent = session.agent;
   const queue = agent.followUpQueue;
   const drain = queue.drain;
 
   queue.drain = function () {
-    const goalMessages = takeQueuedGoalPrompt(session);
-
-    if (goalMessages !== undefined) return goalMessages;
     const messages = drain.call(this);
     const queued = messages.findIndex(message => queuedCommand(userText(message)));
 
@@ -710,37 +496,6 @@ function bindQueuedCommands(session) {
   };
 }
 
-/** While a goal runs, user follow-ups wait for its turn boundary. An idle chat, such as a new branch with an active goal, runs them now. */
-function holdFollowUp(session, options) {
-  const idle = session.isIdle && !session._isEmittingAgentSettled;
-
-  return options?.streamingBehavior === "followUp" && options?.source === "rpc" && !options?.goalPrepared && !idle && hasGoal(session);
-}
-
-async function queueHeldFollowUp(session, text, options) {
-  if (queuedCommand(text)) {
-    await session._queueFollowUp(text, options.images);
-    options.preflightResult?.("queued");
-  } else if (text.startsWith("/") && options.expandPromptTemplates !== false && await session._tryExecuteExtensionCommand(text)) {
-    options.preflightResult?.("handled");
-  } else {
-    const disposition = await session._queueUserInput(text, options.images, "followUp", options.source);
-    options.preflightResult?.(disposition);
-  }
-
-  if (!hasGoal(session)) goalQueueRelease.get(session)();
-}
-
-function installGoalPendingMessages(AgentSession) {
-  const bindCore = AgentSession.prototype._bindExtensionCore;
-  AgentSession.prototype._bindExtensionCore = function (runner) {
-    const result = bindCore.call(this, runner);
-    runner.hasPendingMessagesFn = () => this.getSteeringMessages().length > 0 || (!hasGoal(this) && this.getFollowUpMessages().length > 0);
-
-    return result;
-  };
-}
-
 async function main() {
   const [executable, ...args] = process.argv.slice(2);
   const root = runtimeRoot(executable);
@@ -763,8 +518,6 @@ async function main() {
 
     if (disabled !== undefined) throw new Error(disabled);
 
-    if (holdFollowUp(this, options)) return queueHeldFollowUp(this, text, options);
-
     if (queuedCommand(text) && this.isStreaming) {
       return this._queueFollowUp(text, options?.images).then(() => options?.preflightResult?.("queued"));
     }
@@ -773,7 +526,6 @@ async function main() {
   };
 
   installGoalAcceptance(AgentSession);
-  installGoalPendingMessages(AgentSession);
 
   let session;
   let markSessionReady;
@@ -782,10 +534,7 @@ async function main() {
   AgentSession.prototype.bindExtensions = async function (...bindings) {
     installQueueProtocol(this, output);
 
-    if (session !== this) {
-      bindGoalQueue(this, prompt);
-      bindQueuedCommands(this);
-    }
+    if (session !== this) bindQueuedCommands(this);
 
     await bind.apply(this, bindings);
 

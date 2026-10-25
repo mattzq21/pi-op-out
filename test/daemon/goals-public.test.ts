@@ -164,4 +164,73 @@ test('a long goal is saved to a file the agent reads, which stays while any chat
   expect(existsSync(file)).toBe(false);
 }, 120000);
 
+test('a goal is a queue entry: follow-ups below it wait, a follow-up moved above it runs first, and moving it back keeps it waiting', async () => {
+  const requests: boolean[] = [];
+  let gate: (() => void) | undefined;
+  let blocking = true;
+  let finish = false;
+  agents.scripts.set('Keep drafting', async messages => {
+    const said = (value: string) => messages.some((message: any) => message.role === 'user' && text(message).includes(value));
+    requests.push(said('Question one'));
+    if (blocking) await new Promise<void>(resolve => { gate = resolve; });
+    if (said('Question one') && !messages.some((message: any) => message.role === 'assistant' && text(message) === 'Answered one.')) return { text: 'Answered one.' };
+    if (called(messages, 'update_goal_status')) return { text: 'Drafted.' };
+    return finish ? { tool: 'update_goal_status', arguments: { status: 'complete' } } : { text: 'Drafting.' };
+  });
+  const untilRequest = async (count: number) => { for (let tries = 0; !(requests.length >= count && gate) && tries < 300; tries++) await Bun.sleep(50); expect(requests.length).toBeGreaterThanOrEqual(count); };
+  const release = () => { const resolve = gate; gate = undefined; resolve?.(); };
+  const chat = await agents.rootChat();
+  const queue = async () => ((await chat.command({ type: 'get_state' })).pendingMessages ?? []).map((entry: any) => entry.goal ? 'goal' : entry.message);
+  const id = async (message: string) => ((await chat.command({ type: 'get_state' })).pendingMessages ?? []).find((entry: any) => entry.message === message && !entry.goal).id;
+  await send(chat, '/goal Keep drafting');
+  await untilRequest(1);
+  expect(await queue()).toEqual(['goal']);
+  await send(chat, 'Question one');
+  expect(await queue()).toEqual(['goal', 'Question one']);
+  await chat.command({ type: 'change_pending', id: await id('Question one'), action: 'moveUp' });
+  expect(await queue()).toEqual(['Question one', 'goal']);
+  await chat.command({ type: 'change_pending', id: await id('Question one'), action: 'moveDown' });
+  expect(await queue()).toEqual(['goal', 'Question one']);
+  release();
+  await untilRequest(2);
+  expect(requests[1]).toBe(false);
+  console.log('DEBUG-gq move', JSON.stringify(await chat.command({ type: 'change_pending', id: 'goal', action: 'moveDown' })));
+  await Bun.sleep(300);
+  console.log('DEBUG-gq updates', JSON.stringify(agents.daemon.events.filter(event => event.payload?.runtimeId === chat.runtimeId && event.payload.event?.type === 'queue_update').slice(-3).map(event => [event.payload.event.steering, event.payload.event.followUp, event.payload.event.pendingMessages?.map((entry: any) => [entry.id, entry.message, entry.afterGoal, entry.goal])])));
+  expect(await queue()).toEqual(['Question one', 'goal']);
+  blocking = false;
+  release();
+  try { await chat.until(history => history.some(message => text(message) === 'Answered one.')); } catch (error) { console.log('DEBUG-gq notes', JSON.stringify(notices(chat.runtimeId).filter((note: string) => note.includes('DEBUG-gq7')).slice(0, 8)));
+ console.log('DEBUG-gq events', JSON.stringify(agents.daemon.events.filter(event => event.payload?.runtimeId === chat.runtimeId).map(event => event.payload.event).filter((event: any) => event && ['queue_update', 'agent_start', 'agent_end', 'agent_settled', 'message_start', 'extension_error', 'extension_ui_request'].includes(event.type)).slice(0, 60).map((event: any) => event.type === 'queue_update' ? ['Q', event.followUp] : event.type === 'message_start' ? ['M', event.message?.role, text(event.message ?? {}).slice(0, 30)] : event.type === 'extension_ui_request' ? ['U', event.method, event.statusKey, (event.message ?? '').slice(0, 80)] : [event.type, event.error?.slice?.(0, 120)]))); throw error; }
+  await chat.until(history => history.filter(message => text(message) === 'Drafting.').length >= 3);
+  finish = true;
+  const history = await chat.until(history => text(history.at(-1)) === 'Drafted.');
+  const replies = history.filter(message => message.role === 'assistant').map(text).filter(Boolean);
+  expect(replies.slice(0, 3)).toEqual(['Drafting.', 'Drafting.', 'Answered one.']);
+  expect(await queue()).toEqual([]);
+}, 120000);
+
+test('a follow-up below the goal entry goes to the agent when the goal is complete, and goal commands do not wait', async () => {
+  let finish = false;
+  agents.scripts.set('Finish the plan', async messages => {
+    await Bun.sleep(100);
+    if (messages.some((message: any) => message.role === 'user' && text(message).includes('Question two'))) return { text: 'Answered two.' };
+    if (called(messages, 'update_goal_status')) return { text: 'Planned.' };
+    return finish ? { tool: 'update_goal_status', arguments: { status: 'complete' } } : { text: 'Planning.' };
+  });
+  const chat = await agents.rootChat();
+  await send(chat, '/goal Finish the plan');
+  await chat.until(history => history.some(message => text(message) === 'Planning.'));
+  await send(chat, 'Question two');
+  expect(((await chat.command({ type: 'get_state' })).pendingMessages ?? []).map((entry: any) => entry.goal ? 'goal' : entry.message)).toEqual(['goal', 'Question two']);
+  await chat.until(history => history.filter(message => text(message) === 'Planning.').length >= 3);
+  expect((await chat.history()).some(message => text(message) === 'Answered two.')).toBe(false);
+  finish = true;
+  const history = await chat.until(history => text(history.at(-1)) === 'Answered two.');
+  const replies = history.filter(message => message.role === 'assistant').map(text).filter(Boolean);
+  expect(replies.indexOf('Planned.')).toBeLessThan(replies.indexOf('Answered two.'));
+  expect(((await chat.command({ type: 'get_state' })).pendingMessages ?? [])).toEqual([]);
+}, 120000);
+
+
 });

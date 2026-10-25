@@ -40,6 +40,10 @@ export async function enqueue(queue: QueueDelivery, command: any, name: string):
   const pending = submissionPayload(prepared, id, name);
   // A bad item would stay queued and make every later save fail, so it is rejected before the queue changes.
   try { validateItem(pending); } catch (error) { throw new CommandRefusedError(error instanceof Error ? error.message : String(error), 'daemon'); }
+  if (name === 'follow_up' && state.activeGoal() && !queue.runsAtOnce(text(pending, 'message'))) {
+    await waitBelowGoal(queue, pending);
+    return null;
+  }
   if (await saveSubmission(queue, id, pending)) {
     await queue.reportStorageError(() => queue.publish());
     return null;
@@ -99,6 +103,15 @@ async function prepareSubmission(queue: QueueDelivery, original: any): Promise<a
   command.goalPrepared = true;
   delete command.images;
   return command;
+}
+
+/** Adds a follow-up at the end of the queue, below the active goal's entry. It stays out of Pi's queue until it moves above the goal or the goal stops. */
+async function waitBelowGoal(queue: QueueDelivery, pending: any): Promise<void> {
+  const state = queue.state;
+  pending.afterGoal = true;
+  state.pending.push(clone(pending));
+  try { await queue.record.persist(); } catch (error) { state.markRetry([pending]); await queue.reportStorageError(() => queue.publish()); throw error; }
+  await queue.reportStorageError(() => queue.publish());
 }
 
 async function saveSubmission(queue: QueueDelivery, id: string, pending: any): Promise<boolean> {

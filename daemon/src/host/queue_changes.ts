@@ -1,6 +1,6 @@
 import { array, clone, flag, jsonEqual, text } from './json';
 import type { Mutex } from '../util/sync';
-import { sortHeld, unique } from './queue_state';
+import { GOAL_ENTRY_ID, sortHeld, unique, type QueueState } from './queue_state';
 import type { QueueDelivery } from './queue_delivery';
 import { commandName } from '../plugin_contributions';
 import { queuedCommand } from './queue_submission';
@@ -21,6 +21,9 @@ export async function changePending(queue: QueueDelivery, gate: Mutex, id: strin
   } else release = await gate.lock();
   try {
     assertOwner();
+    const waiting = queue.state.pending.find(item => item.id === id && flag(item, 'afterGoal') && !flag(item, 'retry'));
+    if (waiting && (action === 'remove' || action === 'steer' || action === 'followUp')) return await changeWaiting(queue, waiting, action);
+    if (movesAroundGoal(queue.state, id, action)) return await moveAroundGoal(queue, id, action);
     const change = pendingChange(queue, id, action);
     if (!change) return null;
     const { target, behavior, neighbor } = change;
@@ -90,7 +93,7 @@ async function retry(queue: QueueDelivery, id: string, target: any, behavior: st
 async function changeLive(queue: QueueDelivery, id: string, behavior: string, neighbor: string | undefined, action: any): Promise<any> {
   const state = queue.state;
   const snapshot = [...state.steering, ...state.followUp];
-  if (unique(snapshot).length !== snapshot.length || snapshot.some(message => !state.pending.some(item => !flag(item, 'retry') && jsonEqual(item.message, message)))) {
+  if (unique(snapshot).length !== snapshot.length || snapshot.some(message => !state.pending.some(item => !flag(item, 'retry') && !flag(item, 'afterGoal') && jsonEqual(item.message, message)))) {
     throw new Error('This queue contains messages that cannot be safely switched. Use Ctrl+Enter to steer a new message.');
   }
   state.changing = true;
@@ -102,14 +105,14 @@ async function changeLive(queue: QueueDelivery, id: string, behavior: string, ne
 async function replaceLive(queue: QueueDelivery, id: string, behavior: string, neighbor: string | undefined, action: any, originals: any[]): Promise<any> {
   const state = queue.state;
   const cleared = await queue.execute({ type: 'clear_queue' });
-  const remaining = clearedMessages(cleared, originals, id, behavior, () => queue.record.nextId());
+  const remaining = clearedMessages(cleared, originals.filter(item => !flag(item, 'afterGoal')), id, behavior, () => queue.record.nextId());
   if (neighbor !== undefined) moveItem(remaining, id, neighbor, action);
   let rest = remaining;
   if (behavior === 'remove') {
     rest = remaining.filter(item => item.id !== id);
     await queue.record.forget(id);
   }
-  state.pending = [...originals.filter(item => flag(item, 'retry')), ...clone(rest)];
+  state.pending = [...originals.filter(item => flag(item, 'retry')), ...clone(rest), ...originals.filter(item => flag(item, 'afterGoal') && !flag(item, 'retry'))];
   if (behavior === 'remove') state.remove(id);
   try { await queue.record.persist(); } catch (error) { state.markRetry(rest); throw error; }
   if (rest.some(item => flag(item, 'retry'))) {
@@ -162,4 +165,130 @@ function moveItem(items: any[], id: string, neighbor: string, action: any): void
   } else {
     [items[from], items[to]] = [items[to], items[from]];
   }
+}
+
+/** Removes a follow-up that waits below the goal, or makes it a steering message, which goes to Pi at once. */
+async function changeWaiting(queue: QueueDelivery, item: any, action: string): Promise<any> {
+  const state = queue.state;
+  if (action === 'followUp') return null;
+  if (action === 'remove') {
+    await queue.record.forget(text(item, 'id'));
+    await queue.publish();
+    return null;
+  }
+  if (queuedCommand(text(item, 'message'))) throw new Error('/' + commandName(text(item, 'message')) + ' can only be queued as a follow-up');
+  item.afterGoal = false;
+  item.behavior = 'steer';
+  if (state.held) {
+    state.held.push(clone(item));
+    sortHeld(state.held);
+    await queue.record.persist();
+  } else {
+    await queue.record.persist();
+    try { await queue.deliver(item, false); } catch (error) { state.markRetry([item]); await queue.publish(); throw error; }
+  }
+  await queue.publish();
+  return null;
+}
+
+/** True for a move of the goal entry, and for any follow-up move while a goal is active, because the goal entry is one of the follow-ups. */
+function movesAroundGoal(state: QueueState, id: string, action: any): boolean {
+  if (!state.activeGoal()) return false;
+  const moving = action === 'moveUp' || action === 'moveDown' || (action !== null && typeof action === 'object' && !Array.isArray(action));
+  if (!moving) return false;
+  if (id === GOAL_ENTRY_ID) return true;
+  const item = state.pending.find(entry => entry.id === id);
+  return item !== undefined && item.behavior === 'followUp' && !flag(item, 'retry');
+}
+
+/** The follow-up order with the goal entry moved, or undefined when the move changes nothing. */
+function movedOrder(order: string[], id: string, action: any): string[] | undefined {
+  const next = [...order];
+  const from = next.indexOf(id);
+  if (from < 0) return undefined;
+  if (action === 'moveUp' || action === 'moveDown') {
+    const to = action === 'moveUp' ? from - 1 : from + 1;
+    if (to < 0 || to >= next.length) return undefined;
+    [next[from], next[to]] = [next[to], next[from]];
+    return next;
+  }
+  if (action.targetId === id || !next.includes(action.targetId)) return undefined;
+  next.splice(from, 1);
+  next.splice(next.indexOf(action.targetId) + (action.edge === 'after' ? 1 : 0), 0, id);
+  return next.every((entry, index) => entry === order[index]) ? undefined : next;
+}
+
+/**
+ * Moves the goal entry or a follow-up. Follow-ups that end above the goal are in Pi's queue; the rest wait in the daemon.
+ * Pi's queue changes only as far as the move needs: not at all, by sending follow-ups that came up past the goal,
+ * or by taking its queue back and sending it again in the new order.
+ */
+async function moveAroundGoal(queue: QueueDelivery, id: string, action: any): Promise<any> {
+  const state = queue.state;
+  const followUps = state.pending.filter(item => item.behavior === 'followUp' && !flag(item, 'retry'));
+  const ahead = followUps.filter(item => !flag(item, 'afterGoal')).map(item => text(item, 'id'));
+  const behind = followUps.filter(item => flag(item, 'afterGoal')).map(item => text(item, 'id'));
+  const order = movedOrder([...ahead, GOAL_ENTRY_ID, ...behind], id, action);
+  if (!order) return null;
+  const split = order.indexOf(GOAL_ENTRY_ID);
+  const nextAhead = order.slice(0, split);
+  const nextBehind = order.slice(split + 1);
+  const byId = new Map(followUps.map(item => [text(item, 'id'), item]));
+  const wait = (item: any) => { item.afterGoal = true; item.deliveryStarted = false; item.consumedTimestamp = null; item.consumedContent = null; item.consumedInputId = null; };
+  const arrange = () => {
+    for (const entry of nextBehind) wait(byId.get(entry));
+    for (const entry of nextAhead) byId.get(entry).afterGoal = false;
+    state.pending = [...state.pending.filter(item => !nextBehind.includes(text(item, 'id'))), ...nextBehind.map(entry => byId.get(entry))];
+  };
+  const sameStart = ahead.every((entry, index) => nextAhead[index] === entry);
+  if (state.held) {
+    // Paused: Pi's queue is in the held items, so the move only reorders them.
+    arrange();
+    state.held = [...state.held.filter(item => item.behavior === 'steer'), ...nextAhead.map(entry => clone(byId.get(entry)))];
+    await queue.record.persist();
+    await queue.publish();
+    return null;
+  }
+  if (sameStart) {
+    const added = nextAhead.slice(ahead.length).map(entry => byId.get(entry));
+    arrange();
+    await queue.record.persist();
+    for (let index = 0; index < added.length; index += 1) {
+      try { await queue.deliver(added[index], false); } catch (error) { state.markRetry(added.slice(index)); await queue.publish(); throw error; }
+    }
+    await queue.publish();
+    return null;
+  }
+  return regroupLive(queue, nextAhead, nextBehind, byId);
+}
+
+/** Takes Pi's queue back and sends steering messages and the follow-ups above the goal again, in their new order. */
+async function regroupLive(queue: QueueDelivery, nextAhead: string[], nextBehind: string[], byId: Map<string, any>): Promise<any> {
+  const state = queue.state;
+  const snapshot = [...state.steering, ...state.followUp];
+  if (unique(snapshot).length !== snapshot.length || snapshot.some(message => !state.pending.some(item => !flag(item, 'retry') && !flag(item, 'afterGoal') && jsonEqual(item.message, message)))) {
+    throw new Error('This queue contains messages that cannot be safely moved. Use Ctrl+Enter to steer a new message.');
+  }
+  state.changing = true;
+  const originals = clone(state.pending);
+  try {
+    const cleared = await queue.execute({ type: 'clear_queue' });
+    const returned = clearedMessages(cleared, originals.filter(item => !flag(item, 'afterGoal')), '', 'reorder', () => queue.record.nextId());
+    const steering = returned.filter(item => item.behavior === 'steer');
+    const known = new Set([...nextAhead, ...nextBehind]);
+    const unknown = returned.filter(item => item.behavior === 'followUp' && !known.has(text(item, 'id'))).map(item => ({ ...item, retry: true }));
+    const ahead = nextAhead.map(entry => ({ ...clone(byId.get(entry)), afterGoal: false }));
+    const behind = nextBehind.map(entry => ({ ...clone(byId.get(entry)), afterGoal: true, deliveryStarted: false, consumedTimestamp: null, consumedContent: null, consumedInputId: null }));
+    state.pending = [...originals.filter(item => flag(item, 'retry')), ...steering, ...ahead, ...behind, ...unknown];
+    const resend = [...steering, ...ahead];
+    try { await queue.record.persist(); } catch (error) { state.markRetry(resend); throw error; }
+    if (unknown.length) {
+      state.markRetry(resend);
+      throw new Error('Another source changed the queue while moving. Pending text has been kept for retry.');
+    }
+    for (let index = 0; index < resend.length; index += 1) {
+      try { await queue.deliver(resend[index], false); } catch (error) { state.markRetry(resend.slice(index)); throw error; }
+    }
+    return null;
+  } finally { state.changing = false; await queue.publish(); }
 }

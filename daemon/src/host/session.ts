@@ -33,6 +33,8 @@ export interface SessionHost {
   finished(key: string, epoch: string, transient: boolean): void;
   maintenance(key: string): void;
   canStopIdle(session: Session): boolean;
+  /** True when name is an extension command that Pi runs at once, such as goal. */
+  extensionCommand(name: string): boolean;
   refreshProviders(): Promise<number>;
   /** Called when the state of the conversation identity changes, starts or stops. */
   stateChanged(identity: string): void;
@@ -101,6 +103,7 @@ export class Session {
       execute: command => this.execute(command),
       publish: event => this.publish(event, null),
       savedUserMessages: () => this.savedUserMessages(),
+      extensionCommand: name => this.host.extensionCommand(name),
     };
     this.queue = new SessionQueue(executor, pending, storage);
     this.dialogs = new SessionDialogs({

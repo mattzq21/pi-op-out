@@ -146,7 +146,7 @@ export class SessionRuntimePool {
 
   private updateActivity(transport: NativeTransport, event: RpcEvent) {
     if (event.type === "queue_update") {
-      if ([event.steering, event.followUp, event.pendingMessages].some(value => Array.isArray(value) && value.length)) this.queuedTransports.add(transport); else this.queuedTransports.delete(transport);
+      if ([event.steering, event.followUp, (Array.isArray(event.pendingMessages) ? event.pendingMessages.filter((item: { goal?: unknown } | null) => !item?.goal) : event.pendingMessages)].some(value => Array.isArray(value) && value.length)) this.queuedTransports.add(transport); else this.queuedTransports.delete(transport);
     }
     const running = this.runningTransports.size;
     const unseen = this.unseenTransports.size;

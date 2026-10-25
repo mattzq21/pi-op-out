@@ -11,7 +11,25 @@ export function unique(items: any[]): any[] {
 }
 function stamp(value: any): string { return JSON.stringify(value ?? null); }
 
-/** The queue as the daemon sees it: items it keeps, items Pi holds, and items held back while paused. */
+/** The id of the active goal's entry in the queue view. Queue item ids are numbers, so it does not collide with them. */
+export const GOAL_ENTRY_ID = 'goal';
+
+/** The conversation's goal as the goals extension publishes it in its piop-goal status. */
+export type QueueGoal = { id: string; objective: string; active: boolean };
+
+/** Reads the goal from a goals extension status event: null when the goal is cleared, undefined for other events. */
+export function goalStatus(event: any): QueueGoal | null | undefined {
+  if (kind(event) !== 'extension_ui_request' || event.method !== 'setStatus' || event.statusKey !== 'piop-goal') return undefined;
+  if (typeof event.statusText !== 'string' || !event.statusText) return null;
+  const goal = JSON.parse(event.statusText);
+  return { id: text(goal, 'id'), objective: text(goal, 'objective'), active: goal.status === 'active' };
+}
+
+/**
+ * The queue as the daemon sees it: items it keeps, items Pi holds, and items held back while paused.
+ * An active goal is an entry of the follow-up queue. Follow-ups above it are in Pi's queue and run first.
+ * Follow-ups below it have afterGoal set: the daemon keeps them until they move above the goal or the goal stops.
+ */
 export class QueueState {
   pending: any[] = [];
   retained: any[] = [];
@@ -25,8 +43,14 @@ export class QueueState {
   awaitingSteering: any[] = [];
   steeringTimestamps = new Set<string>();
   inferenceRevision = 0;
+  goal: QueueGoal | null = null;
 
   heldItems(): any[] { return this.held ?? []; }
+
+  activeGoal(): QueueGoal | undefined { return this.goal?.active ? this.goal : undefined; }
+
+  /** Follow-ups below the goal entry, in queue order. */
+  waiting(): any[] { return this.pending.filter(item => flag(item, 'afterGoal') && !flag(item, 'retry')); }
 
   durableMessages(): any[] {
     this.retained = durableMessages(this);
@@ -70,6 +94,11 @@ export class QueueState {
       if (Array.isArray(item?.images)) for (const image of item.images) if (image && typeof image === 'object' && !Array.isArray(image)) delete image.data;
       return item;
     });
+    const goal = this.activeGoal();
+    if (goal) {
+      const index = visible.findIndex(item => flag(item, 'afterGoal') || flag(item, 'retry'));
+      visible.splice(index < 0 ? visible.length : index, 0, { id: GOAL_ENTRY_ID, message: goal.objective, behavior: 'followUp', goal: true });
+    }
     return { type: 'queue_update', steering, followUp, pendingMessages: visible };
   }
 
@@ -79,7 +108,7 @@ export class QueueState {
     for (const behavior of ['steer', 'followUp']) {
       const texts = this.texts(behavior);
       for (const message of unique(texts)) {
-        const matches = available.filter(item => !flag(item, 'retry') && !this.sending.has(text(item, 'id')) && item.behavior === behavior && jsonEqual(item.message, message))
+        const matches = available.filter(item => !flag(item, 'retry') && !flag(item, 'afterGoal') && !this.sending.has(text(item, 'id')) && item.behavior === behavior && jsonEqual(item.message, message))
           .map(item => text(item, 'id'));
         const stale = new Set(matches.slice(0, Math.max(0, matches.length - count(texts, message))));
         available = available.filter(item => !stale.has(text(item, 'id')));
@@ -88,11 +117,12 @@ export class QueueState {
     const pending: any[] = [];
     for (const behavior of ['steer', 'followUp']) {
       for (const message of this.texts(behavior)) {
-        const index = available.findIndex(item => !flag(item, 'retry') && item.behavior === behavior && jsonEqual(item.message, message));
+        const index = available.findIndex(item => !flag(item, 'retry') && !flag(item, 'afterGoal') && item.behavior === behavior && jsonEqual(item.message, message));
         if (index >= 0) pending.push(available.splice(index, 1)[0]);
       }
     }
     pending.push(...this.heldItems());
+    pending.push(...available.filter(item => flag(item, 'afterGoal') && !flag(item, 'retry')));
     pending.push(...available.filter(item => flag(item, 'retry')));
     this.pending = [...pending, ...available.filter(item => !flag(item, 'retry') && this.sending.has(text(item, 'id')))];
     return this.view(pending);
@@ -154,7 +184,7 @@ export class QueueState {
   assertHoldable(): void {
     for (const behavior of ['steer', 'followUp']) {
       for (const message of this.texts(behavior)) {
-        const saved = this.pending.filter(item => !flag(item, 'retry') && item.behavior === behavior && jsonEqual(item.message, message)).length;
+        const saved = this.pending.filter(item => !flag(item, 'retry') && !flag(item, 'afterGoal') && item.behavior === behavior && jsonEqual(item.message, message)).length;
         if (saved < count(this.texts(behavior), message)) {
           throw new Error('Cannot preserve all queued attachments while pausing. Wait for messages sent outside this window to finish first.');
         }

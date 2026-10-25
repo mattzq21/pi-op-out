@@ -8,11 +8,19 @@ export interface Execution {
   execute(command: any): Promise<any>;
   publish(event: any): void;
   savedUserMessages?(): any[];
+  /** True when name is an extension command that Pi runs at once instead of sending it to the model. */
+  extensionCommand?(name: string): boolean;
 }
 
 /** Sends commands and queued items to Pi, and publishes the queue after it changes. */
 export class QueueDelivery {
   constructor(readonly state: QueueState, readonly record: QueueRecord, private executor: Execution) {}
+
+  /** True when the message starts with an extension command, which Pi runs at once. */
+  runsAtOnce(message: string): boolean {
+    const name = /^\/(\S+)/.exec(message.trimStart())?.[1];
+    return name !== undefined && this.executor.extensionCommand?.(name) === true;
+  }
 
   /** Sends an event to the session without changing the queue. */
   announce(event: any): void { this.executor.publish(event); }

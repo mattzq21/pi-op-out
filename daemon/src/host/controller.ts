@@ -7,7 +7,7 @@ import * as Registry from '../session_registry';
 import * as Settings from '../settings';
 import * as Extensions from '../extensions';
 import { recordTools } from '../tool_inventory';
-import { recordCommands } from '../command_inventory';
+import { recordCommands, savedCommands } from '../command_inventory';
 import * as DaemonRestart from '../daemon_restart';
 import { Mutex, errorText } from '../util/sync';
 import { flag, kind, text, jsonEqual } from './json';
@@ -241,6 +241,10 @@ export class Host implements SessionHost {
   async releaseUnused(session: Session): Promise<void> {
     session.idleStop.schedule();
     if (session.unused()) await this.ownership().releaseClient(session.identity, session.clientId(), () => session.unused());
+  }
+
+  extensionCommand(name: string): boolean {
+    return savedCommands(join(this.home, this.storage, 'settings.json'))?.some(command => command.name === name) ?? false;
   }
 
   canStopIdle(session: Session): boolean {
