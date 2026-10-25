@@ -201,7 +201,9 @@ button.agent-delivery-source:hover { color: var(--accent-soft); text-decoration:
 .message:hover .message-time, .message:focus-within .message-time { opacity: 1; }
 @media (hover: none) { .message-time { opacity: 1; } }
 @media (pointer: coarse) { .message-time { opacity: 1; } }
-.cache-hit-rate { margin-left: 5px; color: var(--muted); font: 10px "DM Sans"; }.cache-hit-rate.low { color: #d77865; }
+.cache-hit-rate { margin-left: 5px; color: var(--muted); font: 10px "DM Sans"; }
+/* Digits have no descenders, so their ink sits below the middle of the line. This lifts it to the middle of the icons. */
+.cache-rate-value { padding-bottom: 1px; }.cache-hit-rate.low { color: #d77865; }
 .cache-hit-rate, .session-cache-hit { position: relative; }
 .cache-hit-rate, .session-cache-hit { display: inline-flex; align-items: center; gap: 4px; }
 .cache-icon { width: 20px; height: 20px; flex: 0 0 auto; color: var(--muted); }
