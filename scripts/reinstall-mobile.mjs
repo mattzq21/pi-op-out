@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -9,7 +9,12 @@ const root = dirname(dirname(fileURLToPath(import.meta.url)));
 
 const home = homedir();
 
-const env = { ...process.env, VITE_PIOP_DEBUG: "true" };
+const args = process.argv.slice(2);
+
+/** A release build has the release screen and no debug daemon. It is signed with the debug key, so it installs over a debug build and keeps the app data. */
+const release = args.includes('--release');
+
+const env = { ...process.env, VITE_PIOP_DEBUG: String(!release) };
 
 const localProperties = join(root, 'clients/android/local.properties');
 
@@ -31,14 +36,38 @@ if (!env.JAVA_HOME) {
   if (java) env.JAVA_HOME = java;
 }
 
-function run(command, args, capture = false) {
-  const result = spawnSync(command, args, { cwd: root, env, encoding: 'utf8', stdio: capture ? 'pipe' : 'inherit' });
+function run(command, commandArgs, capture = false, cwd = root) {
+  const result = spawnSync(command, commandArgs, { cwd, env, encoding: 'utf8', stdio: capture ? 'pipe' : 'inherit' });
 
   if (result.error) throw new Error(`Could not run ${command}: ${result.error.message}`);
 
   if (result.status !== 0) throw new Error(`${command} failed${capture ? `: ${result.stderr.trim()}` : ''}`);
 
   return result.stdout;
+}
+
+function apksigner() {
+  const tools = sdk ? join(sdk, 'build-tools') : undefined;
+  const version = tools && existsSync(tools)
+    ? readdirSync(tools).filter(name => existsSync(join(tools, name, 'apksigner'))).sort((a, b) => b.localeCompare(a, undefined, { numeric: true }))[0]
+    : undefined;
+
+  if (!version) throw new Error('Could not find apksigner in the Android SDK build-tools.');
+
+  return join(tools, version, 'apksigner');
+}
+
+function buildRelease() {
+  const keystore = join(home, '.android/debug.keystore');
+
+  if (!existsSync(keystore)) throw new Error(`Could not find the debug signing key at ${keystore}. Build a debug app once to create it.`);
+  run(process.execPath, ['run', 'android:sync']);
+  run('./gradlew', ['assembleRelease'], false, join(root, 'clients/android'));
+  const outputs = join(root, 'clients/android/app/build/outputs/apk/release');
+  const signed = join(outputs, 'app-release-signed.apk');
+  run(apksigner(), ['sign', '--ks', keystore, '--ks-key-alias', 'androiddebugkey', '--ks-pass', 'pass:android', '--key-pass', 'pass:android', '--out', signed, join(outputs, 'app-release-unsigned.apk')]);
+
+  return signed;
 }
 
 function wirelessAddress(connection) {
@@ -71,11 +100,11 @@ function chooseDevice(devices, requested) {
 
   if (ready.length === 1) return ready[0].serial;
 
-  if (ready.length > 1) throw new Error(`Multiple Android devices are ready: ${ready.map(device => device.serial).join(', ')}. Select one with npm run reinstall -- <device-serial>.`);
+  if (ready.length > 1) throw new Error(`Multiple Android devices are ready: ${ready.map(device => device.serial).join(', ')}. Select one with bun run ${release ? 'reinstall:release' : 'reinstall'} <device-serial>.`);
 }
 
 async function waitForDevice() {
-  const requested = process.argv[2] || env.ANDROID_SERIAL;
+  const requested = args.find(arg => !arg.startsWith('--')) || env.ANDROID_SERIAL;
   let devices = [];
 
   for (let attempt = 0; attempt < 20; attempt++) {
@@ -95,17 +124,25 @@ async function waitForDevice() {
 
 try {
   const serial = await waitForDevice();
-  console.log('Building and starting the Piop debug daemon…');
-  run(process.execPath, ['run', 'daemon:dev:restart']);
-  const connection = JSON.parse(run(process.execPath, ['scripts/mobile-debug-connection.mjs'], true));
-  const hostUrl = wirelessAddress(connection);
-  console.log(`Rebuilding Piop for ${serial}…`);
-  run(process.execPath, ['run', 'android:build']);
-  run(adb, ['-s', serial, 'install', '-r', join(root, 'clients/android/app/build/outputs/apk/debug/app-debug.apk')]);
-  run(adb, ['-s', serial, 'shell', 'am', 'start', '-S', '-n', 'dev.pi.mobile/.MainActivity', '--es', 'piopHostUrl', hostUrl]);
-  console.log('Piop reinstalled and opened. App data preserved.');
-  console.log(`Connected wirelessly through Tailscale: ${hostUrl}`);
-  console.log('Daemon controls: bun run daemon:dev:stop | bun run daemon:dev:restart');
+
+  if (release) {
+    console.log(`Building the Piop release app for ${serial}…`);
+    run(adb, ['-s', serial, 'install', '-r', buildRelease()]);
+    run(adb, ['-s', serial, 'shell', 'am', 'start', '-S', '-n', 'dev.pi.mobile/.MainActivity']);
+    console.log('Piop release reinstalled and opened. App data preserved.');
+  } else {
+    console.log('Building and starting the Piop debug daemon…');
+    run(process.execPath, ['run', 'daemon:dev:restart']);
+    const connection = JSON.parse(run(process.execPath, ['scripts/mobile-debug-connection.mjs'], true));
+    const hostUrl = wirelessAddress(connection);
+    console.log(`Rebuilding Piop for ${serial}…`);
+    run(process.execPath, ['run', 'android:build']);
+    run(adb, ['-s', serial, 'install', '-r', join(root, 'clients/android/app/build/outputs/apk/debug/app-debug.apk')]);
+    run(adb, ['-s', serial, 'shell', 'am', 'start', '-S', '-n', 'dev.pi.mobile/.MainActivity', '--es', 'piopHostUrl', hostUrl]);
+    console.log('Piop reinstalled and opened. App data preserved.');
+    console.log(`Connected wirelessly through Tailscale: ${hostUrl}`);
+    console.log('Daemon controls: bun run daemon:dev:stop | bun run daemon:dev:restart');
+  }
 } catch (error) {
   console.error(error.message);
   process.exitCode = 1;
