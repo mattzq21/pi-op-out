@@ -104,7 +104,6 @@ export default function contextWindowCap(pi: ExtensionAPI) {
   let settings: ContextCapSettings | undefined;
   let defaults: ContextCapDefaults | undefined;
   /** The provider/model key of the model when the current defaults were accepted. Its model cap belongs to that model. */
-  let defaultsModel: string | undefined;
   let logged: Logged = {};
   let restored = false;
   let closed = false;
@@ -237,38 +236,14 @@ export default function contextWindowCap(pi: ExtensionAPI) {
     if (error) throw new Error(error);
   };
 
-  /** A new numeric choice must fit the true window of the current model. An existing choice is clamped after a model change instead. */
-  const requireFit = (cap: number, label: string) => {
-    if (!model) throw new Error("Select a model before setting a numeric context cap");
-
-    if (cap > nativeWindow(model)) throw new Error(label + " of " + formatTokens(cap) + " tokens exceeds the " + formatTokens(nativeWindow(model)) + "-token context window of " + model.provider + "/" + model.id);
-  };
-
   const validateManual = (cap: number | null) => {
     if (cap !== null) {
       const error = capRangeError(cap);
 
       if (error) throw new Error(error);
-      requireFit(cap, "The context cap");
     }
 
     requireBudgets({ cap, source: "manual" });
-  };
-
-  const sourceLabel = (source: ContextCapSource) => source === "agent_definition" ? "The agent definition context cap" : "The context cap setting";
-
-  /**
-   * A default cap is a new choice when its value changed: an edited agent, model, or general cap. A model cap also changes when the model changes.
-   * New choices must fit the current model. The first defaults of a session are existing settings and are clamped.
-   */
-  const validateNewDefaults = (next: ContextCapDefaults) => {
-    if (!choice || !defaults) return;
-    const resolved = resolveDefaults(next);
-    const changed = resolved.source === "agent_definition" ? defaults.agentDefinition !== next.agentDefinition
-      : next.modelConfig !== undefined ? defaults.modelConfig !== next.modelConfig || defaultsModel !== (model && keyOf(model))
-        : defaults.generalConfig !== next.generalConfig;
-
-    if (changed && resolved.cap !== null) requireFit(resolved.cap, sourceLabel(resolved.source));
   };
 
   const receivedDefaults = (next: ContextCapSettings): ContextCapDefaults => {
@@ -306,14 +281,12 @@ export default function contextWindowCap(pi: ExtensionAPI) {
     if (!received) return;
     const nextDefaults = receivedDefaults(received);
     const next = choice?.source === "manual" ? choice : resolveDefaults(nextDefaults);
-    validateNewDefaults(nextDefaults);
 
     if (choice && !sameChoice(choice, next)) requireBudgets(next);
     const first = !choice;
     commit(next);
     settings = received;
     defaults = nextDefaults;
-    defaultsModel = model && keyOf(model);
 
     if (!first) return;
     const window = appliedFor(next, model);

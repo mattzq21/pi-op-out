@@ -347,7 +347,6 @@ describe("context cap session", () => {
   test("rejects invalid choices without changing state or the log", async () => {
     const host = await start();
     const before = host.caps().length;
-    await expect(host.session().setManualCap(2_000_000)).rejects.toThrow("exceeds");
     await expect(host.session().setManualCap(50_000)).rejects.toThrow("from 100,000");
     budgets.keepRecentTokens = 600_000;
     await expect(host.session().setManualCap(500_000)).rejects.toThrow("compaction budgets");
@@ -363,7 +362,7 @@ describe("context cap session", () => {
       host.session().setManualCap(400_000),
       host.updateDefaults(general(250_000)),
       host.session().resetManualCap(),
-      host.session().setManualCap(600_000),
+      host.session().setManualCap(50_000),
       host.session().setManualCap(450_000),
     ];
     await host.selectModel(model("medium", 500_000));
@@ -455,15 +454,15 @@ describe("context cap session", () => {
     expect(host.model.contextWindow).toBe(300_000);
   });
 
-  test("an unchanged model cap stays valid after a provider refresh lowers the window", async () => {
+  test("a model cap above a window lowered by a provider refresh applies the window", async () => {
     const defaults = { agentDefinition: undefined, modelConfig: 500_000, generalConfig: 300_000 };
     const host = await start([], model("large", 1_000_000), defaults);
     host.model = model("large", 200_000);
     host.bus.get("piop:models-refreshed")?.forEach(handler => handler({ ctx: host.ctx }));
     expect(await host.updateDefaults(defaults)).toEqual({ cap: 500_000, source: "config", appliedWindow: 200_000 });
-    await expect(host.updateDefaults({ ...defaults, modelConfig: 400_000 })).rejects.toThrow("exceeds the 200,000-token context window");
+    expect(await host.updateDefaults({ ...defaults, modelConfig: 400_000 })).toEqual({ cap: 400_000, source: "config", appliedWindow: 200_000 });
     await host.selectModel(model("other", 200_000));
-    await expect(host.updateDefaults(defaults)).rejects.toThrow("exceeds the 200,000-token context window of test/other");
+    expect(await host.updateDefaults(defaults)).toEqual({ cap: 500_000, source: "config", appliedWindow: 200_000 });
   });
 
   test("subscribers see provider refreshes that change only the applied window", async () => {
@@ -498,18 +497,16 @@ describe("context cap session", () => {
     expect(host.model.contextWindow).toBe(272_000);
   });
 
-  test("rejects new default caps above the current model window and clamps existing ones after a model switch", async () => {
+  test("caps above the model window are upper limits, so the model window applies", async () => {
     const host = await start([], model("large", 1_000_000));
     await host.selectModel(model("small", 200_000));
     expect(await host.session().getState()).toEqual({ cap: 300_000, source: "config", appliedWindow: 200_000 });
-    const log = host.caps();
-    await expect(host.updateDefaults(general(500_000))).rejects.toThrow("exceeds the 200,000-token context window");
-    await expect(host.updateDefaults({ agentDefinition: 400_000, modelConfig: undefined, generalConfig: 300_000 })).rejects.toThrow("agent definition");
-    await expect(host.updateDefaults({ agentDefinition: undefined, modelConfig: 250_000, generalConfig: 300_000 })).rejects.toThrow("exceeds");
-    expect(await host.session().getState()).toEqual({ cap: 300_000, source: "config", appliedWindow: 200_000 });
-    expect(host.caps()).toEqual(log);
-    await host.session().resetManualCap();
-    expect(await host.session().getState()).toEqual({ cap: 300_000, source: "config", appliedWindow: 200_000 });
+    expect(await host.updateDefaults(general(500_000))).toEqual({ cap: 500_000, source: "config", appliedWindow: 200_000 });
+    expect(await host.updateDefaults({ agentDefinition: undefined, modelConfig: 250_000, generalConfig: 500_000 })).toEqual({ cap: 250_000, source: "config", appliedWindow: 200_000 });
+    expect(await host.session().setManualCap(2_000_000)).toEqual({ cap: 2_000_000, source: "manual", appliedWindow: 200_000 });
+    expect(host.model?.contextWindow).toBe(200_000);
+    await host.selectModel(model("large", 1_000_000));
+    expect(await host.session().getState()).toEqual({ cap: 2_000_000, source: "manual", appliedWindow: 1_000_000 });
   });
 
   test("shutdown rejects every unfinished change, a later idle cannot apply them, and new changes are refused", async () => {
