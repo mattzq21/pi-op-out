@@ -5,7 +5,7 @@ export interface ReviewSettings {
   reviewAgent: string;
 }
 
-const defaultAgent = () => 'general';
+const defaultAgent = () => 'reviewer';
 
 export const reviewSettings: SettingsContribution<ReviewSettings> = {
   fields: ['reviewAgent'],

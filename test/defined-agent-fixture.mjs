@@ -27,7 +27,7 @@ export function writeCorruptConfig(dir, content) {
   try { db.prepare('UPDATE application_settings SET body=? WHERE name=?').run(Buffer.from(content), 'config.json'); } finally { db.close(); }
 }
 
-export const configured = agents => ({ agents: agents, webSearchDefaultApplied: true, sessionToolsDefaultApplied: true, subagentsDefaultApplied: true, workhorseDefaultApplied: true });
+export const configured = agents => ({ agents: agents, webSearchDefaultApplied: true, sessionToolsDefaultApplied: true, subagentsDefaultApplied: true, bundledAgentsApplied: ['workhorse', 'reviewer'] });
 
 export async function agentFixture(t, options = {}) {
   options = { files: {}, effort: 'high', model: { provider: 'test', id: 'default' }, config: configured([profile(), profile('reviewer')]), ...options };

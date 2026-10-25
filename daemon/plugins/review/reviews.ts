@@ -131,7 +131,7 @@ async function openReview(ctx: ExtensionContext, record: ReviewRecord, task?: st
 async function reviewSettings() {
   const settings = Parse(settingsSchema, readAppSettings(join(homedir(), process.env.PIOP_STORAGE_DIRECTORY || ".piop")) ?? {});
 
-  const agent = settings.reviewAgent?.trim() || "general";
+  const agent = settings.reviewAgent?.trim() || "reviewer";
   const prompt = await readFile(new URL("./review-prompt.txt", import.meta.url), "utf8");
 
   return { agent, prompt };

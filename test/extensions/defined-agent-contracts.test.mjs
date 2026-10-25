@@ -159,7 +159,7 @@ test('legacy prompts retain their content in editable prompt files', async t => 
   const f = await agentFixture(t, { config: { agents: [legacy, { ...legacy, name: ' Reviewer!! ', systemPrompt: '' }] }, runtime: { enabledTools: [] } });
   await f.load();
   const config = await f.configuration();
-  assert.deepEqual(config.agents.map(a => a.name), ['general', ' Reviewer!! ', 'workhorse']);
+  assert.deepEqual(config.agents.map(a => a.name), ['general', ' Reviewer!! ', 'workhorse', 'reviewer']);
   assert.equal(await readFile(join(f.dir, config.agents[0].path_systemprompt), 'utf8'), 'System\n\nDeveloper');
   assert.match(await readFile(join(f.dir, config.agents[1].path_systemprompt), 'utf8'), /^You are an expert coding assistant[\s\S]*\n\nDeveloper$/);
   for (const agent of config.agents.slice(0, 2)) {
@@ -182,7 +182,7 @@ test('invalid configuration and filesystem failures surface instead of silently 
 test('legacy migration skips null entries and empty names while retaining a general profile', async t => {
   const f = await agentFixture(t, { config: { agents: [{ name: 'default', tools: [] }, null, { name: '' }, { name: 7 }] } });
   await f.load(); const config = await f.configuration();
-  assert.deepEqual(config.agents.map(agent => agent.name), ['general', 'workhorse']);
+  assert.deepEqual(config.agents.map(agent => agent.name), ['general', 'workhorse', 'reviewer']);
   assert.equal(config.agents[0].path_systemprompt, '~/.agents/prompts/system/default.md');
   assert.equal(config.agents[0].path_agent_prompt, '');
 });

@@ -22,7 +22,10 @@ const STATUS_KEY = "pi-define-agents";
 
 const sessionTools = ["spawn_subagents"];
 
-export type Config = { revision?: string; agents: Agent[]; webSearchDefaultApplied?: boolean; sessionToolsDefaultApplied?: boolean; subagentsDefaultApplied?: boolean; workhorseDefaultApplied?: boolean; };
+export type Config = { revision?: string; agents: Agent[]; webSearchDefaultApplied?: boolean; sessionToolsDefaultApplied?: boolean; subagentsDefaultApplied?: boolean; bundledAgentsApplied?: string[]; };
+
+/** Agents that are added once as copies of the general agent. The user can then edit or remove them. */
+const BUNDLED_AGENTS = ["workhorse", "reviewer"];
 
 type ConfigRuntime = { enabledTools?: readonly string[] };
 
@@ -137,7 +140,9 @@ function normalize(value: Omit<Partial<Config>, "agents"> & { agents?: StoredAge
 
   if (!defaults.length) required(agents.find(agent => agent.name === "general")).isDefault = true;
 
-  return { revision: value.revision, agents, webSearchDefaultApplied: value.webSearchDefaultApplied === true, sessionToolsDefaultApplied: value.sessionToolsDefaultApplied === true, subagentsDefaultApplied: value.subagentsDefaultApplied === true, workhorseDefaultApplied: value.workhorseDefaultApplied === true };
+  const bundledAgentsApplied = Array.isArray(value.bundledAgentsApplied) ? value.bundledAgentsApplied.filter((name): name is string => Check(Type.String(), name)) : [];
+
+  return { revision: value.revision, agents, webSearchDefaultApplied: value.webSearchDefaultApplied === true, sessionToolsDefaultApplied: value.sessionToolsDefaultApplied === true, subagentsDefaultApplied: value.subagentsDefaultApplied === true, bundledAgentsApplied };
 }
 
 async function readConfig(pi: ConfigRuntime, supplied: StoredConfig | undefined, initialize: boolean, storage: ConfigStorage): Promise<Config> {
@@ -183,19 +188,21 @@ function migrateSubagents(config: Config, pi: ConfigRuntime) {
   return false;
 }
 
-function migrateWorkhorse(config: Config, pi: ConfigRuntime) {
-  if (config.workhorseDefaultApplied) return false;
+function addBundledAgents(config: Config, pi: ConfigRuntime) {
+  const applied = config.bundledAgentsApplied ?? [];
+  const missing = BUNDLED_AGENTS.filter(name => !applied.includes(name));
 
-  if (!config.agents.some(agent => agent.name === "workhorse")) {
+  for (const name of missing) {
+    if (config.agents.some(agent => agent.name === name)) continue;
     const agent = structuredClone(config.agents.find(agent => agent.name === "general") ?? generalAgent(pi));
-    agent.name = "workhorse";
+    agent.name = name;
     delete agent.isDefault;
     config.agents.push(agent);
   }
 
-  config.workhorseDefaultApplied = true;
+  config.bundledAgentsApplied = [...applied, ...missing];
 
-  return true;
+  return missing.length > 0;
 }
 
 export async function loadConfig(pi: ConfigRuntime, supplied?: StoredConfig, initialize = true, storage: ConfigStorage = { ensurePromptFile, writeConfig }): Promise<Config> { return loadMigratedConfig(pi, supplied, initialize, storage); }
@@ -222,7 +229,7 @@ async function loadMigratedConfig(pi: ConfigRuntime, supplied: StoredConfig | un
 
   if (retainedAgents.length !== config.agents.length) { config.agents = retainedAgents; changed = true; }
 
-  changed = migrateWorkhorse(config, pi) || changed;
+  changed = addBundledAgents(config, pi) || changed;
 
   if (changed) await storage.writeConfig(config);
 
