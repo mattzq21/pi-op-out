@@ -37,6 +37,8 @@ interface Props {
   ownershipRequired?: boolean;
   onTakeOwnership?: () => Promise<void>;
   toolbar?: JSXElement;
+  /** Shown under the queued messages and above the input, such as the goal bar. */
+  belowQueue?: JSXElement;
   streaming: boolean;
   compacting?: boolean;
   paused?: boolean;
@@ -715,6 +717,7 @@ export function Composer(props: Props) {
         {renderPendingMessageActions()}
       </div>;
     }}</Key>}</div>}
+    {props.belowQueue}
     {visualProps.toolbar}
     </div>
     <ComposerBody />
