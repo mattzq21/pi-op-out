@@ -84,6 +84,11 @@ test('the arrow above the composer appears away from the latest message and jump
   await page.mouse.wheel(0, -400);
   await frames();
   await jump.waitFor();
+  await page.evaluate(() => window.setStreaming(true));
+  await frames();
+  assert.equal(await jump.count(), 0, 'the working dots are the only jump button while the agent answers');
+  await page.evaluate(() => window.setStreaming(false));
+  await jump.waitFor();
   await jump.click();
   await frames();
   assert.ok(await gap() <= 2, 'the arrow scrolls to the latest message');
