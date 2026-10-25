@@ -88,6 +88,15 @@ function createChatSession(transport: Accessor<Pick<NativeTransport, "command" |
   const liveRevision = createRef(0); const activeAssistantId = createRef<string | undefined>(undefined); const activeMessageIds = createRef(new Map<string, string>()); const liveMessageSequence = createRef(0); const pendingUpdates = createRef<MessageUpdate[]>([]); const frame = createRef<number | undefined>(undefined);
   const pendingRevision = createRef<{ base: string | undefined; next: string } | undefined>(undefined);
 
+  /** Live events add messages but do not carry the saved message count, so it is read from the host after a message is saved. */
+  const syncMessageCount = () => {
+    const capturedTransport = transport(); const sessionId = session.state.sessionId;
+
+    void load({ type: "get_state" }, agentStateSchema.pick({ sessionId: true, messageCount: true })).then(state => {
+      if (owner.current === capturedTransport && session.state.sessionId === sessionId && state.sessionId === sessionId && session.state.messageCount !== state.messageCount) session.setState(current => ({ ...current, messageCount: state.messageCount }));
+    }, reason => { if (owner.current === capturedTransport) reportBackgroundError("Could not update the conversation state", reason); });
+  };
+
   const refreshStats = () => {
     const sessionId = session.state.sessionId;
     const revision = liveRevision.current;
@@ -451,6 +460,7 @@ function createChatSession(transport: Accessor<Pick<NativeTransport, "command" |
     const handleAgentSettled = () => {
       session.setState((current) => ({ ...current, isStreaming: false, activity: undefined }));
       void refreshStats();
+      syncMessageCount();
     };
 
     const handleDisconnected = () => {
@@ -495,6 +505,8 @@ function createChatSession(transport: Accessor<Pick<NativeTransport, "command" |
 
       message = updateAssistant(message);
       session.setMessages(current => upsertLiveMessage(current, message));
+
+      if (event.type === "message_end" && rawMessage.role === "user") syncMessageCount();
     };
 
     const handleMessageUpdate = () => {
