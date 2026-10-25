@@ -46,7 +46,8 @@ for (const hostId of ['local', 'server']) {
     const first = await daemon.invoke('create_temporary_chat', { hostId });
     const second = await daemon.invoke('create_temporary_chat', { hostId });
     expect(first.sessionId).toMatch(UUID);
-    expect(first.cwd).toBe(join(realpathSync(home()), '.piop/tmp', first.sessionId));
+    expect(first.cwd).toBe(join(realpathSync(home()), '.piop/tmp', first.sessionId.replaceAll('-', '').slice(0, 4)));
+    expect(second.cwd).not.toBe(first.cwd);
     for (const chat of [first, second]) expect(readdirSync(chat.cwd)).toEqual([]);
     mkdirSync(join(first.cwd, 'nested')); writeFileSync(join(first.cwd, 'nested/file'), 'temporary content');
     writeFileSync(join(second.cwd, 'keep'), 'other chat');
@@ -64,8 +65,8 @@ for (const hostId of ['local', 'server']) {
       expect(await daemon.failure('remove_temporary_chat', { hostId, path })).toContain('Refusing to remove a directory not created as a temporary chat');
     }
     const outside = join(home(), 'outside'); mkdirSync(outside, { recursive: true }); writeFileSync(join(outside, 'keep'), 'outside');
-    const link = join(home(), '.piop/tmp', crypto.randomUUID()); mkdirSync(dirname(link), { recursive: true }); symlinkSync(outside, link);
-    await expect(daemon.invoke('remove_temporary_chat', { hostId, path: link })).rejects.toThrow();
+    const link = join(home(), '.piop/tmp', crypto.randomUUID().replaceAll('-', '').slice(0, 12)); mkdirSync(dirname(link), { recursive: true }); symlinkSync(outside, link);
+    expect(await daemon.invoke('remove_temporary_chat', { hostId, path: link })).toBeNull();
     expect(lstatSync(link).isSymbolicLink()).toBe(true);
     expect(readFileSync(join(outside, 'keep'), 'utf8')).toBe('outside');
   });
@@ -321,7 +322,7 @@ test('remote directory listing reports an unreadable folder and lists it again o
 
 test('local cleanup preserves files in an unallocated neighboring directory', async () => {
   const allocated = await daemon.invoke('create_temporary_chat', { hostId: 'local' });
-  const unallocated = join(dirname(allocated.cwd), crypto.randomUUID());
+  const unallocated = join(dirname(allocated.cwd), crypto.randomUUID().replaceAll('-', '').slice(0, 12));
   mkdirSync(unallocated);
   writeFileSync(join(unallocated, 'keep'), 'untouched');
 
@@ -331,7 +332,7 @@ test('local cleanup preserves files in an unallocated neighboring directory', as
 
 test('remote cleanup preserves files in an unallocated neighboring directory', async () => {
   const allocated = await daemon.invoke('create_temporary_chat', { hostId: 'server' });
-  const unallocated = join(dirname(allocated.cwd), crypto.randomUUID());
+  const unallocated = join(dirname(allocated.cwd), crypto.randomUUID().replaceAll('-', '').slice(0, 12));
   mkdirSync(unallocated);
   writeFileSync(join(unallocated, 'keep'), 'untouched');
 

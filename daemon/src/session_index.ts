@@ -15,7 +15,6 @@ import * as Registry from './session_registry';
 import * as restoreRecovery from './restore_recovery';
 import { loadAppSettings } from './settings';
 import { type AppSettings, type RemoteHost } from './settings_types';
-import { canonicalUuid } from './session_worker';
 import { transaction } from './util/db';
 import { Mutex } from './util/sync';
 import * as peers from './peers';
@@ -199,7 +198,7 @@ export async function homeDirectory(app: App, hostId: string): Promise<string> {
   return path;
 }
 
-type TemporaryChatRequest = { action: 'create' | 'remove'; id: string; path?: string; root: string };
+type TemporaryChatRequest = { action: 'create'; id: string; root: string } | { action: 'remove'; path: string; root: string };
 
 const temporaryChatOperation = hostOperation<TemporaryChatRequest, string | null>('temporary-chat', 'general', DEFAULT_TIMEOUT, value => {
   if (value !== null && typeof value !== 'string') throw new Error('expected a directory');
@@ -214,12 +213,11 @@ export async function createLocalTemporaryChat(home: string, sessionId: string):
   return directory;
 }
 
-export function temporaryChatId(path: string): string | undefined {
-  const id = basename(path);
-  if (!id || canonicalUuid(id) !== id) return undefined;
+/** True when path has the form of a temporary chat folder: <storage>/tmp/<4 to 32 hex digits of the chat ID>. */
+export function isTemporaryChatPath(path: string): boolean {
   const parent = dirname(path);
-  if (basename(parent) !== 'tmp' || basename(dirname(parent)) !== STORAGE_DIRECTORY) return undefined;
-  return id;
+
+  return /^[0-9a-f]{4,32}$/.test(basename(path)) && basename(parent) === 'tmp' && basename(dirname(parent)) === STORAGE_DIRECTORY;
 }
 
 export async function removeTemporaryChat(app: App, path: string, hostId: string): Promise<void> {
@@ -228,9 +226,8 @@ export async function removeTemporaryChat(app: App, path: string, hostId: string
 }
 
 export async function removeLocalTemporaryChat(home: string, path: string): Promise<void> {
-  const id = temporaryChatId(path);
-  if (!id) throw new Error('Refusing to remove a directory not created as a temporary chat');
-  try { await runHostOperation(temporaryChatOperation, { action: 'remove', id, path, root: join(home, STORAGE_DIRECTORY) }); }
+  if (!isTemporaryChatPath(path)) throw new Error('Refusing to remove a directory not created as a temporary chat');
+  try { await runHostOperation(temporaryChatOperation, { action: 'remove', path, root: join(home, STORAGE_DIRECTORY) }); }
   catch (error: any) { throw new Error(`Could not remove temporary chat directory: ${error?.message ?? error}`); }
 }
 

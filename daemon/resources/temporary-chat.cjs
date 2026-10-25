@@ -1,6 +1,7 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const database = require('./session-database.cjs');
+const { folderNames, ownsFolder, uuid } = require('./temporary-chat-inventory.cjs');
 
 function directoryExists(directory) {
   try {
@@ -22,20 +23,27 @@ function sync(directory) {
   finally { fs.closeSync(descriptor); }
 }
 
-function create(db, root, directory, id) {
-  const reserve = db.prepare('INSERT INTO temporary_chat_allocations (session_id, original_path) VALUES (?, ?) ON CONFLICT(session_id) DO NOTHING');
-  reserve.run(id, directory);
+/** Claims the chat's folder: its saved folder on a retry, or else the shortest start of its ID that no folder or other chat uses. Returns the folder. */
+function create(db, root, id) {
+  const tmp = path.join(root, 'tmp');
   db.exec('BEGIN IMMEDIATE');
-  reserve.run(id, directory);
-  const saved = db.prepare('SELECT original_path FROM temporary_chat_allocations WHERE session_id=?').get(id);
+  let directory = db.prepare('SELECT original_path FROM temporary_chat_allocations WHERE session_id=?').get(id)?.original_path;
 
-  if (saved.original_path !== directory) throw new Error('Temporary chat directory does not match its saved record');
+  if (directory === undefined) {
+    const taken = db.prepare('SELECT 1 FROM temporary_chat_allocations WHERE original_path=?');
+    directory = folderNames(id).map(name => path.join(tmp, name)).find(candidate => !taken.get(candidate) && !directoryExists(candidate));
 
-  if (!directoryExists(path.join(root, 'tmp'))) fs.mkdirSync(path.join(root, 'tmp'));
+    if (directory === undefined) throw new Error('Every folder name for this temporary chat is in use');
+    db.prepare('INSERT INTO temporary_chat_allocations (session_id, original_path) VALUES (?, ?)').run(id, directory);
+  } else if (!ownsFolder(root, id, directory)) throw new Error('Temporary chat directory does not match its saved record');
+
+  if (!directoryExists(tmp)) fs.mkdirSync(tmp);
 
   if (!directoryExists(directory)) fs.mkdirSync(directory);
-  sync(path.join(root, 'tmp'));
+  sync(tmp);
   sync(root);
+
+  return directory;
 }
 
 function firstLine(file) {
@@ -141,9 +149,9 @@ function removeCandidates(db, root, snapshot, candidates) {
   const failures = [];
 
   for (const candidate of candidates) {
-    const directory = path.join(root, 'tmp', candidate.session_id);
+    const directory = candidate.original_path;
 
-    if (candidate.original_path !== directory || !/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/.test(candidate.session_id) || inUse(snapshot, directory)) continue;
+    if (!ownsFolder(root, candidate.session_id, directory) || inUse(snapshot, directory)) continue;
 
     try { remove(db, directory, candidate.session_id); }
     catch (error) { failures.push(`${directory}: ${error.message}`); }
@@ -173,16 +181,15 @@ function remove(db, directory, id) {
   db.prepare('DELETE FROM sessions WHERE session_id=? AND session_path IS NULL').run(id);
 }
 
-/** Creates or removes one temporary chat directory in the profile at request.root. Returns the directory for create, or null for remove. */
+/** Creates the temporary chat directory of request.id, or removes the one at request.path, in the profile at request.root. Returns the directory for create, or null for remove. */
 function temporaryChat(request) {
-  if (!/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/.test(request.id)) throw new Error('Invalid temporary chat session ID');
-
   if (!['create', 'remove'].includes(request.action)) throw new Error('Invalid temporary chat action');
   if (typeof request.root !== 'string' || !path.isAbsolute(request.root)) throw new Error('Invalid temporary chat profile directory');
   const root = path.resolve(request.root);
-  const directory = path.join(root, 'tmp', request.id);
 
-  if (request.action === 'remove' && request.path !== directory) throw new Error('Refusing to remove a directory outside the temporary chat root');
+  if (request.action === 'create' && !uuid.test(request.id)) throw new Error('Invalid temporary chat session ID');
+
+  if (request.action === 'remove' && (typeof request.path !== 'string' || path.dirname(request.path) !== path.join(root, 'tmp'))) throw new Error('Refusing to remove a directory outside the temporary chat root');
 
   if (!directoryExists(root)) {
     if (request.action === 'remove') return null;
@@ -195,12 +202,24 @@ function temporaryChat(request) {
   try {
     db.exec('CREATE TABLE IF NOT EXISTS temporary_chat_allocations (session_id TEXT PRIMARY KEY, original_path TEXT NOT NULL UNIQUE)');
 
-    if (request.action === 'create') create(db, root, directory, request.id);
-    else removeChecked(db, directory, request.id);
-    db.exec('COMMIT');
-  } finally { db.close(); }
+    if (request.action === 'create') {
+      const directory = create(db, root, request.id);
+      db.exec('COMMIT');
 
-  return request.action === 'create' ? directory : null;
+      return directory;
+    }
+
+    // The folder name is only a start of the chat ID, so the saved record names the chat. Without one, nothing is left to remove.
+    const id = db.prepare('SELECT session_id FROM temporary_chat_allocations WHERE original_path=?').get(request.path)?.session_id;
+
+    if (id === undefined) return null;
+
+    if (!ownsFolder(root, id, request.path)) throw new Error('Temporary chat directory does not match its saved record');
+    removeChecked(db, request.path, id);
+    db.exec('COMMIT');
+
+    return null;
+  } finally { db.close(); }
 }
 
 module.exports = { temporaryChat, cleanupDeleted };
