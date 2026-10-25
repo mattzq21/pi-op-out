@@ -20,14 +20,14 @@ const button = label => [...document.querySelectorAll('button')].find(node => no
 
 test('equal context shares display whole percentages that total 100', async () => {
   view = await renderComponent(PromptContextBar, { context: context(), inputTokens: 3 });
-  assert.deepEqual(['System prompt', 'Instructions', 'Tools', 'Skills'].map(label => button(label).textContent), [
-    'System prompt 34%', 'Instructions 33%', 'Tools 33%', 'Skills 0%',
+  assert.deepEqual(['System', 'Instructions', 'Tools', 'Skills'].map(label => button(label).textContent), [
+    'System 34%', 'Instructions 33%', 'Tools 33%', 'Skills 0%',
   ]);
 });
 
 test("System prompt can show and hide its source details", async () => {
   view = await renderComponent(PromptContextBar, { context: context(), inputTokens: 3 });
-  const control = button("System prompt");
+  const control = button("System");
   assert.equal(control.getAttribute('aria-expanded'), 'false');
   assert.ok(!document.body.textContent.includes("System content"));
   await act(() => control.click());
@@ -82,15 +82,15 @@ const emptyContext = () => ({ tokens: { system: 0, instructions: 0, tools: 0, sk
 test('context shares clear when context becomes empty', async () => {
   view = await renderComponent(PromptContextBar, { context: context(), inputTokens: 3 });
   await view.rerender({ context: emptyContext(), inputTokens: 0 });
-  assert.deepEqual(['System prompt', 'Instructions', 'Tools', 'Skills'].map(label => button(label).textContent), [
-    'System prompt 0%', 'Instructions 0%', 'Tools 0%', 'Skills 0%',
+  assert.deepEqual(['System', 'Instructions', 'Tools', 'Skills'].map(label => button(label).textContent), [
+    'System 0%', 'Instructions 0%', 'Tools 0%', 'Skills 0%',
   ]);
 });
 
 test("System prompt explains an empty context", async () => {
   view = await renderComponent(PromptContextBar, { context: context(), inputTokens: 3 });
   await view.rerender({ context: emptyContext(), inputTokens: 0 });
-  await act(() => button("System prompt").click());
+  await act(() => button("System").click());
   assert.ok(document.body.textContent.includes("No system prompt"));
 });
 

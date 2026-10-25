@@ -299,7 +299,7 @@ test('a turn started by another agent session shows the message once and its con
   const reply = { id: 'reply', role: 'assistant', content: [{ type: 'text', text: 'Done' }], stopReason: 'stop', timestamp: 2 };
   const view = await conversation(t, { debug: allDebug, messages: [delivery, reply] });
   assert.equal(view.container.querySelectorAll('[aria-label="Message from another agent"]').length, 1);
-  assert.match(view.container.textContent, /System prompt/);
+  assert.match(view.container.textContent, /System\s*\d+%/);
 });
 
 test('a turn started by a subagent result shows the result once and its context bar in debug mode', async t => {
@@ -309,5 +309,5 @@ test('a turn started by a subagent result shows the result once and its context 
   const reply = { id: 'reply', role: 'assistant', content: [{ type: 'text', text: 'Done' }], stopReason: 'stop', timestamp: 2 };
   const view = await conversation(t, { debug: allDebug, messages: [result, reply] });
   assert.equal(view.container.querySelectorAll('[aria-label="Delegated work"]').length, 1);
-  assert.match(view.container.textContent, /System prompt/);
+  assert.match(view.container.textContent, /System\s*\d+%/);
 });

@@ -118,7 +118,7 @@ ${instruction().content ?? ""}`} /><strong>{instruction().path}</strong><pre>{in
 
   return <section class={`prompt-context${active() ? " open" : ""}`}>
     <div class="prompt-context-bar">
-      <button class="system" aria-expanded={active() === "system"} onClick={() => toggle("system")}>System prompt <small>{percent().system}%</small></button>
+      <button class="system" aria-expanded={active() === "system"} onClick={() => toggle("system")}>System <small>{percent().system}%</small></button>
       <button class="instructions" aria-expanded={active() === "instructions"} onClick={() => toggle("instructions")}>Instructions <small>{percent().instructions}%</small></button>
       <button class="tools" aria-expanded={active() === "tools"} onClick={() => toggle("tools")}>Tools <small>{percent().tools}%</small></button>
       <button class="skills" aria-expanded={active() === "skills"} onClick={() => toggle("skills")}>Skills <small>{percent().skills}%</small></button>
