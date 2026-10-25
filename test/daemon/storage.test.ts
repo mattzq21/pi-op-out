@@ -46,6 +46,8 @@ test('storage report counts real conversation files and marks malformed archives
   const chat = await daemon.invoke('create_temporary_chat', { hostId: 'local' });
   writeFileSync(join(chat.cwd, 'file'), 'temporary');
   mkdirSync(join(profile, 'tmp/unowned'), { recursive: true });
+  mkdirSync(join(profile, 'worktrees/3fa8'), { recursive: true });
+  writeFileSync(join(profile, 'worktrees/3fa8/file'), 'worktree');
   const { hosts } = await daemon.invoke('storage_report');
   expect(hosts).toHaveLength(1);
   const [local] = hosts;
@@ -55,6 +57,7 @@ test('storage report counts real conversation files and marks malformed archives
   expect(category('active-conversations')).toMatchObject({ itemCount: 1, byteSize: allocatedBytes(join(profile, 'sessions')) });
   expect(category('archived-conversations')).toMatchObject({ itemCount: 1, byteSize: allocatedBytes(join(profile, 'archived')) });
   expect(category('temporary-chats')).toMatchObject({ itemCount: 1, byteSize: allocatedBytes(join(profile, 'tmp')) });
+  expect(category('chat-worktrees')).toMatchObject({ itemCount: 1, byteSize: allocatedBytes(join(profile, 'worktrees')) });
   expect(local.archives).toEqual([expect.objectContaining({ path: broken.path, deletable: false, restorable: false, deleteError: expect.stringContaining('invalid chat data') })]);
 });
 

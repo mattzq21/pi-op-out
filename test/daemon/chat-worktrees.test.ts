@@ -117,7 +117,7 @@ test('creates a chat worktree at the source commit with only the committed files
   const chatId = randomUUID();
   const created = await create({ sourceCwd: repo, chatId, home });
 
-  const worktree = join(home, '.local/share/piop/worktrees', short(chatId));
+  const worktree = join(home, '.piop/worktrees', short(chatId));
   expect(created).toEqual({ repository: repo, gitCommonDir: join(repo, '.git'), chatId, worktree, branch: 'piop/' + short(chatId), commit: before.head });
   expect(git(worktree, 'rev-parse', 'HEAD')).toBe(before.head);
   expect(git(worktree, 'branch', '--show-current')).toBe('piop/' + short(chatId));
@@ -131,10 +131,10 @@ test('creates a chat worktree at the source commit with only the committed files
 test('a taken folder or branch name makes the claim use one more digit, and leaves both untouched', async () => {
   const { repo, home } = repository();
   const chatId = randomUUID();
-  const folder = join(home, '.local/share/piop/worktrees', short(chatId));
+  const folder = join(home, '.piop/worktrees', short(chatId));
   write(join(folder, 'keep.txt'), 'mine\n');
   const created = await create({ sourceCwd: repo, chatId, home });
-  expect(created.worktree).toBe(join(home, '.local/share/piop/worktrees', short(chatId, 5)));
+  expect(created.worktree).toBe(join(home, '.piop/worktrees', short(chatId, 5)));
   expect(created.branch).toBe('piop/' + short(chatId, 5));
   expect(readFileSync(join(folder, 'keep.txt'), 'utf8')).toBe('mine\n');
 
@@ -142,7 +142,7 @@ test('a taken folder or branch name makes the claim use one more digit, and leav
   git(repo, 'branch', 'piop/' + short(other));
   const second = await create({ sourceCwd: repo, chatId: other, home });
   expect(second.branch).toBe('piop/' + short(other, 5));
-  expect(existsSync(join(home, '.local/share/piop/worktrees', short(other)))).toBe(false);
+  expect(existsSync(join(home, '.piop/worktrees', short(other)))).toBe(false);
   expect(hasRef(repo, 'refs/heads/piop/' + short(other))).toBe(true);
   await expect(create({ sourceCwd: join(repo, '..'), chatId: randomUUID(), home })).rejects.toThrow(/outside a Git repository/);
 });
@@ -168,7 +168,7 @@ test('a failed creation removes the folder and branch it made', async () => {
   chmodSync(join(repo, '.git/hooks/post-checkout'), 0o755);
   const chatId = randomUUID();
   await expect(create({ sourceCwd: repo, chatId, home })).rejects.toThrow(/checkout refused/);
-  expect(readdirSync(join(home, '.local/share/piop/worktrees'))).toEqual([]);
+  expect(readdirSync(join(home, '.piop/worktrees'))).toEqual([]);
   expect(hasRef(repo, 'refs/heads/piop/' + short(chatId))).toBe(false);
   expect(git(repo, 'worktree', 'list', '--porcelain').split('\n').filter(line => line.startsWith('worktree '))).toEqual(['worktree ' + repo]);
 });
@@ -193,13 +193,13 @@ test('removes a worktree with read-only parts, and a later call finishes a remov
   const archive = await Worktrees.protectArchive({ worktree: created, home });
   await Worktrees.removeArchivedWorktree({ archive, home });
   expect(existsSync(created.worktree)).toBe(false);
-  expect(readdirSync(join(home, '.local/share/piop/worktrees'))).toEqual([]);
+  expect(readdirSync(join(home, '.piop/worktrees'))).toEqual([]);
   expect(git(repo, 'worktree', 'list', '--porcelain').split('\n').filter(line => line.startsWith('worktree ')).length).toBe(1);
 
-  const leftover = join(home, '.local/share/piop/worktrees', `.removing-${short(chatId)}-${randomUUID()}`);
+  const leftover = join(home, '.piop/worktrees', `.removing-${short(chatId)}-${randomUUID()}`);
   write(join(leftover, 'locked/inner.txt'), 'x');
   chmodSync(join(leftover, 'locked'), 0o555);
-  const other = join(home, '.local/share/piop/worktrees', `.removing-${randomUUID()}-${randomUUID()}`);
+  const other = join(home, '.piop/worktrees', `.removing-${randomUUID()}-${randomUUID()}`);
   mkdirSync(other);
   await Worktrees.removeArchivedWorktree({ archive, home });
   expect(existsSync(leftover)).toBe(false);
@@ -210,7 +210,7 @@ test('undo and delete succeed when nothing was ever created on this machine', as
   const { repo, home } = repository();
   const chatId = randomUUID();
   const gitCommonDir = join(repo, '.git');
-  expect(existsSync(join(home, '.local/share/piop/worktrees'))).toBe(false);
+  expect(existsSync(join(home, '.piop/worktrees'))).toBe(false);
   const names = { worktree: join(Worktrees.worktreesRoot(home), short(chatId)), branch: 'piop/' + short(chatId) };
   await Worktrees.removeCreatedWorktree({ chatId, gitCommonDir, home, ...names });
   await Worktrees.deleteChatWorktree({ record: { repository: repo, gitCommonDir, chatId, ...names, archive: null }, home });
@@ -292,7 +292,7 @@ test('restore reuses an unchanged branch, and avoids a moved branch and an occup
   write(join(created.worktree, 'keep.txt'), 'not ours\n');
   const moved = await Worktrees.planRestore({ archive, home });
   expect(moved.reuse).toBe(false);
-  expect(moved).toMatchObject({ worktree: join(home, '.local/share/piop/worktrees', short(chatId, 5)), branch: 'piop/' + short(chatId, 5) });
+  expect(moved).toMatchObject({ worktree: join(home, '.piop/worktrees', short(chatId, 5)), branch: 'piop/' + short(chatId, 5) });
   const restored = await Worktrees.restoreWorktree({ archive, home, plan: moved });
   expect(git(restored.worktree, 'rev-parse', 'HEAD')).toBe(archive.commit);
   expect(readFileSync(join(created.worktree, 'keep.txt'), 'utf8')).toBe('not ours\n');

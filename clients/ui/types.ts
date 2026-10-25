@@ -23,7 +23,7 @@ export interface StorageOwner { sessionId: string; sessionPath?: string; kind: s
 
 export interface StorageRoot { path: string; ownership: StorageOwnership; provenance: string[]; available: boolean; owners: StorageOwner[]; state?: string; }
 
-export interface StorageCategory { id: "active-conversations" | "archived-conversations" | "temporary-chats" | "other-storage" | "recovery-storage" | "unattributed-recovery-storage" | "goal-attachments" | "unattributed-goal-attachments"; byteSize: number; itemCount: number; estimated?: boolean; directories?: string[]; countUnit?: string; coverage?: string; ownership?: StorageOwnership; reclaimability?: "retained" | "requires-owner-check" | "unknown"; measurement?: "allocated-blocks"; includedInTotal?: boolean; roots?: StorageRoot[]; }
+export interface StorageCategory { id: "active-conversations" | "archived-conversations" | "temporary-chats" | "chat-worktrees" | "other-storage" | "recovery-storage" | "unattributed-recovery-storage" | "goal-attachments" | "unattributed-goal-attachments"; byteSize: number; itemCount: number; estimated?: boolean; directories?: string[]; countUnit?: string; coverage?: string; ownership?: StorageOwnership; reclaimability?: "retained" | "requires-owner-check" | "unknown"; measurement?: "allocated-blocks"; includedInTotal?: boolean; roots?: StorageRoot[]; }
 
 export interface ArchivedConversation { restorable: boolean; id: string; path: string; name: string; cwd: string; modifiedAt: number; byteSize: number; deletable: boolean; deleteError?: string; byteSizeCoverage?: string; }
 

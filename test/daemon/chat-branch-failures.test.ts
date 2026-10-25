@@ -12,7 +12,7 @@ import { agentDaemon, text } from './agent-chats';
  */
 
 const git = (cwd: string, ...args: string[]) => execFileSync('git', ['-C', cwd, ...args], { encoding: 'utf8' }).trimEnd();
-const worktreesRoot = (home: string) => join(home, '.local/share/piop/worktrees');
+const worktreesRoot = (home: string) => join(home, '.piop/worktrees');
 const piopBranches = (cwd: string) => git(cwd, 'for-each-ref', '--format=%(refname)', 'refs/heads/piop').split('\n').filter(Boolean);
 const worktreeFolders = (home: string) => existsSync(worktreesRoot(home)) ? readdirSync(worktreesRoot(home)) : [];
 

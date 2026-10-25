@@ -359,7 +359,7 @@ test('a branch on another machine takes the group of its source on that machine'
   const [source, branch] = ['devbox:' + crypto.randomUUID(), 'devbox:' + crypto.randomUUID()];
   const remote = (cwd: string) => project('devbox:' + cwd, cwd.split('/').at(-1)!, cwd, 'devbox', 'Devbox');
   await load([{ sessionKey: source, project: remote('/srv/app') }]);
-  const state = await load([{ sessionKey: branch, project: remote('/home/dev/.local/share/piop/worktrees/' + branch.slice(7)), parentKey: source }]);
+  const state = await load([{ sessionKey: branch, project: remote('/home/dev/.piop/worktrees/' + branch.slice(7)), parentKey: source }]);
   expect(state.assignments[branch]).toBe('devbox:/srv/app');
   expect(names(state)).toEqual(['app']);
   expect(await daemon.failure('load_session_groups', { seeds: [{ sessionKey: branch, project: remote('/srv/app'), parentKey: branch }] })).toContain('branched from itself');

@@ -108,7 +108,7 @@ test.concurrent('copying after an answer outside a Git repository opens a new co
   expect(copy.sessionId).not.toBe(original.sessionId);
   expect(copy.cwd).toBe(original.cwd);
   expect(copy.forkSource).toEqual({ sessionId: original.sessionId, sessionPath: original.sessionFile, entryId: answer.id });
-  expect(existsSync(join(agents.daemon.home, '.local/share/piop/worktrees', copy.sessionId))).toBe(false);
+  expect(existsSync(join(agents.daemon.home, '.piop/worktrees', copy.sessionId))).toBe(false);
   expect((await chat.history()).filter(message => message.role !== 'system').map(text)).toEqual(['Copy question', 'Copy answer to Copy question']);
   await chat.command({ type: 'prompt', message: 'Other question' });
   await chat.until(history => text(history.at(-1)) === 'Copy answer to Other question');

@@ -3,7 +3,7 @@ const path = require('node:path');
 const { validGoalPath } = require('./storage-inventory-owners.cjs');
 const { goalOwner } = require('./storage-inventory-goals.cjs');
 
-const localCategories = { sessions: 'active-conversations', archived: 'archived-conversations', tmp: 'temporary-chats', recovery: 'unattributed-recovery-storage' };
+const localCategories = { sessions: 'active-conversations', archived: 'archived-conversations', tmp: 'temporary-chats', worktrees: 'chat-worktrees', recovery: 'unattributed-recovery-storage' };
 
 function specialCategory(target, category, metadata, discovery) {
   category = queuedCategory(target, category, metadata, discovery);
@@ -56,6 +56,8 @@ async function diskStorage(profile, discovery) {
   }
 
   function countDirectory(target, category, entries) {
+    if (category === 'chat-worktrees' && target === path.join(root, 'worktrees')) addCount(category, entries.filter(entry => entry.isDirectory()).length);
+
     if (category === 'other-storage') addCount(category, entries.filter(entry => entry.isFile() && !discovery.queuedInput?.has(path.join(target, entry.name))).length);
 
     if (['goal-attachments', 'unattributed-goal-attachments'].includes(category) && validGoalPath(target)) {

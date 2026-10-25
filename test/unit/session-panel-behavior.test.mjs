@@ -403,7 +403,7 @@ test('a branch in its own worktree folder joins its source chat\'s group, and th
   const root = await mkdtemp(join(tmpdir(), 'piop-panel-branch-'));
   t.after(() => rm(root, { recursive: true, force: true }));
   const folder = '0190a6e3-8c42-7b05-a281-3d96e04fc812';
-  const worktree = join(root, '.local/share/piop/worktrees', folder);
+  const worktree = join(root, '.piop/worktrees', folder);
   await mkdir(worktree, { recursive: true });
   const source = session('source', 'Source chat');
   const panel = await fixture(t, { sessions: [source] });

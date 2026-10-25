@@ -5,7 +5,7 @@ import { Dynamic } from "solid-js/web";
 import { DeleteArchivesDialog } from "./DeleteArchivesDialog";
 import { createDependencyEffect, createRef } from "../lib/solid";
 
-import { Archive, Database, FolderClock, HardDrive, MessageSquare, RefreshCw, ShieldAlert, Trash2 } from "lucide-solid";
+import { Archive, Database, FolderClock, GitBranch, HardDrive, MessageSquare, RefreshCw, ShieldAlert, Trash2 } from "lucide-solid";
 import { deleteArchivedConversations, loadStorageReport, openGroupDirectory } from "../lib/nativeTransport";
 import { storageFailureText } from "../lib/storageFailure";
 import type { ArchivedConversation, HostStorage, StorageCategory, StorageReport, StorageRoot } from "../types";
@@ -21,6 +21,7 @@ const categoryDetails: Record<StorageCategory["id"], { name: string; description
   "active-conversations": { name: "Conversations", description: "Saved chats", icon: MessageSquare, item: "conversation" },
   "archived-conversations": { name: "Conversations", description: "Saved chats", icon: MessageSquare, item: "conversation" },
   "temporary-chats": { name: "No-project workdirs", description: "Working directories for conversations without a project", icon: FolderClock, item: "directory" },
+  "chat-worktrees": { name: "Chat worktrees", description: "Git worktrees of branched chats", icon: GitBranch, item: "worktree" },
   "other-storage": { name: "Other storage", description: "Settings, caches, logs, and other piop files", icon: HardDrive, item: "file" },
   "recovery-storage": { name: "Managed recovery", description: "Durable recovery containers with ownership records", icon: FolderClock, item: "recovery" },
   "unattributed-recovery-storage": { name: "Unresolved recovery storage", description: "Loose recovery files or unverified ownership records", icon: ShieldAlert, item: "recovery" },
@@ -32,7 +33,7 @@ const storageSections: { title: string; categories: StorageCategory["id"][] }[] 
   { title: "General and shared history", categories: ["other-storage", "goal-attachments"] },
   { title: "Active sessions", categories: ["active-conversations"] },
   { title: "Archived sessions", categories: ["archived-conversations"] },
-  { title: "Managed directories", categories: ["temporary-chats", "recovery-storage"] },
+  { title: "Managed directories", categories: ["temporary-chats", "chat-worktrees", "recovery-storage"] },
   { title: "Unresolved and temporary storage", categories: ["unattributed-recovery-storage", "unattributed-goal-attachments"] },
 ];
 

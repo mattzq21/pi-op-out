@@ -2,6 +2,7 @@ import { execFile } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { chmod, lstat, mkdir, readdir, realpath, rename, rm, rmdir, stat } from 'node:fs/promises';
 import { basename, dirname, join } from 'node:path';
+import { STORAGE_DIRECTORY } from './config';
 
 /*
  * All Git work of ADR 0006: finding the repository, automatic progress commits, and creating, archiving, restoring
@@ -71,7 +72,7 @@ function chatId(value: string): string {
 }
 
 export function worktreesRoot(home: string): string {
-  return join(home, '.local', 'share', 'piop', 'worktrees');
+  return join(home, STORAGE_DIRECTORY, 'worktrees');
 }
 
 /** Names to try for a chat worktree, shortest first: the first 4, 5, … 32 hex digits of the chat ID. */

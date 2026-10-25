@@ -46,7 +46,7 @@ test('branch copies selected history and committed files, archive restores last 
     await command({ type: 'fork_after', entryId: first.id });
     const branch = await command({ type: 'get_state' });
     expect(branch.sessionId).not.toBe(original.sessionId);
-    expect(branch.cwd).toBe(join(agents.daemon.home, '.local/share/piop/worktrees', short(branch.sessionId)));
+    expect(branch.cwd).toBe(join(agents.daemon.home, '.piop/worktrees', short(branch.sessionId)));
     expect(branch.forkSource).toMatchObject({ sessionId: original.sessionId, entryId: first.id });
     expect(git(branch.cwd, 'branch', '--show-current')).toBe('piop/' + short(branch.sessionId));
     // The branch has only the committed files.
@@ -94,6 +94,6 @@ test('non-repository chat cannot create a worktree branch', async () => {
     const reply = (await chat.command({ type: 'get_entries' })).entries.find((e: any) => e.message?.role === 'assistant');
     await expect(chat.command({ type: 'fork_after', entryId: reply.id })).rejects.toThrow('not a Git repository');
     expect((await chat.command({ type: 'get_state' })).sessionId).toBe(state.sessionId);
-    expect(existsSync(join(agents.daemon.home, '.local/share/piop/worktrees'))).toBe(false);
+    expect(existsSync(join(agents.daemon.home, '.piop/worktrees'))).toBe(false);
   } finally { await agents.close(); }
 }, 60000);
