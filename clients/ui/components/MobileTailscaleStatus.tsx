@@ -16,7 +16,8 @@ const messages: Record<State, { title: string; detail: string }> = {
   unknown: { title: "Tailscale status unavailable", detail: "Open Tailscale to check whether it is connected." },
 };
 
-export function MobileTailscaleStatus() {
+/** The Tailscale state of the phone. With hideDetail it shows only the state title. */
+export function MobileTailscaleStatus(props: { hideDetail?: boolean }) {
   const [state, setState] = createSignal<State>("checking");
   const [error, setError] = createSignal("");
   const [listenerError, setListenerError] = createSignal("");
@@ -61,7 +62,7 @@ export function MobileTailscaleStatus() {
   }, () => []);
 
   return Capacitor.getPlatform() === "android" && <div class="mobile-tailscale-status" data-state={state()}>
-    <div role="status"><strong><span class="mobile-tailscale-dot" aria-hidden="true" />{messages[state()].title}</strong><p>{messages[state()].detail}</p></div>
+    <div role="status"><strong><span class="mobile-tailscale-dot" aria-hidden="true" />{messages[state()].title}</strong>{!props.hideDetail && <p>{messages[state()].detail}</p>}</div>
     <div class="mobile-host-actions"><button type="button" onClick={() => void check()}>Check again</button>{state() !== "missing" && <button type="button" onClick={() => void open()}>Open Tailscale</button>}</div>
     {(listenerError() || error()) && <p role="alert">{listenerError() || error()}</p>}
   </div>;

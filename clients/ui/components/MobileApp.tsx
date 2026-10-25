@@ -218,15 +218,14 @@ export function MobileApp() {
   const renderConnectionNotice = () => showConnectionNotice() && <div class="mobile-reconnect-banner"><div role="status">{error() || "Reconnecting…"}<button disabled={connecting() || disconnecting()} onClick={() => { if (connected()) void disconnect(); else void connect(url()); }}>{connected() ? "Retry disconnect" : connecting() ? "Connecting…" : "Reconnect"}</button></div>{!connected() && <MobileTailscaleStatus />}</div>;
 
   return <>{workspaceOpen() ? (<><div style={{ display: "contents" }} inert={disconnecting()}><App suppressConnectionNotices={restartGrace()} /></div><button class="mobile-host-button" aria-label="Disconnect from anchor host" disabled={disconnecting()} onClick={() => void disconnect()}>Host</button></>) : (<main class="mobile-connect dark"><form onSubmit={(event) => { event.preventDefault(); if (forgetting()) return; intentionalDisconnect.current = false; retryDelay.current = 2000; void connect(url(), name()); }}>
-    {savedHosts().length > 0 && <label>Saved hosts<select disabled={connecting() || forgetting()} value={selectedHost()?.url ?? ""} onChange={(event) => chooseHost(event.currentTarget.value)}><option value="">New host</option><For each={savedHosts()}>{host => <option value={host.url}>{host.name}</option>}</For></select></label>}
+    {savedHosts().length > 0 && <label>Saved hosts<select disabled={connecting() || forgetting()} value={selectedHost()?.url ?? ""} onChange={(event) => chooseHost(event.currentTarget.value)}><option value="">Add host</option><For each={savedHosts()}>{host => <option value={host.url}>{host.name}</option>}</For></select></label>}
     <label>Anchor host address<input type="url" required disabled={connecting() || forgetting()} placeholder="wss://your-host.your-tailnet.ts.net" autoCapitalize="none" autocorrect="off" spellcheck={false} value={url()} onInput={(event) => editAddress(event.target.value)} /></label>
     <label>Host name<input required disabled={connecting() || forgetting()} value={name()} placeholder="My PC" onInput={(event) => setName(event.target.value)} /></label>
     <div class="mobile-host-actions mobile-saved-host-actions">
       {(selectedHost() || anchorReadFailed()) && <button type="button" disabled={connecting() || forgetting() || savingHost()} onClick={() => void forgetHost()}>Forget</button>}
       <button type="button" disabled={connecting() || forgetting() || savingHost() || !url().trim() || !name().trim() || selectedHost()?.name === name().trim()} onClick={() => void saveHost()}>{savingHost() ? "Saving…" : "Save"}</button>
     </div>
-    <p class="mobile-connect-hint">Piop connects to this host. You can also use the hosts that this host has added. Connect this device and the host to the same Tailscale account, then enter the host’s Tailscale Serve wss:// address.</p>
-    <MobileTailscaleStatus />
+    <MobileTailscaleStatus hideDetail />
     {error() && <p role="alert">{error()}</p>}
     <button class="primary-button" disabled={connectDisabled()}>{connecting() ? "Connecting…" : "Connect"}</button>
     {connecting() && <button type="button" onClick={disconnect}>Cancel</button>}
