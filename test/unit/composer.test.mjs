@@ -64,6 +64,19 @@ describe('composer interactions', () => {
     assert.equal(retry(), undefined);
   });
 
+  test('Send becomes available again when a stop finishes after the reply has already ended', async () => {
+    let finishStop;
+    await render({ streaming: true, onAbort: () => new Promise(resolve => { finishStop = resolve; }) });
+    await click(control('Stop piop'));
+    await render({ streaming: false });
+    await act(async () => finishStop());
+    await enterText(editor(), 'Next prompt');
+    assert.equal(control('Send message').disabled, false);
+    await click(control('Send message'));
+    assert.deepEqual(sent, [['Next prompt', undefined, []]]);
+  });
+
+
   test('a streaming draft has a clickable follow-up send action', async () => {
     await render({ streaming: true });
     await enterText(editor(), 'After this turn');

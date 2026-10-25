@@ -408,7 +408,7 @@ export function Composer(props: Props) {
   };
 
   const pendingDrag = usePendingMessageDrag(() => (composer().pendingMessages), () => (pendingControlsDisabled(composer().controlsDisabled, changingPending(), composer().pausing, composer().onChangePending)), () => (changePending));
-  const controlsBlocked = () => composer().agentUnavailable || (props.submissionDisabled ?? composer().controlsDisabled) || composer().compacting || composer().pausing || controlActionRef.current || stoppingRef.current;
+  const controlsBlocked = () => composer().agentUnavailable || (props.submissionDisabled ?? composer().controlsDisabled) || composer().compacting || composer().pausing || controlAction() !== undefined || stopping();
 
   const canSubmit = (message: string, images: ImageAttachment[]) => {
     if (!attachments.acceptsImages(images.length)) return false;
