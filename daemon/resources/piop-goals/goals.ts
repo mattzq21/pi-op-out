@@ -147,7 +147,6 @@ export function registerGoals(pi: ExtensionAPI): { session: GoalSession; core: G
 
     // Waiting messages run first. Pi runs them only when asked to continue: a message that does not start a turn by itself,
     // such as the goal prompt sent after a compaction, would otherwise wait and the goal would stop.
-    ctx.ui.notify('[DEBUG-gq7] settle pending=' + ctx.hasPendingMessages() + ' context=' + event.context.pendingMessages.length, 'info');
     if (ctx.hasPendingMessages() || event.context.pendingMessages.length) return { continue: true };
 
     return { continue: true, entries: [{ type: "custom_message", ...promptMessage(state.goal) }] };

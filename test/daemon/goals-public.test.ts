@@ -194,14 +194,12 @@ test('a goal is a queue entry: follow-ups below it wait, a follow-up moved above
   release();
   await untilRequest(2);
   expect(requests[1]).toBe(false);
-  console.log('DEBUG-gq move', JSON.stringify(await chat.command({ type: 'change_pending', id: 'goal', action: 'moveDown' })));
+  await chat.command({ type: 'change_pending', id: 'goal', action: 'moveDown' });
   await Bun.sleep(300);
-  console.log('DEBUG-gq updates', JSON.stringify(agents.daemon.events.filter(event => event.payload?.runtimeId === chat.runtimeId && event.payload.event?.type === 'queue_update').slice(-3).map(event => [event.payload.event.steering, event.payload.event.followUp, event.payload.event.pendingMessages?.map((entry: any) => [entry.id, entry.message, entry.afterGoal, entry.goal])])));
   expect(await queue()).toEqual(['Question one', 'goal']);
   blocking = false;
   release();
-  try { await chat.until(history => history.some(message => text(message) === 'Answered one.')); } catch (error) { console.log('DEBUG-gq notes', JSON.stringify(notices(chat.runtimeId).filter((note: string) => note.includes('DEBUG-gq7')).slice(0, 8)));
- console.log('DEBUG-gq events', JSON.stringify(agents.daemon.events.filter(event => event.payload?.runtimeId === chat.runtimeId).map(event => event.payload.event).filter((event: any) => event && ['queue_update', 'agent_start', 'agent_end', 'agent_settled', 'message_start', 'extension_error', 'extension_ui_request'].includes(event.type)).slice(0, 60).map((event: any) => event.type === 'queue_update' ? ['Q', event.followUp] : event.type === 'message_start' ? ['M', event.message?.role, text(event.message ?? {}).slice(0, 30)] : event.type === 'extension_ui_request' ? ['U', event.method, event.statusKey, (event.message ?? '').slice(0, 80)] : [event.type, event.error?.slice?.(0, 120)]))); throw error; }
+  await chat.until(history => history.some(message => text(message) === 'Answered one.'));
   await chat.until(history => history.filter(message => text(message) === 'Drafting.').length >= 3);
   finish = true;
   const history = await chat.until(history => text(history.at(-1)) === 'Drafted.');
