@@ -14,6 +14,7 @@ import { useComposerAttachments } from "../lib/useComposerAttachments";
 import { stageComposerDraft, type DraftSubmissionHandle, type StageDraftSubmission } from "../lib/draftSubmission";
 import { ComposerSettingsMenu } from "./ComposerSettingsMenu";
 import { ComposerPlugins } from "../plugins/composer";
+import { GoalActions, type GoalControls } from "./GoalControls";
 
 import { ArrowUp,ChevronDown,ChevronUp,CircleStop,CircleX,CornerDownRight,FileText,ImagePlus,MoveVertical,Pause,Play,RefreshCw,TerminalSquare,Trash2,X,Zap } from "lucide-solid";
 import { hasVisibleText } from "../lib/content";
@@ -37,8 +38,8 @@ interface Props {
   ownershipRequired?: boolean;
   onTakeOwnership?: () => Promise<void>;
   toolbar?: JSXElement;
-  /** Shown under the queued messages and above the input, such as the goal bar. */
-  belowQueue?: JSXElement;
+  /** The conversation goal. Its queue entry carries the goal buttons; a paused goal shows as its own entry. */
+  goal?: GoalControls;
   streaming: boolean;
   compacting?: boolean;
   paused?: boolean;
@@ -409,6 +410,10 @@ export function Composer(props: Props) {
     void required((composer().onChangePending))(id, action).catch((reason) => setControlError(reason instanceof Error ? reason.message : String(reason))).finally(() => setChangingPending(false));
   };
 
+  /** A paused goal is not in the queue, so it shows as its own entry at the end. */
+  const pausedGoal = () => { const goal = props.goal?.goal();
+
+    return goal?.status === "paused" ? goal : undefined; };
   const pendingDrag = usePendingMessageDrag(() => (composer().pendingMessages), () => (pendingControlsDisabled(composer().controlsDisabled, changingPending(), composer().pausing, composer().onChangePending)), () => (changePending));
   const controlsBlocked = () => composer().agentUnavailable || (props.submissionDisabled ?? composer().controlsDisabled) || composer().compacting || composer().pausing || controlAction() !== undefined || stopping();
 
@@ -689,7 +694,7 @@ export function Composer(props: Props) {
     {imageInputError() && <div class="image-input-toast" role="alert"><CircleX size={14} aria-hidden="true" /><span>This model does not support image inputs. Try a different model</span><button type="button" aria-label="Dismiss image input error" onClick={() => setImageInputError(false)}><X size={14} /></button></div>}
     <div class="composer-above">
     {renderStreamBanner()}
-    {composer().pendingMessages.length > 0 && <div class="pending-messages" aria-label="Pending messages">{<Key each={composer().pendingMessages.filter((message) => pendingMessageIdentitySchema.safeParse(message).success)} by={(message) => message.id}>{(message, _index) => {
+    {(composer().pendingMessages.length > 0 || pausedGoal() || props.goal?.error()) && <div class="pending-messages" aria-label="Pending messages">{<Key each={composer().pendingMessages.filter((message) => pendingMessageIdentitySchema.safeParse(message).success)} by={(message) => message.id}>{(message, _index) => {
       const text = createMemo(() => String(message().message ?? ""));
       const change = (action: import("../types").PendingMessageAction) => changePending(message().id, action);
       const disabled = createMemo(() => (composer().controlsDisabled || changingPending() || composer().pausing || Boolean(message().sending)));
@@ -707,6 +712,7 @@ export function Composer(props: Props) {
             <button type="button" class="pending-icon-button" disabled={disabled() || position() < 0 || position() >= peerCount() - 1} aria-label={`Move queued message down: ${text()}`} data-tooltip="Move later in this delivery queue" onClick={() => change("moveDown")}><ChevronDown size={13} /></button>
           </div>
           <Show when={!message().goal && (message().retry || !splitPaneCommand(text()))}><button type="button" disabled={disabled()} data-tooltip={message().behavior === "steer" ? "Queue after the current response" : "Steer at the next turn"} onClick={() => change(message().retry ? message().behavior : message().behavior === "steer" ? "followUp" : "steer")}><CornerDownRight size={13} />{message().retry ? "Retry" : message().behavior === "steer" ? "Queue" : "Steer"}</button></Show>
+          <Show when={message().goal && props.goal?.goal()}>{goal => <GoalActions controls={required(props.goal)} goal={goal()} />}</Show>
           <Show when={!message().goal}><button type="button" class="pending-icon-button" disabled={disabled()} aria-label={`Remove queued message: ${text()}`} data-tooltip="Remove message" onClick={() => change("remove")}><Trash2 size={13} /></button></Show>
         </div>);
 
@@ -716,8 +722,10 @@ export function Composer(props: Props) {
         <span class="pending-message-text" data-tooltip={message().recovered ? "This saved answer may not have reached the model. Check the conversation before retrying." : text()} onDblClick={() => setExpandedPending((current) => current === message().id ? undefined : message().id)}>{message().goal && <small>Goal · </small>}{message().retry && <small>{message().recovered ? "Saved answer · " : "Retry needed · "}</small>}{text()}</span>
         {renderPendingMessageActions()}
       </div>;
-    }}</Key>}</div>}
-    {props.belowQueue}
+    }}</Key>}<Show when={pausedGoal()}>{goal => <div class="pending-message pending-goal paused" aria-label="Paused goal">
+      <span class="pending-message-text" data-tooltip={goal().objective}><small>Goal · Paused · </small>{goal().objective}</span>
+      <div class="pending-message-actions"><GoalActions controls={required(props.goal)} goal={goal()} /></div>
+    </div>}</Show><Show when={props.goal?.error()}>{message => <div class="pending-goal-error" role="alert">{message()}</div>}</Show></div>}
     {visualProps.toolbar}
     </div>
     <ComposerBody />

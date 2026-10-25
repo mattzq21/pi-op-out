@@ -462,7 +462,6 @@ textarea::placeholder { color: var(--faint); }
 .composer-above { display: flex; flex-direction: column; align-items: stretch; gap: 6px; padding-bottom: 6px; }
 .composer-above > .working-dots { margin: 0 auto; }
 .composer-above > .stream-banner { align-self: flex-start; }
-.composer-above > .goal-bar { width: auto; margin: 0; }
 .composer-above > .stream-banner { margin: 0; }
 .stream-banner { background: var(--paper); }
 .composer-above:empty { display: none; }
@@ -472,6 +471,8 @@ textarea::placeholder { color: var(--faint); }
 .pending-message { display: flex; align-items: center; gap: 9px; min-width: 0; min-height: 33px; padding: 3px 3px; font-size: 13px; }
 .pending-message-text { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .pending-goal .pending-message-text small { color: var(--accent); font-weight: 600; }
+.pending-goal.paused .pending-message-text { color: var(--muted); padding-left: 33px; }
+.pending-goal-error { padding: 4px 6px 7px; color: var(--accent); font-size: 12px; overflow-wrap: anywhere; }
 .pending-images { flex: none; display: flex; gap: 4px; }.pending-image { width: 26px; height: 26px; border-radius: 5px; object-fit: cover; border: 1px solid var(--line); }.pending-image-missing { display: grid; place-items: center; color: var(--muted); }
 .pending-message.expanded { align-items: flex-start; }
 .pending-message.expanded .pending-message-text { white-space: pre-wrap; overflow-wrap: anywhere; padding-top: 4px; }
