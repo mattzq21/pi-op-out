@@ -1,7 +1,6 @@
 import { createHash as fastModelHash } from 'node:crypto';
 
 const FAST_CATALOG_CLIENT_VERSION = '0.159.3';
-const FAST_MODEL_PROVIDERS = new Set(['openai', 'openai-codex']);
 
 function fastCatalogUrl(model, auth) {
   const url = new URL(auth.baseUrl ?? model.baseUrl);
@@ -127,6 +126,24 @@ async function scanFastProvider(runtime, provider) {
   }
 }
 
+/** Anthropic's model list does not state fast mode, so its models come from ANTHROPIC_FAST_MODELS, which the host defines before this source. */
+async function scanAnthropicFastProvider(runtime, provider) {
+  let state;
+
+  try {
+    state = await fastProviderState(runtime, provider);
+  } catch (error) {
+    return { provider, status: 'error', message: 'Could not read the ' + provider + ' login: ' + (error instanceof Error ? error.message : String(error)) };
+  }
+  const listed = new Set(ANTHROPIC_FAST_MODELS.models.map(model => model.id));
+  const ids = state.endpoints.flatMap(({ models, auth }) => auth ? models.filter(model => listed.has(model.id)).map(model => model.id) : []);
+
+  return { provider, status: 'ok', supportedModelIds: [...new Set(ids)], context: state.context };
+}
+
+/** The scan of each provider that fast mode supports. */
+const FAST_MODEL_SCANS = new Map([['openai', scanFastProvider], ['openai-codex', scanFastProvider], ['anthropic', scanAnthropicFastProvider]]);
+
 /**
  * Finds the models that accept fast mode, with one host's model runtime and logins.
  * Owns the discovery rules and provider requests; the host owns scheduling and saved results.
@@ -140,9 +157,9 @@ export function createFastModelDiscovery(runtime) {
       const registered = runtime.getProviders().map(item => item.id);
 
       if (provider !== undefined && !registered.includes(provider)) return [{ provider, status: 'error', message: 'Unknown provider ' + provider, context: '' }];
-      const providers = (provider === undefined ? registered : [provider]).filter(id => FAST_MODEL_PROVIDERS.has(id));
+      const providers = (provider === undefined ? registered : [provider]).filter(id => FAST_MODEL_SCANS.has(id));
 
-      return Promise.all(providers.map(id => scanFastProvider(runtime, id)));
+      return Promise.all(providers.map(id => FAST_MODEL_SCANS.get(id)(runtime, id)));
     },
   };
 }

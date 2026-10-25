@@ -1,5 +1,5 @@
 import { STATUS_KEY, type ModelRef } from "./types";
-import { isSupportedProvider } from "./payload";
+import { appliesFastMode } from "./payload";
 
 export type StatusText = "fast" | undefined;
 
@@ -36,7 +36,7 @@ export function getStatusText(
   enabled: boolean,
   model: ModelRef | undefined,
 ): StatusText {
-  return enabled && model && isSupportedProvider(model.provider) ? "fast" : undefined;
+  return enabled && model && appliesFastMode(model) ? "fast" : undefined;
 }
 
 export function getRightAlignedStatusLine(text: string, width: number): string {

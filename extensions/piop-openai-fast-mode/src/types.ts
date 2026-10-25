@@ -7,10 +7,8 @@ export const STATE_ENTRY = "piop-fast-mode-state";
 
 export const DEFAULT_SERVICE_TIER = "priority";
 
-export type SupportedProvider = "openai" | "openai-codex";
-
-/** Providers whose requests this extension knows how to change. This is not a check of model support. */
-export const SUPPORTED_PROVIDERS: readonly SupportedProvider[] = ["openai", "openai-codex"];
+/** OpenAI providers, whose requests get the priority service tier. Their own model lists decide model support. */
+export const OPENAI_PROVIDERS = ["openai", "openai-codex"] as const;
 
 export type FastModeConfig = {
   enabled: boolean;
