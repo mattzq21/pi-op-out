@@ -35,6 +35,7 @@
     "android:build": "bun run android:sync && cd clients/android && ./gradlew assembleDebug",
     "android:debug-connection": "bun scripts/mobile-debug-connection.mjs",
     "reinstall": "bun scripts/reinstall-mobile.mjs",
+    "reinstall:desktop": "bun scripts/reinstall-desktop.mjs",
     "reinstall:release": "bun scripts/reinstall-mobile.mjs --release",
     "test:mobile": "python3 scripts/test-run.py node --test test/mobile/*.test.mjs",
     "test:unit": "python3 scripts/test-run.py node scripts/test-unit.mjs test/unit/*.test.mjs",
