@@ -1,8 +1,0 @@
-{
-  "source": "https://platform.claude.com/docs/en/build-with-claude/fast-mode",
-  "models": [
-    { "id": "claude-opus-5-5" },
-    { "id": "claude-opus-5", "beta": "fast-mode-2026-02-01" },
-    { "id": "claude-opus-4-8", "beta": "fast-mode-2026-02-01" }
-  ]
-}

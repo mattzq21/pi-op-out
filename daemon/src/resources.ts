@@ -15,8 +15,7 @@ import sdkStorageRaw from '../resources/sdk-storage.mjs?raw';
 import agentCommands from '../resources/agent-commands.json?raw';
 import sdkStorageBundleRaw from '../resources/sdk-storage.bundle.mjs?raw';
 import providerSdk from '../resources/provider-sdk.mjs?raw';
-import fastModelDiscoveryRaw from '../resources/fast-model-discovery.mjs?raw';
-import anthropicFastModels from '../../extensions/piop-openai-fast-mode/src/anthropic-fast-models.json';
+import fastModelDiscovery from '../resources/fast-model-discovery.mjs?raw';
 import sessionBroker from '../resources/session-broker.ts?raw';
 import hooksExtendedIndex from '../resources/hooks-extended/index.ts?raw';
 import hooksExtendedInterface from '../resources/hooks-extended/interface.ts?raw';
@@ -103,8 +102,6 @@ function embedFileLock(source: string): string {
     .replace(/require\(['"][^'"]*file-lock\.cjs['"]\)/g, () => '(function () { const module = { exports: {} }; ' + fileLockSource + '; return module.exports; })()');
 }
 const sdkStorage = embedFileLock(sdkStorageRaw);
-/** The discovery runs as joined source text, so the Anthropic fast model list is defined in front of it. */
-const fastModelDiscovery = 'const ANTHROPIC_FAST_MODELS = ' + JSON.stringify(anthropicFastModels) + ';\n' + fastModelDiscoveryRaw;
 const agentPrompts = embedFileLock(agentPromptsRaw);
 const storagePublicationIo = embedFileLock(storagePublicationIoRaw);
 const storageReferences = embedFileLock(storageReferencesRaw);
