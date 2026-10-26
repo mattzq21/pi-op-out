@@ -116,7 +116,7 @@ export class NativeTransport {
   async restoreConnection(target: NativeConnectionTarget) {
     await this.disconnect();
     const hostId = target.hostId || "local";
-    if (this.hostId !== hostId || this.sessionPath !== target.sessionPath || this.cwd !== target.cwd || (target.sessionId !== undefined && this.sessionId !== target.sessionId)) forgetSession(this);
+    if (this.hostId !== hostId || this.sessionPath !== target.sessionPath || this.cwd !== target.cwd || (target.sessionId !== undefined && this.sessionId !== target.sessionId)) { forgetSession(this); this.emit({ type: "pinned_messages", pins: [] }); }
     this.cwd = target.cwd; this.sessionPath = target.sessionPath; this.sessionId = target.sessionId; this.hostId = hostId; this.daemonId = undefined;
     await this.connect();
   }
@@ -126,6 +126,8 @@ export class NativeTransport {
   }
   private readonly runtimeId = globalThis.crypto?.randomUUID?.() ?? `runtime-${Date.now()}-${Math.random()}`;
   private queueSnapshot: RpcEvent = { type: "queue_update", steering: [], followUp: [], pendingMessages: [] };
+  /** The last pinned_messages event of this chat. The daemon sends it each time the view attaches. */
+  private pinsSnapshot: RpcEvent = { type: "pinned_messages", pins: [] };
   private visible = false;
   private presenceCleanup?: () => void;
   setVisible(visible: boolean) { this.visible = visible; this.publishPresence(); }
@@ -353,6 +355,8 @@ export class NativeTransport {
     this.retainExtensionState(event);
 
     if (event.type === "queue_update") this.queueSnapshot = event;
+
+    if (event.type === "pinned_messages") this.pinsSnapshot = event;
 
     if (["queue_update", "extension_ui_request", "extension_ui_resolved"].includes(event.type)) {
       retainSessionResource(this, "transport", [this.queueSnapshot, ...this.retainedStatuses.values(), ...this.retainedWidgets.values(), ...this.retainedRequests.values()], () => {
@@ -582,7 +586,7 @@ export class NativeTransport {
   private resetChangedSession(command: RpcCommand, result: { cancelled?: boolean }) {
     if (["new_session", "switch_session", "fork", "fork_after", "copy_after", "clone"].includes(command.type) && !result.cancelled) { forgetSession(this); this.sessionId = undefined; }
   }
-  subscribe(listener: (event: RpcEvent) => void) { this.listeners.add(listener); listener(this.queueView()); this.retainedStatuses.forEach((event) => listener(event)); this.retainedWidgets.forEach((event) => listener(event)); this.retainedRequests.forEach((event) => listener(event));
+  subscribe(listener: (event: RpcEvent) => void) { this.listeners.add(listener); listener(this.queueView()); listener(this.pinsSnapshot); this.retainedStatuses.forEach((event) => listener(event)); this.retainedWidgets.forEach((event) => listener(event)); this.retainedRequests.forEach((event) => listener(event));
 
   return () => this.listeners.delete(listener); }
   listSessions() { return call("list_sessions", undefined, z.array(sessionSummarySchema)); }

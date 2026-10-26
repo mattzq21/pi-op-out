@@ -127,7 +127,7 @@ test('unused temporary chats are removed on disposal while used chats survive', 
   assert.equal(commands('remove_temporary_chat').length, 1);
 });
 
-test('subscriptions replay queue, statuses and unresolved dialogs, and filter other runtimes', async () => {
+test('subscriptions replay queue, pins, statuses and unresolved dialogs, and filter other runtimes', async () => {
   const client = transport();
   await client.connect();
   const runtimeId = commands('start_pi')[0].args.runtimeId;
@@ -135,21 +135,23 @@ test('subscriptions replay queue, statuses and unresolved dialogs, and filter ot
   const seen = [];
   const unsubscribe = client.subscribe(event => seen.push(event));
   assert.equal(seen[0].type, 'queue_update');
+  assert.deepEqual(seen[1], { type: 'pinned_messages', pins: [] });
   await emit('pi://event', { runtimeId: 'another', event: { type: 'agent_start' } });
-  assert.equal(seen.length, 1);
+  assert.equal(seen.length, 2);
   const status = { type: 'extension_ui_request', method: 'setStatus', statusKey: 'key', statusText: 'ready' };
   const dialog = { type: 'extension_ui_request', method: 'confirm', id: 'dialog' };
   const queue = { type: 'queue_update', steering: ['hello'], followUp: [] };
-  await send(status); await send(dialog); await send(queue);
+  const pins = { type: 'pinned_messages', pins: [{ entryId: 'entry', role: 'prompt', text: 'Pinned', timestamp: 1 }] };
+  await send(status); await send(dialog); await send(queue); await send(pins);
   const replay = [];
   const stopReplay = client.subscribe(event => replay.push(event));
-  assert.deepEqual(replay, [queue, status, dialog]);
+  assert.deepEqual(replay, [queue, pins, status, dialog]);
   stopReplay(); unsubscribe();
   await send({ ...status, statusText: '' });
   await send({ type: 'extension_ui_resolved', id: 'dialog' });
   const cleared = [];
   client.subscribe(event => cleared.push(event));
-  assert.deepEqual(cleared, [queue]);
+  assert.deepEqual(cleared, [queue, pins]);
   await send({ type: 'settings_pending', pending: true });
   assert.equal(client.hasPendingSettings(), true);
   await send({ type: 'disconnected' });

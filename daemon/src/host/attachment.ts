@@ -59,6 +59,7 @@ class Attachment {
 
   private attachReadonly(): any {
     this.host.readonlyMap.set(this.runtime, { id: this.identity, path: this.path });
+    this.host.pins.attached(this.runtime, this.identity);
     return { attached: true, owned: false };
   }
 
