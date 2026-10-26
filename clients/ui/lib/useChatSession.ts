@@ -41,7 +41,7 @@ function messagePositions(messages: ChatMessage[]) {
   };
 }
 
-export function useChatSession(transport: Accessor<Pick<NativeTransport, "command" | "subscribe"> & Partial<Pick<NativeTransport, "ownsConversation" | "isConnected" | "promptControls" | "currentHostId">>>, initialState: Accessor<AgentState> = () => emptyState, options: { poll?: boolean } = {}) {
+export function useChatSession(transport: Accessor<Pick<NativeTransport, "command" | "subscribe"> & Partial<Pick<NativeTransport, "ownsConversation" | "isConnected" | "canLoadModels" | "promptControls" | "currentHostId">>>, initialState: Accessor<AgentState> = () => emptyState, options: { poll?: boolean } = {}) {
   const runtime = createMemo(() => {
     const current = transport();
 
@@ -58,7 +58,7 @@ export function useChatSession(transport: Accessor<Pick<NativeTransport, "comman
   };
 }
 
-function createChatSession(transport: Accessor<Pick<NativeTransport, "command" | "subscribe"> & Partial<Pick<NativeTransport, "ownsConversation" | "isConnected" | "promptControls" | "currentHostId">>>, initialState: Accessor<AgentState>, options: { poll?: boolean }) {
+function createChatSession(transport: Accessor<Pick<NativeTransport, "command" | "subscribe"> & Partial<Pick<NativeTransport, "ownsConversation" | "isConnected" | "canLoadModels" | "promptControls" | "currentHostId">>>, initialState: Accessor<AgentState>, options: { poll?: boolean }) {
   const session = useSessionMemory(() => (transport()), () => (initialState()));
   const owner = createRef<ReturnType<typeof transport> | undefined>(transport());
   const loading = new AbortController();
@@ -156,6 +156,8 @@ function createChatSession(transport: Accessor<Pick<NativeTransport, "command" |
 
   onCleanup(registerModelSession(() => transport().currentHostId?.() ?? "local", async () => {
     capabilityKey.current = undefined;
+    // Without a running Pi there is nothing to ask. The chat loads its models when Pi starts.
+    if (transport().canLoadModels?.() === false) return;
     const request = ++capabilityRequest.current;
     setCapabilitiesLoading(true);
     const result = await load({ type: "get_available_models" }, z.object({ models: z.array(modelSchema) })).catch(reason => {

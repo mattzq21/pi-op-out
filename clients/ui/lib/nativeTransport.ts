@@ -88,6 +88,8 @@ export class NativeTransport {
   ownsConversation() { return this.owns; }
   /** True while Pi runs for this view. A detached view has no Pi to read from. */
   isConnected() { return this.running; }
+  /** True when commands have something to answer them: a running Pi or the draft runtime. */
+  canLoadModels() { return this.running || this.draftOnly(); }
   hasConfirmedOwnership() { return this.running && this.owns; }
   async takeOwnership() {
     if (this.readOnly) throw new Error("This view is read-only");
