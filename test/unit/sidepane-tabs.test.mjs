@@ -5,11 +5,14 @@ import { createSidepaneTabs } from '../../clients/ui/lib/sidepaneTabs.ts';
 
 const session = (id, extra = {}) => ({ id, hostId: 'local', name: id, path: `/sessions/${extra.created ?? '2026-01-01T00-00-00-000Z'}_${id}.jsonl`, project: 'p', cwd: '/p', preview: '', messageCount: 0, lastMessageAt: 0, apiCost: 0, ...extra });
 
-function tabs(initial, mainId = 'main') {
+/** Saved subagent tabs that outlive one tab state, as local storage does across app restarts. */
+const memoryStore = () => { let saved = []; return { load: () => saved, save: keys => { saved = keys; } }; };
+
+function tabs(initial, mainId = 'main', store = memoryStore()) {
   return createRoot(dispose => {
     const [sessions, setSessions] = createSignal(initial);
     const [main, setMain] = createSignal(mainId);
-    const tabs = createSidepaneTabs({ sessions, main: () => ({ hostId: 'local', sessionId: main() }), running: item => Boolean(item.isRunning) });
+    const tabs = createSidepaneTabs({ sessions, main: () => ({ hostId: 'local', sessionId: main() }), running: item => Boolean(item.isRunning), subagentTabs: store, onError: message => { throw new Error(message); } });
     return { tabs, setSessions, setMain, dispose, keys: () => tabs.tabs().map(tab => tab.key.slice('local:'.length)) };
   });
 }
@@ -42,6 +45,22 @@ test('a subagent gets a tab while it works and keeps it until closed; a new run 
   assert.deepEqual(view.keys(), []);
   view.setSessions([session('main'), { ...idle, isRunning: true }]);
   assert.deepEqual(view.keys(), ['helper']);
+});
+
+test('a finished subagent tab that the user did not close is still there after a restart', t => {
+  const store = memoryStore();
+  const idle = session('helper', { auxiliaryParentId: 'main', auxiliaryKind: 'subagent' });
+  const first = tabs([session('main'), { ...idle, isRunning: true }], 'main', store);
+  first.setSessions([session('main'), idle]);
+  assert.deepEqual(first.keys(), ['helper']);
+  first.dispose();
+  const restarted = tabs([session('main'), idle], 'main', store);
+  t.after(restarted.dispose);
+  assert.deepEqual(restarted.keys(), ['helper']);
+  restarted.tabs.forget('local:helper');
+  const again = tabs([session('main'), idle], 'main', store);
+  t.after(again.dispose);
+  assert.deepEqual(again.keys(), []);
 });
 
 test('a chat that a command opened has a tab before the session list has it, and is selected and shown', t => {

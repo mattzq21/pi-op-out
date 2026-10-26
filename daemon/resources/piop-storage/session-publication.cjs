@@ -424,41 +424,7 @@ function pendingReview(root, file, parentId, result) {
   } catch (error) { fs.closeSync(lease); throw error; }
 }
 
-function reviewVisibility(file, parentId) {
-  try {
-    const root = io.rootForTarget(file);
-
-    return io.locked(root, () => visibleReview(root, file, parentId));
-  } catch (_error) { return 'pending'; }
-}
-
-function visibleReview(root, file, parentId) {
-  const child = io.header(file);
-
-  if (!child) return null;
-  const parent = io.locate(root, parentId);
-
-  if (parent) {
-    const saved = stateRecords.merge(parent.path, JSON.parse(`[${io.read(parent.path).body.trim().split('\n').join(',')}]`));
-
-    if (saved.some(entry => Check(recordSchema, entry) && entry.type === 'custom' && entry.customType === 'piop-review' && entry.data?.sessionId === child.id && entry.data.parentSessionId === parentId)) return null;
-  }
-
-  if (!child.piopPublicationId) return 'legacy';
-  const journalFile = io.journalPath(root, child.piopPublicationId);
-
-  if (!database.publication(root, child.piopPublicationId)) return 'pending';
-  const journal = load(root, journalFile);
-
-  const lease = io.claim(journal.lock, journal.lockIdentity);
-
-  if (lease === null) return null;
-  fs.closeSync(lease);
-
-  return 'pending';
-}
-
-module.exports = { temporaryPaths, SessionPublicationError, publish, recover, retainedDependencies, pendingReviews, acknowledge, release, reviewVisibility };
+module.exports = { temporaryPaths, SessionPublicationError, publish, recover, retainedDependencies, pendingReviews, acknowledge, release };
 
 function verifyPreparation(journal) {
   if (journal.preparationComplete === false) throw new Error("Publication preparation is incomplete; retained without replaying its callback");

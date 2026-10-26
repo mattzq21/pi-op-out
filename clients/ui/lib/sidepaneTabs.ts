@@ -15,11 +15,30 @@ function tabLabel(session: SessionSummary) {
   return session.auxiliaryKind === "subagent" ? session.name.replace(/^Subagent: /, "") : session.name;
 }
 
+/** Where the subagent tabs that stay open are saved, as session keys. */
+export interface SubagentTabStore { load(): string[]; save(keys: string[]): void }
+
+const SUBAGENT_TABS_KEY = "piop-sidepane-subagent-tabs";
+
+/** The subagent tabs saved in this client's local storage. */
+export const localSubagentTabs: SubagentTabStore = {
+  load() {
+    const saved: unknown = JSON.parse(localStorage.getItem(SUBAGENT_TABS_KEY) ?? "[]");
+
+    return Array.isArray(saved) ? saved.filter((key): key is string => typeof key === "string") : [];
+  },
+  save(keys) { localStorage.setItem(SUBAGENT_TABS_KEY, JSON.stringify(keys)); },
+};
+
 interface Options {
   sessions: Accessor<SessionSummary[]>;
   /** The chat in the main pane. Its auxiliary chats are the tabs. */
   main: Accessor<{ hostId: string; sessionId?: string }>;
   running: (session: SessionSummary) => boolean;
+  /** The subagent tabs that stay open until the user closes them, kept across restarts. */
+  subagentTabs: SubagentTabStore;
+  /** Reports a subagent tab choice that could not be saved or read. */
+  onError: (message: string) => void;
 }
 
 /**
@@ -32,8 +51,14 @@ export function createSidepaneTabs(options: Options) {
   /** Auxiliary chats that a command opened before the session list has them. */
   const [opened, setOpened] = createSignal<SessionSummary[]>([]);
   const [chats, setChats] = createSignal<SessionSummary[]>([]);
-  const [pinned, setPinned] = createSignal<ReadonlySet<string>>(new Set());
-  const [dismissed, setDismissed] = createSignal<ReadonlySet<string>>(new Set());
+  const [pinned, setPinned] = createSignal<ReadonlySet<string>>((() => {
+    try { return new Set(options.subagentTabs.load()); }
+    catch (error) { options.onError(`Could not read the saved subagent tabs: ${error instanceof Error ? error.message : String(error)}`); return new Set<string>(); }
+  })());
+  createEffect(on(pinned, keys => {
+    try { options.subagentTabs.save([...keys]); }
+    catch (error) { options.onError(`Could not save the subagent tabs: ${error instanceof Error ? error.message : String(error)}`); }
+  }, { defer: true }));
   const openings = new Map<string, SidepaneOpening>();
   const change = (update: (current: Set<string>) => void) => (current: ReadonlySet<string>) => { const next = new Set(current); update(next); return next; };
 
@@ -69,13 +94,12 @@ export function createSidepaneTabs(options: Options) {
     const started = running.filter(key => !previous.includes(key));
 
     if (!started.length) return;
-    setDismissed(change(next => { for (const key of started) next.delete(key); }));
     setPinned(change(next => { for (const key of started) next.add(key); }));
   }));
 
   const tabs = createMemo<SidepaneTab[]>(() => {
     const main = options.main();
-    const auxiliary = auxiliaryTree().filter(session => session.auxiliaryKind !== "subagent" || pinned().has(sessionKey(session)) && !dismissed().has(sessionKey(session)));
+    const auxiliary = auxiliaryTree().filter(session => session.auxiliaryKind !== "subagent" || pinned().has(sessionKey(session)));
     const roots = chats().filter(session => session.id !== main.sessionId || (session.hostId ?? "local") !== main.hostId);
 
     return [...auxiliary.map(session => ({ kind: session.auxiliaryKind ?? "chat", session })), ...roots.map(session => ({ kind: "chat", session }))]
@@ -99,7 +123,7 @@ export function createSidepaneTabs(options: Options) {
 
     if (!options.sessions().some(item => sessionKey(item) === key)) setOpened(current => [...current.filter(item => sessionKey(item) !== key), session]);
 
-    if (session.auxiliaryKind === "subagent") { setPinned(change(next => next.add(key))); setDismissed(change(next => next.delete(key))); }
+    if (session.auxiliaryKind === "subagent") setPinned(change(next => next.add(key)));
     show(key);
   };
 
@@ -124,11 +148,10 @@ export function createSidepaneTabs(options: Options) {
     /** The first prompt of a tab that a command opened, until finishOpening. */
     opening: (key: string) => openings.get(key),
     finishOpening: (key: string) => { openings.delete(key); },
-    /** Removes a root chat tab or hides a subagent tab. Auxiliary chats of other kinds leave the tabs when they are archived. */
+    /** Removes a root chat tab or hides a subagent tab, also when the chat was archived or deleted. Auxiliary chats of other kinds leave the tabs when they are archived. */
     forget: (key: string) => {
       openings.delete(key);
       setChats(current => current.filter(session => sessionKey(session) !== key));
-      setDismissed(change(next => next.add(key)));
       setPinned(change(next => next.delete(key)));
     },
     /** Replaces a root chat tab after a fork in it moved the pane to another chat. */

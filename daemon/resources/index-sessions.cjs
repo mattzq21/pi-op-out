@@ -2,7 +2,6 @@ const stateRecords = require('./piop-storage/session-records.cjs');
 const fs = require('node:fs');
 const { Type } = require('typebox');
 const { Check } = require('typebox/value');
-const { reviewVisibility } = require('./piop-storage/session-publication.cjs');
 
 const parentSchema = Type.Object({ kind: Type.String({ minLength: 1 }), parentSessionId: Type.String(), sessionId: Type.Optional(Type.String()) });
 
@@ -34,8 +33,6 @@ class SessionIndex {
   /** The auxiliary parent entry copied from another session: kept only when the session has no own entry and was not forked. */
   inheritedAuxiliary;
   ownAuxiliary;
-  review = false;
-  reviewParentId;
   first = '';
   hasUserMessage = false;
   preview = '';
@@ -65,8 +62,6 @@ class SessionIndex {
     const unbound = data.sessionId === undefined && !this.header.parentSession;
 
     if (!own && !unbound) return;
-
-    if (data.kind === 'review') { this.review = true; this.reviewParentId = data.parentSessionId; }
 
     const auxiliary = { parentId: data.parentSessionId, kind: data.kind };
 
@@ -148,13 +143,6 @@ class SessionIndex {
     this.leaf = id;
   }
 
-  /** Every session is listed. A review whose parent does not link it yet is named so. */
-  visible(path) {
-    if (this.review && reviewVisibility(path, this.reviewParentId)) this.name = 'Review awaiting parent publication';
-
-    return true;
-  }
-
   summary(path) {
     if (this.header) this.name = stateRecords.sessionName(path, this.header.id);
     if (this.header) {
@@ -168,7 +156,7 @@ class SessionIndex {
       console.error(`${path}: ${notice}`);
       this.preview = notice;
     }
-    if (!this.header || !this.visible(path)) return;
+    if (!this.header) return;
 
     const forkSourceId = typeof this.header.piopForkSource?.sessionId === 'string' && this.header.piopForkSource.sessionId ? this.header.piopForkSource.sessionId : undefined;
 

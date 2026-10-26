@@ -63,11 +63,11 @@ function interruptedWork(branch) {
   return { message: promptText(prompt), entries: [promptCopy, error] };
 }
 
-/** Replaces every saved form of the mapped IDs and paths in value. */
+/** Replaces every saved form of the mapped IDs and paths in value. Longer values go first, so a path is replaced whole before the ID in its file name. */
 function rewrite(value, replacements) {
   let text = JSON.stringify(value);
 
-  for (const [from, to] of replacements) text = text.split(JSON.stringify(from).slice(1, -1)).join(JSON.stringify(to).slice(1, -1));
+  for (const [from, to] of [...replacements].sort(([left], [right]) => right.length - left.length)) text = text.split(JSON.stringify(from).slice(1, -1)).join(JSON.stringify(to).slice(1, -1));
 
   return JSON.parse(text);
 }
@@ -80,7 +80,7 @@ function activeChild(root, child) {
 
 /**
  * Plans copies of the auxiliary chats that source owns, for the fork that becomes target: the chats that are not archived and
- * were made at or before cutoff (an ISO time, or undefined for all), with all their own auxiliary chats that are not archived.
+ * were made at or before cutoff (an ISO time, or undefined for all), with their own auxiliary chats under the same two rules.
  * cwd moves copies whose folder is cwd.from to cwd.to. replacements maps the source and each copied chat to its copy, by ID and
  * by path; the fork's own history uses it for the entries that name a copied chat.
  */
@@ -107,7 +107,7 @@ function planAuxiliaryCopies({ root, source, target, cutoff, cwd }) {
       ids.set(child.sessionId, copyId);
       replacements.push([child.sessionId, copyId], [file, copyPath]);
       copies.push({ kind: child.kind, sourceId: child.sessionId, sourcePath: file, sessionId: copyId, sessionPath: copyPath, header, entries, timestamp });
-      queue.push({ id: child.sessionId, cutoff: undefined });
+      queue.push({ id: child.sessionId, cutoff: queue[index].cutoff });
     }
   }
 

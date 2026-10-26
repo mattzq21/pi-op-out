@@ -19,7 +19,7 @@ import { isConversationChanged } from "./lib/conversationChanged";
 import { initialWindowTarget,NativeTransport,openSessionWindow } from "./lib/nativeTransport";
 import { chatSubmission,waitForConversationReady } from "./lib/chatSubmission";
 import { queuedCommand } from "./plugins";
-import { createSidepaneTabs } from "./lib/sidepaneTabs";
+import { createSidepaneTabs, localSubagentTabs } from "./lib/sidepaneTabs";
 import { parseAuxiliaryOpening } from "./lib/auxiliaryChats";
 import { promptWasAccepted, submitDraftPrompt } from "./lib/draftSubmission";
 import { isMobile,listen } from "./lib/platform";
@@ -163,6 +163,8 @@ export function createAppConversations(preloadChat: () => void) {
     sessions,
     main: () => ({ hostId: activeHostId(), sessionId: chatSession().state.sessionId || undefined }),
     running: session => Boolean(session.isRunning) || runningSessions().has(`${session.hostId ?? "local"}:${session.id}`),
+    subagentTabs: localSubagentTabs,
+    onError: message => addNotice({ title: "Side pane", message }),
   });
   const hasSidePane = sidepane.shown;
   // The selected tab shows in the split chat pane, or in the read-only subagent pane.
@@ -297,6 +299,8 @@ export function createAppConversations(preloadChat: () => void) {
         const split = splitPane()?.session;
 
         if (split && removedSessionMatches(split.hostId, split.id, split.path, payload) && !archives.isPending(split)) sidepane.forget(`${split.hostId ?? "local"}:${split.id}`);
+
+        if (payload.sessionId) sidepane.forget(`${removedSessionHost(payload)}:${payload.sessionId}`);
 
         if (payload.sessionPath) runtimePool().removeSummary(removedSessionHost(payload), payload.sessionPath);
         setSessions((current) => current.filter((session) => !runtimePool().isRemoved(session) && !archives.isArchived(session)));
