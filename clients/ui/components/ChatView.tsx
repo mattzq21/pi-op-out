@@ -478,8 +478,8 @@ export function ChatView(props: Props & { transcriptActions?: JSXElement; follow
 
     return <div ref={element => { frame.current = element; }} class="pinned-messages-frame"><div ref={element => { bar.current = element; }} class="pinned-messages" role="list" aria-label="Pinned messages">
       <Key each={pins()} by={pin => pin.entryId}>{pin => <div class="pinned-message" classList={{ "pinned-prompt": pin().role === "prompt" }} role="listitem">
-        <button type="button" class="pinned-message-text" aria-label={(pin().role === "prompt" ? "Prompt: " : "Response: ") + (pin().text || "Attachment")} onClick={() => setPinReveal(pin().entryId)}>{pin().role === "prompt" ? <User size={13} aria-hidden="true" /> : <Bot size={13} aria-hidden="true" />}<span>{pin().text || <em>Attachment</em>}</span></button>
-        <button type="button" class="pinned-message-unpin" aria-label="Unpin message" data-tooltip="Unpin" onClick={() => void unpin(pin().entryId)}><PinOff size={13} /></button>
+        <button type="button" class="pinned-message-text" aria-label={(pin().role === "prompt" ? "Prompt: " : "Response: ") + (pin().text || "Attachment")} onClick={() => setPinReveal(pin().entryId)}>{pin().role === "prompt" ? <User size={15} aria-hidden="true" /> : <Bot size={15} aria-hidden="true" />}<span>{pin().text || <em>Attachment</em>}</span></button>
+        <button type="button" class="pinned-message-unpin" aria-label="Unpin message" data-tooltip="Unpin" onClick={() => void unpin(pin().entryId)}><PinOff size={15} /></button>
       </div>}</Key>
     </div></div>;
   };
