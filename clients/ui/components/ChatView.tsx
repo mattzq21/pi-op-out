@@ -16,7 +16,7 @@ import { isDaemonRefusal } from "../lib/commandRejected";
 import { createDependencyEffect, createRef, type JSXElement, type StateUpdate } from "../lib/solid";
 
 import { ArrowDown, ChevronRight, Folder, LoaderCircle, Monitor, X } from "lucide-solid";
-import { findReplaceableAbortedTurn } from "../lib/abortedTurn";
+import { findRetryableTurn } from "../lib/retryableTurn";
 import { hasVisibleText, textOf, thinkingOf } from "../lib/content";
 import { cacheHitStats, isContextInjection, isPromptMessage } from "../lib/messages";
 import { SubagentResults, subagentRuns } from "./SubagentResults";
@@ -591,7 +591,7 @@ function turnTiming(messages: ChatMessage[], userIndex: number, finalMessage?: C
   return formatWorkedFor(userIndex >= 0 ? messages[userIndex].timestamp : messages[0]?.timestamp, finalMessage?.completedAt ?? finalMessage?.timestamp);
 }
 
-function retryAttachments(retryTurn: ReturnType<typeof findReplaceableAbortedTurn>) {
+function retryAttachments(retryTurn: ReturnType<typeof findRetryableTurn>) {
   return Array.isArray(retryTurn?.user.content) ? retryTurn.user.content.filter((part) => part.type === "image") : [];
 }
 
@@ -663,7 +663,7 @@ function ConversationTurn(componentProps: ConversationTurnProps) {
 
 
   const workedFor = createMemo(() => (turnTiming(componentProps.messages, userIndex(), finalMessage())));
-  const retryTurn = createMemo(() => (componentProps.retryable ? findReplaceableAbortedTurn(componentProps.messages) : undefined));
+  const retryTurn = createMemo(() => (componentProps.retryable ? findRetryableTurn(componentProps.messages) : undefined));
   const retryPrompt = createMemo(() => (retryTurn()?.prompt));
   const retryImages = createMemo(() => (retryAttachments(retryTurn())));
 

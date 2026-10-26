@@ -351,7 +351,7 @@ describe("Conversation acceptance", () => {
     }
   });
 
-  it("shows a completed provider error without offering an aborted-response retry", async () => {
+  it("retries a completed provider error with the same prompt", async () => {
     await startTemporaryConversation({});
     await setBridgeValue("E2E calls", "[]");
     const history = {
@@ -362,14 +362,18 @@ describe("Conversation acceptance", () => {
       leafId: "error-assistant",
     };
 
-    await mockBackend({ ...connectedSessionResponses("error-session"), "pi_command:get_entries": history });
+    await mockBackend({ ...connectedSessionResponses("error-session"), "pi_command:get_entries": history, "pi_command:fork": {}, "pi_command:prompt": {} });
 
     try {
       await emitPiEvent({ type: "session_switched" });
       const failure = $(".message-failure");
-      await expect(failure).toHaveText("Response failed: Provider rejected the request");
-      await expect(failure.$('button=Retry')).not.toBeExisting();
+      await expect(failure).toHaveText("Response failed: Provider rejected the request", { containing: true });
+      await failure.$('button=Retry').click();
+      await browser.waitUntil(async () => (await backendCalls()).some(({ args }) => isUserPrompt(args.command)));
+      expect((await backendCalls()).filter(({ args }) => isUserPrompt(args.command)).map(({ args }) => args.command)).toMatchObject([{ type: "prompt", message: "Trigger the provider" }]);
     } finally {
+      await updateBackendResponse("pi_command:get_entries", { entries: [], leafId: null });
+      await emitPiEvent({ type: "session_switched" });
       await resetBackend();
     }
   });

@@ -9,10 +9,11 @@ function precedingUser(messages: ChatMessage[]) {
   }
 }
 
-export function findReplaceableAbortedTurn(messages: ChatMessage[]) {
+/** The last turn when its response was stopped or failed, with the prompt to send again. */
+export function findRetryableTurn(messages: ChatMessage[]) {
   const assistant = messages.at(-1);
 
-  if (assistant?.role !== "assistant" || assistant.stopReason !== "aborted") return undefined;
+  if (assistant?.role !== "assistant" || (assistant.stopReason !== "aborted" && assistant.stopReason !== "error")) return undefined;
   const user = precedingUser(messages);
 
   const prompt = user ? textOf(user.content).trim() : "";
