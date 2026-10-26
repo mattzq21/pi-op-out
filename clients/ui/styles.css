@@ -114,6 +114,8 @@ kbd { font: 11px "DM Sans"; border: 1px solid var(--line); padding: 2px 4px; bor
 .conversation-content { display: contents; }
 .response-navigator { position: absolute; top: 14px; bottom: 14px; left: 5px; z-index: 3; width: 24px; display: flex; flex-direction: column; align-items: center; overflow-y: auto; scrollbar-width: none; }
 .response-navigator::-webkit-scrollbar { display: none; }
+/* Only the markers take clicks, so the pin buttons beside responses stay clickable under the rail. */
+.response-navigator { pointer-events: none; } .response-navigator-marker { pointer-events: auto; }
 .response-navigator-marker { flex: 0 0 10px; width: 24px; min-height: 10px; display: grid; place-items: center; border: 0; padding: 0; background: transparent; cursor: pointer; }
 .response-navigator-marker:first-child { margin-top: auto; }
 .response-navigator-marker:last-child { margin-bottom: auto; }
@@ -631,8 +633,8 @@ textarea::placeholder { color: var(--faint); }
 /* A turn clips what it paints to its box. Its padding holds the pin buttons outside the messages. */
 .deferred-turn { margin-inline: -36px; padding-inline: 36px; }
 .message-pin { position: absolute; top: 4px; left: -34px; width: 26px; height: 26px; display: grid; place-items: center; padding: 0; border: 0; border-radius: 6px; background: transparent; color: var(--faint); cursor: pointer; opacity: 0; transition: opacity .15s; }
-.user-message .message-pin { top: 6px; }
-.assistant-message .message-pin { left: auto; right: -34px; top: 2px; }
+.user-message .message-pin { left: auto; right: -34px; top: 6px; }
+.assistant-message .message-pin { top: 2px; }
 .message:focus-within .message-pin, .message-pin:focus-visible { opacity: 1; }
 @media (hover: hover) { .message:hover .message-pin { opacity: 1; } }
 @media (pointer: coarse) { .message-pin { opacity: .6; } }
@@ -648,7 +650,7 @@ textarea::placeholder { color: var(--faint); }
 .pinned-message-text:hover, .pinned-message-unpin:hover { color: var(--ink); background: var(--dark-control-hover); }
 @media (max-width: 700px) {
   .deferred-turn { margin-inline: -20px; padding-inline: 20px; }
-  .message-pin { left: -22px; width: 20px; }
-  .assistant-message .message-pin { right: -20px; }
+  .message-pin { left: -20px; width: 20px; }
+  .user-message .message-pin { left: auto; right: -20px; }
   .pinned-messages { width: calc(100% - 16px); }
 }
