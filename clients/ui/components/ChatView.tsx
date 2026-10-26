@@ -36,7 +36,7 @@ import { MessageFileContext } from "../lib/messageFiles";
 
 interface Props { refreshError?: string; capabilityErrors?: string[]; capabilitiesLoading?: boolean; onRetryCapabilities?: () => void; transport?: NativeTransport; agentHostLabel?: string; state: AgentState; messages: ChatMessage[]; debug?: DebugView; agents?: AgentProfile[]; activeAgent?: string; agentLocked?: boolean; agentSaved?: boolean; agentUnavailable?: boolean; modelAliases?: Record<string, string>; models: Model[]; commands: SlashCommand[]; thinkingLevels: string[]; widgets: string[]; statuses: Record<string, string>; projectCwd?: string; readOnly?: boolean; controlsDisabled?: boolean; draft?: string; onDraftChange?: (value: StateUpdate<string>) => void; focusRequest?: number; onActivate?: () => void; uploads?: ComposerUpload[]; onUploadsChange?: (uploads: StateUpdate<ComposerUpload[]>) => void; onSend: (text: string, behavior?: "steer" | "followUp", images?: ImageAttachment[], submission?: DraftSubmissionHandle) => void | boolean | Promise<void | boolean>; onChangePending?: (id: string, behavior: import("../types").PendingMessageAction) => Promise<void>; onAbort: () => void | Promise<void>; onOpenTerminal?: () => void; hosts?: Array<{ id: string; name: string; disabled?: boolean }>; onChooseHost?: (hostId: string) => void; onOpenProject: () => void; onClearProject?: () => void; onBranch: (message: ChatMessage) => void; onFork?: (message: ChatMessage) => void | Promise<void>; onForkAndForget?: (message: ChatMessage) => void | Promise<void>; forkSourceName?: string; onOpenForkSource?: (source: ForkSource) => void; revealEntryId?: string; onEntryRevealed?: () => void; onAgent?: (name: string) => void; onModel: (model: Model) => void; onToggleFastMode: () => void | Promise<void>; onThinking: (level: string) => void; }
 
-const knownFastMode = new WeakMap<NativeTransport, string>();
+const knownFastMode = new WeakMap<NativeTransport, { status: string; model: string | undefined }>();
 
 function canRetry(props: Props, ownsConversation: boolean) {
   return ownsConversation && !props.readOnly && !props.controlsDisabled && !props.state.isStreaming;
@@ -234,16 +234,19 @@ export function ChatView(props: Props & { transcriptActions?: JSXElement; follow
   const onFork: NonNullable<Props["onFork"]> = message => actions.current.onFork?.(message);
   const branchAction = createMemo(() => (branchingAvailable(props.state) ? onBranch : undefined));
   const onForkAndForget: NonNullable<Props["onForkAndForget"]> = (message) => actions.current.onForkAndForget?.(message);
-  /** The last fast mode status of this chat. A chat switch clears the statuses until Pi reports them again, and the indicator keeps its last state meanwhile. */
+  /** The last fast mode status of this chat. A chat switch clears the statuses until Pi reports them again, and the indicator keeps its last state meanwhile. The kept state is for one model only: a model without fast mode has no status. */
   const fastModeStatus = createMemo(() => {
     const status = props.statuses["pi-desktop-fast-mode"];
     const transport = props.transport;
 
     if (!transport) return status;
+    const model = props.state.model ? `${props.state.model.provider}/${props.state.model.id}` : undefined;
 
-    if (status !== undefined) knownFastMode.set(transport, status);
+    if (status !== undefined) knownFastMode.set(transport, { status, model });
 
-    return status ?? knownFastMode.get(transport);
+    const known = knownFastMode.get(transport);
+
+    return status ?? (known?.model === model ? known?.status : undefined);
   });
   /** True for a short time after the controls become unavailable, so a chat switch that reconnects at once does not dim them. */
   const [settling, setSettling] = createSignal((() => Boolean(props.controlsDisabled))());
