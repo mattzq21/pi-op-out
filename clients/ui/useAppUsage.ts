@@ -4,16 +4,30 @@ import type { NativeTransport } from "./lib/nativeTransport";
 import { createDependencyEffect } from "./lib/solid";
 import type { CodexUsage, OpencodeGoUsage } from "./types";
 
+/** A usage value and its error, loaded by one transport call. The error shows only once the usage has loaded or failed visibly before. */
+function usageSource<T>(name: string, normalize: (value: unknown) => T | undefined) {
+  const [usage, setUsage] = createSignal<T>();
+  const [error, setError] = createSignal<string>();
+  const load = (fetch: () => Promise<unknown>, isCurrent: () => boolean) => {
+    void fetch().then(value => {
+      if (isCurrent()) batch(() => { setUsage(() => normalize(value)); setError(undefined); });
+    }).catch(reason => {
+      if (isCurrent() && (untrack(usage) || untrack(error))) batch(() => { setUsage(undefined); setError(`${name} usage unavailable: ${reason instanceof Error ? reason.message : String(reason)}`); });
+    });
+  };
+
+  return { usage, error, load };
+}
+
 export function useAppUsage(transport: Accessor<NativeTransport>) {
-  const [codexUsage, setCodexUsage] = createSignal<CodexUsage>();
-  const [opencodeGoUsage, setOpencodeGoUsage] = createSignal<OpencodeGoUsage>();
+  const codex = usageSource<CodexUsage>("Codex", normalizeCodexUsage);
+  const anthropic = usageSource<CodexUsage>("Anthropic", normalizeCodexUsage);
+  const opencodeGo = usageSource<OpencodeGoUsage>("OpenCode Go", normalizeOpencodeGoUsage);
   const [usageClock, setUsageClock] = createSignal(0);
-  const [codexUsageError, setCodexUsageError] = createSignal<string>();
-  const [opencodeGoUsageError, setOpencodeGoUsageError] = createSignal<string>();
 
   const opencodeGoBadge = createMemo(() => { usageClock();
 
-  return goUsageBadge(opencodeGoUsage()); });
+  return goUsageBadge(opencodeGo.usage()); });
 
   createDependencyEffect(() => {
     const capturedTransport = transport();
@@ -22,16 +36,10 @@ export function useAppUsage(transport: Accessor<NativeTransport>) {
 
     const load = () => {
       const current = ++request;
-      void capturedTransport.loadCodexUsage().then(usage => {
-        if (!cancelled && current === request) batch(() => { setCodexUsage(normalizeCodexUsage(usage)); setCodexUsageError(undefined); });
-      }).catch(reason => {
-        if (!cancelled && current === request && (untrack(codexUsage) || untrack(codexUsageError))) batch(() => { setCodexUsage(undefined); setCodexUsageError(`Codex usage unavailable: ${reason instanceof Error ? reason.message : String(reason)}`); });
-      });
-      void capturedTransport.loadOpencodeGoUsage().then(usage => {
-        if (!cancelled && current === request) batch(() => { setOpencodeGoUsage(normalizeOpencodeGoUsage(usage)); setOpencodeGoUsageError(undefined); });
-      }).catch(reason => {
-        if (!cancelled && current === request && (untrack(opencodeGoUsage) || untrack(opencodeGoUsageError))) batch(() => { setOpencodeGoUsage(undefined); setOpencodeGoUsageError(`OpenCode Go usage unavailable: ${reason instanceof Error ? reason.message : String(reason)}`); });
-      });
+      const isCurrent = () => !cancelled && current === request;
+      codex.load(() => capturedTransport.loadCodexUsage(), isCurrent);
+      anthropic.load(() => capturedTransport.loadAnthropicUsage(), isCurrent);
+      opencodeGo.load(() => capturedTransport.loadOpencodeGoUsage(), isCurrent);
     };
 
     load();
@@ -44,7 +52,7 @@ export function useAppUsage(transport: Accessor<NativeTransport>) {
       window.removeEventListener("focus", load);
     };
   }, () => [transport()]);
-  useUsageClock(() => (codexUsage()), () => (opencodeGoUsage()), () => (setUsageClock));
+  useUsageClock(() => [codex.usage()?.resetAt, anthropic.usage()?.resetAt, opencodeGo.usage()?.rolling.resetAt, opencodeGo.usage()?.weekly.resetAt, opencodeGo.usage()?.monthly.resetAt], () => (setUsageClock));
 
-  return { codexUsage, opencodeGoBadge, usageClock, codexUsageError, opencodeGoUsageError };
+  return { codexUsage: codex.usage, anthropicUsage: anthropic.usage, opencodeGoBadge, usageClock, codexUsageError: codex.error, anthropicUsageError: anthropic.error, opencodeGoUsageError: opencodeGo.error };
 }

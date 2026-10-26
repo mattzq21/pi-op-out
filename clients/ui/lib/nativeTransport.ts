@@ -597,6 +597,7 @@ export class NativeTransport {
   saveHostSettings(settings: AppSettings, agentsChanged = false) { return this.settings.saveHost(settings, agentsChanged); }
   loadCodexUsage() { return call("codex_usage", undefined, codexUsageSchema); }
   loadOpencodeGoUsage() { return call("opencode_go_usage", undefined, opencodeGoUsageSchema); }
+  loadAnthropicUsage() { return call("anthropic_usage", undefined, codexUsageSchema); }
   saveSettings(settings: AppSettings, reconnect = true, agentHostId?: string, scope: "all" | "client" | "daemon" = "all", baseline?: AppSettings) {
     return this.settings.save(settings, reconnect, agentHostId, scope, baseline);
   }

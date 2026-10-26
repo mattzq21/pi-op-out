@@ -5,6 +5,7 @@ import { createDependencyEffect, type Dispatch, type StateUpdate } from "./lib/s
 import { NativeTransport } from "./lib/nativeTransport";
 import { appendTerminalOutput as retainTerminalOutput } from "./lib/terminalOutput";
 import { isTemporaryChatCwd } from "./lib/sessionGroups";
+import { ProviderLogo, type UsageProvider } from "./components/ProviderLogo";
 import type { AgentConfig, CodexUsage, DefinedAgentsCapability, ExtensionUiRequest, OpencodeGoUsage, SessionSummary } from "./types";
 
 const staleExtensionContext = "This extension ctx is stale after session replacement or reload.";
@@ -91,12 +92,16 @@ const normalizeOpencodeGoUsage = z.object({
 
 const normalizeCodexUsage = usageWindowSchema.optional().catch(undefined).parse;
 
-function LimitBadge(componentProps: { label: string; prefix?: string; go?: boolean; detail?: string; remainingPercent: number; resetAt?: number; clock?: number }) {
+function LimitBadge(componentProps: { label: string; provider: UsageProvider; detail?: string; remainingPercent: number; resetAt?: number; clock?: number }) {
   const resetLabel = () => { componentProps.clock;
 
   return componentProps.resetAt ? formatCodexReset(componentProps.resetAt) : ""; };
 
-  return <span class={componentProps.go ? "codex-usage opencode-go-usage" : "codex-usage"} role="status" aria-label={`${componentProps.label} usage remaining: ${componentProps.remainingPercent}%${componentProps.resetAt ? `, resets ${resetLabel()}` : ""}${componentProps.detail ? ` (${(componentProps.detail)})` : ""}`} data-tooltip={`${componentProps.label} usage remaining`}><span>{componentProps.prefix}{componentProps.remainingPercent}%<span class="codex-usage-left"> left</span></span>{componentProps.resetAt && <span class="codex-usage-reset"><span class="codex-usage-separator"> · </span>{resetLabel()}</span>}</span>;
+  return <span class="codex-usage" role="status" aria-label={`${componentProps.label} usage remaining: ${componentProps.remainingPercent}%${componentProps.resetAt ? `, resets ${resetLabel()}` : ""}${componentProps.detail ? ` (${(componentProps.detail)})` : ""}`} data-tooltip={`${componentProps.label} usage remaining`}><ProviderLogo provider={componentProps.provider} /><span>{componentProps.remainingPercent}%<span class="codex-usage-left"> left</span></span>{componentProps.resetAt && <span class="codex-usage-reset"><span class="codex-usage-separator"> · </span>{resetLabel()}</span>}</span>;
+}
+
+function UsageError(componentProps: { provider: UsageProvider; label: string; message: string }) {
+  return <span class="codex-usage" role="alert" title={componentProps.message} aria-label={componentProps.message}><ProviderLogo provider={componentProps.provider} /><span>{componentProps.label} usage unavailable</span></span>;
 }
 
 function goUsageBadge(usage?: OpencodeGoUsage) { return usage === undefined ? undefined : { window: usage.rolling, detail: usageWindowsDescription(usage) }; }
@@ -115,18 +120,19 @@ function AppLoading(componentProps: { error?: string }) {
   </main>;
 }
 
-function useUsageClock(codexUsage: Accessor<CodexUsage | undefined>, opencodeGoUsage: Accessor<OpencodeGoUsage | undefined>, setUsageClock: Accessor<Dispatch<StateUpdate<number>>>) {
-  createDependencyEffect(() => { const capturedCodexUsage = codexUsage(); const capturedOpencodeGoUsage = opencodeGoUsage(); const capturedSetUsageClock = setUsageClock();
+/** Ticks the clock each minute while any shown reset time exists, so the reset labels count down. */
+function useUsageClock(resetTimes: Accessor<Array<number | undefined>>, setUsageClock: Accessor<Dispatch<StateUpdate<number>>>) {
+  createDependencyEffect(() => { const capturedSetUsageClock = setUsageClock();
 
-    if (!capturedCodexUsage?.resetAt && !capturedOpencodeGoUsage?.rolling.resetAt && !capturedOpencodeGoUsage?.weekly.resetAt && !capturedOpencodeGoUsage?.monthly.resetAt) return;
+    if (!resetTimes().some(Boolean)) return;
     const timer = window.setInterval(() => capturedSetUsageClock((value) => value + 1), 60_000);
 
     return () => window.clearInterval(timer);
-  }, () => [codexUsage()?.resetAt, opencodeGoUsage()?.rolling.resetAt, opencodeGoUsage()?.weekly.resetAt, opencodeGoUsage()?.monthly.resetAt]);
+  }, resetTimes);
 }
 
 function definedAgentSettings(capability?: DefinedAgentsCapability): AgentConfig | undefined { return capability ? { agents: capability.config.agents } : undefined; }
 
-export { appendTerminalOutputs,AppLoading,definedAgentSettings,dialogOwnerName,formatCodexReset,goUsageBadge,initialTerminals,LimitBadge,MAX_TERMINALS,MCP_STATUS_KEY,normalizeCodexUsage,normalizeOpencodeGoUsage,PROMPT_CONTEXT_STATUS_KEY,selectedProjectCwd,splitConversationKey,staleExtensionContext,terminalConversationKey,usageWindowsDescription,useUsageClock,windowInstanceId };
+export { appendTerminalOutputs,AppLoading,definedAgentSettings,dialogOwnerName,formatCodexReset,goUsageBadge,initialTerminals,LimitBadge,UsageError,MAX_TERMINALS,MCP_STATUS_KEY,normalizeCodexUsage,normalizeOpencodeGoUsage,PROMPT_CONTEXT_STATUS_KEY,selectedProjectCwd,splitConversationKey,staleExtensionContext,terminalConversationKey,usageWindowsDescription,useUsageClock,windowInstanceId };
 
 export type { OwnedExtensionDialog,QueuedTerminalOutput,RenameTarget,SessionTerminals,SplitPaneState,TerminalTabState,TerminalTarget };

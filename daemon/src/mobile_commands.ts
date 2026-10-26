@@ -22,6 +22,7 @@ import { detachPiWith, ensureRuntimeOwner, openProjectDirectory, piCommand, piPr
 import { closeTerminal, resizeTerminal, startTerminalForOwner, writeTerminal } from './terminals';
 import { codexUsage } from './provider_codex';
 import { opencodeGoUsage } from './provider_opencode';
+import { anthropicUsage } from './provider_anthropic';
 import type { App } from './app';
 import { detachOwner } from './lifecycle';
 
@@ -219,4 +220,5 @@ const COMMANDS: Record<string, Handler> = {
   save_app_settings: (app, _owner, args) => saveAppSettings(app, parseAppSettings(argument(args, 'settings', 'any')), argument(args, 'agentHostId', 'string?')),
   codex_usage: () => codexUsage(),
   opencode_go_usage: () => opencodeGoUsage(),
+  anthropic_usage: () => anthropicUsage(),
 };

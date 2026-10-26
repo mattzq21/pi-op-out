@@ -37,7 +37,8 @@ button { cursor: pointer; }
 .icon-button:hover { background: #ffffff0b; color: white; }
 .icon-rail .icon-button { color: #aaa69d; width: 36px; height: 36px; }
 .icon-rail .icon-button:hover, .icon-rail .icon-button.active { color: white; background: #ffffff15; }
-.rail-bottom { width: 100%; margin-top: auto; padding-top: 12px; background: #121211; display: flex; flex-direction: column; gap: 2px; align-items: center; justify-content: center; }.codex-usage { color: #aaa69d; font: 500 11px "DM Sans"; white-space: nowrap; }
+.rail-bottom { width: 100%; margin-top: auto; padding-top: 12px; background: #121211; display: flex; flex-direction: column; gap: 2px; align-items: center; justify-content: center; }.codex-usage { color: #aaa69d; font: 500 11px "DM Sans"; white-space: nowrap; display: flex; align-items: center; gap: 5px; }
+.provider-logo { width: 11px; height: 11px; flex: none; color: #e8e6e1; }
 .icon-rail.compact .codex-usage { display: flex; flex-direction: column; align-items: center; gap: 2px; }
 .icon-rail.compact .codex-usage-left { display: none; }
 .icon-rail.compact .codex-usage-separator { display: none; }
