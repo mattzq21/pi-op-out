@@ -9,6 +9,7 @@ import { PluginMessageContext } from "../plugins/messages";
 import { chatSubmission, trackChatSubmission } from "../lib/chatSubmission";
 import { draftUploadsFromImages, stageDraftSubmission, type DraftSubmissionHandle, type DraftSubmissionPayload } from "../lib/draftSubmission";
 import { Key } from "@solid-primitives/keyed";
+import { appendToDraft, sessionLink, type SessionDragDetail } from "../lib/sessionDrop";
 import { createComputed, createMemo, createSignal, Index, onCleanup, Show, type Accessor } from "solid-js";
 import type { NativeTransport } from "../lib/nativeTransport";
 import { isDaemonRefusal } from "../lib/commandRejected";
@@ -95,6 +96,18 @@ export function ChatView(props: Props & { transcriptActions?: JSXElement; follow
   const followLatest = createRef(true);
   /** True when the view is far enough above the latest message to offer the jump button. */
   const [awayFromLatest, setAwayFromLatest] = createSignal(false);
+  /** A chat from the sidebar is dragged over this view. */
+  const [sessionDragOver, setSessionDragOver] = createSignal(false);
+  const acceptsSessionDrop = () => !props.readOnly && Boolean(props.onDraftChange);
+
+  /** A chat dropped here adds a link to it at the end of the draft. */
+  const sessionDrag = (event: CustomEvent<SessionDragDetail>) => {
+    const detail = event.detail;
+
+    if (detail.phase !== "drop") { setSessionDragOver(detail.phase === "enter"); return; }
+    setSessionDragOver(false);
+    props.onDraftChange?.(draft => appendToDraft(draft, sessionLink(detail.session)));
+  };
   const measureDistance = () => { const element = messagesRef.current;
 
     setAwayFromLatest(Boolean(element) && element!.scrollHeight - element!.scrollTop - element!.clientHeight > 120); };
@@ -367,7 +380,7 @@ export function ChatView(props: Props & { transcriptActions?: JSXElement; follow
     </div>);
   };
 
-  const ConversationShell = () => <main class={`chat-shell${ownsConversation() ? "" : " conversation-unowned"}`} oncapture:focus={() => props.onActivate?.()} oncapture:pointerdown={() => props.onActivate?.()}>
+  const ConversationShell = () => <main class={`chat-shell${ownsConversation() ? "" : " conversation-unowned"}`} classList={{ "session-drop-over": sessionDragOver() }} data-session-drop-zone={acceptsSessionDrop() ? "" : undefined} on:piop-session-drag={sessionDrag} oncapture:focus={() => props.onActivate?.()} oncapture:pointerdown={() => props.onActivate?.()}>
     {props.transcriptActions}
     <ConversationContent />
     <TranscriptPlugins messages={() => messagesRef.current} source={() => ({ hostId: props.transport?.currentHostId() ?? "local", sessionId: props.state.sessionId, title: props.state.sessionName || "Current conversation", messageCount: props.state.messageCount, messages: [...messages()], follow: props.followConversation })} />

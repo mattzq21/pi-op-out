@@ -10,6 +10,7 @@ import { isMobile } from "../lib/platform";
 import { DIRLESS_KEY, isTemporaryChatCwd, type SessionGroup } from "../lib/sessionGroups";
 import { groupLayoutToken,isFixedGroup,RECENT_KEY,sessionKey,sessionLayoutToken,type DraggedSession,type SidebarState } from "../lib/sidebarState";
 import type { SessionSummary } from "../types";
+import { SESSION_DROP_ZONE, sendSessionDrag } from "../lib/sessionDrop";
 import { GroupProjectPicker, type GroupProject } from "./GroupProjectPicker";
 import type { NativeTransport } from "../lib/nativeTransport";
 import type { AppSettings } from "../types";
@@ -243,8 +244,20 @@ export function SessionPanel(props: Props) {
     mouseDragRef.current = mouseDrag;
     let holdTimer: number | undefined;
     let touchMoved = false;
+    /** The chat view under a dragged chat. */
+    let chatZone: HTMLElement | undefined;
+
+    const changeChatZone = (next: HTMLElement | undefined) => {
+      if (next === chatZone) return;
+
+      if (chatZone) sendSessionDrag(chatZone, { phase: "leave" });
+      chatZone = next;
+
+      if (next) sendSessionDrag(next, { phase: "enter" });
+    };
 
     const clear = () => {
+      changeChatZone(undefined);
       removeMouseListenersRef.current();
       window.clearTimeout(holdTimer);
       touchHoldRef.current = false;
@@ -307,6 +320,12 @@ export function SessionPanel(props: Props) {
 
     const updateDropTarget = (x: number, y: number, current: MouseDrag) => {
       const hit = document.elementFromPoint(x, y);
+      const zone = "session" in current && isSavedSession(current.session) ? hit?.closest<HTMLElement>("[" + SESSION_DROP_ZONE + "]") ?? undefined : undefined;
+      changeChatZone(zone);
+
+      if (zone) { mouseDropTargetRef.current = undefined; setDropTarget(undefined);
+
+      return; }
       let nextTarget: DropTarget | undefined;
       const sidebarDropZone = hit?.closest<HTMLElement>("[data-sidebar-drop-zone]");
       const sessionElement = hit?.closest<HTMLElement>(".session-item[data-session-key]");
@@ -400,7 +419,11 @@ export function SessionPanel(props: Props) {
         window.setTimeout(() => { if (suppressClickRef.current === sourceToken) suppressClickRef.current = undefined; }, 0);
         const target = mouseDropTargetRef.current;
 
-        if (target) {
+        if (chatZone && "session" in current) {
+          const zone = chatZone;
+          chatZone = undefined;
+          sendSessionDrag(zone, { phase: "drop", session: current.session });
+        } else if (target) {
           if ("session" in current) {
             moveSession(current, target.projectKey, target.sessionKey || undefined, target.edge);
 
