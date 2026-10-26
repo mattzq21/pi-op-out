@@ -74,6 +74,7 @@ export const wireMessageSchema = z.looseObject({
   deferredWork: z.object({ reasoningOnly: z.boolean(), usage: usageSchema.optional(), firstUsage: usageSchema.optional() }).optional(),
   deferredToolPayload: z.string().optional(), toolPayloadLoaded: z.boolean().optional(),
   toolPayloadVersion: z.number().optional(), loadedToolPayloadVersion: z.number().optional(),
+  toolImage: z.boolean().optional(),
   deliveryBehavior: z.enum(["steer", "followUp"]).optional(),
 });
 

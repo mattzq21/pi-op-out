@@ -5,6 +5,7 @@ function utf16Length(value: string): number { return value.length; }
 export function clientPayload(value: any): any {
   if (Array.isArray(value?.entries) && isObject(value) && Object.hasOwn(value, 'leafId')) return clientHistory(value);
   if (value?.role === 'toolResult') {
+    if (hasImage(value.content)) value.toolImage = true;
     value.content = '';
     value.deferredToolPayload = value.toolCallId ?? null;
     remove(value, ['details', 'toolInput', 'structuredContent', 'nestedCalls']);
@@ -18,6 +19,8 @@ export function clientPayload(value: any): any {
 
 function remove(value: any, keys: string[]): void { if (isObject(value)) for (const key of keys) delete value[key]; }
 
+function hasImage(content: unknown): boolean { return Array.isArray(content) && content.some(part => kind(part) === 'image'); }
+
 function clientToolPayload(value: any): any {
   const name = kind(value);
   if (name === 'toolCall') {
@@ -30,6 +33,7 @@ function clientToolPayload(value: any): any {
 
 function deferToolResult(value: any): void {
   remove(value, ['args']);
+  if (kind(value) === 'tool_execution_end' && hasImage(value.result?.content)) value.toolImage = true;
   for (const field of ['result', 'partialResult']) {
     if (value[field] !== undefined && value[field] !== null) value[field] = { content: '', deferredToolPayload: value.toolCallId ?? null };
   }

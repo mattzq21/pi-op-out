@@ -18,7 +18,7 @@ import { createDependencyEffect, createRef, type JSXElement, type StateUpdate } 
 import { ArrowDown, ChevronRight, Folder, LoaderCircle, Monitor, X } from "lucide-solid";
 import { resolveMessageEntry } from "../lib/resolveMessageEntry";
 import { hasVisibleText, textOf, thinkingOf } from "../lib/content";
-import { cacheHitStats, isContextInjection, isPromptMessage } from "../lib/messages";
+import { cacheHitStats, isContextInjection, isPromptMessage, toolTitle } from "../lib/messages";
 import { SubagentResults, subagentRuns } from "./SubagentResults";
 import type { AgentProfile, AgentState, ChatMessage, ComposerUpload, ForkSource, ImageAttachment, Model, PromptContextInfo, SlashCommand } from "../types";
 import { branchingAvailable, canBranchFrom } from "../lib/branching";
@@ -574,7 +574,7 @@ function invisibleAssistant(message: ChatMessage) {
 }
 
 function repeatedCompletedTool(message: ChatMessage, previous: ChatMessage) {
-  return message.role === "tool" && message.toolName !== "spawn_subagents" && (message.toolStatus ?? "done") === "done" && previous.role === "tool" && (previous.toolStatus ?? "done") === "done" && (previous.toolName || "tool") === (message.toolName || "tool");
+  return message.role === "tool" && message.toolName !== "spawn_subagents" && (message.toolStatus ?? "done") === "done" && previous.role === "tool" && (previous.toolStatus ?? "done") === "done" && toolTitle(previous) === toolTitle(message);
 }
 
 function finalResponseIndex(messages: ChatMessage[]) {

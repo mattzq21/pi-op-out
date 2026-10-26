@@ -25,7 +25,7 @@ export const chatSessionEventSchema = z.looseObject({
   method: z.string().optional(), statusKey: z.string().optional(), statusText: z.string().optional().catch(undefined),
   entry: entrySchema.optional(), message: wireMessageSchema.optional(), assistantMessageEvent: assistantEventSchema.optional(),
   parentToolCallId: z.string().optional(), toolCallId: z.string().optional(), toolName: z.string().optional(),
-  isError: z.boolean().optional(), pendingMessages: pendingMessagesSchema,
+  isError: z.boolean().optional(), toolImage: z.boolean().optional(), pendingMessages: pendingMessagesSchema,
   steering: z.array(z.unknown()).optional(), followUp: z.array(z.unknown()).optional(),
   aborted: z.boolean().optional(), errorMessage: z.string().optional(),
   attempt: z.number().optional(), level: z.string().optional().catch(undefined),
