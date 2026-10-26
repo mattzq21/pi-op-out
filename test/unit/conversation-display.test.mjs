@@ -85,7 +85,7 @@ const twoTurns = () => [
 test('streaming leaves the earlier answer settled and shows work on the latest prompt', async t => {
   const messages = twoTurns();
   delete messages[3].stopReason;
-  const view = await conversation(t, { readOnly: false, messages, state: { model: null, thinkingLevel: 'off', isStreaming: true, messageCount: 4 } });
+  const view = await conversation(t, { debug: allDebug, readOnly: false, messages, state: { model: null, thinkingLevel: 'off', isStreaming: true, messageCount: 4 } });
   assert.ok(view.container.textContent.includes('Earlier question'));
   assert.ok(view.container.textContent.includes('Earlier answer'));
   assert.ok(view.container.textContent.includes('Next question'));
