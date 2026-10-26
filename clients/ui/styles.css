@@ -183,7 +183,7 @@ kbd { font: 11px "DM Sans"; border: 1px solid var(--line); padding: 2px 4px; bor
 .message-body > p:has(+ .message-actions) { margin-bottom: 0; }
 .markdown-content { display: contents; }
 :is(.reasoning-text, .work-group-content .message-body, .active-work-content .message-body) > .markdown-content > :is(p, h1, h2, h3, h4, h5, h6, ul, ol, blockquote) { margin-top: 0; margin-bottom: 3px; }
-.message-actions { margin-top: 0; height: 25px; display: flex; align-items: center; gap: 1px; opacity: .55; transition: .15s; }.message:hover .message-actions { opacity: 1; }.message-actions .icon-button { width: 27px; height: 25px; }
+.message-actions { margin-top: 0; height: 25px; display: flex; align-items: center; gap: 1px; opacity: .55; transition: .15s; }@media (hover: hover) { .message:hover .message-actions { opacity: 1; } }.message-actions .icon-button { width: 27px; height: 25px; }
 .agent-delivery .message-body { background: color-mix(in srgb, var(--accent) 18%, #1d1c19); border-color: color-mix(in srgb, var(--accent) 45%, #1d1c19); }
 .goal-prompt .message-body { padding: 6px 10px; background: color-mix(in srgb, var(--accent) 10%, #1d1c19); border-color: color-mix(in srgb, var(--accent) 35%, #1d1c19); }
 .goal-prompt-toggle { display: flex; align-items: center; gap: 6px; padding: 0; border: 0; background: none; color: var(--accent); font: inherit; font-size: 13px; font-weight: 500; cursor: pointer; }
@@ -193,18 +193,17 @@ kbd { font: 11px "DM Sans"; border: 1px solid var(--line); padding: 2px 4px; bor
 button.agent-delivery-source { cursor: pointer; }
 button.agent-delivery-source:hover { color: var(--accent-soft); text-decoration: underline; }
 .user-message .message-actions { margin-top: 4px; opacity: 0; pointer-events: none; }
-.user-message:hover .message-actions, .user-message:focus-within .message-actions { opacity: 1; pointer-events: auto; }
+.user-message:focus-within .message-actions { opacity: 1; pointer-events: auto; }
+@media (hover: hover) { .user-message:hover .message-actions { opacity: 1; pointer-events: auto; } }
 .assistant-message .message-actions { opacity: 0; pointer-events: none; }
-.assistant-message:hover .message-actions, .assistant-message:focus-within .message-actions { opacity: 1; pointer-events: auto; }
+.assistant-message:focus-within .message-actions { opacity: 1; pointer-events: auto; }
+@media (hover: hover) { .assistant-message:hover .message-actions { opacity: 1; pointer-events: auto; } }
 /* The actions under the last response stay visible. */
 .latest-turn .assistant-message .message-actions { opacity: 1; pointer-events: auto; }
-@media (hover: none), (pointer: coarse) { .assistant-message .message-actions { opacity: 1; pointer-events: auto; } }
-@media (hover: none) { .user-message .message-actions { opacity: 1; pointer-events: auto; } }
 .message-time { margin-left: 6px; color: var(--muted); font: 500 11px "DM Sans", sans-serif; white-space: nowrap; opacity: 0; transition: opacity .15s; cursor: default; }
 .assistant-message .message-time { margin-left: 6px; font-weight: 400; }
-.message:hover .message-time, .message:focus-within .message-time { opacity: 1; }
-@media (hover: none) { .message-time { opacity: 1; } }
-@media (pointer: coarse) { .message-time { opacity: 1; } }
+.message:focus-within .message-time { opacity: 1; }
+@media (hover: hover) { .message:hover .message-time { opacity: 1; } }
 .cache-hit-rate { margin-left: 5px; color: var(--muted); font: 10px "DM Sans"; }
 /* Digits have no descenders, so their ink sits below the middle of the line. This lifts it to the middle of the icons. */
 .cache-rate-value { padding-bottom: 1px; }.cache-hit-rate.low { color: #d77865; }

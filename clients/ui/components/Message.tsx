@@ -249,7 +249,7 @@ export function Message(componentProps: Props) {
     const imageContext = createMemo(() => imageContextParts(textOf(componentProps.message.content), images().length > 0));
     const parts = createMemo(() => userMessageParts(imageContext().text));
 
-    return <><article class={`message user-message${componentProps.message.deliveryBehavior === "steer" ? " steering-message" : ""}`}>
+    return <><article tabIndex={-1} class={`message user-message${componentProps.message.deliveryBehavior === "steer" ? " steering-message" : ""}`}>
       {images().length > 0 && <div class="user-message-images"><Index each={images()}>{part => <ZoomableImage src={`data:${part().mimeType};base64,${part().data}`} alt="Sent attachment" />}</Index></div>}
       {(parts().text || parts().skills.length > 0 || parts().command) && <div class="message-body">
       <Show when={parts().command}>{command => <span class="skill-reference command-reference">/{command()}</span>}</Show>{<Key each={parts().skills} by={(skill) => skill}>{(skill, _index) => <span class="skill-reference" >${skill()}</span>}</Key>}{parts().text && (parts().literalSkill ? <span class="literal-skill-content">{parts().text}</span> : <Markdown>{parts().text}</Markdown>)}
@@ -318,7 +318,7 @@ export function Message(componentProps: Props) {
       </div>);
     };
 
-    return (<article class={`message assistant-message ${thinking() ? "reasoning-message" : ""}`} data-response-id={componentProps.message.id} aria-label={metadata().responseLabel}>
+    return (<article tabIndex={-1} class={`message assistant-message ${thinking() ? "reasoning-message" : ""}`} data-response-id={componentProps.message.id} aria-label={metadata().responseLabel}>
       {renderMessageBody()}
     </article>);
   };
