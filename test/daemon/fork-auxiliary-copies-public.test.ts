@@ -80,6 +80,44 @@ for (const mode of ['copy_after', 'fork_after'] as const) test.concurrent(`${mod
   expect(copies.filter((copy: any) => left.includes(copy.id))).toEqual([]);
 }, 120000);
 
+test.concurrent('a working subagent of an idle side chat gets its task again from the fork, and its answer reaches the copied side chat', async () => {
+  let nestedRequests = 0;
+  const stalled = Promise.withResolvers<{ text: string }>();
+  agents.scripts.set('Plan the nested retry', messages => {
+    const last = text(messages.at(-1));
+    if (last === 'Delegate nested') return { tool: 'spawn_subagents', arguments: { tasks: [{ nickname: 'Worker', task: 'Slow nested task' }] } };
+    if (messages.at(-1)?.role === 'tool') return { text: 'Delegated.' };
+    if (last.includes('Nested result.')) return { text: 'Got the nested result.' };
+    return { text: last === 'Next nested step' ? 'Second nested answer.' : 'Nested main answer.' };
+  });
+  agents.scripts.set('Slow nested task', () => ++nestedRequests === 1 ? stalled.promise : { text: 'Nested result.' });
+  const chat = await agents.rootChat({ visible: true });
+  await chat.command({ type: 'prompt', message: 'Plan the nested retry' });
+  await chat.until(history => text(history.at(-1)) === 'Nested main answer.');
+  const side = await sideChat(chat, 'prompt', '/btw');
+  await agents.daemon.invoke('start_pi', { runtimeId: 'nested-retry-side', clientId: 'laptop', cwd: side.cwd, sessionPath: side.sessionPath });
+  const sideCommand = (command: any) => agents.daemon.invoke('pi_command', { runtimeId: 'nested-retry-side', command });
+  await sideCommand({ type: 'prompt', message: 'Delegate nested' });
+  for (let tries = 0; nestedRequests < 1 && tries < 300; tries++) await Bun.sleep(100);
+  for (let tries = 0; tries < 300 && !(await sideCommand({ type: 'get_entries' })).entries.some((entry: any) => entry.type === 'message' && text(entry.message) === 'Delegated.'); tries++) await Bun.sleep(100);
+  await agents.daemon.invoke('stop_pi', { runtimeId: 'nested-retry-side' }).catch(() => undefined);
+  await chat.command({ type: 'prompt', message: 'Next nested step' });
+  await chat.until(history => text(history.at(-1)) === 'Second nested answer.');
+
+  try {
+    const forked = await chat.command({ type: 'copy_after', entryId: (await answer(chat, 'Second nested answer.')).id });
+    const sideCopy = (await sessions()).find((session: any) => session.auxiliaryParentId === forked.state.sessionId && session.auxiliaryKind === 'btw');
+    expect((await sessions()).find((session: any) => session.auxiliaryParentId === sideCopy.id)).toMatchObject({ auxiliaryKind: 'subagent', name: 'Subagent: Worker' });
+    // Only the fork runs; the copied side chat stays closed while its subagent works again.
+    for (let tries = 0; nestedRequests < 2 && tries < 300; tries++) await Bun.sleep(100);
+    expect(nestedRequests).toBe(2);
+    await agents.daemon.invoke('start_pi', { runtimeId: 'nested-retry-copy', clientId: 'laptop', cwd: sideCopy.cwd, sessionPath: sideCopy.path });
+    const copyResult = async () => (await agents.daemon.invoke('pi_command', { runtimeId: 'nested-retry-copy', command: { type: 'get_entries' } })).entries.some((entry: any) => entry.customType === 'piop-subagent-result' && JSON.stringify(entry).includes('Nested result.'));
+    for (let tries = 0; !(await copyResult()) && tries < 300; tries++) await Bun.sleep(100);
+    expect(await copyResult()).toBe(true);
+  } finally { stalled.resolve({ text: 'Late nested answer.' }); }
+}, 120000);
+
 test.concurrent('a side chat that was working when its main chat was forked gets a fork error, and its copy retries the prompt', async () => {
   let sideRequests = 0;
   const stalled = Promise.withResolvers<{ text: string }>();

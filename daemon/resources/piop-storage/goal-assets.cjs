@@ -46,9 +46,11 @@ function acquire(root) {
 
   try {
     if (!fs.fstatSync(descriptor).isFile()) throw new Error('Invalid goal asset lock');
-    const result = lockSync(descriptor, false, true, 5000);
-
-    if (!result) throw new Error('Goal assets are in use by another storage operation. Retry after it finishes.');
+    // Other storage steps hold the lock briefly, so a busy lock is tried again for a few seconds before it is reported.
+    for (const deadline = Date.now() + 5000; !lockSync(descriptor, false, true, 5000);) {
+      if (Date.now() >= deadline) throw new Error('Goal assets are in use by another storage operation. Retry after it finishes.');
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 25);
+    }
 
     return () => fs.closeSync(descriptor);
   } catch (error) { fs.closeSync(descriptor); throw error; }

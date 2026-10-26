@@ -89,8 +89,8 @@ export function createSidepaneTabs(options: Options) {
     return tree.sort(createdOrder);
   });
 
-  // A subagent that starts working gets its tab back.
-  createEffect(on(() => auxiliaryTree().filter(session => session.auxiliaryKind === "subagent" && options.running(session)).map(sessionKey), (running, previous = []) => {
+  // A subagent that starts working gets its tab back, also while another main chat is shown.
+  createEffect(on(() => options.sessions().filter(session => session.auxiliaryKind === "subagent" && options.running(session)).map(sessionKey), (running, previous = []) => {
     const started = running.filter(key => !previous.includes(key));
 
     if (!started.length) return;

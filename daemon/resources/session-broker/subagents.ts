@@ -401,13 +401,10 @@ export function registerSubagents(pi: ExtensionAPI) {
       const run = structuredClone(saved);
       run.runId ??= `${run.toolCallId}:${run.startedAt}`;
 
-      if (run.submission === "prepared" && !run.forkRetry) {
+      if (run.submission === "prepared") {
         run.status = run.cancelRequested ? "cancelled" : "failed"; run.output = "The task was not submitted before supervision was interrupted";
         finishRun(pi, ctx, run); resultsDelivery.publish(ctx, run); continue;
       }
-
-      const retry = run.submission === "prepared";
-      delete run.forkRetry;
 
       const childController = new AbortController();
       let started = () => {};
@@ -421,7 +418,7 @@ export function registerSubagents(pi: ExtensionAPI) {
 
       const signal = AbortSignal.any([controller.signal, childController.signal]);
 
-      const completion = observeSubagent(run, { pi, ctx, signal }, lifecycle, retry)
+      const completion = observeSubagent(run, { pi, ctx, signal }, lifecycle, false)
         .then(() => {
           lifecycle.closing = true; started();
 

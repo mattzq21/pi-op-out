@@ -118,10 +118,10 @@ function planAuxiliaryCopies({ root, source, target, cutoff, cwd }) {
     const header = { ...copy.header, id: copy.sessionId, timestamp: copy.timestamp, cwd: folder };
     const body = [header, ...rewrite(copy.entries.slice(1), replacements), ...work?.entries ?? []];
 
-    return { kind: copy.kind, sourceId: copy.sourceId, sessionId: copy.sessionId, sessionPath: copy.sessionPath, sourcePath: copy.sourcePath, cwd: folder, entries: body, retry: work?.message };
+    return { kind: copy.kind, sourceId: copy.sourceId, sessionId: copy.sessionId, sessionPath: copy.sessionPath, sourcePath: copy.sourcePath, cwd: folder, entries: body, retry: work?.message, deliveryId: work ? randomUUID() : undefined };
   });
 
-  return { copies: planned, replacements, retries: planned.filter(copy => copy.retry !== undefined && copy.kind !== 'subagent').map(copy => ({ sessionId: copy.sessionId, message: copy.retry })) };
+  return { copies: planned, replacements, retries: planned.filter(copy => copy.retry !== undefined).map(copy => ({ sessionId: copy.sessionId, message: copy.retry, deliveryId: copy.deliveryId })) };
 }
 
 /** Copies in fork entries that name a copied chat: they then name the copy, and the fork as its owner. */
@@ -141,7 +141,8 @@ function resultNotificationId(run) {
 
 /**
  * Saves the subagent runs of each copied parent for its copy, so the copy owns the copied subagents and gets their results.
- * A subagent that was working is marked for a fork retry: its new parent sends its task again when it starts.
+ * The fork sends a working subagent its task again (see FORK_RETRIES). Its run then waits for the answer to that delivery,
+ * which the new parent reads whenever it runs, whether or not the parent itself is working.
  */
 function copySubagentRuns(root, plan, parents) {
   root = fs.realpathSync(root);
@@ -163,7 +164,7 @@ function copySubagentRuns(root, plan, parents) {
         const run = rewrite(saved, plan.replacements);
 
         if (run.status === 'running' && child.retry !== undefined) {
-          Object.assign(run, { submission: 'prepared', forkRetry: true, deliveryIds: [], observation: undefined, taskNotificationId: undefined });
+          Object.assign(run, { submission: 'accepted', deliveryIds: [child.deliveryId], taskNotificationId: child.deliveryId, observation: undefined });
         }
 
         delete run.resultNotificationId;

@@ -15,8 +15,6 @@ export const runSchema = Schema.Object({
   submission: Schema.Optional(Schema.Union([Schema.Literal("prepared"), Schema.Literal("submitted"), Schema.Literal("accepted")])),
   deliveryIds: Schema.Optional(Schema.Array(Schema.String())), taskNotificationId: Schema.Optional(Schema.String()), taskStartedAt: Schema.Optional(Schema.Number()), activeMs: Schema.Optional(Schema.Number({ minimum: 0 })),
   resultNotificationId: Schema.Optional(Schema.String()), resultDelivery: Schema.Optional(Schema.Union([Schema.Literal("pending"), Schema.Literal("delivered")])),
-  /** A copy of a working subagent in a fork: the new parent sends its task again when it starts. */
-  forkRetry: Schema.Optional(Schema.Boolean()),
 });
 
 export type SubagentRun = Static<typeof runSchema>;

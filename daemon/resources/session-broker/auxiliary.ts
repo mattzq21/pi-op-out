@@ -48,9 +48,12 @@ export function openAuxiliaryChat(ctx: ExtensionContext, opening: AuxiliaryChatO
 
 const FORK_RETRIES = "piop-fork-retries";
 
-const retriesSchema = Schema.Object({ pending: Schema.Array(Schema.Object({ sessionId: Schema.String(), message: Schema.String() })) });
+const retriesSchema = Schema.Object({ pending: Schema.Array(Schema.Object({ sessionId: Schema.String(), message: Schema.String(), deliveryId: Schema.String() })) });
 
-/** A fork sends the last prompt again to each copied side chat or review that was working when the fork was made. */
+/**
+ * A fork sends the last prompt again to each copied chat that was working when the fork was made, also to subagents of its
+ * side chats, which have no other chat that starts them. A copied subagent's run waits for this delivery ID.
+ */
 async function sendForkRetries(pi: ExtensionAPI, ctx: ExtensionContext) {
   const entry = ctx.sessionManager.getEntries().findLast(item => item.type === "custom" && item.customType === FORK_RETRIES);
 
@@ -59,7 +62,7 @@ async function sendForkRetries(pi: ExtensionAPI, ctx: ExtensionContext) {
   pi.appendEntry(FORK_RETRIES, { pending: [] });
 
   for (const retry of pending) {
-    try { await sendSessionMessage(ctx, retry.sessionId, currentHost(), retry.message, true); }
+    try { await sendSessionMessage(ctx, retry.sessionId, currentHost(), retry.message, true, undefined, retry.deliveryId); }
     catch (error) { ctx.ui.notify(`A copied chat could not retry its last prompt: ${error instanceof Error ? error.message : String(error)}`, "error"); }
   }
 }
