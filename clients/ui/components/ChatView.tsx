@@ -464,8 +464,21 @@ export function ChatView(props: Props & { transcriptActions?: JSXElement; follow
     createDependencyEffect(() => { const element = bar.current; const area = frame.current; const root = messagesRef.current;
 
       if (!element || !area || !root || typeof ResizeObserver === "undefined") return;
+      /** The height that the messages leave for the bar now. A change scrolls the messages by the same amount in the same frame, so the conversation stays still. */
+      let reserved = 0;
+      const reserve = (height: number) => {
+        if (height === reserved) return;
+        const change = height - reserved;
+        reserved = height;
+        // A smaller space can lower the scroll position on its own, so the new position comes from the one before the change.
+        const before = root.scrollTop;
+        if (height) root.style.setProperty("--pins-height", `${height}px`);
+        else root.style.removeProperty("--pins-height");
+        root.scrollTop = before + change;
+        lastScrollTop.current = root.scrollTop;
+      };
       const update = () => {
-        root.style.setProperty("--pins-height", `${element.offsetHeight}px`);
+        reserve(element.offsetHeight);
         area.style.left = `${root.clientLeft}px`;
         area.style.right = `${root.offsetWidth - root.clientWidth - root.clientLeft}px`;
       };
@@ -474,7 +487,7 @@ export function ChatView(props: Props & { transcriptActions?: JSXElement; follow
       observer.observe(element);
       observer.observe(root);
 
-      return () => { observer.disconnect(); root.style.removeProperty("--pins-height"); };
+      return () => { observer.disconnect(); reserve(0); };
     }, () => []);
 
     return <div ref={element => { frame.current = element; }} class="pinned-messages-frame"><div ref={element => { bar.current = element; }} class="pinned-messages" role="list" aria-label="Pinned messages">
