@@ -129,6 +129,17 @@ export function createSidepaneTabs(options: Options) {
 
   return {
     tabs, selected, open, setOpen, shown, openAuxiliary,
+    /** True when session or one of its own auxiliary chats works. */
+    workingTree: (session: SessionSummary) => {
+      const host = session.hostId ?? "local";
+      const tree = [session.id];
+
+      for (let index = 0; index < tree.length; index++) for (const child of options.sessions()) {
+        if ((child.hostId ?? "local") === host && child.auxiliaryParentId === tree[index] && !tree.includes(child.id)) tree.push(child.id);
+      }
+
+      return options.sessions().some(item => (item.hostId ?? "local") === host && tree.includes(item.id) && options.running(item)) || options.running(session);
+    },
     /** True when a chat in the tabs works. */
     working: createMemo(() => tabs().some(tab => tab.running)),
     select: setSelectedKey,

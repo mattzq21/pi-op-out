@@ -63,6 +63,16 @@ test('a finished subagent tab that the user did not close is still there after a
   assert.deepEqual(again.keys(), []);
 });
 
+test('a side chat counts as working while one of its own subagents works', t => {
+  const btw = session('btw', { auxiliaryParentId: 'main', auxiliaryKind: 'btw' });
+  const helper = session('helper', { auxiliaryParentId: 'btw', auxiliaryKind: 'subagent' });
+  const view = tabs([session('main'), btw, helper]);
+  t.after(view.dispose);
+  assert.equal(view.tabs.workingTree(btw), false);
+  view.setSessions([session('main'), btw, { ...helper, isRunning: true }]);
+  assert.equal(view.tabs.workingTree(btw), true);
+});
+
 test('a chat that a command opened has a tab before the session list has it, and is selected and shown', t => {
   const view = tabs([session('main')]);
   t.after(view.dispose);

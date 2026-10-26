@@ -102,8 +102,9 @@ function planAuxiliaryCopies({ root, source, target, cutoff, cwd }) {
 
       if (queue[index].cutoff !== undefined && Date.parse(header.timestamp) > Date.parse(queue[index].cutoff)) continue;
       const copyId = database.reserve(root);
-      const timestamp = new Date().toISOString();
-      const copyPath = path.join(path.dirname(target.path), timestamp.replace(/[:.]/g, '-') + '_' + copyId + '.jsonl');
+      // A copy keeps the creation time of the chat it copies, so a later fork of the fork selects it by the same rule and the tabs keep their order.
+      const timestamp = header.timestamp;
+      const copyPath = path.join(path.dirname(target.path), String(timestamp).replace(/[:.]/g, '-') + '_' + copyId + '.jsonl');
       ids.set(child.sessionId, copyId);
       replacements.push([child.sessionId, copyId], [file, copyPath]);
       copies.push({ kind: child.kind, sourceId: child.sessionId, sourcePath: file, sessionId: copyId, sessionPath: copyPath, header, entries, timestamp });

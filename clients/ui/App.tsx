@@ -66,11 +66,14 @@ export default function App(props: { suppressConnectionNotices?: boolean } = {})
 
   const pluginPane = createPluginWorkspace(conversationSource(activeHostId, chatSession));
 
-  /** X on a tab: a btw or review chat is archived, after a confirmation while its agent works. Other tabs only close. */
+  /**
+   * X on a tab: a btw or review chat is archived with its own auxiliary chats, such as its subagents, after a confirmation
+   * while any of them works. Other tabs only close.
+   */
   const closeTab = async (tab: SidepaneTab) => {
     if (tab.kind === "subagent" || tab.kind === "chat") { sidepane.forget(tab.key); return; }
 
-    if (tab.running && !window.confirm(`“${tab.label}” is working. Stop it and archive it?`)) return;
+    if (sidepane.workingTree(tab.session) && !window.confirm(`“${tab.label}” or one of its subagents is working. Stop them and archive it?`)) return;
     await archiveSession(tab.session);
   };
 

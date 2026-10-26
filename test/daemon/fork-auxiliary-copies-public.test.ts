@@ -69,6 +69,11 @@ for (const mode of ['copy_after', 'fork_after'] as const) test.concurrent(`${mod
   const link = (await chat.command({ type: 'get_entries' })).entries.find((entry: any) => entry.customType === 'piop-review-link');
   expect(link.details).toMatchObject({ sessionId: reviewCopy.id, parentSessionId: forkId });
 
+  // A fork of the fork at the same answer copies the copies, which keep their creation time.
+  const again = await chat.command({ type: mode, entryId: forkPoint.id });
+  const second = (await sessions()).filter((session: any) => session.auxiliaryParentId === again.state.sessionId);
+  expect(second.map((session: any) => session.auxiliaryKind).sort()).toEqual(['btw', 'review', 'subagent']);
+
   // Archiving the fork archives its copies, which needs each copy linked to the fork's saved transcript.
   await agents.daemon.invoke('archive_session', { hostId: 'local', sessionPath: listed.find((session: any) => session.id === forkId).path, terminalIds: [], clientId: 'fork-test' });
   const left = (await sessions()).map((session: any) => session.id);
