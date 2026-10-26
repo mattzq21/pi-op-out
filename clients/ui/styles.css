@@ -651,7 +651,7 @@ textarea::placeholder { color: var(--faint); }
 .pinned-message-text > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .pinned-message-text > svg { flex: none; color: var(--faint); }
 /* A pinned prompt looks like the prompt bubble; a pinned response is plain, like the response. */
-.pinned-prompt .pinned-message-text { border-color: #393732; background: #24231f; font-weight: 500; }
+.pinned-prompt .pinned-message-text { border-color: #2a2925; background: #1f1e1b; font-weight: 500; }
 .pinned-messages { gap: 2px; }
 .pinned-message-text em { color: var(--muted); }
 .pinned-message-unpin { flex: none; width: 24px; height: 24px; display: grid; place-items: center; padding: 0; border: 0; border-radius: 6px; background: transparent; color: var(--faint); cursor: pointer; }
