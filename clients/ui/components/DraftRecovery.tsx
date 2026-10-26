@@ -32,10 +32,16 @@ export function DraftRecovery(props: Props) {
   return <Show when={recoveries().length}>
     <aside aria-label="Interrupted messages" style={{ padding: "12px", "max-height": "35vh", overflow: "auto" }}>
       <Show when={error()}><div role="alert">{error()}</div></Show>
-      <For each={recoveries()}>{submission => <details>
-        <summary>{submission.status === "uncertain" ? "Submission may have been accepted" : "Interrupted submission"} · {submission.rawText.slice(0, 60) || "Attachments"}</summary>
+      <For each={recoveries()}>{submission => <Show when={submission.status === "preparing"} fallback={<details>
+        <summary>Confirming the message · {submission.rawText.slice(0, 60) || "Attachments"}</summary>
         <p>{submission.destination.hostId} · {submission.destination.cwd ?? "Temporary chat"} · {new Date(submission.createdAt).toLocaleString()}</p>
-        <p>{submission.status === "uncertain" ? "Check the conversation before restoring and sending again. This submission will not resend automatically." : "Restore this input to continue sending it."}</p>
+        <p>Piop is asking the host whether it accepted this message.</p>
+        <Show when={props.drafts.confirmationError(submission.id)}>{failure => <p role="alert">{failure()}</p>}</Show>
+        <div><button disabled={busy()} onClick={() => props.onSelect(destinationSession(submission.destination))}>Open conversation</button></div>
+      </details>}><details>
+        <summary>Interrupted submission · {submission.rawText.slice(0, 60) || "Attachments"}</summary>
+        <p>{submission.destination.hostId} · {submission.destination.cwd ?? "Temporary chat"} · {new Date(submission.createdAt).toLocaleString()}</p>
+        <p>Restore this input to continue sending it.</p>
         <Show when={submission.error}><p>{submission.error}</p></Show>
         <pre style={{ "white-space": "pre-wrap" }}>{submission.rawText}</pre>
         <For each={submission.uploads}>{upload => <span>{upload.name} ({Math.ceil(upload.byteSize / 1024)} KB) </span>}</For>
@@ -52,7 +58,7 @@ export function DraftRecovery(props: Props) {
             <Show when={prepared().sessionSaved}><button disabled={busy()} onClick={() => props.onSelect({ ...destinationSession(submission.destination), id: prepared().sessionId, path: prepared().sessionPath ?? "", cwd: prepared().cwd, isDraft: false, name: "Prepared goal", preview: prepared().objective })}>Open prepared conversation</button></Show>
           </>}</Show>
         </div></Show>
-      </details>}</For>
+      </details></Show>}</For>
     </aside>
   </Show>;
 }

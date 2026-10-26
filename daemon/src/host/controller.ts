@@ -25,6 +25,7 @@ import { parseRuntimeEvent, type RuntimeEvent, type RuntimeEventSource } from '.
 import { Session, type SessionHost } from './session';
 import { sessionCommand } from './session_commands';
 import { recoverQueuedInput, watchRetention } from './storage_upkeep';
+import { SubmissionLedger } from './submissions';
 import { ToolPayloadCache } from './tool_payload';
 import type { HostServices } from './services';
 
@@ -54,8 +55,11 @@ export class Host implements SessionHost {
   readonly orchestration = new Orchestration(this);
   private mutations = new MutationGuards(this);
   private timers: NodeJS.Timeout[] = [];
+  readonly submissions: SubmissionLedger;
 
-  private constructor(readonly home: string, readonly storage: string, readonly services: HostServices, private sink: (packet: any) => void) {}
+  private constructor(readonly home: string, readonly storage: string, readonly services: HostServices, private sink: (packet: any) => void) {
+    this.submissions = new SubmissionLedger(join(home, storage), line => this.output({ type: 'diagnostic', line }));
+  }
 
   static async create(home: string, storage: string, services: HostServices, sink: (packet: any) => void): Promise<Host> {
     const settings = Settings.readSettingsAt(join(home, storage, 'settings.json'));
@@ -64,6 +68,7 @@ export class Host implements SessionHost {
     host.agentDefinitions = definitions;
     host.ownershipValue = await ConversationOwnership.create(home, storage, { revoke: (id, intent) => host.releaseConversation(id, intent) });
     const output = (packet: any) => host.output(packet);
+    try { host.submissions.recover(); } catch (error) { output({ type: 'diagnostic', line: 'Could not decide the messages left from the last run: ' + errorText(error) }); }
     recoverQueuedInput(host.storageRoot(), host.ownership(), output);
     services.bind(host);
     await services.initialize();
@@ -382,6 +387,7 @@ export class Host implements SessionHost {
       case 'check_daemon_idle': case 'prepare_daemon_restart': return this.restartRequest(packet);
       case 'agent_definitions': if (flag(packet, 'reload')) await this.reloadAgentDefinitions(); return structuredClone(this.agentDefinitions);
       case 'conversation_owner': return this.ownership().owns(text(packet, 'sessionId'), text(packet, 'clientId'), flag(packet, 'allowReleased'));
+      case 'submission_outcome': return this.submissions.outcome(text(packet, 'submissionId'));
       case 'conversation_mutation': return this.mutations.begin(packet);
       case 'conversation_mutation_end': return this.mutations.end(packet);
       case 'provider_auth': case 'provider_auth_cancel_owner': case 'plugin_status': return this.services.handle(packet);

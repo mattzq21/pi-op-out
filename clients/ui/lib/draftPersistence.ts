@@ -30,7 +30,7 @@ const destinationSchema = z.object({ key: z.string(), hostId: z.string(), cwd: z
 const uploadsSchema = z.array(z.object({ id: z.string(), name: z.string(), kind: z.enum(["image", "text"]), byteSize: z.number(), text: z.string().optional(), image: z.object({ type: z.literal("image"), data: z.string(), mimeType: z.string(), name: z.string().optional() }).optional() }));
 const snapshotSchema = z.object({
   records: z.array(z.object({ key: z.string(), destination: destinationSchema.optional(), text: z.string(), uploads: uploadsSchema, updatedAt: z.number(), retrySubmission: z.object({ id: z.string(), fingerprint: z.string() }).optional() })),
-  submissions: z.array(z.object({ id: z.string(), destination: destinationSchema, rawText: z.string(), uploads: uploadsSchema, status: z.enum(["preparing", "uncertain"]), createdAt: z.number(), error: z.string().optional() })),
+  submissions: z.array(z.object({ id: z.string(), destination: destinationSchema, rawText: z.string(), uploads: uploadsSchema, status: z.enum(["preparing", "dispatched", "uncertain"]).transform(status => status === "uncertain" ? "dispatched" : status), createdAt: z.number(), error: z.string().optional() })),
 });
 
 export function createDraftPersistence() {

@@ -101,7 +101,18 @@ export function ChatView(props: Props & { transcriptActions?: JSXElement; follow
   const [textSelected, setTextSelected] = createSignal(false);
   const selectionChanged = () => {
     const selection = document.getSelection(); const shell = shellRef.current;
-    setTextSelected(Boolean(shell && selection && !selection.isCollapsed && (shell.contains(selection.anchorNode) || shell.contains(selection.focusNode))));
+    const selected = Boolean(shell && selection && !selection.isCollapsed && (shell.contains(selection.anchorNode) || shell.contains(selection.focusNode)));
+
+    if (selected === textSelected()) return;
+    // Drawing the off-screen turns changes their height. The turn that holds the selection keeps its place on screen, so the content does not jump.
+    const root = messagesRef.current; const node = selection?.anchorNode;
+    const anchor = (node instanceof Element ? node : node?.parentElement)?.closest(".deferred-turn") ?? root?.querySelector(".deferred-turn:last-of-type");
+    const before = anchor?.getBoundingClientRect().top;
+    setTextSelected(selected);
+
+    if (!root || !anchor || before === undefined) return;
+    root.scrollTop += anchor.getBoundingClientRect().top - before;
+    lastScrollTop.current = root.scrollTop;
   };
   document.addEventListener("selectionchange", selectionChanged);
   onCleanup(() => document.removeEventListener("selectionchange", selectionChanged));

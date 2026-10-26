@@ -390,6 +390,9 @@ export class Session {
     await this.worker.send(command);
   }
 
+  /** Resolves when Pi can no longer accept a request that failed. */
+  settled(): Promise<void> { return this.worker?.settled() ?? Promise.resolve(); }
+
   // Events from Pi.
 
   private async receive(event: any): Promise<void> {

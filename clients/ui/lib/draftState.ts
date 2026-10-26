@@ -22,7 +22,8 @@ export interface DraftSubmission {
   destination: DraftDestination;
   rawText: string;
   uploads: ComposerUpload[];
-  status: "preparing" | "uncertain";
+  /** dispatched: sent to the host, and its outcome is not known yet. */
+  status: "preparing" | "dispatched";
   createdAt: number;
   error?: string;
 }

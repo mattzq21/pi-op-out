@@ -6,6 +6,7 @@ import type { AppSettings, ComposerUpload, SessionSummary } from "./types";
 import type { DraftDestination, DraftRecord, DraftSubmission } from "./lib/draftState";
 import { bindDraftStaging, goalPreparationSchema, submissionFingerprint, type DraftSubmissionHandle, type DraftSubmissionPayload } from "./lib/draftSubmission";
 import { createDraftPersistence, mergeDraftSnapshots, type DraftSnapshot } from "./lib/draftPersistence";
+import { confirmSubmission } from "./lib/submissionOutcome";
 
 export interface ConversationDraft { text: string; uploads: ComposerUpload[]; target?: NativeConnectionTarget; updatedAt: number; }
 
@@ -60,6 +61,7 @@ export function createConversationDrafts(reportStorageError: (message: string) =
       removedBeforeLoad.length = 0;
       submissionsChangedBeforeLoad.clear();
     });
+    for (const item of saved.submissions) if (item.status === "dispatched" && allows(item.destination.key, item.destination)) void settleDispatched(item);
   }).catch(reason => {
     ready = undefined;
     throw reason;
@@ -219,6 +221,27 @@ export function createConversationDrafts(reportStorageError: (message: string) =
     await save();
   };
 
+  const [confirmationErrors, setConfirmationErrors] = createSignal<ReadonlyMap<string, string>>(new Map());
+  const setConfirmationError = (id: string, error?: string) => setConfirmationErrors(current => { const next = new Map(current);
+
+    if (error) next.set(id, error); else next.delete(id);
+
+    return next; });
+
+  /** A message sent by an earlier window whose outcome it did not learn. The host tells it: an accepted one is done, a refused one can be restored. */
+  const settleDispatched = async (submission: DraftSubmission) => {
+    try {
+      const outcome = await confirmSubmission(submission.destination.hostId, submission.id, failure => setConfirmationError(submission.id, failure), () => !disposed);
+      setConfirmationError(submission.id);
+      const current = submissions().find(item => item.id === submission.id);
+
+      if (!outcome || disposed || current?.status !== "dispatched") return;
+
+      if (outcome.accepted) await retireSubmission(current.id);
+      else await storeSubmission({ ...current, status: "preparing", error: outcome.error });
+    } catch (reason) { reportDraftStorageError(reason); }
+  };
+
   const restoreSubmission = async (submission: DraftSubmission) => {
     await initialize();
     if (!loaded) submissionsChangedBeforeLoad.add(submission.id);
@@ -272,10 +295,9 @@ export function createConversationDrafts(reportStorageError: (message: string) =
     return {
       id: submission.id, owner: () => owner, wasDispatched: () => dispatched,
       move: async destination => { await transferSubmission(submission, owner, destination, next => { submission = next; owner = destination; }); },
-      dispatch: async () => { const next: DraftSubmission = { ...submission, destination: destinationFor(owner), status: "uncertain" }; await storeSubmission(next); submission = next; dispatched = true; },
+      dispatch: async () => { const next: DraftSubmission = { ...submission, destination: destinationFor(owner), status: "dispatched" }; await storeSubmission(next); submission = next; dispatched = true; },
       accept: () => retireSubmission(submission.id),
       reject: async reason => { submission = { ...submission, destination: destinationFor(owner), error: reason }; await restoreSubmission(submission); },
-      uncertain: async reason => { submission = { ...submission, destination: destinationFor(owner), status: "uncertain", error: reason }; await storeSubmission(submission); },
     };
   };
 
@@ -395,5 +417,5 @@ export function createConversationDrafts(reportStorageError: (message: string) =
     return ownerFor(owner).command({ type: "get_goal_preparation", goalSubmissionId: submission.id }, goalPreparationSchema.nullable());
   };
 
-  return { configureHosts, records: draftRecords, hasDraft: transportHasDraftForKey, uploadsFor: (key: string) => recordFor(key).uploads, setDraftTarget, keyForTransport, removeSessionDrafts, composerDrafts, uploadsByTransport, setComposerDraft, setComposerUploads, setTransportDraft, transportHasDraft, inspectGoalPreparation, rekeyDraft, removeDraft, discard, bindTransport, draftSummaries, submissions: visibleSubmissions, recoveries, restoreSubmission, retireSubmission };
+  return { configureHosts, records: draftRecords, hasDraft: transportHasDraftForKey, uploadsFor: (key: string) => recordFor(key).uploads, setDraftTarget, keyForTransport, removeSessionDrafts, composerDrafts, uploadsByTransport, setComposerDraft, setComposerUploads, setTransportDraft, transportHasDraft, inspectGoalPreparation, rekeyDraft, removeDraft, discard, bindTransport, draftSummaries, submissions: visibleSubmissions, recoveries, restoreSubmission, retireSubmission, confirmationError: (id: string) => confirmationErrors().get(id) };
 }

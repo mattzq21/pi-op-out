@@ -18,7 +18,6 @@ export interface DraftSubmissionHandle {
   dispatch: () => Promise<void>;
   accept: () => Promise<void>;
   reject: (reason: string) => Promise<void>;
-  uncertain: (reason: string) => Promise<void>;
   wasDispatched: () => boolean;
 }
 
