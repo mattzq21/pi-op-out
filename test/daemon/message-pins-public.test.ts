@@ -15,10 +15,10 @@ test('pins reach every view of a chat, stop at four, and come back when a view a
     await attached;
 
     const shown = pinsOf('second', pins => pins.length === 1);
-    await chat.command({ type: 'pin_message', entryId: 'one', text: '\n  Release plan ready.\nSecond line' });
-    expect((await shown).event.pins).toEqual([{ entryId: 'one', text: 'Release plan ready.' }]);
-    for (const entryId of ['two', 'three', 'four']) await chat.command({ type: 'pin_message', entryId, text: entryId });
-    expect(await agents.daemon.failure('pi_command', { runtimeId: 'second', command: { type: 'pin_message', entryId: 'five', text: 'five' } })).toBe('Only 4 messages can be pinned. Unpin one first.');
+    await chat.command({ type: 'pin_message', entryId: 'one', role: 'response', text: '\n  Release plan ready.\nSecond line' });
+    expect((await shown).event.pins).toEqual([{ entryId: 'one', role: 'response', text: 'Release plan ready.' }]);
+    for (const entryId of ['two', 'three', 'four']) await chat.command({ type: 'pin_message', entryId, role: 'prompt', text: entryId });
+    expect(await agents.daemon.failure('pi_command', { runtimeId: 'second', command: { type: 'pin_message', entryId: 'five', role: 'prompt', text: 'five' } })).toBe('Only 4 messages can be pinned. Unpin one first.');
 
     const ids = (pins: any[]) => pins.map(pin => pin.entryId).join();
     const unpinned = pinsOf(chat.runtimeId, pins => ids(pins) === 'one,three,four');

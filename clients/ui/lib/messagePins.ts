@@ -4,7 +4,7 @@ import type { ChatMessage } from "../types";
 
 export const PIN_LIMIT = 4;
 
-export const pinnedMessagesSchema = z.array(z.object({ entryId: z.string(), text: z.string() }));
+export const pinnedMessagesSchema = z.array(z.object({ entryId: z.string(), role: z.enum(["prompt", "response"]), text: z.string() }));
 
 /** A message pinned to the top of the chat. An empty text is a prompt that has only attachments. */
 export type MessagePin = z.infer<typeof pinnedMessagesSchema>[number];

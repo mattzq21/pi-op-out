@@ -1,7 +1,7 @@
 import { text } from './json';
 
 /** A message pinned to the top of a chat. text is the first line of the message; it is empty for a prompt that has only attachments. */
-export interface MessagePin { entryId: string; text: string }
+export interface MessagePin { entryId: string; role: 'prompt' | 'response'; text: string }
 
 export const PIN_LIMIT = 4;
 const TEXT_LIMIT = 300;
@@ -27,10 +27,11 @@ export class MessagePins {
     let next: MessagePin[];
     if (command.type === 'pin_message') {
       if (typeof command.text !== 'string') throw new Error('A pin needs the message text');
+      if (command.role !== 'prompt' && command.role !== 'response') throw new Error('A pin is for a prompt or a response');
       if (pins.some(pin => pin.entryId === entryId)) return null;
       if (pins.length >= PIN_LIMIT) throw new Error('Only ' + PIN_LIMIT + ' messages can be pinned. Unpin one first.');
       const line = command.text.split('\n').find((part: string) => part.trim())?.trim() ?? '';
-      next = [...pins, { entryId, text: line.slice(0, TEXT_LIMIT) }];
+      next = [...pins, { entryId, role: command.role, text: line.slice(0, TEXT_LIMIT) }];
     } else {
       next = pins.filter(pin => pin.entryId !== entryId);
       if (next.length === pins.length) return null;

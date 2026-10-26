@@ -15,7 +15,7 @@ import type { NativeTransport } from "../lib/nativeTransport";
 import { isDaemonRefusal } from "../lib/commandRejected";
 import { createDependencyEffect, createRef, type JSXElement, type StateUpdate } from "../lib/solid";
 
-import { ArrowDown, ChevronRight, Folder, LoaderCircle, Monitor, PinOff, X } from "lucide-solid";
+import { ArrowDown, Bot, ChevronRight, Folder, LoaderCircle, Monitor, PinOff, User, X } from "lucide-solid";
 import { MessagePinContext, PIN_LIMIT, pinId, pinnedMessagesSchema, type MessagePin, type MessagePins } from "../lib/messagePins";
 import { resolveMessageEntry } from "../lib/resolveMessageEntry";
 import { hasVisibleText, textOf, thinkingOf } from "../lib/content";
@@ -266,7 +266,7 @@ export function ChatView(props: Props & { transcriptActions?: JSXElement; follow
       try {
         if (!transport) throw new Error("Conversation is unavailable");
         if (pins().length >= PIN_LIMIT) throw new Error(`Only ${PIN_LIMIT} messages can be pinned. Unpin one first.`);
-        await transport.command({ type: "pin_message", entryId: await resolveMessageEntry(transport, message), text });
+        await transport.command({ type: "pin_message", entryId: await resolveMessageEntry(transport, message), role: message.role === "user" ? "prompt" : "response", text });
       } catch (reason) { noticeError("Could not pin message", reason); }
     },
   };
@@ -477,8 +477,8 @@ export function ChatView(props: Props & { transcriptActions?: JSXElement; follow
     }, () => []);
 
     return <div ref={element => { frame.current = element; }} class="pinned-messages-frame"><div ref={element => { bar.current = element; }} class="pinned-messages" role="list" aria-label="Pinned messages">
-      <Key each={pins()} by={pin => pin.entryId}>{pin => <div class="pinned-message" role="listitem">
-        <button type="button" class="pinned-message-text" onClick={() => setPinReveal(pin().entryId)}>{pin().text || <em>Attachment</em>}</button>
+      <Key each={pins()} by={pin => pin.entryId}>{pin => <div class="pinned-message" classList={{ "pinned-prompt": pin().role === "prompt" }} role="listitem">
+        <button type="button" class="pinned-message-text" aria-label={(pin().role === "prompt" ? "Prompt: " : "Response: ") + (pin().text || "Attachment")} onClick={() => setPinReveal(pin().entryId)}>{pin().role === "prompt" ? <User size={13} aria-hidden="true" /> : <Bot size={13} aria-hidden="true" />}<span>{pin().text || <em>Attachment</em>}</span></button>
         <button type="button" class="pinned-message-unpin" aria-label="Unpin message" data-tooltip="Unpin" onClick={() => void unpin(pin().entryId)}><PinOff size={13} /></button>
       </div>}</Key>
     </div></div>;
