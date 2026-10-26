@@ -22,5 +22,5 @@ export function pinText(value: string) {
   const text = value.replace(/<file name="[^"]*">\n[\s\S]*?\n<\/file>/g, "");
   const line = text.split("\n").find(part => part.trim())?.trim() ?? "";
 
-  return line.replace(/^(?:#{1,6}\s+|>\s*|[-*+]\s+|\d+[.)]\s+)/, "").replace(/\*\*|__|`/g, "").trim();
+  return line.replace(/^(?:#{1,6}\s+|>\s*|[-*+]\s+|\d+[.)]\s+)/, "").replace(/!?\[([^\]]*)\]\([^)]*\)/g, "$1").replace(/\*\*|__|`/g, "").replace(/(^|[^\w*])[*_](\S(?:[^*_\n]*\S)?)[*_](?=[^\w*]|$)/g, "$1$2").trim();
 }

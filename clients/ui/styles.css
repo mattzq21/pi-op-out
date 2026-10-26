@@ -632,9 +632,11 @@ textarea::placeholder { color: var(--faint); }
 .message-body, .user-message-images { position: relative; }
 /* A turn clips what it paints to its box. Its padding holds the pin buttons outside the messages. */
 .deferred-turn { margin-inline: -36px; padding-inline: 36px; }
-.message-pin { position: absolute; top: 2px; left: -35px; width: 30px; height: 30px; display: grid; place-items: center; padding: 0; border: 0; border-radius: 6px; background: transparent; color: var(--faint); cursor: pointer; opacity: 0; transition: opacity .15s; }
-.user-message .message-pin { left: auto; right: -35px; top: 4px; }
-.assistant-message .message-pin { top: 0; }
+/* The button takes the line height of the message, so 1lh is the height of its first line. */
+.message-pin { position: absolute; top: 2px; left: -35px; width: 30px; height: 30px; font: inherit; display: grid; place-items: center; padding: 0; border: 0; border-radius: 6px; background: transparent; color: var(--faint); cursor: pointer; opacity: 0; transition: opacity .15s; }
+.user-message .message-pin { left: auto; right: -35px; top: calc(10px + (1lh - 30px) / 2); }
+.user-message-images > .message-pin { top: 4px; }
+.assistant-message .message-pin { top: calc((1lh - 30px) / 2); }
 .message:focus-within .message-pin, .message-pin:focus-visible { opacity: 1; }
 @media (hover: hover) { .message:hover .message-pin { opacity: 1; } }
 @media (pointer: coarse) { .message-pin { opacity: .6; } }
