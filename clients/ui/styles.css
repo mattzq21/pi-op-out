@@ -211,7 +211,7 @@ button.agent-delivery-source:hover { color: var(--accent-soft); text-decoration:
 .cache-hit-rate, .session-cache-hit { position: relative; }
 .cache-hit-rate, .session-cache-hit { display: inline-flex; align-items: center; gap: 4px; }
 .cache-icon { width: 20px; height: 20px; flex: 0 0 auto; color: var(--muted); }
-.cache-fraction-tooltip { position: absolute; z-index: 12; bottom: calc(100% + 6px); left: 50%; transform: translateX(-50%) translateY(2px); opacity: 0; padding: 6px 8px; border: 1px solid #ffffff18; border-radius: 5px; background: #151514; color: #f7f5ef; box-shadow: 0 4px 12px #0005; text-align: center; font: 500 14px/1.25 "DM Sans", sans-serif; letter-spacing: .01em; font-variant-numeric: tabular-nums; pointer-events: none; transition: opacity .12s, transform .12s; }
+.cache-fraction-tooltip { position: absolute; z-index: 12; bottom: calc(100% + 6px); left: 10px; transform: translateX(-50%) translateY(2px); opacity: 0; padding: 6px 8px; border: 1px solid #ffffff18; border-radius: 5px; background: #151514; color: #f7f5ef; box-shadow: 0 4px 12px #0005; text-align: center; font: 500 14px/1.25 "DM Sans", sans-serif; letter-spacing: .01em; font-variant-numeric: tabular-nums; pointer-events: none; transition: opacity .12s, transform .12s; }
 .cache-fraction-tooltip { width: max-content; white-space: nowrap; }
 .cache-fraction-tooltip > span { display: block; }
 .cache-fraction-tooltip > span:first-child { border-bottom: 1px solid currentColor; padding-bottom: 2px; }
