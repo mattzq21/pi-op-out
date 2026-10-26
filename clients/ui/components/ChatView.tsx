@@ -456,26 +456,32 @@ export function ChatView(props: Props & { transcriptActions?: JSXElement; follow
     </div>);
   };
 
-  /** The pinned messages at the top of the chat. The messages leave room for them with --pins-height. */
+  /** The pinned messages at the top of the chat. The messages leave room for them with --pins-height. The frame covers the messages without their scrollbar, so the bar lines up with the conversation. */
   const PinnedMessages = () => {
+    const frame = createRef<HTMLDivElement | null>(null);
     const bar = createRef<HTMLDivElement | null>(null);
-    createDependencyEffect(() => { const element = bar.current; const root = messagesRef.current;
+    createDependencyEffect(() => { const element = bar.current; const area = frame.current; const root = messagesRef.current;
 
-      if (!element || !root || typeof ResizeObserver === "undefined") return;
-      const update = () => root.style.setProperty("--pins-height", `${element.offsetHeight}px`);
+      if (!element || !area || !root || typeof ResizeObserver === "undefined") return;
+      const update = () => {
+        root.style.setProperty("--pins-height", `${element.offsetHeight}px`);
+        area.style.left = `${root.clientLeft}px`;
+        area.style.right = `${root.offsetWidth - root.clientWidth - root.clientLeft}px`;
+      };
       update();
       const observer = new ResizeObserver(update);
       observer.observe(element);
+      observer.observe(root);
 
       return () => { observer.disconnect(); root.style.removeProperty("--pins-height"); };
     }, () => []);
 
-    return <div ref={element => { bar.current = element; }} class="pinned-messages" role="list" aria-label="Pinned messages">
+    return <div ref={element => { frame.current = element; }} class="pinned-messages-frame"><div ref={element => { bar.current = element; }} class="pinned-messages" role="list" aria-label="Pinned messages">
       <Key each={pins()} by={pin => pin.entryId}>{pin => <div class="pinned-message" role="listitem">
         <button type="button" class="pinned-message-text" onClick={() => setPinReveal(pin().entryId)}>{pin().text || <em>Attachment</em>}</button>
         <button type="button" class="pinned-message-unpin" aria-label="Unpin message" data-tooltip="Unpin" onClick={() => void unpin(pin().entryId)}><PinOff size={13} /></button>
       </div>}</Key>
-    </div>;
+    </div></div>;
   };
 
   const ConversationShell = () => <main class={`chat-shell${ownsConversation() ? "" : " conversation-unowned"}`} ref={element => { shellRef.current = element; }} classList={{ "session-drop-over": sessionDragOver() }} data-text-selected={textSelected() ? "" : undefined} data-session-drop-zone={acceptsSessionDrop() ? "" : undefined} on:piop-session-drag={sessionDrag} oncapture:focus={() => props.onActivate?.()} oncapture:pointerdown={() => props.onActivate?.()}>
