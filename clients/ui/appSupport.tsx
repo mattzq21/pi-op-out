@@ -97,7 +97,7 @@ function LimitBadge(componentProps: { label: string; provider: UsageProvider; de
 
   return componentProps.resetAt ? formatCodexReset(componentProps.resetAt) : ""; };
 
-  return <span class="codex-usage" role="status" aria-label={`${componentProps.label} usage remaining: ${componentProps.remainingPercent}%${componentProps.resetAt ? `, resets ${resetLabel()}` : ""}${componentProps.detail ? ` (${(componentProps.detail)})` : ""}`} data-tooltip={`${componentProps.label} usage remaining`}><ProviderLogo provider={componentProps.provider} /><span>{componentProps.remainingPercent}%<span class="codex-usage-left"> left</span></span>{componentProps.resetAt && <span class="codex-usage-reset"><span class="codex-usage-separator"> · </span>{resetLabel()}</span>}</span>;
+  return <span class="codex-usage" role="status" aria-label={`${componentProps.label} usage remaining: ${componentProps.remainingPercent}%${componentProps.resetAt ? `, resets ${resetLabel()}` : ""}${componentProps.detail ? ` (${(componentProps.detail)})` : ""}`}><ProviderLogo provider={componentProps.provider} /><span>{componentProps.remainingPercent}%<span class="codex-usage-left"> left</span></span>{componentProps.resetAt && <span class="codex-usage-reset"><span class="codex-usage-separator"> · </span>{resetLabel()}</span>}</span>;
 }
 
 function UsageError(componentProps: { provider: UsageProvider; label: string; message: string }) {
