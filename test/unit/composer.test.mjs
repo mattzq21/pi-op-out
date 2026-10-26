@@ -77,6 +77,30 @@ describe('composer interactions', () => {
   });
 
 
+  test('a queued message is edited in place: Enter saves, Escape cancels, and a failed save keeps the editor open', async () => {
+    const changes = [];
+    let failure;
+    const pendingMessages = [{ id: '1', message: 'Fix the typo', behavior: 'followUp' }, { id: 'goal', message: 'Ship it', behavior: 'followUp', goal: true }];
+    await render({ streaming: true, queued: 1, pendingMessages, onChangePending: async (id, action) => { changes.push([id, action]); if (failure) throw new Error(failure); } });
+    assert.equal(control('Edit queued message: Ship it'), null, 'the goal entry is edited with /goal edit');
+    await click(control('Edit queued message: Fix the typo'));
+    const field = () => document.querySelector('.pending-edit');
+    await key('Escape', {}, field());
+    assert.equal(field(), null);
+    assert.deepEqual(changes, []);
+    await click(control('Edit queued message: Fix the typo'));
+    failure = 'This message is being sent and can no longer be edited.';
+    await enterText(field(), 'Fix the typo in the title');
+    await key('Enter', {}, field());
+    await untilDom(() => document.body.textContent.includes(failure));
+    assert.ok(field(), 'the editor stays open after a failed save');
+    failure = undefined;
+    await key('Enter', {}, field());
+    await untilDom(() => !field());
+    assert.deepEqual(changes, [['1', { type: 'edit', message: 'Fix the typo in the title' }], ['1', { type: 'edit', message: 'Fix the typo in the title' }]]);
+  });
+
+
   test('a streaming draft has a clickable follow-up send action', async () => {
     await render({ streaming: true });
     await enterText(editor(), 'After this turn');

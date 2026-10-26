@@ -61,7 +61,7 @@ test('an active goal queues its prompt once when a turn ends, as a shown message
   assert.equal(result.continue, true);
   assert.equal(result.entries.length, 1);
   assert.deepEqual({ ...result.entries[0], content: undefined }, { type: 'custom_message', customType: 'piop-goal-context', content: undefined, display: true, details: { goalId: 'goal-1' } });
-  assert.match(result.entries[0].content, /<objective>\nObjective A\n<\/objective>/);
+  assert.equal(result.entries[0].content, 'Objective A');
   const history = [{ role: 'user', content: 'Start', timestamp: 1 }, { role: 'custom', customType: 'piop-goal-context', content: result.entries[0].content, display: true, timestamp: 2 }];
   assert.deepEqual((await agent.request(history)).messages, history, 'the saved goal prompt stays where it is, and nothing is appended');
 });

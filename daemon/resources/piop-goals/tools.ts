@@ -3,7 +3,7 @@ import { Type } from "@earendil-works/pi-ai";
 import type { Goal } from "./state.ts";
 import type { GoalCore } from "./preparation.ts";
 
-const goalToolDescription = "Update the existing goal. Set status to `paused` only at the user's explicit request. Report the returned status and stop goal work. Set status to `complete` only when the objective has actually been achieved and no required work remains. This tool cannot resume a goal.";
+const goalToolDescription = "Set status to `paused` only when you can't progress. Report the returned status and stop goal work. Set status to `complete` only when the objective has actually been achieved and no required work remains.";
 
 /** Registers update_goal_status. The user sets goals with /goal, and the goal context tells the agent the objective and status. */
 export function registerGoalTools(pi: ExtensionAPI, core: GoalCore) {

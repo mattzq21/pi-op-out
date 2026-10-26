@@ -6,11 +6,15 @@ import { commandName } from '../plugin_contributions';
 import { queuedCommand } from './queue_submission';
 
 /**
- * Changes one pending item: removes it, switches it between steer and follow-up, moves it, or sends it again.
+ * Changes one pending item: removes it, edits its text, switches it between steer and follow-up, moves it, or sends it again.
  * Items that Pi holds are taken back from Pi and sent again in the new order.
  */
 export async function changePending(queue: QueueDelivery, gate: Mutex, id: string, action: any, assertOwner: () => void): Promise<any> {
   assertOwner();
+  if (isEdit(action)) {
+    const release = await gate.lock();
+    try { assertOwner(); return await editPending(queue, id, action.message); } finally { release(); }
+  }
   const cancelling = action === 'remove' && queue.state.sending.has(id);
   let release: () => void;
   if (cancelling) {
@@ -75,6 +79,33 @@ async function retry(queue: QueueDelivery, id: string, target: any, behavior: st
   return null;
 }
 
+/** An edit of a queued message's text: { type: 'edit', message }. */
+function isEdit(action: any): action is { type: 'edit'; message: string } {
+  return action !== null && typeof action === 'object' && !Array.isArray(action) && action.type === 'edit';
+}
+
+/**
+ * Replaces the text of a queued message. Messages that the daemon keeps (waiting below the goal, or kept for retry) change in place. A message in Pi's queue is taken back with the rest of that queue and sent again with the new text.
+ */
+async function editPending(queue: QueueDelivery, id: string, message: unknown): Promise<any> {
+  const state = queue.state;
+  const target = state.pending.find(item => item.id === id);
+  if (!target) throw new Error('This message is no longer in the queue.');
+  if (typeof message !== 'string') throw new Error('The edited message must be text.');
+  if (state.sending.has(id)) throw new Error('This message is being sent and can no longer be edited.');
+  if (target.goalSubmissionId !== undefined) throw new Error('A goal message cannot be edited here. Use /goal edit.');
+  if (!message.trim() && !(Array.isArray(target.images) && target.images.length)) throw new Error('A queued message cannot be empty. Remove it instead.');
+  if (target.behavior === 'steer' && queuedCommand(message)) throw new Error('/' + commandName(message) + ' can only be queued as a follow-up');
+  if (jsonEqual(target.message, message)) return null;
+  if (flag(target, 'retry') || flag(target, 'afterGoal')) {
+    target.message = message;
+    await queue.record.persist();
+    await queue.publish();
+    return null;
+  }
+  return changeLive(queue, id, 'edit', undefined, { type: 'edit', message });
+}
+
 async function changeLive(queue: QueueDelivery, id: string, behavior: string, neighbor: string | undefined, action: any): Promise<any> {
   const state = queue.state;
   const snapshot = [...state.steering, ...state.followUp];
@@ -92,6 +123,7 @@ async function replaceLive(queue: QueueDelivery, id: string, behavior: string, n
   const cleared = await queue.execute({ type: 'clear_queue' });
   const remaining = clearedMessages(cleared, originals.filter(item => !flag(item, 'afterGoal')), id, behavior, () => queue.record.nextId());
   if (neighbor !== undefined) moveItem(remaining, id, neighbor, action);
+  if (behavior === 'edit') for (const item of remaining) if (item.id === id) item.message = action.message;
   let rest = remaining;
   if (behavior === 'remove') {
     rest = remaining.filter(item => item.id !== id);

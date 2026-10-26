@@ -28,7 +28,7 @@ describe('goals with update_goal_status enabled', () => {
 
 test('a goal keeps the agent working turn after turn until the agent marks it complete', async () => {
   agents.scripts.set('Write the report', messages => {
-    goalRoles.push(...messages.filter((message: any) => text(message).includes('Continue working toward the current thread goal')).map((message: any) => message.role));
+    goalRoles.push(...messages.filter((message: any) => text(message) === 'Write the report').map((message: any) => message.role));
     if (called(messages, 'update_goal_status')) return { text: 'Report finished.' };
     return turnsSoFar(messages) < 2 ? { text: 'Still writing.' } : { tool: 'update_goal_status', arguments: { status: 'complete' } };
   });
@@ -51,7 +51,7 @@ test('pausing a goal stops the extra turns, and resuming starts them again', asy
   let finish = false;
   const noticeRoles: string[] = [];
   agents.scripts.set('Keep polishing', async messages => {
-    noticeRoles.push(...messages.filter((message: any) => /The saved goal is inactive|The user resumed the thread goal|Continue working toward the current thread goal/.test(text(message))).map((message: any) => message.role));
+    noticeRoles.push(...messages.filter((message: any) => (/The saved goal is inactive|The user resumed the thread goal/.test(text(message)) || text(message) === 'Keep polishing')).map((message: any) => message.role));
     await Bun.sleep(200);
     if (called(messages, 'update_goal_status')) return { text: 'Polished.' };
     return finish ? { tool: 'update_goal_status', arguments: { status: 'complete' } } : { text: 'Polishing.' };

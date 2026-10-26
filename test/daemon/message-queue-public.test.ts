@@ -101,3 +101,26 @@ test.concurrent('stopping a response keeps waiting messages back, and the next m
   expect(userTexts(messages)).toEqual(['Stopped job', 'New request', 'Waiting task']);
   expect((await chat.command({ type: 'get_state' })).pendingMessages).toEqual([]);
 }, 60000);
+test.concurrent('an edited follow-up keeps its place in the queue and reaches the agent with its new text, and an empty edit is refused', async () => {
+  const busy = held<{ text: string }>();
+  agents.scripts.set('Long draft', messages => {
+    const last = text(messages.at(-1));
+    if (last === 'Long draft') return busy.promise;
+    return { text: 'Handled: ' + last };
+  });
+  const chat = await agents.rootChat();
+  await chat.command({ type: 'prompt', message: 'Long draft' });
+  await chat.until(() => agents.model.requests.some(request => text(request.messages.at(-1)) === 'Long draft'));
+  await chat.command({ type: 'follow_up', message: 'Fix the typo' });
+  await chat.command({ type: 'follow_up', message: 'Then publish' });
+  for (let tries = 0; pending(chat.runtimeId).length < 2 && tries < 50; tries++) await Bun.sleep(100);
+  const first = pending(chat.runtimeId)[0].id;
+  await expect(chat.command({ type: 'change_pending', id: first, action: { type: 'edit', message: '   ' } })).rejects.toThrow('cannot be empty');
+  await chat.command({ type: 'change_pending', id: first, action: { type: 'edit', message: 'Fix the typo in the title' } });
+  for (let tries = 0; pending(chat.runtimeId)[0]?.message !== 'Fix the typo in the title' && tries < 50; tries++) await Bun.sleep(100);
+  expect(pending(chat.runtimeId).map(item => [item.message, item.behavior])).toEqual([['Fix the typo in the title', 'followUp'], ['Then publish', 'followUp']]);
+  busy.release({ text: 'Draft done.' });
+  const messages = await chat.until(history => text(history.at(-1)) === 'Handled: Then publish');
+  expect(userTexts(messages)).toEqual(['Long draft', 'Fix the typo in the title', 'Then publish']);
+}, 60000);
+
