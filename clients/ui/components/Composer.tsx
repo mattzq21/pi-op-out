@@ -722,7 +722,7 @@ export function Composer(props: Props) {
         {renderPendingMessageActions()}
       </div>;
     }}</Key>}<Show when={pausedGoal()}>{goal => <div class="pending-message pending-goal paused" aria-label="Paused goal">
-      <span class="pending-message-text" data-tooltip={goal().objective}><small>Goal · Paused · </small>{goal().objective}</span>
+      <span class="pending-message-text" data-tooltip={goal().objective}><small>Paused · </small><small class="goal-label">Goal · </small>{goal().objective}</span>
       <div class="pending-message-actions"><GoalActions controls={required(props.goal)} goal={goal()} /></div>
     </div>}</Show><Show when={props.goal?.error()}>{message => <div class="pending-goal-error" role="alert">{message()}</div>}</Show></div>}
     {visualProps.toolbar}
