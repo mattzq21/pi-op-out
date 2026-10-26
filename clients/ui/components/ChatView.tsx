@@ -96,6 +96,15 @@ export function ChatView(props: Props & { transcriptActions?: JSXElement; follow
   const followLatest = createRef(true);
   /** True when the view is far enough above the latest message to offer the jump button. */
   const [awayFromLatest, setAwayFromLatest] = createSignal(false);
+  const shellRef = createRef<HTMLElement | null>(null);
+  /** Text in this view is selected. Off-screen turns are then drawn too, because the engine can leave a stale highlight in turns it skips. */
+  const [textSelected, setTextSelected] = createSignal(false);
+  const selectionChanged = () => {
+    const selection = document.getSelection(); const shell = shellRef.current;
+    setTextSelected(Boolean(shell && selection && !selection.isCollapsed && (shell.contains(selection.anchorNode) || shell.contains(selection.focusNode))));
+  };
+  document.addEventListener("selectionchange", selectionChanged);
+  onCleanup(() => document.removeEventListener("selectionchange", selectionChanged));
   /** A chat from the sidebar is dragged over this view. */
   const [sessionDragOver, setSessionDragOver] = createSignal(false);
   const acceptsSessionDrop = () => !props.readOnly && Boolean(props.onDraftChange);
@@ -380,7 +389,7 @@ export function ChatView(props: Props & { transcriptActions?: JSXElement; follow
     </div>);
   };
 
-  const ConversationShell = () => <main class={`chat-shell${ownsConversation() ? "" : " conversation-unowned"}`} classList={{ "session-drop-over": sessionDragOver() }} data-session-drop-zone={acceptsSessionDrop() ? "" : undefined} on:piop-session-drag={sessionDrag} oncapture:focus={() => props.onActivate?.()} oncapture:pointerdown={() => props.onActivate?.()}>
+  const ConversationShell = () => <main class={`chat-shell${ownsConversation() ? "" : " conversation-unowned"}`} ref={element => { shellRef.current = element; }} classList={{ "session-drop-over": sessionDragOver() }} data-text-selected={textSelected() ? "" : undefined} data-session-drop-zone={acceptsSessionDrop() ? "" : undefined} on:piop-session-drag={sessionDrag} oncapture:focus={() => props.onActivate?.()} oncapture:pointerdown={() => props.onActivate?.()}>
     {props.transcriptActions}
     <ConversationContent />
     <TranscriptPlugins messages={() => messagesRef.current} source={() => ({ hostId: props.transport?.currentHostId() ?? "local", sessionId: props.state.sessionId, title: props.state.sessionName || "Current conversation", messageCount: props.state.messageCount, messages: [...messages()], follow: props.followConversation })} />

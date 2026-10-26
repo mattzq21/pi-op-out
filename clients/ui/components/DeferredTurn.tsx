@@ -65,7 +65,7 @@ export function DeferredTurn(componentProps: { children: JSXElement; scrollRoot:
     return observeTurn(root, target, () => setRevealed(true));
   }, () => [revealed(), componentProps.scrollRoot]);
 
-  return <div ref={node => { element.current = node; }} data-response-turn={componentProps.navigationId} style={{ "content-visibility": searching() ? "visible" : "auto", "contain-intrinsic-size": "auto 180px", "min-height": cssPixels(revealed() || componentProps.eager || searching() ? undefined : 180) }}>
+  return <div ref={node => { element.current = node; }} class="deferred-turn" data-response-turn={componentProps.navigationId} style={{ "min-height": cssPixels(revealed() || componentProps.eager || searching() ? undefined : 180) }}>
     {(revealed() || componentProps.eager || searching()) && componentProps.children}
   </div>;
 }
