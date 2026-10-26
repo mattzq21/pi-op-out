@@ -250,6 +250,63 @@ function dispatchPrompt(command, session, output) {
   });
 }
 
+/**
+ * Runs the latest failed or stopped response again, the same way Pi's automatic retry does. The failed attempt stays in the transcript,
+ * hidden from the model, and the run continues from the message before it, so the prompt is not sent twice.
+ * Pi has no public continue call, so this repeats the run loop of AgentSession._startRun.
+ */
+function dispatchRetry(command, session, output) {
+  const entryId = command.payload?.entryId;
+
+  if (typeof entryId !== "string" || !entryId) throw new Error("Select a response to retry");
+
+  if (session.isStreaming || session.isCompacting) throw new Error("Wait for the current response to finish before retrying");
+  const failed = session._findLastAssistantMessage();
+
+  if (!failed || (failed.stopReason !== "error" && failed.stopReason !== "aborted") || session._findPersistedMessageEntryId(failed) !== entryId) throw new Error("Only the latest failed or stopped response can be retried");
+  session._isAgentRunActive = true;
+  session._agentRunAbortRequested = false;
+
+  try {
+    session._omitRecoveryAttempt(failed);
+    session._recordSelection();
+  } catch (error) {
+    session._isAgentRunActive = false;
+    session._resolveIdleWaitIfIdle();
+    throw error;
+  }
+
+  output({ type: "response", id: command.id, command: command.command, success: true, data: null });
+  void continueRun(session, failed).catch(error => acceptedPromptError(session, error, output));
+}
+
+async function continueRun(session, failed) {
+  session._failedResponse = failed;
+  session._pendingToolNames.clear();
+
+  try {
+    await session.agent.continue();
+
+    while (!session._agentRunAbortRequested) {
+      if (await session._handlePostAgentRun()) {
+        if (session._agentRunAbortRequested) break;
+        await session.agent.continue();
+        continue;
+      }
+
+      if (session._agentRunAbortRequested || !(await session._runBeforeSettleBoundary()) || session._agentRunAbortRequested) break;
+      await session.agent.continue();
+    }
+  } finally {
+    if (session._agentRunAbortRequested) session._finishCancelledRetry();
+    session._failedResponse = undefined;
+    session._runSystemPromptOptions = undefined;
+    session._flushPendingBashMessages();
+    session._flushPendingCustomMessages();
+    await session._emitAgentSettled();
+  }
+}
+
 async function prepareGoalPrompt(text, session, goalSubmissionId, images, prepared) {
   if (!/^\/goal(?:\s|$)/.test(text.trimStart()) && !prepared) return { message: text };
 
@@ -319,6 +376,12 @@ async function dispatchReady(command, session, output) {
 
     if (command.command === "prompt") {
       dispatchPrompt(command, session, output);
+
+      return;
+    }
+
+    if (command.command === "retry_response") {
+      dispatchRetry(command, session, output);
 
       return;
     }

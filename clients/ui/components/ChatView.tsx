@@ -16,7 +16,7 @@ import { isDaemonRefusal } from "../lib/commandRejected";
 import { createDependencyEffect, createRef, type JSXElement, type StateUpdate } from "../lib/solid";
 
 import { ArrowDown, ChevronRight, Folder, LoaderCircle, Monitor, X } from "lucide-solid";
-import { findReplaceableAbortedTurn } from "../lib/abortedTurn";
+import { resolveMessageEntry } from "../lib/resolveMessageEntry";
 import { hasVisibleText, textOf, thinkingOf } from "../lib/content";
 import { cacheHitStats, isContextInjection, isPromptMessage } from "../lib/messages";
 import { SubagentResults, subagentRuns } from "./SubagentResults";
@@ -222,12 +222,12 @@ export function ChatView(props: Props & { transcriptActions?: JSXElement; follow
   const actions = createRef({ onSend: send, onBranch: props.onBranch, onFork: props.onFork, onForkAndForget: props.onForkAndForget });
   createComputed(() => { actions.current = { onSend: send, onBranch: props.onBranch, onFork: props.onFork, onForkAndForget: props.onForkAndForget }; });
 
-  const onRetry: Props["onSend"] = async (...args) => {
-    const result = await actions.current.onSend(...args);
+  /** Runs the failed or stopped response again in Pi, which hides the failed attempt from the model. */
+  const onRetry = async (message: ChatMessage) => {
+    const transport = props.transport;
 
-    if (result === false) throw new Error("Message was not submitted");
-
-    return result;
+    if (!transport) throw new Error("Conversation is unavailable");
+    await transport.command({ type: "retry_response", entryId: await resolveMessageEntry(transport, message) });
   };
 
   const onBranch: Props["onBranch"] = (message) => actions.current.onBranch(message);
@@ -591,8 +591,11 @@ function turnTiming(messages: ChatMessage[], userIndex: number, finalMessage?: C
   return formatWorkedFor(userIndex >= 0 ? messages[userIndex].timestamp : messages[0]?.timestamp, finalMessage?.completedAt ?? finalMessage?.timestamp);
 }
 
-function retryAttachments(retryTurn: ReturnType<typeof findReplaceableAbortedTurn>) {
-  return Array.isArray(retryTurn?.user.content) ? retryTurn.user.content.filter((part) => part.type === "image") : [];
+/** The last message of the turn when it is a failed or stopped response. */
+function retryableResponse(messages: ChatMessage[]) {
+  const message = messages.at(-1);
+
+  return message?.role === "assistant" && (message.stopReason === "error" || message.stopReason === "aborted") ? message : undefined;
 }
 
 function MessageList(props: { messages: ChatMessage[]; expanded: boolean; compact?: boolean; debug?: DebugView; showActions?: boolean }) {
@@ -609,7 +612,7 @@ function MessageList(props: { messages: ChatMessage[]; expanded: boolean; compac
   return <Key each={entries()} by={entry => entry.message.id}>{entry => <Message message={entry().message} toolCount={entry().count} showActions={props.showActions ?? true} expanded={props.expanded} debug={props.debug} />}</Key>;
 }
 
-type ConversationTurnProps = { latest?: boolean; messages: ChatMessage[]; promptContexts: PromptContextInfo[]; cwd?: string; debug: DebugView; active: boolean; retryable: boolean; onRetry: Props["onSend"]; onBranch?: Props["onBranch"]; onFork?: Props["onFork"]; onForkAndForget?: Props["onForkAndForget"]; };
+type ConversationTurnProps = { latest?: boolean; messages: ChatMessage[]; promptContexts: PromptContextInfo[]; cwd?: string; debug: DebugView; active: boolean; retryable: boolean; onRetry: (message: ChatMessage) => Promise<void>; onBranch?: Props["onBranch"]; onFork?: Props["onFork"]; onForkAndForget?: Props["onForkAndForget"]; };
 
 function ConversationTurn(componentProps: ConversationTurnProps) {
   const [retryError, setRetryError] = createSignal<string>();
@@ -663,9 +666,14 @@ function ConversationTurn(componentProps: ConversationTurnProps) {
 
 
   const workedFor = createMemo(() => (turnTiming(componentProps.messages, userIndex(), finalMessage())));
-  const retryTurn = createMemo(() => (componentProps.retryable ? findReplaceableAbortedTurn(componentProps.messages) : undefined));
-  const retryPrompt = createMemo(() => (retryTurn()?.prompt));
-  const retryImages = createMemo(() => (retryAttachments(retryTurn())));
+  const retryTarget = createMemo(() => (componentProps.retryable ? retryableResponse(componentProps.messages) : undefined));
+  const retry = () => {
+    const target = retryTarget();
+
+    if (!target || retryingRef.current) return;
+    retryingRef.current = true; setRetrying(true); setRetryError(undefined);
+    void componentProps.onRetry(target).catch((reason) => setRetryError(reason instanceof Error ? reason.message : String(reason))).finally(() => { retryingRef.current = false; setRetrying(false); });
+  };
 
   const firstResponseInputTokens = createMemo(() => {
     const earlyTokens = componentProps.promptContexts[0]?.inputTokens;
@@ -682,7 +690,7 @@ function ConversationTurn(componentProps: ConversationTurnProps) {
   const renderActiveWorkContent = () => (<Show when={componentProps.active} fallback={required(<>
     {renderWorkGroup()}
     {finalMessage() && !hasWork() && finishedSubagents().length === 0 && <hr class="turn-divider" />}
-    {finalMessage() && <Message message={required((finalMessage()))} turnCacheUsage={turnCacheUsage()} debug={componentProps.debug} onBranch={canBranchFrom(finalSource()) ? componentProps.onBranch : undefined} onFork={canBranchFrom(finalSource()) ? componentProps.onFork : undefined} onForkAndForget={componentProps.onForkAndForget} retrying={retrying()} onRetry={retryPrompt() ? () => { if (retryingRef.current) return; retryingRef.current = true; setRetrying(true); setRetryError(undefined); void Promise.resolve(componentProps.onRetry(required((retryPrompt())), undefined, retryImages())).catch((reason) => setRetryError(reason instanceof Error ? reason.message : String(reason))).finally(() => { retryingRef.current = false; setRetrying(false); }); } : undefined} />}
+    {finalMessage() && <Message message={required((finalMessage()))} turnCacheUsage={turnCacheUsage()} debug={componentProps.debug} onBranch={canBranchFrom(finalSource()) ? componentProps.onBranch : undefined} onFork={canBranchFrom(finalSource()) ? componentProps.onFork : undefined} onForkAndForget={componentProps.onForkAndForget} retrying={retrying()} onRetry={retryTarget() ? retry : undefined} />}
     {retryError() && <div class="message-failure retry-error" role="alert">Retry failed: {(retryError())}</div>}
     <MessageList messages={componentProps.messages.filter(message => message.role === "system" && message.customType !== "compaction")} expanded={false} />
   </>)}>
