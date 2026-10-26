@@ -60,6 +60,15 @@ test('link context menus copy the URL, restore focus and report clipboard failur
   await page.getByRole('alert').filter({ hasText: 'Could not copy link' }).waitFor();
 });
 
+test('file link context menus copy the full path', async t => {
+  const page = await messagePage(t, 'file');
+  for (const [name, path] of [['app', '/repo/src/app.py'], ['/tmp/notes.md', '/tmp/notes.md']]) {
+    await page.locator('[data-file-reference]', { hasText: name }).click({ button: 'right' });
+    await page.getByRole('menuitem', { name: 'Copy path', exact: true }).click();
+    assert.equal(await page.evaluate(() => navigator.clipboard.readText()), path);
+  }
+});
+
 test('context menus close on Escape, Tab, scrolling and outside clicks and keep focus inside while navigating', async t => {
   const page = await messagePage(t, 'link');
   const link = page.getByRole('link', { name: 'link', exact: true });
