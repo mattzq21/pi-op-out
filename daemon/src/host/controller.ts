@@ -15,6 +15,7 @@ import * as Agents from './agents';
 import { attach } from './attachment';
 import { lockGate } from './lock_gate';
 import { MutationGuards } from './mutation_guards';
+import { MessagePins } from './message_pins';
 import { Orchestration } from './orchestration';
 import { ConversationOwnership, ownershipError } from './ownership';
 import { clientPayload } from './payload';
@@ -53,6 +54,7 @@ export class Host implements SessionHost {
   private ownershipValue: ConversationOwnership | undefined;
   readonly toolPayloads = new ToolPayloadCache();
   readonly orchestration = new Orchestration(this);
+  readonly pins = new MessagePins(this);
   private mutations = new MutationGuards(this);
   private timers: NodeJS.Timeout[] = [];
   readonly submissions: SubmissionLedger;
@@ -222,6 +224,7 @@ export class Host implements SessionHost {
   attachView(runtime: string, session: Session, presence: any): void {
     this.subscriptions.set(runtime, session);
     session.attach(runtime, presence);
+    this.pins.attached(runtime, session.identity);
   }
 
   forgetWorker(session: Session): void {
@@ -433,6 +436,7 @@ export class Host implements SessionHost {
   private async runtimeCommand(packet: any, runtime: string): Promise<any> {
     const name = kind(packet);
     if (name === 'command' && packet.command?.type === 'take_ownership') return this.takeOwnership(runtime);
+    if (name === 'command' && ['pin_message', 'unpin_message'].includes(packet.command?.type)) return this.pinCommand(runtime, packet.command);
     const readonly = this.readonlyMap.get(runtime);
     if (readonly) return readonlyCommand(this, packet, { ...readonly });
     const session = this.subscriptions.get(runtime);
@@ -448,6 +452,13 @@ export class Host implements SessionHost {
     }
     if (name === 'command' && packet.command?.type === 'reload_agents') return this.reloadAgents(runtime, text(packet.command, 'sessionId'));
     return sessionCommand(this, session, runtime, structuredClone(packet.command ?? null));
+  }
+
+  /** Any view of a chat can pin its messages, also a read-only view. */
+  private pinCommand(runtime: string, command: any): null {
+    const identity = this.readonlyMap.get(runtime)?.id ?? this.subscriptions.get(runtime)?.identity;
+    if (identity === undefined) throw new CommandRefusedError('Pi is not running', 'daemon');
+    return this.pins.command(identity, command);
   }
 
   private async takeOwnership(runtime: string): Promise<any> {

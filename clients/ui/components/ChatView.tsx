@@ -15,7 +15,8 @@ import type { NativeTransport } from "../lib/nativeTransport";
 import { isDaemonRefusal } from "../lib/commandRejected";
 import { createDependencyEffect, createRef, type JSXElement, type StateUpdate } from "../lib/solid";
 
-import { ArrowDown, ChevronRight, Folder, LoaderCircle, Monitor, X } from "lucide-solid";
+import { ArrowDown, ChevronRight, Folder, LoaderCircle, Monitor, PinOff, X } from "lucide-solid";
+import { MessagePinContext, PIN_LIMIT, pinId, pinnedMessagesSchema, type MessagePin, type MessagePins } from "../lib/messagePins";
 import { resolveMessageEntry } from "../lib/resolveMessageEntry";
 import { hasVisibleText, textOf, thinkingOf } from "../lib/content";
 import { cacheHitStats, isContextInjection, isPromptMessage, toolTitle } from "../lib/messages";
@@ -66,12 +67,16 @@ export function ChatView(props: Props & { transcriptActions?: JSXElement; follow
   const [terminalAvailable, setTerminalAvailable] = createSignal((() => props.transport?.hasSentMessage() ?? false)());
   const [takingOwnership, setTakingOwnership] = createSignal(false);
   const [ownershipError, setOwnershipError] = createSignal<string>();
+  /** The pinned messages of this chat, as the daemon last sent them. */
+  const [pins, setPins] = createSignal<MessagePin[]>([]);
   createDependencyEffect(() => { const capturedTransport0 = props.transport;
     setOwnsConversation(capturedTransport0?.ownsConversation() !== false);
     setTerminalAvailable(capturedTransport0?.hasSentMessage() ?? false);
     setOwnershipError(undefined);
+    setPins([]);
 
     const unsubscribe = capturedTransport0?.subscribe((event) => {
+      if (event.type === "pinned_messages") { setPins(pinnedMessagesSchema.parse(event.pins)); return; }
       setTerminalAvailable(capturedTransport0.hasSentMessage());
       // A local disconnect also reports ownership_lost; only a real loss changes ownsConversation.
       if (event.type === "ownership_lost") setOwnsConversation(capturedTransport0.ownsConversation() !== false);
@@ -242,6 +247,32 @@ export function ChatView(props: Props & { transcriptActions?: JSXElement; follow
     await transport.command({ type: "retry_response", entryId: await resolveMessageEntry(transport, message) });
   };
 
+  const pinnedIds = createMemo(() => new Set(pins().map(pin => pin.entryId)));
+  const noticeError = (title: string, reason: unknown) => props.onNotice?.(title, reason instanceof Error ? reason.message : String(reason));
+  const unpin = (entryId: string) => {
+    const transport = props.transport;
+
+    if (!transport) { noticeError("Could not unpin message", "Conversation is unavailable"); return Promise.resolve(); }
+
+    return transport.command({ type: "unpin_message", entryId }).then(() => undefined, reason => noticeError("Could not unpin message", reason));
+  };
+  const messagePins: MessagePins = {
+    pinned: id => pinnedIds().has(id),
+    toggle: async (message, text) => {
+      const transport = props.transport;
+
+      if (pinnedIds().has(pinId(message))) return unpin(pinId(message));
+
+      try {
+        if (!transport) throw new Error("Conversation is unavailable");
+        if (pins().length >= PIN_LIMIT) throw new Error(`Only ${PIN_LIMIT} messages can be pinned. Unpin one first.`);
+        await transport.command({ type: "pin_message", entryId: await resolveMessageEntry(transport, message), text });
+      } catch (reason) { noticeError("Could not pin message", reason); }
+    },
+  };
+  /** The pinned message to scroll to. It stays set while older history loads to find it. */
+  const [pinReveal, setPinReveal] = createSignal<string>();
+
   const onBranch: Props["onBranch"] = (message) => actions.current.onBranch(message);
   const onFork: NonNullable<Props["onFork"]> = message => actions.current.onFork?.(message);
   const branchAction = createMemo(() => (branchingAvailable(props.state) ? onBranch : undefined));
@@ -325,6 +356,26 @@ export function ChatView(props: Props & { transcriptActions?: JSXElement; follow
 
     return () => cancelAnimationFrame(frame);
   }, () => [props.revealEntryId, turns()]);
+  createDependencyEffect(() => { const entryId = pinReveal(); const root = messagesRef.current;
+
+    if (!entryId || !root) return;
+    const turn = turns().find(candidate => candidate.messages.some(message => pinId(message) === entryId));
+
+    if (!turn) {
+      if (older()) loadOlder();
+      else { setPinReveal(undefined); props.onNotice?.("Pinned message not found", "The message is not in this branch of the chat."); }
+
+      return;
+    }
+    followLatest.current = false;
+    root.querySelector("[data-response-turn=\"" + CSS.escape(turn.messages[0]?.id ?? "") + "\"]")?.dispatchEvent(new CustomEvent("piop:reveal-turn"));
+    const frame = requestAnimationFrame(() => {
+      setPinReveal(undefined);
+      root.querySelector("[data-pin-id=\"" + CSS.escape(entryId) + "\"]")?.scrollIntoView({ block: "start" });
+    });
+
+    return () => cancelAnimationFrame(frame);
+  }, () => [pinReveal(), turns()]);
   createDependencyEffect(() => {
     const messages = messagesRef.current;
 
@@ -399,9 +450,32 @@ export function ChatView(props: Props & { transcriptActions?: JSXElement; follow
 
     return (<div class="conversation-content">
       <ConversationImageProject.Provider value={imageProject}><MessagesSection /></ConversationImageProject.Provider>
+      <Show when={pins().length > 0}><PinnedMessages /></Show>
       <ResponseNavigator responses={responses()} scrollRoot={messagesRef} onNavigate={() => { followLatest.current = false; }} />
       <ComposerStack />
     </div>);
+  };
+
+  /** The pinned messages at the top of the chat. The messages leave room for them with --pins-height. */
+  const PinnedMessages = () => {
+    const bar = createRef<HTMLDivElement | null>(null);
+    createDependencyEffect(() => { const element = bar.current; const root = messagesRef.current;
+
+      if (!element || !root || typeof ResizeObserver === "undefined") return;
+      const update = () => root.style.setProperty("--pins-height", `${element.offsetHeight}px`);
+      update();
+      const observer = new ResizeObserver(update);
+      observer.observe(element);
+
+      return () => { observer.disconnect(); root.style.removeProperty("--pins-height"); };
+    }, () => []);
+
+    return <div ref={element => { bar.current = element; }} class="pinned-messages" role="list" aria-label="Pinned messages">
+      <Key each={pins()} by={pin => pin.entryId}>{pin => <div class="pinned-message" role="listitem">
+        <button type="button" class="pinned-message-text" onClick={() => setPinReveal(pin().entryId)}>{pin().text || <em>Attachment</em>}</button>
+        <button type="button" class="pinned-message-unpin" aria-label="Unpin message" data-tooltip="Unpin" onClick={() => void unpin(pin().entryId)}><PinOff size={13} /></button>
+      </div>}</Key>
+    </div>;
   };
 
   const ConversationShell = () => <main class={`chat-shell${ownsConversation() ? "" : " conversation-unowned"}`} ref={element => { shellRef.current = element; }} classList={{ "session-drop-over": sessionDragOver() }} data-text-selected={textSelected() ? "" : undefined} data-session-drop-zone={acceptsSessionDrop() ? "" : undefined} on:piop-session-drag={sessionDrag} oncapture:focus={() => props.onActivate?.()} oncapture:pointerdown={() => props.onActivate?.()}>
@@ -412,7 +486,7 @@ export function ChatView(props: Props & { transcriptActions?: JSXElement; follow
 
   const conversationHost = () => props.transport?.currentHostId() ?? "local";
 
-  return <ConversationHostContext.Provider value={conversationHost}><MessageFileContext.Provider value={{ hostId: conversationHost, cwd: projectCwd, get notify() { return props.onNotice; } }}><PluginMessageContext.Provider value={{ sessionId: () => props.state.sessionId, command: async command => { if (!props.transport) throw new Error("Conversation is unavailable"); return props.transport.command(command); } }}><ConversationShell /></PluginMessageContext.Provider></MessageFileContext.Provider></ConversationHostContext.Provider>;
+  return <ConversationHostContext.Provider value={conversationHost}><MessageFileContext.Provider value={{ hostId: conversationHost, cwd: projectCwd, get notify() { return props.onNotice; } }}><PluginMessageContext.Provider value={{ sessionId: () => props.state.sessionId, command: async command => { if (!props.transport) throw new Error("Conversation is unavailable"); return props.transport.command(command); } }}><MessagePinContext.Provider value={messagePins}><ConversationShell /></MessagePinContext.Provider></PluginMessageContext.Provider></MessageFileContext.Provider></ConversationHostContext.Provider>;
 }
 
 type ConversationGroup = { messages: ChatMessage[]; promptContexts: PromptContextInfo[] };

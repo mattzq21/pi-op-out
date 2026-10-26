@@ -10,7 +10,8 @@ import { formatDuration } from "../lib/duration";
 import { ConversationImageProject } from "./markdownImages";
 import { createDependencyEffect, createRef } from "../lib/solid";
 
-import { Check, ChevronRight, CircleAlert, Copy, GitBranch, Split, Undo2, Wrench } from "lucide-solid";
+import { Check, ChevronRight, CircleAlert, Copy, GitBranch, Pin, Split, Undo2, Wrench } from "lucide-solid";
+import { MessagePinContext, pinId, pinText } from "../lib/messagePins";
 import { hasVisibleText, textOf, thinkingOf } from "../lib/content";
 import { cacheHitStats, GOAL_PROMPT, isContextInjection, toolTitle } from "../lib/messages";
 import { CacheIcon } from "./CacheIcon";
@@ -60,6 +61,23 @@ function imageContextParts(content: string, hasImages: boolean) {
 
 function ContextInjection(props: { title: string; content: string }) {
   return <details class="context-injection"><summary>{props.title}<ChevronRight size={12} aria-hidden="true" /></summary><div class="context-injection-content">{props.content}</div></details>;
+}
+
+/** The button outside a message that pins it to the top of the chat or unpins it. text is the message text that the pin shows. */
+function PinButton(props: { message: ChatMessage; text: string }) {
+  const pins = useContext(MessagePinContext);
+  const [busy, setBusy] = createSignal(false);
+
+  return <Show when={pins}>{owner => {
+    const pinned = () => owner().pinned(pinId(props.message));
+    const toggle = () => {
+      if (busy()) return;
+      setBusy(true);
+      void owner().toggle(props.message, props.text).finally(() => setBusy(false));
+    };
+
+    return <button type="button" class="message-pin" classList={{ pinned: pinned() }} aria-pressed={pinned()} aria-label={pinned() ? "Unpin message" : "Pin message"} data-tooltip={pinned() ? "Unpin" : "Pin"} disabled={busy()} onClick={toggle}><Pin size={14} /></button>;
+  }}</Show>;
 }
 
 const shortMessageTime = new Intl.DateTimeFormat(undefined, { hour: "2-digit", minute: "2-digit" });
@@ -258,10 +276,12 @@ export function Message(componentProps: Props) {
     const images = createMemo(() => Array.isArray(componentProps.message.content) ? componentProps.message.content.flatMap(part => part.type === "image" && part.data && part.mimeType && /^image\/(png|jpeg|gif|webp)$/.test(part.mimeType) ? [part] : []) : []);
     const imageContext = createMemo(() => imageContextParts(textOf(componentProps.message.content), images().length > 0));
     const parts = createMemo(() => userMessageParts(imageContext().text));
+    const pinLabel = createMemo(() => pinText([parts().command ? "/" + parts().command : "", ...parts().skills.map(skill => "$" + skill), parts().text].filter(Boolean).join(" ")));
+    const hasBody = () => Boolean(parts().text || parts().skills.length > 0 || parts().command);
 
-    return <><article tabIndex={-1} class={`message user-message${componentProps.message.deliveryBehavior === "steer" ? " steering-message" : ""}`}>
-      {images().length > 0 && <div class="user-message-images"><Index each={images()}>{part => <ZoomableImage src={`data:${part().mimeType};base64,${part().data}`} alt="Sent attachment" />}</Index></div>}
-      {(parts().text || parts().skills.length > 0 || parts().command) && <div class="message-body">
+    return <><article tabIndex={-1} class={`message user-message${componentProps.message.deliveryBehavior === "steer" ? " steering-message" : ""}`} data-pin-id={pinId(componentProps.message)}>
+      {images().length > 0 && <div class="user-message-images">{!hasBody() && <PinButton message={componentProps.message} text={pinLabel()} />}<Index each={images()}>{part => <ZoomableImage src={`data:${part().mimeType};base64,${part().data}`} alt="Sent attachment" />}</Index></div>}
+      {hasBody() && <div class="message-body"><PinButton message={componentProps.message} text={pinLabel()} />
       <Show when={parts().command}>{command => <span class="skill-reference command-reference">/{command()}</span>}</Show>{<Key each={parts().skills} by={(skill) => skill}>{(skill, _index) => <span class="skill-reference" >${skill()}</span>}</Key>}{parts().text && (parts().literalSkill ? <span class="literal-skill-content">{parts().text}</span> : <Markdown>{parts().text}</Markdown>)}
       </div>}
       <div class="message-actions">
@@ -321,6 +341,7 @@ export function Message(componentProps: Props) {
       };
 
       return (<div class="message-body">
+        {(componentProps.showActions ?? true) && !streaming() && hasVisibleText(output()) && <PinButton message={componentProps.message} text={pinText(output())} />}
         {thinking() && <div class="reasoning-text"><Markdown streaming={streaming()}>{thinking()}</Markdown></div>}
         {renderResponse()}
         {renderMessageFailure()}
@@ -328,7 +349,7 @@ export function Message(componentProps: Props) {
       </div>);
     };
 
-    return (<article tabIndex={-1} class={`message assistant-message ${thinking() ? "reasoning-message" : ""}`} data-response-id={componentProps.message.id} aria-label={metadata().responseLabel}>
+    return (<article tabIndex={-1} class={`message assistant-message ${thinking() ? "reasoning-message" : ""}`} data-response-id={componentProps.message.id} data-pin-id={pinId(componentProps.message)} aria-label={metadata().responseLabel}>
       {renderMessageBody()}
     </article>);
   };

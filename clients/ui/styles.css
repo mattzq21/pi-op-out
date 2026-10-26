@@ -627,3 +627,28 @@ textarea::placeholder { color: var(--faint); }
 
 /* A loading chat keeps its controls looking the same; they only stop taking input. */
 .composer-loading .composer-tools .icon-button:disabled:not([data-unavailable]), .composer-loading .fast-mode-indicator:disabled { opacity: 1; }
+.message-body, .user-message-images { position: relative; }
+/* A turn clips what it paints to its box. Its padding holds the pin buttons outside the messages. */
+.deferred-turn { margin-inline: -36px; padding-inline: 36px; }
+.message-pin { position: absolute; top: 4px; left: -34px; width: 26px; height: 26px; display: grid; place-items: center; padding: 0; border: 0; border-radius: 6px; background: transparent; color: var(--faint); cursor: pointer; opacity: 0; transition: opacity .15s; }
+.user-message .message-pin { top: 6px; }
+.assistant-message .message-pin { left: auto; right: -34px; top: 2px; }
+.message:focus-within .message-pin, .message-pin:focus-visible { opacity: 1; }
+@media (hover: hover) { .message:hover .message-pin { opacity: 1; } }
+@media (pointer: coarse) { .message-pin { opacity: .6; } }
+.message-pin:hover, .message-pin:focus-visible { color: var(--ink); background: var(--dark-control-hover); }
+.message-pin.pinned { color: var(--accent); opacity: 1; }
+.message-pin:disabled { cursor: wait; }
+.messages { padding-top: calc(5vh + var(--pins-height, 0px)); scroll-padding-top: calc(var(--pins-height, 0px) + 16px); }
+.pinned-messages { position: absolute; top: 8px; left: 50%; z-index: 4; width: min(740px, calc(100% - 96px)); transform: translateX(-50%); display: flex; flex-direction: column; gap: 1px; padding: 4px; border: 1px solid var(--line); border-radius: 10px; background: color-mix(in srgb, var(--paper) 92%, transparent); backdrop-filter: blur(6px); box-shadow: 0 6px 20px #0003; }
+.pinned-message { display: flex; align-items: center; gap: 2px; min-width: 0; }
+.pinned-message-text { flex: 1; min-width: 0; padding: 4px 8px; border: 0; border-radius: 6px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: left; background: transparent; color: var(--ink); font: 13px "DM Sans", sans-serif; cursor: pointer; }
+.pinned-message-text em { color: var(--muted); }
+.pinned-message-unpin { flex: none; width: 24px; height: 24px; display: grid; place-items: center; padding: 0; border: 0; border-radius: 6px; background: transparent; color: var(--faint); cursor: pointer; }
+.pinned-message-text:hover, .pinned-message-unpin:hover { color: var(--ink); background: var(--dark-control-hover); }
+@media (max-width: 700px) {
+  .deferred-turn { margin-inline: -20px; padding-inline: 20px; }
+  .message-pin { left: -22px; width: 20px; }
+  .assistant-message .message-pin { right: -20px; }
+  .pinned-messages { width: calc(100% - 16px); }
+}
