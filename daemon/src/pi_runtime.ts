@@ -38,6 +38,8 @@ export class PiRuntime {
   agentConfigRevision = 0;
   agentConfigRevisions = new Map<string, number>();
   activeAgents = new Map<string, AgentAddress>();
+  /** Local sessions that have saved settings they did not apply yet. */
+  settingsPendingSessions = new Set<string>();
 
   containsProcess(id: string): boolean { return this.processes.has(id); }
 

@@ -266,7 +266,7 @@ export class Session {
   publishState(): void {
     const messageable = this.unused();
     if (this.isTransient) return;
-    this.host.output({ type: 'session_state', sessionKey: this.key, epoch: this.epoch, state: clone(this.state), working: this.isWorking, messageable });
+    this.host.output({ type: 'session_state', sessionKey: this.key, epoch: this.epoch, state: clone(this.state), working: this.isWorking, messageable, settingsPending: this.settings.pending() });
   }
 
   private publishPresence(): void {

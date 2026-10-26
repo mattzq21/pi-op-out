@@ -408,7 +408,7 @@ function existingRoute(state: PeerRuntime, owner: string, args: any): Route | un
   return existing;
 }
 
-const LOCAL_ONLY = ['save_app_settings', 'load_app_settings', 'load_settings_change', 'change_session_groups', 'load_session_groups'];
+const LOCAL_ONLY = ['save_app_settings', 'load_app_settings', 'load_settings_change', 'settings_pending_count', 'change_session_groups', 'load_session_groups'];
 
 export async function route(app: App, owner: string, command: string, rawArgs: any): Promise<any | undefined> {
   const args = rawArgs && typeof rawArgs === 'object' && !Array.isArray(rawArgs) ? { ...rawArgs } : {};

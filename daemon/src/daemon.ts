@@ -54,6 +54,7 @@ export class Daemon {
     this.sessionEpochs.clear();
     const ids = runtime.disconnectDaemon(this);
     for (const key of [...runtime.activeAgents.keys()]) if (key.startsWith(this.agentPrefix) || ids.includes(key)) runtime.activeAgents.delete(key);
+    for (const key of [...runtime.settingsPendingSessions]) if (key.startsWith(this.agentPrefix)) updateSettingsPending(app, this.hostId, key, false);
     for (const id of ids) app.emit('pi://event', { runtimeId: id, event: { type: 'disconnected' } });
   }
 
@@ -171,6 +172,14 @@ function handleEvent(app: App, connection: Daemon, packet: any): void {
   app.emit('pi://event', { runtimeId: packet.runtimeId ?? null, event: packet.event ?? null });
 }
 
+/** Records whether a local session still has saved settings to apply, and sends the new count to clients. */
+function updateSettingsPending(app: App, hostId: string, key: string, pending: boolean): void {
+  const sessions = app.pi.settingsPendingSessions;
+  if (hostId !== 'local' || sessions.has(key) === pending) return;
+  if (pending) sessions.add(key); else sessions.delete(key);
+  app.emit('pi://settings-pending', { hostId, count: sessions.size });
+}
+
 function handleSessionState(app: App, connection: Daemon, hostId: string, packet: any): void {
   const state = packet.state;
   if (!state || typeof state !== 'object' || Array.isArray(state)) return;
@@ -182,6 +191,7 @@ function handleSessionState(app: App, connection: Daemon, hostId: string, packet
   }
   if (typeof packet.epoch === 'string') connection.sessionEpochs.set(key, packet.epoch);
   app.pi.activeAgents.set(key, { hostId, sessionId, sessionPath: typeof state.sessionFile === 'string' ? state.sessionFile : undefined, working, messageable: packet.messageable === true });
+  updateSettingsPending(app, hostId, key, packet.settingsPending === true);
   app.emit('pi://sessions-changed', null);
 }
 
@@ -201,6 +211,7 @@ function handlePacket(app: App, connection: Daemon, hostId: string, packet: any)
       if (typeof packet.epoch !== 'string' || connection.sessionEpochs.get(key) !== packet.epoch) return;
       connection.sessionEpochs.delete(key);
       app.pi.activeAgents.delete(key);
+      updateSettingsPending(app, hostId, key, false);
       app.emit('pi://sessions-changed', null);
       return;
     }

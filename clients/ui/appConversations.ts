@@ -25,6 +25,7 @@ import { sessionDebugAction } from "./lib/sessionDebugAction";
 import { updateSessionGroups,type SessionGroup } from "./lib/sessionGroups";
 import { createCachedSessionList } from "./lib/sessionListCache";
 import { useSessionResume } from "./lib/sessionResume";
+import { createSettingsPendingCount } from "./lib/settingsPendingCount";
 import { SessionRuntimePool } from "./lib/sessionRuntimePool";
 import { createSidebarState } from "./lib/sidebarState";
 import { createDependencyEffect,createMemoFields,createRef,createSubscription,type StateUpdate } from "./lib/solid";
@@ -74,7 +75,6 @@ export function createAppConversations(preloadChat: () => void) {
 
   const runningSessions = createSubscription(() => (listener) => runtimePool().subscribe(listener), () => () => runtimePool().runningSessions());
   const unseenSessions = createSubscription(() => (listener) => runtimePool().subscribe(listener), () => () => runtimePool().unseenSessions());
-  const pendingSettingsCount = createSubscription(() => (listener) => runtimePool().subscribe(listener), () => () => runtimePool().pendingSettingsCount());
 
   const sessionRuntime = useChatSession(() => (transport()));
   const chatSession = createMemo(() => (sessionRuntime));
@@ -88,6 +88,7 @@ export function createAppConversations(preloadChat: () => void) {
   const [panelOpen, setPanelOpen] = createSignal((() => !window.matchMedia("(max-width: 700px)").matches)());
   const [query, setQuery] = createSignal("");
   const [connected, setConnected] = createSignal(false);
+  const pendingSettingsCount = createSettingsPendingCount(connected, message => addNotice({ title: "Could not read which sessions still apply saved settings", message }));
   const connectionReadyRef = createRef(connected()); createComputed(() => { connectionReadyRef.current = connected(); });
   const updateConnected = (value: boolean) => { const owned = value && activeTransportRef.current.ownsConversation(); connectionReadyRef.current = owned; setConnected(owned); };
 

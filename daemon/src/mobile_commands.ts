@@ -210,6 +210,7 @@ const COMMANDS: Record<string, Handler> = {
   recover_missing_session: (app, _owner, args) => archives.recoverMissingSession(app, argument(args, 'sessionPath', 'string'), argument(args, 'hostId', 'string?'), argument(args, 'action', 'string'), argument(args, 'clientId', 'string')),
   load_app_settings: (app, _owner, args) => loadSettings(app, args),
   load_settings_change: app => loadSettingsChange(app),
+  settings_pending_count: app => app.pi.settingsPendingSessions.size,
   save_app_settings: (app, _owner, args) => saveAppSettings(app, parseAppSettings(argument(args, 'settings', 'any')), argument(args, 'agentHostId', 'string?')),
   codex_usage: () => codexUsage(),
   opencode_go_usage: () => opencodeGoUsage(),

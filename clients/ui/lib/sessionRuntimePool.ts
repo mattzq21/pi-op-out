@@ -280,7 +280,6 @@ export class SessionRuntimePool {
       });
     }
   }
-  pendingSettingsCount() { return [...this.transports].filter((transport) => transport.hasPendingSettings()).length; }
 
   async remove(session: SessionSummary) {
     const key = sessionKey(session.daemonId ?? session.hostId ?? "local", session.id); const transport = this.sessions.get(key);
