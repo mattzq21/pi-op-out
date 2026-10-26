@@ -2,6 +2,7 @@ export const debugFeatures = [
   { id: "contextBar", label: "Context bar" },
   { id: "contextInjections", label: "Context injections" },
   { id: "cacheHitRate", label: "Cache hit rate" },
+  { id: "reasoning", label: "Reasoning traces" },
   { id: "toolDetails", label: "Tool details" },
   { id: "mcpServers", label: "MCP server names" },
   { id: "sessionActions", label: "Session ID and file actions" },

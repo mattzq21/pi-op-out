@@ -571,6 +571,15 @@ function ForkSourceLink(props: { source: ForkSource; name?: string; onOpen?: (so
   return <div class="fork-source" role="note">{props.onOpen ? <button type="button" class="fork-source-link" onClick={() => props.onOpen?.(props.source)}>{label()}</button> : <span>{label()}</span>}</div>;
 }
 
+const reasoningFree = new WeakMap<ChatMessage, ChatMessage>();
+
+function withoutReasoning(message: ChatMessage) {
+  if (message.role !== "assistant" || !Array.isArray(message.content) || !message.content.some(part => part.type === "thinking")) return message;
+  let result = reasoningFree.get(message);
+  if (!result) reasoningFree.set(message, result = { ...message, content: message.content.filter(part => part.type !== "thinking") } as ChatMessage);
+  return result;
+}
+
 function invisibleAssistant(message: ChatMessage) {
   const hasToolCall = Array.isArray(message.content) && message.content.some((part) => part.type === "toolCall");
 
@@ -619,15 +628,16 @@ function MessageList(props: { messages: ChatMessage[]; expanded: boolean; compac
 type ConversationTurnProps = { latest?: boolean; messages: ChatMessage[]; promptContexts: PromptContextInfo[]; cwd?: string; debug: DebugView; active: boolean; retryable: boolean; onRetry: (message: ChatMessage) => Promise<void>; onBranch?: Props["onBranch"]; onFork?: Props["onFork"]; onForkAndForget?: Props["onForkAndForget"]; };
 
 function ConversationTurn(componentProps: ConversationTurnProps) {
+  const turnMessages = createMemo(() => componentProps.debug.reasoning ? componentProps.messages : componentProps.messages.map(withoutReasoning));
   const [retryError, setRetryError] = createSignal<string>();
   const [workOpen, setWorkOpen] = createSignal(false);
   const [retrying, setRetrying] = createSignal(false); const retryingRef = createRef(false);
-  const userIndex = createMemo(() => (componentProps.messages.findIndex(isPromptMessage)));
+  const userIndex = createMemo(() => (turnMessages().findIndex(isPromptMessage)));
 
-  const finalIndex = createMemo(() => (finalResponseIndex(componentProps.messages)));
-  const finalThinking = createMemo(() => (finalIndex() >= 0 ? thinkingOf(componentProps.messages[finalIndex()].content) : ""));
+  const finalIndex = createMemo(() => (finalResponseIndex(turnMessages())));
+  const finalThinking = createMemo(() => (finalIndex() >= 0 ? thinkingOf(turnMessages()[finalIndex()].content) : ""));
 
-  const intermediate = createMemo(() => (componentProps.messages.flatMap((message, index): ChatMessage[] => {
+  const intermediate = createMemo(() => (turnMessages().flatMap((message, index): ChatMessage[] => {
     if (isPromptMessage(message) || isContextInjection(message) || (message.role === "system" && message.customType !== "compaction")) return [];
 
     if (index !== finalIndex()) return [message];
@@ -638,28 +648,28 @@ function ConversationTurn(componentProps: ConversationTurnProps) {
     return [{ ...reasoningMessage, id: `${message.id}:reasoning`, content: [{ type: "thinking", thinking: finalThinking() }], stopReason: undefined, errorMessage: undefined }];
   })));
 
-  const userMessages = createMemo(() => (componentProps.messages.filter(message => isPromptMessage(message) && message.customType !== "piop-subagent-result")));
+  const userMessages = createMemo(() => (turnMessages().filter(message => isPromptMessage(message) && message.customType !== "piop-subagent-result")));
   /** Subagents whose answers started this turn. They show on the turn's "Worked for" line instead of as a message. */
-  const finishedSubagents = createMemo(() => componentProps.messages.filter(message => isPromptMessage(message) && message.customType === "piop-subagent-result").flatMap(message => subagentRuns(message.details)));
+  const finishedSubagents = createMemo(() => turnMessages().filter(message => isPromptMessage(message) && message.customType === "piop-subagent-result").flatMap(message => subagentRuns(message.details)));
   // A click on a subagent opens its chat and must not open or close the work group around it.
   const renderFinishedSubagents = () => finishedSubagents().length > 0 && <span class="subagent-finished" onClick={event => event.preventDefault()}><SubagentResults runs={finishedSubagents()} /></span>;
   /** The work that the daemon left out of this turn until the user opens it. */
-  const deferredWork = createMemo(() => finalIndex() >= 0 ? componentProps.messages[finalIndex()].deferredWork : undefined);
+  const deferredWork = createMemo(() => finalIndex() >= 0 ? turnMessages()[finalIndex()].deferredWork : undefined);
   const [workError, setWorkError] = createSignal<string>();
-  const hasWork = createMemo(() => (Boolean(deferredWork()) || intermediate().some((message) => !invisibleAssistant(message))));
+  const hasWork = createMemo(() => ((Boolean(deferredWork()) && (componentProps.debug.reasoning || !deferredWork()!.reasoningOnly)) || intermediate().some((message) => !invisibleAssistant(message))));
   const openWork = (open: boolean) => {
     setWorkOpen(open);
-    const load = open ? componentProps.messages[finalIndex()]?.loadWork : undefined;
+    const load = open ? turnMessages()[finalIndex()]?.loadWork : undefined;
 
     if (!load) return;
     setWorkError(undefined);
     load().catch(reason => setWorkError(reason instanceof Error ? reason.message : String(reason)));
   };
   const reasoningOnly = createMemo(() => deferredWork() ? deferredWork()!.reasoningOnly : (compactCompletedTools(intermediate()).every(({ message }) => message.role === "assistant" && hasVisibleText(thinkingOf(message.content)) && !hasVisibleText(textOf(message.content)) && message.stopReason !== "error" && message.stopReason !== "aborted")));
-  const finalSource = createMemo(() => (finalIndex() >= 0 ? componentProps.messages[finalIndex()] : undefined));
-  const finalMessage = createMemo(() => (finalIndex() >= 0 ? { ...componentProps.messages[finalIndex()], content: textOf(componentProps.messages[finalIndex()].content) } : undefined));
+  const finalSource = createMemo(() => (finalIndex() >= 0 ? turnMessages()[finalIndex()] : undefined));
+  const finalMessage = createMemo(() => (finalIndex() >= 0 ? { ...turnMessages()[finalIndex()], content: textOf(turnMessages()[finalIndex()].content) } : undefined));
 
-  const turnCacheUsage = createMemo(() => (componentProps.messages.reduce((total, message) => {
+  const turnCacheUsage = createMemo(() => (turnMessages().reduce((total, message) => {
     for (const usage of message.role === "assistant" ? [message.usage, message.deferredWork?.usage] : []) if (usage) {
       total.input += usage.input;
       total.cacheRead += usage.cacheRead; total.cacheWrite += usage.cacheWrite ?? 0;
@@ -669,8 +679,8 @@ function ConversationTurn(componentProps: ConversationTurnProps) {
   }, { input: 0, cacheRead: 0, cacheWrite: 0 })));
 
 
-  const workedFor = createMemo(() => (turnTiming(componentProps.messages, userIndex(), finalMessage())));
-  const retryTarget = createMemo(() => (componentProps.retryable ? retryableResponse(componentProps.messages) : undefined));
+  const workedFor = createMemo(() => (turnTiming(turnMessages(), userIndex(), finalMessage())));
+  const retryTarget = createMemo(() => (componentProps.retryable ? retryableResponse(turnMessages()) : undefined));
   const retry = () => {
     const target = retryTarget();
 
@@ -683,7 +693,7 @@ function ConversationTurn(componentProps: ConversationTurnProps) {
     const earlyTokens = componentProps.promptContexts[0]?.inputTokens;
 
     if (earlyTokens !== undefined) return earlyTokens;
-    const response = componentProps.messages.find(message => message.role === "assistant");
+    const response = turnMessages().find(message => message.role === "assistant");
 
     return cacheHitStats(response?.deferredWork?.firstUsage ?? response?.usage)?.promptTokens;
   });
@@ -696,16 +706,16 @@ function ConversationTurn(componentProps: ConversationTurnProps) {
     {finalMessage() && !hasWork() && finishedSubagents().length === 0 && <hr class="turn-divider" />}
     {finalMessage() && <Message message={required((finalMessage()))} turnCacheUsage={turnCacheUsage()} debug={componentProps.debug} onBranch={canBranchFrom(finalSource()) ? componentProps.onBranch : undefined} onFork={canBranchFrom(finalSource()) ? componentProps.onFork : undefined} onForkAndForget={componentProps.onForkAndForget} retrying={retrying()} onRetry={retryTarget() ? retry : undefined} />}
     {retryError() && <div class="message-failure retry-error" role="alert">Retry failed: {(retryError())}</div>}
-    <MessageList messages={componentProps.messages.filter(message => message.role === "system" && message.customType !== "compaction")} expanded={false} />
+    <MessageList messages={turnMessages().filter(message => message.role === "system" && message.customType !== "compaction")} expanded={false} />
   </>)}>
-    <div class="active-work-content"><MessageList messages={componentProps.messages.filter(message => !isPromptMessage(message) && !isContextInjection(message))} expanded compact={false} debug={componentProps.debug} showActions={false} /></div>
+    <div class="active-work-content"><MessageList messages={turnMessages().filter(message => !isPromptMessage(message) && !isContextInjection(message))} expanded compact={false} debug={componentProps.debug} showActions={false} /></div>
   </Show>);
 
   return <section class="conversation-turn" classList={{ "latest-turn": componentProps.latest === true }}>
     {<Key each={userMessages()} by={(message) => message.id}>{(message, _index) => <Message  message={message()} debug={componentProps.debug} />}</Key>}
     {!hasWork() && finishedSubagents().length > 0 && <div class="subagent-finished-line">{renderFinishedSubagents()}</div>}
     {renderPromptContextBar()}
-    {componentProps.debug.contextInjections && <MessageList messages={componentProps.messages.filter(isContextInjection)} expanded={false} debug={componentProps.debug} />}
+    {componentProps.debug.contextInjections && <MessageList messages={turnMessages().filter(isContextInjection)} expanded={false} debug={componentProps.debug} />}
     {renderActiveWorkContent()}
   </section>;
 }
