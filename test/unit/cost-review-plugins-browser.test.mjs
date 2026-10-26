@@ -22,15 +22,15 @@ for (const width of [1280, 412]) test(`cost and review commands retain their ful
   await page.getByText('Session cost limit cleared.', { exact: true }).waitFor();
   await composer.fill('/review README.md');
   await composer.press('Enter');
-  const review = page.getByRole('region', { name: 'Split conversation: Code review' });
+  const review = page.getByRole('region', { name: 'Side chat: Review README.md' });
   await review.waitFor({ timeout: 30000 });
   await review.getByText(/Reply to You are the dedicated code review agent/s).waitFor({ timeout: 30000 });
-  const feedback = review.getByRole('button', { name: 'Send feedback', exact: true });
-  await feedback.click();
-  await review.getByRole('button', { name: 'Feedback sent', exact: true }).waitFor();
-  assert.equal(await review.isVisible(), true);
-  await review.getByRole('button', { name: 'Close split pane' }).click();
+  assert.equal(await page.getByRole('tab', { name: 'Review README.md' }).getAttribute('aria-selected'), 'true');
+  // Closing a review tab archives the review.
+  await page.getByRole('button', { name: 'Close Review README.md' }).click();
   await review.waitFor({ state: 'detached' });
+  await page.getByRole('button', { name: 'Open review', exact: true }).waitFor();
+  assert.equal(await page.getByRole('button', { name: 'Open review', exact: true }).isDisabled(), true);
   await page.getByRole('button', { name: 'Stop piop', exact: true }).waitFor({ state: 'detached', timeout: 30000 });
 });
 });

@@ -2,7 +2,7 @@ import { Database } from "bun:sqlite";
 import { join } from "node:path";
 import { afterAll, beforeAll, expect, test } from 'bun:test';
 import { readFileSync } from 'node:fs';
-import { agentDaemon, text } from './agent-chats';
+import { agentDaemon, called, text } from './agent-chats';
 
 let agents: Awaited<ReturnType<typeof agentDaemon>>;
 beforeAll(async () => { agents = await agentDaemon(); }, 60000);
@@ -14,24 +14,26 @@ const uiRequests = (runtimeId: string, method: string, host = agents) => host.da
 async function openReview(chat: Awaited<ReturnType<typeof agents.rootChat>>, command: string, host = agents) {
   const seen = new Set(host.daemon.events.map(event => event.payload));
   await chat.command({ type: 'follow_up', message: command });
-  const opened = await host.daemon.waitEvent('pi://event', payload => !seen.has(payload) && payload.runtimeId === chat.runtimeId && payload.event?.method === 'input' && payload.event.title === '__pi_desktop_review__');
+  const opened = await host.daemon.waitEvent('pi://event', payload => !seen.has(payload) && payload.runtimeId === chat.runtimeId && payload.event?.method === 'input' && payload.event.title === '__pi_desktop_auxiliary__');
   return JSON.parse(opened.event.placeholder);
 }
 
-test.concurrent('review findings sent to the main chat start a turn there, and only that chat\'s own reviews may send them', async () => {
+test.concurrent('a review chat sends its result to the reviewed chat with send_to_main, which starts a turn there', async () => {
   agents.scripts.set('Write the lexer', messages => ({ text: text(messages.at(-1)).includes('Missing EOF token') ? 'Fixed the EOF token.' : 'Lexer done.' }));
+  agents.scripts.set('You are the dedicated code review agent', messages => called(messages, 'send_to_main') ? { text: 'Sent.' } : { tool: 'send_to_main', arguments: { message: 'Missing EOF token' } });
   const chat = await agents.rootChat({ visible: true });
+  // The review agent answers with the scripted model.
+  const configuration = await chat.command({ type: 'get_agent_configuration' });
+  await chat.command({ type: 'configure_agents', configuration: { revision: configuration.revision, agents: configuration.agents.map((agent: any) => agent.name === 'reviewer' ? { ...agent, model: 'scripted/scripted-model' } : agent) } });
   await chat.command({ type: 'prompt', message: 'Write the lexer' });
   await chat.until(history => text(history.at(-1)) === 'Lexer done.');
   const review = await openReview(chat, '/review src/lexer.ts');
-
-  const failure = (command: any) => chat.command(command).then(() => 'sent', (error: Error) => error.message);
-  expect(await failure({ type: 'review_feedback', sessionId: crypto.randomUUID(), message: 'Missing EOF token' })).toBe('Feedback requires a review belonging to this conversation');
-  expect(await failure({ type: 'review_feedback', sessionId: review.sessionId, message: '  ' })).toContain('Feedback requires a review');
-  await chat.command({ type: 'review_feedback', sessionId: review.sessionId, message: 'Missing EOF token' });
+  await agents.daemon.invoke('start_pi', { runtimeId: 'review-sender', clientId: 'laptop', cwd: chat.cwd, sessionPath: review.sessionPath });
+  const reviewCommand = (command: any) => agents.daemon.invoke('pi_command', { runtimeId: 'review-sender', command });
+  await reviewCommand({ type: 'prompt', message: review.task });
   await chat.until(history => text(history.at(-1)) === 'Fixed the EOF token.');
-  const feedback = (await chat.command({ type: 'get_entries' })).entries.filter((entry: any) => entry.customType === 'piop-review-feedback');
-  expect(feedback.map((entry: any) => [entry.content, entry.details.sessionId])).toEqual([['Missing EOF token', review.sessionId]]);
+  const request = agents.model.requests.find(request => request.messages.some((message: any) => text(message).startsWith('You are the dedicated code review agent')));
+  expect(request.tools.find((tool: any) => tool.function.name === 'send_to_main')?.function.description).toBe('Send the review result to agent whose work you reviewed, when user asks');
 }, 60000);
 
 test.concurrent('/rs takes an optional subagent count, then an optional scope; a count that is not positive only shows how to use it', async () => {
@@ -40,26 +42,29 @@ test.concurrent('/rs takes an optional subagent count, then an optional scope; a
   const notices = () => agents.daemon.events.filter(event => event.payload?.runtimeId === chat.runtimeId && event.payload.event?.method === 'notify').map(event => event.payload.event.message);
   for (let tries = 0; notices().length < 2 && tries < 100; tries++) await Bun.sleep(100);
   expect(notices()).toEqual(Array(2).fill('Usage: /rs [n] [scope] — n is a positive number of review subagents'));
-  expect(uiRequests(chat.runtimeId, 'input').filter(request => request.title === '__pi_desktop_review__')).toEqual([]);
+  expect(uiRequests(chat.runtimeId, 'input').filter(request => request.title === '__pi_desktop_auxiliary__')).toEqual([]);
   const counted = await openReview(chat, '/rs 2 src/parser.ts');
   expect(counted.task).toContain('Spawn 2 review subagents.');
   expect(counted.task).toContain('src/parser.ts');
   const scoped = await openReview(chat, '/rs the lexer');
   expect(scoped.task).toContain('Spawn a proportionate number of review subagents.');
   expect(scoped.task).toContain('the lexer');
-  expect((await openReview(chat, '/rs')).task).toContain('Spawn a proportionate number of review subagents.');
+  const unscoped = await openReview(chat, '/rs');
+  expect(unscoped.task).toContain('Spawn a proportionate number of review subagents.');
+  // A review is named by its scope; reviews without a scope are numbered.
+  expect([counted.name, scoped.name, unscoped.name, (await openReview(chat, '/review')).name]).toEqual(['Review src/parser.ts', 'Review the lexer', 'Review 1', 'Review 2']);
 }, 60000);
 
-test.concurrent('a review opens a separate code review chat in the side pane, linked to the conversation and kept out of the chat list', async () => {
+test.concurrent('a review opens a separate code review chat in the side pane, linked to the conversation and listed as its auxiliary chat', async () => {
   agents.scripts.set('Implement the parser', () => ({ text: 'Parser done.' }));
   const chat = await agents.rootChat({ visible: true });
   await chat.command({ type: 'prompt', message: 'Implement the parser' });
   await chat.until(history => text(history.at(-1)) === 'Parser done.');
   await chat.command({ type: 'follow_up', message: '/review src/parser.ts' });
   let open: any;
-  for (let tries = 0; !open && tries < 100; tries++, await Bun.sleep(100)) open = uiRequests(chat.runtimeId, 'input').find(request => request.title === '__pi_desktop_review__');
+  for (let tries = 0; !open && tries < 100; tries++, await Bun.sleep(100)) open = uiRequests(chat.runtimeId, 'input').find(request => request.title === '__pi_desktop_auxiliary__');
   const review = JSON.parse(open.placeholder);
-  expect(review).toMatchObject({ parentSessionId: chat.sessionId, readOnly: false });
+  expect(review).toMatchObject({ kind: 'review', name: 'Review src/parser.ts', parentSessionId: chat.sessionId });
   expect(review.task).toContain('src/parser.ts');
   await agents.daemon.invoke('start_pi', { runtimeId: 'review-fork-check', clientId: 'laptop', cwd: chat.cwd, sessionPath: review.sessionPath });
   const childCommand = (command: any) => agents.daemon.invoke('pi_command', { runtimeId: 'review-fork-check', command });
@@ -75,12 +80,13 @@ test.concurrent('a review opens a separate code review chat in the side pane, li
   const db = new Database(join(agents.daemon.home, '.piop', 'sessions.sqlite'), { readonly: true });
   try {
     const name = db.query("SELECT entry_json FROM session_extension_state WHERE session_id=? AND state_key='piop-session-name'").get(review.sessionId) as { entry_json: string };
-    expect(JSON.parse(name.entry_json).name).toBe('Code review');
+    expect(JSON.parse(name.entry_json).name).toBe('Review src/parser.ts');
     const records = db.query('SELECT entry_json FROM session_extension_records WHERE session_id=?').all(review.sessionId) as { entry_json: string }[];
-    expect(records.map(row => JSON.parse(row.entry_json)).find(entry => entry.customType === 'piop-review-parent')?.data).toMatchObject({ parentSessionId: chat.sessionId, sessionId: review.sessionId });
+    expect(records.map(row => JSON.parse(row.entry_json)).find(entry => entry.customType === 'piop-auxiliary-parent')?.data).toMatchObject({ kind: 'review', parentSessionId: chat.sessionId, sessionId: review.sessionId });
   } finally { db.close(); }
   expect(saved.some(entry => entry.type === 'session_info')).toBe(false);
-  expect((await agents.daemon.invoke('list_sessions')).some((session: any) => session.id === review.sessionId)).toBe(false);
+  // The chat list has the review with its parent, so the sidebar leaves it out and the side pane shows it as a tab.
+  expect((await agents.daemon.invoke('list_sessions')).find((session: any) => session.id === review.sessionId)).toMatchObject({ auxiliaryParentId: chat.sessionId, auxiliaryKind: 'review' });
   const entries = (await chat.command({ type: 'get_entries' })).entries;
   // The chat view opens the review from sessionId and hides it in forks by comparing parentSessionId.
   expect(entries.find((entry: any) => entry.customType === 'piop-review-link')?.details).toMatchObject({ sessionId: review.sessionId, parentSessionId: chat.sessionId });
@@ -92,7 +98,7 @@ test.concurrent('a dialog waits until a window shows the chat, then goes to that
   await chat.command({ type: 'prompt', message: 'Write the hidden lexer' });
   await chat.until(history => text(history.at(-1)) === 'Lexer done.');
   await chat.command({ type: 'follow_up', message: '/review' });
-  const dialog = () => uiRequests(chat.runtimeId, 'input').find(request => request.title === '__pi_desktop_review__');
+  const dialog = () => uiRequests(chat.runtimeId, 'input').find(request => request.title === '__pi_desktop_auxiliary__');
   const linked = async () => (await chat.command({ type: 'get_entries' })).entries.some((entry: any) => entry.customType === 'piop-review-link');
   for (let tries = 0; !(await linked()) && tries < 100; tries++) await Bun.sleep(100);
   await Bun.sleep(1000);
@@ -116,7 +122,7 @@ test.concurrent('a review uses the built-in review prompt and the agent from Set
     const missing = await isolated.rootChat({ visible: true });
     const failure = (chat: any) => chat.command({ type: 'follow_up', message: '/review' }).then(() => 'sent', (error: Error) => error.message);
     expect(await failure(missing)).toContain('no-such-agent');
-    expect(uiRequests(missing.runtimeId, 'input', isolated).filter(request => request.title === '__pi_desktop_review__')).toEqual([]);
+    expect(uiRequests(missing.runtimeId, 'input', isolated).filter(request => request.title === '__pi_desktop_auxiliary__')).toEqual([]);
   } finally { await isolated.close(); }
 }, 60000);
 
@@ -129,9 +135,9 @@ test.concurrent('a review submitted during a reply waits for that reply and is n
   await started.promise;
   try {
     await chat.command({ type: 'steer', message: '/review queued.ts' });
-    expect(uiRequests(chat.runtimeId, 'input').some(request => request.title === '__pi_desktop_review__')).toBe(false);
+    expect(uiRequests(chat.runtimeId, 'input').some(request => request.title === '__pi_desktop_auxiliary__')).toBe(false);
   } finally { finish.resolve({ text: 'Ready for review.' }); }
-  const opened = await agents.daemon.waitEvent('pi://event', payload => payload.runtimeId === chat.runtimeId && payload.event?.title === '__pi_desktop_review__', 30000);
+  const opened = await agents.daemon.waitEvent('pi://event', payload => payload.runtimeId === chat.runtimeId && payload.event?.title === '__pi_desktop_auxiliary__', 30000);
   expect(JSON.parse(opened.event.placeholder).task).toContain('queued.ts');
   const requests = agents.model.requests.filter(request => request.messages.some((message: any) => text(message).includes('Prepare queued review')));
   expect(requests).toHaveLength(1);

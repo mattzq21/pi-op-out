@@ -27,7 +27,7 @@ test.concurrent('a child agent\'s final answer reaches its parent, which continu
   const childRequest = agents.model.requests.find(request => text(request.messages.find((message: any) => message.role === 'user')) === 'Summarize the README');
   expect(childRequest.messages.filter((message: any) => message.role !== 'system').map((message: any) => [message.role, text(message)])).toEqual([['user', 'Summarize the README']]);
   const sessions = await agents.daemon.invoke('list_sessions');
-  const child = sessions.find((session: any) => session.subagentParentId === root.sessionId);
+  const child = sessions.find((session: any) => session.auxiliaryParentId === root.sessionId);
   expect(child).toMatchObject({ name: 'Subagent: Reader' });
   await agents.daemon.invoke('start_pi', { runtimeId: 'subagent-fork-check', clientId: 'laptop', cwd: root.cwd, sessionPath: child.path });
   const childCommand = (command: any) => agents.daemon.invoke('pi_command', { runtimeId: 'subagent-fork-check', command });
@@ -121,7 +121,7 @@ test.concurrent('a follow-up task goes to the same child, which still remembers 
   await root.command({ type: 'prompt', message: 'Use a memory helper' });
   const messages = await root.until(history => text(history.at(-1)).startsWith('Relay: word is'));
   expect(text(messages.at(-1))).toBe('Relay: word is apple');
-  const children = (await agents.daemon.invoke('list_sessions')).filter((session: any) => session.subagentParentId === root.sessionId);
+  const children = (await agents.daemon.invoke('list_sessions')).filter((session: any) => session.auxiliaryParentId === root.sessionId);
   expect(children.map((child: any) => child.name)).toEqual(['Subagent: Memory']);
 }, 120000);
 
@@ -169,7 +169,7 @@ test.concurrent('interrupting a busy child cancels its work, tells the parent, a
   } finally { releaseSlow({ text: 'Relay: late' }); }
   const rootRequests = agents.model.requests.filter(request => JSON.stringify(request.messages).includes('Start a slow helper'));
   expect(rootRequests.some(request => /<subagent_response>\n[\s\S]*Subagent stopped by stop_subagent/.test(text(request.messages.at(-1))))).toBe(true);
-  expect((await agents.daemon.invoke('list_sessions')).filter((session: any) => session.subagentParentId === root.sessionId).length).toBe(1);
+  expect((await agents.daemon.invoke('list_sessions')).filter((session: any) => session.auxiliaryParentId === root.sessionId).length).toBe(1);
 }, 120000);
 
 test.concurrent('a parent sees its busy child in its agent list and can send the child an update it acts on', async () => {
@@ -235,7 +235,7 @@ test.concurrent('a batch of children runs at once, waiting for all ends only aft
   const waited = seen.find((message: any) => message.role === 'tool' && /Relay: 3 apples/.test(text(message)));
   expect(text(waited)).toMatch(/<subagent_response>\nSubagent (Apples|Pears):[\s\S]*<subagent_response>\nSubagent (Apples|Pears):/);
   expect(seen.filter((message: any) => message.role === 'user' && text(message).includes('<subagent_response>'))).toEqual([]);
-  const children = (await agents.daemon.invoke('list_sessions')).filter((session: any) => session.subagentParentId === root.sessionId).map((session: any) => session.name).sort();
+  const children = (await agents.daemon.invoke('list_sessions')).filter((session: any) => session.auxiliaryParentId === root.sessionId).map((session: any) => session.name).sort();
   expect(children).toEqual(['Subagent: Apples', 'Subagent: Pears']);
 }, 120000);
 

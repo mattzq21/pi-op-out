@@ -15,6 +15,7 @@ import { interruptSession, requireMessageLength, sendSessionMessage, sessionSnap
 import { SUBAGENT_PARENT, latestRuns, ownedRuns, saveRun, subagentParent, subagentPayload, registerSubagentResults, type SubagentRun } from "./subagent-state.ts";
 import { acceptedSubmission, cancelSubagent, finishRun, observeSubagent, subagentReceiptSchema, SubagentCancellation, type ActiveSubagent } from "./subagent-reconciliation.ts";
 import { savedSubagentRuns } from "../piop-storage/subagent-results.ts";
+import { isAuxiliary } from "../piop-storage/session-records.cjs";
 
 /** A subagent nickname: 1–8 characters, an upper case letter first, then lower case letters or digits. */
 const NICKNAME = "^[A-Z][a-z0-9]{0,7}$";
@@ -108,7 +109,7 @@ async function createSubagent(pi: ExtensionAPI, ctx: ExtensionContext, task: Sub
   try { await writeSessionFile(sessionPath, [
     { type: "session", version: header.version, id: sessionId, timestamp, cwd: workspace.cwd },
     entry({ type: "session_info", name: `Subagent: ${task.name}` }),
-    entry({ type: "custom", customType: SUBAGENT_PARENT, data: { version: 1, sessionId, hostId: currentHost(), parentSessionId, parentHostId: currentHost(), parentSessionPath: ctx.sessionManager.getSessionFile(), toolCallId, task: task.task, depth: scope.depth + 1, taskPath: run.taskPath, parentTaskPath: scope.taskPath, max_subagents: subagentLimits(pi, ctx).max_sub_subagents } }),
+    entry({ type: "custom", customType: SUBAGENT_PARENT, data: { kind: "subagent", version: 1, sessionId, hostId: currentHost(), parentSessionId, parentHostId: currentHost(), parentSessionPath: ctx.sessionManager.getSessionFile(), toolCallId, task: task.task, depth: scope.depth + 1, taskPath: run.taskPath, parentTaskPath: scope.taskPath, max_subagents: subagentLimits(pi, ctx).max_sub_subagents } }),
     entry({ type: "custom", customType: "pi-define-agents-state", data: profile }),
     ...fastMode ? [entry(fastMode)] : [],
   ], { dependencies: { workspace: { path: workspace.cwd, kind: "existing" } } }); }
@@ -280,10 +281,8 @@ export function registerSubagents(pi: ExtensionAPI) {
   pi.on("session_start", (_event, ctx) => { sessionInRepository(ctx); });
   const unsubscribeTools = pi.events.on("piop:required-tools", ({ ctx, tools, availableTools }) => {
     const allowed = availableTools ?? pi.getActiveTools();
-    const child = subagentParent(ctx);
-    const reviewer = ctx.sessionManager.getEntries().some(entry => entry.type === "custom" && entry.customType === "piop-review-parent");
     const subagents = allowed.some(tool => SUBAGENT_TOOLS.includes(tool));
-    const peers = !child && !reviewer && allowed.some(tool => PEER_TOOLS.includes(tool));
+    const peers = !isAuxiliary(ctx.sessionManager.getEntries()) && allowed.some(tool => PEER_TOOLS.includes(tool));
 
     // Saved children stay reachable after their tools are turned off.
     if (subagents || latestRuns(ctx).length) tools.push(...SUBAGENT_TOOLS);
@@ -402,10 +401,13 @@ export function registerSubagents(pi: ExtensionAPI) {
       const run = structuredClone(saved);
       run.runId ??= `${run.toolCallId}:${run.startedAt}`;
 
-      if (run.submission === "prepared") {
+      if (run.submission === "prepared" && !run.forkRetry) {
         run.status = run.cancelRequested ? "cancelled" : "failed"; run.output = "The task was not submitted before supervision was interrupted";
         finishRun(pi, ctx, run); resultsDelivery.publish(ctx, run); continue;
       }
+
+      const retry = run.submission === "prepared";
+      delete run.forkRetry;
 
       const childController = new AbortController();
       let started = () => {};
@@ -419,7 +421,7 @@ export function registerSubagents(pi: ExtensionAPI) {
 
       const signal = AbortSignal.any([controller.signal, childController.signal]);
 
-      const completion = observeSubagent(run, { pi, ctx, signal }, lifecycle, false)
+      const completion = observeSubagent(run, { pi, ctx, signal }, lifecycle, retry)
         .then(() => {
           lifecycle.closing = true; started();
 

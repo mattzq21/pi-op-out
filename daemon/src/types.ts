@@ -2,7 +2,10 @@ export interface AgentAddress { hostId: string; sessionId?: string; sessionPath?
 
 export interface SessionSummary {
   id: string;
-  subagentParentId?: string;
+  /** The root or auxiliary session that owns this auxiliary session. */
+  auxiliaryParentId?: string;
+  /** What kind of auxiliary session this is, for example "subagent", "review" or "btw". */
+  auxiliaryKind?: string;
   /** The conversation this one was branched from, on the same machine. */
   forkSourceId?: string;
   groupId: string | null;
@@ -26,7 +29,7 @@ export interface SessionSummary {
 /** Serializes a session summary in the client field order, without modifiedAt. */
 export function serializeSession(session: SessionSummary): Record<string, unknown> {
   const result: Record<string, unknown> = { id: session.id };
-  if (session.subagentParentId !== undefined && session.subagentParentId !== null) result.subagentParentId = session.subagentParentId;
+  if (session.auxiliaryParentId !== undefined && session.auxiliaryKind !== undefined) Object.assign(result, { auxiliaryParentId: session.auxiliaryParentId, auxiliaryKind: session.auxiliaryKind });
   if (session.forkSourceId !== undefined) result.forkSourceId = session.forkSourceId;
   Object.assign(result, {
     groupId: session.groupId ?? null, path: session.path, name: session.name, project: session.project, cwd: session.cwd, cwdExists: session.cwdExists,
@@ -42,7 +45,7 @@ export function parseSession(value: any): SessionSummary {
   const number = (key: string): number => { if (typeof value?.[key] !== 'number') throw new Error(`missing field \`${key}\``); return value[key]; };
   if (typeof value?.cwdExists !== 'boolean') throw new Error('missing field `cwdExists`');
   return {
-    id: text('id'), subagentParentId: typeof value.subagentParentId === 'string' ? value.subagentParentId : undefined,
+    id: text('id'), auxiliaryParentId: typeof value.auxiliaryParentId === 'string' ? value.auxiliaryParentId : undefined, auxiliaryKind: typeof value.auxiliaryKind === 'string' ? value.auxiliaryKind : undefined,
     forkSourceId: typeof value.forkSourceId === 'string' && value.forkSourceId ? value.forkSourceId : undefined,
     groupId: typeof value.groupId === 'string' ? value.groupId : null, path: text('path'), name: text('name'), project: text('project'), cwd: text('cwd'),
     cwdExists: value.cwdExists, modifiedAt: 0, preview: text('preview'), messageCount: number('messageCount'), lastMessageAt: number('lastMessageAt'),

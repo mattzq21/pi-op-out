@@ -5,10 +5,6 @@ import type { ReviewDelegation, ReviewImage, ReviewSession } from "./interface.t
 
 const reviewRequestSchema = Schema.Object({ command: Schema.Optional(Schema.Union([Schema.Literal("review"), Schema.Literal("rs")])), args: Schema.String(), images: Schema.Array(Schema.Object({ type: Schema.Literal("image"), data: Schema.String(), mimeType: Schema.String(), name: Schema.Optional(Schema.String()) })) });
 
-const feedbackSchema = Schema.Object({ sessionId: Schema.String(), message: Schema.String({ minLength: 1 }) });
-
-const openSchema = Schema.Object({ reviewId: Schema.String() });
-
 /** /review delegates nothing and takes a scope. /rs takes an optional count, then an optional scope. A first word that is a number is the count; other text is the scope. Returns undefined after a usage warning for a count that is not a positive integer. */
 function reviewRequest(args: string, command: "review" | "rs", ctx: ExtensionContext): { delegation: ReviewDelegation; scope: string } | undefined {
   const text = args.trim();
@@ -48,20 +44,6 @@ export function registerReviewCommands(pi: ExtensionAPI, reviews: ReviewSession)
     request.ready = (async () => {
       const payload = Parse(reviewRequestSchema, request.payload);
       await start(payload.args, request.ctx, payload.command, payload.images);
-    })();
-  });
-  pi.events.on("piop:rpc", request => {
-    if (request.command !== "open_review") return;
-    request.ready = (async () => {
-      const { reviewId } = Parse(openSchema, request.payload);
-      await reviews.open(request.ctx, reviewId);
-    })();
-  });
-  pi.events.on("piop:rpc", request => {
-    if (request.command !== "review_feedback") return;
-    request.ready = (async () => {
-      const feedback = Parse(feedbackSchema, request.payload);
-      await reviews.sendFeedback(request.ctx, feedback.sessionId, feedback.message);
     })();
   });
 }

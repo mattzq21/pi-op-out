@@ -24,7 +24,7 @@ const archivedIds = async () => new Set((await archives()).map(archive => archiv
 
 test('archiving a chat archives its subagent chats with it and leaves other chats', async () => {
   const tree = sessionTree('archive-tree');
-  const parents = new Map((await daemon.invoke('list_sessions')).map((session: any) => [session.id, session.subagentParentId]));
+  const parents = new Map((await daemon.invoke('list_sessions')).map((session: any) => [session.id, session.auxiliaryParentId]));
   expect([parents.get(tree.child.id), parents.get(tree.grandchild.id)]).toEqual([tree.root.id, tree.child.id]);
   await daemon.invoke('archive_session', { hostId: 'local', sessionPath: tree.root.path, terminalIds: [], clientId: 'laptop' });
   const listed = await listedIds();

@@ -16,7 +16,8 @@ type SessionTerminals = { activeId: string; tabs: TerminalTabState[] };
 
 type QueuedTerminalOutput = { data: string; length: number };
 
-type SplitPaneState = { key: string; session: SessionSummary; request?: import("./plugins/types").SplitPaneRequest };
+/** The chat of the selected side pane tab. request carries the first prompt of a chat that a command opened. */
+type SplitPaneState = { key: string; session: SessionSummary; request?: import("./plugins/types").SidepaneOpening };
 
 type OwnedExtensionDialog = { request: ExtensionUiRequest; transport: NativeTransport; owner: string; queueId: string };
 

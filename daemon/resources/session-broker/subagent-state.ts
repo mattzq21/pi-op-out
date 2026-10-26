@@ -5,13 +5,15 @@ import { currentHost } from "./client.ts";
 import { sendAgentMailbox } from "./orchestration.ts";
 import { persistSubagentRun, savedSubagentRuns } from "../piop-storage/subagent-results.ts";
 import { runSchema, resultNotificationId, type SubagentRun } from "./subagent-identity.ts";
+import { AUXILIARY_PARENT } from "../piop-storage/session-records.cjs";
 
 export { runSchema, type SubagentRun } from "./subagent-identity.ts";
 
 
-export const SUBAGENT_PARENT = "piop-subagent-parent";
+export const SUBAGENT_PARENT = AUXILIARY_PARENT;
 
 const parentSchema = Schema.Object({
+  kind: Schema.Literal("subagent"),
   max_subagents: Schema.Optional(Schema.Integer({ minimum: 0, maximum: Number.MAX_SAFE_INTEGER })),
   parentSessionId: Schema.String(), sessionId: Schema.Optional(Schema.String()), depth: Schema.Optional(Schema.Integer({ minimum: 1 })),
   hostId: Schema.Optional(Schema.String()), parentHostId: Schema.Optional(Schema.String()),

@@ -48,8 +48,8 @@ describe("Conversation lifecycle", () => {
   });
 
   it("keeps split-pane drafts separate from the main conversation", async () => {
-    const indexed = { id: "draft-split", path: "/tmp/draft-split.jsonl", name: "Draft split conversation", project: "Draft project", cwd: "/tmp", preview: "Split draft", messageCount: 1, hostId: "local" };
-    const main = { ...indexed, id: "draft-main", path: "/tmp/draft-main.jsonl", name: "Draft main conversation" };
+    const indexed = { id: "draft-split", path: "/tmp/draft-split.jsonl", name: "Code review", project: "Draft project", cwd: "/tmp", preview: "Split draft", messageCount: 1, hostId: "local", auxiliaryParentId: "draft-main", auxiliaryKind: "review" };
+    const main = { id: "draft-main", path: "/tmp/draft-main.jsonl", name: "Draft main conversation", project: "Draft project", cwd: "/tmp", preview: "Split draft", messageCount: 1, hostId: "local" };
     await mockBackend({ list_sessions: [main, indexed], load_app_settings: { ...defaultSettings, defaultThinking: "high" }, ...connectedSessionResponses(""), "pi_command:set_model": {} });
 
     let mainRuntimeId: string;
@@ -59,11 +59,11 @@ describe("Conversation lifecycle", () => {
       const requestId = `draft-review-${++requestNumber}`;
       await browser.execute(async (runtimeId, id, session) => {
         await window.__TAURI_INTERNALS__.invoke("plugin:event|emit", { event: "pi://event", payload: { runtimeId, event: {
-          type: "extension_ui_request", id, method: "input", title: "__pi_desktop_review__",
-          placeholder: JSON.stringify({ parentSessionId: "draft-main", cwd: session.cwd, sessionId: session.id, sessionPath: session.path }),
+          type: "extension_ui_request", id, method: "input", title: "__pi_desktop_auxiliary__",
+          placeholder: JSON.stringify({ kind: "review", name: session.name, hostId: "local", parentSessionId: "draft-main", cwd: session.cwd, sessionId: session.id, sessionPath: session.path }),
         } } });
       }, mainRuntimeId, requestId, indexed);
-      const split = $('section[aria-label="Split conversation: Code review"]');
+      const split = $('section[aria-label="Side chat: Code review"]');
       await expect(split).toBeDisplayed();
       await expect(split.$('button[aria-label="Open terminal"]')).toBeEnabled();
       await browser.waitUntil(async () => (await backendCalls()).some(({ args }) => args.command?.type === "extension_ui_response" && args.command.id === requestId && args.command.value === "opened"));
@@ -82,18 +82,18 @@ describe("Conversation lifecycle", () => {
       await app.prepareMessage("Main conversation draft");
       let split = await openSplit();
       await split.$('textarea[aria-label="Message piop"]').setValue("Independent split-pane draft");
-      await split.$('button[aria-label="Close split pane"]').click();
+      await $('button.open-plugins-button').click();
       await expect(app.composer).toHaveValue("Main conversation draft");
 
       split = await openSplit();
       await expect(split.$('textarea[aria-label="Message piop"]')).toHaveValue("Independent split-pane draft");
-      await split.$('button[aria-label="Close split pane"]').click();
+      await $('button.open-plugins-button').click();
       await expect(app.composer).toHaveValue("Main conversation draft");
       await app.clearMessage();
     } finally {
-      const split = $('section[aria-label="Split conversation: Code review"]');
+      const split = $('section[aria-label="Side chat: Code review"]');
 
-      if (await split.isExisting()) await split.$('button[aria-label="Close split pane"]').click();
+      if (await split.isExisting()) await $('button.open-plugins-button').click();
       await app.conversationSearch.clearValue();
       await app.clearMessage();
       await resetBackend();

@@ -23,7 +23,7 @@ try {
     const path = join(sessions, `${timestamp.replace(/[:.]/g, '-')}_${id}.jsonl`);
     const entries = parent ? [
       { type: 'session_info', id: 'info', parentId: null, timestamp, name: 'Subagent: ' + name },
-      { type: 'custom', id: 'parent', parentId: 'info', timestamp, customType: 'piop-subagent-parent', data: { version: 1, sessionId: id, hostId: 'local', parentSessionId: parent.id, parentHostId: 'local', parentSessionPath: parent.path, toolCallId: randomUUID(), task: 'help', depth, taskPath: '/' + name, parentTaskPath: '' } },
+      { type: 'custom', id: 'parent', parentId: 'info', timestamp, customType: 'piop-auxiliary-parent', data: { kind: 'subagent', version: 1, sessionId: id, hostId: 'local', parentSessionId: parent.id, parentHostId: 'local', parentSessionPath: parent.path, toolCallId: randomUUID(), task: 'help', depth, taskPath: '/' + name, parentTaskPath: '' } },
     ] : [{ type: 'message', id: 'request', parentId: null, message: { role: 'user', content: 'Saved chat', timestamp: 1 } }];
     await writeSessionFile(path, [{ type: 'session', version: 3, id, timestamp, cwd }, ...entries], { dependencies: { workspace: { path: cwd, kind: 'existing' } } });
     return { id, path };

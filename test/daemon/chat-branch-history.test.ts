@@ -134,7 +134,7 @@ test('a publication that fails after claiming resources removes everything it cr
   const sessionId = modules.database.reserve(root);
   const locksBefore = leftovers(source.id, source.path).locks;
   const db = modules.database.open(root);
-  db.exec("CREATE TRIGGER reject_branch_state BEFORE INSERT ON session_child_state WHEN NEW.session_id='" + sessionId + "' BEGIN SELECT RAISE(ABORT, 'Index write failed'); END");
+  db.exec("CREATE TRIGGER reject_branch_state BEFORE INSERT ON auxiliary_child_state WHEN NEW.session_id='" + sessionId + "' BEGIN SELECT RAISE(ABORT, 'Index write failed'); END");
   db.close();
   try {
     await expect(modules.history.publishBranchHistory({ root, sourcePath: source.path, sessionId, cwd: source.cwd, entries: source.entries, leafId: 'a3', entryId: 'a3' }))
@@ -206,10 +206,10 @@ test('a publication that saves the transcript but cannot finish is removed', asy
   expect(owners(source.attachment)).toEqual([source.id]);
 });
 
-for (const customType of ['piop-subagent-parent', 'piop-review-parent']) test(`worktree history rejects ${customType} even outside the selected history`, async () => {
+for (const kind of ['subagent', 'review', 'btw']) test(`worktree history rejects a ${kind} chat even outside the selected history`, async () => {
   const source = await sourceChat();
   const body = readFileSync(source.path, 'utf8');
-  source.entries.push({ type: 'custom', id: 'parent-marker', parentId: null, timestamp: new Date().toISOString(), customType, data: { parentSessionId: 'parent' } } as any);
+  source.entries.push({ type: 'custom', id: 'parent-marker', parentId: null, timestamp: new Date().toISOString(), customType: 'piop-auxiliary-parent', data: { kind, parentSessionId: 'parent' } } as any);
   await expect(modules.history.publishBranchHistory({ root, sourcePath: source.path, sessionId: modules.database.reserve(root), cwd: source.cwd, entries: source.entries, leafId: 'a3', entryId: 'a1' })).rejects.toThrow('Only main chats can be forked');
   expect(readFileSync(source.path, 'utf8')).toBe(body);
 });

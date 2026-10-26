@@ -168,18 +168,21 @@ export async function archiveSession(app: App, runtime: TerminalRuntime, session
   });
 }
 
-type DescendantsRequest = { path: string; root: string; archived: boolean; includeOtherArea: boolean };
+type DescendantsRequest = { path: string; root: string; archived: boolean; includeOtherArea: boolean; kinds?: string[] };
 
 const descendantsOperation = hostOperation<DescendantsRequest, unknown[]>('session-descendants', 'general', STORAGE_TIMEOUT, value => {
   if (!Array.isArray(value)) throw new Error('expected a sequence');
   return value;
 });
 
-/** Returns the subagent sessions of the session at sessionPath. With includeOtherArea, each item also tells if it is archived. */
-export async function sessionDescendants(sessionPath: string, archived: boolean, includeOtherArea: boolean): Promise<Array<[string, boolean]>> {
+/** Kinds of auxiliary sessions that a restore of their root brings back. Other kinds, such as reviews and btw chats, stay archived. */
+export const RESTORED_KINDS = ['subagent'];
+
+/** Returns the auxiliary sessions of the session at sessionPath. With includeOtherArea, each item also tells if it is archived. With kinds, only sessions of those kinds. */
+export async function sessionDescendants(sessionPath: string, archived: boolean, includeOtherArea: boolean, kinds?: string[]): Promise<Array<[string, boolean]>> {
   const root = join(profileRoot(), archived ? 'archived' : 'sessions');
   let value: unknown[];
-  try { value = await runHostOperation(descendantsOperation, { path: sessionPath, root, archived, includeOtherArea }); }
+  try { value = await runHostOperation(descendantsOperation, { path: sessionPath, root, archived, includeOtherArea, kinds }); }
   catch (error: any) { throw new Error(`Could not find subagent conversations: ${error?.message ?? error}`); }
   if (includeOtherArea) return value.map((item: any) => {
     if (!Array.isArray(item) || typeof item[0] !== 'string' || typeof item[1] !== 'boolean') throw new Error('Invalid subagent conversation list: expected a tuple');
@@ -295,7 +298,7 @@ async function beginTreeRestore(app: App, hostId: string, sessionPath: string): 
   catch { return []; }
   assertRootRestore(source);
   const settings = await loadAppSettings(app);
-  const tree = [source, ...(await sessionDescendants(source, true, false)).map(([path]) => path)];
+  const tree = [source, ...(await sessionDescendants(source, true, false, RESTORED_KINDS)).map(([path]) => path)];
   const chatIds: string[] = [];
   for (const path of tree) chatIds.push(await sessionIdentity(settings, hostId, path));
   return chatWorktrees.beginRestore(chatIds);

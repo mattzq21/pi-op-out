@@ -66,7 +66,7 @@ test.concurrent('a review chat runs the review agent, while its chat runs the de
   const chat = await plainChat('default-reviewed', { presence: { visible: true, focused: true } });
   await chat.command({ type: 'prompt', message: 'Write the tokenizer' });
   for (let tries = 0; !callFor('Write the tokenizer') && tries < 100; tries++) await Bun.sleep(100);
-  const inputs = () => agents.daemon.events.filter(event => event.payload?.runtimeId === 'default-reviewed' && event.payload.event?.method === 'input' && event.payload.event.title === '__pi_desktop_review__');
+  const inputs = () => agents.daemon.events.filter(event => event.payload?.runtimeId === 'default-reviewed' && event.payload.event?.method === 'input' && event.payload.event.title === '__pi_desktop_auxiliary__');
   for (let tries = 0; tries < 100 && (await chat.command({ type: 'get_state' })).isStreaming; tries++) await Bun.sleep(100);
   await chat.command({ type: 'follow_up', message: '/review src/tokenizer.ts' });
   for (let tries = 0; !inputs().length && tries < 100; tries++) await Bun.sleep(100);

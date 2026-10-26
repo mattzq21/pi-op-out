@@ -4,22 +4,20 @@ import { z } from "zod";
 import { invoke } from "../lib/platform";
 import type { PluginDefinition } from "./types";
 import { flushPlugins, waitForClientPlugins } from "./lifecycle";
-import { reviewSplitPane } from "./review/requests";
 
 export const plugins: PluginDefinition[] = [
   { id: "cost", scope: "host", name: "Cost limit", description: "Per-conversation API cost limit, set with /cost.", load: () => import("./cost/plugin") },
   { id: "review", scope: "host", name: "Review", description: "Code reviews in a split pane, started with /review.", load: () => import("./review/plugin"),
     settings: { section: "review", label: "Review", description: "Choose the agent that runs /review.", icon: ClipboardCheck, within: "agents", load: () => import("./review/ReviewSettings").then(module => ({ default: module.ReviewSettings })) },
-    splitPane: reviewSplitPane,
+    queuedCommands: ["review", "rs"],
     messages: { "piop-review-link": () => import("./review/ReviewLink").then(module => ({ default: module.ReviewLink })) } },
 ];
 
-export const splitPaneHandler = (title?: string) => plugins.find(plugin => plugin.splitPane?.title === title)?.splitPane;
-
-export function splitPaneCommand(text: string) {
+/** True when text is a plugin slash command that waits in the follow-up queue like a message. */
+export function queuedCommand(text: string) {
   const [word] = text.trim().split(/\s/, 1);
 
-  return word.startsWith("/") ? plugins.find(plugin => plugin.splitPane?.commands.includes(word.slice(1)))?.splitPane : undefined;
+  return word.startsWith("/") && plugins.some(plugin => plugin.queuedCommands?.includes(word.slice(1)));
 }
 
 export const pluginStatusSchema = z.object({ enabled: z.array(z.string()), configured: z.array(z.string()), revision: z.string(), error: z.string().nullable() });

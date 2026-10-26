@@ -8,6 +8,7 @@ const assets = require('./piop-storage/goal-assets.cjs');
 const goalOwnership = require('./piop-storage/goal-ownership.cjs');
 const database = require('./session-database.cjs');
 const { acquireReferencePublicationLock } = require('./piop-storage/reference-publication-lock.cjs');
+const auxiliaryCopies = require('./piop-storage/auxiliary-copies.cjs');
 
 const UUID = /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/;
 
@@ -104,14 +105,19 @@ async function publishBranchHistory(request) {
   const source = io.header(sourcePath);
   if (!source) throw new Error('The source conversation has no saved identity');
   if (source.id === sessionId) throw new Error('The branch identity is already in use');
-  const history = selectHistory(entries, leafId, entryId);
+  const selected = selectHistory(entries, leafId, entryId);
   const current = currentState(entries);
   const timestamp = new Date().toISOString();
+  const sessionPath = path.join(path.dirname(sourcePath), timestamp.replace(/[:.]/g, '-') + '_' + sessionId + '.jsonl');
+  const cwd = fs.realpathSync(request.cwd);
+  // The branch copies the auxiliary chats made through the selected response, in its own folder; its history then names the copies.
+  const copies = auxiliaryCopies.planAuxiliaryCopies({ root, source: { id: source.id, path: sourcePath }, target: { id: sessionId, path: sessionPath }, cutoff: selected.at(-1)?.timestamp, cwd: { from: source.cwd, to: cwd } });
+  const history = auxiliaryCopies.rewriteForkHistory(selected, copies);
+  const retries = auxiliaryCopies.retryRecord(copies);
+  if (retries) current.set(auxiliaryCopies.FORK_RETRIES, retries);
   current.set('piop-session-name', { type: 'session_info', id: randomUUID(), parentId: null, timestamp, name: branchName(request.name, current, history) });
   // The branch stays idle until the user sends a message (core input hold).
   current.set('piop-input-hold', { type: 'custom', customType: 'piop-input-hold', data: { held: true }, id: randomUUID(), parentId: null, timestamp });
-  const cwd = fs.realpathSync(request.cwd);
-  const sessionPath = path.join(path.dirname(sourcePath), timestamp.replace(/[:.]/g, '-') + '_' + sessionId + '.jsonl');
   const forkSource = { sessionId: source.id, sessionPath: sourcePath, entryId };
   const header = { type: 'session', version: source.version, id: sessionId, timestamp, cwd, parentSession: sourcePath, piopForkSource: forkSource };
   const body = [header, ...history, ...current.values()].map(entry => JSON.stringify(entry)).join('\n') + '\n';
@@ -123,6 +129,14 @@ async function publishBranchHistory(request) {
     try { await discardBranchHistory(root, sessionId, sessionPath); }
     catch (cleanup) { throw new Error('Could not create the branch: ' + message(error) + '\nCleanup failed: ' + message(cleanup), { cause: error }); }
     throw new Error('Could not create the branch: ' + message(error), { cause: error });
+  }
+  try {
+    await auxiliaryCopies.publishAuxiliaryCopies(root, copies, { id: sessionId }, async (file, copied, options) => {
+      const published = await publication.publish(file, copied.map(entry => JSON.stringify(entry)).join('\n') + '\n', withReferences(root), options);
+      if (published.warnings.length) throw new Error(published.warnings.join('; '));
+    });
+  } catch (error) {
+    throw new Error('The branch was saved at ' + sessionPath + ', but copying its side chats, reviews and subagents failed: ' + message(error), { cause: error });
   }
   return { sessionPath, forkSource };
 }

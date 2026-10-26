@@ -46,11 +46,11 @@ async function archivedPanel(t, archives, { remotes, initial } = {}) {
   const chats = {};
   const publishers = new Map();
   for (const archive of archives) {
-    const { name, hostId, key = name, customType } = typeof archive === 'string' ? { name: archive, hostId: 'local' } : archive;
+    const { name, hostId, key = name, kind } = typeof archive === 'string' ? { name: archive, hostId: 'local' } : archive;
     assert.equal(Object.hasOwn(chats, key), false, `Archive fixture key ${key} is used twice`);
     const home = await daemon.invoke('home_directory', { hostId });
     if (!publishers.has(home)) publishers.set(home, chatPublisher(t, { home }));
-    chats[key] = await publishers.get(home)({ content: JSON.stringify({ type: 'message', id: 'question', parentId: null, message: { role: 'user', content: name } }) + '\n' + (customType ? JSON.stringify({ type: 'custom', id: 'parent-marker', parentId: 'question', customType, data: { parentSessionId: 'root' } }) + '\n' : '') });
+    chats[key] = await publishers.get(home)({ content: JSON.stringify({ type: 'message', id: 'question', parentId: null, message: { role: 'user', content: name } }) + '\n' + (kind ? JSON.stringify({ type: 'custom', id: 'parent-marker', parentId: 'question', customType: 'piop-auxiliary-parent', data: { kind, parentSessionId: 'root' } }) + '\n' : '') });
     await daemon.invoke('archive_session', { hostId, sessionPath: chats[key].path, terminalIds: [], clientId: 'archived-panel-test' });
   }
   const held = initial?.(gate);
@@ -229,8 +229,8 @@ test('refreshing while a restore is pending still removes the chat once the arch
 });
 
 
-for (const customType of ['piop-subagent-parent', 'piop-review-parent']) test(`an archived ${customType} has no restore action and cannot be restored directly`, { timeout: 60000 }, async t => {
-  const panel = await archivedPanel(t, [{ name: 'Auxiliary chat', hostId: 'local', customType }, 'Root chat']);
+for (const kind of ['subagent', 'review', 'btw']) test(`an archived ${kind} chat has no restore action and cannot be restored directly`, { timeout: 60000 }, async t => {
+  const panel = await archivedPanel(t, [{ name: 'Auxiliary chat', hostId: 'local', kind }, 'Root chat']);
   await panel.settle();
   assert.ok(panel.view.container.textContent.includes('Auxiliary chat'));
   assert.equal(panel.button('Auxiliary chat'), null);

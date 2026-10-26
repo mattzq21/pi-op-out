@@ -35,7 +35,7 @@ function publicationState(saved, record) {
 }
 
 function parentMarker(body, sessionId) {
-  return entries(body).find(entry => Check(entrySchema, entry) && entry.type === 'custom' && entry.customType === 'piop-review-parent' && Check(markerSchema, entry.data) && entry.data.sessionId === sessionId);
+  return entries(body).find(entry => Check(entrySchema, entry) && stateRecords.isAuxiliaryParent(entry) && entry.data.kind === 'review' && Check(markerSchema, entry.data) && entry.data.sessionId === sessionId);
 }
 
 function bindsParent(marker, parentId, nonce, hostId) {
