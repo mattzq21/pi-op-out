@@ -91,12 +91,29 @@ export function installTooltips() {
     if (event.key === "Escape") close();
   };
 
+  // Touch has no hover, so a tap on an anchor marked data-tooltip-tap shows its tooltip. A second tap on it, or any other tap, closes it.
+  let touchDown = false;
+  let openAtDown: Element | null = null;
+
+  const pointerDown = (event: PointerEvent) => {
+    touchDown = event.pointerType === "touch";
+    openAtDown = anchor;
+    close();
+  };
+
+  const click = (event: MouseEvent) => {
+    const next = tooltipAnchor(event.target);
+
+    if (touchDown && next?.hasAttribute("data-tooltip-tap") && next !== openAtDown) show(next);
+    else close();
+  };
+
   document.addEventListener("pointerover", pointerOver, { capture: true, signal });
   document.addEventListener("pointerout", pointerOut, { capture: true, signal });
   document.addEventListener("focusin", focusIn, { capture: true, signal });
   document.addEventListener("focusout", focusOut, { capture: true, signal });
-  document.addEventListener("pointerdown", close, { capture: true, signal });
-  document.addEventListener("click", close, { signal });
+  document.addEventListener("pointerdown", pointerDown, { capture: true, signal });
+  document.addEventListener("click", click, { signal });
   document.addEventListener("keydown", keyDown, { capture: true, signal });
   document.addEventListener("close", close, { capture: true, signal });
   window.addEventListener("scroll", close, { capture: true, signal });
