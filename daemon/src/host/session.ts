@@ -479,6 +479,7 @@ export class Session {
       case 'get_available_models': await this.refreshProviders(); break;
       // Pi stops the running response before it compacts, even when there is nothing to compact.
       case 'compact': if (this.working()) throw new CommandRefusedError('Stop piop before running /compact.', 'daemon'); break;
+      case 'retry_response': if (this.working()) throw new CommandRefusedError('Wait for the current response to finish before retrying.', 'daemon'); break;
     }
     return this.executeWorker(command);
   }
