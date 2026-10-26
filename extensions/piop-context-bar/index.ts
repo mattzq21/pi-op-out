@@ -238,7 +238,8 @@ export default function contextBar(pi: ExtensionAPI) {
     const inCodemode = (tool: { name: string; exposure?: string }) => tool.name !== "codemode" && tool.exposure !== "model-only";
     const activeInfo = pi.getAllTools().filter((tool) => activeTools.has(tool.name));
     const tools = activeInfo.map(tool => ({ name: tool.name, description: tool.description, parameters: tool.parameters, ...codemode && tool.name !== "codemode" ? { codemode: inCodemode(tool) } : {} }));
-    const codemodeFlags = new Map(tools.map(tool => [tool.name, tool.codemode]));
+    // A provider can rename tools in its request, such as bash to Bash for Anthropic subscriptions, so names match without case.
+    const codemodeFlags = new Map(tools.map(tool => [tool.name.toLowerCase(), tool.codemode]));
     const estimate = (value: string) => Math.ceil(value.length / 4);
     const skillTokens = { defined: estimate(skillPrompt), invoked: invokedSkills.reduce((sum, skill) => sum + estimate(skill.content), 0) };
 
@@ -261,7 +262,9 @@ export default function contextBar(pi: ExtensionAPI) {
     publish(ctx);
     pending = { save(sent, context) {
       if (sent) {
-        snapshot.tools = sent.map(tool => ({ ...tool, ...codemodeFlags.get(tool.name) === undefined ? {} : { codemode: codemodeFlags.get(tool.name) } }));
+        snapshot.tools = sent.map(tool => { const codemode = codemodeFlags.get(tool.name.toLowerCase());
+
+        return { ...tool, ...codemode === undefined ? {} : { codemode } }; });
         snapshot.tokens.tools = estimate(JSON.stringify(sent));
       }
 
