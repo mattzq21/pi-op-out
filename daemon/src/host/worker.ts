@@ -210,7 +210,7 @@ export class RuntimeWorker {
     const timeout = abort ? 5000 : this.timeout;
     // After a timed-out prompt, Pi may still accept it. A retry would then add it twice, and the sender could not know
     // the outcome, so Pi stops; the next start reconciles the queue with the saved transcript.
-    const stopOnTimeout = abort || requestType === 'queue_prompt' || requestType === 'prompt';
+    const stopOnTimeout = abort || ['queue_prompt', 'prompt', 'compact'].includes(requestType);
     let entry!: Pending;
     const reply = new Promise<any>((resolve, reject) => { entry = { command, requestType, snapshotState, resolve, reject }; });
     reply.catch(() => {});

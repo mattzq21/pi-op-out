@@ -7,8 +7,10 @@ import type { Session } from './session';
 
 /** Runs a command from the view that owns the session. A sent message has its outcome recorded by its submission ID. */
 export async function sessionCommand(host: Host, session: Session, runtime: string, command: any): Promise<any> {
-  const submission = ['prompt', 'steer', 'follow_up'].includes(kind(command)) ? text(command, 'goalSubmissionId') : '';
+  const submission = ['prompt', 'steer', 'follow_up', 'compact'].includes(kind(command)) ? text(command, 'goalSubmissionId') : '';
   if (!submission) return runSessionCommand(host, session, runtime, command);
+  // Pi compacts without a message, so the submission ID stays with the daemon.
+  if (kind(command) === 'compact') delete command.goalSubmissionId;
   return host.submissions.run(submission, session.identity, () => runSessionCommand(host, session, runtime, command), () => session.settled());
 }
 
