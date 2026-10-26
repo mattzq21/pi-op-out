@@ -141,7 +141,7 @@ test('subscriptions replay queue, pins, statuses and unresolved dialogs, and fil
   const status = { type: 'extension_ui_request', method: 'setStatus', statusKey: 'key', statusText: 'ready' };
   const dialog = { type: 'extension_ui_request', method: 'confirm', id: 'dialog' };
   const queue = { type: 'queue_update', steering: ['hello'], followUp: [] };
-  const pins = { type: 'pinned_messages', pins: [{ entryId: 'entry', role: 'prompt', text: 'Pinned' }] };
+  const pins = { type: 'pinned_messages', pins: [{ entryId: 'entry', role: 'prompt', text: 'Pinned', timestamp: 1 }] };
   await send(status); await send(dialog); await send(queue); await send(pins);
   const replay = [];
   const stopReplay = client.subscribe(event => replay.push(event));

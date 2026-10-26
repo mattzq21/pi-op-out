@@ -266,7 +266,8 @@ export function ChatView(props: Props & { transcriptActions?: JSXElement; follow
       try {
         if (!transport) throw new Error("Conversation is unavailable");
         if (pins().length >= PIN_LIMIT) throw new Error(`Only ${PIN_LIMIT} messages can be pinned. Unpin one first.`);
-        await transport.command({ type: "pin_message", entryId: await resolveMessageEntry(transport, message), role: message.role === "user" ? "prompt" : "response", text });
+        if (message.timestamp === undefined) throw new Error("This message has no time, so its place in the chat is unknown");
+        await transport.command({ type: "pin_message", entryId: await resolveMessageEntry(transport, message), role: message.role === "user" ? "prompt" : "response", text, timestamp: message.timestamp });
       } catch (reason) { noticeError("Could not pin message", reason); }
     },
   };

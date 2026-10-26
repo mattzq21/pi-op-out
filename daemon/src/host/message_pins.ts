@@ -1,7 +1,7 @@
 import { text } from './json';
 
-/** A message pinned to the top of a chat. text is the first line of the message; it is empty for a prompt that has only attachments. */
-export interface MessagePin { entryId: string; role: 'prompt' | 'response'; text: string }
+/** A message pinned to the top of a chat. text is the first line of the message; it is empty for a prompt that has only attachments. timestamp is when the message was sent, and puts the pins in chat order. */
+export interface MessagePin { entryId: string; role: 'prompt' | 'response'; text: string; timestamp: number }
 
 export const PIN_LIMIT = 4;
 const TEXT_LIMIT = 300;
@@ -28,10 +28,13 @@ export class MessagePins {
     if (command.type === 'pin_message') {
       if (typeof command.text !== 'string') throw new Error('A pin needs the message text');
       if (command.role !== 'prompt' && command.role !== 'response') throw new Error('A pin is for a prompt or a response');
+      if (typeof command.timestamp !== 'number' || !Number.isFinite(command.timestamp)) throw new Error('A pin needs the time of the message');
       if (pins.some(pin => pin.entryId === entryId)) return null;
       if (pins.length >= PIN_LIMIT) throw new Error('Only ' + PIN_LIMIT + ' messages can be pinned. Unpin one first.');
       const line = command.text.split('\n').find((part: string) => part.trim())?.trim() ?? '';
-      next = [...pins, { entryId, role: command.role, text: line.slice(0, TEXT_LIMIT) }];
+      const pin = { entryId, role: command.role, text: line.slice(0, TEXT_LIMIT), timestamp: command.timestamp };
+      const index = pins.findIndex(other => other.timestamp > pin.timestamp);
+      next = index < 0 ? [...pins, pin] : [...pins.slice(0, index), pin, ...pins.slice(index)];
     } else {
       next = pins.filter(pin => pin.entryId !== entryId);
       if (next.length === pins.length) return null;

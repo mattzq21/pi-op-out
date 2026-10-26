@@ -15,13 +15,14 @@ test('pins reach every view of a chat, stop at four, and come back when a view a
     await attached;
 
     const shown = pinsOf('second', pins => pins.length === 1);
-    await chat.command({ type: 'pin_message', entryId: 'one', role: 'response', text: '\n  Release plan ready.\nSecond line' });
-    expect((await shown).event.pins).toEqual([{ entryId: 'one', role: 'response', text: 'Release plan ready.' }]);
-    for (const entryId of ['two', 'three', 'four']) await chat.command({ type: 'pin_message', entryId, role: 'prompt', text: entryId });
-    expect(await agents.daemon.failure('pi_command', { runtimeId: 'second', command: { type: 'pin_message', entryId: 'five', role: 'prompt', text: 'five' } })).toBe('Only 4 messages can be pinned. Unpin one first.');
+    await chat.command({ type: 'pin_message', entryId: 'one', role: 'response', timestamp: 1, text: '\n  Release plan ready.\nSecond line' });
+    expect((await shown).event.pins).toEqual([{ entryId: 'one', role: 'response', text: 'Release plan ready.', timestamp: 1 }]);
+    // A pin of an earlier message goes before the pins of later messages.
+    for (const [entryId, timestamp] of [['two', 2], ['three', 3], ['four', 0]] as const) await chat.command({ type: 'pin_message', entryId, role: 'prompt', timestamp, text: entryId });
+    expect(await agents.daemon.failure('pi_command', { runtimeId: 'second', command: { type: 'pin_message', entryId: 'five', role: 'prompt', timestamp: 5, text: 'five' } })).toBe('Only 4 messages can be pinned. Unpin one first.');
 
     const ids = (pins: any[]) => pins.map(pin => pin.entryId).join();
-    const unpinned = pinsOf(chat.runtimeId, pins => ids(pins) === 'one,three,four');
+    const unpinned = pinsOf(chat.runtimeId, pins => ids(pins) === 'four,one,three');
     await agents.daemon.invoke('pi_command', { runtimeId: 'second', command: { type: 'unpin_message', entryId: 'two' } });
     await unpinned;
 
@@ -29,6 +30,6 @@ test('pins reach every view of a chat, stop at four, and come back when a view a
     const seen = agents.daemon.events.length;
     const restored = agents.daemon.waitEvent('pi://event', payload => agents.daemon.events.findIndex(event => event.payload === payload) >= seen && payload.runtimeId === 'second' && payload.event?.type === 'pinned_messages');
     await agents.daemon.invoke('start_pi', { runtimeId: 'second', clientId: 'laptop', cwd: chat.cwd, sessionPath: sessionFile });
-    expect((await restored).event.pins.map((pin: any) => pin.text)).toEqual(['Release plan ready.', 'three', 'four']);
+    expect((await restored).event.pins.map((pin: any) => pin.text)).toEqual(['four', 'Release plan ready.', 'three']);
   } finally { await agents.close(); }
 }, 120000);
