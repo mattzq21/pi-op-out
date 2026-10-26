@@ -61,13 +61,6 @@ export class QueueDelivery {
     }
   }
 
-  /** Moves held items back to pending as items to retry. */
-  async heldFailed(): Promise<void> {
-    const event = this.state.failedHeld();
-    await this.record.persist();
-    this.executor.publish(event);
-  }
-
   async consumed(id: string): Promise<void> { await this.reportStorageError(() => this.record.forget(id)); }
 
   async reportStorageError(operation: () => void | Promise<void>): Promise<void> {

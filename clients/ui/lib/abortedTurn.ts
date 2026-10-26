@@ -6,18 +6,15 @@ function precedingUser(messages: ChatMessage[]) {
     const message = messages[index];
 
     if (message.role === "user") return message;
-
-    if (message.role === "assistant" && message.errorMessage === "Response paused") return undefined;
   }
 }
 
 export function findReplaceableAbortedTurn(messages: ChatMessage[]) {
   const assistant = messages.at(-1);
 
-  if (assistant?.role !== "assistant" || assistant.stopReason !== "aborted" || assistant.errorMessage === "Response paused") return undefined;
+  if (assistant?.role !== "assistant" || assistant.stopReason !== "aborted") return undefined;
   const user = precedingUser(messages);
 
-  if (user?.contextCheckpoint) return undefined;
   const prompt = user ? textOf(user.content).trim() : "";
 
   return user && prompt ? { assistant, user, prompt } : undefined;

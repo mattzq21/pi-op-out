@@ -1,7 +1,5 @@
 import type { ExtensionAPI, ExtensionCommandContext, ExtensionContext } from "@earendil-works/pi-coding-agent";
 
-export type PauseState = { isPaused: boolean; isPausing: boolean };
-
 /**
  * fork: copy the history before the user message entryId and return its text.
  * fork_after: copy the history up to the assistant response entryId and its tool results.
@@ -13,15 +11,7 @@ export type ForkResult = { hostId: string; sessionId: string; sessionPath: strin
 
 /** One instance per Pi session. Operations act on the conversation of the given context. */
 export interface SessionControls {
-  pauseState(): PauseState;
-  /** Stops the current run and keeps the session paused until resume. An active goal pauses. Resolves when Pi is idle. */
-  pause(ctx: ExtensionContext): Promise<void>;
-  /**
-   * Continues a stopped goal, then returns the message that resumes the paused run; undefined when the session is not paused.
-   * Rejects while pausing or busy, or when the goal cannot continue.
-   */
-  resume(ctx: ExtensionContext): Promise<string | undefined>;
-  /** Stops the current run and clears any pause. An active goal pauses. Resolves when Pi is idle. */
+  /** Stops the current run. An active goal pauses. Resolves when Pi is idle. */
   stop(ctx: ExtensionContext): Promise<void>;
   /** Cancels child sessions that are still being prepared. */
   cancelPreparation(): void;

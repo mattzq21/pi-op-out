@@ -11,7 +11,6 @@ import { ensurePrivateDir } from '../private_fs';
 import { FileLock, flockDescriptor } from '../util/flock';
 import { flag, text } from './json';
 import { readHeaderLine } from './protocol';
-import * as ControlState from './control_state';
 
 export function ownershipError(): string { return 'Take ownership of this conversation before changing it'; }
 
@@ -274,10 +273,9 @@ export class ConversationOwnership {
     const tipId = typeof leaf?.id === 'string' ? leaf.id : null;
     const leafId = saved ? SessionRecords.selectedLeaf(saved.path, id, tipId) : tipId;
     if (leafId !== null && !entries.some(entry => entry.id === leafId)) throw new Error('The saved branch points to a missing entry');
-    const control = ControlState.reduce(entries, leafId);
     const snapshot: any = {
       revision,
-      state: { canFork: SessionRecords.canFork(entries), sessionId: id, model: null, thinkingLevel: 'off', isStreaming: false, pendingMessageCount: 0, isPaused: control.isPaused, isPausing: false, needsInput: false, messageCount: entries.filter(entry => entry?.type === 'message').length },
+      state: { canFork: SessionRecords.canFork(entries), sessionId: id, model: null, thinkingLevel: 'off', isStreaming: false, pendingMessageCount: 0, needsInput: false, messageCount: entries.filter(entry => entry?.type === 'message').length },
       history: { leafId, entries, ...(damagedLines.length ? { incomplete: true, damagedLines } : {}) }, sequence: 0, epoch: 'readonly:' + id,
       liveTools: [], queue: { type: 'queue_update', steering: [], followUp: [], pendingMessages: [] },
     };

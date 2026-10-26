@@ -16,7 +16,7 @@ interface Destination { key: string; spec: LaunchSpec; path: string; existing: b
 
 export async function switchSession(host: Host, session: Session, runtime: string, command: any): Promise<any> {
   if (!['fork', 'fork_after', 'copy_after'].includes(kind(command)) && (session.working() || !session.queue.isEmpty())) {
-    throw new Error('Stop or pause the response and finish queued messages before switching');
+    throw new Error('Stop the response and finish queued messages before switching');
   }
   const state = await session.execute({ type: 'get_state' });
   assertCurrent(host, session, runtime);

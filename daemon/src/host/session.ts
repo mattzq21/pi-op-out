@@ -4,7 +4,7 @@ import { dirname } from 'node:path';
 import { getProjectRepository } from '../project_repositories';
 import * as Registry from '../session_registry';
 import { Mutex, errorText } from '../util/sync';
-import { array, clone, flag, kind, merge, setEntry, text, jsonEqual } from './json';
+import { array, clone, flag, kind, setEntry, text, jsonEqual } from './json';
 import { olderHistory, recentHistory, turnWork } from './history_window';
 import { savedToolPayload } from './payload';
 import { readHeaderLine, argument, prepareSpec, specIdentity, type LaunchSpec, type SessionLaunch } from './protocol';
@@ -43,7 +43,7 @@ export interface SessionHost {
 }
 
 const STATE_CHANGES = new Set(['session_info_changed', 'session_switched', 'model_select', 'thinking_level_changed', 'agent_start', 'agent_end', 'agent_settled',
-  'message_start', 'message_end', 'entry_appended', 'pause_state', 'compaction_start', 'compaction_end', 'auto_compaction_start', 'auto_compaction_end']);
+  'message_start', 'message_end', 'entry_appended', 'compaction_start', 'compaction_end', 'auto_compaction_start', 'auto_compaction_end']);
 
 function stateChange(name: string): boolean { return STATE_CHANGES.has(name); }
 
@@ -84,7 +84,6 @@ export class Session {
   isClosed = false;
   isStopping = false;
   isTransient: boolean;
-  pauseState: any = null;
   reservedPathValue: string | null = null;
   startupError: string | null = null;
   /** Last stderr lines from Pi, kept for error reports. */
@@ -212,13 +211,13 @@ export class Session {
 
   unused(): boolean {
     if (this.busy(null)) return false;
-    return this.viewsList.length === 0 && !this.settings.applying() && !flag(this.pauseState, 'isPausing') && this.dialogs.empty();
+    return this.viewsList.length === 0 && !this.settings.applying() && this.dialogs.empty();
   }
 
   idle(): boolean {
     return !this.closed() && !this.stopping() && !this.transient() && this.unused()
       && this.pendingRequests === 0 && this.dialogs.empty() && this.queue.pending().length === 0
-      && this.queue.heldCount() === 0 && (!this.orchestrationTask || this.orchestrationTask.finished);
+      && (!this.orchestrationTask || this.orchestrationTask.finished);
   }
 
   publish(event: any, target: string | null): void {
@@ -338,7 +337,7 @@ export class Session {
 
   private assertIdle(observed: any): void {
     if (this.viewsList.length) throw new Error('Close this conversation in all windows before messaging or archiving it');
-    if (!this.unused() || this.busy(observed) || flag(observed, 'isPausing')) {
+    if (!this.unused() || this.busy(observed)) {
       throw new Error('Finish the response, queued messages, and settings changes before messaging or archiving this conversation');
     }
   }
@@ -432,10 +431,9 @@ export class Session {
       case 'agent_settled': this.isWorking = false; this.live.clear(); break;
       case 'compaction_start': case 'auto_compaction_start': this.isCompacting = true; break;
       case 'compaction_end': case 'auto_compaction_end': this.isCompacting = false; break;
-      case 'pause_state': this.pauseState = { isPaused: event.isPaused ?? null, isPausing: event.isPausing ?? null }; break;
     }
     this.live.receive(event);
-    if (['agent_start', 'agent_settled', 'compaction_start', 'compaction_end', 'auto_compaction_start', 'auto_compaction_end', 'pause_state'].includes(name)) this.publishState();
+    if (['agent_start', 'agent_settled', 'compaction_start', 'compaction_end', 'auto_compaction_start', 'auto_compaction_end'].includes(name)) this.publishState();
   }
 
   private async receiveExtension(event: any): Promise<any | undefined> {
@@ -480,18 +478,17 @@ export class Session {
       case 'force_stop': await this.stop(); return null;
       case 'get_available_models': await this.refreshProviders(); break;
       // Pi stops the running response before it compacts, even when there is nothing to compact.
-      case 'compact': if (this.working()) throw new CommandRefusedError('Stop or pause piop before running /compact.', 'daemon'); break;
+      case 'compact': if (this.working()) throw new CommandRefusedError('Stop piop before running /compact.', 'daemon'); break;
     }
     return this.executeWorker(command);
   }
 
   private async collectState(command: any): Promise<any> {
     const state = await this.raw(command);
-    merge(state, await this.raw({ type: 'get_pause_state' }));
     const count = typeof state?.pendingMessageCount === 'number' && Number.isInteger(state.pendingMessageCount) && state.pendingMessageCount >= 0 ? state.pendingMessageCount : 0;
     if (state && typeof state === 'object' && !Array.isArray(state)) {
       state.pendingMessages = this.queue.view().pendingMessages ?? null;
-      state.pendingMessageCount = count + this.queue.heldCount();
+      state.pendingMessageCount = count;
     }
     return state;
   }
@@ -510,7 +507,6 @@ export class Session {
     if ((kind(command) === 'prompt' || kind(command) === 'queue_prompt') && !text(command, 'message').startsWith('/')) this.isSubmitted = true;
     const result = await this.raw(clone(command));
     this.settings.remember(command);
-    if (kind(command) === 'resume' && typeof result?.resumeMessage === 'string' && result.resumeMessage) await this.raw({ type: 'prompt', message: result.resumeMessage });
     if (['set_model', 'set_thinking_level', 'set_session_name', 'fork_and_forget'].includes(kind(command))) this.publish({ type: 'session_info_changed' }, null);
     // The chat list shows the name, so every client reloads it.
     if (['set_session_name', 'fork_and_forget'].includes(kind(command))) this.host.output({ type: 'sessions_changed' });
@@ -548,8 +544,7 @@ export class Session {
     for (;;) {
       const revision = this.stateRevision;
       const state = await this.raw({ type: 'get_state' });
-      merge(state, await this.raw({ type: 'get_pause_state' }));
-      const snapshot = await this.rawAs({ type: 'get_entries' }, 'get_snapshot_entries', state);
+        const snapshot = await this.rawAs({ type: 'get_entries' }, 'get_snapshot_entries', state);
       const current = snapshot?.stateRevision;
       if (snapshot && typeof snapshot === 'object') delete snapshot.stateRevision;
       // stateKey lets a reader wait for the next state change after this snapshot.

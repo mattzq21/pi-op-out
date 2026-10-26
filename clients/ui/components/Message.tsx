@@ -9,7 +9,7 @@ import { type Accessor, createMemo, createSignal, Index, Show, useContext } from
 import { ConversationImageProject } from "./markdownImages";
 import { createDependencyEffect, createRef } from "../lib/solid";
 
-import { Check, ChevronRight, CircleAlert, Copy, Pause, GitBranch, Split, Undo2, Wrench } from "lucide-solid";
+import { Check, ChevronRight, CircleAlert, Copy, GitBranch, Split, Undo2, Wrench } from "lucide-solid";
 import { hasVisibleText, textOf, thinkingOf } from "../lib/content";
 import { cacheHitStats, GOAL_PROMPT, isContextInjection } from "../lib/messages";
 import { CacheIcon } from "./CacheIcon";
@@ -21,7 +21,7 @@ import { SubagentResults, subagentRuns } from "./SubagentResults";
 import { copyText } from "../lib/clipboard";
 import type { DebugView } from "../lib/debugFeatures";
 
-interface Props { message: ChatMessage; turnCacheUsage?: { input: number; cacheRead: number }; expanded?: boolean; showActions?: boolean; toolCount?: number; debug?: DebugView; paused?: boolean; onBranch?: (message: ChatMessage) => void | Promise<void>; onFork?: (message: ChatMessage) => void | Promise<void>; onForkAndForget?: (message: ChatMessage) => void | Promise<void>; onRetry?: () => void; retrying?: boolean; }
+interface Props { message: ChatMessage; turnCacheUsage?: { input: number; cacheRead: number }; expanded?: boolean; showActions?: boolean; toolCount?: number; debug?: DebugView; onBranch?: (message: ChatMessage) => void | Promise<void>; onFork?: (message: ChatMessage) => void | Promise<void>; onForkAndForget?: (message: ChatMessage) => void | Promise<void>; onRetry?: () => void; retrying?: boolean; }
 
 function cacheTokenDigits(tokens: number) {
   const groups = String(tokens).match(/\d{1,3}(?=(?:\d{3})*$)/g) ?? [];
@@ -85,12 +85,10 @@ function formatMessageTime(timestamp?: number) {
   };
 }
 
-function responseFailure(message: ChatMessage, paused: boolean) {
-  const pauseMarker = message.errorMessage === "Response paused";
-  const pausedResponse = message.stopReason === "aborted" && paused;
-  const failure = message.stopReason === "aborted" ? (pausedResponse || pauseMarker ? undefined : message.errorMessage && message.errorMessage !== "Request was aborted" ? message.errorMessage : "Operation aborted") : message.stopReason === "error" ? `Response failed: ${message.errorMessage || "Unknown error"}` : undefined;
+function responseFailure(message: ChatMessage) {
+  const failure = message.stopReason === "aborted" ? (message.errorMessage && message.errorMessage !== "Request was aborted" ? message.errorMessage : "Operation aborted") : message.stopReason === "error" ? `Response failed: ${message.errorMessage || "Unknown error"}` : undefined;
 
-  return { pausedResponse, failure };
+  return { failure };
 }
 
 function responseMetadata(message: Accessor<ChatMessage>, turnCacheUsage: Accessor<Props['turnCacheUsage']>) {
@@ -269,7 +267,7 @@ export function Message(componentProps: Props) {
     const thinking = createMemo(() => (thinkingOf(componentProps.message.content)));
     const streaming = createMemo(() => componentProps.message.streaming);
     const metadata = responseMetadata(() => componentProps.message, () => componentProps.turnCacheUsage);
-    const failureState = createMemo(() => (responseFailure(componentProps.message, (componentProps.paused === undefined ? false : componentProps.paused))));
+    const failureState = createMemo(() => (responseFailure(componentProps.message)));
 
     const branch = async (worktree = false) => { const capturedOnBranch0 = worktree ? componentProps.onBranch : componentProps.onFork; const capturedMessage1 = componentProps.message;
 
@@ -316,7 +314,6 @@ export function Message(componentProps: Props) {
         {thinking() && <div class="reasoning-text"><Markdown streaming={streaming()}>{thinking()}</Markdown></div>}
         {renderResponse()}
         {renderMessageFailure()}
-        {failureState().pausedResponse && <div class="message-paused" role="status"><Pause size={14} /><span>Response paused</span></div>}
         {renderMessageActions()}
       </div>);
     };

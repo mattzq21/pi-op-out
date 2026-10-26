@@ -149,7 +149,6 @@ export function createAppConversations(preloadChat: () => void) {
   createDependencyEffect(() => drafts.bindTransport(transport(), activeConversationKey()), () => [transport(), activeConversationKey(), activeCwd(), connected()]);
   const newSessionPending = createRef(false);
   const abortPending = createRef(new Set<NativeTransport>());
-  const pauseResumePending = createRef(new Set<NativeTransport>());
   const branchPending = createRef(new Set<string>());
   const sessionActionPending = createRef(new Set<string>());
   const [splitPane, setSplitPane] = createSignal<SplitPaneState>();
@@ -433,7 +432,7 @@ export function createAppConversations(preloadChat: () => void) {
 
     try { await capturedBranchConversation(message, mode); } catch (reason) { addNotice({ title: "Could not fork conversation", message: reason instanceof Error ? reason.message : String(reason) }); } };
 
-  const conversationBusy = () => chatSession().state.isStreaming || chatSession().state.isPausing || chatSession().state.pendingMessageCount;
+  const conversationBusy = () => chatSession().state.isStreaming || chatSession().state.pendingMessageCount;
 
   const forkAndForget = async (message: ChatMessage) => {
     const owner = transport();
@@ -648,37 +647,6 @@ export function createAppConversations(preloadChat: () => void) {
 
     try { await ownerTransport.command({ type: "abort" }); } catch (reason) { addNotice({ title: "Could not stop piop", message: reason instanceof Error ? reason.message : String(reason) }); } finally { abortPending.current.delete(ownerTransport); } };
 
-  const pauseInteraction = async () => { const capturedTransport = transport(); const capturedSession = { ...chatSession() };
-    const ownerTransport = capturedTransport; const ownerKey = activeConversationKeyRef.current;
-
-    if (abortPending.current.has(ownerTransport) || pauseResumePending.current.has(ownerTransport)) return;
-    pauseResumePending.current.add(ownerTransport);
-    capturedSession.setState((current) => ({ ...current, isPausing: true }));
-
-    try {
-      await ownerTransport.command({ type: "pause" });
-
-      if (activeTransportRef.current === ownerTransport && activeConversationKeyRef.current === ownerKey) await capturedSession.refresh();
-    } catch (reason) {
-      addNotice({ title: "Could not pause piop", message: reason instanceof Error ? reason.message : String(reason) });
-    } finally {
-      pauseResumePending.current.delete(ownerTransport);
-
-      if (activeTransportRef.current === ownerTransport && activeConversationKeyRef.current === ownerKey) capturedSession.setState((current) => ({ ...current, isPausing: false }));
-    }
-  };
-
-  const resumeInteraction = async () => { const capturedTransport = transport();
-    const ownerTransport = capturedTransport;
-
-    if (abortPending.current.has(ownerTransport) || pauseResumePending.current.has(ownerTransport)) return;
-    pauseResumePending.current.add(ownerTransport);
-
-    try { await ownerTransport.command({ type: "resume" }); }
-    catch (reason) { addNotice({ title: "Could not resume piop", message: reason instanceof Error ? reason.message : String(reason) }); }
-    finally { pauseResumePending.current.delete(ownerTransport); }
-  };
-
   const setAgent = async (name: string) => {
     const capturedTransport = transport();
 
@@ -844,6 +812,6 @@ export function createAppConversations(preloadChat: () => void) {
       } });
   };
 
- return { modelVisibility, drafts, archiveReplacedSession: (session: SessionSummary) => archives.archiveSession(session), isArchiving: archives.isPending, missingDirectoryDialog, archivesOpen, setArchivesOpen, runtimePool, transport, view, setView, activeConversationKey, chatViewKey, runningSessions, unseenSessions, pendingSettingsCount, chatSession, sessions, settings, settingsSaving, debugModeSaving, setSettingsDirty, panelOpen, setPanelOpen, query, setQuery, connected, error, setError, createGroupRequest, setCreateGroupRequest, handleCreateGroup, newChatRequest, activeHostId, codexUsage, usageClock, opencodeGoBadge, codexUsageError, opencodeGoUsageError, setDialogs, notices, setNotices, addNotice, queueExtensionDialog, resolveExtensionDialog, closeTransportDialogs, releaseSplitTransport, statuses, widgets, renameSession, setRenameSession, projectOpen, setProjectOpen, projectOpenRef, uploadsByTransport, setComposerDraft, setComposerUploads, splitPane, setSplitPane, subagentPane, hasSidePane, mainComposerFocusRequest, splitComposerFocusRequest, activePane, setActivePane, terminals, terminalOpen, terminalSessionId, terminalLocationState, startTerminal, addTerminal, selectTerminal, saveTerminalSnapshot, deleteTerminal, reconnectPending, splitSessionId, composerState, terminalViewKey, syncSessionIndex, composerControls, resolveHomeDirectory, send, respondToSplitRequest, closeSplitPane, openSubagent, canLeaveSettings, rekeyConversationUi, branch, forkAndForget, forkSourceName, openForkSource, revealEntryId, entryRevealed, startNewSession, newSession, clearChatProject, chooseChatHost, selectSession, setModel, setThinking, abortInteraction, pauseInteraction, resumeInteraction, saveSettings, setAgent, openProject, chooseChatProject, sessionAction, draftChangeFor, uploadsChangeFor, toggleComposerTerminal, toggleDebugMode, toggleDebugFeature, reconnectMain, extensionStateIsCurrent, activeDialog, projectCwd, mobileSidebarOpen, sidebar, chatAgentProps, chatModels, chatCommands, chatWidgets, composerView };
+ return { modelVisibility, drafts, archiveReplacedSession: (session: SessionSummary) => archives.archiveSession(session), isArchiving: archives.isPending, missingDirectoryDialog, archivesOpen, setArchivesOpen, runtimePool, transport, view, setView, activeConversationKey, chatViewKey, runningSessions, unseenSessions, pendingSettingsCount, chatSession, sessions, settings, settingsSaving, debugModeSaving, setSettingsDirty, panelOpen, setPanelOpen, query, setQuery, connected, error, setError, createGroupRequest, setCreateGroupRequest, handleCreateGroup, newChatRequest, activeHostId, codexUsage, usageClock, opencodeGoBadge, codexUsageError, opencodeGoUsageError, setDialogs, notices, setNotices, addNotice, queueExtensionDialog, resolveExtensionDialog, closeTransportDialogs, releaseSplitTransport, statuses, widgets, renameSession, setRenameSession, projectOpen, setProjectOpen, projectOpenRef, uploadsByTransport, setComposerDraft, setComposerUploads, splitPane, setSplitPane, subagentPane, hasSidePane, mainComposerFocusRequest, splitComposerFocusRequest, activePane, setActivePane, terminals, terminalOpen, terminalSessionId, terminalLocationState, startTerminal, addTerminal, selectTerminal, saveTerminalSnapshot, deleteTerminal, reconnectPending, splitSessionId, composerState, terminalViewKey, syncSessionIndex, composerControls, resolveHomeDirectory, send, respondToSplitRequest, closeSplitPane, openSubagent, canLeaveSettings, rekeyConversationUi, branch, forkAndForget, forkSourceName, openForkSource, revealEntryId, entryRevealed, startNewSession, newSession, clearChatProject, chooseChatHost, selectSession, setModel, setThinking, abortInteraction, saveSettings, setAgent, openProject, chooseChatProject, sessionAction, draftChangeFor, uploadsChangeFor, toggleComposerTerminal, toggleDebugMode, toggleDebugFeature, reconnectMain, extensionStateIsCurrent, activeDialog, projectCwd, mobileSidebarOpen, sidebar, chatAgentProps, chatModels, chatCommands, chatWidgets, composerView };
 
 }

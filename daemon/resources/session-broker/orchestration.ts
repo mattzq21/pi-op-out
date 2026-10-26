@@ -14,7 +14,7 @@ const messageSchema = Schema.Object({ role: Schema.String(), content: Schema.Opt
 
 const entrySchema = Schema.Object({ id: Schema.String(), name: Schema.Optional(Schema.String()), parentId: Schema.Optional(Schema.Union([Schema.String(), Schema.Null()])), type: Schema.String(), message: Schema.Optional(messageSchema), customType: Schema.Optional(Schema.String()), content: Schema.Optional(Schema.Unknown()), details: Schema.Optional(Schema.Unknown()), timestamp: Schema.Optional(Schema.Union([Schema.String(), Schema.Number()])) });
 
-const stateSchema = Schema.Object({ sessionFile: Schema.Optional(Schema.String()), isPaused: Schema.Optional(Schema.Boolean()), isPausing: Schema.Optional(Schema.Boolean()), isStreaming: Schema.Optional(Schema.Boolean()), isCompacting: Schema.Optional(Schema.Boolean()), pendingMessageCount: Schema.Optional(Schema.Number()) });
+const stateSchema = Schema.Object({ sessionFile: Schema.Optional(Schema.String()), isStreaming: Schema.Optional(Schema.Boolean()), isCompacting: Schema.Optional(Schema.Boolean()), pendingMessageCount: Schema.Optional(Schema.Number()) });
 
 const snapshotSchema = Schema.Object({ revision: Schema.String(), stateKey: Schema.Optional(Schema.String()), state: stateSchema, history: Schema.Object({ entries: Schema.Array(entrySchema), leafId: Schema.Optional(Schema.Union([Schema.String(), Schema.Null()])) }) });
 
@@ -111,9 +111,9 @@ export async function sendSessionMessage(ctx: ExtensionContext, sessionId: strin
 }
 
 function executionStopped(snapshot: Awaited<ReturnType<typeof sessionSnapshot>>) {
-  const { isStreaming, isCompacting, isPausing } = snapshot.state;
+  const { isStreaming, isCompacting } = snapshot.state;
 
-  return !isStreaming && !isCompacting && !isPausing;
+  return !isStreaming && !isCompacting;
 }
 
 async function interruptionComplete(sessionId: string, hostId: string, retired: boolean, signal?: AbortSignal) {
@@ -175,8 +175,6 @@ function messageText(message: { content?: unknown }) {
 
 export function snapshotStatus(snapshot: Awaited<ReturnType<typeof sessionSnapshot>>) {
   const state = snapshot.state;
-
-  if (state.isPaused || state.isPausing) return "paused";
 
   return state.isStreaming || state.isCompacting || (state.pendingMessageCount ?? 0) > 0 ? "running" : "idle";
 }
@@ -242,8 +240,6 @@ async function waitSnapshot(targets: Target[], signal: AbortSignal | undefined, 
   return { polls, errors, wake };
 }
 
-const STATUS_NOTES: Record<string, string> = { paused: " (paused)" };
-
 /** The new answers of the chats that finished, each in a <peer_message> tag with the chat's name on the first line. */
 /** What ended a wait besides the peers: a message from the user, a message from another chat, or a subagent result. */
 type Interruption = "user" | "mail" | "subagent" | undefined;
@@ -252,7 +248,7 @@ function peerAnswers(snapshot: Awaited<ReturnType<typeof waitSnapshot>>, interru
   const answers = snapshot.polls.filter(item => item.peer.status !== "running" && item.changed).map(item => {
     const answer = item.answer.length > 16_000 ? item.answer.slice(0, 16_000) + "\n[Answer truncated.]" : item.answer;
 
-    return "<peer_message>\nPeer " + item.name + (STATUS_NOTES[item.peer.status] ?? "") + ":\n" + answer + "\n</peer_message>";
+    return "<peer_message>\nPeer " + item.name + ":\n" + answer + "\n</peer_message>";
   });
   const errors = snapshot.errors.map(item => "Peer " + item.peerId + ": " + item.error);
   const parts = [...answers, ...errors];

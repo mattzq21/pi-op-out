@@ -112,8 +112,6 @@ export function createTransportActivation(context: ActivationContext) {
     const state = chatSession().state;
     let streaming = state.isStreaming;
     let compacting = state.isCompacting;
-    let paused = state.isPaused;
-    let pausing = state.isPausing;
     let stopped = false;
     let scheduled = false;
     const check = () => {
@@ -121,18 +119,17 @@ export function createTransportActivation(context: ActivationContext) {
       scheduled = true;
       queueMicrotask(() => {
         scheduled = false;
-        if (stopped || streaming || compacting || paused || pausing) return;
+        if (stopped || streaming || compacting) return;
         runtimePool().detachIdle(owner, () => !hasDraftWork(owner, transportConversationKeys.current.get(owner)));
       });
     };
     const unsubscribe = owner.subscribe(event => {
-      if (event.type === "agent_start") { streaming = true; paused = false; }
+      if (event.type === "agent_start") streaming = true;
       if (event.type === "runtime_presence") streaming = event.isStreaming === true;
       if (event.type === "agent_settled") streaming = false;
-      if (event.type === "pause_state") { paused = event.isPaused === true; pausing = event.isPausing === true; }
       if (event.type === "compaction_start" || event.type === "auto_compaction_start") compacting = true;
       if (event.type === "compaction_end" || event.type === "auto_compaction_end") compacting = false;
-      if (["agent_settled", "runtime_presence", "pause_state", "compaction_end", "auto_compaction_end", "queue_update", "settings_applied"].includes(event.type)) check();
+      if (["agent_settled", "runtime_presence", "compaction_end", "auto_compaction_end", "queue_update", "settings_applied"].includes(event.type)) check();
     });
     let stopDisposal: (() => void) | undefined;
     const stop = () => { stopped = true; unsubscribe(); stopDisposal?.(); inactiveCleanups.delete(owner); };
@@ -153,7 +150,7 @@ export function createTransportActivation(context: ActivationContext) {
 
     if (leavingEmpty && hasUnsentWork && previousKey && !nextIsDraft) retainDraft(previousTransport, previousKey);
     const state = chatSession().state;
-    const settled = !state.isStreaming && !state.isCompacting && !state.isPausing && !state.isPaused && !runtimePool().isRunning(previousTransport) && !state.pendingMessageCount && !state.pendingMessages?.length;
+    const settled = !state.isStreaming && !state.isCompacting && !runtimePool().isRunning(previousTransport) && !state.pendingMessageCount && !state.pendingMessages?.length;
     const discardPrevious = leavingEmpty && previousKey !== nextKey && !hasUnsentWork && settled;
     if (previousTransport !== nextTransport && !leavingEmpty) watchInactive(previousTransport);
     activeTransportRef.current = nextTransport; runtimePool().activate(nextTransport); setTransport(nextTransport);

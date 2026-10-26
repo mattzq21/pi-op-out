@@ -214,7 +214,6 @@ button.agent-delivery-source:hover { color: var(--accent-soft); text-decoration:
 .cache-fraction-tooltip > span:last-child { padding-top: 2px; }
 .cache-hit-rate:hover .cache-fraction-tooltip, .cache-hit-rate:focus-visible .cache-fraction-tooltip { opacity: 1; transform: translateX(-50%) translateY(0); }
 .message-failure { display: flex; align-items: center; gap: 7px; color: #c64f38; font-size: 12px; }.message-failure button { margin-left: 5px; border: 1px solid currentColor; border-radius: 6px; background: transparent; color: inherit; padding: 4px 9px; font: inherit; cursor: pointer; }.message-failure button:hover { background: #c64f3812; }
-.message-paused { display: flex; align-items: center; gap: 7px; color: var(--muted); font-size: 12px; }
 .reasoning-text, .reasoning-text strong { font-size: 13px; font-weight: 400; }
 .reasoning-text { font-style: italic; font-synthesis: style; color: #b4b0a8; }
 .reasoning-text, :is(.work-group-content, .active-work-content) .message-body { line-height: 1.4; }

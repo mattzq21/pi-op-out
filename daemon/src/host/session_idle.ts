@@ -1,5 +1,4 @@
 import { errorText } from '../util/sync';
-import { flag } from './json';
 import type { Session, SessionHost } from './session';
 
 const IDLE_STOP_DELAY_MS = 120_000;
@@ -43,7 +42,7 @@ export class IdleStop {
       if (!session.idle() || !this.host.canStopIdle(session)) return;
       const state = await session.execute({ type: 'get_state' });
       if (revision !== this.revision) return;
-      if (!session.idle() || session.busy(state) || flag(state, 'isPausing') || !this.host.canStopIdle(session)) return;
+      if (!session.idle() || session.busy(state) || !this.host.canStopIdle(session)) return;
       await session.stop();
     } finally {
       this.checkingValue = false;

@@ -43,7 +43,7 @@ render(() => <>
           if (failSends()) throw new Error("offline");
           setSent(values => [...values, [message, behavior, images]]);
         }}
-        onPause={async () => {}} onResume={async () => {}} onAbort={async () => {}}
+        onAbort={async () => {}}
         onAgent={() => {}} onModel={() => {}} onThinking={() => {}} onToggleFastMode={async () => {}} />
     </Show>
   </div>

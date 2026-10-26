@@ -125,7 +125,7 @@ test.concurrent('a follow-up task goes to the same child, which still remembers 
   expect(children.map((child: any) => child.name)).toEqual(['Subagent: Memory']);
 }, 120000);
 
-test('a child paused by a model failure is reported to its parent at once and can still take a follow-up', async () => {
+test('a child whose model fails is reported to its parent at once and can still take a follow-up', async () => {
   agents.scripts.set('Ask a flaky helper', messages => {
     const last = text(messages.at(-1));
     if (!called(messages, 'spawn_subagents')) return { tool: 'spawn_subagents', arguments: { tasks: [{ nickname: 'Flaky', task: 'Flaky task' }] } };
@@ -343,30 +343,6 @@ test('stopping a parent that waits for its child stops both at once, and the par
   expect(agents.model.requests.length).toBe(calls);
   expect((await root.history()).some(message => text(message) === 'Kept going after stop.')).toBe(false);
 }, 60000);
-
-test('pausing a parent cancels its busy child, and after resume the parent hears of it and the child takes the task again', async () => {
-  const job = await stoppedJob('paused-late.txt', jobs);
-  agents.scripts.set('Pause while a child works', messages => {
-    const last = text(messages.at(-1));
-    const relay = last.match(/Relay: \w+/);
-    if (relay) return { text: relay[0] };
-    if (last.startsWith('<subagent_response>\nSubagent Patience:') && !called(messages, 'message_subagent')) return { tool: 'message_subagent', arguments: { nickname: 'Patience', message: 'Try the slow job again' } };
-    if (called(messages, 'spawn_subagents') && !called(messages, 'await_subagents')) return { tool: 'await_subagents' };
-    return called(messages, 'spawn_subagents') ? { text: 'Waiting.' } : { tool: 'spawn_subagents', arguments: { tasks: [{ nickname: 'Patience', task: 'Paused child job' }] } };
-  });
-  agents.scripts.set('Paused child job', messages => JSON.stringify(messages).includes('Try the slow job again') ? { text: 'Relay: retried' }
-    : called(messages, 'bash') ? { text: 'Relay: first' } : { tool: 'bash', arguments: { command: job.command } });
-  const root = await agents.rootChat();
-  await root.command({ type: 'prompt', message: 'Pause while a child works' });
-  await job.started();
-  await root.command({ type: 'pause' });
-  await job.stopped();
-  await root.until(history => history.at(-1)?.stopReason === 'aborted');
-  await root.command({ type: 'resume' });
-  const messages = await root.until(history => text(history.at(-1)) === 'Relay: retried');
-  expect(messages.some(message => text(message) === 'Relay: first')).toBe(false);
-  expect(messages.some(message => message.role === 'assistant' && message.content?.some((part: any) => part.name === 'message_subagent'))).toBe(true);
-}, 90000);
 
 test('deleting a parent while its child runs a command stops the child and deletes both chats', async () => {
   const job = await stoppedJob('doomed-late.txt', jobs);

@@ -228,10 +228,8 @@ class SubagentObserver {
 
   private canFinish(snapshot: Awaited<ReturnType<typeof sessionSnapshot>>, revision: number) {
     const status = snapshotStatus(snapshot);
-    // A child that paused after a failed response is reported as failed; it stays paused, so a follow-up can resume it.
-    const failedAndPaused = status === "paused" && completedResponse(this.run, snapshot)?.stopReason === "error";
 
-    return (status === "idle" || failedAndPaused) && revision === this.lifecycle.revision && !this.lifecycle.pendingDeliveries && !this.run.cancelRequested && !this.observation.signal.aborted;
+    return status === "idle" && revision === this.lifecycle.revision && !this.lifecycle.pendingDeliveries && !this.run.cancelRequested && !this.observation.signal.aborted;
   }
 
   async watch() {

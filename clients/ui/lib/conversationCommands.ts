@@ -7,7 +7,7 @@ export class ConversationCommands {
     }
     const compact = ["prompt", "steer", "follow_up"].includes(command.type) && command.message !== undefined ? command.message.match(/^\/compact(?:\s+([\s\S]*))?$/) : null;
 
-    if (compact && command.type !== "prompt") throw new Error("Stop or pause piop before running /compact.");
+    if (compact && command.type !== "prompt") throw new Error("Stop piop before running /compact.");
 
     if (compact) {
       const customInstructions = compact[1]?.trim();

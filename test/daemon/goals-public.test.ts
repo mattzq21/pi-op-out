@@ -112,7 +112,7 @@ test('a goal continues through empty replies and large usage until completed', a
   expect(saved.filter((entry: any) => entry.customType === 'piop-goal')).toEqual(goals);
 }, 120000);
 
-test('a goal whose model keeps refusing for a rate limit is retried, then its goal and chat are paused', async () => {
+test('a goal whose model keeps refusing for a rate limit is retried, then its goal is paused', async () => {
   let calls = 0;
   agents.scripts.set('Beat the rate limit', () => { calls++; throw new Error('Rate limit exceeded'); });
   const chat = await agents.rootChat();
@@ -120,7 +120,6 @@ test('a goal whose model keeps refusing for a rate limit is retried, then its go
   await send(chat, '/goal Beat the rate limit');
   await settled(chat.runtimeId);
   expect(calls).toBe(4);
-  expect((await chat.command({ type: 'get_state' })).isPaused).toBe(true);
   expect(await untilGoal(chat.runtimeId, 'paused')).toMatchObject({ status: 'paused', objective: 'Beat the rate limit' });
   expect(calls).toBe(4);
 }, 120000);

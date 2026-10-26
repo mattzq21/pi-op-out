@@ -24,7 +24,7 @@ async function harness(t, responses = new Map()) {
   const record = async label => {
     await dom.flushFrames();
     const noop = () => {};
-    const props = { readOnly: false, onSend: noop, onAbort: noop, onPause: noop, onResume: noop, onOpenProject: noop, onBranch: noop, onModel: noop, onToggleFastMode: noop, onThinking: noop, onChangePending: async () => {}, state: hook.current.state, messages: hook.current.messages, models: [], commands: [], thinkingLevels: [], widgets: [], statuses: {} };
+    const props = { readOnly: false, onSend: noop, onAbort: noop, onOpenProject: noop, onBranch: noop, onModel: noop, onToggleFastMode: noop, onThinking: noop, onChangePending: async () => {}, state: hook.current.state, messages: hook.current.messages, models: [], commands: [], thinkingLevels: [], widgets: [], statuses: {} };
     if (view) await view.rerender(props); else view = await renderComponent(ChatView, props);
     const shown = [];
     for (const turn of view.container.querySelectorAll('.conversation-turn')) {

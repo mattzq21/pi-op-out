@@ -15,7 +15,7 @@ describe('composer interactions', () => {
     dom = installDom(); storage = trackStorage(indexedDB); HTMLElement.prototype.scrollIntoView = () => {};
 
     sent = [];
-    props = { streaming: false, queued: 0, commands: [], agents: [], models: [], model: null, thinkingLevel: 'off', thinkingLevels: ['off', 'high'], onSend: async (message, behavior, images, submission) => { assert.equal(submission, undefined, 'unstaged sends carry no draft submission'); sent.push([message, behavior, images]); }, onPause: async () => {}, onResume: async () => {}, onAbort: async () => {}, onAgent: () => {}, onModel: () => {}, onThinking: () => {}, onToggleFastMode: async () => {} };
+    props = { streaming: false, queued: 0, commands: [], agents: [], models: [], model: null, thinkingLevel: 'off', thinkingLevels: ['off', 'high'], onSend: async (message, behavior, images, submission) => { assert.equal(submission, undefined, 'unstaged sends carry no draft submission'); sent.push([message, behavior, images]); }, onAbort: async () => {}, onAgent: () => {}, onModel: () => {}, onThinking: () => {}, onToggleFastMode: async () => {} };
   });
   afterEach(async () => {
     if (view) await view.unmount(); view = undefined;
@@ -83,7 +83,6 @@ describe('composer interactions', () => {
     assert.ok(control('Send message'));
     await click(control('Send message'));
     assert.deepEqual(sent, [['After this turn', 'followUp', []]]);
-    assert.ok(control('Pause piop'));
   });
 
   test('context indicators clamp percentages and describe unavailable usage', async () => {
@@ -127,8 +126,8 @@ describe('composer interactions', () => {
   });
 
   test('disabled controls preserve typed drafts and prevent submission', async () => {
-    await render({ controlsDisabled: true, paused: true });
-    assert.equal(control('Resume piop').disabled, true);
+    await render({ controlsDisabled: true });
+    assert.equal(control('Send message').disabled, true);
     await enterText(editor(), 'Draft while blocked'); await key('Enter');
     assert.deepEqual(sent, []);
     assert.equal(editor().value, 'Draft while blocked');

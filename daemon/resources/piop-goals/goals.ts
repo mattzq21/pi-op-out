@@ -6,7 +6,6 @@ import { goalChangedPrompt, goalPrompt } from "./prompts.ts";
 import { GoalCoordination } from "./coordination.ts";
 import type { GoalSession } from "./interface.ts";
 import type { GoalCore } from "./preparation.ts";
-import { sessionControls } from "../piop-controls/interface.ts";
 import { inputHold } from "../session-broker/input-hold.ts";
 
 /** A notice that the user changed the goal. It is saved where the change happened, and the model gets it there as a system message. */
@@ -30,15 +29,6 @@ function persistent(ctx: ExtensionContext) {
 /** Registers goal tracking for the session and publishes its GoalSession. Returns the goal internals for the goal tools and Piop input. */
 export function registerGoals(pi: ExtensionAPI): { session: GoalSession; core: GoalCore } {
   const state = new GoalState(pi);
-
-  const pause = (ctx: ExtensionContext) => {
-    const controls = sessionControls(pi);
-
-    if (!controls) { ctx.ui.notify("Session controls are unavailable, so the goal could not pause the run.", "error");
-
-    return; }
-    void controls.pause(ctx).catch(error => ctx.ui.notify((error instanceof Error ? error.message : String(error)), "error"));
-  };
 
   const coordination = new GoalCoordination();
 
@@ -135,7 +125,6 @@ export function registerGoals(pi: ExtensionAPI): { session: GoalSession; core: G
   pi.on("agent_before_settle", (event, ctx) => coordination.run(ctx, (): AgentBeforeSettleEventResult | void => {
     if (event.outcome !== "completed") {
       if (state.goal?.status === "active") state.setStatus(ctx, "paused");
-      if (event.outcome === "error") pause(ctx);
       return;
     }
 
@@ -173,13 +162,8 @@ export function registerGoals(pi: ExtensionAPI): { session: GoalSession; core: G
     pause: ctx => commit(ctx, () => { state.setStatus(ctx, "paused"); changed(ctx, null); }),
     resume: ctx => commit(ctx, () => { assertAvailable(ctx); state.setStatus(ctx, "active"); changed(ctx, null); }),
     clear: ctx => commit(ctx, () => { state.clear(ctx); changed(ctx); }),
-    pauseWithSession: ctx => coordination.run(ctx, () => {
+    stopped: ctx => coordination.run(ctx, () => {
       if (state.goal?.status === "active") state.setStatus(ctx, "paused");
-    }),
-    resumeWithSession: ctx => coordination.run(ctx, () => {
-      if (!state.goal) return;
-
-      if (state.goal.status === "paused" && allowed()) state.setStatus(ctx, "active");
     }),
   };
 

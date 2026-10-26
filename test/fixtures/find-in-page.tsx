@@ -22,7 +22,7 @@ function ConversationSearch() {
   return <div id="conversation-example" style={{ height: '600px', display: 'flex' }}>
     <ChatView readOnly={location.search !== '?composer'} state={{ isStreaming: false, messageCount: 2, thinkingLevel: "off", model: null }} messages={messages}
       models={[]} commands={[]} thinkingLevels={[]} widgets={location.search === '?composer' ? ['Composer boundary'] : []} statuses={{}}
-      onSend={() => {}} onAbort={() => {}} onPause={() => {}} onResume={() => {}}
+      onSend={() => {}} onAbort={() => {}}
       onOpenProject={() => {}} onBranch={() => {}} onModel={() => {}}
       onToggleFastMode={() => {}} onThinking={() => {}} />
     <FindInPage selector="#conversation-example > main" scopeKey="conversation" />

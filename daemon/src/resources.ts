@@ -75,7 +75,7 @@ import storageGoalOwnership from '../resources/piop-storage/goal-ownership.cjs?r
 import storageGoalAssetsRaw from '../resources/piop-storage/goal-assets.cjs?raw';
 import controlsIndex from '../resources/piop-controls/index.ts?raw';
 import controlsInterface from '../resources/piop-controls/interface.ts?raw';
-import controlsPause from '../resources/piop-controls/pause.ts?raw';
+import controlsStop from '../resources/piop-controls/stop.ts?raw';
 import controlsFork from '../resources/piop-controls/fork.ts?raw';
 import controlsCommands from '../resources/piop-controls/commands.ts?raw';
 import controlsFastMode from '../resources/piop-controls/fast-mode.ts?raw';
@@ -194,7 +194,7 @@ export const SESSION_EXTENSIONS: Array<[string, Array<[string, string]>]> = [
     ['session-publication.d.cts', storagePublicationTypes],
   ]],
   ['piop-controls', [
-    ['interface.ts', controlsInterface], ['pause.ts', controlsPause], ['fork.ts', controlsFork],
+    ['interface.ts', controlsInterface], ['stop.ts', controlsStop], ['fork.ts', controlsFork],
     ['commands.ts', controlsCommands], ['fast-mode.ts', controlsFastMode], ['index.ts', controlsIndex],
   ]],
   ['piop-goals', [

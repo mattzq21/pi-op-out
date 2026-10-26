@@ -15,7 +15,7 @@ test('mobile users can queue a follow-up while the agent is streaming', async t 
   assert.deepEqual(await sent(page), [
     { message: 'After this, review the changes', behavior: 'followUp', images: [] },
   ]);
-  assert.equal(await page.getByRole('button', { name: 'Pause piop', exact: true }).isVisible(), true);
+  assert.equal(await page.getByRole('button', { name: 'Stop piop', exact: true }).isVisible(), true);
 });
 
 test('on mobile the keyboard Enter key starts a new line and only Send queues the message', async t => {

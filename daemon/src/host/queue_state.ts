@@ -26,14 +26,13 @@ export function goalStatus(event: any): QueueGoal | null | undefined {
 }
 
 /**
- * The queue as the daemon sees it: items it keeps, items Pi holds, and items held back while paused.
+ * The queue as the daemon sees it: items it keeps and items Pi holds.
  * An active goal is an entry of the follow-up queue. Follow-ups above it are in Pi's queue and run first.
  * Follow-ups below it have afterGoal set: the daemon keeps them until they move above the goal or the goal stops.
  */
 export class QueueState {
   pending: any[] = [];
   retained: any[] = [];
-  held: any[] | null = null;
   steering: any[] = [];
   followUp: any[] = [];
   changing = false;
@@ -44,8 +43,6 @@ export class QueueState {
   steeringTimestamps = new Set<string>();
   inferenceRevision = 0;
   goal: QueueGoal | null = null;
-
-  heldItems(): any[] { return this.held ?? []; }
 
   activeGoal(): QueueGoal | undefined { return this.goal?.active ? this.goal : undefined; }
 
@@ -60,7 +57,6 @@ export class QueueState {
   remove(id: string): void {
     this.pending = this.pending.filter(item => item.id !== id);
     this.retained = this.retained.filter(item => item.id !== id);
-    if (this.held) this.held = this.held.filter(item => item.id !== id);
   }
 
   markRetry(items: any[]): void {
@@ -84,10 +80,6 @@ export class QueueState {
   view(pending: any[]): any {
     const steering = clone(this.steering);
     const followUp = clone(this.followUp);
-    for (const item of this.heldItems().filter(item => !flag(item, 'retry'))) {
-      if (item.behavior === 'steer') steering.push(clone(item.message ?? null));
-      else if (item.behavior === 'followUp') followUp.push(clone(item.message ?? null));
-    }
     const visible = pending.map(original => {
       const item = clone(original);
       if (item && typeof item === 'object' && !Array.isArray(item)) for (const field of CONSUMPTION_FIELDS) delete item[field];
@@ -103,8 +95,7 @@ export class QueueState {
   }
 
   publish(): any {
-    const heldIds = new Set(this.heldItems().map(item => text(item, 'id')));
-    let available = this.pending.filter(item => !heldIds.has(text(item, 'id')));
+    let available = [...this.pending];
     for (const behavior of ['steer', 'followUp']) {
       const texts = this.texts(behavior);
       for (const message of unique(texts)) {
@@ -121,7 +112,6 @@ export class QueueState {
         if (index >= 0) pending.push(available.splice(index, 1)[0]);
       }
     }
-    pending.push(...this.heldItems());
     pending.push(...available.filter(item => flag(item, 'afterGoal') && !flag(item, 'retry')));
     pending.push(...available.filter(item => flag(item, 'retry')));
     this.pending = [...pending, ...available.filter(item => !flag(item, 'retry') && this.sending.has(text(item, 'id')))];
@@ -171,32 +161,11 @@ export class QueueState {
     }
   }
 
-  failedHeld(): any {
-    const held = this.held ?? [];
-    this.held = null;
-    for (const item of held) item.retry = true;
-    this.pending = this.pending.filter(item => !held.some(saved => saved.id === item.id));
-    this.pending.push(...held);
-    return this.publish();
-  }
-
-  /** Throws when pausing would lose attachments of messages that Pi has but this queue does not. */
-  assertHoldable(): void {
-    for (const behavior of ['steer', 'followUp']) {
-      for (const message of this.texts(behavior)) {
-        const saved = this.pending.filter(item => !flag(item, 'retry') && !flag(item, 'afterGoal') && item.behavior === behavior && jsonEqual(item.message, message)).length;
-        if (saved < count(this.texts(behavior), message)) {
-          throw new Error('Cannot preserve all queued attachments while pausing. Wait for messages sent outside this window to finish first.');
-        }
-      }
-    }
-  }
-
 }
 
 export function durableMessages(state: QueueState): any[] {
   const retained: any[] = [];
-  for (const item of [...state.pending, ...state.heldItems()]) updateItem(retained, item);
+  for (const item of state.pending) updateItem(retained, item);
   for (const item of state.retained) {
     const current = retained.find(entry => entry.id === item.id);
     if (current) preserveDelivery(current, item); else retained.push(clone(item));
@@ -217,25 +186,4 @@ function preserveDelivery(item: any, saved: any): void {
   for (const field of CONSUMPTION_FIELDS) {
     if (item[field] === undefined && saved?.[field] !== undefined) item[field] = clone(saved[field]);
   }
-}
-
-export function sortHeld(held: any[]): void { held.sort((left, right) => Number(left.behavior === 'followUp') - Number(right.behavior === 'followUp')); }
-
-/** Matches the messages that Pi gave back on pause to the original items, so their attachments stay. */
-export function heldMessages(cleared: any, originals: any[], nextId: () => string): any[] {
-  const held: any[] = [];
-  for (const [field, behavior] of [['steering', 'steer'], ['followUp', 'followUp']]) {
-    const texts = array(cleared, field);
-    const matches = new Map<string, any[]>();
-    for (const message of texts) {
-      const total = count(texts, message);
-      const candidates = originals.filter(item => !flag(item, 'retry') && item.behavior === behavior && jsonEqual(item.message, message)).reverse().slice(0, total).map(clone);
-      matches.set(key(message), candidates);
-    }
-    for (const message of texts) {
-      const original = matches.get(key(message))?.pop();
-      held.push(original ?? { id: nextId(), message, behavior, retry: true });
-    }
-  }
-  return held;
 }

@@ -17,7 +17,6 @@ const userMessageSchema = Type.Object({ role: Type.Literal("user"), content: Typ
 
 const changeMessageSchema = Type.Object({ role: Type.Literal("custom"), customType: Type.Literal("pi-project-files-watch"), content: Type.Optional(contentSchema) });
 
-const resumeSchema = Type.Object({ message: Type.String() });
 
 const responseUsageSchema = Type.Object({ response: Type.Object({ usage: Type.Object({ input_tokens: Type.Integer({ minimum: 1 }) }) }) });
 
@@ -213,12 +212,8 @@ export default function contextBar(pi: ExtensionAPI) {
   const publishPromptContext = (ctx: ExtensionContext, messages: ContextMessages) => {
     const branch = ctx.sessionManager.getBranch();
 
-    const resumeMessages = new Set(branch.flatMap((entry) => {
-      return entry.type === "custom" && entry.customType === "pi-desktop-resume" && Check(resumeSchema, entry.data) ? [entry.data.message] : [];
-    }));
-
     // A turn starts with a user message, or with a message or result from another agent session.
-    const userIndex = branch.findLastIndex((entry) => (entry.type === "message" && entry.message.role === "user" && !resumeMessages.has(textContent(entry.message.content))) || (entry.type === "custom_message" && AGENT_MESSAGES.has(entry.customType)));
+    const userIndex = branch.findLastIndex((entry) => (entry.type === "message" && entry.message.role === "user") || (entry.type === "custom_message" && AGENT_MESSAGES.has(entry.customType)));
     const user = branch[userIndex];
     const anchor = user?.type === "message" ? { userTimestamp: user.message.timestamp } : user?.type === "custom_message" && Check(agentMessageDetails, user.details) ? { agentNotificationId: user.details.notificationId } : undefined;
 

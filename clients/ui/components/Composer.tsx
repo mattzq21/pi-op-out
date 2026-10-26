@@ -16,7 +16,7 @@ import { ComposerSettingsMenu } from "./ComposerSettingsMenu";
 import { ComposerPlugins } from "../plugins/composer";
 import { GoalActions, type GoalControls } from "./GoalControls";
 
-import { ArrowUp,ChevronDown,ChevronUp,CircleStop,CircleX,CornerDownRight,FileText,ImagePlus,MoveVertical,Pause,Play,RefreshCw,TerminalSquare,Trash2,X,Zap } from "lucide-solid";
+import { ArrowUp,ChevronDown,ChevronUp,CircleStop,CircleX,CornerDownRight,FileText,ImagePlus,MoveVertical,RefreshCw,TerminalSquare,Trash2,X,Zap } from "lucide-solid";
 import { hasVisibleText } from "../lib/content";
 import { usePendingMessageDrag } from "../lib/usePendingMessageDrag";
 import type { AgentProfile,ComposerUpload,ContextUsage,ImageAttachment,Model,PendingMessage,SlashCommand } from "../types";
@@ -42,8 +42,6 @@ interface Props {
   goal?: GoalControls;
   streaming: boolean;
   compacting?: boolean;
-  paused?: boolean;
-  pausing?: boolean;
   queued: number;
   commands: SlashCommand[];
   agents: AgentProfile[];
@@ -74,8 +72,6 @@ interface Props {
   onStageSubmission?: StageDraftSubmission;
   onSend: (message: string, behavior?: "steer" | "followUp", images?: ImageAttachment[], submission?: DraftSubmissionHandle) => void | boolean | Promise<void | boolean>;
   onAbort: () => void | Promise<void>;
-  onPause: () => void | Promise<void>;
-  onResume: () => void | Promise<void>;
   onOpenTerminal?: () => void;
   onJumpToLatest?: () => void;
   terminalDisabled?: boolean;
@@ -126,22 +122,20 @@ function skillMatches(commands: SlashCommand[], query: string) {
   return matches;
 }
 
-function composerDefaults({ streaming, compacting = false, paused = false, pausing = false, queued, pendingMessages = [], onChangePending, commands, agents, activeAgent, agentLocked = false, agentSaved = false, agentUnavailable = false, models, modelAliases, model, fastModeStatus, thinkingLevel, thinkingLevels, sessionCache, contextUsage, controlsDisabled = false, draft, onDraftChange, uploads: controlledUploads, onUploadsChange, focusRequest, onSend, onStageSubmission, onAbort, onPause, onResume, onOpenTerminal, onAgent, onModel, onToggleFastMode, onThinking }: Props) {
-  return { streaming, compacting, paused, pausing, queued, pendingMessages, onChangePending, commands, agents, activeAgent, agentLocked, agentSaved, agentUnavailable, models, modelAliases, model, fastModeStatus, thinkingLevel, thinkingLevels, sessionCache, contextUsage, controlsDisabled, draft, onDraftChange, controlledUploads, onUploadsChange, focusRequest, onSend, onStageSubmission, onAbort, onPause, onResume, onOpenTerminal, onAgent, onModel, onToggleFastMode, onThinking };
+function composerDefaults({ streaming, compacting = false, queued, pendingMessages = [], onChangePending, commands, agents, activeAgent, agentLocked = false, agentSaved = false, agentUnavailable = false, models, modelAliases, model, fastModeStatus, thinkingLevel, thinkingLevels, sessionCache, contextUsage, controlsDisabled = false, draft, onDraftChange, uploads: controlledUploads, onUploadsChange, focusRequest, onSend, onStageSubmission, onAbort, onOpenTerminal, onAgent, onModel, onToggleFastMode, onThinking }: Props) {
+  return { streaming, compacting, queued, pendingMessages, onChangePending, commands, agents, activeAgent, agentLocked, agentSaved, agentUnavailable, models, modelAliases, model, fastModeStatus, thinkingLevel, thinkingLevels, sessionCache, contextUsage, controlsDisabled, draft, onDraftChange, controlledUploads, onUploadsChange, focusRequest, onSend, onStageSubmission, onAbort, onOpenTerminal, onAgent, onModel, onToggleFastMode, onThinking };
 }
 
-function composerControlState(controlsDisabled: boolean, action: "pause" | "resume" | undefined, pausing: boolean, stopping: boolean) {
-  const controlPending = Boolean(action) || pausing || stopping;
-
-  return { controlPending, inputDisabled: controlsDisabled || controlPending, stopDisabled: controlsDisabled || stopping || action === "resume" };
+function composerControlState(controlsDisabled: boolean, stopping: boolean) {
+  return { controlPending: stopping, inputDisabled: controlsDisabled || stopping, stopDisabled: controlsDisabled || stopping };
 }
 
 function insideBounds(bounds: DOMRect | undefined, x: number, y: number) {
   return Boolean(bounds && x >= bounds.left && x <= bounds.right && y >= bounds.top && y <= bounds.bottom);
 }
 
-function pendingControlsDisabled(controlsDisabled: boolean, changingPending: boolean, pausing: boolean, onChangePending: Props['onChangePending']) {
-  return controlsDisabled || changingPending || pausing || !onChangePending;
+function pendingControlsDisabled(controlsDisabled: boolean, changingPending: boolean, onChangePending: Props['onChangePending']) {
+  return controlsDisabled || changingPending || !onChangePending;
 }
 
 function pendingQueuePositions(messages: PendingMessage[]) {
@@ -213,7 +207,6 @@ export function Composer(props: Props) {
   const { uploads, updateUploads, uploadError, setUploadError, readingUploads, imageInputError, setImageInputError, addFiles, addPaths } = attachments;
   trackToastMessage("Composer", "Image input error", () => imageInputError() ? "This model does not support image inputs. Try a different model" : undefined);
   const [sending, setSending] = createSignal(false);
-  const [controlAction, setControlAction] = createSignal<"pause" | "resume">();
   const [stopping, setStopping] = createSignal(false);
   const stoppingRef = createRef(false);
   const [controlError, setControlError] = createSignal<string>();
@@ -228,9 +221,7 @@ export function Composer(props: Props) {
     finally { togglingFastModeRef.current = false; setTogglingFastMode(false); }
   };
 
-  const controlActionRef = createRef(false);
-
-  const controls = createMemo(() => { const state = composerControlState(composer().controlsDisabled, controlAction(), composer().pausing, stopping());
+  const controls = createMemo(() => { const state = composerControlState(composer().controlsDisabled, stopping());
 
   return { ...state, inputDisabled: state.inputDisabled || composer().compacting }; });
 
@@ -414,8 +405,8 @@ export function Composer(props: Props) {
   const pausedGoal = () => { const goal = props.goal?.goal();
 
     return goal?.status === "paused" ? goal : undefined; };
-  const pendingDrag = usePendingMessageDrag(() => (composer().pendingMessages), () => (pendingControlsDisabled(composer().controlsDisabled, changingPending(), composer().pausing, composer().onChangePending)), () => (changePending));
-  const controlsBlocked = () => composer().agentUnavailable || (props.submissionDisabled ?? composer().controlsDisabled) || composer().compacting || composer().pausing || controlAction() !== undefined || stopping();
+  const pendingDrag = usePendingMessageDrag(() => (composer().pendingMessages), () => (pendingControlsDisabled(composer().controlsDisabled, changingPending(), composer().onChangePending)), () => (changePending));
+  const controlsBlocked = () => composer().agentUnavailable || (props.submissionDisabled ?? composer().controlsDisabled) || composer().compacting || stopping();
 
   const canSubmit = (message: string, images: ImageAttachment[]) => {
     if (!attachments.acceptsImages(images.length)) return false;
@@ -456,26 +447,14 @@ export function Composer(props: Props) {
     } finally { setSending(false); }
   };
 
-  const abort = async () => { const capturedComposer = { ...composer() }; const capturedControlAction = controlAction();
+  const abort = async () => { const capturedComposer = { ...composer() };
 
-    if (capturedComposer.controlsDisabled || stoppingRef.current || capturedControlAction === "resume") return;
+    if (capturedComposer.controlsDisabled || stoppingRef.current) return;
     stoppingRef.current = true; setStopping(true); setControlError(undefined);
 
     try { await capturedComposer.onAbort(); }
     catch (reason) { setControlError(reason instanceof Error ? reason.message : String(reason)); }
     finally { stoppingRef.current = false; setStopping(false); }
-  };
-
-  const control = async (action: "pause" | "resume" | "abort") => { const capturedComposer = { ...composer() };
-
-    if (action === "abort") return abort();
-
-    if (controlsBlocked()) return;
-    controlActionRef.current = true; setControlAction(action); setControlError(undefined);
-
-    try { await (action === "pause" ? capturedComposer.onPause() : capturedComposer.onResume()); }
-    catch (reason) { setControlError(reason instanceof Error ? reason.message : String(reason)); }
-    finally { controlActionRef.current = false; setControlAction(undefined); }
   };
 
   const chooseCommand = (command: SlashCommand) => {
@@ -545,10 +524,10 @@ export function Composer(props: Props) {
   const handleEditorKey = createComposerEditorKey({ paste: pasteWithoutEvent, ownershipRequired: () => props.ownershipRequired, palette: handlePaletteKey, history: promptHistory.handleKey, submit });
 
   const renderStreamBanner = () => {
-    const statusText = () => stopping() ? "Stopping…" : controlAction() === "resume" ? "Resuming…" : composer().pausing || controlAction() === "pause" ? "Pausing…" : composer().compacting ? "Compacting context…" : composer().paused ? "Paused · Completed turns saved" : undefined;
-    const renderStreamStatus = () => (<span class="stream-status" role="status">{composer().paused ? <Pause size={11} /> : <span class="pulse" />}{statusText()}</span>);
+    const statusText = () => stopping() ? "Stopping…" : composer().compacting ? "Compacting context…" : undefined;
+    const renderStreamStatus = () => (<span class="stream-status" role="status"><span class="pulse" />{statusText()}</span>);
 
-    return (<Show when={statusText()} fallback={composer().streaming && <button type="button" class="working-dots" role="status" aria-label="piop is working" onClick={() => props.onJumpToLatest?.()}><span /><span /><span /></button>}><div class={`stream-banner${composer().paused ? " paused" : ""}`}>
+    return (<Show when={statusText()} fallback={composer().streaming && <button type="button" class="working-dots" role="status" aria-label="piop is working" onClick={() => props.onJumpToLatest?.()}><span /><span /><span /></button>}><div class="stream-banner">
       {renderStreamStatus()}
     </div></Show>);
   };
@@ -561,7 +540,7 @@ export function Composer(props: Props) {
     </div>}</Show>);
 
     const renderComposerEditor = () => (<div class="composer-editor">
-        <textarea ref={element => { ref.current = element; }} aria-label="Message piop" readOnly={props.ownershipRequired} onFocus={() => { setPaletteDismissed(false); if (props.ownershipRequired) void props.onTakeOwnership?.(); }} placeholder={props.ownershipRequired ? "" : composer().paused ? "Send a message to continue piop…" : composer().streaming ? "Queue a follow-up…" : "Ask piop to build, explain, or change anything…"} value={value()} rows={1} onSelect={(event) => setSelection({ start: event.currentTarget.selectionStart, end: event.currentTarget.selectionEnd })} onInput={(event) => { setSelection({ start: event.target.selectionStart, end: event.target.selectionEnd }); setPaletteDismissed(false); setValue(event.target.value); }} onKeyDown={handleEditorKey} />
+        <textarea ref={element => { ref.current = element; }} aria-label="Message piop" readOnly={props.ownershipRequired} onFocus={() => { setPaletteDismissed(false); if (props.ownershipRequired) void props.onTakeOwnership?.(); }} placeholder={props.ownershipRequired ? "" : composer().streaming ? "Queue a follow-up…" : "Ask piop to build, explain, or change anything…"} value={value()} rows={1} onSelect={(event) => setSelection({ start: event.currentTarget.selectionStart, end: event.currentTarget.selectionEnd })} onInput={(event) => { setSelection({ start: event.target.selectionStart, end: event.target.selectionEnd }); setPaletteDismissed(false); setValue(event.target.value); }} onKeyDown={handleEditorKey} />
       </div>);
 
     const ComposerBar = () => {
@@ -591,12 +570,9 @@ export function Composer(props: Props) {
 
         if (next) composer().onModel(next); }} />);
 
-        const renderStopButton = () => (<Show when={composer().streaming || composer().compacting || composer().paused || composer().pausing}><IconButton title="" label="Stop piop" class="stop-compact" disabled={controls().stopDisabled} onClick={() => void control("abort")}><CircleStop size={17} /></IconButton></Show>);
-        const showPauseResume = () => (composer().streaming || composer().paused) && !(hasVisibleText(value()) || uploads().length) || composer().pausing;
+        const renderStopButton = () => (<Show when={composer().streaming || composer().compacting}><IconButton title="" label="Stop piop" class="stop-compact" disabled={controls().stopDisabled} onClick={() => void abort()}><CircleStop size={17} /></IconButton></Show>);
 
-        const renderSend = () => <Show when={showPauseResume()} fallback={<IconButton title="" label="Send message" class="send" disabled={controlsBlocked() || sending() || readingUploads() > 0 || (!hasVisibleText(value()) && uploads().length === 0)} onClick={() => void submit()}><ArrowUp size={18} /></IconButton>}>
-          <IconButton title="" label={composer().paused ? "Resume piop" : "Pause piop"} class="send" disabled={controls().inputDisabled} onClick={() => void control(composer().paused ? "resume" : "pause")}>{composer().paused ? <Play size={17} /> : <Pause size={17} />}</IconButton>
-        </Show>;
+        const renderSend = () => <IconButton title="" label="Send message" class="send" disabled={controlsBlocked() || sending() || readingUploads() > 0 || (!hasVisibleText(value()) && uploads().length === 0)} onClick={() => void submit()}><ArrowUp size={18} /></IconButton>;
 
         return (<div class="composer-actions">
           <ComposerSettingsMenu agent={composer().activeAgent ?? "general"}>
@@ -697,7 +673,7 @@ export function Composer(props: Props) {
     {(composer().pendingMessages.length > 0 || pausedGoal() || props.goal?.error()) && <div class="pending-messages" aria-label="Pending messages">{<Key each={composer().pendingMessages.filter((message) => pendingMessageIdentitySchema.safeParse(message).success)} by={(message) => message.id}>{(message, _index) => {
       const text = createMemo(() => String(message().message ?? ""));
       const change = (action: import("../types").PendingMessageAction) => changePending(message().id, action);
-      const disabled = createMemo(() => (composer().controlsDisabled || changingPending() || composer().pausing || Boolean(message().sending)));
+      const disabled = createMemo(() => (composer().controlsDisabled || changingPending() || Boolean(message().sending)));
       const queue = createMemo(() => pendingQueues().get(message().behavior));
       const peerCount = createMemo(() => queue()?.length ?? 0);
       const position = createMemo(() => queue()?.positions.get(message().id) ?? -1);

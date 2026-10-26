@@ -37,7 +37,7 @@ export async function queueCommand(session: Session, original: any, assertOwner?
   if (first === '/goal' && Array.isArray(command.images) && command.images.length) throw new Error('Goals do not accept attachments. Remove the files and images before sending.');
   Contributions.assertCommandAvailable(message);
   const queued = Contributions.queuedCommand(message);
-  if (kind(command) === 'prompt' && (!message.startsWith('/') || queued) && !session.queue.held()) {
+  if (kind(command) === 'prompt' && (!message.startsWith('/') || queued)) {
     command.type = !queued && command.streamingBehavior === 'steer' ? 'steer' : 'follow_up';
   }
   return session.queue.command(command, assertOwner);

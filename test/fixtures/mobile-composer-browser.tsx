@@ -11,6 +11,6 @@ render(() => <main style={{ width: '100%' }}>
   <Composer streaming queued={0} commands={[]} agents={[]} models={[]} model={null}
     thinkingLevel="off" thinkingLevels={['off']}
     onSend={async (message, behavior, images) => { setSent(values => [...values, { message, behavior, images }]); }}
-    onPause={() => {}} onResume={() => {}} onAbort={() => {}}
+    onAbort={() => {}}
     onAgent={() => {}} onModel={() => {}} onThinking={() => {}} onToggleFastMode={() => {}} />
 </main>, document.getElementById('root')!);

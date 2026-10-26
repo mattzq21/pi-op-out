@@ -68,7 +68,7 @@ export const wireMessageSchema = z.looseObject({
   stopReason: z.enum(["pending", "stop", "length", "toolUse", "error", "aborted", "deferred"]).optional(),
   errorMessage: z.string().optional(), toolName: z.string().optional(), toolCallId: z.string().optional(),
   toolInput: z.unknown().optional(), details: z.unknown().optional(),
-  promptContext: promptContextSchema.optional(), contextCheckpoint: z.boolean().optional(),
+  promptContext: promptContextSchema.optional(),
   nestedCalls: nestedCallsSchema.optional(),
   usage: usageSchema.optional(),
   deferredWork: z.object({ reasoningOnly: z.boolean(), usage: usageSchema.optional(), firstUsage: usageSchema.optional() }).optional(),
@@ -78,15 +78,6 @@ export const wireMessageSchema = z.looseObject({
 });
 
 export type WireMessage = z.infer<typeof wireMessageSchema>;
-
-export const resumeContentSchema = z.union([
-  z.string(),
-  validItems(textSchema).transform(parts => parts.map(part => part.text).join("\n")),
-]).catch("");
-
-export const resumeMarkerSchema = z.object({ message: z.string() });
-
-export const pauseStateSchema = z.object({ isPaused: z.boolean() });
 
 export const assistantEventSchema = z.object({
   type: z.string().optional(), contentIndex: z.number().int().nonnegative().optional().catch(undefined),

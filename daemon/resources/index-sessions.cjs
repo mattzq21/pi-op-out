@@ -8,7 +8,6 @@ const parentSchema = Type.Object({ parentSessionId: Type.String(), sessionId: Ty
 
 const entrySchema = Type.Object({ type: Type.String() });
 
-const resumeSchema = Type.Object({ message: Type.String() });
 
 const PREVIEW_CODE_POINTS = 100;
 
@@ -46,7 +45,6 @@ class SessionIndex {
   lineNumber = 0;
   damagedLines = [];
   interruptedBytes = 0;
-  resumes = new Set();
   /** Each entry's parent and, for a message, what the chat list shows of it. The chat list follows the branch that ends at the last entry. */
   nodes = new Map();
   leaf = null;
@@ -57,8 +55,6 @@ class SessionIndex {
       const data = entry.data ?? {};
 
       if (Check(parentSchema, data)) this.parent(entry.customType, data);
-
-      if (entry.customType === 'pi-desktop-resume' && Check(resumeSchema, data)) this.resumes.add(data.message);
     }
 
   }
@@ -77,13 +73,11 @@ class SessionIndex {
     else this.subagentParentId = data.parentSessionId;
   }
 
-  /** What the chat list needs of a message entry, or undefined for other entries and resume prompts. */
+  /** What the chat list needs of a message entry, or undefined for other entries. */
   messageRecord(entry) {
     if (entry.type !== 'message') return undefined;
     const message = entry.message || {};
     let content = text(message);
-
-    if (message.role === 'user' && this.resumes.has(content)) return undefined;
 
     if (message.role === 'user') content = userPrompt(content);
 

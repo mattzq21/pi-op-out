@@ -1,19 +1,16 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { registerPauseControl } from "./pause.ts";
+import { registerStopControl } from "./stop.ts";
 import { forkAndForget, forkSession } from "./fork.ts";
-import { publishPauseState, registerControlCommands } from "./commands.ts";
+import { registerControlCommands } from "./commands.ts";
 import { registerFastModeControl } from "./fast-mode.ts";
 import type { SessionControls } from "./interface.ts";
 
-/** Session controls: pause, resume, stop and forks of the current session, and Piop's fast mode switch. Publishes SessionControls on "piop:controls:session". */
+/** Session controls: stop and forks of the current session, and Piop's fast mode switch. Publishes SessionControls on "piop:controls:session". */
 export default function controls(pi: ExtensionAPI) {
-  const pause = registerPauseControl(pi, publishPauseState);
+  const stop = registerStopControl(pi);
   const session: SessionControls = {
-    pauseState: () => pause.state(),
-    pause: ctx => pause.pause(ctx),
-    resume: ctx => pause.resume(ctx),
-    stop: ctx => pause.stop(ctx),
-    cancelPreparation: () => pause.cancelPreparation(),
+    stop: ctx => stop.stop(ctx),
+    cancelPreparation: () => stop.cancelPreparation(),
     fork: forkSession,
     forkAndForget,
   };

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { resumeMarker, isResumeMessage, checkpointLatestUser, normalizeMessage, applyAssistantMessageEvent, branchMessages } from '../../clients/ui/lib/messages.ts';
+import { normalizeMessage, applyAssistantMessageEvent, branchMessages } from '../../clients/ui/lib/messages.ts';
 import { promptContext } from '../prompt-context-fixture.mjs';
 
 test('message normalization preserves content and selects stable identifiers and roles', () => {
@@ -80,70 +80,43 @@ test('streamed tool calls preserve identity without retaining arguments', () => 
   assert.deepEqual(applyAssistantMessageEvent(message, { type: 'toolcall_end', contentIndex: 2 }).content, message.content);
 });
 
-test('resume markers and checkpoints distinguish synthetic prompts from ordinary messages', () => {
-  const marker = { type: 'custom', customType: 'pi-desktop-resume', data: { message: 'resume\nnow' } };
-  assert.equal(resumeMarker(marker), 'resume\nnow');
-
-  for (const entry of [{}, { ...marker, type: 'message' }, { ...marker, customType: 'other' }, { ...marker, data: { message: 1 } }]) assert.equal(resumeMarker(entry), undefined);
-  const markers = new Set(['resume\nnow']);
-  assert.equal(isResumeMessage({ role: 'user', content: 'resume\nnow' }, markers), true);
-  assert.equal(isResumeMessage({ role: 'user', content: [{ type: 'text', text: 'resume' }, { type: 'image' }, { type: 'text', text: 'now' }] }, markers), true);
-  assert.equal(isResumeMessage({ role: 'assistant', content: 'resume\nnow' }, markers), false);
-  assert.equal(isResumeMessage({ role: 'user' }, markers), false);
-  const messages = [{ role: 'user' }, { role: 'assistant' }, { role: 'user' }, { role: 'assistant' }];
-  const result = checkpointLatestUser(messages);
-  assert.equal(result[0], messages[0]);
-  assert.equal(result[2].contextCheckpoint, true);
-  assert.equal(messages[2].contextCheckpoint, undefined);
-  assert.equal(checkpointLatestUser(result), result);
-  const empty = [];
-  assert.equal(checkpointLatestUser(empty), empty);
-});
-
 
 const msg = (id, parentId, role, content = '', extra = {}) => ({ type: 'message', id, parentId, message: { role, content, timestamp: 100, ...extra } });
 
 const custom = (id, parentId, customType, data) => ({ type: 'custom', id, parentId, customType, data });
 
-test('branch reconstruction follows ancestry, hides resume prompts and attaches context without eager tool inputs', () => {
+test('branch reconstruction follows ancestry and attaches context without eager tool inputs', () => {
   const entries = [
     msg('u', null, 'user', 'question'),
     custom('context', 'u', 'pi-desktop-prompt-context', promptContext({ system: 100 })),
     custom('context2', 'context', 'pi-desktop-prompt-context', promptContext({ system: 999 })),
     msg('a', 'context2', 'assistant', [{ type: 'thinking', thinking: 'plan' }, { type: 'toolCall', id: 'call', name: 'read', arguments: { path: 'a' } }]),
     msg('t', 'a', 'toolResult', 'result', { toolCallId: 'call' }),
-    custom('r', 't', 'pi-desktop-resume', { message: 'resume' }),
-    msg('synthetic', 'r', 'user', 'resume'),
-    msg('final', 'synthetic', 'assistant', 'answer'),
+    msg('final', 't', 'assistant', 'answer'),
     msg('sibling', 'u', 'assistant', 'other branch'),
   ];
 
   const result = branchMessages(entries, 'final');
   assert.deepEqual(result.map(message => message.id), ['u', 'a', 't', 'final']);
   assert.deepEqual(result[0].promptContext, promptContext({ system: 100 }));
-  assert.equal(result[0].contextCheckpoint, true);
   assert.equal(result[2].toolInput, undefined);
-  assert.equal(entries[0].message.contextCheckpoint, undefined);
   assert.deepEqual(branchMessages(entries, null), []);
   assert.deepEqual(branchMessages(entries, 'missing'), []);
   assert.deepEqual(branchMessages([msg('cycle', 'cycle', 'user')], 'cycle').map(message => message.id), ['cycle']);
 });
 
-test('branch reconstruction handles orphaned metadata, custom visibility and pauses', () => {
+test('branch reconstruction handles orphaned metadata and custom visibility', () => {
   const entries = [
     custom('c', null, 'pi-desktop-prompt-context', {}),
     msg('u', 'c', 'user'),
-    custom('p', 'u', 'pi-desktop-pause-state', { isPaused: true }),
-    { id: 's', parentId: 'p', type: 'custom_message', customType: 'piop-review-link' },
+    { id: 's', parentId: 'u', type: 'custom_message', customType: 'piop-review-link' },
     { id: 'hidden', parentId: 's', type: 'custom_message', customType: 'piop-session-operation', display: false },
     msg('unsupported', 'hidden', 'system'),
     msg('t', 'unsupported', 'toolResult', '', { toolCallId: 'unknown' }),
-    custom('unpaused', 't', 'pi-desktop-pause-state', { isPaused: false }),
   ];
 
-  const result = branchMessages(entries, 'unpaused');
+  const result = branchMessages(entries, 't');
   assert.deepEqual(result.map(message => message.id), ['u', 's', 't']);
-  assert.equal(result[0].contextCheckpoint, true);
   assert.equal(result[1].role, 'system');
   assert.equal(result[1].content, '');
   assert.equal(result[2].toolInput, undefined);

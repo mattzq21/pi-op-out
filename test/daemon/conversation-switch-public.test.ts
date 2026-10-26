@@ -17,7 +17,7 @@ test.concurrent('a new conversation cannot start while the agent works, and afte
   await chat.command({ type: 'prompt', message: 'Draft the plan' });
   await chat.until(() => agents.model.requests.some(request => text(request.messages.at(-1)) === 'Draft the plan'));
   try {
-    expect(await chat.command({ type: 'new_session' }).then(() => 'switched', (error: Error) => error.message)).toBe('Stop or pause the response and finish queued messages before switching');
+    expect(await chat.command({ type: 'new_session' }).then(() => 'switched', (error: Error) => error.message)).toBe('Stop the response and finish queued messages before switching');
   } finally { busy.release({ text: 'Plan drafted.' }); }
   await chat.until(history => text(history.at(-1)) === 'Plan drafted.');
   const before = (await chat.command({ type: 'get_state' })).sessionId;

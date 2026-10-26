@@ -26,7 +26,7 @@ async function goalComposer({ value = goal(), pendingMessages = [goalEntry], dis
     return createGoalControls(() => ({ value: state().value, disabled: state().disabled, onCommand: async action => { sent.push(action); await state().command(action); } }));
   });
   const props = { streaming: true, queued: pendingMessages.length, pendingMessages, commands: [], agents: [], models: [], model: null, thinkingLevel: 'off', thinkingLevels: ['off'], goal: controls,
-    onChangePending: async () => {}, onSend: async () => {}, onPause: async () => {}, onResume: async () => {}, onAbort: async () => {}, onAgent: () => {}, onModel: () => {}, onThinking: () => {}, onToggleFastMode: async () => {} };
+    onChangePending: async () => {}, onSend: async () => {}, onAbort: async () => {}, onAgent: () => {}, onModel: () => {}, onThinking: () => {}, onToggleFastMode: async () => {} };
   view = await renderComponent(Composer, props);
   return { sent, set, rerender: extra => view.rerender({ ...props, ...extra }) };
 }

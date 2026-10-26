@@ -21,10 +21,7 @@ const [modelsAvailable, setModelsAvailable] = createSignal(true);
 const [fastModeStatus, setFastModeStatus] = createSignal<string>();
 const [fastRequests, setFastRequests] = createSignal(0);
 const [rejectFast, setRejectFast] = createSignal<((error: Error) => void)>();
-const [paused, setPaused] = createSignal(false);
 const [actions, setActions] = createSignal<string[]>([]);
-const [rejectPause, setRejectPause] = createSignal<((error: Error) => void)>();
-const [completeResume, setCompleteResume] = createSignal<(() => void)>();
 const choose = (value: unknown) => setChoices(values => [...values, value]);
 
 render(() => <>
@@ -40,26 +37,15 @@ render(() => <>
   <button disabled={!rejectFast()} onClick={() => rejectFast()?.(new Error('offline'))}>Reject Fast mode request</button>
   <button onClick={() => setFastModeStatus('Fast mode on')}>Report Fast mode on</button>
   <output aria-label="Fast mode requests">{fastRequests()}</output>
-  <button disabled={!rejectPause()} onClick={() => rejectPause()?.(new Error('cannot pause'))}>Reject pause request</button>
-  <button onClick={() => { setStreaming(false); setPaused(true); }}>Report paused</button>
-  <button disabled={!completeResume()} onClick={() => completeResume()?.()}>Complete resume request</button>
   <output aria-label="Control requests">{JSON.stringify(actions())}</output>
   <output aria-label="Sent messages">{JSON.stringify(sent())}</output>
   <output aria-label="Selected values">{JSON.stringify(choices())}</output>
   <div style={{ width: '600px', margin: '80px 150px' }}>
-    <Composer paused={paused()} streaming={streaming()} queued={streaming() ? 2 : 0} pendingMessages={streaming() ? [{ id: "steer", message: "Steer", behavior: "steer" }, { id: "later", message: "Later", behavior: "followUp" }] : []} onChangePending={async () => {}} commands={[{ name: "clear", source: "extension", description: "Clear context" }, { name: "compact", source: "extension" }, { name: "skill:Research", source: "skill" }, { name: "rs", source: "extension", options: [{ value: "", label: "[n] [scope]", description: "Number of review subagents" }] }, { name: "fast", source: "extension", options: [{ value: "on", label: "on" }, { value: "off", label: "off" }, { value: "toggle", label: "toggle" }] }]} agents={[{ name: "default", tools: [] }, { name: "review", tools: [] }]} models={modelsAvailable() ? [{ provider: "provider", id: "gpt-small", name: "gpt-Small" }] : []} model={null} controlsDisabled={disabled()}
+    <Composer streaming={streaming()} queued={streaming() ? 2 : 0} pendingMessages={streaming() ? [{ id: "steer", message: "Steer", behavior: "steer" }, { id: "later", message: "Later", behavior: "followUp" }] : []} onChangePending={async () => {}} commands={[{ name: "clear", source: "extension", description: "Clear context" }, { name: "compact", source: "extension" }, { name: "skill:Research", source: "skill" }, { name: "rs", source: "extension", options: [{ value: "", label: "[n] [scope]", description: "Number of review subagents" }] }, { name: "fast", source: "extension", options: [{ value: "on", label: "on" }, { value: "off", label: "off" }, { value: "toggle", label: "toggle" }] }]} agents={[{ name: "default", tools: [] }, { name: "review", tools: [] }]} models={modelsAvailable() ? [{ provider: "provider", id: "gpt-small", name: "gpt-Small" }] : []} model={null} controlsDisabled={disabled()}
       focusRequest={focusRequest()} thinkingLevel="off" thinkingLevels={['off', 'high']} agentUnavailable={agentUnavailable()} agentLocked={agentUnavailable()} activeAgent="default"
       onSend={async (message, behavior, images) => { setSent(values => [...values, [message, behavior, images]]);
         if (sendMode() === "refuse") return false;
         if (sendMode() === "hold") { try { await new Promise<void>((resolve, reject) => setPendingSend({ resolve, reject })); } finally { setPendingSend(undefined); } }
-      }} onPause={async () => {
-        setActions(values => [...values, 'pause']);
-        try { await new Promise<void>((_, reject) => setRejectPause(() => reject)); }
-        finally { setRejectPause(undefined); }
-      }} onResume={async () => {
-        setActions(values => [...values, 'resume']);
-        try { await new Promise<void>(resolve => setCompleteResume(() => resolve)); }
-        finally { setCompleteResume(undefined); }
       }} onAbort={async () => { setActions(values => [...values, 'stop']); throw 'cannot stop'; }}
       onAgent={choose} onModel={choose} onThinking={choose} fastModeStatus={fastModeStatus()} onToggleFastMode={async () => {
         setFastRequests(value => value + 1);

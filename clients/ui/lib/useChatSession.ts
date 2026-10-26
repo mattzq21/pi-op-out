@@ -12,7 +12,7 @@ import { chatSessionEventSchema, pendingMessagesSchema, type ChatSessionEvent } 
 import { promptContextSchema, wireMessageSchema, type WireMessage } from "./messageSchemas";
 import { contextUsageAfterCompaction } from "./contextUsage";
 import { CONTEXT_CAP_STATUS_KEY } from "../../../extensions/piop-context-window-cap/interface";
-import { appendQueuedProjectContext, applyAssistantMessageEvent, branchMessages, checkpointLatestUser, isContextInjection, isResumeMessage, normalizeMessage, promptContextAnchors, resumeMarker, type PiEntry } from "./messages";
+import { appendQueuedProjectContext, applyAssistantMessageEvent, branchMessages, isContextInjection, normalizeMessage, promptContextAnchors, type PiEntry } from "./messages";
 import type { NativeTransport } from "./nativeTransport";
 import { useSessionMemory } from "./sessionMemory";
 import { keepLoadedHistory, olderHistoryMarker } from "./historyWindow";
@@ -84,7 +84,6 @@ function createChatSession(transport: Accessor<Pick<NativeTransport, "command" |
   const refreshOperation = createRef<{ transport: ReturnType<typeof transport>; promise: Promise<AgentState>; buffer: RpcEvent[] } | undefined>(undefined);
   const bufferedEvents = createRef<RpcEvent[] | undefined>(undefined);
   const eventHandler = createRef<(event: RpcEvent) => void>(() => undefined);
-  const resumeMarkers = createRef(new Set<string>());
   const liveRevision = createRef(0); const activeAssistantId = createRef<string | undefined>(undefined); const activeMessageIds = createRef(new Map<string, string>()); const liveMessageSequence = createRef(0); const pendingUpdates = createRef<MessageUpdate[]>([]); const frame = createRef<number | undefined>(undefined);
   const pendingRevision = createRef<{ base: string | undefined; next: string } | undefined>(undefined);
 
@@ -231,7 +230,7 @@ function createChatSession(transport: Accessor<Pick<NativeTransport, "command" |
   };
 
   createDependencyEffect(() => discardPendingUpdates, () => [discardPendingUpdates]);
-  createDependencyEffect(() => { liveRevision.current += 1; activeAssistantId.current = undefined; activeMessageIds.current.clear(); resumeMarkers.current.clear(); bufferedEvents.current = undefined; discardPendingUpdates(); }, () => [discardPendingUpdates, transport()]);
+  createDependencyEffect(() => { liveRevision.current += 1; activeAssistantId.current = undefined; activeMessageIds.current.clear(); bufferedEvents.current = undefined; discardPendingUpdates(); }, () => [discardPendingUpdates, transport()]);
 
   const refresh = (): Promise<AgentState> => {
     if (owner.current !== transport()) return Promise.reject(new ConversationChangedError());
@@ -241,10 +240,6 @@ function createChatSession(transport: Accessor<Pick<NativeTransport, "command" |
     const buffer: RpcEvent[] = []; bufferedEvents.current = buffer;
 
     const restoreHistory = (snapshot: SessionSnapshot) => {
-      for (const entry of snapshot.history.entries) { const marker = resumeMarker(entry);
-
-      if (marker) resumeMarkers.current.add(marker); }
-
       const cachedSession = session.memory.getSnapshot();
       const cachedMessages = !cachedSession.state.sessionId || cachedSession.state.sessionId === snapshot.state.sessionId ? cachedSession.messages : [];
       const previous = new Map(cachedMessages.filter((message) => message.toolPayloadLoaded && message.toolStatus !== "running").map((message) => [message.deferredToolPayload, message]));
@@ -403,7 +398,7 @@ function createChatSession(transport: Accessor<Pick<NativeTransport, "command" |
 
     flushBeforeEvent(event);
 
-    if (["agent_start", "agent_end", "agent_settled", "pause_state", "message_start", "message_update", "message_end", "tool_execution_start", "tool_execution_update", "tool_execution_end"].includes(event.type)) liveRevision.current += 1;
+    if (["agent_start", "agent_end", "agent_settled", "message_start", "message_update", "message_end", "tool_execution_start", "tool_execution_update", "tool_execution_end"].includes(event.type)) liveRevision.current += 1;
 
     const handleRuntimePresence = () => {
       session.setState((current) => ({ ...current, viewers: Number(event.viewers), isStreaming: event.isStreaming === true }));
@@ -429,9 +424,7 @@ function createChatSession(transport: Accessor<Pick<NativeTransport, "command" |
     };
 
     const handleEntryAppended = () => {
-      if (event.type === "entry_appended" && event.entry) { const entry = event.entry; const marker = resumeMarker(entry);
-
-      if (marker) { resumeMarkers.current.add(marker); session.setMessages(checkpointLatestUser); }
+      if (event.type === "entry_appended" && event.entry) { const entry = event.entry;
 
       if (entry.customType === "piop-queued-project-context") { liveRevision.current += 1; session.setMessages((current) => appendQueuedProjectContext(current, entry)); }
 
@@ -439,22 +432,7 @@ function createChatSession(transport: Accessor<Pick<NativeTransport, "command" |
     };
 
     const handleAgentStart = () => {
-      session.setState((current) => ({ ...current, isStreaming: true, isPaused: false }));
-    };
-
-    const handlePauseState = () => {
-      session.setState((current) => {
-        const next = { ...current, isPaused: event.isPaused === true, isPausing: event.isPausing === true };
-
-        if (next.isPaused && !next.isPausing) {
-          next.isStreaming = false;
-          next.activity = undefined;
-        }
-
-        return next;
-      });
-
-      if (event.type === "pause_state" && event.isPaused === true && event.isPausing !== true) { flush(); session.setMessages(checkpointLatestUser); }
+      session.setState((current) => ({ ...current, isStreaming: true }));
     };
 
     const handleAgentSettled = () => {
@@ -464,7 +442,7 @@ function createChatSession(transport: Accessor<Pick<NativeTransport, "command" |
     };
 
     const handleDisconnected = () => {
-      session.setState((current) => ({ ...current, isStreaming: false, isCompacting: false, isPausing: false, activity: undefined }));
+      session.setState((current) => ({ ...current, isStreaming: false, isCompacting: false, activity: undefined }));
     };
 
     const messageLiveId = (rawMessage: WireMessage, roleKey: string, normalized: ChatMessage) => {
@@ -493,8 +471,6 @@ function createChatSession(transport: Accessor<Pick<NativeTransport, "command" |
     const handleMessageStart = () => {
       if (event.type === "message_end") flush();
       const rawMessage = event.message ?? wireMessageSchema.parse({}); const roleKey = rawMessage.role ?? "message";
-
-      if (isResumeMessage(rawMessage, resumeMarkers.current)) return;
 
       if (rawMessage.role === "custom" && rawMessage.display === false && !isContextInjection(rawMessage)) return;
       const normalized = normalizeMessage(rawMessage);
@@ -592,7 +568,6 @@ function createChatSession(transport: Accessor<Pick<NativeTransport, "command" |
       "extension_ui_request": handleExtensionUiRequest,
       "entry_appended": handleEntryAppended,
       "agent_start": handleAgentStart,
-      "pause_state": handlePauseState,
       "agent_settled": handleAgentSettled,
       "disconnected": handleDisconnected,
       "message_start": handleMessageStart,

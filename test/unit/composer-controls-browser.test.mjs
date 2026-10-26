@@ -281,32 +281,12 @@ test('fast mode prevents repeated requests and reports failures while preserving
 });
 
 
-test('pause, stop and resume serialize pending actions and expose failures', async t => {
+test('a failed stop shows its error', async t => {
   const page = await controlsPage(t);
-  const editor = page.getByRole('textbox', { name: 'Message piop' });
-  const requests = page.getByLabel('Control requests', { exact: true });
   await page.getByRole('checkbox', { name: 'Streaming response', exact: true }).check();
-  await page.getByRole('button', { name: 'Pause piop', exact: true }).dblclick();
-  assert.equal(await requests.textContent(), '["pause"]');
-  assert.match(await page.getByRole('status').filter({ hasText: 'Pausing' }).textContent(), /Pausing/);
-  await editor.fill('Hold');
-  await page.keyboard.press('Enter');
-  assert.deepEqual(await sent(page), []);
   await page.getByRole('button', { name: 'Stop piop', exact: true }).click();
   assert.equal(await page.getByRole('alert').textContent(), 'cannot stop');
-  assert.equal(await requests.textContent(), '["pause","stop"]');
-  await page.getByRole('button', { name: 'Reject pause request', exact: true }).click();
-  assert.equal(await page.getByRole('alert').textContent(), 'cannot pause');
-  await editor.fill('');
-  await page.getByRole('button', { name: 'Report paused', exact: true }).click();
-  const resume = page.getByRole('button', { name: 'Resume piop', exact: true });
-  await resume.dblclick();
-  assert.equal(await page.getByRole('button', { name: 'Stop piop', exact: true }).isDisabled(), true);
-  assert.match(await page.getByRole('status').filter({ hasText: 'Resuming' }).textContent(), /Resuming/);
-  assert.equal(await requests.textContent(), '["pause","stop","resume"]');
-  await page.getByRole('button', { name: 'Complete resume request', exact: true }).click();
-  assert.equal(await resume.isDisabled(), false);
-  assert.equal(await page.getByRole('alert').count(), 0);
+  assert.equal(await page.getByLabel('Control requests', { exact: true }).textContent(), '["stop"]');
 });
 
 test('on a narrow screen the chat settings sit behind one button that opens and closes like a menu', async t => {

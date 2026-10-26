@@ -12,26 +12,8 @@ type History = { entries: any[]; leafId: string | null; before?: string | null; 
 
 function role(entry: any): string | undefined { return entry?.type === 'message' ? entry.message?.role : undefined; }
 
-/** User messages that resume a paused turn. They continue that turn. */
-const resumes = new WeakSet<object>();
-
-function userText(content: unknown): string {
-  if (typeof content === 'string') return content;
-  return Array.isArray(content) ? content.filter((part: any) => part?.type === 'text' && typeof part.text === 'string').map((part: any) => part.text).join('\n') : '';
-}
-
-function branchOf(history: any): any[] {
-  const branch = branchEntries(history);
-  const markers = new Set<string>();
-  for (const entry of branch) {
-    if (entry?.type === 'custom' && entry.customType === 'pi-desktop-resume' && typeof entry.data?.message === 'string') markers.add(entry.data.message);
-    else if (role(entry) === 'user' && markers.has(userText(entry.message.content))) resumes.add(entry);
-  }
-  return branch;
-}
-
 function startsTurn(entry: any): boolean {
-  return (role(entry) === 'user' && !resumes.has(entry)) || (entry?.type === 'custom_message' && PROMPT_CUSTOM_MESSAGES.has(entry.customType));
+  return role(entry) === 'user' || (entry?.type === 'custom_message' && PROMPT_CUSTOM_MESSAGES.has(entry.customType));
 }
 
 function visibleText(entry: any): string {
@@ -133,7 +115,7 @@ function view(branch: any[], start: number, end: number, keepLastTurn: boolean):
 
 /** The newest part of a chat's history that the client shows when it opens the chat. */
 export function recentHistory(history: any, working: boolean): any {
-  const branch = branchOf(history);
+  const branch = branchEntries(history);
   return Object.assign(history, view(branch, windowStart(branch, branch.length), branch.length, working));
 }
 
@@ -145,14 +127,14 @@ function position(branch: any[], id: unknown): number {
 
 /** The part of the history just before the entry before. */
 export function olderHistory(history: any, before: unknown): History {
-  const branch = branchOf(history);
+  const branch = branchEntries(history);
   const end = position(branch, before);
   return view(branch, windowStart(branch, end), end, false);
 }
 
 /** The work and full final response of the turn whose final response is entry id. */
 export function turnWork(history: any, id: unknown): History {
-  const branch = branchOf(history);
+  const branch = branchEntries(history);
   const final = position(branch, id);
   let start = final;
   while (start > 0 && !startsTurn(branch[start])) start--;

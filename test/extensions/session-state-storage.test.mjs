@@ -81,13 +81,13 @@ test('settings keep only their current value across navigation and restart', asy
 
 test('failed SQL state writes do not advance the branch or change the transcript', async t => {
   const f = await fixture(t);
-  f.manager.appendCustomEntry('pi-desktop-pause-state', { isPaused: false });
+  f.manager.appendCustomEntry('piop-fast-mode-state', { enabled: false });
   const before = readFileSync(f.file, 'utf8');
   const leaf = f.manager.getLeafId();
   const db = database.open(f.root);
   db.exec("CREATE TRIGGER reject_state BEFORE INSERT ON session_extension_state BEGIN SELECT RAISE(ABORT, 'Write failed'); END");
   db.close();
-  assert.throws(() => f.manager.appendCustomEntry('pi-desktop-pause-state', { isPaused: true }), /Write failed/);
+  assert.throws(() => f.manager.appendCustomEntry('piop-fast-mode-state', { enabled: true }), /Write failed/);
   assert.equal(f.manager.getLeafId(), leaf);
   assert.equal(readFileSync(f.file, 'utf8'), before);
   assert.equal(f.SessionManager.open(f.file).getLeafId(), leaf);

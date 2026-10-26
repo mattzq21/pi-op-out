@@ -11,6 +11,6 @@ window.appendMessage = () => setMessages(items => [...items, { id: String(items.
 render(() => <div class="app" style={{ height: '600px', display: 'flex' }}>
   <ChatView messages={messages()} state={{ model: null, thinkingLevel: 'off', isStreaming: streaming(), sessionId: 'jump', messageCount: messages().length, pendingMessageCount: 0 }}
     models={[]} commands={[]} thinkingLevels={[]} widgets={[]} statuses={{}}
-    onSend={noop} onAbort={noop} onPause={noop} onResume={noop} onOpenProject={noop}
+    onSend={noop} onAbort={noop} onOpenProject={noop}
     onBranch={noop} onModel={noop} onToggleFastMode={noop} onThinking={noop} />
 </div>, document.getElementById('root')!);

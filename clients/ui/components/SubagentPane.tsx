@@ -57,6 +57,6 @@ export function SubagentPane(props: { target: SubagentTarget; debug: DebugView; 
     {archived() && <div class="split-pane-status" role="status">This conversation is archived and read-only. <button type="button" onClick={props.onShowArchive}>Open archived sessions to restore it</button></div>}
     {error() && <div class="subagent-pane-error" role="alert">{error()} <button type="button" onClick={() => setRetry((value) => value + 1)}>Retry</button></div>}
     {!loaded() && !error() && <div class="split-pane-status" role="status">Loading conversation…</div>}
-    {loaded() && <ChatView transport={transport} state={session.state} messages={session.messages} debug={props.debug} readOnly controlsDisabled models={[]} commands={[]} thinkingLevels={[]} widgets={[]} statuses={{}} onActivate={props.onActivate} onSend={noop} onAbort={noop} onPause={noop} onResume={noop} onOpenProject={noop} onBranch={noop} onModel={noop} onToggleFastMode={noop} onThinking={noop} />}
+    {loaded() && <ChatView transport={transport} state={session.state} messages={session.messages} debug={props.debug} readOnly controlsDisabled models={[]} commands={[]} thinkingLevels={[]} widgets={[]} statuses={{}} onActivate={props.onActivate} onSend={noop} onAbort={noop} onOpenProject={noop} onBranch={noop} onModel={noop} onToggleFastMode={noop} onThinking={noop} />}
   </section>;
 }

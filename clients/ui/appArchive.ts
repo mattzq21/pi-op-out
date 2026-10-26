@@ -141,7 +141,7 @@ export function createConversationArchive(context: ArchiveContext) {
 
       const hostId = capturedActiveHostId; const conversationKey = `${hostId}:draft-${crypto.randomUUID()}`;
       capturedSession.discardPendingUpdates(); capturedSession.setMessages([]);
-      capturedSession.setState((value) => ({ ...value, sessionId: "", sessionName: undefined, sessionFile: undefined, messageCount: 0, pendingMessageCount: 0, isStreaming: false, isPaused: false, isPausing: false, activity: undefined, contextUsage: undefined }));
+      capturedSession.setState((value) => ({ ...value, sessionId: "", sessionName: undefined, sessionFile: undefined, messageCount: 0, pendingMessageCount: 0, isStreaming: false, activity: undefined, contextUsage: undefined }));
       await connectArchiveReplacement(hostId, conversationKey);
     };
 

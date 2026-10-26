@@ -69,7 +69,7 @@ test('streaming batches deltas and finalizes a stable assistant message without 
   assert.ok(hook.current.messages[0].completedAt > 0);
 });
 
-  test('pause checkpoints the latest user, hides synthetic resume input and retains prompt context', async t => {
+  test('hidden session messages stay hidden and the prompt context stays on the user message', async t => {
     const { hook, send } = await sessionView(t);
     const message = (type, role, content, extra = {}) => ({ type, message: { role, content, timestamp: 100, ...extra } });
     await send(message('message_start', 'user', 'question'));
@@ -78,11 +78,7 @@ test('streaming batches deltas and finalizes a stable assistant message without 
     await send({ ...status, statusText: `json:${JSON.stringify(context)}` }, { ...status, statusText: 'json:{' }, { ...status, statusText: 'json:{}' }, { ...status, statusText: `json:${JSON.stringify({ ...context, tokens: 999 })}` });
     await send(message('message_end', 'user', 'question'));
     assert.deepEqual(hook.current.messages[0].promptContext, context);
-    await send({ type: 'agent_start' }, { type: 'pause_state', isPaused: true, isPausing: true });
-    assert.equal(hook.current.state.isStreaming, true);
-    await send({ type: 'pause_state', isPaused: true, isPausing: false });
-    assert.equal(hook.current.state.isStreaming, false); assert.equal(hook.current.messages[0].contextCheckpoint, true);
-    await send({ type: 'entry_appended', entry: { id: 'resume-marker', type: 'custom', customType: 'pi-desktop-resume', data: { message: 'resume' } } }, message('message_start', 'user', 'resume'), message('message_start', 'custom', 'hidden', { display: false, customType: 'piop-session-operation' }));
+    await send(message('message_start', 'custom', 'hidden', { display: false, customType: 'piop-session-operation' }));
     assert.equal(hook.current.messages.length, 1);
   });
 

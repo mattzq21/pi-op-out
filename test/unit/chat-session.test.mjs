@@ -56,12 +56,12 @@ describe('chat session hook', () => {
 
 
 
-  test('snapshot restoration retains live tools, streaming identity and resume markers', async () => {
-    const entries = [{ type: 'custom', id: 'marker', parentId: null, customType: 'pi-desktop-resume', data: { message: 'resume' } }, { type: 'message', id: 'assistant', parentId: 'marker', message: { role: 'assistant', content: 'partial', streaming: true, timestamp: 100 } }];
+  test('snapshot restoration retains live tools and streaming identity', async () => {
+    const entries = [{ type: 'message', id: 'assistant', parentId: null, message: { role: 'assistant', content: 'partial', streaming: true, timestamp: 100 } }];
     responses.set('get_snapshot', snapshot({ history: { entries, leafId: 'assistant' }, liveTools: [{ type: 'tool_execution_start', toolCallId: 'call', toolName: 'read', partialResult: { content: 'live output' } }] }));
     await act(async () => hook.current.refresh()); await dom.flushFrames();
     assert.equal(hook.current.messages[1].content, ''); assert.equal(hook.current.messages[1].deferredToolPayload, 'call');
-    await send(message('message_start', 'user', 'resume'), message('message_end', 'assistant', 'done'));
+    await send(message('message_end', 'assistant', 'done'));
     assert.equal(hook.current.messages.length, 2); assert.equal(hook.current.messages[0].id, 'assistant'); assert.equal(hook.current.messages[0].content, 'done');
   });
 

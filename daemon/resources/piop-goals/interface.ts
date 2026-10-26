@@ -8,8 +8,8 @@ export interface GoalSession {
   pause(ctx: ExtensionContext): Promise<GoalReport>;
   resume(ctx: ExtensionContext): Promise<GoalReport>;
   clear(ctx: ExtensionContext): Promise<GoalReport>;
-  pauseWithSession(ctx: ExtensionContext): Promise<void>;
-  resumeWithSession(ctx: ExtensionContext): Promise<void>;
+  /** The user stopped the run: an active goal pauses. */
+  stopped(ctx: ExtensionContext): Promise<void>;
 }
 
 /** Other extensions emit this request on "piop:goals:session" to get the session interface. */

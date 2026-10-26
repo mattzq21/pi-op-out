@@ -79,7 +79,6 @@ export class QueueRecord {
     const saved = this.saveRetained(retained);
     this.state.retained = retained;
     this.state.pending = this.state.pending.filter(item => item.id !== id);
-    if (this.state.held) this.state.held = this.state.held.filter(item => item.id !== id);
     await this.commitView(saved);
   }
 
@@ -111,7 +110,6 @@ export class QueueRecord {
     const saved = this.saveRetained(retained);
     this.state.retained = retained;
     this.state.pending = this.state.pending.filter(item => !consumed.has(text(item, 'id')));
-    if (this.state.held) this.state.held = this.state.held.filter(item => !consumed.has(text(item, 'id')));
     await this.commitView(saved);
   }
 
@@ -181,6 +179,5 @@ function matchConsumed(item: any, message: any, content: string): boolean {
 
 function availableForConsumption(state: QueueState, item: any): boolean {
   const id = text(item, 'id');
-  if (state.heldItems().some(held => held.id === id)) return false;
   return state.sending.has(id) || !state.pending.some(pending => pending.id === id);
 }

@@ -1,15 +1,15 @@
 import { array, CancelScope, clone, flag, jsonEqual, kind, text } from './json';
 import { Mutex, errorText } from '../util/sync';
 import type { QueueStorage } from './queue_storage';
-import { QueueState, goalStatus, heldMessages, sortHeld, type QueueGoal } from './queue_state';
+import { QueueState, goalStatus, type QueueGoal } from './queue_state';
 import { QueueRecord, track } from './queue_record';
 import { QueueDelivery, type Execution } from './queue_delivery';
 import { changePending } from './queue_changes';
-import { enqueue, executeHeldPrompt, queuedCommand } from './queue_submission';
+import { enqueue, queuedCommand } from './queue_submission';
 
 const TIMEOUT = 'Pi command timed out';
 
-/** The queued input of one session: routes commands to Pi, pauses and resumes delivery, and keeps a saved copy. */
+/** The queued input of one session: routes commands to Pi and keeps a saved copy. */
 export class SessionQueue {
   private s = new QueueState();
   private record: QueueRecord;
@@ -37,8 +37,6 @@ export class SessionQueue {
 
   view(): any { return this.record.view(); }
   pending(): any[] { return clone(this.s.durableMessages()); }
-  held(): boolean { return this.s.held !== null; }
-  heldCount(): number { return this.s.held?.length ?? 0; }
   isEmpty(): boolean { return this.s.pending.length === 0; }
   /** True when storage holds the current queue. Storage is then the only copy, because another host can change it later. */
   saved(): boolean { return this.record.saved(); }
@@ -59,7 +57,6 @@ export class SessionQueue {
       state.pending = clone(state.durableMessages());
       // Pi lost its queue. Follow-ups below the goal were never in it, so they keep waiting.
       for (const item of state.pending) if (!flag(item, 'afterGoal')) item.retry = true;
-      state.held = null;
       state.steering = [];
       state.followUp = [];
       queueEvent = state.publish();
@@ -96,36 +93,12 @@ export class SessionQueue {
     try {
       const waiting = this.s.activeGoal() ? [] : this.s.waiting();
       for (const item of waiting) item.afterGoal = false;
-      if (waiting.length && this.s.held) {
-        // While paused, they join the held items and go to Pi on resume.
-        this.s.held.push(...clone(waiting));
-        sortHeld(this.s.held);
-      } else {
-        await this.record.persist();
-        for (let index = 0; index < waiting.length; index += 1) {
-          try { await this.delivery.deliver(waiting[index], false); } catch (error) { this.s.markRetry(waiting.slice(index)); throw error; }
-        }
+      await this.record.persist();
+      for (let index = 0; index < waiting.length; index += 1) {
+        try { await this.delivery.deliver(waiting[index], false); } catch (error) { this.s.markRetry(waiting.slice(index)); throw error; }
       }
       await this.delivery.publish();
     } finally { release(); }
-  }
-
-  private async restore(): Promise<void> {
-    if (!this.held()) return;
-    for (;;) {
-      const held = this.s.held;
-      const item = held && held.length ? held.shift() : undefined;
-      if (!item) break;
-      if (flag(item, 'retry')) continue;
-      try { await this.delivery.deliver(item, false); } catch (error) {
-        (this.s.held ??= []).unshift(item);
-        await this.delivery.heldFailed();
-        throw error;
-      }
-      await this.delivery.publish();
-    }
-    this.s.held = null;
-    await this.delivery.publish();
   }
 
   interruptDelegation(): Promise<any> { return this.command({ type: 'abort' }); }
@@ -160,10 +133,7 @@ export class SessionQueue {
         if (gate.status === 'rejected') throw gate.reason;
         if (scope.cancelled) throw new Error(TIMEOUT);
         assertOwner();
-        const result = await this.delivery.execute(command, scope);
-        // Stop ends a pause. Messages the pause held are not sent by themselves; they wait for the user to send them again.
-        if (this.held()) await this.delivery.heldFailed();
-        return result;
+        return await this.delivery.execute(command, scope);
       } finally {
         if (release) { scope.remove(release); release(); }
       }
@@ -176,17 +146,8 @@ export class SessionQueue {
     finally { clearTimeout(timer); }
   }
 
-  private wakingOrchestration(command: any, name: string): boolean { return name === 'orchestration_message' && command.wake !== false && this.held(); }
-  private resumingPrompt(command: any, name: string): boolean { return name === 'resume' || (name === 'prompt' && this.held() && typeof command.message === 'string'); }
-
   private async serialCommand(command: any, name: string): Promise<any> {
     if (name === 'clear_queue') return this.clear(command);
-    if (this.wakingOrchestration(command, name)) return this.resumeCommand(command, name);
-    if (name === 'pause') {
-      await this.hold();
-      try { return await this.delivery.execute(command); } catch (error) { await this.delivery.heldFailed(); throw error; }
-    }
-    if (this.resumingPrompt(command, name)) return this.resumeCommand(command, name);
     if (name !== 'steer' && name !== 'follow_up') return this.delivery.execute(command);
     return enqueue(this.delivery, command, queuedCommand(text(command, 'message')) ? 'follow_up' : name);
   }
@@ -196,22 +157,12 @@ export class SessionQueue {
     const result = await this.delivery.execute(command);
     const removed = [
       ...originals.filter(item => !flag(item, 'retry') && !flag(item, 'afterGoal') && array(result, item.behavior === 'steer' ? 'steering' : 'followUp').some(message => jsonEqual(message, item.message))),
-      ...clone(this.s.heldItems()),
       ...clone(this.s.waiting()),
     ];
     for (const item of removed) this.s.remove(text(item, 'id'));
-    this.s.held = null;
     this.s.steering = []; this.s.followUp = []; this.s.awaitingSteering = [];
     await this.record.persist();
     await this.delivery.publish();
-    return result;
-  }
-
-  private async resumeCommand(command: any, name: string): Promise<any> {
-    const revision = this.s.inferenceRevision;
-    const slash = text(command, 'message').startsWith('/');
-    const result = name === 'prompt' && !slash ? await executeHeldPrompt(this.delivery, command) : await this.delivery.execute(command);
-    if (name === 'resume' || name === 'orchestration_message' || !slash || this.s.inferenceRevision !== revision) await this.restore();
     return result;
   }
 
@@ -226,7 +177,6 @@ export class SessionQueue {
     const state = this.s;
     state.pending = clone(state.durableMessages());
     for (const item of state.pending) if (!flag(item, 'afterGoal')) item.retry = true;
-    state.held = null;
     state.changing = false; state.clearing = false;
     state.steering = []; state.followUp = []; state.awaitingSteering = [];
     await this.delivery.publish();
@@ -237,42 +187,6 @@ export class SessionQueue {
   changePending(id: string, action: any, assertOwner: () => void = () => {}): Promise<any> {
     if (this.closed) return Promise.reject(new Error('Pi is not running'));
     return track(this.operations, changePending(this.delivery, this.gate, id, action, assertOwner));
-  }
-
-  /** Pauses delivery: takes Pi's queue back into held items. */
-  private async hold(scope?: CancelScope): Promise<void> {
-    const state = this.s;
-    if (state.held !== null) return;
-    state.assertHoldable();
-    state.changing = true;
-    // Follow-ups below the goal are not in Pi's queue, so pausing leaves them waiting.
-    const originals = clone(state.pending).filter(item => !flag(item, 'afterGoal'));
-    let active = true;
-    const surviving = () => originals.filter(item => !this.record.durable || this.s.retained.some(retained => retained.id === item.id));
-    const recover = () => {
-      if (!active) return;
-      active = false;
-      const restored = surviving().map(clone);
-      for (const item of restored) item.retry = true;
-      this.s.pending = this.s.pending.filter(item => !restored.some(original => original.id === item.id));
-      this.s.pending.push(...restored);
-      this.s.changing = false;
-      this.s.clearing = false;
-      const event = this.s.publish();
-      this.record.persistInBackground(() => this.delivery.announce(event));
-    };
-    scope?.add(recover);
-    try {
-      const cleared = await this.delivery.execute({ type: 'clear_queue' }, scope);
-      if (!active) throw new Error(TIMEOUT);
-      this.s.held = heldMessages(cleared, surviving(), () => this.record.nextId());
-      this.s.changing = false;
-      active = false;
-    } catch (error) {
-      recover();
-      throw error;
-    } finally { scope?.remove(recover); }
-    await this.delivery.publish();
   }
 
   /** Removes items that Pi's saved transcript already holds. */

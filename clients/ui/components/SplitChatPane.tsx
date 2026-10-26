@@ -64,7 +64,7 @@ export function SplitChatPane(componentProps: Props) {
   const reconnectRef = createRef<() => void>(() => undefined);
   const lifecycleRef = createRef(0);
   const [initialPromptPending, setInitialPromptPending] = createSignal(Boolean(componentProps.initialPrompt));
-  const paneBusy = () => initialPromptPending() || session().state.isStreaming || session().state.isPaused || session().state.isPausing || session().state.isCompacting || session().state.pendingMessageCount > 0;
+  const paneBusy = () => initialPromptPending() || session().state.isStreaming || session().state.isCompacting || session().state.pendingMessageCount > 0;
   createDependencyEffect(() => { const capturedTransport = transport(); const capturedSession = { ...session() }; const capturedRuntimePool0 = componentProps.runtimePool; const capturedSettings1 = componentProps.settings; const capturedInitialPrompt2 = componentProps.initialPrompt; const capturedOnReady3 = componentProps.onReady; const capturedOnFailed4 = componentProps.onFailed; const capturedSession5 = componentProps.session; const capturedOnDialogTransportClosed7 = componentProps.onDialogTransportClosed; const capturedOnDialogResolved8 = componentProps.onDialogResolved; const capturedOnDialogRequest9 = componentProps.onDialogRequest; const capturedDrafts = componentProps.drafts; const capturedOnReleaseTransport11 = componentProps.onReleaseTransport;
     const lifecycle = ++lifecycleRef.current; let closing = false; let reconnecting = false; let connectedOnce = false;
     capturedRuntimePool0.setInteractive(capturedTransport, true);
@@ -264,7 +264,7 @@ export function SplitChatPane(componentProps: Props) {
 
   const forgettingRef = createRef(false);
 
-  const conversationBusy = () => session().state.isStreaming || session().state.isPausing || session().state.pendingMessageCount;
+  const conversationBusy = () => session().state.isStreaming || session().state.pendingMessageCount;
 
   const forkAndForget = async (message: ChatMessage) => {
     if (forgettingRef.current) return;
@@ -288,24 +288,13 @@ export function SplitChatPane(componentProps: Props) {
     const capturedTransport = transport();
  await capturedTransport.command({ type: "abort" }); };
 
-  const pause = async () => { const capturedSession = { ...session() }; const capturedTransport = transport();
-    capturedSession.setState((current) => ({ ...current, isPausing: true }));
-
-    try { await capturedTransport.command({ type: "pause" }); await capturedSession.refresh(); }
-    catch (reason) { capturedSession.setState((current) => ({ ...current, isPausing: false })); throw reason; }
-  };
-
-  const resume = async () => {
-    const capturedTransport = transport();
- await capturedTransport.command({ type: "resume" }); };
-
   const chatModels = createMemo(() => componentProps.modelVisibility.visibleModels(componentProps.session.hostId ?? "local", session().models));
   const chatAgents = createMemo(() => (definedAgents()?.config.agents ?? []));
   const chatWidgets = createMemo(() => Object.values(widgets()).flat());
 
   const agentDefinitionHost = () => (componentProps.session.hostId ?? "local") === "local" ? localHostLabel() : componentProps.session.hostName || componentProps.session.hostId;
 
-  const renderSplitPaneStatus = () => (error() ? <div class="split-pane-status error">{(error())}</div> : <ChatView onNotice={(title, message) => setNotices((current) => [...current, { id: crypto.randomUUID(), title, message }])} followConversation={followSource} readOnly={Boolean(componentProps.readOnly)} agentHostLabel={agentDefinitionHost()} transport={transport()} state={transport().promptControls.state(session().state)} messages={session().messages} debug={debugView(componentProps.settings)} agents={chatAgents()} activeAgent={definedAgents()?.active} agentLocked={definedAgents()?.locked} agentSaved={definedAgents()?.saved} agentUnavailable={definedAgents()?.unavailable} refreshError={session().error} capabilityErrors={session().capabilityErrors} capabilitiesLoading={session().capabilitiesLoading} onRetryCapabilities={session().retryCapabilities} modelAliases={componentProps.modelVisibility.aliases(componentProps.session.hostId ?? "local")} models={chatModels()} commands={chatCommands()} thinkingLevels={transport().promptControls.levels(session().thinkingLevels)} widgets={chatWidgets()} statuses={transport().promptControls.statuses(statuses(), fastModelNames(hostFastModels(componentProps.session.hostId ?? "local")()), transport().promptControls.state(session().state).model)} projectCwd={componentProps.session.cwd} controlsDisabled={!connected()} draft={componentProps.draft} onDraftChange={(update) => componentProps.drafts.setTransportDraft(transport(), update)} focusRequest={(componentProps.focusRequest === undefined ? 0 : componentProps.focusRequest) + extensionFocusRequest()} onActivate={componentProps.onActivate} uploads={uploads()} onUploadsChange={setUploads} onSend={send} onChangePending={(id, behavior) => transport().changePendingMessage(id, behavior)} onAbort={abort} onPause={pause} onResume={resume} onOpenTerminal={componentProps.onOpenTerminal} onOpenProject={() => undefined} onBranch={message => branch(message)} onFork={async message => { await branch(message, "fork"); }} onForkAndForget={forkAndForget} forkSourceName={session().state.forkSource ? componentProps.forkSourceName?.(session().state.forkSource!) : undefined} onOpenForkSource={componentProps.onOpenForkSource} onAgent={(name) => void transport().command({ type: "select_agent", agent: name }).then(() => { transport().promptControls.reset();
+  const renderSplitPaneStatus = () => (error() ? <div class="split-pane-status error">{(error())}</div> : <ChatView onNotice={(title, message) => setNotices((current) => [...current, { id: crypto.randomUUID(), title, message }])} followConversation={followSource} readOnly={Boolean(componentProps.readOnly)} agentHostLabel={agentDefinitionHost()} transport={transport()} state={transport().promptControls.state(session().state)} messages={session().messages} debug={debugView(componentProps.settings)} agents={chatAgents()} activeAgent={definedAgents()?.active} agentLocked={definedAgents()?.locked} agentSaved={definedAgents()?.saved} agentUnavailable={definedAgents()?.unavailable} refreshError={session().error} capabilityErrors={session().capabilityErrors} capabilitiesLoading={session().capabilitiesLoading} onRetryCapabilities={session().retryCapabilities} modelAliases={componentProps.modelVisibility.aliases(componentProps.session.hostId ?? "local")} models={chatModels()} commands={chatCommands()} thinkingLevels={transport().promptControls.levels(session().thinkingLevels)} widgets={chatWidgets()} statuses={transport().promptControls.statuses(statuses(), fastModelNames(hostFastModels(componentProps.session.hostId ?? "local")()), transport().promptControls.state(session().state).model)} projectCwd={componentProps.session.cwd} controlsDisabled={!connected()} draft={componentProps.draft} onDraftChange={(update) => componentProps.drafts.setTransportDraft(transport(), update)} focusRequest={(componentProps.focusRequest === undefined ? 0 : componentProps.focusRequest) + extensionFocusRequest()} onActivate={componentProps.onActivate} uploads={uploads()} onUploadsChange={setUploads} onSend={send} onChangePending={(id, behavior) => transport().changePendingMessage(id, behavior)} onAbort={abort} onOpenTerminal={componentProps.onOpenTerminal} onOpenProject={() => undefined} onBranch={message => branch(message)} onFork={async message => { await branch(message, "fork"); }} onForkAndForget={forkAndForget} forkSourceName={session().state.forkSource ? componentProps.forkSourceName?.(session().state.forkSource!) : undefined} onOpenForkSource={componentProps.onOpenForkSource} onAgent={(name) => void transport().command({ type: "select_agent", agent: name }).then(() => { transport().promptControls.reset();
 
   return session().refresh(); }).catch(reportControlError)} onModel={(model) => transport().promptControls.model(model, transport().promptControls.state(session().state).thinkingLevel)} onToggleFastMode={() => transport().promptControls.toggle(statuses())} onThinking={(level) => transport().promptControls.thinking(level)} />);
 

@@ -30,6 +30,6 @@ window.appendResponse = () => setMessages(items => [...items, { id: String(items
 render(() => <div style={{ height: '500px', display: 'flex' }}>
   <ChatView messages={messages()} state={{ model: null, thinkingLevel: 'off', isStreaming: streaming(), activity: activity(), sessionId: 'scroll', messageCount: messages().length, pendingMessageCount: 0 }}
     models={[]} commands={[]} thinkingLevels={[]} widgets={[]} statuses={{}}
-    onSend={window.appendMessage} onAbort={noop} onPause={noop} onResume={noop} onOpenProject={noop}
+    onSend={window.appendMessage} onAbort={noop} onOpenProject={noop}
     onBranch={noop} onModel={noop} onToggleFastMode={noop} onThinking={noop} />
 </div>, document.getElementById('app'));

@@ -156,12 +156,10 @@ describe('split conversation lifecycle', () => {
     assert.equal(document.querySelector('.split-control-error'), null); assert.deepEqual(started(), Array(3).fill(['/repo', 'session', 'local']));
   });
 
-  test('pause failures restore controls, successful pauses refresh state, and resume and abort reach runtime', async () => {
+  test('stop reaches the runtime', async () => {
     await render(); await event({ type: 'agent_start' });
-    responses.set('pause', new Error('cannot pause')); await click(control('Pause piop')); assert.match(document.querySelector('.upload-error').textContent, /cannot pause/); assert.equal(control('Pause piop').disabled, false);
-    responses.delete('pause'); responses.get('get_snapshot').state = { ...responses.get('get_snapshot').state, isPaused: true };
-    await click(control('Pause piop')); assert.ok(control('Resume piop')); await click(control('Resume piop')); await click(control('Stop piop'));
-    assert.ok(calls.some(command => command.type === 'resume')); assert.ok(calls.some(command => command.type === 'abort'));
+    await click(control('Stop piop'));
+    assert.ok(calls.some(command => command.type === 'abort'));
   });
 
   for (const repository of [null, { root: '/repo', gitDir: '/repo/.git' }]) test(`regular fork keeps the folder and original chat (${repository ? 'repository' : 'plain folder'})`, async () => {

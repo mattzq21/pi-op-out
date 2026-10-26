@@ -35,13 +35,6 @@ test('running tools keep their input and output closed until requested', async t
   assert.equal(control('Tool output'), null);
 });
 
-test('paused responses show a pause notice without a failure or retry action', async t => {
-  await renderMessage(t, { role: 'assistant', content: '', stopReason: 'aborted' }, { paused: true, onRetry: () => {} });
-  assert.match(document.body.textContent, /Response paused/);
-  assert.doesNotMatch(document.body.textContent, /Operation aborted|Response failed/);
-  assert.equal(button('Retry'), undefined);
-});
-
 test('aborted responses without a reason show a clear failure notice', async t => {
   await renderMessage(t, { role: 'assistant', content: '', stopReason: 'aborted' });
   assert.match(document.querySelector('[role=status]').textContent, /Operation aborted/);

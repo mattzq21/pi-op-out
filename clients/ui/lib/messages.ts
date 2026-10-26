@@ -1,7 +1,7 @@
 import type { ChatMessage } from "../types";
 import { pluginMessageMetadata } from "../plugins/messageMetadata";
 import { z } from "zod";
-import { pauseStateSchema, promptContextSchema, resumeContentSchema, resumeMarkerSchema, wireMessageSchema, type WireMessage } from "./messageSchemas";
+import { promptContextSchema, wireMessageSchema, type WireMessage } from "./messageSchemas";
 
 const SYSTEM_MESSAGES = new Set(["pi-desktop-mcp-status"]);
 
@@ -23,20 +23,6 @@ function replaceMessage(messages: ChatMessage[], index: number, message: ChatMes
   return result;
 }
 
-export function resumeMarker(entry: PiEntry) {
-  if (entry.type !== "custom" || entry.customType !== "pi-desktop-resume") return undefined;
-  const marker = resumeMarkerSchema.safeParse(entry.data);
-
-  return marker.success ? marker.data.message : undefined;
-}
-
-export function isResumeMessage(message: { role?: unknown; content?: unknown }, markers: ReadonlySet<string>) {
-  if (message.role !== "user") return false;
-  const text = resumeContentSchema.parse(message.content);
-
-  return markers.has(text);
-}
-
 /** A message that starts a turn: one the user sent, a goal prompt, or a message or subagent result from another agent session. */
 export const isPromptMessage = (message: ChatMessage) => message.role === "user" || (message.role === "custom" && (message.customType === "piop-agent-message" || message.customType === "piop-subagent-result" || message.customType === GOAL_PROMPT));
 
@@ -51,14 +37,6 @@ function latestUser(messages: ChatMessage[]) {
   while (index >= 0 && !isPromptMessage(messages[index])) index--;
 
   return index;
-}
-
-export function checkpointLatestUser(messages: ChatMessage[], inPlace = false) {
-  const index = latestUser(messages);
-
-  if (index < 0 || messages[index].contextCheckpoint) return messages;
-
-  return replaceMessage(messages, index, { ...messages[index], contextCheckpoint: true }, inPlace);
 }
 
 export function cacheHitStats(usage?: { input: number; cacheRead: number; cacheWrite?: number }) {
@@ -171,20 +149,8 @@ export function appendQueuedProjectContext(messages: ChatMessage[], entry: PiEnt
   return result;
 }
 
-function applyCustomEntry(messages: ChatMessage[], entry: PiEntry, resumeMarkers: Set<string>, promptParts: SavedPromptParts) {
+function applyCustomEntry(messages: ChatMessage[], entry: PiEntry, promptParts: SavedPromptParts) {
   if (entry.customType === "piop-queued-project-context") return appendQueuedProjectContext(messages, entry, true);
-
-  const marker = resumeMarker(entry);
-
-  if (marker) { resumeMarkers.add(marker);
-
-  return checkpointLatestUser(messages, true); }
-
-  if (entry.customType === "pi-desktop-pause-state") {
-    const state = pauseStateSchema.safeParse(entry.data);
-
-    if (state.success && state.data.isPaused) return checkpointLatestUser(messages, true);
-  }
 
   if (["piop-context", "pi-desktop-prompt-context"].includes(entry.customType ?? "")) appendPromptContext(messages, entry, promptParts);
 
@@ -203,24 +169,24 @@ function customEntryMessage(entry: PiEntry): ChatMessage | undefined {
   }
 }
 
-function visibleEntryMessage(entry: PiEntry, resumeMarkers: Set<string>): ChatMessage | undefined {
+function visibleEntryMessage(entry: PiEntry): ChatMessage | undefined {
   if (entry.type === "compaction") return compactionMessage(entry);
 
   if (entry.type === "custom_message") return customEntryMessage(entry);
 
-  if (entry.type !== "message" || !entry.message || isResumeMessage(entry.message, resumeMarkers)) return undefined;
+  if (entry.type !== "message" || !entry.message) return undefined;
   const message = normalizeMessage(entry.message, entry.id, entry.timestamp);
 
   return (["user", "assistant", "tool"] satisfies string[]).includes(message.role) || isContextInjection(message) ? message : undefined;
 }
 
 export function branchMessages(entries: PiEntry[], leafId: string | null): ChatMessage[] {
-  let messages: ChatMessage[] = []; const resumeMarkers = new Set<string>(); const promptParts: SavedPromptParts = {};
+  let messages: ChatMessage[] = []; const promptParts: SavedPromptParts = {};
 
   for (const entry of entryBranch(entries, leafId)) {
-    if (entry.type === "custom") { messages = applyCustomEntry(messages, entry, resumeMarkers, promptParts); continue; }
+    if (entry.type === "custom") { messages = applyCustomEntry(messages, entry, promptParts); continue; }
 
-    const message = visibleEntryMessage(entry, resumeMarkers);
+    const message = visibleEntryMessage(entry);
 
     if (message) messages.push(message);
   }

@@ -118,11 +118,6 @@ export class RuntimeWorker {
   }
 
   private receive(event: any, size: number): void {
-    if (kind(event) === 'extension_ui_request' && event.method === 'setStatus' && event.statusKey === 'pi-desktop-pause-state') {
-      const statusText = event.statusText;
-      if (typeof statusText !== 'string' || !statusText.startsWith('json:')) return;
-      try { event = JSON.parse(statusText.slice(5)); } catch (error: any) { this.observer.diagnostic(error.message); return; }
-    }
     if (isRuntimeEvent(event)) { this.track(this.answerRuntimeEvent(event), size); return; }
     if (kind(event) !== 'response') { this.track(this.observer.event(event), size); return; }
     const id = event?.id;

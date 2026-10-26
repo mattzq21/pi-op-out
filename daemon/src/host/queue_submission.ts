@@ -1,7 +1,7 @@
 import { clone, text } from './json';
 import { CommandRefusedError } from '../pi_rejection';
 import { validateItem } from './queue_storage';
-import { durableMessages, sortHeld } from './queue_state';
+import { durableMessages } from './queue_state';
 import type { QueueDelivery } from './queue_delivery';
 
 export { queuedCommand } from '../plugin_contributions';
@@ -27,8 +27,8 @@ function submissionPayload(command: any, id: string, name: string): any {
 }
 
 /**
- * Adds a steer or follow-up message to the queue and sends it to Pi, unless the queue is paused.
- * Returns null for an item kept while paused, or an item kept for retry after a failure.
+ * Adds a steer or follow-up message to the queue and sends it to Pi.
+ * Returns null for an item kept for retry after a failure.
  * Returns false when goal preparation declines the message.
  */
 export async function enqueue(queue: QueueDelivery, command: any, name: string): Promise<any> {
@@ -44,10 +44,7 @@ export async function enqueue(queue: QueueDelivery, command: any, name: string):
     await waitBelowGoal(queue, pending);
     return null;
   }
-  if (await saveSubmission(queue, id, pending)) {
-    await queue.reportStorageError(() => queue.publish());
-    return null;
-  }
+  await saveSubmission(queue, id, pending);
   let result: any;
   let failure: unknown;
   let failed = false;
@@ -60,33 +57,6 @@ export async function enqueue(queue: QueueDelivery, command: any, name: string):
     return null;
   }
   if (failed) throw failure;
-  return result;
-}
-
-/** Sends a prompt while the queue is paused, as a follow-up that Pi discards when it rejects it. */
-export async function executeHeldPrompt(queue: QueueDelivery, original: any): Promise<any> {
-  const state = queue.state;
-  if (durableMessages(state).length >= 100) throw new CommandRefusedError('Queue is full', 'daemon');
-  const command = clone(original);
-  const id = queue.record.nextId();
-  const item: any = { id, message: command.message ?? null, behavior: 'followUp', deliveryStarted: true };
-  if (command.images !== undefined) item.images = clone(command.images);
-  if (command.goalSubmissionId !== undefined) item.goalSubmissionId = command.goalSubmissionId;
-  command.type = 'queue_prompt';
-  command.queueId = id;
-  command.streamingBehavior = 'followUp';
-  command.discardOnRejection = true;
-  state.pending.push(item);
-  state.sending.add(id);
-  let result: any;
-  try { await queue.record.retain(item); result = await queue.execute(command); } catch (error) {
-    state.failedSubmission(id);
-    state.sending.delete(id);
-    await queue.reportStorageError(() => queue.publish());
-    throw error;
-  } finally { state.sending.delete(id); }
-  if (result?.disposition === 'handled') await queue.consumed(id);
-  await queue.publish();
   return result;
 }
 
@@ -114,18 +84,14 @@ async function waitBelowGoal(queue: QueueDelivery, pending: any): Promise<void> 
   await queue.reportStorageError(() => queue.publish());
 }
 
-async function saveSubmission(queue: QueueDelivery, id: string, pending: any): Promise<boolean> {
+async function saveSubmission(queue: QueueDelivery, id: string, pending: any): Promise<void> {
   const state = queue.state;
   if (durableMessages(state).length >= 100) throw new CommandRefusedError('Queue is full', 'daemon');
   state.pending.push(clone(pending));
-  const held = state.held !== null;
-  if (state.held) {
-    state.held.push(clone(pending));
-    sortHeld(state.held);
-  } else state.sending.add(id);
+  state.sending.add(id);
   try { await queue.record.persist(); } catch (error) {
     state.sending.delete(id);
-    for (const item of [...state.pending, ...state.retained, ...state.heldItems()]) {
+    for (const item of [...state.pending, ...state.retained]) {
       if (item.id === id) item.retry = true;
     }
     const view = state.publish();
@@ -133,5 +99,4 @@ async function saveSubmission(queue: QueueDelivery, id: string, pending: any): P
     queue.announce(clone(view));
     throw error;
   }
-  return held;
 }

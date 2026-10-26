@@ -86,7 +86,7 @@ test.concurrent('compacting while the agent works is refused with how to do it, 
     const chat = await agents.rootChat();
     await chat.command({ type: 'prompt', message: 'Busy chat' });
     await chat.until(() => agents.model.requests.length > 0);
-    expect(await chat.command({ type: 'compact' }).then(() => 'compacted', (error: Error) => error.message)).toBe('Stop or pause piop before running /compact.');
+    expect(await chat.command({ type: 'compact' }).then(() => 'compacted', (error: Error) => error.message)).toBe('Stop piop before running /compact.');
     release({ text: 'Finished anyway.' });
     const history = await chat.until(messages => text(messages.at(-1)) === 'Finished anyway.');
     expect(history.some(message => message.stopReason === 'aborted')).toBe(false);

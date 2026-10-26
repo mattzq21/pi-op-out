@@ -95,11 +95,8 @@ export function expandHome(path: string, home: string): string {
 
 function controlAction(command: string): string | undefined {
   switch (command) {
-    case 'pause': return 'pause';
-    case 'resume': return 'resume';
     case 'abort': return 'stop';
     case 'cancel_preparation': return 'cancel-preparation';
-    case 'get_pause_state': return 'state';
     default: return undefined;
   }
 }

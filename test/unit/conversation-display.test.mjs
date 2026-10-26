@@ -97,30 +97,6 @@ test('streaming leaves the earlier answer settled and shows work on the latest p
   assert.deepEqual([...view.container.querySelectorAll('[role="status"]')].map(element => element.getAttribute('aria-label')), ['piop is working']);
 });
 
-test('pausing shows a paused status on the latest response without offering retry', async t => {
-  const view = await conversation(t, { readOnly: false, messages: twoTurns(), state: { model: null, thinkingLevel: 'off', isStreaming: false, isPaused: true, messageCount: 4 } });
-  const responses = [...view.container.querySelectorAll('article[aria-label]')];
-  const latest = responses.find(element => element.textContent.includes('Partial answer'));
-  const earlier = responses.find(element => element.textContent.includes('Earlier answer'));
-  assert.ok(latest && earlier);
-  assert.equal(latest.querySelector('[role="status"]').textContent, 'Response paused');
-  assert.ok(!earlier.textContent.includes('Response paused'));
-  assert.ok(![...view.container.querySelectorAll('button')].some(button => button.textContent === 'Retry'));
-});
-
-test('ending the pause offers retry only for the latest aborted response', async t => {
-  const messages = twoTurns();
-  messages[1].stopReason = 'aborted';
-  const state = { model: null, thinkingLevel: 'off', isStreaming: false, isPaused: true, messageCount: 4 };
-  const view = await conversation(t, { readOnly: false, messages, state });
-  assert.ok(![...view.container.querySelectorAll('button')].some(button => button.textContent === 'Retry'));
-  await view.update({ state: { ...state, isPaused: false } });
-  const retries = [...view.container.querySelectorAll('button')].filter(button => button.textContent === 'Retry');
-  assert.equal(retries.length, 1, retries.map(button => button.outerHTML + button.parentElement.textContent).join('\n'));
-  assert.equal(retries[0].disabled, false);
-  assert.ok(retries[0].closest('article').textContent.includes('Partial answer'));
-});
-
 const repositoryState = { model: null, thinkingLevel: 'off', isStreaming: false, messageCount: 2, repository: { root: '/repo', gitDir: '/repo/.git' } };
 const forkControl = view => view.container.querySelector('[aria-label="Branch off"]');
 
@@ -258,26 +234,8 @@ test("Retry is unavailable for a completed response", async t => {
   assert.equal(view.container.querySelector('[aria-label="Message piop"]').value, '');
 });
 
-test("Retry is unavailable for a response marked as paused", async t => {
-  const view = await conversation(t, { readOnly: false, messages: [{"id": "question", "role": "user", "content": "Question"}, {"id": "answer", "role": "assistant", "content": "Partial answer", "stopReason": "aborted", "errorMessage": "Response paused"}] });
-  assert.ok(![...view.container.querySelectorAll('article button')].some(button => button.textContent === 'Retry'));
-  assert.equal(view.container.querySelector('[aria-label="Message piop"]').value, '');
-});
-
-test("Retry is unavailable for a context checkpoint", async t => {
-  const view = await conversation(t, { readOnly: false, messages: [{"id": "question", "role": "user", "content": "Question", "contextCheckpoint": true}, {"id": "answer", "role": "assistant", "content": "Partial answer", "stopReason": "aborted"}] });
-  assert.ok(![...view.container.querySelectorAll('article button')].some(button => button.textContent === 'Retry'));
-  assert.equal(view.container.querySelector('[aria-label="Message piop"]').value, '');
-});
-
 test("Retry is unavailable for a blank prompt", async t => {
   const view = await conversation(t, { readOnly: false, messages: [{"id": "question", "role": "user", "content": "   "}, {"id": "answer", "role": "assistant", "content": "Partial answer", "stopReason": "aborted"}] });
-  assert.ok(![...view.container.querySelectorAll('article button')].some(button => button.textContent === 'Retry'));
-  assert.equal(view.container.querySelector('[aria-label="Message piop"]').value, '');
-});
-
-test("Retry is unavailable for an abort after a pause marker", async t => {
-  const view = await conversation(t, { readOnly: false, messages: [{"id": "question", "role": "user", "content": "Question"}, {"id": "paused", "role": "assistant", "content": "Partial answer", "stopReason": "aborted", "errorMessage": "Response paused"}, {"id": "answer", "role": "assistant", "content": "Partial answer", "stopReason": "aborted"}] });
   assert.ok(![...view.container.querySelectorAll('article button')].some(button => button.textContent === 'Retry'));
   assert.equal(view.container.querySelector('[aria-label="Message piop"]').value, '');
 });

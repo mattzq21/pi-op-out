@@ -33,7 +33,7 @@ render(() => <>
     <Composer controlsDisabled={disabled()} streaming={true} queued={messages().length} commands={[]} agents={[]} models={[]} model={null}
       thinkingLevel="off" thinkingLevels={['off']} pendingMessages={messages()}
       onChangePending={async (...args) => { setMoves(values => [...values, args]); if (holdMoves()) await new Promise<void>((_resolve, reject) => { rejectMove = reject; }); }}
-      onSend={async () => {}} onPause={async () => {}} onResume={async () => {}} onAbort={async () => {}}
+      onSend={async () => {}} onAbort={async () => {}}
       onAgent={() => {}} onModel={() => {}} onThinking={() => {}} onToggleFastMode={async () => {}} />
   </div>
 </>, document.getElementById('root')!);

@@ -1,6 +1,6 @@
 import { array, clone, flag, jsonEqual, text } from './json';
 import type { Mutex } from '../util/sync';
-import { GOAL_ENTRY_ID, sortHeld, unique, type QueueState } from './queue_state';
+import { GOAL_ENTRY_ID, unique, type QueueState } from './queue_state';
 import type { QueueDelivery } from './queue_delivery';
 import { commandName } from '../plugin_contributions';
 import { queuedCommand } from './queue_submission';
@@ -30,7 +30,6 @@ export async function changePending(queue: QueueDelivery, gate: Mutex, id: strin
     if (action === 'steer' && queuedCommand(text(target, 'message'))) throw new Error('/' + commandName(text(target, 'message')) + ' can only be queued as a follow-up');
     assertOwner();
     if (cancelling) return await changeLive(queue, id, 'remove', undefined, action);
-    if (changeHeld(queue, id, behavior, neighbor, action)) { await queue.publish(); return null; }
     if (flag(target, 'retry')) return await retry(queue, id, target, behavior);
     return await changeLive(queue, id, behavior, neighbor, action);
   } finally { release(); }
@@ -45,20 +44,6 @@ function pendingChange(queue: QueueDelivery, id: string, action: any): { target:
   const neighbor = queueNeighbor(queue.state.pending, target, action, behavior);
   if (moving && (flag(target, 'retry') || neighbor === undefined)) return undefined;
   return { target, behavior, neighbor };
-}
-
-function changeHeld(queue: QueueDelivery, id: string, behavior: string, neighbor: string | undefined, action: any): boolean {
-  const state = queue.state;
-  const held = state.held;
-  if (!held || !held.some(item => item.id === id)) return false;
-  if (behavior === 'remove') state.held = held.filter(item => item.id !== id);
-  else if (behavior === 'steer' || behavior === 'followUp') {
-    const target = held.find(item => item.id === id);
-    if (target) { target.behavior = behavior; target.retry = false; }
-  } else if (neighbor !== undefined) moveItem(held, id, neighbor, action);
-  sortHeld(state.held!);
-  if (behavior === 'remove') state.remove(id);
-  return true;
 }
 
 async function retry(queue: QueueDelivery, id: string, target: any, behavior: string): Promise<any> {
@@ -179,14 +164,8 @@ async function changeWaiting(queue: QueueDelivery, item: any, action: string): P
   if (queuedCommand(text(item, 'message'))) throw new Error('/' + commandName(text(item, 'message')) + ' can only be queued as a follow-up');
   item.afterGoal = false;
   item.behavior = 'steer';
-  if (state.held) {
-    state.held.push(clone(item));
-    sortHeld(state.held);
-    await queue.record.persist();
-  } else {
-    await queue.record.persist();
-    try { await queue.deliver(item, false); } catch (error) { state.markRetry([item]); await queue.publish(); throw error; }
-  }
+  await queue.record.persist();
+  try { await queue.deliver(item, false); } catch (error) { state.markRetry([item]); await queue.publish(); throw error; }
   await queue.publish();
   return null;
 }
@@ -241,14 +220,6 @@ async function moveAroundGoal(queue: QueueDelivery, id: string, action: any): Pr
     state.pending = [...state.pending.filter(item => !nextBehind.includes(text(item, 'id'))), ...nextBehind.map(entry => byId.get(entry))];
   };
   const sameStart = ahead.every((entry, index) => nextAhead[index] === entry);
-  if (state.held) {
-    // Paused: Pi's queue is in the held items, so the move only reorders them.
-    arrange();
-    state.held = [...state.held.filter(item => item.behavior === 'steer'), ...nextAhead.map(entry => clone(byId.get(entry)))];
-    await queue.record.persist();
-    await queue.publish();
-    return null;
-  }
   if (sameStart) {
     const added = nextAhead.slice(ahead.length).map(entry => byId.get(entry));
     arrange();
