@@ -208,9 +208,9 @@ export class RuntimeWorker {
     const wire = wireCommand(command, id);
     const abort = kind(command) === 'abort';
     const timeout = abort ? 5000 : this.timeout;
-    // After a timed-out queued prompt, Pi may still accept it. A retry with the same queue ID would then add it twice,
-    // so Pi stops; the next start reconciles the queue with the saved transcript.
-    const stopOnTimeout = abort || requestType === 'queue_prompt';
+    // After a timed-out prompt, Pi may still accept it. A retry would then add it twice, and the sender could not know
+    // the outcome, so Pi stops; the next start reconciles the queue with the saved transcript.
+    const stopOnTimeout = abort || ['queue_prompt', 'prompt', 'compact'].includes(requestType);
     let entry!: Pending;
     const reply = new Promise<any>((resolve, reject) => { entry = { command, requestType, snapshotState, resolve, reject }; });
     reply.catch(() => {});
@@ -245,6 +245,12 @@ export class RuntimeWorker {
   async stop(): Promise<void> {
     if (this.closedFlag) return;
     this.signal(false);
+    await new Promise<void>(resolve => { if (this.closedFlag) resolve(); else this.closedWaiters.push(resolve); });
+  }
+
+  /** Resolves when Pi can no longer act on a request: at once while it runs, or once a stopping Pi has exited. */
+  async settled(): Promise<void> {
+    if (!this.exited || this.closedFlag) return;
     await new Promise<void>(resolve => { if (this.closedFlag) resolve(); else this.closedWaiters.push(resolve); });
   }
 }

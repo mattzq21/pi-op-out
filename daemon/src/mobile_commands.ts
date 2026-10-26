@@ -1,6 +1,7 @@
 import { newChatBranches } from './chat_worktrees';
 import { DEVELOPMENT } from './config';
 import * as endpoint from './daemon_endpoint';
+import * as daemon from './daemon';
 import * as daemonRestart from './daemon_restart';
 import * as peers from './peers';
 import * as plugins from './plugins';
@@ -150,6 +151,10 @@ const COMMANDS: Record<string, Handler> = {
   load_host_settings_change: app => loadSettingsChange(app),
   save_host_settings: (app, _owner, args) => saveHostSettings(app, args),
   host_storage_report: async () => ({ hosts: [await archives.inspectStorage()] }),
+  submission_outcome: async (app, _owner, args) => {
+    const connection = await daemon.connect(app, app.pi, app.broker, await loadAppSettings(app), 'local');
+    return connection.request({ type: 'submission_outcome', submissionId: argument(args, 'submissionId', 'string') });
+  },
   provider_auth: (app, owner, args) => providerAuth.forOwner(app, owner, argument(args, 'hostId', 'string?'), argument(args, 'request', 'any')),
   open_project_directory: async (app, _owner, args) => { await openProjectDirectory(app, argument(args, 'cwd', 'string'), argument(args, 'hostId', 'string?')); return null; },
   start_pi: async (app, owner, args) => {

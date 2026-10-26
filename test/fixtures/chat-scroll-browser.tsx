@@ -6,6 +6,7 @@ import '../../clients/ui/styles.css';
 const [messages, setMessages] = createSignal(Array.from({ length: 25 }, (_, index) => ({ id: crypto.randomUUID(), role: 'user', content: `Earlier message ${index}` })));
 const [streaming, setStreaming] = createSignal(false);
 window.appendScrollMessage = () => setMessages(items => [...items, { id: crypto.randomUUID(), role: 'assistant', content: 'More output\n\n'.repeat(15) }]);
+window.appendScrollTurn = () => setMessages(items => [...items, { id: crypto.randomUUID(), role: 'user', content: 'Another question' }, { id: crypto.randomUUID(), role: 'assistant', content: 'A long answer\n\n'.repeat(8) }]);
 window.streamAnswerLine = (line: string) => {
   setStreaming(true);
   setMessages(items => {

@@ -5,8 +5,17 @@ import * as Contributions from '../plugin_contributions';
 import type { Host } from './controller';
 import type { Session } from './session';
 
-/** Runs a command from the view that owns the session. Commands that change the session check ownership first. */
+/** Runs a command from the view that owns the session. A sent message has its outcome recorded by its submission ID. */
 export async function sessionCommand(host: Host, session: Session, runtime: string, command: any): Promise<any> {
+  const submission = ['prompt', 'steer', 'follow_up', 'compact'].includes(kind(command)) ? text(command, 'goalSubmissionId') : '';
+  if (!submission) return runSessionCommand(host, session, runtime, command);
+  // Pi compacts without a message, so the submission ID stays with the daemon.
+  if (kind(command) === 'compact') delete command.goalSubmissionId;
+  return host.submissions.run(submission, session.identity, () => runSessionCommand(host, session, runtime, command), () => session.settled());
+}
+
+/** Commands that change the session check ownership first. */
+async function runSessionCommand(host: Host, session: Session, runtime: string, command: any): Promise<any> {
   Contributions.pluginRequest(kind(command));
   const client = text(host.attachments.get(runtime), 'clientId');
   const assertOwner = () => {

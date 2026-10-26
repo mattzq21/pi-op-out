@@ -81,6 +81,7 @@ function initialize(db) {
       CREATE TABLE IF NOT EXISTS session_directories (session_id TEXT PRIMARY KEY REFERENCES sessions(session_id) ON DELETE CASCADE, cwd TEXT NOT NULL, checked_at INTEGER NOT NULL, directory_exists INTEGER NOT NULL);
       CREATE TABLE IF NOT EXISTS storage_transactions (id TEXT PRIMARY KEY, kind TEXT NOT NULL CHECK(kind IN ('archive', 'delete', 'restore')), state TEXT NOT NULL CHECK(state IN ('prepared', 'committed')), journal_json TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS chat_worktrees (chat_id TEXT PRIMARY KEY, record_json TEXT NOT NULL);
+      CREATE TABLE IF NOT EXISTS submission_outcomes (submission_id TEXT PRIMARY KEY, session_id TEXT NOT NULL, outcome TEXT NOT NULL CHECK(outcome IN ('received', 'accepted', 'rejected')), error TEXT, updated_at INTEGER NOT NULL);
 `);
 
     db.exec('COMMIT');

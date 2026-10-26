@@ -4,6 +4,7 @@ import type { ChatMessage, ImageAttachment } from "../types";
 import { ownDraftSubmission, releaseDraftSubmission, type DraftSubmissionHandle } from "./draftSubmission";
 import { discardSubmittedMessage, retainSubmittedMessage } from "./sessionMemory";
 import { CommandRejectedError } from "./commandRejected";
+import { confirmSubmission } from "./submissionOutcome";
 
 type Submission = { owner: NativeTransport; message: ChatMessage; status: string; durable: DraftSubmissionHandle };
 
@@ -36,12 +37,16 @@ export async function trackChatSubmission<T>(owner: NativeTransport, text: strin
   } catch (reason) {
     const error = reason instanceof Error ? reason.message : String(reason);
 
-    const uncertain = durable.wasDispatched() && !(reason instanceof CommandRejectedError);
+    if (!durable.wasDispatched() || reason instanceof CommandRejectedError) { await durable.reject(error); throw reason; }
+    // The reply was lost, so the host tells whether it accepted the message.
+    updateChatPreparation(owner, "Confirming the message…");
+    const outcome = await confirmSubmission(durable.owner().currentHostId(), durable.id, failure => updateChatPreparation(owner, `Confirming the message… ${failure}`));
 
-    if (uncertain) await durable.uncertain(error);
-    else await durable.reject(error);
-    retain = uncertain && !text.trimStart().startsWith("/");
-    throw reason;
+    if (!outcome?.accepted) { const refusal = outcome?.error ?? error; await durable.reject(refusal); throw new CommandRejectedError(refusal, "daemon"); }
+    await durable.accept();
+    retain = !text.trimStart().startsWith("/");
+
+    return undefined as T;
   } finally {
     releaseDraftSubmission(durable, owner);
     releaseDraftSubmission(durable);

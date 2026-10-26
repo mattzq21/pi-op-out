@@ -11,8 +11,9 @@ export class ConversationCommands {
 
     if (compact) {
       const customInstructions = compact[1]?.trim();
+      const submission = command.goalSubmissionId ? { goalSubmissionId: command.goalSubmissionId } : {};
 
-      return customInstructions ? { type: "compact", customInstructions } : { type: "compact" };
+      return customInstructions ? { type: "compact", customInstructions, ...submission } : { type: "compact", ...submission };
     }
 
     return command;
