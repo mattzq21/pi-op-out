@@ -29,15 +29,7 @@ import { Type as Schema, type Static } from "typebox";
 import { Check } from "typebox/value";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 
-const DEFAULT_BASE_URL = "https://chatgpt.com/backend-api";
-
-function codexEndpoint(baseUrl: string | undefined): string {
-  const normalized = (baseUrl?.trim() || DEFAULT_BASE_URL).replace(/\/+$/, "");
-
-  if (normalized.endsWith("/codex/responses")) return normalized;
-
-  return normalized.endsWith("/codex") ? `${normalized}/responses` : `${normalized}/codex/responses`;
-}
+const LOGIN_HINT = "Use Pi /login → OpenAI (Sign in with ChatGPT) on this host.";
 
 const TIMEOUT_MS = 60_000;
 
@@ -57,24 +49,24 @@ function record(value: unknown): value is RecordValue {
 }
 
 function rankedModels(ctx: ExtensionContext) {
-  const isCodex = (model: NonNullable<ExtensionContext["model"]>) =>
-    model.provider === "openai-codex" && model.api === "openai-codex-responses";
+  const isOpenAI = (model: NonNullable<ExtensionContext["model"]>) =>
+    model.provider === "openai" && model.api === "openai-responses";
 
   const override = process.env.PIOP_WEB_SEARCH_MODEL?.trim();
-  const models = ctx.modelRegistry.getAll().filter(isCodex);
+  const models = ctx.modelRegistry.getAll().filter(isOpenAI);
   const fastEnough = (model: NonNullable<ExtensionContext["model"]>) => !model.id.split("-").some((part) => part === "pro" || part === "ultra");
 
   const candidates = models.filter(fastEnough)
     .sort((a, b) => b.id.localeCompare(a.id, undefined, { numeric: true }));
 
   const ranked = override ? models.filter((model) => model.id === override) : [
-    ...ctx.model && isCodex(ctx.model) && fastEnough(ctx.model) ? [ctx.model] : [],
+    ...ctx.model && isOpenAI(ctx.model) && fastEnough(ctx.model) ? [ctx.model] : [],
     ...candidates.filter((model) => model.id.includes("terra")),
     ...candidates.filter((model) => /^gpt-\d+(\.\d+)?$/.test(model.id)),
     ...candidates,
   ];
 
-  if (override && !ranked.length) throw new Error(`Unknown Codex web search model: ${override}`);
+  if (override && !ranked.length) throw new Error(`Unknown OpenAI web search model: ${override}`);
 
   return ranked;
 }
@@ -90,21 +82,11 @@ async function selectModel(ctx: ExtensionContext) {
     seen.add(key);
     const auth = await ctx.modelRegistry.getApiKeyAndHeaders(model);
 
-    if (auth.ok && auth.apiKey) return { model, auth };
+    // OpenAI API keys start with sk-; any other OpenAI credential is a Sign in with ChatGPT token.
+    if (auth.ok && auth.apiKey && !auth.apiKey.startsWith("sk-")) return { model, apiKey: auth.apiKey, extraHeaders: auth.headers };
   }
 
-  throw new Error("Codex web search needs an authenticated openai-codex account. Use Pi /login on this host.");
-}
-
-function accountId(token: string): string {
-  try {
-    const payload = JSON.parse(Buffer.from(token.split(".")[1], "base64url").toString("utf8"));
-    const id = payload?.["https://api.openai.com/auth"]?.chatgpt_account_id;
-
-    if (Check(Schema.String(), id) && id.trim()) return id;
-  } catch { }
-
-  throw new Error("Codex account ID is missing. Sign in again with Pi /login on this host.");
+  throw new Error(`Web search needs an OpenAI ChatGPT sign-in. ${LOGIN_HINT}`);
 }
 
 function normalizeDomains(domains: string[] = []): string[] {
@@ -121,10 +103,10 @@ function normalizeDomains(domains: string[] = []): string[] {
 
 function responseError(payload: RecordValue): string | undefined {
   if (payload.error) {
-    return record(payload.error) && Check(Schema.String(), payload.error.message) ? payload.error.message : "Codex web search failed";
+    return record(payload.error) && Check(Schema.String(), payload.error.message) ? payload.error.message : "Web search failed";
   }
 
-  if (payload.status && payload.status !== "completed") return `Codex web search response was ${payload.status}`;
+  if (payload.status && payload.status !== "completed") return `Web search response was ${payload.status}`;
 }
 
 function streamEvent(frame: string) {
@@ -137,7 +119,7 @@ function streamEvent(frame: string) {
 
   if (["error", "response.failed", "response.incomplete"].includes(String(event.type))) {
     const failure = record(event.response) ? event.response : event;
-    throw new Error(responseError(failure) ?? (Check(Schema.String(), event.message) ? event.message : "Codex web search failed"));
+    throw new Error(responseError(failure) ?? (Check(Schema.String(), event.message) ? event.message : "Web search failed"));
   }
 
   return event;
@@ -166,19 +148,19 @@ function parseResponse(text: string): RecordValue[] {
   if (text.trimStart().startsWith("{")) {
     const payload: unknown = JSON.parse(text);
 
-    if (!record(payload)) throw new Error("Invalid Codex web search response");
+    if (!record(payload)) throw new Error("Invalid web search response");
     completed = payload;
   } else {
     completed = streamResponse(text, items);
   }
 
-  if (!completed) throw new Error("Codex web search stream ended before completion. Try the search again.");
+  if (!completed) throw new Error("Web search stream ended before completion. Try the search again.");
   const error = responseError(completed);
 
   if (error) throw new Error(error);
   const output = Array.isArray(completed.output) && completed.output.length ? completed.output.filter(record) : items;
 
-  if (!output.some((item) => item.type === "web_search_call")) throw new Error("Codex returned an answer without performing a web search.");
+  if (!output.some((item) => item.type === "web_search_call")) throw new Error("OpenAI returned an answer without performing a web search.");
 
   return output;
 }
@@ -241,7 +223,7 @@ function extractResult(output: RecordValue[]) {
 
   const answer = parts.join("\n").trim();
 
-  if (!answer && !sources.length) throw new Error("Codex web search returned no answer or sources.");
+  if (!answer && !sources.length) throw new Error("Web search returned no answer or sources.");
 
   return { answer, sources };
 }
@@ -251,19 +233,16 @@ function searchHeaders(apiKey: string, extra: Record<string, string | null> | un
 
   for (const [key, value] of Object.entries(extra ?? {})) if (value !== null) headers.set(key, value);
   headers.set("Authorization", `Bearer ${apiKey}`);
-  headers.set("chatgpt-account-id", accountId(apiKey));
   headers.set("Content-Type", "application/json");
   headers.set("Accept", "text/event-stream");
-  headers.set("OpenAI-Beta", "responses=experimental");
-  headers.set("originator", "pi");
 
   return headers;
 }
 
 function searchFailure(cause: unknown, apiKey: string, timeout: AbortSignal, signal?: AbortSignal) {
-  if (signal?.aborted) return new Error("Codex web search cancelled.");
+  if (signal?.aborted) return new Error("Web search cancelled.");
 
-  if (timeout.aborted) return new Error("Codex web search timed out after 60 seconds. Try a narrower query.");
+  if (timeout.aborted) return new Error("Web search timed out after 60 seconds. Try a narrower query.");
 
   return new Error((cause instanceof Error ? cause.message : String(cause)).split(apiKey).join("[redacted]"));
 }
@@ -289,16 +268,14 @@ export default function codexWebSearch(pi: ExtensionAPI) {
       if (!query) throw new Error("Search query cannot be empty.");
       const domains = normalizeDomains(params.domains);
       signal?.throwIfAborted();
-      const { model, auth } = await selectModel(ctx);
-
-      if (!auth.ok || !auth.apiKey) throw new Error("Codex web search authentication is unavailable. Use Pi /login on this host.");
+      const { model, apiKey, extraHeaders } = await selectModel(ctx);
       signal?.throwIfAborted();
-      const headers = searchHeaders(auth.apiKey, auth.headers);
+      const headers = searchHeaders(apiKey, extraHeaders);
       const timeout = AbortSignal.timeout(TIMEOUT_MS);
       const searchTool = domains.length ? { type: "web_search", filters: { allowed_domains: domains } } : { type: "web_search" };
 
       try {
-        const response = await fetch(codexEndpoint(model.baseUrl), {
+        const response = await fetch(`${model.baseUrl.replace(/\/+$/, "")}/responses`, {
           method: "POST", headers,
           signal: signal ? AbortSignal.any([signal, timeout]) : timeout,
           body: JSON.stringify({
@@ -313,7 +290,7 @@ export default function codexWebSearch(pi: ExtensionAPI) {
 
         const text = await response.text();
 
-        if (!response.ok) throw new Error(`Codex web search HTTP ${response.status}: ${text.split(auth.apiKey).join("[redacted]").slice(0, 300)}`);
+        if (!response.ok) throw new Error(`Web search HTTP ${response.status}: ${text.split(apiKey).join("[redacted]").slice(0, 300)}`);
         const result = extractResult(parseResponse(text));
 
         return {
@@ -321,7 +298,7 @@ export default function codexWebSearch(pi: ExtensionAPI) {
           details: { model: model.id, ...result },
         };
       } catch (error) {
-        throw searchFailure(error, auth.apiKey, timeout, signal);
+        throw searchFailure(error, apiKey, timeout, signal);
       }
     },
   });

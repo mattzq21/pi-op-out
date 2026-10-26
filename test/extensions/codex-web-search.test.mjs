@@ -13,7 +13,7 @@ await build({ entryPoints: ['extensions/piop-codex-web-search/index.ts'], outfil
   plugins: [{ name: 'pi-ai', setup(api) { api.onResolve({ filter: /^@earendil-works\/pi-ai$/ }, () => ({ path: 'pi-ai', namespace: 'sdk' })); api.onLoad({ filter: /.*/, namespace: 'sdk' }, () => ({ contents: 'export { Type } from "typebox";', resolveDir: process.cwd() })); } }] });
 const { default: register } = await import(pathToFileURL(outfile));
 
-/** The Codex endpoint. reply decides each answer; requests keeps what the tool sent. */
+/** The OpenAI Responses endpoint. reply decides each answer; requests keeps what the tool sent. */
 const requests = [];
 let reply = () => ({ status: 500, body: 'no reply set' });
 let baseUrl;
@@ -26,14 +26,14 @@ const server = createServer((request, response) => {
     response.writeHead(status, { 'content-type': 'text/event-stream' }).end(text);
   });
 });
-before(() => new Promise(resolve => server.listen(0, '127.0.0.1', () => { baseUrl = `http://127.0.0.1:${server.address().port}/backend-api`; resolve(); })));
+before(() => new Promise(resolve => server.listen(0, '127.0.0.1', () => { baseUrl = `http://127.0.0.1:${server.address().port}/v1`; resolve(); })));
 after(async () => { server.close(); await rm(dir, { recursive: true, force: true }); });
 
-const token = ['e30', Buffer.from(JSON.stringify({ 'https://api.openai.com/auth': { chatgpt_account_id: 'acct-7' } })).toString('base64url'), 'sig'].join('.');
-const codex = id => ({ provider: 'openai-codex', api: 'openai-codex-responses', id, baseUrl });
+const token = 'chatgpt-sign-in-token';
+const openai = id => ({ provider: 'openai', api: 'openai-responses', id, baseUrl });
 const sse = events => events.map(event => `data: ${JSON.stringify(event)}\n\n`).join('') + 'data: [DONE]\n\n';
 
-function webSearch({ models = [codex('gpt-5.4')], current = models[0], auth = () => ({ ok: true, apiKey: token }) } = {}) {
+function webSearch({ models = [openai('gpt-5.4')], current = models[0], auth = () => ({ ok: true, apiKey: token }) } = {}) {
   let tool;
   register({ registerTool: definition => { tool = definition; } });
   const ctx = { model: current, modelRegistry: { getAll: () => models, getApiKeyAndHeaders: async model => auth(model) } };
@@ -52,8 +52,8 @@ test('a streamed search returns the answer with each source once, without OpenAI
   const result = await webSearch()({ query: '  pi release  ', domains: ['https://Docs.Example.org/path', 'docs.example.org'] });
   assert.equal(result.content[0].text, 'Pi 1.1 is out.\n\nSources:\n1. Pi docs: https://docs.example.org/a\n2. Pi news: https://news.example.com/pi');
   const sent = requests.at(-1);
-  assert.equal(sent.url, '/backend-api/codex/responses');
-  assert.equal(sent.headers['chatgpt-account-id'], 'acct-7');
+  assert.equal(sent.url, '/v1/responses');
+  assert.equal(sent.headers.authorization, `Bearer ${token}`);
   assert.equal(sent.body.input[0].content[0].text, 'pi release');
   assert.deepEqual(sent.body.tools, [{ type: 'web_search', filters: { allowed_domains: ['docs.example.org'] } }]);
 });
@@ -62,24 +62,25 @@ test('failed searches say why and never show the login token', async () => {
   const search = webSearch();
   const failure = () => search({ query: 'q' }).then(() => 'succeeded', error => error.message);
   reply = () => ({ status: 401, body: 'bad token ' + token });
-  assert.equal(await failure(), 'Codex web search HTTP 401: bad token [redacted]');
+  assert.equal(await failure(), 'Web search HTTP 401: bad token [redacted]');
   reply = () => ({ body: sse([{ type: 'response.completed', response: { status: 'completed', output: [answer('From memory.')] } }]) });
-  assert.equal(await failure(), 'Codex returned an answer without performing a web search.');
+  assert.equal(await failure(), 'OpenAI returned an answer without performing a web search.');
   reply = () => ({ body: sse([{ type: 'response.failed', response: { error: { message: 'Rate limit reached' } } }]) });
   assert.equal(await failure(), 'Rate limit reached');
   reply = () => ({ body: sse([{ type: 'response.output_item.done', item: searched }]) });
-  assert.equal(await failure(), 'Codex web search stream ended before completion. Try the search again.');
+  assert.equal(await failure(), 'Web search stream ended before completion. Try the search again.');
   assert.match(await search({ query: 'q', domains: ['not a domain'] }).then(() => '', error => error.message), /^Invalid search domain: not a domain$/);
 });
 
-test('the search uses a fast, signed-in Codex model, preferring the one in use', async () => {
+test('the search uses a fast OpenAI model signed in with ChatGPT, preferring the one in use', async () => {
   reply = () => ({ body: sse([{ type: 'response.completed', response: { status: 'completed', output: [searched, answer('ok')] } }]) });
   const usedModel = async options => (await webSearch(options)({ query: 'q' })).details.model;
-  const models = [codex('gpt-5.2'), codex('gpt-5.4-pro'), codex('gpt-5.3-mini'), codex('gpt-5.4')];
-  assert.equal(await usedModel({ models, current: codex('gpt-5.3-mini') }), 'gpt-5.3-mini');
-  assert.equal(await usedModel({ models, current: codex('gpt-5.4-pro') }), 'gpt-5.4');
+  const models = [openai('gpt-5.2'), openai('gpt-5.4-pro'), openai('gpt-5.3-mini'), openai('gpt-5.4')];
+  assert.equal(await usedModel({ models, current: openai('gpt-5.3-mini') }), 'gpt-5.3-mini');
+  assert.equal(await usedModel({ models, current: openai('gpt-5.4-pro') }), 'gpt-5.4');
   assert.equal(await usedModel({ models, current: { provider: 'anthropic', api: 'anthropic-messages', id: 'claude' } }), 'gpt-5.4');
   assert.equal(await usedModel({ models, auth: model => model.id === 'gpt-5.2' ? { ok: true, apiKey: token } : { ok: false } }), 'gpt-5.2');
-  assert.equal(await webSearch({ models, auth: () => ({ ok: false }) })({ query: 'q' }).then(() => '', error => error.message),
-    'Codex web search needs an authenticated openai-codex account. Use Pi /login on this host.');
+  const needsSignIn = 'Web search needs an OpenAI ChatGPT sign-in. Use Pi /login → OpenAI (Sign in with ChatGPT) on this host.';
+  assert.equal(await webSearch({ models, auth: () => ({ ok: false }) })({ query: 'q' }).then(() => '', error => error.message), needsSignIn);
+  assert.equal(await webSearch({ models, auth: () => ({ ok: true, apiKey: 'sk-api-key' }) })({ query: 'q' }).then(() => '', error => error.message), needsSignIn);
 });
