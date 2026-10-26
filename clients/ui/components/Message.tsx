@@ -76,7 +76,7 @@ function PinButton(props: { message: ChatMessage; text: string }) {
       void owner().toggle(props.message, props.text).finally(() => setBusy(false));
     };
 
-    return <button type="button" class="message-pin" classList={{ pinned: pinned() }} aria-pressed={pinned()} aria-label={pinned() ? "Unpin message" : "Pin message"} data-tooltip={pinned() ? "Unpin" : "Pin"} disabled={busy()} onClick={toggle}><Pin size={14} /></button>;
+    return <button type="button" class="message-pin" classList={{ pinned: pinned() }} aria-pressed={pinned()} aria-label={pinned() ? "Unpin message" : "Pin message"} data-tooltip={pinned() ? "Unpin" : "Pin"} disabled={busy()} onClick={toggle}><Pin size={17} /></button>;
   }}</Show>;
 }
 

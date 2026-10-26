@@ -632,9 +632,9 @@ textarea::placeholder { color: var(--faint); }
 .message-body, .user-message-images { position: relative; }
 /* A turn clips what it paints to its box. Its padding holds the pin buttons outside the messages. */
 .deferred-turn { margin-inline: -36px; padding-inline: 36px; }
-.message-pin { position: absolute; top: 4px; left: -34px; width: 26px; height: 26px; display: grid; place-items: center; padding: 0; border: 0; border-radius: 6px; background: transparent; color: var(--faint); cursor: pointer; opacity: 0; transition: opacity .15s; }
-.user-message .message-pin { left: auto; right: -34px; top: 6px; }
-.assistant-message .message-pin { top: 2px; }
+.message-pin { position: absolute; top: 2px; left: -35px; width: 30px; height: 30px; display: grid; place-items: center; padding: 0; border: 0; border-radius: 6px; background: transparent; color: var(--faint); cursor: pointer; opacity: 0; transition: opacity .15s; }
+.user-message .message-pin { left: auto; right: -35px; top: 4px; }
+.assistant-message .message-pin { top: 0; }
 .message:focus-within .message-pin, .message-pin:focus-visible { opacity: 1; }
 @media (hover: hover) { .message:hover .message-pin { opacity: 1; } }
 @media (pointer: coarse) { .message-pin { opacity: .6; } }
@@ -649,8 +649,8 @@ textarea::placeholder { color: var(--faint); }
 .pinned-message-unpin { flex: none; width: 24px; height: 24px; display: grid; place-items: center; padding: 0; border: 0; border-radius: 6px; background: transparent; color: var(--faint); cursor: pointer; }
 .pinned-message-text:hover, .pinned-message-unpin:hover { color: var(--ink); background: var(--dark-control-hover); }
 @media (max-width: 700px) {
-  .deferred-turn { margin-inline: -20px; padding-inline: 20px; }
-  .message-pin { left: -20px; width: 20px; }
-  .user-message .message-pin { left: auto; right: -20px; }
+  .deferred-turn { margin-inline: -22px; padding-inline: 22px; }
+  .message-pin { left: -21px; width: 22px; height: 26px; }
+  .user-message .message-pin { left: auto; right: -21px; }
   .pinned-messages { width: calc(100% - 16px); }
 }
