@@ -94,6 +94,12 @@ export function normalizeMessage(message: Partial<WireMessage> | null | undefine
 
 export { applyAssistantMessageEvent } from "./messageEvents";
 
+/** The tool entry title, such as "read" or "read(image)" when the result contains an image. */
+export function toolTitle(message: ChatMessage): string {
+  const name = message.toolName || "tool";
+  return message.toolImage ? `${name}(image)` : name;
+}
+
 function entryBranch(entries: PiEntry[], leafId: string | null): PiEntry[] {
   const list = Array.isArray(entries) ? entries : [];
   const byId = new Map<string, PiEntry>();
