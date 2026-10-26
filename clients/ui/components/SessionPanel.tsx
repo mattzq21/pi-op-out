@@ -522,6 +522,15 @@ export function SessionPanel(props: Props) {
       if (!archiving()) void panel().onAction(session(), "archive");
     };
 
+    // A tap reveals the hidden archive button through hover or focus before the browser picks the click target, so the click then lands on it.
+    // A touch click counts only when the touch began on the already visible button. Other touch clicks select the session, as the user tapped the row.
+    let touchBeganOnArchive = false;
+
+    const clickArchive = (event: MouseEvent & { currentTarget: HTMLButtonElement }) => {
+      if ("pointerType" in event && event.pointerType === "touch" && !touchBeganOnArchive) return event.currentTarget.parentElement?.querySelector<HTMLButtonElement>(".session-main")?.click();
+      archive();
+    };
+
     const accessibleActivity = () => running() ? "Running" : activity();
     const target = createMemo(() => dropTarget()?.projectKey === projectKey && dropTarget()?.sessionKey === key() ? dropTarget()?.edge : undefined);
     const drag = () => ({ projectKey, sessionKey: key(), session: session() });
@@ -539,10 +548,10 @@ export function SessionPanel(props: Props) {
 
       panel().onSelect(session()); }}><span class="session-copy"><span class="session-title-row"><Show when={pickedProject(session())}><Folder class="session-leading-icon" size={14} aria-hidden="true" /></Show><strong>{session().name}</strong><span class="session-api-cost" data-tooltip="Would-be API cost">{formatApiCost(session().apiCost)}</span></span></span></button>);
 
-    const renderArchiveButton = () => (<button class="session-archive" aria-busy={archiving()} aria-label={`${archiving() ? "Archiving" : "Archive"} ${session().name}`} data-tooltip={!isSavedSession(session()) ? "Send a message before archiving this draft" : `${archiving() ? "Archiving" : "Archive"} ${session().name}`} disabled={archiving() || !isSavedSession(session())} onClick={() => void archive()}><Show when={archiving()} fallback={<Archive size={14} />}><LoaderCircle size={14} class="spinning" /></Show></button>);
+    const renderArchiveButton = () => (<button class="session-archive" aria-busy={archiving()} aria-label={`${archiving() ? "Archiving" : "Archive"} ${session().name}`} data-tooltip={!isSavedSession(session()) ? "Send a message before archiving this draft" : `${archiving() ? "Archiving" : "Archive"} ${session().name}`} disabled={archiving() || !isSavedSession(session())} onClick={clickArchive}><Show when={archiving()} fallback={<Archive size={14} />}><LoaderCircle size={14} class="spinning" /></Show></button>);
 
 
-    return <div data-sidebar-token={sessionLayoutToken(key())} data-session-key={key()} data-project-key={projectKey} class={`session-item ${!normalizedQuery() ? "reorderable" : ""} ${isActiveSession(session()) ? "active" : ""} ${running() ? "running" : activity() ? "unseen" : ""} ${draggedSession()?.sessionKey === key() ? "dragging" : ""} ${target() ? `drop-${target()}` : ""}`} onContextMenu={(event) => { event.preventDefault();
+    return <div data-sidebar-token={sessionLayoutToken(key())} data-session-key={key()} data-project-key={projectKey} onPointerDown={(event) => { touchBeganOnArchive = event.pointerType === "touch" && event.target instanceof Element && event.target.closest(".session-archive") !== null; }} class={`session-item ${!normalizedQuery() ? "reorderable" : ""} ${isActiveSession(session()) ? "active" : ""} ${running() ? "running" : activity() ? "unseen" : ""} ${draggedSession()?.sessionKey === key() ? "dragging" : ""} ${target() ? `drop-${target()}` : ""}`} onContextMenu={(event) => { event.preventDefault();
 
       if (touchHoldRef.current) return; openSessionMenu(event.clientX, event.clientY, document.activeElement instanceof HTMLElement ? document.activeElement : event.currentTarget.querySelector<HTMLElement>(".session-main") ?? undefined); }}>
       {renderSessionMain()}

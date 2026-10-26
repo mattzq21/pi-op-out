@@ -428,3 +428,16 @@ test('starting a new chat closes the new-group form that the Group button opened
   await panel.render({ newChatRequest: 2 });
   assert.ok(control('Group actions for Kept'), 'existing groups stay');
 });
+
+test('a touch tap archives only when the touch began on the visible archive button', async t => {
+  const selected = [], actions = [];
+  await fixture(t, { sessions: [session('a', 'Tapped chat')], onSelect: value => selected.push(value), onAction: (...args) => actions.push(args) });
+  const archiveButton = control('Archive Tapped chat');
+  const touch = (type, target) => { const event = new MouseEvent(type, { bubbles: true, cancelable: true }); Object.defineProperty(event, 'pointerType', { value: 'touch' }); target.dispatchEvent(event); };
+  await act(() => { touch('pointerdown', row('a')); touch('click', archiveButton); });
+  assert.deepEqual(actions, []);
+  assert.equal(selected.length, 1);
+  await act(() => { touch('pointerdown', archiveButton); touch('click', archiveButton); });
+  assert.equal(actions.length, 1);
+  assert.equal(actions[0][1], 'archive');
+});
