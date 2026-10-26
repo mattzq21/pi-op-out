@@ -69,7 +69,8 @@ function sanitizeMarkdown(html: string, streaming: boolean, detectFiles: boolean
   return template.innerHTML;
 }
 
-type LinkMenu = { href: string; x: number; y: number; returnFocus?: HTMLElement };
+/** text: the web address or the full file path that the menu copies. */
+type LinkMenu = { kind: "web" | "file"; text: string; x: number; y: number; returnFocus?: HTMLElement };
 
 /** fileLinks: plain absolute and ~ paths in the text become file links. */
 export function Markdown(props: { children: string; streaming?: boolean; imageProject?: FileProject; fileLinks?: boolean }) {
@@ -244,15 +245,17 @@ export function Markdown(props: { children: string; streaming?: boolean; imagePr
   };
 
   const contextMenu = (event: MouseEvent) => {
-    const link = event.target instanceof Element ? event.target.closest<HTMLAnchorElement>("a") : null;
+    if (!(event.target instanceof Element)) return;
+    const fileLink = event.target.closest<HTMLElement>(".message-link[data-file-reference], button.file-link");
+    const link = fileLink ?? event.target.closest<HTMLAnchorElement>("a");
 
     if (!link) return;
-    const href = webUrl(link.href);
+    const text = fileLink ? fileLinkTooltip(required(fileLink.dataset.fileReference), fileScope?.cwd()) : webUrl((link as HTMLAnchorElement).href);
 
-    if (!href) return;
+    if (!text) return;
     event.preventDefault();
     const bounds = link.getBoundingClientRect();
-    setMenu({ href, x: event.clientX || bounds.left, y: event.clientY || bounds.bottom, returnFocus: document.activeElement instanceof HTMLElement ? document.activeElement : link });
+    setMenu({ kind: fileLink ? "file" : "web", text, x: event.clientX || bounds.left, y: event.clientY || bounds.bottom, returnFocus: document.activeElement instanceof HTMLElement ? document.activeElement : link });
   };
 
   const copyLink = async () => { const capturedMenu = menu();
@@ -261,7 +264,7 @@ export function Markdown(props: { children: string; streaming?: boolean; imagePr
     if (!current) return;
     setError(undefined);
 
-    try { await copyText(current.href); } catch { setError("Could not copy link"); }
+    try { await copyText(current.text); } catch { setError(current.kind === "file" ? "Could not copy path" : "Could not copy link"); }
 
     close(true);
   };
@@ -271,7 +274,7 @@ export function Markdown(props: { children: string; streaming?: boolean; imagePr
     <div ref={root} class="markdown-content" onClick={click} onContextMenu={contextMenu} onAuxClick={event => event.preventDefault()} />
     <Show when={menu()}>{current => <Portal mount={root?.closest(".app") ?? document.body}>
       <div ref={setMenuElement} class="conversation-menu link-context-menu" role="menu" aria-label="Link actions" style={{ left: `${current().x}px`, top: `${current().y}px` }} onContextMenu={event => event.preventDefault()}>
-        <button type="button" role="menuitem" onClick={() => void copyLink()}><Copy size={14} />Copy link</button>
+        <button type="button" role="menuitem" onClick={() => void copyLink()}><Copy size={14} />{current().kind === "file" ? "Copy path" : "Copy link"}</button>
       </div>
     </Portal>}</Show>
     <Show when={error()}><span class="message-link-error" role="alert">{error()}</span></Show>

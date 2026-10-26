@@ -1,6 +1,5 @@
 .mobile-sidebar-toggle { display: none; align-items: center; justify-content: center; flex-shrink: 0; min-width: 44px; min-height: 44px; border: 0; border-radius: 8px; background: var(--paper); color: var(--ink); font-size: 18px; }
-.app > .mobile-sidebar-toggle, .icon-rail nav > .mobile-sidebar-toggle { position: fixed; z-index: 20; top: calc(4px + env(safe-area-inset-top)); left: max(8px, env(safe-area-inset-left)); }
-html[data-mobile] .icon-rail nav:has(> .mobile-sidebar-toggle) { padding-left: 56px; flex-wrap: wrap; }
+.app > .mobile-sidebar-toggle { position: fixed; z-index: 20; top: calc(4px + env(safe-area-inset-top)); left: max(8px, env(safe-area-inset-left)); }
 html[data-mobile] .mobile-sidebar-toggle { display: flex; }
 html[data-mobile] body { min-width: 0; }
 html[data-mobile] .app { padding-top: env(safe-area-inset-top); }
@@ -47,7 +46,6 @@ html[data-mobile] .app:has(.icon-rail:not(.compact)) ~ .mobile-reconnect-banner 
   body { min-width: 0; min-height: 100dvh; }
   .app { height: var(--mobile-height, 100dvh); padding-top: env(safe-area-inset-top); padding-bottom: env(safe-area-inset-bottom); }
   .mobile-sidebar-toggle { display: flex; }
-  .icon-rail nav:has(> .mobile-sidebar-toggle) { padding-left: 56px; flex-wrap: wrap; }
 
 
   .app > .icon-rail { position: absolute; top: env(safe-area-inset-top); bottom: env(safe-area-inset-bottom); left: 0; width: min(85vw, 340px); z-index: 19; }

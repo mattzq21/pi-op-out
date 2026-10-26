@@ -514,7 +514,8 @@ function createChatSession(transport: Accessor<Pick<NativeTransport, "command" |
 
     const handleToolExecutionStart = () => {
       if (event.parentToolCallId) return;
-      const message: ChatMessage = { id: String(event.toolCallId), role: "tool", toolName: String(event.toolName), toolStatus: "running", content: "", timestamp: Date.now() };
+      const elapsedMs = typeof event.elapsedMs === "number" && event.elapsedMs > 0 ? event.elapsedMs : 0;
+      const message: ChatMessage = { id: String(event.toolCallId), role: "tool", toolName: String(event.toolName), toolStatus: "running", content: "", timestamp: Date.now() - elapsedMs };
       session.setMessages(current => upsertLiveMessage(current, message));
     };
 

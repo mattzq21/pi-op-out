@@ -5,7 +5,8 @@ import { pluginMessageRenderer } from "../plugins/messages";
 import { AgentDelivery } from "./AgentDelivery";
 import { GoalPrompt } from "./GoalPrompt";
 import { Key } from "@solid-primitives/keyed";
-import { type Accessor, createMemo, createSignal, Index, Show, useContext } from "solid-js";
+import { type Accessor, createMemo, createSignal, Index, onCleanup, Show, useContext } from "solid-js";
+import { formatDuration } from "../lib/duration";
 import { ConversationImageProject } from "./markdownImages";
 import { createDependencyEffect, createRef } from "../lib/solid";
 
@@ -112,7 +113,16 @@ function MessageCopyButton(componentProps: { state: "idle" | "copied" | "error";
 }
 
 function ToolLabel(componentProps: { message: ChatMessage; toolCount: number; status: string }) {
-  return <>{componentProps.message.toolName !== "codemode" && <Wrench size={14} />}<span><strong>{toolTitle(componentProps.message)}{componentProps.toolCount > 1 ? ` x${componentProps.toolCount}` : ""}</strong><small>{componentProps.status === "running" ? "Running…" : componentProps.status === "error" ? "Failed" : componentProps.status === "unfinished" ? "Unfinished" : "Completed"}</small></span></>;
+  return <>{componentProps.message.toolName !== "codemode" && <Wrench size={14} />}<span><strong>{toolTitle(componentProps.message)}{componentProps.toolCount > 1 ? ` x${componentProps.toolCount}` : ""}</strong><small>{componentProps.status === "running" ? "Running…" : componentProps.status === "error" ? "Failed" : componentProps.status === "unfinished" ? "Unfinished" : "Completed"}</small><Show when={componentProps.status === "running" && componentProps.message.timestamp}>{startedAt => <ToolElapsed startedAt={startedAt()} />}</Show></span></>;
+}
+
+/** Time since a running tool started, updated each second. */
+function ToolElapsed(componentProps: { startedAt: number }) {
+  const [now, setNow] = createSignal(Date.now());
+  const timer = setInterval(() => setNow(Date.now()), 1000);
+  onCleanup(() => clearInterval(timer));
+
+  return <small class="tool-elapsed" aria-label="Running time">{formatDuration(now() - componentProps.startedAt)}</small>;
 }
 
 function ToolPayload(componentProps: { message: ChatMessage; loading: boolean; error?: string; retry: () => void }) {

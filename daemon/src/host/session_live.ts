@@ -5,6 +5,8 @@ import { assistantDelta } from './payload';
 export class LiveOutput {
   private messages: Array<[string, any]> = [];
   private tools: Array<[string, any]> = [];
+  /** When each running tool started, by tool call id. */
+  private started = new Map<string, number>();
 
   receive(event: any): void {
     switch (kind(event)) {
@@ -34,18 +36,20 @@ export class LiveOutput {
         const id = text(event, 'toolCallId');
         const found = this.tools.find(([key]) => key === id);
         const tool = found ? clone(found[1]) : {};
+        if (!this.started.has(id)) this.started.set(id, Date.now());
         merge(tool, clone(event));
         tool.type = 'tool_execution_start';
         setEntry(this.tools, id, tool);
         break;
       }
-      case 'tool_execution_end': this.tools = this.tools.filter(([id]) => event.toolCallId !== id); break;
+      case 'tool_execution_end': this.tools = this.tools.filter(([id]) => event.toolCallId !== id); this.started.delete(text(event, 'toolCallId')); break;
     }
   }
 
   clear(): void {
     this.messages = [];
     this.tools = [];
+    this.started.clear();
   }
 
   /** The payload of a running tool, or undefined when the tool is not running. */
@@ -58,7 +62,11 @@ export class LiveOutput {
     return result;
   }
 
-  runningTools(): any[] { return this.tools.map(([, value]) => clone(value)); }
+  /** Running tools as start events. elapsedMs is the time since the tool started, so clients do not depend on the host clock. */
+  runningTools(): any[] {
+    const now = Date.now();
+    return this.tools.map(([id, value]) => ({ ...clone(value), elapsedMs: now - (this.started.get(id) ?? now) }));
+  }
 
   /** Adds streamed messages that the saved history does not hold yet to its end. */
   addTo(history: any): void {
