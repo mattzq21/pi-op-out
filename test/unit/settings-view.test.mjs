@@ -423,6 +423,12 @@ describe('settings editor', () => {
     assert.equal(control('Context window cap').disabled, true);
   });
 
+  test('the context cap input keeps leading zeros while editing', async () => {
+    await render();
+    await enterText(control('Context window cap'), '00000');
+    assert.equal(control('Context window cap').value, '00000');
+  });
+
   test('a context cap below the minimum cannot be saved', async () => {
     await render();
     await enterText(control('Context window cap'), '999');

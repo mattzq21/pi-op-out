@@ -13,7 +13,7 @@ import { CapInput } from "./CapInput";
 import { FilterSelect } from "./FilterSelect";
 import { capRangeError } from "../../../extensions/piop-context-window-cap/interface";
 import { Key, Rerun } from "@solid-primitives/keyed";
-import { createComputed, createEffect, createMemo, createSignal, For, Index, Show } from "solid-js";
+import { createComputed, createEffect, createMemo, createSignal, For, Index, Show, untrack } from "solid-js";
 import { Dynamic } from "solid-js/web";
 import { createDependencyEffect, createMemoFields, createRef, type JSXElement } from "../lib/solid";
 
@@ -243,6 +243,8 @@ export function SettingsView(props: SettingsViewProps) {
     applyIncomingAgents(capturedAgentConfig);
   }, () => [agentConfigDirty(), agentConfig(), agentConfigSnapshot(), saving()]);
   const patch = (value: Partial<AppSettings>) => setDraft((current) => ({ ...current, ...value }));
+  const [contextWindowCapText, setContextWindowCapText] = createSignal(String(draft().contextWindowCap));
+  createComputed(() => { const value = draft().contextWindowCap; if (Number(untrack(contextWindowCapText)) !== value) setContextWindowCapText(String(value)); });
   const [capErrors, setCapErrors] = createSignal<Record<string, string>>({});
 
   const capError = (key: string) => (error: string | undefined) => setCapErrors(current => {
@@ -466,7 +468,7 @@ export function SettingsView(props: SettingsViewProps) {
 
 
       const renderGeneral = () => (formValidation().visibleSection === "general" && <SettingsSection title="General" description="Agent behavior.">
-        <SettingRow icon={<CircleGauge />} title="Default context window cap" description="Used when no /cap choice, agent cap, or model cap applies. Off uses each model's full window. Open conversations update when idle."><div class="setting-cap-controls"><input class="setting-number" aria-label="Context window cap" aria-invalid={!nameValidation().contextWindowValid} disabled={!draft().contextWindowCapEnabled} type="number" min={100000} max={50000000} step={1000} value={draft().contextWindowCap} onInput={(event) => patch({ contextWindowCap: Number(event.target.value) })} /><Toggle label="Enable context window cap" checked={draft().contextWindowCapEnabled} onChange={(contextWindowCapEnabled) => patch({ contextWindowCapEnabled })} /></div></SettingRow>
+        <SettingRow icon={<CircleGauge />} title="Default context window cap" description="Used when no /cap choice, agent cap, or model cap applies. Off uses each model's full window. Open conversations update when idle."><div class="setting-cap-controls"><input class="setting-number" aria-label="Context window cap" aria-invalid={!nameValidation().contextWindowValid} disabled={!draft().contextWindowCapEnabled} type="number" min={100000} max={50000000} step={1000} value={contextWindowCapText()} onInput={(event) => { setContextWindowCapText(event.target.value); patch({ contextWindowCap: Number(event.target.value) }); }} /><Toggle label="Enable context window cap" checked={draft().contextWindowCapEnabled} onChange={(contextWindowCapEnabled) => patch({ contextWindowCapEnabled })} /></div></SettingRow>
         <SettingRow icon={<ShieldCheck />} title="Automatic retry" description="Retry transient provider and network errors."><Toggle label="Automatic retry" checked={draft().autoRetry} onChange={(autoRetry) => patch({ autoRetry })} /></SettingRow>
         <div class="general-agent-default">
           <label class="field"><span>Default agent</span><select aria-label="Default agent" disabled={!agentConfig()} value={defaultAgentName() ?? ""} onChange={(event) => setDefaultAgent(event.target.value)}>{<Key each={agentDrafts()} by={(item) => item.name}>{(item, _index) => <option  value={item().name}>{item().name}</option>}</Key>}</select></label>
