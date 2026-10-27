@@ -1,4 +1,4 @@
-import { retainSettingsResources } from "./lib/settingsResources";
+import { preloadSettingsResources, retainSettingsResources } from "./lib/settingsResources";
 import { capSessionName } from "./lib/sessionName";
 import { ComposerPluginsContext } from "./plugins/composer";
 import { localHostLabel } from "./lib/mobileHosts";
@@ -37,9 +37,9 @@ const TerminalView = lazy(() => import("./components/TerminalView").then(module 
 
 function preloadSettings() {
   let disposed = false;
+  // The page code only; its data needs a Pi session, so it loads when the user points at or focuses Settings.
   const timer = setTimeout(() => {
-    void import("./components/LocalSettingsView").catch(reason => console.error("Could not preload the settings page:", reason));
-    void import("./lib/settingsResources").then(module => { if (!disposed) module.preloadSettingsResources(); }, reason => console.error("Could not preload the settings data:", reason));
+    if (!disposed) void import("./components/LocalSettingsView").catch(reason => console.error("Could not preload the settings page:", reason));
   }, 1000);
   onCleanup(() => { disposed = true; clearTimeout(timer); });
 }
@@ -93,7 +93,7 @@ export default function App(props: { suppressConnectionNotices?: boolean } = {})
   };
 
   const renderSidebar = () => {
-    const renderNavigation = () => (<nav><IconButton label="New conversation" onClick={newSession}><MessageSquare size={18} /></IconButton><IconButton label="Group" onClick={() => { if (!canLeaveSettings()) return; setView("chat"); setArchivesOpen(false); setPanelOpen(true); setQuery(""); setCreateGroupRequest((request) => request + 1); }}><FolderPlus size={18} /></IconButton><DebugModeButton debugMode={required(settings()).debugMode} featuresOff={required(settings()).debugFeaturesOff ?? []} disabled={debugModeSaving() || settingsSaving()} onToggle={toggleDebugMode} onToggleFeature={toggleDebugFeature}><Bug size={18} /></DebugModeButton>{renderArchiveButton()}<IconButton label={view() === "settings" ? "Go back" : "Settings"} class={view() === "settings" ? "active" : ""} onClick={() => { if (view() !== "settings") { setView("settings");
+    const renderNavigation = () => (<nav><IconButton label="New conversation" onClick={newSession}><MessageSquare size={18} /></IconButton><IconButton label="Group" onClick={() => { if (!canLeaveSettings()) return; setView("chat"); setArchivesOpen(false); setPanelOpen(true); setQuery(""); setCreateGroupRequest((request) => request + 1); }}><FolderPlus size={18} /></IconButton><DebugModeButton debugMode={required(settings()).debugMode} featuresOff={required(settings()).debugFeaturesOff ?? []} disabled={debugModeSaving() || settingsSaving()} onToggle={toggleDebugMode} onToggleFeature={toggleDebugFeature}><Bug size={18} /></DebugModeButton>{renderArchiveButton()}<IconButton label={view() === "settings" ? "Go back" : "Settings"} class={view() === "settings" ? "active" : ""} onPointerEnter={() => { if (view() !== "settings") preloadSettingsResources(); }} onFocus={() => { if (view() !== "settings") preloadSettingsResources(); }} onClick={() => { if (view() !== "settings") { setView("settings");
 
         return; }
 
