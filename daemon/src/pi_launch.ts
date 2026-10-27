@@ -173,7 +173,7 @@ function configureLocalExtensions(command: LaunchCommand, settings: AppSettings,
     '--extension', Ext.prepareProvidersRefreshExtension(), '--extension', mcpExtension, '--extension', session.storage, '--extension', session.hooks, '--extension', session.controls, '--extension', session.broker,
     '--extension', session.goals, ...after('goals'),
     '--extension', contextWindowCapExtension, '--extension', contextBarExtension, ...after('context-bar'),
-    '--extension', Ext.prepareFastModeExtension(), '--extension', openaiCacheForkExtension,
+    '--extension', Ext.prepareFastModeExtension(), '--extension', openaiCacheForkExtension, '--extension', Ext.prepareCompactionTimingExtension(),
     '--extension', definedAgentsExtension);
   Object.assign(command.env, {
     PI_DESKTOP_DEFINED_AGENTS_EXTENSION: definedAgentsExtension,

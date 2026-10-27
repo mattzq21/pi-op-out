@@ -147,6 +147,14 @@ export function prepareContextBarExtension(): string {
   return path;
 }
 
+export function prepareCompactionTimingExtension(): string {
+  const dir = generatedExtensionRoot();
+  ensurePrivateDir(dir);
+  const path = join(dir, 'piop-compaction-timing.ts');
+  atomicWritePrivate(path, R.compactionTimingExtension);
+  return path;
+}
+
 export function prepareContextWindowCapExtension(settings: AppSettings): string {
   saveContextCapSettings(settings);
   const dir = join(generatedExtensionRoot(), 'piop-context-window-cap');

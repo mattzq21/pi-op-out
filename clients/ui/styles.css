@@ -307,7 +307,7 @@ button.agent-delivery-source:hover { color: var(--accent-soft); text-decoration:
 .image-input-toast button { display: grid; place-items: center; flex-shrink: 0; margin-left: 2px; padding: 0; border: 0; background: transparent; color: inherit; cursor: pointer; }
 .conversation-turn > .prompt-context { margin: 0 0 14px; }
 .conversation-turn > :is(.user-message, .prompt-context):has(+ .work-group) { margin-bottom: 8px; }
-.command-result { margin: 18px auto 28px; color: var(--muted); text-align: center; font-size: 12px; line-height: 1.6; white-space: pre-wrap; overflow-wrap: anywhere; }.command-result.compaction { color: var(--accent); }
+.command-result { margin: 18px auto 28px; color: var(--muted); text-align: center; font-size: 12px; line-height: 1.6; white-space: pre-wrap; overflow-wrap: anywhere; }.command-result.compaction { color: var(--accent); font-size: 15px; font-weight: 700; font-style: italic; }
 .context-injection { margin: 18px 0; color: var(--muted); font-size: 12px; line-height: 1.6; }
 .context-injection > summary { display: flex; align-items: center; justify-content: center; gap: 6px; cursor: pointer; list-style: none; }
 .context-injection > summary::-webkit-details-marker { display: none; }
@@ -610,11 +610,11 @@ textarea::placeholder { color: var(--faint); }
 .agent-mcp-settings > .secondary-button { margin-top: 10px; }
 .model-bulk-actions { display: flex; flex-wrap: wrap; gap: 7px; padding: 12px 0; }
 .message-actions .fork-and-forget-button { margin-left: auto; }
-.compaction-message { grid-template-columns: 1fr; gap: 4px; margin: 18px auto 28px; }.compaction-message > .command-result { margin: 0; }
-.compaction-message .message-actions { justify-content: center; opacity: 0; pointer-events: none; }
+.compaction-message { grid-template-columns: 1fr; gap: 4px; margin: 4px 0 8px; }.compaction-message > .command-result { margin: 0; text-align: left; }
+.compaction-message .message-actions { opacity: 0; pointer-events: none; }
+.compaction-duration { padding-bottom: 6px; margin-bottom: 6px; border-bottom: 1px solid var(--line); color: var(--muted); font: 12px/18px "DM Sans"; }
 .compaction-message:focus-within .message-actions { opacity: 1; pointer-events: auto; }
 @media (hover: hover) { .compaction-message:hover .message-actions { opacity: 1; pointer-events: auto; } }
-.compaction-message .fork-and-forget-button { margin-left: 0; }
 .split-pane-actions { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
 .review-feedback-button { padding: 5px 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--paper); color: var(--ink); font-size: 11px; }
 .review-feedback-button:hover:not(:disabled), .review-feedback-button[aria-pressed="true"] { background: var(--hover); }

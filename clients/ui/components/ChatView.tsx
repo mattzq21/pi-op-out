@@ -34,7 +34,7 @@ import { ConversationHostContext } from "../lib/subagentNavigation";
 import { OLDER_HISTORY, olderHistory } from "../lib/historyWindow";
 import { loadOlderHistory } from "../lib/sessionMemory";
 import { MessageFileContext } from "../lib/messageFiles";
-import { formatDuration } from "../lib/duration";
+import { formatElapsed } from "../lib/duration";
 
 interface Props { refreshError?: string; capabilityErrors?: string[]; capabilitiesLoading?: boolean; onRetryCapabilities?: () => void; transport?: NativeTransport; agentHostLabel?: string; state: AgentState; messages: ChatMessage[]; debug?: DebugView; agents?: AgentProfile[]; activeAgent?: string; agentLocked?: boolean; agentSaved?: boolean; agentUnavailable?: boolean; modelAliases?: Record<string, string>; models: Model[]; commands: SlashCommand[]; thinkingLevels: string[]; widgets: string[]; statuses: Record<string, string>; projectCwd?: string; readOnly?: boolean; controlsDisabled?: boolean; draft?: string; onDraftChange?: (value: StateUpdate<string>) => void; focusRequest?: number; onActivate?: () => void; uploads?: ComposerUpload[]; onUploadsChange?: (uploads: StateUpdate<ComposerUpload[]>) => void; onSend: (text: string, behavior?: "steer" | "followUp", images?: ImageAttachment[], submission?: DraftSubmissionHandle) => void | boolean | Promise<void | boolean>; onChangePending?: (id: string, behavior: import("../types").PendingMessageAction) => Promise<void>; onAbort: () => void | Promise<void>; onOpenTerminal?: () => void; hosts?: Array<{ id: string; name: string; disabled?: boolean }>; onChooseHost?: (hostId: string) => void; onOpenProject: () => void; onClearProject?: () => void; onBranch: (message: ChatMessage) => void; onFork?: (message: ChatMessage) => void | Promise<void>; onForkAndForget?: (message: ChatMessage) => void | Promise<void>; forkSourceName?: string; onOpenForkSource?: (source: ForkSource) => void; revealEntryId?: string; onEntryRevealed?: () => void; onAgent?: (name: string) => void; onModel: (model: Model) => void; onToggleFastMode: () => void | Promise<void>; onThinking: (level: string) => void; }
 
@@ -650,12 +650,6 @@ function groupTurns(messages: ChatMessage[], previous: ConversationGroup[] = [])
   })];
 }
 
-function formatWorkedFor(startedAt?: number, completedAt?: number) {
-  if (startedAt === undefined || completedAt === undefined || completedAt < startedAt) return "";
-
-  return formatDuration(Math.max(1, Math.round((completedAt - startedAt) / 1000)) * 1000);
-}
-
 function compactCompletedTools(messages: ChatMessage[], groupRepeated = true) {
   return messages.reduce<Array<{ message: ChatMessage; count: number }>>((runs, message) => {
     if (invisibleAssistant(message)) return runs;
@@ -707,7 +701,7 @@ function finalResponseIndex(messages: ChatMessage[]) {
 }
 
 function turnTiming(messages: ChatMessage[], userIndex: number, finalMessage?: ChatMessage) {
-  return formatWorkedFor(userIndex >= 0 ? messages[userIndex].timestamp : messages[0]?.timestamp, finalMessage?.completedAt ?? finalMessage?.timestamp);
+  return formatElapsed(userIndex >= 0 ? messages[userIndex].timestamp : messages[0]?.timestamp, finalMessage?.completedAt ?? finalMessage?.timestamp);
 }
 
 /** The last message of the turn when it is a failed or stopped response. */

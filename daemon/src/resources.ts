@@ -40,6 +40,7 @@ import contextWindowCapExtension from '../../extensions/piop-context-window-cap/
 import contextWindowCapDefaults from '../../extensions/piop-context-window-cap/defaults.ts?raw';
 import contextWindowCapInterface from '../../extensions/piop-context-window-cap/interface.ts?raw';
 import contextBarExtension from '../../extensions/piop-context-bar/index.ts?raw';
+import compactionTimingExtension from '../../extensions/piop-compaction-timing/index.ts?raw';
 import storageGoalRecovery from '../resources/piop-storage/goal-directory-recovery.cjs?raw';
 import brokerModule2 from '../resources/session-broker/app-settings.cjs?raw';
 import brokerModule4 from '../resources/session-broker/client.ts?raw';
@@ -142,6 +143,7 @@ export {
   contextWindowCapInterface,
   contextWindowCapDefaults,
   contextBarExtension,
+  compactionTimingExtension,
 };
 
 export const SESSION_BROKER_MODULES: Array<[string, string]> = [

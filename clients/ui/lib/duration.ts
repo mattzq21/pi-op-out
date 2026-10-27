@@ -11,3 +11,10 @@ export function formatDuration(milliseconds: number) {
 
   return `${seconds}s`;
 }
+
+/** The time from start to end, rounded to whole seconds and at least 1s, as "Worked for" shows it. Empty when a time is missing. */
+export function formatElapsed(startedAt?: number, endedAt?: number) {
+  if (startedAt === undefined || endedAt === undefined || endedAt < startedAt) return "";
+
+  return formatDuration(Math.max(1, Math.round((endedAt - startedAt) / 1000)) * 1000);
+}
