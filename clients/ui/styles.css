@@ -610,7 +610,7 @@ textarea::placeholder { color: var(--faint); }
 .agent-mcp-settings > .secondary-button { margin-top: 10px; }
 .model-bulk-actions { display: flex; flex-wrap: wrap; gap: 7px; padding: 12px 0; }
 .message-actions .fork-and-forget-button { margin-left: auto; }
-.compaction-message { margin: 18px auto 28px; }.compaction-message > .command-result { margin: 0; }
+.compaction-message { grid-template-columns: 1fr; gap: 4px; margin: 18px auto 28px; }.compaction-message > .command-result { margin: 0; }
 .compaction-message .message-actions { justify-content: center; opacity: 0; pointer-events: none; }
 .compaction-message:focus-within .message-actions { opacity: 1; pointer-events: auto; }
 @media (hover: hover) { .compaction-message:hover .message-actions { opacity: 1; pointer-events: auto; } }
