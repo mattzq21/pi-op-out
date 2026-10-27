@@ -3,11 +3,52 @@ import { spawn } from 'node:child_process';
 import { createInterface } from 'node:readline';
 import { fileURLToPath } from 'node:url';
 import { mkdtemp, rm } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { availableParallelism, tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { pauseTestClock } from './timed-test.mjs';
+
+/**
+ * Daemon slots shared by every test process on this machine, so parallel test files do not start more daemons than
+ * the machine can run. One slot per two cores: a daemon with its Pi sessions and the test's browser uses about two.
+ */
+const DAEMON_SLOTS = Math.max(2, Math.floor(availableParallelism() / 2));
+
+/** Waits for count daemon slots, without counting the wait in the test's timeout. Returns the release. */
+async function takeDaemonSlots(count) {
+  const directory = process.env.PIOP_TEST_DAEMON_SLOTS;
+  if (!directory) throw new Error('Run tests that start daemons with python3 scripts/test-run.py, which shares the daemon slots');
+  const holder = spawn('python3', [fileURLToPath(new URL('./daemon-slots.py', import.meta.url)), directory, String(DAEMON_SLOTS), String(count)], { stdio: ['pipe', 'pipe', 'pipe'] });
+  let diagnostics = '';
+  holder.stderr.on('data', data => { diagnostics += data; });
+  const exited = new Promise(resolve => holder.once('exit', (code, signal) => resolve({ code, signal })));
+  const resume = pauseTestClock();
+  try {
+    await new Promise((resolve, reject) => {
+      holder.once('error', reject);
+      exited.then(result => reject(new Error('Daemon slot holder ended before it held its slots: ' + JSON.stringify(result) + '\n' + diagnostics)));
+      createInterface({ input: holder.stdout }).once('line', line => line === 'ready' ? resolve() : reject(new Error('Daemon slot holder: ' + line + '\n' + diagnostics)));
+    });
+  } catch (error) { holder.kill('SIGKILL'); throw error; }
+  finally { resume(); }
+  return async () => {
+    holder.stdin.end();
+    const result = await exited;
+    if (result.code !== 0) throw new Error('Daemon slot holder failed: ' + JSON.stringify(result) + '\n' + diagnostics);
+  };
+}
 
 /** A real daemon for UI tests. With model 'echo', its only model answers each message with "Reply to " and the message text. */
 export async function daemonClient(t, onEvent = () => {}, { remotes = [], model } = {}) {
+  // Each remote machine is a daemon of its own, so it needs its own slot.
+  const releaseSlots = await takeDaemonSlots(1 + remotes.length);
+  let released;
+  // The cleanup of a started client releases the slots after its daemon stops; owned is set once that cleanup is registered.
+  const slots = { owned: false, release: () => released ??= releaseSlots() };
+  try { return await startClient(t, onEvent, { remotes, model }, slots); }
+  catch (error) { if (!slots.owned) await slots.release(); throw error; }
+}
+
+async function startClient(t, onEvent, { remotes, model }, slots) {
   const directory = await mkdtemp(join(tmpdir(), 'piop-ui-'));
   const worker = spawn('bun', [fileURLToPath(new URL('./daemon/ui-host.ts', import.meta.url))], { env: { ...process.env, TMPDIR: directory, PIOP_TEST_UI_REMOTES: JSON.stringify(remotes), ...(model ? { PIOP_TEST_UI_MODEL: model } : {}) }, stdio: ['pipe', 'pipe', 'pipe'] });
   let diagnostics = '';
@@ -24,8 +65,9 @@ export async function daemonClient(t, onEvent = () => {}, { remotes = [], model 
       const result = await exited;
       if (result.code !== 0) throw new Error(`Daemon test host ended: ${JSON.stringify(result)}\n${diagnostics}`);
       await rm(directory, { recursive: true });
-    } finally { clearTimeout(timer); }
+    } finally { clearTimeout(timer); await slots.release(); }
   });
+  slots.owned = true;
   const endpoint = await new Promise((resolve, reject) => {
     const lines = createInterface({ input: worker.stdout });
     const timer = setTimeout(() => reject(new Error('Daemon test host did not start\n' + diagnostics)), 20000);

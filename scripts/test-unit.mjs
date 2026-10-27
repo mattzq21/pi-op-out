@@ -10,6 +10,8 @@ import { buildTraceControls } from '../test/trace-command-fixture.mjs';
 delete process.env.PIOP_TEST_NATIVE_EXECUTABLE;
 delete process.env.PIOP_TEST_DAEMON_EXECUTABLE;
 delete process.env.PIOP_TEST_CONTROLS_BUNDLE;
+// Test timeouts are kept by test/timed-test.mjs, which does not count waits for daemon slots; node keeps the same limit for hooks.
+const TEST_TIMEOUT_MS = 30000;
 
 async function run() {
   const directory = await mkdtemp(join(tmpdir(), 'piop-unit-builds-'));
@@ -28,8 +30,8 @@ async function run() {
     return await new Promise((resolve, reject) => {
       const child = spawn(process.execPath, [
         '--max-old-space-size=1536', '--enable-source-maps', '--import', './test/register-typescript.mjs',
-        '--test', '--test-concurrency=6', '--test-timeout=30000', ...process.argv.slice(2),
-      ], { stdio: 'inherit', env: { ...process.env, PIOP_TEST_NATIVE_EXECUTABLE: executable, PIOP_TEST_DAEMON_EXECUTABLE: daemonExecutable, PIOP_TEST_CONTROLS_BUNDLE: controlsBundle } });
+        '--test', '--test-concurrency=6', `--test-timeout=${TEST_TIMEOUT_MS}`, ...process.argv.slice(2),
+      ], { stdio: 'inherit', env: { ...process.env, PIOP_TEST_TIMEOUT_MS: String(TEST_TIMEOUT_MS), PIOP_TEST_NATIVE_EXECUTABLE: executable, PIOP_TEST_DAEMON_EXECUTABLE: daemonExecutable, PIOP_TEST_CONTROLS_BUNDLE: controlsBundle } });
       child.on('error', reject);
       child.on('exit', (code, signal) => resolve({ code, signal }));
     });

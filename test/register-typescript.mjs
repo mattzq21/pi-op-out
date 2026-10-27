@@ -6,6 +6,7 @@ const require = createRequire(import.meta.url);
 let compiler;
 
 const converted = cachedTransform(new URL(import.meta.url), (source, filename) => transform(source, filename).code);
+const timedTest = new URL('./timed-test.mjs', import.meta.url).href;
 
 function transform(source, filename) {
   compiler ??= {
@@ -40,6 +41,9 @@ registerHooks({
     return result;
   },
   resolve(specifier, context, nextResolve) {
+    // Test timeouts that do not count waits for shared test resources.
+    if (specifier === 'node:test' && context.parentURL !== timedTest) return nextResolve(timedTest, context);
+
     if (specifier === 'solid-js' || specifier.startsWith('solid-js/')) return nextResolve(specifier, { ...context, conditions: [...context.conditions.filter(condition => condition !== 'node'), 'browser'] });
 
     if (['@xterm/xterm', '@xterm/addon-fit', '@xterm/addon-serialize'].includes(specifier)) return nextResolve(new URL('./terminal-runtime.mjs', import.meta.url).href, context);
