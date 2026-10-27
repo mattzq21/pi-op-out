@@ -185,7 +185,7 @@ export function ChatView(props: Props & { transcriptActions?: JSXElement; follow
   const fillView = () => { const element = messagesRef.current;
 
     if (element && element.scrollHeight <= element.clientHeight) loadOlder(); };
-  const split = createMemo(() => splitTranscript(messages(), props.state.isStreaming));
+  const split = createMemo(() => splitTranscript(messages(), props.state.isStreaming, props.state.queueHeld === true));
   const turns = createMemo<ConversationGroup[]>(previous => groupTurns(split().transcript, previous), []);
   /** The queued messages, then the sent messages that the daemon has not queued yet. */
   const pendingMessages = createMemo<import("../types").PendingMessage[]>(() => [...props.state.pendingMessages ?? [], ...split().sending.map(message => ({ id: message.id, message: textOf(message.content), behavior: message.deliveryBehavior ?? "followUp", sending: true, images: Array.isArray(message.content) ? message.content.flatMap(part => part.type === "image" && part.data && part.mimeType ? [{ type: "image" as const, data: part.data, mimeType: part.mimeType }] : []) : [] }))]);
@@ -446,7 +446,7 @@ export function ChatView(props: Props & { transcriptActions?: JSXElement; follow
       }}><div class="conversation">
         {!messages().length && !mcpLoading() && !pendingSubmission() && <div class="empty-chat"><span>π<sup>op</sup></span></div>}
         {<Key each={turns()} by={turn => turn.messages[0]?.id ?? "empty"}>{(turn, index) => <DeferredTurn navigationId={turn().messages[0]?.id} scrollRoot={messagesRef} eager={index() >= turns().length - 3}><ConversationTurn latest={index() === turns().length - 1} messages={turn().messages} promptContexts={turn().promptContexts} cwd={props.projectCwd} debug={props.debug ?? noDebug} active={props.state.isStreaming && index() === turns().length - 1} retryable={retryable() && index() === turns().length - 1} onRetry={onRetry} onBranch={branchAction()} onFork={props.state.canFork !== false && props.onFork ? onFork : undefined} onForkAndForget={props.state.canFork !== false && props.onForkAndForget && ownsConversation() ? onForkAndForget : undefined} forkSource={props.state.forkSource} forkSourceName={props.forkSourceName} onOpenForkSource={props.onOpenForkSource} /></DeferredTurn>}</Key>}
-        {sendingSubmission() && !mcpLoading() && <section class="mcp-pending-turn" aria-label="Preparing message" aria-busy="true"><div class="mcp-loading" role="status"><LoaderCircle class="mcp-loading-spinner" size={14} aria-hidden="true" /><span>{required(sendingSubmission()).status}</span></div></section>}
+        {sendingSubmission() && !props.state.queueHeld && !mcpLoading() && <section class="mcp-pending-turn" aria-label="Preparing message" aria-busy="true"><div class="mcp-loading" role="status"><LoaderCircle class="mcp-loading-spinner" size={14} aria-hidden="true" /><span>{required(sendingSubmission()).status}</span></div></section>}
         {mcpLoading() && <section class="mcp-pending-turn" aria-label="Message waiting for MCP" aria-busy="true">
           <div class="mcp-loading-list" role="status">{props.debug?.mcpServers ? <Key each={loadingServers()} by={(server) => server.id}>{(server, _index) => <div class="mcp-loading" ><LoaderCircle class="mcp-loading-spinner" size={14} aria-hidden="true" /><span>Loading {server().name}</span></div>}</Key> : <div class="mcp-loading"><LoaderCircle class="mcp-loading-spinner" size={14} aria-hidden="true" /><span>Loading MCPs</span></div>}</div>
         </section>}
@@ -602,8 +602,9 @@ function associateQueuedContext(messages: ChatMessage[]) {
  * Splits the messages into the transcript and the sent messages that wait for the daemon's queue.
  * A sent message that the daemon has not queued yet waits in the queue above the message box while an earlier user message still waits for its reply: Pi delivers it only after that reply.
  * An earlier user message waits for its reply while it is still being sent, or while the agent works. A message whose task ended without a reply does not wait.
+ * While the queue is on hold, every sent message waits in the queue: the daemon keeps it there.
  */
-function splitTranscript(messages: ChatMessage[], working: boolean) {
+function splitTranscript(messages: ChatMessage[], working: boolean, held: boolean) {
   let waiting = false;
   const sending: ChatMessage[] = [];
   const transcript = messages.filter(message => {
@@ -611,7 +612,7 @@ function splitTranscript(messages: ChatMessage[], working: boolean) {
 
     if (message.role === "assistant") waiting = false;
     else if (message.role === "user") {
-      if (message.submissionId && waiting) { sending.push(message); return false; }
+      if (message.submissionId && (waiting || held)) { sending.push(message); return false; }
       waiting = working || Boolean(message.submissionId);
     }
 

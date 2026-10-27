@@ -556,10 +556,11 @@ function createChatSession(transport: Accessor<Pick<NativeTransport, "command" |
       session.setMessages((current) => current.map((item) => item.id === event.toolCallId ? { ...item, toolPayloadVersion: Number(event.sequence), toolStatus: event.isError ? "error" : "done", ...(event.toolImage ? { toolImage: true } : {}) } : item));
     };
 
-    const handleQueueUpdate = () => {
+    /** One update, so a sent message moves from sending to its queue entry without a frame where it shows twice or not at all. */
+    const handleQueueUpdate = () => session.memory.batch(() => {
       session.setMessages(current => reconcilePendingMessages(current, event.pendingMessages));
       session.setState((current) => ({ ...current, pendingMessages: event.pendingMessages, pendingMessageCount: (event.steering?.length ?? 0) + (event.followUp?.length ?? 0), queueHeld: event.held === true }));
-    };
+    });
 
     const handleCompactionStart = () => {
       session.setState((current) => ({ ...current, isCompacting: true }));

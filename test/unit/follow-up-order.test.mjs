@@ -119,3 +119,17 @@ test('a message sent after a task that ended without a reply shows at once', asy
   await chat.submit('B submitted while idle', 'submission-b', 'Message B');
   assert.equal(chat.steps.at(-1).transcript, 'user A | user B');
 });
+test('a message sent while the queue is on hold never shows in the conversation, only once in the queue', async t => {
+  const chat = await harness(t);
+  await chat.events('the queue is on hold', { type: 'queue_update', steering: [], followUp: [], pendingMessages: [], held: true });
+  await chat.submit('B submitted while idle', 'submission-b', 'Message B');
+  await chat.events('the daemon holds B', { type: 'queue_update', steering: [], followUp: [], pendingMessages: [{ ...queued('followUp'), held: true }], held: true });
+  await chat.refresh('a refresh keeps the held B in the queue');
+  assert.deepEqual(chat.steps.map(({ step, transcript, queue }) => [step, transcript, queue]), [
+    ['the queue is on hold', '', []],
+    ['B submitted while idle', '', ['Message B']],
+    ['the daemon holds B', '', ['Message B']],
+    ['a refresh keeps the held B in the queue', '', ['Message B']],
+  ]);
+  assert.equal(document.querySelector('[aria-label="Preparing message"]'), null);
+});
