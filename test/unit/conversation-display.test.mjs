@@ -132,6 +132,29 @@ test('Worktree fork appears only under finished or stopped final responses in a 
   assert.equal(forkControl(view), null);
 });
 
+test('Fork and forget is absent at the last point of the chat, and a compaction is a point to fork from', async t => {
+  const forgotten = [], branched = [];
+  const forgetIn = (view, label) => view.container.querySelector(`[aria-label="${label}"] .fork-and-forget-button`);
+  const turn = id => [{ id: id + '-question', role: 'user', content: 'Question ' + id }, { id: id + '-answer', role: 'assistant', content: 'Answer ' + id, stopReason: 'stop' }];
+  const compaction = { id: 'compacted', entryId: 'compacted', role: 'system', customType: 'compaction', content: 'Compacted' };
+  const view = await conversation(t, { state: repositoryState, messages: [...turn('first'), ...turn('last')], onFork: () => {}, onBranch: value => branched.push(value.id), onForkAndForget: value => forgotten.push(value.id) });
+  const answers = () => [...view.container.querySelectorAll('.assistant-message')];
+  assert.equal(answers().length, 2);
+  assert.ok(answers()[0].querySelector('.fork-and-forget-button'));
+  assert.equal(answers()[1].querySelector('.fork-and-forget-button'), null);
+
+  await view.update({ messages: [...turn('first'), ...turn('last'), compaction] });
+  assert.ok(answers()[1].querySelector('.fork-and-forget-button'));
+  assert.ok(view.container.querySelector('[aria-label="Compaction"] [aria-label="Fork"]'));
+  assert.equal(forgetIn(view, 'Compaction'), null);
+  await act(() => view.container.querySelector('[aria-label="Compaction"] [aria-label="Branch off"]').click());
+  assert.deepEqual(branched, ['compacted']);
+
+  await view.update({ messages: [...turn('first'), compaction, ...turn('last')] });
+  await act(() => forgetIn(view, 'Compaction').click());
+  assert.deepEqual(forgotten, ['compacted']);
+});
+
 test('a branched conversation links to its original conversation and message', async t => {
   const opened = [];
   const forkSource = { sessionId: '019a6e31-8c42-7b05-a281-3d96e04fc812', sessionPath: '/sessions/original.jsonl', entryId: 'answer' };

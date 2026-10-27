@@ -1,7 +1,9 @@
 import type { AgentState, ChatMessage } from "../types";
 
-/** A response can start a branch after it finished or was stopped, as a final answer without tool calls. */
+/** A new chat can start from a compaction, or from a response that finished or was stopped as a final answer without tool calls. */
 export function canBranchFrom(message: ChatMessage | undefined) {
+  if (message?.role === "system" && message.customType === "compaction") return true;
+
   return message?.role === "assistant" && (message.stopReason === "stop" || message.stopReason === "aborted") && !message.streaming && !(Array.isArray(message.content) && message.content.some(part => part.type === "toolCall"));
 }
 

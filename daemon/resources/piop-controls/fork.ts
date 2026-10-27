@@ -203,10 +203,9 @@ function forkHistory(ctx: ExtensionContext, entryId?: string) {
   if (entryId && !entry) throw new Error("The selected response is no longer on the current branch. Reload the conversation and select it again.");
 
   if (!entry) return [];
-  const end = responseBoundary(branch, branch.indexOf(entry));
-  const retained = branch.slice(0, end + 1);
+  const end = entry.type === "compaction" ? branch.indexOf(entry) : responseBoundary(branch, branch.indexOf(entry));
 
-  return retained;
+  return branch.slice(0, end + 1);
 }
 
 function assertForkable(ctx: ExtensionContext) {

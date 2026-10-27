@@ -182,4 +182,11 @@ function auxiliaryParent(entries, sessionId) {
 
 function canFork(entries) { return !isAuxiliary(entries); }
 
-module.exports = { AUXILIARY_PARENT, isAuxiliaryParent, auxiliaryParent, capSessionName, isAuxiliary, canFork, selectBranch, selectedLeaf, stateKey, initializeSessionName, sessionName, isCurrent, history, stored, save, seed, capture, append, records, merge, revision, create };
+/** An entry a new chat can start from: a compaction, or a finished or stopped final response without tool calls. */
+function forkPoint(entry) {
+  if (entry?.type === 'compaction') return true;
+  return entry?.type === 'message' && entry.message?.role === 'assistant' && ['stop', 'aborted'].includes(entry.message.stopReason)
+    && Array.isArray(entry.message.content) && !entry.message.content.some(part => part?.type === 'toolCall');
+}
+
+module.exports = { AUXILIARY_PARENT, isAuxiliaryParent, auxiliaryParent, capSessionName, isAuxiliary, canFork, forkPoint, selectBranch, selectedLeaf, stateKey, initializeSessionName, sessionName, isCurrent, history, stored, save, seed, capture, append, records, merge, revision, create };

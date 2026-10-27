@@ -64,3 +64,30 @@ test('fork starts from a response stopped while its command ran', async () => {
   expect(seen[0]).toEqual(['user', 'Stop the command']);
   expect(seen.at(-1)).toEqual(['user', 'Go on after the command']);
 }, 60000);
+
+test('fork and branch off start from a compaction, with its summary and without the later turns', async () => {
+  const summary = 'Summary of Remember the otter: the user likes otters.';
+  agents.scripts.set('Remember the otter', messages => /context summarization assistant/.test(text(messages[0])) ? { text: summary }
+    : goingOn(messages) ? { text: 'Continued.' } : { text: 'Noted: ' + text(messages.at(-1)).slice(0, 20) });
+  const chat = await agents.rootChat({ repository: true });
+  // Compaction keeps the most recent part, so the chat needs enough later text to have an older part to summarize.
+  for (const prompt of ['Remember the otter', ...[1, 2, 3].map(fact => `Fact ${fact}: ` + 'filler words '.repeat(3000)), 'After the compaction']) {
+    if (prompt === 'After the compaction') await chat.command({ type: 'compact' });
+    await chat.command({ type: 'prompt', message: prompt });
+    await chat.until(history => text(history.at(-1)).startsWith('Noted: ' + prompt.slice(0, 12)));
+  }
+  const compaction = (await chat.command({ type: 'get_entries' })).entries.find((entry: any) => entry.type === 'compaction');
+  const source = await chat.command({ type: 'get_state' });
+  const expectFromCompaction = (seen: string[][], prompt: string) => {
+    expect(seen[0][1]).toContain(summary);
+    expect(seen.some(([, content]) => content === 'Remember the otter' || content === 'After the compaction')).toBe(false);
+    expect(seen.at(-1)).toEqual(['user', prompt]);
+  };
+
+  await chat.command({ type: 'copy_after', entryId: compaction.id });
+  expect((await chat.command({ type: 'get_state' })).forkSource).toMatchObject({ sessionId: source.sessionId, entryId: compaction.id });
+  expectFromCompaction(await continueIn(chat, 'Go on in the fork'), 'Go on in the fork');
+
+  await chat.command({ type: 'fork_after', entryId: compaction.id });
+  expectFromCompaction(await continueIn(chat, 'Go on in the branch'), 'Go on in the branch');
+}, 120000);
