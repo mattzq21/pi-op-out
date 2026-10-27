@@ -5,23 +5,11 @@ import { fileURLToPath } from 'node:url';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { takeDaemonSlots } from './daemon-slots.mjs';
 
 /** A real daemon for UI tests. With model 'echo', its only model answers each message with "Reply to " and the message text. */
 export async function daemonClient(t, onEvent = () => {}, { remotes = [], model } = {}) {
-  // Each remote machine is a daemon of its own, so it needs its own slot.
-  const releaseSlots = await takeDaemonSlots(1 + remotes.length);
-  let released;
-  // The cleanup of a started client releases the slots after its daemon stops; owned is set once that cleanup is registered.
-  const slots = { owned: false, release: () => released ??= releaseSlots() };
-  try { return await startClient(t, onEvent, { remotes, model }, slots); }
-  catch (error) { if (!slots.owned) await slots.release(); throw error; }
-}
-
-async function startClient(t, onEvent, { remotes, model }, slots) {
   const directory = await mkdtemp(join(tmpdir(), 'piop-ui-'));
-  // This client holds the slots of the daemon and its remote machines, so the host does not take them again.
-  const worker = spawn('bun', [fileURLToPath(new URL('./daemon/ui-host.ts', import.meta.url))], { env: { ...process.env, PIOP_TEST_DAEMON_SLOTS_TAKEN: '1', TMPDIR: directory, PIOP_TEST_UI_REMOTES: JSON.stringify(remotes), ...(model ? { PIOP_TEST_UI_MODEL: model } : {}) }, stdio: ['pipe', 'pipe', 'pipe'] });
+  const worker = spawn('bun', [fileURLToPath(new URL('./daemon/ui-host.ts', import.meta.url))], { env: { ...process.env, TMPDIR: directory, PIOP_TEST_UI_REMOTES: JSON.stringify(remotes), ...(model ? { PIOP_TEST_UI_MODEL: model } : {}) }, stdio: ['pipe', 'pipe', 'pipe'] });
   let diagnostics = '';
   worker.stderr.on('data', data => { diagnostics += data; });
   const exited = new Promise(resolve => worker.once('exit', (code, signal) => resolve({ code, signal })));
@@ -36,9 +24,8 @@ async function startClient(t, onEvent, { remotes, model }, slots) {
       const result = await exited;
       if (result.code !== 0) throw new Error(`Daemon test host ended: ${JSON.stringify(result)}\n${diagnostics}`);
       await rm(directory, { recursive: true });
-    } finally { clearTimeout(timer); await slots.release(); }
+    } finally { clearTimeout(timer); }
   });
-  slots.owned = true;
   const endpoint = await new Promise((resolve, reject) => {
     const lines = createInterface({ input: worker.stdout });
     const timer = setTimeout(() => reject(new Error('Daemon test host did not start\n' + diagnostics)), 20000);

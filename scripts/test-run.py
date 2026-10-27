@@ -36,9 +36,7 @@ def service(owner, started, command):
                'BUN_INSTALL_CACHE_DIR': str(cache / 'packages'),
                'BUN_RUNTIME_TRANSPILER_CACHE_PATH': str(cache / 'transpiled'),
                'PIOP_TEST_TRANSFORM_CACHE_DIR': str(cache / 'node-transformed'),
-               'NODE_COMPILE_CACHE': str(cache / 'node-compiled'),
-               # Lock files that limit the test daemons of all test runs on this machine.
-               'PIOP_TEST_DAEMON_SLOTS': str(cache / 'daemon-slots')}
+               'NODE_COMPILE_CACHE': str(cache / 'node-compiled')}
         for key in ('BUN_INSTALL_CACHE_DIR', 'BUN_RUNTIME_TRANSPILER_CACHE_PATH'):
             Path(env[key]).mkdir(parents=True, exist_ok=True)
         child = subprocess.Popen(command, env=env)
