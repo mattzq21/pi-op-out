@@ -10,12 +10,13 @@ import { createProfileSession } from "./agent-profiles.ts";
 import { durableMailbox } from "../piop-storage/durable-mailbox.ts";
 import { activeConversation } from "./conversation-location.ts";
 import { AUXILIARY_PARENT, auxiliaryParent, isAuxiliary } from "../piop-storage/session-records.cjs";
+import { sessionName } from "./session-names.cjs";
 
 const messageSchema = Schema.Object({ role: Schema.String(), content: Schema.Optional(Schema.Unknown()), toolName: Schema.Optional(Schema.String()), customType: Schema.Optional(Schema.String()), details: Schema.Optional(Schema.Unknown()), stopReason: Schema.Optional(Schema.String()), errorMessage: Schema.Optional(Schema.String()) });
 
-const entrySchema = Schema.Object({ id: Schema.String(), name: Schema.Optional(Schema.String()), parentId: Schema.Optional(Schema.Union([Schema.String(), Schema.Null()])), type: Schema.String(), message: Schema.Optional(messageSchema), customType: Schema.Optional(Schema.String()), content: Schema.Optional(Schema.Unknown()), details: Schema.Optional(Schema.Unknown()), timestamp: Schema.Optional(Schema.Union([Schema.String(), Schema.Number()])) });
+const entrySchema = Schema.Object({ id: Schema.String(), parentId: Schema.Optional(Schema.Union([Schema.String(), Schema.Null()])), type: Schema.String(), message: Schema.Optional(messageSchema), customType: Schema.Optional(Schema.String()), content: Schema.Optional(Schema.Unknown()), details: Schema.Optional(Schema.Unknown()), timestamp: Schema.Optional(Schema.Union([Schema.String(), Schema.Number()])) });
 
-const stateSchema = Schema.Object({ sessionFile: Schema.Optional(Schema.String()), isStreaming: Schema.Optional(Schema.Boolean()), isCompacting: Schema.Optional(Schema.Boolean()), pendingMessageCount: Schema.Optional(Schema.Number()) });
+const stateSchema = Schema.Object({ sessionFile: Schema.Optional(Schema.String()), sessionName: Schema.Optional(Schema.String()), isStreaming: Schema.Optional(Schema.Boolean()), isCompacting: Schema.Optional(Schema.Boolean()), pendingMessageCount: Schema.Optional(Schema.Number()) });
 
 const snapshotSchema = Schema.Object({ revision: Schema.String(), stateKey: Schema.Optional(Schema.String()), state: stateSchema, history: Schema.Object({ entries: Schema.Array(entrySchema), leafId: Schema.Optional(Schema.Union([Schema.String(), Schema.Null()])) }) });
 
@@ -25,6 +26,13 @@ const address = { peerId: Type.String({ minLength: 1 }) };
 
 type Target = { peerId: string; afterCursor?: string };
 
+
+/** The name of ctx's chat, which other chats see as the sender of its messages. */
+function ownName(ctx: ExtensionContext) {
+  const file = ctx.sessionManager.getSessionFile();
+
+  return file ? sessionName(file, ctx.sessionManager.getSessionId()) : undefined;
+}
 
 function requireRootCaller(ctx: ExtensionContext) {
   if (isAuxiliary(ctx.sessionManager.getEntries())) throw new Error("Auxiliary chats, such as subagents and reviewers, cannot use peer tools");
@@ -105,7 +113,7 @@ export async function sendSessionMessage(ctx: ExtensionContext, sessionId: strin
   if (sessionId === ctx.sessionManager.getSessionId() && hostId === currentHost()) throw new Error("Choose another conversation as the recipient");
   await activeConversation(sessionId, hostId, signal);
 
-  return request("/orchestration", { action: "send", sessionId, hostId, message, wake, deliveryId, discardOnFailure, deliverAs, sourceSessionId: ctx.sessionManager.getSessionId(), sourceHostId: currentHost(), sourceName: ctx.sessionManager.getSessionName() }, signal, 60_000);
+  return request("/orchestration", { action: "send", sessionId, hostId, message, wake, deliveryId, discardOnFailure, deliverAs, sourceSessionId: ctx.sessionManager.getSessionId(), sourceHostId: currentHost(), sourceName: ownName(ctx) }, signal, 60_000);
 }
 
 function executionStopped(snapshot: Awaited<ReturnType<typeof sessionSnapshot>>) {
@@ -187,7 +195,7 @@ async function poll(target: Target, signal?: AbortSignal) {
   const text = message ? messageText(message) : "";
   const cursor = createHash("sha256").update(JSON.stringify([hostId, target.peerId, snapshot.revision, status, last?.id, text])).digest("hex");
   const changed = cursor !== target.afterCursor;
-  const name = snapshot.history.entries.findLast(entry => entry.type === "session_info" && entry.name)?.name ?? target.peerId;
+  const name = snapshot.state.sessionName ?? target.peerId;
   const answer = text || message?.errorMessage || (message ? "(No text in the answer.)" : "(No answer yet.)");
 
   return { peer: { id: target.peerId, hostId, status }, stateKey: snapshot.stateKey ?? null, name, answer, cursor, changed,
@@ -450,7 +458,7 @@ export function registerOrchestration(pi: ExtensionAPI) {
       requireRootCaller(ctx);
       requireMessageLength(params.message);
       const created = Parse(Schema.Object({ peerId: Schema.String() }), await request("/orchestration", { action: "branch_off", sessionId: ctx.sessionManager.getSessionId(), hostId: currentHost(),
-        message: params.message, wake: true, deliveryId: randomUUID(), sourceSessionId: ctx.sessionManager.getSessionId(), sourceHostId: currentHost(), sourceName: ctx.sessionManager.getSessionName() }, signal, 180_000));
+        message: params.message, wake: true, deliveryId: randomUUID(), sourceSessionId: ctx.sessionManager.getSessionId(), sourceHostId: currentHost(), sourceName: ownName(ctx) }, signal, 180_000));
 
       return result({ peerId: created.peerId });
     },

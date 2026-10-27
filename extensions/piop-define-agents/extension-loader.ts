@@ -335,7 +335,7 @@ export function agentExtensions(pi: ExtensionAPI, baseDirectory: string, importe
       if (!group.ready || current !== group) throw new Error(`piop extension API ${method} is unavailable before activation or after deactivation`);
     };
 
-    const forwardingApi: Pick<ExtensionAPI, "getFlag" | "registerMarkdownTransformer" | "sendMessage" | "sendUserMessage" | "appendEntry" | "setSessionName" | "getSessionName" | "setLabel" | "exec" | "getActiveTools" | "getAllTools" | "getSettings" | "setActiveTools" | "getCommands" | "setModel" | "getThinkingLevel" | "setThinkingLevel" | "registerProvider" | "unregisterProvider" | "registerMcpServer" | "unregisterMcpServer" | "getMcpServers" | "registerVirtualModel" | "unregisterVirtualModel"> = {
+    const forwardingApi: Pick<ExtensionAPI, "getFlag" | "registerMarkdownTransformer" | "sendMessage" | "sendUserMessage" | "appendEntry" | "setLabel" | "exec" | "getActiveTools" | "getAllTools" | "getSettings" | "setActiveTools" | "getCommands" | "setModel" | "getThinkingLevel" | "setThinkingLevel" | "registerProvider" | "unregisterProvider" | "registerMcpServer" | "unregisterMcpServer" | "getMcpServers" | "registerVirtualModel" | "unregisterVirtualModel"> = {
       getFlag: (...args) => {
         ensureActive("getFlag");
 
@@ -364,16 +364,6 @@ export function agentExtensions(pi: ExtensionAPI, baseDirectory: string, importe
         ensureActive("appendEntry");
 
         return pi.appendEntry(...args);
-      },
-      setSessionName: (...args) => {
-        ensureActive("setSessionName");
-
-        return pi.setSessionName(...args);
-      },
-      getSessionName: (...args) => {
-        ensureActive("getSessionName");
-
-        return pi.getSessionName(...args);
       },
       setLabel: (...args) => {
         ensureActive("setLabel");

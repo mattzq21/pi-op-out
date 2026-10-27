@@ -1,5 +1,5 @@
 import { retainSettingsResources } from "./lib/settingsResources";
-import { capSessionName } from "./lib/sessionName";
+import { renameConversation } from "./lib/conversationLookup";
 import { ComposerPluginsContext } from "./plugins/composer";
 import { localHostLabel } from "./lib/mobileHosts";
 import { hostChoices } from "./lib/hostChoices";
@@ -25,7 +25,6 @@ import { DraftRecovery } from "./components/DraftRecovery";
 import { SessionPanel } from "./components/SessionPanel";
 import { ArchivedSessionPanel } from "./components/ArchivedSessionPanel";
 import { MissingDirectoryDialog } from "./components/MissingDirectoryDialog";
-import { hasVisibleText } from "./lib/content";
 import { isMobile } from "./lib/platform";
 import { SessionLinkContext, SubagentNavigationContext, type SessionLinks } from "./lib/subagentNavigation";
 
@@ -211,7 +210,7 @@ export default function App(props: { suppressConnectionNotices?: boolean } = {})
 
         return; }
 
-      if (response.value === undefined || !hasVisibleText(response.value)) throw new Error("Conversation name can't be empty"); const name = capSessionName(response.value); await required((capturedRenameSession)).transport.connect(); await required((capturedRenameSession)).transport.command({ type: "set_session_name", name });
+      const target = required(capturedRenameSession).session; const name = await renameConversation(target.id, target.hostId ?? "local", response.value ?? "");
 
       if (required((capturedRenameSession)).session.id === capturedSession.state.sessionId && (required((capturedRenameSession)).session.hostId ?? "local") === capturedActiveHostId) capturedSession.setState((current) => ({ ...current, sessionName: name })); await syncSessionIndex(); setRenameSession(undefined); }} />}</Rerun>}
     {renderMissingDirectoryDialog()}

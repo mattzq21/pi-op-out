@@ -1,4 +1,5 @@
 const stateRecords = require('./piop-storage/session-records.cjs');
+const names = require('./session-broker/session-names.cjs');
 const { Type } = require("typebox");
 const { Check } = require("typebox/value");
 const { validSessionHeader } = require("./session-header.cjs");
@@ -31,7 +32,7 @@ async function inspectSession(file, includeArchiveDetails, read) {
 
   if (!includeArchiveDetails) return observed;
 
-  return archiveDetails(file, header, validSessionHeader(header) ? stateRecords.sessionName(file, header.id) : undefined, firstPrompt, malformed, observed);
+  return archiveDetails(file, header, validSessionHeader(header) ? names.sessionName(file, header.id) : undefined, firstPrompt, malformed, observed);
 }
 
 async function inspectTranscript(file) {

@@ -1,4 +1,5 @@
 import * as SessionRecords from "../../resources/piop-storage/session-records.cjs";
+import { sessionName } from "../../resources/session-broker/session-names.cjs";
 import { createServer, type Server } from 'node:http';
 import { randomUUID } from 'node:crypto';
 import { closeSync, constants, openSync, readFileSync, realpathSync, statSync } from 'node:fs';
@@ -281,6 +282,8 @@ export class ConversationOwnership {
     };
     if (saved) {
       snapshot.state.sessionFile = saved.path;
+      const name = sessionName(saved.path, saved.header.id);
+      if (name !== undefined) snapshot.state.sessionName = name;
       snapshot.state.cwd = saved.header.cwd;
       snapshot.state.repository = typeof saved.header.cwd === 'string' ? getProjectRepository(this.root, saved.header.cwd) : null;
       if (saved.header.piopForkSource) snapshot.state.forkSource = saved.header.piopForkSource;

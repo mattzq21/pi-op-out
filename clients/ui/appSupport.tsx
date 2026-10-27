@@ -20,7 +20,7 @@ type SplitPaneState = { key: string; session: SessionSummary; request?: import("
 
 type OwnedExtensionDialog = { request: ExtensionUiRequest; transport: NativeTransport; owner: string; queueId: string };
 
-type RenameTarget = { session: SessionSummary; transport: NativeTransport };
+type RenameTarget = { session: SessionSummary };
 
 type TerminalTarget = { sessionKey: string; cwd?: string; hostId: string };
 

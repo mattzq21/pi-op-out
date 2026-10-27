@@ -1,4 +1,5 @@
 import { canFork } from '../../resources/piop-storage/session-records.cjs';
+import { sessionName } from '../../resources/session-broker/session-names.cjs';
 import { randomUUID } from 'node:crypto';
 import { dirname } from 'node:path';
 import { getProjectRepository } from '../project_repositories';
@@ -265,6 +266,13 @@ export class Session {
     return [this.key, targets];
   }
 
+  /** Shows the new chat name to the views of this session. */
+  renamed(name: string): void {
+    if (this.state && typeof this.state === 'object') this.state.sessionName = name;
+    this.publish({ type: 'session_info_changed' }, null);
+    this.publishState();
+  }
+
   publishState(): void {
     const messageable = this.unused();
     if (this.isTransient) return;
@@ -519,9 +527,8 @@ export class Session {
     if ((kind(command) === 'prompt' || kind(command) === 'queue_prompt') && !text(command, 'message').startsWith('/')) this.isSubmitted = true;
     const result = await this.raw(clone(command));
     this.settings.remember(command);
-    if (['set_model', 'set_thinking_level', 'set_session_name', 'fork_and_forget'].includes(kind(command))) this.publish({ type: 'session_info_changed' }, null);
-    // The chat list shows the name, so every client reloads it.
-    if (['set_session_name', 'fork_and_forget'].includes(kind(command))) this.host.output({ type: 'sessions_changed' });
+    if (['set_model', 'set_thinking_level', 'fork_and_forget'].includes(kind(command))) this.publish({ type: 'session_info_changed' }, null);
+    if (kind(command) === 'fork_and_forget') this.host.output({ type: 'sessions_changed' });
     return result;
   }
 
@@ -605,6 +612,9 @@ export class Session {
         const header = JSON.parse(readHeaderLine(data.sessionFile));
         if (header.piopForkSource) data.forkSource = header.piopForkSource;
       }
+      // Pi sessions have no name: the session broker owns it.
+      const name = typeof data.sessionFile === 'string' && typeof data.sessionId === 'string' ? sessionName(data.sessionFile, data.sessionId) : undefined;
+      if (name === undefined) delete data.sessionName; else data.sessionName = name;
     }
     if (!jsonEqual(this.state?.sessionId, data?.sessionId)) Registry.record(data, this.cwd);
     this.state = clone(data);

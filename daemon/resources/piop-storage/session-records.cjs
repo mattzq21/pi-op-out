@@ -1,23 +1,24 @@
 const database = require('../session-database.cjs');
+const names = require('../session-broker/session-names.cjs');
 const { randomUUID, createHash } = require('node:crypto');
 
-const capSessionName = name => Array.from(name.trim()).slice(0, 30).join('').trimEnd();
-
 const currentTypes = new Set(['pi-define-agents-state', 'piop-fast-mode-state', 'piop-context-cap', 'piop-session-cost-limit', 'piop-openai-cache-fork', 'piop-codemode-abilities', 'piop-input-hold', 'piop-fork-retries']);
-const nativeKeys = new Map([['session_info', 'piop-session-name'], ['model_change', 'piop-selected-model'], ['thinking_level_change', 'piop-thinking-level']]);
+const nativeKeys = new Map([['model_change', 'piop-selected-model'], ['thinking_level_change', 'piop-thinking-level']]);
 const stateKey = entry => nativeKeys.get(entry.type) ?? entry.customType;
 const isCurrent = entry => nativeKeys.has(entry.type) || entry.type === 'custom' && currentTypes.has(entry.customType);
+/** A Pi chat name record. Chat names belong to the session broker, so Piop never stores these or shows them to Pi. */
+const isName = entry => entry?.type === 'session_info';
+const isSetting = entry => isCurrent(entry) || isName(entry);
 
 function validRecord(entry) {
   switch (entry.type) {
-    case 'session_info': return typeof entry.name === 'string';
     case 'model_change': return typeof entry.provider === 'string' && typeof entry.modelId === 'string';
     case 'thinking_level_change': return typeof entry.thinkingLevel === 'string';
     default: return entry.type === 'custom' && !!entry.customType?.trim();
   }
 }
 
-function history(entries, current = isCurrent) {
+function history(entries, current = isSetting) {
   const settings = new Map(entries.filter(entry => current(entry) && typeof entry.id === 'string').map(entry => [entry.id, entry.parentId]));
   return entries.filter(entry => !current(entry)).map(entry => {
     let parentId = entry.parentId;
@@ -98,13 +99,12 @@ function records(file, sessionId, connection) {
 
 function setCurrent(db, sessionId, entry) {
   const saved = { ...entry, parentId: null };
-  if (saved.type === 'session_info') saved.name = capSessionName(saved.name);
   db.prepare(`INSERT INTO session_extension_state (session_id, state_key, entry_json) VALUES (?, ?, ?)
     ON CONFLICT(session_id, state_key) DO UPDATE SET entry_json=excluded.entry_json`).run(sessionId, stateKey(entry), JSON.stringify(saved));
 }
 
 function merge(file, entries, connection) {
-  entries = history(entries, entry => nativeKeys.has(entry.type));
+  entries = history(entries, entry => nativeKeys.has(entry.type) || isName(entry));
   const header = entries[0];
   if (header?.type !== 'session') throw new Error('Session state requires its conversation header');
   const known = new Set(entries.map(entry => entry.id));
@@ -141,25 +141,10 @@ function revision(file, sessionId) {
     const sequence = db.prepare('SELECT coalesce(max(sequence), 0) AS revision FROM session_extension_records WHERE session_id=?').get(sessionId).revision;
     const current = db.prepare('SELECT state_key, entry_json FROM session_extension_state WHERE session_id=? ORDER BY state_key').all(sessionId);
     const branch = db.prepare('SELECT tip_id, leaf_id FROM session_branch_selection WHERE session_id=?').get(sessionId);
-    return sequence + ':' + createHash('sha256').update(JSON.stringify({ current, branch })).digest('hex');
+    const name = names.nameOf(db, sessionId);
+    return sequence + ':' + createHash('sha256').update(JSON.stringify({ current, branch, name })).digest('hex');
   }
   finally { db.close(); }
-}
-
-function initializeSessionName(file, sessionId, name) {
-  const entry = { type: 'session_info', id: randomUUID(), parentId: null, timestamp: new Date().toISOString(), name: capSessionName(name) };
-  transaction(file, sessionId, db => {
-    db.prepare('INSERT INTO session_extension_state (session_id, state_key, entry_json) VALUES (?, ?, ?) ON CONFLICT(session_id, state_key) DO NOTHING')
-      .run(sessionId, stateKey(entry), JSON.stringify(entry));
-  });
-}
-
-function sessionName(file, sessionId, connection) {
-  const db = connection ?? database.open(database.storageRoot(file));
-  try {
-    const row = db.prepare("SELECT entry_json FROM session_extension_state WHERE session_id=? AND state_key='piop-session-name'").get(sessionId);
-    return row ? capSessionName(JSON.parse(row.entry_json).name) || undefined : undefined;
-  } finally { if (!connection) db.close(); }
 }
 
 function create(type, data, parentId) {
@@ -189,4 +174,4 @@ function forkPoint(entry) {
     && Array.isArray(entry.message.content) && !entry.message.content.some(part => part?.type === 'toolCall');
 }
 
-module.exports = { AUXILIARY_PARENT, isAuxiliaryParent, auxiliaryParent, capSessionName, isAuxiliary, canFork, forkPoint, selectBranch, selectedLeaf, stateKey, initializeSessionName, sessionName, isCurrent, history, stored, save, seed, capture, append, records, merge, revision, create };
+module.exports = { AUXILIARY_PARENT, isAuxiliaryParent, auxiliaryParent, isAuxiliary, canFork, forkPoint, selectBranch, selectedLeaf, stateKey, isCurrent, isName, history, stored, save, seed, capture, append, records, merge, revision, create };

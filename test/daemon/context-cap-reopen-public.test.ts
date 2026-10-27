@@ -21,7 +21,7 @@ test('a saved session can be renamed after the daemon restarts', async () => {
     daemon = await startDaemon({ home });
     runtimeId = crypto.randomUUID();
     await daemon.invoke('start_pi', { runtimeId, clientId: 'reopen-owner', cwd: daemon.home, sessionPath: chat.path });
-    await daemon.invoke('pi_command', { runtimeId, command: { type: 'set_session_name', name: 'After reopen' } });
+    await daemon.invoke('broker_request', { hostId: 'local', path: '/orchestration', body: { action: 'rename', sessionId: chat.id, hostId: 'local', name: 'After reopen' } });
     const state = await daemon.invoke('pi_command', { runtimeId, command: { type: 'get_state' } });
     expect(state.sessionName).toBe('After reopen');
     await daemon.invoke('stop_pi', { runtimeId });

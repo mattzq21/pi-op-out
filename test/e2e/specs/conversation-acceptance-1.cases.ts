@@ -334,7 +334,7 @@ describe("Conversation acceptance", () => {
 
   it("renames an indexed conversation", async () => {
     const indexed = { id: "acceptance-rename", path: "/tmp/acceptance-rename.jsonl", name: "Acceptance rename target", project: "Acceptance project", cwd: "/tmp", preview: "Rename preview", messageCount: 1, hostId: "local" };
-    await mockBackend({ list_sessions: [indexed], ...connectedSessionResponses(indexed.id), "pi_command:set_session_name": {} });
+    await mockBackend({ list_sessions: [indexed], ...connectedSessionResponses(indexed.id), "broker_request:rename": { name: "Renamed acceptance conv" } });
 
     try {
       await emitPiEvent({ type: "session_switched" });
@@ -355,8 +355,9 @@ describe("Conversation acceptance", () => {
       await input.setValue(name);
       await expect(input).toHaveValue(name);
       await $('//dialog//button[normalize-space(.)="Continue"]').click();
-      await browser.waitUntil(async () => (await backendCalls()).some(({ args }) => args.command?.type === "set_session_name"));
-      expect((await backendCalls()).find(({ args }) => args.command?.type === "set_session_name")?.args.command).toMatchObject({ type: "set_session_name", name: name.slice(0, 30) });
+      const renameCall = async () => (await backendCalls()).find(call => call.command === "broker_request" && (call.args.body as { action?: string } | undefined)?.action === "rename");
+      await browser.waitUntil(async () => Boolean(await renameCall()));
+      expect((await renameCall())?.args).toMatchObject({ hostId: "local", body: { action: "rename", sessionId: indexed.id, name } });
     } finally {
       await resetApp();
     }

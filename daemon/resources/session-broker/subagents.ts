@@ -102,17 +102,16 @@ async function createSubagent(pi: ExtensionAPI, ctx: ExtensionContext, task: Sub
   const run: SubagentRun = { version: 1, toolCallId, parentSessionId, sessionId, sessionPath, hostId: currentHost(), name: task.name, task: task.task, taskPath: `${scope.taskPath}/${task.name}`, agent: profile.active, status: "running", startedAt: Date.now(), runId: randomUUID(), submission: "prepared", ...workspace };
   let parentId: string | null = null;
 
-  const entry = (value: CustomEntryDraft | { type: "session_info"; name: string }) => { const id = randomUUID(); const result = { ...value, id, parentId, timestamp }; parentId = id;
+  const entry = (value: CustomEntryDraft) => { const id = randomUUID(); const result = { ...value, id, parentId, timestamp }; parentId = id;
 
   return result; };
 
   try { await writeSessionFile(sessionPath, [
     { type: "session", version: header.version, id: sessionId, timestamp, cwd: workspace.cwd },
-    entry({ type: "session_info", name: `Subagent: ${task.name}` }),
     entry({ type: "custom", customType: SUBAGENT_PARENT, data: { kind: "subagent", version: 1, sessionId, hostId: currentHost(), parentSessionId, parentHostId: currentHost(), parentSessionPath: ctx.sessionManager.getSessionFile(), toolCallId, task: task.task, depth: scope.depth + 1, taskPath: run.taskPath, parentTaskPath: scope.taskPath, max_subagents: subagentLimits(pi, ctx).max_sub_subagents } }),
     entry({ type: "custom", customType: "pi-define-agents-state", data: profile }),
     ...fastMode ? [entry(fastMode)] : [],
-  ], { dependencies: { workspace: { path: workspace.cwd, kind: "existing" } } }); }
+  ], { name: `Subagent: ${task.name}`, dependencies: { workspace: { path: workspace.cwd, kind: "existing" } } }); }
   catch (error) { throw new Error(`Subagent session creation failed in ${workspace.cwd}; chat assets are retained: ${(error instanceof Error ? error.message : String(error))}`, { cause: error }); }
 
   return run;

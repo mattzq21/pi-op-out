@@ -79,8 +79,7 @@ test.concurrent('a review opens a separate code review chat in the side pane, li
   expect(saved.some(entry => entry.type === 'custom')).toBe(false);
   const db = new Database(join(agents.daemon.home, '.piop', 'sessions.sqlite'), { readonly: true });
   try {
-    const name = db.query("SELECT entry_json FROM session_extension_state WHERE session_id=? AND state_key='piop-session-name'").get(review.sessionId) as { entry_json: string };
-    expect(JSON.parse(name.entry_json).name).toBe('Review src/parser.ts');
+    expect(db.query('SELECT name FROM session_names WHERE session_id=?').get(review.sessionId)).toEqual({ name: 'Review src/parser.ts' });
     const records = db.query('SELECT entry_json FROM session_extension_records WHERE session_id=?').all(review.sessionId) as { entry_json: string }[];
     expect(records.map(row => JSON.parse(row.entry_json)).find(entry => entry.customType === 'piop-auxiliary-parent')?.data).toMatchObject({ kind: 'review', parentSessionId: chat.sessionId, sessionId: review.sessionId });
   } finally { db.close(); }

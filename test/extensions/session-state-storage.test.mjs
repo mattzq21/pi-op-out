@@ -7,6 +7,7 @@ import { execFileSync } from 'node:child_process';
 import { pathToFileURL } from 'node:url';
 import { build } from 'esbuild';
 import database from '../../daemon/resources/session-database.cjs';
+import sessionNames from '../../daemon/resources/session-broker/session-names.cjs';
 import { storageSchemaImports } from '../../scripts/storage-schema-plugin.mjs';
 
 let sdk = dirname(realpathSync(execFileSync('which', ['pi'], { encoding: 'utf8' }).trim()));
@@ -44,14 +45,39 @@ async function fixture(t) {
   return { home, root, id, file, SessionManager, manager: SessionManager.open(file), physical: () => readFileSync(file, 'utf8').trim().split('\n').map(JSON.parse) };
 }
 
-test('session names keep at most 30 characters after saving and reopening', async t => {
+test('Pi sessions refuse names, and the session broker keeps names of at most 30 characters', async t => {
   const f = await fixture(t);
+  const body = readFileSync(f.file, 'utf8');
+  assert.throws(() => f.manager.appendSessionInfo('Pi name'), /session broker owns chat names/);
+  assert.equal(readFileSync(f.file, 'utf8'), body);
   for (const name of ['x'.repeat(30), 'x'.repeat(31), '😀'.repeat(31)]) {
-    f.manager.appendSessionInfo(name);
-    const expected = Array.from(name).slice(0, 30).join('');
-    assert.equal(f.manager.getSessionName(), expected);
-    assert.equal(f.SessionManager.open(f.file).getSessionName(), expected);
+    assert.equal(sessionNames.renameSession(f.root, f.id, name), Array.from(name).slice(0, 30).join(''));
+    assert.equal(sessionNames.sessionName(f.file, f.id), Array.from(name).slice(0, 30).join(''));
   }
+  assert.throws(() => sessionNames.renameSession(f.root, f.id, ' \t '), /name can't be empty/);
+  assert.equal(f.SessionManager.open(f.file).getSessionName(), undefined);
+});
+
+test('a name line in a saved transcript stays out of Pi', async t => {
+  const f = await fixture(t);
+  const user = { type: 'message', id: 'user', parentId: 'name', timestamp: '2026-10-19T00:00:01.000Z', message: { role: 'user', content: 'Start', timestamp: 1 } };
+  writeFileSync(f.file, readFileSync(f.file, 'utf8') + JSON.stringify({ type: 'session_info', id: 'name', parentId: null, timestamp: '2026-10-19T00:00:00.000Z', name: 'Old name' }) + '\n' + JSON.stringify(user) + '\n');
+  const opened = f.SessionManager.open(f.file);
+  assert.equal(opened.getSessionName(), undefined);
+  assert.deepEqual(opened.getEntries().map(entry => [entry.type, entry.parentId]), [['message', null]]);
+});
+
+test('names that Pi saved before move to the session broker once', async t => {
+  const f = await fixture(t);
+  const db = database.open(f.root);
+  try {
+    db.prepare('INSERT INTO session_extension_state (session_id, state_key, entry_json) VALUES (?, ?, ?)').run(f.id, 'piop-session-name', JSON.stringify({ type: 'session_info', name: ' Saved name ' }));
+    db.exec('PRAGMA user_version=0');
+  } finally { db.close(); }
+  assert.equal(sessionNames.sessionName(f.file, f.id), 'Saved name');
+  const reopened = database.open(f.root);
+  try { assert.equal(reopened.prepare("SELECT count(*) AS n FROM session_extension_state WHERE state_key='piop-session-name'").get().n, 0); }
+  finally { reopened.close(); }
 });
 
 test('settings keep only their current value across navigation and restart', async t => {
@@ -96,7 +122,7 @@ test('failed SQL state writes do not advance the branch or change the transcript
 test('SQL state follows archive and restore and is removed with the session', async t => {
   const f = await fixture(t);
   f.manager.appendCustomEntry('pi-define-agents-state', { active: 'Builder' });
-  f.manager.appendSessionInfo('Named chat');
+  sessionNames.renameSession(f.root, f.id, 'Named chat');
   const selected = f.manager.appendMessage({ role: 'user', content: 'First', timestamp: 1 });
   f.manager.appendMessage({ role: 'user', content: 'Second', timestamp: 2 });
   f.manager.branch(selected);
@@ -107,6 +133,7 @@ test('SQL state follows archive and restore and is removed with the session', as
   database.movePaths(f.root, [{ source: f.file, destination: archived }]);
   assert.deepEqual(f.SessionManager.open(archived).getEntries(), saved);
   assert.equal(f.SessionManager.open(archived).getLeafId(), selected);
+  assert.equal(sessionNames.sessionName(archived, f.id), 'Named chat');
   renameSync(archived, f.file);
   database.movePaths(f.root, [{ source: archived, destination: f.file }]);
   assert.deepEqual(f.SessionManager.open(f.file).getEntries(), saved);
@@ -115,6 +142,7 @@ test('SQL state follows archive and restore and is removed with the session', as
   db.prepare('DELETE FROM sessions WHERE session_id=?').run(f.id);
   assert.equal(db.prepare('SELECT count(*) AS n FROM session_extension_state').get().n, 0);
   assert.equal(db.prepare('SELECT count(*) AS n FROM session_branch_selection').get().n, 0);
+  assert.equal(db.prepare('SELECT count(*) AS n FROM session_names').get().n, 0);
   db.close();
 });
 
@@ -124,7 +152,6 @@ test('fork publication copies current settings once, independent of the selected
   const user = f.manager.appendMessage({ role: 'user', content: 'Start', timestamp: 1 });
   f.manager.appendCustomEntry('piop-fast-mode-state', { enabled: true });
   const left = f.manager.appendMessage({ role: 'user', content: 'Left', timestamp: 2 });
-  f.manager.appendSessionInfo('Current title');
   f.manager.branch(user);
   f.manager.appendCustomEntry('piop-fast-mode-state', { enabled: false });
   f.manager.appendMessage({ role: 'user', content: 'Right', timestamp: 3 });
@@ -136,46 +163,34 @@ test('fork publication copies current settings once, independent of the selected
   await writeSessionFile(target, [{ ...f.manager.getHeader(), id, parentSession: f.file }, ...f.manager.getBranch(left)]);
   assert.equal(readFileSync(target, 'utf8').split('\n').filter(Boolean).map(JSON.parse).some(entry => entry.type === 'custom'), false);
   const fork = f.SessionManager.open(target);
-  assert.equal(fork.getSessionName(), 'Current title');
   assert.deepEqual(fork.getBranch().filter(entry => entry.customType === 'piop-fast-mode-state').map(entry => entry.data), [{ enabled: false }]);
   f.manager.appendCustomEntry('piop-fast-mode-state', { enabled: true });
   assert.equal(f.SessionManager.open(target).getBranch().find(entry => entry.customType === 'piop-fast-mode-state').data.enabled, false);
   const db = database.open(f.root);
-  assert.equal(db.prepare('SELECT count(*) AS n FROM session_extension_state WHERE session_id=?').get(id).n, 2);
+  assert.equal(db.prepare('SELECT count(*) AS n FROM session_extension_state WHERE session_id=?').get(id).n, 1);
   db.close();
 });
 
 
-test('chat names keep one SQL value without writing transcript history', async t => {
+test('a rename shows in the chat list, keeps the transcript, and a failed write keeps the old name', async t => {
   const f = await fixture(t);
   const first = f.manager.appendMessage({ role: 'user', content: 'First', timestamp: 1 });
   const body = readFileSync(f.file, 'utf8');
   const bundle = join(f.home, 'lists.mjs');
   await build({ entryPoints: ['daemon/resources/sdk-session-list.mjs'], outfile: bundle, bundle: true, platform: 'node', format: 'esm', target: 'node22', logLevel: 'silent', plugins: [storageSchemaImports()], banner: { js: "import { createRequire } from 'node:module'; const require = createRequire(import.meta.url);" } });
   (await import(pathToFileURL(bundle))).installSessionLists(f.SessionManager);
-  f.manager.appendSessionInfo('First name');
+  sessionNames.renameSession(f.root, f.id, 'First name');
   assert.equal((await f.SessionManager.listAll())[0].name, 'First name');
-  f.manager.appendSessionInfo('Current name');
-  assert.equal(f.manager.getSessionName(), 'Current name');
+  sessionNames.renameSession(f.root, f.id, 'Current name');
   assert.equal((await f.SessionManager.listAll())[0].name, 'Current name');
   assert.equal(f.manager.getLeafId(), first);
   assert.equal(readFileSync(f.file, 'utf8'), body);
-  assert.equal(f.physical().some(entry => entry.type === 'session_info'), false);
-  f.manager.branch(first);
-  assert.equal(f.manager.getSessionName(), 'Current name');
-  assert.equal(f.SessionManager.open(f.file).getSessionName(), 'Current name');
   const db = database.open(f.root);
   try {
-    const rows = db.prepare("SELECT entry_json FROM session_extension_state WHERE session_id=? AND state_key='piop-session-name'").all(f.id);
-    assert.equal(rows.length, 1);
-    assert.equal(JSON.parse(rows[0].entry_json).name, 'Current name');
-    db.exec("CREATE TRIGGER reject_name BEFORE UPDATE ON session_extension_state BEGIN SELECT RAISE(ABORT, 'name write failed'); END;");
-    assert.throws(() => f.manager.appendSessionInfo('Lost name'), /name write failed/);
-    assert.equal(f.manager.getSessionName(), 'Current name');
-    assert.equal(readFileSync(f.file, 'utf8'), body);
+    db.exec("CREATE TRIGGER reject_name BEFORE UPDATE ON session_names BEGIN SELECT RAISE(ABORT, 'name write failed'); END;");
+    assert.throws(() => sessionNames.renameSession(f.root, f.id, 'Lost name'), /name write failed/);
+    assert.equal(sessionNames.sessionName(f.file, f.id), 'Current name');
     db.exec('DROP TRIGGER reject_name');
-    f.manager.appendSessionInfo('');
-    assert.equal(f.SessionManager.open(f.file).getSessionName(), undefined);
   } finally { db.close(); }
 });
 
@@ -276,18 +291,16 @@ test('recovered queued-input chats keep their names in SQL when reopened', async
   const db = database.open(f.root);
   try {
     database.bind(db, id, file);
-    db.exec("CREATE TRIGGER reject_recovered_name BEFORE INSERT ON session_extension_state BEGIN SELECT RAISE(ABORT, 'recovery name write failed'); END;");
+    db.exec("CREATE TRIGGER reject_recovered_name BEFORE INSERT ON session_names BEGIN SELECT RAISE(ABORT, 'recovery name write failed'); END;");
     assert.throws(() => createTranscript(file, id, f.home, 'Important queued request'), /recovery name write failed/);
     assert.equal(existsSync(file), false);
     assert.equal(existsSync(join(f.root, 'sessions', '.queued-input-recovery-' + id)), false);
     db.exec('DROP TRIGGER reject_recovered_name');
     assert.equal(createTranscript(file, id, f.home, 'Important queued request'), true);
-    const recovered = f.SessionManager.open(file);
-    assert.equal(recovered.getSessionName(), 'Recovered queued input: Import');
+    assert.equal(sessionNames.sessionName(file, id), 'Recovered queued input: Import');
     assert.equal(readFileSync(file, 'utf8').trim().split('\n').map(JSON.parse).some(entry => entry.type === 'session_info'), false);
-    assert.equal(db.prepare("SELECT count(*) AS n FROM session_extension_state WHERE session_id=? AND state_key='piop-session-name'").get(id).n, 1);
-    recovered.appendSessionInfo('Renamed recovered chat');
+    sessionNames.renameSession(f.root, id, 'Renamed recovered chat');
     assert.equal(createTranscript(file, id, f.home, 'Another request'), false);
-    assert.equal(f.SessionManager.open(file).getSessionName(), 'Renamed recovered chat');
+    assert.equal(sessionNames.sessionName(file, id), 'Renamed recovered chat');
   } finally { db.close(); }
 });

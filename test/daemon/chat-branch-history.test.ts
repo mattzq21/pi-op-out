@@ -24,6 +24,7 @@ beforeAll(async () => {
     dependencies: require('../../daemon/resources/piop-storage/goal-dependencies.cjs'),
     goals: require('../../daemon/resources/piop-storage/goals.cjs'),
     records: require('../../daemon/resources/piop-storage/session-records.cjs'),
+    names: require('../../daemon/resources/session-broker/session-names.cjs'),
     lock: require('../../daemon/resources/piop-storage/reference-publication-lock.cjs'),
     operation: require('../../daemon/resources/storage-operation.cjs'),
   };
@@ -55,14 +56,13 @@ async function sourceChat() {
     message('a3', 't2', 'assistant', text('Second answer'), { stopReason: 'stop' }),
   ];
   const current = [
-    { type: 'session_info', id: 'name', parentId: null, timestamp: new Date().toISOString(), name: 'Source' },
     { type: 'thinking_level_change', id: 'thinking', parentId: null, timestamp: new Date().toISOString(), thinkingLevel: 'high' },
   ];
   const header = { type: 'session', version: 3, id, timestamp: new Date().toISOString(), cwd };
   await publication.publish(path, [header, ...entries, ...current].map(entry => JSON.stringify(entry)).join('\n') + '\n', async (operation: any) => {
     const release = lock.acquireReferencePublicationLock(root, true);
     try { return await operation(); } finally { release(); }
-  }, { dependencies: { workspace: { path: cwd, kind: 'existing' } } });
+  }, { name: 'Source', dependencies: { workspace: { path: cwd, kind: 'existing' } } });
   goals.write(path, id, { id: randomUUID(), sessionId: id, objective: 'Keep going', status: 'active' });
   return { id, path, cwd, attachment, entries: [...entries, ...current] };
 }
@@ -109,9 +109,9 @@ test('a branch copies history through the selected final response, current setti
   expect(saved[0]).toMatchObject({ type: 'session', id: sessionId, cwd: source.cwd, parentSession: source.path, piopForkSource: result.forkSource });
   expect(saved.slice(1).map((entry: any) => entry.id)).toEqual(['u1', 'a1']);
   expect(registered(sessionId)).toBe(result.sessionPath);
-  expect(modules.records.sessionName(result.sessionPath, sessionId)).toBe('Source (branch)');
+  expect(modules.names.sessionName(result.sessionPath, sessionId)).toBe('Source (branch)');
   const settings = modules.records.records(result.sessionPath, sessionId).map((record: any) => record.entry);
-  expect(settings.map((entry: any) => entry.customType ?? entry.type).sort()).toEqual(['piop-input-hold', 'session_info', 'thinking_level_change']);
+  expect(settings.map((entry: any) => entry.customType ?? entry.type).sort()).toEqual(['piop-input-hold', 'thinking_level_change']);
   // The branch waits for the user's first message.
   expect(settings.find((entry: any) => entry.customType === 'piop-input-hold').data).toEqual({ held: true });
   expect(settings.find((entry: any) => entry.type === 'thinking_level_change').thinkingLevel).toBe('high');

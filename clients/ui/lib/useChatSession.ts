@@ -268,7 +268,7 @@ function createChatSession(transport: Accessor<Pick<NativeTransport, "command" |
         session.setState(current => current.sessionId && current.sessionId !== sessionId ? current : { ...current, sessionId, sessionFile, cwd, repository, forkSource, canFork, messageCount });
       });
       session.memory.markRevision(snapshot.revision);
-    }, reason => { if (owner.current === capturedTransport) reportBackgroundError("Could not show the saved conversation", reason); });
+    }, reason => console.warn("Saved conversation preview failed; waiting for the full load", reason));
   };
   showPreview();
 

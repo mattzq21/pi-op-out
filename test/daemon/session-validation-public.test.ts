@@ -75,7 +75,7 @@ test.concurrent('opening a registered transcript with a damaged body reports the
 
     writeFileSync(chat.path, original);
     expect(await daemon.invoke('start_pi', start)).toMatchObject({ owned: true });
-    await daemon.invoke('pi_command', { runtimeId, command: { type: 'set_session_name', name: 'Repaired transcript' } });
+    await daemon.invoke('broker_request', { hostId: 'local', path: '/orchestration', body: { action: 'rename', sessionId: chat.id, hostId: 'local', name: 'Repaired transcript' } });
     const state = await daemon.invoke('pi_command', { runtimeId, command: { type: 'get_state' } });
     expect(state).toMatchObject({ sessionFile: chat.path, sessionId: chat.id, sessionName: 'Repaired transcript' });
     await daemon.invoke('stop_pi', { runtimeId });
@@ -99,7 +99,7 @@ test.concurrent('a failed open of a damaged transcript by one client does not bl
     const other = await daemon.connect();
     const runtimeId = crypto.randomUUID();
     expect(await other.invoke('start_pi', { runtimeId, clientId: 'session-validation-b', cwd: daemon.home, sessionPath: chat.path })).toMatchObject({ owned: true });
-    await other.invoke('pi_command', { runtimeId, command: { type: 'set_session_name', name: 'Repaired by another client' } });
+    await other.invoke('broker_request', { hostId: 'local', path: '/orchestration', body: { action: 'rename', sessionId: chat.id, hostId: 'local', name: 'Repaired by another client' } });
     const state = await other.invoke('pi_command', { runtimeId, command: { type: 'get_state' } });
     expect(state).toMatchObject({ sessionFile: chat.path, sessionId: chat.id, sessionName: 'Repaired by another client' });
     await other.invoke('stop_pi', { runtimeId });

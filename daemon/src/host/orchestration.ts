@@ -12,6 +12,7 @@ import { detectRepository } from '../chat_worktrees';
 import { publishBranchHistory } from '../chat_branch_operations';
 import { rememberProjectRepository } from '../project_repositories';
 import { recentHistory } from './history_window';
+import { renameSession } from '../../resources/session-broker/session-names.cjs';
 import type { Host } from './controller';
 import type { Session } from './session';
 
@@ -60,6 +61,14 @@ export class Orchestration {
     });
   }
 
+  /** Renames a saved chat. Pi does not know chat names, so the chat does not have to run. */
+  private rename(id: string, name: unknown): { name: string } {
+    const renamed = renameSession(this.host.storageRoot(), id, name as string);
+    this.host.findSession(id)?.renamed(renamed);
+    this.host.output({ type: 'sessions_changed' });
+    return { name: renamed };
+  }
+
   /** True while any message is being delivered. */
   busy(): boolean { return this.deliveries.size > 0; }
 
@@ -78,6 +87,7 @@ export class Orchestration {
     const action = text(packet, 'action');
     if (action === 'locate') return host.ownership().lookup(id);
     if (action === 'preview') return this.preview(id);
+    if (action === 'rename') return this.rename(id, packet.name);
     if (action === 'watch') return this.watch(id, typeof packet.stateKey === 'string' ? packet.stateKey : null, typeof packet.waitMs === 'number' ? packet.waitMs : 0);
     if (action === 'branch_off') return this.branchOff(id);
     if (action === 'settle_first_message') return this.settleFirstMessage(packet);

@@ -1,4 +1,5 @@
 const stateRecords = require('./piop-storage/session-records.cjs');
+const names = require('./session-broker/session-names.cjs');
 const fs = require('node:fs');
 const { Type } = require('typebox');
 const { Check } = require('typebox/value');
@@ -131,7 +132,7 @@ class SessionIndex {
     }
 
     this.metadata(entry);
-    if (stateRecords.isCurrent(entry)) return;
+    if (stateRecords.isCurrent(entry) || stateRecords.isName(entry)) return;
 
     if (entry.type === 'usage') this.recordCost(entry);
 
@@ -144,7 +145,7 @@ class SessionIndex {
   }
 
   summary(path) {
-    if (this.header) this.name = stateRecords.sessionName(path, this.header.id);
+    if (this.header) this.name = names.sessionName(path, this.header.id);
     if (this.header) {
       this.leaf = stateRecords.selectedLeaf(path, this.header.id, this.leaf);
       if (this.leaf !== null && !this.nodes.has(this.leaf)) throw new Error('The saved branch points to a missing entry');
@@ -160,7 +161,7 @@ class SessionIndex {
 
     const forkSourceId = typeof this.header.piopForkSource?.sessionId === 'string' && this.header.piopForkSource.sessionId ? this.header.piopForkSource.sessionId : undefined;
 
-    return { path, id: this.header.id || '', cwd: this.header.cwd || 'Unknown project', name: stateRecords.capSessionName(this.name || this.first || 'Untitled session'), preview: this.preview, messageCount: this.count, lastMessageAt: this.lastMessageAt, apiCost: this.cost, explicitlyNamed: !!this.name, hasUserMessage: this.hasUserMessage, bytes: this.bytes, auxiliaryParentId: (this.ownAuxiliary ?? this.inheritedAuxiliary)?.parentId, auxiliaryKind: (this.ownAuxiliary ?? this.inheritedAuxiliary)?.kind, forkSourceId };
+    return { path, id: this.header.id || '', cwd: this.header.cwd || 'Unknown project', name: names.capSessionName(this.name || this.first || 'Untitled session'), preview: this.preview, messageCount: this.count, lastMessageAt: this.lastMessageAt, apiCost: this.cost, explicitlyNamed: !!this.name, hasUserMessage: this.hasUserMessage, bytes: this.bytes, auxiliaryParentId: (this.ownAuxiliary ?? this.inheritedAuxiliary)?.parentId, auxiliaryKind: (this.ownAuxiliary ?? this.inheritedAuxiliary)?.kind, forkSourceId };
   }
 }
 

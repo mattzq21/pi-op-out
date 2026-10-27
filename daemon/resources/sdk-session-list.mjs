@@ -2,7 +2,7 @@ import { createReadStream, realpathSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, join, resolve, sep } from "node:path";
 import * as database from "./session-database.cjs";
-import * as stateRecords from "./piop-storage/session-records.cjs";
+import { sessionName } from "./session-broker/session-names.cjs";
 import { sessionHeaderMatches } from "./piop-storage/session-storage.mjs";
 
 const cached = new Map();
@@ -182,7 +182,7 @@ function sorted(values) {
 async function availableSummary(db, row, signal) {
   try {
     const value = await summary(db, row, signal);
-    return value ? { ...value, name: stateRecords.sessionName(row.session_path, row.session_id, db) } : undefined;
+    return value ? { ...value, name: sessionName(row.session_path, row.session_id, db) } : undefined;
   }
   catch (error) {
     signal?.throwIfAborted();

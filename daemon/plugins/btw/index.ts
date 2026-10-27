@@ -1,5 +1,6 @@
 import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import { isAuxiliary } from "../../resources/piop-storage/session-records.cjs";
+import { sessionName } from "../../resources/session-broker/session-names.cjs";
 import { sessionControls } from "../../resources/piop-controls/interface.ts";
 import { openAuxiliaryChat } from "../../resources/session-broker/auxiliary.ts";
 
@@ -7,7 +8,8 @@ const NOTE = "This is a side chat of the main chat. Use send_to_main to send res
 
 /** The name the chat list shows: the saved name, or else the first line of the first prompt. */
 function mainChatName(ctx: ExtensionCommandContext) {
-  const saved = ctx.sessionManager.getSessionName()?.trim();
+  const file = ctx.sessionManager.getSessionFile();
+  const saved = file ? sessionName(file, ctx.sessionManager.getSessionId()) : undefined;
 
   if (saved) return saved;
   const first = ctx.sessionManager.getBranch().find(entry => entry.type === "message" && entry.message.role === "user");

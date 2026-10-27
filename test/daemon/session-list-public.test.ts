@@ -4,6 +4,9 @@ import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { startDaemon, waitForSessions, type TestDaemon } from './harness';
 
+const renameChat = (client: { invoke(command: string, args?: any): Promise<any> }, sessionId: string, name: string) =>
+  client.invoke('broker_request', { hostId: 'local', path: '/orchestration', body: { action: 'rename', sessionId, hostId: 'local', name } });
+
 function publicChat(home: string, content: string): { id: string; path: string } {
   return JSON.parse(execFileSync('node', [fileURLToPath(new URL('../fixtures/publish-chat.mjs', import.meta.url))], {
     encoding: 'utf8', timeout: 30000, input: JSON.stringify({ home, content }),
@@ -66,7 +69,7 @@ test.concurrent('session ordering uses file change times instead of transcript f
   } finally { await fresh.stop(); }
 }, 60000);
 
-test.concurrent('a chat renamed in a running agent keeps one row with the new name for other clients and after restart, and leaves the list when archived', async () => {
+test.concurrent('a chat renamed while its agent runs keeps one row with the new name for other clients and after restart, and leaves the list when archived', async () => {
   let daemon = await startDaemon();
   try {
     const chat = publicChat(daemon.home, JSON.stringify({ type: 'message', id: 'question', parentId: null, message: { role: 'user', content: 'Original question' } }) + '\n');
@@ -75,8 +78,9 @@ test.concurrent('a chat renamed in a running agent keeps one row with the new na
     const runtimeId = crypto.randomUUID();
     await daemon.invoke('start_pi', { runtimeId, clientId: 'rename-owner', cwd: daemon.home, sessionPath: chat.path });
     const transcript = readFileSync(chat.path, 'utf8');
-    await daemon.invoke('pi_command', { runtimeId, command: { type: 'set_session_name', name: 'Renamed chat' } });
+    expect(await renameChat(daemon, chat.id, 'Renamed chat')).toEqual({ name: 'Renamed chat' });
     expect(readFileSync(chat.path, 'utf8')).toBe(transcript);
+    expect(await daemon.invoke('pi_command', { runtimeId, command: { type: 'get_state' } })).toMatchObject({ sessionName: 'Renamed chat' });
     const seen = await waitForSessions(other as TestDaemon, rows => rows.some(row => row.id === chat.id && row.name === 'Renamed chat'));
     expect(seen.filter((row: any) => row.id === chat.id)).toMatchObject([{ path: chat.path, name: 'Renamed chat', messageCount: 1 }]);
     await daemon.invoke('stop_pi', { runtimeId });
@@ -91,7 +95,7 @@ test.concurrent('a chat renamed in a running agent keeps one row with the new na
   } finally { await daemon.stop(); }
 }, 60000);
 
-test.concurrent('a blank rename in a running agent is rejected, keeps the custom name for other clients, and a valid retry shows for other clients and after restart', async () => {
+test.concurrent('a blank rename of a stopped chat is rejected, keeps the custom name for other clients, and a valid retry shows for other clients and after restart', async () => {
   let daemon = await startDaemon();
   try {
     const chat = publicChat(daemon.home, [
@@ -100,14 +104,11 @@ test.concurrent('a blank rename in a running agent is rejected, keeps the custom
     ].map(entry => JSON.stringify(entry)).join('\n') + '\n');
     const other = await daemon.connect();
     expect((await other.invoke('list_sessions')).filter((row: any) => row.id === chat.id)).toMatchObject([{ path: chat.path, name: 'Kept name', messageCount: 1 }]);
-    const runtimeId = crypto.randomUUID();
-    await daemon.invoke('start_pi', { runtimeId, clientId: 'rename-owner', cwd: daemon.home, sessionPath: chat.path });
-    expect(await daemon.failure('pi_command', { runtimeId, command: { type: 'set_session_name', name: ' \t ' } })).toContain('Session name cannot be empty');
+    expect(await daemon.failure('broker_request', { hostId: 'local', path: '/orchestration', body: { action: 'rename', sessionId: chat.id, hostId: 'local', name: ' \t ' } })).toContain("Conversation name can't be empty");
     expect((await other.invoke('list_sessions')).filter((row: any) => row.id === chat.id)).toMatchObject([{ path: chat.path, name: 'Kept name', messageCount: 1 }]);
-    await daemon.invoke('pi_command', { runtimeId, command: { type: 'set_session_name', name: 'Retried name' } });
+    await renameChat(daemon, chat.id, 'Retried name');
     const seen = await waitForSessions(other as TestDaemon, rows => rows.some(row => row.id === chat.id && row.name === 'Retried name'));
     expect(seen.filter((row: any) => row.id === chat.id)).toMatchObject([{ path: chat.path, name: 'Retried name', messageCount: 1 }]);
-    await daemon.invoke('stop_pi', { runtimeId });
     const home = daemon.home;
     await daemon.stop();
     daemon = await startDaemon({ home });

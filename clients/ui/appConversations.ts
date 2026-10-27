@@ -729,7 +729,7 @@ export function createAppConversations(preloadChat: () => void) {
 
   const sessionAction = async (session: SessionSummary, action: SessionAction) => archives.isPending(session) || (session.isDraft && action !== "open-directory") ? undefined : performSessionAction(session, action);
 
-  const performSessionAction = async (session: SessionSummary, action: SessionAction) => { const capturedRuntimePool = runtimePool();
+  const performSessionAction = async (session: SessionSummary, action: SessionAction) => {
 
     if (["copy-id", "open-rollout"].includes(action)) { await sessionDebugAction(session, action, addNotice);
 
@@ -745,7 +745,7 @@ export function createAppConversations(preloadChat: () => void) {
 
     if (action === "archive") return archiveSession(session);
 
-    if (action === "rename") { setRenameSession({ session, transport: capturedRuntimePool.forSession(session) });
+    if (action === "rename") { setRenameSession({ session });
 
       return; }
 
