@@ -198,5 +198,20 @@ describe('composer interactions', () => {
     assert.equal(control('Remove file10.txt'), null); assert.equal(control('Remove file13.txt'), null);
     assert.match(document.querySelector('[role=alert]').textContent, /extra files were skipped/);
   });
+  test('the hold button shows with an empty queue, so the queue can be held before sending, and then offers resume', async () => {
+    const holds = [];
+    const button = label => [...document.querySelectorAll('button')].find(element => element.textContent === label);
+    await render({ onHoldQueue: async held => { holds.push(held); } });
+    assert.equal(control('Pending messages'), null);
+    await click(button('Hold queue'));
+    assert.deepEqual(holds, [true]);
+    await render({ queueHeld: true });
+    assert.ok(control('Pending messages'));
+    assert.match(document.body.textContent, /Queue on hold/);
+    await click(button('Resume queue'));
+    assert.deepEqual(holds, [true, false]);
+    await render({ queueHeld: false, onHoldQueue: undefined });
+    assert.equal(button('Hold queue'), undefined);
+  });
 
 });

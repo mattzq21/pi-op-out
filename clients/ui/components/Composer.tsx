@@ -431,6 +431,10 @@ export function Composer(props: Props) {
   const pausedGoal = () => { const goal = props.goal?.goal();
 
     return goal?.status === "paused" ? goal : undefined; };
+  /** The queue box shows while it has messages, a paused goal, a goal error, or a hold. */
+  const showPendingBox = () => composer().pendingMessages.length > 0 || Boolean(pausedGoal()) || Boolean(props.goal?.error()) || Boolean(props.queueHeld);
+  /** The hold button. Without a queue box it stands alone, so the user can hold the queue before sending. */
+  const renderQueueHold = (alone = false) => (<Show when={props.onHoldQueue}><div class="pending-queue-hold" classList={{ held: Boolean(props.queueHeld), alone }}><span>{props.queueHeld ? "Queue on hold. Messages wait until you resume." : ""}</span><button type="button" disabled={composer().controlsDisabled || changingPending()} aria-pressed={Boolean(props.queueHeld)} data-tooltip={props.queueHeld ? "Send the held messages" : "Keep messages in the queue until you resume"} onClick={() => holdQueue(!props.queueHeld)}>{props.queueHeld ? <><Play size={13} />Resume queue</> : <><Pause size={13} />Hold queue</>}</button></div></Show>);
   const pendingDrag = usePendingMessageDrag(() => (composer().pendingMessages), () => (pendingControlsDisabled(composer().controlsDisabled, changingPending(), composer().onChangePending)), () => (changePending));
   const controlsBlocked = () => composer().agentUnavailable || (props.submissionDisabled ?? composer().controlsDisabled) || composer().compacting || stopping();
 
@@ -696,7 +700,7 @@ export function Composer(props: Props) {
     {imageInputError() && <div class="image-input-toast" role="alert"><CircleX size={14} aria-hidden="true" /><span>This model does not support image inputs. Try a different model</span><button type="button" aria-label="Dismiss image input error" onClick={() => setImageInputError(false)}><X size={14} /></button></div>}
     <div class="composer-above">
     {renderStreamBanner()}
-    {(composer().pendingMessages.length > 0 || pausedGoal() || props.goal?.error() || props.queueHeld) && <div class="pending-messages" aria-label="Pending messages"><Show when={props.onHoldQueue && (composer().pendingMessages.length > 0 || props.queueHeld)}><div class="pending-queue-hold" classList={{ held: Boolean(props.queueHeld) }}><span>{props.queueHeld ? "Queue on hold. Messages wait until you resume." : ""}</span><button type="button" disabled={composer().controlsDisabled || changingPending()} aria-pressed={Boolean(props.queueHeld)} data-tooltip={props.queueHeld ? "Send the held messages" : "Keep queued messages until you resume"} onClick={() => holdQueue(!props.queueHeld)}>{props.queueHeld ? <><Play size={13} />Resume queue</> : <><Pause size={13} />Hold queue</>}</button></div></Show>{<Key each={composer().pendingMessages.filter((message) => pendingMessageIdentitySchema.safeParse(message).success)} by={(message) => message.id}>{(message, _index) => {
+    {showPendingBox() ? <div class="pending-messages" aria-label="Pending messages">{renderQueueHold()}{<Key each={composer().pendingMessages.filter((message) => pendingMessageIdentitySchema.safeParse(message).success)} by={(message) => message.id}>{(message, _index) => {
       const text = createMemo(() => String(message().message ?? ""));
       const change = (action: import("../types").PendingMessageAction) => changePending(message().id, action);
       const disabled = createMemo(() => (composer().controlsDisabled || changingPending() || Boolean(message().sending)));
@@ -735,7 +739,7 @@ export function Composer(props: Props) {
       <button type="button" class="pending-icon-button pending-drag-handle" disabled aria-label="Paused goal cannot be reordered"><MoveVertical size={16} /></button>
       <span class="pending-message-text" data-tooltip={goal().objective}><small>Paused · </small><small class="goal-label">Goal · </small>{goal().objective}</span>
       <div class="pending-message-actions"><GoalActions controls={required(props.goal)} goal={goal()} /></div>
-    </div>}</Show><Show when={props.goal?.error()}>{message => <div class="pending-goal-error" role="alert">{message()}</div>}</Show></div>}
+    </div>}</Show><Show when={props.goal?.error()}>{message => <div class="pending-goal-error" role="alert">{message()}</div>}</Show></div> : renderQueueHold(true)}
     {visualProps.toolbar}
     </div>
     <ComposerBody />
