@@ -212,7 +212,7 @@ button.agent-delivery-source:hover { color: var(--accent-soft); text-decoration:
 .assistant-message .message-time { margin-left: 6px; font-weight: 400; }
 .message:focus-within .message-time { opacity: 1; }
 @media (hover: hover) { .message:hover .message-time { opacity: 1; } }
-.cache-hit-rate { margin-left: 5px; color: var(--muted); font: 10px "DM Sans"; }
+.cache-hit-rate { margin-left: 5px; color: var(--muted); font: 12px "DM Sans"; }
 /* Trim the line box to the digit height, so flex centering centers the ink. */
 .cache-rate-value, .message-time { line-height: 1; text-box: trim-both cap alphabetic; }.cache-hit-rate.low { color: #d77865; }
 .cache-hit-rate, .session-cache-hit { position: relative; }
@@ -327,7 +327,7 @@ button.agent-delivery-source:hover { color: var(--accent-soft); text-decoration:
 .agent-definitions-host > span { font-size: inherit; font-weight: inherit; }
 .composer-picker-menu .agent-definitions-reload { width: 22px; min-height: 22px; flex: 0 0 22px; display: flex; align-items: center; justify-content: center; padding: 0; color: var(--muted); }
 .composer-picker-footer p { max-width: 280px; margin: 5px 8px; color: #a54e38; font-size: 12px; overflow-wrap: anywhere; }
-.session-cache-hit { margin-left: 5px; color: var(--muted); font: 10px "DM Sans"; white-space: nowrap; }.session-cache-hit.low { color: #d77865; }
+.session-cache-hit { margin-left: 5px; color: var(--muted); font: 12px "DM Sans"; white-space: nowrap; }.session-cache-hit.low { color: #d77865; }
 .composer-bar .composer-picker-trigger:is([aria-label="Model"], [aria-label="Thinking level"]) { padding-inline: 1px; }
 .fast-mode-indicator { position: relative; width: 14px; height: 27px; flex: 0 0 14px; display: inline-grid; place-items: center; padding: 0; border: 0; border-radius: 4px; background: transparent; color: var(--faint); cursor: pointer; }
 .fast-mode-indicator.active { color: var(--ink); }
