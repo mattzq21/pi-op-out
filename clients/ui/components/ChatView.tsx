@@ -747,6 +747,10 @@ function ConversationTurn(componentProps: ConversationTurnProps) {
   const renderForkLink = () => <Show when={forkIndex() >= 0 ? componentProps.forkSource : undefined}>{source => <ForkSourceLink source={source()} name={componentProps.forkSourceName} onOpen={componentProps.onOpenForkSource} />}</Show>;
 
   const finalIndex = createMemo(() => (finalResponseIndex(turnMessages())));
+  /** The last point of the chat: the latest final response or compaction. Fork and forget from it would change nothing. */
+  const lastPointId = createMemo(() => componentProps.latest ? turnMessages().filter((message, index) => index === finalIndex() || message.customType === "compaction").at(-1)?.id : undefined);
+  const forgetFrom = (message: ChatMessage | undefined) => (message?.id === lastPointId() ? undefined : componentProps.onForkAndForget);
+  const renderSystemMessages = (after: boolean) => <Key each={systemMessages(after)} by={message => message.id}>{message => <Message message={message()} expanded={false} onFork={canBranchFrom(message()) ? componentProps.onFork : undefined} onBranch={canBranchFrom(message()) ? componentProps.onBranch : undefined} onForkAndForget={canBranchFrom(message()) ? forgetFrom(message()) : undefined} />}</Key>;
   const finalThinking = createMemo(() => (finalIndex() >= 0 ? thinkingOf(turnMessages()[finalIndex()].content) : ""));
 
   const intermediate = createMemo(() => (turnMessages().flatMap((message, index): ChatMessage[] => {
@@ -816,11 +820,11 @@ function ConversationTurn(componentProps: ConversationTurnProps) {
   const renderActiveWorkContent = () => (<Show when={componentProps.active} fallback={required(<>
     {renderWorkGroup()}
     {finalMessage() && !hasWork() && finishedSubagents().length === 0 && <hr class="turn-divider" />}
-    {finalMessage() && <Message message={required((finalMessage()))} turnCacheUsage={turnCacheUsage()} debug={componentProps.debug} onBranch={canBranchFrom(finalSource()) ? componentProps.onBranch : undefined} onFork={canBranchFrom(finalSource()) ? componentProps.onFork : undefined} onForkAndForget={componentProps.onForkAndForget} retrying={retrying()} onRetry={retryTarget() ? retry : undefined} />}
+    {finalMessage() && <Message message={required((finalMessage()))} turnCacheUsage={turnCacheUsage()} debug={componentProps.debug} onBranch={canBranchFrom(finalSource()) ? componentProps.onBranch : undefined} onFork={canBranchFrom(finalSource()) ? componentProps.onFork : undefined} onForkAndForget={forgetFrom(finalSource())} retrying={retrying()} onRetry={retryTarget() ? retry : undefined} />}
     {retryError() && <div class="message-failure retry-error" role="alert">Retry failed: {(retryError())}</div>}
-    <MessageList messages={systemMessages(false)} expanded={false} />
+    {renderSystemMessages(false)}
     {renderForkLink()}
-    <MessageList messages={systemMessages(true)} expanded={false} />
+    {renderSystemMessages(true)}
   </>)}>
     <div class="active-work-content"><MessageList messages={turnMessages().filter(message => !isPromptMessage(message) && !isContextInjection(message))} expanded compact={false} debug={componentProps.debug} showActions={false} /></div>
     {renderForkLink()}

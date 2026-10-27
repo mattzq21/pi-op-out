@@ -9,6 +9,7 @@ import { argument, expandHome, readHeaderLine, sessionSpec, specIdentity, type L
 import type { Host } from './controller';
 import { lockGate } from './lock_gate';
 import type { Session } from './session';
+import { forkPoint } from '../../resources/piop-storage/session-records.cjs';
 
 const UUID = /^[0-9a-fA-F]{8}-?[0-9a-fA-F]{4}-?[0-9a-fA-F]{4}-?[0-9a-fA-F]{4}-?[0-9a-fA-F]{12}$/;
 
@@ -166,7 +167,7 @@ class Branch {
     const snapshot = await this.session.execute({ type: 'get_snapshot' });
     const entries = snapshot.history.entries;
     const selected = entries.find((entry: any) => entry.id === entryId);
-    if (selected?.type !== 'message' || selected.message?.role !== 'assistant' || selected.message.stopReason !== 'stop' || selected.message.content.some((part: any) => part.type === 'toolCall')) throw new Error('Select a finished final assistant response');
+    if (!forkPoint(selected)) throw new Error('Select a finished or stopped final response or a compaction to branch from');
     const repository = { repository: savedRepository.root, gitCommonDir: savedRepository.gitDir };
     const sessionId = Registry.reserve(this.host.storageRoot());
     this.managedId = sessionId;

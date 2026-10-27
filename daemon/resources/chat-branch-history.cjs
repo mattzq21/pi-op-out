@@ -29,18 +29,13 @@ function storageRoot(root, sessionPath) {
   return canonical;
 }
 
-function finalResponse(entry) {
-  return entry?.type === 'message' && entry.message?.role === 'assistant' && entry.message.stopReason === 'stop'
-    && Array.isArray(entry.message.content) && !entry.message.content.some(part => part?.type === 'toolCall');
-}
-
 /** Entries from the first entry through entryId on the branch that ends at leafId, without current-state entries. */
 function selectHistory(entries, leafId, entryId) {
   if (!stateRecords.canFork(entries)) throw new Error("Only main chats can be forked");
   const byId = new Map(entries.filter(entry => entry?.type !== 'session' && typeof entry?.id === 'string').map(entry => [entry.id, entry]));
   const selected = byId.get(entryId);
   if (!selected) throw new Error('The selected response is no longer in this conversation');
-  if (!finalResponse(selected)) throw new Error('Select a finished final response to branch from');
+  if (!stateRecords.forkPoint(selected)) throw new Error('Select a finished or stopped final response or a compaction to branch from');
   const path = [];
   const seen = new Set();
   for (let id = leafId; id; id = byId.get(id)?.parentId) {

@@ -610,6 +610,11 @@ textarea::placeholder { color: var(--faint); }
 .agent-mcp-settings > .secondary-button { margin-top: 10px; }
 .model-bulk-actions { display: flex; flex-wrap: wrap; gap: 7px; padding: 12px 0; }
 .message-actions .fork-and-forget-button { margin-left: auto; }
+.compaction-message { margin: 18px auto 28px; }.compaction-message > .command-result { margin: 0; }
+.compaction-message .message-actions { justify-content: center; opacity: 0; pointer-events: none; }
+.compaction-message:focus-within .message-actions { opacity: 1; pointer-events: auto; }
+@media (hover: hover) { .compaction-message:hover .message-actions { opacity: 1; pointer-events: auto; } }
+.compaction-message .fork-and-forget-button { margin-left: 0; }
 .split-pane-actions { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
 .review-feedback-button { padding: 5px 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--paper); color: var(--ink); font-size: 11px; }
 .review-feedback-button:hover:not(:disabled), .review-feedback-button[aria-pressed="true"] { background: var(--hover); }

@@ -31,6 +31,26 @@ function cacheTokenDigits(tokens: number) {
   return groups.map((group, index) => <span style={{ color: "var(--accent)", opacity: [0.33, 0.66, 1][Math.min(2, groups.length - index - 1)] }}>{group}</span>);
 }
 
+/** The Fork, Branch off and Fork and forget buttons of a point in the chat. Only one of them runs at a time. label names the point, such as "response". */
+function createForkActions(props: Props, label: () => string) {
+  const [running, setRunning] = createSignal(false);
+  const runningRef = createRef(false);
+  const run = async (action: Props["onFork"]) => { const message = props.message;
+
+    if (!action || runningRef.current) return;
+    runningRef.current = true; setRunning(true);
+
+    try { await action(message); } finally { runningRef.current = false; setRunning(false); }
+  };
+
+  return {
+    available: () => Boolean(props.onFork || props.onBranch || props.onForkAndForget),
+    fork: () => (props.onFork && <button class="branch-button" aria-label="Fork" data-tooltip="Fork" disabled={running()} onClick={() => void run(props.onFork)}><Split size={14} /></button>),
+    branch: () => (props.onBranch && <button class="branch-button" aria-label="Branch off" data-tooltip="Branch off" disabled={running()} onClick={() => void run(props.onBranch)}><GitBranch size={14} /></button>),
+    forget: () => (props.onForkAndForget && <button class="branch-button fork-and-forget-button" aria-label={`Fork and forget from ${label()}`} data-tooltip="Fork and forget" disabled={running()} onClick={() => void run(props.onForkAndForget)}><Undo2 size={14} /></button>),
+  };
+}
+
 function userMessageParts(content: string) {
   const goal = content.match(/^\/goal(?:\s+([\s\S]*))?$/);
 
@@ -243,10 +263,6 @@ function ToolResult(componentProps: Pick<Props, "message" | "toolCount"> & { deb
 export function Message(componentProps: Props) {
   const imageProject = useContext(ConversationImageProject);
   const [copyState, setCopyState] = createSignal<"idle" | "copied" | "error">("idle");
-  const [branching, setBranching] = createSignal(false);
-  const branchingRef = createRef(false);
-  const [forgetting, setForgetting] = createSignal(false);
-  const forgettingRef = createRef(false);
 
   const copy = async (value?: string) => { const capturedMessage0 = componentProps.message;
 
@@ -298,22 +314,7 @@ export function Message(componentProps: Props) {
     const streaming = createMemo(() => componentProps.message.streaming);
     const metadata = responseMetadata(() => componentProps.message, () => componentProps.turnCacheUsage);
     const failureState = createMemo(() => (responseFailure(componentProps.message)));
-
-    const branch = async (worktree = false) => { const capturedOnBranch0 = worktree ? componentProps.onBranch : componentProps.onFork; const capturedMessage1 = componentProps.message;
-
-      if (!capturedOnBranch0 || branchingRef.current || forgettingRef.current) return;
-      branchingRef.current = true; setBranching(true);
-
-      try { await (capturedOnBranch0)(capturedMessage1); } finally { branchingRef.current = false; setBranching(false); }
-    };
-
-    const forkAndForget = async () => { const capturedOnForkAndForget0 = componentProps.onForkAndForget; const capturedMessage1 = componentProps.message;
-
-      if (!capturedOnForkAndForget0 || branchingRef.current || forgettingRef.current) return;
-      forgettingRef.current = true; setForgetting(true);
-
-      try { await (capturedOnForkAndForget0)(capturedMessage1); } finally { forgettingRef.current = false; setForgetting(false); }
-    };
+    const forkActions = createForkActions(componentProps, () => metadata().responseLabel.toLowerCase());
 
     const renderMessageBody = () => {
       const renderResponse = () => <Markdown imageProject={imageProject()} fileLinks streaming={streaming()}>{output()}</Markdown>;
@@ -321,22 +322,19 @@ export function Message(componentProps: Props) {
 
       const renderMessageActions = () => {
         const renderCopyResponse = () => (<IconButton title="Copy" label={copyState() === "copied" ? `${metadata().responseLabel} copied` : copyState() === "error" ? `Copy failed for ${metadata().responseLabel.toLowerCase()}` : `Copy ${metadata().responseLabel.toLowerCase()}`} onClick={() => void copy()}>{copyState() === "copied" ? <Check size={14} /> : copyState() === "error" ? <CircleAlert size={14} /> : <Copy size={14} />}</IconButton>);
-        const renderForkAction = () => (componentProps.onFork && <button class="branch-button" aria-label="Fork" data-tooltip="Fork" disabled={branching() || forgetting()} onClick={() => void branch()}><Split size={14} /></button>);
-        const renderBranchAction = () => (componentProps.onBranch && <button class="branch-button" aria-label="Branch off" data-tooltip="Branch off" disabled={branching() || forgetting()} onClick={() => void branch(true)}><GitBranch size={14} /></button>);
-        const renderForkAndForgetAction = () => (componentProps.onForkAndForget && <button class="branch-button fork-and-forget-button" aria-label={`Fork and forget from ${metadata().responseLabel.toLowerCase()}`} data-tooltip="Fork and forget" disabled={branching() || forgetting()} onClick={() => void forkAndForget()}><Undo2 size={14} /></button>);
         const renderCacheHitRate = () => ((componentProps.debug?.cacheHitRate ?? false) && metadata().cache && <span class={`cache-hit-rate${required((metadata().cache)).low ? " low" : ""}`} tabIndex={0} aria-label={`Cache ${required((metadata().cache)).rate}%, ${required((metadata().cache)).cachedTokens}/${required((metadata().cache)).promptTokens}`}><CacheIcon rate={required((metadata().cache)).rate} /><span class="cache-rate-value">{required((metadata().cache)).rate}%</span><span class="cache-fraction-tooltip" aria-hidden="true"><span>{cacheTokenDigits(required((metadata().cache)).cachedTokens)}</span><span>{cacheTokenDigits(required((metadata().cache)).promptTokens)}</span></span></span>);
 
-        const showActions = () => (componentProps.showActions === undefined ? true : componentProps.showActions) && !streaming() && (output().trim().length > 0 || componentProps.message.stopReason === "aborted" || componentProps.onFork || componentProps.onForkAndForget);
+        const showActions = () => (componentProps.showActions === undefined ? true : componentProps.showActions) && !streaming() && (output().trim().length > 0 || componentProps.message.stopReason === "aborted" || forkActions.available());
 
         return (showActions() && <div class="message-actions">
           {hasVisibleText(output()) && renderCopyResponse()}
           {copyState() === "error" && <span class="copy-feedback" role="status">Could not copy response</span>}
-          {renderForkAction()}
-          {renderBranchAction()}
+          {forkActions.fork()}
+          {forkActions.branch()}
 
           {renderCacheHitRate()}
           {metadata().responseTime && <span class="message-time">{required((metadata().responseTime)).short}</span>}
-          {renderForkAndForgetAction()}
+          {forkActions.forget()}
         </div>);
       };
 
@@ -356,5 +354,15 @@ export function Message(componentProps: Props) {
 
   const renderToolMessage = () => (<ToolResult message={componentProps.message} toolCount={(componentProps.toolCount === undefined ? 1 : componentProps.toolCount)} debug={componentProps.debug?.toolDetails ?? false} />);
 
-  return <>{componentProps.message.customType === "piop-agent-message" ? <AgentDelivery message={componentProps.message} actions={renderSentActions} /> : componentProps.message.customType === GOAL_PROMPT ? <GoalPrompt message={componentProps.message} /> : isContextInjection(componentProps.message) ? <ContextInjection title={componentProps.message.customType === "pi-project-files-watch" ? "Project files changed" : "Context added"} content={textOf(componentProps.message.content)} /> : componentProps.message.customType === "piop-subagent-result" ? <SubagentResults runs={subagentRuns(componentProps.message.details)} /> : pluginMessageRenderer(componentProps.message.customType) ? <Dynamic component={pluginMessageRenderer(componentProps.message.customType)} details={componentProps.message.details} /> : componentProps.message.role === "system" ? (<div class={`command-result${componentProps.message.customType === "compaction" ? " compaction" : ""}`} role="status">{textOf(componentProps.message.content)}</div>) : componentProps.message.role === "tool" ? renderToolMessage() : componentProps.message.role === "user" ? (<UserMessage />) : (renderAssistantMessage())}</>;
+  /** A compaction is a point a new chat can start from, so it has the fork buttons. */
+  const renderCompaction = () => {
+    const forkActions = createForkActions(componentProps, () => "compaction");
+
+    return <article tabIndex={-1} class="message compaction-message" aria-label="Compaction">
+      <div class="command-result compaction" role="status">{textOf(componentProps.message.content)}</div>
+      <Show when={forkActions.available()}><div class="message-actions">{forkActions.fork()}{forkActions.branch()}{forkActions.forget()}</div></Show>
+    </article>;
+  };
+
+  return <>{componentProps.message.customType === "piop-agent-message" ? <AgentDelivery message={componentProps.message} actions={renderSentActions} /> : componentProps.message.customType === GOAL_PROMPT ? <GoalPrompt message={componentProps.message} /> : isContextInjection(componentProps.message) ? <ContextInjection title={componentProps.message.customType === "pi-project-files-watch" ? "Project files changed" : "Context added"} content={textOf(componentProps.message.content)} /> : componentProps.message.customType === "piop-subagent-result" ? <SubagentResults runs={subagentRuns(componentProps.message.details)} /> : pluginMessageRenderer(componentProps.message.customType) ? <Dynamic component={pluginMessageRenderer(componentProps.message.customType)} details={componentProps.message.details} /> : componentProps.message.role === "system" && componentProps.message.customType === "compaction" ? renderCompaction() : componentProps.message.role === "system" ? (<div class="command-result" role="status">{textOf(componentProps.message.content)}</div>) : componentProps.message.role === "tool" ? renderToolMessage() : componentProps.message.role === "user" ? (<UserMessage />) : (renderAssistantMessage())}</>;
 }

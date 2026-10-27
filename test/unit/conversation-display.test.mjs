@@ -115,12 +115,14 @@ test('regular Fork is available with and without a repository and is separate fr
   assert.deepEqual(worktrees, ['answer']);
 });
 
-test('Worktree fork appears only under finished final responses in a Git repository', async t => {
+test('Worktree fork appears only under finished or stopped final responses in a Git repository', async t => {
   const question = { id: 'question', role: 'user', content: 'Question' };
   const answer = { id: 'answer', role: 'assistant', content: [{ type: 'text', text: 'Answer' }], stopReason: 'stop' };
   const view = await conversation(t, { state: repositoryState, messages: [question, answer], onBranch: () => {} });
   assert.ok(forkControl(view));
-  for (const changed of [{ stopReason: 'aborted' }, { stopReason: 'error' }, { stopReason: 'length' }, { streaming: true }, { content: [{ type: 'text', text: 'Answer' }, { type: 'toolCall', id: 'call', name: 'read', arguments: {} }] }]) {
+  await view.update({ messages: [question, { ...answer, stopReason: 'aborted' }] });
+  assert.ok(forkControl(view));
+  for (const changed of [{ stopReason: 'error' }, { stopReason: 'length' }, { streaming: true }, { content: [{ type: 'text', text: 'Answer' }, { type: 'toolCall', id: 'call', name: 'read', arguments: {} }] }]) {
     await view.update({ messages: [question, { ...answer, ...changed }] });
     assert.equal(forkControl(view), null, JSON.stringify(changed));
   }
@@ -128,6 +130,29 @@ test('Worktree fork appears only under finished final responses in a Git reposit
   assert.equal(forkControl(view), null);
   await view.update({ state: { ...repositoryState, repository: undefined } });
   assert.equal(forkControl(view), null);
+});
+
+test('Fork and forget is absent at the last point of the chat, and a compaction is a point to fork from', async t => {
+  const forgotten = [], branched = [];
+  const forgetIn = (view, label) => view.container.querySelector(`[aria-label="${label}"] .fork-and-forget-button`);
+  const turn = id => [{ id: id + '-question', role: 'user', content: 'Question ' + id }, { id: id + '-answer', role: 'assistant', content: 'Answer ' + id, stopReason: 'stop' }];
+  const compaction = { id: 'compacted', entryId: 'compacted', role: 'system', customType: 'compaction', content: 'Compacted' };
+  const view = await conversation(t, { state: repositoryState, messages: [...turn('first'), ...turn('last')], onFork: () => {}, onBranch: value => branched.push(value.id), onForkAndForget: value => forgotten.push(value.id) });
+  const answers = () => [...view.container.querySelectorAll('.assistant-message')];
+  assert.equal(answers().length, 2);
+  assert.ok(answers()[0].querySelector('.fork-and-forget-button'));
+  assert.equal(answers()[1].querySelector('.fork-and-forget-button'), null);
+
+  await view.update({ messages: [...turn('first'), ...turn('last'), compaction] });
+  assert.ok(answers()[1].querySelector('.fork-and-forget-button'));
+  assert.ok(view.container.querySelector('[aria-label="Compaction"] [aria-label="Fork"]'));
+  assert.equal(forgetIn(view, 'Compaction'), null);
+  await act(() => view.container.querySelector('[aria-label="Compaction"] [aria-label="Branch off"]').click());
+  assert.deepEqual(branched, ['compacted']);
+
+  await view.update({ messages: [...turn('first'), compaction, ...turn('last')] });
+  await act(() => forgetIn(view, 'Compaction').click());
+  assert.deepEqual(forgotten, ['compacted']);
 });
 
 test('a branched conversation links to its original conversation and message', async t => {

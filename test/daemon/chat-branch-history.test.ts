@@ -150,11 +150,11 @@ test('a publication that fails after claiming resources removes everything it cr
   expect(owners(source.attachment)).toEqual([source.id]);
 });
 
-test('only finished final responses on the current branch can be branched from', async () => {
+test('only finished or stopped final responses on the current branch can be branched from', async () => {
   const source = await sourceChat();
   const sessionId = modules.database.reserve(root);
   const request = { root, sourcePath: source.path, sessionId, cwd: source.cwd, entries: source.entries, leafId: 'a3' };
-  await expect(modules.history.publishBranchHistory({ ...request, entryId: 'a2' })).rejects.toThrow(/finished final response/);
+  await expect(modules.history.publishBranchHistory({ ...request, entryId: 'a2' })).rejects.toThrow(/finished or stopped final response/);
   await expect(modules.history.publishBranchHistory({ ...request, entryId: 'a1', leafId: 'u1' })).rejects.toThrow(/not on the current branch/);
   expect(registered(sessionId)).toBeNull();
   expect(owners(source.attachment)).toEqual([source.id]);
