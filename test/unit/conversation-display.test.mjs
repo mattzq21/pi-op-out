@@ -115,12 +115,14 @@ test('regular Fork is available with and without a repository and is separate fr
   assert.deepEqual(worktrees, ['answer']);
 });
 
-test('Worktree fork appears only under finished final responses in a Git repository', async t => {
+test('Worktree fork appears only under finished or stopped final responses in a Git repository', async t => {
   const question = { id: 'question', role: 'user', content: 'Question' };
   const answer = { id: 'answer', role: 'assistant', content: [{ type: 'text', text: 'Answer' }], stopReason: 'stop' };
   const view = await conversation(t, { state: repositoryState, messages: [question, answer], onBranch: () => {} });
   assert.ok(forkControl(view));
-  for (const changed of [{ stopReason: 'aborted' }, { stopReason: 'error' }, { stopReason: 'length' }, { streaming: true }, { content: [{ type: 'text', text: 'Answer' }, { type: 'toolCall', id: 'call', name: 'read', arguments: {} }] }]) {
+  await view.update({ messages: [question, { ...answer, stopReason: 'aborted' }] });
+  assert.ok(forkControl(view));
+  for (const changed of [{ stopReason: 'error' }, { stopReason: 'length' }, { streaming: true }, { content: [{ type: 'text', text: 'Answer' }, { type: 'toolCall', id: 'call', name: 'read', arguments: {} }] }]) {
     await view.update({ messages: [question, { ...answer, ...changed }] });
     assert.equal(forkControl(view), null, JSON.stringify(changed));
   }

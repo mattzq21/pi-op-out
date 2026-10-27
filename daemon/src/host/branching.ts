@@ -166,7 +166,7 @@ class Branch {
     const snapshot = await this.session.execute({ type: 'get_snapshot' });
     const entries = snapshot.history.entries;
     const selected = entries.find((entry: any) => entry.id === entryId);
-    if (selected?.type !== 'message' || selected.message?.role !== 'assistant' || selected.message.stopReason !== 'stop' || selected.message.content.some((part: any) => part.type === 'toolCall')) throw new Error('Select a finished final assistant response');
+    if (selected?.type !== 'message' || selected.message?.role !== 'assistant' || !['stop', 'aborted'].includes(selected.message.stopReason) || selected.message.content.some((part: any) => part.type === 'toolCall')) throw new Error('Select a finished or stopped final assistant response');
     const repository = { repository: savedRepository.root, gitCommonDir: savedRepository.gitDir };
     const sessionId = Registry.reserve(this.host.storageRoot());
     this.managedId = sessionId;

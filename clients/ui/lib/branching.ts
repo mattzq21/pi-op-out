@@ -1,8 +1,8 @@
 import type { AgentState, ChatMessage } from "../types";
 
-/** A response can start a branch only after it finished as a final answer without tool calls. */
+/** A response can start a branch after it finished or was stopped, as a final answer without tool calls. */
 export function canBranchFrom(message: ChatMessage | undefined) {
-  return message?.role === "assistant" && message.stopReason === "stop" && !message.streaming && !(Array.isArray(message.content) && message.content.some(part => part.type === "toolCall"));
+  return message?.role === "assistant" && (message.stopReason === "stop" || message.stopReason === "aborted") && !message.streaming && !(Array.isArray(message.content) && message.content.some(part => part.type === "toolCall"));
 }
 
 /** Branching needs the saved project repository reported by the daemon. */

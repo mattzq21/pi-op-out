@@ -30,7 +30,7 @@ function storageRoot(root, sessionPath) {
 }
 
 function finalResponse(entry) {
-  return entry?.type === 'message' && entry.message?.role === 'assistant' && entry.message.stopReason === 'stop'
+  return entry?.type === 'message' && entry.message?.role === 'assistant' && ['stop', 'aborted'].includes(entry.message.stopReason)
     && Array.isArray(entry.message.content) && !entry.message.content.some(part => part?.type === 'toolCall');
 }
 
@@ -40,7 +40,7 @@ function selectHistory(entries, leafId, entryId) {
   const byId = new Map(entries.filter(entry => entry?.type !== 'session' && typeof entry?.id === 'string').map(entry => [entry.id, entry]));
   const selected = byId.get(entryId);
   if (!selected) throw new Error('The selected response is no longer in this conversation');
-  if (!finalResponse(selected)) throw new Error('Select a finished final response to branch from');
+  if (!finalResponse(selected)) throw new Error('Select a finished or stopped final response to branch from');
   const path = [];
   const seen = new Set();
   for (let id = leafId; id; id = byId.get(id)?.parentId) {
