@@ -162,6 +162,7 @@ export function createSidepaneTabs(options: Options) {
     /** Removes a root chat tab or hides a subagent tab, also when the chat was archived or deleted. Auxiliary chats of other kinds leave the tabs when they are archived. */
     forget: (key: string) => {
       openings.delete(key);
+      setOpened(current => current.filter(session => sessionKey(session) !== key));
       setChats(current => current.filter(session => sessionKey(session) !== key));
       setPinned(change(next => next.delete(key)));
     },

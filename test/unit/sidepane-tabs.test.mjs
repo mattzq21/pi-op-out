@@ -74,6 +74,15 @@ test('a subagent that works while another main chat is shown has its tab when it
   assert.deepEqual(view.keys(), ['helper']);
 });
 
+test('a chat that a command opened and that was removed before the session list had it leaves the tabs', t => {
+  const view = tabs([session('main')]);
+  t.after(view.dispose);
+  view.tabs.openAuxiliary(session('fresh', { auxiliaryParentId: 'main', auxiliaryKind: 'btw' }));
+  view.tabs.forget('local:fresh');
+  view.setSessions([session('main')]);
+  assert.deepEqual(view.keys(), []);
+});
+
 test('a side chat counts as working while one of its own subagents works', t => {
   const btw = session('btw', { auxiliaryParentId: 'main', auxiliaryKind: 'btw' });
   const helper = session('helper', { auxiliaryParentId: 'btw', auxiliaryKind: 'subagent' });
