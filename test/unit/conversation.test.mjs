@@ -26,4 +26,10 @@ test('work duration handles seconds, hours and unavailable timestamps', async ()
     }
   });
 
+  test('a compaction after a finished turn shows outside its work group', async () => {
+    await render({ messages: [user('u'), { id: 't', role: 'tool', content: 'result' }, assistant('a', 'Done'), { id: 'c', role: 'system', customType: 'compaction', content: 'Context compacted' }] });
+    assert.equal(document.querySelector('.work-group-content'), null);
+    assert.equal(document.querySelector('.command-result')?.textContent, 'Context compacted');
+  });
+
 });
