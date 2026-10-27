@@ -33,20 +33,33 @@ test('on mobile the keyboard Enter key starts a new line and only Send queues th
   ]);
 });
 
-test('tapping Send on mobile includes the word the keyboard is still composing and clears the editor', { skip: testBrowserName === 'webkit' && 'the input method of the WebKitGTK test screen composes code points, not words' }, async t => {
+/** Types text, then leaves a word open in the input method and returns that word. */
+async function typeAndCompose(page, text) {
+  if (testBrowserName === 'webkit') {
+    // GTK's own input method composes only Unicode entry: Ctrl+Shift+U, then hex digits, open as "u" and the digits.
+    await page.keyboard.type(text);
+    await page.keyboard.press('Control+Shift+u');
+    await page.keyboard.type('cafe');
+    return 'ucafe';
+  }
+  const keyboard = await page.context().newCDPSession(page);
+  try {
+    await keyboard.send('Input.insertText', { text });
+    await keyboard.send('Input.imeSetComposition', { text: 'tests', selectionStart: 5, selectionEnd: 5 });
+  } finally { await keyboard.detach(); }
+  return 'tests';
+}
+
+test('tapping Send on mobile includes the word the keyboard is still composing and clears the editor', async t => {
   const page = await mobilePage(t);
   const editor = page.getByRole('textbox', { name: 'Message piop', exact: true });
   await editor.click();
-  const keyboard = await page.context().newCDPSession(page);
-  try {
-    await editor.evaluate(node => node.addEventListener('compositionend', event => { window.composedAtSend = event.data; }, { once: true }));
-    await keyboard.send('Input.insertText', { text: 'Please review ' });
-    await keyboard.send('Input.imeSetComposition', { text: 'tests', selectionStart: 5, selectionEnd: 5 });
-    assert.equal(await page.evaluate(() => window.composedAtSend), undefined);
-    await page.getByRole('button', { name: 'Send message', exact: true }).click();
-    await page.getByLabel('Sent messages', { exact: true }).filter({ hasText: 'Please review' }).waitFor();
-    assert.equal(await page.evaluate(() => window.composedAtSend), 'tests');
-    assert.deepEqual(await sent(page), [{ message: 'Please review tests', behavior: 'followUp', images: [] }]);
-    assert.equal(await editor.inputValue(), '');
-  } finally { await keyboard.detach(); }
+  await editor.evaluate(node => node.addEventListener('compositionend', event => { window.composedAtSend = event.data; }, { once: true }));
+  const word = await typeAndCompose(page, 'Please review ');
+  assert.equal(await page.evaluate(() => window.composedAtSend), undefined);
+  await page.getByRole('button', { name: 'Send message', exact: true }).click();
+  await page.getByLabel('Sent messages', { exact: true }).filter({ hasText: 'Please review' }).waitFor();
+  assert.equal(await page.evaluate(() => window.composedAtSend), word);
+  assert.deepEqual(await sent(page), [{ message: 'Please review ' + word, behavior: 'followUp', images: [] }]);
+  assert.equal(await editor.inputValue(), '');
 });

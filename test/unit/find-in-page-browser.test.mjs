@@ -122,13 +122,17 @@ test('Enter during text composition preserves the current search result', async 
   const input = await page.context().newCDPSession(page);
   try {
     await input.send('Input.imeSetComposition', { text: 'alpha', selectionStart: 5, selectionEnd: 5, replacementStart: 0, replacementEnd: 5 });
+    const composing = await count(page);
     await page.keyboard.press('Enter');
     // WebKitGTK's input method consumes keys during a composition, so the page gets no Enter keydown.
     assert.deepEqual(await page.evaluate(() => window.compositionKey), testBrowserName === 'webkit' ? undefined : { composing: true, prevented: false });
-    assert.equal(await count(page), '2 / 2');
+    assert.equal(await count(page), composing);
     await input.send('Input.insertText', { text: 'alpha' });
+    // The composition of WebKitGTK's input method shows other text than "alpha", so its search starts again when the text is committed.
+    const committed = testBrowserName === 'webkit' ? '1 / 2' : '2 / 2';
+    assert.equal(await count(page), committed);
     await page.keyboard.press('Enter');
-    assert.equal(await count(page), '1 / 2');
+    assert.equal(await count(page), committed === '1 / 2' ? '2 / 2' : '1 / 2');
   } finally { await input.detach(); }
 });
 

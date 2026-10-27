@@ -79,7 +79,7 @@ export async function startSession({ proxy, scale = 1 }) {
   const display = await startHiddenDisplay();
   const port = await freePort();
   // Playwright's browser contexts default to the en-US locale.
-  const env = { ...await hiddenDisplayEnv(process.env, display.name), GDK_SCALE: String(scale), XDG_CONFIG_HOME: await gtkConfig(), LANG: 'en_US.UTF-8', LC_ALL: 'en_US.UTF-8', LANGUAGE: 'en_US' };
+  const env = { ...await hiddenDisplayEnv(process.env, display.name), GDK_SCALE: String(scale), XDG_CONFIG_HOME: await gtkConfig(), LANG: 'en_US.UTF-8', LC_ALL: 'en_US.UTF-8', LANGUAGE: 'en_US', GTK_IM_MODULE: 'gtk-im-context-simple', XMODIFIERS: '' };
   const driver = spawn('WebKitWebDriver', ['--port=' + port], { stdio: ['ignore', 'ignore', 'pipe'], env });
   let driverErrors = '';
   driver.stderr.on('data', chunk => { driverErrors += chunk; });
