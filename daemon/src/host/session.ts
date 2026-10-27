@@ -500,6 +500,7 @@ export class Session {
     const count = typeof state?.pendingMessageCount === 'number' && Number.isInteger(state.pendingMessageCount) && state.pendingMessageCount >= 0 ? state.pendingMessageCount : 0;
     if (state && typeof state === 'object' && !Array.isArray(state)) {
       state.pendingMessages = this.queue.view().pendingMessages ?? null;
+      state.queueHeld = this.queue.view().held === true;
       state.pendingMessageCount = count;
     }
     return state;
@@ -630,6 +631,7 @@ export class Session {
       snapshotState.viewers = this.visibleViewers();
       snapshotState.needsInput = !this.dialogs.empty();
       snapshotState.pendingMessageCount = array(queue, 'steering').length + array(queue, 'followUp').length;
+      snapshotState.queueHeld = queue.held === true;
     }
     return {
       history: data, revision: this.epoch + ':' + this.contentRevision, sequence: this.sequence, stateRevision: this.stateRevision,

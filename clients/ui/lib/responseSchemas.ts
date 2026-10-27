@@ -67,7 +67,7 @@ export const gitRepositorySchema = z.object({ root: z.string().min(1), gitDir: z
 
 export const forkSourceSchema = z.object({ sessionId: z.string().min(1), sessionPath: z.string().min(1), entryId: z.string().min(1) });
 
-export const agentStateSchema = z.object({ canFork: z.boolean().optional(), viewers: z.number().optional(), pendingMessages: z.array(pendingMessageSchema).optional(), model: z.union([modelSchema, z.null()]), thinkingLevel: z.string(), isStreaming: z.boolean(), isCompacting: z.boolean().optional(), sessionFile: z.string().optional(), sessionId: z.string(), sessionName: z.string().optional(), cwd: z.string().optional(), repository: z.union([gitRepositorySchema, z.null()]).optional(), forkSource: forkSourceSchema.optional(), messageCount: z.number(), pendingMessageCount: z.number(), activity: z.string().optional(), contextUsage: contextUsageSchema.optional() });
+export const agentStateSchema = z.object({ canFork: z.boolean().optional(), viewers: z.number().optional(), pendingMessages: z.array(pendingMessageSchema).optional(), queueHeld: z.boolean().optional(), model: z.union([modelSchema, z.null()]), thinkingLevel: z.string(), isStreaming: z.boolean(), isCompacting: z.boolean().optional(), sessionFile: z.string().optional(), sessionId: z.string(), sessionName: z.string().optional(), cwd: z.string().optional(), repository: z.union([gitRepositorySchema, z.null()]).optional(), forkSource: forkSourceSchema.optional(), messageCount: z.number(), pendingMessageCount: z.number(), activity: z.string().optional(), contextUsage: contextUsageSchema.optional() });
 
 export const forkAfterResultSchema = z.object({ cancelled: z.boolean().optional(), state: z.object({ cwd: z.union([z.string(), z.null()]).optional() }).optional() });
 

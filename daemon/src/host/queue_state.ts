@@ -17,6 +17,9 @@ export const GOAL_ENTRY_ID = 'goal';
 /** The conversation's goal as the goals extension publishes it in its piop-goal status. */
 export type QueueGoal = { id: string; objective: string; active: boolean };
 
+/** True for an item the daemon keeps out of Pi's queue: it waits below the goal, or the queue is on hold. */
+export function kept(item: any): boolean { return flag(item, 'afterGoal') || flag(item, 'held'); }
+
 /** Reads the goal from a goals extension status event: null when the goal is cleared, undefined for other events. */
 export function goalStatus(event: any): QueueGoal | null | undefined {
   if (kind(event) !== 'extension_ui_request' || event.method !== 'setStatus' || event.statusKey !== 'piop-goal') return undefined;
@@ -29,6 +32,7 @@ export function goalStatus(event: any): QueueGoal | null | undefined {
  * The queue as the daemon sees it: items it keeps and items Pi holds.
  * An active goal is an entry of the follow-up queue. Follow-ups above it are in Pi's queue and run first.
  * Follow-ups below it have afterGoal set: the daemon keeps them until they move above the goal or the goal stops.
+ * While the queue is on hold, the other items have held set: the daemon keeps them until the user resumes the queue.
  */
 export class QueueState {
   pending: any[] = [];
@@ -43,11 +47,16 @@ export class QueueState {
   steeringTimestamps = new Set<string>();
   inferenceRevision = 0;
   goal: QueueGoal | null = null;
+  /** True while the user holds the queue. */
+  held = false;
 
   activeGoal(): QueueGoal | undefined { return this.goal?.active ? this.goal : undefined; }
 
   /** Follow-ups below the goal entry, in queue order. */
   waiting(): any[] { return this.pending.filter(item => flag(item, 'afterGoal') && !flag(item, 'retry')); }
+
+  /** Items kept while the queue is on hold, in queue order. */
+  heldItems(): any[] { return this.pending.filter(item => flag(item, 'held') && !flag(item, 'retry')); }
 
   durableMessages(): any[] {
     this.retained = durableMessages(this);
@@ -91,7 +100,7 @@ export class QueueState {
       const index = visible.findIndex(item => flag(item, 'afterGoal') || flag(item, 'retry'));
       visible.splice(index < 0 ? visible.length : index, 0, { id: GOAL_ENTRY_ID, message: goal.objective, behavior: 'followUp', goal: true });
     }
-    return { type: 'queue_update', steering, followUp, pendingMessages: visible };
+    return { type: 'queue_update', steering, followUp, pendingMessages: visible, held: this.held };
   }
 
   publish(): any {
@@ -99,7 +108,7 @@ export class QueueState {
     for (const behavior of ['steer', 'followUp']) {
       const texts = this.texts(behavior);
       for (const message of unique(texts)) {
-        const matches = available.filter(item => !flag(item, 'retry') && !flag(item, 'afterGoal') && !this.sending.has(text(item, 'id')) && item.behavior === behavior && jsonEqual(item.message, message))
+        const matches = available.filter(item => !flag(item, 'retry') && !kept(item) && !this.sending.has(text(item, 'id')) && item.behavior === behavior && jsonEqual(item.message, message))
           .map(item => text(item, 'id'));
         const stale = new Set(matches.slice(0, Math.max(0, matches.length - count(texts, message))));
         available = available.filter(item => !stale.has(text(item, 'id')));
@@ -108,10 +117,11 @@ export class QueueState {
     const pending: any[] = [];
     for (const behavior of ['steer', 'followUp']) {
       for (const message of this.texts(behavior)) {
-        const index = available.findIndex(item => !flag(item, 'retry') && !flag(item, 'afterGoal') && item.behavior === behavior && jsonEqual(item.message, message));
+        const index = available.findIndex(item => !flag(item, 'retry') && !kept(item) && item.behavior === behavior && jsonEqual(item.message, message));
         if (index >= 0) pending.push(available.splice(index, 1)[0]);
       }
     }
+    pending.push(...available.filter(item => flag(item, 'held') && !flag(item, 'retry')));
     pending.push(...available.filter(item => flag(item, 'afterGoal') && !flag(item, 'retry')));
     pending.push(...available.filter(item => flag(item, 'retry')));
     this.pending = [...pending, ...available.filter(item => !flag(item, 'retry') && this.sending.has(text(item, 'id')))];

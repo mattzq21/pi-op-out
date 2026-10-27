@@ -496,6 +496,13 @@ textarea::placeholder { color: var(--faint); }
 .pending-message button:hover { color: var(--ink); background: #ffffff09; }
 .pending-message button:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 .pending-message button:disabled { opacity: .4; cursor: default; }
+.pending-queue-hold { display: flex; align-items: center; justify-content: space-between; gap: 9px; min-height: 30px; padding: 2px 3px; border-bottom: 1px solid #353532; color: var(--muted); font-size: 12px; }
+.pending-queue-hold.held { color: var(--ink); }
+.pending-queue-hold button { display: inline-flex; align-items: center; gap: 5px; min-height: 24px; padding: 3px 6px; border: 0; border-radius: 5px; background: transparent; color: var(--muted); font-size: 12px; cursor: pointer; }
+.pending-queue-hold.held button { color: var(--accent); }
+.pending-queue-hold button:hover { color: var(--ink); background: #ffffff09; }
+.pending-queue-hold button:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.pending-queue-hold button:disabled { opacity: .4; cursor: default; }
 .pending-message .pending-icon-button { width: 24px; flex-shrink: 0; padding: 3px; }
 
 .user-message.steering-message .message-body { background: #191815; border-color: #302e29; color: #c4beb3; }

@@ -123,4 +123,27 @@ test.concurrent('an edited follow-up keeps its place in the queue and reaches th
   const messages = await chat.until(history => text(history.at(-1)) === 'Handled: Then publish');
   expect(userTexts(messages)).toEqual(['Long draft', 'Fix the typo in the title', 'Then publish']);
 }, 60000);
-
+test.concurrent('a held queue keeps every message, even one sent while the agent is idle, and sends them in order on resume', async () => {
+  const busy = held<{ text: string }>();
+  agents.scripts.set('Long migration', messages => text(messages.at(-1)) === 'Long migration' ? busy.promise : { text: 'Handled: ' + text(messages.at(-1)) });
+  const chat = await agents.rootChat();
+  const latest = () => agents.daemon.events.filter(event => event.payload?.runtimeId === chat.runtimeId && event.payload.event?.type === 'queue_update').at(-1)?.payload.event;
+  const asked = (message: string) => agents.model.requests.some(request => text(request.messages.at(-1)) === message);
+  await chat.command({ type: 'prompt', message: 'Long migration' });
+  await chat.until(() => asked('Long migration'));
+  await chat.command({ type: 'follow_up', message: 'Check the schema' });
+  for (let tries = 0; pending(chat.runtimeId).length < 1 && tries < 50; tries++) await Bun.sleep(100);
+  await chat.command({ type: 'hold_queue', held: true });
+  expect(latest()).toMatchObject({ held: true, followUp: [] });
+  await chat.command({ type: 'steer', message: 'Keep the old column' });
+  const settled = nextSettlement(chat.runtimeId);
+  busy.release({ text: 'Migrated.' });
+  await settled();
+  await chat.command({ type: 'prompt', message: 'Run the tests' });
+  expect(pending(chat.runtimeId).map(item => [item.message, item.behavior])).toEqual([['Check the schema', 'followUp'], ['Keep the old column', 'steer'], ['Run the tests', 'followUp']]);
+  expect(['Check the schema', 'Keep the old column', 'Run the tests'].some(asked)).toBe(false);
+  await chat.command({ type: 'hold_queue', held: false });
+  const messages = await chat.until(history => text(history.at(-1)) === 'Handled: Run the tests');
+  expect(userTexts(messages)).toEqual(['Long migration', 'Keep the old column', 'Check the schema', 'Run the tests']);
+  expect(latest()).toMatchObject({ held: false, pendingMessages: [] });
+}, 60000);

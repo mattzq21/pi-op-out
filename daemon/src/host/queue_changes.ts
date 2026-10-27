@@ -1,6 +1,6 @@
 import { array, clone, flag, jsonEqual, text } from './json';
 import type { Mutex } from '../util/sync';
-import { GOAL_ENTRY_ID, unique, type QueueState } from './queue_state';
+import { GOAL_ENTRY_ID, kept, unique, type QueueState } from './queue_state';
 import type { QueueDelivery } from './queue_delivery';
 import { commandName } from '../plugin_contributions';
 import { queuedCommand } from './queue_submission';
@@ -25,6 +25,7 @@ export async function changePending(queue: QueueDelivery, gate: Mutex, id: strin
   } else release = await gate.lock();
   try {
     assertOwner();
+    if (queue.state.held) return await changeHeld(queue, id, action);
     const waiting = queue.state.pending.find(item => item.id === id && flag(item, 'afterGoal') && !flag(item, 'retry'));
     if (waiting && (action === 'remove' || action === 'steer' || action === 'followUp')) return await changeWaiting(queue, waiting, action);
     if (movesAroundGoal(queue.state, id, action)) return await moveAroundGoal(queue, id, action);
@@ -59,6 +60,7 @@ async function retry(queue: QueueDelivery, id: string, target: any, behavior: st
     return null;
   }
   target.retry = false;
+  delete target.held;
   target.consumedTimestamp = null;
   target.consumedContent = null;
   target.consumedInputId = null;
@@ -97,7 +99,7 @@ async function editPending(queue: QueueDelivery, id: string, message: unknown): 
   if (!message.trim() && !(Array.isArray(target.images) && target.images.length)) throw new Error('A queued message cannot be empty. Remove it instead.');
   if (target.behavior === 'steer' && queuedCommand(message)) throw new Error('/' + commandName(message) + ' can only be queued as a follow-up');
   if (jsonEqual(target.message, message)) return null;
-  if (flag(target, 'retry') || flag(target, 'afterGoal')) {
+  if (flag(target, 'retry') || kept(target)) {
     target.message = message;
     await queue.record.persist();
     await queue.publish();
@@ -248,10 +250,17 @@ async function moveAroundGoal(queue: QueueDelivery, id: string, action: any): Pr
   const wait = (item: any) => { item.afterGoal = true; item.deliveryStarted = false; item.consumedTimestamp = null; item.consumedContent = null; item.consumedInputId = null; };
   const arrange = () => {
     for (const entry of nextBehind) wait(byId.get(entry));
-    for (const entry of nextAhead) byId.get(entry).afterGoal = false;
+    for (const entry of nextBehind) delete byId.get(entry).held;
+    for (const entry of nextAhead) { byId.get(entry).afterGoal = false; if (state.held) byId.get(entry).held = true; }
     state.pending = [...state.pending.filter(item => !nextBehind.includes(text(item, 'id'))), ...nextBehind.map(entry => byId.get(entry))];
   };
   const sameStart = ahead.every((entry, index) => nextAhead[index] === entry);
+  if (state.held) {
+    arrange();
+    await queue.record.persist();
+    await queue.publish();
+    return null;
+  }
   if (sameStart) {
     const added = nextAhead.slice(ahead.length).map(entry => byId.get(entry));
     arrange();
@@ -294,4 +303,78 @@ async function regroupLive(queue: QueueDelivery, nextAhead: string[], nextBehind
     }
     return null;
   } finally { state.changing = false; await queue.publish(); }
+}
+
+/** Clears the fields that record a delivery to Pi, for an item that the daemon keeps again. */
+function undelivered(item: any): any {
+  return { ...item, deliveryStarted: false, consumedTimestamp: null, consumedContent: null, consumedInputId: null };
+}
+
+/**
+ * Puts the queue on hold. Pi's queue is taken back, and its items stay with the daemon until resumeQueue.
+ * Pi messages that the daemon did not send stay in the queue for retry.
+ */
+export async function holdQueue(queue: QueueDelivery): Promise<void> {
+  const state = queue.state;
+  if (!state.steering.length && !state.followUp.length) {
+    state.held = true;
+    await queue.publish();
+    return;
+  }
+  state.changing = true;
+  const originals = clone(state.pending);
+  try {
+    const cleared = await queue.execute({ type: 'clear_queue' });
+    const live = originals.filter(item => !flag(item, 'retry') && !kept(item));
+    const returned: any[] = [];
+    for (const [field, behavior] of [['steering', 'steer'], ['followUp', 'followUp']]) {
+      for (const message of array(cleared, field)) {
+        const index = live.findIndex(item => item.behavior === behavior && jsonEqual(item.message, message));
+        returned.push(index >= 0 ? { ...undelivered(live.splice(index, 1)[0]), held: true } : { id: queue.record.nextId(), message, behavior, retry: true });
+      }
+    }
+    state.held = true;
+    state.pending = [...originals.filter(item => flag(item, 'retry')), ...returned.filter(item => !flag(item, 'retry')), ...originals.filter(item => flag(item, 'afterGoal') && !flag(item, 'retry')), ...returned.filter(item => flag(item, 'retry'))];
+    await queue.record.persist();
+  } finally { state.changing = false; await queue.publish(); }
+}
+
+/** Ends the hold and sends the held items to Pi: steering messages first, then follow-ups, each in queue order. */
+export async function resumeQueue(queue: QueueDelivery): Promise<void> {
+  const state = queue.state;
+  const held = state.heldItems();
+  const send = [...held.filter(item => item.behavior === 'steer'), ...held.filter(item => item.behavior !== 'steer')];
+  state.held = false;
+  for (const item of state.pending) delete item.held;
+  try { await queue.record.persist(); } catch (error) { state.markRetry(send); await queue.publish(); throw error; }
+  for (let index = 0; index < send.length; index += 1) {
+    try { await queue.deliver(send[index], false); } catch (error) { state.markRetry(send.slice(index)); await queue.publish(); throw error; }
+  }
+  await queue.publish();
+}
+
+/** Changes an item while the queue is on hold. Nothing goes to Pi: the item changes in place and stays with the daemon. */
+async function changeHeld(queue: QueueDelivery, id: string, action: any): Promise<any> {
+  const state = queue.state;
+  if (movesAroundGoal(state, id, action)) return moveAroundGoal(queue, id, action);
+  const target = state.pending.find(item => item.id === id);
+  if (!target) return null;
+  if (action === 'remove') {
+    await queue.record.forget(id);
+    await queue.publish();
+    return null;
+  }
+  if (action === 'steer' || action === 'followUp') {
+    if (action === 'steer' && queuedCommand(text(target, 'message'))) throw new Error('/' + commandName(text(target, 'message')) + ' can only be queued as a follow-up');
+    if (!flag(target, 'retry') && !flag(target, 'afterGoal') && target.behavior === action) return null;
+    const index = state.pending.indexOf(target);
+    state.pending[index] = { ...undelivered(target), behavior: action, held: true, retry: false, afterGoal: false };
+  } else {
+    const change = pendingChange(queue, id, action);
+    if (!change || change.neighbor === undefined) return null;
+    moveItem(state.pending, id, change.neighbor, action);
+  }
+  await queue.record.persist();
+  await queue.publish();
+  return null;
 }

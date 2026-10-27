@@ -558,7 +558,7 @@ function createChatSession(transport: Accessor<Pick<NativeTransport, "command" |
 
     const handleQueueUpdate = () => {
       session.setMessages(current => reconcilePendingMessages(current, event.pendingMessages));
-      session.setState((current) => ({ ...current, pendingMessages: event.pendingMessages, pendingMessageCount: (event.steering?.length ?? 0) + (event.followUp?.length ?? 0) }));
+      session.setState((current) => ({ ...current, pendingMessages: event.pendingMessages, pendingMessageCount: (event.steering?.length ?? 0) + (event.followUp?.length ?? 0), queueHeld: event.held === true }));
     };
 
     const handleCompactionStart = () => {

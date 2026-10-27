@@ -150,6 +150,7 @@ function recoverItems(saved: any): any[] {
     if (identities.has(key)) throw new Error('Duplicate queued-input journal identity');
     identities.add(key);
     item.retry = true;
+    delete item.held;
   }
   return items;
 }
