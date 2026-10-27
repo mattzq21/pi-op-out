@@ -38,7 +38,9 @@ function windowStart(branch: any[], end: number): number {
 
 function isFinalResponse(entry: any): boolean {
   const message = entry?.type === 'message' ? entry.message : undefined;
-  return message?.role === 'assistant' && (visibleText(entry).trim().length > 0 || message.stopReason === 'aborted' || message.stopReason === 'error');
+  if (message?.role !== 'assistant') return false;
+  const ended = message.stopReason === 'stop' && !(Array.isArray(message.content) && message.content.some((part: any) => part?.type === 'toolCall'));
+  return ended || visibleText(entry).trim().length > 0 || message.stopReason === 'aborted' || message.stopReason === 'error';
 }
 
 function isWork(entry: any): boolean { const name = role(entry); return name === 'assistant' || name === 'toolResult'; }
@@ -96,27 +98,13 @@ function linked(entries: any[], before: string | null): History {
   return { entries: result, leafId: parentId, before };
 }
 
-/** The prompt tokens of the first model call after the compaction at index, which is the exact context size after it. Pi saves no such count on the compaction entry. */
-function tokensAfterCompaction(branch: any[], index: number): number | undefined {
-  for (let next = index + 1; next < branch.length; next++) {
-    if (branch[next]?.type === 'compaction') return undefined;
-    const message = branch[next]?.message;
-    if (role(branch[next]) !== 'assistant' || message.stopReason === 'aborted' || message.stopReason === 'error') continue;
-    const usage = message.usage;
-    const tokens = usage ? usage.input + usage.cacheRead + usage.cacheWrite : NaN;
-    if (Number.isFinite(tokens) && tokens > 0) return tokens;
-  }
-  return undefined;
-}
-
 function view(branch: any[], start: number, end: number, keepLastTurn: boolean): History {
   const entries: any[] = [];
   let turn: any[] = [];
   const close = (last: boolean) => { entries.push(...(last && keepLastTurn ? turn : deferWork(turn))); turn = []; };
   for (let index = start; index < end; index++) {
     if (startsTurn(branch[index]) && turn.length) close(false);
-    const tokensAfter = branch[index]?.type === 'compaction' ? tokensAfterCompaction(branch, index) : undefined;
-    turn.push(tokensAfter === undefined ? branch[index] : { ...branch[index], tokensAfter });
+    turn.push(branch[index]);
   }
   close(true);
   resolvePromptContext(branch, start, entries);

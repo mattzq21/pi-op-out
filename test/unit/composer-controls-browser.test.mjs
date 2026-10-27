@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { startupPage } from '../startup-browser-fixture.mjs';
+import { testBrowserName } from '../test-browser.mjs';
 import { nativeFileCommand } from '../native-file-command.mjs';
 
 async function controlsPage(t) {
@@ -213,7 +214,8 @@ test('submission trims text, ignores blank and composed input, and respects newl
     }));
     await input.send('Input.imeSetComposition', { text: '  Build it  ', selectionStart: 12, selectionEnd: 12, replacementStart: 0, replacementEnd: 13 });
     await page.keyboard.press('Enter');
-    assert.deepEqual(await page.evaluate(() => window.composingEnter), { composing: true, trusted: true });
+    // WebKitGTK's input method consumes keys during a composition, so the page gets no Enter keydown.
+    assert.deepEqual(await page.evaluate(() => window.composingEnter), testBrowserName === 'webkit' ? undefined : { composing: true, trusted: true });
     assert.deepEqual(await sent(page), []);
     await input.send('Input.insertText', { text: '  Build it  ' });
     await page.keyboard.press('Enter');

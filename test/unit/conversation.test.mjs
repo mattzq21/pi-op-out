@@ -26,6 +26,12 @@ test('work duration handles seconds, hours and unavailable timestamps', async ()
     }
   });
 
+  test('a reply that stops without text can be forked from', async () => {
+    await render({ onFork: () => {}, messages: [user('u'), assistant('w', [{ type: 'toolCall', id: 'c', name: 'ls', arguments: {} }], { stopReason: 'toolUse' }), { id: 't', role: 'toolResult', toolCallId: 'c', content: 'result' }, assistant('a', [{ type: 'thinking', thinking: 'Joke' }], { stopReason: 'stop' })] });
+    assert.ok(document.querySelector('button[aria-label="Fork"]'));
+    assert.equal(document.querySelector('.assistant-message .message-actions [aria-label^="Copy"]'), null);
+  });
+
   test('a compaction after a finished turn shows outside its work group', async () => {
     await render({ messages: [user('u'), { id: 't', role: 'tool', content: 'result' }, assistant('a', 'Done'), { id: 'c', role: 'system', customType: 'compaction', content: 'Context compacted' }] });
     assert.equal(document.querySelector('.work-group-content'), null);

@@ -39,6 +39,7 @@
     "reinstall:release": "bun scripts/reinstall-mobile.mjs --release",
     "test:mobile": "python3 scripts/test-run.py node --test test/mobile/*.test.mjs",
     "test:unit": "python3 scripts/test-run.py node scripts/test-unit.mjs test/unit/*.test.mjs",
+    "test:unit:chromium": "PIOP_TEST_BROWSER=chromium python3 scripts/test-run.py node scripts/test-unit.mjs test/unit/*.test.mjs",
     "test:extensions": "python3 scripts/test-run.py sh -c 'node --test --test-timeout=120000 test/extensions/*.test.mjs && bun test ./extensions'",
     "test:runner": "python3 test/runner/cleanup.test.py && python3 scripts/test-run.py node --test test/runner/*.test.mjs",
     "test:daemon": "python3 scripts/test-run.py node scripts/test-daemon.mjs",
@@ -87,6 +88,7 @@
     "playwright-core": "^1.63.0",
     "typescript": "~5.7.2",
     "vite": "^6.0.7",
-    "vite-plugin-solid": "^2.11.14"
+    "vite-plugin-solid": "^2.11.14",
+    "ws": "^8.22.0"
   }
 }

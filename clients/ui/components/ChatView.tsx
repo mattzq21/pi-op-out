@@ -195,7 +195,7 @@ export function ChatView(props: Props & { transcriptActions?: JSXElement; follow
 
     if (!message) return [];
 
-    return [{ turnId: turn.messages[0].id, messageId: message.id, preview: textOf(message.content).replace(/\s+/g, " ").trim().slice(0, 160) || "Response interrupted" } satisfies ResponseDestination];
+    return [{ turnId: turn.messages[0].id, messageId: message.id, preview: textOf(message.content).replace(/\s+/g, " ").trim().slice(0, 160) || (message.stopReason === "stop" ? "Empty response" : "Response interrupted") } satisfies ResponseDestination];
   }));
 
   const hasSentPrompt = createMemo(() => messages().some((message) => message.role === "user"));
@@ -445,7 +445,7 @@ export function ChatView(props: Props & { transcriptActions?: JSXElement; follow
         if (movedUp && element.scrollTop < element.clientHeight) loadOlder();
       }}><div class="conversation">
         {!messages().length && !mcpLoading() && !pendingSubmission() && <div class="empty-chat"><span>π<sup>op</sup></span></div>}
-        {<Key each={turns()} by={turn => turn.messages[0]?.id ?? "empty"}>{(turn, index) => <DeferredTurn navigationId={turn().messages[0]?.id} scrollRoot={messagesRef} eager={index() >= turns().length - 3}><ConversationTurn latest={index() === turns().length - 1} messages={turn().messages} promptContexts={turn().promptContexts} cwd={props.projectCwd} debug={props.debug ?? noDebug} active={props.state.isStreaming && index() === turns().length - 1} retryable={retryable() && index() === turns().length - 1} onRetry={onRetry} onBranch={branchAction()} onFork={props.state.canFork !== false && props.onFork ? onFork : undefined} onForkAndForget={props.state.canFork !== false && props.onForkAndForget ? onForkAndForget : undefined} /><Show when={props.state.forkSource && turn().messages.some(message => (message.entryId ?? message.id) === props.state.forkSource?.entryId) ? props.state.forkSource : undefined}>{source => <ForkSourceLink source={source()} name={props.forkSourceName} onOpen={props.onOpenForkSource} />}</Show></DeferredTurn>}</Key>}
+        {<Key each={turns()} by={turn => turn.messages[0]?.id ?? "empty"}>{(turn, index) => <DeferredTurn navigationId={turn().messages[0]?.id} scrollRoot={messagesRef} eager={index() >= turns().length - 3}><ConversationTurn latest={index() === turns().length - 1} messages={turn().messages} promptContexts={turn().promptContexts} cwd={props.projectCwd} debug={props.debug ?? noDebug} active={props.state.isStreaming && index() === turns().length - 1} retryable={retryable() && index() === turns().length - 1} onRetry={onRetry} onBranch={branchAction()} onFork={props.state.canFork !== false && props.onFork ? onFork : undefined} onForkAndForget={props.state.canFork !== false && props.onForkAndForget ? onForkAndForget : undefined} forkSource={props.state.forkSource} forkSourceName={props.forkSourceName} onOpenForkSource={props.onOpenForkSource} /></DeferredTurn>}</Key>}
         {sendingSubmission() && !mcpLoading() && <section class="mcp-pending-turn" aria-label="Preparing message" aria-busy="true"><div class="mcp-loading" role="status"><LoaderCircle class="mcp-loading-spinner" size={14} aria-hidden="true" /><span>{required(sendingSubmission()).status}</span></div></section>}
         {mcpLoading() && <section class="mcp-pending-turn" aria-label="Message waiting for MCP" aria-busy="true">
           <div class="mcp-loading-list" role="status">{props.debug?.mcpServers ? <Key each={loadingServers()} by={(server) => server.id}>{(server, _index) => <div class="mcp-loading" ><LoaderCircle class="mcp-loading-spinner" size={14} aria-hidden="true" /><span>Loading {server().name}</span></div>}</Key> : <div class="mcp-loading"><LoaderCircle class="mcp-loading-spinner" size={14} aria-hidden="true" /><span>Loading MCPs</span></div>}</div>
@@ -700,7 +700,7 @@ function finalResponseIndex(messages: ChatMessage[]) {
   for (let index = messages.length - 1; index >= 0; index -= 1) {
     const message = messages[index];
 
-    if (message.role === "assistant" && (textOf(message.content).trim().length > 0 || message.stopReason === "aborted" || message.stopReason === "error")) return index;
+    if (message.role === "assistant" && (canBranchFrom(message) || textOf(message.content).trim().length > 0 || message.stopReason === "aborted" || message.stopReason === "error")) return index;
   }
 
   return -1;
@@ -731,7 +731,7 @@ function MessageList(props: { messages: ChatMessage[]; expanded: boolean; compac
   return <Key each={entries()} by={entry => entry.message.id}>{entry => <Message message={entry().message} toolCount={entry().count} showActions={props.showActions ?? true} expanded={props.expanded} debug={props.debug} />}</Key>;
 }
 
-type ConversationTurnProps = { latest?: boolean; messages: ChatMessage[]; promptContexts: PromptContextInfo[]; cwd?: string; debug: DebugView; active: boolean; retryable: boolean; onRetry: (message: ChatMessage) => Promise<void>; onBranch?: Props["onBranch"]; onFork?: Props["onFork"]; onForkAndForget?: Props["onForkAndForget"]; };
+type ConversationTurnProps = { latest?: boolean; messages: ChatMessage[]; promptContexts: PromptContextInfo[]; cwd?: string; debug: DebugView; active: boolean; retryable: boolean; onRetry: (message: ChatMessage) => Promise<void>; onBranch?: Props["onBranch"]; onFork?: Props["onFork"]; onForkAndForget?: Props["onForkAndForget"]; forkSource?: ForkSource; forkSourceName?: string; onOpenForkSource?: Props["onOpenForkSource"]; };
 
 function ConversationTurn(componentProps: ConversationTurnProps) {
   const turnMessages = createMemo(() => componentProps.debug.reasoning ? componentProps.messages : componentProps.messages.map(withoutReasoning));
@@ -739,6 +739,12 @@ function ConversationTurn(componentProps: ConversationTurnProps) {
   const [workOpen, setWorkOpen] = createSignal(false);
   const [retrying, setRetrying] = createSignal(false); const retryingRef = createRef(false);
   const userIndex = createMemo(() => (turnMessages().findIndex(isPromptMessage)));
+  /** The place of the message this chat branched from. The link to the parent chat shows after it, before later notes such as a compaction. */
+  const forkIndex = createMemo(() => { const entryId = componentProps.forkSource?.entryId;
+
+    return entryId ? turnMessages().findIndex(message => (message.entryId ?? message.id) === entryId) : -1; });
+  const systemMessages = (after: boolean) => turnMessages().filter((message, index) => message.role === "system" && (forkIndex() >= 0 && index > forkIndex()) === after);
+  const renderForkLink = () => <Show when={forkIndex() >= 0 ? componentProps.forkSource : undefined}>{source => <ForkSourceLink source={source()} name={componentProps.forkSourceName} onOpen={componentProps.onOpenForkSource} />}</Show>;
 
   const finalIndex = createMemo(() => (finalResponseIndex(turnMessages())));
   const finalThinking = createMemo(() => (finalIndex() >= 0 ? thinkingOf(turnMessages()[finalIndex()].content) : ""));
@@ -812,9 +818,12 @@ function ConversationTurn(componentProps: ConversationTurnProps) {
     {finalMessage() && !hasWork() && finishedSubagents().length === 0 && <hr class="turn-divider" />}
     {finalMessage() && <Message message={required((finalMessage()))} turnCacheUsage={turnCacheUsage()} debug={componentProps.debug} onBranch={canBranchFrom(finalSource()) ? componentProps.onBranch : undefined} onFork={canBranchFrom(finalSource()) ? componentProps.onFork : undefined} onForkAndForget={componentProps.onForkAndForget} retrying={retrying()} onRetry={retryTarget() ? retry : undefined} />}
     {retryError() && <div class="message-failure retry-error" role="alert">Retry failed: {(retryError())}</div>}
-    <MessageList messages={turnMessages().filter(message => message.role === "system")} expanded={false} />
+    <MessageList messages={systemMessages(false)} expanded={false} />
+    {renderForkLink()}
+    <MessageList messages={systemMessages(true)} expanded={false} />
   </>)}>
     <div class="active-work-content"><MessageList messages={turnMessages().filter(message => !isPromptMessage(message) && !isContextInjection(message))} expanded compact={false} debug={componentProps.debug} showActions={false} /></div>
+    {renderForkLink()}
   </Show>);
 
   return <section class="conversation-turn" classList={{ "latest-turn": componentProps.latest === true }}>

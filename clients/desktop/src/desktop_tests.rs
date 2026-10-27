@@ -108,6 +108,9 @@ fn attachment_command_bridge() {
                 handle.as_ref().expect("desktop test app").clone(), request["target"].clone(),
             ).map(Value::String),
             Some("read_dropped_file") => tauri::async_runtime::block_on(read_dropped_file(request["path"].as_str().expect("file path").to_owned())),
+            Some("read_clipboard_image") => tauri::async_runtime::block_on(read_clipboard_image(
+                handle.as_ref().expect("desktop test app").clone(),
+            )).map(|image| json!(image)),
             Some("open_external_url") => tauri::async_runtime::block_on(open_external_url(
                 request["url"].as_str().expect("web URL").to_owned(),
             )).map(|_| Value::Null),

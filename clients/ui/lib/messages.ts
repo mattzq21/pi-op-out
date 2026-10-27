@@ -12,8 +12,7 @@ export function isContextInjection(message: { role?: string; customType?: string
   return message.role === "custom" && (pluginMessageMetadata(message.customType)?.contextInjection ?? (!SYSTEM_MESSAGES.has(message.customType ?? "") && !["piop-subagent-result", "piop-session-operation", "piop-agent-message", GOAL_PROMPT].includes(message.customType ?? "")));
 }
 
-/** tokensAfter: the daemon adds it to compaction entries from the first model call after the compaction. */
-export type PiEntry = { type: string; id: string; parentId: string | null; message?: Partial<WireMessage>; customType?: string; details?: unknown; content?: ChatMessage["content"]; data?: unknown; display?: boolean; timestamp?: string; tokensBefore?: number; tokensAfter?: number };
+export type PiEntry = { type: string; id: string; parentId: string | null; message?: Partial<WireMessage>; customType?: string; details?: unknown; content?: ChatMessage["content"]; data?: unknown; display?: boolean; timestamp?: string; tokensBefore?: number };
 
 const entryIdentitySchema = z.object({ id: z.string() });
 
@@ -164,46 +163,16 @@ function applyCustomEntry(messages: ChatMessage[], entry: PiEntry, promptParts: 
   return messages;
 }
 
-const compactionTokensSchema = z.object({ tokensBefore: z.number(), tokensAfter: z.number().optional() });
-
-function compactionContent(tokens: z.infer<typeof compactionTokensSchema>) {
-  const before = tokens.tokensBefore.toLocaleString();
-
-  return tokens.tokensAfter === undefined ? `Context compacted · ${before} tokens before compaction` : `Context compacted · ${before} → ${tokens.tokensAfter.toLocaleString()} tokens`;
-}
-
 function compactionMessage(entry: PiEntry): ChatMessage {
-  const tokens = compactionTokensSchema.safeParse({ tokensBefore: entry.tokensBefore, tokensAfter: entry.tokensAfter });
+  const tokensBefore = entry.tokensBefore;
 
-  return { id: entry.id, entryId: entry.id, role: "system", customType: "compaction", timestamp: entry.timestamp ? Date.parse(entry.timestamp) : undefined, details: tokens.success ? tokens.data : undefined, content: tokens.success ? compactionContent(tokens.data) : "Context compacted" };
+  return { id: entry.id, entryId: entry.id, role: "system", customType: "compaction", timestamp: entry.timestamp ? Date.parse(entry.timestamp) : undefined, content: tokensBefore === undefined ? "Compacted" : `Compacted from ${compactionTokens(tokensBefore)}` };
 }
 
-const countsAsModelCall = (message: ChatMessage) => message.role === "assistant" && message.stopReason !== "aborted" && message.stopReason !== "error";
-
-/** Sets the context size after the last compaction from the prompt tokens of reply, when reply is the first model call after it. */
-export function withTokensAfterCompaction(messages: ChatMessage[], reply: ChatMessage): ChatMessage[] {
-  if (!countsAsModelCall(reply) || !reply.usage) return messages;
-  const tokensAfter = reply.usage.input + reply.usage.cacheRead + reply.usage.cacheWrite;
-
-  if (!Number.isFinite(tokensAfter) || tokensAfter <= 0) return messages;
-
-  for (let index = messages.length - 1; index >= 0; index--) {
-    const message = messages[index];
-
-    if (message.id === reply.id) continue;
-
-    if (countsAsModelCall(message)) return messages;
-
-    if (message.customType !== "compaction") continue;
-    const saved = compactionTokensSchema.safeParse(message.details);
-
-    if (!saved.success || saved.data.tokensAfter !== undefined) return messages;
-    const tokens = { ...saved.data, tokensAfter };
-
-    return replaceMessage(messages, index, { ...message, details: tokens, content: compactionContent(tokens) }, false);
-  }
-
-  return messages;
+function compactionTokens(tokens: number) {
+  if (tokens < 1000) return `${tokens} tokens`;
+  if (tokens < 10000) return `${Number((tokens / 1000).toFixed(1))}k tokens`;
+  return `${Math.round(tokens / 1000)}k`;
 }
 
 function customEntryMessage(entry: PiEntry): ChatMessage | undefined {
@@ -231,7 +200,7 @@ export function branchMessages(entries: PiEntry[], leafId: string | null): ChatM
 
     const message = visibleEntryMessage(entry);
 
-    if (message) { messages = withTokensAfterCompaction(messages, message); messages.push(message); }
+    if (message) messages.push(message);
   }
 
   return messages;

@@ -4,7 +4,7 @@ import solid from 'babel-preset-solid';
 import typescript from '@babel/preset-typescript';
 import { readFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
-import { chromium } from 'playwright-core';
+import { launchTestBrowser } from './test-browser.mjs';
 import assert from 'node:assert/strict';
 
 const bundle = await build({ entryPoints: ['test/fixtures/chat-scroll-follow.tsx'], bundle: true, write: false,
@@ -30,7 +30,7 @@ const server = createServer((req, res) => {
 
 await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
 
-const browser = await chromium.launch({ executablePath: process.env.CHROME_BIN, headless: true });
+const browser = await launchTestBrowser();
 
 try {
   const page = await browser.newPage({ viewport: { width: 900, height: 600 } });

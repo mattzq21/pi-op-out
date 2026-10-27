@@ -1,3 +1,4 @@
+import { holdBodyDragStyle } from "../lib/bodyDragStyle";
 import { createPanelSize } from "../lib/panelSize";
 import { createMemo, createSignal } from "solid-js";
 import { createDependencyEffect, createRef, type CSSProperties, type JSXElement } from "../lib/solid";
@@ -28,11 +29,8 @@ export function ResizableSidebar(componentProps: { compact: boolean; children: J
   createDependencyEffect(() => { const capturedDragging = dragging(); const capturedCompact0 = componentProps.compact;
 
     if (!capturedDragging || capturedCompact0) return;
-    const { cursor, userSelect } = document.body.style;
-    document.body.style.cursor = "col-resize";
-    document.body.style.userSelect = "none";
 
-    return () => { document.body.style.cursor = cursor; document.body.style.userSelect = userSelect; };
+    return holdBodyDragStyle("col-resize");
   }, () => [dragging(), componentProps.compact]);
 
   return <aside class={`icon-rail ${componentProps.compact ? "compact" : ""}`} style={{ "--rail-width": `${visibleWidth()}px` } satisfies CSSProperties}>

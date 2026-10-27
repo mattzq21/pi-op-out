@@ -39,6 +39,16 @@ describe("BUGS-3 regressions", () => {
     await $('//dialog//button[normalize-space(.)="Cancel"]').click();
   });
 
+  it("resets the app while it is still loading", async () => {
+    const appUrl = await browser.getUrl();
+
+    // A reload creates the app's databases again, so each reset leaves the app while it writes to them.
+    for (let attempt = 0; attempt < 10; attempt++) {
+      await browser.url(appUrl);
+      await resetApp();
+    }
+  });
+
   it("isolates drafts and terminals between fresh conversations", async () => {
     const first = await startTemporaryConversation({ "shared_terminal:start": {}, "shared_terminal:resize": {} });
 

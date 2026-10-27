@@ -12,7 +12,7 @@ import { chatSessionEventSchema, pendingMessagesSchema, type ChatSessionEvent } 
 import { promptContextSchema, wireMessageSchema, type WireMessage } from "./messageSchemas";
 import { contextUsageAfterCompaction } from "./contextUsage";
 import { CONTEXT_CAP_STATUS_KEY } from "../../../extensions/piop-context-window-cap/interface";
-import { appendQueuedProjectContext, applyAssistantMessageEvent, branchMessages, isContextInjection, normalizeMessage, promptContextAnchors, withTokensAfterCompaction, type PiEntry } from "./messages";
+import { appendQueuedProjectContext, applyAssistantMessageEvent, branchMessages, isContextInjection, normalizeMessage, promptContextAnchors, type PiEntry } from "./messages";
 import type { NativeTransport } from "./nativeTransport";
 import { useSessionMemory } from "./sessionMemory";
 import { keepLoadedHistory, olderHistoryMarker } from "./historyWindow";
@@ -499,7 +499,7 @@ function createChatSession(transport: Accessor<Pick<NativeTransport, "command" |
       let message = { ...normalized, id: liveId };
 
       message = updateAssistant(message);
-      session.setMessages(current => event.type === "message_end" ? withTokensAfterCompaction(upsertLiveMessage(current, message), message) : upsertLiveMessage(current, message));
+      session.setMessages(current => upsertLiveMessage(current, message));
 
       if (event.type === "message_end" && rawMessage.role === "user") syncMessageCount();
     };
@@ -562,13 +562,13 @@ function createChatSession(transport: Accessor<Pick<NativeTransport, "command" |
     };
 
     const handleCompactionStart = () => {
-      session.setState((current) => ({ ...current, isCompacting: true, activity: "Compacting context…" }));
-      session.setMessages(current => [...current.filter(message => message.id !== "live-compaction"), { id: "live-compaction", role: "system", customType: "compaction", content: "Compacting context…", timestamp: Date.now() }]);
+      session.setState((current) => ({ ...current, isCompacting: true }));
+      session.setMessages(current => [...current.filter(message => message.id !== "live-compaction"), { id: "live-compaction", role: "system", customType: "compaction", content: "Compacting…", timestamp: Date.now() }]);
     };
 
     const handleCompactionEnd = () => {
       session.setState((current) => ({ ...current, isCompacting: false, activity: undefined, contextUsage: contextUsageAfterCompaction(current.contextUsage, event) }));
-      session.setMessages(current => current.map(message => message.id === "live-compaction" ? { ...message, content: event.aborted ? "Compaction cancelled" : event.errorMessage ? String(event.errorMessage) : "Context compacted" } : message));
+      session.setMessages(current => current.map(message => message.id === "live-compaction" ? { ...message, content: event.aborted ? "Compaction cancelled" : event.errorMessage ? String(event.errorMessage) : "Compacted" } : message));
 
       if (!event.aborted && !event.errorMessage) void refreshView();
     };
