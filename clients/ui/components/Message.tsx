@@ -63,12 +63,12 @@ function ContextInjection(props: { title: string; content: string }) {
   return <details class="context-injection"><summary>{props.title}<ChevronRight size={12} aria-hidden="true" /></summary><div class="context-injection-content">{props.content}</div></details>;
 }
 
-/** The button outside a message that pins it to the top of the chat or unpins it. text is the message text that the pin shows. */
+/** The button outside a message that pins it to the top of the chat or unpins it. text is the message text that the pin shows. A message without a time, such as one still being sent, has no place in the chat yet, so it shows no button. */
 function PinButton(props: { message: ChatMessage; text: string }) {
   const pins = useContext(MessagePinContext);
   const [busy, setBusy] = createSignal(false);
 
-  return <Show when={pins}>{owner => {
+  return <Show when={props.message.timestamp !== undefined && pins}>{owner => {
     const pinned = () => owner().pinned(pinId(props.message));
     const toggle = () => {
       if (busy()) return;
