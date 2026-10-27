@@ -61,7 +61,7 @@ test('older history and the work of a turn load on request', () => {
   expect(older.before).toBeNull();
   expect(turnWork(source, 'e31').entries.map((entry: any) => entry.message.role)).toEqual(['assistant', 'toolResult', 'assistant']);
 });
-test('a compaction shows the prompt tokens of the first model call after it', () => {
+test('a compaction does not infer a token count from the next model call', () => {
   const usage = (input: number) => ({ input, output: 5, cacheRead: 100, cacheWrite: 10, totalTokens: input + 115 });
   const entries: any[] = [];
   let parentId: string | null = null;
@@ -76,5 +76,5 @@ test('a compaction shows the prompt tokens of the first model call after it', ()
     { type: 'message', message: { role: 'assistant', content: [{ type: 'text', text: 'Done' }], stopReason: 'stop', usage: usage(2000) } },
   ]) { const id = 'e' + entries.length; entries.push({ ...entry, id, parentId }); parentId = id; }
   const history = recentHistory({ entries, leafId: parentId }, false);
-  expect(history.entries.find((entry: any) => entry.type === 'compaction').tokensAfter).toBe(1000);
+  expect(history.entries.find((entry: any) => entry.type === 'compaction').tokensAfter).toBeUndefined();
 });
