@@ -545,7 +545,7 @@ function createChatSession(transport: Accessor<Pick<NativeTransport, "command" |
     };
 
     const handleCompactionStart = () => {
-      session.setState((current) => ({ ...current, isCompacting: true, activity: "Compacting context…" }));
+      session.setState((current) => ({ ...current, isCompacting: true }));
       session.setMessages(current => [...current.filter(message => message.id !== "live-compaction"), { id: "live-compaction", role: "system", customType: "compaction", content: "Compacting context…", timestamp: Date.now() }]);
     };
 

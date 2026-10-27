@@ -111,7 +111,7 @@ test('streaming batches deltas and finalizes a stable assistant message without 
     await send({ type: 'runtime_presence', viewers: 3, isStreaming: true }, { type: 'queue_update', steering: ['a'], followUp: ['b'], pendingMessages: [pendingMessage] });
     assert.equal(hook.current.state.viewers, 3); assert.equal(hook.current.state.pendingMessageCount, 2);
     assert.deepEqual(hook.current.state.pendingMessages, [pendingMessage]);
-    await send({ type: 'compaction_start' }); assert.equal(hook.current.state.activity, 'Compacting context…');
+    await send({ type: 'compaction_start' }); assert.equal(hook.current.state.activity, undefined);
     await send({ type: 'compaction_end', result: { estimatedTokensAfter: 100 } });
     assert.equal(hook.current.state.contextUsage.percent, 10); assert.equal(hook.current.state.activity, undefined);
     await send({ type: 'auto_retry_start', attempt: 2 }); assert.equal(hook.current.state.activity, 'Retrying · attempt 2');
