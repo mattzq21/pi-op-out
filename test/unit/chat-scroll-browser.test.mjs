@@ -123,3 +123,32 @@ test('selecting text at the latest message keeps the content in place while the 
   assert.ok(Math.abs(moved) <= 1, `the selected turn moved by ${moved}px`);
 });
 
+test('removing a selection in earlier history keeps the content in place while the hidden turns are skipped', async t => {
+  const page = await startupPage(t, 'production', { entryPoint: 'test/fixtures/chat-scroll-browser.tsx', ready: '.messages' });
+  await page.addStyleTag({ content: '.messages { overflow-anchor: none; }' });
+  const frames = () => page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+  await page.evaluate(() => { for (let index = 0; index < 20; index++) window.appendScrollTurn(); });
+  await frames();
+  for (let jump = 0; jump < 3; jump++) {
+    await page.locator('.messages').evaluate(element => { element.scrollTop = element.scrollHeight / 2; });
+    await frames();
+  }
+  await page.evaluate(() => {
+    const view = document.querySelector('.messages').getBoundingClientRect();
+    const range = document.createRange();
+    range.selectNodeContents(document.elementFromPoint(view.left + view.width / 2, view.top + view.height / 2).closest('.deferred-turn'));
+    document.getSelection().addRange(range);
+  });
+  await page.locator('.chat-shell[data-text-selected]').waitFor();
+  await frames();
+  const moved = await page.evaluate(() => new Promise(resolve => {
+    const view = document.querySelector('.messages').getBoundingClientRect();
+    const turn = document.elementFromPoint(view.left + view.width / 2, view.top + view.height / 2).closest('.deferred-turn');
+    const top = turn.getBoundingClientRect().top;
+    document.addEventListener('selectionchange', () => resolve(turn.getBoundingClientRect().top - top), { once: true });
+    document.getSelection().removeAllRanges();
+  }));
+  assert.equal(await page.locator('.chat-shell[data-text-selected]').count(), 0, 'the hidden turns are skipped again');
+  assert.ok(Math.abs(moved) <= 1, `the visible turn moved by ${moved}px`);
+});
+
