@@ -20,7 +20,9 @@ cache_source="$repo_root/target"
 
 if [ -d "$cache_source" ] && [ ! -e target ]; then
   cp -a --reflink=auto "$cache_source" target
-fi'''
+fi
+
+bun scripts/setup-dependencies.mjs'''
 
 [cleanup]
 script = ""
