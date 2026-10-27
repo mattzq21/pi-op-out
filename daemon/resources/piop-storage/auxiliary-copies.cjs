@@ -144,6 +144,11 @@ function resultNotificationId(run) {
  * The fork sends a working subagent its task again (see FORK_RETRIES). Its run then waits for the answer to that delivery,
  * which the new parent reads whenever it runs, whether or not the parent itself is working.
  */
+/** The notification IDs of the subagent results in entries. */
+function deliveredResults(entries) {
+  return new Set(entries.flatMap(entry => entry.type === 'custom_message' && entry.customType === 'piop-subagent-result' && typeof entry.details?.notificationId === 'string' ? [entry.details.notificationId] : []));
+}
+
 function copySubagentRuns(root, plan, parents) {
   root = fs.realpathSync(root);
   const copiedChildren = new Map(plan.copies.filter(copy => copy.kind === 'subagent').map(copy => [copy.sourceId, copy]));
@@ -159,6 +164,8 @@ function copySubagentRuns(root, plan, parents) {
       if (!runs.length) continue;
       db.prepare('INSERT INTO session_subagent_state VALUES (?) ON CONFLICT(session_id) DO NOTHING').run(parent.sessionId);
 
+      const results = deliveredResults(parent.entries);
+
       for (const saved of runs) {
         const child = copiedChildren.get(saved.sessionId);
         const run = rewrite(saved, plan.replacements);
@@ -167,7 +174,12 @@ function copySubagentRuns(root, plan, parents) {
           Object.assign(run, { submission: 'accepted', deliveryIds: [child.deliveryId], taskNotificationId: child.deliveryId, observation: undefined });
         }
 
-        delete run.resultNotificationId;
+        // A result that came after the fork point is not in the copied history, so the copy gets it again.
+        if (run.resultDelivery === 'delivered' && !results.has(run.resultNotificationId)) {
+          run.resultDelivery = 'pending';
+          delete run.resultNotificationId;
+        }
+
         db.prepare('INSERT INTO session_subagent_runs VALUES (?, ?, ?, ?) ON CONFLICT(session_id, run_id) DO UPDATE SET run_json=excluded.run_json')
           .run(parent.sessionId, resultNotificationId(run), run.startedAt, JSON.stringify(run));
       }
@@ -194,7 +206,8 @@ async function publishAuxiliaryCopies(root, plan, target, publishOne) {
     await publishOne(copy.sessionPath, copy.entries, { goalSource: copy.sourcePath, dependencies: { workspace: { path: copy.cwd, kind: 'existing' } } });
   }
 
-  copySubagentRuns(root, plan, [{ sourceId: plan.replacements[0][0], sessionId: target.id }, ...plan.copies.map(copy => ({ sourceId: copy.sourceId, sessionId: copy.sessionId }))]);
+  const forkPath = plan.replacements[1][1];
+  copySubagentRuns(root, plan, [{ sourceId: plan.replacements[0][0], sessionId: target.id, entries: readTranscript(forkPath) }, ...plan.copies.map(copy => ({ sourceId: copy.sourceId, sessionId: copy.sessionId, entries: copy.entries }))]);
 }
 
 module.exports = { FORK_RETRIES, FORK_ERROR, planAuxiliaryCopies, rewriteForkHistory, retryRecord, publishAuxiliaryCopies };

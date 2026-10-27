@@ -58,12 +58,14 @@ async function sendForkRetries(pi: ExtensionAPI, ctx: ExtensionContext) {
   const entry = ctx.sessionManager.getEntries().findLast(item => item.type === "custom" && item.customType === FORK_RETRIES);
 
   if (entry?.type !== "custom" || !Check(retriesSchema, entry.data) || !entry.data.pending.length) return;
-  const pending = entry.data.pending;
-  pi.appendEntry(FORK_RETRIES, { pending: [] });
+  // Each retry stays saved until its delivery succeeds; a repeated delivery after a restart uses the same delivery ID.
+  let pending = entry.data.pending;
 
-  for (const retry of pending) {
+  for (const retry of entry.data.pending) {
     try { await sendSessionMessage(ctx, retry.sessionId, currentHost(), retry.message, true, undefined, retry.deliveryId); }
-    catch (error) { ctx.ui.notify(`A copied chat could not retry its last prompt: ${error instanceof Error ? error.message : String(error)}`, "error"); }
+    catch (error) { ctx.ui.notify(`A copied chat could not retry its last prompt; it is retried when this chat starts again: ${error instanceof Error ? error.message : String(error)}`, "error"); continue; }
+    pending = pending.filter(item => item !== retry);
+    pi.appendEntry(FORK_RETRIES, { pending });
   }
 }
 

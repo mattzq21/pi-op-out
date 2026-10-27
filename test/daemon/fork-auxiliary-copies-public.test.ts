@@ -118,6 +118,24 @@ test.concurrent('a working subagent of an idle side chat gets its task again fro
   } finally { stalled.resolve({ text: 'Late nested answer.' }); }
 }, 120000);
 
+test.concurrent('a fork made before a finished subagent reported gets that result again', async () => {
+  agents.scripts.set('Fork before the report', messages => {
+    const last = text(messages.at(-1));
+    if (last === 'Fork before the report') return { tool: 'spawn_subagents', arguments: { tasks: [{ nickname: 'Reporter', task: 'Report later' }] } };
+    if (last.includes('Reported.')) return { text: 'Read the report.' };
+    return { text: 'Started.' };
+  });
+  agents.scripts.set('Report later', () => ({ text: 'Reported.' }));
+  const chat = await agents.rootChat({ visible: true });
+  await chat.command({ type: 'prompt', message: 'Fork before the report' });
+  await chat.until(history => text(history.at(-1)) === 'Read the report.');
+  const forked = await chat.command({ type: 'copy_after', entryId: (await answer(chat, 'Started.')).id });
+  expect(forked.state.sessionId).not.toBe(chat.sessionId);
+  // The fork's history ends before the result, so the fork gets it and answers it again.
+  await chat.until(history => text(history.at(-1)) === 'Read the report.');
+  expect((await chat.command({ type: 'get_state' })).sessionId).toBe(forked.state.sessionId);
+}, 120000);
+
 test.concurrent('a side chat that was working when its main chat was forked gets a fork error, and its copy retries the prompt', async () => {
   let sideRequests = 0;
   const stalled = Promise.withResolvers<{ text: string }>();
