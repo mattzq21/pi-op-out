@@ -194,7 +194,7 @@ export function ChatView(props: Props & { transcriptActions?: JSXElement; follow
 
     if (!message) return [];
 
-    return [{ turnId: turn.messages[0].id, messageId: message.id, preview: textOf(message.content).replace(/\s+/g, " ").trim().slice(0, 160) || "Response interrupted" } satisfies ResponseDestination];
+    return [{ turnId: turn.messages[0].id, messageId: message.id, preview: textOf(message.content).replace(/\s+/g, " ").trim().slice(0, 160) || (message.stopReason === "stop" ? "Empty response" : "Response interrupted") } satisfies ResponseDestination];
   }));
 
   const hasSentPrompt = createMemo(() => messages().some((message) => message.role === "user"));
@@ -695,7 +695,7 @@ function finalResponseIndex(messages: ChatMessage[]) {
   for (let index = messages.length - 1; index >= 0; index -= 1) {
     const message = messages[index];
 
-    if (message.role === "assistant" && (textOf(message.content).trim().length > 0 || message.stopReason === "aborted" || message.stopReason === "error")) return index;
+    if (message.role === "assistant" && (canBranchFrom(message) || textOf(message.content).trim().length > 0 || message.stopReason === "aborted" || message.stopReason === "error")) return index;
   }
 
   return -1;

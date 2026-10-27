@@ -54,6 +54,12 @@ test('a goal continuation prompt starts a turn, so the reply before it stays vis
   expect(turnWork(source(), 'e7').entries.map((entry: any) => entry.message.role)).toEqual(['assistant', 'toolResult', 'assistant']);
 });
 
+test('a reply that stops without text keeps the turn work behind it, so it can be forked from', () => {
+  const history = recentHistory(chat(1, ''), false);
+  expect(history.entries.map((entry: any) => entry.message.role)).toEqual(['user', 'assistant']);
+  expect(history.entries[1].message).toMatchObject({ stopReason: 'stop', content: [{ type: 'text', text: '' }], deferredWork: { reasoningOnly: false } });
+});
+
 test('older history and the work of a turn load on request', () => {
   const source = chat(8, 'x'.repeat(2000));
   const older = olderHistory(source, 'e12');
