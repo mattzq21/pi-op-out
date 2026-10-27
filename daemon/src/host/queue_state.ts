@@ -122,7 +122,11 @@ export class QueueState {
     const pending: any[] = [];
     for (const behavior of ['steer', 'followUp']) {
       for (const message of this.texts(behavior)) {
-        const index = available.findIndex(item => !flag(item, 'retry') && !kept(item) && item.behavior === behavior && jsonEqual(item.message, message));
+        let index = available.findIndex(item => !flag(item, 'retry') && !kept(item) && item.behavior === behavior && jsonEqual(item.message, message));
+        if (index < 0) {
+          index = available.findIndex(item => retriedInPi(item, behavior, message));
+          if (index >= 0) available[index] = inPi(available[index]);
+        }
         if (index >= 0) pending.push(available.splice(index, 1)[0]);
       }
     }
@@ -176,6 +180,22 @@ export class QueueState {
     }
   }
 
+}
+
+/**
+ * True for an item marked for retry whose message Pi still holds in its queue. The daemon marks items for retry when it cannot know
+ * whether Pi used them, for example after a restart while Pi kept running. Pi holding the message shows that it was not used.
+ */
+export function retriedInPi(item: any, behavior: string, message: any): boolean {
+  return flag(item, 'retry') && !flag(item, 'recovered') && item.behavior === behavior && jsonEqual(item.message, message);
+}
+
+/** The item as one that Pi holds: no longer marked for retry or kept by the daemon. */
+export function inPi(item: any): any {
+  const next = { ...clone(item), retry: false, deliveryStarted: true };
+  delete next.held;
+  delete next.afterGoal;
+  return next;
 }
 
 export function durableMessages(state: QueueState): any[] {

@@ -1,6 +1,6 @@
 import { array, clone, flag, jsonEqual, text } from './json';
 import type { Mutex } from '../util/sync';
-import { GOAL_ENTRY_ID, kept, unique, type QueueState } from './queue_state';
+import { GOAL_ENTRY_ID, inPi, kept, retriedInPi, unique, type QueueState } from './queue_state';
 import type { QueueDelivery } from './queue_delivery';
 import { commandName } from '../plugin_contributions';
 import { queuedCommand } from './queue_submission';
@@ -333,15 +333,20 @@ export async function holdQueue(queue: QueueDelivery): Promise<void> {
       throw error;
     }
     const live = originals.filter(item => !flag(item, 'retry') && !kept(item));
+    const retried = originals.filter(item => flag(item, 'retry'));
     const returned: any[] = [];
     for (const [field, behavior] of [['steering', 'steer'], ['followUp', 'followUp']]) {
       for (const message of array(cleared, field)) {
         const index = live.findIndex(item => item.behavior === behavior && jsonEqual(item.message, message));
-        returned.push(index >= 0 ? { ...undelivered(live.splice(index, 1)[0]), held: true } : { id: queue.record.nextId(), message, behavior, retry: true });
+        if (index >= 0) { returned.push({ ...undelivered(live.splice(index, 1)[0]), held: true }); continue; }
+        // An item marked for retry that Pi still held was never used, so it is held like the others.
+        const again = retried.findIndex(item => retriedInPi(item, behavior, message));
+        if (again >= 0) { returned.push({ ...undelivered(inPi(retried.splice(again, 1)[0])), held: true }); continue; }
+        returned.push({ id: queue.record.nextId(), message, behavior, retry: true });
       }
     }
     state.held = true;
-    state.pending = [...originals.filter(item => flag(item, 'retry')), ...returned.filter(item => !flag(item, 'retry')), ...originals.filter(item => flag(item, 'afterGoal') && !flag(item, 'retry')), ...returned.filter(item => flag(item, 'retry'))];
+    state.pending = [...retried, ...returned.filter(item => !flag(item, 'retry')), ...originals.filter(item => flag(item, 'afterGoal') && !flag(item, 'retry')), ...returned.filter(item => flag(item, 'retry'))];
     await queue.record.persist();
   } finally { state.changing = false; await queue.publish(); }
 }
