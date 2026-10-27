@@ -80,11 +80,11 @@ function PinButton(props: { message: ChatMessage; text: string }) {
   }}</Show>;
 }
 
-const shortMessageTime = new Intl.DateTimeFormat(undefined, { hour: "2-digit", minute: "2-digit" });
+const shortMessageTime = new Intl.DateTimeFormat(undefined, { hour: "2-digit", minute: "2-digit", hourCycle: "h23" });
 
-const recentMessageTime = new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
+const recentMessageTime = new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit", hourCycle: "h23" });
 
-const fullMessageTime = new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "short" });
+const fullMessageTime = new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "short", hourCycle: "h23" });
 
 function formatMessageTime(timestamp?: number) {
   if (timestamp === undefined || !Number.isFinite(timestamp)) return undefined;
