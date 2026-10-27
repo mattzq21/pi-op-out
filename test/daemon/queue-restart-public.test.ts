@@ -46,3 +46,44 @@ test('a message waiting when the daemon stops is kept after the restart and sent
     expect(pending(second, 'after')).toEqual([]);
   } finally { await second?.stop(); await first.stop(); await model.close(); }
 }, 120000);
+test('a held queue stays on hold after the daemon restarts, and its messages go to the agent only when the user resumes it', async () => {
+  let release!: (reply: { text: string }) => void;
+  const busy = new Promise<{ text: string }>(resolve => { release = resolve; });
+  let started!: () => void;
+  const modelStarted = new Promise<void>(resolve => { started = resolve; });
+  const first = await startDaemon();
+  const model = await scriptedModel(first.home, request => {
+    const last = text(request.messages.at(-1));
+    if (last === 'Long job') { started(); return busy; }
+    return { text: 'Handled: ' + last };
+  });
+  let second: TestDaemon | undefined;
+  try {
+    const chat = await first.invoke('create_temporary_chat', { hostId: 'local' });
+    await first.invoke('start_pi', { runtimeId: 'before', clientId: 'laptop', cwd: chat.cwd, sessionId: chat.sessionId });
+    await command(first, 'before', { type: 'set_model', provider: 'scripted', modelId: 'scripted-model' });
+    await command(first, 'before', { type: 'prompt', message: 'Long job' });
+    await modelStarted;
+    await command(first, 'before', { type: 'follow_up', message: 'Queued before the hold' });
+    await command(first, 'before', { type: 'hold_queue', held: true });
+    await command(first, 'before', { type: 'steer', message: 'Held steer' });
+    await first.stop();
+    release({ text: 'never delivered' });
+
+    second = await startDaemon({ home: first.home });
+    const path = (await second.invoke('list_sessions')).find((session: any) => session.id === chat.sessionId).path;
+    await second.invoke('start_pi', { runtimeId: 'after', clientId: 'laptop', cwd: chat.cwd, sessionPath: path });
+    await second.waitEvent('pi://event', payload => payload.runtimeId === 'after' && payload.event?.type === 'queue_update' && payload.event.pendingMessages?.length === 2);
+    expect((await command(second, 'after', { type: 'get_state' })).queueHeld).toBe(true);
+    expect(pending(second, 'after').map((item: any) => [item.message, item.behavior, item.retry ?? false])).toEqual([['Queued before the hold', 'followUp', false], ['Held steer', 'steer', false]]);
+    expect(model.requests).toHaveLength(1);
+
+    const seen = new Set(second.events.map(event => event.payload));
+    await command(second, 'after', { type: 'hold_queue', held: false });
+    await second.waitEvent('pi://event', payload => !seen.has(payload) && payload.runtimeId === 'after' && payload.event?.type === 'queue_update' && payload.event.held === false && payload.event.pendingMessages?.length === 0);
+    await second.waitEvent('pi://event', payload => !seen.has(payload) && payload.runtimeId === 'after' && payload.event?.type === 'agent_settled');
+    for (let tries = 0; text((await messages(second, 'after')).at(-1)) !== 'Handled: Queued before the hold' && tries < 50; tries++) await Bun.sleep(100);
+    expect((await messages(second, 'after')).filter((message: any) => message.role === 'user').map(text)).toEqual(['Long job', 'Held steer', 'Queued before the hold']);
+    expect((await command(second, 'after', { type: 'get_state' })).queueHeld).toBe(false);
+  } finally { await second?.stop(); await first.stop(); await model.close(); }
+}, 120000);

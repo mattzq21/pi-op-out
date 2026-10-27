@@ -316,6 +316,7 @@ function undelivered(item: any): any {
  */
 export async function holdQueue(queue: QueueDelivery): Promise<void> {
   const state = queue.state;
+  await queue.record.saveHeld(true);
   if (!state.steering.length && !state.followUp.length) {
     state.held = true;
     await queue.publish();
@@ -324,7 +325,8 @@ export async function holdQueue(queue: QueueDelivery): Promise<void> {
   state.changing = true;
   const originals = clone(state.pending);
   try {
-    const cleared = await queue.execute({ type: 'clear_queue' });
+    let cleared: any;
+    try { cleared = await queue.execute({ type: 'clear_queue' }); } catch (error) { await queue.record.saveHeld(false); throw error; }
     const live = originals.filter(item => !flag(item, 'retry') && !kept(item));
     const returned: any[] = [];
     for (const [field, behavior] of [['steering', 'steer'], ['followUp', 'followUp']]) {
@@ -342,6 +344,7 @@ export async function holdQueue(queue: QueueDelivery): Promise<void> {
 /** Ends the hold and sends the held items to Pi: steering messages first, then follow-ups, each in queue order. */
 export async function resumeQueue(queue: QueueDelivery): Promise<void> {
   const state = queue.state;
+  await queue.record.saveHeld(false);
   const held = state.heldItems();
   const send = [...held.filter(item => item.behavior === 'steer'), ...held.filter(item => item.behavior !== 'steer')];
   state.held = false;

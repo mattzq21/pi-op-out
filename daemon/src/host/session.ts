@@ -92,7 +92,7 @@ export class Session {
   stderrTail: string[] = [];
   providerRevision = 0;
 
-  private constructor(launch: SessionLaunch, identity: string, pending: any[], storage: QueueStorage | null, private host: SessionHost, private toolPayloads: ToolPayloadCache) {
+  private constructor(launch: SessionLaunch, identity: string, pending: any[], storage: QueueStorage | null, private host: SessionHost, private toolPayloads: ToolPayloadCache, held: boolean) {
     this.identity = identity;
     this.clientIdValue = launch.clientId;
     this.spec = launch.spec;
@@ -106,7 +106,7 @@ export class Session {
       savedUserMessages: () => this.savedUserMessages(),
       extensionCommand: name => this.host.extensionCommand(name),
     };
-    this.queue = new SessionQueue(executor, pending, storage);
+    this.queue = new SessionQueue(executor, pending, storage, held);
     this.dialogs = new SessionDialogs({
       views: () => this.viewsList,
       readonly: runtime => this.host.readonly(runtime),
@@ -122,9 +122,10 @@ export class Session {
   static async spawn(launch: SessionLaunch, pending: any[], host: SessionHost, home: string, toolPayloads: ToolPayloadCache, assertRunning: () => void): Promise<Session> {
     prepareSpec(launch.spec, launch.key, launch.clientId, home);
     const storage = queueStorage(host, launch.spec, launch.cwd, home, launch.key);
-    const recovered = storage ? await storage.recover(pending) : pending;
+    const held = storage?.held() ?? false;
+    const recovered = storage ? await storage.recover(pending, held) : pending;
     const identity = argument(launch.spec, '--session') !== undefined ? launch.key : (argument(launch.spec, '--session-id') ?? launch.key);
-    const session = new Session(launch, identity, recovered, storage, host, toolPayloads);
+    const session = new Session(launch, identity, recovered, storage, host, toolPayloads, held);
     await session.reconcileQueue();
     assertRunning();
     session.worker = RuntimeWorker.spawn(session.spec, session.identity, launch.timeout, session.observer(), home);

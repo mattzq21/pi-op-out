@@ -19,7 +19,8 @@ export class SessionQueue {
   /** Serializes commands that change the queue. */
   readonly gate = new Mutex();
 
-  constructor(executor: Execution, pending: any[] = [], storage: QueueStorage | null = null) {
+  constructor(executor: Execution, pending: any[] = [], storage: QueueStorage | null = null, held = false) {
+    this.s.held = held;
     this.s.retained = clone(pending);
     this.s.pending = clone(pending);
     this.record = new QueueRecord(this.s, storage, executor);

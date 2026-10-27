@@ -83,17 +83,38 @@ export class QueueStorage {
 
   load(): any[] {
     const saved = this.record();
-    return saved ? recoverItems(saved) : [];
+    return saved ? recoverItems(saved, this.held()) : [];
   }
 
-  async recover(pending: any[]): Promise<any[]> {
+  /** True when the user holds this session's queue. */
+  held(): boolean {
+    const db = Registry.open(this.root());
+    try { return db.prepare('SELECT 1 FROM session_queue_holds WHERE session_id=?').get(this.id()) !== undefined; } finally { db.close(); }
+  }
+
+  /** Saves whether the user holds this session's queue. */
+  async saveHeld(held: boolean): Promise<void> {
+    const root = this.root();
+    return inOrder(resolve(root), async () => {
+      const lock = await temporaryLock(root);
+      try {
+        const db = Registry.open(root);
+        try {
+          if (held) db.prepare('INSERT OR IGNORE INTO session_queue_holds VALUES (?)').run(this.id());
+          else db.prepare('DELETE FROM session_queue_holds WHERE session_id=?').run(this.id());
+        } finally { db.close(); }
+      } finally { lock.release(); }
+    });
+  }
+
+  async recover(pending: any[], held: boolean): Promise<any[]> {
     const snapshot = structuredClone(pending);
     const origin = structuredClone(this.origin);
     return inOrder(resolve(this.root()), async () => {
       const recovered = this.load();
       for (const item of snapshot) {
         validateItem(item);
-        item.retry = true;
+        restartItem(item, held);
         if (!recovered.some(saved => saved.id === item.id)) recovered.push(item);
       }
       await this.saveLocked(recovered, origin);
@@ -139,7 +160,14 @@ export async function clearSaved(root: string, id: string): Promise<void> {
   await new QueueStorage(join(root, 'queued-input'), id).save([]);
 }
 
-function recoverItems(saved: any): any[] {
+/** Marks an item of a queue that starts again. Pi never had a held item of a held queue, so it stays held. Other items wait for the user to retry them. */
+function restartItem(item: any, held: boolean): void {
+  if (held && item.held === true && item.retry !== true) return;
+  item.retry = true;
+  delete item.held;
+}
+
+function recoverItems(saved: any, held: boolean): any[] {
   if (saved.version !== 1) throw new Error('Unsupported queued-input journal version');
   if (!Array.isArray(saved.items)) throw new Error('Invalid queued-input journal');
   const items = structuredClone(saved.items);
@@ -149,8 +177,7 @@ function recoverItems(saved: any): any[] {
     const key = JSON.stringify(item.id);
     if (identities.has(key)) throw new Error('Duplicate queued-input journal identity');
     identities.add(key);
-    item.retry = true;
-    delete item.held;
+    restartItem(item, held);
   }
   return items;
 }
