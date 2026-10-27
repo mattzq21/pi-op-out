@@ -16,7 +16,7 @@ import type { NativeTransport } from "../lib/nativeTransport";
 import type { AppSettings } from "../types";
 import { RemoveGroupDialog } from "./RemoveGroupDialog";
 
-export type SessionAction = "split" | "new-window" | "rename" | "open-directory" | "archive" | "copy-id" | "open-rollout";
+export type SessionAction = "new-window" | "rename" | "open-directory" | "archive" | "copy-id" | "open-rollout";
 
 
 /** A chat in a project folder that the user picked, in the main worktree. A chat without a project has a temporary folder from Piop. */

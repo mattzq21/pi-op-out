@@ -3,7 +3,7 @@ import type { SidepaneOpening } from "../plugins/types";
 import type { SessionSummary } from "../types";
 import type { SubagentTarget } from "./subagentNavigation";
 
-/** One tab of the side pane. kind is the auxiliary kind of the chat, or "chat" for a root chat that the user opened next to the main chat. */
+/** One tab of the side pane. kind is the auxiliary kind of the chat, such as "btw", "review" or "subagent". */
 export interface SidepaneTab { key: string; kind: string; session: SessionSummary; label: string; running: boolean }
 
 const sessionKey = (session: Pick<SessionSummary, "hostId" | "id">) => `${session.hostId ?? "local"}:${session.id}`;
@@ -42,15 +42,14 @@ interface Options {
 }
 
 /**
- * The side pane tabs: the btw, review and subagent chats in the main chat's tree, oldest first, and root chats the user opened
- * there. A subagent gets a tab while it works or after the user opens it, and keeps it until the user closes it.
+ * The side pane tabs: the btw, review and subagent chats in the main chat's tree, oldest first. A subagent gets a tab while it
+ * works or after the user opens it, and keeps it until the user closes it.
  */
 export function createSidepaneTabs(options: Options) {
   const [open, setOpen] = createSignal(false);
   const [selectedKey, setSelectedKey] = createSignal<string>();
   /** Auxiliary chats that a command opened before the session list has them. */
   const [opened, setOpened] = createSignal<SessionSummary[]>([]);
-  const [chats, setChats] = createSignal<SessionSummary[]>([]);
   const [pinned, setPinned] = createSignal<ReadonlySet<string>>((() => {
     try { return new Set(options.subagentTabs.load()); }
     catch (error) { options.onError(`Could not read the saved subagent tabs: ${error instanceof Error ? error.message : String(error)}`); return new Set<string>(); }
@@ -97,16 +96,9 @@ export function createSidepaneTabs(options: Options) {
     setPinned(change(next => { for (const key of started) next.add(key); }));
   }));
 
-  const tabs = createMemo<SidepaneTab[]>(() => {
-    const main = options.main();
-    const auxiliary = auxiliaryTree().filter(session => session.auxiliaryKind !== "subagent" || pinned().has(sessionKey(session)));
-    // A root chat tab shows the chat as the session list has it now, with its current name and working state.
-    const listed = new Map(options.sessions().map(session => [sessionKey(session), session]));
-    const roots = chats().map(session => listed.get(sessionKey(session)) ?? session).filter(session => session.id !== main.sessionId || (session.hostId ?? "local") !== main.hostId);
-
-    return [...auxiliary.map(session => ({ kind: session.auxiliaryKind ?? "chat", session })), ...roots.map(session => ({ kind: "chat", session }))]
-      .map(({ kind, session }) => ({ key: sessionKey(session), kind, session, label: tabLabel(session), running: options.running(session) }));
-  });
+  const tabs = createMemo<SidepaneTab[]>(() => auxiliaryTree()
+    .filter(session => session.auxiliaryKind !== "subagent" || pinned().has(sessionKey(session)))
+    .map(session => ({ key: sessionKey(session), kind: session.auxiliaryKind ?? "btw", session, label: tabLabel(session), running: options.running(session) })));
 
   const selected = createMemo(() => tabs().find(tab => tab.key === selectedKey()) ?? tabs()[0]);
   const shown = () => open() && tabs().length > 0;
@@ -145,12 +137,6 @@ export function createSidepaneTabs(options: Options) {
     /** True when a chat in the tabs works. */
     working: createMemo(() => tabs().some(tab => tab.running)),
     select: setSelectedKey,
-    /** Opens a root chat next to the main chat. */
-    openChat: (session: SessionSummary) => {
-      const key = sessionKey(session);
-      setChats(current => [...current.filter(item => sessionKey(item) !== key), session]);
-      show(key);
-    },
     openSubagent: (target: SubagentTarget) => {
       const listed = options.sessions().find(session => session.id === target.sessionId && (session.hostId ?? "local") === target.hostId);
       const main = options.main();
@@ -161,30 +147,23 @@ export function createSidepaneTabs(options: Options) {
     /** The first prompt of a tab that a command opened, until finishOpening. */
     opening: (key: string) => openings.get(key),
     finishOpening: (key: string) => { openings.delete(key); },
-    /** Removes a root chat tab or hides a subagent tab, also when the chat was archived or deleted. Auxiliary chats of other kinds leave the tabs when they are archived. */
+    /** Hides a subagent tab, and drops a chat that a command opened. Auxiliary chats of other kinds leave the tabs when they are archived. */
     forget: (key: string) => {
       openings.delete(key);
       setOpened(current => current.filter(session => sessionKey(session) !== key));
-      setChats(current => current.filter(session => sessionKey(session) !== key));
       setPinned(change(next => next.delete(key)));
     },
     /** Removes every tab of an archived or deleted chat, named by its ID, its path or both, whichever tab is shown. */
     forgetRemoved: (hostId: string, sessionId: string | undefined, sessionPath: string | undefined) => {
       const matches = (session: SessionSummary) => (session.hostId ?? "local") === hostId && (session.id === sessionId || Boolean(sessionPath && session.path === sessionPath));
-      const keys = [...chats(), ...opened(), ...options.sessions()].filter(matches).map(sessionKey);
+      const keys = [...opened(), ...options.sessions()].filter(matches).map(sessionKey);
 
       if (sessionId) keys.push(`${hostId}:${sessionId}`);
       for (const key of new Set(keys)) {
         openings.delete(key);
         setPinned(change(next => next.delete(key)));
       }
-      setChats(current => current.filter(session => !matches(session)));
       setOpened(current => current.filter(session => !matches(session)));
-    },
-    /** Replaces a root chat tab after a fork in it moved the pane to another chat. */
-    replaceChat: (previousKey: string, session: SessionSummary) => {
-      setChats(current => current.map(item => sessionKey(item) === previousKey ? session : item));
-      if (selectedKey() === previousKey) setSelectedKey(sessionKey(session));
     },
   };
 }

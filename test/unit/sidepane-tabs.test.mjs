@@ -84,22 +84,13 @@ test('a chat that a command opened and that was removed before the session list 
 });
 
 test('an archived chat leaves the tabs whether or not its tab is shown, also when only its path is known', t => {
-  const other = session('other');
-  const view = tabs([session('main'), other]);
+  const fresh = session('fresh', { auxiliaryParentId: 'main', auxiliaryKind: 'btw' });
+  const view = tabs([session('main')]);
   t.after(view.dispose);
-  view.tabs.openChat(other);
+  view.tabs.openAuxiliary(fresh);
   view.tabs.setOpen(false);
-  view.tabs.forgetRemoved('local', undefined, other.path);
+  view.tabs.forgetRemoved('local', undefined, fresh.path);
   assert.deepEqual(view.keys(), []);
-});
-
-test('a root chat tab shows the chat\'s current name and working state', t => {
-  const other = session('other', { isRunning: true });
-  const view = tabs([session('main'), other]);
-  t.after(view.dispose);
-  view.tabs.openChat(other);
-  view.setSessions([session('main'), session('other', { name: 'Renamed' })]);
-  assert.deepEqual(view.tabs.tabs().map(tab => [tab.label, tab.running]), [['Renamed', false]]);
 });
 
 test('a side chat counts as working while one of its own subagents works', t => {

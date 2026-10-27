@@ -13,7 +13,7 @@ import { required } from "./lib/required";
 import { trackToastMessage, trackToastNotices } from "./lib/toastHistory";
 import { Key,Rerun } from "@solid-primitives/keyed";
 import { Archive,ArrowLeft,Bug,FolderPlus,MessageSquare,PanelRight,Server,Settings } from "lucide-solid";
-import { batch,createComponent,createEffect,createMemo,lazy,onCleanup,Show } from "solid-js";
+import { createComponent,lazy,onCleanup,Show } from "solid-js";
 import { createAppConversations } from "./appConversations";
 import { AppLoading,LimitBadge,splitConversationKey,UsageError } from "./appSupport";
 import { FindInPage } from "./components/FindInPage";
@@ -26,10 +26,8 @@ import { SessionPanel } from "./components/SessionPanel";
 import { ArchivedSessionPanel } from "./components/ArchivedSessionPanel";
 import { MissingDirectoryDialog } from "./components/MissingDirectoryDialog";
 import { hasVisibleText } from "./lib/content";
-import { NativeTransport } from "./lib/nativeTransport";
 import { isMobile } from "./lib/platform";
 import { SessionLinkContext, SubagentNavigationContext, type SessionLinks } from "./lib/subagentNavigation";
-import type { SessionSummary } from "./types";
 
 export { formatCodexReset,normalizeCodexUsage,normalizeOpencodeGoUsage,usageWindowsDescription } from "./appSupport";
 
@@ -61,17 +59,17 @@ const SubagentPane = lazy(() => import("./components/SubagentPane").then(module 
 
 export default function App(props: { suppressConnectionNotices?: boolean } = {}) {
   onCleanup(retainSettingsResources());
- const { modelVisibility, drafts, archiveReplacedSession, isArchiving, missingDirectoryDialog, archivesOpen, setArchivesOpen, runtimePool, transport, view, setView, activeConversationKey, chatViewKey, runningSessions, unseenSessions, pendingSettingsCount, chatSession, sessions, settings, settingsSaving, debugModeSaving, setSettingsDirty, panelOpen, setPanelOpen, query, setQuery, connected, error, setError, createGroupRequest, setCreateGroupRequest, handleCreateGroup, newChatRequest, activeHostId, codexUsage, anthropicUsage, usageClock, opencodeGoBadge, codexUsageError, anthropicUsageError, opencodeGoUsageError, setDialogs, notices, setNotices, addNotice, queueExtensionDialog, resolveExtensionDialog, closeTransportDialogs, releaseSplitTransport, statuses, renameSession, setRenameSession, projectOpen, setProjectOpen, projectOpenRef, uploadsByTransport, setComposerUploads, splitPane, setSplitPane, subagentPane, hasSidePane, sidepane, listedRunningSessions, archiveSession, mainComposerFocusRequest, splitComposerFocusRequest, activePane, setActivePane, terminals, terminalOpen, terminalLocationState, startTerminal, addTerminal, selectTerminal, deleteTerminal, reconnectPending, splitSessionId, composerState, terminalViewKey, syncSessionIndex, composerControls, resolveHomeDirectory, send, respondToSplitRequest, closeSplitPane, openSubagent, canLeaveSettings, rekeyConversationUi, branch, forkAndForget, forkSourceName, openForkSource, revealEntryId, entryRevealed, startNewSession, newSession, clearChatProject, chooseChatHost, selectSession, setModel, setThinking, abortInteraction, saveSettings, setAgent, openProject, chooseChatProject, sessionAction, draftChangeFor, uploadsChangeFor, toggleComposerTerminal, toggleDebugMode, toggleDebugFeature, reconnectMain, extensionStateIsCurrent, activeDialog, projectCwd, mobileSidebarOpen, sidebar, chatAgentProps, chatModels, chatCommands, chatWidgets, composerView } = createAppConversations(() => { void ChatView.preload().catch(() => undefined); });
+ const { modelVisibility, drafts, isArchiving, missingDirectoryDialog, archivesOpen, setArchivesOpen, runtimePool, transport, view, setView, activeConversationKey, chatViewKey, runningSessions, unseenSessions, pendingSettingsCount, chatSession, sessions, settings, settingsSaving, debugModeSaving, setSettingsDirty, panelOpen, setPanelOpen, query, setQuery, connected, error, setError, createGroupRequest, setCreateGroupRequest, handleCreateGroup, newChatRequest, activeHostId, codexUsage, anthropicUsage, usageClock, opencodeGoBadge, codexUsageError, anthropicUsageError, opencodeGoUsageError, setDialogs, notices, setNotices, addNotice, queueExtensionDialog, resolveExtensionDialog, closeTransportDialogs, releaseSplitTransport, statuses, renameSession, setRenameSession, projectOpen, setProjectOpen, projectOpenRef, uploadsByTransport, setComposerUploads, splitPane, subagentPane, hasSidePane, sidepane, listedRunningSessions, archiveSession, mainComposerFocusRequest, splitComposerFocusRequest, activePane, setActivePane, terminals, terminalOpen, terminalLocationState, startTerminal, addTerminal, selectTerminal, deleteTerminal, reconnectPending, splitSessionId, composerState, terminalViewKey, syncSessionIndex, composerControls, resolveHomeDirectory, send, respondToSplitRequest, closeSplitPane, openSubagent, canLeaveSettings, branch, forkAndForget, forkSourceName, openForkSource, revealEntryId, entryRevealed, startNewSession, newSession, clearChatProject, chooseChatHost, selectSession, setModel, setThinking, abortInteraction, saveSettings, setAgent, openProject, chooseChatProject, sessionAction, draftChangeFor, uploadsChangeFor, toggleComposerTerminal, toggleDebugMode, toggleDebugFeature, reconnectMain, extensionStateIsCurrent, activeDialog, projectCwd, mobileSidebarOpen, sidebar, chatAgentProps, chatModels, chatCommands, chatWidgets, composerView } = createAppConversations(() => { void ChatView.preload().catch(() => undefined); });
 
 
   const pluginPane = createPluginWorkspace(conversationSource(activeHostId, chatSession));
 
   /**
    * X on a tab: a btw or review chat is archived with its own auxiliary chats, such as its subagents, after a confirmation
-   * while any of them works. Other tabs only close.
+   * while any of them works. A subagent tab only closes.
    */
   const closeTab = async (tab: SidepaneTab) => {
-    if (tab.kind === "subagent" || tab.kind === "chat") { sidepane.forget(tab.key); return; }
+    if (tab.kind === "subagent") { sidepane.forget(tab.key); return; }
 
     if (sidepane.workingTree(tab.session) && !window.confirm(`“${tab.label}” or one of its subagents is working. Stop them and archive it?`)) return;
     await archiveSession(tab.session);
@@ -115,18 +113,6 @@ export default function App(props: { suppressConnectionNotices?: boolean } = {})
         const pane = required(splitPane());
         const currentPane = () => splitPane()?.key === pane.key ? splitPane() : undefined;
 
-        const changeSession = (next: SessionSummary, owner: NativeTransport) => {
-          const current = currentPane();
-
-          if (!current) return;
-          const previousKey = splitConversationKey(current);
-          const nextKey = `${next.hostId ?? "local"}:${next.id}`;
-          batch(() => {
-            rekeyConversationUi(previousKey, nextKey, owner);
-            sidepane.replaceChat(previousKey, next);
-            setSplitPane(value => value?.key === pane.key ? { ...value, key: nextKey, session: next } : value);
-          });
-        };
         const finishOpening = (response: { value?: string; cancelled?: boolean }) => {
           const opening = pane.request;
 
@@ -142,9 +128,7 @@ export default function App(props: { suppressConnectionNotices?: boolean } = {})
 
             if (current) toggleComposerTerminal("split", { sessionKey: splitConversationKey(current), cwd: current.session.cwd, hostId: current.session.hostId ?? "local" }); }}
           onDialogRequest={queueExtensionDialog} onDialogResolved={resolveExtensionDialog} onDialogTransportClosed={closeTransportDialogs}
-          onOpenForkSource={source => openForkSource(source, (currentPane()?.session ?? pane.session).hostId ?? "local")}
-          forkSourceName={source => sessions().find(session => session.id === source.sessionId && (session.hostId ?? "local") === ((currentPane()?.session ?? pane.session).hostId ?? "local"))?.name}
-          onReleaseTransport={releaseSplitTransport} onArchiveOriginal={archiveReplacedSession} onSessionChange={changeSession} pluginPane={Boolean(pane.session.auxiliaryKind)} initialPrompt={pane.request?.initialPrompt} initialImages={pane.request?.initialImages}
+          onReleaseTransport={releaseSplitTransport} initialPrompt={pane.request?.initialPrompt} initialImages={pane.request?.initialImages}
           onReady={() => finishOpening({ value: "opened" })} onFailed={() => finishOpening({ cancelled: true })}
           onClose={() => { if (currentPane()) sidepane.forget(pane.key); }} />;
       }}</Rerun></Show>);

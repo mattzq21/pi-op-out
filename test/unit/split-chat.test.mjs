@@ -48,13 +48,13 @@ describe('split conversation lifecycle', () => {
     }, { shouldMockEvents: true });
     pool = new SessionRuntimePool(); pool.setErrorHandler(message => notices.push(message));
     const session = { id: 'session', name: 'Conversation', cwd: '/repo', path: '/session.jsonl', project: 'repo', messageCount: 0 };
-    transport = pool.forSession(session);
+    transport = pool.forPluginPane(session);
     const settings = appSettings({ knownModels: ['p/base', 'p/one', 'p/two'] });
     let modelVisibility;
     createRoot(dispose => { disposeRoot = dispose; drafts = createConversationDrafts(message => storageErrors.push(message)); modelVisibility = createHostModelVisibility(() => settings, notice => notices.push(notice)); });
     props = { drafts, modelVisibility, runtimePool: pool, session, settings, uploadsFor: owner => drafts.uploadsByTransport().get(owner) ?? [], onUploadsChange: drafts.setComposerUploads,
       onOpenTerminal: () => {}, onDialogRequest: (...args) => dialogs.push(args), onDialogResolved: (...args) => dialogs.push(args), onDialogTransportClosed: async () => {},
-      onReleaseTransport: async value => released.push(value), onArchiveOriginal: async () => {}, onSessionChange: () => {}, onClose: () => {} };
+      onReleaseTransport: async value => released.push(value), onClose: () => {} };
   });
   afterEach(async () => {
     if (view) await view.unmount(); view = undefined;
@@ -160,78 +160,6 @@ describe('split conversation lifecycle', () => {
     assert.ok(calls.some(command => command.type === 'abort'));
   });
 
-  for (const repository of [null, { root: '/repo', gitDir: '/repo/.git' }]) test(`regular fork keeps the folder and original chat (${repository ? 'repository' : 'plain folder'})`, async () => {
-    const entries = [{ type: 'message', id: 'u', parentId: null, message: { role: 'user', content: 'Question' } }, { type: 'message', id: 'a', parentId: 'u', message: { role: 'assistant', content: 'Answer', stopReason: 'stop' } }];
-    const snapshot = responses.get('get_snapshot');
-    snapshot.history = { entries, leafId: 'a' };
-    snapshot.state = { ...snapshot.state, repository };
-    const changes = [], archived = [];
-    responses.set('copy_after', () => {
-      snapshot.state = { ...snapshot.state, sessionId: 'regular-fork', sessionFile: '/regular-fork.jsonl', cwd: '/repo' };
-      return { cancelled: false, state: snapshot.state };
-    });
-    await render({ onSessionChange: value => changes.push(value), onArchiveOriginal: value => archived.push(value) });
-    assert.ok(control('Fork'));
-    assert.equal(Boolean(control('Branch off')), Boolean(repository));
-    await click(control('Fork'));
-    await untilDom(() => changes.length === 1);
-    assert.ok(calls.some(command => command.type === 'copy_after' && command.entryId === 'a'));
-    assert.equal(calls.some(command => command.type === 'fork_after'), false);
-    assert.equal(changes[0].cwd, '/repo');
-    assert.equal(changes[0].id, 'regular-fork');
-    assert.deepEqual(archived, []);
-  });
-
-  test('the split source link requests the source chat at its selected response', async () => {
-    const source = { sessionId: 'source-chat', sessionPath: '/source.jsonl', entryId: 'source-answer' };
-    const snapshot = responses.get('get_snapshot');
-    snapshot.state = { ...snapshot.state, forkSource: source };
-    snapshot.history = { entries: [
-      { type: 'message', id: 'source-question', parentId: null, message: { role: 'user', content: 'Question' } },
-      { type: 'message', id: 'source-answer', parentId: 'source-question', message: { role: 'assistant', content: 'Answer', stopReason: 'stop' } },
-    ], leafId: 'source-answer' };
-    const opened = [];
-    await render({ forkSourceName: value => value.sessionId === 'source-chat' ? 'Original chat' : undefined, onOpenForkSource: value => opened.push(value) });
-    const link = document.querySelector('button.fork-source-link');
-    assert.ok(link);
-    assert.equal(link.textContent, 'Branched from “Original chat”');
-    await click(link);
-    assert.deepEqual(opened, [source]);
-  });
-
-  test('branching forks before the next prompt', async () => {
-    const entries = [{ type: 'message', id: 'u', parentId: null, message: { role: 'user', content: 'Question' } }, { type: 'message', id: 'a', parentId: 'u', message: { role: 'assistant', content: 'Answer', stopReason: 'stop' } }, { type: 'message', id: 'next', parentId: 'a', message: { role: 'user', content: 'Next question' } }];
-    responses.get('get_snapshot').history = { entries, leafId: 'next' };
-    responses.get('get_snapshot').state = { ...responses.get('get_snapshot').state, repository: { root: '/repo', gitDir: '/repo/.git' } };
-    const changes = []; const changed = Promise.withResolvers();
-    responses.set('fork_after', () => { const snapshot = responses.get('get_snapshot'); snapshot.state = { ...snapshot.state, sessionId: 'forked', sessionName: 'Fork', sessionFile: '/fork.jsonl', cwd: '/worktrees/forked' }; snapshot.history = { entries: entries.slice(0, 2), leafId: 'a' };
-
-    return { cancelled: false, state: { cwd: '/worktrees/forked' } }; });
-    responses.set('get_entries', { entries: entries.slice(0, 2), leafId: 'a' });
-    await render({ onSessionChange: (...args) => { changes.push(args); changed.resolve(); } });
-    assert.ok(control('Branch off'), JSON.stringify({ text: document.body.textContent, calls }));
-    await click(control('Branch off'));
-    await received(command => command.type === 'fork_after' && command.entryId === 'a');
-    await Promise.race([changed.promise, untilDom(() => document.querySelector('.split-control-error')).then(error => assert.fail(error.textContent))]);
-    assert.equal(pool.forSession({ id: 'forked', cwd: '/repo', path: '/fork.jsonl', hostId: 'local' }), transport);
-    assert.equal(changes[0][0].id, 'forked'); assert.equal(changes[0][0].path, '/fork.jsonl'); assert.equal(changes[0][0].name, 'Fork'); assert.equal(changes[0][1], transport);
-    assert.equal(changes[0][0].cwd, '/worktrees/forked'); assert.equal(transport.currentCwd(), '/worktrees/forked');
-    // The daemon gives the branch its source's group when it loads groups; the pane writes no group itself.
-    assert.equal(changes[0][0].forkSourceId, 'session');
-    assert.deepEqual(daemon.filter(({ command }) => command === 'change_session_groups'), []);
-  });
-
-  test('branching the latest answer forks after it, honors cancellation, and exposes runtime errors', async () => {
-    responses.get('get_snapshot').history = { entries: [{ type: 'message', id: 'a', parentId: null, message: { role: 'assistant', content: 'Answer', stopReason: 'stop' } }], leafId: 'a' };
-    responses.get('get_snapshot').state = { ...responses.get('get_snapshot').state, repository: { root: '/repo', gitDir: '/repo/.git' } };
-    const changes = [];
-    responses.set('fork_after', { cancelled: true }); await render({ onSessionChange: value => changes.push(value) });
-    assert.ok(control('Branch off'), JSON.stringify({ text: document.body.textContent, calls }));
-    await click(control('Branch off')); await received(command => command.type === 'fork_after' && command.entryId === 'a'); await untilDom(() => control('Branch off') && !control('Branch off').disabled);
-    assert.deepEqual(changes, []); assert.equal(document.querySelector('.split-control-error'), null);
-    responses.set('fork_after', new Error('fork failed')); await click(control('Branch off')); await untilDom(() => /fork failed/.test(document.querySelector('.split-control-error')?.textContent ?? ''));
-    await click(control('Dismiss split pane error')); assert.equal(document.querySelector('.split-control-error'), null); assert.deepEqual(changes, []);
-  });
   test('model controls serialize changes and recover after a rejected command', async () => {
     responses.set('get_available_models', { models: [MODEL, { provider: 'p', id: 'one', reasoning: true }, { provider: 'p', id: 'two', reasoning: true }] });
     responses.set('get_commands', { commands: [{ name: 'fast', source: 'extension', sourceInfo: { path: '/extensions/piop-openai-fast-mode/index.ts' } }] });

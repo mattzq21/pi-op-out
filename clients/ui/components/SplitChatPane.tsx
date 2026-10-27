@@ -1,11 +1,9 @@
-import type { ForkSource } from "../types";
 import type { HostModelVisibility } from "../lib/hostModelVisibility";
 import { required } from "../lib/required";
 import { fastModelNames, hostFastModels } from "../lib/fastModels";
 import { localHostLabel } from "../lib/mobileHosts";
 import { trackToastMessage, trackToastNotices } from "../lib/toastHistory";
 import { extensionUiSchema } from "../lib/extensionUiSchema";
-import { resolveMessageEntry } from "../lib/resolveMessageEntry";
 import { Key } from "@solid-primitives/keyed";
 import { createComputed, createMemo, createSignal } from "solid-js";
 import { createDependencyEffect, createRef, type StateUpdate } from "../lib/solid";
@@ -19,7 +17,7 @@ import type { NativeTransport } from "../lib/nativeTransport";
 import { SessionRuntimePool } from "../lib/sessionRuntimePool";
 import { useChatSession } from "../lib/useChatSession";
 import { followConversation } from "../plugins/conversation";
-import type { AgentState, AppSettings, ChatMessage, ComposerUpload, DefinedAgentsCapability, ExtensionUiRequest, ImageAttachment, RpcEvent, SessionSummary } from "../types";
+import type { AgentState, AppSettings, ComposerUpload, DefinedAgentsCapability, ExtensionUiRequest, ImageAttachment, RpcEvent, SessionSummary } from "../types";
 
 import { ChatView } from "./ChatView";
 import { debugView } from "../lib/debugFeatures";
@@ -27,13 +25,13 @@ import type { createConversationDrafts } from "../appDrafts";
 import { draftUploadsFromImages, stageDraftSubmission, submitDraftPrompt } from "../lib/draftSubmission";
 import { trackChatSubmission, updateChatPreparation, waitForConversationReady } from "../lib/chatSubmission";
 
-interface Props { forkSourceName?: (source: ForkSource) => string | undefined; onOpenForkSource?: (source: ForkSource) => void; drafts: ReturnType<typeof createConversationDrafts>; onArchiveOriginal: (session: SessionSummary) => Promise<void>; uploadsFor: (owner: NativeTransport) => ComposerUpload[]; onUploadsChange: (owner: NativeTransport, update: StateUpdate<ComposerUpload[]>) => void; runtimePool: SessionRuntimePool; session: SessionSummary; settings: AppSettings; modelVisibility: HostModelVisibility; draft: string; focusRequest?: number; onActivate?: () => void; onOpenTerminal: () => void; onDialogRequest: (request: ExtensionUiRequest, transport: NativeTransport, owner: string) => void; onDialogResolved: (transport: NativeTransport, id: string) => void; onDialogTransportClosed: (transport: NativeTransport) => Promise<void>; onReleaseTransport: (transport: NativeTransport) => Promise<void>; pluginPane?: boolean; initialPrompt?: string; initialImages?: ImageAttachment[]; onReady?: () => void; onFailed?: (cause: unknown) => void; onSessionChange: (session: SessionSummary, transport: NativeTransport) => void; onClose: () => void; }
+interface Props { drafts: ReturnType<typeof createConversationDrafts>; uploadsFor: (owner: NativeTransport) => ComposerUpload[]; onUploadsChange: (owner: NativeTransport, update: StateUpdate<ComposerUpload[]>) => void; runtimePool: SessionRuntimePool; session: SessionSummary; settings: AppSettings; modelVisibility: HostModelVisibility; draft: string; focusRequest?: number; onActivate?: () => void; onOpenTerminal: () => void; onDialogRequest: (request: ExtensionUiRequest, transport: NativeTransport, owner: string) => void; onDialogResolved: (transport: NativeTransport, id: string) => void; onDialogTransportClosed: (transport: NativeTransport) => Promise<void>; onReleaseTransport: (transport: NativeTransport) => Promise<void>; initialPrompt?: string; initialImages?: ImageAttachment[]; onReady?: () => void; onFailed?: (cause: unknown) => void; onClose: () => void; }
 
 const initialState = (session: SessionSummary): AgentState => ({ model: null, thinkingLevel: "off", isStreaming: false, sessionId: session.id, sessionName: session.name, messageCount: session.messageCount, pendingMessageCount: 0 });
 
 export function SplitChatPane(componentProps: Props) {
   const [transport] = createSignal((() => {
-    return componentProps.pluginPane ? componentProps.runtimePool.forPluginPane(componentProps.session) : componentProps.runtimePool.forSession(componentProps.session);
+    return componentProps.runtimePool.forPluginPane(componentProps.session);
   })());
 
   componentProps.drafts.bindTransport(transport(), `${componentProps.session.hostId ?? "local"}:${componentProps.session.id}`);
@@ -220,7 +218,7 @@ export function SplitChatPane(componentProps: Props) {
     void connectRuntime(true);
 
     return () => { closing = true; capturedRuntimePool0.setInteractive(capturedTransport, false); document.title = "piop"; reconnectRef.current = () => undefined; unsubscribe(); queueMicrotask(() => { if (lifecycleRef.current === lifecycle) void capturedOnReleaseTransport11(capturedTransport); }); };
-  }, () => [transport(), componentProps.pluginPane, componentProps.initialPrompt, session().handleEvent, session().refresh, componentProps.onDialogRequest, componentProps.onDialogTransportClosed, componentProps.onReleaseTransport]);
+  }, () => [transport(), componentProps.initialPrompt, session().handleEvent, session().refresh, componentProps.onDialogRequest, componentProps.onDialogTransportClosed, componentProps.onReleaseTransport]);
   createDependencyEffect(() => {
     const capturedConnected = connected(); const capturedTransport = transport(); const capturedSettings0 = componentProps.settings;
 
@@ -239,40 +237,6 @@ export function SplitChatPane(componentProps: Props) {
 
   const reportControlError = (cause: unknown) => setControlError(cause instanceof Error ? cause.message : String(cause));
 
-  const branch = async (message: ChatMessage, mode: "branch" | "fork" | "copy" = "branch") => {
-    const finishBranching = beginBranching();
-    const capturedTransport = transport(); const capturedSession = { ...session() }; const capturedRuntimePool0 = componentProps.runtimePool; const capturedSession1 = componentProps.session; const capturedOnSessionChange2 = componentProps.onSessionChange;
-
- try { const entryId = await resolveMessageEntry(capturedTransport, message); const result = await capturedTransport.command({ type: mode === "branch" ? "fork_after" : "copy_after", entryId }, forkAfterResultSchema);
-
- if (result.cancelled) return false; const nextState = await capturedSession.refresh(); const cwd = mode === "branch" ? branchCwd(result.state?.cwd, nextState.cwd) : capturedSession1.cwd; if (mode === "branch") capturedTransport.adoptBranchCwd(cwd); capturedRuntimePool0.bind(capturedSession1.hostId ?? "local", nextState.sessionId, capturedTransport); capturedOnSessionChange2({ ...capturedSession1, cwd, id: nextState.sessionId, forkSourceId: capturedSession1.id, path: nextState.sessionFile || "", name: nextState.sessionName || capturedSession1.name }, capturedTransport);
-
- return true; } catch (reason) { reportControlError(reason);
-
- return false; } finally { finishBranching(); } };
-
-  const forgettingRef = createRef(false);
-
-  const conversationBusy = () => session().state.isStreaming || session().state.pendingMessageCount;
-
-  const forkAndForget = async (message: ChatMessage) => {
-    if (forgettingRef.current) return;
-    const owner = transport();
-    const source = { ...componentProps.session };
-    const archiveOriginal = componentProps.onArchiveOriginal;
-    forgettingRef.current = true;
-
-    try {
-      if (conversationBusy()) throw new Error("Wait for the current response and queued messages to finish first");
-      const entryId = await resolveMessageEntry(owner, message);
-
-        if (!await branch({ ...message, entryId }, "copy")) return;
-
-      await archiveOriginal(source);
-    } catch (reason) { reportControlError(reason); }
-    finally { forgettingRef.current = false; }
-  };
-
   const abort = async () => {
     const capturedTransport = transport();
  await capturedTransport.command({ type: "abort" }); };
@@ -283,7 +247,7 @@ export function SplitChatPane(componentProps: Props) {
 
   const agentDefinitionHost = () => (componentProps.session.hostId ?? "local") === "local" ? localHostLabel() : componentProps.session.hostName || componentProps.session.hostId;
 
-  const renderSplitPaneStatus = () => (error() ? <div class="split-pane-status error">{(error())}</div> : <ChatView onNotice={(title, message) => setNotices((current) => [...current, { id: crypto.randomUUID(), title, message }])} followConversation={followSource} agentHostLabel={agentDefinitionHost()} transport={transport()} state={transport().promptControls.state(session().state)} messages={session().messages} debug={debugView(componentProps.settings)} agents={chatAgents()} activeAgent={definedAgents()?.active} agentLocked={definedAgents()?.locked} agentSaved={definedAgents()?.saved} agentUnavailable={definedAgents()?.unavailable} refreshError={session().error} capabilityErrors={session().capabilityErrors} capabilitiesLoading={session().capabilitiesLoading} onRetryCapabilities={session().retryCapabilities} modelAliases={componentProps.modelVisibility.aliases(componentProps.session.hostId ?? "local")} models={chatModels()} commands={chatCommands()} thinkingLevels={transport().promptControls.levels(session().thinkingLevels)} widgets={chatWidgets()} statuses={transport().promptControls.statuses(statuses(), fastModelNames(hostFastModels(componentProps.session.hostId ?? "local")()), transport().promptControls.state(session().state).model)} projectCwd={componentProps.session.cwd} controlsDisabled={!connected()} draft={componentProps.draft} onDraftChange={(update) => componentProps.drafts.setTransportDraft(transport(), update)} focusRequest={(componentProps.focusRequest === undefined ? 0 : componentProps.focusRequest) + extensionFocusRequest()} onActivate={componentProps.onActivate} uploads={uploads()} onUploadsChange={setUploads} onSend={send} onChangePending={(id, behavior) => transport().changePendingMessage(id, behavior)} onAbort={abort} onOpenTerminal={componentProps.onOpenTerminal} onOpenProject={() => undefined} onBranch={message => branch(message)} onFork={async message => { await branch(message, "fork"); }} onForkAndForget={forkAndForget} forkSourceName={session().state.forkSource ? componentProps.forkSourceName?.(session().state.forkSource!) : undefined} onOpenForkSource={componentProps.onOpenForkSource} onAgent={(name) => void transport().command({ type: "select_agent", agent: name }).then(() => { transport().promptControls.reset();
+  const renderSplitPaneStatus = () => (error() ? <div class="split-pane-status error">{(error())}</div> : <ChatView onNotice={(title, message) => setNotices((current) => [...current, { id: crypto.randomUUID(), title, message }])} followConversation={followSource} agentHostLabel={agentDefinitionHost()} transport={transport()} state={transport().promptControls.state(session().state)} messages={session().messages} debug={debugView(componentProps.settings)} agents={chatAgents()} activeAgent={definedAgents()?.active} agentLocked={definedAgents()?.locked} agentSaved={definedAgents()?.saved} agentUnavailable={definedAgents()?.unavailable} refreshError={session().error} capabilityErrors={session().capabilityErrors} capabilitiesLoading={session().capabilitiesLoading} onRetryCapabilities={session().retryCapabilities} modelAliases={componentProps.modelVisibility.aliases(componentProps.session.hostId ?? "local")} models={chatModels()} commands={chatCommands()} thinkingLevels={transport().promptControls.levels(session().thinkingLevels)} widgets={chatWidgets()} statuses={transport().promptControls.statuses(statuses(), fastModelNames(hostFastModels(componentProps.session.hostId ?? "local")()), transport().promptControls.state(session().state).model)} projectCwd={componentProps.session.cwd} controlsDisabled={!connected()} draft={componentProps.draft} onDraftChange={(update) => componentProps.drafts.setTransportDraft(transport(), update)} focusRequest={(componentProps.focusRequest === undefined ? 0 : componentProps.focusRequest) + extensionFocusRequest()} onActivate={componentProps.onActivate} uploads={uploads()} onUploadsChange={setUploads} onSend={send} onChangePending={(id, behavior) => transport().changePendingMessage(id, behavior)} onAbort={abort} onOpenTerminal={componentProps.onOpenTerminal} onOpenProject={() => undefined} onBranch={() => undefined} onAgent={(name) => void transport().command({ type: "select_agent", agent: name }).then(() => { transport().promptControls.reset();
 
   return session().refresh(); }).catch(reportControlError)} onModel={(model) => transport().promptControls.model(model, transport().promptControls.state(session().state).thinkingLevel)} onToggleFastMode={() => transport().promptControls.toggle(statuses())} onThinking={(level) => transport().promptControls.thinking(level)} />);
 
@@ -296,6 +260,3 @@ export function SplitChatPane(componentProps: Props) {
   </section>;
 }
 
-import { beginBranching } from "../lib/branchActivity";
-import { branchCwd } from "../lib/branching";
-import { forkAfterResultSchema } from "../lib/responseSchemas";
