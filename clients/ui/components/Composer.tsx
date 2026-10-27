@@ -138,6 +138,9 @@ function insideBounds(bounds: DOMRect | undefined, x: number, y: number) {
   return Boolean(bounds && x >= bounds.left && x <= bounds.right && y >= bounds.top && y <= bounds.bottom);
 }
 
+/** A sent message keeps its row when the daemon queues it: the row of the message still being sent has the submission ID that the queued item carries. */
+const pendingKey = (message: import("../types").PendingMessage) => message.goalSubmissionId ?? message.id;
+
 function pendingControlsDisabled(controlsDisabled: boolean, changingPending: boolean, onChangePending: Props['onChangePending']) {
   return controlsDisabled || changingPending || !onChangePending;
 }
@@ -696,7 +699,7 @@ export function Composer(props: Props) {
     {imageInputError() && <div class="image-input-toast" role="alert"><CircleX size={14} aria-hidden="true" /><span>This model does not support image inputs. Try a different model</span><button type="button" aria-label="Dismiss image input error" onClick={() => setImageInputError(false)}><X size={14} /></button></div>}
     <div class="composer-above">
     {renderStreamBanner()}
-    {showPendingBox() ? <div class="pending-messages" aria-label="Pending messages">{renderQueueHold()}{<Key each={composer().pendingMessages.filter((message) => pendingMessageIdentitySchema.safeParse(message).success)} by={(message) => message.id}>{(message, _index) => {
+    {showPendingBox() ? <div class="pending-messages" aria-label="Pending messages">{renderQueueHold()}{<Key each={composer().pendingMessages.filter((message) => pendingMessageIdentitySchema.safeParse(message).success)} by={pendingKey}>{(message, _index) => {
       const text = createMemo(() => String(message().message ?? ""));
       const change = (action: import("../types").PendingMessageAction) => changePending(message().id, action);
       const disabled = createMemo(() => (composer().controlsDisabled || changingPending() || Boolean(message().sending)));

@@ -188,7 +188,7 @@ export function ChatView(props: Props & { transcriptActions?: JSXElement; follow
   const split = createMemo(() => splitTranscript(messages(), props.state.isStreaming, props.state.queueHeld === true));
   const turns = createMemo<ConversationGroup[]>(previous => groupTurns(split().transcript, previous), []);
   /** The queued messages, then the sent messages that the daemon has not queued yet. */
-  const pendingMessages = createMemo<import("../types").PendingMessage[]>(() => [...props.state.pendingMessages ?? [], ...split().sending.map(message => ({ id: message.id, message: textOf(message.content), behavior: message.deliveryBehavior ?? "followUp", sending: true, images: Array.isArray(message.content) ? message.content.flatMap(part => part.type === "image" && part.data && part.mimeType ? [{ type: "image" as const, data: part.data, mimeType: part.mimeType }] : []) : [] }))]);
+  const pendingMessages = createMemo<import("../types").PendingMessage[]>(() => [...props.state.pendingMessages ?? [], ...split().sending.map(message => ({ id: message.id, goalSubmissionId: message.id, message: textOf(message.content), behavior: message.deliveryBehavior ?? "followUp", sending: true, images: Array.isArray(message.content) ? message.content.flatMap(part => part.type === "image" && part.data && part.mimeType ? [{ type: "image" as const, data: part.data, mimeType: part.mimeType }] : []) : [] }))]);
 
   const responses = createMemo(() => turns().flatMap(turn => {
     const message = turn.messages[finalResponseIndex(turn.messages)];
@@ -603,6 +603,7 @@ function associateQueuedContext(messages: ChatMessage[]) {
  * A sent message that the daemon has not queued yet waits in the queue above the message box while an earlier user message still waits for its reply: Pi delivers it only after that reply.
  * An earlier user message waits for its reply while it is still being sent, or while the agent works. A message whose task ended without a reply does not wait.
  * While the queue is on hold, every sent message waits in the queue: the daemon keeps it there.
+ * A message sent as a steer or follow-up while the agent worked also waits there, even after the reply started: Pi queues it.
  */
 function splitTranscript(messages: ChatMessage[], working: boolean, held: boolean) {
   let waiting = false;
@@ -612,7 +613,7 @@ function splitTranscript(messages: ChatMessage[], working: boolean, held: boolea
 
     if (message.role === "assistant") waiting = false;
     else if (message.role === "user") {
-      if (message.submissionId && (waiting || held)) { sending.push(message); return false; }
+      if (message.submissionId && (waiting || held || message.deliveryBehavior)) { sending.push(message); return false; }
       waiting = working || Boolean(message.submissionId);
     }
 
