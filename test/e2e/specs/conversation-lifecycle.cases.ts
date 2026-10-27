@@ -1,4 +1,5 @@
 import { $, $$, browser, expect } from "@wdio/globals";
+import { z } from "zod";
 
 import { app } from "../pageobjects/app.page.js";
 import { mockBackend, backendCalls, updateBackendResponse, resetBackend, resetApp, emitPiEvent, defaultSettings, connectedSessionResponses, failureState } from './acceptance-fixture.js';
@@ -144,6 +145,9 @@ describe("Conversation lifecycle", () => {
   });
 
   it("starts a replacement session and closes the archived conversation's terminal", async () => {
+    // Settings and model readers start hidden Pi processes in the background; only visible starts are chats.
+    const shown = z.object({ presence: z.object({ visible: z.literal(true) }) });
+    const chatStarts = (calls: Awaited<ReturnType<typeof backendCalls>>) => calls.filter(({ command, args }) => command === "start_pi" && shown.safeParse(args).success);
     const indexed = { id: "archive-active", path: "/tmp/archive-active.jsonl", name: "Active archive conversation", project: "Archive project", cwd: "/tmp", preview: "Active archive", messageCount: 2, hostId: "local" };
     const replacementState = { model: { provider: "e2e", id: "acceptance" }, thinkingLevel: "high", isStreaming: false, sessionId: "archive-replacement", messageCount: 0, pendingMessageCount: 0 };
     await mockBackend({ list_sessions: [indexed], load_app_settings: { ...defaultSettings, defaultThinking: "high" }, ...connectedSessionResponses(""), "pi_command:set_model": {}, create_temporary_chat: { cwd: "/tmp/archive-replacement", sessionId: "archive-replacement" }, archive_session: {}, "shared_terminal:start": {}, "shared_terminal:resize": {}, "shared_terminal:close": {} });
@@ -165,14 +169,14 @@ describe("Conversation lifecycle", () => {
       await browser.waitUntil(async () => (await backendCalls()).some(({ command }) => command === "archive_session"));
       const afterArchive = await backendCalls();
       const archiveIndex = afterArchive.findIndex(({ command }) => command === "archive_session");
-      expect(afterArchive.slice(archiveIndex + 1).filter(({ command }) => command === "start_pi")).toHaveLength(0);
+      expect(chatStarts(afterArchive.slice(archiveIndex + 1))).toHaveLength(0);
       await expect(app.composer).toHaveValue("");
       await updateBackendResponse("pi_command:get_state", replacementState);
       await app.chooseComposerOption("Model", "Acceptance model");
       await app.prepareMessage("Begin the replacement conversation");
       await app.sendMessageButton.click();
       await browser.waitUntil(async () => (await backendCalls()).slice(archiveIndex + 1).some(({ command, args }) => command === "pi_command" && args.command?.type === "prompt" && args.command.message === "Begin the replacement conversation"));
-      const replacementStarts = (await backendCalls()).slice(archiveIndex + 1).filter(({ command }) => command === "start_pi");
+      const replacementStarts = chatStarts((await backendCalls()).slice(archiveIndex + 1));
       expect(replacementStarts).toHaveLength(1);
       expect(replacementStarts[0].args.sessionPath).toBeUndefined();
       expect(replacementStarts[0].args.sessionId).not.toBe(indexed.id);

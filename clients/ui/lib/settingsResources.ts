@@ -10,14 +10,13 @@ import type { AgentConfig, Model } from "../types";
 export type SettingsResources = { config: AgentConfig; models: Model[]; levels: string[] };
 
 /**
- * Settings resources per host. Reading them starts a Pi session, so they are kept until the host's settings or
- * provider logins change. The local host's resources are loaded again in the background after such a change.
+ * Settings resources per host. Reading them starts a Pi session, so they are read only when the settings are about to open,
+ * and kept until the host's settings or provider logins change. A change drops them; the next use reads them again.
  */
 const cache = new Map<string, Promise<SettingsResources>>();
 let listening = false;
 let owners = 0;
 let generation = 0;
-let reloadTimer: ReturnType<typeof setTimeout> | undefined;
 let subscriptions: Array<Promise<() => void>> = [];
 
 export function retainSettingsResources() {
@@ -28,15 +27,12 @@ export function retainSettingsResources() {
     released = true;
     if (--owners) return;
     generation++;
-    clearTimeout(reloadTimer);
-    reloadTimer = undefined;
     cache.clear();
     listening = false;
     for (const pending of subscriptions) void pending.then(unlisten => unlisten(), () => undefined);
     subscriptions = [];
   };
 }
-const RELOAD_DELAY_MS = 2000;
 
 async function load(hostId: string): Promise<SettingsResources> {
   const reader = new NativeTransport({ hostId, cwd: "~" });
@@ -63,12 +59,6 @@ function start(hostId: string): Promise<SettingsResources> {
 
 function changed(hostId: string) {
   cache.delete(hostId);
-
-  // Loaded again shortly after, so the next opening of the settings does not wait for Pi.
-  if (hostId === "local" && owners && reloadTimer === undefined) reloadTimer = setTimeout(() => {
-    reloadTimer = undefined;
-    if (owners && !cache.has("local")) void start("local").catch(() => undefined);
-  }, RELOAD_DELAY_MS);
 }
 
 function listenForChanges() {
@@ -96,7 +86,7 @@ export function reloadSettingsResources(hostId: string): Promise<SettingsResourc
   return start(hostId);
 }
 
-/** Loads the local host's settings resources in the background, so the settings page opens without waiting for Pi. Errors show when the page opens. */
+/** Loads the local host's settings resources when the user is about to open the settings, so the page opens without waiting for Pi. Errors show when the page opens. */
 export function preloadSettingsResources() {
   void settingsResources("local").catch(() => undefined);
 }

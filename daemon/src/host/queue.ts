@@ -50,10 +50,11 @@ export class SessionQueue {
     }
     const state = this.s;
     let queueEvent: any;
-    if (kind(event) === 'agent_start') state.inferenceRevision += 1;
+    if (kind(event) === 'agent_start') { state.inferenceRevision += 1; state.running = true; }
     const goal = goalStatus(event);
     if (goal !== undefined) this.goalChanged(goal);
     if (kind(event) === 'disconnected') {
+      state.running = false;
       state.pending = clone(state.durableMessages());
       // Pi lost its queue. Follow-ups below the goal were never in it, so they keep waiting.
       for (const item of state.pending) if (!flag(item, 'afterGoal')) item.retry = true;
@@ -76,11 +77,16 @@ export class SessionQueue {
     }
     if (kind(event) === 'queue_update') return;
     state.tagMessage(event);
-    if (kind(event) === 'agent_settled') state.awaitingSteering = [];
+    if (kind(event) === 'agent_settled') {
+      state.awaitingSteering = [];
+      state.running = false;
+      // A run that ends while the goal stays active leaves the goal without turns, so its waiting follow-ups go to Pi.
+      if (state.waiting().length) track(this.operations, this.releaseWaiting()).catch(error => this.record.reportError(errorText(error)));
+    }
     this.delivery.announce(event);
   }
 
-  /** Shows the goal entry while the goal is active. When the goal stops, the follow-ups below its entry go to Pi in order. */
+  /** Shows the goal entry while the goal is active. When the goal stops working, the follow-ups below its entry go to Pi in order. */
   private goalChanged(goal: QueueGoal | null): void {
     const previous = this.s.goal;
     this.s.goal = goal;
@@ -91,7 +97,7 @@ export class SessionQueue {
   private async releaseWaiting(): Promise<void> {
     const release = await this.gate.lock();
     try {
-      const waiting = this.s.activeGoal() ? [] : this.s.waiting();
+      const waiting = this.s.goalWorking() ? [] : this.s.waiting();
       for (const item of waiting) item.afterGoal = false;
       await this.record.persist();
       for (let index = 0; index < waiting.length; index += 1) {

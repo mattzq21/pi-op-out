@@ -31,6 +31,16 @@ async function retryConversation(t, extra = {}) {
   }, { background: false, shouldMockEvents: true });
   target = await daemon.invoke('create_temporary_chat', { hostId: 'local' });
   transport = new NativeTransport({ cwd: target.cwd, sessionId: target.sessionId });
+  // Retry starts the chat's Pi and sends retry_response. The test records both and answers with extra.onRetry.
+  const retries = [];
+  let connected = false;
+  transport.connect = async () => { connected = true; };
+  const command = transport.command.bind(transport);
+  transport.command = (request, ...rest) => {
+    if (request?.type !== 'retry_response') return command(request, ...rest);
+    retries.push({ connected, command: request });
+    return extra.onRetry(request);
+  };
   const key = `local:${target.sessionId}`;
   const errors = [];
   function DraftConversation(props) {
@@ -50,87 +60,54 @@ async function retryConversation(t, extra = {}) {
   }
   let props = { messages: [
     { id: 'question', role: 'user', content: 'Question' },
-    { id: 'answer', role: 'assistant', content: 'Partial answer', stopReason: 'aborted' },
+    { id: 'answer', entryId: 'answer-entry', role: 'assistant', content: 'Partial answer', stopReason: 'aborted' },
   ], ...extra };
   view = await renderComponent(DraftConversation, props);
   const editor = () => view.container.querySelector('[aria-label="Message piop"]');
   const retry = () => [...view.container.querySelectorAll('article button')].find(button => ['Retry', 'Retrying…'].includes(button.textContent));
-  return { view, editor, retry, settle, errors,
+  return { view, editor, retry, settle, errors, retries,
     async update(changes) { props = { ...props, ...changes }; await view.rerender(props); },
   };
 }
 
-test('retry sends the original attachments once while submission is pending', async t => {
-  const sent = Promise.withResolvers(), pending = Promise.withResolvers();
-  const calls = [];
-  const image = { type: 'image', mimeType: 'image/png', data: 'aA==' };
-  const fixture = await retryConversation(t, {
-    messages: [{ id: 'question', role: 'user', content: [{ type: 'text', text: 'Question' }, image] }, { id: 'answer', role: 'assistant', content: '', stopReason: 'aborted' }],
-    onSend: (text, behavior, images) => { calls.push([text, behavior, images]); sent.resolve(); return pending.promise; },
-  });
-  await enterText(fixture.editor(), 'Question');
+test('Retry starts the chat, asks Pi once to run the stopped response again, and leaves the draft alone', async t => {
+  const pending = Promise.withResolvers();
+  const fixture = await retryConversation(t, { onRetry: () => pending.promise });
+  await enterText(fixture.editor(), 'Draft');
   await act(() => { fixture.retry().click(); fixture.retry().click(); });
-  await sent.promise;
-  assert.deepEqual(calls, [['Question', undefined, [image]]]);
+  await untilDom(() => fixture.retries.length === 1);
+  assert.deepEqual(fixture.retries, [{ connected: true, command: { type: 'retry_response', entryId: 'answer-entry' } }]);
+  assert.equal(fixture.retry().textContent, 'Retrying…');
   assert.equal(fixture.retry().disabled, true);
-  assert.equal(fixture.editor().value, '');
-  await act(() => pending.resolve(true));
+  await act(() => pending.resolve(null));
+  await untilDom(() => fixture.retry().textContent === 'Retry');
+  assert.equal(fixture.editor().value, 'Draft');
   await fixture.settle();
   assert.deepEqual(fixture.errors, []);
 });
 
-test('a rejected retry restores the prompt in the editor and shows the error', async t => {
-  const sent = Promise.withResolvers(), pending = Promise.withResolvers();
-  const fixture = await retryConversation(t, { onSend: () => { sent.resolve(); return pending.promise; } });
-  await enterText(fixture.editor(), 'Question');
-  await act(() => fixture.retry().click());
-  await sent.promise;
-  assert.equal(fixture.editor().value, '');
-  await act(() => pending.reject(new Error('offline')));
-  const alert = await untilDom(() => [...fixture.view.container.querySelectorAll('[role="alert"]')].find(element => element.textContent === 'Retry failed: offline'));
-  assert.ok(alert);
-  assert.equal(fixture.editor().value, 'Question');
-  assert.equal(fixture.retry().disabled, false);
-  assert.deepEqual(fixture.errors, []);
-});
-
-test('a declined retry restores the prompt and explains that it was not submitted', async t => {
-  const fixture = await retryConversation(t, { onSend: async () => false });
-  await enterText(fixture.editor(), 'Question');
-  await act(() => fixture.retry().click());
-  await untilDom(() => [...fixture.view.container.querySelectorAll('[role="alert"]')].find(element => element.textContent === 'Retry failed: Message was not submitted'));
-  assert.equal(fixture.editor().value, 'Question');
-  assert.equal(fixture.retry().disabled, false);
-  assert.deepEqual(fixture.errors, []);
-});
-
-test('retry can submit again after a previous attempt failed', async t => {
-  const fixture = await retryConversation(t, { onSend: async () => { throw new Error('offline'); } });
-  await enterText(fixture.editor(), 'Question');
+test('a failed retry shows the error, and Retry works again afterwards', async t => {
+  let fail = true;
+  const fixture = await retryConversation(t, { onRetry: async () => { if (fail) throw new Error('offline'); return null; } });
   await act(() => fixture.retry().click());
   await untilDom(() => [...fixture.view.container.querySelectorAll('[role="alert"]')].find(element => element.textContent === 'Retry failed: offline'));
-  const calls = [], sent = Promise.withResolvers();
-  await fixture.update({ onSend: async (text, behavior, images) => { calls.push([text, behavior, images]); sent.resolve(); return true; } });
+  assert.equal(fixture.retry().disabled, false);
+  fail = false;
   await act(() => fixture.retry().click());
-  await sent.promise;
+  await untilDom(() => fixture.retries.length === 2 && !fixture.view.container.textContent.includes('Retry failed: offline'));
   await fixture.settle();
-  assert.deepEqual(calls, [['Question', undefined, []]]);
-  assert.equal(fixture.editor().value, '');
-  assert.ok(!fixture.view.container.textContent.includes('Retry failed: offline'));
   assert.deepEqual(fixture.errors, []);
 });
 
-test('a failed retry preserves text typed while the send was pending', async t => {
-  const sent = Promise.withResolvers(), pending = Promise.withResolvers();
-  const fixture = await retryConversation(t, { onSend: () => { sent.resolve(); return pending.promise; } });
-  await enterText(fixture.editor(), 'Question');
+test('Retry targets the stopped response after tool output', async t => {
+  const fixture = await retryConversation(t, {
+    messages: [{ id: 'question', role: 'user', content: 'Question' }, { id: 'tool', role: 'tool', content: 'Tool output' }, { id: 'answer', entryId: 'late-answer', role: 'assistant', content: '', stopReason: 'error' }],
+    onRetry: async () => null,
+  });
   await act(() => fixture.retry().click());
-  await sent.promise;
-  assert.equal(fixture.editor().value, '');
-  await enterText(fixture.editor(), 'New question');
-  await act(() => pending.resolve(false));
-  await untilDom(() => [...fixture.view.container.querySelectorAll('[role="alert"]')].find(element => element.textContent === 'Retry failed: Message was not submitted'));
-  assert.equal(fixture.editor().value, 'Question\n\nNew question');
+  await untilDom(() => fixture.retries.length === 1);
+  assert.equal(fixture.retries[0].command.entryId, 'late-answer');
+  await fixture.settle();
   assert.deepEqual(fixture.errors, []);
 });
 
@@ -155,17 +132,5 @@ test('a submitted message waits for MCP loading and then shows its send status',
   await act(() => pending.resolve(true));
   await untilDom(() => !fixture.view.container.querySelector('[aria-label="Preparing message"]'));
   assert.equal(fixture.editor().value, '');
-  assert.deepEqual(fixture.errors, []);
-});
-
-test('retry trims the original prompt and keeps intervening tool output out of the submission', async t => {
-  const sent = Promise.withResolvers();
-  const fixture = await retryConversation(t, {
-    messages: [{ id: 'question', role: 'user', content: '  retry me  ' }, { id: 'tool', role: 'tool', content: 'Tool output' }, { id: 'answer', role: 'assistant', content: '', stopReason: 'aborted' }],
-    onSend: async text => { sent.resolve(text); return true; },
-  });
-  await act(() => fixture.retry().click());
-  assert.equal(await sent.promise, 'retry me');
-  await fixture.settle();
   assert.deepEqual(fixture.errors, []);
 });

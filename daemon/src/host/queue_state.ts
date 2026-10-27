@@ -43,8 +43,16 @@ export class QueueState {
   steeringTimestamps = new Set<string>();
   inferenceRevision = 0;
   goal: QueueGoal | null = null;
+  /** True from agent_start to agent_settled: Pi is in a run. */
+  running = false;
 
   activeGoal(): QueueGoal | undefined { return this.goal?.active ? this.goal : undefined; }
+
+  /**
+   * True while the active goal makes turns. Follow-ups wait below the goal only then.
+   * An active goal without a run, such as a new branch that waits for the user, does not start work, so a follow-up goes to Pi at once.
+   */
+  goalWorking(): boolean { return this.running && this.activeGoal() !== undefined; }
 
   /** Follow-ups below the goal entry, in queue order. */
   waiting(): any[] { return this.pending.filter(item => flag(item, 'afterGoal') && !flag(item, 'retry')); }

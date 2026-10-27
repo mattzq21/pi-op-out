@@ -97,6 +97,11 @@ export const withSessionSnapshot = (responses: BackendResponses) => {
     // The app looks up a saved conversation's file and folder before it connects to it.
     const sessions = z.array(z.looseObject({ id: z.string(), path: z.string().optional(), cwd: z.string().optional(), archived: z.boolean().optional() })).catch([]).parse(responses.list_sessions);
     responses["broker_request:locate"] = { bySession: Object.fromEntries(sessions.map(session => [session.id, { sessionId: session.id, sessionPath: session.path ?? `/tmp/${session.id}.jsonl`, cwd: session.cwd ?? "/tmp", archived: session.archived ?? false, revision: "e2e" }])) };
+    // It also shows the saved history of a chat while the chat starts. The listed chats have no saved messages.
+    responses["broker_request:preview"] = { bySession: Object.fromEntries(sessions.map(session => [session.id, {
+      revision: "e2e-preview", sequence: 0, epoch: "e2e", liveTools: [], queue: { type: "queue_state", pendingMessages: [] }, history: { entries: [], leafId: null },
+      state: { model: null, thinkingLevel: "off", isStreaming: false, sessionId: session.id, sessionFile: session.path ?? `/tmp/${session.id}.jsonl`, cwd: session.cwd ?? "/tmp", messageCount: 0, pendingMessageCount: 0 },
+    }])) };
   }
 
   if (responses.start_pi) {

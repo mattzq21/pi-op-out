@@ -5,7 +5,7 @@ import { appService } from '../app-service-fixture.mjs';
 import { act, captureConsoleErrors } from '../dom.mjs';
 import { settingsResources } from '../../clients/ui/lib/settingsResources.ts';
 
-test('closing the app before the settings preload does not start a settings reader later', async t => {
+test('closing the app before the settings page preload does not load it later', async t => {
   t.mock.timers.enable({ apis: ['setTimeout'] });
   const errors = captureConsoleErrors();
   let cleanup, closed = false;
@@ -20,28 +20,42 @@ test('closing the app before the settings preload does not start a settings read
   assert.deepEqual(errors.lines, []);
 });
 
-test('a mounted chat preloads settings and closing it cancels queued reloads', async t => {
+test('settings data loads only when the user points at Settings, and a settings change only drops it', async t => {
   t.mock.timers.enable({ apis: ['setTimeout'] });
   const errors = captureConsoleErrors();
   let cleanup, closed = false;
   t.after(async () => { try { if (!closed) await cleanup?.(); } finally { errors.release(); } });
-  const { daemon, settle } = await appService({ after(callback) { cleanup = callback; } });
-  const started = Promise.withResolvers();
+  const { root, daemon, settle } = await appService({ after(callback) { cleanup = callback; } });
+  // Each settings read starts a Pi session in the home folder.
+  const readers = [];
   const invoke = daemon.invoke;
   t.mock.method(daemon, 'invoke', (command, args) => {
-    if (command === 'start_pi') started.resolve();
+    if (command === 'start_pi' && !args.sessionId && !args.sessionPath) readers.push(args.cwd);
     return invoke(command, args);
   });
   await act(() => t.mock.timers.tick(1000));
-  await started.promise;
+  await settle();
+  assert.deepEqual(readers, []);
+  await act(() => root.querySelector('button[aria-label="Settings"]').dispatchEvent(new Event('pointerenter')));
   const resources = await settingsResources('local');
   assert.ok(Array.isArray(resources.models));
   assert.ok(Array.isArray(resources.levels));
+  assert.equal(readers.length, 1);
+  // The first read saves the models it sees as known; that settings change drops the data once.
   await settle();
+  await settingsResources('local');
+  await settle();
+  const loaded = readers.length;
+  await settingsResources('local');
+  assert.equal(readers.length, loaded);
   const change = await daemon.invoke('load_settings_change');
   await emit('pi://host-settings-changed', { ...change, hostId: 'local' });
+  await act(() => t.mock.timers.tick(2000));
+  await settle();
+  assert.equal(readers.length, loaded);
+  await settingsResources('local');
+  assert.equal(readers.length, loaded + 1);
   await cleanup();
   closed = true;
-  await act(() => t.mock.timers.tick(2000));
   assert.deepEqual(errors.lines, []);
 });

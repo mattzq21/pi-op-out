@@ -41,12 +41,14 @@ describe('terminal view', () => {
     await render();
     const terminal = terminals[0];
     await view.unmount(); view = undefined;
-    assert.equal(terminal.disposed, true);
     assert.equal(terminal.dataDisposed, true);
     assert.equal(terminal.csiDisposed, true);
     assert.equal(terminal.cursorDisposed, true);
     assert.equal(terminal.renderDisposed, true);
     assert.equal(terminal.scrollDisposed, true);
+    // xterm throws when it is disposed before its first viewport sync, so the view disposes it one task later.
+    await new Promise(resolve => setTimeout(resolve));
+    assert.equal(terminal.disposed, true);
   });
 
   test('a conversation without a directory explains why its terminal is unavailable', async () => {

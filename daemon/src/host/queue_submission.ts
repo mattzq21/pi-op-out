@@ -40,7 +40,7 @@ export async function enqueue(queue: QueueDelivery, command: any, name: string):
   const pending = submissionPayload(prepared, id, name);
   // A bad item would stay queued and make every later save fail, so it is rejected before the queue changes.
   try { validateItem(pending); } catch (error) { throw new CommandRefusedError(error instanceof Error ? error.message : String(error), 'daemon'); }
-  if (name === 'follow_up' && state.activeGoal() && !queue.runsAtOnce(text(pending, 'message'))) {
+  if (name === 'follow_up' && state.goalWorking() && !queue.runsAtOnce(text(pending, 'message'))) {
     await waitBelowGoal(queue, pending);
     return null;
   }
