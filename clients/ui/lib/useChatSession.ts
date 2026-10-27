@@ -568,7 +568,7 @@ function createChatSession(transport: Accessor<Pick<NativeTransport, "command" |
 
     const handleCompactionEnd = () => {
       session.setState((current) => ({ ...current, isCompacting: false, activity: undefined, contextUsage: contextUsageAfterCompaction(current.contextUsage, event) }));
-      session.setMessages(current => current.map(message => message.id === "live-compaction" ? { ...message, content: event.aborted ? "Compaction cancelled" : event.errorMessage ? String(event.errorMessage) : "Compacted" } : message));
+      session.setMessages(current => current.map(message => message.id === "live-compaction" ? { ...message, timestamp: Date.now(), content: event.aborted ? "Compaction cancelled" : event.errorMessage ? String(event.errorMessage) : "Compacted" } : message));
 
       if (!event.aborted && !event.errorMessage) void refreshView();
     };

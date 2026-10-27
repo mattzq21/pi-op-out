@@ -357,10 +357,11 @@ export function Message(componentProps: Props) {
   /** A compaction is a point a new chat can start from, so it has the fork buttons. */
   const renderCompaction = () => {
     const forkActions = createForkActions(componentProps, () => "compaction");
+    const finishedTime = createMemo(() => formatMessageTime(componentProps.message.timestamp));
 
     return <article tabIndex={-1} class="message compaction-message" classList={{ "last-point": componentProps.lastPoint === true }} aria-label="Compaction">
       <div class="command-result compaction" role="status">{textOf(componentProps.message.content)}</div>
-      <Show when={forkActions.available()}><div class="message-actions">{forkActions.fork()}{forkActions.branch()}{forkActions.forget()}</div></Show>
+      <Show when={forkActions.available() || finishedTime()}><div class="message-actions"><Show when={forkActions.available()}>{forkActions.fork()}{forkActions.branch()}{forkActions.forget()}</Show>{finishedTime() && <span class="message-time">{required(finishedTime()).short}</span>}</div></Show>
     </article>;
   };
 
