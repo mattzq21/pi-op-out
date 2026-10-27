@@ -207,7 +207,7 @@ button.agent-delivery-source:hover { color: var(--accent-soft); text-decoration:
 .assistant-message:focus-within .message-actions { opacity: 1; pointer-events: auto; }
 @media (hover: hover) { .assistant-message:hover .message-actions { opacity: 1; pointer-events: auto; } }
 /* The actions under the last response stay visible. */
-.latest-turn .assistant-message .message-actions { opacity: 1; pointer-events: auto; }
+.message.last-point .message-actions { opacity: 1; pointer-events: auto; }
 .message-time { margin-left: 6px; color: var(--muted); font: 500 11px "DM Sans", sans-serif; white-space: nowrap; opacity: 0; transition: opacity .15s; cursor: default; }
 .assistant-message .message-time { margin-left: 6px; font-weight: 400; }
 .message:focus-within .message-time { opacity: 1; }

@@ -23,7 +23,7 @@ import { SubagentResults, subagentRuns } from "./SubagentResults";
 import { copyText } from "../lib/clipboard";
 import type { DebugView } from "../lib/debugFeatures";
 
-interface Props { message: ChatMessage; turnCacheUsage?: { input: number; cacheRead: number }; expanded?: boolean; showActions?: boolean; toolCount?: number; debug?: DebugView; onBranch?: (message: ChatMessage) => void | Promise<void>; onFork?: (message: ChatMessage) => void | Promise<void>; onForkAndForget?: (message: ChatMessage) => void | Promise<void>; onRetry?: () => void; retrying?: boolean; }
+interface Props { message: ChatMessage; turnCacheUsage?: { input: number; cacheRead: number }; expanded?: boolean; showActions?: boolean; toolCount?: number; debug?: DebugView; onBranch?: (message: ChatMessage) => void | Promise<void>; onFork?: (message: ChatMessage) => void | Promise<void>; onForkAndForget?: (message: ChatMessage) => void | Promise<void>; onRetry?: () => void; retrying?: boolean; /** The latest point a new chat can start from. Its actions always show. */ lastPoint?: boolean; }
 
 function cacheTokenDigits(tokens: number) {
   const groups = String(tokens).match(/\d{1,3}(?=(?:\d{3})*$)/g) ?? [];
@@ -347,7 +347,7 @@ export function Message(componentProps: Props) {
       </div>);
     };
 
-    return (<article tabIndex={-1} class={`message assistant-message ${thinking() ? "reasoning-message" : ""}`} data-response-id={componentProps.message.id} data-pin-id={pinId(componentProps.message)} aria-label={metadata().responseLabel}>
+    return (<article tabIndex={-1} class={`message assistant-message ${thinking() ? "reasoning-message" : ""}`} classList={{ "last-point": componentProps.lastPoint === true }} data-response-id={componentProps.message.id} data-pin-id={pinId(componentProps.message)} aria-label={metadata().responseLabel}>
       {renderMessageBody()}
     </article>);
   };
@@ -358,7 +358,7 @@ export function Message(componentProps: Props) {
   const renderCompaction = () => {
     const forkActions = createForkActions(componentProps, () => "compaction");
 
-    return <article tabIndex={-1} class="message compaction-message" aria-label="Compaction">
+    return <article tabIndex={-1} class="message compaction-message" classList={{ "last-point": componentProps.lastPoint === true }} aria-label="Compaction">
       <div class="command-result compaction" role="status">{textOf(componentProps.message.content)}</div>
       <Show when={forkActions.available()}><div class="message-actions">{forkActions.fork()}{forkActions.branch()}{forkActions.forget()}</div></Show>
     </article>;
