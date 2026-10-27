@@ -38,7 +38,9 @@ function windowStart(branch: any[], end: number): number {
 
 function isFinalResponse(entry: any): boolean {
   const message = entry?.type === 'message' ? entry.message : undefined;
-  return message?.role === 'assistant' && (visibleText(entry).trim().length > 0 || message.stopReason === 'aborted' || message.stopReason === 'error');
+  if (message?.role !== 'assistant') return false;
+  const ended = message.stopReason === 'stop' && !(Array.isArray(message.content) && message.content.some((part: any) => part?.type === 'toolCall'));
+  return ended || visibleText(entry).trim().length > 0 || message.stopReason === 'aborted' || message.stopReason === 'error';
 }
 
 function isWork(entry: any): boolean { const name = role(entry); return name === 'assistant' || name === 'toolResult'; }
