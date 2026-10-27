@@ -5,7 +5,7 @@ import { build } from 'esbuild';
 import { transformSync } from '@babel/core';
 import solid from 'babel-preset-solid';
 import typescript from '@babel/preset-typescript';
-import { chromium } from 'playwright-core';
+import { launchTestBrowser, noTouchInput } from '../test-browser.mjs';
 import assert from 'node:assert/strict';
 import { daemonClient } from '../daemon-client.mjs';
 
@@ -26,7 +26,7 @@ before(async () => {
   });
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   url = `http://127.0.0.1:${server.address().port}`;
-  browser = await chromium.launch({ executablePath: process.env.CHROME_BIN ?? chromium.executablePath(), headless: true });
+  browser = await launchTestBrowser();
 });
 after(async () => { await browser?.close(); if (server) await new Promise(resolve => server.close(resolve)); });
 
@@ -81,12 +81,12 @@ async function swipe(page, target) {
   assert.ok(await page.evaluate(() => window.swipeScroll.scrollTop > 20));
 }
 
-test('swiping over a chat name scrolls the real sidebar', async t => {
+test('swiping over a chat name scrolls the real sidebar', { skip: noTouchInput }, async t => {
   const page = await sidebar(t);
   await swipe(page, page.getByRole('button', { name: /^Chat 06,/ }));
 });
 
-test('swiping over a project name scrolls the real sidebar', async t => {
+test('swiping over a project name scrolls the real sidebar', { skip: noTouchInput }, async t => {
   const page = await sidebar(t);
   await swipe(page, page.getByRole('button', { name: 'Project', exact: true }));
 });

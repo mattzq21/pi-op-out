@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { startupPage } from '../startup-browser-fixture.mjs';
+import { noTouchInput } from '../test-browser.mjs';
 import { nativeFileCommand } from '../native-file-command.mjs';
 
 async function composerPage(t, long = false) {
@@ -21,7 +22,7 @@ const moves = async page => JSON.parse(await page.getByLabel('Requested moves').
 
 const frames = page => page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
 
-test('another pointer cannot move or finish the current queued-message drag', async t => {
+test('another pointer cannot move or finish the current queued-message drag', { skip: noTouchInput }, async t => {
   const page = await composerPage(t);
   const input = await page.context().newCDPSession(page);
   try {
@@ -64,7 +65,7 @@ test('window blur stops queued-message dragging and scrolling', async t => {
   } finally { await other.close(); await browser.detach(); }
 });
 
-test('pointer cancellation stops queued-message dragging and scrolling', async t => {
+test('pointer cancellation stops queued-message dragging and scrolling', { skip: noTouchInput }, async t => {
   const page = await composerPage(t, true);
   const input = await page.context().newCDPSession(page);
   try {

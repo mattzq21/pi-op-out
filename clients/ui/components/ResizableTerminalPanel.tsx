@@ -1,3 +1,4 @@
+import { holdBodyDragStyle } from "../lib/bodyDragStyle";
 import { createPanelSize } from "../lib/panelSize";
 import { createMemo, createSignal } from "solid-js";
 import { createDependencyEffect, createRef, type CSSProperties, type JSXElement } from "../lib/solid";
@@ -28,11 +29,8 @@ export function ResizableTerminalPanel(componentProps: { children: JSXElement })
   createDependencyEffect(() => { const capturedDragging = dragging();
 
     if (!capturedDragging) return;
-    const { cursor, userSelect } = document.body.style;
-    document.body.style.cursor = "row-resize";
-    document.body.style.userSelect = "none";
 
-    return () => { document.body.style.cursor = cursor; document.body.style.userSelect = userSelect; };
+    return holdBodyDragStyle("row-resize");
   }, () => [dragging()]);
 
   return <section class="terminal-shell terminal-shell-resizable" aria-label="Session terminal" style={{ height: `${visibleHeight()}px` } satisfies CSSProperties}>

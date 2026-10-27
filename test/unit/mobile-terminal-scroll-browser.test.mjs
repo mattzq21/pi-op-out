@@ -5,7 +5,7 @@ import solid from 'babel-preset-solid';
 import typescript from '@babel/preset-typescript';
 import { readFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
-import { chromium } from 'playwright-core';
+import { launchTestBrowser, noTouchInput } from '../test-browser.mjs';
 import assert from 'node:assert/strict';
 
 const bundle = await build({entryPoints:['test/fixtures/mobile-terminal-scroll.tsx'], bundle:true, write:false,
@@ -22,7 +22,7 @@ const server=createServer((req,res)=>{res.setHeader('Content-Type',req.url==='/a
 
 await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
 
-const browser=await chromium.launch({executablePath:process.env.CHROME_BIN ?? chromium.executablePath(),headless:true});
+const browser=await launchTestBrowser();
 
 after(async () => { await browser.close(); await new Promise(resolve => server.close(resolve)); });
 
@@ -34,7 +34,7 @@ async function openTerminal(t) {
   return page;
 }
 
-test('history scrolls without taking ownership and a tap claims the terminal', async t => {
+test('history scrolls without taking ownership and a tap claims the terminal', { skip: noTouchInput }, async t => {
   const page = await openTerminal(t);
   const transcript=page.locator('.terminal-transcript');
   await transcript.waitFor();

@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { startupPage } from '../startup-browser-fixture.mjs';
+import { testBrowserName } from '../test-browser.mjs';
 
 const mobilePage = t => startupPage(t, 'mobile', {
     entryPoint: 'test/fixtures/mobile-composer-browser.tsx', ready: '[aria-label="Message piop"]', holdStorage: false,
@@ -32,7 +33,7 @@ test('on mobile the keyboard Enter key starts a new line and only Send queues th
   ]);
 });
 
-test('tapping Send on mobile includes the word the keyboard is still composing and clears the editor', async t => {
+test('tapping Send on mobile includes the word the keyboard is still composing and clears the editor', { skip: testBrowserName === 'webkit' && 'the input method of the WebKitGTK test screen composes code points, not words' }, async t => {
   const page = await mobilePage(t);
   const editor = page.getByRole('textbox', { name: 'Message piop', exact: true });
   await editor.click();

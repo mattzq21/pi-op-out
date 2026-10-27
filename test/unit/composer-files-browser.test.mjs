@@ -4,13 +4,14 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { startupPage } from '../startup-browser-fixture.mjs';
+import { testBrowserName } from '../test-browser.mjs';
 import { nativeFileCommand } from '../native-file-command.mjs';
 
-async function fileComposer(t) {
+async function fileComposer(t, contextOptions) {
   const native = await nativeFileCommand(t, { desktop: true });
   const reads = [], pending = new Set(), gates = new Map();
   const page = await startupPage(t, 'development', {
-    entryPoint: 'test/fixtures/composer-files-browser.tsx', ready: '[aria-label="Message piop"]', holdStorage: false,
+    entryPoint: 'test/fixtures/composer-files-browser.tsx', ready: '[aria-label="Message piop"]', holdStorage: false, contextOptions,
     prepare: page => page.exposeFunction('nativeCommand', async (command, args) => {
       if (command === 'read_dropped_file') reads.push(args.path);
       const gate = command === 'read_dropped_file' ? gates.get(args.path) : undefined;
@@ -62,10 +63,11 @@ test('valid images are sent with their bytes and media type', async t => {
 });
 
 test('native file drops convert physical coordinates before attaching files', async t => {
-  const { page, directory } = await fileComposer(t);
+  // WebKit sets the device scale of a whole browser, so its page starts at scale 2.
+  const { page, directory } = await fileComposer(t, testBrowserName === 'webkit' ? { deviceScaleFactor: 2 } : undefined);
   const display = await page.context().newCDPSession(page);
   try {
-    await display.send('Emulation.setDeviceMetricsOverride', { width: 1280, height: 720, deviceScaleFactor: 2, mobile: false });
+    if (testBrowserName !== 'webkit') await display.send('Emulation.setDeviceMetricsOverride', { width: 1280, height: 720, deviceScaleFactor: 2, mobile: false });
     assert.equal(await page.evaluate(() => devicePixelRatio), 2);
     const path = join(directory, 'native.txt');
     await writeFile(path, 'Native content');
@@ -314,7 +316,8 @@ test('disabled attachment input ignores pasted files', async t => {
   const editor = page.getByRole('textbox', { name: 'Message piop' });
   await editor.focus();
   await page.keyboard.press('Control+v');
-  assert.equal(await page.evaluate(() => window.pastedFileCount), 1);
+  // WebKitGTK leaves a pasted image out of the paste event; the app reads it from the clipboard.
+  assert.equal(await page.evaluate(() => window.pastedFileCount), testBrowserName === 'webkit' ? 0 : 1);
   assert.equal(await page.locator('.attachments button').count(), 0);
   await page.getByRole('checkbox', { name: 'Disable controls' }).uncheck();
   await editor.fill('Continue');
@@ -386,7 +389,10 @@ test('dropping a file attaches its content and focuses the editor', async t => {
   ]);
 });
 
-test('file dragging offers a copy operation', async t => {
+// WebKitGTK loses the files of a real drop (https://bugs.webkit.org/show_bug.cgi?id=323277), so its file drags are made in the page: they are not trusted and keep dropEffect "none".
+const trustedDrops = testBrowserName !== 'webkit';
+
+test('file dragging offers a copy operation', { skip: !trustedDrops && 'a file drag made in the page cannot set dropEffect' }, async t => {
   const { page, directory } = await fileComposer(t);
   const path = join(directory, 'copy.txt');
   await writeFile(path, 'Copy me');
@@ -420,7 +426,7 @@ test('disabled file drops preserve existing attachments and reject new files', a
   await browserFileDrop(page, [ignored]);
   const operations = await page.evaluate(() => window.dragOperations);
   assert.ok(operations.length > 0);
-  for (const operation of operations) assert.deepEqual(operation, { trusted: true, operation: 'none' });
+  for (const operation of operations) assert.deepEqual(operation, { trusted: trustedDrops, operation: 'none' });
   assert.equal(await page.getByRole('button', { name: 'Remove ignored.txt', exact: true }).count(), 0);
   assert.equal(await page.getByRole('button', { name: 'Remove keep.txt', exact: true }).count(), 1);
   await page.getByRole('checkbox', { name: 'Disable controls' }).uncheck();
@@ -443,7 +449,7 @@ test('file drops outside the composer do not navigate the window', async t => {
     }, { once: true }));
   });
   await browserFileDrop(page, [path], { x: box.x - 50, y: box.y + box.height / 2 });
-  assert.deepEqual(await page.evaluate(() => window.outsideDrop), { trusted: true, prevented: true });
+  assert.deepEqual(await page.evaluate(() => window.outsideDrop), { trusted: trustedDrops, prevented: true });
   assert.equal(page.url(), originalUrl);
   assert.equal(await page.getByRole('textbox', { name: 'Message piop' }).isVisible(), true);
   assert.equal(await page.getByRole('button', { name: 'Remove outside.txt', exact: true }).count(), 0);

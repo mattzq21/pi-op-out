@@ -2,12 +2,10 @@ import { createServer } from 'vite';
 import { mkdtemp } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { chromium } from 'playwright-core';
+import { launchTestBrowser } from './test-browser.mjs';
 import assert from 'node:assert/strict';
 
 const screenshots = await mkdtemp(join(tmpdir(), 'piop-mobile-ui-'));
-
-const chromePath = process.env.CHROME_PATH || chromium.executablePath();
 
 const server = await createServer({ mode: 'mobile', server: { host: '127.0.0.1', port: 0, strictPort: true } });
 
@@ -16,7 +14,7 @@ const unknownCommands = new Set();
 
 try {
  await server.listen();
- browser = await chromium.launch({ executablePath: chromePath, headless: true, args: ['--no-sandbox'] });
+ browser = await launchTestBrowser({ executablePath: process.env.CHROME_PATH, args: ['--no-sandbox'] });
  page = await browser.newPage({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
  const errors=[]; page.on('pageerror', error=>errors.push(error.stack));
   const settings={hiddenModels:[],defaultThinking:'high',defaultFastMode:false,contextWindowCap:200000,contextWindowCapEnabled:true,modelContextWindowCaps:{},autoRetry:true,debugMode:false,keybindings:{newConversation:'Ctrl+N',toggleConversations:'Ctrl+B',toggleTerminal:'Ctrl+J',toggleDebugMode:'Ctrl+D',focusComposer:'Ctrl+E',openSettings:'Ctrl+,'},tools:[],skills:[],hosts:[]};

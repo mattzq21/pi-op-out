@@ -5,7 +5,7 @@ import { basename, resolve } from 'node:path';
 import { createServer } from 'node:http';
 import { build } from 'esbuild';
 import { createRequire } from 'node:module';
-import { chromium } from 'playwright-core';
+import { launchTestBrowser } from './test-browser.mjs';
 import { cachedTransform } from './transform-cache.mjs';
 
 const require = createRequire(import.meta.url);
@@ -31,7 +31,7 @@ after(async () => {
 function testBrowser(executablePath, args) {
   const key = JSON.stringify([executablePath, args]);
   if (!browsers.has(key)) {
-    const pending = chromium.launch({ executablePath, headless: true, args }).catch(error => {
+    const pending = launchTestBrowser({ executablePath, args }).catch(error => {
       browsers.delete(key);
       throw error;
     });
@@ -66,7 +66,7 @@ async function buildBrowserFiles(entryPoint, mode) {
   return new Map(bundle.outputFiles.map(file => ['/' + basename(file.path), file.contents]));
 }
 
-export async function startupPage(t, mode, { entryPoint = 'test/fixtures/startup.tsx', ready = '[role="status"]', readyTimeout = 10000, holdStorage = true, prepare = async () => {}, browserArgs = [], executablePath } = {}) {
+export async function startupPage(t, mode, { entryPoint = 'test/fixtures/startup.tsx', ready = '[role="status"]', readyTimeout = 10000, holdStorage = true, prepare = async () => {}, browserArgs = [], executablePath, contextOptions } = {}) {
   const files = await browserFiles(entryPoint, mode);
   const server = createServer((req, res) => {
     res.setHeader('Content-Type', /\.m?js$/.test(req.url ?? '') ? 'text/javascript' : req.url?.endsWith('.css') ? 'text/css' : req.url?.endsWith('.wasm') ? 'application/wasm' : 'text/html');
@@ -75,8 +75,8 @@ export async function startupPage(t, mode, { entryPoint = 'test/fixtures/startup
   let context;
   t.after(async () => { try { await context?.close(); } finally { await new Promise(resolve => server.close(resolve)); } });
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
-  const browser = await testBrowser(executablePath ?? process.env.CHROME_BIN ?? chromium.executablePath(), browserArgs);
-  context = await browser.newContext();
+  const browser = await testBrowser(executablePath, browserArgs);
+  context = await browser.newContext(contextOptions);
   const page = await context.newPage();
   page.setDefaultTimeout(10000);
   const errors = [];
