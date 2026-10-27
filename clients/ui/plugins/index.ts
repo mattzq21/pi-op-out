@@ -16,11 +16,14 @@ export const plugins: PluginDefinition[] = [
   { id: "btw", scope: "host", name: "Side chats", description: "Side chats started with /btw." },
 ];
 
-/** True when text is a plugin slash command that waits in the follow-up queue like a message. */
+/** Core slash commands that wait in the follow-up queue like a message. */
+const coreQueuedCommands = ["compact"];
+
+/** True when text is a core or plugin slash command that waits in the follow-up queue like a message. */
 export function queuedCommand(text: string) {
   const [word] = text.trim().split(/\s/, 1);
 
-  return word.startsWith("/") && plugins.some(plugin => plugin.queuedCommands?.includes(word.slice(1)));
+  return word.startsWith("/") && (coreQueuedCommands.includes(word.slice(1)) || plugins.some(plugin => plugin.queuedCommands?.includes(word.slice(1))));
 }
 
 export const pluginStatusSchema = z.object({ enabled: z.array(z.string()), configured: z.array(z.string()), revision: z.string(), error: z.string().nullable() });

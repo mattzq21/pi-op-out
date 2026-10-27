@@ -491,7 +491,7 @@ export class Session {
       case 'get_available_models': await this.refreshProviders(); break;
       // Pi stops the running response before it compacts, even when there is nothing to compact.
       case 'compact': {
-        if (this.working()) throw new CommandRefusedError('Stop piop before running /compact.', 'daemon');
+        if (this.working()) throw new CommandRefusedError('piop is working. Send /compact as a message to compact after the current response.', 'daemon');
         const started = this.manualCompactions;
         // After Pi starts, the chat shows the result, so the request is done.
         try { return await this.executeWorker(command); } catch (error) { if (this.manualCompactions !== started) return null; throw error; }

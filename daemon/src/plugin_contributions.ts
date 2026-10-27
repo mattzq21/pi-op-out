@@ -33,6 +33,9 @@ function commandOwner(name: string): BundledPlugin | undefined {
   return CATALOG.find(plugin => plugin.commands && Object.hasOwn(plugin.commands, name));
 }
 
+/** Core slash commands that wait in the follow-up queue and run when the conversation reaches them. The runtime bridge runs them. */
+const CORE_QUEUED = ['compact'];
+
 function disabledCommand(plugin: BundledPlugin, name: string): string {
   return 'The ' + plugin.name + ' plugin is disabled. Enable it to use /' + name + '.';
 }
@@ -47,6 +50,7 @@ export function assertCommandAvailable(message: string): void {
 /** True when the message starts with a command of an enabled plugin that waits in the follow-up queue. */
 export function queuedCommand(message: string): boolean {
   const name = commandName(message);
+  if (name !== undefined && CORE_QUEUED.includes(name)) return true;
   const owner = name === undefined ? undefined : commandOwner(name);
   return owner !== undefined && loaded().has(owner.id) && owner.commands![name!] === 'queued';
 }
@@ -62,7 +66,7 @@ export function pluginRequest(type: string): boolean {
 /** Command rules for Pi agents: commands that wait in the follow-up queue, and commands of disabled plugins with the error to show. */
 export function commandPolicy(): { queued: string[]; disabled: Record<string, string> } {
   const ids = loaded();
-  const queued: string[] = [];
+  const queued: string[] = [...CORE_QUEUED];
   const disabled: Record<string, string> = {};
   for (const plugin of CATALOG) for (const [name, delivery] of Object.entries(plugin.commands ?? {})) {
     if (!ids.has(plugin.id)) disabled[name] = disabledCommand(plugin, name);
