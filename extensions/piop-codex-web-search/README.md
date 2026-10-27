@@ -16,7 +16,7 @@ Example tool arguments:
 {"query":"What changed in the latest stable Rust release?","domains":["blog.rust-lang.org"]}
 ```
 
-The current OpenAI model performs the search. When chatting with another provider, the extension picks a registered `openai` model using upstream's preference for Terra, then a mainline GPT model, then another non-Pro/non-Ultra model. `PIOP_WEB_SEARCH_MODEL` can override this with a registered `openai` model ID; set it in the Pi process environment on the executing host. Search requests consume that host's ChatGPT usage. An `sk-` API key does not count as a sign-in. Unsupported models produce a tool error instead of falling back to another provider.
+`gpt-6.1-sol` performs the search. If it is not available, the current OpenAI model does; when chatting with another provider, the extension picks a registered `openai` model using upstream's preference for Terra, then a mainline GPT model, then another non-Pro/non-Ultra model. `PIOP_WEB_SEARCH_MODEL` can override this with a registered `openai` model ID; set it in the Pi process environment on the executing host. Search requests consume that host's ChatGPT usage. An `sk-` API key does not count as a sign-in. Unsupported models produce a tool error instead of falling back to another provider.
 
 ## How the extraction works
 

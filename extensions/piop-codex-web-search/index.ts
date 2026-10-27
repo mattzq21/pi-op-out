@@ -30,6 +30,7 @@ import { Check } from "typebox/value";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 
 const LOGIN_HINT = "Use Pi /login → OpenAI (Sign in with ChatGPT) on this host.";
+const DEFAULT_MODEL = "gpt-6.1-sol";
 
 const TIMEOUT_MS = 60_000;
 
@@ -60,6 +61,7 @@ function rankedModels(ctx: ExtensionContext) {
     .sort((a, b) => b.id.localeCompare(a.id, undefined, { numeric: true }));
 
   const ranked = override ? models.filter((model) => model.id === override) : [
+    ...models.filter((model) => model.id === DEFAULT_MODEL),
     ...ctx.model && isOpenAI(ctx.model) && fastEnough(ctx.model) ? [ctx.model] : [],
     ...candidates.filter((model) => model.id.includes("terra")),
     ...candidates.filter((model) => /^gpt-\d+(\.\d+)?$/.test(model.id)),

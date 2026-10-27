@@ -72,10 +72,11 @@ test('failed searches say why and never show the login token', async () => {
   assert.match(await search({ query: 'q', domains: ['not a domain'] }).then(() => '', error => error.message), /^Invalid search domain: not a domain$/);
 });
 
-test('the search uses a fast OpenAI model signed in with ChatGPT, preferring the one in use', async () => {
+test('the search uses gpt-6.1-sol, else a fast OpenAI model signed in with ChatGPT, preferring the one in use', async () => {
   reply = () => ({ body: sse([{ type: 'response.completed', response: { status: 'completed', output: [searched, answer('ok')] } }]) });
   const usedModel = async options => (await webSearch(options)({ query: 'q' })).details.model;
   const models = [openai('gpt-5.2'), openai('gpt-5.4-pro'), openai('gpt-5.3-mini'), openai('gpt-5.4')];
+  assert.equal(await usedModel({ models: [...models, openai('gpt-6.1-sol')], current: openai('gpt-5.3-mini') }), 'gpt-6.1-sol');
   assert.equal(await usedModel({ models, current: openai('gpt-5.3-mini') }), 'gpt-5.3-mini');
   assert.equal(await usedModel({ models, current: openai('gpt-5.4-pro') }), 'gpt-5.4');
   assert.equal(await usedModel({ models, current: { provider: 'anthropic', api: 'anthropic-messages', id: 'claude' } }), 'gpt-5.4');
