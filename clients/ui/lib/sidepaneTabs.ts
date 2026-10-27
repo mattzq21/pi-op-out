@@ -166,6 +166,19 @@ export function createSidepaneTabs(options: Options) {
       setChats(current => current.filter(session => sessionKey(session) !== key));
       setPinned(change(next => next.delete(key)));
     },
+    /** Removes every tab of an archived or deleted chat, named by its ID, its path or both, whichever tab is shown. */
+    forgetRemoved: (hostId: string, sessionId: string | undefined, sessionPath: string | undefined) => {
+      const matches = (session: SessionSummary) => (session.hostId ?? "local") === hostId && (session.id === sessionId || Boolean(sessionPath && session.path === sessionPath));
+      const keys = [...chats(), ...opened(), ...options.sessions()].filter(matches).map(sessionKey);
+
+      if (sessionId) keys.push(`${hostId}:${sessionId}`);
+      for (const key of new Set(keys)) {
+        openings.delete(key);
+        setPinned(change(next => next.delete(key)));
+      }
+      setChats(current => current.filter(session => !matches(session)));
+      setOpened(current => current.filter(session => !matches(session)));
+    },
     /** Replaces a root chat tab after a fork in it moved the pane to another chat. */
     replaceChat: (previousKey: string, session: SessionSummary) => {
       setChats(current => current.map(item => sessionKey(item) === previousKey ? session : item));

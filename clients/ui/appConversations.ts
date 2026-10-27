@@ -46,10 +46,6 @@ type RemovedSession = z.infer<typeof removedSessionSchema>;
 
 const removedSessionHost = (removed: RemovedSession) => removed.hostId ?? "local";
 
-function removedSessionMatches(hostId: string | undefined, sessionId: string, sessionPath: string | undefined, removed: RemovedSession) {
-  return (hostId ?? "local") === (removed.hostId ?? "local") && (sessionId === removed.sessionId || Boolean(removed.sessionPath && sessionPath === removed.sessionPath));
-}
-
 export function createAppConversations(preloadChat: () => void) {
   const runtimePool = createMemo(() => new SessionRuntimePool());
   const initialTarget = initialWindowTarget();
@@ -294,12 +290,10 @@ export function createAppConversations(preloadChat: () => void) {
         void syncSessionIndex();
       }, z.object({ hostId: z.string(), sessionId: z.string(), sessionPath: z.string() })),
       listen("pi://session-removed", async ({ payload }) => {
+        // A removed chat leaves the side pane tabs, also when its tab is not shown.
+        sidepane.forgetRemoved(removedSessionHost(payload), payload.sessionId ?? undefined, payload.sessionPath ?? undefined);
+
         if (!await archives.removed(payload.hostId ?? "local", payload.sessionPath, payload.sessionId)) return;
-        const split = splitPane()?.session;
-
-        if (split && removedSessionMatches(split.hostId, split.id, split.path, payload) && !archives.isPending(split)) sidepane.forget(`${split.hostId ?? "local"}:${split.id}`);
-
-        if (payload.sessionId) sidepane.forget(`${removedSessionHost(payload)}:${payload.sessionId}`);
 
         if (payload.sessionPath) runtimePool().removeSummary(removedSessionHost(payload), payload.sessionPath);
         setSessions((current) => current.filter((session) => !runtimePool().isRemoved(session) && !archives.isArchived(session)));
