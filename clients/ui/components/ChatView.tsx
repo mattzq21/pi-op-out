@@ -41,7 +41,8 @@ interface Props { refreshError?: string; capabilityErrors?: string[]; capabiliti
 const knownFastMode = new WeakMap<NativeTransport, { status: string; model: string | undefined }>();
 
 function canRetry(props: Props, ownsConversation: boolean) {
-  return ownsConversation && !props.readOnly && !props.controlsDisabled && !props.state.isStreaming;
+  // Retry shows with the saved history while Pi starts; the retry command waits for Pi.
+  return ownsConversation && !props.readOnly && !props.state.isStreaming;
 }
 
 export function ChatView(props: Props & { transcriptActions?: JSXElement; followConversation?: () => Accessor<PluginConversation>; onNotice?: (title: string, message: string) => void }) {
