@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { startupPage } from '../startup-browser-fixture.mjs';
+import { testBrowserName } from '../test-browser.mjs';
 
 async function searchPage(t) {
   const page = await startupPage(t, 'development', {
@@ -121,12 +122,17 @@ test('Enter during text composition preserves the current search result', async 
   const input = await page.context().newCDPSession(page);
   try {
     await input.send('Input.imeSetComposition', { text: 'alpha', selectionStart: 5, selectionEnd: 5, replacementStart: 0, replacementEnd: 5 });
+    const composing = await count(page);
     await page.keyboard.press('Enter');
-    assert.deepEqual(await page.evaluate(() => window.compositionKey), { composing: true, prevented: false });
-    assert.equal(await count(page), '2 / 2');
+    // WebKitGTK's input method consumes keys during a composition, so the page gets no Enter keydown.
+    assert.deepEqual(await page.evaluate(() => window.compositionKey), testBrowserName === 'webkit' ? undefined : { composing: true, prevented: false });
+    assert.equal(await count(page), composing);
     await input.send('Input.insertText', { text: 'alpha' });
+    // The composition of WebKitGTK's input method shows other text than "alpha", so its search starts again when the text is committed.
+    const committed = testBrowserName === 'webkit' ? '1 / 2' : '2 / 2';
+    assert.equal(await count(page), committed);
     await page.keyboard.press('Enter');
-    assert.equal(await count(page), '1 / 2');
+    assert.equal(await count(page), committed === '1 / 2' ? '2 / 2' : '1 / 2');
   } finally { await input.detach(); }
 });
 
@@ -149,8 +155,9 @@ test('Find during text composition leaves search closed', async t => {
   try {
     await input.send('Input.imeSetComposition', { text: '日本', selectionStart: 2, selectionEnd: 2 });
     await page.keyboard.press('Control+f');
-    assert.equal(await page.evaluate(() => window.findShortcutComposing), true);
-    assert.equal(await page.evaluate(() => window.findShortcutPrevented), false);
+    // WebKitGTK's input method consumes the shortcut during a composition, so the page gets no keydown.
+    assert.equal(await page.evaluate(() => window.findShortcutComposing), testBrowserName === 'webkit' ? undefined : true);
+    assert.equal(await page.evaluate(() => window.findShortcutPrevented), testBrowserName === 'webkit' ? undefined : false);
     assert.equal(await page.getByRole('search').count(), 0);
     await input.send('Input.insertText', { text: '日本' });
     const search = await openSearch(page);

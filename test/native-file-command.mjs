@@ -1,3 +1,4 @@
+import { hiddenDisplayEnv } from './hidden-display.mjs';
 import { execFile, spawn } from 'node:child_process';
 import { copyFile, mkdtemp, rm, writeFile, readFile } from 'node:fs/promises';
 import { createConnection } from 'node:net';
@@ -41,8 +42,10 @@ export async function nativeFileCommand(t, { launcher, desktop = false, desktopU
     Object.assign(launcherEnv, { PATH: directory + ':' + process.env.PATH, PIOP_TEST_LAUNCH_LOG: launchLog, PIOP_TEST_LAUNCH_STATUS: String(launcher.status ?? 0) });
   }
   const path = join(directory, 'command.sock');
+  // The bridge runs on a hidden screen, so windows of its desktop app do not take focus from the desktop.
+  const base = await hiddenDisplayEnv();
   const child = spawn(binary, ['tests::attachment_command_bridge', '--exact', '--ignored', '--nocapture'], {
-    env: { ...process.env, ...launcherEnv, ...(desktop ? { HOME: directory, XDG_CONFIG_HOME: directory, XDG_CACHE_HOME: directory, XDG_DATA_HOME: directory, PIOP_TEST_NATIVE_APP: '1', ...(desktopUrl ? { PIOP_TEST_NATIVE_URL: desktopUrl } : {}) } : {}), ...env, PIOP_TEST_NATIVE_SOCKET: path }, stdio: ['ignore', 'pipe', 'pipe'],
+    env: { ...base, ...launcherEnv, ...(desktop ? { HOME: directory, XDG_CONFIG_HOME: directory, XDG_CACHE_HOME: directory, XDG_DATA_HOME: directory, PIOP_TEST_NATIVE_APP: '1', ...(desktopUrl ? { PIOP_TEST_NATIVE_URL: desktopUrl } : {}) } : {}), ...env, PIOP_TEST_NATIVE_SOCKET: path }, stdio: ['ignore', 'pipe', 'pipe'],
   });
   let diagnostics = '', socket;
   child.stderr.on('data', data => { diagnostics += data; });

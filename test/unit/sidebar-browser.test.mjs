@@ -6,7 +6,7 @@ import { build } from 'esbuild';
 import { transformSync } from '@babel/core';
 import solid from 'babel-preset-solid';
 import typescript from '@babel/preset-typescript';
-import { chromium } from 'playwright-core';
+import { launchTestBrowser } from '../test-browser.mjs';
 
 let server, browser, url;
 before(async () => {
@@ -26,9 +26,12 @@ before(async () => {
   });
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   url = `http://127.0.0.1:${server.address().port}`;
-  browser = await chromium.launch({ executablePath: process.env.CHROME_BIN ?? chromium.executablePath(), headless: true });
+  browser = await launchTestBrowser();
 });
 after(async () => { await browser?.close(); if (server) await new Promise(resolve => server.close(resolve)); });
+
+// WebKit knows user-select only by its prefixed name.
+const bodyUserSelect = page => page.evaluate(() => { const style = getComputedStyle(document.body); return style.userSelect ?? style.webkitUserSelect; });
 
 async function openSidebar(t, { storageUnavailable = false } = {}) {
   const context = await browser.newContext({ viewport: { width: 1200, height: 700 } });
@@ -162,7 +165,7 @@ describe('sidebar behavior', { concurrency: 4 }, () => {
     await page.mouse.move(current.x + current.width / 2, current.y + current.height / 2);
     await page.mouse.down();
     await page.evaluate(() => new Promise(resolve => requestAnimationFrame(resolve)));
-    assert.equal(await page.evaluate(() => getComputedStyle(document.body).userSelect), 'none');
+    assert.equal(await bodyUserSelect(page), 'none');
     await separator.dispatchEvent('pointermove', { pointerId: 999, clientX: 800, isPrimary: false });
     await separator.dispatchEvent('pointerup', { pointerId: 999 });
     assert.equal(Number(await separator.getAttribute('aria-valuenow')), initial);
@@ -170,7 +173,7 @@ describe('sidebar behavior', { concurrency: 4 }, () => {
     assert.equal(Number(await separator.getAttribute('aria-valuenow')), initial + 50);
     await page.mouse.up();
     assert.equal(await page.evaluate(() => getComputedStyle(document.body).cursor), 'default');
-    assert.notEqual(await page.evaluate(() => getComputedStyle(document.body).userSelect), 'none');
+    assert.notEqual(await bodyUserSelect(page), 'none');
   });
 
   test('sidebar dragging keeps the application cursor', async t => {
@@ -188,9 +191,9 @@ describe('sidebar behavior', { concurrency: 4 }, () => {
     const separator = page.getByRole('separator', { name: 'Sidebar width' });
     await separator.hover();
     await page.mouse.down();
-    assert.equal(await page.evaluate(() => getComputedStyle(document.body).userSelect), 'none');
+    assert.equal(await bodyUserSelect(page), 'none');
     await separator.dispatchEvent('pointercancel');
-    assert.notEqual(await page.evaluate(() => getComputedStyle(document.body).userSelect), 'none');
+    assert.notEqual(await bodyUserSelect(page), 'none');
     await page.mouse.up();
   });
 
@@ -201,7 +204,7 @@ describe('sidebar behavior', { concurrency: 4 }, () => {
     await separator.hover();
     await page.mouse.down();
     await page.mouse.move(350, 45);
-    assert.equal(await page.evaluate(() => getComputedStyle(document.body).userSelect), 'none');
+    assert.equal(await bodyUserSelect(page), 'none');
     const width = await separator.getAttribute('aria-valuenow');
     await separator.evaluate(element => {
       window.sidebarCaptureLost = new Promise(resolve => element.addEventListener('lostpointercapture', resolve, { once: true }));
@@ -209,7 +212,7 @@ describe('sidebar behavior', { concurrency: 4 }, () => {
     });
     await page.mouse.move(450, 45);
     await page.evaluate(() => window.sidebarCaptureLost);
-    assert.notEqual(await page.evaluate(() => getComputedStyle(document.body).userSelect), 'none');
+    assert.notEqual(await bodyUserSelect(page), 'none');
     assert.equal(await separator.getAttribute('aria-valuenow'), width);
     await page.mouse.up();
     await page.setViewportSize({ width: 1000, height: 700 });

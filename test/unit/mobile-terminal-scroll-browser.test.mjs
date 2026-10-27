@@ -5,7 +5,7 @@ import solid from 'babel-preset-solid';
 import typescript from '@babel/preset-typescript';
 import { readFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
-import { chromium } from 'playwright-core';
+import { launchTestBrowser, chromiumOnly } from '../test-browser.mjs';
 import assert from 'node:assert/strict';
 
 const bundle = await build({entryPoints:['test/fixtures/mobile-terminal-scroll.tsx'], bundle:true, write:false,
@@ -22,12 +22,14 @@ const server=createServer((req,res)=>{res.setHeader('Content-Type',req.url==='/a
 
 await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
 
-const browser=await chromium.launch({executablePath:process.env.CHROME_BIN ?? chromium.executablePath(),headless:true});
+const browser=await launchTestBrowser();
+let touchBrowser;
 
-after(async () => { await browser.close(); await new Promise(resolve => server.close(resolve)); });
+after(async () => { await browser.close(); await (await touchBrowser)?.close(); await new Promise(resolve => server.close(resolve)); });
 
-async function openTerminal(t) {
-  const page=await browser.newPage({viewport:{width:390,height:844},isMobile:true,hasTouch:true});
+async function openTerminal(t, touch = false) {
+  const target = touch ? await (touchBrowser ??= launchTestBrowser({ engine: chromiumOnly })) : browser;
+  const page=await target.newPage({viewport:{width:390,height:844},isMobile:true,hasTouch:true});
   await page.goto(`http://127.0.0.1:${server.address().port}`);
   t.after(() => page.close());
   await page.getByRole('textbox', { name: 'Terminal command' }).waitFor();
@@ -35,7 +37,7 @@ async function openTerminal(t) {
 }
 
 test('history scrolls without taking ownership and a tap claims the terminal', async t => {
-  const page = await openTerminal(t);
+  const page = await openTerminal(t, true);
   const transcript=page.locator('.terminal-transcript');
   await transcript.waitFor();
   const cdp=await page.context().newCDPSession(page);

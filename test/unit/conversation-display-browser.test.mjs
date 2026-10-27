@@ -23,8 +23,9 @@ test('completed work groups repeated tools and keeps the final answer outside it
   const group = summary.locator('..');
   assert.equal(await group.evaluate(node => node.open), false);
   await summary.click();
-  await group.getByText('Consider the evidence', { exact: true }).waitFor();
-  assert.match(await group.textContent(), /read x2/);
+  await group.getByText('read x2', { exact: true }).waitFor();
+  // Reasoning traces show only in the debug view.
+  assert.doesNotMatch(await page.locator('body').textContent(), /Consider the evidence/);
   assert.doesNotMatch(await group.textContent(), /Final answer/);
   const answer = page.getByText('Final answer', { exact: true });
   assert.equal(await answer.isVisible(), true);
@@ -35,10 +36,11 @@ test('debug view exposes each repeated tool result separately', async t => {
   const page = await completedConversation(t);
   const summary = page.locator('summary').filter({ hasText: /^Worked for 1min 1s$/ });
   await summary.click();
-  await page.getByText('Consider the evidence', { exact: true }).waitFor();
+  await page.getByText('read x2', { exact: true }).waitFor();
   await page.getByLabel('Debug view', { exact: true }).check();
   const group = summary.locator('..');
   if (!await group.evaluate(node => node.open)) await summary.click();
+  await group.getByText('Consider the evidence', { exact: true }).waitFor();
   const tools = group.locator('summary').filter({ hasText: /read/ });
   assert.equal(await tools.count(), 2);
   await tools.nth(0).click();
@@ -58,8 +60,8 @@ test('a failed call between repeated tool calls stays visible as a failure', asy
   const summary = page.locator('summary').filter({ hasText: /^Worked for 1min 1s$/ });
   await summary.click();
   const group = summary.locator('..');
-  await group.getByText('Consider the evidence', { exact: true }).waitFor();
   const failed = group.getByText('Failed', { exact: true });
+  await failed.waitFor();
   assert.equal(await failed.count(), 1);
   assert.equal(await failed.isVisible(), true);
   assert.equal(await group.getByText('Completed', { exact: true }).count(), 2);

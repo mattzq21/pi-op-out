@@ -1,12 +1,13 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { startupPage } from '../startup-browser-fixture.mjs';
+import { chromiumOnly } from '../test-browser.mjs';
 import { nativeFileCommand } from '../native-file-command.mjs';
 
-async function composerPage(t, long = false) {
+async function composerPage(t, long = false, engine = undefined) {
   const native = await nativeFileCommand(t, { desktop: true });
   const page = await startupPage(t, 'development', {
-    entryPoint: 'test/fixtures/composer-drag-browser.tsx', ready: '[aria-label="Pending messages"]', holdStorage: false,
+    entryPoint: 'test/fixtures/composer-drag-browser.tsx', ready: '[aria-label="Pending messages"]', holdStorage: false, engine,
     prepare: page => page.exposeFunction('nativeCommand', (command, args) => native.invoke(command, args)),
   });
   if (long) {
@@ -22,7 +23,7 @@ const moves = async page => JSON.parse(await page.getByLabel('Requested moves').
 const frames = page => page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
 
 test('another pointer cannot move or finish the current queued-message drag', async t => {
-  const page = await composerPage(t);
+  const page = await composerPage(t, false, chromiumOnly);
   const input = await page.context().newCDPSession(page);
   try {
     await page.evaluate(() => {
@@ -65,7 +66,7 @@ test('window blur stops queued-message dragging and scrolling', async t => {
 });
 
 test('pointer cancellation stops queued-message dragging and scrolling', async t => {
-  const page = await composerPage(t, true);
+  const page = await composerPage(t, true, chromiumOnly);
   const input = await page.context().newCDPSession(page);
   try {
     const queue = page.getByLabel('Pending messages', { exact: true });

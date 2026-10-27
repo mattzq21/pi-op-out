@@ -118,7 +118,8 @@ type ShortcutEvent = Pick<KeyboardEvent, "key" | "metaKey" | "ctrlKey" | "altKey
 const hasEventModifier = (event: ShortcutEvent) => event.ctrlKey || event.metaKey || event.altKey;
 
 export function shortcutFromEvent(event: ShortcutEvent) {
-  if (["Meta", "Control", "Alt", "Shift"].includes(event.key)) return null;
+  // A key the engine cannot name is no shortcut; WebKitGTK names some modifier presses "Unidentified".
+  if (["Meta", "Control", "Alt", "Shift", "Unidentified"].includes(event.key)) return null;
 
   if (["Tab", "Escape"].includes(event.key) && !hasEventModifier(event)) return null;
 

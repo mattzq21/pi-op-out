@@ -16,7 +16,7 @@
 .provider-login-link button { display: inline-flex; align-items: center; gap: 6px; }
 .provider-login-link input { min-width: 120px; flex: 1; font-size: calc(12px + var(--settings-font-offset, 0px)); }
 .provider-login-notice { overflow-wrap: anywhere; }
-.provider-device-code { font-family: monospace; letter-spacing: .08em; user-select: all; }
+.provider-device-code { font-family: monospace; letter-spacing: .08em; user-select: all; -webkit-user-select: all; }
 .provider-login-prompt { display: grid; gap: 12px; margin: 16px 0; }
 .provider-login-prompt .primary-button { justify-self: start; }
 @media (max-width: 720px) {
