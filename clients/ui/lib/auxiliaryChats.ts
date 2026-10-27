@@ -15,6 +15,32 @@ export interface AuxiliaryChats { listed: (hostId: string, sessionId: string) =>
 
 export const AuxiliaryChatsContext = createContext<AuxiliaryChats>();
 
+/**
+ * The keys of the working chats for the session list: each working chat, and the root chat of each working side chat,
+ * such as a btw or review chat. Subagents do not mark their root chat.
+ */
+export function withWorkingSideChats(sessions: SessionSummary[], running: ReadonlySet<string>): ReadonlySet<string> {
+  const key = (hostId: string | undefined, id: string) => `${hostId ?? "local"}:${id}`;
+  const byKey = new Map(sessions.map(session => [key(session.hostId, session.id), session]));
+  const result = new Set(running);
+
+  for (const session of sessions) {
+    if (!session.auxiliaryParentId || session.auxiliaryKind === "subagent" || !(session.isRunning || running.has(key(session.hostId, session.id)))) continue;
+    let root = key(session.hostId, session.auxiliaryParentId);
+
+    for (const seen = new Set([root]); byKey.get(root)?.auxiliaryParentId;) {
+      root = key(session.hostId, byKey.get(root)!.auxiliaryParentId!);
+
+      if (seen.has(root)) break;
+      seen.add(root);
+    }
+
+    result.add(root);
+  }
+
+  return result;
+}
+
 /** Reads the request that opens an auxiliary chat. Throws when it is malformed. */
 export function parseAuxiliaryOpening(placeholder?: string): { session: SessionSummary; task?: string; images?: ImageAttachment[] } {
   const parsed = openingSchema.safeParse((() => { try { return JSON.parse(placeholder || "{}"); } catch { return undefined; } })());
