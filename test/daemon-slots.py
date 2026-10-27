@@ -1,11 +1,12 @@
 """Holds daemon slots for one test daemon until stdin closes.
 
-Usage: daemon-slots.py DIRECTORY SIZE NEED
+Usage: daemon-slots.py DIRECTORY SIZE NEED wait|try
 
 The slots are SIZE lock files in DIRECTORY, shared by every test process on this machine. A holder takes NEED of them
 together while it holds the gate, so two tests that need several slots never each hold part and wait for each other.
-It prints "ready" once it holds them and keeps them until stdin closes. The kernel releases the locks when the
-holder exits, also when its test process dies.
+With try, it takes the slots that are free at once, up to NEED, and never waits: callers that already hold slots
+use it, so a holder never waits and the slots cannot deadlock. It prints "ready" once it holds its slots and keeps
+them until stdin closes. The kernel releases the locks when the holder exits, also when its test process dies.
 """
 import fcntl
 import os
@@ -14,11 +15,27 @@ import threading
 
 
 def main():
-    directory, size, need = sys.argv[1], int(sys.argv[2]), int(sys.argv[3])
+    directory, size, need, mode = sys.argv[1], int(sys.argv[2]), int(sys.argv[3]), sys.argv[4]
     if size < 1 or need < 1:
         raise SystemExit('Slot size and need must be positive')
+    if mode not in ('wait', 'try'):
+        raise SystemExit('Mode must be wait or try')
     need = min(need, size)
     os.makedirs(directory, exist_ok=True)
+    if mode == 'try':
+        taken = []
+        for index in range(size):
+            if len(taken) == need:
+                break
+            slot = open(os.path.join(directory, 'slot-%d' % index), 'a')
+            try:
+                fcntl.flock(slot, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                taken.append(slot)
+            except BlockingIOError:
+                slot.close()
+        print('ready', flush=True)
+        sys.stdin.buffer.read()
+        os._exit(0)
     gate = open(os.path.join(directory, 'gate'), 'a')
     fcntl.flock(gate, fcntl.LOCK_EX)
     held = []

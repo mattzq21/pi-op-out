@@ -3,6 +3,7 @@ import { mkdtemp, readdir, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { parseArgs, promisify } from 'node:util';
+import { fileURLToPath } from 'node:url';
 import { daemonTestTimings } from './daemon-test-timings.mjs';
 
 const started = performance.now();
@@ -11,6 +12,7 @@ const { values, positionals } = parseArgs({
   options: { jobs: { type: 'string', default: '4' }, filter: { type: 'string' } },
 });
 const jobs = Number(values.jobs);
+const TEST_TIMEOUT_MS = 60000;
 if (!Number.isSafeInteger(jobs) || jobs < 1 || jobs > 16) throw new Error('--jobs must be a whole number from 1 to 16');
 const files = positionals.length ? positionals : (await readdir('test/daemon', { recursive: true })).filter(file => file.endsWith('.test.ts')).sort().map(file => 'test/daemon/' + file);
 if (!files.length) throw new Error('No daemon test files found');
@@ -31,11 +33,12 @@ async function main() {
     if (failedBuild) throw failedBuild.reason;
     const executable = builds[0].value.stdout.trim();
     if (!executable) throw new Error('Daemon test executable was not built');
-    const env = { ...process.env, PIOP_TEST_DAEMON_EXECUTABLE: executable, PIOP_TEST_CONTROLS_BUNDLE: controlsBundle };
+    const env = { ...process.env, PIOP_TEST_TIMEOUT_MS: String(TEST_TIMEOUT_MS), PIOP_TEST_DAEMON_EXECUTABLE: executable, PIOP_TEST_CONTROLS_BUNDLE: controlsBundle };
     const timings = join(directory, 'timings.json');
     const saveTimings = await daemonTestTimings(files, timings, 'target/test-cache/daemon-timings.json');
     const result = await new Promise((resolve, reject) => {
-      const child = spawn('bun', ['test', '--parallel=' + jobs, '--parallel-delay=0', '--timeout', '60000',
+      // Test timeouts are kept by test/daemon/timed-test-preload.ts, which does not count waits for daemon slots; bun keeps the same limit for hooks.
+      const child = spawn('bun', ['test', '--preload', fileURLToPath(new URL('../test/daemon/timed-test-preload.ts', import.meta.url)), '--parallel=' + jobs, '--parallel-delay=0', '--timeout', String(TEST_TIMEOUT_MS),
         '--timings=' + timings, '--update-timings', ...(values.filter ? ['-t', values.filter] : []), ...files], { env, stdio: 'inherit' });
       child.once('error', reject);
       child.once('close', (code, signal) => resolve({ code, signal }));

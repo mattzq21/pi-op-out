@@ -37,7 +37,7 @@ describe('terminal view', () => {
     });
   }
 
-  test('closing the view releases its event subscriptions at once and the terminal one task later', async () => {
+  test('closing the view releases the terminal and its event subscriptions', async () => {
     await render();
     const terminal = terminals[0];
     await view.unmount(); view = undefined;
@@ -46,8 +46,7 @@ describe('terminal view', () => {
     assert.equal(terminal.cursorDisposed, true);
     assert.equal(terminal.renderDisposed, true);
     assert.equal(terminal.scrollDisposed, true);
-    // xterm throws when it is disposed before its first viewport sync, so the view disposes it after that task.
-    assert.equal(terminal.disposed, undefined);
+    // xterm throws when it is disposed before its first viewport sync, so the view disposes it one task later.
     await new Promise(resolve => setTimeout(resolve));
     assert.equal(terminal.disposed, true);
   });

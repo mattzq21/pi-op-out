@@ -6,6 +6,7 @@ import { Database } from 'bun:sqlite';
 import { tmpdir } from 'node:os';
 import { isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { developmentEndpointKey } from '../../daemon/src/config';
+import { takeDaemonSlots } from '../daemon-slots.mjs';
 
 const root = resolve(import.meta.dir, '../..');
 const bundles = new Map<string, Promise<string>>();
@@ -99,6 +100,15 @@ cd "$remote" && HOME="$remote" PIOP_MOBILE_BIND=127.0.0.1:0 exec sh -c "$*"
 export interface RemoteMachine { id: string; name: string; target: string; home: string; stop(): Promise<void> }
 
 /**
+ * A slot for one test daemon (see test/daemon-slots.mjs). The UI test client already holds the slots of the daemon
+ * that its host process starts, so that host takes none.
+ */
+async function testDaemonSlot(): Promise<() => Promise<void>> {
+  if (process.env.PIOP_TEST_DAEMON_SLOTS_TAKEN === '1') return async () => {};
+  return takeDaemonSlots(1);
+}
+
+/**
  * Creates a remote machine for the daemon: its own HOME reached through the fake ssh, with piopd installed in
  * ~/.bun/bin like a user install. Its daemon starts on demand when the local daemon attaches with --stdio-client.
  */
@@ -108,9 +118,11 @@ export async function remoteMachine(daemon: TestDaemon, id: string, name = id, t
   mkdirSync(join(home, '.bun/bin'), { recursive: true });
   symlinkSync(executable, join(home, '.bun/bin/piopd'));
   const env = { ...process.env, HOME: home, PIOP_MOBILE_BIND: '127.0.0.1:0' };
+  // The remote daemon starts when the local daemon first connects to it, so the slot is taken now.
+  const releaseSlot = await testDaemonSlot();
   return {
     id, name, target, home,
-    stop: () => control(executable, 'stop', env).then(() => {}),
+    stop: async () => { try { await control(executable, 'stop', env); } finally { await releaseSlot(); } },
   };
 }
 
@@ -261,10 +273,11 @@ export async function startDaemon(options: BuildOptions & { home?: string; env?:
   const directory = daemonDirectory(home, options);
   const daemonLog = join(directory, 'daemon.log');
   const clients: Client[] = [];
+  const releaseSlot = await testDaemonSlot();
   let stopped: Promise<void> | undefined;
   const stop = () => stopped ??= (async () => {
     for (const client of clients) client.close();
-    await control(executable, 'stop', env);
+    try { await control(executable, 'stop', env); } finally { await releaseSlot(); }
   })();
   try {
     await control(executable, 'start', env);
