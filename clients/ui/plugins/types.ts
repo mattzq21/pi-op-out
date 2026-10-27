@@ -1,6 +1,6 @@
 import type { Accessor, Component, JSX } from "solid-js";
 import type { LucideProps } from "lucide-solid";
-import type { AgentProfile, AgentState, AppSettings, ChatMessage, ImageAttachment, RpcCommand, SessionSummary } from "../types";
+import type { AgentProfile, AgentState, AppSettings, ChatMessage, ImageAttachment, Model, RpcCommand, SessionSummary } from "../types";
 
 export interface PluginConversation { title: string; hostId: string; sessionId: string; messageCount?: number; messages: ChatMessage[]; follow?: () => Accessor<PluginConversation>; readMessages?: () => ChatMessage[]; selected?: { text: string; source: string } }
 
@@ -23,10 +23,11 @@ export interface PluginInstance {
 
 export interface PluginModule { createPlugin: (context: PluginContext) => PluginInstance }
 
-export interface PluginSettingsProps { settings: AppSettings; agents: AgentProfile[]; onChange: (patch: Partial<AppSettings>) => void }
+/** models: the models of the host whose settings are shown. */
+export interface PluginSettingsProps { settings: AppSettings; agents: AgentProfile[]; models: Model[]; onChange: (patch: Partial<AppSettings>) => void }
 
-/** Plugin settings: a tab of their own, or with "within" a sub-tab of a core settings tab such as "agents". */
-export interface PluginSettingsSection { section: string; label: string; description: string; icon: (props: LucideProps) => JSX.Element; within?: "agents"; load: () => Promise<{ default: Component<PluginSettingsProps> }> }
+/** Plugin settings: a sub-tab of the Plugins settings tab, shown while the plugin is enabled. */
+export interface PluginSettingsSection { section: string; label: string; description: string; icon: (props: LucideProps) => JSX.Element; load: () => Promise<{ default: Component<PluginSettingsProps> }> }
 
 export type PluginScope = "client" | "host" | "conversation";
 
@@ -50,7 +51,8 @@ export interface PluginDefinition {
   retainOnHostRestart?: boolean;
   name: string;
   description: string;
-  load: () => Promise<PluginModule>;
+  /** The client code. A plugin without it runs only in the daemon and only shows in the plugin list. */
+  load?: () => Promise<PluginModule>;
   settings?: PluginSettingsSection;
   splitPane?: SplitPaneRequestHandler;
   messages?: Record<string, () => Promise<{ default: Component<{ details: unknown }> }>>;

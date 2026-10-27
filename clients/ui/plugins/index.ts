@@ -1,5 +1,5 @@
 import { createSignal } from "solid-js";
-import { ClipboardCheck } from "lucide-solid";
+import { ClipboardCheck, Globe } from "lucide-solid";
 import { z } from "zod";
 import { invoke } from "../lib/platform";
 import type { PluginDefinition } from "./types";
@@ -9,9 +9,11 @@ import { reviewSplitPane } from "./review/requests";
 export const plugins: PluginDefinition[] = [
   { id: "cost", scope: "host", name: "Cost limit", description: "Per-conversation API cost limit, set with /cost.", load: () => import("./cost/plugin") },
   { id: "review", scope: "host", name: "Review", description: "Code reviews in a split pane, started with /review.", load: () => import("./review/plugin"),
-    settings: { section: "review", label: "Review", description: "Choose the agent that runs /review.", icon: ClipboardCheck, within: "agents", load: () => import("./review/ReviewSettings").then(module => ({ default: module.ReviewSettings })) },
+    settings: { section: "review", label: "Review", description: "Choose the agent that runs /review.", icon: ClipboardCheck, load: () => import("./review/ReviewSettings").then(module => ({ default: module.ReviewSettings })) },
     splitPane: reviewSplitPane,
     messages: { "piop-review-link": () => import("./review/ReviewLink").then(module => ({ default: module.ReviewLink })) } },
+  { id: "web-search", scope: "host", name: "Web search", description: "The web_search tool for agents, through the host's OpenAI ChatGPT sign-in.",
+    settings: { section: "web-search", label: "Web search", description: "Choose the OpenAI model that runs web searches.", icon: Globe, load: () => import("./web-search/WebSearchSettings").then(module => ({ default: module.WebSearchSettings })) } },
 ];
 
 export const splitPaneHandler = (title?: string) => plugins.find(plugin => plugin.splitPane?.title === title)?.splitPane;
@@ -66,7 +68,7 @@ export async function restartPlugins(host: string, enabled: string[], revision: 
   for (const id of enabled) {
     const plugin = plugins.find(plugin => plugin.id === id);
 
-    if (plugin) await plugin.load();
+    if (plugin?.load) await plugin.load();
   }
 
   const response = await restartDaemon(host, enabled, revision, closeTerminals);

@@ -11,7 +11,7 @@ describe('settings editor', () => {
   beforeEach(() => {
     dom = installDom(); saves = []; dirty = []; supportedModels = ['model'];
     mockIPC((command, args) => {
-      if (command === 'plugin_status') return { enabled: ['cost', 'review'], configured: ['cost', 'review'], revision: 'settings-1', error: null };
+      if (command === 'plugin_status') return { enabled: ['cost', 'review', 'web-search'], configured: ['cost', 'review', 'web-search'], revision: 'settings-1', error: null };
       if (command === 'provider_auth' && args.request.action === 'fast_models') return { ready: true, providers: { p: { supportedModelIds: supportedModels } } };
       throw new Error('Unexpected command: ' + command);
     }, { shouldMockEvents: true });
@@ -115,8 +115,10 @@ describe('settings editor', () => {
     await click(save()); assert.deepEqual(saves[1][0].hiddenModels, ['remote/model']); assert.deepEqual(saves[1][0].knownModels, ['remote/model']);
   });
 
-  test('the Review sub-tab of Agents sets the review agent and marks one that no longer exists', async () => {
+  test('the Review sub-tab of Plugins sets the review agent and marks one that no longer exists', async () => {
     await render({ settings: { ...props.settings, reviewAgent: 'gone' }, agentConfig: { agents: [profile('general'), profile('reviewer')] } });
+    const tabs = [...document.querySelectorAll('nav button')].map(item => item.textContent);
+    assert.equal(tabs.indexOf('Review'), tabs.indexOf('Plugins') + 1);
     await section('Review');
     const agent = control('Review agent');
     assert.equal(agent.value, 'gone');
@@ -124,6 +126,17 @@ describe('settings editor', () => {
     await act(async () => { agent.value = 'reviewer'; agent.dispatchEvent(new Event('change', { bubbles: true })); });
     await click(save());
     assert.equal(saves[0][0].reviewAgent, 'reviewer');
+  });
+
+  test('the Web search sub-tab of Plugins offers the host OpenAI models, starts on gpt-6.1-sol and saves the choice', async () => {
+    await render({ models: [{ provider: 'openai', id: 'gpt-6.1-sol', name: 'GPT-6.1 Sol' }, { provider: 'openai', id: 'gpt-5.4', name: 'GPT-5.4' }, { provider: 'anthropic', id: 'claude', name: 'Claude' }] });
+    await section('Web search');
+    const model = control('Search model');
+    assert.equal(model.value, 'gpt-6.1-sol');
+    assert.deepEqual([...model.options].map(option => option.textContent), ['GPT-6.1 Sol', 'GPT-5.4']);
+    await select('Search model', 'gpt-5.4');
+    await click(save());
+    assert.equal(saves[0][0].webSearchModel, 'gpt-5.4');
   });
 
   test('the review agent choice follows the selected host plugin state without clearing saved choices', async () => {

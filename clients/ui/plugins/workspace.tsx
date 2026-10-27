@@ -34,7 +34,7 @@ export function createPluginWorkspace(source: Accessor<PluginConversation>, visi
   const enabledPlugins = createMemo(() => {
     const order = [...new Set([host(), ...hosts()].flatMap(target => pluginStatus(target)?.enabled ?? []))];
 
-    return order.flatMap(id => plugins.filter(plugin => plugin.id === id && (plugin.scope !== "conversation" || conversationReady()) && pluginStatus(runtimeHost(plugin.scope))?.enabled.includes(plugin.id)));
+    return order.flatMap(id => plugins.filter(plugin => plugin.id === id && plugin.load && (plugin.scope !== "conversation" || conversationReady()) && pluginStatus(runtimeHost(plugin.scope))?.enabled.includes(plugin.id)));
   });
 
   const configuration = createMemo(() => JSON.stringify([
@@ -105,7 +105,7 @@ export function createPluginWorkspace(source: Accessor<PluginConversation>, visi
         if (retained.some(item => item.id === definition.id)) continue;
 
         try {
-          const module = await definition.load();
+          const module = await definition.load!();
 
           if (stale()) return;
           next.push(createRoot(dispose => {

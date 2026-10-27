@@ -59,7 +59,7 @@ test('explicit tool exclusions survive tools becoming available after the settin
   const config = configured([profile()]);
   config.sessionToolsDefaultApplied = false;
   config.subagentsDefaultApplied = false;
-  config.webSearchDefaultApplied = false;
+  config.pluginToolsApplied = [];
   const runtime = { enabledTools: ['read'] };
   const f = await agentFixture(t, { config, runtime, tools: ['read', 'subagent', 'web_search'] });
   await f.load(); await f.start();

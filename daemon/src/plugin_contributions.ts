@@ -19,6 +19,11 @@ export function enabled(): BundledPlugin[] {
   return CATALOG.filter(plugin => ids.has(plugin.id));
 }
 
+/** The default agent tools of the enabled plugins. */
+export function agentTools(): string[] {
+  return [...new Set(enabled().flatMap(plugin => plugin.agentTools ?? []))];
+}
+
 /** The slash command at the start of a message, without the slash. The runtime bridge uses the same rule. */
 export function commandName(message: string): string | undefined {
   return /^\/(\S+)/.exec(message)?.[1];

@@ -34,7 +34,7 @@ test.concurrent('opening a chat preserves directories that block extension files
     }));
     const request = { runtimeId: crypto.randomUUID(), clientId: 'extension-obstruction', cwd: daemon.home, sessionPath: chat.path };
     const generated = join(daemon.home, '.piop');
-    for (const name of ['piop-mcp-bridge.ts', 'session-broker.ts', 'piop-openai-cache-fork.ts', 'piop-codex-web-search.ts']) {
+    for (const name of ['piop-mcp-bridge.ts', 'session-broker.ts', 'piop-openai-cache-fork.ts']) {
       const obstruction = join(generated, name);
       rmSync(obstruction, { force: true });
       mkdirSync(obstruction, { mode: 0o750 });

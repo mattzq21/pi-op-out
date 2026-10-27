@@ -26,4 +26,6 @@ export interface BundledPlugin {
   /** Client requests the plugin's extension answers, with the action each one does, for the disabled error. */
   requests?: Record<string, string>;
   settings?: SettingsContribution<any>;
+  /** Tools that agents get by default: the general agent always, and each existing agent once. */
+  agentTools?: string[];
 }

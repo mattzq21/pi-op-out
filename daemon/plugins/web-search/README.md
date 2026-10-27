@@ -1,0 +1,32 @@
+# Pi OpenAI web search
+
+A single-file Pi extension exposing `web_search({ query, domains? })`. It returns a web-grounded answer and source URLs using the host's Pi OpenAI "Sign in with ChatGPT" login. No extra npm dependencies, search API keys, browser, or MCP server are needed.
+
+In Piop this is the daemon-only `web-search` plugin. It is on by default, also on hosts that saved their plugin setup before it existed, and you can turn it off in Settings → Plugins. It gives `web_search` to the general agent and once to each existing agent; you can remove it per agent under Settings → Agents. Each SSH host needs its own Pi OpenAI sign-in.
+
+For standalone Pi, from this repository:
+
+```bash
+pi --extension ./daemon/plugins/web-search/index.ts
+```
+
+Example tool arguments:
+
+```json
+{"query":"What changed in the latest stable Rust release?","domains":["blog.rust-lang.org"]}
+```
+
+The OpenAI model chosen in Settings → Plugins → Web search performs the search; the default is `gpt-6.1-sol`. The choice is read before each search. If that model is not registered or not signed in with ChatGPT on the host, the search fails with an error; there is no fallback model. Search requests consume that host's ChatGPT usage. An `sk-` API key does not count as a sign-in.
+
+## How the extraction works
+
+Adapted from [`openai-search.ts` in pi-web-access](https://github.com/nicobailon/pi-web-access/blob/811ef82a6dd04fe4abd73fa40b079aa39ee1870d/openai-search.ts), pinned at `811ef82a6dd04fe4abd73fa40b079aa39ee1870d`. The upstream MIT license is retained in `LICENSE` and in the staged source header.
+
+1. Resolve credentials through `ctx.modelRegistry.getApiKeyAndHeaders`, allowing Pi to handle OAuth refresh.
+2. POST a separate request to `https://api.openai.com/v1/responses` with the ChatGPT sign-in token as bearer authentication.
+3. Supply hosted `web_search` with `tool_choice: required`, `store: false`, `stream: true`, and `include: ["web_search_call.action.sources"]`. Only the search query is sent, not the conversation history.
+4. Parse the completed SSE response, require an actual web search call, and return answer text plus deduplicated citation/source URLs. Cancellation and a 60-second timeout propagate through the request. Incomplete and failed streams produce errors.
+
+This wraps a model's hosted search capability; it does not invoke a Codex CLI process or expose the Codex app's full `web.run` interface. The hosted search request format is described in [OpenAI's web search documentation](https://developers.openai.com/api/docs/guides/tools-web-search); the sign-in token handling follows Pi's `openai` provider.
+
+The extraction omits upstream's other providers, API-key configuration, curator UI, page scraping, video tools, caching, and background jobs. A query can ask for recent sources or information from a URL, but there is no standalone page-fetch tool. Do not load this alongside another extension registering `web_search` (including the full `pi-web-access`).
