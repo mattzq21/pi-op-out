@@ -272,5 +272,24 @@ test('a held queue holds the goal: no goal turn runs until the user resumes, and
   finish = true;
   await chat.until(history => text(history.at(-1)) === 'Polished.');
 }, 120000);
+test('a new goal sent while the queue is on hold waits in the queue and starts only when the user resumes', async () => {
+  let requests = 0;
+  agents.scripts.set('Tidy the docs', async messages => {
+    requests += 1;
+    await Bun.sleep(100);
+    if (called(messages, 'update_goal_status')) return { text: 'Tidied.' };
+    return { tool: 'update_goal_status', arguments: { status: 'complete' } };
+  });
+  const chat = await agents.rootChat();
+  await chat.command({ type: 'hold_queue', held: true });
+  await chat.command({ type: 'prompt', message: '/goal Tidy the docs', goalSubmissionId: crypto.randomUUID() });
+  await Bun.sleep(1000);
+  expect(requests).toBe(0);
+  expect(shownGoal(chat.runtimeId)).toBeNull();
+  expect(((await chat.command({ type: 'get_state' })).pendingMessages ?? []).map((entry: any) => entry.message)).toEqual(['/goal Tidy the docs']);
+  await chat.command({ type: 'hold_queue', held: false });
+  await chat.until(history => text(history.at(-1)) === 'Tidied.');
+  expect(requests).toBeGreaterThan(0);
+}, 60000);
 
 });

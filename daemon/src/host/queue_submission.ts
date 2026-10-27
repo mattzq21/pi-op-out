@@ -15,7 +15,8 @@ function goalObjective(message: string): boolean {
   return value.length > 0 && !['edit', 'clear', 'pause', 'resume', 'budget'].includes(value) && !value.startsWith('budget ');
 }
 
-function goalSubmission(command: any): boolean {
+/** True for a message that sets a new goal objective. It goes through the queue like any other message. */
+export function goalSubmission(command: any): boolean {
   const message = text(command, 'message');
   return goalObjective(message) || (message.trim() === '/goal' && Array.isArray(command.images) && command.images.length > 0);
 }
@@ -45,7 +46,8 @@ export async function enqueue(queue: QueueDelivery, command: any, name: string):
     await keep(queue, pending, 'afterGoal');
     return null;
   }
-  if (state.held && !runsAtOnce) {
+  // A new objective starts goal work, so a held queue keeps it although Pi would run the /goal command at once.
+  if (state.held && (!runsAtOnce || prepared.goalPrepared === true)) {
     await keep(queue, pending, 'held');
     return null;
   }

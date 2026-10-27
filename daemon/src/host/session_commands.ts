@@ -2,6 +2,7 @@ import { kind, text } from './json';
 import { lockGate } from './lock_gate';
 import * as Branching from './branching';
 import * as Contributions from '../plugin_contributions';
+import { goalSubmission } from './queue_submission';
 import type { Host } from './controller';
 import type { Session } from './session';
 
@@ -46,8 +47,9 @@ export async function queueCommand(session: Session, original: any, assertOwner?
   if (first === '/goal' && Array.isArray(command.images) && command.images.length) throw new Error('Goals do not accept attachments. Remove the files and images before sending.');
   Contributions.assertCommandAvailable(message);
   const queued = Contributions.queuedCommand(message);
-  if (kind(command) === 'prompt' && (!message.startsWith('/') || queued)) {
-    command.type = !queued && command.streamingBehavior === 'steer' ? 'steer' : 'follow_up';
+  const goal = goalSubmission(command);
+  if (kind(command) === 'prompt' && (!message.startsWith('/') || queued || goal)) {
+    command.type = !queued && !goal && command.streamingBehavior === 'steer' ? 'steer' : 'follow_up';
   }
   return session.queue.command(command, assertOwner);
 }
