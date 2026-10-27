@@ -136,6 +136,41 @@ test.concurrent('a fork made before a finished subagent reported gets that resul
   expect((await chat.command({ type: 'get_state' })).sessionId).toBe(forked.state.sessionId);
 }, 120000);
 
+test.concurrent('a side chat working on a prompt with only an image retries it after a fork', async () => {
+  let imageRequests = 0;
+  const stalled = Promise.withResolvers<{ text: string }>();
+  const pixel = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=';
+  agents.scripts.set('Plan the image retry', messages => {
+    const last = messages.at(-1);
+    const image = Array.isArray(last?.content) && last.content.some((part: any) => part.type === 'image_url');
+    if (image && last.role === 'user') return ++imageRequests === 1 ? stalled.promise : { text: 'Unexpected second image request.' };
+    if (text(last) === 'Retry the prompt above the fork error.') return { text: 'Image done.' };
+    return { text: text(last) === 'Next image step' ? 'Second image answer.' : 'Image main answer.' };
+  });
+  const chat = await agents.rootChat({ visible: true });
+  await chat.command({ type: 'prompt', message: 'Plan the image retry' });
+  await chat.until(history => text(history.at(-1)) === 'Image main answer.');
+  const side = await sideChat(chat, 'prompt', '/btw');
+  await agents.daemon.invoke('start_pi', { runtimeId: 'image-side', clientId: 'laptop', cwd: side.cwd, sessionPath: side.sessionPath });
+  await agents.daemon.invoke('pi_command', { runtimeId: 'image-side', command: { type: 'prompt', message: '', images: [{ type: 'image', data: pixel, mimeType: 'image/png' }] } });
+  for (let tries = 0; imageRequests < 1 && tries < 100; tries++) await Bun.sleep(100);
+  await chat.command({ type: 'prompt', message: 'Next image step' });
+  await chat.until(history => text(history.at(-1)) === 'Second image answer.');
+
+  try {
+    const forked = await chat.command({ type: 'copy_after', entryId: (await answer(chat, 'Second image answer.')).id });
+    const copy = (await sessions()).find((session: any) => session.auxiliaryParentId === forked.state.sessionId);
+    await agents.daemon.invoke('start_pi', { runtimeId: 'image-copy', clientId: 'laptop', cwd: copy.cwd, sessionPath: copy.path });
+    const copyHistory = async () => (await agents.daemon.invoke('pi_command', { runtimeId: 'image-copy', command: { type: 'get_entries' } })).entries.filter((entry: any) => entry.type === 'message').map((entry: any) => entry.message);
+    for (let tries = 0; text((await copyHistory()).at(-1)) !== 'Image done.' && tries < 300; tries++) await Bun.sleep(100);
+    const history = await copyHistory();
+    expect(text(history.at(-1))).toBe('Image done.');
+    // The copied prompt keeps its image above the fork error.
+    const error = history.findIndex(message => message.stopReason === 'error');
+    expect(history[error - 1].content.some((part: any) => part.type === 'image')).toBe(true);
+  } finally { stalled.resolve({ text: 'Late image answer.' }); }
+}, 120000);
+
 test.concurrent('a side chat that was working when its main chat was forked gets a fork error, and its copy retries the prompt', async () => {
   let sideRequests = 0;
   const stalled = Promise.withResolvers<{ text: string }>();

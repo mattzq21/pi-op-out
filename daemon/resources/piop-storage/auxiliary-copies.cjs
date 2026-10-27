@@ -9,6 +9,9 @@ const childIndex = require('../session-broker/session-child-index.cjs');
 /** The error that a copied chat shows for the prompt it was working on when its main chat was forked. */
 const FORK_ERROR = 'Fork error: this chat was working when its main chat was forked. Its last prompt is sent again.';
 
+/** The retry of a prompt that has no text, such as one image: the copied history keeps the prompt above the fork error. */
+const PROMPT_ABOVE = 'Retry the prompt above the fork error.';
+
 /** Current-state record of a fork: the copied chats that get their last prompt again when the fork starts. */
 const FORK_RETRIES = 'piop-fork-retries';
 
@@ -60,7 +63,7 @@ function interruptedWork(branch) {
   const error = { type: 'message', id: randomUUID(), parentId: promptCopy.id, timestamp: new Date().toISOString(),
     message: { role: 'assistant', content: [], api: model.api ?? 'piop', provider: model.provider ?? 'piop', model: model.model ?? 'fork', usage: zero, stopReason: 'error', errorMessage: FORK_ERROR, timestamp: Date.now() } };
 
-  return { message: promptText(prompt), entries: [promptCopy, error] };
+  return { message: promptText(prompt).trim() ? promptText(prompt) : PROMPT_ABOVE, entries: [promptCopy, error] };
 }
 
 /** Replaces every saved form of the mapped IDs and paths in value. Longer values go first, so a path is replaced whole before the ID in its file name. */
