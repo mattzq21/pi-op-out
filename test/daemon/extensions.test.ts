@@ -8,6 +8,12 @@ import { recordTools } from '../../daemon/src/tool_inventory';
 
 const root = join(import.meta.dir, '../..');
 const source = (relative: string) => readFileSync(join(root, relative), 'utf8');
+/** A plugin file as installed: its imports of daemon resources point at the installed copies. */
+const pluginSource = (relative: string) => source(relative).replaceAll('"../../resources/', '"../../');
+/** The expected content of the generated file name, installed from the source file relative. */
+const installed = (name: string, relative: string) => name === 'piop-context-window-cap/defaults.ts'
+  ? source(relative).replace('../../daemon/resources/session-broker/app-settings.cjs', './app-settings.cjs')
+  : name.startsWith('plugins/') ? pluginSource(relative) : source(relative);
 
 /**
  * Installs a fake Pi in ~/.local/bin, where the daemon looks first. The daemon starts Pi through
@@ -140,14 +146,14 @@ test('a Pi start installs the bundled extensions as private files and refreshes 
   for (const removed of ['runtime-settings.ts', 'piop-skills-store/index.ts', 'piop-tool-store/index.ts', 'piop-codemode-tools-description.ts']) expect(extensions).not.toContain(join(generated, removed));
   expect(extensions).toContain(join(generated, 'piop-providers-refresh.ts'));
   for (const [name, relative] of bundles) {
-    expect(readFileSync(join(generated, name), 'utf8')).toBe(name === 'piop-context-window-cap/defaults.ts' ? source(relative).replace('../../daemon/resources/session-broker/app-settings.cjs', './app-settings.cjs') : source(relative));
+    expect(readFileSync(join(generated, name), 'utf8')).toBe(installed(name, relative));
     expect(mode(join(generated, name))).toBe(0o600);
     writeFileSync(join(generated, name), 'stale bundle');
   }
   expect(mode(generated)).toBe(0o700);
   writeFileSync(join(generated, 'user-file'), 'keep');
   await launchPublicPi(daemon);
-  for (const [name, relative] of bundles) expect(readFileSync(join(generated, name), 'utf8')).toBe(name === 'piop-context-window-cap/defaults.ts' ? source(relative).replace('../../daemon/resources/session-broker/app-settings.cjs', './app-settings.cjs') : source(relative));
+  for (const [name, relative] of bundles) expect(readFileSync(join(generated, name), 'utf8')).toBe(installed(name, relative));
   expect(readFileSync(join(generated, 'user-file'), 'utf8')).toBe('keep');
 }, 60_000);
 
@@ -203,12 +209,12 @@ test('a Pi start repairs the permissions of unchanged extension files and restor
   chmodSync(entry, 0o644);
   chmodSync(generated, 0o755);
   await launchPublicPi(daemon);
-  expect(readFileSync(entry, 'utf8')).toBe(source('daemon/plugins/web-search/index.ts'));
+  expect(readFileSync(entry, 'utf8')).toBe(pluginSource('daemon/plugins/web-search/index.ts'));
   expect(mode(entry)).toBe(0o600);
   expect(mode(generated)).toBe(0o700);
   writeFileSync(entry, 'replacement');
   await launchPublicPi(daemon);
-  expect(readFileSync(entry, 'utf8')).toBe(source('daemon/plugins/web-search/index.ts'));
+  expect(readFileSync(entry, 'utf8')).toBe(pluginSource('daemon/plugins/web-search/index.ts'));
   expect(mode(entry)).toBe(0o600);
   expect(readdirSync(generated).filter(name => name.endsWith('.tmp'))).toEqual([]);
 }, 60_000);

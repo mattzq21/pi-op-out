@@ -2,14 +2,22 @@ import assert from 'node:assert/strict';
 import { after, before, test } from 'node:test';
 import { createServer } from 'node:http';
 import { mkdtemp, rm } from 'node:fs/promises';
+import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { build } from 'esbuild';
 
 const dir = await mkdtemp(join(tmpdir(), 'piop-web-search-'));
+// The extension reads the chosen model from the Piop settings in this home.
+const home = join(dir, 'home');
+const previousHome = process.env.HOME;
+process.env.HOME = home;
+const appSettings = createRequire(import.meta.url)('../../daemon/resources/session-broker/app-settings.cjs');
+const chooseModel = webSearchModel => appSettings.write(join(home, '.piop', 'settings.json'), JSON.stringify(webSearchModel === undefined ? {} : { webSearchModel }));
+chooseModel(undefined);
 const outfile = join(dir, 'extension.mjs');
-await build({ entryPoints: ['daemon/plugins/web-search/index.ts'], outfile, bundle: true, format: 'esm', platform: 'node', logLevel: 'silent',
+await build({ entryPoints: ['daemon/plugins/web-search/index.ts'], outfile, bundle: true, format: 'esm', platform: 'node', logLevel: 'silent', banner: { js: 'import { createRequire as piopRequire } from "node:module"; const require = piopRequire(import.meta.url);' },
   plugins: [{ name: 'pi-ai', setup(api) { api.onResolve({ filter: /^@earendil-works\/pi-ai$/ }, () => ({ path: 'pi-ai', namespace: 'sdk' })); api.onLoad({ filter: /.*/, namespace: 'sdk' }, () => ({ contents: 'export { Type } from "typebox";', resolveDir: process.cwd() })); } }] });
 const { default: register } = await import(pathToFileURL(outfile));
 
@@ -27,16 +35,16 @@ const server = createServer((request, response) => {
   });
 });
 before(() => new Promise(resolve => server.listen(0, '127.0.0.1', () => { baseUrl = `http://127.0.0.1:${server.address().port}/v1`; resolve(); })));
-after(async () => { server.close(); await rm(dir, { recursive: true, force: true }); });
+after(async () => { server.close(); process.env.HOME = previousHome; await rm(dir, { recursive: true, force: true }); });
 
 const token = 'chatgpt-sign-in-token';
 const openai = id => ({ provider: 'openai', api: 'openai-responses', id, baseUrl });
 const sse = events => events.map(event => `data: ${JSON.stringify(event)}\n\n`).join('') + 'data: [DONE]\n\n';
 
-function webSearch({ models = [openai('gpt-5.4')], current = models[0], auth = () => ({ ok: true, apiKey: token }) } = {}) {
+function webSearch({ models = [openai('gpt-6.1-sol')], auth = () => ({ ok: true, apiKey: token }) } = {}) {
   let tool;
   register({ registerTool: definition => { tool = definition; } });
-  const ctx = { model: current, modelRegistry: { getAll: () => models, getApiKeyAndHeaders: async model => auth(model) } };
+  const ctx = { model: openai('gpt-5.4'), modelRegistry: { getAll: () => models, getApiKeyAndHeaders: async model => auth(model) } };
   return params => tool.execute('call-1', params, undefined, undefined, ctx);
 }
 
@@ -72,16 +80,18 @@ test('failed searches say why and never show the login token', async () => {
   assert.match(await search({ query: 'q', domains: ['not a domain'] }).then(() => '', error => error.message), /^Invalid search domain: not a domain$/);
 });
 
-test('the search uses gpt-6.1-sol, else a fast OpenAI model signed in with ChatGPT, preferring the one in use', async () => {
+test('the search uses the chosen model, gpt-6.1-sol by default, and fails when that model is missing or not signed in with ChatGPT', async () => {
   reply = () => ({ body: sse([{ type: 'response.completed', response: { status: 'completed', output: [searched, answer('ok')] } }]) });
   const usedModel = async options => (await webSearch(options)({ query: 'q' })).details.model;
-  const models = [openai('gpt-5.2'), openai('gpt-5.4-pro'), openai('gpt-5.3-mini'), openai('gpt-5.4')];
-  assert.equal(await usedModel({ models: [...models, openai('gpt-6.1-sol')], current: openai('gpt-5.3-mini') }), 'gpt-6.1-sol');
-  assert.equal(await usedModel({ models, current: openai('gpt-5.3-mini') }), 'gpt-5.3-mini');
-  assert.equal(await usedModel({ models, current: openai('gpt-5.4-pro') }), 'gpt-5.4');
-  assert.equal(await usedModel({ models, current: { provider: 'anthropic', api: 'anthropic-messages', id: 'claude' } }), 'gpt-5.4');
-  assert.equal(await usedModel({ models, auth: model => model.id === 'gpt-5.2' ? { ok: true, apiKey: token } : { ok: false } }), 'gpt-5.2');
+  const failure = options => webSearch(options)({ query: 'q' }).then(() => '', error => error.message);
+  const models = [openai('gpt-5.4'), openai('gpt-6.1-sol'), { ...openai('gpt-5.2'), provider: 'openai-codex' }];
+  assert.equal(await usedModel({ models }), 'gpt-6.1-sol');
+  chooseModel('gpt-5.4');
+  assert.equal(await usedModel({ models }), 'gpt-5.4', 'a new choice applies to the next search');
+  chooseModel('gpt-5.2');
+  assert.equal(await failure({ models }), 'The web search model openai/gpt-5.2 is not available on this host. Pick another in Settings → Plugins → Web search.');
+  chooseModel(undefined);
   const needsSignIn = 'Web search needs an OpenAI ChatGPT sign-in. Use Pi /login → OpenAI (Sign in with ChatGPT) on this host.';
-  assert.equal(await webSearch({ models, auth: () => ({ ok: false }) })({ query: 'q' }).then(() => '', error => error.message), needsSignIn);
-  assert.equal(await webSearch({ models, auth: () => ({ ok: true, apiKey: 'sk-api-key' }) })({ query: 'q' }).then(() => '', error => error.message), needsSignIn);
+  assert.equal(await failure({ models, auth: () => ({ ok: false }) }), needsSignIn);
+  assert.equal(await failure({ models, auth: () => ({ ok: true, apiKey: 'sk-api-key' }) }), needsSignIn);
 });

@@ -1,5 +1,5 @@
 import { createSignal } from "solid-js";
-import { ClipboardCheck } from "lucide-solid";
+import { ClipboardCheck, Globe } from "lucide-solid";
 import { z } from "zod";
 import { invoke } from "../lib/platform";
 import type { PluginDefinition } from "./types";
@@ -12,7 +12,8 @@ export const plugins: PluginDefinition[] = [
     settings: { section: "review", label: "Review", description: "Choose the agent that runs /review.", icon: ClipboardCheck, load: () => import("./review/ReviewSettings").then(module => ({ default: module.ReviewSettings })) },
     splitPane: reviewSplitPane,
     messages: { "piop-review-link": () => import("./review/ReviewLink").then(module => ({ default: module.ReviewLink })) } },
-  { id: "web-search", scope: "host", name: "Web search", description: "The web_search tool for agents, through the host's OpenAI ChatGPT sign-in." },
+  { id: "web-search", scope: "host", name: "Web search", description: "The web_search tool for agents, through the host's OpenAI ChatGPT sign-in.",
+    settings: { section: "web-search", label: "Web search", description: "Choose the OpenAI model that runs web searches.", icon: Globe, load: () => import("./web-search/WebSearchSettings").then(module => ({ default: module.WebSearchSettings })) } },
 ];
 
 export const splitPaneHandler = (title?: string) => plugins.find(plugin => plugin.splitPane?.title === title)?.splitPane;

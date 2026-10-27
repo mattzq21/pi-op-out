@@ -28,9 +28,13 @@ import { Type } from "@earendil-works/pi-ai";
 import { Type as Schema, type Static } from "typebox";
 import { Check } from "typebox/value";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { homedir } from "node:os";
+import { join } from "node:path";
+import { read as readAppSettings } from "../../resources/session-broker/app-settings.cjs";
 
 const LOGIN_HINT = "Use Pi /login → OpenAI (Sign in with ChatGPT) on this host.";
 const DEFAULT_MODEL = "gpt-6.1-sol";
+const settingsSchema = Schema.Object({ webSearchModel: Schema.Optional(Schema.String()) });
 
 const TIMEOUT_MS = 60_000;
 
@@ -49,46 +53,26 @@ function record(value: unknown): value is RecordValue {
   return Check(responseValueSchema, value);
 }
 
-function rankedModels(ctx: ExtensionContext) {
-  const isOpenAI = (model: NonNullable<ExtensionContext["model"]>) =>
-    model.provider === "openai" && model.api === "openai-responses";
+/** The model chosen in Settings → Plugins → Web search, read at each search so a change applies at once. */
+function searchModelId(): string {
+  const settings = readAppSettings(join(homedir(), process.env.PIOP_STORAGE_DIRECTORY || ".piop")) ?? {};
 
-  const override = process.env.PIOP_WEB_SEARCH_MODEL?.trim();
-  const models = ctx.modelRegistry.getAll().filter(isOpenAI);
-  const fastEnough = (model: NonNullable<ExtensionContext["model"]>) => !model.id.split("-").some((part) => part === "pro" || part === "ultra");
+  if (!Check(settingsSchema, settings)) throw new Error("The saved web search model is not text. Pick one in Settings → Plugins → Web search.");
 
-  const candidates = models.filter(fastEnough)
-    .sort((a, b) => b.id.localeCompare(a.id, undefined, { numeric: true }));
-
-  const ranked = override ? models.filter((model) => model.id === override) : [
-    ...models.filter((model) => model.id === DEFAULT_MODEL),
-    ...ctx.model && isOpenAI(ctx.model) && fastEnough(ctx.model) ? [ctx.model] : [],
-    ...candidates.filter((model) => model.id.includes("terra")),
-    ...candidates.filter((model) => /^gpt-\d+(\.\d+)?$/.test(model.id)),
-    ...candidates,
-  ];
-
-  if (override && !ranked.length) throw new Error(`Unknown OpenAI web search model: ${override}`);
-
-  return ranked;
+  return settings.webSearchModel?.trim() || DEFAULT_MODEL;
 }
 
 async function selectModel(ctx: ExtensionContext) {
-  const ranked = rankedModels(ctx);
-  const seen = new Set<string>();
+  const id = searchModelId();
+  const model = ctx.modelRegistry.getAll().find((item) => item.provider === "openai" && item.api === "openai-responses" && item.id === id);
 
-  for (const model of ranked) {
-    const key = `${model.provider}/${model.id}`;
+  if (!model) throw new Error(`The web search model openai/${id} is not available on this host. Pick another in Settings → Plugins → Web search.`);
+  const auth = await ctx.modelRegistry.getApiKeyAndHeaders(model);
 
-    if (seen.has(key)) continue;
-    seen.add(key);
-    const auth = await ctx.modelRegistry.getApiKeyAndHeaders(model);
+  // OpenAI API keys start with sk-; any other OpenAI credential is a Sign in with ChatGPT token.
+  if (!auth.ok || !auth.apiKey || auth.apiKey.startsWith("sk-")) throw new Error(`Web search needs an OpenAI ChatGPT sign-in. ${LOGIN_HINT}`);
 
-    // OpenAI API keys start with sk-; any other OpenAI credential is a Sign in with ChatGPT token.
-    if (auth.ok && auth.apiKey && !auth.apiKey.startsWith("sk-")) return { model, apiKey: auth.apiKey, extraHeaders: auth.headers };
-  }
-
-  throw new Error(`Web search needs an OpenAI ChatGPT sign-in. ${LOGIN_HINT}`);
+  return { model, apiKey: auth.apiKey, extraHeaders: auth.headers };
 }
 
 function normalizeDomains(domains: string[] = []): string[] {
