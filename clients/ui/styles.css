@@ -307,7 +307,7 @@ button.agent-delivery-source:hover { color: var(--accent-soft); text-decoration:
 .image-input-toast button { display: grid; place-items: center; flex-shrink: 0; margin-left: 2px; padding: 0; border: 0; background: transparent; color: inherit; cursor: pointer; }
 .conversation-turn > .prompt-context { margin: 0 0 14px; }
 .conversation-turn > :is(.user-message, .prompt-context):has(+ .work-group) { margin-bottom: 8px; }
-.command-result { margin: 18px auto 28px; color: var(--muted); text-align: center; font-size: 12px; line-height: 1.6; white-space: pre-wrap; overflow-wrap: anywhere; }.command-result.compaction { color: var(--accent); font-size: 15px; font-weight: 700; }
+.command-result { margin: 18px auto 28px; color: var(--muted); text-align: center; font-size: 12px; line-height: 1.6; white-space: pre-wrap; overflow-wrap: anywhere; }.command-result.compaction { color: var(--accent); font-size: 15px; font-weight: 700; font-style: italic; }
 .context-injection { margin: 18px 0; color: var(--muted); font-size: 12px; line-height: 1.6; }
 .context-injection > summary { display: flex; align-items: center; justify-content: center; gap: 6px; cursor: pointer; list-style: none; }
 .context-injection > summary::-webkit-details-marker { display: none; }
