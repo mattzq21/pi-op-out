@@ -252,6 +252,8 @@ export function ChatView(props: Props & { transcriptActions?: JSXElement; follow
     const transport = props.transport;
 
     if (!transport) throw new Error("Conversation is unavailable");
+    // The saved history can show before the chat has begun to start its Pi; connect joins a start in progress.
+    if (!transport.isConnected()) await transport.connect();
     await transport.command({ type: "retry_response", entryId: await resolveMessageEntry(transport, message) });
   };
 
