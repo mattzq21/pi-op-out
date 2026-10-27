@@ -3,7 +3,7 @@ import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync
 import { spawn, execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { join } from 'node:path';
-import { fakeProgram, startDaemon, temporaryDirectory, type Client, type TestDaemon } from './harness';
+import { fakeProgram, refreshedUsage, startDaemon, temporaryDirectory, type Client, type TestDaemon } from './harness';
 import { recordTools } from '../../daemon/src/tool_inventory';
 
 const root = join(import.meta.dir, '../..');
@@ -95,7 +95,7 @@ require('node:readline').createInterface({ input: process.stdin }).on('line', li
   reject('Unsupported test server method');
 });
 `);
-  expect(await daemon.invoke('codex_usage')).toEqual({ remainingPercent: 25, resetAt: 200 });
+  expect((await refreshedUsage(daemon, 'codex')).usage).toEqual({ remainingPercent: 25, resetAt: 200 });
 });
 
 const mode = (path: string) => statSync(path).mode & 0o777;

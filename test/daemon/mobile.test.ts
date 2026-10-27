@@ -156,7 +156,7 @@ async function arrivalSocket() {
 test('stop, abort and cancel requests still run when every work slot is busy, within their own small limit', async () => {
   const codex = await arrivalSocket();
   const ssh = await arrivalSocket();
-  // Each Codex usage request waits for an answer that never comes, so it holds a work slot until its 8 s timeout.
+  // Each usage refresh waits for the one Codex run, which never answers, so it holds a work slot until the 8 s timeout.
   fakeProgram(daemon.bin, 'codex', codex.program);
   // Provider cancellations for this machine wait for its SSH connection, which never answers, so they hold their slot too.
   const slow = join(daemon.home, '.test-remotes', 'slow');
@@ -166,10 +166,12 @@ test('stop, abort and cancel requests still run when every work slot is busy, wi
   await synchronizationFinished(daemon, (await daemon.invoke('save_app_settings', { settings })).revision);
   const client = await daemon.connect();
   const settled = (promise: Promise<unknown>) => promise.then(() => 'answered', (error: Error) => error.message);
-  const work = Array.from({ length: 16 }, () => settled(client.invoke('codex_usage')));
+  const refresh = (target = client) => target.invoke('provider_usage', { refresh: true });
+  const work = Array.from({ length: 16 }, () => settled(refresh()));
   try {
-    await codex.arrivals(16);
-    expect(await client.failure('codex_usage')).toBe('Host is busy; try again');
+    // The connection handles requests in order, so once the one Codex run starts, all 16 refreshes hold a slot.
+    await codex.arrivals(1);
+    expect(await refresh().then(() => 'answered', (error: Error) => error.message)).toBe('Host is busy; try again');
     // Each of these gets a reserved slot and runs; its answer for an unknown runtime or terminal proves it was dispatched.
     expect(await client.invoke('stop_pi', { runtimeId: 'missing' })).toBe(false);
     expect(await client.failure('pi_command', { runtimeId: 'missing', command: { type: 'abort' } })).toBe('Pi is not running');
@@ -182,10 +184,11 @@ test('stop, abort and cancel requests still run when every work slot is busy, wi
     expect(await client.failure('stop_pi', { runtimeId: 'missing' })).toBe('Host is busy; try again');
     // Another connection has its own reserved slots.
     const other = await daemon.connect();
-    expect(await other.failure('codex_usage')).toBe('Host is busy; try again');
+    expect(await refresh(other).then(() => 'answered', (error: Error) => error.message)).toBe('Host is busy; try again');
     expect(await other.invoke('stop_pi', { runtimeId: 'missing' })).toBe(false);
     other.close();
-    expect(await Promise.all(work)).toEqual(Array(16).fill('Codex usage request timed out'));
+    expect(await Promise.all(work)).toEqual(Array(16).fill('answered'));
+    expect((await client.invoke('provider_usage', {})).codex).toEqual({ error: 'Codex usage request timed out' });
     client.close();
     await Promise.all(held);
   } finally {

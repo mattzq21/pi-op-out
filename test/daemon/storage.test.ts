@@ -3,7 +3,7 @@ import { mkdirSync, readFileSync, rmdirSync, rmSync, writeFileSync } from 'node:
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { join } from 'node:path';
-import { daemonExecutable, fakeProgram, startDaemon, type TestDaemon } from './harness';
+import { daemonExecutable, fakeProgram, refreshedUsage, startDaemon, type TestDaemon } from './harness';
 
 let daemon: TestDaemon;
 let profile: string;
@@ -176,8 +176,8 @@ require('node:readline').createInterface({ input: process.stdin }).on('line', li
 }
 
 test('Codex usage skips notifications and other replies and reports Codex errors', async () => {
-  const usage = async (reply: string) => { installFakeCodex(reply); return daemon.invoke('codex_usage'); };
-  const failure = async (reply: string) => { installFakeCodex(reply); return daemon.failure('codex_usage'); };
+  const usage = async (reply: string) => { installFakeCodex(reply); return (await refreshedUsage(daemon, 'codex')).usage; };
+  const failure = async (reply: string) => { installFakeCodex(reply); return (await refreshedUsage(daemon, 'codex')).error; };
   expect(await usage(JSON.stringify({ id: 2, result: { rateLimits: { primary: { usedPercent: 40, resetsAt: 123 }, secondary: { usedPercent: 10 } } } }))).toEqual({ remainingPercent: 60, resetAt: 123 });
   expect(await failure(JSON.stringify({ id: 2, error: 'denied' }))).toContain('denied');
   expect(await failure(JSON.stringify({ id: 2 }))).toBe('Codex returned no usage data');
@@ -187,7 +187,7 @@ test('Codex usage skips notifications and other replies and reports Codex errors
 test('Codex usage times out when Codex stays silent', async () => {
   installFakeCodex('silent');
   const started = Date.now();
-  expect(await daemon.failure('codex_usage')).toBe('Codex usage request timed out');
+  expect((await refreshedUsage(daemon, 'codex')).error).toBe('Codex usage request timed out');
   expect(Date.now() - started).toBeGreaterThanOrEqual(7_500);
 }, 30_000);
 

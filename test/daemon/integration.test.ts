@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, expect, test } from 'bun:test';
 import { chmodSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { fakeProgram, remoteMachine, startDaemon, temporaryDirectory, useRemotes, type TestDaemon } from './harness';
+import { fakeProgram, refreshedUsage, remoteMachine, startDaemon, temporaryDirectory, useRemotes, type TestDaemon } from './harness';
 
 let daemon: TestDaemon;
 
@@ -38,7 +38,7 @@ test('Codex usage reports server errors and missing usage data', async () => {
   ];
   for (const [initialize, rateLimits, expected] of cases) {
     codexAnswers(initialize, rateLimits);
-    expect(await daemon.failure('codex_usage'), expected).toContain(expected);
+    expect((await refreshedUsage(daemon, 'codex')).error, expected).toContain(expected);
   }
 });
 
@@ -48,7 +48,7 @@ test('Codex usage reports a Codex program that cannot start', async () => {
   mkdirSync(join(daemon.home, '.local/bin'), { recursive: true });
   writeFileSync(installed, FAKE_CODEX);
   chmodSync(installed, 0o644);
-  try { expect(await daemon.failure('codex_usage')).toStartWith('Could not start Codex:'); }
+  try { expect((await refreshedUsage(daemon, 'codex')).error).toStartWith('Could not start Codex:'); }
   finally { rmSync(installed); }
 });
 

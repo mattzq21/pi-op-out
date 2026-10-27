@@ -141,6 +141,11 @@ export function synchronizationFinished(client: Client, revision: number): Promi
   return client.waitEvent('pi://settings-changed', payload => !('committedRevision' in payload) && payload.revision === revision, 20_000);
 }
 
+/** Refreshes plan usage now and returns what the daemon then holds for one provider. */
+export async function refreshedUsage(client: Client, provider: 'codex' | 'anthropic' | 'opencodeGo'): Promise<{ usage?: any; error?: string }> {
+  return (await client.invoke('provider_usage', { refresh: true }))[provider] ?? {};
+}
+
 function logTail(path: string): string {
   try { return readFileSync(path, 'utf8').split('\n').slice(-30).map(line => line.length > 300 ? line.slice(0, 300) + '…' : line).join('\n'); }
   catch { return '(no log)'; }
@@ -251,7 +256,8 @@ export async function startDaemon(options: BuildOptions & { home?: string; env?:
   mkdirSync(bin, { recursive: true });
   fakeProgram(bin, 'ssh', FAKE_SSH);
   // A daemon of a test that fails before it stops the daemon stops by itself after 5 minutes without clients.
-  const env = { ...process.env, HOME: home, PATH: bin + ':' + process.env.PATH, PIOP_MOBILE_BIND: '127.0.0.1:0', PIOP_UNUSED_STOP_MS: '300000', PIOP_DAEMON_ORIGIN: 'test', ...options.env };
+  // Plan usage refreshes only when a test asks, so no timer starts provider programs during a test.
+  const env = { ...process.env, HOME: home, PATH: bin + ':' + process.env.PATH, PIOP_MOBILE_BIND: '127.0.0.1:0', PIOP_UNUSED_STOP_MS: '300000', PIOP_DAEMON_ORIGIN: 'test', PIOP_USAGE_REFRESH_MS: '0', ...options.env };
   const directory = daemonDirectory(home, options);
   const daemonLog = join(directory, 'daemon.log');
   const clients: Client[] = [];
