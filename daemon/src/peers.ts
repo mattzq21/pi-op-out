@@ -105,7 +105,7 @@ export class Connection {
     if (!this.alive) return;
     let event = packet?.event;
     if (typeof event !== 'string') return;
-    if (event === 'pi://groups-changed' || packet.payload?._peer === true) return;
+    if (event === 'pi://groups-changed' || event === 'pi://usage-changed' || packet.payload?._peer === true) return;
     if (event === 'pi://daemon-log-status') {
       const failure = packet.payload?.failure;
       if (packet.payload?.hostId !== 'local' || (failure !== null && typeof failure !== 'string')) { console.error('Invalid remote daemon log status'); return; }

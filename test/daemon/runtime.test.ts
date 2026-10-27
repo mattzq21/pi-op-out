@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, expect, test } from 'bun:test';
 import { mkdirSync, readdirSync, readFileSync, realpathSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
-import { daemonExecutable, fakeProgram, remoteMachine, startDaemon, temporaryDirectory, useRemotes, type Client, type RemoteMachine, type TestDaemon } from './harness';
+import { daemonExecutable, fakeProgram, refreshedUsage, remoteMachine, startDaemon, temporaryDirectory, useRemotes, type Client, type RemoteMachine, type TestDaemon } from './harness';
 
 let daemon: TestDaemon;
 
@@ -228,14 +228,14 @@ function codexAnswers(rateLimits: string, initialize = '"result":{}'): void {
 test('Codex usage reports the most used window of the codex limit and clamps the remaining percent', async () => {
   fakeProgram(daemon.bin, 'codex', FAKE_CODEX);
   codexAnswers('"result":' + JSON.stringify({ rateLimitsByLimitId: { codex: { primary: { usedPercent: 12, resetsAt: 100 }, secondary: { usedPercent: 80.4, resetsAt: 200 } } }, rateLimits: { primary: { usedPercent: 99 } } }));
-  expect(await daemon.invoke('codex_usage')).toEqual({ remainingPercent: 20, resetAt: 200 });
+  expect((await refreshedUsage(daemon, 'codex')).usage).toEqual({ remainingPercent: 20, resetAt: 200 });
   for (const [used, remaining] of [[-2, 100], [150, 0], [0, 100]]) {
     codexAnswers('"result":' + JSON.stringify({ rateLimits: { primary: { usedPercent: used } } }));
-    expect(await daemon.invoke('codex_usage'), String(used)).toEqual({ remainingPercent: remaining });
+    expect((await refreshedUsage(daemon, 'codex')).usage, String(used)).toEqual({ remainingPercent: remaining });
   }
   for (const result of [null, {}, { rateLimits: {} }, { rateLimits: { primary: { usedPercent: 'bad' } } }]) {
     codexAnswers('"result":' + JSON.stringify(result));
-    expect(await daemon.failure('codex_usage'), JSON.stringify(result)).toBe('Codex usage is unavailable');
+    expect((await refreshedUsage(daemon, 'codex')).error, JSON.stringify(result)).toBe('Codex usage is unavailable');
   }
 });
 

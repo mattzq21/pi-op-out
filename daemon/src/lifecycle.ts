@@ -70,6 +70,7 @@ async function runBackend(): Promise<void> {
     await step(() => daemon.connect(app, app.pi, app.broker, settings!, 'local'));
     await step(() => daemonRestart.initializeCandidate(app));
     await step(() => mobile.start(app));
+    await step(() => app.usage.start(app));
     await step(() => daemonRestart.ready());
     // Quit in the tray menu stops this daemon the same way as piopd stop.
     await step(async () => { removeTray = await startTray(() => app.clients.stop()); });
@@ -119,6 +120,7 @@ export async function detachOwner(app: App, owner: string, discardBlank: boolean
 
 async function shutdownBackend(app: App): Promise<void> {
   app.clients.stop();
+  app.usage.stop();
   mobile.stopAccepting(app);
   await ignore(() => app.clients.drain(10_000));
   mobile.closeConnections(app);

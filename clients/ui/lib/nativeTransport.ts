@@ -1,6 +1,6 @@
 import { hostModelConnected } from "./modelReports";
 import { DraftRuntime } from "./draftRuntime";
-import { agentStateSchema, sessionGroupsSchema, voidResultSchema, storageReportSchema, rpcEventSchema, sessionSummarySchema, codexUsageSchema, opencodeGoUsageSchema, directoryListingSchema } from "./responseSchemas";
+import { agentStateSchema, sessionGroupsSchema, voidResultSchema, storageReportSchema, rpcEventSchema, sessionSummarySchema, providerUsageSchema, directoryListingSchema } from "./responseSchemas";
 import { z } from "zod";
 import { jsonResultSchema } from "./transportSchemas";
 import { commandSessionSchema, runtimeEventSchema, runtimeStderrSchema, type CommandSession } from "./rpcSchemas";
@@ -31,6 +31,8 @@ export function initialWindowTarget(): NativeConnectionTarget {
 export interface NativeConnectionTarget { cwd?: string; sessionPath?: string; sessionId?: string; hostId?: string; readOnly?: boolean; draftKey?: string; }
 
 export const loadSessionGroups = () => call("load_session_groups", { seeds: [] }, sessionGroupsSchema);
+
+export const loadProviderUsage = (refresh: boolean) => call("provider_usage", { refresh }, providerUsageSchema);
 
 export const changeSessionGroups = (change: GroupChange) => call("change_session_groups", { change }, sessionGroupsSchema);
 
@@ -599,9 +601,6 @@ export class NativeTransport {
   loadHostSettings() { return this.settings.loadHost(); }
   loadHostSettingsChange() { return this.settings.loadHostChange(); }
   saveHostSettings(settings: AppSettings, agentsChanged = false) { return this.settings.saveHost(settings, agentsChanged); }
-  loadCodexUsage() { return call("codex_usage", undefined, codexUsageSchema); }
-  loadOpencodeGoUsage() { return call("opencode_go_usage", undefined, opencodeGoUsageSchema); }
-  loadAnthropicUsage() { return call("anthropic_usage", undefined, codexUsageSchema); }
   saveSettings(settings: AppSettings, reconnect = true, agentHostId?: string, scope: "all" | "client" | "daemon" = "all", baseline?: AppSettings) {
     return this.settings.save(settings, reconnect, agentHostId, scope, baseline);
   }

@@ -23,7 +23,7 @@ const MAX_MESSAGE = MAX_REQUEST_BYTES;
 const MAX_OUTGOING_BYTES = MAX_RESPONSE_BYTES;
 const MAX_OUTGOING_MESSAGES = 1024;
 const MAX_CONNECTIONS = 8;
-const EVENTS = ['pi://event', 'pi://stderr', 'pi://settings-changed', 'pi://settings-pending', 'pi://groups-changed', 'pi://sessions-changed', 'pi://daemon-error', 'pi://daemon-log-status', 'pi://provider-auth-changed', 'pi://session-removed', 'pi://session-restored', 'pi://host-settings-changed', 'pi://plugins-changed', 'pi://fast-models-changed', 'pi://daemon-restarting'];
+const EVENTS = ['pi://event', 'pi://stderr', 'pi://settings-changed', 'pi://settings-pending', 'pi://groups-changed', 'pi://sessions-changed', 'pi://daemon-error', 'pi://daemon-log-status', 'pi://provider-auth-changed', 'pi://session-removed', 'pi://session-restored', 'pi://host-settings-changed', 'pi://plugins-changed', 'pi://fast-models-changed', 'pi://daemon-restarting', 'pi://usage-changed'];
 
 /** A counter that limits how many items may run at once. */
 class Slots {
@@ -301,7 +301,8 @@ async function serveClient(shared: Shared, ws: WebSocketConnection, peer: boolea
     });
   };
   const subscriber: Subscriber = event => {
-    if (peer && (event.packet.payload?._peer === true || event.packet.event === 'pi://groups-changed')) return;
+    // Groups and plan usage belong to the daemon that clients connect to, so they do not go on to another daemon.
+    if (peer && (event.packet.payload?._peer === true || event.packet.event === 'pi://groups-changed' || event.packet.event === 'pi://usage-changed')) return;
     send(event.text);
   };
   await sendReady(ws);
