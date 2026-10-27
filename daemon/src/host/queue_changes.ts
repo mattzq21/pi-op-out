@@ -202,9 +202,9 @@ async function changeWaiting(queue: QueueDelivery, item: any, action: string): P
   return null;
 }
 
-/** True for a move of the goal entry, and for any follow-up move while a goal is active, because the goal entry is one of the follow-ups. */
+/** True for a move of the goal entry, and for any follow-up move while the goal works, because the goal entry is one of the follow-ups. */
 function movesAroundGoal(state: QueueState, id: string, action: any): boolean {
-  if (!state.activeGoal()) return false;
+  if (!state.goalWorking()) return false;
   const moving = action === 'moveUp' || action === 'moveDown' || (action !== null && typeof action === 'object' && !Array.isArray(action));
   if (!moving) return false;
   if (id === GOAL_ENTRY_ID) return true;

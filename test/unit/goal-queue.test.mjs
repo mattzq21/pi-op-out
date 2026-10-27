@@ -37,7 +37,7 @@ test('the goal queue entry pauses, edits and clears the goal, and a paused goal 
   await click(control('Pause goal'));
   await act(() => chat.set({ value: goal({ status: 'paused' }) }));
   await chat.rerender({ pendingMessages: [], queued: 0 });
-  assert.match(control('Paused goal').textContent, /Paused · Ship the parser/);
+  assert.match(control('Paused goal').textContent, /Paused · Goal · Ship the parser/);
   await click(control('Resume goal'));
   await click(control('Edit goal'));
   await click(control('Clear goal'));

@@ -44,10 +44,10 @@ function responseKey(command: string, args?: NativeArguments) {
 
 const locationsSchema = z.object({ bySession: z.record(z.string(), z.json()) });
 
-/** A mocked conversation lookup answers per conversation; conversations without a mocked location go to the real daemon. */
+/** A mocked conversation lookup or preview answers per conversation; conversations without a mocked answer go to the real daemon. */
 function mockedValue(key: string, args: NativeArguments | undefined, responses: Record<string, JSONType>) {
   if (!(key in responses)) return undefined;
-  const locations = key === "broker_request:locate" ? locationsSchema.safeParse(responses[key]) : undefined;
+  const locations = key === "broker_request:locate" || key === "broker_request:preview" ? locationsSchema.safeParse(responses[key]) : undefined;
 
   if (!locations?.success) return { value: responses[key] };
   const sessionId = z.object({ sessionId: z.string() }).catch({ sessionId: "" }).parse(args?.body).sessionId;

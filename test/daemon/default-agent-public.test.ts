@@ -74,6 +74,6 @@ test.concurrent('a review chat runs the review agent, while its chat runs the de
   await agents.daemon.invoke('start_pi', { runtimeId: 'review-chat', clientId: 'laptop', cwd: chat.cwd, sessionId: review.sessionId, sessionPath: review.sessionPath });
   for (let tries = 0; !activeAgent('review-chat') && tries < 100; tries++) await Bun.sleep(100);
   expect(activeAgent('default-reviewed')).toBe('deep-thinker');
-  expect(activeAgent('review-chat')).toBe('general');
+  expect(activeAgent('review-chat')).toBe('reviewer');
 }, 60000);
 

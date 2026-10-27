@@ -172,6 +172,8 @@ test('a goal is a queue entry: follow-ups below it wait, a follow-up moved above
     const said = (value: string) => messages.some((message: any) => message.role === 'user' && text(message).includes(value));
     requests.push(said('Question one'));
     if (blocking) await new Promise<void>(resolve => { gate = resolve; });
+    // Each goal turn takes a moment, as a model call does, so the history does not outgrow the checks of this test.
+    else await Bun.sleep(100);
     if (said('Question one') && !messages.some((message: any) => message.role === 'assistant' && text(message) === 'Answered one.')) return { text: 'Answered one.' };
     if (called(messages, 'update_goal_status')) return { text: 'Drafted.' };
     return finish ? { tool: 'update_goal_status', arguments: { status: 'complete' } } : { text: 'Drafting.' };

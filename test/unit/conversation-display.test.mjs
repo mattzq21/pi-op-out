@@ -222,9 +222,10 @@ test("Retry is unavailable for an unanswered prompt", async t => {
   assert.equal(view.container.querySelector('[aria-label="Message piop"]').value, '');
 });
 
-test("Retry is unavailable for an aborted response without a prompt", async t => {
+// Pi runs the stopped response again from the messages before it, so Retry does not depend on the prompt text.
+test("Retry is available for an aborted response without a prompt", async t => {
   const view = await conversation(t, { readOnly: false, messages: [{"id": "answer", "role": "assistant", "content": "Partial answer", "stopReason": "aborted"}] });
-  assert.ok(![...view.container.querySelectorAll('article button')].some(button => button.textContent === 'Retry'));
+  assert.ok([...view.container.querySelectorAll('article button')].some(button => button.textContent === 'Retry'));
   assert.equal(view.container.querySelector('[aria-label="Message piop"]').value, '');
 });
 
@@ -234,9 +235,9 @@ test("Retry is unavailable for a completed response", async t => {
   assert.equal(view.container.querySelector('[aria-label="Message piop"]').value, '');
 });
 
-test("Retry is unavailable for a blank prompt", async t => {
+test("Retry is available for a stopped response after a blank prompt", async t => {
   const view = await conversation(t, { readOnly: false, messages: [{"id": "question", "role": "user", "content": "   "}, {"id": "answer", "role": "assistant", "content": "Partial answer", "stopReason": "aborted"}] });
-  assert.ok(![...view.container.querySelectorAll('article button')].some(button => button.textContent === 'Retry'));
+  assert.ok([...view.container.querySelectorAll('article button')].some(button => button.textContent === 'Retry'));
   assert.equal(view.container.querySelector('[aria-label="Message piop"]').value, '');
 });
 
