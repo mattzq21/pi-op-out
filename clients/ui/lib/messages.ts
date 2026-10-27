@@ -158,7 +158,21 @@ export function appendQueuedProjectContext(messages: ChatMessage[], entry: PiEnt
 function applyCustomEntry(messages: ChatMessage[], entry: PiEntry, promptParts: SavedPromptParts) {
   if (entry.customType === "piop-queued-project-context") return appendQueuedProjectContext(messages, entry, true);
 
+  if (entry.customType === "piop-compaction-timing") return applyCompactionTiming(messages, entry);
+
   if (["piop-context", "pi-desktop-prompt-context"].includes(entry.customType ?? "")) appendPromptContext(messages, entry, promptParts);
+
+  return messages;
+}
+
+const compactionTimingSchema = z.object({ compactionId: z.string(), startedAt: z.number() });
+
+/** Adds the start time that the compaction timing extension saved to its compaction. */
+function applyCompactionTiming(messages: ChatMessage[], entry: PiEntry) {
+  const timing = compactionTimingSchema.parse(entry.data);
+  const index = messages.findIndex(message => message.id === timing.compactionId);
+
+  if (index >= 0) messages[index] = { ...messages[index], startedAt: timing.startedAt };
 
   return messages;
 }

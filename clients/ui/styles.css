@@ -612,6 +612,7 @@ textarea::placeholder { color: var(--faint); }
 .message-actions .fork-and-forget-button { margin-left: auto; }
 .compaction-message { grid-template-columns: 1fr; gap: 4px; margin: 4px 0 8px; }.compaction-message > .command-result { margin: 0; text-align: left; }
 .compaction-message .message-actions { opacity: 0; pointer-events: none; }
+.compaction-duration { padding-bottom: 6px; margin-bottom: 6px; border-bottom: 1px solid var(--line); color: var(--muted); font: 12px/18px "DM Sans"; }
 .compaction-message:focus-within .message-actions { opacity: 1; pointer-events: auto; }
 @media (hover: hover) { .compaction-message:hover .message-actions { opacity: 1; pointer-events: auto; } }
 .split-pane-actions { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }

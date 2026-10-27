@@ -6,7 +6,7 @@ import { AgentDelivery } from "./AgentDelivery";
 import { GoalPrompt } from "./GoalPrompt";
 import { Key } from "@solid-primitives/keyed";
 import { type Accessor, createMemo, createSignal, Index, onCleanup, Show, useContext } from "solid-js";
-import { formatDuration } from "../lib/duration";
+import { formatDuration, formatElapsed } from "../lib/duration";
 import { ConversationImageProject } from "./markdownImages";
 import { createDependencyEffect, createRef } from "../lib/solid";
 
@@ -358,8 +358,10 @@ export function Message(componentProps: Props) {
   const renderCompaction = () => {
     const forkActions = createForkActions(componentProps, () => "compaction");
     const finishedTime = createMemo(() => formatMessageTime(componentProps.message.timestamp));
+    const compactedFor = createMemo(() => formatElapsed(componentProps.message.startedAt, componentProps.message.timestamp));
 
     return <article tabIndex={-1} class="message compaction-message" classList={{ "last-point": componentProps.lastPoint === true }} aria-label="Compaction">
+      <Show when={compactedFor()}><div class="compaction-duration">Compacted for {compactedFor()}</div></Show>
       <div class="command-result compaction" role="status">{textOf(componentProps.message.content)}</div>
       <Show when={forkActions.available() || finishedTime()}><div class="message-actions"><Show when={forkActions.available()}>{forkActions.fork()}{forkActions.branch()}{forkActions.forget()}</Show>{finishedTime() && <span class="message-time">{required(finishedTime()).short}</span>}</div></Show>
     </article>;
