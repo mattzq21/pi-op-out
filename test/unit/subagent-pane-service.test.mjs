@@ -19,21 +19,19 @@ async function pane(t) {
   const chat = JSON.parse(execFileSync('node', [fileURLToPath(new URL('../fixtures/publish-chat.mjs', import.meta.url))], { encoding: 'utf8', timeout: 30000, input: JSON.stringify({ home, content: '' }) }));
   mockWindows('main');
   mockIPC((command, args) => { assert.equal(command, 'daemon_invoke'); return daemon.invoke(args.command, args.args); }, { shouldMockEvents: true });
-  const closed = [], archives = [];
-  const open = async target => { view = await renderComponent(SubagentPane, { target: { name: 'reader', hostId: 'local', ...target }, onClose: () => closed.push(1), onActivate: () => {}, onShowArchive: () => archives.push(1) }); };
+  const archives = [];
+  const open = async target => { view = await renderComponent(SubagentPane, { target: { name: 'reader', hostId: 'local', ...target }, onActivate: () => {}, onShowArchive: () => archives.push(1) }); };
   const region = () => document.querySelector('[aria-label="Subagent conversation: reader"]');
-  return { daemon, chat, open, close, region, closed, archives };
+  return { daemon, chat, open, close, region, archives };
 }
 
 test('active and archived subagent views', { timeout: 60000 }, async t => {
-  const { daemon, chat, open, close, region, closed, archives } = await pane(t);
-  await t.test('a subagent chat opens read-only, without a message box, and closes', { timeout: 30000 }, async () => {
+  const { daemon, chat, open, close, region, archives } = await pane(t);
+  await t.test('a subagent chat opens read-only, without a message box', { timeout: 30000 }, async () => {
     await open({ sessionId: chat.id, sessionPath: chat.path });
     await untilDom(() => !region().querySelector('.split-pane-status') && region().querySelector('.chat-shell, .conversation'), 15000);
     assert.equal(region().querySelector('[aria-label="Message piop"]'), null, 'there is no message box');
     assert.equal(region().querySelector('[role="alert"]'), null);
-    await act(async () => region().querySelector('[aria-label="Close subagent conversation"]').click());
-    assert.equal(closed.length, 1);
   });
   await t.test('an archived subagent chat says so and links to the archive', { timeout: 30000 }, async () => {
     await close();

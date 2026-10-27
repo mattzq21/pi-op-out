@@ -2,7 +2,7 @@ import { z } from "zod";
 import { createMutable } from "solid-js/store";
 import { required } from "./lib/required";
 import { fastModelNames, hostFastModels } from "./lib/fastModels";
-import { batch,createComputed,createMemo,createSignal,onCleanup } from "solid-js";
+import { batch,createComputed,createMemo,createSignal,onCleanup,untrack } from "solid-js";
 import { showBackgroundErrors } from "./lib/backgroundErrors";
 import { createConversationArchive } from "./appArchive";
 import { createConversationDrafts } from "./appDrafts";
@@ -18,7 +18,8 @@ import type { MissingDirectoryRequest } from "./components/MissingDirectoryDialo
 import { isConversationChanged } from "./lib/conversationChanged";
 import { initialWindowTarget,NativeTransport,openSessionWindow } from "./lib/nativeTransport";
 import { chatSubmission,waitForConversationReady } from "./lib/chatSubmission";
-import { splitPaneCommand } from "./plugins";
+import { createSidepaneTabs, localSubagentTabs } from "./lib/sidepaneTabs";
+import { parseAuxiliaryOpening, withWorkingSideChats } from "./lib/auxiliaryChats";
 import { promptWasAccepted, submitDraftPrompt } from "./lib/draftSubmission";
 import { isMobile,listen } from "./lib/platform";
 import { sessionDebugAction } from "./lib/sessionDebugAction";
@@ -44,10 +45,6 @@ const removedSessionSchema = z.object({ hostId: z.string().optional(), sessionPa
 type RemovedSession = z.infer<typeof removedSessionSchema>;
 
 const removedSessionHost = (removed: RemovedSession) => removed.hostId ?? "local";
-
-function removedSessionMatches(hostId: string | undefined, sessionId: string, sessionPath: string | undefined, removed: RemovedSession) {
-  return (hostId ?? "local") === (removed.hostId ?? "local") && (sessionId === removed.sessionId || Boolean(removed.sessionPath && sessionPath === removed.sessionPath));
-}
 
 export function createAppConversations(preloadChat: () => void) {
   const runtimePool = createMemo(() => new SessionRuntimePool());
@@ -152,14 +149,36 @@ export function createAppConversations(preloadChat: () => void) {
   const abortPending = createRef(new Set<NativeTransport>());
   const branchPending = createRef(new Set<string>());
   const sessionActionPending = createRef(new Set<string>());
-  const [splitPane, setSplitPane] = createSignal<SplitPaneState>();
-  const [subagentPane, setSubagentPane] = createSignal<SubagentTarget>();
-  const hasSidePane = () => Boolean(splitPane() || subagentPane());
-  createDependencyEffect(() => { if (splitPane()) setSubagentPane(undefined); }, () => [splitPane()]);
   const [mainComposerFocusRequest, setMainComposerFocusRequest] = createSignal(0);
   const [splitComposerFocusRequest, setSplitComposerFocusRequest] = createSignal(0);
   const [activePane, setActivePane] = createSignal<"main" | "split">("main");
-  const pendingSplitRequest = createRef<{ id: string; transport: NativeTransport; command: string } | undefined>(undefined);
+  const [splitPane, setSplitPane] = createSignal<SplitPaneState>();
+  const [subagentPane, setSubagentPane] = createSignal<SubagentTarget>();
+  const sidepane = createSidepaneTabs({
+    sessions,
+    main: () => ({ hostId: activeHostId(), sessionId: chatSession().state.sessionId || undefined }),
+    running: session => Boolean(session.isRunning) || runningSessions().has(`${session.hostId ?? "local"}:${session.id}`),
+    subagentTabs: localSubagentTabs,
+    onError: message => addNotice({ title: "Side pane", message }),
+  });
+  const hasSidePane = sidepane.shown;
+  /** Working chats as the session list shows them: a main chat also counts while one of its side chats answers. */
+  const listedRunningSessions = createMemo(() => withWorkingSideChats(sessions(), runningSessions()));
+  // The selected tab shows in the split chat pane, or in the read-only subagent pane.
+  createDependencyEffect(() => {
+    const tab = sidepane.shown() ? sidepane.selected() : undefined;
+
+    untrack(() => {
+      if (!tab) { setSplitPane(undefined); setSubagentPane(undefined); if (activePane() === "split") setActivePane("main"); return; }
+
+      if (tab.kind === "subagent") { setSplitPane(undefined); setSubagentPane({ name: tab.label, sessionId: tab.session.id, sessionPath: tab.session.path, hostId: tab.session.hostId ?? "local" }); return; }
+      setSubagentPane(undefined);
+
+      if (splitPane()?.key !== tab.key) setSplitPane({ key: tab.key, session: tab.session, request: sidepane.opening(tab.key) });
+    });
+  }, () => [sidepane.shown(), sidepane.selected()?.key]);
+  /** Side pane requests from extensions that wait for their chat to open, by request ID. */
+  const pendingSidepaneRequests = createRef(new Map<string, NativeTransport>());
 
   const terminals = createTerminalController({
     transport, conversationKey: activeConversationKey, addNotice,
@@ -273,13 +292,10 @@ export function createAppConversations(preloadChat: () => void) {
         void syncSessionIndex();
       }, z.object({ hostId: z.string(), sessionId: z.string(), sessionPath: z.string() })),
       listen("pi://session-removed", async ({ payload }) => {
+        // A removed chat leaves the side pane tabs, also when its tab is not shown.
+        sidepane.forgetRemoved(removedSessionHost(payload), payload.sessionId ?? undefined, payload.sessionPath ?? undefined);
+
         if (!await archives.removed(payload.hostId ?? "local", payload.sessionPath, payload.sessionId)) return;
-        const split = splitPane()?.session;
-
-        if (split && removedSessionMatches(split.hostId, split.id, split.path, payload) && !archives.isPending(split)) closeSplitPane();
-        const subagent = subagentPane();
-
-        if (subagent && removedSessionMatches(subagent.hostId, subagent.sessionId, subagent.sessionPath, payload)) closeSplitPane();
 
         if (payload.sessionPath) runtimePool().removeSummary(removedSessionHost(payload), payload.sessionPath);
         setSessions((current) => current.filter((session) => !runtimePool().isRemoved(session) && !archives.isArchived(session)));
@@ -347,7 +363,7 @@ export function createAppConversations(preloadChat: () => void) {
     }
   };
 
-  useAppEvents(() => ({ transport: transport(), prepareSession, handleEvent: chatSession().handleEvent, setDialogs, loadSettings, refresh, queueTerminalOutput, terminalExited: terminals.exited, addNotice, activeTransportRef, pendingSplitRequest, commandImages, setSplitPane, activeHostIdRef, setExtensionOwner, setDefinedAgents, refreshSession, setStatuses, setWidgets, setComposerDraft, transportConversationKeys, terminalSessionId, setActivePane, setMainComposerFocusRequest, queueExtensionDialog, mainDialogOwnerRef, setActiveHostId, setActiveCwd, activateConversationKey, setTerminalOpen, setTerminalTarget, configureRuntime, setError, updateConnected, flushTerminalOutput: terminals.flushOutput }));
+  useAppEvents(() => ({ transport: transport(), prepareSession, handleEvent: chatSession().handleEvent, setDialogs, loadSettings, refresh, queueTerminalOutput, terminalExited: terminals.exited, addNotice, activeTransportRef, openAuxiliaryRequest, activeHostIdRef, setExtensionOwner, setDefinedAgents, refreshSession, setStatuses, setWidgets, setComposerDraft, transportConversationKeys, terminalSessionId, setActivePane, setMainComposerFocusRequest, queueExtensionDialog, mainDialogOwnerRef, setActiveHostId, setActiveCwd, activateConversationKey, setTerminalOpen, setTerminalTarget, configureRuntime, setError, updateConnected, flushTerminalOutput: terminals.flushOutput }));
   createDependencyEffect(() => {
     const capturedTransport = transport(); const capturedRuntimePool = runtimePool();
     const shutdown = () => { for (const id of terminals.draftTerminalIds()) void capturedTransport.closeTerminal(id).catch(() => undefined); void capturedRuntimePool.disconnectAll(); };
@@ -366,7 +382,8 @@ export function createAppConversations(preloadChat: () => void) {
     const ownerTransport = capturedTransport;
     const imagePayload = images.length ? { images } : {};
 
-    if (splitPaneCommand(text)) commandImages.set(capturedTransport, images);
+    // A command can open a side chat, such as /btw or /review; its first prompt gets the command's attachments.
+    if (text.trimStart().startsWith("/")) commandImages.set(capturedTransport, images);
 
     try {
       if (behavior) return promptWasAccepted(await submitDraftPrompt(ownerTransport, { type: behavior === "steer" ? "steer" : "follow_up", message: text, ...imagePayload }));
@@ -379,16 +396,35 @@ export function createAppConversations(preloadChat: () => void) {
   };
 
   const respondToSplitRequest = (requestId: string, response: { value?: string; cancelled?: boolean }) => {
-    const pending = pendingSplitRequest.current;
+    const owner = pendingSidepaneRequests.current.get(requestId);
 
-    if (!pending || pending.id !== requestId) return;
-    pendingSplitRequest.current = undefined;
-    void pending.transport.command({ type: "extension_ui_response", id: requestId, ...response }).catch((reason) => addNotice({ title: `Could not finish ${pending.command} request`, message: reason instanceof Error ? reason.message : String(reason) }));
+    if (!owner) return;
+    pendingSidepaneRequests.current.delete(requestId);
+    void owner.command({ type: "extension_ui_response", id: requestId, ...response }).catch((reason) => addNotice({ title: "Could not finish the side chat request", message: reason instanceof Error ? reason.message : String(reason) }));
   };
 
-  const closeSplitPane = () => { if (splitPane()?.request) respondToSplitRequest(required(required((splitPane())).request).requestId, { cancelled: true }); setSplitPane(undefined); setSubagentPane(undefined); setActivePane("main"); };
+  /** Opens the auxiliary chat that an extension request of the main chat names, with its first prompt. */
+  function openAuxiliaryRequest(owner: NativeTransport, request: { id: string; placeholder?: string }) {
+    try {
+      const opening = parseAuxiliaryOpening(request.placeholder);
+      const pendingImages = commandImages.get(owner);
+      commandImages.delete(owner);
+      pendingSidepaneRequests.current.set(request.id, owner);
+      sidepane.openAuxiliary(opening.session, { requestId: request.id, initialPrompt: opening.task, initialImages: opening.task ? opening.images ?? pendingImages : undefined });
+      setActivePane("split");
+    } catch (reason) {
+      void owner.command({ type: "extension_ui_response", id: request.id, cancelled: true }).catch(() => undefined);
+      addNotice({ title: "Could not open the side chat", message: reason instanceof Error ? reason.message : String(reason) });
+    }
+  }
 
-  const openSubagent = (target: SubagentTarget) => { closeSplitPane(); setSubagentPane(target); setActivePane("split"); };
+  /** Hides the side pane. Its tabs stay. */
+  const closeSplitPane = () => { sidepane.setOpen(false); setActivePane("main"); };
+
+  /** Removes the tab of the chat in the split pane, for example after that chat was archived. */
+  const forgetSplitPane = () => { const pane = splitPane(); if (pane) sidepane.forget(pane.key); };
+
+  const openSubagent = (target: SubagentTarget) => { sidepane.openSubagent(target); setActivePane("split"); };
 
   const canLeaveSettings = () => view() !== "settings" || !settingsDirty() || window.confirm("Discard unsaved settings changes?");
   const activateTransport = createTransportActivation({ savedSessions: sessions, transport, transportConversationKeys, transportHasDraft, conversationTerminalIds, runtimePool, chatSession, composerDrafts, activeTransportRef, setTransport, discardDraft: drafts.discard, forgetTerminals: terminals.forgetConversation });
@@ -485,7 +521,7 @@ export function createAppConversations(preloadChat: () => void) {
 
     if (!isSelectedSession(draft)) selectSession(draft);
 
-    setView("chat"); closeSplitPane();
+    setView("chat");
 
     return true;
   };
@@ -546,7 +582,7 @@ export function createAppConversations(preloadChat: () => void) {
       drafts.bindTransport(nextTransport, conversationKey);
       assignNewSessionGroup(nextTransport, group);
       batch(() => {
-        setView("chat"); closeSplitPane(); setTerminalOpen(false); setTerminalTarget(undefined);
+        setView("chat"); setTerminalOpen(false); setTerminalTarget(undefined);
         updateConnected(false); setDefinedAgents(undefined); capturedSession.discardPendingUpdates();
         setActiveCwd(cwd); setActiveHostId(hostId); activateTransport(owner); activateConversationKey(conversationKey);
       });
@@ -603,7 +639,7 @@ export function createAppConversations(preloadChat: () => void) {
     // From an untouched new chat, New conversation reopens the newest unsent chat, which is not listed anywhere else.
     const unsent = existingSessionDraft();
     if (fresh && unsent && !isSelectedSession(unsent) && openDraftUntouched()) { await startNewSession(); return; }
-    if (fresh && await resetDraftInPlace()) { closeMobileSidebar(); setArchivesOpen(false); setView("chat"); closeSplitPane(); setMainComposerFocusRequest(request => request + 1); return; }
+    if (fresh && await resetDraftInPlace()) { closeMobileSidebar(); setArchivesOpen(false); setView("chat"); setMainComposerFocusRequest(request => request + 1); return; }
     await startNewSession(fresh, undefined, undefined, undefined, fresh);
   };
 
@@ -612,7 +648,6 @@ export function createAppConversations(preloadChat: () => void) {
   const chooseChatHost = (hostId: string) => hostId === activeHostId() ? undefined : startNewSession(true, undefined, undefined, hostId);
   const isSplitSession = (session: SessionSummary) => splitPane()?.session.id === session.id && (required((splitPane())).session.hostId ?? "local") === (session.hostId ?? "local");
   const isSelectedSession = (session: SessionSummary) => (session.hostId ?? "local") === activeHostId() && (session.id === chatSession().state.sessionId || `${session.hostId ?? "local"}:${session.id}` === activeConversationKey());
-  const closeSplitForSession = (session: SessionSummary) => { if (isSplitSession(session) || splitPane()?.request) closeSplitPane(); };
 
   const selectSession = (session: SessionSummary) => {
     if (archives.isPending(session) || !canLeaveSettings()) return undefined;
@@ -630,7 +665,6 @@ export function createAppConversations(preloadChat: () => void) {
 
       return transport(); }
 
-    closeSplitForSession(session);
     const nextTransport = runtimePool().forSession(session);
     const conversationKey = `${hostId}:${session.id}`; transportConversationKeys.current.set(nextTransport, conversationKey); drafts.bindTransport(nextTransport, conversationKey); activateConversationKey(conversationKey); chatSession().discardPendingUpdates(); setView("chat"); setTerminalOpen(false); updateConnected(false); setDefinedAgents(undefined); setActiveHostId(hostId); setActiveCwd(session.cwd || undefined); activateTransport(nextTransport);
 
@@ -659,7 +693,6 @@ export function createAppConversations(preloadChat: () => void) {
 
   const chooseChatProject = () => { projectOpenRequest.current += 1; setProjectOpen(true); };
 
-  const openSplitPane = (session: SessionSummary) => { const owner = runtimePool().forSession(session); transportConversationKeys.current.set(owner, `${session.hostId ?? "local"}:${session.id}`); drafts.bindTransport(owner, `${session.hostId ?? "local"}:${session.id}`); closeSplitPane(); setSplitPane({ key: crypto.randomUUID(), session }); };
 
   const openSessionDirectory = async (session: SessionSummary) => { const capturedTransport = transport();
     const actionKey = `open-directory:${session.hostId ?? "local"}:${session.id}`;
@@ -678,7 +711,7 @@ export function createAppConversations(preloadChat: () => void) {
     transportConversationKeys, isSelectedSession, isSplitSession, conversationTerminalIds,
     removeConversationTerminals: terminals.removeConversationTerminals, removeDraft: drafts.removeDraft, removeSessionDrafts: drafts.removeSessionDrafts,
     setSessions, setActiveCwd, activateTransport, activateConversationKey, updateConnected,
-    closeSplitPane, syncSessionIndex, addNotice, reuseSessionDraft, archiveCount,
+    closeSplitPane: forgetSplitPane, syncSessionIndex, addNotice, reuseSessionDraft, archiveCount,
   });
 
   const archiveSession = archives.archiveSession;
@@ -698,10 +731,6 @@ export function createAppConversations(preloadChat: () => void) {
       return; }
 
     if (session.cwdExists === false && action !== "archive" && action !== "open-directory") { await openDirlessSession(session, action);
-
-      return; }
-
-    if (action === "split") { openSplitPane(session);
 
       return; }
 
@@ -813,6 +842,6 @@ export function createAppConversations(preloadChat: () => void) {
       } });
   };
 
- return { modelVisibility, drafts, archiveReplacedSession: (session: SessionSummary) => archives.archiveSession(session), isArchiving: archives.isPending, missingDirectoryDialog, archivesOpen, setArchivesOpen, runtimePool, transport, view, setView, activeConversationKey, chatViewKey, runningSessions, unseenSessions, pendingSettingsCount, chatSession, sessions, settings, settingsSaving, debugModeSaving, setSettingsDirty, panelOpen, setPanelOpen, query, setQuery, connected, error, setError, createGroupRequest, setCreateGroupRequest, handleCreateGroup, newChatRequest, activeHostId, codexUsage, anthropicUsage, usageClock, opencodeGoBadge, codexUsageError, anthropicUsageError, opencodeGoUsageError, setDialogs, notices, setNotices, addNotice, queueExtensionDialog, resolveExtensionDialog, closeTransportDialogs, releaseSplitTransport, statuses, widgets, renameSession, setRenameSession, projectOpen, setProjectOpen, projectOpenRef, uploadsByTransport, setComposerDraft, setComposerUploads, splitPane, setSplitPane, subagentPane, hasSidePane, mainComposerFocusRequest, splitComposerFocusRequest, activePane, setActivePane, terminals, terminalOpen, terminalSessionId, terminalLocationState, startTerminal, addTerminal, selectTerminal, saveTerminalSnapshot, deleteTerminal, reconnectPending, splitSessionId, composerState, terminalViewKey, syncSessionIndex, composerControls, resolveHomeDirectory, send, respondToSplitRequest, closeSplitPane, openSubagent, canLeaveSettings, rekeyConversationUi, branch, forkAndForget, forkSourceName, openForkSource, revealEntryId, entryRevealed, startNewSession, newSession, clearChatProject, chooseChatHost, selectSession, setModel, setThinking, abortInteraction, saveSettings, setAgent, openProject, chooseChatProject, sessionAction, draftChangeFor, uploadsChangeFor, toggleComposerTerminal, toggleDebugMode, toggleDebugFeature, reconnectMain, extensionStateIsCurrent, activeDialog, projectCwd, mobileSidebarOpen, sidebar, chatAgentProps, chatModels, chatCommands, chatWidgets, composerView };
+ return { modelVisibility, drafts, isArchiving: archives.isPending, missingDirectoryDialog, archivesOpen, setArchivesOpen, runtimePool, transport, view, setView, activeConversationKey, chatViewKey, runningSessions, unseenSessions, pendingSettingsCount, chatSession, sessions, settings, settingsSaving, debugModeSaving, setSettingsDirty, panelOpen, setPanelOpen, query, setQuery, connected, error, setError, createGroupRequest, setCreateGroupRequest, handleCreateGroup, newChatRequest, activeHostId, codexUsage, anthropicUsage, usageClock, opencodeGoBadge, codexUsageError, anthropicUsageError, opencodeGoUsageError, setDialogs, notices, setNotices, addNotice, queueExtensionDialog, resolveExtensionDialog, closeTransportDialogs, releaseSplitTransport, statuses, widgets, renameSession, setRenameSession, projectOpen, setProjectOpen, projectOpenRef, uploadsByTransport, setComposerDraft, setComposerUploads, splitPane, setSplitPane, subagentPane, hasSidePane, sidepane, listedRunningSessions, archiveSession: (session: SessionSummary) => archives.archiveSession(session), mainComposerFocusRequest, splitComposerFocusRequest, activePane, setActivePane, terminals, terminalOpen, terminalSessionId, terminalLocationState, startTerminal, addTerminal, selectTerminal, saveTerminalSnapshot, deleteTerminal, reconnectPending, splitSessionId, composerState, terminalViewKey, syncSessionIndex, composerControls, resolveHomeDirectory, send, respondToSplitRequest, closeSplitPane, openSubagent, canLeaveSettings, rekeyConversationUi, branch, forkAndForget, forkSourceName, openForkSource, revealEntryId, entryRevealed, startNewSession, newSession, clearChatProject, chooseChatHost, selectSession, setModel, setThinking, abortInteraction, saveSettings, setAgent, openProject, chooseChatProject, sessionAction, draftChangeFor, uploadsChangeFor, toggleComposerTerminal, toggleDebugMode, toggleDebugFeature, reconnectMain, extensionStateIsCurrent, activeDialog, projectCwd, mobileSidebarOpen, sidebar, chatAgentProps, chatModels, chatCommands, chatWidgets, composerView };
 
 }

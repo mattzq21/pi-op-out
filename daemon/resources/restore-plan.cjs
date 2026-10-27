@@ -32,7 +32,7 @@ function referencedPaths(records) {
 
       if (entry.customType === 'piop-review' && Check(Type.String(), data?.sessionPath)) paths.set(data.sessionId, data.sessionPath);
 
-      if (entry.customType === 'piop-subagent-parent' && Check(Type.String(), data?.parentSessionPath)) paths.set(data.parentSessionId, data.parentSessionPath);
+      if (stateRecords.isAuxiliaryParent(entry) && Check(Type.String(), data?.parentSessionPath)) paths.set(data.parentSessionId, data.parentSessionPath);
     }
   }
 

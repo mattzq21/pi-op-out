@@ -21,7 +21,7 @@ function Draft() {
   const [hostId, setHostId] = createSignal('local');
   /** Opens a new chat on another agent host. */
   (window as any).chooseHost = setHostId;
-  const workspace = createPluginWorkspace(() => ({ hostId: hostId(), sessionId: '', messageCount: 0, title: 'New chat', messages: [] }), () => true, () => {});
+  const workspace = createPluginWorkspace(() => ({ hostId: hostId(), sessionId: '', messageCount: 0, title: 'New chat', messages: [] }));
   const [draft, setDraft] = createSignal('Unsent words');
   return <ComposerPluginsContext.Provider value={workspace.composers}>
     <main><ComposerPlugins disabled={false} onText={text => setDraft(value => value + ' ' + text)} /><p aria-label="Draft">{draft()}</p></main>

@@ -1,5 +1,6 @@
 import { createPanelSize } from "../lib/panelSize";
 import { createSignal, onCleanup, onMount, Show, type JSX } from "solid-js";
+import "./workspace.css";
 
 export function Sidepane(props: { open: boolean; children: JSX.Element }) {
   const [width, setWidth] = createPanelSize("piop-sidepane-width", 420, 300);
@@ -26,7 +27,7 @@ export function Sidepane(props: { open: boolean; children: JSX.Element }) {
     onCleanup(() => observer.disconnect());
   });
 
-  return <aside ref={pane} id="plugin-sidepane" class="plugin-sidepane" hidden={!props.open} aria-label="Plugins" style={{ "--plugin-width": `${shownWidth()}px` }}>
+  return <aside ref={pane} id="plugin-sidepane" class="plugin-sidepane" hidden={!props.open} aria-label="Side pane" style={{ "--plugin-width": `${shownWidth()}px` }}>
     <Show when={props.open}><div class="plugin-resizer" classList={{ dragging: dragging() }} role="separator" tabIndex={0} aria-label="Sidepane width" aria-orientation="vertical" aria-valuemin={minimum()} aria-valuemax={maximum()} aria-valuenow={shownWidth()}
       onPointerDown={event => {
         if (event.button !== 0 || !event.isPrimary) return;

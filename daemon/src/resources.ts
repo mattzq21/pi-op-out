@@ -52,6 +52,7 @@ import storagePublicationJournal from '../resources/piop-storage/session-publica
 import storagePublicationIoRaw from '../resources/piop-storage/session-publication-io.cjs?raw';
 import storagePublicationDependencies from '../resources/piop-storage/session-publication-dependencies.cjs?raw';
 import storageReviews from '../resources/piop-storage/review-publication.cjs?raw';
+import storageAuxiliaryCopies from '../resources/piop-storage/auxiliary-copies.cjs?raw';
 import storagePublicationTypes from '../resources/piop-storage/session-publication.d.cts?raw';
 import brokerModule17 from '../resources/session-broker/subagents.ts?raw';
 import brokerModule18 from '../resources/session-broker/subagent-state.ts?raw';
@@ -59,6 +60,7 @@ import brokerModule19 from '../resources/session-broker/subagent-reconciliation.
 import brokerModule21 from '../resources/session-broker/orchestration.ts?raw';
 import brokerInputHold from '../resources/session-broker/input-hold.ts?raw';
 import brokerToolInventory from '../resources/session-broker/tool-inventory.ts?raw';
+import brokerAuxiliary from '../resources/session-broker/auxiliary.ts?raw';
 import storageMailbox from '../resources/piop-storage/durable-mailbox.ts?raw';
 import brokerModule23 from '../resources/session-broker/agent-profiles.ts?raw';
 import storageRuns from '../resources/piop-storage/subagent-results.ts?raw';
@@ -155,6 +157,7 @@ export const SESSION_BROKER_MODULES: Array<[string, string]> = [
   ['orchestration.ts', brokerModule21],
   ['input-hold.ts', brokerInputHold],
   ['tool-inventory.ts', brokerToolInventory],
+  ['auxiliary.ts', brokerAuxiliary],
   ['agent-profiles.ts', brokerModule23],
   ['subagent-identity.ts', brokerModule29],
 ];
@@ -180,6 +183,7 @@ export const SESSION_EXTENSIONS: Array<[string, Array<[string, string]>]> = [
     ['goal-ownership.cjs', storageGoalOwnership],
     ['reference-publication-lock.cjs', storageReferences],
     ['review-publication.cjs', storageReviews],
+    ['auxiliary-copies.cjs', storageAuxiliaryCopies],
     ['durable-mailbox.ts', storageMailbox],
     ['subagent-results.ts', storageRuns],
     ['session-file.ts', storagePublication],

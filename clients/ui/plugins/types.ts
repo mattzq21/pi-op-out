@@ -8,16 +8,12 @@ export interface TranscriptProps { messages: Accessor<HTMLElement | null>; sourc
 
 export interface PluginContext {
   source: Accessor<PluginConversation>;
-  visible: Accessor<boolean>;
-  activate: () => void;
 }
 
 export interface ComposerToolProps { disabled: boolean; compact?: boolean; onText: (text: string) => void }
 
 export interface PluginInstance {
   composer?: Component<ComposerToolProps>;
-  panel?: () => JSX.Element;
-  show?: () => void;
   transcript?: Component<TranscriptProps>;
 }
 
@@ -31,19 +27,8 @@ export interface PluginSettingsSection { section: string; label: string; descrip
 
 export type PluginScope = "client" | "host" | "conversation";
 
-export interface SplitPaneControls { state: Accessor<AgentState>; messages: Accessor<ChatMessage[]>; paneKey: Accessor<string>; connected: Accessor<boolean>; busy: Accessor<boolean>; reportError: (cause: unknown) => void }
-
-export interface SplitPaneRequest { requestId: string; readOnly: boolean; initialPrompt?: string; initialImages?: ImageAttachment[]; actions?: Component<SplitPaneControls>; notice?: Component<{ onShowArchive: () => void }> }
-
-export interface SplitPaneParent { connectionTarget: () => { sessionId?: string }; command: (command: RpcCommand) => Promise<unknown> }
-
-export interface SplitPaneRequestHandler {
-  title: string;
-  command: string;
-  commands: string[];
-  rejectInSplit: string;
-  open: (request: { id: string; placeholder?: string }, options: { activeHostId: string; pendingImages?: ImageAttachment[]; parent: SplitPaneParent }) => { session: SessionSummary; request: SplitPaneRequest };
-}
+/** The first prompt of an auxiliary chat that a plugin command opened in the side pane, and the request to answer when the chat opens. */
+export interface SidepaneOpening { requestId: string; initialPrompt?: string; initialImages?: ImageAttachment[] }
 
 export interface PluginDefinition {
   id: string;
@@ -54,6 +39,7 @@ export interface PluginDefinition {
   /** The client code. A plugin without it runs only in the daemon and only shows in the plugin list. */
   load?: () => Promise<PluginModule>;
   settings?: PluginSettingsSection;
-  splitPane?: SplitPaneRequestHandler;
+  /** Slash commands that wait in the follow-up queue like a message. */
+  queuedCommands?: string[];
   messages?: Record<string, () => Promise<{ default: Component<{ details: unknown }> }>>;
 }

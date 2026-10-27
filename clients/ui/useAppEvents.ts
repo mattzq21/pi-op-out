@@ -6,12 +6,11 @@ import { initializeSession } from "./lib/sessionInitialization";
 import { type Accessor } from "solid-js";
 import { createDependencyEffect, type Dispatch, type RefObject, type StateUpdate } from "./lib/solid";
 
-import { MCP_STATUS_KEY, PROMPT_CONTEXT_STATUS_KEY, staleExtensionContext, type OwnedExtensionDialog, type SplitPaneState, type TerminalTarget } from "./appSupport";
+import { MCP_STATUS_KEY, PROMPT_CONTEXT_STATUS_KEY, staleExtensionContext, type OwnedExtensionDialog, type TerminalTarget } from "./appSupport";
 import { decodeAgentValue, DEFINED_AGENTS_STATUS_KEY } from "./lib/agentProtocol";
 import { definedAgentsCapabilitySchema } from "./lib/agentSchemas";
 import { NativeTransport } from "./lib/nativeTransport";
-import { splitPaneHandler } from "./plugins";
-import type { SplitPaneRequestHandler } from "./plugins/types";
+import { OPEN_AUXILIARY_CHAT } from "./lib/auxiliaryChats";
 import type { AgentState, AppSettings, DefinedAgentsCapability, ExtensionUiRequest, RpcEvent } from "./types";
 
 type AppEventsContext = {
@@ -25,9 +24,8 @@ type AppEventsContext = {
   terminalExited: (terminalId: string) => void;
   addNotice: (notice: { title: string; message: string; }) => void;
   activeTransportRef: RefObject<NativeTransport>;
-  pendingSplitRequest: RefObject<{ id: string; transport: NativeTransport; command: string } | undefined>;
-  commandImages: WeakMap<NativeTransport, import("./types").ImageAttachment[]>;
-  setSplitPane: Dispatch<StateUpdate<SplitPaneState | undefined>>;
+  /** Opens the auxiliary chat that an extension request of the main chat names. */
+  openAuxiliaryRequest: (owner: NativeTransport, request: { id: string; placeholder?: string }) => void;
   activeHostIdRef: RefObject<string>;
   setExtensionOwner: Dispatch<StateUpdate<NativeTransport>>;
   setDefinedAgents: Dispatch<StateUpdate<DefinedAgentsCapability | undefined>>;
@@ -108,21 +106,6 @@ export function useAppEvents(options: Accessor<AppEventsContext>) {
         if (capturedOptions.transport !== capturedOptions.activeTransportRef.current) return;
         const notifyExtension = () => { if (!event.inputRejected) capturedOptions.addNotice({ title: request.notifyType === "error" ? "Extension error" : request.notifyType === "warning" ? "Extension warning" : "piop extension", message: request.message || "Notification" }); };
 
-        const openSplitPane = (handler: SplitPaneRequestHandler) => {
-          try {
-            const opened = handler.open(request, { activeHostId: capturedOptions.activeHostIdRef.current, pendingImages: capturedOptions.commandImages.get(capturedOptions.transport), parent: capturedOptions.transport });
-            const previous = capturedOptions.pendingSplitRequest.current;
-
-            if (previous && previous.id !== request.id) void previous.transport.command({ type: "extension_ui_response", id: previous.id, cancelled: true }).catch(() => undefined);
-            capturedOptions.pendingSplitRequest.current = { id: request.id, transport: capturedOptions.transport, command: handler.command };
-            capturedOptions.setSplitPane({ key: crypto.randomUUID(), session: opened.session, request: opened.request });
-            capturedOptions.commandImages.delete(capturedOptions.transport);
-          } catch (reason) {
-            void capturedOptions.transport.command({ type: "extension_ui_response", id: request.id, cancelled: true });
-            capturedOptions.addNotice({ title: `Could not start ${handler.command}`, message: reason instanceof Error ? reason.message : String(reason) });
-          }
-        };
-
         const setDefinedAgentStatus = () => {
           capturedOptions.setExtensionOwner(capturedOptions.transport);
 
@@ -175,9 +158,7 @@ export function useAppEvents(options: Accessor<AppEventsContext>) {
 
         if (request.method === "notify") return notifyExtension();
 
-        const splitHandler = request.method === "input" ? splitPaneHandler(request.title) : undefined;
-
-        if (splitHandler) return openSplitPane(splitHandler);
+        if (request.method === "input" && request.title === OPEN_AUXILIARY_CHAT) return capturedOptions.openAuxiliaryRequest(capturedOptions.transport, request);
 
         if (request.method === "setStatus") return handleStatus();
 

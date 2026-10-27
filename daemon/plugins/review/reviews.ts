@@ -15,8 +15,10 @@ import { locateConversation } from "../../resources/session-broker/conversation-
 import { acknowledge, pendingReviews, release, type SessionPublication } from "../../resources/piop-storage/session-publication.cjs";
 import { read as readAppSettings } from "../../resources/session-broker/app-settings.cjs";
 import type { ReviewDelegation, ReviewImage, ReviewSession } from "./interface.ts";
+import { openAuxiliaryChat } from "../../resources/session-broker/auxiliary.ts";
+import { AUXILIARY_PARENT } from "../../resources/piop-storage/session-records.cjs";
 
-const reviewSchema = Schema.Object({ sessionId: Schema.String(), sessionPath: Schema.String(), cwd: Schema.String(), parentSessionId: Schema.String(), hostId: Schema.Optional(Schema.String()), publicationId: Schema.Optional(Schema.String()) });
+const reviewSchema = Schema.Object({ sessionId: Schema.String(), sessionPath: Schema.String(), cwd: Schema.String(), parentSessionId: Schema.String(), hostId: Schema.Optional(Schema.String()), publicationId: Schema.Optional(Schema.String()), scope: Schema.Optional(Schema.String()) });
 
 const settingsSchema = Schema.Object({ reviewAgent: Schema.Optional(Schema.String()) });
 
@@ -25,8 +27,6 @@ const fileErrorSchema = Schema.Object({ code: Schema.String() });
 const sessionHeaderSchema = Schema.Object({ type: Schema.Literal("session"), id: Schema.String() });
 
 type ReviewRecord = Static<typeof reviewSchema>;
-
-const feedbackDetailsSchema = Schema.Object({ toolCallId: Schema.String() });
 
 async function requireSavedReviewParent(ctx: ExtensionContext) {
   const path = ctx.sessionManager.getSessionFile();
@@ -50,7 +50,15 @@ async function requireSavedReviewParent(ctx: ExtensionContext) {
   } finally { await file.close(); }
 }
 
-async function createReview(pi: ExtensionAPI, ctx: ExtensionContext, agentState: SessionAgentState, signal?: AbortSignal) {
+/** "Review <scope>", or "Review <n>" where n counts this chat's reviews without a scope. */
+function reviewName(ctx: ExtensionContext, scope: string | undefined) {
+  if (scope) return `Review ${scope}`;
+  const unscoped = ctx.sessionManager.getEntries().filter(entry => entry.type === "custom" && entry.customType === "piop-review" && Check(reviewSchema, entry.data) && entry.data.parentSessionId === ctx.sessionManager.getSessionId() && !entry.data.scope).length;
+
+  return `Review ${unscoped + 1}`;
+}
+
+async function createReview(pi: ExtensionAPI, ctx: ExtensionContext, agentState: SessionAgentState, scope: string | undefined, signal?: AbortSignal) {
   signal?.throwIfAborted();
   const header = ctx.sessionManager.getHeader();
 
@@ -63,18 +71,19 @@ async function createReview(pi: ExtensionAPI, ctx: ExtensionContext, agentState:
   signal?.throwIfAborted();
   const timestamp = new Date().toISOString();
   const sessionId = await reserveSessionId();
-  const record = { sessionId, sessionPath: join(ctx.sessionManager.getSessionDir(), `${timestamp.replace(/[:.]/g, "-")}_${sessionId}.jsonl`), cwd: ctx.cwd, parentSessionId: ctx.sessionManager.getSessionId(), hostId: currentHost(), publicationId: randomUUID() };
+  const record = { sessionId, sessionPath: join(ctx.sessionManager.getSessionDir(), `${timestamp.replace(/[:.]/g, "-")}_${sessionId}.jsonl`), cwd: ctx.cwd, parentSessionId: ctx.sessionManager.getSessionId(), hostId: currentHost(), publicationId: randomUUID(), ...scope ? { scope } : {} };
+  const name = reviewName(ctx, scope);
   const metadataId = randomUUID();
 
   const publication = await writeSessionFile(record.sessionPath, [
     { type: "session", version: header.version, id: sessionId, timestamp, cwd: ctx.cwd },
-    { type: "custom", id: metadataId, parentId: null, timestamp, customType: "piop-review-parent", data: { parentSessionId: record.parentSessionId, sessionId, hostId: record.hostId, parentHostId: record.hostId, publicationId: record.publicationId } },
+    { type: "custom", id: metadataId, parentId: null, timestamp, customType: AUXILIARY_PARENT, data: { kind: "review", parentSessionId: record.parentSessionId, sessionId, hostId: record.hostId, parentHostId: record.hostId, publicationId: record.publicationId } },
     { type: "custom", id: `${metadataId}-agent`, parentId: metadataId, timestamp, customType: "pi-define-agents-state", data: agentState },
     ...fastMode ? [{ ...fastMode, id: `${metadataId}-fast-mode`, parentId: `${metadataId}-agent`, timestamp }] : [],
-    { type: "session_info", id: randomUUID(), parentId: fastMode ? `${metadataId}-fast-mode` : `${metadataId}-agent`, timestamp, name: "Code review" },
+    { type: "session_info", id: randomUUID(), parentId: fastMode ? `${metadataId}-fast-mode` : `${metadataId}-agent`, timestamp, name },
   ], { review: { record, parentSessionPath }, beforeWrite: () => signal?.throwIfAborted() });
 
-  return { record, publication };
+  return { record, publication, name };
 }
 
 function matchesPublication(value: ReviewRecord, record: ReviewRecord) {
@@ -114,18 +123,11 @@ async function reconcileReviews(pi: ExtensionAPI, ctx: ExtensionContext) {
   } catch (error) { if (current()) ctx.ui.notify(`Review publication recovery is pending: ${(error instanceof Error ? error.message : String(error))}`, "warning"); }
 }
 
-async function openReview(ctx: ExtensionContext, record: ReviewRecord, task?: string, inherited = false, images?: ReviewImage[]) {
+async function openReview(ctx: ExtensionContext, record: ReviewRecord, name: string, task: string, images?: ReviewImage[]) {
   const hostId = record.hostId ?? currentHost();
   const location = await locateConversation(record.sessionId, hostId);
-  ctx.ui.setStatus("review", "Opening code review…");
-  const readOnly = inherited || location.archived;
-  const payload: ReviewRecord & { task?: string; images?: ReviewImage[]; readOnly: boolean; archived: boolean; inherited: boolean } = { ...record, ...location, hostId, readOnly, inherited };
 
-  if (task && !readOnly) { payload.task = task; payload.images = images; }
-
-  void ctx.ui.input("__pi_desktop_review__", JSON.stringify(payload)).catch(error => {
-    ctx.ui.notify(`/review failed: ${error instanceof Error ? error.message : String(error)}`, "error");
-  }).finally(() => ctx.ui.setStatus("review", undefined));
+  openAuxiliaryChat(ctx, { kind: "review", name, sessionId: record.sessionId, sessionPath: location.sessionPath, cwd: location.cwd, hostId, parentSessionId: record.parentSessionId, task, ...images?.length ? { images } : {} });
 }
 
 async function reviewSettings() {
@@ -166,21 +168,12 @@ async function reviewProfile(pi: ExtensionAPI, agent: string) {
   return profile.state;
 }
 
-/** Registers review publication recovery and review feedback context, and returns the review feature. */
+/** Registers review publication recovery and send_to_main for review chats, and returns the review feature. */
 export function registerReviews(pi: ExtensionAPI): ReviewSession {
+  const unsubscribe = pi.events.on("piop:auxiliary:kind", request => { if (request.kind === "review") request.sendToMain = "Send the review result to agent whose work you reviewed, when user asks"; });
+  pi.on("session_shutdown", () => { unsubscribe(); });
   pi.on("session_start", (_event, ctx) => reconcileReviews(pi, ctx));
   pi.on("agent_settled", (_event, ctx) => reconcileReviews(pi, ctx));
-  pi.on("context", event => ({ messages: event.messages.flatMap((message): typeof event.messages => {
-    if (message.role !== "custom" || message.customType !== "piop-review-feedback" || !Check(feedbackDetailsSchema, message.details)) return [message];
-    const toolCallId = message.details.toolCallId;
-
-    return [
-      { role: "assistant", content: [{ type: "toolCall", id: toolCallId, name: "review_feedback", arguments: {} }], api: "openai-responses", provider: "piop", model: "review", usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } }, stopReason: "toolUse", timestamp: message.timestamp },
-      { role: "toolResult", toolCallId, toolName: "review_feedback", content: [{ type: "text", text: Parse(Schema.String(), message.content) }], isError: false, timestamp: message.timestamp },
-    ];
-  }) }));
-
-  const linkedReview = (ctx: ExtensionContext, reviewId: string) => ctx.sessionManager.getEntries().find(entry => entry.type === "custom" && entry.customType === "piop-review" && Check(reviewSchema, entry.data) && entry.data.sessionId === reviewId);
 
   return {
     async start(ctx, request) {
@@ -195,25 +188,10 @@ export function registerReviews(pi: ExtensionAPI): ReviewSession {
       const prompt = `${settings.prompt.trimEnd()}\n\n${request.scope?.trim() ? `Review ${request.scope.trim()}` : "Review the scope affected since last branch off."}`;
 
       const task = subagentReviewTask(profile, request.delegation, prompt);
-      const { record, publication } = await createReview(pi, ctx, profile, signal);
+      const { record, publication, name } = await createReview(pi, ctx, profile, request.scope?.trim() || undefined, signal);
       await publishReview(pi, ctx, record, publication);
       signal?.throwIfAborted();
-      await openReview(ctx, record, task, false, request.images);
-    },
-    async open(ctx, reviewId) {
-      const entry = linkedReview(ctx, reviewId);
-
-      if (!entry || entry.type !== "custom") throw new Error("Review not found in this conversation");
-      const record = Parse(reviewSchema, entry.data);
-
-      await openReview(ctx, record, undefined, record.parentSessionId !== ctx.sessionManager.getSessionId());
-    },
-    async sendFeedback(ctx, reviewId, message) {
-      const parentId = ctx.sessionManager.getSessionId();
-      const review = ctx.sessionManager.getEntries().find(entry => entry.type === "custom" && entry.customType === "piop-review" && Check(reviewSchema, entry.data) && entry.data.sessionId === reviewId && entry.data.parentSessionId === parentId);
-
-      if (!review || !message.trim()) throw new Error("Feedback requires a review belonging to this conversation");
-      pi.sendMessage({ customType: "piop-review-feedback", content: message, display: true, details: { sessionId: reviewId, toolCallId: randomUUID() } }, { triggerTurn: true, deliverAs: "followUp" });
+      await openReview(ctx, record, name, task, request.images);
     },
   };
 }

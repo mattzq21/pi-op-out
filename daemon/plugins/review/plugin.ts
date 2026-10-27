@@ -15,6 +15,5 @@ export const review: BundledPlugin = {
     files: [['interface.ts', face], ['review-prompt.txt', prompt], ['reviews.ts', reviews], ['commands.ts', commands], ['index.ts', index]],
   },
   commands: { review: 'queued', rs: 'queued' },
-  requests: { open_review: 'open reviews', review_feedback: 'send review feedback' },
   settings: reviewSettings,
 };

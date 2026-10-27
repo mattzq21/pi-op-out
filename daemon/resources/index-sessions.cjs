@@ -2,9 +2,8 @@ const stateRecords = require('./piop-storage/session-records.cjs');
 const fs = require('node:fs');
 const { Type } = require('typebox');
 const { Check } = require('typebox/value');
-const { reviewVisibility } = require('./piop-storage/session-publication.cjs');
 
-const parentSchema = Type.Object({ parentSessionId: Type.String(), sessionId: Type.Optional(Type.String()) });
+const parentSchema = Type.Object({ kind: Type.String({ minLength: 1 }), parentSessionId: Type.String(), sessionId: Type.Optional(Type.String()) });
 
 const entrySchema = Type.Object({ type: Type.String() });
 
@@ -31,10 +30,9 @@ function timestamp(value) {
 class SessionIndex {
   header;
   name;
-  subagentParentId;
-  ownSubagentParentId;
-  review = false;
-  reviewParentId;
+  /** The auxiliary parent entry copied from another session: kept only when the session has no own entry and was not forked. */
+  inheritedAuxiliary;
+  ownAuxiliary;
   first = '';
   hasUserMessage = false;
   preview = '';
@@ -51,26 +49,24 @@ class SessionIndex {
   unnamed = 0;
 
   metadata(entry) {
-    if (entry.type === 'custom') {
+    if (entry.type === 'custom' && entry.customType === stateRecords.AUXILIARY_PARENT) {
       const data = entry.data ?? {};
 
-      if (Check(parentSchema, data)) this.parent(entry.customType, data);
+      if (Check(parentSchema, data)) this.parent(data);
     }
 
   }
 
-  parent(kind, data) {
+  parent(data) {
     const own = data.sessionId === this.header.id;
-    const legacy = data.sessionId === undefined && !this.header.parentSession;
+    const unbound = data.sessionId === undefined && !this.header.parentSession;
 
-    if (!own && !legacy) return;
+    if (!own && !unbound) return;
 
-    if (kind === 'piop-review-parent') { this.review = true; this.reviewParentId = data.parentSessionId; }
+    const auxiliary = { parentId: data.parentSessionId, kind: data.kind };
 
-    if (kind !== 'piop-subagent-parent') return;
-
-    if (own) this.ownSubagentParentId = data.parentSessionId;
-    else this.subagentParentId = data.parentSessionId;
+    if (own) this.ownAuxiliary = auxiliary;
+    else this.inheritedAuxiliary = auxiliary;
   }
 
   /** What the chat list needs of a message entry, or undefined for other entries. */
@@ -147,15 +143,6 @@ class SessionIndex {
     this.leaf = id;
   }
 
-  visible(path) {
-    if (!this.review) return true;
-
-    if (!reviewVisibility(path, this.reviewParentId)) return false;
-    this.name = 'Review awaiting parent publication';
-
-    return true;
-  }
-
   summary(path) {
     if (this.header) this.name = stateRecords.sessionName(path, this.header.id);
     if (this.header) {
@@ -169,11 +156,11 @@ class SessionIndex {
       console.error(`${path}: ${notice}`);
       this.preview = notice;
     }
-    if (!this.header || !this.visible(path)) return;
+    if (!this.header) return;
 
     const forkSourceId = typeof this.header.piopForkSource?.sessionId === 'string' && this.header.piopForkSource.sessionId ? this.header.piopForkSource.sessionId : undefined;
 
-    return { path, id: this.header.id || '', cwd: this.header.cwd || 'Unknown project', name: stateRecords.capSessionName(this.name || this.first || 'Untitled session'), preview: this.preview, messageCount: this.count, lastMessageAt: this.lastMessageAt, apiCost: this.cost, explicitlyNamed: !!this.name, hasUserMessage: this.hasUserMessage, bytes: this.bytes, subagentParentId: this.ownSubagentParentId ?? this.subagentParentId, forkSourceId };
+    return { path, id: this.header.id || '', cwd: this.header.cwd || 'Unknown project', name: stateRecords.capSessionName(this.name || this.first || 'Untitled session'), preview: this.preview, messageCount: this.count, lastMessageAt: this.lastMessageAt, apiCost: this.cost, explicitlyNamed: !!this.name, hasUserMessage: this.hasUserMessage, bytes: this.bytes, auxiliaryParentId: (this.ownAuxiliary ?? this.inheritedAuxiliary)?.parentId, auxiliaryKind: (this.ownAuxiliary ?? this.inheritedAuxiliary)?.kind, forkSourceId };
   }
 }
 

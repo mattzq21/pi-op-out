@@ -3,7 +3,7 @@ const { randomUUID, createHash } = require('node:crypto');
 
 const capSessionName = name => Array.from(name.trim()).slice(0, 30).join('').trimEnd();
 
-const currentTypes = new Set(['pi-define-agents-state', 'piop-fast-mode-state', 'piop-context-cap', 'piop-session-cost-limit', 'piop-openai-cache-fork', 'piop-codemode-abilities', 'piop-input-hold']);
+const currentTypes = new Set(['pi-define-agents-state', 'piop-fast-mode-state', 'piop-context-cap', 'piop-session-cost-limit', 'piop-openai-cache-fork', 'piop-codemode-abilities', 'piop-input-hold', 'piop-fork-retries']);
 const nativeKeys = new Map([['session_info', 'piop-session-name'], ['model_change', 'piop-selected-model'], ['thinking_level_change', 'piop-thinking-level']]);
 const stateKey = entry => nativeKeys.get(entry.type) ?? entry.customType;
 const isCurrent = entry => nativeKeys.has(entry.type) || entry.type === 'custom' && currentTypes.has(entry.customType);
@@ -166,10 +166,20 @@ function create(type, data, parentId) {
   return { type: 'custom', customType: type, data: structuredClone(data), id: randomUUID(), parentId, timestamp: new Date().toISOString() };
 }
 
+/** The entry that makes a session auxiliary: owned by a root session. Its data has kind (for example "subagent", "review" or a plugin kind), sessionId and parentSessionId. */
+const AUXILIARY_PARENT = 'piop-auxiliary-parent';
+
+const isAuxiliaryParent = entry => entry?.type === 'custom' && entry.customType === AUXILIARY_PARENT && typeof entry.data?.kind === 'string' && typeof entry.data?.parentSessionId === 'string';
+
 function isAuxiliary(entries) {
-  return entries.some(entry => entry?.type === 'custom' && ['piop-subagent-parent', 'piop-review-parent'].includes(entry.customType));
+  return entries.some(isAuxiliaryParent);
+}
+
+/** The auxiliary parent data that entries saved for sessionId, or undefined for a root session. */
+function auxiliaryParent(entries, sessionId) {
+  return entries.findLast(entry => isAuxiliaryParent(entry) && (sessionId === undefined || entry.data.sessionId === sessionId))?.data;
 }
 
 function canFork(entries) { return !isAuxiliary(entries); }
 
-module.exports = { capSessionName, isAuxiliary, canFork, selectBranch, selectedLeaf, stateKey, initializeSessionName, sessionName, isCurrent, history, stored, save, seed, capture, append, records, merge, revision, create };
+module.exports = { AUXILIARY_PARENT, isAuxiliaryParent, auxiliaryParent, capSessionName, isAuxiliary, canFork, selectBranch, selectedLeaf, stateKey, initializeSessionName, sessionName, isCurrent, history, stored, save, seed, capture, append, records, merge, revision, create };

@@ -62,9 +62,7 @@ export type SidebarState = ReturnType<typeof createSidebarState>;
 
 export function createSidebarState(source: Accessor<SessionSummary[]>, query: Accessor<string>, projects?: ReturnType<typeof useSessionGroups>) {
   const sessions = createMemo(() => {
-    const parents = new Set(source().map(session => `${session.hostId ?? "local"}:${session.id}`));
-
-    return source().filter(session => !session.subagentParentId || !parents.has(`${session.hostId ?? "local"}:${session.subagentParentId}`));
+    return source().filter(session => !session.auxiliaryParentId);
   });
 
   const storedGroups = projects ?? useSessionProjects();

@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { canFork, isCurrent } from "../piop-storage/session-records.cjs";
+import { AUXILIARY_PARENT, canFork, isCurrent } from "../piop-storage/session-records.cjs";
 import { reserveSessionId } from "../piop-storage/session-file.ts";
 import type { ExtensionCommandContext, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { realpath, mkdir, rmdir } from "node:fs/promises";
@@ -10,9 +10,10 @@ import { Type } from "typebox";
 import { Check } from "typebox/value";
 import { existsSync } from "node:fs";
 import { releaseHistory, retainHistory, rootForDirectory } from "../piop-storage/goal-assets.cjs";
-import type { ForkMode, ForkResult } from "./interface.ts";
+import { planAuxiliaryCopies, publishAuxiliaryCopies, retryRecord, rewriteForkHistory } from "../piop-storage/auxiliary-copies.cjs";
+import type { AuxiliaryCopy, ForkMode, ForkResult } from "./interface.ts";
 
-export type ForkOptions = { cwd?: string; entryId?: string; position?: "before" | "at" };
+export type ForkOptions = { cwd?: string; entryId?: string; position?: "before" | "at"; auxiliary?: AuxiliaryCopy };
 
 const fileErrorSchema = Type.Object({ code: Type.String() });
 
@@ -41,6 +42,22 @@ export async function forkSession(ctx: ExtensionContext, mode: ForkMode, entryId
   return { ...fork, text };
 }
 
+/** The last finished final answer on the current branch: a stopped assistant message without tool calls. */
+function lastFinishedAnswer(ctx: ExtensionContext) {
+  return ctx.sessionManager.getBranch().findLast(entry => entry.type === "message" && entry.message.role === "assistant" && entry.message.stopReason === "stop" && !entry.message.content.some(part => part.type === "toolCall"))?.id;
+}
+
+/** SessionControls.copyAuxiliary. */
+export async function copyAuxiliary(ctx: ExtensionContext, copy: AuxiliaryCopy) {
+  assertForkable(ctx);
+  const entryId = lastFinishedAnswer(ctx);
+
+  if (!entryId) throw new Error("Wait for the first answer");
+  const fork = await forkConversation(ctx, { entryId, auxiliary: copy });
+
+  return { ...fork, parentSessionId: ctx.sessionManager.getSessionId() };
+}
+
 /** SessionControls.forkAndForget. */
 export async function forkAndForget(ctx: ExtensionCommandContext, entryId: string) {
   assertForkable(ctx);
@@ -65,7 +82,15 @@ export async function forkConversation(ctx: ExtensionContext, options: ForkOptio
   retained.push({ type: "custom", customType: "piop-input-hold", data: { held: true }, id: randomUUID(), parentId: null, timestamp });
   const sessionPath = join(ctx.sessionManager.getSessionDir(), `${timestamp.replace(/[:.]/g, "-")}_${sessionId}.jsonl`);
   // The copy names the chat and entry it came from. A source's own fork source is replaced, so a copy of a branch names the branch.
-  const piopForkSource = options.entryId ? { sessionId: header.id, sessionPath: source, entryId: options.entryId } : undefined;
+  const piopForkSource = options.entryId && !options.auxiliary ? { sessionId: header.id, sessionPath: source, entryId: options.entryId } : undefined;
+  // A fork of a root chat copies the auxiliary chats made through its fork point; its history then names the copies.
+  const copies = options.auxiliary ? undefined : planAuxiliaryCopies({ root: rootForDirectory(ctx.sessionManager.getSessionDir()), source: { id: header.id, path: source }, target: { id: sessionId, path: sessionPath }, cutoff: selected.filter(entry => !isCurrent(entry)).at(-1)?.timestamp ?? header.timestamp });
+  if (copies) {
+    retained.splice(0, retained.length, ...rewriteForkHistory(retained, copies));
+    const retries = retryRecord(copies);
+    if (retries) retained.push(retries);
+  }
+  if (options.auxiliary) retained.splice(0, retained.length, ...retained.filter(entry => entry.type !== "session_info"), ...auxiliaryEntries(ctx, options.auxiliary, sessionId, source, selected.filter(entry => !isCurrent(entry)).at(-1)?.id ?? null, timestamp));
   let publication: SessionPublication | undefined;
   let goalAssets: ReturnType<typeof retainHistory> | undefined;
 
@@ -87,7 +112,27 @@ export async function forkConversation(ctx: ExtensionContext, options: ForkOptio
     throw error;
   }
 
+  if (copies?.copies.length) {
+    try { await publishAuxiliaryCopies(rootForDirectory(ctx.sessionManager.getSessionDir()), copies, { id: sessionId }, (path: string, entries: unknown[], publication: Parameters<typeof writeSessionFile>[2]) => writeSessionFile(path, entries, publication)); }
+    catch (error) {
+      throw new Error(`The fork was saved at ${sessionPath}, but copying its side chats, reviews and subagents failed: ${error instanceof Error ? error.message : String(error)}`, { cause: error }); }
+  }
+
   return { hostId: currentHost(), sessionId, sessionPath, cwd };
+}
+
+/** The entries that make a copy an auxiliary conversation of ctx's conversation: its parent record, its name and its note, after the copied leaf. */
+function auxiliaryEntries(ctx: ExtensionContext, copy: AuxiliaryCopy, sessionId: string, parentSessionPath: string, leafId: string | null, timestamp: string) {
+  const parentId = randomUUID();
+  const host = currentHost();
+  const entries: Array<Record<string, unknown>> = [
+    { type: "custom", customType: AUXILIARY_PARENT, id: parentId, parentId: leafId, timestamp, data: { kind: copy.kind, sessionId, hostId: host, parentSessionId: ctx.sessionManager.getSessionId(), parentHostId: host, parentSessionPath } },
+    { type: "session_info", id: randomUUID(), parentId: null, timestamp, name: copy.name },
+  ];
+
+  if (copy.note) entries.push({ type: "custom_message", customType: "piop-auxiliary-note", content: copy.note, display: true, id: randomUUID(), parentId, timestamp });
+
+  return entries;
 }
 
 function releaseForkAssets(ctx: ExtensionContext, goalAssets: ReturnType<typeof retainHistory> | undefined, sessionId: string, sessionPath: string) {

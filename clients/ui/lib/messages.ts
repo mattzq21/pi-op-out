@@ -3,7 +3,7 @@ import { pluginMessageMetadata } from "../plugins/messageMetadata";
 import { z } from "zod";
 import { promptContextSchema, wireMessageSchema, type WireMessage } from "./messageSchemas";
 
-const SYSTEM_MESSAGES = new Set(["pi-desktop-mcp-status"]);
+const SYSTEM_MESSAGES = new Set(["pi-desktop-mcp-status", "piop-auxiliary-note"]);
 
 /** The user message that a goal sends to continue its work. */
 export const GOAL_PROMPT = "piop-goal-context";
