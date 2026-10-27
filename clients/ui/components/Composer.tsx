@@ -819,7 +819,7 @@ function ContextWheel(componentProps: { usage: ContextUsage }) {
   const tooltip = createMemo(() => (`${percent() === null ? "—" : `${Math.round(required((percent())))}%`} of ${componentProps.usage.contextWindow.toLocaleString()}`));
   const label = createMemo(() => (percent() === null ? `Context usage unavailable; window is ${componentProps.usage.contextWindow.toLocaleString()} tokens` : `${Math.round(required((percent())))}% of ${componentProps.usage.contextWindow.toLocaleString()} context tokens used`));
 
-  return <span class="context-wheel" data-tooltip={tooltip()} data-tooltip-tap aria-label={label()} tabIndex={0}>
-    <svg viewBox="0 0 20 20" aria-hidden="true"><circle class="context-wheel-track" cx="10" cy="10" r="7.5" /><circle class="context-wheel-value" cx="10" cy="10" r="7.5" pathLength="100" style={{ "stroke-dasharray": `${percent() ?? 0} 100` }} /></svg>
+  return <span class="context-wheel" classList={{ unknown: percent() === null }} data-tooltip={tooltip()} data-tooltip-tap aria-label={label()} tabIndex={0}>
+    <svg viewBox="0 0 20 20" aria-hidden="true"><circle class="context-wheel-track" cx="10" cy="10" r="7.5" /><circle class="context-wheel-value" cx="10" cy="10" r="7.5" pathLength="100" style={{ "stroke-dasharray": `${percent() ?? 100} 100` }} /></svg>
   </span>;
 }
