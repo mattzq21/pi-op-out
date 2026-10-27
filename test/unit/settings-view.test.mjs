@@ -115,8 +115,10 @@ describe('settings editor', () => {
     await click(save()); assert.deepEqual(saves[1][0].hiddenModels, ['remote/model']); assert.deepEqual(saves[1][0].knownModels, ['remote/model']);
   });
 
-  test('the Review sub-tab of Agents sets the review agent and marks one that no longer exists', async () => {
+  test('the Review sub-tab of Plugins sets the review agent and marks one that no longer exists', async () => {
     await render({ settings: { ...props.settings, reviewAgent: 'gone' }, agentConfig: { agents: [profile('general'), profile('reviewer')] } });
+    const tabs = [...document.querySelectorAll('nav button')].map(item => item.textContent);
+    assert.equal(tabs.indexOf('Review'), tabs.indexOf('Plugins') + 1);
     await section('Review');
     const agent = control('Review agent');
     assert.equal(agent.value, 'gone');

@@ -9,7 +9,7 @@ import { reviewSplitPane } from "./review/requests";
 export const plugins: PluginDefinition[] = [
   { id: "cost", scope: "host", name: "Cost limit", description: "Per-conversation API cost limit, set with /cost.", load: () => import("./cost/plugin") },
   { id: "review", scope: "host", name: "Review", description: "Code reviews in a split pane, started with /review.", load: () => import("./review/plugin"),
-    settings: { section: "review", label: "Review", description: "Choose the agent that runs /review.", icon: ClipboardCheck, within: "agents", load: () => import("./review/ReviewSettings").then(module => ({ default: module.ReviewSettings })) },
+    settings: { section: "review", label: "Review", description: "Choose the agent that runs /review.", icon: ClipboardCheck, load: () => import("./review/ReviewSettings").then(module => ({ default: module.ReviewSettings })) },
     splitPane: reviewSplitPane,
     messages: { "piop-review-link": () => import("./review/ReviewLink").then(module => ({ default: module.ReviewLink })) } },
   { id: "web-search", scope: "host", name: "Web search", description: "The web_search tool for agents, through the host's OpenAI ChatGPT sign-in." },
