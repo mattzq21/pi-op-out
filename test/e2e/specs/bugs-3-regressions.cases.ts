@@ -19,7 +19,7 @@ describe("BUGS-3 regressions", () => {
 
   it("keeps a failed rename available for retry", async () => {
     const indexed = { id: "bugs3-rename", path: "/tmp/bugs3-rename.jsonl", name: "Rename target", project: "BUGS-3", cwd: "/tmp", preview: "Rename", messageCount: 1, hostId: "local" };
-    await mockBackend({ list_sessions: [indexed], ...connectedSessionResponses(indexed.id), "pi_command:set_session_name": { error: "Rename failed" } });
+    await mockBackend({ list_sessions: [indexed], ...connectedSessionResponses(indexed.id), "broker_request:rename": { error: "Rename failed" } });
     await emitPiEvent({ type: "session_switched" });
     await app.conversationSearch.setValue(indexed.name);
     await browser.execute(() => {

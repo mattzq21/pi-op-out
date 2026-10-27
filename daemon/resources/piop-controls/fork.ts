@@ -11,6 +11,7 @@ import { Check } from "typebox/value";
 import { existsSync } from "node:fs";
 import { releaseHistory, retainHistory, rootForDirectory } from "../piop-storage/goal-assets.cjs";
 import { planAuxiliaryCopies, publishAuxiliaryCopies, retryRecord, rewriteForkHistory } from "../piop-storage/auxiliary-copies.cjs";
+import { sessionName } from "../session-broker/session-names.cjs";
 import type { AuxiliaryCopy, ForkMode, ForkResult } from "./interface.ts";
 
 export type ForkOptions = { cwd?: string; entryId?: string; position?: "before" | "at"; auxiliary?: AuxiliaryCopy };
@@ -90,13 +91,15 @@ export async function forkConversation(ctx: ExtensionContext, options: ForkOptio
     const retries = retryRecord(copies);
     if (retries) retained.push(retries);
   }
-  if (options.auxiliary) retained.splice(0, retained.length, ...retained.filter(entry => entry.type !== "session_info"), ...auxiliaryEntries(ctx, options.auxiliary, sessionId, source, selected.filter(entry => !isCurrent(entry)).at(-1)?.id ?? null, timestamp));
+  if (options.auxiliary) retained.push(...auxiliaryEntries(ctx, options.auxiliary, sessionId, source, selected.filter(entry => !isCurrent(entry)).at(-1)?.id ?? null, timestamp));
+  const name = options.auxiliary ? options.auxiliary.name : sessionName(source, header.id);
   let publication: SessionPublication | undefined;
   let goalAssets: ReturnType<typeof retainHistory> | undefined;
 
   try {
     goalAssets = retainHistory(rootForDirectory(ctx.sessionManager.getSessionDir()), [{ ...header, parentSession: source }, ...retained], sessionId, sessionPath);
     publication = await writeSessionFile(sessionPath, [{ ...header, id: sessionId, timestamp, cwd, parentSession: source, piopForkSource, goalAssets }, ...retained], {
+      ...name ? { name } : {},
       goalSource: source,
       dependencies: { workspace: { path: cwd, kind: options.cwd === undefined ? "existing" : "created-directory" } },
     });
@@ -121,13 +124,12 @@ export async function forkConversation(ctx: ExtensionContext, options: ForkOptio
   return { hostId: currentHost(), sessionId, sessionPath, cwd };
 }
 
-/** The entries that make a copy an auxiliary conversation of ctx's conversation: its parent record, its name and its note, after the copied leaf. */
+/** The entries that make a copy an auxiliary conversation of ctx's conversation: its parent record and its note, after the copied leaf. */
 function auxiliaryEntries(ctx: ExtensionContext, copy: AuxiliaryCopy, sessionId: string, parentSessionPath: string, leafId: string | null, timestamp: string) {
   const parentId = randomUUID();
   const host = currentHost();
   const entries: Array<Record<string, unknown>> = [
     { type: "custom", customType: AUXILIARY_PARENT, id: parentId, parentId: leafId, timestamp, data: { kind: copy.kind, sessionId, hostId: host, parentSessionId: ctx.sessionManager.getSessionId(), parentHostId: host, parentSessionPath } },
-    { type: "session_info", id: randomUUID(), parentId: null, timestamp, name: copy.name },
   ];
 
   if (copy.note) entries.push({ type: "custom_message", customType: "piop-auxiliary-note", content: copy.note, display: true, id: randomUUID(), parentId, timestamp });

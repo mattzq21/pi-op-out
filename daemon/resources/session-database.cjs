@@ -84,7 +84,16 @@ function initialize(db) {
       CREATE TABLE IF NOT EXISTS storage_transactions (id TEXT PRIMARY KEY, kind TEXT NOT NULL CHECK(kind IN ('archive', 'delete', 'restore')), state TEXT NOT NULL CHECK(state IN ('prepared', 'committed')), journal_json TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS chat_worktrees (chat_id TEXT PRIMARY KEY, record_json TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS submission_outcomes (submission_id TEXT PRIMARY KEY, session_id TEXT NOT NULL, outcome TEXT NOT NULL CHECK(outcome IN ('received', 'accepted', 'rejected')), error TEXT, updated_at INTEGER NOT NULL);
+      CREATE TABLE IF NOT EXISTS session_names (session_id TEXT PRIMARY KEY REFERENCES sessions(session_id) ON DELETE CASCADE, name TEXT NOT NULL);
 `);
+
+    // Version 1: chat names moved out of the Pi session state into session_names.
+    if (db.prepare('PRAGMA user_version').get().user_version < 1) {
+      db.exec(`INSERT INTO session_names (session_id, name) SELECT session_id, trim(json_extract(entry_json, '$.name')) FROM session_extension_state
+          WHERE state_key='piop-session-name' AND trim(coalesce(json_extract(entry_json, '$.name'), '')) <> '' ON CONFLICT(session_id) DO NOTHING;
+        DELETE FROM session_extension_state WHERE state_key='piop-session-name';
+        PRAGMA user_version=1;`);
+    }
 
     db.exec('COMMIT');
   } catch (error) { db.exec('ROLLBACK'); throw error; }

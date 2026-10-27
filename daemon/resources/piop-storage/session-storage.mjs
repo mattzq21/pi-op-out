@@ -467,11 +467,6 @@ export function installSessionStorage(SessionManager, recordReferences) {
       thinkingLevel: current?.get("piop-thinking-level")?.thinkingLevel ?? "off" };
   };
 
-  prototype.getSessionName = function () {
-    const name = currentSessionState.get(this)?.get("piop-session-name")?.name;
-    return name ? stateRecords.capSessionName(name) || undefined : undefined;
-  };
-
   prototype.appendCustomEntry = function (type, data) {
     const entry = stateRecords.create(type, data, this.leafId);
     this._appendEntry(entry);
@@ -480,9 +475,9 @@ export function installSessionStorage(SessionManager, recordReferences) {
 
   prototype._appendEntry = function (entry) {
     sessionStorageState(this);
+    if (stateRecords.isName(entry)) throw new Error("Pi sessions have no name: the Piop session broker owns chat names");
     if (stateRecords.isCurrent(entry)) {
       entry = { ...entry, parentId: null };
-      if (entry.type === "session_info") entry.name = stateRecords.capSessionName(entry.name);
       if (this.persist && this.sessionFile) sessionStorageAppend(this, entry);
       const current = currentSessionState.get(this) ?? new Map();
       current.set(stateRecords.stateKey(entry), entry);

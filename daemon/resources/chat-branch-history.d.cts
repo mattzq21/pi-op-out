@@ -6,7 +6,6 @@ export interface BranchHistoryRequest {
   entries: any[];
   leafId: string;
   entryId: string;
-  name?: string;
 }
 
 export interface BranchHistoryResult {

@@ -9,6 +9,7 @@ const goalOwnership = require('./piop-storage/goal-ownership.cjs');
 const database = require('./session-database.cjs');
 const { acquireReferencePublicationLock } = require('./piop-storage/reference-publication-lock.cjs');
 const auxiliaryCopies = require('./piop-storage/auxiliary-copies.cjs');
+const names = require('./session-broker/session-names.cjs');
 
 const UUID = /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/;
 
@@ -70,14 +71,7 @@ function userText(history) {
   return line ? line.slice(0, 80) : undefined;
 }
 
-function branchName(name, current, history) {
-  if (name !== undefined) {
-    if (typeof name !== 'string' || !name.trim()) throw new Error('Invalid branch name');
-    return name.trim();
-  }
-  const source = current.get('piop-session-name')?.name?.trim() || userText(history) || 'Chat';
-  return source + ' (branch)';
-}
+function branchName(sourceName, history) { return (sourceName || userText(history) || 'Chat') + ' (branch)'; }
 
 function withReferences(root) {
   return async operation => {
@@ -110,14 +104,13 @@ async function publishBranchHistory(request) {
   const history = auxiliaryCopies.rewriteForkHistory(selected, copies);
   const retries = auxiliaryCopies.retryRecord(copies);
   if (retries) current.set(auxiliaryCopies.FORK_RETRIES, retries);
-  current.set('piop-session-name', { type: 'session_info', id: randomUUID(), parentId: null, timestamp, name: branchName(request.name, current, history) });
   // The branch stays idle until the user sends a message (core input hold).
   current.set('piop-input-hold', { type: 'custom', customType: 'piop-input-hold', data: { held: true }, id: randomUUID(), parentId: null, timestamp });
   const forkSource = { sessionId: source.id, sessionPath: sourcePath, entryId };
   const header = { type: 'session', version: source.version, id: sessionId, timestamp, cwd, parentSession: sourcePath, piopForkSource: forkSource };
   const body = [header, ...history, ...current.values()].map(entry => JSON.stringify(entry)).join('\n') + '\n';
   try {
-    const published = await publication.publish(sessionPath, body, withReferences(root), { goalSource: sourcePath, dependencies: { workspace: { path: cwd, kind: 'existing' } } });
+    const published = await publication.publish(sessionPath, body, withReferences(root), { name: branchName(names.sessionName(sourcePath, source.id), history), goalSource: sourcePath, dependencies: { workspace: { path: cwd, kind: 'existing' } } });
     // A warning means the transcript exists but saving it did not fully finish. The branch is not usable then.
     if (published.warnings.length) throw new Error(published.warnings.join('; '));
   } catch (error) {

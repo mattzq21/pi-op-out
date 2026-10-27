@@ -10,6 +10,7 @@ const io = require('./session-publication-io.cjs');
 const reviews = require('./review-publication.cjs');
 const dependencies = require('./session-publication-dependencies.cjs');
 const children = require('../session-broker/session-child-index.cjs');
+const names = require('../session-broker/session-names.cjs');
 const database = require('../session-database.cjs');
 
 const identitySchema = Type.String({ pattern: '^\\d+:\\d+$' });
@@ -20,7 +21,7 @@ const journalSchema = Type.Object({
   bytes: Type.Integer({ minimum: 1 }), digest: Type.String({ pattern: '^[a-f0-9]{64}$' }), lock: Type.String(), lockIdentity: identitySchema,
   writer: io.writerSchema, phase: Type.Union(['planned', 'writing', 'ready', 'linked', 'parent-pending', 'quarantined'].map(value => Type.Literal(value))),
   temporaryIdentity: Type.Optional(identitySchema), review: Type.Optional(reviews.reviewSchema),
-  state: Type.Array(Type.Unknown()),
+  state: Type.Array(Type.Unknown()), name: Type.Optional(Type.String({ minLength: 1 })),
   dependencies: Type.Optional(dependencies.contractSchema), preparationComplete: Type.Optional(Type.Boolean()),
   quarantine: Type.Optional(Type.Object({ path: Type.String(), reason: Type.String() })),
 });
@@ -90,6 +91,12 @@ function prepareBody(body, id) {
   return { header: values[0], entries: values, body: values.map(value => JSON.stringify(value)).join('\n') + '\n' };
 }
 
+/** Saves the settings and the name of the published chat. Recovery repeats it, so it only sets values. */
+function seedState(journal) {
+  stateRecords.seed(journal.target, journal.sessionId, journal.state);
+  if (journal.name !== undefined) names.nameSession(journal.target, journal.sessionId, journal.name);
+}
+
 function prepare(root, target, body, options) {
   const id = options.review?.record.publicationId ?? randomUUID();
 
@@ -110,6 +117,8 @@ function prepare(root, target, body, options) {
 }
 
 function prepareJournal(root, target, prepared, id, lock, lease, options) {
+  if (prepared.entries.some(stateRecords.isName)) throw new Error('A new chat gets its name from the publication name, not from its entries');
+  const name = options.name === undefined ? undefined : names.validName(options.name);
   const contract = dependencies.plan(root, prepared.entries, options.dependencies);
   if (options.goalSource) goals.copy(options.goalSource, target, prepared.header.id);
   prepared.header = { ...prepared.header, goalAssets: contract.goalAssets };
@@ -119,7 +128,7 @@ function prepareJournal(root, target, prepared, id, lock, lease, options) {
   const journal = {
     version: 1, kind: 'session-publication', id, root, rootIdentity: io.identity(root), target, directoryIdentity: io.identity(path.dirname(target)),
     temporary: `${target}.${id}.tmp`, sessionId: prepared.header.id, bytes: Buffer.byteLength(prepared.body), digest: io.hash(prepared.body),
-    lock, lockIdentity: io.identity(lock), writer: io.writer(), phase: 'planned', dependencies: contract, state: stateRecords.capture(prepared.entries),
+    lock, lockIdentity: io.identity(lock), writer: io.writer(), phase: 'planned', dependencies: contract, state: stateRecords.capture(prepared.entries), ...name ? { name } : {},
   };
 
   if (options.beforeWrite) {
@@ -214,7 +223,7 @@ async function publishLocked(root, target, body, options) {
 
   try {
     dependencies.retain(journal);
-    stateRecords.seed(journal.target, journal.sessionId, journal.state);
+    seedState(journal);
 
     if (options.beforeWrite) { await options.beforeWrite(); journal.preparationComplete = true; save(journal); }
 
@@ -278,7 +287,7 @@ function recoverUnlinked(journal) {
   if (io.exists(journal.target)) return quarantine(journal, 'Publication target belongs to another transcript; both files were retained');
   verifyPreparation(journal);
   dependencies.retain(journal);
-  stateRecords.seed(journal.target, journal.sessionId, journal.state);
+  seedState(journal);
   journal.temporaryIdentity = io.identity(journal.temporary);
   journal.phase = 'ready';
   save(journal);

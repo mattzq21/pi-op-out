@@ -48,6 +48,8 @@ import brokerModule7 from '../resources/session-broker/fast-mode.ts?raw';
 import storagePublication from '../resources/piop-storage/session-file.ts?raw';
 import brokerModule9 from '../resources/session-broker/session-child-index.cjs?raw';
 import brokerModule10 from '../resources/session-broker/session-child-index.d.cts?raw';
+import brokerSessionNames from '../resources/session-broker/session-names.cjs?raw';
+import brokerSessionNameTypes from '../resources/session-broker/session-names.d.cts?raw';
 import storagePublicationJournal from '../resources/piop-storage/session-publication.cjs?raw';
 import storagePublicationIoRaw from '../resources/piop-storage/session-publication-io.cjs?raw';
 import storagePublicationDependencies from '../resources/piop-storage/session-publication-dependencies.cjs?raw';
@@ -151,6 +153,8 @@ export const SESSION_BROKER_MODULES: Array<[string, string]> = [
   ['fast-mode.ts', brokerModule7],
   ['session-child-index.cjs', brokerModule9],
   ['session-child-index.d.cts', brokerModule10],
+  ['session-names.cjs', brokerSessionNames],
+  ['session-names.d.cts', brokerSessionNameTypes],
   ['subagents.ts', brokerModule17],
   ['subagent-state.ts', brokerModule18],
   ['subagent-reconciliation.ts', brokerModule19],

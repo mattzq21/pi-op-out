@@ -1,5 +1,6 @@
 import { createServer } from "node:http";
 import stateRecords from '../daemon/resources/piop-storage/session-records.cjs';
+import sessionNames from '../daemon/resources/session-broker/session-names.cjs';
 import { reserve, bind, open } from "../daemon/resources/session-database.cjs";
 import { createRequire } from 'node:module';
 import { openSync, closeSync } from 'node:fs';
@@ -83,7 +84,9 @@ export async function publishedTrace(t, traceReader, content, { folder = '', hom
       try { return { line, entry: JSON.parse(line) }; } catch { return { line }; }
     });
     const names = lines.flatMap(({ entry }) => entry?.type === 'session_info' ? [entry] : []);
-    stateRecords.save(fork.sessionPath, [JSON.parse(publishedHeader), ...names]);
+    // A session_info line in the content names the chat; the session broker keeps the name.
+    const name = names.findLast(entry => entry.name?.trim())?.name;
+    if (name) sessionNames.nameSession(fork.sessionPath, fork.sessionId, name);
     const parents = new Map(names.filter(entry => typeof entry.id === 'string').map(entry => [entry.id, entry.parentId]));
     const transcript = lines.filter(({ entry }) => entry?.type !== 'session_info').map(({ line, entry }) => {
       if (!entry || !parents.has(entry.parentId)) return line;

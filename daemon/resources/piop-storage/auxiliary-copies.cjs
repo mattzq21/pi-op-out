@@ -5,6 +5,7 @@ const io = require('./session-publication-io.cjs');
 const stateRecords = require('./session-records.cjs');
 const database = require('../session-database.cjs');
 const childIndex = require('../session-broker/session-child-index.cjs');
+const names = require('../session-broker/session-names.cjs');
 
 /** The error that a copied chat shows for the prompt it was working on when its main chat was forked. */
 const FORK_ERROR = 'Fork error: this chat was working when its main chat was forked. Its last prompt is sent again.';
@@ -110,7 +111,7 @@ function planAuxiliaryCopies({ root, source, target, cutoff, cwd }) {
       const copyPath = path.join(path.dirname(target.path), String(timestamp).replace(/[:.]/g, '-') + '_' + copyId + '.jsonl');
       ids.set(child.sessionId, copyId);
       replacements.push([child.sessionId, copyId], [file, copyPath]);
-      copies.push({ kind: child.kind, sourceId: child.sessionId, sourcePath: file, sessionId: copyId, sessionPath: copyPath, header, entries, timestamp });
+      copies.push({ kind: child.kind, sourceId: child.sessionId, sourcePath: file, sessionId: copyId, sessionPath: copyPath, header, entries, timestamp, name: names.sessionName(file, child.sessionId) });
       queue.push({ id: child.sessionId, cutoff: queue[index].cutoff });
     }
   }
@@ -121,7 +122,7 @@ function planAuxiliaryCopies({ root, source, target, cutoff, cwd }) {
     const header = { ...copy.header, id: copy.sessionId, timestamp: copy.timestamp, cwd: folder };
     const body = [header, ...rewrite(copy.entries.slice(1), replacements), ...work ? rewrite(work.entries, replacements) : []];
 
-    return { kind: copy.kind, sourceId: copy.sourceId, sessionId: copy.sessionId, sessionPath: copy.sessionPath, sourcePath: copy.sourcePath, cwd: folder, entries: body, retry: work ? rewrite(work.message, replacements) : undefined, deliveryId: work ? randomUUID() : undefined };
+    return { kind: copy.kind, sourceId: copy.sourceId, sessionId: copy.sessionId, sessionPath: copy.sessionPath, sourcePath: copy.sourcePath, cwd: folder, name: copy.name, entries: body, retry: work ? rewrite(work.message, replacements) : undefined, deliveryId: work ? randomUUID() : undefined };
   });
 
   return { copies: planned, replacements, retries: planned.filter(copy => copy.retry !== undefined).map(copy => ({ sessionId: copy.sessionId, message: copy.retry, deliveryId: copy.deliveryId })) };
@@ -206,7 +207,7 @@ function retryRecord(plan) {
  */
 async function publishAuxiliaryCopies(root, plan, target, publishOne) {
   for (const copy of plan.copies) {
-    await publishOne(copy.sessionPath, copy.entries, { goalSource: copy.sourcePath, dependencies: { workspace: { path: copy.cwd, kind: 'existing' } } });
+    await publishOne(copy.sessionPath, copy.entries, { ...copy.name ? { name: copy.name } : {}, goalSource: copy.sourcePath, dependencies: { workspace: { path: copy.cwd, kind: 'existing' } } });
   }
 
   const forkPath = plan.replacements[1][1];

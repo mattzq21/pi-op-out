@@ -80,8 +80,7 @@ async function createReview(pi: ExtensionAPI, ctx: ExtensionContext, agentState:
     { type: "custom", id: metadataId, parentId: null, timestamp, customType: AUXILIARY_PARENT, data: { kind: "review", parentSessionId: record.parentSessionId, sessionId, hostId: record.hostId, parentHostId: record.hostId, publicationId: record.publicationId } },
     { type: "custom", id: `${metadataId}-agent`, parentId: metadataId, timestamp, customType: "pi-define-agents-state", data: agentState },
     ...fastMode ? [{ ...fastMode, id: `${metadataId}-fast-mode`, parentId: `${metadataId}-agent`, timestamp }] : [],
-    { type: "session_info", id: randomUUID(), parentId: fastMode ? `${metadataId}-fast-mode` : `${metadataId}-agent`, timestamp, name },
-  ], { review: { record, parentSessionPath }, beforeWrite: () => signal?.throwIfAborted() });
+  ], { name, review: { record, parentSessionPath }, beforeWrite: () => signal?.throwIfAborted() });
 
   return { record, publication, name };
 }

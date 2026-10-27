@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { join } from 'node:path';
 import { open, reserveId, bind } from '../../daemon/resources/session-database.cjs';
 import stateRecords from '../../daemon/resources/piop-storage/session-records.cjs';
+import sessionNames from '../../daemon/resources/session-broker/session-names.cjs';
 
 const { home, count, cwd, contents } = JSON.parse(readFileSync(0, 'utf8'));
 const root = join(home, '.piop');
@@ -24,7 +25,9 @@ try {
     writeFileSync(path, stateRecords.stored(entries).map(entry => JSON.stringify(entry)).join('\n') + '\n');
     bind(db, id, path);
     const captured = stateRecords.capture(entries);
-    if (captured.length) records.push({ path, id, captured });
+    // A session_info line in the content names the chat; the session broker keeps the name.
+    const name = entries.findLast(entry => entry.type === 'session_info')?.name;
+    if (captured.length || name) records.push({ path, id, captured, name });
     chats.push({ id, path, preview });
   }
   db.exec('COMMIT');
@@ -32,5 +35,8 @@ try {
   if (db.isTransaction) db.exec('ROLLBACK');
   throw error;
 } finally { db.close(); }
-for (const { path, id, captured } of records) stateRecords.seed(path, id, captured);
+for (const { path, id, captured, name } of records) {
+  stateRecords.seed(path, id, captured);
+  if (name) sessionNames.nameSession(path, id, name);
+}
 process.stdout.write(JSON.stringify(chats));

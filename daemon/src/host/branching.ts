@@ -173,7 +173,7 @@ class Branch {
     this.managedId = sessionId;
     const created = await Worktrees.create({ sourceCwd: cwd, chatId: sessionId, home: this.host.home, repository }, this.host.storageRoot());
     rememberProjectRepository(this.host.storageRoot(), created.worktree, { root: created.worktree, gitDir: created.gitCommonDir });
-    const result = await publishBranchHistory({ root: this.host.storageRoot(), sourcePath: this.path, sessionId, cwd: created.worktree, entries, leafId: snapshot.history.leafId, entryId, name: this.state.sessionName ? this.state.sessionName + ' (branch)' : undefined });
+    const result = await publishBranchHistory({ root: this.host.storageRoot(), sourcePath: this.path, sessionId, cwd: created.worktree, entries, leafId: snapshot.history.leafId, entryId });
     this.managedPath = result.sessionPath;
     return { sessionId, sessionPath: result.sessionPath, cwd: created.worktree };
   }

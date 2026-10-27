@@ -15,7 +15,7 @@ test('a renamed chat shows its new name in the chat list, for other connections 
 
     // The other connection is told that the list changed, so it reloads it instead of polling.
     const told = phone.waitEvent('pi://sessions-changed');
-    await chat.command({ type: 'set_session_name', name: 'Release 2.0 plan' });
+    await agents.daemon.invoke('broker_request', { hostId: 'local', path: '/orchestration', body: { action: 'rename', sessionId: chat.sessionId, hostId: 'local', name: 'Release 2.0 plan' } });
     await told;
     expect(await named(phone)).toBe('Release 2.0 plan');
     phone.close();

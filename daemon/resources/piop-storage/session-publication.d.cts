@@ -8,6 +8,8 @@ export interface ReviewPublicationRecord {
 }
 
 export interface PublicationOptions {
+  /** The name of the new chat. */
+  name?: string;
   goalSource?: string;
   review?: { record: ReviewPublicationRecord; parentSessionPath: string };
   dependencies?: {

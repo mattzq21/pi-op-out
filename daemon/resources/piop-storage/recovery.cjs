@@ -1,4 +1,4 @@
-const { initializeSessionName } = require('./session-records.cjs');
+const { nameSession } = require('../session-broker/session-names.cjs');
 const { closeSync, constants, fsyncSync, linkSync, lstatSync, openSync, unlinkSync, writeSync } = require('node:fs');
 const { dirname, join } = require('node:path');
 
@@ -16,7 +16,7 @@ function createTranscript(path, id, cwd, name) {
   let created;
   try {
     const title = 'Recovered queued input: ' + Array.from(name).slice(0, 120).join('').trim();
-    created = installTranscript(path, temporary, transcript(id, cwd), () => initializeSessionName(path, id, title));
+    created = installTranscript(path, temporary, transcript(id, cwd), () => nameSession(path, id, title, false));
   }
   catch (error) {
     try { removeTemporary(temporary); } catch (cleanup) { throw new AggregateError([error, cleanup], 'Session recovery and cleanup failed'); }
