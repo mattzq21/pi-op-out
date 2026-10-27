@@ -88,6 +88,18 @@ test('a failed refresh keeps the last usage with the error, tells every client a
   } finally { other.close(); }
 }, 60_000);
 
+test('a refresh of one provider asks only that provider, and an unknown provider is refused', async () => {
+  const window = { status: 'ok', percent: 10 };
+  reply = { status: 200, body: JSON.stringify({ usage: { rolling: window, weekly: window, monthly: window } }) };
+  const before = requests.length;
+  await daemon.invoke('provider_usage', { refresh: true, provider: 'anthropic' });
+  expect(requests.length).toBe(before);
+  const usage = await daemon.invoke('provider_usage', { refresh: true, provider: 'opencodeGo' });
+  expect(requests.length).toBe(before + 1);
+  expect(usage.opencodeGo.usage.rolling.remainingPercent).toBe(90);
+  expect(await daemon.failure('provider_usage', { refresh: true, provider: 'toString' })).toContain('Invalid provider');
+}, 60_000);
+
 test('reset times are read only from UTC ISO 8601 timestamps, with or without fractions', async () => {
   const cases: Array<[string, number | undefined]> = [
     ['2026-09-17T00:00:00.000Z', 1789603200], ['2026-09-17T11:39:50Z', 1789645190], ['2000-02-29T23:59:59Z', 951868799],

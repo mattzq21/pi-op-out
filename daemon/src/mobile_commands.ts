@@ -22,6 +22,7 @@ import { detachPiWith, ensureRuntimeOwner, openProjectDirectory, piCommand, piPr
 import { closeTerminal, resizeTerminal, startTerminalForOwner, writeTerminal } from './terminals';
 import type { App } from './app';
 import { detachOwner } from './lifecycle';
+import { isUsageProvider } from './provider_usage';
 
 const RESTARTING = 'The daemon is restarting. Reconnect before retrying.';
 
@@ -215,5 +216,9 @@ const COMMANDS: Record<string, Handler> = {
   load_settings_change: app => loadSettingsChange(app),
   settings_pending_count: app => app.pi.settingsPendingSessions.size,
   save_app_settings: (app, _owner, args) => saveAppSettings(app, parseAppSettings(argument(args, 'settings', 'any')), argument(args, 'agentHostId', 'string?')),
-  provider_usage: (app, _owner, args) => argument(args, 'refresh', 'boolean?') ? app.usage.refresh(app) : app.usage.snapshot(),
+  provider_usage: (app, _owner, args) => {
+    const provider = argument(args, 'provider', 'string?');
+    if (provider !== undefined && !isUsageProvider(provider)) throw new Error('Invalid provider: unknown usage provider ' + JSON.stringify(provider));
+    return argument(args, 'refresh', 'boolean?') ? app.usage.refresh(app, provider) : app.usage.snapshot();
+  },
 };

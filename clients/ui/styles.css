@@ -43,6 +43,9 @@ button { cursor: pointer; }
 .icon-rail.compact .codex-usage-left { display: none; }
 .icon-rail.compact .codex-usage-separator { display: none; }
 .codex-usage.stale { color: #66635d; }
+button.codex-usage { background: none; border: 0; padding: 0; cursor: pointer; }
+button.codex-usage:hover:not(:disabled) { color: #d6d2c8; }
+button.codex-usage.refreshing { cursor: progress; opacity: .6; }
 .codex-usage.stale .provider-logo { opacity: .5; }
 
 .session-panel { width: 100%; flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; min-width: 0; background: #141413; }

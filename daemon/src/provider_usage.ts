@@ -4,18 +4,19 @@ import { codexUsage } from './provider_codex';
 import { opencodeGoUsage } from './provider_opencode';
 
 const SOURCES = { codex: codexUsage, anthropic: anthropicUsage, opencodeGo: opencodeGoUsage };
-type Provider = keyof typeof SOURCES;
+export type Provider = keyof typeof SOURCES;
+export const isUsageProvider = (value: string): value is Provider => Object.hasOwn(SOURCES, value);
 
 /** The last usage a provider reported, if any. error: why the latest refresh failed, so the usage is stale. */
 export interface ProviderUsage { usage?: unknown; error?: string }
 export type UsageSnapshot = Partial<Record<Provider, ProviderUsage>>;
 
 export const USAGE_CHANGED = 'pi://usage-changed';
-const INTERVAL_MS = Number(process.env.PIOP_USAGE_REFRESH_MS ?? 30_000);
+const INTERVAL_MS = Number(process.env.PIOP_USAGE_REFRESH_MS ?? 5 * 60_000);
 
 /**
- * Plan usage of every provider, shared by all clients of this daemon. It refreshes at start, every 30 seconds
- * and when a client asks; one refresh per provider runs at a time.
+ * Plan usage of every provider, shared by all clients of this daemon. It refreshes at start, every 5 minutes
+ * and when a client asks, for all providers or one; one refresh per provider runs at a time.
  */
 export class UsageRuntime {
   private state: UsageSnapshot = {};
@@ -33,8 +34,9 @@ export class UsageRuntime {
 
   snapshot(): UsageSnapshot { return structuredClone(this.state); }
 
-  async refresh(app: App): Promise<UsageSnapshot> {
-    await Promise.all((Object.keys(SOURCES) as Provider[]).map(provider => this.refreshProvider(app, provider)));
+  async refresh(app: App, only?: Provider): Promise<UsageSnapshot> {
+    const providers = only ? [only] : Object.keys(SOURCES) as Provider[];
+    await Promise.all(providers.map(provider => this.refreshProvider(app, provider)));
     return this.snapshot();
   }
 

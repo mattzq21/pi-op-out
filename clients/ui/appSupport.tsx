@@ -77,13 +77,13 @@ function usageWindowsDescription(usage: OpencodeGoUsage): string {
   return `rolling ${usage.rolling.remainingPercent}% left, weekly ${usage.weekly.remainingPercent}% left, monthly ${usage.monthly.remainingPercent}% left`;
 }
 
-/** One provider's usage left. stale: why the latest refresh failed; the badge then shows the older value darkened. */
-function LimitBadge(componentProps: { label: string; provider: UsageProvider; detail?: string; remainingPercent: number; resetAt?: number; clock?: number; stale?: string }) {
+/** One provider's usage left. stale: why the latest refresh failed; the badge then shows the older value darkened. A click refreshes this provider only. */
+function LimitBadge(componentProps: { label: string; provider: UsageProvider; detail?: string; remainingPercent: number; resetAt?: number; clock?: number; stale?: string; refreshing: boolean; onRefresh: () => void }) {
   const resetLabel = () => { componentProps.clock;
 
   return componentProps.resetAt ? formatCodexReset(componentProps.resetAt) : ""; };
 
-  return <span class="codex-usage" classList={{ stale: componentProps.stale !== undefined }} role="status" title={componentProps.stale} aria-label={`${componentProps.label} usage remaining: ${componentProps.remainingPercent}%${componentProps.resetAt ? `, resets ${resetLabel()}` : ""}${componentProps.detail ? ` (${(componentProps.detail)})` : ""}${componentProps.stale !== undefined ? `, stale: ${componentProps.stale}` : ""}`}><ProviderLogo provider={componentProps.provider} /><span>{componentProps.remainingPercent}%<span class="codex-usage-left"> left</span></span>{componentProps.resetAt && <span class="codex-usage-reset"><span class="codex-usage-separator"> · </span>{resetLabel()}</span>}{componentProps.stale !== undefined && <span class="codex-usage-stale"> (stale)</span>}</span>;
+  return <button type="button" class="codex-usage" classList={{ stale: componentProps.stale !== undefined, refreshing: componentProps.refreshing }} disabled={componentProps.refreshing} onClick={() => componentProps.onRefresh()} title={componentProps.stale === undefined ? "Click to refresh" : `${componentProps.stale}. Click to refresh.`} aria-label={`${componentProps.label} usage remaining: ${componentProps.remainingPercent}%${componentProps.resetAt ? `, resets ${resetLabel()}` : ""}${componentProps.detail ? ` (${(componentProps.detail)})` : ""}${componentProps.stale !== undefined ? `, stale: ${componentProps.stale}` : ""}`}><ProviderLogo provider={componentProps.provider} /><span>{componentProps.remainingPercent}%<span class="codex-usage-left"> left</span></span>{componentProps.resetAt && <span class="codex-usage-reset"><span class="codex-usage-separator"> · </span>{resetLabel()}</span>}{componentProps.stale !== undefined && <span class="codex-usage-stale"> (stale)</span>}</button>;
 }
 
 function UsageError(componentProps: { message: string }) {

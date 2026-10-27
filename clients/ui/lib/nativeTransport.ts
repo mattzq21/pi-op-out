@@ -32,7 +32,9 @@ export interface NativeConnectionTarget { cwd?: string; sessionPath?: string; se
 
 export const loadSessionGroups = () => call("load_session_groups", { seeds: [] }, sessionGroupsSchema);
 
-export const loadProviderUsage = (refresh: boolean) => call("provider_usage", { refresh }, providerUsageSchema);
+/** provider: refresh only this provider; without it a refresh reads all of them. */
+export const loadProviderUsage = (refresh: boolean, provider?: UsageProviderKey) => call("provider_usage", { refresh, provider }, providerUsageSchema);
+export type UsageProviderKey = "codex" | "anthropic" | "opencodeGo";
 
 export const changeSessionGroups = (change: GroupChange) => call("change_session_groups", { change }, sessionGroupsSchema);
 
