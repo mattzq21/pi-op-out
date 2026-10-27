@@ -49,7 +49,7 @@ export interface PromptContextInfo {
 }
 
 /** sending: the message was sent, but the daemon has not queued it yet. It cannot be changed yet. */
-export interface PendingMessage { id: string; goalSubmissionId?: string; message: string; behavior: "steer" | "followUp"; images?: (Omit<ImageAttachment, "data"> & { data?: string })[]; retry?: boolean; recovered?: boolean; sending?: boolean; goal?: boolean; }
+export interface PendingMessage { id: string; goalSubmissionId?: string; message: string; behavior: "steer" | "followUp"; images?: (Omit<ImageAttachment, "data"> & { data?: string })[]; retry?: boolean; recovered?: boolean; sending?: boolean; goal?: boolean; paused?: boolean; }
 
 export interface GitRepository { root: string; gitDir: string; }
 

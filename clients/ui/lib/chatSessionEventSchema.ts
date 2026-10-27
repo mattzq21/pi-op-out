@@ -13,6 +13,8 @@ export const pendingMessageSchema = z.object({
   images: z.array(imageSchema.omit({ data: true }).extend({ data: z.string().optional() })).optional(), retry: z.boolean().optional(), recovered: z.boolean().optional(),
   /** The active goal's entry: follow-ups above it run first, and those below it wait until the goal stops. */
   goal: z.boolean().optional(),
+  /** True on a paused goal's entry. It keeps its place, and the queue is on hold until the goal resumes. */
+  paused: z.boolean().optional(),
 });
 
 export const pendingMessagesSchema = z.array(pendingMessageSchema).optional();

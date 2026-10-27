@@ -15,7 +15,7 @@ function stamp(value: any): string { return JSON.stringify(value ?? null); }
 export const GOAL_ENTRY_ID = 'goal';
 
 /** The conversation's goal as the goals extension publishes it in its piop-goal status. */
-export type QueueGoal = { id: string; objective: string; active: boolean };
+export type QueueGoal = { id: string; objective: string; status: 'active' | 'paused' | 'complete' };
 
 /** True for an item the daemon keeps out of Pi's queue: it waits below the goal, or the queue is on hold. */
 export function kept(item: any): boolean { return flag(item, 'afterGoal') || flag(item, 'held'); }
@@ -25,13 +25,15 @@ export function goalStatus(event: any): QueueGoal | null | undefined {
   if (kind(event) !== 'extension_ui_request' || event.method !== 'setStatus' || event.statusKey !== 'piop-goal') return undefined;
   if (typeof event.statusText !== 'string' || !event.statusText) return null;
   const goal = JSON.parse(event.statusText);
-  return { id: text(goal, 'id'), objective: text(goal, 'objective'), active: goal.status === 'active' };
+  const status = goal.status === 'active' || goal.status === 'paused' ? goal.status : 'complete';
+  return { id: text(goal, 'id'), objective: text(goal, 'objective'), status };
 }
 
 /**
  * The queue as the daemon sees it: items it keeps and items Pi holds.
- * An active goal is an entry of the follow-up queue. Follow-ups above it are in Pi's queue and run first.
- * Follow-ups below it have afterGoal set: the daemon keeps them until they move above the goal or the goal stops.
+ * An active or paused goal is an entry of the follow-up queue. Follow-ups above it are in Pi's queue and run first.
+ * Follow-ups below it have afterGoal set: the daemon keeps them until they move above the goal or the goal ends.
+ * A paused goal keeps its place, and pausing it holds the queue.
  * While the queue is on hold, the other items have held set: the daemon keeps them until the user resumes the queue.
  */
 export class QueueState {
@@ -50,7 +52,10 @@ export class QueueState {
   /** True while the user holds the queue. */
   held = false;
 
-  activeGoal(): QueueGoal | undefined { return this.goal?.active ? this.goal : undefined; }
+  activeGoal(): QueueGoal | undefined { return this.goal?.status === 'active' ? this.goal : undefined; }
+
+  /** The goal while it has a place in the queue: active or paused. */
+  queuedGoal(): QueueGoal | undefined { return this.goal && this.goal.status !== 'complete' ? this.goal : undefined; }
 
   /** Follow-ups below the goal entry, in queue order. */
   waiting(): any[] { return this.pending.filter(item => flag(item, 'afterGoal') && !flag(item, 'retry')); }
@@ -95,10 +100,10 @@ export class QueueState {
       if (Array.isArray(item?.images)) for (const image of item.images) if (image && typeof image === 'object' && !Array.isArray(image)) delete image.data;
       return item;
     });
-    const goal = this.activeGoal();
+    const goal = this.queuedGoal();
     if (goal) {
       const index = visible.findIndex(item => flag(item, 'afterGoal') || flag(item, 'retry'));
-      visible.splice(index < 0 ? visible.length : index, 0, { id: GOAL_ENTRY_ID, message: goal.objective, behavior: 'followUp', goal: true });
+      visible.splice(index < 0 ? visible.length : index, 0, { id: GOAL_ENTRY_ID, message: goal.objective, behavior: 'followUp', goal: true, ...(goal.status === 'paused' ? { paused: true } : {}) });
     }
     return { type: 'queue_update', steering, followUp, pendingMessages: visible, held: this.held };
   }

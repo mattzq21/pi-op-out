@@ -42,7 +42,7 @@ export async function enqueue(queue: QueueDelivery, command: any, name: string):
   // A bad item would stay queued and make every later save fail, so it is rejected before the queue changes.
   try { validateItem(pending); } catch (error) { throw new CommandRefusedError(error instanceof Error ? error.message : String(error), 'daemon'); }
   const runsAtOnce = queue.runsAtOnce(text(pending, 'message'));
-  if (name === 'follow_up' && state.activeGoal() && !runsAtOnce) {
+  if (name === 'follow_up' && state.queuedGoal() && !runsAtOnce) {
     await keep(queue, pending, 'afterGoal');
     return null;
   }

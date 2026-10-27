@@ -427,12 +427,8 @@ export function Composer(props: Props) {
     void props.onHoldQueue(held).catch((reason) => setControlError(reason instanceof Error ? reason.message : String(reason))).finally(() => setChangingPending(false));
   };
 
-  /** A paused goal is not in the queue, so it shows as its own entry at the end. */
-  const pausedGoal = () => { const goal = props.goal?.goal();
-
-    return goal?.status === "paused" ? goal : undefined; };
   /** The queue box shows while it has messages, a paused goal, a goal error, or a hold. */
-  const showPendingBox = () => composer().pendingMessages.length > 0 || Boolean(pausedGoal()) || Boolean(props.goal?.error()) || Boolean(props.queueHeld);
+  const showPendingBox = () => composer().pendingMessages.length > 0 || Boolean(props.goal?.error()) || Boolean(props.queueHeld);
   /** The hold button. Without a queue box it stands alone, so the user can hold the queue before sending. */
   const renderQueueHold = (alone = false) => (<Show when={props.onHoldQueue}><div class="pending-queue-hold" classList={{ held: Boolean(props.queueHeld), alone }}><span>{props.queueHeld ? "Queue on hold. Messages wait until you resume." : ""}</span><button type="button" disabled={composer().controlsDisabled || changingPending()} aria-pressed={Boolean(props.queueHeld)} data-tooltip={props.queueHeld ? "Send the held messages" : "Keep messages in the queue until you resume"} onClick={() => holdQueue(!props.queueHeld)}>{props.queueHeld ? <><Play size={13} />Resume queue</> : <><Pause size={13} />Hold queue</>}</button></div></Show>);
   const pendingDrag = usePendingMessageDrag(() => (composer().pendingMessages), () => (pendingControlsDisabled(composer().controlsDisabled, changingPending(), composer().onChangePending)), () => (changePending));
@@ -726,20 +722,16 @@ export function Composer(props: Props) {
           <Show when={!message().goal}><button type="button" class="pending-icon-button" disabled={disabled()} aria-label={`Remove queued message: ${text()}`} data-tooltip="Remove message" onClick={() => change("remove")}><Trash2 size={13} /></button></Show>
         </div>);
 
-      return <div data-pending-id={message().id} class={pendingMessageClass(message().id, expandedPending(), pendingDrag.drop)} classList={{ "pending-goal": Boolean(message().goal) }}>
+      return <div data-pending-id={message().id} class={pendingMessageClass(message().id, expandedPending(), pendingDrag.drop)} classList={{ "pending-goal": Boolean(message().goal), paused: Boolean(message().paused) }}>
         {renderPendingDragHandle()}
         <PendingImages message={message()} load={props.loadPendingImage} />
-        <Show when={editingPending()?.id === message().id} fallback={<span class="pending-message-text" data-tooltip={message().recovered ? "This saved answer may not have reached the model. Check the conversation before retrying." : text()} onDblClick={() => setExpandedPending((current) => current === message().id ? undefined : message().id)}>{message().goal && <small>Goal · </small>}{message().retry && <small>{message().recovered ? "Saved answer · " : "Retry needed · "}</small>}{text()}</span>}><textarea class="pending-edit" aria-label={`Edit queued message: ${text()}`} rows={Math.min(6, Math.max(1, (editingPending()?.text ?? "").split("\n").length))} value={editingPending()?.text ?? ""} disabled={savingEdit()} ref={element => queueMicrotask(() => { if (element.isConnected) { element.focus(); element.setSelectionRange(element.value.length, element.value.length); } })} onInput={event => setEditingPending({ id: message().id, text: event.currentTarget.value })} onKeyDown={event => {
+        <Show when={editingPending()?.id === message().id} fallback={<span class="pending-message-text" data-tooltip={message().recovered ? "This saved answer may not have reached the model. Check the conversation before retrying." : text()} onDblClick={() => setExpandedPending((current) => current === message().id ? undefined : message().id)}>{message().goal && <>{message().paused && <small>Paused · </small>}<small class="goal-label">Goal · </small></>}{message().retry && <small>{message().recovered ? "Saved answer · " : "Retry needed · "}</small>}{text()}</span>}><textarea class="pending-edit" aria-label={`Edit queued message: ${text()}`} rows={Math.min(6, Math.max(1, (editingPending()?.text ?? "").split("\n").length))} value={editingPending()?.text ?? ""} disabled={savingEdit()} ref={element => queueMicrotask(() => { if (element.isConnected) { element.focus(); element.setSelectionRange(element.value.length, element.value.length); } })} onInput={event => setEditingPending({ id: message().id, text: event.currentTarget.value })} onKeyDown={event => {
           if (event.key === "Enter" && !event.shiftKey && !event.isComposing) { event.preventDefault(); void saveEdit(); }
           else if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); setEditingPending(undefined); }
         }} /></Show>
         {renderPendingMessageActions()}
       </div>;
-    }}</Key>}<Show when={pausedGoal()}>{goal => <div class="pending-message pending-goal paused" aria-label="Paused goal">
-      <button type="button" class="pending-icon-button pending-drag-handle" disabled aria-label="Paused goal cannot be reordered"><MoveVertical size={16} /></button>
-      <span class="pending-message-text" data-tooltip={goal().objective}><small>Paused · </small><small class="goal-label">Goal · </small>{goal().objective}</span>
-      <div class="pending-message-actions"><GoalActions controls={required(props.goal)} goal={goal()} /></div>
-    </div>}</Show><Show when={props.goal?.error()}>{message => <div class="pending-goal-error" role="alert">{message()}</div>}</Show></div> : renderQueueHold(true)}
+    }}</Key>}<Show when={props.goal?.error()}>{message => <div class="pending-goal-error" role="alert">{message()}</div>}</Show></div> : renderQueueHold(true)}
     {visualProps.toolbar}
     </div>
     <ComposerBody />

@@ -31,13 +31,15 @@ async function goalComposer({ value = goal(), pendingMessages = [goalEntry], dis
   return { sent, set, rerender: extra => view.rerender({ ...props, ...extra }) };
 }
 
-test('the goal queue entry pauses, edits and clears the goal, and a paused goal shows as its own entry that resumes', async () => {
-  const chat = await goalComposer();
+test('the goal queue entry pauses, edits and clears the goal, and a paused goal keeps its place in the queue and resumes', async () => {
+  const chat = await goalComposer({ pendingMessages: [{ id: '1', message: 'Check the tests', behavior: 'followUp' }, goalEntry, { id: '2', message: 'Then deploy', behavior: 'followUp' }] });
   assert.match(document.querySelector('.pending-goal').textContent, /Ship the parser/);
   await click(control('Pause goal'));
   await act(() => chat.set({ value: goal({ status: 'paused' }) }));
-  await chat.rerender({ pendingMessages: [], queued: 0 });
-  assert.match(control('Paused goal').textContent, /Paused · Ship the parser/);
+  await chat.rerender({ pendingMessages: [{ id: '1', message: 'Check the tests', behavior: 'followUp' }, { ...goalEntry, paused: true }, { id: '2', message: 'Then deploy', behavior: 'followUp' }] });
+  const texts = [...document.querySelectorAll('.pending-message-text')].map(element => element.textContent);
+  assert.deepEqual(texts, ['Check the tests', 'Paused · Goal · Ship the parser', 'Then deploy']);
+  assert.ok(document.querySelector('.pending-goal.paused'));
   await click(control('Resume goal'));
   await click(control('Edit goal'));
   await click(control('Clear goal'));
@@ -48,6 +50,7 @@ test('a finished goal shows no entry, and the goal buttons are blocked while the
   const chat = await goalComposer({ value: goal({ status: 'complete' }), pendingMessages: [] });
   assert.equal(document.querySelector('.pending-goal'), null);
   await act(() => chat.set({ value: goal({ status: 'paused' }), disabled: true }));
+  await chat.rerender({ pendingMessages: [{ ...goalEntry, paused: true }], queued: 1 });
   assert.deepEqual(['Clear goal', 'Resume goal', 'Edit goal'].map(label => control(label).disabled), [true, true, true]);
 });
 

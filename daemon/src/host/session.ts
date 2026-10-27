@@ -214,7 +214,7 @@ export class Session {
     const count = observed?.pendingMessageCount;
     return this.isWorking || this.isCompacting || flag(observed, 'isStreaming') || flag(observed, 'isCompacting')
       || (typeof count === 'number' && Number.isInteger(count) && count > 0)
-      || array(queue, 'steering').length > 0 || array(queue, 'followUp').length > 0 || array(queue, 'pendingMessages').length > 0;
+      || array(queue, 'steering').length > 0 || array(queue, 'followUp').length > 0 || array(queue, 'pendingMessages').some(item => !flag(item, 'goal'));
   }
 
   unused(): boolean {
