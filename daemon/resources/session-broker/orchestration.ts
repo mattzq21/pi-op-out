@@ -9,6 +9,7 @@ import { BrokerRequestError, currentHost, request } from "./client.ts";
 import { createProfileSession } from "./agent-profiles.ts";
 import { durableMailbox } from "../piop-storage/durable-mailbox.ts";
 import { activeConversation } from "./conversation-location.ts";
+import { AUXILIARY_PARENT, auxiliaryParent, isAuxiliary } from "../piop-storage/session-records.cjs";
 
 const messageSchema = Schema.Object({ role: Schema.String(), content: Schema.Optional(Schema.Unknown()), toolName: Schema.Optional(Schema.String()), customType: Schema.Optional(Schema.String()), details: Schema.Optional(Schema.Unknown()), stopReason: Schema.Optional(Schema.String()), errorMessage: Schema.Optional(Schema.String()) });
 
@@ -24,19 +25,16 @@ const address = { peerId: Type.String({ minLength: 1 }) };
 
 type Target = { peerId: string; afterCursor?: string };
 
-const parentTypes = new Set(["piop-subagent-parent", "piop-review-parent"]);
 
 function requireRootCaller(ctx: ExtensionContext) {
-  if (ctx.sessionManager.getEntries().some(entry => entry.type === "custom" && parentTypes.has(entry.customType))) {
-    throw new Error("Subagents and reviewers cannot use peer tools");
-  }
+  if (isAuxiliary(ctx.sessionManager.getEntries())) throw new Error("Auxiliary chats, such as subagents and reviewers, cannot use peer tools");
 }
 
 async function rootSnapshot(sessionId: string, hostId: string, signal?: AbortSignal) {
   const snapshot = await sessionSnapshot(sessionId, hostId, signal);
 
-  if (snapshot.history.entries.some(entry => entry.type === "custom" && parentTypes.has(entry.customType ?? ""))) {
-    throw new Error("This is a subagent, not a peer; use the subagent tools for it");
+  if (snapshot.history.entries.some(entry => entry.type === "custom" && entry.customType === AUXILIARY_PARENT)) {
+    throw new Error("This is an auxiliary chat, such as a subagent, not a peer");
   }
 
   return snapshot;
@@ -369,7 +367,7 @@ function registerDelivery(pi: ExtensionAPI) {
     catch (error) { ctx.ui.notify(`Agent mailbox acknowledgement failed: ${(error instanceof Error ? error.message : String(error))}`, "error"); }
   });
   pi.on("context", (event, ctx) => {
-    const subagent = ctx.sessionManager.getEntries().some(entry => entry.type === "custom" && entry.customType === "piop-subagent-parent");
+    const auxiliary = auxiliaryParent(ctx.sessionManager.getEntries(), ctx.sessionManager.getSessionId()) !== undefined;
 
     return { messages: event.messages.flatMap<ContextEvent["messages"][number]>(message => {
       const delivered = message.role === "user" && Check(deliveredSchema, message);
@@ -380,8 +378,8 @@ function registerDelivery(pi: ExtensionAPI) {
       if (Check(mailboxMessageSchema, message)) mailbox.consume(ctx, message.details.notificationId);
       const sent = message.role === "custom" && message.customType === "piop-agent-message" ? agentMessage(messageText(message)) : undefined;
 
-      // A subagent sees only the text its parent wrote; a chat sees a message from another chat as a <peer_message>.
-      if (sent) return [{ role: "user", content: [{ type: "text", text: subagent ? sent.message : peerMessage(sent) }], timestamp: message.timestamp }];
+      // An auxiliary chat, such as a subagent, sees only the text its owner wrote; a chat sees a message from another chat as a <peer_message>.
+      if (sent) return [{ role: "user", content: [{ type: "text", text: auxiliary ? sent.message : peerMessage(sent) }], timestamp: message.timestamp }];
 
       if (message.role === "custom" && message.customType === "piop-subagent-result" && Check(resultDetailsSchema, message.details)) {
         return [{ role: "user", content: [{ type: "text", text: subagentResponses(message.details.runs) }], timestamp: message.timestamp }];

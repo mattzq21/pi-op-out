@@ -20,7 +20,7 @@ test('archiving a worktree chat and its child releases its worktree', async () =
   const branch=await source.command({type:'get_state'});
   await source.command({type:'prompt',message:'Delegate now'});
   await source.until(messages=>text(messages.at(-1))==='All finished');
-  const child=(await agents.daemon.invoke('list_sessions')).find((s:any)=>s.subagentParentId===branch.sessionId);
+  const child=(await agents.daemon.invoke('list_sessions')).find((s:any)=>s.auxiliaryParentId===branch.sessionId);
   expect(child).toBeTruthy();
   writeFileSync(join(branch.cwd,'dirty.txt'),'after last commit');
   await agents.daemon.invoke('archive_session',{sessionPath:branch.sessionFile,hostId:'local',clientId:'laptop',terminalIds:[]});

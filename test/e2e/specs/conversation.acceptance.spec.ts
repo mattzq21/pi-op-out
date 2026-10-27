@@ -3,7 +3,7 @@ import './conversation-acceptance-1.cases.js';
 import './conversation-acceptance-2.cases.js';
 import './conversation-acceptance-3.cases.js';
 import './conversation-acceptance-4.cases.js';
-import './btw-acceptance.cases.js';
+import './sidepane-acceptance.cases.js';
 import './settings-behavior.cases.js';
 import './agent-profiles-acceptance.cases.js';
 import './settings-acceptance.cases.js';

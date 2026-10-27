@@ -42,7 +42,7 @@ try {
    }
   };
  },settings);
- let connection; const savedSettings=[];
+ let connection; const savedSettings=[]; const usageRequests=[];
  await page.routeWebSocket('wss://piop.example.test/', ws=> {
   connection=ws;
   ws.onMessage(raw=> {
@@ -53,7 +53,7 @@ try {
    return; }
 
    if(m.type==='ping') return;
-   const data={stop_pi:true,load_app_settings:settings,load_settings_change:{settings},plugin_status:{enabled:[],configured:[],revision:'plugins',error:null},create_temporary_chat:{cwd:'/tmp/project',sessionId:'mobile-test'},list_sessions:[],load_session_groups:{version:1,groups:[],assignments:{}},codex_usage:{remainingPercent:80},anthropic_usage:{remainingPercent:60},opencode_go_usage:{rolling:{status:'ok',remainingPercent:70},weekly:{status:'ok',remainingPercent:45},monthly:{status:'ok',remainingPercent:30}},start_pi:{attached:true},home_directory:'/home/test',is_git_repository:false};
+   const data={stop_pi:true,load_app_settings:settings,load_settings_change:{settings},plugin_status:{enabled:[],configured:[],revision:'plugins',error:null},create_temporary_chat:{cwd:'/tmp/project',sessionId:'mobile-test'},list_sessions:[],load_session_groups:{version:1,groups:[],assignments:{}},provider_usage:{codex:{usage:{remainingPercent:80}},anthropic:{usage:{remainingPercent:60},error:'Rate limited'},opencodeGo:{usage:{rolling:{status:'ok',remainingPercent:70},weekly:{status:'ok',remainingPercent:45},monthly:{status:'ok',remainingPercent:30}}}},start_pi:{attached:true},home_directory:'/home/test',is_git_repository:false};
    let result=Object.hasOwn(data,m.command)?data[m.command]:undefined;
 
    if(m.command==='provider_auth'&&m.args.request.action==='draft_catalog') result={config:{agents:[{name:'default',isDefault:true,model:'test/model',effort:'high',path_systemprompt:'',path_agent_prompt:'',tools:[],skills:[],mcpServers:{}}]},models:[state.model],initialModel:null,initialThinking:'medium',commands:[],commandDetails:[]};
@@ -62,6 +62,8 @@ try {
    const responses={get_session_revision:{revision:'changed'},get_snapshot:{revision:'snapshot',state,history:{entries:[],leafId:null},queue:{type:'queue_state',pendingMessages:[]},liveTools:[],sequence:0,epoch:'mobile-test'},get_state:state,get_available_models:{models:[state.model]},get_available_thinking_levels:{levels:['high']},get_commands:{commands:[]},get_session_stats:{}};
     result=responses[m.args.command.type]??{};
    }
+
+   if(m.command==='provider_usage') usageRequests.push(m.args);
 
    if(m.command==='save_app_settings') { savedSettings.push(m.args.settings); result={settings:m.args.settings}; }
 
@@ -78,12 +80,19 @@ try {
  await page.getByRole('button',{name:'Toggle conversations'}).waitFor();
  await page.getByRole('textbox',{name:'Message piop'}).waitFor();
  await page.waitForFunction(()=>!document.querySelector('textarea[aria-label="Message piop"]').disabled);
- const usageBadges=await page.locator('.rail-bottom .codex-usage').evaluateAll(elements=>elements.map(element=>({label:element.getAttribute('aria-label'),logo:!!element.querySelector('svg.provider-logo')})));
+ const usageBadges=await page.locator('.rail-bottom .codex-usage').evaluateAll(elements=>elements.map(element=>({label:element.getAttribute('aria-label'),logo:!!element.querySelector('svg.provider-logo'),text:element.textContent,stale:element.classList.contains('stale')})));
  assert.equal(usageBadges.length,3);
  assert.ok(usageBadges.every(badge=>badge.logo));
  assert.match(usageBadges[0].label,/OpenCode Go usage remaining: 70%/);
- assert.match(usageBadges[1].label,/Anthropic usage remaining: 60%/);
+ assert.match(usageBadges[1].label,/Anthropic usage remaining: 60%, stale: Rate limited/);
+ assert.deepEqual(usageBadges.map(badge=>[badge.stale,badge.text.endsWith(' (stale)')]),[[false,false],[true,true],[false,false]]);
  assert.match(usageBadges[2].label,/Codex usage remaining: 80%/);
+ await page.locator('.rail-bottom button.codex-usage').nth(1).dispatchEvent('click');
+ for (let attempt = 0; !usageRequests.some(args => args.provider === 'anthropic'); attempt++) {
+  if (attempt === 100) throw new Error('A click on the Anthropic badge did not refresh its usage');
+  await new Promise(resolve => setTimeout(resolve, 100));
+ }
+ assert.deepEqual([usageRequests.at(-1).refresh,usageRequests.at(-1).provider],[true,'anthropic']);
  connection.send(JSON.stringify({event:'pi://event',payload:{type:'session_switched'}}));
  for (let attempt = 0; !savedSettings.some(saved => saved.knownModels?.includes('test/model')); attempt++) {
   if (attempt === 100) throw new Error('The connected model was not saved as a known model');

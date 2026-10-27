@@ -304,31 +304,28 @@ describe("Conversation acceptance", () => {
     }
   });
 
-  it("opens an indexed conversation as a second chat shell and closes it by selecting that session", async () => {
-    await startTemporaryConversation({});
+  it("opens a side chat as a second chat shell, and its tab leaves when another main chat is selected", async () => {
+    const { sessionId } = await startTemporaryConversation({});
+    const side = { id: "acceptance-side", path: "/tmp/acceptance-side.jsonl", name: "Code review", project: "Acceptance project", cwd: "/tmp", preview: "", messageCount: 0, hostId: "local", auxiliaryParentId: sessionId, auxiliaryKind: "review" };
     const indexed = { id: "acceptance-split", path: "/tmp/acceptance-split.jsonl", name: "Acceptance split target", project: "Acceptance project", cwd: "/tmp", preview: "Split preview", messageCount: 1, hostId: "local" };
     await mockBackend({
-      list_sessions: [indexed], ...connectedSessionResponses(indexed.id),
+      list_sessions: [indexed, side], ...connectedSessionResponses(side.id),
       load_app_settings: { ...defaultSettings, defaultThinking: "high" },
-      "pi_command:get_state": { ...connectedSessionResponses(indexed.id)["pi_command:get_state"], sessionFile: indexed.path, messageCount: indexed.messageCount },
+      "pi_command:get_state": { ...connectedSessionResponses(side.id)["pi_command:get_state"], sessionFile: side.path },
     });
 
     try {
-      await app.conversationSearch.setValue(indexed.name);
-      const session = $(".session-item");
-      await expect(session.$(".session-main")).toBeDisplayed();
-      await expect(session.$(".session-main")).toHaveAttribute("aria-label", expect.stringContaining(indexed.name));
-      await emitPiEvent({ type: "extension_ui_request", id: "indexed-review", method: "input", title: "__pi_desktop_review__", placeholder: JSON.stringify({ task: "Review this conversation", parentSessionId: "parent", cwd: indexed.cwd, sessionId: indexed.id, sessionPath: indexed.path }) });
-      const split = $('section[aria-label="Split conversation: Code review"]');
+      await emitPiEvent({ type: "extension_ui_request", id: "indexed-review", method: "input", title: "__pi_desktop_auxiliary__", placeholder: JSON.stringify({ kind: "review", name: side.name, task: "Review this conversation", parentSessionId: sessionId, cwd: side.cwd, hostId: "local", sessionId: side.id, sessionPath: side.path }) });
+      const split = $('section[aria-label="Side chat: Code review"]');
       await expect(split).toBeDisplayed();
       await expect($$(".chat-panes .chat-shell")).toBeElementsArrayOfSize(2);
       await split.$('textarea[aria-label="Message piop"]').waitForEnabled();
-      const splitRuntimeId = (await backendCalls()).find(({ command, args }) => command === "start_pi" && args.sessionId === indexed.id)?.args.runtimeId;
-      expect(splitRuntimeId).toBeTruthy();
+      await app.conversationSearch.setValue(indexed.name);
+      const session = $(".session-item");
+      await expect(session.$(".session-main")).toHaveAttribute("aria-label", expect.stringContaining(indexed.name));
       await session.$(".session-main").click();
       await expect(split).not.toBeExisting();
       await app.composer.waitForEnabled();
-      expect((await backendCalls()).some(({ command, args }) => command === "stop_pi" && args.runtimeId === splitRuntimeId)).toBe(false);
     } finally {
       await app.conversationSearch.clearValue();
       await resetBackend();

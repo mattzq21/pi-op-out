@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { isAuxiliary, records } from '../resources/piop-storage/session-records.cjs';
-import { locateSessionFile, sessionDescendants } from './archives';
+import { locateSessionFile, RESTORED_KINDS, sessionDescendants } from './archives';
 import * as storageTransactions from './storage_transactions';
 import { StorageTransactionError, type RestoreResult } from './storage_transactions';
 import type { FolderMove } from './storage_transactions';
@@ -27,7 +27,7 @@ export async function restoreSessionTree(sessionPath: string, lease: (path: stri
       source = await locateSessionFile(sessionPath, true);
       assertRootRestore(source);
       leases.push([source, await lease(source)]);
-      for (const [child] of await sessionDescendants(source, true, false)) leases.push([child, await lease(child)]);
+      for (const [child] of await sessionDescendants(source, true, false, RESTORED_KINDS)) leases.push([child, await lease(child)]);
       result = await storageTransactions.restore(leases.map(([path]) => path), cwdMoves);
       restored = restoredPaths(result, leases.map(([path]) => path));
     } catch (error) {

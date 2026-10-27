@@ -1,5 +1,5 @@
 import { Key } from "@solid-primitives/keyed";
-import { createMemo, createSignal, onCleanup } from "solid-js";
+import { createMemo, createSignal, onCleanup, untrack } from "solid-js";
 import { createDependencyEffect, createRef } from "../lib/solid";
 import { createTerminalTranscript } from "../lib/terminalTranscript";
 import { Plus, RotateCcw, TerminalSquare, Trash2, X } from "lucide-solid";
@@ -7,22 +7,43 @@ import { IconButton } from "./IconButton";
 
 import type { TerminalViewProps } from "./TerminalView";
 
+/** Bash's end-of-history key (Alt+>). It returns bash from a history entry to its empty new line. */
+const endOfHistory = "\u001b>";
+/** Time after which another up or down press is allowed when the shell has not replied. */
+const historyReplyTime = 2000;
+
+function sharedStart(first: string, second: string) {
+  let index = 0;
+
+  while (index < first.length && first[index] === second[index]) index++;
+
+  return index;
+}
+
 export function MobileTerminalView(componentProps: TerminalViewProps) {
   const [command, setCommand] = createSignal("");
   const [sending, setSending] = createSignal(false);
   const host = createRef<HTMLDivElement>(null);
   const input = createRef<HTMLSpanElement>(null);
   const tabRefs = createRef(new Map<string, HTMLButtonElement>());
-  const history: string[] = [];
-  let historyIndex = 0;
-  let draft = "";
+  /** Set while bash shows a history entry that the box holds a copy of. Bash's own line then has that entry, not an empty line. */
+  const [recall, setRecall] = createSignal<{ terminal: string; prompt: string; draft: string }>();
+  /** Terminals left while bash showed a history entry. Each gets the end of history key when it is shown again. */
+  const awayTerminals = new Set<string>();
+  let lineWaiter: { outputEnd: number; before: string; created: number; resolve: (line: string | undefined) => void } | undefined;
+  let historyMove: Promise<void> | undefined;
   let followOutput = true;
   let parser = createTerminalTranscript();
   let parsedId = "";
   let parsedEnd = 0;
   let commandRevision = 0;
   let disposed = false;
-  onCleanup(() => { disposed = true; });
+  onCleanup(() => {
+    disposed = true;
+    lineWaiter?.resolve(undefined);
+
+    if (untrack(recall)) void componentProps.onData(endOfHistory);
+  });
 
   const transcript = createMemo(() => {
     const start = componentProps.outputEnd - componentProps.output.length;
@@ -33,11 +54,27 @@ export function MobileTerminalView(componentProps: TerminalViewProps) {
       parsedId = componentProps.activeId;
     }
 
-    const text = parser.append(componentProps.output.slice(parsedEnd - start));
+    parser.append(componentProps.output.slice(parsedEnd - start));
     parsedEnd = componentProps.outputEnd;
 
-    return { text, segments: parser.segments() };
+    return { line: parser.currentLine(), outputEnd: componentProps.outputEnd };
   });
+
+  // The box shows the recalled command, so the shell's copy of it after the prompt is hidden.
+  const segments = createMemo(() => {
+    transcript();
+    const current = recall();
+
+    return parser.segments(current?.terminal === componentProps.activeId ? current.prompt.length : undefined);
+  });
+
+  createDependencyEffect(() => {
+    const waiter = lineWaiter;
+    const { line, outputEnd } = transcript();
+
+    if (!waiter || outputEnd <= waiter.outputEnd) return;
+    waiter.resolve(line === waiter.before ? undefined : line);
+  }, () => [transcript()]);
 
   const disabled = () => Boolean(componentProps.ownershipRequired || !componentProps.started || componentProps.exited);
   const canAdd = createMemo(() => componentProps.terminals.length < 8);
@@ -57,24 +94,27 @@ export function MobileTerminalView(componentProps: TerminalViewProps) {
   }, () => [transcript()]);
 
   createDependencyEffect(() => {
-    setCommand(""); history.length = 0; historyIndex = 0; draft = ""; followOutput = true;
+    setCommand(""); followOutput = true;
+    lineWaiter?.resolve(undefined);
+    const current = untrack(recall);
+
+    if (current && current.terminal !== componentProps.activeId) { awayTerminals.add(current.terminal); setRecall(undefined); }
 
     if (componentProps.visible !== false) tabRefs.current.get(componentProps.activeId)?.scrollIntoView({ block: "nearest", inline: "nearest" });
   }, () => [componentProps.activeId]);
 
-  const finishInput = (value: string, interrupting: boolean, revision: number) => {
-    if (!interrupting && value && history.at(-1) !== value) {
-      const atLatest = historyIndex === history.length;
-      history.push(value);
+  createDependencyEffect(() => {
+    if (disabled() || !awayTerminals.delete(componentProps.activeId)) return;
+    void componentProps.onData(endOfHistory);
+  }, () => [componentProps.activeId, disabled()]);
 
-      if (history.length > 100) { history.shift(); historyIndex = Math.max(0, historyIndex - 1); }
+  /** Bash's line holds a history entry, or may hold one because an up or down key has no reply yet. */
+  const shellAway = () => Boolean(recall() || lineWaiter);
 
-      if (atLatest) historyIndex = history.length;
-    }
-
+  const finishInput = (revision: number) => {
     if (revision !== commandRevision) return;
     commandRevision++;
-    historyIndex = history.length; draft = ""; setCommand(""); followOutput = true;
+    setCommand(""); followOutput = true;
 
     if (host.current) host.current.scrollTop = host.current.scrollHeight;
     input.current?.focus();
@@ -82,17 +122,23 @@ export function MobileTerminalView(componentProps: TerminalViewProps) {
 
   const submit = async (interrupting = false) => {
     if (disabled() || sending()) return;
-    const value = command();
     const id = componentProps.activeId;
-    const revision = commandRevision;
     setSending(true);
     let accepted;
+    let value = command();
+    let revision = commandRevision;
 
-    try { accepted = await componentProps.onData(interrupting ? "\u0003" : value + "\r", true); }
+    try {
+      if (historyMove) { await historyMove; value = command(); revision = commandRevision; }
+
+      // Ctrl+C also returns bash to its empty line.
+      accepted = await componentProps.onData(interrupting ? "\u0003" : (shellAway() ? endOfHistory : "") + value + "\r", true);
+    }
     finally { if (!disposed) setSending(false); }
 
     if (!accepted || disposed || componentProps.activeId !== id) return;
-    finishInput(value, interrupting, revision);
+    lineWaiter?.resolve(undefined); setRecall(undefined);
+    finishInput(revision);
   };
 
   let restoredRevision = 0;
@@ -103,7 +149,6 @@ export function MobileTerminalView(componentProps: TerminalViewProps) {
   createDependencyEffect(() => {
     if (commandRevision !== restoredRevision) return;
     setCommand(componentProps.inputDraft ?? "");
-    historyIndex = history.length; draft = "";
   }, () => [componentProps.activeId, componentProps.ownershipRequired, componentProps.inputDraft]);
 
   const send = () => { void submit(); };
@@ -119,7 +164,9 @@ export function MobileTerminalView(componentProps: TerminalViewProps) {
       return;
     }
 
-    componentProps.onData(data);
+    const leaveHistory = shellAway();
+    lineWaiter?.resolve(undefined); setRecall(undefined);
+    componentProps.onData((leaveHistory ? endOfHistory : "") + data);
     input.current?.focus();
   };
 
@@ -129,10 +176,54 @@ export function MobileTerminalView(componentProps: TerminalViewProps) {
     componentProps.onDraft(value);
   };
 
-  const browseHistory = (direction: number) => {
-    if (historyIndex === history.length) draft = command();
-    historyIndex = Math.max(0, Math.min(history.length, historyIndex + direction));
-    editCommand(historyIndex === history.length ? draft : history[historyIndex]);
+  /** Shows a command in the box, with the caret at its end when the box has focus. */
+  const showCommand = (value: string) => {
+    editCommand(value);
+    const element = input.current;
+
+    if (!element) return;
+    element.textContent = value;
+
+    if (document.activeElement !== element) return;
+    const range = document.createRange();
+    range.selectNodeContents(element); range.collapse(false);
+    window.getSelection()?.removeAllRanges(); window.getSelection()?.addRange(range);
+  };
+
+  /** Sends a history key to the shell and gives the shell's current line after its reply, or undefined if the line did not change. */
+  const historyLine = (key: string, before: string) => new Promise<string | undefined>(resolve => {
+    lineWaiter?.resolve(undefined);
+    const waiter = { outputEnd: componentProps.outputEnd, before, created: Date.now(), resolve: (line: string | undefined) => {
+      if (lineWaiter === waiter) lineWaiter = undefined;
+      resolve(line);
+    } };
+    lineWaiter = waiter;
+    componentProps.onData(key).then(accepted => { if (!accepted) waiter.resolve(undefined); }, () => waiter.resolve(undefined));
+  });
+
+  // Bash moves through its history and the box gets a copy of the entry. Bash returns to its empty line before the next command.
+  const moveHistory = async (direction: -1 | 1) => {
+    if (disabled() || sending() || (lineWaiter && Date.now() - lineWaiter.created < historyReplyTime)) return;
+    const current = recall();
+
+    if (!current && direction > 0) return;
+    const id = componentProps.activeId;
+    const before = transcript().line;
+    const prompt = current?.prompt ?? before;
+    const draft = current?.draft ?? command();
+    const pending = historyLine(direction < 0 ? "\u001b[A" : "\u001b[B", before);
+    const move = pending.then(line => {
+      // A program without line editing shows the key as text, for example ^[[A.
+      if (line === undefined || disposed || componentProps.activeId !== id || /\^\[\[[AB]$/.test(line)) return;
+
+      if (line === prompt) { setRecall(undefined); showCommand(draft); return; }
+      setRecall({ terminal: id, prompt, draft });
+      showCommand(line.startsWith(prompt) ? line.slice(prompt.length) : line.slice(sharedStart(line, prompt)));
+    });
+    historyMove = move;
+    await move;
+
+    if (historyMove === move) historyMove = undefined;
   };
 
   // Android keyboards send Enter during word composition as a new line in the text, with no Enter key event.
@@ -183,7 +274,7 @@ export function MobileTerminalView(componentProps: TerminalViewProps) {
         const element = host.current;
 
         if (element) followOutput = element.scrollHeight - element.scrollTop - element.clientHeight < 24;
-      }}><span><Key each={transcript().segments} by="id">{segment => <span style={segment().style}>{segment().text}</span>}</Key></span>{!componentProps.ownershipRequired &&
+      }}><span><Key each={segments()} by="id">{segment => <span style={segment().style}>{segment().text}</span>}</Key></span>{!componentProps.ownershipRequired &&
         <form class="terminal-command" onSubmit={event => { event.preventDefault(); send(); }}>
           <span ref={element => { input.current = element; element.textContent = command(); }} role="textbox" aria-label="Terminal command" aria-multiline="true" aria-disabled={disabled()} tabIndex={disabled() ? -1 : 0} contentEditable={disabled() ? false : "plaintext-only"} autocapitalize="off" spellcheck={false} onInput={event => acceptInput(event.currentTarget, event.isComposing)} onCompositionEnd={event => acceptInput(event.currentTarget, false)} onKeyDown={event => {
             if (event.isComposing) return;
@@ -191,20 +282,16 @@ export function MobileTerminalView(componentProps: TerminalViewProps) {
             if (event.key === "Enter") { event.preventDefault(); send(); }
 
             if (event.ctrlKey && event.key.toLowerCase() === "c" && window.getSelection()?.isCollapsed) { event.preventDefault(); interrupt(); }
-
-            if (event.key === "ArrowUp" || event.key === "ArrowDown") {
-              event.preventDefault();
-
-              browseHistory(event.key === "ArrowUp" ? -1 : 1);
-            }
           }} />
         </form>}
       </div>
       <div class="terminal-controls" role="group" aria-label="Terminal controls">
         <button type="button" disabled={disabled() || sending()} onClick={send}>Send</button>
-        <Key each={[["Esc", "\u001b"], ["Tab", "\t"], ["Ctrl+C", "\u0003"], ["Ctrl+D", "\u0004"], ["↑", "\u001b[A"], ["↓", "\u001b[B"], ["←", "\u001b[D"], ["→", "\u001b[C"]]} by={entry => entry[0]}>{entry =>
+        <Key each={[["Esc", "\u001b"], ["Tab", "\t"], ["Ctrl+C", "\u0003"], ["Ctrl+D", "\u0004"]]} by={entry => entry[0]}>{entry =>
           <button type="button" disabled={disabled()} onPointerDown={event => event.preventDefault()} onClick={() => sendControl(entry()[1])}>{entry()[0]}</button>
         }</Key>
+        <button type="button" disabled={disabled()} onPointerDown={event => event.preventDefault()} onClick={() => { void moveHistory(-1); }}>↑</button>
+        <button type="button" disabled={disabled()} onPointerDown={event => event.preventDefault()} onClick={() => { void moveHistory(1); }}>↓</button>
       </div>
 
     </div> : <div class="terminal-unavailable">Start the conversation to get a CWD</div>}

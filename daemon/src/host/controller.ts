@@ -64,6 +64,8 @@ export class Host implements SessionHost {
   }
 
   static async create(home: string, storage: string, services: HostServices, sink: (packet: any) => void): Promise<Host> {
+    // Plugins start first: the agent definitions give agents the default tools of the enabled plugins.
+    await services.initialize();
     const settings = Settings.readSettingsAt(join(home, storage, 'settings.json'));
     const definitions = await Agents.load(home, storage, Extensions.agentResources(settings), true, null);
     const host = new Host(home, storage, services, sink);
@@ -73,7 +75,6 @@ export class Host implements SessionHost {
     try { host.submissions.recover(); } catch (error) { output({ type: 'diagnostic', line: 'Could not decide the messages left from the last run: ' + errorText(error) }); }
     recoverQueuedInput(host.storageRoot(), host.ownership(), output);
     services.bind(host);
-    await services.initialize();
     host.timers.push(watchRetention(host.storageRoot(), host.ownership(), output));
     return host;
   }

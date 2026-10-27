@@ -3,7 +3,7 @@ import { execFileSync } from 'node:child_process';
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { connect, createServer, type Server } from 'node:net';
 import { join } from 'node:path';
-import { startDaemon, temporaryDirectory, type TestDaemon } from './harness';
+import { refreshedUsage, startDaemon, temporaryDirectory, type TestDaemon } from './harness';
 
 /*
  * The daemon asks https://opencode.ai/zen/go/v1/usage for OpenCode Go usage. The test daemon reaches it through an
@@ -51,7 +51,7 @@ test('OpenCode Go usage reports each window with its status, remaining percent a
     weekly: { status: 'ok', percent: 55.4, resetsAt: '2026-09-21T00:00:00Z' },
     monthly: { status: 'rate-limited', percent: 101, resetsAt: '2026-09-30T00:00:00.000Z' },
   } }) };
-  expect(await daemon.invoke('opencode_go_usage')).toEqual({
+  expect((await refreshedUsage(daemon, 'opencodeGo')).usage).toEqual({
     rolling: { status: 'ok', remainingPercent: 73, resetAt: 1789660800 },
     weekly: { status: 'ok', remainingPercent: 45, resetAt: 1789948800 },
     monthly: { status: 'rate-limited', remainingPercent: 0, resetAt: 1790726400 },
@@ -62,10 +62,42 @@ test('OpenCode Go usage reports each window with its status, remaining percent a
 test('OpenCode Go usage without all three windows is unavailable, and a gateway error passes on its message', async () => {
   for (const body of [{ type: 'error', error: { type: 'AuthError', message: 'Unauthorized' } }, { usage: { rolling: { status: 'ok', percent: 50 } } }, {}]) {
     reply = { status: 200, body: JSON.stringify(body) };
-    expect(await daemon.failure('opencode_go_usage'), JSON.stringify(body)).toBe('OpenCode Go usage is unavailable');
+    expect((await refreshedUsage(daemon, 'opencodeGo')).error, JSON.stringify(body)).toBe('OpenCode Go usage is unavailable');
   }
   reply = { status: 401, body: JSON.stringify({ type: 'error', error: { type: 'AuthError', message: 'Unauthorized' } }) };
-  expect(await daemon.failure('opencode_go_usage')).toBe('OpenCode Go usage is unavailable: Unauthorized');
+  expect((await refreshedUsage(daemon, 'opencodeGo')).error).toBe('OpenCode Go usage is unavailable: Unauthorized');
+}, 60_000);
+
+test('a failed refresh keeps the last usage with the error, tells every client and logs the error once', async () => {
+  const window = { status: 'ok', percent: 40 };
+  reply = { status: 200, body: JSON.stringify({ usage: { rolling: window, weekly: window, monthly: window } }) };
+  const usage = (await refreshedUsage(daemon, 'opencodeGo')).usage;
+  expect(usage.rolling.remainingPercent).toBe(60);
+  const other = await daemon.connect();
+  try {
+    reply = { status: 429, body: JSON.stringify({ error: { message: 'Rate limited' } }) };
+    const error = 'OpenCode Go usage is unavailable: Rate limited';
+    const changed = other.waitEvent('pi://usage-changed', payload => payload.opencodeGo?.error === error);
+    expect(await refreshedUsage(daemon, 'opencodeGo')).toEqual({ usage, error });
+    expect((await changed).opencodeGo).toEqual({ usage, error });
+    await refreshedUsage(daemon, 'opencodeGo');
+    expect(await other.invoke('provider_usage', {})).toMatchObject({ opencodeGo: { usage, error } });
+    expect(daemon.log().split('\n').filter(line => line.includes('Usage of opencodeGo could not refresh: ' + error))).toHaveLength(1);
+    reply = { status: 200, body: JSON.stringify({ usage: { rolling: window, weekly: window, monthly: window } }) };
+    expect(await refreshedUsage(daemon, 'opencodeGo')).toEqual({ usage });
+  } finally { other.close(); }
+}, 60_000);
+
+test('a refresh of one provider asks only that provider, and an unknown provider is refused', async () => {
+  const window = { status: 'ok', percent: 10 };
+  reply = { status: 200, body: JSON.stringify({ usage: { rolling: window, weekly: window, monthly: window } }) };
+  const before = requests.length;
+  await daemon.invoke('provider_usage', { refresh: true, provider: 'anthropic' });
+  expect(requests.length).toBe(before);
+  const usage = await daemon.invoke('provider_usage', { refresh: true, provider: 'opencodeGo' });
+  expect(requests.length).toBe(before + 1);
+  expect(usage.opencodeGo.usage.rolling.remainingPercent).toBe(90);
+  expect(await daemon.failure('provider_usage', { refresh: true, provider: 'toString' })).toContain('Invalid provider');
 }, 60_000);
 
 test('reset times are read only from UTC ISO 8601 timestamps, with or without fractions', async () => {
@@ -76,7 +108,7 @@ test('reset times are read only from UTC ISO 8601 timestamps, with or without fr
   for (const [resetsAt, expected] of cases) {
     const window = { status: 'ok', percent: 0, resetsAt };
     reply = { status: 200, body: JSON.stringify({ usage: { rolling: window, weekly: window, monthly: window } }) };
-    const usage = await daemon.invoke('opencode_go_usage');
+    const usage = (await refreshedUsage(daemon, 'opencodeGo')).usage;
     expect(usage.rolling.resetAt, resetsAt).toBe(expected);
   }
 }, 60_000);

@@ -69,8 +69,8 @@ function sharedFolder(record: ChatWorktreeRecord, root: string, folder = record.
     sessions = db.prepare('SELECT session_id, session_path FROM sessions WHERE session_path IS NOT NULL AND session_id != ?').all(record.chatId) as typeof sessions;
     if (excludeArchivedChildren) {
       const descendants = db.prepare(`WITH RECURSIVE descendants(id) AS (
-        SELECT child_id FROM session_children WHERE parent_id=?
-        UNION SELECT c.child_id FROM session_children c JOIN descendants d ON c.parent_id=d.id
+        SELECT child_id FROM auxiliary_children WHERE parent_id=?
+        UNION SELECT c.child_id FROM auxiliary_children c JOIN descendants d ON c.parent_id=d.id
       ) SELECT id FROM descendants`).all(record.chatId) as Array<{ id: string }>;
       for (const child of descendants) children.add(child.id);
     }

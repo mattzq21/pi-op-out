@@ -262,7 +262,7 @@ function storedSessionEntries(path, manager) {
 function sessionParentPath(entry) {
   if (entry?.type === "session") return entry.parentSession;
 
-  if (entry?.type === "custom" && entry.customType === "piop-subagent-parent") return entry.data?.parentSessionPath;
+  if (stateRecords.isAuxiliaryParent(entry) && entry.data.kind === "subagent") return entry.data.parentSessionPath;
 }
 
 function inheritedSessionEntries(entries) {

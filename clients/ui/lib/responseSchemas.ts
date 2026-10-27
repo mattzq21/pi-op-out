@@ -24,7 +24,7 @@ export const settingsPublicationSchema = z.object({ committed: z.literal(true), 
 
 export const settingsChangeSchema = z.object({ settings: appSettingsSchema, publication: settingsPublicationSchema.optional(), agentConfigChange: agentConfigChangeSchema.optional(), committed: z.boolean().optional(), warnings: z.array(z.string()).optional(), revision: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER).optional(), committedRevision: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER).optional(), synchronizationPending: z.boolean().optional(), source: z.string().optional(), phaseRevision: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER).optional() });
 
-export const sessionSummarySchema = z.object({ id: z.string(), isDraft: z.boolean().optional(), subagentParentId: z.string().optional(), forkSourceId: z.string().optional(), daemonId: z.string().optional(), isRunning: z.boolean().optional(), groupId: z.union([z.string(), z.null()]).optional(), path: z.string(), name: z.string(), project: z.string(), cwd: z.string(), cwdExists: z.boolean().optional(), linkedWorktree: z.boolean().optional(), preview: z.string(), messageCount: z.number(), lastMessageAt: z.number(), apiCost: z.number(), hostId: z.string().optional(), hostName: z.string().optional() });
+export const sessionSummarySchema = z.object({ id: z.string(), isDraft: z.boolean().optional(), auxiliaryParentId: z.string().optional(), auxiliaryKind: z.string().optional(), forkSourceId: z.string().optional(), daemonId: z.string().optional(), isRunning: z.boolean().optional(), groupId: z.union([z.string(), z.null()]).optional(), path: z.string(), name: z.string(), project: z.string(), cwd: z.string(), cwdExists: z.boolean().optional(), linkedWorktree: z.boolean().optional(), preview: z.string(), messageCount: z.number(), lastMessageAt: z.number(), apiCost: z.number(), hostId: z.string().optional(), hostName: z.string().optional() });
 
 export const sessionGroupSchema = z.object({ id: z.string(), name: z.string(), cwd: z.union([z.string(), z.null()]).optional(), hostId: z.union([z.string(), z.null()]).optional(), hostName: z.union([z.string(), z.null()]).optional() });
 
@@ -49,6 +49,11 @@ export const codexUsageSchema = z.object({ remainingPercent: z.number(), resetAt
 export const usageWindowSchema = z.object({ status: z.string(), remainingPercent: z.number(), resetAt: z.number().optional() });
 
 export const opencodeGoUsageSchema = z.object({ rolling: usageWindowSchema, weekly: usageWindowSchema, monthly: usageWindowSchema });
+
+const providerUsage = <T extends z.ZodType>(usage: T) => z.object({ usage: usage.optional(), error: z.string().optional() }).optional();
+
+/** The usage the daemon last read per provider; error means its latest refresh failed, so the usage is stale. */
+export const providerUsageSchema = z.object({ codex: providerUsage(codexUsageSchema), anthropic: providerUsage(codexUsageSchema), opencodeGo: providerUsage(opencodeGoUsageSchema) });
 
 export const directoryListingSchema = z.object({ path: z.string(), parent: z.string().optional(), directories: z.array(z.string()) });
 

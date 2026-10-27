@@ -9,6 +9,9 @@ export type ForkMode = "fork" | "fork_after" | "clone";
 
 export type ForkResult = { hostId: string; sessionId: string; sessionPath: string; cwd: string; text?: string };
 
+/** An auxiliary copy: kind is the auxiliary kind, name the chat name, note an optional system message the agent and the user see after the copied history. */
+export type AuxiliaryCopy = { kind: string; name: string; note?: string };
+
 /** One instance per Pi session. Operations act on the conversation of the given context. */
 export interface SessionControls {
   /** Stops the current run. An active goal pauses. Resolves when Pi is idle. */
@@ -17,6 +20,12 @@ export interface SessionControls {
   cancelPreparation(): void;
   /** Saves a copy of this conversation as a new conversation. Does not switch to it. */
   fork(ctx: ExtensionContext, mode: ForkMode, entryId?: string): Promise<ForkResult>;
+  /**
+   * Saves a copy of this root conversation through its last finished answer as an auxiliary conversation that this one owns.
+   * The copy keeps the agent, model, thinking level and fast mode, and waits for its first message. Rejects in an auxiliary
+   * conversation and when there is no finished answer yet.
+   */
+  copyAuxiliary(ctx: ExtensionContext, copy: AuxiliaryCopy): Promise<ForkResult & { parentSessionId: string }>;
   /** Moves this conversation back to the assistant response entryId and records that the later branch was dropped. */
   forkAndForget(ctx: ExtensionCommandContext, entryId: string): Promise<{ cancelled: boolean }>;
 }

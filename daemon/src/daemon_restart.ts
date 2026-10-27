@@ -10,7 +10,7 @@ import * as records from './settings_records';
 import * as daemonLog from './daemon_log';
 import * as plugins from './plugins';
 import * as peers from './peers';
-import { validateConfiguration } from './host/index';
+import { restartConfiguration, validateConfiguration } from './host/index';
 import { piExecutable } from './environment';
 import { hostOperationsBusy } from './host_operations';
 import { daemonScript } from './session_worker';
@@ -319,7 +319,7 @@ async function waitForHandoff(plan: Plan): Promise<void> {
 async function startCandidate(plan: Plan, fallback: boolean): Promise<number> {
   const lock = await artifacts.publicationLock();
   try {
-    restartStorage.write(path('plugins.json'), { enabled: fallback ? plan.previous : plan.enabled, previous: plan.previous });
+    restartStorage.write(path('plugins.json'), restartConfiguration(fallback ? plan.previous : plan.enabled, plan.previous));
     restartStorage.remove(path('restart-ready.json'));
   } finally { lock.release(); }
   const child = watch(await launch(plan, fallback ? plan.fallback : plan.executable, '--restart-candidate'));

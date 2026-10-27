@@ -6,8 +6,8 @@ let agents: Awaited<ReturnType<typeof agentDaemon>>;
 beforeAll(async () => { agents = await agentDaemon(); }, 60_000);
 afterAll(async () => { await agents?.close(); });
 
-const ALL = ['cost', 'review'];
-const REVIEW = '__pi_desktop_review__';
+const ALL = ['cost', 'review', 'web-search', 'btw'];
+const REVIEW = '__pi_desktop_auxiliary__';
 let runtimes = 0;
 
 /** Restarts the daemon with the given plugins, as Settings → Plugins does, and returns a new connection to it. */
@@ -84,9 +84,7 @@ test('cost and review are plugins: enabled by default, gone with an explicit err
   expect(await disabled.failure({ type: 'prompt', message: '/cost 3' })).toBe('The Cost limit plugin is disabled. Enable it to use /cost.');
   expect(await disabled.failure({ type: 'follow_up', message: '/review after.ts' })).toBe('The Code review plugin is disabled. Enable it to use /review.');
   expect(await disabled.failure({ type: 'steer', message: '/rs 2' })).toBe('The Code review plugin is disabled. Enable it to use /rs.');
-  expect(await disabled.failure({ type: 'open_review', reviewId: saved.sessionId })).toBe('The Code review plugin is disabled. Enable it to open reviews.');
-  expect(await disabled.failure({ type: 'review_feedback', sessionId: saved.sessionId, message: 'Looks fine' })).toBe('The Code review plugin is disabled. Enable it to send review feedback.');
-  for (const words of ['/cost 3', '/review after.ts', '/rs 2', 'Looks fine']) expect(modelSaw(words)).toBe(false);
+  for (const words of ['/cost 3', '/review after.ts', '/rs 2']) expect(modelSaw(words)).toBe(false);
   expect(disabled.costStatuses()).toEqual([]);
 
   // Each plugin loads on its own: review without cost, then cost without review.
@@ -95,9 +93,6 @@ test('cost and review are plugins: enabled by default, gone with an explicit err
   const reviewOnly = await openChat(client, first);
   expect(await reviewOnly.owned()).toEqual(['review', 'rs']);
   expect(await reviewOnly.failure({ type: 'prompt', message: '/cost 3' })).toBe('The Cost limit plugin is disabled. Enable it to use /cost.');
-  const linked = reviewOnly.review(review => review.sessionId === saved.sessionId);
-  await reviewOnly.command({ type: 'open_review', reviewId: saved.sessionId });
-  expect(await linked).toMatchObject({ sessionId: saved.sessionId, parentSessionId: first.sessionId });
   expect(reviewOnly.costStatuses()).toEqual([]);
 
   client = await restartWith(client, ['cost']);
@@ -106,7 +101,6 @@ test('cost and review are plugins: enabled by default, gone with an explicit err
   expect(await costOnly.owned()).toEqual(['cost']);
   await costOnly.costStatus(status => status.endsWith(' / $5.00'));
   expect(await costOnly.failure({ type: 'follow_up', message: '/review only-cost.ts' })).toBe('The Code review plugin is disabled. Enable it to use /review.');
-  expect(await costOnly.failure({ type: 'open_review', reviewId: saved.sessionId })).toBe('The Code review plugin is disabled. Enable it to open reviews.');
   expect(modelSaw('/review only-cost.ts')).toBe(false);
 
   client = await restartWith(client, ALL);
@@ -119,9 +113,6 @@ test('cost and review are plugins: enabled by default, gone with an explicit err
   await again.command({ type: 'prompt', message: '/cost 4' });
   await raised;
   await again.costStatus(status => status.endsWith(' / $4.00'));
-  const reopened = again.review(review => review.sessionId === saved.sessionId);
-  await again.command({ type: 'open_review', reviewId: saved.sessionId });
-  expect(await reopened).toMatchObject({ sessionId: saved.sessionId, parentSessionId: first.sessionId });
   const next = again.review(review => review.task?.includes('again.ts'));
   await again.command({ type: 'follow_up', message: '/review again.ts' });
   expect((await next).task).toContain('again.ts');

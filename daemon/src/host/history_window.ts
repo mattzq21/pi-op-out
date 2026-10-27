@@ -6,7 +6,7 @@ const RECENT_TURNS = 5;
 const RECENT_TEXT = 5000;
 
 const PROMPT_CONTEXTS = new Set(['piop-context', 'pi-desktop-prompt-context']);
-const PROMPT_CUSTOM_MESSAGES = new Set(['piop-agent-message', 'piop-subagent-result']);
+const PROMPT_CUSTOM_MESSAGES = new Set(['piop-agent-message', 'piop-subagent-result', 'piop-goal-context']);
 
 type History = { entries: any[]; leafId: string | null; before?: string | null; olderUsage?: any };
 
@@ -38,7 +38,9 @@ function windowStart(branch: any[], end: number): number {
 
 function isFinalResponse(entry: any): boolean {
   const message = entry?.type === 'message' ? entry.message : undefined;
-  return message?.role === 'assistant' && (visibleText(entry).trim().length > 0 || message.stopReason === 'aborted' || message.stopReason === 'error');
+  if (message?.role !== 'assistant') return false;
+  const ended = message.stopReason === 'stop' && !(Array.isArray(message.content) && message.content.some((part: any) => part?.type === 'toolCall'));
+  return ended || visibleText(entry).trim().length > 0 || message.stopReason === 'aborted' || message.stopReason === 'error';
 }
 
 function isWork(entry: any): boolean { const name = role(entry); return name === 'assistant' || name === 'toolResult'; }

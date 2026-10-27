@@ -80,6 +80,8 @@ export class Session {
   toolPayloadRevision = 0;
   isWorking = false;
   isCompacting = false;
+  /** Counts the compactions Pi started on request. */
+  manualCompactions = 0;
   isSubmitted = false;
   isClosed = false;
   isStopping = false;
@@ -432,7 +434,8 @@ export class Session {
     switch (name) {
       case 'agent_start': this.isWorking = true; this.isSubmitted = true; break;
       case 'agent_settled': this.isWorking = false; this.live.clear(); break;
-      case 'compaction_start': case 'auto_compaction_start': this.isCompacting = true; break;
+      case 'compaction_start': this.isCompacting = true; this.manualCompactions += 1; break;
+      case 'auto_compaction_start': this.isCompacting = true; break;
       case 'compaction_end': case 'auto_compaction_end': this.isCompacting = false; break;
     }
     this.live.receive(event);
@@ -481,7 +484,12 @@ export class Session {
       case 'force_stop': await this.stop(); return null;
       case 'get_available_models': await this.refreshProviders(); break;
       // Pi stops the running response before it compacts, even when there is nothing to compact.
-      case 'compact': if (this.working()) throw new CommandRefusedError('Stop piop before running /compact.', 'daemon'); break;
+      case 'compact': {
+        if (this.working()) throw new CommandRefusedError('Stop piop before running /compact.', 'daemon');
+        const started = this.manualCompactions;
+        // After Pi starts, the chat shows the result, so the request is done.
+        try { return await this.executeWorker(command); } catch (error) { if (this.manualCompactions !== started) return null; throw error; }
+      }
       case 'retry_response': if (this.working()) throw new CommandRefusedError('Wait for the current response to finish before retrying.', 'daemon'); break;
     }
     return this.executeWorker(command);

@@ -6,6 +6,7 @@ import { registerConversationClient } from "./session-broker/client.ts";
 import { registerOrchestration } from "./session-broker/orchestration.ts";
 import { registerInputHold } from "./session-broker/input-hold.ts";
 import { registerToolInventory } from "./session-broker/tool-inventory.ts";
+import { registerAuxiliaryChats } from "./session-broker/auxiliary.ts";
 import { existsSync } from "node:fs";
 import { initialize } from "./session-broker/session-child-index.cjs";
 
@@ -39,4 +40,5 @@ export default function sessionBroker(pi: ExtensionAPI) {
   registerOrchestration(pi);
   registerSubagents(pi);
   registerToolInventory(pi);
+  registerAuxiliaryChats(pi);
 }

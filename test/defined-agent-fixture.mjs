@@ -27,7 +27,7 @@ export function writeCorruptConfig(dir, content) {
   try { db.prepare('UPDATE application_settings SET body=? WHERE name=?').run(Buffer.from(content), 'config.json'); } finally { db.close(); }
 }
 
-export const configured = agents => ({ agents: agents, webSearchDefaultApplied: true, sessionToolsDefaultApplied: true, subagentsDefaultApplied: true, bundledAgentsApplied: ['workhorse', 'reviewer'] });
+export const configured = agents => ({ agents: agents, pluginToolsApplied: ['web_search'], sessionToolsDefaultApplied: true, subagentsDefaultApplied: true, bundledAgentsApplied: ['workhorse', 'reviewer'] });
 
 export async function agentFixture(t, options = {}) {
   options = { files: {}, effort: 'high', model: { provider: 'test', id: 'default' }, config: configured([profile(), profile('reviewer')]), ...options };
@@ -117,6 +117,7 @@ export async function agentFixture(t, options = {}) {
     process.env.PIOP_AGENT_RESOURCES = JSON.stringify({
       tools: input.tools ?? { enabledTools, registeredTools: enabledTools },
       skills: input.skills ?? { userInvokedSkills: [], agentInvokedSkills: (options.config?.agents ?? []).flatMap(agent => agent?.skills ?? []) },
+      pluginAgentTools: input.pluginAgentTools ?? ['web_search'],
     });
     if (!options.realFastMode) return defineLocal();
     const loadFast = async () => {

@@ -117,10 +117,10 @@ test.concurrent('chat tools list and read only root chats, never subagent chats'
   agents.scripts.set('Helper task', async () => { await childKnown.promise; return { text: 'helped' }; });
   await coordinator.command({ type: 'prompt', message: 'Delegate, then look around' });
   await coordinator.until(history => history.some(message => message.role === 'toolResult' && message.toolName === 'spawn_subagents'));
-  childId = (await agents.daemon.invoke('list_sessions')).find((session: any) => session.subagentParentId === coordinator.sessionId).id;
+  childId = (await agents.daemon.invoke('list_sessions')).find((session: any) => session.auxiliaryParentId === coordinator.sessionId).id;
   childKnown.resolve();
   const messages = await coordinator.until(history => text(history.at(-1)).startsWith('Relay: '));
-  expect(text(messages.at(-1))).toBe('Relay: This is a subagent, not a peer; use the subagent tools for it');
+  expect(text(messages.at(-1))).toBe('Relay: This is an auxiliary chat, such as a subagent, not a peer');
   const seen = agents.model.requests.findLast(request => startedWith(request, 'Delegate, then look around')).messages;
   const listed = JSON.stringify(toolResult(seen, 'list_peers'));
   expect([listed.includes(coordinator.sessionId), listed.includes(childId)]).toEqual([true, false]);
@@ -143,7 +143,7 @@ test.concurrent('a chat can start a new independent chat that works on its promp
   expect(created.error).toBeUndefined();
   const session = (await agents.daemon.invoke('list_sessions')).find((item: any) => item.id === created.peerId);
   expect(session).toMatchObject({ name: 'Release notes' });
-  expect(session.subagentParentId).toBeUndefined();
+  expect(session.auxiliaryParentId).toBeUndefined();
 }, 120000);
 
 test.concurrent('branchoff_peer starts a peer in a new worktree with only the committed files, the agent and the history', async () => {

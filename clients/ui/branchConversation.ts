@@ -32,6 +32,15 @@ type Context = {
   requestComposerFocus: () => void;
 };
 
+const sessionStatsSchema = z.object({ contextUsage: agentStateSchema.shape["contextUsage"].nullish() });
+
+/** Agent state with the context size, which `get_state` does not carry. */
+async function loadState(transport: NativeTransport): Promise<AgentState> {
+  const [state, stats] = await Promise.all([transport.command({ type: "get_state" }, agentStateSchema), transport.command({ type: "get_session_stats" }, sessionStatsSchema)]);
+
+  return stats.contextUsage ? { ...state, contextUsage: stats.contextUsage } : state;
+}
+
 export function createBranchConversation({ transport, activeConversationKeyRef, branchPending, state, sessions, runtimePool, rekeyConversationUi, activeTransportRef, setActiveCwd, setState, setMessages, updateConnected, configureRuntime, transportConversationKeys, activateConversationKey, syncSessionIndex, requestComposerFocus }: Context) {
   /** "branch" creates a worktree; "fork" keeps the folder; "copy" also transfers the draft for Fork and forget. */
   return async (message: ChatMessage, mode: "branch" | "fork" | "copy" = "branch") => {
@@ -81,7 +90,7 @@ export function createBranchConversation({ transport, activeConversationKeyRef, 
       if (activeTransportRef.current === ownerTransport) setActiveCwd(sourceCwd);
       const restoredSettings = await ownerTransport.loadSettings();
       await configureRuntime(restoredSettings);
-      const restoredState = await ownerTransport.command({ type: "get_state" }, agentStateSchema);
+      const restoredState = await loadState(ownerTransport);
       const restoredHistory = await ownerTransport.command({ type: "get_entries" }, z.object({ entries: z.array(entrySchema), leafId: z.union([z.string(), z.null()]) }));
       transportConversationKeys.current.set(ownerTransport, previousKey);
 
@@ -107,7 +116,7 @@ export function createBranchConversation({ transport, activeConversationKeyRef, 
 
       if (!forked_) return false;
       forked = true;
-      const nextState = await ownerTransport.command({ type: "get_state" }, agentStateSchema);
+      const nextState = await loadState(ownerTransport);
       const history = await ownerTransport.command({ type: "get_entries" }, z.object({ entries: z.array(entrySchema), leafId: z.union([z.string(), z.null()]) }));
 
       const nextKey = `${sourceHostId}:${nextState.sessionId}`;

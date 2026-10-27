@@ -427,6 +427,13 @@ test('tool migration adds missing defaults without removing explicit builtin cho
   assert.deepEqual(saved.agents[1].tools, ['web_search', 'spawn_subagents']);
 });
 
+test('agents get a tool by default only while an enabled plugin lists it', async t => {
+  const config = { agents: [profile('general', { tools: ['read'] })], pluginToolsApplied: [] };
+  const f = await agentFixture(t, { runtime: { enabledTools: ['read', 'web_search'], pluginAgentTools: [] }, config });
+  await f.load();
+  assert.deepEqual((await f.configuration()).agents[0].tools, ['read']);
+});
+
 test('an unreadable inherited agent prompt does not silently become an empty prompt', async t => {
   const f = await agentFixture(t, { config: null }); await mkdir(join(f.home, '.agents/AGENTS.md'), { recursive: true });
   await f.load(); await f.start();

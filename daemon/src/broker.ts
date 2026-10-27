@@ -187,7 +187,7 @@ async function brokerAgents(app: App, broker: BrokerRuntime): Promise<any> {
   const active = [...app.pi.activeAgents.values()];
   const busy = new Set(broker.busy);
   const sessions = await peers.localSummaries(app, app.sessionIndex);
-  return sessions.filter(session => session.subagentParentId === undefined).map(session => ({
+  return sessions.filter(session => session.auxiliaryParentId === undefined).map(session => ({
     hostId: session.hostId, sessionId: session.id, name: session.name, project: session.project, cwd: session.cwd,
     active: busy.has(`${session.hostId}\0${session.id}`) || active.some(agent => agentIsActive(session, agent)),
   }));

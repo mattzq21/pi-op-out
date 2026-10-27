@@ -7,7 +7,16 @@ import { RwLock, errorText } from '../util/sync';
 
 const BUNDLED = Contributions.CATALOG.map(plugin => plugin.id);
 
-interface Configuration { enabled: string[]; previous: string[] }
+/** The bundled plugins of the last daemon that saved a configuration without a known list. */
+const KNOWN_WITHOUT_LIST = ['cost', 'review'];
+
+/** known: the bundled plugins that the daemon has offered. A bundled plugin that is not known is new and turns on once. */
+interface Configuration { enabled: string[]; previous: string[]; known: string[] }
+
+/** The plugin configuration that a restart saves. This daemon offered all of its bundled plugins. */
+export function restartConfiguration(enabled: string[], previous: string[]): Configuration {
+  return { enabled, previous, known: [...BUNDLED] };
+}
 
 function validate(enabled: unknown): asserts enabled is string[] {
   if (!Array.isArray(enabled) || enabled.some(id => typeof id !== 'string')) throw new Error('invalid type: expected a sequence of strings');
@@ -21,17 +30,27 @@ function validate(enabled: unknown): asserts enabled is string[] {
 
 function configurationPath(): string { return join(Endpoint.directory(), 'plugins.json'); }
 
-function configuration(): Configuration {
+function configuration(): Configuration | null {
   const value = RestartStorage.read(configurationPath());
-  if (value === null) return { enabled: [...BUNDLED], previous: [] };
+  if (value === null) return null;
   const fail = (reason: string) => new Error('Could not read plugin configuration: ' + reason);
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw fail('invalid type: expected struct Configuration');
-  for (const key of Object.keys(value)) if (key !== 'enabled' && key !== 'previous') throw fail('unknown field ' + key + ', expected enabled or previous');
+  for (const key of Object.keys(value)) if (!['enabled', 'previous', 'known'].includes(key)) throw fail('unknown field ' + key + ', expected enabled, previous or known');
   for (const key of ['enabled', 'previous']) {
     if (!(key in value)) throw fail('missing field ' + key);
     if (!Array.isArray(value[key]) || value[key].some((item: any) => typeof item !== 'string')) throw fail('invalid type for ' + key);
   }
-  return { enabled: value.enabled, previous: value.previous };
+  if ('known' in value && (!Array.isArray(value.known) || value.known.some((item: any) => typeof item !== 'string'))) throw fail('invalid type for known');
+  return { enabled: value.enabled, previous: value.previous, known: 'known' in value ? value.known : KNOWN_WITHOUT_LIST };
+}
+
+/** Turns on the bundled plugins that are new to the configuration, and saves it when that changes it. */
+function withNewPlugins(config: Configuration): Configuration {
+  const added = BUNDLED.filter(id => !config.known.includes(id));
+  if (!added.length) return config;
+  const next = { enabled: [...config.enabled, ...added.filter(id => !config.enabled.includes(id))], previous: config.previous, known: [...new Set([...config.known, ...added])] };
+  RestartStorage.write(configurationPath(), next);
+  return next;
 }
 
 /** Plugins only add Pi extensions, commands and settings, so a valid list of bundled plugins always starts. */
@@ -51,7 +70,8 @@ export class PluginService {
       const errors: string[] = [];
       let enabled: string[] = [];
       try {
-        const config = configuration();
+        const saved = configuration();
+        const config = saved === null ? restartConfiguration([...BUNDLED], []) : withNewPlugins(saved);
         try { validate(config.enabled); enabled = config.enabled; } catch (reason) {
           errors.push('Could not load the plugin setup: ' + errorText(reason) + '. Restored the previous setup.');
           try { validate(config.previous); enabled = config.previous; } catch (failure) { errors.push('The previous plugin setup is also invalid: ' + errorText(failure) + '. Plugins are disabled; your conversations remain available.'); }

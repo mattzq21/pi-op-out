@@ -35,10 +35,52 @@ test('a running turn keeps its work', () => {
   expect(history.entries.slice(-4).map((entry: any) => entry.message.role)).toEqual(['user', 'assistant', 'toolResult', 'assistant']);
 });
 
+test('a goal continuation prompt starts a turn, so the reply before it stays visible', () => {
+  const source = () => {
+    const history = chat(1, 'First reply');
+    let parentId = history.leafId;
+    for (const entry of [
+      { type: 'custom_message', customType: 'piop-goal-context', content: 'Continue the goal' },
+      { type: 'message', message: { role: 'assistant', content: [{ type: 'toolCall', id: 'g', name: 'read', arguments: {} }] } },
+      { type: 'message', message: { role: 'toolResult', toolCallId: 'g', content: 'File' } },
+      { type: 'message', message: { role: 'assistant', content: [{ type: 'text', text: 'Second reply' }], stopReason: 'stop' } },
+    ]) { const id = 'e' + history.entries.length; history.entries.push({ ...entry, id, parentId }); parentId = id; }
+    history.leafId = parentId;
+    return history;
+  };
+  const history = recentHistory(source(), false);
+  expect(history.entries.map((entry: any) => entry.type === 'custom_message' ? entry.customType : entry.message.role)).toEqual(['user', 'assistant', 'piop-goal-context', 'assistant']);
+  expect(history.entries[1].message.content).toEqual([{ type: 'text', text: 'First reply' }]);
+  expect(turnWork(source(), 'e7').entries.map((entry: any) => entry.message.role)).toEqual(['assistant', 'toolResult', 'assistant']);
+});
+
+test('a reply that stops without text keeps the turn work behind it, so it can be forked from', () => {
+  const history = recentHistory(chat(1, ''), false);
+  expect(history.entries.map((entry: any) => entry.message.role)).toEqual(['user', 'assistant']);
+  expect(history.entries[1].message).toMatchObject({ stopReason: 'stop', content: [{ type: 'text', text: '' }], deferredWork: { reasoningOnly: false } });
+});
+
 test('older history and the work of a turn load on request', () => {
   const source = chat(8, 'x'.repeat(2000));
   const older = olderHistory(source, 'e12');
   expect(users(older)).toEqual(['Question 0', 'Question 1', 'Question 2']);
   expect(older.before).toBeNull();
   expect(turnWork(source, 'e31').entries.map((entry: any) => entry.message.role)).toEqual(['assistant', 'toolResult', 'assistant']);
+});
+test('a compaction does not infer a token count from the next model call', () => {
+  const usage = (input: number) => ({ input, output: 5, cacheRead: 100, cacheWrite: 10, totalTokens: input + 115 });
+  const entries: any[] = [];
+  let parentId: string | null = null;
+  for (const entry of [
+    { type: 'message', message: { role: 'user', content: 'Question' } },
+    { type: 'message', message: { role: 'assistant', content: [{ type: 'text', text: 'Reply' }], stopReason: 'stop', usage: usage(9000) } },
+    { type: 'compaction', summary: 'Summary', tokensBefore: 9115 },
+    { type: 'message', message: { role: 'user', content: 'Next' } },
+    { type: 'message', message: { role: 'assistant', content: [], stopReason: 'aborted', usage: usage(0) } },
+    { type: 'message', message: { role: 'assistant', content: [{ type: 'toolCall', id: 'c', name: 'read', arguments: {} }], stopReason: 'toolUse', usage: usage(890) } },
+    { type: 'message', message: { role: 'toolResult', toolCallId: 'c', content: 'File' } },
+    { type: 'message', message: { role: 'assistant', content: [{ type: 'text', text: 'Done' }], stopReason: 'stop', usage: usage(2000) } },
+  ]) { const id = 'e' + entries.length; entries.push({ ...entry, id, parentId }); parentId = id; }
+  const history = recentHistory({ entries, leafId: parentId }, false);
+  expect(history.entries.find((entry: any) => entry.type === 'compaction').tokensAfter).toBeUndefined();
 });

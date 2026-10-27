@@ -5,7 +5,7 @@ import { Type } from "typebox";
 import { loadConfig } from "./index.ts";
 import { agentSchema, agentThinkingLevels } from "./state.ts";
 import { configPath, readConfigDocument, readPrompt, resolvePromptPath } from "./prompts.ts";
-import { parseAgentResources } from "./resources.ts";
+import { parseAgentResources, parsePluginAgentTools } from "./resources.ts";
 import { extensionPaths } from "./extension-loader.ts";
 import { extensionValidator } from "./validation-runtime.ts";
 import { modelValidator } from "./model-validation.ts";
@@ -55,7 +55,7 @@ export async function loadAgentDefinitions({ settings, initial: initialize }: Ag
   }
 
   const { tools: toolLists } = parseAgentResources(settings);
-  const api = { enabledTools: toolLists.enabledTools };
+  const api = { enabledTools: toolLists.enabledTools, pluginTools: parsePluginAgentTools(settings) };
 
   const prompts: Record<string, string> = {};
 

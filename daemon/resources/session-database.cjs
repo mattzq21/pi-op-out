@@ -16,15 +16,17 @@ function initialize(db) {
     db.exec(`      CREATE TABLE IF NOT EXISTS session_sidebar (
         session_id TEXT PRIMARY KEY REFERENCES sessions(session_id) ON DELETE CASCADE,
         fingerprint TEXT NOT NULL, modified_at INTEGER NOT NULL, summary_json TEXT NOT NULL);
-      CREATE TABLE IF NOT EXISTS session_child_state (
+      DROP TABLE IF EXISTS session_children;
+      DROP TABLE IF EXISTS session_child_state;
+      CREATE TABLE IF NOT EXISTS auxiliary_child_state (
         session_id TEXT PRIMARY KEY REFERENCES sessions(session_id) ON DELETE CASCADE,
         complete INTEGER NOT NULL CHECK(complete IN (0, 1)));
-      CREATE TABLE IF NOT EXISTS session_children (
+      CREATE TABLE IF NOT EXISTS auxiliary_children (
         parent_id TEXT NOT NULL REFERENCES sessions(session_id) ON DELETE CASCADE,
         child_id TEXT NOT NULL REFERENCES sessions(session_id) ON DELETE CASCADE,
-        kind TEXT NOT NULL CHECK(kind IN ('subagent', 'review')),
+        kind TEXT NOT NULL CHECK(length(kind) > 0),
         PRIMARY KEY(parent_id, child_id));
-      CREATE INDEX IF NOT EXISTS session_children_child ON session_children(child_id);
+      CREATE INDEX IF NOT EXISTS auxiliary_children_child ON auxiliary_children(child_id);
       CREATE TABLE IF NOT EXISTS session_mailbox_state (
         session_id TEXT PRIMARY KEY REFERENCES sessions(session_id) ON DELETE CASCADE);
       CREATE TABLE IF NOT EXISTS session_mailbox (

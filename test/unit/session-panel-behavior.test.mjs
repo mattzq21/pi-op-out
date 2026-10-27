@@ -56,7 +56,7 @@ async function fixture(t, props, group = 'repo', native, beforeMount, options = 
       }
       if (item.cwd === undefined) item.cwd = temporaryDirectories.get(item.id);
     }
-    for (const item of input.sessions ?? []) if (item.subagentParentId) item.subagentParentId = sessionIds.get(item.subagentParentId) ?? item.subagentParentId;
+    for (const item of input.sessions ?? []) if (item.auxiliaryParentId) item.auxiliaryParentId = sessionIds.get(item.auxiliaryParentId) ?? item.auxiliaryParentId;
     for (const item of input.sessions ?? []) if (item.forkSourceId) item.forkSourceId = sessionIds.get(item.forkSourceId) ?? item.forkSourceId;
     await daemon.listChats(input.sessions ?? []);
     const mapped = { ...input };
@@ -114,35 +114,13 @@ async function fixture(t, props, group = 'repo', native, beforeMount, options = 
 const key = (element, key, extra = {}) => act(() => element.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true, ...extra })));
 const names = () => [...document.querySelectorAll('.session-main strong')].map(element => element.textContent);
 
-test('child conversations remain manageable after their parent is archived', async t => {
-  const child = session('child', 'Delegated task', { subagentParentId: 'parent' });
-  const actions = [];
-  const panel = await fixture(t, { sessions: [session('parent', 'Parent'), child], onAction: (...args) => actions.push(args) });
+test('auxiliary chats stay out of the conversation list, also without their parent', async t => {
+  const child = session('child', 'Delegated task', { auxiliaryParentId: 'parent', auxiliaryKind: 'subagent' });
+  const panel = await fixture(t, { sessions: [session('parent', 'Parent'), child] });
+  assert.ok(row('parent'));
   assert.equal(row('child'), null);
   await panel.render({ sessions: [child] });
-  assert.ok(row('child'));
-  await click(control('Archive Delegated task'));
-  assert.deepEqual(actions, [[child, 'archive']]);
-});
-
-test('a remote child is hidden only by its parent on the same machine', { timeout: 30_000 }, async t => {
-  const remoteHost = { hostId: 'remote', hostName: 'Remote', project: 'folder', cwd: process.cwd() + '/test' };
-  const localParent = session('parent', 'Local parent', { project: 'Local' });
-  const remoteParent = session('parent', 'Remote parent', remoteHost);
-  const child = session('child', 'Delegated task', { ...remoteHost, subagentParentId: 'parent' });
-  const selected = [], actions = [];
-  const panel = await fixture(t, { sessions: [localParent, child], onSelect: value => selected.push(value), onAction: (...args) => actions.push(args) }, 'Local', undefined, undefined, { remotes: [{ id: 'remote', name: 'Remote', target: 'remote' }] });
-  assert.equal(child.subagentParentId, localParent.id);
-  await click(row('child', 'remote'));
-  assert.deepEqual(selected, [child]);
-  await panel.render({ sessions: [localParent, remoteParent, child] });
-  assert.equal(remoteParent.id, localParent.id);
-  assert.ok(row('parent', 'remote'));
-  assert.equal(row('child', 'remote'), null);
-  await panel.render({ sessions: [localParent, child] });
-  assert.ok(row('parent'));
-  await click(control('Archive Delegated task'));
-  assert.deepEqual(actions, [[child, 'archive']]);
+  assert.equal(row('child'), null);
 });
 
 test('conversation list interactions', async t => {

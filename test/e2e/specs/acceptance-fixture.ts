@@ -64,8 +64,7 @@ export const setBridgeValue = async (label: "E2E calls" | "E2E responses", value
 };
 
 export const isolatedUsageResponses = {
-  codex_usage: { error: "Usage lookup disabled in conversation fixtures" },
-  opencode_go_usage: { error: "Usage lookup disabled in conversation fixtures" },
+  provider_usage: {},
 };
 
 const withKnownModels = (responses: BackendResponses) => {

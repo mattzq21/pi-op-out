@@ -20,10 +20,6 @@ export interface ReviewSession {
    * and opens it in the side pane. Rejects when the conversation is not saved, settings are invalid or the review agent is unavailable.
    */
   start(ctx: ExtensionContext, request: ReviewRequest): Promise<void>;
-  /** Opens a review linked to this conversation. A review inherited from a parent conversation opens read-only. */
-  open(ctx: ExtensionContext, reviewId: string): Promise<void>;
-  /** Sends feedback from a review of this conversation as a follow-up that starts a turn. */
-  sendFeedback(ctx: ExtensionContext, reviewId: string, message: string): Promise<void>;
 }
 
 /** Other extensions emit this request on "piop:reviews:session" to get the session interface. */

@@ -3,7 +3,7 @@ import { pluginMessageMetadata } from "../plugins/messageMetadata";
 import { z } from "zod";
 import { promptContextSchema, wireMessageSchema, type WireMessage } from "./messageSchemas";
 
-const SYSTEM_MESSAGES = new Set(["pi-desktop-mcp-status"]);
+const SYSTEM_MESSAGES = new Set(["pi-desktop-mcp-status", "piop-auxiliary-note"]);
 
 /** The user message that a goal sends to continue its work. */
 export const GOAL_PROMPT = "piop-goal-context";
@@ -164,9 +164,9 @@ function applyCustomEntry(messages: ChatMessage[], entry: PiEntry, promptParts: 
 }
 
 function compactionMessage(entry: PiEntry): ChatMessage {
-  const tokens = z.number().safeParse(entry.tokensBefore);
+  const tokensBefore = entry.tokensBefore;
 
-  return { id: entry.id, entryId: entry.id, role: "system", customType: "compaction", timestamp: entry.timestamp ? Date.parse(entry.timestamp) : undefined, content: tokens.success ? `Context compacted · ${tokens.data.toLocaleString()} tokens before compaction` : "Context compacted" };
+  return { id: entry.id, entryId: entry.id, role: "system", customType: "compaction", timestamp: entry.timestamp ? Date.parse(entry.timestamp) : undefined, content: tokensBefore === undefined ? "Compacted" : `Compacted from ${tokensBefore.toLocaleString()} tokens` };
 }
 
 function customEntryMessage(entry: PiEntry): ChatMessage | undefined {

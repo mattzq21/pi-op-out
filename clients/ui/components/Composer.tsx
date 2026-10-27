@@ -23,7 +23,7 @@ import type { AgentProfile,ComposerUpload,ContextUsage,ImageAttachment,Model,Pen
 import { IconButton } from "./IconButton";
 import { PendingImages } from "./PendingImages";
 import { z } from "zod";
-import { splitPaneCommand } from "../plugins";
+import { queuedCommand } from "../plugins";
 import { isDaemonRefusal } from "../lib/commandRejected";
 
 const pastedImageSchema = z.object({ data: z.string().optional(), mimeType: z.string().optional(), error: z.string().optional() });
@@ -163,7 +163,7 @@ function canPickCommand(event: KeyboardEvent) {
 }
 
 function reviewBehavior(message: string, behavior: "steer" | "followUp") {
-  return splitPaneCommand(message) ? "followUp" : behavior;
+  return queuedCommand(message) ? "followUp" : behavior;
 }
 
 export function Composer(props: Props) {
@@ -694,7 +694,7 @@ export function Composer(props: Props) {
       const peerCount = createMemo(() => queue()?.length ?? 0);
       const position = createMemo(() => queue()?.positions.get(message().id) ?? -1);
 
-      const renderPendingDragHandle = () => (<button type="button" class="pending-icon-button pending-drag-handle" disabled={disabled() || message().retry || !composer().onChangePending || peerCount() < 2} aria-label={`Drag to reorder queued message: ${text()}`} data-tooltip="Drag to reorder · Arrow keys to move" onKeyDown={(event) => {
+      const renderPendingDragHandle = () => (<button type="button" class="pending-icon-button pending-drag-handle" disabled={disabled() || Boolean(message().goal) || message().retry || !composer().onChangePending || peerCount() < 2} aria-label={`Drag to reorder queued message: ${text()}`} data-tooltip="Drag to reorder · Arrow keys to move" onKeyDown={(event) => {
           if (event.key === "ArrowUp" || event.key === "ArrowDown") { event.preventDefault(); change(event.key === "ArrowUp" ? "moveUp" : "moveDown"); }
         }} onPointerDown={(event) => pendingDrag.begin(event, message().id)}><MoveVertical size={16} /></button>);
 
@@ -707,7 +707,7 @@ export function Composer(props: Props) {
             <button type="button" class="pending-icon-button" disabled={disabled() || position() <= 0} aria-label={`Move queued message up: ${text()}`} data-tooltip="Move earlier in this delivery queue" onClick={() => change("moveUp")}><ChevronUp size={13} /></button>
             <button type="button" class="pending-icon-button" disabled={disabled() || position() < 0 || position() >= peerCount() - 1} aria-label={`Move queued message down: ${text()}`} data-tooltip="Move later in this delivery queue" onClick={() => change("moveDown")}><ChevronDown size={13} /></button>
           </div>
-          <Show when={!message().goal && (message().retry || !splitPaneCommand(text()))}><button type="button" disabled={disabled()} data-tooltip={message().behavior === "steer" ? "Queue after the current response" : "Steer at the next turn"} onClick={() => change(message().retry ? message().behavior : message().behavior === "steer" ? "followUp" : "steer")}><CornerDownRight size={13} />{message().retry ? "Retry" : message().behavior === "steer" ? "Queue" : "Steer"}</button></Show>
+          <Show when={!message().goal && (message().retry || !queuedCommand(text()))}><button type="button" disabled={disabled()} data-tooltip={message().behavior === "steer" ? "Queue after the current response" : "Steer at the next turn"} onClick={() => change(message().retry ? message().behavior : message().behavior === "steer" ? "followUp" : "steer")}><CornerDownRight size={13} />{message().retry ? "Retry" : message().behavior === "steer" ? "Queue" : "Steer"}</button></Show>
           <Show when={message().goal && props.goal?.goal()}>{goal => <GoalActions controls={required(props.goal)} goal={goal()} />}</Show>
           <Show when={!message().goal}><button type="button" class="pending-icon-button" disabled={disabled()} aria-label={`Remove queued message: ${text()}`} data-tooltip="Remove message" onClick={() => change("remove")}><Trash2 size={13} /></button></Show>
         </div>);
@@ -722,6 +722,7 @@ export function Composer(props: Props) {
         {renderPendingMessageActions()}
       </div>;
     }}</Key>}<Show when={pausedGoal()}>{goal => <div class="pending-message pending-goal paused" aria-label="Paused goal">
+      <button type="button" class="pending-icon-button pending-drag-handle" disabled aria-label="Paused goal cannot be reordered"><MoveVertical size={16} /></button>
       <span class="pending-message-text" data-tooltip={goal().objective}><small>Paused · </small><small class="goal-label">Goal · </small>{goal().objective}</span>
       <div class="pending-message-actions"><GoalActions controls={required(props.goal)} goal={goal()} /></div>
     </div>}</Show><Show when={props.goal?.error()}>{message => <div class="pending-goal-error" role="alert">{message()}</div>}</Show></div>}

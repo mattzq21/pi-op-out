@@ -153,7 +153,7 @@ function configureLocalLaunch(command: LaunchCommand, launch: PiLaunch, piPath: 
 function configureLocalExtensions(command: LaunchCommand, settings: AppSettings, hostId: string, brokerPort: number, brokerToken: string, sessionDir: string): void {
   const root = Ext.generatedExtensionRoot();
   Ext.prepareRuntimeBridge();
-  command.env.PIOP_AGENT_RESOURCES = JSON.stringify(Ext.agentResources(settings));
+  command.env.PIOP_AGENT_RESOURCES = JSON.stringify({ ...Ext.agentResources(settings), pluginAgentTools: Contributions.agentTools() });
   command.env.PIOP_AGENT_CONFIG_PATH = join(homeDir(), STORAGE_DIRECTORY, 'piop-define-agents/config.json');
   command.env.PIOP_CONTEXT_CAP_SETTINGS_PATH = join(root, 'context-cap-settings.json');
   command.env.PIOP_GENERATED_EXTENSION_ROOT = root;
@@ -161,7 +161,6 @@ function configureLocalExtensions(command: LaunchCommand, settings: AppSettings,
   const contextWindowCapExtension = Ext.prepareContextWindowCapExtension(settings);
   const contextBarExtension = Ext.prepareContextBarExtension();
   const openaiCacheForkExtension = Ext.prepareOpenaiCacheForkExtension();
-  const codexWebSearchExtension = Ext.prepareCodexWebSearchExtension();
   const definedAgentsExtension = Ext.prepareDefinedAgentsExtension();
   const session = Ext.prepareSessionExtensions();
   const plugins = Ext.preparePluginExtensions();
@@ -171,12 +170,11 @@ function configureLocalExtensions(command: LaunchCommand, settings: AppSettings,
     '--extension', Ext.prepareProvidersRefreshExtension(), '--extension', mcpExtension, '--extension', session.storage, '--extension', session.hooks, '--extension', session.controls, '--extension', session.broker,
     '--extension', session.goals, ...after('goals'),
     '--extension', contextWindowCapExtension, '--extension', contextBarExtension, ...after('context-bar'),
-    '--extension', Ext.prepareFastModeExtension(), '--extension', openaiCacheForkExtension, '--extension', codexWebSearchExtension,
+    '--extension', Ext.prepareFastModeExtension(), '--extension', openaiCacheForkExtension,
     '--extension', definedAgentsExtension);
   Object.assign(command.env, {
     PI_DESKTOP_DEFINED_AGENTS_EXTENSION: definedAgentsExtension,
     PIOP_MCP_EXTENSION: mcpExtension,
-    PI_DESKTOP_CODEX_WEB_SEARCH_EXTENSION: codexWebSearchExtension,
     PI_DESKTOP_CONTEXT_WINDOW_CAP_EXTENSION: contextWindowCapExtension,
     PIOP_COMMAND_POLICY: JSON.stringify(Contributions.commandPolicy()),
     PI_DESKTOP_BROKER_URL: `http://127.0.0.1:${brokerPort}`,

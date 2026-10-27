@@ -1,4 +1,4 @@
-import { readAgentResources, resourcePath, type AgentResources } from "./resources.ts";
+import { readAgentResources, readPluginAgentTools, resourcePath, type AgentResources } from "./resources.ts";
 import { STATE_ENTRY, DEFAULTS_ENV, DRAFT_STATE_ENV, type RuntimeDefaults, agentSchema, agentThinkingLevels, persistedAgentIdentity, storedRuntimeDefaults, sessionIsLocked, readAgentState, subagentLimit, registerSubagentLimits, agentFlag, agentAccess, agentDescription, startRefusal } from "./state.ts";
 import { Type } from "typebox";
 import { Check, Errors, Parse } from "typebox/value";
@@ -22,19 +22,21 @@ const STATUS_KEY = "pi-define-agents";
 
 const sessionTools = ["spawn_subagents"];
 
-export type Config = { revision?: string; agents: Agent[]; webSearchDefaultApplied?: boolean; sessionToolsDefaultApplied?: boolean; subagentsDefaultApplied?: boolean; bundledAgentsApplied?: string[]; };
+/** pluginToolsApplied: plugin default tools already added to every existing agent. */
+export type Config = { revision?: string; agents: Agent[]; pluginToolsApplied?: string[]; sessionToolsDefaultApplied?: boolean; subagentsDefaultApplied?: boolean; bundledAgentsApplied?: string[]; };
 
 /** Agents that are added once as copies of the general agent. The user can then edit or remove them. */
 const BUNDLED_AGENTS = ["workhorse", "reviewer"];
 
-type ConfigRuntime = { enabledTools?: readonly string[] };
+/** pluginTools: the default agent tools of the enabled plugins. */
+type ConfigRuntime = { enabledTools?: readonly string[]; pluginTools: readonly string[] };
 
 export type ConfigStorage = { ensurePromptFile: typeof ensurePromptFile; writeConfig: typeof writeConfig };
 
 function generalAgent(pi: ConfigRuntime): Agent {
   const agent = structuredClone(fallbackConfig.agents[0]);
 
-  if (enabledTools(pi)?.includes("web_search")) agent.tools.push("web_search");
+  agent.tools.push(...availablePluginTools(pi));
   agent.tools.push(...sessionTools.filter((tool) => enabledTools(pi)?.includes(tool)));
 
   return agent;
@@ -142,7 +144,9 @@ function normalize(value: Omit<Partial<Config>, "agents"> & { agents?: StoredAge
 
   const bundledAgentsApplied = Array.isArray(value.bundledAgentsApplied) ? value.bundledAgentsApplied.filter((name): name is string => Check(Type.String(), name)) : [];
 
-  return { revision: value.revision, agents, webSearchDefaultApplied: value.webSearchDefaultApplied === true, sessionToolsDefaultApplied: value.sessionToolsDefaultApplied === true, subagentsDefaultApplied: value.subagentsDefaultApplied === true, bundledAgentsApplied };
+  const pluginToolsApplied = Array.isArray(value.pluginToolsApplied) ? value.pluginToolsApplied.filter((name): name is string => Check(Type.String(), name)) : [];
+
+  return { revision: value.revision, agents, pluginToolsApplied, sessionToolsDefaultApplied: value.sessionToolsDefaultApplied === true, subagentsDefaultApplied: value.subagentsDefaultApplied === true, bundledAgentsApplied };
 }
 
 async function readConfig(pi: ConfigRuntime, supplied: StoredConfig | undefined, initialize: boolean, storage: ConfigStorage): Promise<Config> {
@@ -188,6 +192,17 @@ function migrateSubagents(config: Config, pi: ConfigRuntime) {
   return false;
 }
 
+/** Adds each plugin default tool to every agent once, when Pi reports the tool. Later removals stay. */
+function migratePluginTools(config: Config, pi: ConfigRuntime) {
+  const applied = config.pluginToolsApplied ?? [];
+  const missing = availablePluginTools(pi).filter(tool => !applied.includes(tool));
+
+  for (const agent of config.agents) for (const tool of missing) if (!agent.tools.includes(tool)) agent.tools.push(tool);
+  config.pluginToolsApplied = [...applied, ...missing];
+
+  return missing.length > 0;
+}
+
 function addBundledAgents(config: Config, pi: ConfigRuntime) {
   const applied = config.bundledAgentsApplied ?? [];
   const missing = BUNDLED_AGENTS.filter(name => !applied.includes(name));
@@ -220,11 +235,7 @@ async function loadMigratedConfig(pi: ConfigRuntime, supplied: StoredConfig | un
     changed = true;
   }
 
-  if (!config.webSearchDefaultApplied && enabledTools(pi)?.includes("web_search")) {
-    for (const agent of config.agents) if (!agent.tools.includes("web_search")) agent.tools.push("web_search");
-    config.webSearchDefaultApplied = true;
-    changed = true;
-  }
+  changed = migratePluginTools(config, pi) || changed;
 
   const retainedAgents = config.agents.filter(agent => agent.name !== "voice-orchestrator");
 
@@ -242,6 +253,8 @@ function encode<T>(value: T) { return Buffer.from(JSON.stringify(value), "utf8")
 function safeName(value: string) { return value.toLowerCase().replace(/[^a-z0-9_]+/g, "_").replace(/^_+|_+$/g, "") || "tool"; }
 
 function enabledTools(config: ConfigRuntime) { return config.enabledTools; }
+
+function availablePluginTools(config: ConfigRuntime) { return config.pluginTools.filter(tool => enabledTools(config)?.includes(tool)); }
 
 function required<T>(value: T | undefined): T {
   if (value === undefined) throw new Error("A required agent is missing");
@@ -281,7 +294,7 @@ export default async function defineAgents(pi: ExtensionAPI) {
   };
   const extensions = agentExtensions(pi, dirname(configPath));
   const initialResources = readAgentResources();
-  const configRuntime = { enabledTools: initialResources.tools.enabledTools };
+  const configRuntime = { enabledTools: initialResources.tools.enabledTools, pluginTools: readPluginAgentTools() };
   let config = await loadConfig(configRuntime);
   let active = "general";
   let snapshot: AgentSnapshot | undefined;
@@ -750,7 +763,7 @@ export default async function defineAgents(pi: ExtensionAPI) {
       if (supplied.agents) {
         next.sessionToolsDefaultApplied = true;
         next.subagentsDefaultApplied = true;
-        next.webSearchDefaultApplied = true;
+        next.pluginToolsApplied = [...new Set([...next.pluginToolsApplied ?? [], ...configRuntime.pluginTools])];
       }
 
       for (const agent of next.agents) mcpServersSchema.parse(agent.mcpServers);

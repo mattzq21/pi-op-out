@@ -1,16 +1,21 @@
 import { cost } from './cost/plugin';
 import { review } from './review/plugin';
+import { webSearch } from './web-search/plugin';
+import { btw } from './btw/plugin';
 import type { ReviewSettings } from './review/settings';
+import type { WebSearchSettings } from './web-search/settings';
 import type { BundledPlugin } from './types';
 
 /** Every plugin bundled with the daemon, in display order. A new configuration enables all of them. */
 export const CATALOG: readonly BundledPlugin[] = [
   cost,
   review,
+  webSearch,
+  btw,
 ];
 
 /** The app settings fields that plugins own. */
-export type PluginSettings = ReviewSettings;
+export type PluginSettings = ReviewSettings & WebSearchSettings;
 
 export function parsePluginSettings(value: Record<string, unknown>): PluginSettings {
   return Object.assign({}, ...CATALOG.map(plugin => plugin.settings?.parse(value) ?? {}));

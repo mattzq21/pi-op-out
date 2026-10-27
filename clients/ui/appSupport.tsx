@@ -1,12 +1,11 @@
 import { type Accessor } from "solid-js";
-import { z } from "zod";
 import { createDependencyEffect, type Dispatch, type StateUpdate } from "./lib/solid";
 
 import { NativeTransport } from "./lib/nativeTransport";
 import { appendTerminalOutput as retainTerminalOutput } from "./lib/terminalOutput";
 import { isTemporaryChatCwd } from "./lib/sessionGroups";
 import { ProviderLogo, type UsageProvider } from "./components/ProviderLogo";
-import type { AgentConfig, CodexUsage, DefinedAgentsCapability, ExtensionUiRequest, OpencodeGoUsage, SessionSummary } from "./types";
+import type { AgentConfig, DefinedAgentsCapability, ExtensionUiRequest, OpencodeGoUsage, SessionSummary } from "./types";
 
 const staleExtensionContext = "This extension ctx is stale after session replacement or reload.";
 
@@ -16,7 +15,8 @@ type SessionTerminals = { activeId: string; tabs: TerminalTabState[] };
 
 type QueuedTerminalOutput = { data: string; length: number };
 
-type SplitPaneState = { key: string; session: SessionSummary; request?: import("./plugins/types").SplitPaneRequest };
+/** The chat of the selected side pane tab. request carries the first prompt of a chat that a command opened. */
+type SplitPaneState = { key: string; session: SessionSummary; request?: import("./plugins/types").SidepaneOpening };
 
 type OwnedExtensionDialog = { request: ExtensionUiRequest; transport: NativeTransport; owner: string; queueId: string };
 
@@ -77,34 +77,18 @@ function usageWindowsDescription(usage: OpencodeGoUsage): string {
   return `rolling ${usage.rolling.remainingPercent}% left, weekly ${usage.weekly.remainingPercent}% left, monthly ${usage.monthly.remainingPercent}% left`;
 }
 
-const usageWindowSchema = z.looseObject({
-  remainingPercent: z.number(),
-  resetAt: z.number().optional(),
-});
-
-const goUsageWindowSchema = usageWindowSchema.extend({ status: z.string().default("unknown") });
-
-const normalizeOpencodeGoUsage = z.object({
-  rolling: goUsageWindowSchema,
-  weekly: goUsageWindowSchema,
-  monthly: goUsageWindowSchema,
-}).optional().catch(undefined).parse;
-
-const normalizeCodexUsage = usageWindowSchema.optional().catch(undefined).parse;
-
-function LimitBadge(componentProps: { label: string; provider: UsageProvider; detail?: string; remainingPercent: number; resetAt?: number; clock?: number }) {
+/** One provider's usage left. stale: why the latest refresh failed; the badge then shows the older value darkened. A click refreshes this provider only. */
+function LimitBadge(componentProps: { label: string; provider: UsageProvider; detail?: string; remainingPercent: number; resetAt?: number; clock?: number; stale?: string; refreshing: boolean; onRefresh: () => void }) {
   const resetLabel = () => { componentProps.clock;
 
   return componentProps.resetAt ? formatCodexReset(componentProps.resetAt) : ""; };
 
-  return <span class="codex-usage" role="status" aria-label={`${componentProps.label} usage remaining: ${componentProps.remainingPercent}%${componentProps.resetAt ? `, resets ${resetLabel()}` : ""}${componentProps.detail ? ` (${(componentProps.detail)})` : ""}`}><ProviderLogo provider={componentProps.provider} /><span>{componentProps.remainingPercent}%<span class="codex-usage-left"> left</span></span>{componentProps.resetAt && <span class="codex-usage-reset"><span class="codex-usage-separator"> · </span>{resetLabel()}</span>}</span>;
+  return <button type="button" class="codex-usage" classList={{ stale: componentProps.stale !== undefined, refreshing: componentProps.refreshing }} disabled={componentProps.refreshing} onClick={() => componentProps.onRefresh()} title={componentProps.stale === undefined ? "Click to refresh" : `${componentProps.stale}. Click to refresh.`} aria-label={`${componentProps.label} usage remaining: ${componentProps.remainingPercent}%${componentProps.resetAt ? `, resets ${resetLabel()}` : ""}${componentProps.detail ? ` (${(componentProps.detail)})` : ""}${componentProps.stale !== undefined ? `, stale: ${componentProps.stale}` : ""}`}><ProviderLogo provider={componentProps.provider} /><span>{componentProps.remainingPercent}%<span class="codex-usage-left"> left</span></span>{componentProps.resetAt && <span class="codex-usage-reset"><span class="codex-usage-separator"> · </span>{resetLabel()}</span>}{componentProps.stale !== undefined && <span class="codex-usage-stale"> (stale)</span>}</button>;
 }
 
-function UsageError(componentProps: { provider: UsageProvider; label: string; message: string }) {
-  return <span class="codex-usage" role="alert" title={componentProps.message} aria-label={componentProps.message}><ProviderLogo provider={componentProps.provider} /><span>{componentProps.label} usage unavailable</span></span>;
+function UsageError(componentProps: { message: string }) {
+  return <span class="codex-usage" role="alert" title={componentProps.message} aria-label={componentProps.message}>Usage unavailable</span>;
 }
-
-function goUsageBadge(usage?: OpencodeGoUsage) { return usage === undefined ? undefined : { window: usage.rolling, detail: usageWindowsDescription(usage) }; }
 
 function dialogOwnerName(name?: string) { return name ? `Main: ${name}` : "Main conversation"; }
 
@@ -133,6 +117,6 @@ function useUsageClock(resetTimes: Accessor<Array<number | undefined>>, setUsage
 
 function definedAgentSettings(capability?: DefinedAgentsCapability): AgentConfig | undefined { return capability ? { agents: capability.config.agents } : undefined; }
 
-export { appendTerminalOutputs,AppLoading,definedAgentSettings,dialogOwnerName,formatCodexReset,goUsageBadge,initialTerminals,LimitBadge,UsageError,MAX_TERMINALS,MCP_STATUS_KEY,normalizeCodexUsage,normalizeOpencodeGoUsage,PROMPT_CONTEXT_STATUS_KEY,selectedProjectCwd,splitConversationKey,staleExtensionContext,terminalConversationKey,usageWindowsDescription,useUsageClock,windowInstanceId };
+export { appendTerminalOutputs,AppLoading,definedAgentSettings,dialogOwnerName,formatCodexReset,initialTerminals,LimitBadge,UsageError,MAX_TERMINALS,MCP_STATUS_KEY,PROMPT_CONTEXT_STATUS_KEY,selectedProjectCwd,splitConversationKey,staleExtensionContext,terminalConversationKey,usageWindowsDescription,useUsageClock,windowInstanceId };
 
 export type { OwnedExtensionDialog,QueuedTerminalOutput,RenameTarget,SessionTerminals,SplitPaneState,TerminalTabState,TerminalTarget };

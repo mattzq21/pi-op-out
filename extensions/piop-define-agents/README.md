@@ -21,7 +21,7 @@ Agents inherit the built-in default system prompt when both `systemPrompt` and `
 
 Use `path_systemprompt` instead of `systemPrompt` to load the base prompt from a UTF-8 file. The two fields are mutually exclusive. Relative paths resolve beside `config.json`; absolute paths and `~/` are also supported. Files are read on the host running Pi, including for SSH sessions. The file is reread when the agent activates and before each input; an unreadable file blocks the run. Settings → Agents supports “Use system prompt file”. Empty files provide an empty base prompt.
 
-In piop, `web_search` is included in the default agent when globally enabled. Existing profiles receive it once on upgrade; subsequent per-agent opt-outs are preserved. New agents created in Settings inherit all globally enabled tools.
+In piop, the default agent tools of the enabled plugins (such as `web_search`) are included in the default agent when globally enabled. Existing profiles receive each one once; subsequent per-agent opt-outs are preserved. New agents created in Settings inherit all globally enabled tools.
 
 Legacy agent tool selections migrate on load: `exec_command` becomes `read`, `bash`, `grep`, `find`, and `ls`; `apply_patch` becomes `edit` and `write`. Unselected tools stay unselected.
 
