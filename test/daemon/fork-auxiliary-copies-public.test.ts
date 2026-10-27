@@ -176,7 +176,7 @@ test.concurrent('a side chat that was working when its main chat was forked gets
   const stalled = Promise.withResolvers<{ text: string }>();
   agents.scripts.set('Plan the retry', messages => {
     const last = text(messages.at(-1));
-    if (last === 'Long side task') return ++sideRequests === 1 ? stalled.promise : { text: 'Side done.' };
+    if (last.startsWith('Long side task')) return ++sideRequests === 1 ? stalled.promise : { text: 'Side done.' };
     return { text: last === 'Next main step' ? 'Second main answer.' : 'Main answer.' };
   });
   const chat = await agents.rootChat({ visible: true });
@@ -184,7 +184,8 @@ test.concurrent('a side chat that was working when its main chat was forked gets
   await chat.until(history => text(history.at(-1)) === 'Main answer.');
   const side = await sideChat(chat, 'prompt', '/btw');
   await agents.daemon.invoke('start_pi', { runtimeId: 'retry-side', clientId: 'laptop', cwd: side.cwd, sessionPath: side.sessionPath });
-  await agents.daemon.invoke('pi_command', { runtimeId: 'retry-side', command: { type: 'prompt', message: 'Long side task' } });
+  // The prompt names the main chat, so its copy must name the fork.
+  await agents.daemon.invoke('pi_command', { runtimeId: 'retry-side', command: { type: 'prompt', message: 'Long side task for ' + chat.sessionId } });
   for (let tries = 0; sideRequests < 1 && tries < 100; tries++) await Bun.sleep(100);
   await chat.command({ type: 'prompt', message: 'Next main step' });
   await chat.until(history => text(history.at(-1)) === 'Second main answer.');
@@ -200,5 +201,9 @@ test.concurrent('a side chat that was working when its main chat was forked gets
     const history = await copyHistory();
     expect(history.find(message => message.stopReason === 'error')?.errorMessage).toBe('Fork error: this chat was working when its main chat was forked. Its last prompt is sent again.');
     expect(text(history.at(-1))).toBe('Side done.');
+    const errorAt = history.findIndex(message => message.stopReason === 'error');
+    expect(text(history[errorAt - 1])).toBe('Long side task for ' + forked.state.sessionId);
+    const retried = agents.model.requests.filter(request => text(request.messages.at(-1)).startsWith('Long side task')).at(-1);
+    expect(text(retried.messages.at(-1))).toBe('Long side task for ' + forked.state.sessionId);
   } finally { stalled.resolve({ text: 'Late original answer.' }); }
 }, 120000);

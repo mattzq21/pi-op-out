@@ -119,9 +119,9 @@ function planAuxiliaryCopies({ root, source, target, cutoff, cwd }) {
     const work = interruptedWork(shownBranch(copy.sourcePath, copy.header, copy.entries));
     const folder = cwd && copy.header.cwd === cwd.from ? cwd.to : copy.header.cwd;
     const header = { ...copy.header, id: copy.sessionId, timestamp: copy.timestamp, cwd: folder };
-    const body = [header, ...rewrite(copy.entries.slice(1), replacements), ...work?.entries ?? []];
+    const body = [header, ...rewrite(copy.entries.slice(1), replacements), ...work ? rewrite(work.entries, replacements) : []];
 
-    return { kind: copy.kind, sourceId: copy.sourceId, sessionId: copy.sessionId, sessionPath: copy.sessionPath, sourcePath: copy.sourcePath, cwd: folder, entries: body, retry: work?.message, deliveryId: work ? randomUUID() : undefined };
+    return { kind: copy.kind, sourceId: copy.sourceId, sessionId: copy.sessionId, sessionPath: copy.sessionPath, sourcePath: copy.sourcePath, cwd: folder, entries: body, retry: work ? rewrite(work.message, replacements) : undefined, deliveryId: work ? randomUUID() : undefined };
   });
 
   return { copies: planned, replacements, retries: planned.filter(copy => copy.retry !== undefined).map(copy => ({ sessionId: copy.sessionId, message: copy.retry, deliveryId: copy.deliveryId })) };

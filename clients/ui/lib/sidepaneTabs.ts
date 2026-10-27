@@ -100,7 +100,9 @@ export function createSidepaneTabs(options: Options) {
   const tabs = createMemo<SidepaneTab[]>(() => {
     const main = options.main();
     const auxiliary = auxiliaryTree().filter(session => session.auxiliaryKind !== "subagent" || pinned().has(sessionKey(session)));
-    const roots = chats().filter(session => session.id !== main.sessionId || (session.hostId ?? "local") !== main.hostId);
+    // A root chat tab shows the chat as the session list has it now, with its current name and working state.
+    const listed = new Map(options.sessions().map(session => [sessionKey(session), session]));
+    const roots = chats().map(session => listed.get(sessionKey(session)) ?? session).filter(session => session.id !== main.sessionId || (session.hostId ?? "local") !== main.hostId);
 
     return [...auxiliary.map(session => ({ kind: session.auxiliaryKind ?? "chat", session })), ...roots.map(session => ({ kind: "chat", session }))]
       .map(({ kind, session }) => ({ key: sessionKey(session), kind, session, label: tabLabel(session), running: options.running(session) }));
