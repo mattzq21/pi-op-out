@@ -70,11 +70,7 @@ function userText(history) {
   return line ? line.slice(0, 80) : undefined;
 }
 
-function branchName(name, current, history) {
-  if (name !== undefined) {
-    if (typeof name !== 'string' || !name.trim()) throw new Error('Invalid branch name');
-    return name.trim();
-  }
+function branchName(current, history) {
   const source = current.get('piop-session-name')?.name?.trim() || userText(history) || 'Chat';
   return source + ' (branch)';
 }
@@ -89,6 +85,7 @@ function withReferences(root) {
 /**
  * Publishes a new conversation with the history of sourcePath through the finished final response entryId,
  * the current settings of the source, and a fork source link. On failure it removes everything it created.
+ * keepName keeps the name of the source; else the copy is named as its branch.
  */
 async function publishBranchHistory(request) {
   const { sourcePath, sessionId, entries, leafId, entryId } = request ?? {};
@@ -110,7 +107,7 @@ async function publishBranchHistory(request) {
   const history = auxiliaryCopies.rewriteForkHistory(selected, copies);
   const retries = auxiliaryCopies.retryRecord(copies);
   if (retries) current.set(auxiliaryCopies.FORK_RETRIES, retries);
-  current.set('piop-session-name', { type: 'session_info', id: randomUUID(), parentId: null, timestamp, name: branchName(request.name, current, history) });
+  if (request.keepName !== true) current.set('piop-session-name', { type: 'session_info', id: randomUUID(), parentId: null, timestamp, name: branchName(current, history) });
   // The branch stays idle until the user sends a message (core input hold).
   current.set('piop-input-hold', { type: 'custom', customType: 'piop-input-hold', data: { held: true }, id: randomUUID(), parentId: null, timestamp });
   const forkSource = { sessionId: source.id, sessionPath: sourcePath, entryId };

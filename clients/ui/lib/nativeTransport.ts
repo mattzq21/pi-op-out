@@ -592,7 +592,11 @@ export class NativeTransport {
     return new Error(diagnostics && /disconnect|connect|start|running/i.test(message) ? `${message}\n${diagnostics}` : message);
   }
   private resetChangedSession(command: RpcCommand, result: { cancelled?: boolean }) {
-    if (["new_session", "switch_session", "fork", "fork_after", "copy_after", "clone"].includes(command.type) && !result.cancelled) { forgetSession(this); this.sessionId = undefined; }
+    if (!["new_session", "switch_session", "fork", "fork_after", "copy_after", "clone"].includes(command.type) || result.cancelled) return;
+    forgetSession(this); this.sessionId = undefined;
+
+    // Any view can fork or branch a chat, and it owns the new chat.
+    if (["fork_after", "copy_after"].includes(command.type) && !this.owns && !this.readOnly) { this.owns = true; this.emit({ type: "ownership_acquired" }); }
   }
   subscribe(listener: (event: RpcEvent) => void) { this.listeners.add(listener); listener(this.queueView()); listener(this.pinsSnapshot); this.retainedStatuses.forEach((event) => listener(event)); this.retainedWidgets.forEach((event) => listener(event)); this.retainedRequests.forEach((event) => listener(event));
 

@@ -3,32 +3,40 @@ import { getProjectRepository, rememberProjectRepository } from '../project_repo
 import * as Worktrees from '../chat_worktree_records';
 import { publishBranchHistory } from '../chat_branch_operations';
 import * as Registry from '../session_registry';
-import { kind, text } from './json';
+import { flag, kind, text } from './json';
 import { Guard, ownershipError } from './ownership';
-import { argument, expandHome, readHeaderLine, sessionSpec, specIdentity, type LaunchSpec } from './protocol';
+import { argument, expandHome, parseLaunchSpec, readHeaderLine, sessionSpec, specIdentity, type LaunchSpec } from './protocol';
 import type { Host } from './controller';
 import { lockGate } from './lock_gate';
+import { readonlyCommand, type ReadonlyView } from './readonly_views';
 import type { Session } from './session';
 import { forkPoint } from '../../resources/piop-storage/session-records.cjs';
 
 const UUID = /^[0-9a-fA-F]{8}-?[0-9a-fA-F]{4}-?[0-9a-fA-F]{4}-?[0-9a-fA-F]{4}-?[0-9a-fA-F]{12}$/;
+const FORKS = ['fork', 'fork_after', 'copy_after', 'clone'];
 
 interface Destination { key: string; spec: LaunchSpec; path: string; existing: boolean; cwd: string | null }
 
+/** The conversation that a view forks from: the session that it owns, or a conversation that another client owns. */
+interface BranchSource {
+  spec: LaunchSpec;
+  timeout: number;
+  clientId: string;
+  /** The source session when the view owns it. Only the owner can let Pi prepare a fork. */
+  owned?: Session;
+  read(): Promise<{ state: any; snapshot: any; cwd: string | null }>;
+  current(): boolean;
+  /** Takes the view off the source. Returns the presence of the view and the session that it watched. */
+  detach(): { presence: any; session?: Session };
+}
+
 export async function switchSession(host: Host, session: Session, runtime: string, command: any): Promise<any> {
-  if (!['fork', 'fork_after', 'copy_after'].includes(kind(command)) && (session.working() || !session.queue.isEmpty())) {
+  if (FORKS.includes(kind(command))) return fork(host, runtime, ownedSource(host, session, runtime), command);
+  if (session.working() || !session.queue.isEmpty()) {
     throw new Error('Stop the response and finish queued messages before switching');
   }
-  const state = await session.execute({ type: 'get_state' });
+  await session.execute({ type: 'get_state' });
   assertCurrent(host, session, runtime);
-  if (['fork', 'fork_after', 'copy_after', 'clone'].includes(kind(command))) {
-    const snapshot = await session.execute({ type: 'get_snapshot' });
-    if (snapshot.state?.canFork !== true) throw new Error('Only main chats can be forked');
-    assertCurrent(host, session, runtime);
-    const path = typeof state?.sessionFile === 'string' && state.sessionFile ? state.sessionFile : undefined;
-    if (path === undefined) throw new Error('The conversation has no session file');
-    return fork(host, session, runtime, command, state, path);
-  }
   const target = destination(host, session, command);
   const guard = await host.ownership().begin(target.key, session.clientId(), { path: target.existing ? target.path : null, create: !target.existing });
   try { resolveCwd(target, host, guard); } catch (error) { guard.drop(); throw error; }
@@ -39,6 +47,57 @@ export async function switchSession(host: Host, session: Session, runtime: strin
   guard.release(host.ownership(), false);
   if (failure !== undefined) throw failure;
   return result;
+}
+
+/** Forks or branches the conversation that a read-only view shows. The view then owns the new conversation. */
+export function forkFromView(host: Host, runtime: string, view: ReadonlyView, command: any): Promise<any> {
+  const packet = host.attachments.get(runtime);
+  if (packet === undefined) throw new Error('This conversation has been deleted or closed');
+  if (flag(packet.presence, 'readOnly')) throw new Error('This view is read-only');
+  return fork(host, runtime, viewSource(host, runtime, view, packet), command);
+}
+
+function ownedSource(host: Host, session: Session, runtime: string): BranchSource {
+  return {
+    spec: session.spec, timeout: session.timeout, clientId: session.clientId(), owned: session,
+    read: () => readSession(session),
+    current: () => host.current(runtime, session),
+    detach: () => {
+      const presence = session.views().find(([id]) => id === runtime)?.[1] ?? {};
+      session.detachView(runtime);
+      return { presence, session };
+    },
+  };
+}
+
+function viewSource(host: Host, runtime: string, view: ReadonlyView, packet: any): BranchSource {
+  const timeout = packet.timeout;
+  return {
+    spec: parseLaunchSpec(packet.spec),
+    timeout: typeof timeout === 'number' && Number.isInteger(timeout) && timeout >= 0 ? timeout : 630000,
+    clientId: text(packet, 'clientId'),
+    read: async () => {
+      const running = host.findSession(view.id);
+      if (running && !running.transient()) return readSession(running);
+      const snapshot = await readonlyCommand(host, { command: { type: 'get_snapshot' } }, view);
+      const cwd = snapshot.state?.cwd;
+      return { state: snapshot.state, snapshot, cwd: typeof cwd === 'string' && cwd.trim() ? expandHome(cwd, host.home) : null };
+    },
+    current: () => host.attachments.get(runtime) === packet && host.readonlyMap.get(runtime)?.id === view.id,
+    detach: () => {
+      host.readonlyMap.delete(runtime);
+      const session = host.subscriptions.get(runtime);
+      host.subscriptions.delete(runtime);
+      session?.detachView(runtime);
+      return { presence: structuredClone(packet.presence ?? null), session };
+    },
+  };
+}
+
+async function readSession(session: Session): Promise<{ state: any; snapshot: any; cwd: string | null }> {
+  const state = await session.execute({ type: 'get_state' });
+  const snapshot = await session.execute({ type: 'get_snapshot' });
+  return { state, snapshot, cwd: session.cwd };
 }
 
 function destination(host: Host, session: Session, command: any): Destination {
@@ -116,21 +175,26 @@ async function transfer(host: Host, session: Session, next: Session, runtime: st
   return {};
 }
 
-async function fork(host: Host, session: Session, runtime: string, command: any, state: any, path: string): Promise<any> {
-  const pending = pendingBranches.get(session) ?? new Map<string, Promise<any>>();
-  pendingBranches.set(session, pending);
+async function fork(host: Host, runtime: string, source: BranchSource, command: any): Promise<any> {
+  const pending = pendingBranches.get(host) ?? new Map<string, Promise<any>>();
+  pendingBranches.set(host, pending);
   const key = JSON.stringify([runtime, kind(command), text(command, 'entryId')]);
   const existing = pending.get(key);
   if (existing) return existing;
-  const operation = runFork(host, session, runtime, command, state, path);
+  const operation = runFork(host, runtime, source, command);
   pending.set(key, operation);
   try { return await operation; } finally { pending.delete(key); }
 }
 
-const pendingBranches = new WeakMap<Session, Map<string, Promise<any>>>();
+const pendingBranches = new WeakMap<Host, Map<string, Promise<any>>>();
 
-async function runFork(host: Host, session: Session, runtime: string, command: any, state: any, path: string): Promise<any> {
-  const branch = new Branch(host, session, runtime, state, path);
+async function runFork(host: Host, runtime: string, source: BranchSource, command: any): Promise<any> {
+  const read = await source.read();
+  if (!source.current()) throw new Error('The conversation changed while preparing its destination');
+  if (read.snapshot?.state?.canFork !== true) throw new Error('Only main chats can be forked');
+  const path = typeof read.state?.sessionFile === 'string' && read.state.sessionFile ? read.state.sessionFile : undefined;
+  if (path === undefined) throw new Error('The conversation has no session file');
+  const branch = new Branch(host, runtime, source, read, path);
   let result: any;
   let failure: unknown;
   try { result = await branch.create(command); } catch (error) { failure = error ?? new Error('Fork failed'); }
@@ -145,14 +209,14 @@ class Branch {
   committed = false;
   managedId: string | null = null;
   managedPath: string | null = null;
+  worktree = false;
 
-  constructor(private host: Host, private session: Session, private runtime: string, private state: any, private path: string) {}
+  constructor(private host: Host, private runtime: string, private source: BranchSource, private read: { state: any; snapshot: any; cwd: string | null }, private path: string) {}
 
   async create(command: any): Promise<any> {
-    const request: any = { type: 'prepare_fork', mode: kind(command) === 'copy_after' ? 'fork_after' : kind(command) };
-    if (command?.entryId !== undefined) request.entryId = command.entryId;
-    const branch = kind(command) === 'fork_after' ? await this.prepareManaged(text(command, 'entryId')) : await this.session.raw(request);
-    const destination = validatePrepared(this.host, branch, this.state, this.path);
+    const mode = kind(command);
+    const branch = mode === 'fork_after' || mode === 'copy_after' ? await this.publish(text(command, 'entryId'), mode === 'fork_after') : await this.prepareInPi(command);
+    const destination = validatePrepared(this.host, branch, this.read.state, this.path);
     const retained = (error: unknown): Error => new Error('Conversation branch was saved at ' + destination + '; its history and dependencies were retained: ' + ((error as any)?.message ?? String(error)));
     let opened: Session;
     try { opened = await this.open(branch, destination); } catch (error) { throw this.managedId ? error : retained(error); }
@@ -160,33 +224,47 @@ class Branch {
     return { cancelled: false, text: branch?.text ?? null, state: { sessionId: branch?.sessionId ?? null, sessionFile: destination, cwd: branch?.cwd ?? null } };
   }
 
-  private async prepareManaged(entryId: string): Promise<any> {
-    const cwd = this.session.cwd;
-    const savedRepository = cwd ? getProjectRepository(this.host.storageRoot(), cwd) : null;
-    if (!cwd || !savedRepository) throw new Error('This folder is not a Git repository');
-    const snapshot = await this.session.execute({ type: 'get_snapshot' });
+  private prepareInPi(command: any): Promise<any> {
+    if (!this.source.owned) throw new Error(ownershipError());
+    const request: any = { type: 'prepare_fork', mode: kind(command) };
+    if (command?.entryId !== undefined) request.entryId = command.entryId;
+    return this.source.owned.raw(request);
+  }
+
+  /** Saves the copy of the history through entryId. A branch (worktree) runs in a new worktree; a fork stays in the source folder and keeps its name. */
+  private async publish(entryId: string, worktree: boolean): Promise<any> {
+    const cwd = this.read.cwd;
+    const savedRepository = worktree && cwd ? getProjectRepository(this.host.storageRoot(), cwd) : null;
+    if (worktree && (!cwd || !savedRepository)) throw new Error('This folder is not a Git repository');
+    if (!cwd) throw new Error('The conversation has no working directory');
+    const snapshot = this.read.snapshot;
     const entries = snapshot.history.entries;
     const selected = entries.find((entry: any) => entry.id === entryId);
     if (!forkPoint(selected)) throw new Error('Select a finished or stopped final response or a compaction to branch from');
-    const repository = { repository: savedRepository.root, gitCommonDir: savedRepository.gitDir };
     const sessionId = Registry.reserve(this.host.storageRoot());
     this.managedId = sessionId;
-    const created = await Worktrees.create({ sourceCwd: cwd, chatId: sessionId, home: this.host.home, repository }, this.host.storageRoot());
-    rememberProjectRepository(this.host.storageRoot(), created.worktree, { root: created.worktree, gitDir: created.gitCommonDir });
-    const result = await publishBranchHistory({ root: this.host.storageRoot(), sourcePath: this.path, sessionId, cwd: created.worktree, entries, leafId: snapshot.history.leafId, entryId, name: this.state.sessionName ? this.state.sessionName + ' (branch)' : undefined });
+    let branchCwd = cwd;
+    if (savedRepository) {
+      const repository = { repository: savedRepository.root, gitCommonDir: savedRepository.gitDir };
+      this.worktree = true;
+      const created = await Worktrees.create({ sourceCwd: cwd, chatId: sessionId, home: this.host.home, repository }, this.host.storageRoot());
+      rememberProjectRepository(this.host.storageRoot(), created.worktree, { root: created.worktree, gitDir: created.gitCommonDir });
+      branchCwd = created.worktree;
+    }
+    const result = await publishBranchHistory({ root: this.host.storageRoot(), sourcePath: this.path, sessionId, cwd: branchCwd, entries, leafId: snapshot.history.leafId, entryId, keepName: !worktree });
     this.managedPath = result.sessionPath;
-    return { sessionId, sessionPath: result.sessionPath, cwd: created.worktree };
+    return { sessionId, sessionPath: result.sessionPath, cwd: branchCwd };
   }
 
   private async open(branch: any, destination: string): Promise<Session> {
     const branchId = text(branch, 'sessionId');
-    const ownership = await this.host.ownership().begin(branchId, this.session.clientId(), { path: destination });
+    const ownership = await this.host.ownership().begin(branchId, this.source.clientId, { path: destination });
     this.guard = ownership;
     if (!ownership.owned) throw new Error(ownershipError());
-    const cwd = text(branch, 'cwd') || this.session.cwd;
-    const spec = sessionSpec(this.session.spec, '--session', destination);
+    const cwd = text(branch, 'cwd') || this.read.cwd;
+    const spec = sessionSpec(this.source.spec, '--session', destination);
     if (cwd) { spec.cwd = cwd; if (spec.env.PIOP_SESSION_CWD !== undefined) spec.env.PIOP_SESSION_CWD = cwd; }
-    const opened = await this.host.spawnSession({ key: branchId, spec, timeout: this.session.timeout, transient: true, clientId: this.session.clientId(), cwd });
+    const opened = await this.host.spawnSession({ key: branchId, spec, timeout: this.source.timeout, transient: true, clientId: this.source.clientId, cwd });
     opened.setReservedPath(destination);
     this.next = opened;
     const actual = await opened.execute({ type: 'get_state' });
@@ -195,18 +273,17 @@ class Branch {
   }
 
   private async commit(opened: Session): Promise<void> {
-    if (!this.host.current(this.runtime, this.session)) throw new Error('The conversation changed while preparing its branch');
-    if (this.managedId) Worktrees.activate(this.managedId, this.host.storageRoot());
-    const presence = this.session.views().find(([id]) => id === this.runtime)?.[1] ?? {};
-    this.session.detachView(this.runtime);
+    if (!this.source.current()) throw new Error('The conversation changed while preparing its branch');
+    if (this.worktree) Worktrees.activate(this.managedId!, this.host.storageRoot());
+    const { presence, session: previous } = this.source.detach();
     opened.setReservedPath(null);
     opened.makeVisible();
     this.host.attachView(this.runtime, opened, presence);
     this.committed = true;
     this.host.remember(this.runtime, opened);
-    try {
-      await this.session.finishDetach(false, true);
-      await this.host.releaseUnused(this.session);
+    if (previous) try {
+      await previous.finishDetach(false, true);
+      await this.host.releaseUnused(previous);
     } catch (error) {
       this.host.output({ type: 'diagnostic', line: 'Branch created, but source chat release failed: ' + String(error) });
     }

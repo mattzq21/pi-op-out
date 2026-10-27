@@ -487,6 +487,8 @@ export function createAppConversations(preloadChat: () => void) {
     try {
       if (!source) throw new Error("Could not find the original saved conversation");
 
+      if (!owner.ownsConversation()) throw new Error("Take ownership of this conversation first");
+
       if (conversationBusy()) throw new Error("Wait for the current response and queued messages to finish first");
 
       if (!await branchConversation()(message, "copy")) return;
