@@ -277,6 +277,7 @@ describe("Conversation acceptance", () => {
     const { sessionId, cwd } = await startTemporaryConversation({
       "pi_command:get_entries": history,
       "pi_command:copy_after": {},
+      "pi_command:get_session_stats": { contextUsage: { tokens: 30_000, contextWindow: 100_000, percent: 30 } },
     });
     await updateBackendResponse("pi_command:get_state", { ...connectedSessionResponses(sessionId)["pi_command:get_state"], sessionFile: `${cwd}/session.jsonl`, messageCount: 2 });
 
@@ -284,6 +285,7 @@ describe("Conversation acceptance", () => {
       await emitPiEvent({ type: "session_info_changed" });
       const branch = $(".assistant-message").$('button[aria-label="Fork"]');
       await expect(branch).toBeEnabled();
+      await updateBackendResponse("pi_command:get_session_stats", { contextUsage: { tokens: 12_000, contextWindow: 100_000, percent: 12 } });
       await browser.execute(() => {
         const element = document.querySelector('.assistant-message button[aria-label="Fork"]');
 
@@ -295,6 +297,7 @@ describe("Conversation acceptance", () => {
       expect((await backendCalls()).find(({ args }) => args.command?.type === "copy_after")?.args.command).toMatchObject({ type: "copy_after", entryId: "branch-assistant" });
       await expect($(".user-message .message-body")).toHaveText("Establish the branch point");
       await expect($(".assistant-message .markdown-content p")).toHaveText("This response can be branched.");
+      await browser.waitUntil(async () => (await $(".context-wheel").getAttribute("aria-label"))?.startsWith("12%") === true);
     } finally {
       await resetBackend();
     }
