@@ -176,6 +176,16 @@ const pageDiagnostics = async () => JSON.stringify(await browser.execute(() => (
   text: document.body.innerText.slice(0, 400),
 })).catch(error => ({ diagnosticsFailed: String(error) })));
 
+/**
+ * Opens the script-free cleanup page in place of the app page.
+ * A normal navigation keeps the app page in WebKitGTK's back/forward cache, and a database request that was running there then blocks the deletion of that database forever.
+ * A replaced page has no history entry, so WebKitGTK does not cache it.
+ */
+const openCleanupPage = async (cleanupUrl: string) => {
+  await browser.execute(url => { location.replace(url); return null; }, cleanupUrl);
+  await $("[data-piop-fixture-cleanup]").waitForExist();
+};
+
 export const resetApp = async () => {
   const appUrl = await browser.getUrl();
   // Keep the current IPC fixtures until the old runtimes have detached.
@@ -195,8 +205,7 @@ export const resetApp = async () => {
   // destroys its timers and writers before storage is cleared.
   const cleanupUrl = new URL("/e2e-cleanup.html", appUrl).href;
   try {
-    await browser.url(cleanupUrl);
-    await $('[data-piop-fixture-cleanup]').waitForExist();
+    await openCleanupPage(cleanupUrl);
     await browser.execute(async () => {
       for (const name of ["piop-drafts", "piop-session-resume"]) {
         await new Promise<void>((resolve, reject) => {
