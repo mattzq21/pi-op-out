@@ -694,7 +694,7 @@ export function Composer(props: Props) {
       const peerCount = createMemo(() => queue()?.length ?? 0);
       const position = createMemo(() => queue()?.positions.get(message().id) ?? -1);
 
-      const renderPendingDragHandle = () => (<button type="button" class="pending-icon-button pending-drag-handle" disabled={disabled() || message().retry || !composer().onChangePending || peerCount() < 2} aria-label={`Drag to reorder queued message: ${text()}`} data-tooltip="Drag to reorder · Arrow keys to move" onKeyDown={(event) => {
+      const renderPendingDragHandle = () => (<button type="button" class="pending-icon-button pending-drag-handle" disabled={disabled() || Boolean(message().goal) || message().retry || !composer().onChangePending || peerCount() < 2} aria-label={`Drag to reorder queued message: ${text()}`} data-tooltip="Drag to reorder · Arrow keys to move" onKeyDown={(event) => {
           if (event.key === "ArrowUp" || event.key === "ArrowDown") { event.preventDefault(); change(event.key === "ArrowUp" ? "moveUp" : "moveDown"); }
         }} onPointerDown={(event) => pendingDrag.begin(event, message().id)}><MoveVertical size={16} /></button>);
 
@@ -722,6 +722,7 @@ export function Composer(props: Props) {
         {renderPendingMessageActions()}
       </div>;
     }}</Key>}<Show when={pausedGoal()}>{goal => <div class="pending-message pending-goal paused" aria-label="Paused goal">
+      <button type="button" class="pending-icon-button pending-drag-handle" disabled aria-label="Paused goal cannot be reordered"><MoveVertical size={16} /></button>
       <span class="pending-message-text" data-tooltip={goal().objective}><small>Paused · </small><small class="goal-label">Goal · </small>{goal().objective}</span>
       <div class="pending-message-actions"><GoalActions controls={required(props.goal)} goal={goal()} /></div>
     </div>}</Show><Show when={props.goal?.error()}>{message => <div class="pending-goal-error" role="alert">{message()}</div>}</Show></div>}
