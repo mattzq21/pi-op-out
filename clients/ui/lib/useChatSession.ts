@@ -546,12 +546,12 @@ function createChatSession(transport: Accessor<Pick<NativeTransport, "command" |
 
     const handleCompactionStart = () => {
       session.setState((current) => ({ ...current, isCompacting: true, activity: "Compacting context…" }));
-      session.setMessages(current => [...current.filter(message => message.id !== "live-compaction"), { id: "live-compaction", role: "system", customType: "compaction", content: "Compacting context…", timestamp: Date.now() }]);
+      session.setMessages(current => [...current.filter(message => message.id !== "live-compaction"), { id: "live-compaction", role: "system", customType: "compaction", content: "Compacting…", timestamp: Date.now() }]);
     };
 
     const handleCompactionEnd = () => {
       session.setState((current) => ({ ...current, isCompacting: false, activity: undefined, contextUsage: contextUsageAfterCompaction(current.contextUsage, event) }));
-      session.setMessages(current => current.map(message => message.id === "live-compaction" ? { ...message, content: event.aborted ? "Compaction cancelled" : event.errorMessage ? String(event.errorMessage) : "Context compacted" } : message));
+      session.setMessages(current => current.map(message => message.id === "live-compaction" ? { ...message, content: event.aborted ? "Compaction cancelled" : event.errorMessage ? String(event.errorMessage) : "Compacted" } : message));
 
       if (!event.aborted && !event.errorMessage) void refreshView();
     };

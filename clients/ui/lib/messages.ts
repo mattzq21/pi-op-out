@@ -166,7 +166,7 @@ function applyCustomEntry(messages: ChatMessage[], entry: PiEntry, promptParts: 
 function compactionMessage(entry: PiEntry): ChatMessage {
   const tokensBefore = entry.tokensBefore;
 
-  return { id: entry.id, entryId: entry.id, role: "system", customType: "compaction", timestamp: entry.timestamp ? Date.parse(entry.timestamp) : undefined, content: tokensBefore === undefined ? "Context compacted" : `Context compacted from ${tokensBefore.toLocaleString()} tokens` };
+  return { id: entry.id, entryId: entry.id, role: "system", customType: "compaction", timestamp: entry.timestamp ? Date.parse(entry.timestamp) : undefined, content: tokensBefore === undefined ? "Compacted" : `Compacted from ${tokensBefore.toLocaleString()} tokens` };
 }
 
 function customEntryMessage(entry: PiEntry): ChatMessage | undefined {
