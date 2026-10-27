@@ -1,5 +1,7 @@
 import { $, browser, expect } from "@wdio/globals";
 
+import { app } from "../pageobjects/app.page.js";
+
 import { mockBackend, backendCalls, resetBackend, resetApp, emitPiEvent, connectedSessionResponses, startTemporaryConversation } from './acceptance-fixture.js';
 
 interface SideChatRequest { kind?: string; name?: string; task?: string; cwd?: string; hostId?: string; parentSessionId?: string; sessionId?: string; sessionPath?: string }
@@ -61,6 +63,29 @@ describe("side pane acceptance", () => {
     expect(responses[0].args.command).toMatchObject({ type: "extension_ui_response", id: "side-hide", value: "opened" });
     await toggle().click();
     await expect(sideChat()).toBeDisplayed();
+  });
+
+  it("gives /btw's attached image to the side chat's first prompt", async () => {
+    const model = { provider: "e2e", id: "vision", name: "Vision model", input: ["text", "image"] };
+    const pixel = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=";
+    await mockBackend({ ...runtimeResponses(), "pi_command:get_state": { ...runtimeResponses()["pi_command:get_state"], sessionId: mainSessionId, model }, "pi_command:get_available_models": { models: [model] } });
+    await emitPiEvent({ type: "session_switched" });
+    await expect(app.modelPicker).toHaveAttribute("data-value", "e2e/vision");
+    await browser.execute((data) => {
+      const bytes = Uint8Array.from(atob(data), character => character.charCodeAt(0));
+      const transfer = new DataTransfer(); transfer.items.add(new File([bytes], "pixel.png", { type: "image/png" }));
+      document.querySelector(".composer")?.dispatchEvent(new DragEvent("drop", { bubbles: true, dataTransfer: transfer }));
+    }, pixel);
+    await expect($('button[aria-label="Remove pixel.png"]')).toBeDisplayed();
+    await app.prepareMessage("/btw Look at this");
+    await app.sendMessageButton.click();
+    await browser.waitUntil(async () => (await backendCalls()).some(({ args }) => args.command?.message === "/btw Look at this"));
+    await request("side-image", { ...review("Look at this"), kind: "btw" });
+
+    await expect(sideChat()).toBeDisplayed();
+    await browser.waitUntil(async () => (await backendCalls()).some(({ args }) => args.command?.type === "prompt" && args.command.message === "Look at this"));
+    const prompt = (await backendCalls()).find(({ args }) => args.command?.type === "prompt" && args.command.message === "Look at this")?.args.command;
+    expect(prompt?.images).toMatchObject([{ type: "image", data: pixel, mimeType: "image/png", name: "pixel.png" }]);
   });
 
   it("rejects a malformed side chat request", async () => {

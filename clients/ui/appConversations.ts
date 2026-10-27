@@ -18,7 +18,6 @@ import type { MissingDirectoryRequest } from "./components/MissingDirectoryDialo
 import { isConversationChanged } from "./lib/conversationChanged";
 import { initialWindowTarget,NativeTransport,openSessionWindow } from "./lib/nativeTransport";
 import { chatSubmission,waitForConversationReady } from "./lib/chatSubmission";
-import { queuedCommand } from "./plugins";
 import { createSidepaneTabs, localSubagentTabs } from "./lib/sidepaneTabs";
 import { parseAuxiliaryOpening } from "./lib/auxiliaryChats";
 import { promptWasAccepted, submitDraftPrompt } from "./lib/draftSubmission";
@@ -387,7 +386,8 @@ export function createAppConversations(preloadChat: () => void) {
     const ownerTransport = capturedTransport;
     const imagePayload = images.length ? { images } : {};
 
-    if (queuedCommand(text)) commandImages.set(capturedTransport, images);
+    // A command can open a side chat, such as /btw or /review; its first prompt gets the command's attachments.
+    if (text.trimStart().startsWith("/")) commandImages.set(capturedTransport, images);
 
     try {
       if (behavior) return promptWasAccepted(await submitDraftPrompt(ownerTransport, { type: behavior === "steer" ? "steer" : "follow_up", message: text, ...imagePayload }));
