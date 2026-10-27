@@ -6,7 +6,7 @@ const RECENT_TURNS = 5;
 const RECENT_TEXT = 5000;
 
 const PROMPT_CONTEXTS = new Set(['piop-context', 'pi-desktop-prompt-context']);
-const PROMPT_CUSTOM_MESSAGES = new Set(['piop-agent-message', 'piop-subagent-result']);
+const PROMPT_CUSTOM_MESSAGES = new Set(['piop-agent-message', 'piop-subagent-result', 'piop-goal-context']);
 
 type History = { entries: any[]; leafId: string | null; before?: string | null; olderUsage?: any };
 

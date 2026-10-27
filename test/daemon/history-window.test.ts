@@ -35,6 +35,25 @@ test('a running turn keeps its work', () => {
   expect(history.entries.slice(-4).map((entry: any) => entry.message.role)).toEqual(['user', 'assistant', 'toolResult', 'assistant']);
 });
 
+test('a goal continuation prompt starts a turn, so the reply before it stays visible', () => {
+  const source = () => {
+    const history = chat(1, 'First reply');
+    let parentId = history.leafId;
+    for (const entry of [
+      { type: 'custom_message', customType: 'piop-goal-context', content: 'Continue the goal' },
+      { type: 'message', message: { role: 'assistant', content: [{ type: 'toolCall', id: 'g', name: 'read', arguments: {} }] } },
+      { type: 'message', message: { role: 'toolResult', toolCallId: 'g', content: 'File' } },
+      { type: 'message', message: { role: 'assistant', content: [{ type: 'text', text: 'Second reply' }], stopReason: 'stop' } },
+    ]) { const id = 'e' + history.entries.length; history.entries.push({ ...entry, id, parentId }); parentId = id; }
+    history.leafId = parentId;
+    return history;
+  };
+  const history = recentHistory(source(), false);
+  expect(history.entries.map((entry: any) => entry.type === 'custom_message' ? entry.customType : entry.message.role)).toEqual(['user', 'assistant', 'piop-goal-context', 'assistant']);
+  expect(history.entries[1].message.content).toEqual([{ type: 'text', text: 'First reply' }]);
+  expect(turnWork(source(), 'e7').entries.map((entry: any) => entry.message.role)).toEqual(['assistant', 'toolResult', 'assistant']);
+});
+
 test('older history and the work of a turn load on request', () => {
   const source = chat(8, 'x'.repeat(2000));
   const older = olderHistory(source, 'e12');
