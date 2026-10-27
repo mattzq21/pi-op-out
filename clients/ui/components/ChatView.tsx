@@ -739,7 +739,7 @@ function ConversationTurn(componentProps: ConversationTurnProps) {
   const finalThinking = createMemo(() => (finalIndex() >= 0 ? thinkingOf(turnMessages()[finalIndex()].content) : ""));
 
   const intermediate = createMemo(() => (turnMessages().flatMap((message, index): ChatMessage[] => {
-    if (isPromptMessage(message) || isContextInjection(message) || (message.role === "system" && message.customType !== "compaction")) return [];
+    if (isPromptMessage(message) || isContextInjection(message) || message.role === "system") return [];
 
     if (index !== finalIndex()) return [message];
 
@@ -807,7 +807,7 @@ function ConversationTurn(componentProps: ConversationTurnProps) {
     {finalMessage() && !hasWork() && finishedSubagents().length === 0 && <hr class="turn-divider" />}
     {finalMessage() && <Message message={required((finalMessage()))} turnCacheUsage={turnCacheUsage()} debug={componentProps.debug} onBranch={canBranchFrom(finalSource()) ? componentProps.onBranch : undefined} onFork={canBranchFrom(finalSource()) ? componentProps.onFork : undefined} onForkAndForget={componentProps.onForkAndForget} retrying={retrying()} onRetry={retryTarget() ? retry : undefined} />}
     {retryError() && <div class="message-failure retry-error" role="alert">Retry failed: {(retryError())}</div>}
-    <MessageList messages={turnMessages().filter(message => message.role === "system" && message.customType !== "compaction")} expanded={false} />
+    <MessageList messages={turnMessages().filter(message => message.role === "system")} expanded={false} />
   </>)}>
     <div class="active-work-content"><MessageList messages={turnMessages().filter(message => !isPromptMessage(message) && !isContextInjection(message))} expanded compact={false} debug={componentProps.debug} showActions={false} /></div>
   </Show>);
