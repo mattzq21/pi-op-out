@@ -13,6 +13,7 @@ import { Mutex, errorText } from '../util/sync';
 import { flag, kind, text, jsonEqual } from './json';
 import * as Agents from './agents';
 import { attach } from './attachment';
+import { forkFromView } from './branching';
 import { lockGate } from './lock_gate';
 import { MutationGuards } from './mutation_guards';
 import { MessagePins } from './message_pins';
@@ -439,7 +440,11 @@ export class Host implements SessionHost {
     if (name === 'command' && packet.command?.type === 'take_ownership') return this.takeOwnership(runtime);
     if (name === 'command' && ['pin_message', 'unpin_message'].includes(packet.command?.type)) return this.pinCommand(runtime, packet.command);
     const readonly = this.readonlyMap.get(runtime);
-    if (readonly) return readonlyCommand(this, packet, { ...readonly });
+    if (readonly) {
+      // Any view can fork or branch a chat; the view then owns the new chat.
+      if (name === 'command' && ['fork_after', 'copy_after'].includes(packet.command?.type)) return forkFromView(this, runtime, { ...readonly }, structuredClone(packet.command));
+      return readonlyCommand(this, packet, { ...readonly });
+    }
     const session = this.subscriptions.get(runtime);
     if (!session) {
       if (name === 'detach') return { stopped: false };

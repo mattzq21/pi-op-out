@@ -274,8 +274,7 @@ export class Orchestration {
     try {
       const created = await Worktrees.create({ sourceCwd: cwd, chatId: sessionId, home: host.home, repository }, root);
       rememberProjectRepository(root, created.worktree, { root: created.worktree, gitDir: created.gitCommonDir });
-      const published = await publishBranchHistory({ root, sourcePath, sessionId, cwd: created.worktree, entries, leafId, entryId,
-        name: state.sessionName ? state.sessionName + ' (branch)' : undefined });
+      const published = await publishBranchHistory({ root, sourcePath, sessionId, cwd: created.worktree, entries, leafId, entryId });
       return { sessionId, sessionPath: published.sessionPath };
     } catch (error) {
       await Worktrees.abandonCreation(sessionId, null, root);

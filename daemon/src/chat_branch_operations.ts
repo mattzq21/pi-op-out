@@ -8,7 +8,7 @@ export interface BranchHistoryRequest {
   entries: any[];
   leafId: string | null;
   entryId: string;
-  name?: string;
+  keepName?: boolean;
 }
 export interface BranchHistoryResult {
   sessionPath: string;
