@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { nativeCall } from "./nativeCall";
+import { sessionSnapshotSchema } from "./responseSchemas";
 
 const locationSchema = z.object({ sessionId: z.string(), sessionPath: z.string(), cwd: z.string(), archived: z.boolean(), revision: z.string() });
 
@@ -9,4 +10,9 @@ export async function locateConversation(sessionId: string, hostId: string) {
   if (location.sessionId !== sessionId) throw new Error("Conversation lookup returned another identity");
 
   return location;
+}
+
+/** The recent history of a saved conversation, from its host without waiting for its Pi to start. */
+export function previewConversation(sessionId: string, hostId: string) {
+  return nativeCall("broker_request", { hostId, path: "/orchestration", body: { action: "preview", sessionId, hostId: "local" } }, sessionSnapshotSchema);
 }

@@ -269,8 +269,12 @@ export function createAppConversations(preloadChat: () => void) {
     return sessionIndexRequest.current;
   };
 
+  // The first connection loads the chat list. Later changes arrive as pi://sessions-changed, so opening a chat does not reload it.
+  let sessionIndexLoaded = false;
   createDependencyEffect(() => {
-    if (connected()) void syncSessionIndex();
+    if (!connected() || sessionIndexLoaded) return;
+    sessionIndexLoaded = true;
+    void syncSessionIndex();
   }, () => [connected()]);
 
   createDependencyEffect(() => {
@@ -332,7 +336,6 @@ export function createAppConversations(preloadChat: () => void) {
   };
 
   const refresh = async (hostId?: string, loadedSettings?: AppSettings) => {
-    void syncSessionIndex();
     const settingsRequest = loadedSettings ? Promise.resolve(settings() ?? loadedSettings) : loadSettings();
     const [, nextSettings] = await Promise.all([refreshSession(hostId), settingsRequest]);
 
@@ -771,7 +774,7 @@ export function createAppConversations(preloadChat: () => void) {
     void ownerTransport.connect().then(() => ownerTransport.loadSettings()).then((value) => activeTransportRef.current === ownerTransport && activeConversationKeyRef.current === ownerKey ? configureRuntime(value) : undefined).then(async () => {
       const capturedSession = { ...chatSession() };
 
-      if (activeTransportRef.current === ownerTransport && activeConversationKeyRef.current === ownerKey) await capturedSession.refresh(); }).then(() => { if (activeTransportRef.current === ownerTransport && activeConversationKeyRef.current === ownerKey) { setError(undefined); updateConnected(true); void syncSessionIndex(); } }).catch((reason) => { if (!isConversationChanged(reason) && activeTransportRef.current === ownerTransport && activeConversationKeyRef.current === ownerKey) setError(reason instanceof Error ? reason.message : String(reason)); }).finally(() => { reconnectPending.current.delete(ownerTransport); });
+      if (activeTransportRef.current === ownerTransport && activeConversationKeyRef.current === ownerKey) await capturedSession.refresh(); }).then(() => { if (activeTransportRef.current === ownerTransport && activeConversationKeyRef.current === ownerKey) { setError(undefined); updateConnected(true); } }).catch((reason) => { if (!isConversationChanged(reason) && activeTransportRef.current === ownerTransport && activeConversationKeyRef.current === ownerKey) setError(reason instanceof Error ? reason.message : String(reason)); }).finally(() => { reconnectPending.current.delete(ownerTransport); });
   };
 
   useAppKeyboard({ settings, activePane, splitPane, canLeaveSettings, setView, panelOpen, setPanelOpen, newSession, toggleTerminal, toggleDebugMode, setSplitComposerFocusRequest, setMainComposerFocusRequest, settingsDirty, view, terminalOpen, setTerminalOpen });

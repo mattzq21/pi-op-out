@@ -11,6 +11,7 @@ import * as Registry from '../session_registry';
 import { detectRepository } from '../chat_worktrees';
 import { publishBranchHistory } from '../chat_branch_operations';
 import { rememberProjectRepository } from '../project_repositories';
+import { recentHistory } from './history_window';
 import type { Host } from './controller';
 import type { Session } from './session';
 
@@ -62,11 +63,21 @@ export class Orchestration {
   /** True while any message is being delivered. */
   busy(): boolean { return this.deliveries.size > 0; }
 
+  /** The view a chat opens with. It reads the saved transcript while the chat's Pi is not ready, so opening a chat does not wait for Pi to start. */
+  private async preview(id: string): Promise<any> {
+    const session = this.host.findSession(id);
+    if (session && !session.transient() && session.savedState() !== null) return session.execute({ type: 'get_snapshot', recent: true });
+    const snapshot = this.host.ownership().snapshot(id);
+    if (snapshot.history) recentHistory(snapshot.history, false);
+    return snapshot;
+  }
+
   async handle(packet: any): Promise<any> {
     const host = this.host;
     const id = text(packet, 'sessionKey');
     const action = text(packet, 'action');
     if (action === 'locate') return host.ownership().lookup(id);
+    if (action === 'preview') return this.preview(id);
     if (action === 'watch') return this.watch(id, typeof packet.stateKey === 'string' ? packet.stateKey : null, typeof packet.waitMs === 'number' ? packet.waitMs : 0);
     if (action === 'branch_off') return this.branchOff(id);
     if (action === 'settle_first_message') return this.settleFirstMessage(packet);

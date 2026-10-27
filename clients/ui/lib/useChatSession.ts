@@ -41,7 +41,7 @@ function messagePositions(messages: ChatMessage[]) {
   };
 }
 
-export function useChatSession(transport: Accessor<Pick<NativeTransport, "command" | "subscribe"> & Partial<Pick<NativeTransport, "ownsConversation" | "isConnected" | "canLoadModels" | "promptControls" | "currentHostId">>>, initialState: Accessor<AgentState> = () => emptyState, options: { poll?: boolean } = {}) {
+export function useChatSession(transport: Accessor<Pick<NativeTransport, "command" | "subscribe"> & Partial<Pick<NativeTransport, "ownsConversation" | "isConnected" | "canLoadModels" | "promptControls" | "currentHostId" | "preview">>>, initialState: Accessor<AgentState> = () => emptyState, options: { poll?: boolean } = {}) {
   const runtime = createMemo(() => {
     const current = transport();
 
@@ -58,7 +58,7 @@ export function useChatSession(transport: Accessor<Pick<NativeTransport, "comman
   };
 }
 
-function createChatSession(transport: Accessor<Pick<NativeTransport, "command" | "subscribe"> & Partial<Pick<NativeTransport, "ownsConversation" | "isConnected" | "canLoadModels" | "promptControls" | "currentHostId">>>, initialState: Accessor<AgentState>, options: { poll?: boolean }) {
+function createChatSession(transport: Accessor<Pick<NativeTransport, "command" | "subscribe"> & Partial<Pick<NativeTransport, "ownsConversation" | "isConnected" | "canLoadModels" | "promptControls" | "currentHostId" | "preview">>>, initialState: Accessor<AgentState>, options: { poll?: boolean }) {
   const session = useSessionMemory(() => (transport()), () => (initialState()));
   const owner = createRef<ReturnType<typeof transport> | undefined>(transport());
   const loading = new AbortController();
@@ -234,33 +234,50 @@ function createChatSession(transport: Accessor<Pick<NativeTransport, "command" |
   createDependencyEffect(() => discardPendingUpdates, () => [discardPendingUpdates]);
   createDependencyEffect(() => { liveRevision.current += 1; activeAssistantId.current = undefined; activeMessageIds.current.clear(); bufferedEvents.current = undefined; discardPendingUpdates(); }, () => [discardPendingUpdates, transport()]);
 
+  const restoreHistory = (snapshot: SessionSnapshot) => {
+    const cachedSession = session.memory.getSnapshot();
+    const cachedMessages = !cachedSession.state.sessionId || cachedSession.state.sessionId === snapshot.state.sessionId ? cachedSession.messages : [];
+    const previous = new Map(cachedMessages.filter((message) => message.toolPayloadLoaded && message.toolStatus !== "running").map((message) => [message.deferredToolPayload, message]));
+
+    const windowMessages = branchMessages(snapshot.history.entries, snapshot.history.leafId).map((message) => {
+      const cached = previous.get(message.deferredToolPayload);
+
+      return cached && cached.loadedToolPayloadVersion === message.toolPayloadVersion ? { ...message, content: cached.content, details: cached.details, toolInput: cached.toolInput, nestedCalls: cached.nestedCalls, toolPayloadLoaded: true, loadedToolPayloadVersion: cached.loadedToolPayloadVersion, loadToolPayload: cached.loadToolPayload } : message;
+    });
+
+    if (snapshot.history.omittedEntries) windowMessages.unshift({ id: "client-memory-limit", role: "system", content: "Older history was omitted to fit this client's memory limit. The full conversation remains on the host." });
+    const nextMessages = keepLoadedHistory(cachedMessages, [...olderHistoryMarker(snapshot.history.before, snapshot.history.olderUsage), ...windowMessages]);
+    if (snapshot.history.incomplete) nextMessages.push({ id: `client-transcript-damage:${snapshot.state.sessionId}`, role: "system", content: `Chat history is incomplete. Damaged record lines: ${snapshot.history.damagedLines?.join(", ") ?? "unknown"}. Some messages may be missing.` });
+    activeAssistantId.current = [...nextMessages].reverse().find((message) => message.role === "assistant" && message.streaming)?.id;
+    activeMessageIds.current.clear();
+
+    for (const message of nextMessages.filter((message) => message.streaming)) trackLiveId(message.role, message.id);
+    session.setMessages(reconcileMessages(cachedMessages, nextMessages, pendingMessagesSchema.parse(snapshot.queue.pendingMessages)));
+  };
+
+  /** Shows the saved history of a chat that has nothing cached while its Pi starts. The first refresh replaces it. */
+  const showPreview = () => {
+    const capturedTransport = transport();
+    const request = session.memory.revision === undefined && !session.messages.length ? capturedTransport.preview?.() : undefined;
+
+    void request?.then(snapshot => {
+      if (owner.current !== capturedTransport || session.memory.revision !== undefined || session.messages.length) return;
+      const { sessionId, sessionFile, cwd, repository, forkSource, canFork, messageCount } = snapshot.state;
+      session.memory.batch(() => {
+        restoreHistory(snapshot);
+        session.setState(current => current.sessionId && current.sessionId !== sessionId ? current : { ...current, sessionId, sessionFile, cwd, repository, forkSource, canFork, messageCount });
+      });
+      session.memory.markRevision(snapshot.revision);
+    }, reason => { if (owner.current === capturedTransport) reportBackgroundError("Could not show the saved conversation", reason); });
+  };
+  showPreview();
+
   const refresh = (): Promise<AgentState> => {
     if (owner.current !== transport()) return Promise.reject(new ConversationChangedError());
     flush();
 
     if (refreshOperation.current?.transport === transport()) return refreshOperation.current.promise;
     const buffer: RpcEvent[] = []; bufferedEvents.current = buffer;
-
-    const restoreHistory = (snapshot: SessionSnapshot) => {
-      const cachedSession = session.memory.getSnapshot();
-      const cachedMessages = !cachedSession.state.sessionId || cachedSession.state.sessionId === snapshot.state.sessionId ? cachedSession.messages : [];
-      const previous = new Map(cachedMessages.filter((message) => message.toolPayloadLoaded && message.toolStatus !== "running").map((message) => [message.deferredToolPayload, message]));
-
-      const windowMessages = branchMessages(snapshot.history.entries, snapshot.history.leafId).map((message) => {
-        const cached = previous.get(message.deferredToolPayload);
-
-        return cached && cached.loadedToolPayloadVersion === message.toolPayloadVersion ? { ...message, content: cached.content, details: cached.details, toolInput: cached.toolInput, nestedCalls: cached.nestedCalls, toolPayloadLoaded: true, loadedToolPayloadVersion: cached.loadedToolPayloadVersion, loadToolPayload: cached.loadToolPayload } : message;
-      });
-
-      if (snapshot.history.omittedEntries) windowMessages.unshift({ id: "client-memory-limit", role: "system", content: "Older history was omitted to fit this client's memory limit. The full conversation remains on the host." });
-      const nextMessages = keepLoadedHistory(cachedMessages, [...olderHistoryMarker(snapshot.history.before, snapshot.history.olderUsage), ...windowMessages]);
-      if (snapshot.history.incomplete) nextMessages.push({ id: `client-transcript-damage:${snapshot.state.sessionId}`, role: "system", content: `Chat history is incomplete. Damaged record lines: ${snapshot.history.damagedLines?.join(", ") ?? "unknown"}. Some messages may be missing.` });
-      activeAssistantId.current = [...nextMessages].reverse().find((message) => message.role === "assistant" && message.streaming)?.id;
-      activeMessageIds.current.clear();
-
-      for (const message of nextMessages.filter((message) => message.streaming)) trackLiveId(message.role, message.id);
-      session.setMessages(reconcileMessages(cachedMessages, nextMessages, pendingMessagesSchema.parse(snapshot.queue.pendingMessages)));
-    };
 
     const replaySnapshotEvents = (snapshot: SessionSnapshot) => {
       for (const event of snapshot.liveTools) { eventHandler.current(event);

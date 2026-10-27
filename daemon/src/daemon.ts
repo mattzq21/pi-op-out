@@ -186,13 +186,17 @@ function handleSessionState(app: App, connection: Daemon, hostId: string, packet
   const key = connection.agentPrefix + (typeof packet.sessionKey === 'string' ? packet.sessionKey : '');
   const working = packet.working === true;
   const sessionId = typeof state.sessionId === 'string' ? state.sessionId : undefined;
+  const sessionPath = typeof state.sessionFile === 'string' ? state.sessionFile : undefined;
+  const previous = app.pi.activeAgents.get(key);
+  // The chat list shows only these facts of a running chat; other state changes do not change it.
+  const listChanged = !previous || previous.working !== working || previous.sessionId !== sessionId || previous.sessionPath !== sessionPath;
   if (sessionId !== undefined) {
     for (const agent of app.pi.activeAgents.values()) if (agent.hostId === hostId && agent.sessionId === sessionId) agent.working = working;
   }
   if (typeof packet.epoch === 'string') connection.sessionEpochs.set(key, packet.epoch);
-  app.pi.activeAgents.set(key, { hostId, sessionId, sessionPath: typeof state.sessionFile === 'string' ? state.sessionFile : undefined, working, messageable: packet.messageable === true });
+  app.pi.activeAgents.set(key, { hostId, sessionId, sessionPath, working, messageable: packet.messageable === true });
   updateSettingsPending(app, hostId, key, packet.settingsPending === true);
-  app.emit('pi://sessions-changed', null);
+  if (listChanged) app.emit('pi://sessions-changed', null);
 }
 
 function handlePacket(app: App, connection: Daemon, hostId: string, packet: any): void {

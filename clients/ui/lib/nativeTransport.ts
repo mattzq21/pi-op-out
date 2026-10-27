@@ -9,7 +9,7 @@ import { PromptControls } from "./promptControls";
 import { nativeCall as call } from "./nativeCall";
 import { CommandRejectedError } from "./commandRejected";
 import { NativeSettings } from "./nativeSettings";
-import { locateConversation } from "./conversationLookup";
+import { locateConversation, previewConversation } from "./conversationLookup";
 import { nativeTerminals } from "./nativeTerminals";
 import { ConversationCommands } from "./conversationCommands";
 import { listen, type UnlistenFn } from "./platform";
@@ -94,6 +94,8 @@ export class NativeTransport {
   isConnected() { return this.running; }
   /** True when commands have something to answer them: a running Pi or the draft runtime. */
   canLoadModels() { return this.running || this.draftOnly(); }
+  /** The saved history of this chat while its Pi starts, or undefined when there is nothing saved to show. */
+  preview() { return this.sessionId && !this.running && !this.readOnly && !this.draftOnly() ? previewConversation(this.sessionId, this.hostId) : undefined; }
   hasConfirmedOwnership() { return this.running && this.owns; }
   async takeOwnership() {
     if (this.readOnly) throw new Error("This view is read-only");
@@ -566,6 +568,8 @@ export class NativeTransport {
   }
   private async executeCommandNow<S extends z.ZodType>(command: RpcCommand, schema: S) {
     if (this.draftOnly()) return schema.parse(await this.draftRuntime.command(command));
+    // A command sent while Pi starts, such as loading a turn of the saved history, waits for Pi.
+    if (!this.running && this.connectPromise) await this.connectPromise.catch(() => undefined);
     command = this.conversationCommands.normalize(command);
 
     try {

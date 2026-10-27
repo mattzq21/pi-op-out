@@ -430,14 +430,16 @@ export function ChatView(props: Props & { transcriptActions?: JSXElement; follow
       onScroll={(event) => {
         const element = event.currentTarget;
         const atBottom = element.scrollHeight - element.scrollTop - element.clientHeight <= 2;
+        const movedUp = element.scrollTop < lastScrollTop.current;
 
         if (atBottom) followLatest.current = true;
-        else if (element.scrollTop < lastScrollTop.current) followLatest.current = false;
+        else if (movedUp) followLatest.current = false;
         lastScrollTop.current = element.scrollTop;
         scrollToLatest();
         measureDistance();
 
-        if (element.scrollTop < element.clientHeight) loadOlder();
+        // The scroll to the latest message when a chat opens moves down, so only scrolling up loads older history.
+        if (movedUp && element.scrollTop < element.clientHeight) loadOlder();
       }}><div class="conversation">
         {!messages().length && !mcpLoading() && !pendingSubmission() && <div class="empty-chat"><span>π<sup>op</sup></span></div>}
         {<Key each={turns()} by={turn => turn.messages[0]?.id ?? "empty"}>{(turn, index) => <DeferredTurn navigationId={turn().messages[0]?.id} scrollRoot={messagesRef} eager={index() >= turns().length - 3}><ConversationTurn latest={index() === turns().length - 1} messages={turn().messages} promptContexts={turn().promptContexts} cwd={props.projectCwd} debug={props.debug ?? noDebug} active={props.state.isStreaming && index() === turns().length - 1} retryable={retryable() && index() === turns().length - 1} onRetry={onRetry} onBranch={branchAction()} onFork={props.state.canFork !== false && props.onFork ? onFork : undefined} onForkAndForget={props.state.canFork !== false && props.onForkAndForget ? onForkAndForget : undefined} /><Show when={props.state.forkSource && turn().messages.some(message => (message.entryId ?? message.id) === props.state.forkSource?.entryId) ? props.state.forkSource : undefined}>{source => <ForkSourceLink source={source()} name={props.forkSourceName} onOpen={props.onOpenForkSource} />}</Show></DeferredTurn>}</Key>}
