@@ -2,7 +2,7 @@ import { errorText } from '../util/sync';
 import { Host } from './controller';
 import { HostServices } from './services';
 
-export { validateConfiguration } from './plugins';
+export { restartConfiguration, validateConfiguration } from './plugins';
 export { resolveProviderAuth } from './provider_sdk';
 
 /** Runs the session host. Send packets to input(); replies and events go to the output callback. */

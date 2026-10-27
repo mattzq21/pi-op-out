@@ -1,5 +1,6 @@
 import { cost } from './cost/plugin';
 import { review } from './review/plugin';
+import { webSearch } from './web-search/plugin';
 import type { ReviewSettings } from './review/settings';
 import type { BundledPlugin } from './types';
 
@@ -7,6 +8,7 @@ import type { BundledPlugin } from './types';
 export const CATALOG: readonly BundledPlugin[] = [
   cost,
   review,
+  webSearch,
 ];
 
 /** The app settings fields that plugins own. */

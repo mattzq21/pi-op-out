@@ -133,10 +133,10 @@ test('a Pi start installs the bundled extensions as private files and refreshes 
     ['piop-goals/index.ts', 'daemon/resources/piop-goals/index.ts'],
     ['plugins/review/index.ts', 'daemon/plugins/review/index.ts'],
     ['piop-openai-cache-fork.ts', 'extensions/piop-openai-cache-fork/index.ts'],
-    ['piop-codex-web-search.ts', 'extensions/piop-codex-web-search/index.ts'],
+    ['plugins/web-search/index.ts', 'daemon/plugins/web-search/index.ts'],
   ];
   const extensions = extensionPaths(await launchPublicPi(daemon));
-  for (const name of ['hooks-extended/index.ts', 'piop-controls/index.ts', 'session-broker.ts', 'piop-goals/index.ts', 'plugins/review/index.ts', 'piop-openai-cache-fork.ts', 'piop-codex-web-search.ts']) expect(extensions).toContain(join(generated, name));
+  for (const name of ['hooks-extended/index.ts', 'piop-controls/index.ts', 'session-broker.ts', 'piop-goals/index.ts', 'plugins/review/index.ts', 'piop-openai-cache-fork.ts', 'plugins/web-search/index.ts']) expect(extensions).toContain(join(generated, name));
   for (const removed of ['runtime-settings.ts', 'piop-skills-store/index.ts', 'piop-tool-store/index.ts', 'piop-codemode-tools-description.ts']) expect(extensions).not.toContain(join(generated, removed));
   expect(extensions).toContain(join(generated, 'piop-providers-refresh.ts'));
   for (const [name, relative] of bundles) {
@@ -198,17 +198,17 @@ test('saved context settings reach a running Pi through their own request', asyn
 
 test('a Pi start repairs the permissions of unchanged extension files and restores changed files', async () => {
   const generated = join(daemon.home, '.piop');
-  const entry = join(generated, 'piop-codex-web-search.ts');
+  const entry = join(generated, 'plugins/web-search/index.ts');
   await launchPublicPi(daemon);
   chmodSync(entry, 0o644);
   chmodSync(generated, 0o755);
   await launchPublicPi(daemon);
-  expect(readFileSync(entry, 'utf8')).toBe(source('extensions/piop-codex-web-search/index.ts'));
+  expect(readFileSync(entry, 'utf8')).toBe(source('daemon/plugins/web-search/index.ts'));
   expect(mode(entry)).toBe(0o600);
   expect(mode(generated)).toBe(0o700);
   writeFileSync(entry, 'replacement');
   await launchPublicPi(daemon);
-  expect(readFileSync(entry, 'utf8')).toBe(source('extensions/piop-codex-web-search/index.ts'));
+  expect(readFileSync(entry, 'utf8')).toBe(source('daemon/plugins/web-search/index.ts'));
   expect(mode(entry)).toBe(0o600);
   expect(readdirSync(generated).filter(name => name.endsWith('.tmp'))).toEqual([]);
 }, 60_000);

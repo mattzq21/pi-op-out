@@ -9,7 +9,7 @@ import { build } from 'esbuild';
 
 const dir = await mkdtemp(join(tmpdir(), 'piop-web-search-'));
 const outfile = join(dir, 'extension.mjs');
-await build({ entryPoints: ['extensions/piop-codex-web-search/index.ts'], outfile, bundle: true, format: 'esm', platform: 'node', logLevel: 'silent',
+await build({ entryPoints: ['daemon/plugins/web-search/index.ts'], outfile, bundle: true, format: 'esm', platform: 'node', logLevel: 'silent',
   plugins: [{ name: 'pi-ai', setup(api) { api.onResolve({ filter: /^@earendil-works\/pi-ai$/ }, () => ({ path: 'pi-ai', namespace: 'sdk' })); api.onLoad({ filter: /.*/, namespace: 'sdk' }, () => ({ contents: 'export { Type } from "typebox";', resolveDir: process.cwd() })); } }] });
 const { default: register } = await import(pathToFileURL(outfile));
 

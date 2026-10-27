@@ -2,12 +2,12 @@
 
 A single-file Pi extension exposing `web_search({ query, domains? })`. It returns a web-grounded answer and source URLs using the host's Pi OpenAI "Sign in with ChatGPT" login. No extra npm dependencies, search API keys, browser, or MCP server are needed.
 
-Piop embeds the source and automatically loads it in local and SSH sessions, including side conversations. Rebuild/restart Piop to pick it up. `web_search` is enabled by default in Settings → Tools and for agents, including existing profiles on their first launch with this update. You can disable it under Settings → Agents or Settings → Tools; later launches preserve that choice. Each SSH host needs its own Pi OpenAI sign-in.
+In Piop this is the daemon-only `web-search` plugin. It is on by default, also on hosts that saved their plugin setup before it existed, and you can turn it off in Settings → Plugins. It gives `web_search` to the general agent and once to each existing agent; you can remove it per agent under Settings → Agents. Each SSH host needs its own Pi OpenAI sign-in.
 
 For standalone Pi, from this repository:
 
 ```bash
-pi --extension ./extensions/piop-codex-web-search/index.ts
+pi --extension ./daemon/plugins/web-search/index.ts
 ```
 
 Example tool arguments:

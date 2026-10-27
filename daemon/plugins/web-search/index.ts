@@ -255,7 +255,7 @@ function searchContent(result: ReturnType<typeof extractResult>) {
   return [result.answer, sourceText && `Sources:\n${sourceText}`].filter(Boolean).join("\n\n");
 }
 
-export default function codexWebSearch(pi: ExtensionAPI) {
+export default function webSearch(pi: ExtensionAPI) {
   pi.registerTool({
     name: "web_search",
     label: "Web search",

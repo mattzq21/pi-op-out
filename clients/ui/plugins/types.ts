@@ -50,7 +50,8 @@ export interface PluginDefinition {
   retainOnHostRestart?: boolean;
   name: string;
   description: string;
-  load: () => Promise<PluginModule>;
+  /** The client code. A plugin without it runs only in the daemon and only shows in the plugin list. */
+  load?: () => Promise<PluginModule>;
   settings?: PluginSettingsSection;
   splitPane?: SplitPaneRequestHandler;
   messages?: Record<string, () => Promise<{ default: Component<{ details: unknown }> }>>;

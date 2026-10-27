@@ -21,11 +21,8 @@ function sourceName(source: string): string | undefined {
   return file === "index" && parts.length > 1 ? parts.at(-2) : file;
 }
 
-/** Tools from extensions that are shown with the Pi built-in tools, outside any group. */
-const UNGROUPED_TOOLS = new Set(["web_search"]);
-
 /** The group a tool belongs to, or undefined for a tool shown without a group. */
-const toolGroup = (tool: ToolConfig) => UNGROUPED_TOOLS.has(tool.name) ? undefined : toolGroups.find(group => group.tools.includes(tool.name))?.name ?? sourceName(tool.source);
+const toolGroup = (tool: ToolConfig) => toolGroups.find(group => group.tools.includes(tool.name))?.name ?? sourceName(tool.source);
 
 const SKILLS_ROOT = "/.agents/skills/";
 

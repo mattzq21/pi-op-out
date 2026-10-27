@@ -12,6 +12,7 @@ export const plugins: PluginDefinition[] = [
     settings: { section: "review", label: "Review", description: "Choose the agent that runs /review.", icon: ClipboardCheck, within: "agents", load: () => import("./review/ReviewSettings").then(module => ({ default: module.ReviewSettings })) },
     splitPane: reviewSplitPane,
     messages: { "piop-review-link": () => import("./review/ReviewLink").then(module => ({ default: module.ReviewLink })) } },
+  { id: "web-search", scope: "host", name: "Web search", description: "The web_search tool for agents, through the host's OpenAI ChatGPT sign-in." },
 ];
 
 export const splitPaneHandler = (title?: string) => plugins.find(plugin => plugin.splitPane?.title === title)?.splitPane;
@@ -66,7 +67,7 @@ export async function restartPlugins(host: string, enabled: string[], revision: 
   for (const id of enabled) {
     const plugin = plugins.find(plugin => plugin.id === id);
 
-    if (plugin) await plugin.load();
+    if (plugin?.load) await plugin.load();
   }
 
   const response = await restartDaemon(host, enabled, revision, closeTerminals);

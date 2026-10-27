@@ -26,3 +26,16 @@ export function readAgentResources(): AgentResources {
   if (!value) throw new Error("Agent startup resources are unavailable");
   return parseAgentResources(JSON.parse(value));
 }
+
+/** The default agent tools of the plugins enabled on this host. The daemon sends them with the startup resources. */
+export function parsePluginAgentTools(value: unknown): string[] {
+  const tools = Check(Type.Object({ pluginAgentTools: Type.Array(Type.String({ minLength: 1 })) }), value) ? value.pluginAgentTools : undefined;
+  if (!tools) throw new Error("Plugin agent tools are missing from the agent startup resources");
+  return [...tools];
+}
+
+export function readPluginAgentTools(): string[] {
+  const value = process.env.PIOP_AGENT_RESOURCES;
+  if (!value) throw new Error("Agent startup resources are unavailable");
+  return parsePluginAgentTools(JSON.parse(value));
+}
