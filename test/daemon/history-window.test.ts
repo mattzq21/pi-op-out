@@ -61,3 +61,20 @@ test('older history and the work of a turn load on request', () => {
   expect(older.before).toBeNull();
   expect(turnWork(source, 'e31').entries.map((entry: any) => entry.message.role)).toEqual(['assistant', 'toolResult', 'assistant']);
 });
+test('a compaction shows the prompt tokens of the first model call after it', () => {
+  const usage = (input: number) => ({ input, output: 5, cacheRead: 100, cacheWrite: 10, totalTokens: input + 115 });
+  const entries: any[] = [];
+  let parentId: string | null = null;
+  for (const entry of [
+    { type: 'message', message: { role: 'user', content: 'Question' } },
+    { type: 'message', message: { role: 'assistant', content: [{ type: 'text', text: 'Reply' }], stopReason: 'stop', usage: usage(9000) } },
+    { type: 'compaction', summary: 'Summary', tokensBefore: 9115 },
+    { type: 'message', message: { role: 'user', content: 'Next' } },
+    { type: 'message', message: { role: 'assistant', content: [], stopReason: 'aborted', usage: usage(0) } },
+    { type: 'message', message: { role: 'assistant', content: [{ type: 'toolCall', id: 'c', name: 'read', arguments: {} }], stopReason: 'toolUse', usage: usage(890) } },
+    { type: 'message', message: { role: 'toolResult', toolCallId: 'c', content: 'File' } },
+    { type: 'message', message: { role: 'assistant', content: [{ type: 'text', text: 'Done' }], stopReason: 'stop', usage: usage(2000) } },
+  ]) { const id = 'e' + entries.length; entries.push({ ...entry, id, parentId }); parentId = id; }
+  const history = recentHistory({ entries, leafId: parentId }, false);
+  expect(history.entries.find((entry: any) => entry.type === 'compaction').tokensAfter).toBe(1000);
+});

@@ -96,13 +96,27 @@ function linked(entries: any[], before: string | null): History {
   return { entries: result, leafId: parentId, before };
 }
 
+/** The prompt tokens of the first model call after the compaction at index, which is the exact context size after it. Pi saves no such count on the compaction entry. */
+function tokensAfterCompaction(branch: any[], index: number): number | undefined {
+  for (let next = index + 1; next < branch.length; next++) {
+    if (branch[next]?.type === 'compaction') return undefined;
+    const message = branch[next]?.message;
+    if (role(branch[next]) !== 'assistant' || message.stopReason === 'aborted' || message.stopReason === 'error') continue;
+    const usage = message.usage;
+    const tokens = usage ? usage.input + usage.cacheRead + usage.cacheWrite : NaN;
+    if (Number.isFinite(tokens) && tokens > 0) return tokens;
+  }
+  return undefined;
+}
+
 function view(branch: any[], start: number, end: number, keepLastTurn: boolean): History {
   const entries: any[] = [];
   let turn: any[] = [];
   const close = (last: boolean) => { entries.push(...(last && keepLastTurn ? turn : deferWork(turn))); turn = []; };
   for (let index = start; index < end; index++) {
     if (startsTurn(branch[index]) && turn.length) close(false);
-    turn.push(branch[index]);
+    const tokensAfter = branch[index]?.type === 'compaction' ? tokensAfterCompaction(branch, index) : undefined;
+    turn.push(tokensAfter === undefined ? branch[index] : { ...branch[index], tokensAfter });
   }
   close(true);
   resolvePromptContext(branch, start, entries);

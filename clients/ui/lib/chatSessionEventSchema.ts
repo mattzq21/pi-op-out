@@ -5,7 +5,7 @@ export const entrySchema = z.object({
   type: z.string(), id: z.string(), parentId: z.string().nullable().default(null),
   message: wireMessageSchema.optional(), customType: z.string().optional(), details: z.unknown().optional(),
   content: contentSchema.optional(), data: z.unknown().optional(), display: z.boolean().optional(),
-  timestamp: z.string().optional(), tokensBefore: z.number().optional(),
+  timestamp: z.string().optional(), tokensBefore: z.number().optional(), tokensAfter: z.number().optional(),
 });
 
 export const pendingMessageSchema = z.object({
