@@ -105,6 +105,10 @@ export class Session {
       publish: event => this.publish(event, null),
       savedUserMessages: () => this.savedUserMessages(),
       extensionCommand: name => this.host.extensionCommand(name),
+      queueHeld: async held => {
+        this.spec.env.PIOP_QUEUE_HELD = held ? '1' : '0';
+        await this.execute({ type: 'queue_hold', held });
+      },
     };
     this.queue = new SessionQueue(executor, pending, storage, held);
     this.dialogs = new SessionDialogs({
@@ -126,6 +130,7 @@ export class Session {
     const recovered = storage ? await storage.recover(pending, held) : pending;
     const identity = argument(launch.spec, '--session') !== undefined ? launch.key : (argument(launch.spec, '--session-id') ?? launch.key);
     const session = new Session(launch, identity, recovered, storage, host, toolPayloads, held);
+    session.spec.env.PIOP_QUEUE_HELD = held ? '1' : '0';
     await session.reconcileQueue();
     assertRunning();
     session.worker = RuntimeWorker.spawn(session.spec, session.identity, launch.timeout, session.observer(), home);

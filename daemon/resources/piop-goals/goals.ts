@@ -7,6 +7,7 @@ import { GoalCoordination } from "./coordination.ts";
 import type { GoalSession } from "./interface.ts";
 import type { GoalCore } from "./preparation.ts";
 import { inputHold } from "../session-broker/input-hold.ts";
+import { queueHold } from "../session-broker/queue-hold.ts";
 
 /** A notice that the user changed the goal. It is saved where the change happened, and the model gets it there as a system message. */
 const GOAL_CHANGE = "piop-goal-change";
@@ -62,8 +63,9 @@ export function registerGoals(pi: ExtensionAPI): { session: GoalSession; core: G
     return { customType: GOAL_CONTEXT, content: goalPrompt(goal), display: true, details: { goalId: goal.id } };
   };
 
+  /** Goal work goes through the queue: it starts only when the goal is active and first, so no message waits ahead of it and the queue is not on hold. */
   const start = (ctx: ExtensionContext) => {
-    if (starting || state.goal?.status !== "active" || !ctx.isIdle() || ctx.hasPendingMessages()) return;
+    if (starting || state.goal?.status !== "active" || !ctx.isIdle() || ctx.hasPendingMessages() || queueHold(pi).held()) return;
     assertAvailable(ctx);
     starting = true;
     pi.sendMessage(promptMessage(state.goal), { triggerTurn: true, deliverAs: "followUp" });
@@ -138,8 +140,13 @@ export function registerGoals(pi: ExtensionAPI): { session: GoalSession; core: G
     // such as the goal prompt sent after a compaction, would otherwise wait and the goal would stop.
     if (ctx.hasPendingMessages() || event.context.pendingMessages.length) return { continue: true };
 
+    // A held queue holds the goal too. The goal stays active, and its work starts again when the user resumes the queue.
+    if (queueHold(pi).held()) return;
+
     return { continue: true, entries: [{ type: "custom_message", ...promptMessage(state.goal) }] };
   }));
+  let released: (() => void) | undefined;
+  pi.on("session_start", () => { released ??= queueHold(pi).onRelease(ctx => schedule(ctx, () => start(ctx))); });
   pi.on("agent_settled", (_event, ctx) => coordination.run(ctx, () => {
     starting = false;
 
@@ -184,7 +191,7 @@ export function registerGoals(pi: ExtensionAPI): { session: GoalSession; core: G
   pi.on("session_shutdown", (_event, ctx) => coordination.run(ctx, () => {
     if (context) state.save(context);
 
-    ready(); publish();
+    ready(); publish(); released?.(); released = undefined;
   }));
 
   return { session, core };

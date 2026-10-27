@@ -228,6 +228,49 @@ test('a follow-up below the goal entry goes to the agent when the goal is comple
   expect(replies.indexOf('Planned.')).toBeLessThan(replies.indexOf('Answered two.'));
   expect(((await chat.command({ type: 'get_state' })).pendingMessages ?? [])).toEqual([]);
 }, 120000);
+test('a held queue holds the goal: no goal turn runs until the user resumes, and a message above the goal goes first', async () => {
+  let requests = 0;
+  let gate: (() => void) | undefined;
+  let finish = false;
+  agents.scripts.set('Keep polishing', async messages => {
+    requests += 1;
+    if (requests === 1) await new Promise<void>(resolve => { gate = resolve; }); else await Bun.sleep(100);
+    const last = messages.findLast((message: any) => message.role === 'user');
+    if (text(last) === 'Question three') return { text: 'Answered three.' };
+    if (called(messages, 'update_goal_status')) return { text: 'Polished.' };
+    return finish ? { tool: 'update_goal_status', arguments: { status: 'complete' } } : { text: 'Polishing.' };
+  });
+  const chat = await agents.rootChat();
+  const queue = async () => ((await chat.command({ type: 'get_state' })).pendingMessages ?? []).map((entry: any) => entry.goal ? 'goal' : entry.message);
+  const quiet = async () => { const seen = requests; await Bun.sleep(1000); expect(requests).toBe(seen); };
+  await send(chat, '/goal Keep polishing');
+  for (let tries = 0; !gate && tries < 100; tries++) await Bun.sleep(50);
+  await chat.command({ type: 'hold_queue', held: true });
+  await send(chat, 'Question three');
+  const id = ((await chat.command({ type: 'get_state' })).pendingMessages ?? []).find((entry: any) => entry.message === 'Question three').id;
+  await chat.command({ type: 'change_pending', id, action: 'moveUp' });
+  expect(await queue()).toEqual(['Question three', 'goal']);
+  const firstSettled = settled(chat.runtimeId);
+  gate!();
+  await firstSettled;
+  await quiet();
+  expect(requests).toBe(1);
+  expect(shownGoal(chat.runtimeId)?.status).toBe('active');
 
+  await chat.command({ type: 'hold_queue', held: false });
+  await chat.until(history => history.filter(message => text(message) === 'Polishing.').length >= 2);
+  const replies = (await chat.history()).filter(message => message.role === 'assistant').map(text).filter(Boolean);
+  expect(replies.slice(0, 3)).toEqual(['Polishing.', 'Answered three.', 'Polishing.']);
+
+  await chat.command({ type: 'hold_queue', held: true });
+  for (let tries = 0; (await chat.command({ type: 'get_state' })).isStreaming && tries < 100; tries++) await Bun.sleep(100);
+  await quiet();
+  const before = requests;
+  await chat.command({ type: 'hold_queue', held: false });
+  for (let tries = 0; requests === before && tries < 100; tries++) await Bun.sleep(50);
+  expect(requests).toBeGreaterThan(before);
+  finish = true;
+  await chat.until(history => text(history.at(-1)) === 'Polished.');
+}, 120000);
 
 });

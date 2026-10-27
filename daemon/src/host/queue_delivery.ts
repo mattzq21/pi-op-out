@@ -10,6 +10,8 @@ export interface Execution {
   savedUserMessages?(): any[];
   /** True when name is an extension command that Pi runs at once instead of sending it to the model. */
   extensionCommand?(name: string): boolean;
+  /** Tells Pi whether the queue is on hold, so extensions do not send queued work on their own while it is. */
+  queueHeld(held: boolean): Promise<void>;
 }
 
 /** Sends commands and queued items to Pi, and publishes the queue after it changes. */
@@ -24,6 +26,9 @@ export class QueueDelivery {
 
   /** Sends an event to the session without changing the queue. */
   announce(event: any): void { this.executor.publish(event); }
+
+  /** Tells Pi whether the queue is on hold. */
+  tellHeld(held: boolean): Promise<void> { return this.executor.queueHeld(held); }
 
   async publish(): Promise<void> {
     this.state.durableMessages();

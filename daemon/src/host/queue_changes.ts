@@ -317,6 +317,7 @@ function undelivered(item: any): any {
 export async function holdQueue(queue: QueueDelivery): Promise<void> {
   const state = queue.state;
   await queue.record.saveHeld(true);
+  try { await queue.tellHeld(true); } catch (error) { await queue.record.saveHeld(false); throw error; }
   if (!state.steering.length && !state.followUp.length) {
     state.held = true;
     await queue.publish();
@@ -326,7 +327,11 @@ export async function holdQueue(queue: QueueDelivery): Promise<void> {
   const originals = clone(state.pending);
   try {
     let cleared: any;
-    try { cleared = await queue.execute({ type: 'clear_queue' }); } catch (error) { await queue.record.saveHeld(false); throw error; }
+    try { cleared = await queue.execute({ type: 'clear_queue' }); } catch (error) {
+      await queue.record.saveHeld(false);
+      await queue.tellHeld(false);
+      throw error;
+    }
     const live = originals.filter(item => !flag(item, 'retry') && !kept(item));
     const returned: any[] = [];
     for (const [field, behavior] of [['steering', 'steer'], ['followUp', 'followUp']]) {
@@ -341,7 +346,10 @@ export async function holdQueue(queue: QueueDelivery): Promise<void> {
   } finally { state.changing = false; await queue.publish(); }
 }
 
-/** Ends the hold and sends the held items to Pi: steering messages first, then follow-ups, each in queue order. */
+/**
+ * Ends the hold and sends the held items to Pi: steering messages first, then follow-ups, each in queue order.
+ * Pi hears that the hold ended only after they are in its queue, so the goal cannot start ahead of them.
+ */
 export async function resumeQueue(queue: QueueDelivery): Promise<void> {
   const state = queue.state;
   await queue.record.saveHeld(false);
@@ -349,11 +357,15 @@ export async function resumeQueue(queue: QueueDelivery): Promise<void> {
   const send = [...held.filter(item => item.behavior === 'steer'), ...held.filter(item => item.behavior !== 'steer')];
   state.held = false;
   for (const item of state.pending) delete item.held;
-  try { await queue.record.persist(); } catch (error) { state.markRetry(send); await queue.publish(); throw error; }
-  for (let index = 0; index < send.length; index += 1) {
-    try { await queue.deliver(send[index], false); } catch (error) { state.markRetry(send.slice(index)); await queue.publish(); throw error; }
+  try {
+    try { await queue.record.persist(); } catch (error) { state.markRetry(send); throw error; }
+    for (let index = 0; index < send.length; index += 1) {
+      try { await queue.deliver(send[index], false); } catch (error) { state.markRetry(send.slice(index)); throw error; }
+    }
+  } finally {
+    await queue.publish();
+    await queue.tellHeld(false);
   }
-  await queue.publish();
 }
 
 /** Changes an item while the queue is on hold. Nothing goes to Pi: the item changes in place and stays with the daemon. */
