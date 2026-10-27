@@ -143,7 +143,7 @@ export function synchronizationFinished(client: Client, revision: number): Promi
 
 /** Refreshes plan usage now and returns what the daemon then holds for one provider. */
 export async function refreshedUsage(client: Client, provider: 'codex' | 'anthropic' | 'opencodeGo'): Promise<{ usage?: any; error?: string }> {
-  return (await client.invoke('provider_usage', { refresh: true }))[provider] ?? {};
+  return (await client.invoke('provider_usage', { refresh: true, provider }))[provider] ?? {};
 }
 
 function logTail(path: string): string {

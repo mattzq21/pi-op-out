@@ -13,15 +13,19 @@ export type UsageSnapshot = Partial<Record<Provider, ProviderUsage>>;
 
 export const USAGE_CHANGED = 'pi://usage-changed';
 const INTERVAL_MS = Number(process.env.PIOP_USAGE_REFRESH_MS ?? 5 * 60_000);
+/** A refresh of all providers skips a provider read this recently. Back-to-back reads, such as the daemon start and a client start, hit provider rate limits. */
+const MIN_GAP_MS = 60_000;
 
 /**
  * Plan usage of every provider, shared by all clients of this daemon. It refreshes at start, every 5 minutes
- * and when a client asks, for all providers or one; one refresh per provider runs at a time.
+ * and when a client asks, for all providers or one; one refresh per provider runs at a time. A refresh of one
+ * provider, a click on its badge, always reads it.
  */
 export class UsageRuntime {
   private state: UsageSnapshot = {};
   private failures = new Map<Provider, string>();
   private running = new Map<Provider, Promise<void>>();
+  private readAt = new Map<Provider, number>();
   private timer: ReturnType<typeof setInterval> | undefined;
 
   start(app: App): void {
@@ -35,7 +39,9 @@ export class UsageRuntime {
   snapshot(): UsageSnapshot { return structuredClone(this.state); }
 
   async refresh(app: App, only?: Provider): Promise<UsageSnapshot> {
-    const providers = only ? [only] : Object.keys(SOURCES) as Provider[];
+    const now = Date.now();
+    const recent = (provider: Provider) => !this.running.has(provider) && now - (this.readAt.get(provider) ?? -Infinity) < MIN_GAP_MS;
+    const providers = only ? [only] : (Object.keys(SOURCES) as Provider[]).filter(provider => !recent(provider));
     await Promise.all(providers.map(provider => this.refreshProvider(app, provider)));
     return this.snapshot();
   }
@@ -43,6 +49,7 @@ export class UsageRuntime {
   private refreshProvider(app: App, provider: Provider): Promise<void> {
     const current = this.running.get(provider);
     if (current) return current;
+    this.readAt.set(provider, Date.now());
     const work = SOURCES[provider]().then(
       usage => { this.failures.delete(provider); this.update(app, provider, { usage }); },
       error => {
