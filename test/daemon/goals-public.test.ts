@@ -171,7 +171,8 @@ test('a goal is a queue entry: follow-ups below it wait, a follow-up moved above
   agents.scripts.set('Keep drafting', async messages => {
     const said = (value: string) => messages.some((message: any) => message.role === 'user' && text(message).includes(value));
     requests.push(said('Question one'));
-    if (blocking) await new Promise<void>(resolve => { gate = resolve; });
+    // A reply takes a moment, as a real model's does. Instant replies make the goal run turns so fast that no history read finds the chat unchanged.
+    if (blocking) await new Promise<void>(resolve => { gate = resolve; }); else await Bun.sleep(100);
     if (said('Question one') && !messages.some((message: any) => message.role === 'assistant' && text(message) === 'Answered one.')) return { text: 'Answered one.' };
     if (called(messages, 'update_goal_status')) return { text: 'Drafted.' };
     return finish ? { tool: 'update_goal_status', arguments: { status: 'complete' } } : { text: 'Drafting.' };
