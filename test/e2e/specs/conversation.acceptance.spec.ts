@@ -9,3 +9,4 @@ import './agent-profiles-acceptance.cases.js';
 import './settings-acceptance.cases.js';
 import './project-behavior.cases.js';
 import './conversation-lifecycle.cases.js';
+import './chat-selection-acceptance.cases.js';
