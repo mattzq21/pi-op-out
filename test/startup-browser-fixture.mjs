@@ -28,10 +28,10 @@ after(async () => {
   if (failures.length) throw new AggregateError(failures, 'Could not close test browsers');
 });
 
-function testBrowser(executablePath, args) {
-  const key = JSON.stringify([executablePath, args]);
+function testBrowser(engine, executablePath, args) {
+  const key = JSON.stringify([engine, executablePath, args]);
   if (!browsers.has(key)) {
-    const pending = launchTestBrowser({ executablePath, args }).catch(error => {
+    const pending = launchTestBrowser({ engine, executablePath, args }).catch(error => {
       browsers.delete(key);
       throw error;
     });
@@ -66,7 +66,7 @@ async function buildBrowserFiles(entryPoint, mode) {
   return new Map(bundle.outputFiles.map(file => ['/' + basename(file.path), file.contents]));
 }
 
-export async function startupPage(t, mode, { entryPoint = 'test/fixtures/startup.tsx', ready = '[role="status"]', readyTimeout = 10000, holdStorage = true, prepare = async () => {}, browserArgs = [], executablePath, contextOptions } = {}) {
+export async function startupPage(t, mode, { entryPoint = 'test/fixtures/startup.tsx', ready = '[role="status"]', readyTimeout = 10000, holdStorage = true, prepare = async () => {}, browserArgs = [], executablePath, contextOptions, engine } = {}) {
   const files = await browserFiles(entryPoint, mode);
   const server = createServer((req, res) => {
     res.setHeader('Content-Type', /\.m?js$/.test(req.url ?? '') ? 'text/javascript' : req.url?.endsWith('.css') ? 'text/css' : req.url?.endsWith('.wasm') ? 'application/wasm' : 'text/html');
@@ -75,7 +75,7 @@ export async function startupPage(t, mode, { entryPoint = 'test/fixtures/startup
   let context;
   t.after(async () => { try { await context?.close(); } finally { await new Promise(resolve => server.close(resolve)); } });
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
-  const browser = await testBrowser(executablePath, browserArgs);
+  const browser = await testBrowser(engine, executablePath, browserArgs);
   context = await browser.newContext(contextOptions);
   const page = await context.newPage();
   page.setDefaultTimeout(10000);

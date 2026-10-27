@@ -4,14 +4,14 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { startupPage } from '../startup-browser-fixture.mjs';
-import { testBrowserName } from '../test-browser.mjs';
+import { testBrowserName, chromiumOnly } from '../test-browser.mjs';
 import { nativeFileCommand } from '../native-file-command.mjs';
 
-async function fileComposer(t, contextOptions) {
+async function fileComposer(t, contextOptions, engine = undefined) {
   const native = await nativeFileCommand(t, { desktop: true });
   const reads = [], pending = new Set(), gates = new Map();
   const page = await startupPage(t, 'development', {
-    entryPoint: 'test/fixtures/composer-files-browser.tsx', ready: '[aria-label="Message piop"]', holdStorage: false, contextOptions,
+    entryPoint: 'test/fixtures/composer-files-browser.tsx', ready: '[aria-label="Message piop"]', holdStorage: false, contextOptions, engine,
     prepare: page => page.exposeFunction('nativeCommand', async (command, args) => {
       if (command === 'read_dropped_file') reads.push(args.path);
       const gate = command === 'read_dropped_file' ? gates.get(args.path) : undefined;
@@ -392,8 +392,8 @@ test('dropping a file attaches its content and focuses the editor', async t => {
 // WebKitGTK loses the files of a real drop (https://bugs.webkit.org/show_bug.cgi?id=323277), so its file drags are made in the page: they are not trusted and keep dropEffect "none".
 const trustedDrops = testBrowserName !== 'webkit';
 
-test('file dragging offers a copy operation', { skip: !trustedDrops && 'a file drag made in the page cannot set dropEffect' }, async t => {
-  const { page, directory } = await fileComposer(t);
+test('file dragging offers a copy operation', async t => {
+  const { page, directory } = await fileComposer(t, undefined, chromiumOnly);
   const path = join(directory, 'copy.txt');
   await writeFile(path, 'Copy me');
   await page.evaluate(() => {
