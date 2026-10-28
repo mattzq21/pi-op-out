@@ -29,7 +29,7 @@ for (const behavior of ['followUp', 'steer']) test(`${behavior} stays queued whi
     message('message_start', 'assistant', 'Partial answer', 200),
   );
   const original = view.container.querySelector('.conversation-turn');
-  await act(() => retainSubmittedMessage(transport, { id: 'submission', role: 'user', content: 'Next question' }));
+  await act(() => retainSubmittedMessage(transport, { id: 'submission', role: 'user', content: 'Next question', deliveryBehavior: behavior }));
   const queued = { id: 'queued', goalSubmissionId: 'submission', message: 'Next question', behavior };
   await send({ type: 'queue_update', pendingMessages: [queued] });
   const checkRunning = () => {

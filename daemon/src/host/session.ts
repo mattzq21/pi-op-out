@@ -134,8 +134,6 @@ export class Session {
     await session.reconcileQueue();
     assertRunning();
     session.worker = RuntimeWorker.spawn(session.spec, session.identity, launch.timeout, session.observer(), home);
-    // Pi takes waiting messages by itself; the offer tells it how many wait.
-    session.queue.offer();
     return session;
   }
 
@@ -295,6 +293,8 @@ export class Session {
     if (error !== null) this.publish({ type: 'extension_error', error }, runtime);
     this.dialogs.route();
     this.publishPresence();
+    // Pi takes waiting messages by itself; the offer tells it how many wait. It goes after the view attached, so the view gets the events of the run they start.
+    this.queue.offer();
   }
 
   presence(runtime: string, presence: any): void {

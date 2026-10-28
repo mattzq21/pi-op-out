@@ -79,6 +79,10 @@ test('record', { timeout: 120000 }, async t => {
 
 Run it with `python3 scripts/test-run.py node scripts/test-unit.mjs test/unit/<file>`. All read commands and `replay` accept its `events.json`. To hold the queue, click the "Hold queue" button; "Resume queue" sends the held messages. Queue rows are `.pending-message`.
 
+`page.daemon` is the daemon client. `await page.daemon.restart()` restarts the daemon on the same home and sends the app what the desktop app sends: restarting, a disconnect for each chat, then `connection_restored`. App requests wait for the new daemon. `await page.daemon.modelRequests()` gives the last user text of each model request, to check that each message reached the model once.
+
+Before the next message, wait for `button.send:enabled`: Enter does nothing while the previous message is still sending. To see the order of app events next to the recording, wrap `window.deliverNativeEvent` in `page.evaluate` and log `Date.now()` with each event; recording times are `(time - first event timestamp) / 1000`. `rrweb dom <events.json> --at T --depth 60` in a loop over T shows where a message is (queue row or chat) at each moment.
+
 Read the needless re-renders between two marks:
 
 ```bash

@@ -80,6 +80,8 @@ function createChatSession(transport: Accessor<Pick<NativeTransport, "command" |
   const [refreshError, setRefreshError] = createSignal<string>();
   const [capabilitiesLoading, setCapabilitiesLoading] = createSignal(false);
   const sessionEpoch = createRef("");
+  /** The sequence of the last snapshot shown. It already holds the effect of every event up to it, so such an event that arrives later is stale. */
+  const snapshotSequence = createRef(-1);
   const statsOperation = createRef<{ sessionId: string; revision: number; promise: Promise<void> } | undefined>(undefined);
   const refreshOperation = createRef<{ transport: ReturnType<typeof transport>; promise: Promise<AgentState>; buffer: RpcEvent[] } | undefined>(undefined);
   const bufferedEvents = createRef<RpcEvent[] | undefined>(undefined);
@@ -232,7 +234,7 @@ function createChatSession(transport: Accessor<Pick<NativeTransport, "command" |
   };
 
   createDependencyEffect(() => discardPendingUpdates, () => [discardPendingUpdates]);
-  createDependencyEffect(() => { liveRevision.current += 1; activeAssistantId.current = undefined; activeMessageIds.current.clear(); bufferedEvents.current = undefined; discardPendingUpdates(); }, () => [discardPendingUpdates, transport()]);
+  createDependencyEffect(() => { liveRevision.current += 1; activeAssistantId.current = undefined; activeMessageIds.current.clear(); bufferedEvents.current = undefined; snapshotSequence.current = -1; discardPendingUpdates(); }, () => [discardPendingUpdates, transport()]);
 
   const restoreHistory = (snapshot: SessionSnapshot) => {
     const cachedSession = session.memory.getSnapshot();
@@ -337,6 +339,7 @@ function createChatSession(transport: Accessor<Pick<NativeTransport, "command" |
         });
         session.memory.markRevision(snapshot.revision);
         sessionEpoch.current = snapshot.epoch;
+        snapshotSequence.current = snapshot.sequence;
         bufferedEvents.current = undefined;
         replaySnapshotEvents(snapshot);
         refreshCapabilities();
@@ -414,6 +417,8 @@ function createChatSession(transport: Accessor<Pick<NativeTransport, "command" |
     if (bufferedEvents.current) { bufferedEvents.current.push(event);
 
     return; }
+
+    if (event.sequence !== undefined && event.epoch === sessionEpoch.current && Number(event.sequence) <= snapshotSequence.current) return;
 
     flushBeforeEvent(event);
 

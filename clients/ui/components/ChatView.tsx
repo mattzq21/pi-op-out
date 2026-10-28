@@ -187,8 +187,8 @@ export function ChatView(props: Props & { transcriptActions?: JSXElement; follow
     if (element && element.scrollHeight <= element.clientHeight) loadOlder(); };
   const split = createMemo(() => splitTranscript(messages(), props.state.isStreaming, props.state.queueHeld === true));
   const turns = createMemo<ConversationGroup[]>(previous => groupTurns(split().transcript, previous), []);
-  /** The queued messages, then the sent messages that the daemon has not queued yet. */
-  const pendingMessages = createMemo<import("../types").PendingMessage[]>(() => [...props.state.pendingMessages ?? [], ...split().sending.map(message => ({ id: message.id, goalSubmissionId: message.id, message: textOf(message.content), behavior: message.deliveryBehavior ?? "followUp", sending: true, images: Array.isArray(message.content) ? message.content.flatMap(part => part.type === "image" && part.data && part.mimeType ? [{ type: "image" as const, data: part.data, mimeType: part.mimeType }] : []) : [] }))]);
+  /** The queued messages, without those the conversation already shows, then the sent messages that the daemon has not queued yet. */
+  const pendingMessages = createMemo<import("../types").PendingMessage[]>(() => [...(props.state.pendingMessages ?? []).filter(item => !split().started.has(item.id) && !split().delivered.has(item.id)), ...split().sending.map(message => ({ id: message.id, goalSubmissionId: message.id, message: textOf(message.content), behavior: message.deliveryBehavior ?? "followUp", sending: true, images: Array.isArray(message.content) ? message.content.flatMap(part => part.type === "image" && part.data && part.mimeType ? [{ type: "image" as const, data: part.data, mimeType: part.mimeType }] : []) : [] }))]);
 
   const responses = createMemo(() => turns().flatMap(turn => {
     const message = turn.messages[finalResponseIndex(turn.messages)];
@@ -245,8 +245,10 @@ export function ChatView(props: Props & { transcriptActions?: JSXElement; follow
     }
 
     const durable = staged ?? await stageSubmission({ rawText: text, uploads: draftUploadsFromImages(images), consume: props.draft === text && !props.uploads?.length });
+    // A message sent while an earlier one still waits for its reply, or while messages wait in the queue, goes into the queue, even before the agent reports that it works.
+    const shown = behavior ?? (split().waiting || (props.state.pendingMessages?.length ?? 0) > 0 ? "followUp" : undefined);
 
-    return trackChatSubmission(durable.owner(), text, images, durable, () => Promise.resolve(capturedOnSend(text, behavior, images, durable)), props.controlsDisabled ? "Getting ready..." : "Sending message…", behavior);
+    return trackChatSubmission(durable.owner(), text, images, durable, () => Promise.resolve(capturedOnSend(text, behavior, images, durable)), props.controlsDisabled ? "Getting ready..." : "Sending message…", shown);
   };
 
   const actions = createRef({ onSend: send, onBranch: props.onBranch, onFork: props.onFork, onForkAndForget: props.onForkAndForget });
@@ -610,12 +612,18 @@ function associateQueuedContext(messages: ChatMessage[]) {
  * An earlier user message waits for its reply while it is still being sent, or while the agent works. A message whose task ended without a reply does not wait.
  * While the queue is on hold, every sent message waits in the queue: the daemon keeps it there.
  * A message sent as a steer or follow-up while the agent worked also waits there, even after the reply started: Pi queues it.
+ * A queued message that starts a turn stays in the conversation, and its queue entry is left out of the queue (started), so it does not move to the queue while Pi takes it.
  */
 function splitTranscript(messages: ChatMessage[], working: boolean, held: boolean) {
   let waiting = false;
   const sending: ChatMessage[] = [];
+  const started = new Set<string>();
+  const delivered = new Set(messages.flatMap(message => !message.submissionId && message.piopQueueId ? [message.piopQueueId] : []));
   const transcript = messages.filter(message => {
-    if (message.submissionId && message.piopQueueId) return false;
+    if (message.submissionId && message.piopQueueId) {
+      if (delivered.has(message.piopQueueId) || waiting || held || message.deliveryBehavior) return false;
+      started.add(message.piopQueueId);
+    }
 
     if (message.role === "assistant") waiting = false;
     else if (message.role === "user") {
@@ -626,7 +634,7 @@ function splitTranscript(messages: ChatMessage[], working: boolean, held: boolea
     return true;
   });
 
-  return { transcript, sending };
+  return { transcript, sending, started, waiting, delivered };
 }
 
 function groupTurns(messages: ChatMessage[], previous: ConversationGroup[] = []) {
