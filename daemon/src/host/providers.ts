@@ -51,6 +51,7 @@ export class ProviderService {
   private host: Host | undefined;
   private flows = new Map<string, Flow>();
   private busy = new Set<string>();
+  private logins = new Map<string, { flowId: string; done: Promise<void> }>();
   private catalogWarning: string | null = null;
   private nextCatalog: number | null = null;
   private runtimeInfo: { builtinIds: Set<string> } | null = null;
@@ -133,7 +134,9 @@ export class ProviderService {
 
   private async listing(refresh: boolean): Promise<any> {
     await this.runtime();
-    await this.refreshCatalogs(refresh);
+    // Model scans use the network. Only an explicit refresh waits for them; otherwise the listing shows saved data and the scan reports changes when it ends.
+    if (refresh) await this.refreshCatalogs(true, false);
+    else this.refreshCatalogsInBackground();
     const snapshot = await this.sdk.request({ method: 'inspect' });
     const credentials = array(snapshot, 'credentials');
     const providers = array(snapshot, 'providers').map(provider => listedProvider(provider, credentials)).filter(provider => array(provider, 'methods').length > 0);
@@ -149,11 +152,22 @@ export class ProviderService {
     const snapshot = await this.sdk.request({ method: 'inspect' });
     const provider = array(snapshot, 'providers').find(provider => jsonEqual(provider?.id, request?.providerId));
     if (!provider) throw new Error('Provider is unavailable on this host');
+    await this.replaceOwnLogin(owner, text(provider, 'id'));
     this.validateLogin(provider, request);
     const flow = new Flow(randomUUID(), owner, text(provider, 'id'), text(provider, 'name'));
     const result = flow.snapshot();
     this.startLogin(flow, request?.authType ?? null);
     return result;
+  }
+
+  /** A client that lost track of its login starts again; its earlier login for the provider is cancelled first. */
+  private async replaceOwnLogin(owner: string, providerId: string): Promise<void> {
+    const running = this.logins.get(providerId);
+    if (!running || this.flows.get(running.flowId)?.owner !== owner) return;
+    await this.cancel(running.flowId);
+    let timer: NodeJS.Timeout | undefined;
+    await Promise.race([running.done.catch(() => {}), new Promise(resolve => { timer = setTimeout(resolve, 10_000); })]);
+    clearTimeout(timer);
   }
 
   private validateLogin(provider: any, request: any): void {
@@ -172,7 +186,7 @@ export class ProviderService {
     if (this.busy.has(providerId)) throw new Error('A credential operation is already running for this provider');
     this.busy.add(providerId);
     this.flows.set(id, flow);
-    void (async () => {
+    const done = (async () => {
       let result: { ok: true; value: any } | { ok: false; error: string };
       let timer: NodeJS.Timeout | undefined;
       const login = this.sdk.request({ method: 'login', flowId: id, providerId, authType });
@@ -186,6 +200,7 @@ export class ProviderService {
         result = { ok: false, error: errorText(error) };
       } finally { clearTimeout(timer); }
       this.busy.delete(providerId);
+      this.logins.delete(providerId);
       if (result.ok && result.value?.status === 'complete') void this.fastModels.scan(providerId);
       const current = this.flows.get(id);
       if (current) {
@@ -205,6 +220,7 @@ export class ProviderService {
       try { snapshot = this.snapshot(id); } catch {}
       this.flowChanged(snapshot);
     })();
+    this.logins.set(providerId, { flowId: id, done });
   }
 
   private async reply(id: string, request: any): Promise<any> {
@@ -273,12 +289,35 @@ export class ProviderService {
     if (login?.status !== 'complete') throw new Error('Provider login could not be confirmed');
   }
 
-  private async refreshCatalogs(force: boolean): Promise<void> {
+  /** Built-in providers need no model scan. The fast model scan still uses the network for them, so the listing does not wait for it. */
+  private async refreshCatalogs(force: boolean, waitForFastModels = true): Promise<void> {
     await this.catalogs.run(async () => {
       if (!force && this.nextCatalog !== null && Date.now() < this.nextCatalog) return;
       this.nextCatalog = Date.now() + 300_000;
-      await Promise.all([this.refreshCustomCatalogs(), this.fastModels.scan()]);
+      const before = this.listingWarnings();
+      const fastModels = this.fastModels.scan();
+      if (waitForFastModels) await Promise.all([this.refreshCustomCatalogs(), fastModels]);
+      else {
+        void fastModels.then(() => this.announceWarnings(before));
+        await this.refreshCustomCatalogs();
+      }
     });
+  }
+
+  private listingWarnings(): string { return JSON.stringify([this.catalogWarning, fastModelWarning(this.fastModels.snapshot())]); }
+
+  /** Clients read the warnings with the listing, so they list again when the warnings change. */
+  private announceWarnings(before: string): void {
+    if (this.listingWarnings() !== before) this.host?.output({ type: 'provider_auth_changed', flow: null });
+  }
+
+  private refreshCatalogsInBackground(): void {
+    if (this.nextCatalog !== null && Date.now() < this.nextCatalog) return;
+    const before = this.listingWarnings();
+    this.refreshCatalogs(false, false).then(
+      () => this.announceWarnings(before),
+      error => this.host?.output({ type: 'diagnostic', line: 'Provider model scan failed: ' + errorText(error) }),
+    );
   }
 
   /** Regular model scans cover custom providers only; fast model scans have their own provider filter. */

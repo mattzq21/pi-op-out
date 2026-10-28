@@ -22,6 +22,7 @@ export class Daemon {
   pending = new Map<string, Pending>();
   supervisor: host.Supervisor | undefined;
   private queued: any[] = [];
+  private appliedConfiguration: string | undefined;
   readonly sessionEpochs = new Map<string, string>();
 
   constructor(readonly hostId: string, readonly connectionConfig: string | undefined) {
@@ -39,8 +40,14 @@ export class Daemon {
 
   async configure(runtime: PiRuntime, settings: AppSettings, hostId: string): Promise<void> {
     const agentRevision = runtime.agentConfigRevisions.get(hostId) ?? 0;
+    const configuration = { contextCapSettings: contextCapSettings(settings), settings: agentResources(settings), autoCompaction: true, autoRetry: settings.autoRetry, agentRevision };
+    // Every request to the host connects first, so an unchanged configuration must not write storage or reconfigure the sessions again.
+    const key = JSON.stringify(configuration);
+    if (key === this.appliedConfiguration) return;
+    this.appliedConfiguration = undefined;
     saveContextCapSettings(settings);
-    await this.request({ type: 'configure', configuration: { contextCapSettings: contextCapSettings(settings), settings: agentResources(settings), autoCompaction: true, autoRetry: settings.autoRetry, agentRevision } });
+    await this.request({ type: 'configure', configuration });
+    this.appliedConfiguration = key;
   }
 
   matchesConnection(settings: AppSettings, hostId: string): boolean {
