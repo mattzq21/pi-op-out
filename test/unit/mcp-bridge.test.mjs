@@ -98,7 +98,7 @@ test('MCP registrations preserve native stdio and HTTP configuration without mut
   const original = structuredClone(definitions); await f.select(definitions);
   assert.deepEqual(definitions, original); assert.deepEqual(f.servers.get('remote'), { ...definitions.remote, exposure: 'codemode' });
   assert.deepEqual(f.servers.get('search').args, ['two words']); assert.equal(f.servers.get('search').timeout, 23000); assert.equal(f.servers.get('search').env.CUSTOM, 'value');
-  const identity = f.servers.get('search').env.PIOP_CHAT_ID;
+  const identity = f.servers.get('search').env.PIOP_AGENT_ID;
   assert.equal(typeof identity, 'string');
   assert.notEqual(identity.trim(), '');
   assert.equal('piopInjectAgentId' in f.servers.get('search'), false);
@@ -121,12 +121,12 @@ test('unchanged MCP definitions retain registrations and replacements remove onl
 test('MCP identities use the session ID directly across servers', async () => fixture(async f => {
   const definitions = { search: { command: 'server' }, other: { command: 'server' } };
   await f.select(definitions);
-  assert.equal(f.servers.get('search').env.PIOP_CHAT_ID, 'session');
-  assert.equal(f.servers.get('other').env.PIOP_CHAT_ID, 'session');
+  assert.equal(f.servers.get('search').env.PIOP_AGENT_ID, 'session');
+  assert.equal(f.servers.get('other').env.PIOP_AGENT_ID, 'session');
   await f.select(definitions); assert.equal(f.registrations.length, 2);
   await f.select(definitions, 'other-session');
-  assert.equal(f.servers.get('search').env.PIOP_CHAT_ID, 'other-session');
-  assert.equal(f.servers.get('other').env.PIOP_CHAT_ID, 'other-session');
+  assert.equal(f.servers.get('search').env.PIOP_AGENT_ID, 'other-session');
+  assert.equal(f.servers.get('other').env.PIOP_AGENT_ID, 'other-session');
 }));
 
 test('opted-in MCP tools hide private identity fields and override spoofed call arguments', async () => fixture(async f => {
