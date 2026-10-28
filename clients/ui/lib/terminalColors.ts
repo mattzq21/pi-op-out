@@ -1,7 +1,7 @@
 import type { JSX } from "solid-js";
 
 export const terminalTheme = {
-  background: "#1d1d1b", foreground: "#e5e1d8", selectionBackground: "#5a554b88",
+  background: "#1e1e1b", foreground: "#e5e1d8", selectionBackground: "#5a554b88",
   black: "#242320", red: "#d77865", green: "#72ad8d", yellow: "#c49b52",
   blue: "#7496b8", magenta: "#ad83ad", cyan: "#72aaa9", white: "#e5e1d8",
   brightBlack: "#555753", brightRed: "#ef2929", brightGreen: "#8ae234", brightYellow: "#fce94f",
