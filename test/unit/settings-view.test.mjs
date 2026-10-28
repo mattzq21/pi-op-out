@@ -158,6 +158,13 @@ describe('settings editor', () => {
     assert.equal(saves.length, 0);
   });
 
+  test('send_to_main is not an agent setting', async () => {
+    await render({ settings: { ...props.settings, tools: [{ name: 'send_to_main', description: '', source: '/x/session-broker.ts' }] }, agentConfig: { agents: [profile('general')] } });
+    await section('Agents');
+    assert.equal(control('Allow send_to_main'), null);
+    assert.equal(document.querySelector('[aria-label="session-broker tools"]'), null);
+  });
+
   test('subagent limits are saved as whole numbers, and a cleared or invalid limit cannot be saved', async () => {
     await render({ settings: { ...props.settings, tools: [{ name: 'spawn_subagents', description: '', source: '/x/session-broker.ts' }] }, agentConfig: { agents: [profile('general', { tools: ['spawn_subagents'] })] } });
     await section('Agents');
