@@ -1,0 +1,8 @@
+.skill-mcp-status { margin: 6px 0; border: 1px solid var(--line); border-radius: 8px; padding: 8px 12px; }
+.skill-mcp-row { display: flex; justify-content: space-between; gap: 12px; align-items: center; }
+.skill-mcp-row + .skill-mcp-row { margin-top: 8px; }
+.skill-mcp-row > div:first-child { min-width: 0; overflow-wrap: anywhere; }
+.skill-mcp-row p { margin: 3px 0; white-space: pre-wrap; font-size: 12px; }
+.skill-mcp-actions { display: flex; gap: 6px; flex-shrink: 0; }
+.skill-mcp-actions button { border: 1px solid var(--line); border-radius: 5px; padding: 4px 8px; background: var(--paper); color: var(--ink); }
+@media (max-width: 480px) { .skill-mcp-row { align-items: flex-start; flex-direction: column; gap: 5px; } }

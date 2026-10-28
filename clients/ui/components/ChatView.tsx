@@ -5,6 +5,7 @@ import type { PluginConversation } from "../plugins/types";
 import { stringsSchema, validItems } from "../lib/messageSchemas";
 import { required } from "../lib/required";
 import { createGoalControls } from "./GoalControls";
+import { SkillMcpStatus } from "./SkillMcpStatus";
 import { PluginMessageContext } from "../plugins/messages";
 import { chatSubmission, trackChatSubmission } from "../lib/chatSubmission";
 import { draftUploadsFromImages, stageDraftSubmission, type DraftSubmissionHandle, type DraftSubmissionPayload } from "../lib/draftSubmission";
@@ -474,6 +475,7 @@ export function ChatView(props: Props & { transcriptActions?: JSXElement; follow
     return (<div class="conversation-content">
       <ConversationImageProject.Provider value={imageProject}><MessagesSection /></ConversationImageProject.Provider>
       <Show when={pins().length > 0}><PinnedMessages /></Show>
+      <SkillMcpStatus value={props.statuses["piop-skill-mcp"]} disabled={props.readOnly || props.controlsDisabled || !ownsConversation() || !props.transport} onAction={(name, action) => required(props.transport).command({ type: "skill_mcp", name, action })} />
       <ResponseNavigator responses={responses()} scrollRoot={messagesRef} onNavigate={() => { followLatest.current = false; }} />
       <ComposerStack />
     </div>);

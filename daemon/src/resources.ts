@@ -24,6 +24,7 @@ import runtimeConfiguration from '../resources/runtime-configuration.cjs?raw';
 import runtimeBridge from '../resources/runtime-bridge.cjs?raw';
 import queuePull from '../resources/queue-pull.cjs?raw';
 import runtimeAvailability from '../resources/runtime-availability.cjs?raw';
+import mcpConnections from '../resources/mcp-connections.cjs?raw';
 import hooksAvailability from '../resources/hooks-extended/availability.ts?raw';
 import mcpSchemaBundle from '../resources/mcp-schema.bundle.mjs?raw';
 import mcpBridgeBundle from '../resources/mcp-bridge.bundle.mjs?raw';
@@ -131,6 +132,7 @@ export {
   runtimeBridge,
   queuePull,
   runtimeAvailability,
+  mcpConnections,
   mcpSchemaBundle,
   mcpBridgeBundle,
   fastModeBundle,

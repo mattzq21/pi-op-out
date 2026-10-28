@@ -2,6 +2,13 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { registerHooks } from 'node:module';
 import { EventEmitter } from 'node:events';
+import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { installConnectionEvents } from '../../daemon/resources/mcp-connections.cjs';
+
+class Connection { constructor(name) { this.name = name; this.state = 'connected'; } changed() {} }
+installConnectionEvents(Connection);
 
 const hooks = registerHooks({
   resolve(specifier, context, nextResolve) {
@@ -19,7 +26,7 @@ hooks.deregister();
 
 async function fixture(run) {
   const bus = new EventEmitter(), tools = new Map(), handlers = new Map(), servers = new Map(), registrations = [], removed = [], starts = [], executions = [];
-  let active = ['read', 'codemode'], startFailure, registrationFailure, adapter;
+  let active = ['read', 'codemode'], startFailure, registrationFailure, adapter, change;
   globalThis.__PIOP_MCP_SDK__ = pi => {
     adapter = pi; pi.registerCommand('mcp', {});
     pi.on('session_start', async (event, ctx) => { starts.push({ event, ctx });
@@ -27,6 +34,7 @@ async function fixture(run) {
       if (startFailure) throw startFailure;
     });
     pi.registerTool({ name: 'codemode', parameters: {} });
+    pi.on('mcp_servers_change', async () => { await change?.(); });
   };
 
   const pi = {
@@ -40,16 +48,20 @@ async function fixture(run) {
     },
     registerCommand() { throw new Error('SDK slash commands must stay private'); },
     registerTool(tool) { tools.set(tool.name, tool); },
+    appendEntry(customType, data) { entries.push({ type: 'custom', customType, data: structuredClone(data) }); },
     getAllTools: () => [...tools.values()], getActiveTools: () => active, setActiveTools(value) { active = value; },
     registerMcpServer(name, config) {
       if (registrationFailure) throw registrationFailure;
       registrations.push({ name, config }); servers.set(name, config);
+      new Connection(name).changed();
+      void dispatch('mcp_servers_change');
     },
     unregisterMcpServer(name) { removed.push(name); servers.delete(name); },
   };
 
-  const ctx = { sessionManager: { getSessionId: () => 'session' } };
-  const dispatch = async (name, event = {}) => { for (const handler of handlers.get(name) ?? []) await handler(event, ctx); };
+  const entries = [];
+  const ctx = { cwd: process.cwd(), sessionManager: { getSessionId: () => 'session', getBranch: () => entries }, ui: { setStatus() {}, notify() {} }, abort() {} };
+  const dispatch = async (name, event = {}) => { let result; for (const handler of handlers.get(name) ?? []) result = await handler(event, ctx) ?? result; return result; };
 
   const select = async (definitions, sessionId = 'session', codemode) => {
     const request = { servers: definitions, sessionId, codemode }; bus.emit('piop:mcp:select', request);
@@ -72,6 +84,7 @@ async function fixture(run) {
     mcpBridge(pi); await dispatch('session_start', { type: 'session_start', reason: 'startup' });
     await run({ bus, ctx, adapter, tools, servers, registrations, removed, starts, executions, dispatch, select, addTool,
       setStartFailure(value) { startFailure = value; }, setRegistrationFailure(value) { registrationFailure = value; },
+      onChange(value) { change = value; },
       setActive(value) { active = value; }, getActive: () => active,
       available() { const request = {}; bus.emit('piop:mcp:tools', request);
 
@@ -80,6 +93,24 @@ async function fixture(run) {
     });
   } finally { await dispatch('session_shutdown'); delete globalThis.__PIOP_MCP_SDK__; }
 }
+
+test('reading a skill through the bridge waits for SDK tools and retains them across agent selection', async () => fixture(async f => {
+  const dir = mkdtempSync(join(tmpdir(), 'piop-skill-bridge-'));
+  try {
+    const path = join(dir, 'SKILL.md'); writeFileSync(path, 'Use this skill.');
+    writeFileSync(join(dir, 'mcp.json'), JSON.stringify({ mcpServers: { app: { command: 'server' } } }));
+    let release; const gate = new Promise(resolve => { release = resolve; });
+    f.onChange(() => gate); let completed = false;
+    const pending = f.dispatch('tool_result', { toolName: 'read', input: { path }, content: [], isError: false }).then(result => { completed = true; return result; });
+    await new Promise(resolve => setImmediate(resolve)); assert.equal(completed, false);
+    assert.equal(f.starts.length, 1); assert.equal(f.servers.size, 1);
+    release(); assert.match((await pending).content[0].text, /Skill MCP tools/);
+    const name = f.registrations[0].name;
+    await f.select({ configured: { command: 'other' } }, 'session', 'off');
+    assert.equal(f.servers.get(name).exposure, 'direct');
+    await f.dispatch('session_shutdown'); assert.equal(f.servers.has(name), false);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+}));
 
 test('MCP connections start once on input and restart for a switched session', async () => fixture(async f => {
   assert.equal(f.starts.length, 0); await f.select({ search: { command: 'server', args: ['two words'] } }); assert.equal(f.starts.length, 0);
