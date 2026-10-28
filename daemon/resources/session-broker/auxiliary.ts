@@ -87,7 +87,6 @@ export function registerAuxiliaryChats(pi: ExtensionAPI) {
       const main = mainChat(pi, ctx);
 
       if (!main) throw new Error("Only a side chat can send to its main chat");
-      if (!params.message) throw new Error("The message is empty");
       requireMessageLength(params.message);
       const data = await sendSessionMessage(ctx, main.sessionId, main.hostId, params.message, true, signal);
 

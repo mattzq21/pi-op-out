@@ -105,6 +105,7 @@ export async function sessionSnapshot(sessionId: string, hostId: string, signal?
 export const MAX_MESSAGE_LENGTH = 100_000;
 
 export function requireMessageLength(message: string) {
+  if (!message) throw new Error("The message is empty");
   if (message.length > MAX_MESSAGE_LENGTH) throw new Error(`The message is ${message.length} characters; the limit is ${MAX_MESSAGE_LENGTH}`);
 }
 
@@ -417,7 +418,7 @@ export function registerOrchestration(pi: ExtensionAPI) {
   pi.registerTool({
     name: "create_peer", label: "Create peer", exposure: "model-only",
     description: "Start a new chat/session with its first message. Pick an agent profile or omit it to use your own. The peer starts with no history and runs on its own.",
-    parameters: Type.Object({ title: Type.String({ minLength: 1, maxLength: 120 }), message: Type.String({ minLength: 1 }), agent: Type.Optional(Type.String({ minLength: 1 })), project: Type.Optional(Type.String({ minLength: 1 })) }),
+    parameters: Type.Object({ title: Type.String({ minLength: 1, maxLength: 120 }), message: Type.String(), agent: Type.Optional(Type.String({ minLength: 1 })), project: Type.Optional(Type.String({ minLength: 1 })) }),
     async execute(_id, params, signal, _update, ctx) {
       requireRootCaller(ctx);
       requireMessageLength(params.message);
@@ -453,7 +454,7 @@ export function registerOrchestration(pi: ExtensionAPI) {
   pi.registerTool({
     name: "branchoff_peer", label: "Branch off peer", exposure: "model-only",
     description: "Start a chat/session in a new worktree, branched off from last commit here. It keeps your agent and your history through your last finished answer, then gets message.",
-    parameters: Type.Object({ message: Type.String({ minLength: 1 }) }),
+    parameters: Type.Object({ message: Type.String() }),
     async execute(_id, params, signal, _update, ctx) {
       requireRootCaller(ctx);
       requireMessageLength(params.message);
@@ -465,7 +466,7 @@ export function registerOrchestration(pi: ExtensionAPI) {
   });
   pi.registerTool({
     name: "message_peer", label: "Message peer", exposure: "model-only", description: "Send a message to a peer. An idle peer starts at once; a busy one reads it after its current work. Returns when the message is accepted.",
-    parameters: Type.Object({ ...address, message: Type.String({ minLength: 1 }) }),
+    parameters: Type.Object({ ...address, message: Type.String() }),
     async execute(_id, params, signal, _update, ctx) {
       requireRootCaller(ctx);
       requireMessageLength(params.message);

@@ -311,7 +311,7 @@ export function registerSubagents(pi: ExtensionAPI) {
   });
   pi.registerTool({
     name: "message_subagent", label: "Message subagent", exposure: "model-only", description: "Send a subagent a message. A busy subagent gets it as a follow-up after its current work, or during it with delivery: \"steer\". A finished one starts a new task with its own earlier history. Its answer arrives as a new message.",
-    parameters: Type.Object({ nickname: Type.String({ minLength: 1 }), message: Type.String({ minLength: 1 }), delivery: Type.Optional(Type.Union([Type.Literal("follow_up"), Type.Literal("steer")])) }),
+    parameters: Type.Object({ nickname: Type.String({ minLength: 1 }), message: Type.String(), delivery: Type.Optional(Type.Union([Type.Literal("follow_up"), Type.Literal("steer")])) }),
     async execute(id, params, signal, _update, ctx) {
       requireMessageLength(params.message);
       const run = targetRun(ctx, params.nickname);
