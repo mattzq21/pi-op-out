@@ -438,6 +438,8 @@ export function ChatView(props: Props & { transcriptActions?: JSXElement; follow
 
       if (y !== undefined && touchY.current !== undefined && y > touchY.current && event.currentTarget.scrollTop > 0) followLatest.current = false; touchY.current = y; }}
       oncapture:keydown={(event) => { if (["ArrowUp", "PageUp", "Home"].includes(event.key) || (event.key === " " && event.shiftKey)) followLatest.current = false; }}
+      // A context bar tab opens below the bar, so the view must not follow the new bottom.
+      onClick={(event) => { if (event.target instanceof Element && event.target.closest(".prompt-context")) followLatest.current = false; }}
       onScroll={(event) => {
         const element = event.currentTarget;
         const atBottom = element.scrollHeight - element.scrollTop - element.clientHeight <= 2;
