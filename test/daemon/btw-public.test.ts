@@ -55,7 +55,7 @@ test.concurrent('/btw opens a side chat with the main chat history, which sends 
   await sideCommand({ type: 'prompt', message: side.task });
   await chat.until(history => text(history.at(-1)) === 'Thanks for the side finding.');
   const sideRequest = agents.model.requests.find(request => text(request.messages.at(-1)) === 'Check the lexer');
-  expect(sideRequest.tools.find((tool: any) => tool.function.name === 'send_to_main')?.function.description).toBe('Send results to the main chat.');
+  expect(sideRequest.tools.find((tool: any) => tool.function.name === 'send_to_main')?.function.description).toBe('Send results to the main chat. Use only when user explicitly asks to communicate with the other chat');
   const mainRequest = agents.model.requests.find(request => text(request.messages.at(-1)) === 'Plan the parser');
   expect(mainRequest.tools.some((tool: any) => tool.function.name === 'send_to_main')).toBe(false);
 

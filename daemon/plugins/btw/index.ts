@@ -33,7 +33,7 @@ async function startBtw(pi: ExtensionAPI, args: string, ctx: ExtensionCommandCon
 
 /** /btw: a side chat with this chat's history through its last finished answer, opened in the side pane. */
 export default function btw(pi: ExtensionAPI) {
-  const unsubscribe = pi.events.on("piop:auxiliary:kind", request => { if (request.kind === "btw") request.sendToMain = "Send results to the main chat."; });
+  const unsubscribe = pi.events.on("piop:auxiliary:kind", request => { if (request.kind === "btw") request.sendToMain = "Send results to the main chat. Use only when user explicitly asks to communicate with the other chat"; });
   pi.on("session_shutdown", () => { unsubscribe(); });
   pi.registerCommand("btw", {
     description: "Ask a side question in a side chat that knows this chat",
