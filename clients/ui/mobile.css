@@ -1,4 +1,4 @@
-.mobile-sidebar-toggle { display: none; align-items: center; justify-content: center; flex-shrink: 0; min-width: 44px; min-height: 44px; border: 0; border-radius: 8px; background: var(--paper); color: var(--ink); font-size: 18px; }
+.mobile-sidebar-toggle { display: none; align-items: center; justify-content: center; flex-shrink: 0; min-width: 44px; min-height: 44px; border: 1px solid var(--line); border-radius: 8px; background: color-mix(in srgb, var(--paper) 50%, transparent); color: var(--ink); font-size: 18px; }
 .app > .mobile-sidebar-toggle { position: fixed; z-index: 20; top: calc(4px + env(safe-area-inset-top)); left: max(8px, env(safe-area-inset-left)); }
 html[data-mobile] .mobile-sidebar-toggle { display: flex; }
 html[data-mobile] body { min-width: 0; }
