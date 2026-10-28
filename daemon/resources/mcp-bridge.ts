@@ -113,7 +113,7 @@ export default function agentMcp(pi: ExtensionAPI) {
         if (piopInjectAgentId) identities.set(namespace, instance); else identities.delete(namespace);
 
         if ("command" in config) {
-          config.env = { PIOP_CUA_INSTANCE_ID: instance, ...config.env };
+          config.env = { PIOP_CHAT_ID: instance, ...config.env };
         }
 
         const serialized = JSON.stringify([config, piopInjectAgentId, instance]);
