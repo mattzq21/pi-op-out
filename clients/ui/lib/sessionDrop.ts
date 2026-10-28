@@ -30,3 +30,13 @@ export function appendToDraft(draft: string, text: string) {
   return !draft || /\s$/.test(draft) ? draft + text : draft + " " + text;
 }
 
+
+export function sessionReference(value: string) {
+  const match = /^piop:\/\/session\/([^/?#]+)\/([^/?#]+)$/.exec(value);
+  if (!match) return undefined;
+  try {
+    return { hostId: decodeURIComponent(match[1]), sessionId: decodeURIComponent(match[2]) };
+  } catch {
+    return undefined;
+  }
+}

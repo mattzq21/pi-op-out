@@ -687,3 +687,6 @@ textarea::placeholder { color: var(--faint); }
   .user-message .message-pin { left: auto; right: -21px; }
   .pinned-messages { width: calc(100% - 16px); }
 }
+
+button.message-link { border: 0; padding: 0; background: transparent; font: inherit; text-align: inherit; cursor: pointer; }
+button.message-link:hover { text-decoration-style: solid; }

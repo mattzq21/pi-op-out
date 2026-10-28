@@ -1,3 +1,5 @@
+import { SessionLinkContext } from "../lib/subagentNavigation";
+import { sessionReference } from "../lib/sessionDrop";
 import { required } from "../lib/required";
 import DOMPurify from "dompurify";
 import { Copy } from "lucide-solid";
@@ -32,6 +34,7 @@ const parser = new Marked({
     },
     link({ href, tokens }) {
       const text = this.parser.parseInline(tokens);
+      if (sessionReference(href)) return `<button type="button" class="message-link" data-session-reference="${escapeHtml(href)}">${text}</button>`;
       const url = webUrl(href);
 
       if (url) return `<a class="message-link" href="${escapeHtml(url)}">${text}</a>`;
@@ -79,6 +82,7 @@ export function Markdown(props: { children: string; streaming?: boolean; imagePr
   const renderMarkdown = streamingMarkdown(parser, (html, streaming, detectFiles) => sanitizeMarkdown(html, streaming, detectFiles, allowFile));
   const [error, setError] = createSignal<string>();
   const fileScope = useContext(MessageFileContext);
+  const sessionLinks = useContext(SessionLinkContext);
   const [menu, setMenu] = createSignal<LinkMenu>();
   const timers = new Set<ReturnType<typeof setTimeout>>();
   let root: HTMLDivElement | undefined;
@@ -212,6 +216,19 @@ export function Markdown(props: { children: string; streaming?: boolean; imagePr
 
   const click = (event: MouseEvent) => {
     if (!(event.target instanceof Element)) return;
+    const sessionLink = event.target.closest<HTMLButtonElement>("button[data-session-reference]");
+
+    if (sessionLink) {
+      event.preventDefault();
+      const target = sessionReference(sessionLink.dataset.sessionReference ?? "");
+      if (event.button === 0 && target) {
+        setError(undefined);
+        if (sessionLinks) sessionLinks.open(target.hostId, target.sessionId);
+        else setError("Could not open chat: chat navigation is unavailable.");
+      }
+      return;
+    }
+
     const fileTarget = canOpenFileLinks && event.button === 0 ? event.target.closest<HTMLElement>(".message-link[data-file-reference], button.file-link") : null;
 
     if (fileTarget) {

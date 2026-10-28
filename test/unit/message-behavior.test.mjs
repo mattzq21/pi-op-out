@@ -2,6 +2,9 @@ import { installDom, renderComponent, act, untilDom } from '../dom.mjs';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { readFile } from 'node:fs/promises';
+import { createComponent } from 'solid-js';
+import { SessionLinkContext } from '../../clients/ui/lib/subagentNavigation.ts';
+import { sessionLink } from '../../clients/ui/lib/sessionDrop.ts';
 import { Message } from '../../clients/ui/components/Message.tsx';
 import { debugView } from '../../clients/ui/lib/debugFeatures.ts';
 
@@ -234,4 +237,21 @@ test('a stale tool payload failure does not replace the newer loaded input and o
   assert.equal(document.querySelector('[role=status]'), null);
   assert.match(control('Tool arguments').textContent, /\/repo\/new/);
   assert.equal(control('Tool output').textContent, 'new contents');
+});
+
+test('chat links in prompts open the referenced chat on its host', async t => {
+  const dom = installDom();
+  let view;
+  t.after(async () => { await view?.unmount(); dom.restore(); });
+  const opened = [];
+  const content = sessionLink({ name: 'Other [chat]', hostId: 'remote host', id: 'chat/id' });
+  view = await renderComponent(() => createComponent(SessionLinkContext.Provider, {
+    value: { name: () => undefined, open: (host, id) => opened.push([host, id]) },
+    get children() { return createComponent(Message, { message: { id: 'prompt', role: 'user', content } }); },
+  }));
+  const link = document.querySelector('.user-message button.message-link');
+  assert.ok(link, 'chat reference must be clickable');
+  assert.equal(link.textContent, 'Other [chat]');
+  await click(link);
+  assert.deepEqual(opened, [['remote host', 'chat/id']]);
 });
