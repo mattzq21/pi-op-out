@@ -134,7 +134,7 @@ export function olderHistory(history: any, before: unknown): History {
   return view(branch, windowStart(branch, end), end, false);
 }
 
-/** The work and full final response of the turn whose final response is entry id. */
+/** The work, compactions and full final response of the turn whose final response is entry id. */
 export function turnWork(history: any, id: unknown): History {
   const branch = branchEntries(history);
   const final = position(branch, id);
@@ -142,5 +142,5 @@ export function turnWork(history: any, id: unknown): History {
   while (start > 0 && !startsTurn(branch[start])) start--;
   let end = final + 1;
   while (end < branch.length && !startsTurn(branch[end])) end++;
-  return linked(branch.slice(start, end).filter(isWork), null);
+  return linked(branch.slice(start, end).filter(entry => isWork(entry) || entry?.type === 'compaction'), null);
 }

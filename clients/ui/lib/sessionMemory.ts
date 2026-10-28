@@ -264,7 +264,7 @@ export class SessionMemory {
     this.commit();
   }
 
-  /** Loads the work of a finished turn that the daemon left out, and puts it in front of the turn's final response. */
+  /** Loads the work of a finished turn that the daemon left out, and puts it in front of the turn's final response. Its compactions move into their place in the work. */
   private loadWork(entryId: string) {
     const previous = this.workLoading.get(entryId);
 
@@ -277,10 +277,12 @@ export class SessionMemory {
         const index = messages.findIndex(message => (message.entryId ?? message.id) === entryId && message.deferredWork);
 
         if (index < 0) return messages;
-        const present = new Set(messages.map(message => message.entryId ?? message.id));
-        const work = loaded.flatMap(message => (message.entryId ?? message.id) === entryId ? [{ ...message, id: messages[index].id }] : present.has(message.entryId ?? message.id) ? [] : [message]);
+        const key = (message: ChatMessage) => message.entryId ?? message.id;
+        const later = new Set(messages.slice(index + 1).map(key));
+        const work = loaded.flatMap(message => key(message) === entryId ? [{ ...message, id: messages[index].id }] : later.has(key(message)) ? [] : [message]);
+        const moved = new Set(work.map(key));
 
-        return [...messages.slice(0, index), ...work, ...messages.slice(index + 1)];
+        return [...messages.slice(0, index).filter(message => !moved.has(key(message))), ...work, ...messages.slice(index + 1)];
       });
     }).finally(() => this.workLoading.delete(entryId));
     this.workLoading.set(entryId, request);

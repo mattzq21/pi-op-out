@@ -38,4 +38,14 @@ test('work duration handles seconds, hours and unavailable timestamps', async ()
     assert.equal(document.querySelector('.command-result')?.textContent, 'Context compacted');
   });
 
+  test('a compaction during a turn shows in its place in the work group', async () => {
+    await render({ messages: [user('u'), { id: 't1', role: 'tool', content: 'first' }, { id: 'c', role: 'system', customType: 'compaction', content: 'Context compacted' }, { id: 't2', role: 'tool', content: 'second' }, assistant('a', 'Done')] });
+    assert.equal(document.querySelector('.command-result.compaction'), null);
+    document.querySelector('.work-group').open = true;
+    document.querySelector('.work-group').dispatchEvent(new Event('toggle'));
+    await new Promise(resolve => setTimeout(resolve, 0));
+    const content = document.querySelector('.work-group-content');
+    assert.equal(content.querySelector('.command-result.compaction')?.textContent, 'Context compacted');
+  });
+
 });

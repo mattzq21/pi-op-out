@@ -20,7 +20,7 @@ export function olderHistory(messages: ChatMessage[]): OlderHistory | undefined 
 
 const key = (message: ChatMessage) => message.entryId ?? message.id;
 
-/** The work messages around a loaded final response, up to the prompts of its turn. */
+/** The work messages and compactions around a loaded final response, up to the prompts of its turn. */
 function loadedWork(messages: ChatMessage[], index: number) {
   let start = index;
 
@@ -29,18 +29,23 @@ function loadedWork(messages: ChatMessage[], index: number) {
 
   while (end < messages.length && !isPromptMessage(messages[end])) end++;
 
-  return messages.slice(start, end).filter(message => message === messages[index] || message.role === "assistant" || message.role === "tool");
+  return messages.slice(start, end).filter(message => message === messages[index] || message.role === "assistant" || message.role === "tool" || message.customType === "compaction");
 }
 
 /** Keeps the older history and the turn work that the client already loaded when a newer view of the same chat replaces it. */
 export function keepLoadedHistory(cached: ChatMessage[], next: ChatMessage[]): ChatMessage[] {
   if (!cached.length) return next;
   const positions = new Map(cached.map((message, index) => [key(message), index]));
-  let result = next.flatMap(message => {
+  const loaded = new Map<ChatMessage, ChatMessage[]>();
+
+  for (const message of next) {
     const index = message.deferredWork ? positions.get(key(message)) : undefined;
 
-    return index !== undefined && !cached[index].deferredWork ? loadedWork(cached, index) : [message];
-  });
+    if (index !== undefined && !cached[index].deferredWork) loaded.set(message, loadedWork(cached, index));
+  }
+  /** The loaded work holds the compactions of its turn in their place, so their copies in the newer view go. */
+  const moved = new Set([...loaded.values()].flat().map(key));
+  let result = next.flatMap(message => loaded.get(message) ?? (moved.has(key(message)) ? [] : [message]));
   const first = result.find(message => message.id !== OLDER_HISTORY);
   const start = first ? positions.get(key(first)) : undefined;
 

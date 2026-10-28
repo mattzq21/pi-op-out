@@ -757,7 +757,9 @@ function ConversationTurn(componentProps: ConversationTurnProps) {
   const forkIndex = createMemo(() => { const entryId = componentProps.forkSource?.entryId;
 
     return entryId ? turnMessages().findIndex(message => (message.entryId ?? message.id) === entryId) : -1; });
-  const systemMessages = (after: boolean) => turnMessages().filter((message, index) => message.role === "system" && (forkIndex() >= 0 && index > forkIndex()) === after);
+  /** A compaction before the final response happened during the turn's work, so it shows in its place in the work. */
+  const inWork = (message: ChatMessage, index: number) => message.customType === "compaction" && index < finalIndex();
+  const systemMessages = (after: boolean) => turnMessages().filter((message, index) => message.role === "system" && !inWork(message, index) && (forkIndex() >= 0 && index > forkIndex()) === after);
   const renderForkLink = () => <Show when={forkIndex() >= 0 ? componentProps.forkSource : undefined}>{source => <ForkSourceLink source={source()} name={componentProps.forkSourceName} onOpen={componentProps.onOpenForkSource} />}</Show>;
 
   const finalIndex = createMemo(() => (finalResponseIndex(turnMessages())));
@@ -768,7 +770,7 @@ function ConversationTurn(componentProps: ConversationTurnProps) {
   const finalThinking = createMemo(() => (finalIndex() >= 0 ? thinkingOf(turnMessages()[finalIndex()].content) : ""));
 
   const intermediate = createMemo(() => (turnMessages().flatMap((message, index): ChatMessage[] => {
-    if (isPromptMessage(message) || isContextInjection(message) || message.role === "system") return [];
+    if (isPromptMessage(message) || isContextInjection(message) || (message.role === "system" && !inWork(message, index))) return [];
 
     if (index !== finalIndex()) return [message];
 
