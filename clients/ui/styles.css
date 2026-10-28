@@ -332,6 +332,7 @@ button.agent-delivery-source:hover { color: var(--accent-soft); text-decoration:
 .composer-picker-footer p { max-width: 280px; margin: 5px 8px; color: #a54e38; font-size: 12px; overflow-wrap: anywhere; }
 .session-cache-hit { margin-left: 5px; color: var(--muted); font: 12px "DM Sans"; white-space: nowrap; }.session-cache-hit.low { color: #d77865; }
 .composer-bar .composer-picker-trigger:is([aria-label="Model"], [aria-label="Thinking level"]) { padding-inline: 1px; }
+.composer-bar .composer-picker-trigger[aria-label="Model"] { max-width: 84px; }
 .fast-mode-indicator { position: relative; width: 14px; height: 27px; flex: 0 0 14px; display: inline-grid; place-items: center; padding: 0; border: 0; border-radius: 4px; background: transparent; color: var(--faint); cursor: pointer; }
 .fast-mode-indicator.active { color: var(--ink); }
 .fast-mode-indicator:hover:not(:disabled) { color: var(--ink); background: #88888814; }
