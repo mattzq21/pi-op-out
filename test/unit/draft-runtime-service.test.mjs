@@ -18,14 +18,14 @@ function hostDraft(t) {
   mockIPC(async (command, args) => {
     assert.equal(command, 'daemon_invoke');
     assert.equal(args.args.request.action, 'draft_catalog');
-    return { config: structuredClone(host.config), models, initialModel: host.initialModel ?? null, initialThinking: host.initialThinking ?? 'medium', commands: [], commandDetails: [], skills: host.skills ?? {} };
+    return { config: structuredClone(host.config), models, initialModel: host.initialModel ?? null, initialThinking: host.initialThinking ?? 'medium', commands: [], commandDetails: [], skills: [] };
   });
   const events = [];
   const draft = new DraftRuntime(() => 'local', event => events.push(event));
   const shown = () => decodeAgentValue(events.filter(event => event.statusKey === 'pi-define-agents').at(-1).statusText.slice(5)).active;
   /** Changes the host's default agent and reloads the definitions, as Settings does after a save. */
   const changeDefault = async () => { host.config = chosenDefault; clearDraftCatalogs(); await draft.reload(() => true); };
-  return { draft, shown, changeDefault, host, events };
+  return { draft, shown, changeDefault, host };
 }
 
 test('a draft records the default agent it shows, so sending starts that agent even after the host default changes', async t => {
@@ -93,17 +93,3 @@ for (const [choice, change] of [
   });
 }
 
-
-test('a draft offers the skills of the agent it shows and asks for the command list again when the agent changes', async t => {
-  const { draft, host, events } = hostDraft(t);
-  host.skills = { general: [{ name: 'alpha', description: 'Alpha' }], chosen: [{ name: 'beta', description: 'Beta' }] };
-  const skills = async () => (await draft.command({ type: 'get_commands' })).commands.filter(command => command.source === 'skill').map(command => command.name);
-  await draft.applyDefaults('medium', false);
-  assert.deepEqual(await skills(), ['skill:alpha']);
-  const before = events.filter(event => event.type === 'commands_changed').length;
-  await draft.command({ type: 'select_agent', agent: 'chosen' });
-  assert.equal(events.filter(event => event.type === 'commands_changed').length, before + 1);
-  assert.deepEqual(await skills(), ['skill:beta']);
-  await draft.command({ type: 'select_agent', agent: 'bare' });
-  assert.deepEqual(await skills(), []);
-});

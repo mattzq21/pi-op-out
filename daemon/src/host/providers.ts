@@ -6,7 +6,7 @@ import { authText, authUrl } from './catalogs';
 import { Sdk } from './provider_sdk';
 import { FastModelStore, type FastModelScanResult, type FastModelSnapshot } from './fast_models';
 import type { Host } from './controller';
-import { join, resolve } from 'node:path';
+import { join } from 'node:path';
 import { savedCommands } from '../command_inventory';
 
 /** One login attempt that a client started for a provider. */
@@ -104,7 +104,7 @@ export class ProviderService {
     if (!owner) throw new Error('Login owner is missing');
     switch (request?.action) {
       case 'fast_models': return this.fastModels.snapshot();
-      case 'draft_catalog': return { ...await this.sdk.request({ method: 'draft_catalog', agentSkills: this.agentSkillPaths() }), commandDetails: savedCommands(join(this.host!.home, this.host!.storage, 'settings.json')) };
+      case 'draft_catalog': return { ...await this.sdk.request({ method: 'draft_catalog', skillPaths: this.skillPaths() }), commandDetails: savedCommands(join(this.host!.home, this.host!.storage, 'settings.json')) };
       case 'list': return this.listing(flag(request, 'refreshModels'));
       case 'begin': return this.begin(owner, request);
       case 'logout': return this.logout(text(request, 'providerId'));
@@ -113,15 +113,11 @@ export class ProviderService {
     return this.flowRequest(owner, request);
   }
 
-  /** The skill paths a new session of each agent loads: the agent's skills that are enabled in Settings. */
-  private agentSkillPaths(): Record<string, string[]> {
-    const host = this.host!;
-    const skills = host.configuration()?.settings?.skills;
-    const agents = host.agentDefinitions?.config?.agents;
-    if (!skills || !Array.isArray(agents)) throw new Error('Daemon is not configured');
-    const path = (value: string) => resolve(value.startsWith('~/') ? join(host.home, value.slice(2)) : value);
-    const allowed = new Set([...skills.userInvokedSkills, ...skills.agentInvokedSkills].map(path));
-    return Object.fromEntries(agents.map((agent: any) => [agent.name, agent.skills.filter((skill: string) => allowed.has(path(skill)))]));
+  /** The skill paths that every new session loads. */
+  private skillPaths(): string[] {
+    const skills = this.host!.configuration()?.settings?.skills;
+    if (!skills) throw new Error('Daemon is not configured');
+    return [...skills.userInvokedSkills, ...skills.agentInvokedSkills];
   }
 
   private async flowRequest(owner: string, request: any): Promise<any> {

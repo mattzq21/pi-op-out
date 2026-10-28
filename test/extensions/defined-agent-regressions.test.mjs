@@ -23,10 +23,10 @@ test('obsolete voice agents are removed and restored voice selections fall back 
 });
 
 
-test('prompt options clear duplicate project context and mark explicit skills by file or directory', async t => {
+test('prompt options clear duplicate project context and hide user-invoked skills by file or directory, even when the agent lists them', async t => {
   const f = await agentFixture(t, { config: null, runtime: { enabledTools: ['read'], skills: { userInvokedSkills: ['/skills/file/SKILL.md', '/skills/directory/'], agentInvokedSkills: [] } } });
   await f.load();
-  await f.configure(configured([profile(), profile('reviewer')]));
+  await f.configure(configured([profile('general', { skills: ['/skills/file', '/skills/directory', '/skills/normal'] }), profile('reviewer')]));
   await f.start();
 
   const skills = [
