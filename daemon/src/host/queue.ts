@@ -75,25 +75,16 @@ export class SessionQueue {
     if (changed) await this.delivery.publish();
   }
 
-  /**
-   * Keeps the goal entry while the goal is active or paused. Pausing the goal holds the queue, and resuming it resumes the queue.
-   * When the goal ends, the follow-ups below its entry wait for Pi in order.
-   */
   private goalChanged(goal: QueueGoal | null): void {
     const previous = this.s.goal;
     this.s.goal = goal;
     if (previous?.id === goal?.id && previous?.status === goal?.status && previous?.objective === goal?.objective) return;
-    // The first status after Pi starts restores the goal; it is no pause or resume by the user.
-    const paused = previous?.status === 'active' && goal?.id === previous.id && goal.status === 'paused';
-    const resumed = previous?.status === 'paused' && goal?.status !== 'paused';
-    track(this.operations, this.followGoal(paused, resumed)).catch(error => this.record.reportError(errorText(error)));
+    track(this.operations, this.followGoal()).catch(error => this.record.reportError(errorText(error)));
   }
 
-  private async followGoal(paused: boolean, resumed: boolean): Promise<void> {
+  private async followGoal(): Promise<void> {
     const release = await this.gate.lock();
     try {
-      if (paused && !this.s.held) await holdQueue(this.delivery);
-      if (resumed && this.s.held) await resumeQueue(this.delivery);
       if (!this.s.queuedGoal()) for (const item of this.s.waiting()) delete item.afterGoal;
       await this.delivery.publish();
     } finally { release(); }
@@ -175,15 +166,11 @@ export class SessionQueue {
     return enqueue(this.delivery, command, queuedCommand(text(command, 'message')) ? 'follow_up' : name);
   }
 
-  /** Holds the queue, or resumes it. Resuming the queue also resumes a paused goal, because the goal is one of its entries. */
   private async hold(held: unknown): Promise<null> {
     if (typeof held !== 'boolean') throw new Error('hold_queue needs held set to true or false');
     if (held === this.s.held) return null;
     if (held) await holdQueue(this.delivery);
-    else {
-      await resumeQueue(this.delivery);
-      if (this.s.goal?.status === 'paused') await this.delivery.execute({ type: 'prompt', message: '/goal resume' });
-    }
+    else await resumeQueue(this.delivery);
     return null;
   }
 

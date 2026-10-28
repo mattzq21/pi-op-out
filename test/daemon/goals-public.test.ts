@@ -292,14 +292,15 @@ test('a new goal sent while the queue is on hold waits in the queue and starts o
   await chat.until(history => text(history.at(-1)) === 'Tidied.');
   expect(requests).toBeGreaterThan(0);
 }, 60000);
-test('a paused goal keeps its place in the queue and holds the queue, and resuming the queue resumes the goal', async () => {
+test('a paused goal keeps its place but lets the next queued message run', async () => {
   let finish = false;
   agents.scripts.set('Keep shipping', async messages => {
     await Bun.sleep(100);
     const last = messages.findLast((message: any) => message.role === 'user');
-    if (text(last) === 'Question four') return { text: 'Answered four.' };
     if (called(messages, 'update_goal_status')) return { text: 'Shipped.' };
-    return finish ? { tool: 'update_goal_status', arguments: { status: 'complete' } } : { text: 'Shipping.' };
+    if (finish) return { tool: 'update_goal_status', arguments: { status: 'complete' } };
+    if (text(last) === 'Question four') return { text: 'Answered four.' };
+    return { text: 'Shipping.' };
   });
   const chat = await agents.rootChat();
   const entries = async () => ((await chat.command({ type: 'get_state' })).pendingMessages ?? []).map((entry: any) => entry.goal ? (entry.paused ? 'paused goal' : 'goal') : entry.message);
@@ -310,23 +311,16 @@ test('a paused goal keeps its place in the queue and holds the queue, and resumi
   expect(await entries()).toEqual(['goal', 'Question four']);
   await send(chat, '/goal pause');
   await untilGoal(chat.runtimeId, 'paused');
-  for (let tries = 0; (await chat.command({ type: 'get_state' })).isStreaming && tries < 100; tries++) await Bun.sleep(100);
-  expect(await entries()).toEqual(['paused goal', 'Question four']);
-  expect((await chat.command({ type: 'get_state' })).queueHeld).toBe(true);
-  const id = ((await chat.command({ type: 'get_state' })).pendingMessages ?? []).find((entry: any) => entry.message === 'Question four').id;
-  await chat.command({ type: 'change_pending', id, action: 'moveUp' });
-  expect(await entries()).toEqual(['Question four', 'paused goal']);
+  await chat.until(history => text(history.at(-1)) === 'Answered four.');
+  expect(await entries()).toEqual(['paused goal']);
+  expect((await chat.command({ type: 'get_state' })).queueHeld).toBe(false);
+  expect(shownGoal(chat.runtimeId)?.status).toBe('paused');
   const before = (await replies()).length;
-  await Bun.sleep(1000);
+  await Bun.sleep(300);
   expect((await replies()).length).toBe(before);
 
-  await chat.command({ type: 'hold_queue', held: false });
-  await untilGoal(chat.runtimeId, 'active');
-  await chat.until(history => history.filter(message => message.role === 'assistant' && text(message)).length >= before + 2);
-  const after = (await replies()).slice(before);
-  expect(after.slice(0, 2)).toEqual(['Answered four.', 'Shipping.']);
-  expect((await chat.command({ type: 'get_state' })).queueHeld).toBe(false);
   finish = true;
+  await send(chat, '/goal resume');
   await chat.until(history => text(history.at(-1)) === 'Shipped.');
   expect(await entries()).toEqual([]);
 }, 120000);
