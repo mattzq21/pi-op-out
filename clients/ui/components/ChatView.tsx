@@ -839,7 +839,9 @@ function ConversationTurn(componentProps: ConversationTurnProps) {
 
 
   const workedFor = createMemo(() => (turnTiming(turnMessages(), userIndex(), finalMessage())));
-  const retryTarget = createMemo(() => (componentProps.retryable ? retryableResponse(turnMessages()) : undefined));
+  /** Pi runs a failed response again from the prompt before it, so a turn without a prompt that has content cannot be retried. */
+  const hasRetryPrompt = createMemo(() => turnMessages().some(message => isPromptMessage(message) && (message.role !== "user" || hasVisibleText(textOf(message.content)) || (Array.isArray(message.content) && message.content.some(part => part.type === "image")))));
+  const retryTarget = createMemo(() => (componentProps.retryable && hasRetryPrompt() ? retryableResponse(turnMessages()) : undefined));
   const retry = () => {
     const target = retryTarget();
 
