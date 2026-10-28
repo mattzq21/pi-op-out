@@ -113,15 +113,17 @@ test('every agent loads all globally allowed skills, and the model sees the agen
   assert.deepEqual(await visibleSkills(f, [join(f.home, 'allowed'), join(f.home, 'other')]), [join(f.home, 'allowed')]);
 });
 
-test('configuration edits normalize duplicate profiles and prompt paths', async t => {
+test('configuration edits normalize prompt paths and reject a repeated agent name', async t => {
   const f = await agentFixture(t, { config: null, files: { 'agent.md': 'Review instructions' } }); await f.load(); await f.start();
-  await f.configure({ agents: [profile('reviewer', { model: '', effort: 'high', tools: ['read'], skills: ['/skill'], mcpServers: { remote: remoteMcp }, path_agent_prompt: '  agent.md  ' }), profile('reviewer', { tools: ['bash'] }), profile('default')] });
+  await f.configure({ agents: [profile('reviewer', { model: '', effort: 'high', tools: ['read'], skills: ['/skill'], mcpServers: { remote: remoteMcp }, path_agent_prompt: '  agent.md  ' }), profile('default')] });
   const saved = await f.configuration();
   assert.deepEqual(saved.agents.map(agent => agent.name), ['reviewer', 'general']);
   assert.partialDeepStrictEqual(saved.agents[0], {
     name: 'reviewer', model: '', effort: 'high', tools: ['read'], skills: ['/skill'],
     mcpServers: { remote: { command: 'mcp-server', args: [], enabled: true } }, path_agent_prompt: 'agent.md',
   });
+  await assert.rejects(f.configure({ agents: [...saved.agents, profile('reviewer', { skills: ['/other'] })] }), { message: 'Duplicate agent name: reviewer' });
+  assert.deepEqual(await f.configuration(), saved);
 });
 
 test('first run creates private defaults and preserves existing prompts (production)', async t => {

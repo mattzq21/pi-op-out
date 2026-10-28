@@ -134,8 +134,10 @@ function normalize(value: Omit<Partial<Config>, "agents"> & { agents?: StoredAge
     if (legacy) legacy.name = "general";
   }
 
-  const unique = supplied.filter((agent, index) => supplied.findIndex((candidate) => candidate.name === agent.name) === index);
-  const agents = unique.some((agent) => agent.name === "general") ? unique : [generalAgent(pi), ...unique];
+  const duplicate = supplied.find((agent, index) => supplied.findIndex((candidate) => candidate.name === agent.name) !== index);
+
+  if (duplicate) throw new Error(`Duplicate agent name: ${duplicate.name}`);
+  const agents = supplied.some((agent) => agent.name === "general") ? supplied : [generalAgent(pi), ...supplied];
   const defaults = agents.filter(agent => agent.isDefault);
 
   if (defaults.length > 1) throw new Error(`Only one agent can be the default. Default agents: ${defaults.map(agent => agent.name).join(", ")}`);
