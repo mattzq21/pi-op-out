@@ -175,7 +175,7 @@ function createChatSession(transport: Accessor<Pick<NativeTransport, "command" |
     await reportModels(transport().currentHostId?.() ?? "local", result.models);
   }));
 
-  const invalidatesCapabilities = (event: ChatSessionEvent) => ["settings_applied", "model_select", "session_switched", "disconnected", "connection_restored"].includes(event.type) || (event.type === "extension_ui_request" && event.statusKey === DEFINED_AGENTS_STATUS_KEY);
+  const invalidatesCapabilities = (event: ChatSessionEvent) => ["settings_applied", "model_select", "session_switched", "disconnected", "connection_restored", "commands_changed"].includes(event.type) || (event.type === "extension_ui_request" && event.statusKey === DEFINED_AGENTS_STATUS_KEY);
 
   const nextLiveMessageId = (role: string) => `live-${role.slice(0, 32)}-${Date.now()}-${++liveMessageSequence.current}`;
 
@@ -412,7 +412,7 @@ function createChatSession(transport: Accessor<Pick<NativeTransport, "command" |
       capabilityRequest.current += 1;
     }
 
-    if (event.type === "ownership_acquired") refreshCapabilities();
+    if (event.type === "ownership_acquired" || event.type === "commands_changed") refreshCapabilities();
 
     if (bufferedEvents.current) { bufferedEvents.current.push(event);
 

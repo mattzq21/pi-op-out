@@ -51,11 +51,12 @@ async function loadRuntime() {
       const { stripJsonComments } = await import(pathToFileURL(join(directory, 'dist/utils/json.js')).href);
       const { SettingsManager } = await import(pathToFileURL(join(directory, 'dist/core/settings-manager.js')).href);
       const resolver = await import(pathToFileURL(join(directory, 'dist/core/model-resolver.js')).href);
+      const { loadSkills } = await import(pathToFileURL(join(directory, 'dist/core/skills.js')).href);
       const settings = SettingsManager.create(process.cwd(), config.getAgentDir());
       const builtin = await sdk.ModelRuntime.create({ modelsPath: null, allowModelNetwork: false, refreshOnCreate: false });
       const runtime = await sdk.ModelRuntime.create({ allowModelNetwork: false }).catch(() => { throw new Error('Could not load provider configuration on this host. Check Pi configuration and file permissions.'); });
 
-      return { runtime, settings, resolver, authPath: config.getAuthPath(), modelsPath: join(config.getAgentDir(), 'models.json'), parseModels: body => JSON.parse(stripJsonComments(body.replace(/^\uFEFF/, ''))), builtinIds: builtin.getProviders().map((provider) => provider.id) };
+      return { runtime, settings, resolver, loadSkills, agentDir: config.getAgentDir(), authPath: config.getAuthPath(), modelsPath: join(config.getAgentDir(), 'models.json'), parseModels: body => JSON.parse(stripJsonComments(body.replace(/^\uFEFF/, ''))), builtinIds: builtin.getProviders().map((provider) => provider.id) };
     }
 
     directory = dirname(directory);
@@ -354,7 +355,7 @@ async function handleProviderRequest(loaded, packet) {
 
     const initial = await initialSelection(loaded);
 
-    return { models: await loaded.runtime.getAvailable(), initialModel: initial.model, initialThinking: initial.thinkingLevel };
+    return { models: await loaded.runtime.getAvailable(), initialModel: initial.model, initialThinking: initial.thinkingLevel, skills: agentSkills(loaded, packet.agentSkills) };
   }
 
   if (packet.method === 'inspect') {
@@ -378,6 +379,13 @@ async function handleProviderRequest(loaded, packet) {
   }
 
   throw new Error('Unknown provider SDK operation');
+}
+
+/** The skills a new session of each agent offers. Pi loads them as it does for a session that starts with these skill paths. */
+function agentSkills(loaded, paths) {
+  if (!paths || typeof paths !== 'object' || Object.values(paths).some(list => !Array.isArray(list) || list.some(path => typeof path !== 'string'))) throw new Error('Invalid agent skill paths');
+
+  return Object.fromEntries(Object.entries(paths).map(([agent, skillPaths]) => [agent, skillPaths.length ? loaded.loadSkills({ cwd: homedir(), agentDir: loaded.agentDir, skillPaths, includeDefaults: false }).skills.map(skill => ({ name: skill.name, description: skill.description })) : []]));
 }
 
 /**

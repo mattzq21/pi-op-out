@@ -28,7 +28,7 @@ export async function forOwner(app: App, owner: string, hostId: string | undefin
     if (!Array.isArray(plugins?.enabled) || plugins.enabled.some((id: unknown) => typeof id !== 'string')) throw new Error('The host returned an invalid plugin status');
     const commands = Contributions.agentCommands(JSON.parse(agentCommands), plugins.enabled);
     const details = new Map((catalog?.commandDetails ?? []).map((command: any) => [command.name, command]));
-    return { config: definitions?.config ?? null, models: catalog?.models ?? null, initialModel: catalog?.initialModel ?? null, initialThinking: catalog?.initialThinking ?? 'medium', commands, commandDetails: commands.flatMap(name => details.has(name) ? [details.get(name)] : []) };
+    return { config: definitions?.config ?? null, models: catalog?.models ?? null, initialModel: catalog?.initialModel ?? null, initialThinking: catalog?.initialThinking ?? 'medium', commands, commandDetails: commands.flatMap(name => details.has(name) ? [details.get(name)] : []), skills: catalog?.skills ?? null };
   }
   return connection.request({ type: 'provider_auth', owner, request });
 }
