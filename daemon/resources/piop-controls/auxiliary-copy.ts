@@ -65,10 +65,10 @@ export async function copyAuxiliary(ctx: ExtensionContext, copy: AuxiliaryCopy) 
   let publication: SessionPublication | undefined;
   let goalAssets: ReturnType<typeof retainHistory> | undefined;
 
-  // The copy keeps the files its history names, but gets no goal of its own.
+  // The copy keeps the files its history names, but gets no goal and no fork source of its own.
   try {
     goalAssets = retainHistory(root, [{ ...header, parentSession: source }, ...entries], sessionId, sessionPath);
-    publication = await writeSessionFile(sessionPath, [{ ...header, id: sessionId, timestamp, cwd, parentSession: source, goalAssets }, ...entries], {
+    publication = await writeSessionFile(sessionPath, [{ ...header, id: sessionId, timestamp, cwd, parentSession: source, piopForkSource: undefined, goalAssets }, ...entries], {
       name: copy.name,
       dependencies: { workspace: { path: cwd, kind: "existing" } },
     });

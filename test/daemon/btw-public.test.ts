@@ -101,6 +101,16 @@ test.concurrent('/btw during a goal run copies the history through the last fini
   expect(messages.some((message: any) => text(message) === 'Checking more.')).toBe(false);
 }, 60000);
 
+test.concurrent('/btw in a forked chat does not show the fork source of its main chat', async () => {
+  const chat = await answeredChat('Plan the fork');
+  const answer = (await chat.command({ type: 'get_entries' })).entries.findLast((entry: any) => entry.type === 'message' && entry.message.role === 'assistant');
+  await chat.command({ type: 'copy_after', entryId: answer.id });
+  expect((await chat.command({ type: 'get_state' })).forkSource).toBeDefined();
+  const side = await sideChat(chat, '/btw');
+  await agents.daemon.invoke('start_pi', { runtimeId: 'btw-forked', clientId: 'laptop', cwd: side.cwd, sessionPath: side.sessionPath });
+  expect((await agents.daemon.invoke('pi_command', { runtimeId: 'btw-forked', command: { type: 'get_state' } })).forkSource).toBeUndefined();
+}, 60000);
+
 test.concurrent('/btw before the first answer says to wait for it', async () => {
   const chat = await agents.rootChat({ visible: true });
   await chat.command({ type: 'prompt', message: '/btw Too early' });
