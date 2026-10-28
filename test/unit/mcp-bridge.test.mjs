@@ -5,6 +5,10 @@ import { EventEmitter } from 'node:events';
 import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { installConnectionEvents } from '../../daemon/resources/mcp-connections.cjs';
+
+class Connection { constructor(name) { this.name = name; this.state = 'connected'; } changed() {} }
+installConnectionEvents(Connection);
 
 const hooks = registerHooks({
   resolve(specifier, context, nextResolve) {
@@ -44,16 +48,19 @@ async function fixture(run) {
     },
     registerCommand() { throw new Error('SDK slash commands must stay private'); },
     registerTool(tool) { tools.set(tool.name, tool); },
+    appendEntry(customType, data) { entries.push({ type: 'custom', customType, data: structuredClone(data) }); },
     getAllTools: () => [...tools.values()], getActiveTools: () => active, setActiveTools(value) { active = value; },
     registerMcpServer(name, config) {
       if (registrationFailure) throw registrationFailure;
       registrations.push({ name, config }); servers.set(name, config);
+      new Connection(name).changed();
       void dispatch('mcp_servers_change');
     },
     unregisterMcpServer(name) { removed.push(name); servers.delete(name); },
   };
 
-  const ctx = { cwd: process.cwd(), sessionManager: { getSessionId: () => 'session' } };
+  const entries = [];
+  const ctx = { cwd: process.cwd(), sessionManager: { getSessionId: () => 'session', getBranch: () => entries }, ui: { setStatus() {}, notify() {} }, abort() {} };
   const dispatch = async (name, event = {}) => { let result; for (const handler of handlers.get(name) ?? []) result = await handler(event, ctx) ?? result; return result; };
 
   const select = async (definitions, sessionId = 'session', codemode) => {

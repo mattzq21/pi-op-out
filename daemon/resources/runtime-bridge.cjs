@@ -665,6 +665,8 @@ async function main() {
   process.argv = [process.execPath, join(root, "dist/cli.js"), ...args];
 
   const { AgentSession } = await import(pathToFileURL(join(root, "dist/index.js")).href);
+  const { McpServerConnection } = await import(pathToFileURL(join(root, "dist/extensions/mcp/runtime.js")).href);
+  require("./mcp-connections.cjs").installConnectionEvents(McpServerConnection);
   require("./runtime-availability.cjs").installAvailability(AgentSession);
 
   queueValidation = await queueContracts(root);
