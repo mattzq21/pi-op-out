@@ -16,8 +16,11 @@ const IDLE_LIMIT = 8;
 
 const startsUserMessage = (event: RpcEvent) => event.type === "message_start" && z.object({ role: z.literal("user") }).safeParse(event.message).success;
 
+/** The name of a chat without a set name is its first prompt, so a later prompt keeps the name the chat already has. */
 function retainedName(state: AgentState, prompt: string | undefined, previous: SessionSummary | undefined) {
-  return capSessionName(state.sessionName || prompt || previous?.name || "New session");
+  const named = previous && !previous.isDraft ? previous.name : undefined;
+
+  return capSessionName(state.sessionName || named || prompt || previous?.name || "New session");
 }
 
 function retainedActivity(state: AgentState, previous: SessionSummary | undefined, prompt?: string, lastMessageAt?: number) {

@@ -800,6 +800,33 @@ function ConversationTurn(componentProps: ConversationTurnProps) {
   const reasoningOnly = createMemo(() => deferredWork() ? deferredWork()!.reasoningOnly : (compactCompletedTools(intermediate()).every(({ message }) => message.role === "assistant" && hasVisibleText(thinkingOf(message.content)) && !hasVisibleText(textOf(message.content)) && message.stopReason !== "error" && message.stopReason !== "aborted")));
   const finalSource = createMemo(() => (finalIndex() >= 0 ? turnMessages()[finalIndex()] : undefined));
   const finalMessage = createMemo(() => (finalIndex() >= 0 ? { ...turnMessages()[finalIndex()], content: textOf(turnMessages()[finalIndex()].content) } : undefined));
+  /**
+   * The final response shows in one place while the turn runs and after it ends, so the end of the turn does not build it again.
+   * While the turn runs, a response is final only while it is the last message of the turn and calls no tool.
+   */
+  const finalShown = createMemo(() => {
+    const index = finalIndex();
+
+    if (index < 0) return false;
+
+    if (!componentProps.active) return true;
+    const message = turnMessages()[index];
+
+    const later = turnMessages().slice(index + 1).some(item => !isPromptMessage(item) && !isContextInjection(item));
+
+    return !later && !(Array.isArray(message.content) && message.content.some(part => part.type === "toolCall"));
+  });
+  /** The work of a running turn: every message but the prompt and the final response. The reasoning of the final response stays here. */
+  const activeWork = createMemo(() => turnMessages().flatMap((message, index): ChatMessage[] => {
+    if (isPromptMessage(message) || isContextInjection(message)) return [];
+
+    if (!finalShown() || index !== finalIndex()) return [message];
+
+    if (!finalThinking()) return [];
+    const { promptContext: _promptContext, ...reasoningMessage } = message;
+
+    return [{ ...reasoningMessage, id: `${message.id}:reasoning`, content: [{ type: "thinking", thinking: finalThinking() }], stopReason: undefined, errorMessage: undefined }];
+  }));
 
   const turnCacheUsage = createMemo(() => (turnMessages().reduce((total, message) => {
     for (const usage of message.role === "assistant" ? [message.usage, message.deferredWork?.usage] : []) if (usage) {
@@ -831,26 +858,29 @@ function ConversationTurn(componentProps: ConversationTurnProps) {
   });
 
   const renderPromptContextBar = () => (<Show when={componentProps.debug.contextBar && firstResponseInputTokens()}>{inputTokens => <Index each={componentProps.promptContexts}>{context => <PromptContextBar context={context()} inputTokens={inputTokens()} />}</Index>}</Show>);
-  const renderWorkGroup = () => hasWork() && <details class="work-group" open={workOpen()} onToggle={(event) => openWork(event.currentTarget.open)}><summary>{reasoningOnly() ? "Reasoning" : workedFor() ? `Worked for ${workedFor()}` : "Work"}<ChevronRight size={12} class="work-group-chevron" aria-hidden="true" />{renderFinishedSubagents()}</summary>{workOpen() && <div class={`work-group-content${reasoningOnly() ? " reasoning-group-content" : ""}`}>{deferredWork() ? workError() ? <div class="message-failure" role="alert">Could not load this work: {workError()}</div> : <div class="mcp-loading" role="status"><LoaderCircle class="mcp-loading-spinner" size={14} aria-hidden="true" /><span>Loading work</span></div> : <MessageList messages={intermediate()} expanded debug={componentProps.debug} showActions={false} />}</div>}</details>;
+  const renderWorkGroup = () => <Show when={hasWork()}><details class="work-group" open={workOpen()} onToggle={(event) => openWork(event.currentTarget.open)}><summary>{reasoningOnly() ? "Reasoning" : workedFor() ? `Worked for ${workedFor()}` : "Work"}<ChevronRight size={12} class="work-group-chevron" aria-hidden="true" />{renderFinishedSubagents()}</summary>{workOpen() && <div class={`work-group-content${reasoningOnly() ? " reasoning-group-content" : ""}`}>{deferredWork() ? workError() ? <div class="message-failure" role="alert">Could not load this work: {workError()}</div> : <div class="mcp-loading" role="status"><LoaderCircle class="mcp-loading-spinner" size={14} aria-hidden="true" /><span>Loading work</span></div> : <MessageList messages={intermediate()} expanded debug={componentProps.debug} showActions={false} />}</div>}</details></Show>;
 
-  const renderActiveWorkContent = () => (<Show when={componentProps.active} fallback={required(<>
-    {renderWorkGroup()}
-    {finalMessage() && !hasWork() && finishedSubagents().length === 0 && <hr class="turn-divider" />}
-    {finalMessage() && <Message message={required((finalMessage()))} turnCacheUsage={turnCacheUsage()} debug={componentProps.debug} onBranch={canBranchFrom(finalSource()) ? componentProps.onBranch : undefined} onFork={canBranchFrom(finalSource()) ? componentProps.onFork : undefined} onForkAndForget={forgetFrom(finalSource())} lastPoint={finalSource()?.id === lastPointId()} retrying={retrying()} onRetry={retryTarget() ? retry : undefined} />}
-    {retryError() && <div class="message-failure retry-error" role="alert">Retry failed: {(retryError())}</div>}
-    {renderSystemMessages(false)}
-    {renderForkLink()}
-    {renderSystemMessages(true)}
-  </>)}>
-    <div class="active-work-content"><MessageList messages={turnMessages().filter(message => !isPromptMessage(message) && !isContextInjection(message))} expanded compact={false} debug={componentProps.debug} showActions={false} /></div>
-    {renderForkLink()}
-  </Show>);
+  const renderTurnEnd = () => (<>
+    <Show when={componentProps.active} fallback={<>
+      {renderWorkGroup()}
+      <Show when={finalShown() && !hasWork() && finishedSubagents().length === 0}><hr class="turn-divider" /></Show>
+    </>}>
+      <div class="active-work-content"><MessageList messages={activeWork()} expanded compact={false} debug={componentProps.debug} showActions={false} /></div>
+    </Show>
+    <Show when={finalShown()}><Message message={required(finalMessage())} turnCacheUsage={turnCacheUsage()} debug={componentProps.debug} showActions={!componentProps.active} onBranch={!componentProps.active && canBranchFrom(finalSource()) ? componentProps.onBranch : undefined} onFork={!componentProps.active && canBranchFrom(finalSource()) ? componentProps.onFork : undefined} onForkAndForget={componentProps.active ? undefined : forgetFrom(finalSource())} lastPoint={finalSource()?.id === lastPointId()} retrying={retrying()} onRetry={retryTarget() ? retry : undefined} /></Show>
+    <Show when={!componentProps.active} fallback={renderForkLink()}>
+      <Show when={retryError()}>{error => <div class="message-failure retry-error" role="alert">Retry failed: {error()}</div>}</Show>
+      {renderSystemMessages(false)}
+      {renderForkLink()}
+      {renderSystemMessages(true)}
+    </Show>
+  </>);
 
   return <section class="conversation-turn" classList={{ "latest-turn": componentProps.latest === true }}>
     {<Key each={userMessages()} by={(message) => message.id}>{(message, _index) => <Message  message={message()} debug={componentProps.debug} />}</Key>}
     {!hasWork() && finishedSubagents().length > 0 && <div class="subagent-finished-line">{renderFinishedSubagents()}</div>}
     {renderPromptContextBar()}
     {componentProps.debug.contextInjections && <MessageList messages={turnMessages().filter(isContextInjection)} expanded={false} debug={componentProps.debug} />}
-    {renderActiveWorkContent()}
+    {renderTurnEnd()}
   </section>;
 }

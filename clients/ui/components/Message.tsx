@@ -45,9 +45,9 @@ function createForkActions(props: Props, label: () => string) {
 
   return {
     available: () => Boolean(props.onFork || props.onBranch || props.onForkAndForget),
-    fork: () => (props.onFork && <button class="branch-button" aria-label="Fork" data-tooltip="Fork" disabled={running()} onClick={() => void run(props.onFork)}><Split size={14} /></button>),
-    branch: () => (props.onBranch && <button class="branch-button" aria-label="Branch off" data-tooltip="Branch off" disabled={running()} onClick={() => void run(props.onBranch)}><GitBranch size={14} /></button>),
-    forget: () => (props.onForkAndForget && <button class="branch-button fork-and-forget-button" aria-label={`Fork and forget from ${label()}`} data-tooltip="Fork and forget" disabled={running()} onClick={() => void run(props.onForkAndForget)}><Undo2 size={14} /></button>),
+    fork: () => <Show when={props.onFork}><button class="branch-button" aria-label="Fork" data-tooltip="Fork" disabled={running()} onClick={() => void run(props.onFork)}><Split size={14} /></button></Show>,
+    branch: () => <Show when={props.onBranch}><button class="branch-button" aria-label="Branch off" data-tooltip="Branch off" disabled={running()} onClick={() => void run(props.onBranch)}><GitBranch size={14} /></button></Show>,
+    forget: () => <Show when={props.onForkAndForget}><button class="branch-button fork-and-forget-button" aria-label={`Fork and forget from ${label()}`} data-tooltip="Fork and forget" disabled={running()} onClick={() => void run(props.onForkAndForget)}><Undo2 size={14} /></button></Show>,
   };
 }
 
@@ -298,7 +298,7 @@ export function Message(componentProps: Props) {
     return <><article tabIndex={-1} class={`message user-message${componentProps.message.deliveryBehavior === "steer" ? " steering-message" : ""}`} data-pin-id={pinId(componentProps.message)}>
       {images().length > 0 && <div class="user-message-images">{!hasBody() && <PinButton message={componentProps.message} text={pinLabel()} />}<Index each={images()}>{part => <ZoomableImage src={`data:${part().mimeType};base64,${part().data}`} alt="Sent attachment" />}</Index></div>}
       {hasBody() && <div class="message-body"><PinButton message={componentProps.message} text={pinLabel()} />
-      <Show when={parts().command}>{command => <span class="skill-reference command-reference">/{command()}</span>}</Show>{<Key each={parts().skills} by={(skill) => skill}>{(skill, _index) => <span class="skill-reference" >${skill()}</span>}</Key>}{parts().text && (parts().literalSkill ? <span class="literal-skill-content">{parts().text}</span> : <Markdown>{parts().text}</Markdown>)}
+      <Show when={parts().command}>{command => <span class="skill-reference command-reference">/{command()}</span>}</Show>{<Key each={parts().skills} by={(skill) => skill}>{(skill, _index) => <span class="skill-reference" >${skill()}</span>}</Key>}<Show when={parts().text}><Show when={parts().literalSkill} fallback={<Markdown>{parts().text}</Markdown>}><span class="literal-skill-content">{parts().text}</span></Show></Show>
       </div>}
       <div class="message-actions">
         {sentTime() && <span class="message-time">{required(sentTime()).short}</span>}
@@ -326,21 +326,21 @@ export function Message(componentProps: Props) {
 
         const showActions = () => (componentProps.showActions === undefined ? true : componentProps.showActions) && !streaming() && (output().trim().length > 0 || componentProps.message.stopReason === "aborted" || forkActions.available());
 
-        return (showActions() && <div class="message-actions">
-          {hasVisibleText(output()) && renderCopyResponse()}
+        return (<Show when={showActions()}><div class="message-actions">
+          <Show when={hasVisibleText(output())}>{renderCopyResponse()}</Show>
           {copyState() === "error" && <span class="copy-feedback" role="status">Could not copy response</span>}
           {forkActions.fork()}
           {forkActions.branch()}
 
           {renderCacheHitRate()}
-          {metadata().responseTime && <span class="message-time">{required((metadata().responseTime)).short}</span>}
+          <Show when={metadata().responseTime}>{time => <span class="message-time">{time().short}</span>}</Show>
           {forkActions.forget()}
-        </div>);
+        </div></Show>);
       };
 
       return (<div class="message-body">
-        {(componentProps.showActions ?? true) && !streaming() && hasVisibleText(output()) && <PinButton message={componentProps.message} text={pinText(output())} />}
-        {thinking() && <div class="reasoning-text"><Markdown streaming={streaming()}>{thinking()}</Markdown></div>}
+        <Show when={(componentProps.showActions ?? true) && !streaming() && hasVisibleText(output())}><PinButton message={componentProps.message} text={pinText(output())} /></Show>
+        <Show when={thinking()}><div class="reasoning-text"><Markdown streaming={streaming()}>{thinking()}</Markdown></div></Show>
         {renderResponse()}
         {renderMessageFailure()}
         {renderMessageActions()}
