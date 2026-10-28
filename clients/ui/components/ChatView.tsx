@@ -28,6 +28,8 @@ import { Composer, ContainedPicker } from "./Composer";
 import { DeferredTurn } from "./DeferredTurn";
 import { noDebug, type DebugView } from "../lib/debugFeatures";
 import { ResponseNavigator, type ResponseDestination } from "./ResponseNavigator";
+import { ScrollIndicator } from "./ScrollIndicator";
+import { isMobile } from "../lib/platform";
 import { Message } from "./Message";
 import { ConversationImageProject } from "./markdownImages";
 import { PromptContextBar } from "./PromptContextBar";
@@ -474,6 +476,7 @@ export function ChatView(props: Props & { transcriptActions?: JSXElement; follow
 
     return (<div class="conversation-content">
       <ConversationImageProject.Provider value={imageProject}><MessagesSection /></ConversationImageProject.Provider>
+      {isMobile && <ScrollIndicator scrollRoot={messagesRef} />}
       <Show when={pins().length > 0}><PinnedMessages /></Show>
       <SkillMcpStatus value={props.statuses["piop-skill-mcp"]} disabled={props.readOnly || props.controlsDisabled || !ownsConversation() || !props.transport} onAction={(name, action) => required(props.transport).command({ type: "skill_mcp", name, action })} />
       <ResponseNavigator responses={responses()} scrollRoot={messagesRef} onNavigate={() => { followLatest.current = false; }} />

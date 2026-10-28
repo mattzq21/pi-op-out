@@ -4,6 +4,11 @@ html[data-mobile] .mobile-sidebar-toggle { display: flex; }
 html[data-mobile] body { min-width: 0; }
 html[data-mobile] .app { padding-top: env(safe-area-inset-top); }
 html[data-mobile] .conversation-unowned .composer-interaction { opacity: 1; }
+html[data-mobile] .messages { scrollbar-width: none; }
+html[data-mobile] .messages::-webkit-scrollbar { display: none; }
+.scroll-indicator { position: absolute; top: 4px; bottom: 4px; right: 2px; z-index: 3; width: 3px; pointer-events: none; }
+.scroll-indicator[hidden] { display: none; }
+.scroll-indicator > div { width: 100%; border-radius: 999px; background: #4a4842; will-change: transform; }
 html[data-mobile] .main-chat .composer textarea { max-height: clamp(31px, calc(var(--mobile-height, 100dvh) - 200px - env(safe-area-inset-top)), 130px); }
 .mobile-sidebar-backdrop { display: none; }
 .composer-settings, .composer-settings-panel, .composer-settings-row { display: contents; }
