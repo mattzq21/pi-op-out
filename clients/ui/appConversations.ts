@@ -786,10 +786,10 @@ export function createAppConversations(preloadChat: () => void) {
   const mobileSidebarOpen = () => panelOpen() && view() === "chat";
 
   const sidebar = createSidebarState(() => {
-    const summaries = new Map([...liveSessions(), ...draftSessions(), ...sessions()].map(session => [`${session.hostId ?? "local"}:${session.id}`, session]));
+    const summaries = new Map([...draftSessions(), ...liveSessions(), ...sessions()].map(session => [`${session.hostId ?? "local"}:${session.id}`, session]));
 
     // A new chat joins the list when its first message is sent. The New chat button reopens an unsent one.
-    return [...summaries.values()].filter(session => !archives.isArchived(session) && !session.isDraft);
+    return [...summaries.values()].filter(session => !archives.isArchived(session) && !session.isDraft && session.messageCount > 0);
   }, query);
 
   const chatAgentProps = () => { if (!extensionStateIsCurrent()) return { agents: [], activeAgent: undefined, agentLocked: false, agentSaved: false, agentUnavailable: false };
