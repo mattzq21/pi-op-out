@@ -405,7 +405,8 @@ export function ChatView(props: Props & { transcriptActions?: JSXElement; follow
       composer.style.left = `${messages.clientLeft}px`;
       composer.style.right = `${messages.offsetWidth - messages.clientWidth - messages.clientLeft}px`;
       messages.style.setProperty("--composer-height", `${composer.getBoundingClientRect().height}px`);
-      scrollToLatest();
+      // Resize observers run before paint, so the new space and the scroll show in the same frame and the history does not jump.
+      if (followLatest.current) { messages.scrollTop = messages.scrollHeight; lastScrollTop.current = messages.scrollTop; }
       measureDistance();
     };
 
