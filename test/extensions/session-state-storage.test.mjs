@@ -80,6 +80,19 @@ test('names that Pi saved before move to the session broker once', async t => {
   finally { reopened.close(); }
 });
 
+test('skill MCP requirements keep their current removal across navigation and restart', async t => {
+  const f = await fixture(t);
+  f.manager.appendCustomEntry('piop-skill-mcp', [{ file: '/skill/SKILL.md', servers: [{ alias: 'app', name: 'skill_app', config: { command: 'server' } }] }]);
+  const earlier = f.manager.appendMessage({ role: 'user', content: 'Start', timestamp: 1 });
+  f.manager.appendMessage({ role: 'user', content: 'Later', timestamp: 2 });
+  f.manager.appendCustomEntry('piop-skill-mcp', [{ file: '/skill/SKILL.md', servers: [] }]);
+  f.manager.branch(earlier);
+  const reopened = f.SessionManager.open(f.file);
+  const entries = reopened.getBranch().filter(entry => entry.customType === 'piop-skill-mcp');
+  assert.equal(entries.length, 1);
+  assert.deepEqual(entries[0].data, [{ file: '/skill/SKILL.md', servers: [] }]);
+});
+
 test('settings keep only their current value across navigation and restart', async t => {
   const f = await fixture(t);
   f.manager.appendCustomEntry('piop-fast-mode-state', { enabled: false });

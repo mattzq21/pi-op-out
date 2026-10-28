@@ -2,7 +2,7 @@ const database = require('../session-database.cjs');
 const names = require('../session-broker/session-names.cjs');
 const { randomUUID, createHash } = require('node:crypto');
 
-const currentTypes = new Set(['pi-define-agents-state', 'piop-fast-mode-state', 'piop-context-cap', 'piop-session-cost-limit', 'piop-openai-cache-fork', 'piop-codemode-abilities', 'piop-input-hold', 'piop-fork-retries']);
+const currentTypes = new Set(['pi-define-agents-state', 'piop-fast-mode-state', 'piop-context-cap', 'piop-session-cost-limit', 'piop-openai-cache-fork', 'piop-codemode-abilities', 'piop-input-hold', 'piop-fork-retries', 'piop-skill-mcp']);
 const nativeKeys = new Map([['model_change', 'piop-selected-model'], ['thinking_level_change', 'piop-thinking-level']]);
 const stateKey = entry => nativeKeys.get(entry.type) ?? entry.customType;
 const isCurrent = entry => nativeKeys.has(entry.type) || entry.type === 'custom' && currentTypes.has(entry.customType);
