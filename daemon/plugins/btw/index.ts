@@ -4,8 +4,6 @@ import { sessionName } from "../../resources/session-broker/session-names.cjs";
 import { sessionControls } from "../../resources/piop-controls/interface.ts";
 import { openAuxiliaryChat } from "../../resources/session-broker/auxiliary.ts";
 
-const NOTE = "This is a side chat of the main chat. Use send_to_main to send results there.";
-
 /** The name the chat list shows: the saved name, or else the first line of the first prompt. */
 function mainChatName(ctx: ExtensionCommandContext) {
   const file = ctx.sessionManager.getSessionFile();
@@ -25,7 +23,7 @@ async function startBtw(pi: ExtensionAPI, args: string, ctx: ExtensionCommandCon
 
   if (!controls) throw new Error("Piop session controls are not loaded");
   const name = `btw ${mainChatName(ctx)}`;
-  const copy = await controls.copyAuxiliary(ctx, { kind: "btw", name, note: NOTE });
+  const copy = await controls.copyAuxiliary(ctx, { kind: "btw", name });
   const task = args.trim();
 
   openAuxiliaryChat(ctx, { kind: "btw", name, sessionId: copy.sessionId, sessionPath: copy.sessionPath, cwd: copy.cwd, hostId: copy.hostId, parentSessionId: copy.parentSessionId, ...task ? { task } : {} });
@@ -33,7 +31,7 @@ async function startBtw(pi: ExtensionAPI, args: string, ctx: ExtensionCommandCon
 
 /** /btw: a side chat with this chat's history through its last finished answer, opened in the side pane. */
 export default function btw(pi: ExtensionAPI) {
-  const unsubscribe = pi.events.on("piop:auxiliary:kind", request => { if (request.kind === "btw") request.sendToMain = "Send results to the main chat."; });
+  const unsubscribe = pi.events.on("piop:auxiliary:kind", request => { if (request.kind === "btw") request.sendToMain = "Send results to the main chat. Use only when user explicitly asks to communicate with the other chat"; });
   pi.on("session_shutdown", () => { unsubscribe(); });
   pi.registerCommand("btw", {
     description: "Ask a side question in a side chat that knows this chat",

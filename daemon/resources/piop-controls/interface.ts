@@ -9,8 +9,8 @@ export type ForkMode = "fork" | "fork_after" | "clone";
 
 export type ForkResult = { hostId: string; sessionId: string; sessionPath: string; cwd: string; text?: string };
 
-/** An auxiliary copy: kind is the auxiliary kind, name the chat name, note an optional system message the agent and the user see after the copied history. */
-export type AuxiliaryCopy = { kind: string; name: string; note?: string };
+/** An auxiliary copy: kind is the auxiliary kind, name the chat name. */
+export type AuxiliaryCopy = { kind: string; name: string };
 
 /** One instance per Pi session. Operations act on the conversation of the given context. */
 export interface SessionControls {

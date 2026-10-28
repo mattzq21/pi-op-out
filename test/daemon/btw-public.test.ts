@@ -48,14 +48,14 @@ test.concurrent('/btw opens a side chat with the main chat history, which sends 
   const sideCommand = (command: any) => agents.daemon.invoke('pi_command', { runtimeId: 'btw-side', command });
   const entries = (await sideCommand({ type: 'get_entries' })).entries;
   expect(entries.filter((entry: any) => entry.type === 'message' && entry.message.role !== 'system').map((entry: any) => [entry.message.role, text(entry.message)])).toEqual([['user', 'Plan the parser'], ['assistant', 'Plan ready.']]);
-  expect(entries.find((entry: any) => entry.customType === 'piop-auxiliary-note')?.content).toBe('This is a side chat of the main chat. Use send_to_main to send results there.');
+  expect(entries.some((entry: any) => entry.customType === 'piop-auxiliary-note')).toBe(false);
   expect((await sideCommand({ type: 'get_state' })).canFork).toBe(false);
   expect(await listed(side.sessionId)).toMatchObject({ auxiliaryParentId: chat.sessionId, auxiliaryKind: 'btw', name: side.name });
 
   await sideCommand({ type: 'prompt', message: side.task });
   await chat.until(history => text(history.at(-1)) === 'Thanks for the side finding.');
   const sideRequest = agents.model.requests.find(request => text(request.messages.at(-1)) === 'Check the lexer');
-  expect(sideRequest.tools.find((tool: any) => tool.function.name === 'send_to_main')?.function.description).toBe('Send results to the main chat.');
+  expect(sideRequest.tools.find((tool: any) => tool.function.name === 'send_to_main')?.function.description).toBe('Send results to the main chat. Use only when user explicitly asks to communicate with the other chat');
   const mainRequest = agents.model.requests.find(request => text(request.messages.at(-1)) === 'Plan the parser');
   expect(mainRequest.tools.some((tool: any) => tool.function.name === 'send_to_main')).toBe(false);
 

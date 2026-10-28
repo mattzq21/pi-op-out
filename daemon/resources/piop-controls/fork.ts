@@ -124,17 +124,11 @@ export async function forkConversation(ctx: ExtensionContext, options: ForkOptio
   return { hostId: currentHost(), sessionId, sessionPath, cwd };
 }
 
-/** The entries that make a copy an auxiliary conversation of ctx's conversation: its parent record and its note, after the copied leaf. */
+/** The entries that make a copy an auxiliary conversation of ctx's conversation: its parent record, after the copied leaf. */
 function auxiliaryEntries(ctx: ExtensionContext, copy: AuxiliaryCopy, sessionId: string, parentSessionPath: string, leafId: string | null, timestamp: string) {
-  const parentId = randomUUID();
   const host = currentHost();
-  const entries: Array<Record<string, unknown>> = [
-    { type: "custom", customType: AUXILIARY_PARENT, id: parentId, parentId: leafId, timestamp, data: { kind: copy.kind, sessionId, hostId: host, parentSessionId: ctx.sessionManager.getSessionId(), parentHostId: host, parentSessionPath } },
-  ];
 
-  if (copy.note) entries.push({ type: "custom_message", customType: "piop-auxiliary-note", content: copy.note, display: true, id: randomUUID(), parentId, timestamp });
-
-  return entries;
+  return [{ type: "custom", customType: AUXILIARY_PARENT, id: randomUUID(), parentId: leafId, timestamp, data: { kind: copy.kind, sessionId, hostId: host, parentSessionId: ctx.sessionManager.getSessionId(), parentHostId: host, parentSessionPath } }];
 }
 
 function releaseForkAssets(ctx: ExtensionContext, goalAssets: ReturnType<typeof retainHistory> | undefined, sessionId: string, sessionPath: string) {

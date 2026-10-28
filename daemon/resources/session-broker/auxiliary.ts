@@ -81,7 +81,7 @@ export function registerAuxiliaryChats(pi: ExtensionAPI) {
   pi.registerTool({
     name: "send_to_main", label: "Send to main chat", exposure: "model-only", defaultActive: false,
     description: "Send a message to the main chat.",
-    parameters: Type.Object({ message: Type.String({ minLength: 1 }) }),
+    parameters: Type.Object({ message: Type.String() }),
     prepareLoadout: () => description ? { descriptions: { send_to_main: description } } : undefined,
     async execute(_id, params, signal, _update, ctx): Promise<AgentToolResult<unknown>> {
       const main = mainChat(pi, ctx);
