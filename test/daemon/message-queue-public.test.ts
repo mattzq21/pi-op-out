@@ -134,7 +134,7 @@ test.concurrent('a held queue keeps every message, even one sent while the agent
   await chat.command({ type: 'follow_up', message: 'Check the schema' });
   for (let tries = 0; pending(chat.runtimeId).length < 1 && tries < 50; tries++) await Bun.sleep(100);
   await chat.command({ type: 'hold_queue', held: true });
-  expect(latest()).toMatchObject({ held: true, followUp: [] });
+  expect(latest()).toMatchObject({ held: true, pendingMessages: [{ message: 'Check the schema', behavior: 'followUp' }] });
   await chat.command({ type: 'steer', message: 'Keep the old column' });
   const settled = nextSettlement(chat.runtimeId);
   busy.release({ text: 'Migrated.' });

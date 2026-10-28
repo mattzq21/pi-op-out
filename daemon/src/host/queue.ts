@@ -1,15 +1,18 @@
-import { array, CancelScope, clone, flag, jsonEqual, kind, text } from './json';
+import { CancelScope, clone, flag, kind, text } from './json';
 import { Mutex, errorText } from '../util/sync';
 import type { QueueStorage } from './queue_storage';
-import { QueueState, goalStatus, kept, type QueueGoal } from './queue_state';
+import { QueueState, goalStatus, type QueueGoal } from './queue_state';
 import { QueueRecord, track } from './queue_record';
 import { QueueDelivery, type Execution } from './queue_delivery';
-import { changePending, holdQueue, resumeQueue } from './queue_changes';
+import { changePending, holdQueue, releaseTaken, resumeQueue, takeFailed, takeNext } from './queue_changes';
 import { enqueue, queuedCommand } from './queue_submission';
 
 const TIMEOUT = 'Pi command timed out';
 
-/** The queued input of one session: routes commands to Pi and keeps a saved copy. */
+/**
+ * The queued input of one session. The daemon is the only owner of the queue and saves it: Pi takes a message when it is ready for one,
+ * and a message leaves the queue when Pi's transcript holds it. A message that Pi took but did not use, or that Pi lost when it stopped, waits again.
+ */
 export class SessionQueue {
   private s = new QueueState();
   private record: QueueRecord;
@@ -23,6 +26,7 @@ export class SessionQueue {
     this.s.held = held;
     this.s.retained = clone(pending);
     this.s.pending = clone(pending);
+    this.s.order();
     this.record = new QueueRecord(this.s, storage, executor);
     this.delivery = new QueueDelivery(this.s, this.record, executor);
   }
@@ -44,46 +48,36 @@ export class SessionQueue {
 
   tagEntries(entries: any): void { this.s.tagEntries(entries); }
 
+  /** Tells a Pi that just started how many messages it may take. */
+  offer(): void { this.delivery.offer(true); }
+
   async receive(event: any): Promise<void> {
+    const before = this.s.pending.length;
     try { await this.record.observe(event); } catch (error) {
       console.error(error);
       this.record.reportError(errorText(error));
     }
-    const state = this.s;
-    let queueEvent: any;
-    if (kind(event) === 'agent_start') state.inferenceRevision += 1;
+    // The transcript confirmed messages as used, so they left the queue.
+    if (this.s.pending.length !== before) await this.delivery.reportStorageError(() => this.delivery.publish());
     const goal = goalStatus(event);
     if (goal !== undefined) this.goalChanged(goal);
-    if (kind(event) === 'disconnected') {
-      state.pending = clone(state.durableMessages());
-      // Pi lost its queue. Follow-ups below the goal were never in it, so they keep waiting.
-      for (const item of state.pending) if (!kept(item)) item.retry = true;
-      state.steering = [];
-      state.followUp = [];
-      queueEvent = state.publish();
-    } else if (kind(event) === 'queue_update') {
-      state.receiveQueue(event);
-      await this.record.persist();
-      if (state.changing) return;
-      queueEvent = state.publish();
-    }
-    if (queueEvent !== undefined) {
-      const publish = async () => {
-        await this.record.persist();
-        this.delivery.announce(queueEvent);
-      };
-      if (kind(event) === 'disconnected') await this.delivery.reportStorageError(publish);
-      else await publish();
-    }
+    // Pi lost what it took. Those messages wait again; the transcript already removed the ones Pi used.
+    if (kind(event) === 'disconnected') await this.delivery.reportStorageError(() => this.untake());
+    // Pi's own queue holds at most a message it just took, so clients see the daemon's queue only.
     if (kind(event) === 'queue_update') return;
-    state.tagMessage(event);
-    if (kind(event) === 'agent_settled') state.awaitingSteering = [];
+    this.s.tagMessage(event);
     this.delivery.announce(event);
+  }
+
+  private async untake(): Promise<void> {
+    let changed = false;
+    for (const item of this.s.pending) if (flag(item, 'taken')) { delete item.taken; item.deliveryStarted = false; changed = true; }
+    if (changed) await this.delivery.publish();
   }
 
   /**
    * Keeps the goal entry while the goal is active or paused. Pausing the goal holds the queue, and resuming it resumes the queue.
-   * When the goal ends, the follow-ups below its entry go to Pi in order, or are held while the queue is on hold.
+   * When the goal ends, the follow-ups below its entry wait for Pi in order.
    */
   private goalChanged(goal: QueueGoal | null): void {
     const previous = this.s.goal;
@@ -100,17 +94,33 @@ export class SessionQueue {
     try {
       if (paused && !this.s.held) await holdQueue(this.delivery);
       if (resumed && this.s.held) await resumeQueue(this.delivery);
-      const waiting = this.s.queuedGoal() ? [] : this.s.waiting();
-      for (const item of waiting) { item.afterGoal = false; if (this.s.held) item.held = true; }
-      await this.record.persist();
-      for (let index = 0; !this.s.held && index < waiting.length; index += 1) {
-        try { await this.delivery.deliver(waiting[index], false); } catch (error) { this.s.markRetry(waiting.slice(index)); throw error; }
-      }
+      if (!this.s.queuedGoal()) for (const item of this.s.waiting()) delete item.afterGoal;
       await this.delivery.publish();
     } finally { release(); }
   }
 
-  interruptDelegation(): Promise<any> { return this.command({ type: 'abort' }); }
+  /** Answers Pi: queue_take gives the next message, queue_release returns messages Pi did not use, queue_used forgets a message an extension handled at once, queue_failed marks a message Pi could not take. */
+  async runtimeEvent(name: string, data: any): Promise<any> {
+    const release = await this.gate.lock();
+    try {
+      if (name === 'queue_take') return await takeNext(this.delivery, data.behavior, data.holding);
+      if (name === 'queue_release') return await releaseTaken(this.delivery, data.ids);
+      if (name === 'queue_used') {
+        if (typeof data?.id !== 'string' || !data.id) throw new Error('queue_used needs the message id');
+        await this.delivery.consumed(data.id);
+        await this.delivery.publish();
+        return null;
+      }
+      if (name === 'queue_failed') return await takeFailed(this.delivery, data.id, data.error);
+      throw new Error('Unknown queue request ' + name);
+    } finally { release(); }
+  }
+
+  /** Stops the running response for a delegated message. Unlike a stop by the user, the waiting messages keep going. */
+  interruptDelegation(): Promise<any> {
+    if (this.closed) return Promise.reject(new Error('Pi is not running'));
+    return track(this.operations, this.abort({ type: 'abort' }, () => {}).then(result => this.stop(result)));
+  }
 
   command(command: any, assertOwner: () => void = () => {}): Promise<any> {
     if (this.closed) return Promise.reject(new Error('Pi is not running'));
@@ -121,6 +131,9 @@ export class SessionQueue {
     assertOwner();
     const name = kind(command);
     if (name === 'abort') {
+      // Waiting messages stay after a stop. The next message the user sends goes first.
+      this.s.stopped = true;
+      this.delivery.offer();
       const result = await this.abort(command, assertOwner);
       assertOwner();
       return this.stop(result);
@@ -142,7 +155,7 @@ export class SessionQueue {
         if (gate.status === 'rejected') throw gate.reason;
         if (scope.cancelled) throw new Error(TIMEOUT);
         assertOwner();
-        return await this.delivery.execute(command, scope);
+        return await this.delivery.execute(command);
       } finally {
         if (release) { scope.remove(release); release(); }
       }
@@ -156,13 +169,13 @@ export class SessionQueue {
   }
 
   private async serialCommand(command: any, name: string): Promise<any> {
-    if (name === 'clear_queue') return this.clear(command);
+    if (name === 'clear_queue') return this.clear();
     if (name === 'hold_queue') return this.hold(command.held);
     if (name !== 'steer' && name !== 'follow_up') return this.delivery.execute(command);
     return enqueue(this.delivery, command, queuedCommand(text(command, 'message')) ? 'follow_up' : name);
   }
 
-  /** Holds the queue, or resumes it and sends what it held. Resuming the queue also resumes a paused goal, because the goal is one of its entries. */
+  /** Holds the queue, or resumes it. Resuming the queue also resumes a paused goal, because the goal is one of its entries. */
   private async hold(held: unknown): Promise<null> {
     if (typeof held !== 'boolean') throw new Error('hold_queue needs held set to true or false');
     if (held === this.s.held) return null;
@@ -174,19 +187,12 @@ export class SessionQueue {
     return null;
   }
 
-  private async clear(command: any): Promise<any> {
-    const originals = clone(this.s.pending);
-    const result = await this.delivery.execute(command);
-    const removed = [
-      ...originals.filter(item => !flag(item, 'retry') && !kept(item) && array(result, item.behavior === 'steer' ? 'steering' : 'followUp').some(message => jsonEqual(message, item.message))),
-      ...clone(this.s.waiting()),
-      ...clone(this.s.heldItems()),
-    ];
+  /** Removes every waiting message. Messages that Pi took are already on their way. */
+  private async clear(): Promise<any> {
+    const removed = this.s.pending.filter(item => !flag(item, 'taken'));
     for (const item of removed) this.s.remove(text(item, 'id'));
-    this.s.steering = []; this.s.followUp = []; this.s.awaitingSteering = [];
-    await this.record.persist();
     await this.delivery.publish();
-    return result;
+    return { steering: removed.filter(item => item.behavior === 'steer').map(item => item.message), followUp: removed.filter(item => item.behavior !== 'steer').map(item => item.message) };
   }
 
   private async stop(result: { ok: true; value: any } | { ok: false; error: unknown }): Promise<any> {
@@ -197,12 +203,7 @@ export class SessionQueue {
 
   private async forceStop(): Promise<any> {
     await this.delivery.execute({ type: 'force_stop' });
-    const state = this.s;
-    state.pending = clone(state.durableMessages());
-    for (const item of state.pending) if (!kept(item)) item.retry = true;
-    state.changing = false; state.clearing = false;
-    state.steering = []; state.followUp = []; state.awaitingSteering = [];
-    await this.delivery.publish();
+    await this.untake();
     this.delivery.announce({ type: 'disconnected' });
     return null;
   }
@@ -220,6 +221,9 @@ export class SessionQueue {
     await this.consumed(id);
   }
 
-  async consumed(id: string): Promise<void> { await this.delivery.consumed(id); }
-
+  /** Pi's transcript holds the message, so it left the queue. */
+  async consumed(id: string): Promise<void> {
+    await this.delivery.consumed(id);
+    await this.delivery.reportStorageError(() => this.delivery.publish());
+  }
 }

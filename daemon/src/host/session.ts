@@ -127,13 +127,15 @@ export class Session {
     prepareSpec(launch.spec, launch.key, launch.clientId, home);
     const storage = queueStorage(host, launch.spec, launch.cwd, home, launch.key);
     const held = storage?.held() ?? false;
-    const recovered = storage ? await storage.recover(pending, held) : pending;
+    const recovered = storage ? await storage.recover(pending) : pending;
     const identity = argument(launch.spec, '--session') !== undefined ? launch.key : (argument(launch.spec, '--session-id') ?? launch.key);
     const session = new Session(launch, identity, recovered, storage, host, toolPayloads, held);
     session.spec.env.PIOP_QUEUE_HELD = held ? '1' : '0';
     await session.reconcileQueue();
     assertRunning();
     session.worker = RuntimeWorker.spawn(session.spec, session.identity, launch.timeout, session.observer(), home);
+    // Pi takes waiting messages by itself; the offer tells it how many wait.
+    session.queue.offer();
     return session;
   }
 
@@ -141,7 +143,8 @@ export class Session {
     return {
       // inOrder already reports a failed event; the returned promise only tells the worker when the event is done.
       event: event => this.inOrder(() => this.receive(event)).then(() => {}, () => {}),
-      runtimeEvent: event => this.inOrder(() => this.receiveRuntimeEvent(event)),
+      // Queue requests wait for the queue's lock, which a queue command can hold while it waits for a Pi response. They skip the event order, so that response is not stuck behind them.
+      runtimeEvent: event => event.name.startsWith('queue_') ? this.receiveRuntimeEvent(event) : this.inOrder(() => this.receiveRuntimeEvent(event)),
       // The requester receives a failed response, so it is not also reported as a diagnostic.
       response: (event, request) => this.inOrder(() => this.response(event, request), false),
       stderr: line => {
@@ -409,9 +412,14 @@ export class Session {
     finally { this.idleStop.schedule(); }
   }
 
-  private async receiveRuntimeEvent(event: RuntimeEvent): Promise<void> {
+  /** Handles an event that Pi waits on. Queue requests go to the queue, whose answer Pi gets; other events go to the host. */
+  private async receiveRuntimeEvent(event: RuntimeEvent): Promise<unknown> {
     this.idleStop.cancel();
-    try { await this.host.runtimeEvent({ sessionKey: this.key, identity: this.identity, cwd: this.cwd }, event); }
+    try {
+      if (event.name.startsWith('queue_')) return await this.queue.runtimeEvent(event.name, event.data);
+      await this.host.runtimeEvent({ sessionKey: this.key, identity: this.identity, cwd: this.cwd }, event);
+      return undefined;
+    }
     catch (error) {
       this.host.output({ type: 'diagnostic', line: this.key + ': ' + event.name + ' failed: ' + errorText(error) });
       throw error;

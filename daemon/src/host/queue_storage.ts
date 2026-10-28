@@ -83,7 +83,7 @@ export class QueueStorage {
 
   load(): any[] {
     const saved = this.record();
-    return saved ? recoverItems(saved, this.held()) : [];
+    return saved ? recoverItems(saved) : [];
   }
 
   /** True when the user holds this session's queue. */
@@ -107,14 +107,14 @@ export class QueueStorage {
     });
   }
 
-  async recover(pending: any[], held: boolean): Promise<any[]> {
+  async recover(pending: any[]): Promise<any[]> {
     const snapshot = structuredClone(pending);
     const origin = structuredClone(this.origin);
     return inOrder(resolve(this.root()), async () => {
       const recovered = this.load();
       for (const item of snapshot) {
         validateItem(item);
-        restartItem(item, held);
+        restartItem(item);
         if (!recovered.some(saved => saved.id === item.id)) recovered.push(item);
       }
       await this.saveLocked(recovered, origin);
@@ -160,14 +160,16 @@ export async function clearSaved(root: string, id: string): Promise<void> {
   await new QueueStorage(join(root, 'queued-input'), id).save([]);
 }
 
-/** Marks an item of a queue that starts again. Pi never had a held item of a held queue, so it stays held. Other items wait for the user to retry them. */
-function restartItem(item: any, held: boolean): void {
-  if (held && item.held === true && item.retry !== true) return;
-  item.retry = true;
+/**
+ * Readies an item of a queue that starts again. An item that Pi took but whose transcript does not hold it was not used, so it waits again;
+ * the transcript check removes the used ones. An item marked for retry stays marked.
+ */
+function restartItem(item: any): void {
+  delete item.taken;
   delete item.held;
 }
 
-function recoverItems(saved: any, held: boolean): any[] {
+function recoverItems(saved: any): any[] {
   if (saved.version !== 1) throw new Error('Unsupported queued-input journal version');
   if (!Array.isArray(saved.items)) throw new Error('Invalid queued-input journal');
   const items = structuredClone(saved.items);
@@ -177,7 +179,7 @@ function recoverItems(saved: any, held: boolean): any[] {
     const key = JSON.stringify(item.id);
     if (identities.has(key)) throw new Error('Duplicate queued-input journal identity');
     identities.add(key);
-    restartItem(item, held);
+    restartItem(item);
   }
   return items;
 }

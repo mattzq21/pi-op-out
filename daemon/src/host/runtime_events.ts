@@ -15,6 +15,8 @@ export function parseRuntimeEvent(value: any): RuntimeEvent {
   return { id: value.id, name: value.name, data: value.data };
 }
 
-export function runtimeEventResult(id: string, error?: string): any {
-  return error === undefined ? { type: 'piop_runtime_event_result', id } : { type: 'piop_runtime_event_result', id, error };
+/** The answer to a runtime event: its error, or the data Piop answers with. */
+export function runtimeEventResult(id: string, error?: string, data?: unknown): any {
+  if (error !== undefined) return { type: 'piop_runtime_event_result', id, error };
+  return data === undefined ? { type: 'piop_runtime_event_result', id } : { type: 'piop_runtime_event_result', id, data };
 }

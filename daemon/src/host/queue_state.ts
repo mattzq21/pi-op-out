@@ -1,14 +1,8 @@
-import { array, canon, clone, flag, jsonEqual, kind, messageText, text } from './json';
+import { clone, flag, kind, text } from './json';
 
 /** Fields that record how Pi took a queued item. Clients do not see them. */
 export const CONSUMPTION_FIELDS = ['consumedContent', 'consumedTimestamp', 'consumedInputId', 'deliveryStarted'];
 
-function key(value: any): string { return canon(value); }
-function count(items: any[], value: any): number { return items.filter(item => jsonEqual(item, value)).length; }
-export function unique(items: any[]): any[] {
-  const seen = new Set<string>();
-  return items.filter(item => { const id = key(item); if (seen.has(id)) return false; seen.add(id); return true; });
-}
 function stamp(value: any): string { return JSON.stringify(value ?? null); }
 
 /** The id of the active goal's entry in the queue view. Queue item ids are numbers, so it does not collide with them. */
@@ -16,9 +10,6 @@ export const GOAL_ENTRY_ID = 'goal';
 
 /** The conversation's goal as the goals extension publishes it in its piop-goal status. */
 export type QueueGoal = { id: string; objective: string; status: 'active' | 'paused' | 'complete' };
-
-/** True for an item the daemon keeps out of Pi's queue: it waits below the goal, or the queue is on hold. */
-export function kept(item: any): boolean { return flag(item, 'afterGoal') || flag(item, 'held'); }
 
 /** Reads the goal from a goals extension status event: null when the goal is cleared, undefined for other events. */
 export function goalStatus(event: any): QueueGoal | null | undefined {
@@ -29,28 +20,31 @@ export function goalStatus(event: any): QueueGoal | null | undefined {
   return { id: text(goal, 'id'), objective: text(goal, 'objective'), status };
 }
 
+/** How many waiting messages Pi may take now, of each kind. */
+export type QueueOffer = { steer: number; followUp: number };
+
 /**
- * The queue as the daemon sees it: items it keeps and items Pi holds.
- * An active or paused goal is an entry of the follow-up queue. Follow-ups above it are in Pi's queue and run first.
- * Follow-ups below it have afterGoal set: the daemon keeps them until they move above the goal or the goal ends.
- * A paused goal keeps its place, and pausing it holds the queue.
- * While the queue is on hold, the other items have held set: the daemon keeps them until the user resumes the queue.
+ * The queue of one conversation. The daemon is its only owner and saves it. Pi keeps no queue of its own:
+ * when it is ready for a message, it takes the next one (the item is then taken), and the item leaves the queue when Pi's transcript holds it.
+ * An item that Pi took but did not use goes back to waiting.
+ *
+ * An active or paused goal is an entry of the follow-ups. Follow-ups below it have afterGoal set; they wait until they move above it or the goal ends.
+ * Pi may take an item that is not taken, not below the goal and not marked for retry, while the queue is not held and not stopped.
  */
 export class QueueState {
   pending: any[] = [];
   retained: any[] = [];
-  steering: any[] = [];
-  followUp: any[] = [];
-  changing = false;
-  clearing = false;
+  /** Commands that Pi runs at once, while they are delivered. They never wait in the queue. */
   sending = new Set<string>();
   rejected = new Set<string>();
-  awaitingSteering: any[] = [];
+  /** Ids of taken steering messages, so their user messages show as steering. */
+  steerTaken = new Set<string>();
   steeringTimestamps = new Set<string>();
-  inferenceRevision = 0;
   goal: QueueGoal | null = null;
   /** True while the user holds the queue. */
   held = false;
+  /** True after the user stopped a response: waiting items stay until the user sends a message, which goes first. */
+  stopped = false;
 
   activeGoal(): QueueGoal | undefined { return this.goal?.status === 'active' ? this.goal : undefined; }
 
@@ -60,8 +54,16 @@ export class QueueState {
   /** Follow-ups below the goal entry, in queue order. */
   waiting(): any[] { return this.pending.filter(item => flag(item, 'afterGoal') && !flag(item, 'retry')); }
 
-  /** Items kept while the queue is on hold, in queue order. */
-  heldItems(): any[] { return this.pending.filter(item => flag(item, 'held') && !flag(item, 'retry')); }
+  /** True when Pi may take the item now. */
+  available(item: any): boolean {
+    return !this.held && !this.stopped && !flag(item, 'taken') && !flag(item, 'afterGoal') && !flag(item, 'retry') && !this.sending.has(text(item, 'id'));
+  }
+
+  offer(): QueueOffer {
+    const offer = { steer: 0, followUp: 0 };
+    for (const item of this.pending) if (this.available(item)) offer[item.behavior === 'steer' ? 'steer' : 'followUp'] += 1;
+    return offer;
+  }
 
   durableMessages(): any[] {
     this.retained = durableMessages(this);
@@ -74,29 +76,21 @@ export class QueueState {
   }
 
   markRetry(items: any[]): void {
-    for (const pending of this.pending) if (items.some(item => item.id === pending.id)) pending.retry = true;
+    for (const pending of this.pending) if (items.some(item => item.id === pending.id)) { pending.retry = true; delete pending.taken; }
   }
 
-  failedSubmission(id: string): boolean {
-    if (this.rejected.delete(id)) return true;
-    const saved = this.retained.find(item => item.id === id);
-    if (saved) {
-      const item = clone(saved);
-      item.retry = true;
-      this.pending = this.pending.filter(entry => entry.id !== id);
-      this.pending.push(item);
-    }
-    return false;
+  /** Puts the items in the order the view shows them: taken items, waiting ones, those below the goal, then those marked for retry. Order inside each group stays. */
+  order(): void {
+    const rank = (item: any) => flag(item, 'retry') ? 3 : flag(item, 'taken') ? 0 : flag(item, 'afterGoal') ? 2 : 1;
+    this.pending = this.pending.map((item, index) => [item, index] as const).sort((a, b) => rank(a[0]) - rank(b[0]) || a[1] - b[1]).map(([item]) => item);
   }
 
-  texts(behavior: string): any[] { return behavior === 'steer' ? this.steering : this.followUp; }
-
-  view(pending: any[]): any {
-    const steering = clone(this.steering);
-    const followUp = clone(this.followUp);
+  view(pending: any[] = this.pending): any {
     const visible = pending.map(original => {
       const item = clone(original);
-      if (item && typeof item === 'object' && !Array.isArray(item)) for (const field of CONSUMPTION_FIELDS) delete item[field];
+      for (const field of CONSUMPTION_FIELDS) delete item[field];
+      if (flag(item, 'taken')) item.sending = true;
+      delete item.taken;
       if (Array.isArray(item?.images)) for (const image of item.images) if (image && typeof image === 'object' && !Array.isArray(image)) delete image.data;
       return item;
     });
@@ -105,72 +99,22 @@ export class QueueState {
       const index = visible.findIndex(item => flag(item, 'afterGoal') || flag(item, 'retry'));
       visible.splice(index < 0 ? visible.length : index, 0, { id: GOAL_ENTRY_ID, message: goal.objective, behavior: 'followUp', goal: true, ...(goal.status === 'paused' ? { paused: true } : {}) });
     }
-    return { type: 'queue_update', steering, followUp, pendingMessages: visible, held: this.held };
+    const queued = pending.filter(item => !flag(item, 'retry') && !flag(item, 'afterGoal'));
+    return {
+      type: 'queue_update',
+      steering: queued.filter(item => item.behavior === 'steer').map(item => clone(item.message)),
+      followUp: queued.filter(item => item.behavior !== 'steer').map(item => clone(item.message)),
+      pendingMessages: visible,
+      held: this.held,
+    };
   }
 
-  publish(): any {
-    let available = [...this.pending];
-    for (const behavior of ['steer', 'followUp']) {
-      const texts = this.texts(behavior);
-      for (const message of unique(texts)) {
-        const matches = available.filter(item => !flag(item, 'retry') && !kept(item) && !this.sending.has(text(item, 'id')) && item.behavior === behavior && jsonEqual(item.message, message))
-          .map(item => text(item, 'id'));
-        const stale = new Set(matches.slice(0, Math.max(0, matches.length - count(texts, message))));
-        available = available.filter(item => !stale.has(text(item, 'id')));
-      }
-    }
-    const pending: any[] = [];
-    for (const behavior of ['steer', 'followUp']) {
-      for (const message of this.texts(behavior)) {
-        let index = available.findIndex(item => !flag(item, 'retry') && !kept(item) && item.behavior === behavior && jsonEqual(item.message, message));
-        if (index < 0) {
-          index = available.findIndex(item => retriedInPi(item, behavior, message));
-          if (index >= 0) available[index] = inPi(available[index]);
-        }
-        if (index >= 0) pending.push(available.splice(index, 1)[0]);
-      }
-    }
-    pending.push(...available.filter(item => flag(item, 'held') && !flag(item, 'retry')));
-    pending.push(...available.filter(item => flag(item, 'afterGoal') && !flag(item, 'retry')));
-    pending.push(...available.filter(item => flag(item, 'retry')));
-    this.pending = [...pending, ...available.filter(item => !flag(item, 'retry') && this.sending.has(text(item, 'id')))];
-    return this.view(pending);
-  }
-
-  receiveQueue(event: any): void {
-    if (!this.clearing) {
-      const remaining = array(event, 'steering');
-      for (const message of this.steering) {
-        const index = remaining.findIndex(item => jsonEqual(item, message));
-        if (index >= 0) remaining.splice(index, 1); else this.awaitingSteering.push(clone(message));
-      }
-    }
-    for (const [field, behavior] of [['steering', 'steer'], ['followUp', 'followUp']]) {
-      const before = [...this.texts(behavior)];
-      const added = array(event, field).filter(message => {
-        const index = before.findIndex(item => jsonEqual(item, message));
-        if (index >= 0) { before.splice(index, 1); return false; }
-        return true;
-      });
-      const sending = this.pending.map((item, index) => [item, index] as const)
-        .filter(([item]) => this.sending.has(text(item, 'id')) && item.behavior === behavior).map(([, index]) => index);
-      if (added.length === 1 && sending.length === 1) this.pending[sending[0]].message = clone(added[0]);
-    }
-    this.steering = array(event, 'steering');
-    this.followUp = array(event, 'followUp');
-  }
-
+  /** Marks the user message of a taken steering message, so the chat shows it as steering. */
   tagMessage(event: any): void {
     const name = kind(event);
     if ((name !== 'message_start' && name !== 'message_end') || event.message?.role !== 'user' || typeof event.message?.timestamp !== 'number') return;
     const timestamp = stamp(event.message.timestamp);
-    if (name === 'message_start') {
-      const message = messageText(event.message.content, '');
-      const index = this.awaitingSteering.findIndex(item => item === message);
-      const sending = this.pending.some(item => this.sending.has(text(item, 'id')) && item.behavior === 'steer' && item.message === message);
-      if (index >= 0 || sending) this.steeringTimestamps.add(timestamp);
-      if (index >= 0) this.awaitingSteering.splice(index, 1);
-    }
+    if (typeof event.message.piopQueueId === 'string' && this.steerTaken.has(event.message.piopQueueId)) this.steeringTimestamps.add(timestamp);
     if (this.steeringTimestamps.has(timestamp)) event.message.deliveryBehavior = 'steer';
   }
 
@@ -179,23 +123,6 @@ export class QueueState {
       if (entry?.message?.role === 'user' && this.steeringTimestamps.has(stamp(entry.message.timestamp))) entry.message.deliveryBehavior = 'steer';
     }
   }
-
-}
-
-/**
- * True for an item marked for retry whose message Pi still holds in its queue. The daemon marks items for retry when it cannot know
- * whether Pi used them, for example after a restart while Pi kept running. Pi holding the message shows that it was not used.
- */
-export function retriedInPi(item: any, behavior: string, message: any): boolean {
-  return flag(item, 'retry') && !flag(item, 'recovered') && item.behavior === behavior && jsonEqual(item.message, message);
-}
-
-/** The item as one that Pi holds: no longer marked for retry or kept by the daemon. */
-export function inPi(item: any): any {
-  const next = { ...clone(item), retry: false, deliveryStarted: true };
-  delete next.held;
-  delete next.afterGoal;
-  return next;
 }
 
 export function durableMessages(state: QueueState): any[] {

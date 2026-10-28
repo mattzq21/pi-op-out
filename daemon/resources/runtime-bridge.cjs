@@ -21,6 +21,8 @@ const wrappedManagers = new WeakSet();
 
 const { installReloadLifecycle, afterReload, serializeConfiguration, runtimeRequest } = require("./runtime-configuration.cjs");
 
+const { queuePull } = require("./queue-pull.cjs");
+
 const configurationCommands = new Set(["context_cap_settings", "provider_auth_refresh", "get_agent_configuration", "configure_agents", "select_agent", "fork_after", "fork_and_forget", "prepare_fork"]);
 
 let queueValidation;
@@ -175,7 +177,7 @@ function runtimeEvents(output) {
     pending.delete(result.id);
 
     if (typeof result.error === "string") waiter.reject(new Error(result.error));
-    else waiter.resolve();
+    else waiter.resolve(result.data);
   };
 
   const close = () => {
@@ -185,7 +187,7 @@ function runtimeEvents(output) {
 
   Object.defineProperty(globalThis, Symbol.for("piop.runtime-events"), { value: send, configurable: true });
 
-  return { answer, close };
+  return { answer, close, send };
 }
 
 function appInput(dispatch, events) {
@@ -233,6 +235,33 @@ async function dispatchQueuedPrompt(command, session, output) {
   }).catch(error => {
     if (!preflightSucceeded) promptError(command, error, output);
     else acceptedPromptError(session, error, output);
+  });
+}
+
+/** Passes a message taken from the daemon's queue to Pi. Resolves with Pi's preflight disposition; a later failure of the run it started is reported as a run error. */
+function bindQueuePull(session, output) {
+  const ask = Object.getOwnPropertyDescriptor(globalThis, Symbol.for("piop.runtime-events"))?.value;
+
+  if (!ask) throw new Error("Piop runtime events are unavailable");
+
+  return queuePull(session, { ask, prompt: (target, item) => promptTaken(target, item, output) });
+}
+
+function promptTaken(session, item, output) {
+  return new Promise((resolve, reject) => {
+    let preflightSucceeded = false;
+    void session.prompt(item.message, {
+      images: item.images,
+      streamingBehavior: item.behavior,
+      source: "rpc",
+      goalSubmissionId: item.goalSubmissionId,
+      goalPrepared: item.goalPrepared,
+      [queuePromptScope]: { session, queueId: item.id, submissionId: item.goalSubmissionId, tagged: false },
+      preflightResult: disposition => { preflightSucceeded = true; resolve(disposition); },
+    }).catch(error => {
+      if (!preflightSucceeded) reject(error);
+      else acceptedPromptError(session, error, output);
+    });
   });
 }
 
@@ -388,6 +417,13 @@ async function dispatchReady(command, session, output) {
 
     if (command.command === "queue_prompt") {
       await dispatchQueuedPrompt(command, session, output);
+
+      return;
+    }
+
+    if (command.command === "queue_offer") {
+      bindQueuePull(session, output).setOffer(command.payload);
+      output({ type: "response", id: command.id, command: command.command, success: true, data: null });
 
       return;
     }
@@ -658,6 +694,7 @@ async function main() {
   const bind = AgentSession.prototype.bindExtensions;
   AgentSession.prototype.bindExtensions = async function (...bindings) {
     installQueueProtocol(this, output);
+    bindQueuePull(this, output);
 
     if (session !== this) bindQueuedCommands(this, output);
 

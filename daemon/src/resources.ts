@@ -22,6 +22,7 @@ import hooksExtendedInterface from '../resources/hooks-extended/interface.ts?raw
 import sdkSessionList from '../resources/sdk-session-list.mjs?raw';
 import runtimeConfiguration from '../resources/runtime-configuration.cjs?raw';
 import runtimeBridge from '../resources/runtime-bridge.cjs?raw';
+import queuePull from '../resources/queue-pull.cjs?raw';
 import runtimeAvailability from '../resources/runtime-availability.cjs?raw';
 import hooksAvailability from '../resources/hooks-extended/availability.ts?raw';
 import mcpSchemaBundle from '../resources/mcp-schema.bundle.mjs?raw';
@@ -125,6 +126,7 @@ export {
   sdkSessionList,
   runtimeConfiguration,
   runtimeBridge,
+  queuePull,
   runtimeAvailability,
   mcpSchemaBundle,
   mcpBridgeBundle,
