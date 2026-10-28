@@ -189,13 +189,13 @@ test('history refresh uses daemon entries without retaining a second live assist
   assert.equal((await client.command({ type: 'get_entries' })).entries.length, 0);
 });
 
-test('compact prompts become commands while ordinary prompts and state updates retain their semantics', async () => {
+test('compact prompts go to the queue as messages while state updates retain their semantics', async () => {
   const client = transport();
   await client.command({ type: 'prompt', message: '/compact   keep the decisions  ' });
-  await client.command({ type: 'prompt', message: '/compact' });
-  await client.command({ type: 'prompt', message: '/compactly' });
-  assert.deepEqual(rpc('compact').map(call => call.args.command), [{ type: 'compact', customInstructions: 'keep the decisions' }, { type: 'compact' }]);
-  assert.equal(rpc('prompt')[0].args.command.message, '/compactly');
+  await client.command({ type: 'follow_up', message: '/compact' });
+  assert.deepEqual(rpc('compact'), []);
+  assert.equal(rpc('prompt')[0].args.command.message, '/compact   keep the decisions  ');
+  assert.equal(rpc('follow_up')[0].args.command.message, '/compact');
   responses.set('pi_command:get_state', { sessionFile: '/session', sessionId: 'id' });
   await client.command({ type: 'get_state' });
   assert.equal(client.currentSessionPath(), '/session');

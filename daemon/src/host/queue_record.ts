@@ -49,6 +49,11 @@ export class QueueRecord {
     return String(nextLocalId++);
   }
 
+  /** Saves whether the queue is on hold. */
+  async saveHeld(held: boolean): Promise<void> {
+    if (this.storage) await track(this.saves, this.storage.saveHeld(held));
+  }
+
   async persist(): Promise<void> {
     const retained = durableMessages(this.state);
     const saved = this.saveRetained(retained);

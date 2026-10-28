@@ -1,7 +1,7 @@
+import { randomUUID } from 'node:crypto';
 import { clone, text } from './json';
 import { CommandRefusedError } from '../pi_rejection';
 import { validateItem } from './queue_storage';
-import { durableMessages } from './queue_state';
 import type { QueueDelivery } from './queue_delivery';
 
 export { queuedCommand } from '../plugin_contributions';
@@ -15,21 +15,27 @@ function goalObjective(message: string): boolean {
   return value.length > 0 && !['edit', 'clear', 'pause', 'resume', 'budget'].includes(value) && !value.startsWith('budget ');
 }
 
-function goalSubmission(command: any): boolean {
+/** True for a message that sets a new goal objective. It goes through the queue like any other message. */
+export function goalSubmission(command: any): boolean {
   const message = text(command, 'message');
   return goalObjective(message) || (message.trim() === '/goal' && Array.isArray(command.images) && command.images.length > 0);
+}
+
+/** The images with an id each. The queue view leaves image data out, so clients tell images apart by id after an edit. Pi does not get the ids. */
+export function withImageIds(images: any[]): any[] {
+  return images.map(image => image && typeof image === 'object' && typeof image.id === 'string' ? clone(image) : { ...clone(image), id: randomUUID() });
 }
 
 function submissionPayload(command: any, id: string, name: string): any {
   const pending: any = { id, message: command.message ?? null, behavior: name === 'steer' ? 'steer' : 'followUp' };
   for (const field of ['images', 'goalSubmissionId', 'goalPrepared']) if (command[field] !== undefined) pending[field] = clone(command[field]);
+  if (Array.isArray(pending.images)) pending.images = withImageIds(pending.images);
   return pending;
 }
 
 /**
- * Adds a steer or follow-up message to the queue and sends it to Pi.
- * Returns null for an item kept for retry after a failure.
- * Returns false when goal preparation declines the message.
+ * Adds a steer or follow-up message to the queue. Pi takes it when it is ready for it.
+ * A command that Pi runs at once never waits: it goes to Pi now. Returns false when goal preparation declines the message.
  */
 export async function enqueue(queue: QueueDelivery, command: any, name: string): Promise<any> {
   const state = queue.state;
@@ -37,30 +43,41 @@ export async function enqueue(queue: QueueDelivery, command: any, name: string):
   const prepared = await prepareSubmission(queue, command);
   if (prepared === undefined) return false;
   const id = queue.record.nextId();
-  const pending = submissionPayload(prepared, id, name);
+  const item = submissionPayload(prepared, id, name);
   // A bad item would stay queued and make every later save fail, so it is rejected before the queue changes.
-  try { validateItem(pending); } catch (error) { throw new CommandRefusedError(error instanceof Error ? error.message : String(error), 'daemon'); }
-  if (name === 'follow_up' && state.goalWorking() && !queue.runsAtOnce(text(pending, 'message'))) {
-    await waitBelowGoal(queue, pending);
-    return null;
+  try { validateItem(item); } catch (error) { throw new CommandRefusedError(error instanceof Error ? error.message : String(error), 'daemon'); }
+  // A new goal objective starts goal work, so it waits like any message, although Pi would run the /goal command at once.
+  if (queue.runsAtOnce(text(item, 'message')) && prepared.goalPrepared !== true) return runAtOnce(queue, item);
+  if (name === 'follow_up' && state.queuedGoal()) item.afterGoal = true;
+  // After the user stopped a response, the next message goes before the messages that waited.
+  if (state.stopped && !item.afterGoal) { state.stopped = false; state.pending.unshift(item); } else state.pending.push(item);
+  try { await queue.publish(); } catch (error) {
+    state.markRetry([item]);
+    await queue.reportStorageError(() => queue.publish());
+    throw error;
   }
-  await saveSubmission(queue, id, pending);
+  return { disposition: 'queued' };
+}
+
+/** Sends a command that Pi runs at once. Its saved copy goes when Pi handled it; a command that failed in another way is kept for retry. */
+async function runAtOnce(queue: QueueDelivery, item: any): Promise<any> {
+  const state = queue.state;
+  const id = text(item, 'id');
+  state.pending.push(clone(item));
   let result: any;
-  let failure: unknown;
-  let failed = false;
-  try { result = await queue.deliver(pending, true); } catch (error) { failure = error; failed = true; }
-  const rejected = failed && state.failedSubmission(id);
-  state.sending.delete(id);
-  await queue.reportStorageError(() => queue.publish());
-  if (failed && !rejected) {
-    await queue.reportStorageError(() => { throw failure; });
+  try { result = await queue.deliver(item, true); } catch (error) {
+    if (state.rejected.delete(id)) { await queue.reportStorageError(() => queue.publish()); throw error; }
+    state.markRetry([item]);
+    await queue.reportStorageError(() => queue.publish());
+    await queue.reportStorageError(() => { throw error; });
     return null;
   }
-  if (failed) throw failure;
+  await queue.reportStorageError(() => queue.publish());
   return result;
 }
 
-async function prepareSubmission(queue: QueueDelivery, original: any): Promise<any | undefined> {
+/** Prepares a message that sets a goal objective. Other messages stay as they are. Returns undefined when the user declines. */
+export async function prepareSubmission(queue: QueueDelivery, original: any): Promise<any | undefined> {
   if (!goalSubmission(original)) return original;
   const command = clone(original);
   const request: any = { type: 'prepare_goal_prompt', message: command.message ?? null };
@@ -73,30 +90,4 @@ async function prepareSubmission(queue: QueueDelivery, original: any): Promise<a
   command.goalPrepared = true;
   delete command.images;
   return command;
-}
-
-/** Adds a follow-up at the end of the queue, below the active goal's entry. It stays out of Pi's queue until it moves above the goal or the goal stops. */
-async function waitBelowGoal(queue: QueueDelivery, pending: any): Promise<void> {
-  const state = queue.state;
-  pending.afterGoal = true;
-  state.pending.push(clone(pending));
-  try { await queue.record.persist(); } catch (error) { state.markRetry([pending]); await queue.reportStorageError(() => queue.publish()); throw error; }
-  await queue.reportStorageError(() => queue.publish());
-}
-
-async function saveSubmission(queue: QueueDelivery, id: string, pending: any): Promise<void> {
-  const state = queue.state;
-  if (durableMessages(state).length >= 100) throw new CommandRefusedError('Queue is full', 'daemon');
-  state.pending.push(clone(pending));
-  state.sending.add(id);
-  try { await queue.record.persist(); } catch (error) {
-    state.sending.delete(id);
-    for (const item of [...state.pending, ...state.retained]) {
-      if (item.id === id) item.retry = true;
-    }
-    const view = state.publish();
-    queue.record.setView(view);
-    queue.announce(clone(view));
-    throw error;
-  }
 }

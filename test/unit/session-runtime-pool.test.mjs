@@ -137,9 +137,9 @@ describe('session runtime pool', () => {
     assert.equal(commands('stop_pi').length, count);
   });
 
-  test('user prompts update retained session summaries while preserving project details', async () => {
+  test('user prompts update retained session summaries while preserving project details, and only the first prompt names the chat', async () => {
     const client = pool.create({ cwd: '/repo' });
-    pool.setLiveSession(client, { ...session, cwdExists: true, apiCost: 2, messageCount: 4, name: 'Previous' });
+    pool.setLiveSession(client, { ...session, cwdExists: true, apiCost: 2, messageCount: 4, name: 'New session', isDraft: true });
     const id = await connect(client);
     const text = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz12345678 omitted from the title';
     await send(id, { type: 'message_start', message: { role: 'user', content: [{ type: 'text', text }] } });
@@ -149,6 +149,10 @@ describe('session runtime pool', () => {
     assert.equal(current.preview, text);
     assert.equal(current.messageCount, 4);
     assert.equal(current.apiCost, 2);
+    await send(id, { type: 'message_start', message: { role: 'user', content: [{ type: 'text', text: 'A later prompt' }] } });
+    await settled();
+    assert.equal(pool.liveSessionSummaries()[0].name, 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcd');
+    assert.equal(pool.liveSessionSummaries()[0].preview, 'A later prompt');
     await pool.remove(session);
     assert.equal(pool.liveSessionSummaries().length, 0);
     await pool.remove(session);

@@ -173,7 +173,10 @@ export function createConversationDrafts(reportStorageError: (message: string) =
 
   const visibleRecords = createMemo(() => [...records()].filter(([key, record]) => allows(key, record.destination)));
   const visibleSubmissions = createMemo(() => submissions().filter(item => allows(item.destination.key, item.destination)));
-  const recoveries = createMemo(() => visibleSubmissions().filter(item => !isChatSubmissionActive(item.id)));
+  /** Submissions that this window is sending, from staging until they are accepted or rejected. They are not interrupted, so recovery does not offer them. */
+  const [inFlight, setInFlight] = createSignal<ReadonlySet<string>>(new Set());
+  const flying = (id: string, sending: boolean) => setInFlight(current => { const next = new Set(current); if (sending) next.add(id); else next.delete(id); return next; });
+  const recoveries = createMemo(() => visibleSubmissions().filter(item => !isChatSubmissionActive(item.id) && !inFlight().has(item.id)));
   const composerDrafts = createMemo(() => Object.fromEntries(visibleRecords().map(([key, record]) => [key, record.text])));
 
   const setComposerDraft = (sessionKey: string, value: StateUpdate<string>) => {
@@ -281,7 +284,8 @@ export function createConversationDrafts(reportStorageError: (message: string) =
     const retry = recordFor(destination.key).retrySubmission;
     const id = retry?.fingerprint === fingerprint ? retry.id : crypto.randomUUID();
     let submission: DraftSubmission = { id, destination, rawText: payload.rawText, uploads: payload.uploads, status: "preparing", createdAt: Date.now() };
-    await storeSubmission(submission);
+    flying(id, true);
+    try { await storeSubmission(submission); } catch (reason) { flying(id, false); throw reason; }
     update(destination.key, current => ({ ...current, retrySubmission: undefined }));
 
     if (payload.consume) {
@@ -296,8 +300,8 @@ export function createConversationDrafts(reportStorageError: (message: string) =
       id: submission.id, owner: () => owner, wasDispatched: () => dispatched,
       move: async destination => { await transferSubmission(submission, owner, destination, next => { submission = next; owner = destination; }); },
       dispatch: async () => { const next: DraftSubmission = { ...submission, destination: destinationFor(owner), status: "dispatched" }; await storeSubmission(next); submission = next; dispatched = true; },
-      accept: () => retireSubmission(submission.id),
-      reject: async reason => { submission = { ...submission, destination: destinationFor(owner), error: reason }; await restoreSubmission(submission); },
+      accept: async () => { try { await retireSubmission(submission.id); } finally { flying(submission.id, false); } },
+      reject: async reason => { submission = { ...submission, destination: destinationFor(owner), error: reason }; try { await restoreSubmission(submission); } finally { flying(submission.id, false); } },
     };
   };
 

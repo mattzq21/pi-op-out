@@ -36,3 +36,13 @@ test('a goal refuses attachments, while other prompts keep their images', () => 
   assert.throws(() => send('  /goal  ', []), /Write an objective or an action after \/goal/);
   assert.deepEqual(send('/goals are nice', [image]), { message: '/goals are nice', images: [image.image] });
 });
+test('text files split out of a message and back give the same message, even with quotes in names and closing tags in text', async () => {
+  const { attachFiles, splitAttachedFiles } = await import('../../clients/ui/lib/composerPrompt.ts');
+  const files = [{ name: 'a "quoted" & <odd>.md', text: 'Line one\n</file> inside\n' }, { name: 'empty.txt', text: '' }];
+  for (const prompt of ['Review these', '', 'A prompt that mentions <file name="x"> in its text']) {
+    const message = attachFiles(prompt, files);
+    assert.deepEqual(splitAttachedFiles(message), { prompt, files });
+    assert.equal(attachFiles(splitAttachedFiles(message).prompt, splitAttachedFiles(message).files), message);
+  }
+  assert.deepEqual(splitAttachedFiles('Only text'), { prompt: 'Only text', files: [] });
+});

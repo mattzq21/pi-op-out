@@ -93,7 +93,7 @@ export class Session {
   stderrTail: string[] = [];
   providerRevision = 0;
 
-  private constructor(launch: SessionLaunch, identity: string, pending: any[], storage: QueueStorage | null, private host: SessionHost, private toolPayloads: ToolPayloadCache) {
+  private constructor(launch: SessionLaunch, identity: string, pending: any[], storage: QueueStorage | null, private host: SessionHost, private toolPayloads: ToolPayloadCache, held: boolean) {
     this.identity = identity;
     this.clientIdValue = launch.clientId;
     this.spec = launch.spec;
@@ -106,8 +106,12 @@ export class Session {
       publish: event => this.publish(event, null),
       savedUserMessages: () => this.savedUserMessages(),
       extensionCommand: name => this.host.extensionCommand(name),
+      queueHeld: async held => {
+        this.spec.env.PIOP_QUEUE_HELD = held ? '1' : '0';
+        await this.execute({ type: 'queue_hold', held });
+      },
     };
-    this.queue = new SessionQueue(executor, pending, storage);
+    this.queue = new SessionQueue(executor, pending, storage, held);
     this.dialogs = new SessionDialogs({
       views: () => this.viewsList,
       readonly: runtime => this.host.readonly(runtime),
@@ -123,9 +127,11 @@ export class Session {
   static async spawn(launch: SessionLaunch, pending: any[], host: SessionHost, home: string, toolPayloads: ToolPayloadCache, assertRunning: () => void): Promise<Session> {
     prepareSpec(launch.spec, launch.key, launch.clientId, home);
     const storage = queueStorage(host, launch.spec, launch.cwd, home, launch.key);
+    const held = storage?.held() ?? false;
     const recovered = storage ? await storage.recover(pending) : pending;
     const identity = argument(launch.spec, '--session') !== undefined ? launch.key : (argument(launch.spec, '--session-id') ?? launch.key);
-    const session = new Session(launch, identity, recovered, storage, host, toolPayloads);
+    const session = new Session(launch, identity, recovered, storage, host, toolPayloads, held);
+    session.spec.env.PIOP_QUEUE_HELD = held ? '1' : '0';
     await session.reconcileQueue();
     assertRunning();
     session.worker = RuntimeWorker.spawn(session.spec, session.identity, launch.timeout, session.observer(), home);
@@ -136,7 +142,8 @@ export class Session {
     return {
       // inOrder already reports a failed event; the returned promise only tells the worker when the event is done.
       event: event => this.inOrder(() => this.receive(event)).then(() => {}, () => {}),
-      runtimeEvent: event => this.inOrder(() => this.receiveRuntimeEvent(event)),
+      // Queue requests wait for the queue's lock, which a queue command can hold while it waits for a Pi response. They skip the event order, so that response is not stuck behind them.
+      runtimeEvent: event => event.name.startsWith('queue_') ? this.receiveRuntimeEvent(event) : this.inOrder(() => this.receiveRuntimeEvent(event)),
       // The requester receives a failed response, so it is not also reported as a diagnostic.
       response: (event, request) => this.inOrder(() => this.response(event, request), false),
       stderr: line => {
@@ -209,7 +216,7 @@ export class Session {
     const count = observed?.pendingMessageCount;
     return this.isWorking || this.isCompacting || flag(observed, 'isStreaming') || flag(observed, 'isCompacting')
       || (typeof count === 'number' && Number.isInteger(count) && count > 0)
-      || array(queue, 'steering').length > 0 || array(queue, 'followUp').length > 0 || array(queue, 'pendingMessages').length > 0;
+      || array(queue, 'steering').length > 0 || array(queue, 'followUp').length > 0 || array(queue, 'pendingMessages').some(item => !flag(item, 'goal'));
   }
 
   unused(): boolean {
@@ -294,6 +301,8 @@ export class Session {
     if (error !== null) this.publish({ type: 'extension_error', error }, runtime);
     this.dialogs.route();
     this.publishPresence();
+    // Pi takes waiting messages by itself; the offer tells it how many wait. It goes after the view attached, so the view gets the events of the run they start.
+    this.queue.offer();
   }
 
   presence(runtime: string, presence: any): void {
@@ -411,9 +420,14 @@ export class Session {
     finally { this.idleStop.schedule(); }
   }
 
-  private async receiveRuntimeEvent(event: RuntimeEvent): Promise<void> {
+  /** Handles an event that Pi waits on. Queue requests go to the queue, whose answer Pi gets; other events go to the host. */
+  private async receiveRuntimeEvent(event: RuntimeEvent): Promise<unknown> {
     this.idleStop.cancel();
-    try { await this.host.runtimeEvent({ sessionKey: this.key, identity: this.identity, cwd: this.cwd }, event); }
+    try {
+      if (event.name.startsWith('queue_')) return await this.queue.runtimeEvent(event.name, event.data);
+      await this.host.runtimeEvent({ sessionKey: this.key, identity: this.identity, cwd: this.cwd }, event);
+      return undefined;
+    }
     catch (error) {
       this.host.output({ type: 'diagnostic', line: this.key + ': ' + event.name + ' failed: ' + errorText(error) });
       throw error;
@@ -493,7 +507,7 @@ export class Session {
       case 'get_available_models': await this.refreshProviders(); break;
       // Pi stops the running response before it compacts, even when there is nothing to compact.
       case 'compact': {
-        if (this.working()) throw new CommandRefusedError('Stop piop before running /compact.', 'daemon');
+        if (this.working()) throw new CommandRefusedError('piop is working. Send /compact as a message to compact after the current response.', 'daemon');
         const started = this.manualCompactions;
         // After Pi starts, the chat shows the result, so the request is done.
         try { return await this.executeWorker(command); } catch (error) { if (this.manualCompactions !== started) return null; throw error; }
@@ -508,6 +522,7 @@ export class Session {
     const count = typeof state?.pendingMessageCount === 'number' && Number.isInteger(state.pendingMessageCount) && state.pendingMessageCount >= 0 ? state.pendingMessageCount : 0;
     if (state && typeof state === 'object' && !Array.isArray(state)) {
       state.pendingMessages = this.queue.view().pendingMessages ?? null;
+      state.queueHeld = this.queue.view().held === true;
       state.pendingMessageCount = count;
     }
     return state;
@@ -640,6 +655,7 @@ export class Session {
       snapshotState.viewers = this.visibleViewers();
       snapshotState.needsInput = !this.dialogs.empty();
       snapshotState.pendingMessageCount = array(queue, 'steering').length + array(queue, 'followUp').length;
+      snapshotState.queueHeld = queue.held === true;
     }
     return {
       history: data, revision: this.epoch + ':' + this.contentRevision, sequence: this.sequence, stateRevision: this.stateRevision,

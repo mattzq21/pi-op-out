@@ -18,7 +18,7 @@ export async function deliverAppEvent(page, event, payload) {
   if (result) throw new Error(result.error);
 }
 
-/** The app on a real daemon. nativeFailures maps a native command to the error message it fails with. model 'echo' gives the daemon a model that echoes each message. */
+/** The app on a real daemon. nativeFailures maps a native command to the error message it fails with. model 'echo' gives the daemon a model that echoes each message. The page's daemon property is the daemon client. */
 export async function appBrowser(t, { remotes = [], keybindings = {}, nativeFailures = {}, model } = {}) {
   t = cleanupScope(t);
   let page;
@@ -58,6 +58,7 @@ export async function appBrowser(t, { remotes = [], keybindings = {}, nativeFail
   t.after(() => assert.deepEqual(errors, []));
   if (model) await browserPage.locator('[aria-label="Model"]:enabled').waitFor({ timeout: 30000 });
   await browserPage.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+  browserPage.daemon = daemon;
   return browserPage;
 }
 

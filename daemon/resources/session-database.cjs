@@ -70,6 +70,7 @@ function initialize(db) {
         message TEXT NOT NULL, behavior TEXT NOT NULL CHECK(behavior IN ('steer', 'followUp')),
         details_json TEXT NOT NULL);
       CREATE INDEX IF NOT EXISTS queue_items_order ON queue_items(session_id, queue_position);
+      CREATE TABLE IF NOT EXISTS session_queue_holds (session_id TEXT PRIMARY KEY REFERENCES sessions(session_id) ON DELETE CASCADE);
       CREATE TRIGGER IF NOT EXISTS queue_items_limit BEFORE INSERT ON queue_items
         WHEN NOT EXISTS(SELECT 1 FROM queue_items WHERE queue_item_id=NEW.queue_item_id)
           AND (SELECT count(*) FROM queue_items WHERE session_id=NEW.session_id)>=100

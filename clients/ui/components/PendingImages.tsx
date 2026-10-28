@@ -13,7 +13,8 @@ function source(message: PendingMessage, index: number, load: PendingImageLoader
 
   if (image?.data) return Promise.resolve(`data:${image.mimeType};base64,${image.data}`);
   if (!load) return Promise.reject(new Error("This view cannot load queued images"));
-  const key = `${message.id}:${index}`;
+  // An edit can remove or add images, so a position may hold another image later. The image id names one image.
+  const key = `${message.id}:${image?.id ?? index}`;
   let pending = sources.get(key);
 
   if (!pending) {
@@ -25,7 +26,7 @@ function source(message: PendingMessage, index: number, load: PendingImageLoader
   return pending;
 }
 
-function PendingImage(props: { message: PendingMessage; index: number; load?: PendingImageLoader }) {
+export function PendingImage(props: { message: PendingMessage; index: number; load?: PendingImageLoader }) {
   const [src] = createResource(() => [props.message, props.index] as const, ([message, index]) => source(message, index, props.load));
   const label = () => props.message.images?.[props.index]?.name ?? "Attached image";
 

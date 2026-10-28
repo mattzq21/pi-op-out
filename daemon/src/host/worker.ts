@@ -15,7 +15,8 @@ export interface WorkerObserver {
   /** Settles when the event is handled. The worker stops reading Pi's output while too many events wait. */
   event(event: any): Promise<void>;
   /** Settles when Piop handled an event that Pi waits on. A rejection goes back to Pi, which reports it as the hook's error. */
-  runtimeEvent(event: RuntimeEvent): Promise<void>;
+  /** Handles an event that Pi waits on. The result goes back to Pi as the answer's data. */
+  runtimeEvent(event: RuntimeEvent): Promise<unknown>;
   response(event: any, request: Request): any;
   stderr(line: string): void;
   diagnostic(line: string): void;
@@ -137,9 +138,10 @@ export class RuntimeWorker {
       return;
     }
     let failure: string | undefined;
-    try { await this.observer.runtimeEvent(event); }
+    let data: unknown;
+    try { data = await this.observer.runtimeEvent(event); }
     catch (error: any) { failure = error instanceof Error ? error.message : String(error); }
-    await this.write(runtimeEventResult(event.id, failure)).catch(error => this.observer.diagnostic('Could not answer Pi runtime event ' + event.name + ': ' + error.message));
+    await this.write(runtimeEventResult(event.id, failure, data ?? undefined)).catch(error => this.observer.diagnostic('Could not answer Pi runtime event ' + event.name + ': ' + error.message));
   }
 
   /** Pauses reading Pi's output while the backlog is over its limit, and resumes at half of it. */

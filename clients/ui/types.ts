@@ -49,13 +49,13 @@ export interface PromptContextInfo {
 }
 
 /** sending: the message was sent, but the daemon has not queued it yet. It cannot be changed yet. */
-export interface PendingMessage { id: string; goalSubmissionId?: string; message: string; behavior: "steer" | "followUp"; images?: (Omit<ImageAttachment, "data"> & { data?: string })[]; retry?: boolean; recovered?: boolean; sending?: boolean; goal?: boolean; }
+export interface PendingMessage { id: string; goalSubmissionId?: string; message: string; behavior: "steer" | "followUp"; images?: (Omit<ImageAttachment, "data"> & { data?: string; id?: string })[]; retry?: boolean; recovered?: boolean; sending?: boolean; goal?: boolean; paused?: boolean; }
 
 export interface GitRepository { root: string; gitDir: string; }
 
 export interface ForkSource { sessionId: string; sessionPath: string; entryId: string; }
 
-export interface AgentState { canFork?: boolean; viewers?: number; pendingMessages?: PendingMessage[]; model: Model | null; thinkingLevel: string; isStreaming: boolean; isCompacting?: boolean; sessionFile?: string; sessionId: string; sessionName?: string; cwd?: string; repository?: GitRepository | null; forkSource?: ForkSource; messageCount: number; pendingMessageCount: number; activity?: string; contextUsage?: ContextUsage; }
+export interface AgentState { canFork?: boolean; viewers?: number; pendingMessages?: PendingMessage[]; queueHeld?: boolean; model: Model | null; thinkingLevel: string; isStreaming: boolean; isCompacting?: boolean; sessionFile?: string; sessionId: string; sessionName?: string; cwd?: string; repository?: GitRepository | null; forkSource?: ForkSource; messageCount: number; pendingMessageCount: number; activity?: string; contextUsage?: ContextUsage; }
 
 export interface ExtensionUiRequest { type: "extension_ui_request"; id: string; method: "select" | "confirm" | "input" | "editor" | "notify" | "setStatus" | "setWidget" | "setTitle" | "set_editor_text"; title?: string; message?: string; error?: string; options?: string[]; placeholder?: string; prefill?: string; notifyType?: "info" | "warning" | "error"; statusKey?: string; statusText?: string; widgetKey?: string; widgetLines?: string[]; widgetPlacement?: "aboveEditor" | "belowEditor"; text?: string; }
 
@@ -117,4 +117,4 @@ export interface ChatMessage { submissionId?: string; piopQueueId?: string; piop
 /** The daemon left out the work of this finished turn. loadWork fetches it. */
 export interface ChatMessage { deferredWork?: { reasoningOnly: boolean; usage?: ChatMessage["usage"]; firstUsage?: ChatMessage["usage"] }; loadWork?: () => Promise<void>; }
 
-export type PendingMessageAction = "steer" | "followUp" | "remove" | "moveUp" | "moveDown" | { type: "move"; targetId: string; edge: "before" | "after" } | { type: "edit"; message: string };
+export type PendingMessageAction = "steer" | "followUp" | "remove" | "moveUp" | "moveDown" | { type: "move"; targetId: string; edge: "before" | "after" } | { type: "edit"; message: string; images: { keep: number[]; add: ImageAttachment[] } };

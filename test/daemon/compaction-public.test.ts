@@ -86,7 +86,7 @@ test.concurrent('compacting while the agent works is refused with how to do it, 
     const chat = await agents.rootChat();
     await chat.command({ type: 'prompt', message: 'Busy chat' });
     await chat.until(() => agents.model.requests.length > 0);
-    expect(await chat.command({ type: 'compact' }).then(() => 'compacted', (error: Error) => error.message)).toBe('Stop piop before running /compact.');
+    expect(await chat.command({ type: 'compact' }).then(() => 'compacted', (error: Error) => error.message)).toBe('piop is working. Send /compact as a message to compact after the current response.');
     release({ text: 'Finished anyway.' });
     const history = await chat.until(messages => text(messages.at(-1)) === 'Finished anyway.');
     expect(history.some(message => message.stopReason === 'aborted')).toBe(false);
@@ -115,5 +115,55 @@ test.concurrent('a goal goes on working after its chat is compacted by itself be
     for (let tries = 0; turns < atCompaction + 2 && tries < 100; tries++) await Bun.sleep(100);
     expect(turns).toBeGreaterThanOrEqual(atCompaction + 2);
     await chat.command({ type: 'follow_up', message: '/goal pause', goalSubmissionId: crypto.randomUUID() });
+  } finally { await agents.close(); }
+}, 120000);
+test.concurrent('a /compact sent while the agent works waits its turn in the queue, compacts there, and the next queued message sees only the summary', async () => {
+  const agents = await agentDaemon();
+  try {
+    let release!: (reply: { text: string }) => void;
+    const busy = new Promise<{ text: string }>(resolve => { release = resolve; });
+    agents.scripts.set('My favourite animal is the otter', messages => {
+      if (/context summarization assistant/.test(text(messages[0]))) return { text: 'Summary of My favourite animal is the otter: the user likes otters.' };
+      if (text(messages.at(-1)) === 'Busy work') return busy;
+      return { text: 'Noted: ' + text(messages.at(-1)).slice(0, 20) };
+    });
+    const chat = await agents.rootChat();
+    const compactions = () => agents.daemon.events.filter(event => event.payload?.runtimeId === chat.runtimeId && event.payload.event?.type === 'compaction_end');
+    const pending = () => agents.daemon.events.filter(event => event.payload?.runtimeId === chat.runtimeId && event.payload.event?.type === 'queue_update').at(-1)?.payload.event.pendingMessages ?? [];
+    await chat.command({ type: 'prompt', message: 'My favourite animal is the otter' });
+    await chat.until(history => text(history.at(-1)).startsWith('Noted'));
+    for (const fact of [1, 2, 3]) {
+      await chat.command({ type: 'prompt', message: `Fact ${fact}: ` + 'filler words '.repeat(3000) });
+      await chat.until(history => text(history.at(-1)).startsWith(`Noted: Fact ${fact}`));
+    }
+
+    await chat.command({ type: 'prompt', message: 'Busy work' });
+    await chat.until(() => agents.model.requests.some(request => text(request.messages.at(-1)) === 'Busy work'));
+    await chat.command({ type: 'follow_up', message: '/compact keep the otter' });
+    await chat.command({ type: 'follow_up', message: 'What do I like?' });
+    for (let tries = 0; pending().length < 2 && tries < 50; tries++) await Bun.sleep(100);
+    expect(pending().map((item: any) => item.message)).toEqual(['/compact keep the otter', 'What do I like?']);
+    expect(compactions()).toHaveLength(0);
+
+    release({ text: 'Busy work done.' });
+    const history = await chat.until(messages => text(messages.at(-1)).startsWith('Noted: What do I like'));
+    expect(compactions().map(event => event.payload.event.errorMessage)).toEqual([undefined]);
+    const summarizing = agents.model.requests.find(request => /context summarization assistant/.test(text(request.messages[0])));
+    expect(summarizing?.messages.map(text).join('\n')).toContain('keep the otter');
+    const asked = agents.model.requests.find(request => text(request.messages.at(-1)) === 'What do I like?')!.messages.map(text);
+    expect(asked.some((content: string) => content.includes('Summary of My favourite animal is the otter'))).toBe(true);
+    expect(asked).not.toContain('My favourite animal is the otter');
+    expect(history.some(message => message.stopReason === 'aborted')).toBe(false);
+    expect(history.filter(message => message.role === 'user').map(text)).not.toContain('/compact keep the otter');
+    for (let tries = 0; pending().length && tries < 50; tries++) await Bun.sleep(100);
+    expect(pending()).toEqual([]);
+
+    for (const fact of [4, 5, 6]) {
+      await chat.command({ type: 'prompt', message: `Fact ${fact}: ` + 'filler words '.repeat(3000) });
+      await chat.until(messages => text(messages.at(-1)).startsWith(`Noted: Fact ${fact}`));
+    }
+    await chat.command({ type: 'prompt', message: '/compact' });
+    for (let tries = 0; compactions().length < 2 && tries < 100; tries++) await Bun.sleep(100);
+    expect(compactions().map(event => event.payload.event.errorMessage)).toEqual([undefined, undefined]);
   } finally { await agents.close(); }
 }, 120000);

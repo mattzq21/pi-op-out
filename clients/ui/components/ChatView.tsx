@@ -185,10 +185,10 @@ export function ChatView(props: Props & { transcriptActions?: JSXElement; follow
   const fillView = () => { const element = messagesRef.current;
 
     if (element && element.scrollHeight <= element.clientHeight) loadOlder(); };
-  const split = createMemo(() => splitTranscript(messages(), props.state.isStreaming));
+  const split = createMemo(() => splitTranscript(messages(), props.state.isStreaming, props.state.queueHeld === true));
   const turns = createMemo<ConversationGroup[]>(previous => groupTurns(split().transcript, previous), []);
-  /** The queued messages, then the sent messages that the daemon has not queued yet. */
-  const pendingMessages = createMemo<import("../types").PendingMessage[]>(() => [...props.state.pendingMessages ?? [], ...split().sending.map(message => ({ id: message.id, message: textOf(message.content), behavior: message.deliveryBehavior ?? "followUp", sending: true, images: Array.isArray(message.content) ? message.content.flatMap(part => part.type === "image" && part.data && part.mimeType ? [{ type: "image" as const, data: part.data, mimeType: part.mimeType }] : []) : [] }))]);
+  /** The queued messages, without those the conversation already shows, then the sent messages that the daemon has not queued yet. */
+  const pendingMessages = createMemo<import("../types").PendingMessage[]>(() => [...(props.state.pendingMessages ?? []).filter(item => !split().started.has(item.id) && !split().delivered.has(item.id)), ...split().sending.map(message => ({ id: message.id, goalSubmissionId: message.id, message: textOf(message.content), behavior: message.deliveryBehavior ?? "followUp", sending: true, images: Array.isArray(message.content) ? message.content.flatMap(part => part.type === "image" && part.data && part.mimeType ? [{ type: "image" as const, data: part.data, mimeType: part.mimeType }] : []) : [] }))]);
 
   const responses = createMemo(() => turns().flatMap(turn => {
     const message = turn.messages[finalResponseIndex(turn.messages)];
@@ -214,10 +214,15 @@ export function ChatView(props: Props & { transcriptActions?: JSXElement; follow
 
   const sessionCache = createMemo(() => hasSentPrompt() ? cacheHitStats(sessionUsage()) : undefined);
   const pendingSubmission = createMemo(() => chatSubmission(props.transport));
-  /** A /compact request stays open until compaction ends, but it is sent when Pi starts compacting. */
+  /**
+   * The submission whose status shows in the conversation: a message that starts a turn.
+   * A message that goes into the queue, as a steer or follow-up or while the queue is on hold, shows in the queue instead.
+   * A /compact request stays open until compaction ends, but it is sent when Pi starts compacting.
+   */
   const sendingSubmission = createMemo(() => {
     const submission = pendingSubmission();
-    const compact = submission && /^\/compact(?:\s|$)/.test(textOf(submission.message.content));
+    if (!submission || submission.message.deliveryBehavior || props.state.queueHeld) return undefined;
+    const compact = /^\/compact(?:\s|$)/.test(textOf(submission.message.content));
 
     return compact && props.state.isCompacting ? undefined : submission;
   });
@@ -240,8 +245,10 @@ export function ChatView(props: Props & { transcriptActions?: JSXElement; follow
     }
 
     const durable = staged ?? await stageSubmission({ rawText: text, uploads: draftUploadsFromImages(images), consume: props.draft === text && !props.uploads?.length });
+    // A message sent while an earlier one still waits for its reply, or while messages wait in the queue, goes into the queue, even before the agent reports that it works.
+    const shown = behavior ?? (split().waiting || (props.state.pendingMessages?.length ?? 0) > 0 ? "followUp" : undefined);
 
-    return trackChatSubmission(durable.owner(), text, images, durable, () => Promise.resolve(capturedOnSend(text, behavior, images, durable)), props.controlsDisabled ? "Getting ready..." : "Sending message…", behavior);
+    return trackChatSubmission(durable.owner(), text, images, durable, () => Promise.resolve(capturedOnSend(text, behavior, images, durable)), props.controlsDisabled ? "Getting ready..." : "Sending message…", shown);
   };
 
   const actions = createRef({ onSend: send, onBranch: props.onBranch, onFork: props.onFork, onForkAndForget: props.onForkAndForget });
@@ -400,7 +407,8 @@ export function ChatView(props: Props & { transcriptActions?: JSXElement; follow
       composer.style.left = `${messages.clientLeft}px`;
       composer.style.right = `${messages.offsetWidth - messages.clientWidth - messages.clientLeft}px`;
       messages.style.setProperty("--composer-height", `${composer.getBoundingClientRect().height}px`);
-      scrollToLatest();
+      // Resize observers run before paint, so the new space and the scroll show in the same frame and the history does not jump.
+      if (followLatest.current) { messages.scrollTop = messages.scrollHeight; lastScrollTop.current = messages.scrollTop; }
       measureDistance();
     };
 
@@ -456,7 +464,7 @@ export function ChatView(props: Props & { transcriptActions?: JSXElement; follow
       const selectionDisabled = () => props.controlsDisabled || !ownsConversation() || Boolean(pendingSubmission());
       const renderNewChatProject = () => (<Show when={!messages().length && props.state.messageCount === 0}><div class="new-chat-project">{props.hosts && props.onChooseHost && <div class="host-picker"><ContainedPicker label="Host" value={props.transport?.currentHostId() ?? "local"} disabled={Boolean(pendingSubmission())} menuMinWidth={140} anchorLeft icon={<Monitor size={14} />} options={props.hosts.map(host => ({ value: host.id, label: host.name, disabled: host.disabled }))} onChange={hostId => props.onChooseHost?.(hostId)} /></div>}<div class="project-picker"><button type="button" class={projectName() ? "selected" : undefined} aria-label={projectName() ? `Selected project: ${required((projectName()))}` : "Choose project"} data-tooltip={displayedProjectCwd()} disabled={selectionDisabled()} onClick={props.onOpenProject}><Folder size={14} />{projectName() ?? "Choose project"}</button>{projectName() && props.onClearProject && <button type="button" class="clear-project" aria-label="Clear project" data-tooltip="Clear project" disabled={selectionDisabled()} onClick={props.onClearProject}><X size={14} /></button>}</div><Show when={props.transport?.newChatWorktreeOptions()}>{options => <NewChatWorktreePicker options={options()} value={props.transport?.newChatBaseBranch()} disabled={selectionDisabled()} onChange={branch => props.transport?.setNewChatBranch(branch)} />}</Show></div></Show>);
       const renderConversationOwnershipBanner = () => ((takingOwnership() || ownershipError()) && <div class="conversation-ownership-banner"><div>{takingOwnership() && <p role="status">Taking ownership…</p>}{ownershipError() && <p role="alert">{ownershipError()}</p>}</div></div>);
-      const ComposerInteraction = () => (<div class="composer-interaction"><Composer goal={goalControls} recentPrompts={() => props.messages.filter(message => message.role === "user").map(message => textOf(message.content))} submissionDisabled={!ownsConversation() || Boolean(pendingSubmission())} ownershipRequired={!ownsConversation()} onTakeOwnership={takeOwnership} toolbar={renderNewChatProject()} streaming={props.state.isStreaming} compacting={props.state.isCompacting} queued={props.state.pendingMessageCount} pendingMessages={pendingMessages()} loadPendingImage={props.transport ? (id, index) => required(props.transport).command({ type: "get_queued_image", id, index }, z.object({ data: z.string(), mimeType: z.string() })) : undefined} onChangePending={props.onChangePending} refreshError={props.refreshError} capabilityErrors={props.capabilityErrors} capabilitiesLoading={props.capabilitiesLoading} onRetryCapabilities={props.onRetryCapabilities} commands={props.commands} agents={props.agents ?? []} activeAgent={props.activeAgent} agentLocked={props.agentLocked} agentSaved={props.agentSaved} agentUnavailable={props.agentUnavailable} modelAliases={props.modelAliases} models={props.models} model={props.state.model} fastModeStatus={fastModeStatus()} thinkingLevel={props.state.thinkingLevel} thinkingLevels={props.thinkingLevels} sessionCache={props.debug?.cacheHitRate ? sessionCache() : undefined} contextUsage={props.state.contextUsage} controlsDisabled={props.controlsDisabled || !ownsConversation() || Boolean(pendingSubmission())} draft={props.draft} onDraftChange={props.onDraftChange} focusRequest={props.focusRequest} uploads={props.uploads} onUploadsChange={props.onUploadsChange} onStageSubmission={stageSubmission} onSend={send} onAbort={props.onAbort} terminalDisabled={!terminalAvailable()} onOpenTerminal={props.onOpenTerminal} onJumpToLatest={jumpToLatest} agentHostLabel={agentDefinitionHost()} agentReloadScope={agentReloadScope()} onReloadAgents={props.transport ? reloadAgentDefinitions : undefined} onAgent={props.onAgent ?? (() => undefined)} onModel={props.onModel} onToggleFastMode={props.onToggleFastMode} onThinking={props.onThinking} /></div>);
+      const ComposerInteraction = () => (<div class="composer-interaction"><Composer goal={goalControls} recentPrompts={() => props.messages.filter(message => message.role === "user").map(message => textOf(message.content))} submissionDisabled={!ownsConversation() || Boolean(pendingSubmission())} ownershipRequired={!ownsConversation()} onTakeOwnership={takeOwnership} toolbar={renderNewChatProject()} streaming={props.state.isStreaming} compacting={props.state.isCompacting} queued={props.state.pendingMessageCount} pendingMessages={pendingMessages()} queueHeld={props.state.queueHeld === true} onHoldQueue={props.transport && props.state.sessionId ? held => required(props.transport).command({ type: "hold_queue", held }).then(() => undefined) : undefined} loadPendingImage={props.transport ? (id, index) => required(props.transport).command({ type: "get_queued_image", id, index }, z.object({ data: z.string(), mimeType: z.string() })) : undefined} onChangePending={props.onChangePending} refreshError={props.refreshError} capabilityErrors={props.capabilityErrors} capabilitiesLoading={props.capabilitiesLoading} onRetryCapabilities={props.onRetryCapabilities} commands={props.commands} agents={props.agents ?? []} activeAgent={props.activeAgent} agentLocked={props.agentLocked} agentSaved={props.agentSaved} agentUnavailable={props.agentUnavailable} modelAliases={props.modelAliases} models={props.models} model={props.state.model} fastModeStatus={fastModeStatus()} thinkingLevel={props.state.thinkingLevel} thinkingLevels={props.thinkingLevels} sessionCache={props.debug?.cacheHitRate ? sessionCache() : undefined} contextUsage={props.state.contextUsage} controlsDisabled={props.controlsDisabled || !ownsConversation() || Boolean(pendingSubmission())} queueControlsDisabled={props.controlsDisabled || !ownsConversation()} draft={props.draft} onDraftChange={props.onDraftChange} focusRequest={props.focusRequest} uploads={props.uploads} onUploadsChange={props.onUploadsChange} onStageSubmission={stageSubmission} onSend={send} onAbort={props.onAbort} terminalDisabled={!terminalAvailable()} onOpenTerminal={props.onOpenTerminal} onJumpToLatest={jumpToLatest} agentHostLabel={agentDefinitionHost()} agentReloadScope={agentReloadScope()} onReloadAgents={props.transport ? reloadAgentDefinitions : undefined} onAgent={props.onAgent ?? (() => undefined)} onModel={props.onModel} onToggleFastMode={props.onToggleFastMode} onThinking={props.onThinking} /></div>);
 
       return (<Show when={!props.readOnly}><div ref={element => { composerStack.current = element; }} class="composer-stack" classList={{ "composer-settling": settling(), "composer-loading": Boolean(props.controlsDisabled) }}><Show when={awayFromLatest() && !props.state.isStreaming}><button type="button" class="jump-to-latest" aria-label="Scroll to latest" onClick={jumpToLatest}><ArrowDown size={16} /></button></Show>{props.widgets.length > 0 && <div class="extension-widget">{<Index each={stringsSchema.parse(props.widgets)}>{(line, _index) => <div >{line()}</div>}</Index>}</div>} {activity() && <div class="runtime-activity" role="status">{(activity())}</div>}{renderConversationOwnershipBanner()}<ComposerInteraction /></div></Show>);
     };
@@ -602,23 +610,31 @@ function associateQueuedContext(messages: ChatMessage[]) {
  * Splits the messages into the transcript and the sent messages that wait for the daemon's queue.
  * A sent message that the daemon has not queued yet waits in the queue above the message box while an earlier user message still waits for its reply: Pi delivers it only after that reply.
  * An earlier user message waits for its reply while it is still being sent, or while the agent works. A message whose task ended without a reply does not wait.
+ * While the queue is on hold, every sent message waits in the queue: the daemon keeps it there.
+ * A message sent as a steer or follow-up while the agent worked also waits there, even after the reply started: Pi queues it.
+ * A queued message that starts a turn stays in the conversation, and its queue entry is left out of the queue (started), so it does not move to the queue while Pi takes it.
  */
-function splitTranscript(messages: ChatMessage[], working: boolean) {
+function splitTranscript(messages: ChatMessage[], working: boolean, held: boolean) {
   let waiting = false;
   const sending: ChatMessage[] = [];
+  const started = new Set<string>();
+  const delivered = new Set(messages.flatMap(message => !message.submissionId && message.piopQueueId ? [message.piopQueueId] : []));
   const transcript = messages.filter(message => {
-    if (message.submissionId && message.piopQueueId) return false;
+    if (message.submissionId && message.piopQueueId) {
+      if (delivered.has(message.piopQueueId) || waiting || held || message.deliveryBehavior) return false;
+      started.add(message.piopQueueId);
+    }
 
     if (message.role === "assistant") waiting = false;
     else if (message.role === "user") {
-      if (message.submissionId && waiting) { sending.push(message); return false; }
+      if (message.submissionId && (waiting || held || message.deliveryBehavior)) { sending.push(message); return false; }
       waiting = working || Boolean(message.submissionId);
     }
 
     return true;
   });
 
-  return { transcript, sending };
+  return { transcript, sending, started, waiting, delivered };
 }
 
 function groupTurns(messages: ChatMessage[], previous: ConversationGroup[] = []) {
@@ -778,6 +794,33 @@ function ConversationTurn(componentProps: ConversationTurnProps) {
   const reasoningOnly = createMemo(() => deferredWork() ? deferredWork()!.reasoningOnly : (compactCompletedTools(intermediate()).every(({ message }) => message.role === "assistant" && hasVisibleText(thinkingOf(message.content)) && !hasVisibleText(textOf(message.content)) && message.stopReason !== "error" && message.stopReason !== "aborted")));
   const finalSource = createMemo(() => (finalIndex() >= 0 ? turnMessages()[finalIndex()] : undefined));
   const finalMessage = createMemo(() => (finalIndex() >= 0 ? { ...turnMessages()[finalIndex()], content: textOf(turnMessages()[finalIndex()].content) } : undefined));
+  /**
+   * The final response shows in one place while the turn runs and after it ends, so the end of the turn does not build it again.
+   * While the turn runs, a response is final only while it is the last message of the turn and calls no tool.
+   */
+  const finalShown = createMemo(() => {
+    const index = finalIndex();
+
+    if (index < 0) return false;
+
+    if (!componentProps.active) return true;
+    const message = turnMessages()[index];
+
+    const later = turnMessages().slice(index + 1).some(item => !isPromptMessage(item) && !isContextInjection(item));
+
+    return !later && !(Array.isArray(message.content) && message.content.some(part => part.type === "toolCall"));
+  });
+  /** The work of a running turn: every message but the prompt and the final response. The reasoning of the final response stays here. */
+  const activeWork = createMemo(() => turnMessages().flatMap((message, index): ChatMessage[] => {
+    if (isPromptMessage(message) || isContextInjection(message)) return [];
+
+    if (!finalShown() || index !== finalIndex()) return [message];
+
+    if (!finalThinking()) return [];
+    const { promptContext: _promptContext, ...reasoningMessage } = message;
+
+    return [{ ...reasoningMessage, id: `${message.id}:reasoning`, content: [{ type: "thinking", thinking: finalThinking() }], stopReason: undefined, errorMessage: undefined }];
+  }));
 
   const turnCacheUsage = createMemo(() => (turnMessages().reduce((total, message) => {
     for (const usage of message.role === "assistant" ? [message.usage, message.deferredWork?.usage] : []) if (usage) {
@@ -790,7 +833,9 @@ function ConversationTurn(componentProps: ConversationTurnProps) {
 
 
   const workedFor = createMemo(() => (turnTiming(turnMessages(), userIndex(), finalMessage())));
-  const retryTarget = createMemo(() => (componentProps.retryable ? retryableResponse(turnMessages()) : undefined));
+  /** Pi runs a failed response again from the prompt before it, so a turn without a prompt that has content cannot be retried. */
+  const hasRetryPrompt = createMemo(() => turnMessages().some(message => isPromptMessage(message) && (message.role !== "user" || hasVisibleText(textOf(message.content)) || (Array.isArray(message.content) && message.content.some(part => part.type === "image")))));
+  const retryTarget = createMemo(() => (componentProps.retryable && hasRetryPrompt() ? retryableResponse(turnMessages()) : undefined));
   const retry = () => {
     const target = retryTarget();
 
@@ -809,26 +854,29 @@ function ConversationTurn(componentProps: ConversationTurnProps) {
   });
 
   const renderPromptContextBar = () => (<Show when={componentProps.debug.contextBar && firstResponseInputTokens()}>{inputTokens => <Index each={componentProps.promptContexts}>{context => <PromptContextBar context={context()} inputTokens={inputTokens()} />}</Index>}</Show>);
-  const renderWorkGroup = () => hasWork() && <details class="work-group" open={workOpen()} onToggle={(event) => openWork(event.currentTarget.open)}><summary>{reasoningOnly() ? "Reasoning" : workedFor() ? `Worked for ${workedFor()}` : "Work"}<ChevronRight size={12} class="work-group-chevron" aria-hidden="true" />{renderFinishedSubagents()}</summary>{workOpen() && <div class={`work-group-content${reasoningOnly() ? " reasoning-group-content" : ""}`}>{deferredWork() ? workError() ? <div class="message-failure" role="alert">Could not load this work: {workError()}</div> : <div class="mcp-loading" role="status"><LoaderCircle class="mcp-loading-spinner" size={14} aria-hidden="true" /><span>Loading work</span></div> : <MessageList messages={intermediate()} expanded debug={componentProps.debug} showActions={false} />}</div>}</details>;
+  const renderWorkGroup = () => <Show when={hasWork()}><details class="work-group" open={workOpen()} onToggle={(event) => openWork(event.currentTarget.open)}><summary>{reasoningOnly() ? "Reasoning" : workedFor() ? `Worked for ${workedFor()}` : "Work"}<ChevronRight size={12} class="work-group-chevron" aria-hidden="true" />{renderFinishedSubagents()}</summary>{workOpen() && <div class={`work-group-content${reasoningOnly() ? " reasoning-group-content" : ""}`}>{deferredWork() ? workError() ? <div class="message-failure" role="alert">Could not load this work: {workError()}</div> : <div class="mcp-loading" role="status"><LoaderCircle class="mcp-loading-spinner" size={14} aria-hidden="true" /><span>Loading work</span></div> : <MessageList messages={intermediate()} expanded debug={componentProps.debug} showActions={false} />}</div>}</details></Show>;
 
-  const renderActiveWorkContent = () => (<Show when={componentProps.active} fallback={required(<>
-    {renderWorkGroup()}
-    {finalMessage() && !hasWork() && finishedSubagents().length === 0 && <hr class="turn-divider" />}
-    {finalMessage() && <Message message={required((finalMessage()))} turnCacheUsage={turnCacheUsage()} debug={componentProps.debug} onBranch={canBranchFrom(finalSource()) ? componentProps.onBranch : undefined} onFork={canBranchFrom(finalSource()) ? componentProps.onFork : undefined} onForkAndForget={forgetFrom(finalSource())} lastPoint={finalSource()?.id === lastPointId()} retrying={retrying()} onRetry={retryTarget() ? retry : undefined} />}
-    {retryError() && <div class="message-failure retry-error" role="alert">Retry failed: {(retryError())}</div>}
-    {renderSystemMessages(false)}
-    {renderForkLink()}
-    {renderSystemMessages(true)}
-  </>)}>
-    <div class="active-work-content"><MessageList messages={turnMessages().filter(message => !isPromptMessage(message) && !isContextInjection(message))} expanded compact={false} debug={componentProps.debug} showActions={false} /></div>
-    {renderForkLink()}
-  </Show>);
+  const renderTurnEnd = () => (<>
+    <Show when={componentProps.active} fallback={<>
+      {renderWorkGroup()}
+      <Show when={finalShown() && !hasWork() && finishedSubagents().length === 0}><hr class="turn-divider" /></Show>
+    </>}>
+      <div class="active-work-content"><MessageList messages={activeWork()} expanded compact={false} debug={componentProps.debug} showActions={false} /></div>
+    </Show>
+    <Show when={finalShown()}><Message message={required(finalMessage())} turnCacheUsage={turnCacheUsage()} debug={componentProps.debug} showActions={!componentProps.active} onBranch={!componentProps.active && canBranchFrom(finalSource()) ? componentProps.onBranch : undefined} onFork={!componentProps.active && canBranchFrom(finalSource()) ? componentProps.onFork : undefined} onForkAndForget={componentProps.active ? undefined : forgetFrom(finalSource())} lastPoint={finalSource()?.id === lastPointId()} retrying={retrying()} onRetry={retryTarget() ? retry : undefined} /></Show>
+    <Show when={!componentProps.active} fallback={renderForkLink()}>
+      <Show when={retryError()}>{error => <div class="message-failure retry-error" role="alert">Retry failed: {error()}</div>}</Show>
+      {renderSystemMessages(false)}
+      {renderForkLink()}
+      {renderSystemMessages(true)}
+    </Show>
+  </>);
 
   return <section class="conversation-turn" classList={{ "latest-turn": componentProps.latest === true }}>
     {<Key each={userMessages()} by={(message) => message.id}>{(message, _index) => <Message  message={message()} debug={componentProps.debug} />}</Key>}
     {!hasWork() && finishedSubagents().length > 0 && <div class="subagent-finished-line">{renderFinishedSubagents()}</div>}
     {renderPromptContextBar()}
     {componentProps.debug.contextInjections && <MessageList messages={turnMessages().filter(isContextInjection)} expanded={false} debug={componentProps.debug} />}
-    {renderActiveWorkContent()}
+    {renderTurnEnd()}
   </section>;
 }

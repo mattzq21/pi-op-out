@@ -3,23 +3,19 @@ import type { KeyboardEvent } from "./solid";
 
 type EditorEvent = KeyboardEvent<HTMLTextAreaElement>;
 
-function pasteShortcut(event: EditorEvent) {
-  return (event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "v" && !event.altKey;
-}
-
 function submitShortcut(event: EditorEvent) {
   return event.key === "Enter" && !event.shiftKey && (!isMobile || event.ctrlKey);
 }
 
 export function createComposerEditorKey(options: {
-  paste: () => void;
+  paste: (event: EditorEvent) => void;
   ownershipRequired: () => boolean | undefined;
   palette: (event: EditorEvent) => boolean;
   history: (event: EditorEvent) => boolean;
   submit: (behavior: "steer" | "followUp") => Promise<void>;
 }) {
   return (event: EditorEvent) => {
-    if (pasteShortcut(event)) options.paste();
+    options.paste(event);
 
     if (options.ownershipRequired() || event.isComposing) return;
 

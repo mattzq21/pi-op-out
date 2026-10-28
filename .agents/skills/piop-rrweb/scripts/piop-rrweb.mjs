@@ -4,13 +4,16 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { openSession, chordActions } from './lib/webdriver.mjs';
 import { ensureBundles } from './lib/bundles.mjs';
-import { Mirror, loadEvents, markers, resolveTime, isMutation, isCustom, TYPE, SOURCE } from './lib/mirror.mjs';
+import { Mirror, loadEvents, markers, resolveTime, isMutation, TYPE, SOURCE } from './lib/mirror.mjs';
 import * as PAGE from './lib/page.mjs';
 import { buildViewer, verifyViewer } from './lib/replay.mjs';
+import { writeRecording } from './lib/recording.mjs';
+import { refreshReport } from './lib/refresh.mjs';
 
 const HELP = `piop-rrweb.mjs <command> [options]
 
-Recording (needs --session <session.json> printed by piop-wdio's tauri-webdriver.py):
+Recording (needs --session <session.json> printed by piop-wdio's tauri-webdriver.py; for Playwright pages use
+recordPage from scripts/lib/playwright.mjs):
   start   [--track "sel1,sel2"] [--mask] [--interval 20]   inject rrweb, start recording and geometry sampling
   mark    <label>                                          add a time marker
   click   <selector> [--label L]                           mark + element.click() in one call
@@ -31,6 +34,10 @@ Replay (headless Chromium, no session needed):
 Reading events (no browser):
   summary <events.json>                                    counts, mutations per second, markers
   diff    <events.json> --between A B | --from T --to T    DOM changes between two markers or times (seconds), node ids resolved to paths
+  refresh <events.json> --between A B | --from T --to T [--ms 1000]
+          needless re-renders: RECREATE (node removed and added again with the same tag/class/text), MOVE (same node
+          removed and re-inserted), FLIP (attribute or text that changes and returns to its old value within --ms),
+          REWRITE (attribute set to the value it already has)
   quiet   <events.json> [--after LABEL] [--ms 2000]        last DOM change after each marker; fails when one lands later than --ms
   find    <events.json> <query> [--at T]                   nodes whose tag/attributes/text contain query
   attrs   <events.json> [--id N] [--name style] [--all]    attribute change timeline (repeats hidden unless --all)
@@ -115,46 +122,8 @@ async function doStep(wd, step) {
   fail('unknown step ' + JSON.stringify(step));
 }
 
-// Per mark and tracked selector: when did the geometry last change before the next mark?
-function settleReport(marks, geometry) {
-  const report = [];
-  for (let i = 0; i < marks.length; i++) {
-    const start = marks[i].t, end = marks[i + 1]?.t ?? Infinity;
-    const samples = geometry.filter(g => g.t > start && g.t <= end);
-    const bySelector = {};
-    for (const g of samples) {
-      const entry = bySelector[g.selector] ||= { changes: 0, lastChangeMs: null, final: null };
-      entry.changes++;
-      entry.lastChangeMs = g.t - start;
-      entry.final = g.present ? { width: g.width, height: g.height, scrollTop: g.scrollTop, gapToBottom: g.gapToBottom } : { present: false };
-    }
-    report.push({ mark: marks[i].label, offsetMs: marks[i].t - marks[0].t, selectors: bySelector });
-  }
-  return report;
-}
-
 async function doStop(wd, outDir) {
-  const result = await checkResult(await wd.execute(PAGE.STOP));
-  fs.mkdirSync(outDir, { recursive: true });
-  const eventsFile = path.join(outDir, 'events.json');
-  fs.writeFileSync(eventsFile, JSON.stringify(result.events));
-  fs.writeFileSync(path.join(outDir, 'geometry.json'), JSON.stringify(result.geometry, null, 1));
-  const events = result.events;
-  const counts = {};
-  for (const e of events) counts[TYPE[e.type]] = (counts[TYPE[e.type]] || 0) + 1;
-  const meta = {
-    eventsFile, events: events.length, counts, durationMs: events.length ? events.at(-1).timestamp - events[0].timestamp : 0,
-    marks: result.marks.map(m => ({ label: m.label, offsetMs: events.length ? m.t - events[0].timestamp : null })),
-    geometrySamples: result.geometry.length, samplerTicks: result.ticks, visibilityState: result.visibilityState, viewport: result.viewport, href: result.href,
-    settle: settleReport(result.marks, result.geometry),
-  };
-  fs.writeFileSync(path.join(outDir, 'recording.json'), JSON.stringify(meta, null, 1));
-  const summary = { eventsFile, events: events.length, durationMs: meta.durationMs, marks: meta.marks.length, geometrySamples: result.geometry.length };
-  if (result.ticks === 0 && result.geometry.length === 0 && list(flags.track).length) summary.warning = 'sampler never ran';
-  const neverPresent = list(flags.track).filter(sel => !result.geometry.some(g => g.selector === sel && g.present));
-  if (neverPresent.length) summary.warning = (summary.warning ? summary.warning + '; ' : '') + 'tracked selectors never matched: ' + neverPresent.join(', ');
-  for (const s of meta.settle) for (const [sel, e] of Object.entries(s.selectors)) (summary.settle ||= []).push(`${s.mark} ${sel}: ${e.changes} changes, last ${e.lastChangeMs} ms`);
-  return summary;
+  return writeRecording(outDir, await checkResult(await wd.execute(PAGE.STOP)), list(flags.track));
 }
 
 async function runReplay() {
@@ -204,12 +173,24 @@ function runSummary(events) {
   for (const m of marks) if (m.tag !== 'geometry') out(`  ${(m.offsetMs / 1000).toFixed(3)}s  ${m.payload?.label ?? m.tag}${m.payload?.selector ? '  ' + m.payload.selector : ''}`);
 }
 
-function runDiff(events) {
+function timeWindow(events) {
   let from, to;
   if (flags.between) { from = resolveTime(events, flags.between); to = resolveTime(events, positional[1] || fail('--between A B needs two markers')); }
   else if (flags.from != null) { from = resolveTime(events, flags.from); to = flags.to != null ? resolveTime(events, flags.to) : Infinity; }
   else fail('give --between A B or --from T [--to T]');
-  if (to < from) [from, to] = [to, from];
+  return to < from ? [to, from] : [from, to];
+}
+
+function runRefresh(events) {
+  const [from, to] = timeWindow(events);
+  out(`window: ${rel(events, from)} -> ${Number.isFinite(to) ? rel(events, to) : 'end'}`);
+  const { lines, totals } = refreshReport(events, from, to, { flipMs: Number(flags.ms || 1000), limit: Number(flags.limit || 60) });
+  for (const l of lines) out(l);
+  out(`totals: ${totals.recreate} recreated, ${totals.move} moved, ${totals.flip} flips, ${totals.rewrite} rewrites, ${totals.placeholders} placeholder swaps ignored`);
+}
+
+function runDiff(events) {
+  const [from, to] = timeWindow(events);
   const mirror = new Mirror();
   const totals = { mutations: 0, adds: 0, removes: 0, texts: 0, attrs: 0, attrsUnchanged: 0, addedNodes: 0, removedNodes: 0, placeholderSwaps: 0 };
   const lines = [];
@@ -318,6 +299,7 @@ async function main() {
     case 'replay': return runReplay();
     case 'summary': return runSummary(loadEvents(positional[0] || fail('events.json required')));
     case 'diff': return runDiff(loadEvents(positional[0] || fail('events.json required')));
+    case 'refresh': return runRefresh(loadEvents(positional[0] || fail('events.json required')));
     case 'quiet': return runQuiet(loadEvents(positional[0] || fail('events.json required')));
     case 'attrs': return runAttrs(loadEvents(positional[0] || fail('events.json required')));
     case 'texts': return runTexts(loadEvents(positional[0] || fail('events.json required')));

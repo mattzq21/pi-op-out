@@ -6,7 +6,10 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-/** A real daemon for UI tests. With model 'echo', its only model answers each message with "Reply to " and the message text. */
+/**
+ * A real daemon for UI tests. With model 'echo', its only model answers each message with "Reply to " and the message text; messages that start with "Slow " get it after 3 seconds.
+ * restart() restarts the daemon the way the desktop app sees it; modelRequests() gives the last user text of each model request.
+ */
 export async function daemonClient(t, onEvent = () => {}, { remotes = [], model } = {}) {
   const directory = await mkdtemp(join(tmpdir(), 'piop-ui-'));
   const worker = spawn('bun', [fileURLToPath(new URL('./daemon/ui-host.ts', import.meta.url))], { env: { ...process.env, TMPDIR: directory, PIOP_TEST_UI_REMOTES: JSON.stringify(remotes), ...(model ? { PIOP_TEST_UI_MODEL: model } : {}) }, stdio: ['pipe', 'pipe', 'pipe'] });
@@ -26,16 +29,24 @@ export async function daemonClient(t, onEvent = () => {}, { remotes = [], model 
       await rm(directory, { recursive: true });
     } finally { clearTimeout(timer); }
   });
-  const endpoint = await new Promise((resolve, reject) => {
-    const lines = createInterface({ input: worker.stdout });
-    const timer = setTimeout(() => reject(new Error('Daemon test host did not start\n' + diagnostics)), 20000);
-    worker.once('error', reject);
-    exited.then(() => reject(new Error('Daemon test host exited before ready\n' + diagnostics)));
-    lines.once('line', line => {
-      clearTimeout(timer);
-      try { resolve(JSON.parse(line)); } catch (error) { reject(error); }
-    });
+  /** Each line of the test host answers the oldest waiting reader. */
+  const readers = [];
+  createInterface({ input: worker.stdout }).on('line', line => {
+    const reader = readers.shift();
+    if (!reader) { diagnostics += 'Unexpected test host line: ' + line + '\n'; return; }
+    try { reader.resolve(JSON.parse(line)); } catch (error) { reader.reject(error); }
   });
+  worker.once('error', error => { for (const reader of readers.splice(0)) reader.reject(error); });
+  exited.then(() => { for (const reader of readers.splice(0)) reader.reject(new Error('Daemon test host exited\n' + diagnostics)); });
+  const readLine = (timeout = 20000) => new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error('Daemon test host did not answer\n' + diagnostics)), timeout);
+    readers.push({ resolve: value => { clearTimeout(timer); resolve(value); }, reject: error => { clearTimeout(timer); reject(error); } });
+  });
+  let endpoint = await readLine();
+  /** The chat runtimes the app started; the desktop app tells each one that it disconnected when the daemon goes away. */
+  const runtimes = new Set();
+  /** Set while restart() waits for the new daemon. Requests wait for it, as the desktop app connects again before it sends one. */
+  let reconnecting;
   async function connect() {
     socket = new WebSocket(endpoint.url);
     const connection = socket;
@@ -66,13 +77,37 @@ export async function daemonClient(t, onEvent = () => {}, { remotes = [], model 
       if (socket.readyState !== WebSocket.CLOSED) throw new Error('Close the existing test connection before reconnecting');
       await connect();
     },
-    invoke(command, args = {}) {
+    async invoke(command, args = {}) {
+      if (reconnecting) await reconnecting;
       const id = nextId++;
+      if (command === 'start_pi' && typeof args.runtimeId === 'string') runtimes.add(args.runtimeId);
+      if (command === 'stop_pi') runtimes.delete(args.runtimeId);
       return new Promise((resolve, reject) => {
         if (socket.readyState !== WebSocket.OPEN) { reject(new Error('Daemon test connection is not open')); return; }
         pending.set(id, { resolve, reject });
         socket.send(JSON.stringify({ id, command, args }));
       });
+    },
+    /** Restarts the daemon on the same home. The app gets the events the desktop app sends: restarting, a disconnect per chat, then connection_restored. */
+    async restart() {
+      await onEvent('pi://daemon-restarting', { hostId: 'local' });
+      const next = readLine(60000);
+      let restarted;
+      reconnecting = new Promise(resolve => { restarted = resolve; });
+      try {
+        worker.stdin.write('restart\n');
+        await client.disconnect();
+        for (const runtimeId of runtimes) await onEvent('pi://event', { runtimeId, event: { type: 'disconnected' } });
+        runtimes.clear();
+        endpoint = await next;
+        await connect();
+      } finally { reconnecting = undefined; restarted(); }
+      await onEvent('pi://event', { type: 'connection_restored' });
+    },
+    async modelRequests() {
+      const answer = readLine();
+      worker.stdin.write('requests\n');
+      return answer;
     },
     /**
      * Registers the projects of chats that the test lists in place of the daemon, as the daemon does for chats it lists:

@@ -10,9 +10,11 @@ export const entrySchema = z.object({
 
 export const pendingMessageSchema = z.object({
   id: z.string(), goalSubmissionId: z.string().optional(), message: z.string(), behavior: z.enum(["steer", "followUp"]),
-  images: z.array(imageSchema.omit({ data: true }).extend({ data: z.string().optional() })).optional(), retry: z.boolean().optional(), recovered: z.boolean().optional(),
+  images: z.array(imageSchema.omit({ data: true }).extend({ data: z.string().optional(), id: z.string().optional() })).optional(), retry: z.boolean().optional(), recovered: z.boolean().optional(),
   /** The active goal's entry: follow-ups above it run first, and those below it wait until the goal stops. */
   goal: z.boolean().optional(),
+  /** True on a paused goal's entry. It keeps its place, and the queue is on hold until the goal resumes. */
+  paused: z.boolean().optional(),
 });
 
 export const pendingMessagesSchema = z.array(pendingMessageSchema).optional();
@@ -27,6 +29,8 @@ export const chatSessionEventSchema = z.looseObject({
   parentToolCallId: z.string().optional(), toolCallId: z.string().optional(), toolName: z.string().optional(),
   isError: z.boolean().optional(), toolImage: z.boolean().optional(), pendingMessages: pendingMessagesSchema,
   steering: z.array(z.unknown()).optional(), followUp: z.array(z.unknown()).optional(),
+  /** True while the user holds the queue: queued messages wait until the user resumes it. */
+  held: z.boolean().optional(),
   aborted: z.boolean().optional(), errorMessage: z.string().optional(),
   attempt: z.number().optional(), level: z.string().optional().catch(undefined),
 });

@@ -21,6 +21,8 @@ const wrappedManagers = new WeakSet();
 
 const { installReloadLifecycle, afterReload, serializeConfiguration, runtimeRequest } = require("./runtime-configuration.cjs");
 
+const { queuePull } = require("./queue-pull.cjs");
+
 const configurationCommands = new Set(["context_cap_settings", "provider_auth_refresh", "get_agent_configuration", "configure_agents", "select_agent", "fork_after", "fork_and_forget", "prepare_fork"]);
 
 let queueValidation;
@@ -175,7 +177,7 @@ function runtimeEvents(output) {
     pending.delete(result.id);
 
     if (typeof result.error === "string") waiter.reject(new Error(result.error));
-    else waiter.resolve();
+    else waiter.resolve(result.data);
   };
 
   const close = () => {
@@ -185,7 +187,7 @@ function runtimeEvents(output) {
 
   Object.defineProperty(globalThis, Symbol.for("piop.runtime-events"), { value: send, configurable: true });
 
-  return { answer, close };
+  return { answer, close, send };
 }
 
 function appInput(dispatch, events) {
@@ -233,6 +235,33 @@ async function dispatchQueuedPrompt(command, session, output) {
   }).catch(error => {
     if (!preflightSucceeded) promptError(command, error, output);
     else acceptedPromptError(session, error, output);
+  });
+}
+
+/** Passes a message taken from the daemon's queue to Pi. Resolves with Pi's preflight disposition; a later failure of the run it started is reported as a run error. */
+function bindQueuePull(session, output) {
+  const ask = Object.getOwnPropertyDescriptor(globalThis, Symbol.for("piop.runtime-events"))?.value;
+
+  if (!ask) throw new Error("Piop runtime events are unavailable");
+
+  return queuePull(session, { ask, prompt: (target, item) => promptTaken(target, item, output) });
+}
+
+function promptTaken(session, item, output) {
+  return new Promise((resolve, reject) => {
+    let preflightSucceeded = false;
+    void session.prompt(item.message, {
+      images: item.images,
+      streamingBehavior: item.behavior,
+      source: "rpc",
+      goalSubmissionId: item.goalSubmissionId,
+      goalPrepared: item.goalPrepared,
+      [queuePromptScope]: { session, queueId: item.id, submissionId: item.goalSubmissionId, tagged: false },
+      preflightResult: disposition => { preflightSucceeded = true; resolve(disposition); },
+    }).catch(error => {
+      if (!preflightSucceeded) reject(error);
+      else acceptedPromptError(session, error, output);
+    });
   });
 }
 
@@ -392,6 +421,13 @@ async function dispatchReady(command, session, output) {
       return;
     }
 
+    if (command.command === "queue_offer") {
+      bindQueuePull(session, output).setOffer(command.payload);
+      output({ type: "response", id: command.id, command: command.command, success: true, data: null });
+
+      return;
+    }
+
     if (command.command === "get_commands") {
       output({ type: "response", id: command.id, command: command.command, success: true, data: { commands: await listCommands(session) } });
 
@@ -510,6 +546,12 @@ async function consumeQueuedCommands(session, messages) {
 
     if (index !== -1) pending.splice(index, 1);
     session._emitQueueUpdate();
+
+    if (compactionText(text)) {
+      session[reachedCompaction] = { text, message };
+      break;
+    }
+
     const consumed = await executeQueuedCommand(session, text, message.content.filter(part => part.type === "image"));
 
     if (consumed && isQueuedUserMessage(message)) session.sessionManager.appendMessage(message);
@@ -520,19 +562,73 @@ async function consumeQueuedCommands(session, messages) {
 
 async function drainQueuedCommands(session, drain) {
   while (true) {
-    if (session.agent.signal?.aborted) return [];
+    if (session.agent.signal?.aborted || session[reachedCompaction]) return [];
     const messages = await drain();
 
     if (!messages.length) return messages;
     const prompts = await consumeQueuedCommands(session, messages);
 
-    if (prompts.length) return prompts;
+    if (prompts.length || session[reachedCompaction]) return prompts;
   }
 }
 
-function bindQueuedCommands(session) {
+const compactionText = text => commandName(text) === "compact";
+
+/** The queued /compact that the run reached. The run compacts after its turn ends, before it takes the next queued message. */
+const reachedCompaction = Symbol("piop.reachedCompaction");
+
+/** Settles when a queued compaction ends. Prompts that arrive meanwhile wait for it, because Pi refuses prompts during a manual compaction. */
+const runningCompaction = Symbol("piop.runningCompaction");
+
+/**
+ * Compacts at the position of a queued /compact. Pi's compact() stops the agent run first; here the run reached the compaction in order,
+ * so that one stop is skipped. A later Stop from the user still stops the compaction and the run.
+ */
+async function runQueuedCompaction(session, reached, output) {
+  const instructions = reached.text.slice("/compact".length).trim() || undefined;
+  let finish;
+  session[runningCompaction] = new Promise(resolve => { finish = resolve; });
+  session.abort = async function () { delete session.abort; };
+
+  try { await session.compact(instructions); } catch (error) {
+    console.error(`Queued compaction failed: ${error instanceof Error ? error.message : String(error)}`);
+  } finally {
+    if (Object.hasOwn(session, "abort")) delete session.abort;
+    session[runningCompaction] = undefined;
+    finish();
+  }
+
+  if (isQueuedUserMessage(reached.message)) output({ type: "queue_consumed", queueId: reached.message.piopQueueId, sessionId: session.sessionManager.getSessionId(), entryId: null });
+}
+
+function bindQueuedCompaction(session, output) {
+  const post = session._handlePostAgentRun;
+
+  session._handlePostAgentRun = async function () {
+    const reached = this[reachedCompaction];
+
+    if (!reached) return post.call(this);
+    this[reachedCompaction] = undefined;
+
+    // A stop before the compaction starts keeps it first in the queue.
+    if (this._agentRunAbortRequested) {
+      this.agent.followUpQueue.messages.unshift(reached.message);
+      this.getFollowUpMessages().unshift(reached.text);
+      this._emitQueueUpdate();
+
+      return post.call(this);
+    }
+    this._lastAssistantMessage = undefined;
+    await runQueuedCompaction(this, reached, output);
+
+    return !this._agentRunAbortRequested && this.agent.hasQueuedMessages();
+  };
+}
+
+function bindQueuedCommands(session, output) {
   const agent = session.agent;
   bindFollowUpDrain(session);
+  bindQueuedCompaction(session, output);
   const createLoopConfig = agent.createLoopConfig;
   const runPromptMessages = agent.runPromptMessages;
 
@@ -555,7 +651,7 @@ function bindQueuedCommands(session) {
       cancelled = signal.aborted;
     });
 
-    if (!cancelled && this.hasQueuedMessages()) return this.continue();
+    if (!cancelled && !session[reachedCompaction] && this.hasQueuedMessages()) return this.continue();
   };
 }
 
@@ -581,6 +677,8 @@ async function main() {
 
     if (disabled !== undefined) throw new Error(disabled);
 
+    if (this[runningCompaction]) await this[runningCompaction];
+
     if (queuedCommand(text) && this.isStreaming) {
       return this._queueFollowUp(text, options?.images).then(() => options?.preflightResult?.("queued"));
     }
@@ -596,8 +694,9 @@ async function main() {
   const bind = AgentSession.prototype.bindExtensions;
   AgentSession.prototype.bindExtensions = async function (...bindings) {
     installQueueProtocol(this, output);
+    bindQueuePull(this, output);
 
-    if (session !== this) bindQueuedCommands(this);
+    if (session !== this) bindQueuedCommands(this, output);
 
     await bind.apply(this, bindings);
 

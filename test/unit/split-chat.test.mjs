@@ -133,8 +133,9 @@ describe('split conversation lifecycle', () => {
     await dom.flushFrames();
     await event({ type: 'agent_start' }); await type('Direction');
     await act(async () => control('Message piop').dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', ctrlKey: true, bubbles: true })));
-    await received(command => command.type === 'steer' && command.message === 'Direction'); await sendSettled();
-    await type('/catch-up latest');
+    await received(command => command.type === 'steer' && command.message === 'Direction');
+    // A steer goes into the queue, so the conversation shows no sending status. Send accepts the next message once the steer is sent.
+    await type('/catch-up latest'); await untilDom(() => control('Send message')?.disabled === false);
     await act(async () => control('Message piop').dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true })));
     await received(command => command.type === 'follow_up' && command.message === '/catch-up latest');
   });

@@ -1,0 +1,35 @@
+import assert from 'node:assert/strict';
+import { test } from 'node:test';
+import { installDom, renderHook, renderComponent, act } from '../dom.mjs';
+import { useChatSession } from '../../clients/ui/lib/useChatSession.ts';
+import { trackChatSubmission } from '../../clients/ui/lib/chatSubmission.ts';
+import { ChatView } from '../../clients/ui/components/ChatView.tsx';
+
+const text = value => [{ type: 'text', text: value }];
+for (const [name, behavior, held, expected] of [['queueing while the agent works shows no', 'followUp', false, [null, null, null]], ['queueing while the queue is on hold shows no', undefined, true, [null, null, null]], ['sending while the agent is idle shows the', undefined, false, ['Sending message…', 'Sending message…', null]]]) test(name + ' Sending message status in the conversation', async t => {
+  const dom = installDom();
+  // The transport methods that this view does not need answer with nothing.
+  const base = { subscribe() { return () => {}; }, async command() { return {}; }, ownsConversation: () => true, hasConfirmedOwnership: () => true, isConnected: () => true, currentHostId: () => 'local' };
+  const transport = new Proxy(base, { get: (target, name) => name in target || name === 'then' || typeof name === 'symbol' ? target[name] : () => undefined });
+  const hook = await renderHook(value => useChatSession(value), transport);
+  const noop = () => {};
+  const change = async () => {};
+  const props = () => ({ transport, readOnly: false, onSend: noop, onAbort: noop, onOpenProject: noop, onBranch: noop, onModel: noop, onToggleFastMode: noop, onThinking: noop, onChangePending: change, state: hook.current.state, messages: hook.current.messages, models: [], commands: [], thinkingLevels: [], widgets: [], statuses: {} });
+  const view = await renderComponent(ChatView, props());
+  const settle = async () => { await dom.flushFrames(); await view.rerender(props()); await dom.flushFrames(); };
+  const events = async (...items) => { await act(() => items.forEach(event => hook.current.handleEvent(event))); await settle(); };
+  if (held) await events({ type: 'queue_update', steering: [], followUp: [], pendingMessages: [], held: true });
+  else if (behavior) await events({ type: 'agent_start' }, { type: 'message_end', message: { role: 'user', content: text('Question'), timestamp: 10 } }, { type: 'message_start', message: { role: 'assistant', content: text('Answer so far'), timestamp: 11 } });
+  let finish;
+  const durable = { id: 'submission-1', owner: () => transport, accept: async () => {}, reject: async () => {}, wasDispatched: () => true };
+  const sending = trackChatSubmission(transport, 'Check the tests', [], durable, () => new Promise(resolve => { finish = resolve; }), 'Sending message…', behavior);
+  await settle();
+  const status = () => view.container.querySelector('[aria-label="Preparing message"]')?.textContent ?? null;
+  const shown = [status()];
+  await events({ type: 'queue_update', steering: [], followUp: held ? [] : ['Check the tests'], pendingMessages: [{ id: 'queue-1', goalSubmissionId: 'submission-1', message: 'Check the tests', behavior: 'followUp', ...(held ? { held: true } : {}) }], held });
+  shown.push(status());
+  finish(null); await sending; await settle();
+  shown.push(status());
+  t.after(async () => { await view.unmount(); await hook.unmount(); dom.restore(); });
+  assert.deepEqual(shown, expected);
+});

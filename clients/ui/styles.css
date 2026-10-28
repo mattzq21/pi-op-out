@@ -488,6 +488,12 @@ textarea::placeholder { color: var(--faint); }
 .pending-goal.paused .pending-message-text small.goal-label { color: var(--muted); }
 .pending-goal-error { padding: 4px 6px 7px; color: var(--accent); font-size: 12px; overflow-wrap: anywhere; }
 .pending-images { flex: none; display: flex; gap: 4px; }.pending-image { width: 26px; height: 26px; border-radius: 5px; object-fit: cover; border: 1px solid var(--line); }.pending-image-missing { display: grid; place-items: center; color: var(--muted); }
+.pending-editor { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 4px; }
+.pending-editor .pending-edit { flex: none; }
+.pending-edit-attachments { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; }
+.pending-edit-attachment { display: inline-flex; align-items: center; gap: 3px; max-width: 220px; min-height: 26px; padding: 0 2px 0 4px; border: 1px solid var(--line); border-radius: 6px; color: var(--muted); font-size: 12px; }
+.pending-edit-attachment b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 500; }
+.pending-edit-attachment .pending-image { width: 22px; height: 22px; }
 .pending-message.expanded { align-items: flex-start; }
 .pending-message.expanded .pending-message-text { white-space: pre-wrap; overflow-wrap: anywhere; padding-top: 4px; }
 .pending-message small { color: var(--muted); font-size: 11px; }
@@ -496,6 +502,14 @@ textarea::placeholder { color: var(--faint); }
 .pending-message button:hover { color: var(--ink); background: #ffffff09; }
 .pending-message button:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 .pending-message button:disabled { opacity: .4; cursor: default; }
+.pending-queue-hold { display: flex; align-items: center; justify-content: space-between; gap: 9px; min-height: 30px; padding: 2px 3px; border-bottom: 1px solid #353532; color: var(--muted); font-size: 12px; }
+.pending-queue-hold.held { color: var(--ink); }
+.pending-queue-hold.alone { min-height: 0; padding: 0; border-bottom: 0; }
+.pending-queue-hold button { display: inline-flex; align-items: center; gap: 5px; min-height: 24px; padding: 3px 6px; border: 0; border-radius: 5px; background: transparent; color: var(--muted); font-size: 12px; cursor: pointer; }
+.pending-queue-hold.held button { color: var(--accent); }
+.pending-queue-hold button:hover { color: var(--ink); background: #ffffff09; }
+.pending-queue-hold button:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.pending-queue-hold button:disabled { opacity: .4; cursor: default; }
 .pending-message .pending-icon-button { width: 24px; flex-shrink: 0; padding: 3px; }
 
 .user-message.steering-message .message-body { background: #191815; border-color: #302e29; color: #c4beb3; }

@@ -22,6 +22,7 @@ import hooksExtendedInterface from '../resources/hooks-extended/interface.ts?raw
 import sdkSessionList from '../resources/sdk-session-list.mjs?raw';
 import runtimeConfiguration from '../resources/runtime-configuration.cjs?raw';
 import runtimeBridge from '../resources/runtime-bridge.cjs?raw';
+import queuePull from '../resources/queue-pull.cjs?raw';
 import runtimeAvailability from '../resources/runtime-availability.cjs?raw';
 import hooksAvailability from '../resources/hooks-extended/availability.ts?raw';
 import mcpSchemaBundle from '../resources/mcp-schema.bundle.mjs?raw';
@@ -62,6 +63,7 @@ import brokerModule18 from '../resources/session-broker/subagent-state.ts?raw';
 import brokerModule19 from '../resources/session-broker/subagent-reconciliation.ts?raw';
 import brokerModule21 from '../resources/session-broker/orchestration.ts?raw';
 import brokerInputHold from '../resources/session-broker/input-hold.ts?raw';
+import brokerQueueHold from '../resources/session-broker/queue-hold.ts?raw';
 import brokerToolInventory from '../resources/session-broker/tool-inventory.ts?raw';
 import brokerAuxiliary from '../resources/session-broker/auxiliary.ts?raw';
 import storageMailbox from '../resources/piop-storage/durable-mailbox.ts?raw';
@@ -127,6 +129,7 @@ export {
   sdkSessionList,
   runtimeConfiguration,
   runtimeBridge,
+  queuePull,
   runtimeAvailability,
   mcpSchemaBundle,
   mcpBridgeBundle,
@@ -162,6 +165,7 @@ export const SESSION_BROKER_MODULES: Array<[string, string]> = [
   ['subagent-reconciliation.ts', brokerModule19],
   ['orchestration.ts', brokerModule21],
   ['input-hold.ts', brokerInputHold],
+  ['queue-hold.ts', brokerQueueHold],
   ['tool-inventory.ts', brokerToolInventory],
   ['auxiliary.ts', brokerAuxiliary],
   ['agent-profiles.ts', brokerModule23],
