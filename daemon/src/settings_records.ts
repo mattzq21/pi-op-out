@@ -24,10 +24,10 @@ export function name(path: string): string {
 }
 
 export function read(path: string): Buffer | undefined {
-  return withDatabase(open(path), database => transaction(database, 'IMMEDIATE', () => {
+  return withDatabase(open(path), database => {
     const row = database.prepare('SELECT body FROM application_settings WHERE name=?').get(name(path)) as { body: unknown } | undefined;
     return blob(row?.body);
-  }));
+  });
 }
 
 export function publish(path: string, body: Buffer | string): Publication {

@@ -22,7 +22,8 @@ export function load(connection: Database): Map<string, CachedSession> {
 }
 
 export function save(connection: Database, cache: Map<string, CachedSession>): void {
-  transaction(connection, 'DEFERRED', () => {
+  // A deferred transaction that reads and then writes fails at once when another connection wrote in between; the busy timeout does not apply.
+  transaction(connection, 'IMMEDIATE', () => {
     connection.exec('CREATE TEMP TABLE IF NOT EXISTS sidebar_seen (session_id TEXT PRIMARY KEY); DELETE FROM sidebar_seen;');
     const registered = connection.prepare('SELECT EXISTS(SELECT 1 FROM sessions WHERE session_id=? AND session_path=?) AS present');
     const upsert = connection.prepare(`INSERT INTO session_sidebar VALUES (?, ?, ?, ?) ON CONFLICT(session_id) DO UPDATE SET
