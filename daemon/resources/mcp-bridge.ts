@@ -2,6 +2,7 @@ import { z } from "zod";
 import type { TSchema } from "typebox";
 import { createMcpExtension, type ExtensionAPI, type ExtensionContext, type ExtensionEvent, type ExtensionHandler, type McpServerConfig, type SessionStartEvent } from "@earendil-works/pi-coding-agent";
 import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
+import { skillMcp } from "./skill-mcp.ts";
 
 type Selection = { servers: Record<string, McpServerConfig & { piopInjectAgentId?: boolean }>; codemode?: "on" | "off"; sessionId: string; registered?: Promise<string[]> };
 
@@ -41,6 +42,7 @@ export default function agentMcp(pi: ExtensionAPI) {
   let codemodeEnabled = true;
   let sessionStart: SessionStartEvent = { type: "session_start", reason: "startup" };
   let start: ExtensionHandler<SessionStartEvent> | undefined;
+  const changes = new Set<Promise<unknown>>();
 
   const ensureStarted = async (ctx: ExtensionContext) => {
     if (started) return;
@@ -66,6 +68,13 @@ export default function agentMcp(pi: ExtensionAPI) {
 
         return () => { start = undefined; };
       }
+      if (event === "mcp_servers_change") {
+        return pi.on("mcp_servers_change", (event, ctx) => {
+          const pending = Promise.resolve((handler as ExtensionHandler<typeof event>)(event, ctx));
+          changes.add(pending);
+          return pending.finally(() => changes.delete(pending));
+        });
+      }
 
       return subscribe(event, handler);
     },
@@ -73,6 +82,9 @@ export default function agentMcp(pi: ExtensionAPI) {
       nativeToolNames.add(tool.name);
       pi.registerTool(withAgentIdentity(tool, identities.get(tool.namespace?.name ?? "")));
     },
+  });
+  const skills = skillMcp(pi, ensureStarted, async () => {
+    while (changes.size) await Promise.all([...changes]);
   });
 
   const nativeTools = () => pi.getAllTools().filter(tool =>
@@ -92,6 +104,7 @@ export default function agentMcp(pi: ExtensionAPI) {
   const stopSelection = pi.events.on("piop:mcp:select", selection => {
     try {
       codemodeEnabled = selection.codemode !== "off";
+      skills.select(codemodeEnabled);
 
       if (!codemodeEnabled) pi.setActiveTools(pi.getActiveTools().filter(name => name !== "codemode"));
 
