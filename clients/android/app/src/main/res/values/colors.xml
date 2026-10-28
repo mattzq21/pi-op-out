@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- The same color as the chat background (paper) in clients/ui/styles.css. -->
+    <color name="chatBackground">#161615</color>
+</resources>
