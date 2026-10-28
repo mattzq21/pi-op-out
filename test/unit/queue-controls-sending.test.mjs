@@ -1,0 +1,33 @@
+import assert from 'node:assert/strict';
+import { test } from 'node:test';
+import { installDom, renderHook, renderComponent, act } from '../dom.mjs';
+import { useChatSession } from '../../clients/ui/lib/useChatSession.ts';
+import { trackChatSubmission } from '../../clients/ui/lib/chatSubmission.ts';
+import { ChatView } from '../../clients/ui/components/ChatView.tsx';
+
+test('sending a message keeps the controls of the queued messages and the hold button usable', async t => {
+  const dom = installDom();
+  // The transport methods that this view does not need answer with nothing.
+  const base = { subscribe() { return () => {}; }, async command() { return {}; }, ownsConversation: () => true, hasConfirmedOwnership: () => true, isConnected: () => true, currentHostId: () => 'local' };
+  const transport = new Proxy(base, { get: (target, name) => name in target || name === 'then' || typeof name === 'symbol' ? target[name] : () => undefined });
+  const hook = await renderHook(value => useChatSession(value), transport);
+  const noop = () => {};
+  const change = async () => {};
+  const hold = async () => {};
+  const props = () => ({ transport, readOnly: false, onSend: noop, onAbort: noop, onOpenProject: noop, onBranch: noop, onModel: noop, onToggleFastMode: noop, onThinking: noop, onChangePending: change, onHoldQueue: hold, state: { ...hook.current.state, sessionId: 'session' }, messages: hook.current.messages, models: [], commands: [], thinkingLevels: [], widgets: [], statuses: {} });
+  const view = await renderComponent(ChatView, props());
+  t.after(async () => { await view.unmount(); await hook.unmount(); dom.restore(); });
+  const settle = async () => { await dom.flushFrames(); await view.rerender(props()); await dom.flushFrames(); };
+  await act(() => hook.current.handleEvent({ type: 'queue_update', steering: [], followUp: [], pendingMessages: [{ id: 'queue-1', goalSubmissionId: 'submission-1', message: 'Queued one', behavior: 'followUp', held: true }, { id: 'queue-2', goalSubmissionId: 'submission-2', message: 'Queued two', behavior: 'followUp', held: true }], held: true }));
+  await settle();
+  /** Whether each button of the first queued message, then the hold button, can be used. */
+  const usable = () => [...view.container.querySelector('.pending-message').querySelectorAll('button'), view.container.querySelector('.pending-queue-hold button')].map(button => !button.disabled);
+  const before = usable();
+  let finish;
+  const durable = { id: 'submission-3', owner: () => transport, accept: async () => {}, reject: async () => {}, wasDispatched: () => true };
+  const sending = trackChatSubmission(transport, 'Queued three', [], durable, () => new Promise(resolve => { finish = resolve; }), 'Sending message…');
+  await settle();
+  const during = usable();
+  finish(null); await sending; await settle();
+  assert.deepEqual(during, before);
+});

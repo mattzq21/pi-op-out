@@ -58,6 +58,8 @@ interface Props {
   sessionCache?: { rate: number; low: boolean; cachedTokens: number; promptTokens: number };
   contextUsage?: ContextUsage;
   controlsDisabled?: boolean;
+  /** Disables the controls of the queued messages and the hold button. A message being sent does not disable them, because the daemon changes the queue one step at a time. Defaults to controlsDisabled. */
+  queueControlsDisabled?: boolean;
   submissionDisabled?: boolean;
   draft?: string;
   recentPrompts?: () => string[];
@@ -433,8 +435,9 @@ export function Composer(props: Props) {
   /** The queue box shows while it has messages, a paused goal, a goal error, or a hold. */
   const showPendingBox = () => composer().pendingMessages.length > 0 || Boolean(props.goal?.error()) || Boolean(props.queueHeld);
   /** The hold button. Without a queue box it stands alone, so the user can hold the queue before sending. */
-  const renderQueueHold = (alone = false) => (<Show when={props.onHoldQueue}><div class="pending-queue-hold" classList={{ held: Boolean(props.queueHeld), alone }}><span>{props.queueHeld ? "Queue on hold. Messages wait until you resume." : ""}</span><button type="button" disabled={composer().controlsDisabled || changingPending()} aria-pressed={Boolean(props.queueHeld)} data-tooltip={props.queueHeld ? "Send the held messages" : "Keep messages in the queue until you resume"} onClick={() => holdQueue(!props.queueHeld)}>{props.queueHeld ? <><Play size={13} />Resume queue</> : <><Pause size={13} />Hold queue</>}</button></div></Show>);
-  const pendingDrag = usePendingMessageDrag(() => (composer().pendingMessages), () => (pendingControlsDisabled(composer().controlsDisabled, changingPending(), composer().onChangePending)), () => (changePending));
+  const renderQueueHold = (alone = false) => (<Show when={props.onHoldQueue}><div class="pending-queue-hold" classList={{ held: Boolean(props.queueHeld), alone }}><span>{props.queueHeld ? "Queue on hold. Messages wait until you resume." : ""}</span><button type="button" disabled={queueDisabled() || changingPending()} aria-pressed={Boolean(props.queueHeld)} data-tooltip={props.queueHeld ? "Send the held messages" : "Keep messages in the queue until you resume"} onClick={() => holdQueue(!props.queueHeld)}>{props.queueHeld ? <><Play size={13} />Resume queue</> : <><Pause size={13} />Hold queue</>}</button></div></Show>);
+  const queueDisabled = () => props.queueControlsDisabled ?? composer().controlsDisabled;
+  const pendingDrag = usePendingMessageDrag(() => (composer().pendingMessages), () => (pendingControlsDisabled(queueDisabled(), changingPending(), composer().onChangePending)), () => (changePending));
   const controlsBlocked = () => composer().agentUnavailable || (props.submissionDisabled ?? composer().controlsDisabled) || composer().compacting || stopping();
 
   const canSubmit = (message: string, images: ImageAttachment[]) => {
@@ -702,7 +705,7 @@ export function Composer(props: Props) {
     {showPendingBox() ? <div class="pending-messages" aria-label="Pending messages">{renderQueueHold()}{<Key each={composer().pendingMessages.filter((message) => pendingMessageIdentitySchema.safeParse(message).success)} by={pendingKey}>{(message, _index) => {
       const text = createMemo(() => String(message().message ?? ""));
       const change = (action: import("../types").PendingMessageAction) => changePending(message().id, action);
-      const disabled = createMemo(() => (composer().controlsDisabled || changingPending() || Boolean(message().sending)));
+      const disabled = createMemo(() => (queueDisabled() || changingPending() || Boolean(message().sending)));
       const queue = createMemo(() => pendingQueues().get(message().behavior));
       const peerCount = createMemo(() => queue()?.length ?? 0);
       const position = createMemo(() => queue()?.positions.get(message().id) ?? -1);
