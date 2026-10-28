@@ -135,7 +135,7 @@ export class ProviderService {
   private async listing(refresh: boolean): Promise<any> {
     await this.runtime();
     // Model scans use the network. Only an explicit refresh waits for them; otherwise the listing shows saved data and the scan reports changes when it ends.
-    if (refresh) await this.refreshCatalogs(true);
+    if (refresh) await this.refreshCatalogs(true, false);
     else this.refreshCatalogsInBackground();
     const snapshot = await this.sdk.request({ method: 'inspect' });
     const credentials = array(snapshot, 'credentials');
@@ -289,20 +289,33 @@ export class ProviderService {
     if (login?.status !== 'complete') throw new Error('Provider login could not be confirmed');
   }
 
-  private async refreshCatalogs(force: boolean): Promise<void> {
+  /** Built-in providers need no model scan. The fast model scan still uses the network for them, so the listing does not wait for it. */
+  private async refreshCatalogs(force: boolean, waitForFastModels = true): Promise<void> {
     await this.catalogs.run(async () => {
       if (!force && this.nextCatalog !== null && Date.now() < this.nextCatalog) return;
       this.nextCatalog = Date.now() + 300_000;
-      await Promise.all([this.refreshCustomCatalogs(), this.fastModels.scan()]);
+      const before = this.listingWarnings();
+      const fastModels = this.fastModels.scan();
+      if (waitForFastModels) await Promise.all([this.refreshCustomCatalogs(), fastModels]);
+      else {
+        void fastModels.then(() => this.announceWarnings(before));
+        await this.refreshCustomCatalogs();
+      }
     });
+  }
+
+  private listingWarnings(): string { return JSON.stringify([this.catalogWarning, fastModelWarning(this.fastModels.snapshot())]); }
+
+  /** Clients read the warnings with the listing, so they list again when the warnings change. */
+  private announceWarnings(before: string): void {
+    if (this.listingWarnings() !== before) this.host?.output({ type: 'provider_auth_changed', flow: null });
   }
 
   private refreshCatalogsInBackground(): void {
     if (this.nextCatalog !== null && Date.now() < this.nextCatalog) return;
-    const warnings = () => JSON.stringify([this.catalogWarning, fastModelWarning(this.fastModels.snapshot())]);
-    const before = warnings();
-    this.refreshCatalogs(false).then(
-      () => { if (warnings() !== before) this.host?.output({ type: 'provider_auth_changed', flow: null }); },
+    const before = this.listingWarnings();
+    this.refreshCatalogs(false, false).then(
+      () => this.announceWarnings(before),
       error => this.host?.output({ type: 'diagnostic', line: 'Provider model scan failed: ' + errorText(error) }),
     );
   }
