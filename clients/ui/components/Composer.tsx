@@ -22,7 +22,7 @@ import { usePendingMessageDrag } from "../lib/usePendingMessageDrag";
 import type { AgentProfile,ComposerUpload,ContextUsage,ImageAttachment,Model,PendingMessage,SlashCommand } from "../types";
 import { IconButton } from "./IconButton";
 import { PendingImages } from "./PendingImages";
-import { PendingMessageEditor, pendingEditAction, startPendingEdit, type PendingEdit } from "./PendingMessageEditor";
+import { PendingMessageAttachments, pendingEditAction, startPendingEdit, type PendingEdit } from "./PendingMessageEditor";
 import { z } from "zod";
 import { queuedCommand } from "../plugins";
 import { isDaemonRefusal } from "../lib/commandRejected";
@@ -199,8 +199,11 @@ export function Composer(props: Props) {
   const composerFields = createMemoFields(() => composerDefaults(controlProps));
   const composer = () => composerFields;
   const pendingQueues = createMemo(() => pendingQueuePositions(composer().pendingMessages));
+  const [editingPending, setEditingPending] = createSignal<PendingEdit>();
+  const [savingEdit, setSavingEdit] = createSignal(false);
+  const isEditingPending = createSelector(() => editingPending()?.id);
   const [localValue, setLocalValue] = createSignal("");
-  const value = createMemo(() => (composer().draft ?? localValue()));
+  const value = createMemo(() => (editingPending()?.prompt ?? composer().draft ?? localValue()));
   const agentOptions = createMemo(() => composer().agents.map(agent => ({ value: agent.name, label: agent.name })));
   const displayModelName = (model: Model) => composer().modelAliases?.[`${model.provider}/${model.id}`] || (model.name || model.id).replace(/^gpt-/i, "");
   const modelOptions = createMemo(() => composer().models.map(item => ({ value: `${item.provider}/${item.id}`, label: displayModelName(item), detail: item.provider })));
@@ -209,13 +212,21 @@ export function Composer(props: Props) {
   const fastModeSupported = createMemo(() => (fastModeEnabled() || composer().fastModeStatus === "Fast mode off"));
   const [togglingFastMode, setTogglingFastMode] = createSignal(false);
   const togglingFastModeRef = createRef(false);
-  const writeValue = (next: string) => { if (composer().onDraftChange) required((composer().onDraftChange))(next); else setLocalValue(next); };
+  const writeValue = (next: string) => { if (editingPending()) { setEditingPending(edit => edit && ({ ...edit, prompt: next })); return; } if (composer().onDraftChange) required((composer().onDraftChange))(next); else setLocalValue(next); };
 
   const promptHistory = createComposerPromptHistory(value, writeValue, () => props.recentPrompts?.() ?? [], next => { setPaletteDismissed(true); setSelection({ start: next.length, end: next.length }); });
 
   const setValue = (next: string) => { promptHistory.reset(); writeValue(next); };
 
-  const attachments = useComposerAttachments(composer);
+  const attachmentOptions = createMemo(() => {
+    const edit = editingPending();
+    if (!edit) return composer();
+    const id = edit.id;
+    return { ...composer(), controlledUploads: edit.added, onUploadsChange: (update: StateUpdate<ComposerUpload[]>) => {
+      setEditingPending(current => current?.id === id ? { ...current, added: typeof update === "function" ? update(current.added) : update } : current);
+    } };
+  });
+  const attachments = useComposerAttachments(attachmentOptions);
   const { uploads, updateUploads, uploadError, setUploadError, readingUploads, imageInputError, setImageInputError, addFiles, addPaths } = attachments;
   trackToastMessage("Composer", "Image input error", () => imageInputError() ? "This model does not support image inputs. Try a different model" : undefined);
   const [sending, setSending] = createSignal(false);
@@ -406,15 +417,19 @@ export function Composer(props: Props) {
 
   const [expandedPending, setExpandedPending] = createSignal<string>();
   const [changingPending, setChangingPending] = createSignal(false);
-  /** The queued message being edited, with its text, images and files so far. */
-  const [editingPending, setEditingPending] = createSignal<PendingEdit>();
-  const [savingEdit, setSavingEdit] = createSignal(false);
+  const cancelEdit = () => { if (!savingEdit()) { setEditingPending(undefined); setControlError(undefined); focusOwnedEditor(); } };
+  const beginEdit = (message: PendingMessage) => {
+    if (editingPending()?.id !== message.id) setEditingPending(startPendingEdit(message));
+    setControlError(undefined);
+    focusOwnedEditor();
+    ref.current?.setSelectionRange(value().length, value().length);
+  };
 
   /** Saves the edited queued message. The editor stays open with the error when the save fails. */
   const saveEdit = async () => {
     const edit = editingPending();
 
-    if (!edit || savingEdit() || !composer().onChangePending) return;
+    if (!edit || savingEdit() || readingUploads() || queueDisabled() || !composer().onChangePending) return;
     setSavingEdit(true); setControlError(undefined);
 
     try { await required(composer().onChangePending)(edit.id, pendingEditAction(edit)); setEditingPending(undefined); }
@@ -451,6 +466,7 @@ export function Composer(props: Props) {
 
   const submit = async (behavior: "steer" | "followUp" = "followUp") => { const capturedUploads = uploads(); const capturedValue = value(); const capturedComposer = { ...composer() };
 
+    if (editingPending()) return saveEdit();
     if (controlsBlocked()) return;
     let prompt: ReturnType<typeof buildComposerPrompt>;
 
@@ -525,14 +541,14 @@ export function Composer(props: Props) {
 
   const filePaste = createFilePaste({
     field: () => ref.current,
-    enabled: () => !controls().inputDisabled && !props.ownershipRequired,
+    enabled: () => !controls().inputDisabled && !savingEdit() && !props.ownershipRequired,
     start: () => { const commit = attachments.captureUploadWriter();
 
       return files => addFiles(files, [], commit); },
     error: setUploadError,
   });
 
-  const handleEditorKey = createComposerEditorKey({ paste: filePaste.onKeyDown, ownershipRequired: () => props.ownershipRequired, palette: handlePaletteKey, history: promptHistory.handleKey, submit });
+  const handleEditorKey = createComposerEditorKey({ paste: filePaste.onKeyDown, ownershipRequired: () => props.ownershipRequired, palette: handlePaletteKey, history: event => editingPending() ? false : promptHistory.handleKey(event), submit });
 
   const renderStreamBanner = () => {
     const statusText = () => stopping() ? "Stopping…" : composer().compacting ? "Compacting context…" : undefined;
@@ -551,7 +567,10 @@ export function Composer(props: Props) {
     </div>}</Show>);
 
     const renderComposerEditor = () => (<div class="composer-editor">
-        <textarea ref={element => { ref.current = element; }} aria-label="Message piop" readOnly={props.ownershipRequired} onFocus={() => { setPaletteDismissed(false); if (props.ownershipRequired) void props.onTakeOwnership?.(); }} placeholder={props.ownershipRequired ? "" : composer().streaming || props.queueHeld ? "Queue a follow-up…" : "Ask piop to build, explain, or change anything…"} value={value()} rows={1} onSelect={(event) => setSelection({ start: event.currentTarget.selectionStart, end: event.currentTarget.selectionEnd })} onInput={(event) => { setSelection({ start: event.target.selectionStart, end: event.target.selectionEnd }); setPaletteDismissed(false); setValue(event.target.value); }} onKeyDown={handleEditorKey} />
+        <textarea ref={element => { ref.current = element; }} classList={{ "pending-edit": Boolean(editingPending()) }} aria-label="Message piop" readOnly={props.ownershipRequired || savingEdit()} onFocus={() => { setPaletteDismissed(false); if (props.ownershipRequired) void props.onTakeOwnership?.(); }} placeholder={props.ownershipRequired ? "" : composer().streaming || props.queueHeld ? "Queue a follow-up…" : "Ask piop to build, explain, or change anything…"} value={value()} rows={1} onSelect={(event) => setSelection({ start: event.currentTarget.selectionStart, end: event.currentTarget.selectionEnd })} onInput={(event) => { setSelection({ start: event.target.selectionStart, end: event.target.selectionEnd }); setPaletteDismissed(false); setValue(event.target.value); }} onKeyDown={event => {
+          if (editingPending() && event.key === "Escape") { event.preventDefault(); event.stopPropagation(); cancelEdit(); return; }
+          handleEditorKey(event);
+        }} />
       </div>);
 
     const ComposerBar = () => {
@@ -583,7 +602,10 @@ export function Composer(props: Props) {
 
         const renderStopButton = () => (<Show when={composer().streaming || composer().compacting}><IconButton title="" label="Stop piop" class="stop-compact" disabled={controls().stopDisabled} onClick={() => void abort()}><CircleStop size={17} /></IconButton></Show>);
 
-        const renderSend = () => <IconButton title="" label="Send message" class="send" disabled={controlsBlocked() || sending() || readingUploads() > 0 || (!hasVisibleText(value()) && uploads().length === 0)} onClick={() => void submit()}><ArrowUp size={18} /></IconButton>;
+        const renderSend = () => <Show when={editingPending()} fallback={<IconButton title="" label="Send message" class="send" disabled={controlsBlocked() || sending() || readingUploads() > 0 || (!hasVisibleText(value()) && uploads().length === 0)} onClick={() => void submit()}><ArrowUp size={18} /></IconButton>}>
+          <IconButton title="" label="Cancel editing" disabled={savingEdit()} onClick={cancelEdit}><X size={18} /></IconButton>
+          <IconButton title="" label="Save edited message" class="send" disabled={queueDisabled() || savingEdit() || readingUploads() > 0} onClick={() => void saveEdit()}><Check size={18} /></IconButton>
+        </Show>;
 
         return (<div class="composer-actions">
           <ComposerSettingsMenu agent={composer().activeAgent ?? "general"}>
@@ -604,7 +626,7 @@ export function Composer(props: Props) {
       </div>);
     };
 
-    return (<div ref={element => { composerRef.current = element; }} class={`composer${draggingFiles() && !controls().inputDisabled ? " dragging-files" : ""}`}
+    return (<div ref={element => { composerRef.current = element; }} classList={{ "editing-pending": Boolean(editingPending()) }} class={`composer${draggingFiles() && !controls().inputDisabled ? " dragging-files" : ""}`}
       onPaste={event => filePaste.onPaste(event)}
       onDragEnter={(event) => {
         if (!event.dataTransfer || (!event.dataTransfer.types.includes("Files") && !(isTauri() && event.dataTransfer.types.includes("text/uri-list")))) return;
@@ -643,9 +665,10 @@ export function Composer(props: Props) {
       {renderComposerDropHint()}
       {renderCommandPalette()}
       {renderArgumentPalette()}
-      {uploads().length > 0 && <div class="attachments">{<Key each={uploads()} by={(upload) => upload.id}>{(upload, _index) => <span >{upload().kind === "image" ? <ImagePlus size={12} /> : <FileText size={12} />}<b>{upload().name}</b><button aria-label={`Remove ${upload().name}`} onClick={() => { updateUploads((current) => current.filter((item) => item.id !== upload().id)); setUploadError(undefined); }}><X size={11} /></button></span>}</Key>}</div>}
+      {!editingPending() && uploads().length > 0 && <div class="attachments">{<Key each={uploads()} by={(upload) => upload.id}>{(upload, _index) => <span >{upload().kind === "image" ? <ImagePlus size={12} /> : <FileText size={12} />}<b>{upload().name}</b><button aria-label={`Remove ${upload().name}`} onClick={() => { updateUploads((current) => current.filter((item) => item.id !== upload().id)); setUploadError(undefined); }}><X size={11} /></button></span>}</Key>}</div>}
       {uploadError() && <div class="upload-error" role="alert">{(uploadError())}</div>}
       {controlError() && <div class="upload-error" role="alert">{(controlError())}</div>}
+      <Show when={editingPending()}>{edit => <PendingMessageAttachments message={composer().pendingMessages.find(message => message.id === edit().id) ?? { id: edit().id, message: edit().prompt, behavior: "followUp" }} edit={edit()} saving={savingEdit()} load={props.loadPendingImage} onChange={update => setEditingPending(current => current?.id === edit().id ? update(current) : current)} addFiles={files => attachments.addFiles(files)} />}</Show>
       {renderComposerEditor()}
       <ComposerBar />
     </div>);
@@ -683,10 +706,7 @@ export function Composer(props: Props) {
         }} onPointerDown={(event) => pendingDrag.begin(event, message().id)}><MoveVertical size={16} /></button>);
 
       const renderPendingMessageActions = () => (composer().onChangePending && <div class="pending-message-actions">
-          <Show when={!message().goal && !queuedCompaction(text())}><Show when={editingPending()?.id === message().id} fallback={<button type="button" class="pending-icon-button" disabled={disabled() || savingEdit()} aria-label={`Edit queued message: ${text()}`} data-tooltip="Edit message" onClick={() => setEditingPending(startPendingEdit(message()))}><Pencil size={12} /></button>}>
-            <button type="button" class="pending-icon-button" disabled={disabled() || savingEdit()} aria-label="Save edited message" data-tooltip="Save · Enter" onClick={() => void saveEdit()}><Check size={13} /></button>
-            <button type="button" class="pending-icon-button" disabled={savingEdit()} aria-label="Cancel editing" data-tooltip="Cancel · Esc" onClick={() => setEditingPending(undefined)}><X size={13} /></button>
-          </Show></Show>
+          <Show when={!message().goal && !queuedCompaction(text())}><button type="button" class="pending-icon-button" disabled={disabled() || savingEdit()} aria-label={`Edit queued message: ${text()}`} data-tooltip="Edit message" onClick={() => beginEdit(message())}><Pencil size={12} /></button></Show>
           <div class="pending-order-actions">
             <button type="button" class="pending-icon-button" disabled={disabled() || position() <= 0} aria-label={`Move queued message up: ${text()}`} data-tooltip="Move earlier in this delivery queue" onClick={() => change("moveUp")}><ChevronUp size={13} /></button>
             <button type="button" class="pending-icon-button" disabled={disabled() || position() < 0 || position() >= peerCount() - 1} aria-label={`Move queued message down: ${text()}`} data-tooltip="Move later in this delivery queue" onClick={() => change("moveDown")}><ChevronDown size={13} /></button>
@@ -696,10 +716,10 @@ export function Composer(props: Props) {
           <Show when={!message().goal}><button type="button" class="pending-icon-button" disabled={disabled()} aria-label={`Remove queued message: ${text()}`} data-tooltip="Remove message" onClick={() => change("remove")}><Trash2 size={13} /></button></Show>
         </div>);
 
-      return <div data-pending-id={message().id} class={pendingMessageClass(message().id, expandedPending(), pendingDrag.drop)} classList={{ "pending-goal": Boolean(message().goal), paused: Boolean(message().paused) }}>
+      return <div data-pending-id={message().id} class={pendingMessageClass(message().id, expandedPending(), pendingDrag.drop)} classList={{ "editing-pending": isEditingPending(message().id), "pending-goal": Boolean(message().goal), paused: Boolean(message().paused) }}>
         {renderPendingDragHandle()}
-        <Show when={editingPending()?.id !== message().id}><PendingImages message={message()} load={props.loadPendingImage} /></Show>
-        <Show when={editingPending()?.id === message().id ? editingPending() : undefined} fallback={<span class="pending-message-text" data-tooltip={message().recovered ? "This saved answer may not have reached the model. Check the conversation before retrying." : message().retry ? "piop could not confirm whether this message reached the model, for example after a restart, so it is not sent by itself. Retry sends it again. Remove it if the conversation already has it." : text()} onDblClick={() => setExpandedPending((current) => current === message().id ? undefined : message().id)}>{message().goal && <>{message().paused && <small>Paused · </small>}<small class="goal-label">Goal · </small></>}{message().retry && <small>{message().recovered ? "Saved answer · " : "Retry needed · "}</small>}{text()}</span>}>{edit => <PendingMessageEditor message={message()} edit={edit()} saving={savingEdit()} load={props.loadPendingImage} onChange={update => setEditingPending(current => current && current.id === edit().id ? update(current) : current)} addFiles={(files, commit) => attachments.addFiles(files, [], commit)} onSave={() => void saveEdit()} onCancel={() => setEditingPending(undefined)} onError={setUploadError} />}</Show>
+        <PendingImages message={message()} load={props.loadPendingImage} />
+        <span class="pending-message-text" data-tooltip={message().recovered ? "This saved answer may not have reached the model. Check the conversation before retrying." : message().retry ? "piop could not confirm whether this message reached the model, for example after a restart, so it is not sent by itself. Retry sends it again. Remove it if the conversation already has it." : text()} onDblClick={() => setExpandedPending((current) => current === message().id ? undefined : message().id)}>{message().goal && <>{message().paused && <small>Paused · </small>}<small class="goal-label">Goal · </small></>}{message().retry && <small>{message().recovered ? "Saved answer · " : "Retry needed · "}</small>}{text()}</span>
         {renderPendingMessageActions()}
       </div>;
     }}</Key>}<Show when={props.goal?.error()}>{message => <div class="pending-goal-error" role="alert">{message()}</div>}</Show></div> : renderQueueHold(true)}

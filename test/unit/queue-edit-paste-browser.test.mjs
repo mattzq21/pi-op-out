@@ -19,7 +19,10 @@ for (const way of ['a paste event', 'Ctrl+V without a paste event']) test('an im
   await composer.fill('Look at this');
   await composer.press('Enter');
   await page.getByRole('button', { name: 'Edit queued message: Look at this', exact: true }).click();
-  const editor = page.locator('.pending-edit');
+  const editor = page.locator('.composer .pending-edit');
+  assert.equal(await page.locator('.pending-message textarea').count(), 0);
+  const colors = await page.evaluate(() => ['.composer.editing-pending', '.pending-message.editing-pending'].map(selector => getComputedStyle(document.querySelector(selector)).backgroundColor));
+  assert.deepEqual(colors, ['rgb(73, 55, 40)', 'rgb(73, 55, 40)']);
   await editor.focus();
   await page.evaluate(async data => {
     const bytes = Uint8Array.from(atob(data), character => character.charCodeAt(0));

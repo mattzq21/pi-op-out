@@ -77,16 +77,25 @@ describe('composer interactions', () => {
   });
 
 
-  test('a queued message is edited in place: Enter saves, Escape cancels, and a failed save keeps the editor open', async () => {
+  test('a queued message uses the composer: Enter saves, Escape cancels, and a failed save keeps the editor open', async () => {
     const changes = [];
     let failure;
     const pendingMessages = [{ id: '1', message: 'Fix the typo', behavior: 'followUp' }, { id: 'goal', message: 'Ship it', behavior: 'followUp', goal: true }];
     await render({ streaming: true, queued: 1, pendingMessages, onChangePending: async (id, action) => { changes.push([id, action]); if (failure) throw new Error(failure); } });
     assert.equal(control('Edit queued message: Ship it'), null, 'the goal entry is edited with /goal edit');
+    await enterText(editor(), 'Unfinished draft');
+    const originalEditor = editor();
     await click(control('Edit queued message: Fix the typo'));
+    assert.equal(editor(), originalEditor);
+    assert.equal(editor().value, 'Fix the typo');
+    assert.equal(document.querySelector('.pending-message textarea'), null);
+    assert.ok(document.querySelector('.composer.editing-pending'));
+    assert.ok(document.querySelector('[data-pending-id="1"].editing-pending'));
     const field = () => document.querySelector('.pending-edit');
     await key('Escape', {}, field());
     assert.equal(field(), null);
+    assert.equal(editor().value, 'Unfinished draft');
+    assert.equal(document.querySelector('.editing-pending'), null);
     assert.deepEqual(changes, []);
     await click(control('Edit queued message: Fix the typo'));
     failure = 'This message is being sent and can no longer be edited.';
@@ -97,6 +106,8 @@ describe('composer interactions', () => {
     failure = undefined;
     await key('Enter', {}, field());
     await untilDom(() => !field());
+    assert.equal(editor().value, 'Unfinished draft');
+    assert.deepEqual(sent, []);
     const edit = { type: 'edit', message: 'Fix the typo in the title', images: { keep: [], add: [] } };
     assert.deepEqual(changes, [['1', edit], ['1', edit]]);
   });

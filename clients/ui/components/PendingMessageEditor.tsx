@@ -1,10 +1,8 @@
 import { For, Index, Show } from "solid-js";
 import { FileText, Paperclip, X } from "lucide-solid";
 import type { ComposerUpload, PendingMessage, PendingMessageAction } from "../types";
-import type { StateUpdate } from "../lib/solid";
 import { attachFiles, splitAttachedFiles, type AttachedFile } from "../lib/composerPrompt";
 import { PendingImage, type PendingImageLoader } from "./PendingImages";
-import { createFilePaste } from "../lib/filePaste";
 
 /** A queued message being edited: its prompt, its text files, the indexes of the images it keeps, and the files added in the editor. */
 export interface PendingEdit { id: string; prompt: string; files: AttachedFile[]; keep: number[]; added: ComposerUpload[] }
@@ -30,33 +28,13 @@ interface Props {
   saving: boolean;
   load?: PendingImageLoader;
   onChange: (update: (edit: PendingEdit) => PendingEdit) => void;
-  /** Reads files into uploads with the composer's limits, and writes them with commit. */
-  addFiles: (files: File[], commit: (update: StateUpdate<ComposerUpload[]>) => void) => Promise<void>;
-  onSave: () => void;
-  onCancel: () => void;
-  /** Shows an error from reading the clipboard. */
-  onError: (message: string) => void;
+  addFiles: (files: File[]) => Promise<void>;
 }
 
-/** Edits the text, images and text files of a queued message. Files and images can be attached with the button or pasted into the text, as in the message box. */
-export function PendingMessageEditor(props: Props) {
+export function PendingMessageAttachments(props: Props) {
   let input: HTMLInputElement | undefined;
-  let field: HTMLTextAreaElement | undefined;
-  const commit = (update: StateUpdate<ComposerUpload[]>) => props.onChange(edit => ({ ...edit, added: typeof update === "function" ? update(edit.added) : update }));
-  const add = (files: FileList | null) => { if (files?.length) void props.addFiles([...files], commit); };
-  const filePaste = createFilePaste({ field: () => field, enabled: () => !props.saving, start: () => files => props.addFiles(files, commit), error: message => props.onError(message) });
-  const label = () => props.edit.prompt.split("\n", 1)[0] || "attachments";
-
-  return <div class="pending-editor">
-    <textarea class="pending-edit" aria-label={`Edit queued message: ${label()}`} rows={Math.min(6, Math.max(1, props.edit.prompt.split("\n").length))} value={props.edit.prompt} disabled={props.saving}
-      ref={element => { field = element; queueMicrotask(() => { if (element.isConnected) { element.focus(); element.setSelectionRange(element.value.length, element.value.length); } }); }}
-      onInput={event => { const prompt = event.currentTarget.value; props.onChange(edit => ({ ...edit, prompt })); }}
-      onPaste={event => filePaste.onPaste(event)}
-      onKeyDown={event => {
-        filePaste.onKeyDown(event);
-        if (event.key === "Enter" && !event.shiftKey && !event.isComposing) { event.preventDefault(); props.onSave(); }
-        else if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); props.onCancel(); }
-      }} />
+  const add = (files: FileList | null) => { if (files?.length) void props.addFiles([...files]); };
+  return (
     <div class="pending-edit-attachments" aria-label="Attachments of the edited message">
       <Index each={props.edit.keep}>{index => <span class="pending-edit-attachment">
         <PendingImage message={props.message} index={index()} load={props.load} />
@@ -73,5 +51,5 @@ export function PendingMessageEditor(props: Props) {
       <button type="button" class="pending-icon-button" disabled={props.saving} aria-label="Attach files to the edited message" data-tooltip="Attach files" onClick={() => input?.click()}><Paperclip size={13} /></button>
       <input ref={element => { input = element; }} type="file" multiple hidden onChange={event => { add(event.currentTarget.files); event.currentTarget.value = ""; }} />
     </div>
-  </div>;
+  );
 }
