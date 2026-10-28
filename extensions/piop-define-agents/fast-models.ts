@@ -34,8 +34,8 @@ export function fastModelProblem(snapshot: FastModelSnapshot | null, agent: stri
 
 /** Reads the host's fast model results through the daemon. Returns null outside piop. */
 export async function hostFastModels(): Promise<FastModelSnapshot | null> {
-  const broker = process.env.PI_DESKTOP_BROKER_URL;
-  const token = process.env.PI_DESKTOP_BROKER_TOKEN;
+  const broker = process.env.PIOP_BROKER_URL;
+  const token = process.env.PIOP_BROKER_TOKEN;
 
   if (!broker || !token) return null;
   const response = await fetch(broker + "/fast-models", {

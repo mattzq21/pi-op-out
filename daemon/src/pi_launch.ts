@@ -180,8 +180,8 @@ function configureLocalExtensions(command: LaunchCommand, settings: AppSettings,
     PIOP_MCP_EXTENSION: mcpExtension,
     PI_DESKTOP_CONTEXT_WINDOW_CAP_EXTENSION: contextWindowCapExtension,
     PIOP_COMMAND_POLICY: JSON.stringify(Contributions.commandPolicy()),
-    PI_DESKTOP_BROKER_URL: `http://127.0.0.1:${brokerPort}`,
-    PI_DESKTOP_BROKER_TOKEN: brokerToken,
+    PIOP_BROKER_URL: `http://127.0.0.1:${brokerPort}`,
+    PIOP_BROKER_TOKEN: brokerToken,
     PI_DESKTOP_HOST_ID: hostId,
   });
 }

@@ -28,7 +28,7 @@ function installFakePi(home: string): void {
   fakeProgram(bin, 'node', `#!${process.execPath}
 const fs = require('node:fs');
 const args = process.argv.slice(2);
-fs.writeFileSync(require('node:path').join(process.env.HOME, 'pi-env.json'), JSON.stringify({ url: process.env.PI_DESKTOP_BROKER_URL, token: process.env.PI_DESKTOP_BROKER_TOKEN }));
+fs.writeFileSync(require('node:path').join(process.env.HOME, 'pi-env.json'), JSON.stringify({ url: process.env.PIOP_BROKER_URL, token: process.env.PIOP_BROKER_TOKEN }));
 const sessionFile = args[args.lastIndexOf('--session') + 1];
 const sessionId = JSON.parse(fs.readFileSync(sessionFile, 'utf8').split('\\n')[0]).id;
 const state = { sessionFile, sessionId, isStreaming: false, messageCount: 0, pendingMessageCount: 0, model: null, thinkingLevel: 'medium' };
