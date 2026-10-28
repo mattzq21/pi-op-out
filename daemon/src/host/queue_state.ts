@@ -28,8 +28,9 @@ export type QueueOffer = { steer: number; followUp: number };
  * when it is ready for a message, it takes the next one (the item is then taken), and the item leaves the queue when Pi's transcript holds it.
  * An item that Pi took but did not use goes back to waiting.
  *
- * An active or paused goal is an entry of the follow-ups. Follow-ups below it have afterGoal set; they wait only while the goal is active.
- * Pi may take an item that is not taken, not below an active goal and not marked for retry, while the queue is not held and not stopped.
+ * An active or paused goal is an entry of the follow-ups. Follow-ups below it have afterGoal set; they wait until the goal completes or is cleared,
+ * or until the user moves them above the goal. Steering messages never wait for the goal.
+ * Pi may take an item that is not taken, not below the goal and not marked for retry, while the queue is not held and not stopped.
  */
 export class QueueState {
   pending: any[] = [];
@@ -56,7 +57,7 @@ export class QueueState {
 
   /** True when Pi may take the item now. */
   available(item: any): boolean {
-    return !this.held && !this.stopped && !flag(item, 'taken') && (!flag(item, 'afterGoal') || this.goal?.status === 'paused') && !flag(item, 'retry') && !this.sending.has(text(item, 'id'));
+    return !this.held && !this.stopped && !flag(item, 'taken') && !flag(item, 'afterGoal') && !flag(item, 'retry') && !this.sending.has(text(item, 'id'));
   }
 
   offer(): QueueOffer {
@@ -99,7 +100,7 @@ export class QueueState {
       const index = visible.findIndex(item => flag(item, 'afterGoal') || flag(item, 'retry'));
       visible.splice(index < 0 ? visible.length : index, 0, { id: GOAL_ENTRY_ID, message: goal.objective, behavior: 'followUp', goal: true, ...(goal.status === 'paused' ? { paused: true } : {}) });
     }
-    const queued = pending.filter(item => !flag(item, 'retry') && (!flag(item, 'afterGoal') || this.goal?.status === 'paused'));
+    const queued = pending.filter(item => !flag(item, 'retry') && !flag(item, 'afterGoal'));
     return {
       type: 'queue_update',
       steering: queued.filter(item => item.behavior === 'steer').map(item => clone(item.message)),

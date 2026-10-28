@@ -701,7 +701,7 @@ export function Composer(props: Props) {
       const peerCount = createMemo(() => queue()?.length ?? 0);
       const position = createMemo(() => queue()?.positions.get(message().id) ?? -1);
 
-      const renderPendingDragHandle = () => (<button type="button" class="pending-icon-button pending-drag-handle" disabled={disabled() || Boolean(message().goal) || message().retry || !composer().onChangePending || peerCount() < 2} aria-label={`Drag to reorder queued message: ${text()}`} data-tooltip="Drag to reorder · Arrow keys to move" onKeyDown={(event) => {
+      const renderPendingDragHandle = () => (<button type="button" class="pending-icon-button pending-drag-handle" disabled={disabled() || message().retry || !composer().onChangePending || peerCount() < 2} aria-label={`Drag to reorder queued message: ${text()}`} data-tooltip="Drag to reorder · Arrow keys to move" onKeyDown={(event) => {
           if (event.key === "ArrowUp" || event.key === "ArrowDown") { event.preventDefault(); change(event.key === "ArrowUp" ? "moveUp" : "moveDown"); }
         }} onPointerDown={(event) => pendingDrag.begin(event, message().id)}><MoveVertical size={16} /></button>);
 
