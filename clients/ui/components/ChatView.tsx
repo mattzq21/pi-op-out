@@ -214,10 +214,15 @@ export function ChatView(props: Props & { transcriptActions?: JSXElement; follow
 
   const sessionCache = createMemo(() => hasSentPrompt() ? cacheHitStats(sessionUsage()) : undefined);
   const pendingSubmission = createMemo(() => chatSubmission(props.transport));
-  /** A /compact request stays open until compaction ends, but it is sent when Pi starts compacting. */
+  /**
+   * The submission whose status shows in the conversation: a message that starts a turn.
+   * A message that goes into the queue, as a steer or follow-up or while the queue is on hold, shows in the queue instead.
+   * A /compact request stays open until compaction ends, but it is sent when Pi starts compacting.
+   */
   const sendingSubmission = createMemo(() => {
     const submission = pendingSubmission();
-    const compact = submission && /^\/compact(?:\s|$)/.test(textOf(submission.message.content));
+    if (!submission || submission.message.deliveryBehavior || props.state.queueHeld) return undefined;
+    const compact = /^\/compact(?:\s|$)/.test(textOf(submission.message.content));
 
     return compact && props.state.isCompacting ? undefined : submission;
   });
@@ -446,7 +451,7 @@ export function ChatView(props: Props & { transcriptActions?: JSXElement; follow
       }}><div class="conversation">
         {!messages().length && !mcpLoading() && !pendingSubmission() && <div class="empty-chat"><span>π<sup>op</sup></span></div>}
         {<Key each={turns()} by={turn => turn.messages[0]?.id ?? "empty"}>{(turn, index) => <DeferredTurn navigationId={turn().messages[0]?.id} scrollRoot={messagesRef} eager={index() >= turns().length - 3}><ConversationTurn latest={index() === turns().length - 1} messages={turn().messages} promptContexts={turn().promptContexts} cwd={props.projectCwd} debug={props.debug ?? noDebug} active={props.state.isStreaming && index() === turns().length - 1} retryable={retryable() && index() === turns().length - 1} onRetry={onRetry} onBranch={branchAction()} onFork={props.state.canFork !== false && props.onFork ? onFork : undefined} onForkAndForget={props.state.canFork !== false && props.onForkAndForget && ownsConversation() ? onForkAndForget : undefined} forkSource={props.state.forkSource} forkSourceName={props.forkSourceName} onOpenForkSource={props.onOpenForkSource} /></DeferredTurn>}</Key>}
-        {sendingSubmission() && !props.state.queueHeld && !mcpLoading() && <section class="mcp-pending-turn" aria-label="Preparing message" aria-busy="true"><div class="mcp-loading" role="status"><LoaderCircle class="mcp-loading-spinner" size={14} aria-hidden="true" /><span>{required(sendingSubmission()).status}</span></div></section>}
+        {sendingSubmission() && !mcpLoading() && <section class="mcp-pending-turn" aria-label="Preparing message" aria-busy="true"><div class="mcp-loading" role="status"><LoaderCircle class="mcp-loading-spinner" size={14} aria-hidden="true" /><span>{required(sendingSubmission()).status}</span></div></section>}
         {mcpLoading() && <section class="mcp-pending-turn" aria-label="Message waiting for MCP" aria-busy="true">
           <div class="mcp-loading-list" role="status">{props.debug?.mcpServers ? <Key each={loadingServers()} by={(server) => server.id}>{(server, _index) => <div class="mcp-loading" ><LoaderCircle class="mcp-loading-spinner" size={14} aria-hidden="true" /><span>Loading {server().name}</span></div>}</Key> : <div class="mcp-loading"><LoaderCircle class="mcp-loading-spinner" size={14} aria-hidden="true" /><span>Loading MCPs</span></div>}</div>
         </section>}
