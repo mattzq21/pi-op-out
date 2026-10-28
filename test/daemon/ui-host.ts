@@ -4,9 +4,11 @@ import { scriptedModel } from './scripted-model';
 const daemon = await startDaemon();
 const remotes = [];
 // With PIOP_TEST_UI_MODEL=echo, the daemon's only model answers each message with "Reply to " and the message text.
+// A message that starts with "Slow " is answered after 3 seconds, so the agent stays busy meanwhile.
 const model = process.env.PIOP_TEST_UI_MODEL === 'echo' ? await scriptedModel(daemon.home, request => {
   const last = request.messages.at(-1);
   const content = typeof last?.content === 'string' ? last.content : (last?.content ?? []).map((part: any) => part.text ?? '').join('');
+  if (content.startsWith('Slow ')) return new Promise(resolve => setTimeout(() => resolve({ text: 'Reply to ' + content }), 3000));
   return { text: 'Reply to ' + content };
 }) : undefined;
 try {

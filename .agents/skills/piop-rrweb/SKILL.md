@@ -50,6 +50,50 @@ rrweb dom events.json --at open --id 180               # DOM outline at a marker
 
 `diff` flags `[placeholder]` for the empty text/comment nodes SolidJS keeps for conditional content, and counts placeholder swaps separately. rrweb sees DOM output only: a component that re-ran without changing the DOM, detached-node activity, and render cost are not in the recording.
 
+## 3b. Record in the browser harness and find needless re-renders
+
+Use this when a flow needs a model reply, or to check for needless re-renders. `appBrowser` (`test/app-browser-fixture.mjs`) runs the real UI in Playwright Chromium on a real daemon. `model: 'echo'` gives a model (`scripted-model`) that answers "Reply to <message>". It answers a message that starts with "Slow " after 3 s, so you can queue messages while the agent is busy.
+
+Write a temporary test in `test/unit/` (delete it when done):
+
+```js
+import { test } from 'node:test';
+import { appBrowser } from '../app-browser-fixture.mjs';
+import { recordPage } from '../../.agents/skills/piop-rrweb/scripts/lib/playwright.mjs';
+
+test('record', { timeout: 120000 }, async t => {
+  const page = await appBrowser(t, { model: 'echo' });
+  await page.getByRole('button', { name: 'Model', exact: true }).click();
+  await page.getByRole('option', { name: /scripted-model/ }).click();
+  const composer = page.getByRole('textbox', { name: 'Message piop' });
+  const rec = await recordPage(page, { track: ['.conversation'] });   // same options as `start`
+  await rec.mark('send');
+  await composer.fill('Hello');
+  await composer.press('Enter');
+  await page.getByText('Reply to Hello').waitFor();
+  await page.waitForTimeout(800);                                     // let the UI settle before the next mark
+  await rec.mark('end');
+  await rec.stop('/tmp/rec');                                         // events.json, geometry.json, recording.json
+});
+```
+
+Run it with `python3 scripts/test-run.py node scripts/test-unit.mjs test/unit/<file>`. All read commands and `replay` accept its `events.json`. To hold the queue, click the "Hold queue" button; "Resume queue" sends the held messages. Queue rows are `.pending-message`.
+
+Read the needless re-renders between two marks:
+
+```bash
+rrweb refresh /tmp/rec/events.json --between send end [--ms 1000] [--limit 60]
+```
+
+Each line is one group, largest first:
+
+- `RECREATE Nx in P parents`: a subtree was removed and a new one with the same tag, class and text was added. The DOM was rebuilt with no visible change.
+- `MOVE Nx`: the same node was removed and inserted again.
+- `FLIP Nx on K nodes`: an attribute or text changed and returned to its old value within `--ms`, for example `disabled: null -> "" -> back`.
+- `REWRITE Nx`: an attribute was set to the value it already had.
+
+Paths mask aria-labels that contain digits as `[aria-label=*]`, so one line covers the same element in every message. Each line gives one example node `id`; use `rrweb attrs <events.json> --id N` or `rrweb diff` to see the single changes. Empty SolidJS placeholders are not counted. Some flips are real state (a "running" class for the length of a reply); judge each against what the action should change.
+
 ## 4. Replay and verify
 
 ```bash

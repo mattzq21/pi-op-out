@@ -81,6 +81,10 @@ export class Mirror {
       this.removeNode(r.id);
     }
     for (const a of d.adds || []) {
+      // A node that is still attached elsewhere moves: drop it from its old parent first.
+      const old = this.nodes.get(a.node.id);
+      const oldParent = old && this.nodes.get(old.parent);
+      if (oldParent) oldParent.children = oldParent.children.filter(c => c !== a.node.id);
       const p = this.nodes.get(a.parentId);
       const m = this.addSerialized(a.node, a.parentId);
       if (p) {

@@ -6,7 +6,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-/** A real daemon for UI tests. With model 'echo', its only model answers each message with "Reply to " and the message text. */
+/** A real daemon for UI tests. With model 'echo', its only model answers each message with "Reply to " and the message text; messages that start with "Slow " get it after 3 seconds. */
 export async function daemonClient(t, onEvent = () => {}, { remotes = [], model } = {}) {
   const directory = await mkdtemp(join(tmpdir(), 'piop-ui-'));
   const worker = spawn('bun', [fileURLToPath(new URL('./daemon/ui-host.ts', import.meta.url))], { env: { ...process.env, TMPDIR: directory, PIOP_TEST_UI_REMOTES: JSON.stringify(remotes), ...(model ? { PIOP_TEST_UI_MODEL: model } : {}) }, stdio: ['pipe', 'pipe', 'pipe'] });
