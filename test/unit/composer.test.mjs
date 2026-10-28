@@ -97,7 +97,32 @@ describe('composer interactions', () => {
     failure = undefined;
     await key('Enter', {}, field());
     await untilDom(() => !field());
-    assert.deepEqual(changes, [['1', { type: 'edit', message: 'Fix the typo in the title' }], ['1', { type: 'edit', message: 'Fix the typo in the title' }]]);
+    const edit = { type: 'edit', message: 'Fix the typo in the title', images: { keep: [], add: [] } };
+    assert.deepEqual(changes, [['1', edit], ['1', edit]]);
+  });
+
+  test('a queued message is edited with its images and text files, a pasted file is attached, and a queued /compact has no edit button', async () => {
+    const changes = [];
+    const message = 'Review these\n\n<file name="notes.md">\nFirst note\n</file>\n\n<file name="old.txt">\nOld text\n</file>';
+    const pendingMessages = [
+      { id: '1', goalSubmissionId: 'submission-1', message, behavior: 'followUp', images: [{ type: 'image', mimeType: 'image/png', name: 'first.png', id: 'image-1' }, { type: 'image', mimeType: 'image/png', name: 'second.png', id: 'image-2' }] },
+      { id: '2', goalSubmissionId: 'submission-2', message: '/compact keep it short', behavior: 'followUp' },
+    ];
+    await render({ streaming: true, queued: 2, pendingMessages, loadPendingImage: async () => ({ data: 'AAAA', mimeType: 'image/png' }), onChangePending: async (id, action) => { changes.push([id, action]); } });
+    assert.equal(control('Edit queued message: /compact keep it short'), null, 'a queued /compact runs as it is');
+    await click(control('Edit queued message: ' + message));
+    const field = () => document.querySelector('.pending-edit');
+    assert.equal(field().value, 'Review these', 'the text files show as attachments, not as text');
+    await click(control('Remove old.txt'));
+    await click(control('Remove first.png'));
+    const pasted = new Event('paste', { bubbles: true, cancelable: true });
+    Object.defineProperty(pasted, 'clipboardData', { value: { files: [new File(['New text'], 'new.txt', { type: 'text/plain' })], items: [], getData: () => '' } });
+    await act(async () => field().dispatchEvent(pasted));
+    await untilDom(() => control('Remove new.txt'));
+    await enterText(field(), 'Review these again');
+    await key('Enter', {}, field());
+    await untilDom(() => !field());
+    assert.deepEqual(changes, [['1', { type: 'edit', message: 'Review these again\n\n<file name="notes.md">\nFirst note\n</file>\n\n<file name="new.txt">\nNew text\n</file>', images: { keep: [1], add: [] } }]]);
   });
 
 

@@ -53,7 +53,7 @@ export class QueueDelivery {
     this.state.sending.add(id);
     const command: any = { type: 'queue_prompt', queueId: id, message: item.message ?? null, streamingBehavior: item.behavior ?? null, discardOnRejection };
     for (const field of ['goalSubmissionId', 'goalPrepared']) if (item[field] !== undefined) command[field] = clone(item[field]);
-    if (Array.isArray(item.images) && item.images.length) command.images = clone(item.images);
+    if (Array.isArray(item.images) && item.images.length) command.images = item.images.map((image: any) => { const { id: _id, ...content } = clone(image); return content; });
     try {
       await this.record.retain(retained);
       const result = await this.execute(command);

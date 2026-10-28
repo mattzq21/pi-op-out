@@ -1,9 +1,10 @@
+import { randomUUID } from 'node:crypto';
 import { array, clone, flag, jsonEqual, text } from './json';
 import type { Mutex } from '../util/sync';
 import { GOAL_ENTRY_ID, inPi, kept, retriedInPi, unique, type QueueState } from './queue_state';
 import type { QueueDelivery } from './queue_delivery';
 import { commandName } from '../plugin_contributions';
-import { queuedCommand } from './queue_submission';
+import { goalSubmission, prepareSubmission, queuedCommand, withImageIds } from './queue_submission';
 
 /**
  * Changes one pending item: removes it, edits its text, switches it between steer and follow-up, moves it, or sends it again.
@@ -13,7 +14,7 @@ export async function changePending(queue: QueueDelivery, gate: Mutex, id: strin
   assertOwner();
   if (isEdit(action)) {
     const release = await gate.lock();
-    try { assertOwner(); return await editPending(queue, id, action.message); } finally { release(); }
+    try { assertOwner(); return await editPending(queue, id, action); } finally { release(); }
   }
   const cancelling = action === 'remove' && queue.state.sending.has(id);
   let release: () => void;
@@ -81,31 +82,67 @@ async function retry(queue: QueueDelivery, id: string, target: any, behavior: st
   return null;
 }
 
-/** An edit of a queued message's text: { type: 'edit', message }. */
-function isEdit(action: any): action is { type: 'edit'; message: string } {
+/**
+ * An edit of a queued message: { type: 'edit', message, images? }. images keeps the listed indexes of the current images, in that order,
+ * and adds new ones: { keep: number[], add: { data, mimeType, name? }[] }. Without images, the images stay as they are.
+ */
+function isEdit(action: any): action is { type: 'edit'; message: unknown; images?: unknown } {
   return action !== null && typeof action === 'object' && !Array.isArray(action) && action.type === 'edit';
 }
 
+const IMAGE_TYPES = new Set(['image/png', 'image/jpeg', 'image/gif', 'image/webp']);
+
+/** The images of an edited message, from the current images and the edit. */
+function editedImages(current: any[], change: unknown): any[] {
+  if (change === undefined) return clone(current);
+  const edit = change as any;
+  if (!edit || typeof edit !== 'object' || !Array.isArray(edit.keep) || !Array.isArray(edit.add)) throw new Error('The edited images must list the images to keep and to add.');
+  const keep: unknown[] = edit.keep;
+  if (keep.some(index => !Number.isInteger(index) || (index as number) < 0 || (index as number) >= current.length) || new Set(keep).size !== keep.length) throw new Error('The edited images name an image that the message does not have.');
+  const added = edit.add.map((image: any) => {
+    if (typeof image?.data !== 'string' || !image.data || typeof image?.mimeType !== 'string' || !IMAGE_TYPES.has(image.mimeType)) throw new Error('An added image must be PNG, JPEG, GIF or WebP data.');
+    return { type: 'image', data: image.data, mimeType: image.mimeType, ...(typeof image.name === 'string' ? { name: image.name } : {}) };
+  });
+  return [...keep.map(index => clone(current[index as number])), ...withImageIds(added)];
+}
+
 /**
- * Replaces the text of a queued message. Messages that the daemon keeps (waiting below the goal, or kept for retry) change in place. A message in Pi's queue is taken back with the rest of that queue and sent again with the new text.
+ * Replaces the text and images of a queued message. A queued /compact cannot be edited. An edited goal objective is prepared again, as when it was sent.
+ * Messages that the daemon keeps (waiting below the goal, held, or kept for retry) change in place. A message in Pi's queue is taken back with the rest of that queue and sent again with the new content.
  */
-async function editPending(queue: QueueDelivery, id: string, message: unknown): Promise<any> {
+async function editPending(queue: QueueDelivery, id: string, action: { message: unknown; images?: unknown }): Promise<any> {
   const state = queue.state;
   const target = state.pending.find(item => item.id === id);
   if (!target) throw new Error('This message is no longer in the queue.');
+  const message = action.message;
   if (typeof message !== 'string') throw new Error('The edited message must be text.');
   if (state.sending.has(id)) throw new Error('This message is being sent and can no longer be edited.');
-  if (target.goalSubmissionId !== undefined) throw new Error('A goal message cannot be edited here. Use /goal edit.');
-  if (!message.trim() && !(Array.isArray(target.images) && target.images.length)) throw new Error('A queued message cannot be empty. Remove it instead.');
+  if (commandName(text(target, 'message')) === 'compact') throw new Error('A queued /compact cannot be edited. Remove it and queue a new one.');
+  const current = Array.isArray(target.images) ? target.images : [];
+  const images = editedImages(current, action.images);
+  if (!message.trim() && !images.length) throw new Error('A queued message cannot be empty. Remove it instead.');
   if (target.behavior === 'steer' && queuedCommand(message)) throw new Error('/' + commandName(message) + ' can only be queued as a follow-up');
-  if (jsonEqual(target.message, message)) return null;
+  if (jsonEqual(target.message, message) && jsonEqual(current, images)) return null;
+  const update: any = { message, images };
+  if (goalSubmission({ message, images })) {
+    if (images.length) throw new Error('Goals do not accept attachments. Remove the files and images before saving.');
+    const prepared = await prepareSubmission(queue, { message, goalSubmissionId: randomUUID() });
+    if (prepared === undefined) throw new Error('The goal was not prepared, so the message was not changed.');
+    Object.assign(update, { message: prepared.message, goalSubmissionId: prepared.goalSubmissionId, goalPrepared: true });
+  } else update.goalPrepared = false;
   if (flag(target, 'retry') || kept(target)) {
-    target.message = message;
+    applyEdit(target, update);
     await queue.record.persist();
     await queue.publish();
     return null;
   }
-  return changeLive(queue, id, 'edit', undefined, { type: 'edit', message });
+  return changeLive(queue, id, 'edit', undefined, { type: 'edit', update });
+}
+
+function applyEdit(item: any, update: any): void {
+  Object.assign(item, clone(update));
+  if (!item.images.length) delete item.images;
+  if (!item.goalPrepared) delete item.goalPrepared;
 }
 
 async function changeLive(queue: QueueDelivery, id: string, behavior: string, neighbor: string | undefined, action: any): Promise<any> {
@@ -125,7 +162,7 @@ async function replaceLive(queue: QueueDelivery, id: string, behavior: string, n
   const cleared = await queue.execute({ type: 'clear_queue' });
   const remaining = clearedMessages(cleared, originals.filter(item => !flag(item, 'afterGoal')), id, behavior, () => queue.record.nextId());
   if (neighbor !== undefined) moveItem(remaining, id, neighbor, action);
-  if (behavior === 'edit') for (const item of remaining) if (item.id === id) item.message = action.message;
+  if (behavior === 'edit') for (const item of remaining) if (item.id === id) applyEdit(item, action.update);
   let rest = remaining;
   if (behavior === 'remove') {
     rest = remaining.filter(item => item.id !== id);

@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { clone, text } from './json';
 import { CommandRefusedError } from '../pi_rejection';
 import { validateItem } from './queue_storage';
@@ -21,9 +22,15 @@ export function goalSubmission(command: any): boolean {
   return goalObjective(message) || (message.trim() === '/goal' && Array.isArray(command.images) && command.images.length > 0);
 }
 
+/** The images with an id each. The queue view leaves image data out, so clients tell images apart by id after an edit. Pi does not get the ids. */
+export function withImageIds(images: any[]): any[] {
+  return images.map(image => image && typeof image === 'object' && typeof image.id === 'string' ? clone(image) : { ...clone(image), id: randomUUID() });
+}
+
 function submissionPayload(command: any, id: string, name: string): any {
   const pending: any = { id, message: command.message ?? null, behavior: name === 'steer' ? 'steer' : 'followUp' };
   for (const field of ['images', 'goalSubmissionId', 'goalPrepared']) if (command[field] !== undefined) pending[field] = clone(command[field]);
+  if (Array.isArray(pending.images)) pending.images = withImageIds(pending.images);
   return pending;
 }
 
@@ -67,7 +74,8 @@ export async function enqueue(queue: QueueDelivery, command: any, name: string):
   return result;
 }
 
-async function prepareSubmission(queue: QueueDelivery, original: any): Promise<any | undefined> {
+/** Prepares a message that sets a goal objective. Other messages stay as they are. Returns undefined when the user declines. */
+export async function prepareSubmission(queue: QueueDelivery, original: any): Promise<any | undefined> {
   if (!goalSubmission(original)) return original;
   const command = clone(original);
   const request: any = { type: 'prepare_goal_prompt', message: command.message ?? null };

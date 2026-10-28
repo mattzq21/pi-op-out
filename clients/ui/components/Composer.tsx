@@ -22,6 +22,7 @@ import { usePendingMessageDrag } from "../lib/usePendingMessageDrag";
 import type { AgentProfile,ComposerUpload,ContextUsage,ImageAttachment,Model,PendingMessage,SlashCommand } from "../types";
 import { IconButton } from "./IconButton";
 import { PendingImages } from "./PendingImages";
+import { PendingMessageEditor, pendingEditAction, startPendingEdit, type PendingEdit } from "./PendingMessageEditor";
 import { z } from "zod";
 import { queuedCommand } from "../plugins";
 import { isDaemonRefusal } from "../lib/commandRejected";
@@ -139,6 +140,9 @@ function composerControlState(controlsDisabled: boolean, stopping: boolean) {
 function insideBounds(bounds: DOMRect | undefined, x: number, y: number) {
   return Boolean(bounds && x >= bounds.left && x <= bounds.right && y >= bounds.top && y <= bounds.bottom);
 }
+
+/** True for a queued /compact. It runs as it is, so it cannot be edited. */
+const queuedCompaction = (text: string) => /^\/compact(?:\s|$)/.test(text.trimStart());
 
 /** A sent message keeps its row when the daemon queues it: the row of the message still being sent has the submission ID that the queued item carries. */
 const pendingKey = (message: import("../types").PendingMessage) => message.goalSubmissionId ?? message.id;
@@ -403,18 +407,18 @@ export function Composer(props: Props) {
 
   const [expandedPending, setExpandedPending] = createSignal<string>();
   const [changingPending, setChangingPending] = createSignal(false);
-  /** The queued message whose text is being edited, and the text so far. */
-  const [editingPending, setEditingPending] = createSignal<{ id: string; text: string }>();
+  /** The queued message being edited, with its text, images and files so far. */
+  const [editingPending, setEditingPending] = createSignal<PendingEdit>();
   const [savingEdit, setSavingEdit] = createSignal(false);
 
-  /** Saves the edited text of a queued message. The editor stays open with the error when the save fails. */
+  /** Saves the edited queued message. The editor stays open with the error when the save fails. */
   const saveEdit = async () => {
     const edit = editingPending();
 
     if (!edit || savingEdit() || !composer().onChangePending) return;
     setSavingEdit(true); setControlError(undefined);
 
-    try { await required(composer().onChangePending)(edit.id, { type: "edit", message: edit.text }); setEditingPending(undefined); }
+    try { await required(composer().onChangePending)(edit.id, pendingEditAction(edit)); setEditingPending(undefined); }
     catch (reason) { setControlError(reason instanceof Error ? reason.message : String(reason)); }
     finally { setSavingEdit(false); }
   };
@@ -715,7 +719,7 @@ export function Composer(props: Props) {
         }} onPointerDown={(event) => pendingDrag.begin(event, message().id)}><MoveVertical size={16} /></button>);
 
       const renderPendingMessageActions = () => (composer().onChangePending && <div class="pending-message-actions">
-          <Show when={!message().goal && !message().goalSubmissionId}><Show when={editingPending()?.id === message().id} fallback={<button type="button" class="pending-icon-button" disabled={disabled() || savingEdit()} aria-label={`Edit queued message: ${text()}`} data-tooltip="Edit message" onClick={() => setEditingPending({ id: message().id, text: text() })}><Pencil size={12} /></button>}>
+          <Show when={!message().goal && !queuedCompaction(text())}><Show when={editingPending()?.id === message().id} fallback={<button type="button" class="pending-icon-button" disabled={disabled() || savingEdit()} aria-label={`Edit queued message: ${text()}`} data-tooltip="Edit message" onClick={() => setEditingPending(startPendingEdit(message()))}><Pencil size={12} /></button>}>
             <button type="button" class="pending-icon-button" disabled={disabled() || savingEdit()} aria-label="Save edited message" data-tooltip="Save · Enter" onClick={() => void saveEdit()}><Check size={13} /></button>
             <button type="button" class="pending-icon-button" disabled={savingEdit()} aria-label="Cancel editing" data-tooltip="Cancel · Esc" onClick={() => setEditingPending(undefined)}><X size={13} /></button>
           </Show></Show>
@@ -730,11 +734,8 @@ export function Composer(props: Props) {
 
       return <div data-pending-id={message().id} class={pendingMessageClass(message().id, expandedPending(), pendingDrag.drop)} classList={{ "pending-goal": Boolean(message().goal), paused: Boolean(message().paused) }}>
         {renderPendingDragHandle()}
-        <PendingImages message={message()} load={props.loadPendingImage} />
-        <Show when={editingPending()?.id === message().id} fallback={<span class="pending-message-text" data-tooltip={message().recovered ? "This saved answer may not have reached the model. Check the conversation before retrying." : message().retry ? "piop could not confirm whether this message reached the model, for example after a restart, so it is not sent by itself. Retry sends it again. Remove it if the conversation already has it." : text()} onDblClick={() => setExpandedPending((current) => current === message().id ? undefined : message().id)}>{message().goal && <>{message().paused && <small>Paused · </small>}<small class="goal-label">Goal · </small></>}{message().retry && <small>{message().recovered ? "Saved answer · " : "Retry needed · "}</small>}{text()}</span>}><textarea class="pending-edit" aria-label={`Edit queued message: ${text()}`} rows={Math.min(6, Math.max(1, (editingPending()?.text ?? "").split("\n").length))} value={editingPending()?.text ?? ""} disabled={savingEdit()} ref={element => queueMicrotask(() => { if (element.isConnected) { element.focus(); element.setSelectionRange(element.value.length, element.value.length); } })} onInput={event => setEditingPending({ id: message().id, text: event.currentTarget.value })} onKeyDown={event => {
-          if (event.key === "Enter" && !event.shiftKey && !event.isComposing) { event.preventDefault(); void saveEdit(); }
-          else if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); setEditingPending(undefined); }
-        }} /></Show>
+        <Show when={editingPending()?.id !== message().id}><PendingImages message={message()} load={props.loadPendingImage} /></Show>
+        <Show when={editingPending()?.id === message().id ? editingPending() : undefined} fallback={<span class="pending-message-text" data-tooltip={message().recovered ? "This saved answer may not have reached the model. Check the conversation before retrying." : message().retry ? "piop could not confirm whether this message reached the model, for example after a restart, so it is not sent by itself. Retry sends it again. Remove it if the conversation already has it." : text()} onDblClick={() => setExpandedPending((current) => current === message().id ? undefined : message().id)}>{message().goal && <>{message().paused && <small>Paused · </small>}<small class="goal-label">Goal · </small></>}{message().retry && <small>{message().recovered ? "Saved answer · " : "Retry needed · "}</small>}{text()}</span>}>{edit => <PendingMessageEditor message={message()} edit={edit()} saving={savingEdit()} load={props.loadPendingImage} onChange={update => setEditingPending(current => current && current.id === edit().id ? update(current) : current)} addFiles={(files, commit) => attachments.addFiles(files, [], commit)} onSave={() => void saveEdit()} onCancel={() => setEditingPending(undefined)} />}</Show>
         {renderPendingMessageActions()}
       </div>;
     }}</Key>}<Show when={props.goal?.error()}>{message => <div class="pending-goal-error" role="alert">{message()}</div>}</Show></div> : renderQueueHold(true)}

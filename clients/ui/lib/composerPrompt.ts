@@ -68,14 +68,51 @@ function expandSkillReference(value: string, commands: SlashCommand[]) {
 
 const escapeAttribute = (value: string) => value.replace(/[&<>"']/g, (character) => required(({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&apos;" })[character]));
 
+/** A text file attached to a message. The message ends with one block per file, so the model reads the file with the prompt. */
+export interface AttachedFile { name: string; text: string }
+
+const unescapeAttribute = (value: string) => value.replace(/&(amp|lt|gt|quot|apos);/g, (_match, name: string) => required(({ amp: "&", lt: "<", gt: ">", quot: '"', apos: "'" } as Record<string, string>)[name]));
+
+/** The message for a prompt and its text files. File text cannot end its block early, because a closing tag inside it is escaped. */
+export function attachFiles(prompt: string, files: AttachedFile[]) {
+  return [prompt, ...files.map((file) => '<file name="' + escapeAttribute(file.name) + '">\n' + file.text.replace(/<\/file>/gi, "<\\/file>") + "\n</file>")].filter(Boolean).join("\n\n");
+}
+
+const FILE_BLOCK = /<file name="([^"]*)">\n([\s\S]*?)\n<\/file>/y;
+
+/** Splits a message made by attachFiles into its prompt and text files. A message without file blocks at its end is all prompt. */
+export function splitAttachedFiles(message: string): { prompt: string; files: AttachedFile[] } {
+  for (let start = message.indexOf('<file name="'); start >= 0; start = message.indexOf('<file name="', start + 1)) {
+    if (start > 0 && !message.slice(0, start).endsWith("\n\n")) continue;
+    const files: AttachedFile[] = [];
+    let at = start;
+
+    while (at < message.length) {
+      FILE_BLOCK.lastIndex = at;
+      const block = FILE_BLOCK.exec(message);
+
+      if (!block) break;
+      files.push({ name: unescapeAttribute(block[1]), text: block[2].replace(/<\\\/file>/gi, "</file>") });
+      at = FILE_BLOCK.lastIndex;
+
+      if (at < message.length) {
+        if (!message.startsWith("\n\n", at)) break;
+        at += 2;
+      }
+    }
+
+    if (at === message.length && files.length) return { prompt: message.slice(0, start).replace(/\n\n$/, ""), files };
+  }
+
+  return { prompt: message, files: [] };
+}
+
 export function buildComposerPrompt(value: string, uploads: ComposerUpload[], commands: SlashCommand[]) {
   const prompt = expandSkillReference(expandInlineCommand(value.trim(), commands), commands);
 
   if (prompt === "/goal") throw new Error("Write an objective or an action after /goal. Usage: /goal <objective | edit | pause | resume | clear>");
   if (/^\/goal(?:\s|$)/.test(prompt) && uploads.length) throw new Error("Goals do not accept attachments. Remove the files and images before sending.");
-  const textFiles = uploads.filter((upload) => upload.kind === "text");
-  const escapeFileContent = (text: string) => text.replace(/<\/file>/gi, "<\\/file>");
-  const message = [prompt, ...textFiles.map((file) => `<file name="${escapeAttribute(file.name)}">\n${escapeFileContent(file.text ?? "")}\n</file>`)].filter(Boolean).join("\n\n");
+  const message = attachFiles(prompt, uploads.flatMap((upload) => upload.kind === "text" ? [{ name: upload.name, text: upload.text ?? "" }] : []));
   const images = uploads.flatMap((upload) => upload.image ? [upload.image] : []);
 
   return { message, images };

@@ -147,3 +147,25 @@ test.concurrent('a held queue keeps every message, even one sent while the agent
   expect(userTexts(messages)).toEqual(['Long migration', 'Keep the old column', 'Check the schema', 'Run the tests']);
   expect(latest()).toMatchObject({ held: false, pendingMessages: [] });
 }, 60000);
+test.concurrent('a queued message sent from the composer can be edited, with its images, and the agent gets the edited text and images; a queued /compact cannot be edited', async () => {
+  const png = (data: string) => ({ type: 'image', data, mimeType: 'image/png' });
+  const red = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFBQIAX8jx0gAAAABJRU5ErkJggg==';
+  const black = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==';
+  const clear = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=';
+  agents.scripts.set('Look at this one', () => ({ text: 'Seen.' }));
+  const chat = await agents.rootChat();
+  await chat.command({ type: 'hold_queue', held: true });
+  await chat.command({ type: 'follow_up', message: 'Look at these', images: [png(red), png(black)], goalSubmissionId: crypto.randomUUID() });
+  await chat.command({ type: 'follow_up', message: '/compact keep the images', goalSubmissionId: crypto.randomUUID() });
+  for (let tries = 0; pending(chat.runtimeId).length < 2 && tries < 50; tries++) await Bun.sleep(100);
+  const [message, compaction] = pending(chat.runtimeId);
+  await chat.command({ type: 'change_pending', id: message.id, action: { type: 'edit', message: 'Look at this one', images: { keep: [1], add: [png(clear)] } } });
+  const edited = pending(chat.runtimeId)[0] as any;
+  expect([edited.id, edited.message, edited.images.length]).toEqual([message.id, 'Look at this one', 2]);
+  expect(await chat.command({ type: 'change_pending', id: compaction.id, action: { type: 'edit', message: '/compact', images: { keep: [], add: [] } } }).then(() => 'edited', (error: Error) => error.message)).toBe('A queued /compact cannot be edited. Remove it and queue a new one.');
+  await chat.command({ type: 'change_pending', id: compaction.id, action: 'remove' });
+  await chat.command({ type: 'hold_queue', held: false });
+  await chat.until(history => text(history.at(-1)) === 'Seen.');
+  const sent = agents.model.requests.find(request => text(request.messages.at(-1)) === 'Look at this one')!.messages.at(-1).content;
+  expect(sent.filter((part: any) => part.type === 'image_url').map((part: any) => part.image_url.url)).toEqual(['data:image/png;base64,' + black, 'data:image/png;base64,' + clear]);
+}, 60000);

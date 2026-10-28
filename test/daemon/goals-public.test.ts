@@ -330,5 +330,21 @@ test('a paused goal keeps its place in the queue and holds the queue, and resumi
   await chat.until(history => text(history.at(-1)) === 'Shipped.');
   expect(await entries()).toEqual([]);
 }, 120000);
+test('an edited goal objective in a held queue is prepared again, and the goal starts with the new objective', async () => {
+  agents.scripts.set('Draft the new plan', async messages => { await Bun.sleep(100); return called(messages, 'update_goal_status') ? { text: 'Planned.' } : { tool: 'update_goal_status', arguments: { status: 'complete' } }; });
+  agents.scripts.set('Draft the old plan', () => ({ text: 'Wrong objective.' }));
+  const chat = await agents.rootChat();
+  await chat.command({ type: 'hold_queue', held: true });
+  await send(chat, '/goal Draft the old plan');
+  const queued = ((await chat.command({ type: 'get_state' })).pendingMessages ?? [])[0];
+  expect(queued.message).toBe('/goal Draft the old plan');
+  await chat.command({ type: 'change_pending', id: queued.id, action: { type: 'edit', message: '/goal Draft the new plan', images: { keep: [], add: [] } } });
+  expect(((await chat.command({ type: 'get_state' })).pendingMessages ?? []).map((entry: any) => entry.message)).toEqual(['/goal Draft the new plan']);
+  await chat.command({ type: 'hold_queue', held: false });
+  await chat.until(history => text(history.at(-1)) === 'Planned.');
+  const said = agents.model.requests.flatMap(request => request.messages.filter((message: any) => message.role === 'user').map(text));
+  expect(said.some((content: string) => content.includes('Draft the new plan'))).toBe(true);
+  expect(said.some((content: string) => content.includes('Draft the old plan'))).toBe(false);
+}, 60000);
 
 });
