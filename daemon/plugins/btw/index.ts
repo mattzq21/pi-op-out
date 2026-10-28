@@ -4,8 +4,6 @@ import { sessionName } from "../../resources/session-broker/session-names.cjs";
 import { sessionControls } from "../../resources/piop-controls/interface.ts";
 import { openAuxiliaryChat } from "../../resources/session-broker/auxiliary.ts";
 
-const NOTE = "This is a side chat of the main chat. Use send_to_main to send results there.";
-
 /** The name the chat list shows: the saved name, or else the first line of the first prompt. */
 function mainChatName(ctx: ExtensionCommandContext) {
   const file = ctx.sessionManager.getSessionFile();
@@ -25,7 +23,7 @@ async function startBtw(pi: ExtensionAPI, args: string, ctx: ExtensionCommandCon
 
   if (!controls) throw new Error("Piop session controls are not loaded");
   const name = `btw ${mainChatName(ctx)}`;
-  const copy = await controls.copyAuxiliary(ctx, { kind: "btw", name, note: NOTE });
+  const copy = await controls.copyAuxiliary(ctx, { kind: "btw", name });
   const task = args.trim();
 
   openAuxiliaryChat(ctx, { kind: "btw", name, sessionId: copy.sessionId, sessionPath: copy.sessionPath, cwd: copy.cwd, hostId: copy.hostId, parentSessionId: copy.parentSessionId, ...task ? { task } : {} });
