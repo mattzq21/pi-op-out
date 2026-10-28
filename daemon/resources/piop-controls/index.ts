@@ -1,6 +1,7 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { registerStopControl } from "./stop.ts";
-import { copyAuxiliary, forkAndForget, forkSession } from "./fork.ts";
+import { forkAndForget, forkSession } from "./fork.ts";
+import { copyAuxiliary } from "./auxiliary-copy.ts";
 import { registerControlCommands } from "./commands.ts";
 import { registerFastModeControl } from "./fast-mode.ts";
 import type { SessionControls } from "./interface.ts";

@@ -29,7 +29,7 @@ async function startBtw(pi: ExtensionAPI, args: string, ctx: ExtensionCommandCon
   openAuxiliaryChat(ctx, { kind: "btw", name, sessionId: copy.sessionId, sessionPath: copy.sessionPath, cwd: copy.cwd, hostId: copy.hostId, parentSessionId: copy.parentSessionId, ...task ? { task } : {} });
 }
 
-/** /btw: a side chat with this chat's history through its last finished answer, opened in the side pane. */
+/** /btw: a side chat with this chat's history through its last finished agent turn, without its goal, opened in the side pane. */
 export default function btw(pi: ExtensionAPI) {
   const unsubscribe = pi.events.on("piop:auxiliary:kind", request => { if (request.kind === "btw") request.sendToMain = "Send results to the main chat. Use only when user explicitly asks to communicate with the other chat"; });
   pi.on("session_shutdown", () => { unsubscribe(); });

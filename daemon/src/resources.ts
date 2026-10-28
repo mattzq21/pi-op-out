@@ -83,6 +83,7 @@ import controlsIndex from '../resources/piop-controls/index.ts?raw';
 import controlsInterface from '../resources/piop-controls/interface.ts?raw';
 import controlsStop from '../resources/piop-controls/stop.ts?raw';
 import controlsFork from '../resources/piop-controls/fork.ts?raw';
+import controlsAuxiliaryCopy from '../resources/piop-controls/auxiliary-copy.ts?raw';
 import controlsCommands from '../resources/piop-controls/commands.ts?raw';
 import controlsFastMode from '../resources/piop-controls/fast-mode.ts?raw';
 import goalsIndex from '../resources/piop-goals/index.ts?raw';
@@ -205,7 +206,7 @@ export const SESSION_EXTENSIONS: Array<[string, Array<[string, string]>]> = [
     ['session-publication.d.cts', storagePublicationTypes],
   ]],
   ['piop-controls', [
-    ['interface.ts', controlsInterface], ['stop.ts', controlsStop], ['fork.ts', controlsFork],
+    ['interface.ts', controlsInterface], ['stop.ts', controlsStop], ['fork.ts', controlsFork], ['auxiliary-copy.ts', controlsAuxiliaryCopy],
     ['commands.ts', controlsCommands], ['fast-mode.ts', controlsFastMode], ['index.ts', controlsIndex],
   ]],
   ['piop-goals', [

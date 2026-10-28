@@ -21,9 +21,9 @@ export interface SessionControls {
   /** Saves a copy of this conversation as a new conversation. Does not switch to it. */
   fork(ctx: ExtensionContext, mode: ForkMode, entryId?: string): Promise<ForkResult>;
   /**
-   * Saves a copy of this root conversation through its last finished answer as an auxiliary conversation that this one owns.
-   * The copy keeps the agent, model, thinking level and fast mode, and waits for its first message. Rejects in an auxiliary
-   * conversation and when there is no finished answer yet.
+   * Saves a copy of this root conversation through its last finished agent turn as an auxiliary conversation that this one owns.
+   * The copy keeps the agent, model, thinking level and fast mode, but not the goal, and waits for its first message.
+   * Rejects in an auxiliary conversation and when no agent turn has finished yet.
    */
   copyAuxiliary(ctx: ExtensionContext, copy: AuxiliaryCopy): Promise<ForkResult & { parentSessionId: string }>;
   /** Moves this conversation back to the assistant response entryId and records that the later branch was dropped. */
