@@ -11,7 +11,7 @@ const toolGroups = [
 ];
 
 /** Tools that have their own setting. codemode follows the agent's Codemode switch; list_agent_profiles is on when the Subagents or Orchestration group is. */
-const HIDDEN_TOOLS = new Set(["codemode", "list_agent_profiles"]);
+const HIDDEN_TOOLS = new Set(["codemode", "list_agent_profiles", "send_to_main"]);
 
 /** The name of the extension that registered a tool, from its source path, or undefined for a Pi built-in. */
 function sourceName(source: string): string | undefined {
