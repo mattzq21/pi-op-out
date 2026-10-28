@@ -29,7 +29,7 @@ async function fixture(t) {
   process.env.PIOP_STORAGE_DIRECTORY = basename(dir);
   t.after(() => rm(dir, { recursive: true, force: true }));
 
-  const previousBroker = [process.env.PI_DESKTOP_BROKER_URL, process.env.PI_DESKTOP_BROKER_TOKEN];
+  const previousBroker = [process.env.PIOP_BROKER_URL, process.env.PIOP_BROKER_TOKEN];
   const server = createServer(async (request, response) => {
     response.setHeader('Content-Type', 'application/json');
     try {
@@ -48,12 +48,12 @@ async function fixture(t) {
     } catch (error) { response.writeHead(500).end(JSON.stringify({ error: error.message })); }
   });
   await new Promise((resolve, reject) => { server.once('error', reject); server.listen(0, '127.0.0.1', resolve); });
-  process.env.PI_DESKTOP_BROKER_URL = `http://127.0.0.1:${server.address().port}`;
-  process.env.PI_DESKTOP_BROKER_TOKEN = 'fixture';
+  process.env.PIOP_BROKER_URL = `http://127.0.0.1:${server.address().port}`;
+  process.env.PIOP_BROKER_TOKEN = 'fixture';
   t.after(async () => {
     server.closeAllConnections();
     await new Promise((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
-    for (const [index, key] of ['PI_DESKTOP_BROKER_URL', 'PI_DESKTOP_BROKER_TOKEN'].entries()) {
+    for (const [index, key] of ['PIOP_BROKER_URL', 'PIOP_BROKER_TOKEN'].entries()) {
       if (previousBroker[index] === undefined) delete process.env[key]; else process.env[key] = previousBroker[index];
     }
   });

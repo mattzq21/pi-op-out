@@ -5,7 +5,7 @@ import { randomUUID } from 'node:crypto';
 import { reserveSessionId, takeSessionId, withSessionIds } from '../../daemon/resources/piop-storage/identities.mjs';
 
 async function daemon(t, reply) {
-  const previous = [process.env.PI_DESKTOP_BROKER_URL, process.env.PI_DESKTOP_BROKER_TOKEN];
+  const previous = [process.env.PIOP_BROKER_URL, process.env.PIOP_BROKER_TOKEN];
   const requests = [];
   const server = createServer(async (request, response) => {
     assert.equal(request.headers.authorization, 'Bearer storage-test');
@@ -18,12 +18,12 @@ async function daemon(t, reply) {
     response.end(JSON.stringify({ data: reply(body) }));
   });
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
-  process.env.PI_DESKTOP_BROKER_URL = `http://127.0.0.1:${server.address().port}`;
-  process.env.PI_DESKTOP_BROKER_TOKEN = 'storage-test';
+  process.env.PIOP_BROKER_URL = `http://127.0.0.1:${server.address().port}`;
+  process.env.PIOP_BROKER_TOKEN = 'storage-test';
   t.after(async () => {
     server.closeAllConnections();
     await new Promise(resolve => server.close(resolve));
-    for (const [i, name] of ['PI_DESKTOP_BROKER_URL', 'PI_DESKTOP_BROKER_TOKEN'].entries()) {
+    for (const [i, name] of ['PIOP_BROKER_URL', 'PIOP_BROKER_TOKEN'].entries()) {
       if (previous[i] === undefined) delete process.env[name]; else process.env[name] = previous[i];
     }
   });

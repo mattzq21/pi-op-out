@@ -37,7 +37,7 @@ On Matt's local host, register this server in Piop's Settings → MCP (the agent
   "name": "cua-vm",
   "transport": "stdio",
   "command": "/home/matt/Projects/cua-vm-broker/cua-vm-broker",
-  "args": "mcp --instance-env PIOP_CUA_INSTANCE_ID",
+  "args": "mcp --instance-env PIOP_AGENT_ID",
   "startupTimeoutSec": 300,
   "enabled": true
 }

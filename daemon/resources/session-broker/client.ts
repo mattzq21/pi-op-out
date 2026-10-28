@@ -23,9 +23,9 @@ interface BrokerRequest {
 
 const responseSchema = Type.Object({ error: Type.Optional(Type.String()), data: Type.Optional(Type.Unknown()) });
 
-const url = process.env.PI_DESKTOP_BROKER_URL;
+const url = process.env.PIOP_BROKER_URL;
 
-const token = process.env.PI_DESKTOP_BROKER_TOKEN;
+const token = process.env.PIOP_BROKER_TOKEN;
 
 export class BrokerRequestError extends Error {
   constructor(message: string, readonly transient: boolean) { super(message); }

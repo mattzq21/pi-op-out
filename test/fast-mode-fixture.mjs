@@ -30,10 +30,10 @@ export async function installFastMode(t, { dir, pi, ctx, models, catalog, fastMo
   ctx.modelRegistry.getApiKeyAndHeaders = async () => ({ ok: true, apiKey: 'fixture-key', headers: {} });
   ctx.hasUI = true;
   ctx.mode = 'rpc';
-  const brokerKeys = ['PI_DESKTOP_BROKER_URL', 'PI_DESKTOP_BROKER_TOKEN'];
+  const brokerKeys = ['PIOP_BROKER_URL', 'PIOP_BROKER_TOKEN'];
   const previous = brokerKeys.map(key => process.env[key]);
-  process.env.PI_DESKTOP_BROKER_URL = `http://127.0.0.1:${server.address().port}`;
-  process.env.PI_DESKTOP_BROKER_TOKEN = 'fixture-token';
+  process.env.PIOP_BROKER_URL = `http://127.0.0.1:${server.address().port}`;
+  process.env.PIOP_BROKER_TOKEN = 'fixture-token';
   t.after(() => brokerKeys.forEach((key, index) => {
     if (previous[index] === undefined) delete process.env[key]; else process.env[key] = previous[index];
   }));

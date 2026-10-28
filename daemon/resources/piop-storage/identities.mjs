@@ -4,8 +4,8 @@ const identities = new AsyncLocalStorage();
 const uuid = /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/;
 
 async function request(body) {
-  const url = process.env.PI_DESKTOP_BROKER_URL;
-  const token = process.env.PI_DESKTOP_BROKER_TOKEN;
+  const url = process.env.PIOP_BROKER_URL;
+  const token = process.env.PIOP_BROKER_TOKEN;
   if (!url || !token) throw new Error("Session identity requires the Piop daemon");
   const response = await fetch(`${url}/session-identity`, {
     method: "POST", headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },

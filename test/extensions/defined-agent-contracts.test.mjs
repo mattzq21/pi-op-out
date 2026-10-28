@@ -12,7 +12,7 @@ const remoteMcp = { command: 'mcp-server', args: [], enabled: true };
 test('agent startup reads local definitions even when a broker is configured', async t => {
   const f = await agentFixture(t, {
     config: configured([profile()]),
-    env: { PI_DESKTOP_BROKER_URL: 'http://127.0.0.1:1', PI_DESKTOP_BROKER_TOKEN: '' },
+    env: { PIOP_BROKER_URL: 'http://127.0.0.1:1', PIOP_BROKER_TOKEN: '' },
   });
   await f.load(); await f.start();
   assert.deepEqual(f.pi.getActiveTools(), ['read']);

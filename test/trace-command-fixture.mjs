@@ -43,7 +43,7 @@ export async function publishedTrace(t, traceReader, content, { folder = '', hom
   try { bind(sourceDb, id, source); } finally { sourceDb.close(); }
   const outfile = controlsBundle ?? join(buildDirectory, 'operations.mjs');
   if (!controlsBundle) await buildTraceControls(outfile);
-  const previousBroker = [process.env.PI_DESKTOP_BROKER_URL, process.env.PI_DESKTOP_BROKER_TOKEN];
+  const previousBroker = [process.env.PIOP_BROKER_URL, process.env.PIOP_BROKER_TOKEN];
   const server = createServer(async (request, response) => {
     if (request.method !== 'POST' || request.url !== '/session-identity' || request.headers.authorization !== 'Bearer fixture') {
       response.writeHead(400); response.end(JSON.stringify({ error: 'Unexpected storage request' })); return;
@@ -56,11 +56,11 @@ export async function publishedTrace(t, traceReader, content, { folder = '', hom
   });
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   server.unref();
-  process.env.PI_DESKTOP_BROKER_URL = `http://127.0.0.1:${server.address().port}`;
-  process.env.PI_DESKTOP_BROKER_TOKEN = 'fixture';
+  process.env.PIOP_BROKER_URL = `http://127.0.0.1:${server.address().port}`;
+  process.env.PIOP_BROKER_TOKEN = 'fixture';
   t.after(() => {
     server.closeAllConnections(); server.close();
-    for (const [index, key] of ['PI_DESKTOP_BROKER_URL', 'PI_DESKTOP_BROKER_TOKEN'].entries()) {
+    for (const [index, key] of ['PIOP_BROKER_URL', 'PIOP_BROKER_TOKEN'].entries()) {
       if (previousBroker[index] === undefined) delete process.env[key]; else process.env[key] = previousBroker[index];
     }
   });
