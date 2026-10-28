@@ -56,6 +56,7 @@ export class SessionPublicationError extends Error {
 export function publish(target: string, body: string, withReferences: (operation: () => Promise<SessionPublication>) => Promise<SessionPublication>, options?: PublicationOptions): Promise<SessionPublication>;
 export function recover(root: string): PublicationRecovery;
 export function retainedDependencies(root: string): DiagnosticPublication[];
+export function awaitRetainedDependencies(root: string): Promise<DiagnosticPublication[]>;
 export function pendingReviews(parentPath: string, parentId: string): Promise<{ publication: SessionPublication; record: ReviewPublicationRecord }[]>;
 export function acknowledge(publication: SessionPublication): Promise<boolean>;
 export function release(publication: SessionPublication): void;

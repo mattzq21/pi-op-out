@@ -405,7 +405,16 @@ async function pendingReviews(parentPath, parentId) {
 }
 
 function retainedDependencies(root) {
-  return io.locked(root, () => journalFiles(root).map(file => {
+  return io.locked(root, () => readRetainedDependencies(root));
+}
+
+/** Same as retainedDependencies, but waits for a running storage transaction to end. */
+function awaitRetainedDependencies(root) {
+  return io.lockedAsync(root, () => readRetainedDependencies(root));
+}
+
+function readRetainedDependencies(root) {
+  return journalFiles(root).map(file => {
     const journal = load(root, file);
 
     const candidates = [journal.target, journal.temporary, journal.quarantine?.path].filter(Boolean);
@@ -413,7 +422,7 @@ function retainedDependencies(root) {
     const transcriptPaths = [...new Set(candidates)].filter(candidate => io.verified(candidate, journal));
 
     return { kind: 'publication-diagnostic', sessionId: journal.sessionId, journalPath: file, transcriptPaths, dependencies: journal.dependencies };
-  }));
+  });
 }
 
 function pendingReview(root, file, parentId, result) {
@@ -433,7 +442,7 @@ function pendingReview(root, file, parentId, result) {
   } catch (error) { fs.closeSync(lease); throw error; }
 }
 
-module.exports = { temporaryPaths, SessionPublicationError, publish, recover, retainedDependencies, pendingReviews, acknowledge, release };
+module.exports = { temporaryPaths, SessionPublicationError, publish, recover, retainedDependencies, awaitRetainedDependencies, pendingReviews, acknowledge, release };
 
 function verifyPreparation(journal) {
   if (journal.preparationComplete === false) throw new Error("Publication preparation is incomplete; retained without replaying its callback");
