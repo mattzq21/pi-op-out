@@ -3,6 +3,7 @@ import type { createConversationDrafts } from "../appDrafts";
 import type { DraftDestination } from "../lib/draftState";
 import type { SessionSummary } from "../types";
 import { goalPreparationSchema } from "../lib/draftSubmission";
+import { formatDateTime } from "../lib/dateTime";
 import type { z } from "zod";
 
 function destinationSession(destination: DraftDestination): SessionSummary {
@@ -34,13 +35,13 @@ export function DraftRecovery(props: Props) {
       <Show when={error()}><div role="alert">{error()}</div></Show>
       <For each={recoveries()}>{submission => <Show when={submission.status === "preparing"} fallback={<details>
         <summary>Confirming the message · {submission.rawText.slice(0, 60) || "Attachments"}</summary>
-        <p>{submission.destination.hostId} · {submission.destination.cwd ?? "Temporary chat"} · {new Date(submission.createdAt).toLocaleString()}</p>
+        <p>{submission.destination.hostId} · {submission.destination.cwd ?? "Temporary chat"} · {formatDateTime(new Date(submission.createdAt))}</p>
         <p>Piop is asking the host whether it accepted this message.</p>
         <Show when={props.drafts.confirmationError(submission.id)}>{failure => <p role="alert">{failure()}</p>}</Show>
         <div><button disabled={busy()} onClick={() => props.onSelect(destinationSession(submission.destination))}>Open conversation</button></div>
       </details>}><details>
         <summary>Interrupted submission · {submission.rawText.slice(0, 60) || "Attachments"}</summary>
-        <p>{submission.destination.hostId} · {submission.destination.cwd ?? "Temporary chat"} · {new Date(submission.createdAt).toLocaleString()}</p>
+        <p>{submission.destination.hostId} · {submission.destination.cwd ?? "Temporary chat"} · {formatDateTime(new Date(submission.createdAt))}</p>
         <p>Restore this input to continue sending it.</p>
         <Show when={submission.error}><p>{submission.error}</p></Show>
         <pre style={{ "white-space": "pre-wrap" }}>{submission.rawText}</pre>

@@ -22,6 +22,7 @@ import { ZoomableImage } from "./ZoomableImage";
 import { SubagentResults, subagentRuns } from "./SubagentResults";
 import { copyText } from "../lib/clipboard";
 import type { DebugView } from "../lib/debugFeatures";
+import { formatDateTime, formatDayTime, formatTime } from "../lib/dateTime";
 
 interface Props { message: ChatMessage; turnCacheUsage?: { input: number; cacheRead: number }; expanded?: boolean; showActions?: boolean; toolCount?: number; debug?: DebugView; onBranch?: (message: ChatMessage) => void | Promise<void>; onFork?: (message: ChatMessage) => void | Promise<void>; onForkAndForget?: (message: ChatMessage) => void | Promise<void>; onRetry?: () => void; retrying?: boolean; /** The latest point a new chat can start from. Its actions always show. */ lastPoint?: boolean; }
 
@@ -100,12 +101,6 @@ function PinButton(props: { message: ChatMessage; text: string }) {
   }}</Show>;
 }
 
-const shortMessageTime = new Intl.DateTimeFormat(undefined, { hour: "2-digit", minute: "2-digit", hourCycle: "h23" });
-
-const recentMessageTime = new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit", hourCycle: "h23" });
-
-const fullMessageTime = new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "short", hourCycle: "h23" });
-
 function formatMessageTime(timestamp?: number) {
   if (timestamp === undefined || !Number.isFinite(timestamp)) return undefined;
   const date = new Date(timestamp);
@@ -116,11 +111,11 @@ function formatMessageTime(timestamp?: number) {
 
   return {
     short: age < 24 * 60 * 60 * 1000
-      ? shortMessageTime.format(date)
+      ? formatTime(date)
       : age < 365 * 24 * 60 * 60 * 1000
-        ? recentMessageTime.format(date)
-        : fullMessageTime.format(date),
-    full: fullMessageTime.format(date),
+        ? formatDayTime(date)
+        : formatDateTime(date),
+    full: formatDateTime(date),
   };
 }
 
@@ -134,7 +129,7 @@ function responseMetadata(message: Accessor<ChatMessage>, turnCacheUsage: Access
   const timestamp = createMemo(() => message().timestamp);
   const completedAt = createMemo(() => message().completedAt ?? timestamp());
   const id = createMemo(() => message().id);
-  const responseLabel = createMemo(() => `Assistant response${timestamp() ? ` from ${new Date(required(timestamp())).toLocaleString()}` : ` ${id().slice(0, 8)}`}`);
+  const responseLabel = createMemo(() => `Assistant response${timestamp() ? ` from ${formatDateTime(new Date(required(timestamp())))}` : ` ${id().slice(0, 8)}`}`);
   const responseTime = createMemo(() => formatMessageTime(completedAt()));
 
   return createMemo(() => ({ cache: cacheHitStats(turnCacheUsage() ?? message().usage), responseLabel: responseLabel(), responseTime: responseTime() }));

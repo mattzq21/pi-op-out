@@ -6,6 +6,7 @@ import { storageFailureText } from "../lib/storageFailure";
 import { createDependencyEffect, createRef } from "../lib/solid";
 import { IconButton } from "./IconButton";
 import type { StorageReport } from "../types";
+import { formatDateTime } from "../lib/dateTime";
 
 export function ArchivedSessionPanel() {
   const [report, setReport] = createSignal<StorageReport>();
@@ -81,7 +82,7 @@ export function ArchivedSessionPanel() {
           <div class="session-main"><div class="session-copy">
             <div class="session-title-row"><strong>{archive().name}</strong></div>
             <small class="archived-session-detail">{archive().cwd}</small>
-            <small class="archived-session-detail">{new Date(archive().modifiedAt * 1000).toLocaleString()}</small>
+            <small class="archived-session-detail">{formatDateTime(new Date(archive().modifiedAt * 1000))}</small>
           </div></div>
           <Show when={archive().restorable}><IconButton label={`Restore ${archive().name} to active sessions`} disabled={Boolean(restoring())} onClick={() => void restore(host().hostId, archive().path)}>{restoring() === `${host().hostId}:${archive().path}` ? <RefreshCw size={15} class="spinning" /> : <ArchiveRestore size={15} />}</IconButton></Show>
         </div>}</Key>

@@ -8,6 +8,7 @@ import { createDependencyEffect, createRef } from "../lib/solid";
 import { Archive, Database, FolderClock, GitBranch, HardDrive, MessageSquare, RefreshCw, ShieldAlert, Trash2 } from "lucide-solid";
 import { deleteArchivedConversations, loadStorageReport, openGroupDirectory } from "../lib/nativeTransport";
 import { storageFailureText } from "../lib/storageFailure";
+import { formatDateTime } from "../lib/dateTime";
 import type { ArchivedConversation, HostStorage, StorageCategory, StorageReport, StorageRoot } from "../types";
 
 function includesTemporaryFolder(host: HostStorage, archives: ArchivedConversation[]) {
@@ -92,7 +93,7 @@ function formatDate(timestamp: number) {
 
   if (Number.isNaN(date.getTime())) return "Unknown date";
 
-  return new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "short" }).format(date);
+  return formatDateTime(date);
 }
 
 function archiveKey(host: HostStorage, archive: ArchivedConversation) { return `${host.hostId}:${archive.path}`; }

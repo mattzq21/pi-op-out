@@ -1,5 +1,6 @@
 import { For, Show } from "solid-js";
 import { toastHistory, toastHistoryError } from "../lib/toastHistory";
+import { formatDateTime } from "../lib/dateTime";
 
 export function ToastHistory() {
   return <div class="settings-section">
@@ -9,7 +10,7 @@ export function ToastHistory() {
       <For each={[...toastHistory()].reverse()} fallback={<p class="empty-small">No toasts recorded yet.</p>}>{entry =>
         <article class="toast-history-entry">
           <strong>{entry.title}</strong>
-          <small><time dateTime={new Date(entry.timestamp).toISOString()}>{new Date(entry.timestamp).toLocaleString()}</time> · {entry.source}</small>
+          <small><time dateTime={new Date(entry.timestamp).toISOString()}>{formatDateTime(new Date(entry.timestamp))}</time> · {entry.source}</small>
           <p>{entry.message}</p>
         </article>
       }</For>
