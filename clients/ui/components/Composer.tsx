@@ -7,7 +7,7 @@ import { Key } from "@solid-primitives/keyed";
 import { isTauri } from "@tauri-apps/api/core";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { createMemo,createSelector,createSignal,Show,splitProps } from "solid-js";
-import { clipboardImageFile,pastedFiles,readClipboardImages } from "../lib/clipboardImages";
+import { createFilePaste } from "../lib/filePaste";
 import { buildComposerPrompt,composerReference,isPromptCommand,skillName } from "../lib/composerPrompt";
 import { createDependencyEffect,createMemoFields,createRef,cssPixels,type CSSProperties,type JSXElement,type KeyboardEvent,type StateUpdate } from "../lib/solid";
 import { useComposerAttachments } from "../lib/useComposerAttachments";
@@ -27,7 +27,6 @@ import { z } from "zod";
 import { queuedCommand } from "../plugins";
 import { isDaemonRefusal } from "../lib/commandRejected";
 
-const pastedImageSchema = z.object({ data: z.string().optional(), mimeType: z.string().optional(), error: z.string().optional() });
 
 const pendingMessageIdentitySchema = z.object({ id: z.string() });
 
@@ -524,40 +523,16 @@ export function Composer(props: Props) {
     return false;
   };
 
-  let pasteRevision = 0;
+  const filePaste = createFilePaste({
+    field: () => ref.current,
+    enabled: () => !controls().inputDisabled && !props.ownershipRequired,
+    start: () => { const commit = attachments.captureUploadWriter();
 
-  const pasteWithoutEvent = () => {
-    if (controls().inputDisabled || props.ownershipRequired) return;
-    const revision = pasteRevision;
-    const editor = ref.current;
-    const commit = attachments.captureUploadWriter();
-    setTimeout(() => {
-      if (revision !== pasteRevision || !editor?.isConnected || document.activeElement !== editor) return;
-      void readClipboardImages().then(files => addFiles(files, [], commit)).catch(reason => setUploadError((reason instanceof Error ? reason.message : String(reason))));
-    }, 0);
-  };
+      return files => addFiles(files, [], commit); },
+    error: setUploadError,
+  });
 
-  createDependencyEffect(() => {
-    const handle = (event: Event) => {
-      if (!(event instanceof CustomEvent) || event.target !== ref.current || controls().inputDisabled || props.ownershipRequired) return;
-      const parsed = pastedImageSchema.safeParse(event.detail);
-
-      if (!parsed.success) return;
-      const detail = parsed.data;
-
-      if (detail.error) { setUploadError(detail.error);
-
-      return; }
-
-      if (detail.data) void addFiles([clipboardImageFile(detail.data, detail.mimeType)]).catch(reason => setUploadError((reason instanceof Error ? reason.message : String(reason))));
-    };
-
-    document.addEventListener("piop-native-image-paste", handle);
-
-    return () => document.removeEventListener("piop-native-image-paste", handle);
-  }, () => []);
-
-  const handleEditorKey = createComposerEditorKey({ paste: pasteWithoutEvent, ownershipRequired: () => props.ownershipRequired, palette: handlePaletteKey, history: promptHistory.handleKey, submit });
+  const handleEditorKey = createComposerEditorKey({ paste: filePaste.onKeyDown, ownershipRequired: () => props.ownershipRequired, palette: handlePaletteKey, history: promptHistory.handleKey, submit });
 
   const renderStreamBanner = () => {
     const statusText = () => stopping() ? "Stopping…" : composer().compacting ? "Compacting context…" : undefined;
@@ -630,18 +605,7 @@ export function Composer(props: Props) {
     };
 
     return (<div ref={element => { composerRef.current = element; }} class={`composer${draggingFiles() && !controls().inputDisabled ? " dragging-files" : ""}`}
-      onPaste={(event) => {
-        pasteRevision += 1;
-
-        if (!event.clipboardData || controls().inputDisabled) return;
-        const files = pastedFiles(event.clipboardData);
-
-        if (!files.length && event.clipboardData.getData("text/plain")) return;
-        event.preventDefault();
-        const commitUploads = attachments.captureUploadWriter();
-        const source = files.length ? Promise.resolve(files) : readClipboardImages();
-        void source.then(files => addFiles(files, [], commitUploads)).catch((reason) => setUploadError(reason instanceof Error ? reason.message : String(reason)));
-      }}
+      onPaste={event => filePaste.onPaste(event)}
       onDragEnter={(event) => {
         if (!event.dataTransfer || (!event.dataTransfer.types.includes("Files") && !(isTauri() && event.dataTransfer.types.includes("text/uri-list")))) return;
         event.preventDefault(); dragDepth.current += 1; setDraggingFiles(true);
@@ -735,7 +699,7 @@ export function Composer(props: Props) {
       return <div data-pending-id={message().id} class={pendingMessageClass(message().id, expandedPending(), pendingDrag.drop)} classList={{ "pending-goal": Boolean(message().goal), paused: Boolean(message().paused) }}>
         {renderPendingDragHandle()}
         <Show when={editingPending()?.id !== message().id}><PendingImages message={message()} load={props.loadPendingImage} /></Show>
-        <Show when={editingPending()?.id === message().id ? editingPending() : undefined} fallback={<span class="pending-message-text" data-tooltip={message().recovered ? "This saved answer may not have reached the model. Check the conversation before retrying." : message().retry ? "piop could not confirm whether this message reached the model, for example after a restart, so it is not sent by itself. Retry sends it again. Remove it if the conversation already has it." : text()} onDblClick={() => setExpandedPending((current) => current === message().id ? undefined : message().id)}>{message().goal && <>{message().paused && <small>Paused · </small>}<small class="goal-label">Goal · </small></>}{message().retry && <small>{message().recovered ? "Saved answer · " : "Retry needed · "}</small>}{text()}</span>}>{edit => <PendingMessageEditor message={message()} edit={edit()} saving={savingEdit()} load={props.loadPendingImage} onChange={update => setEditingPending(current => current && current.id === edit().id ? update(current) : current)} addFiles={(files, commit) => attachments.addFiles(files, [], commit)} onSave={() => void saveEdit()} onCancel={() => setEditingPending(undefined)} />}</Show>
+        <Show when={editingPending()?.id === message().id ? editingPending() : undefined} fallback={<span class="pending-message-text" data-tooltip={message().recovered ? "This saved answer may not have reached the model. Check the conversation before retrying." : message().retry ? "piop could not confirm whether this message reached the model, for example after a restart, so it is not sent by itself. Retry sends it again. Remove it if the conversation already has it." : text()} onDblClick={() => setExpandedPending((current) => current === message().id ? undefined : message().id)}>{message().goal && <>{message().paused && <small>Paused · </small>}<small class="goal-label">Goal · </small></>}{message().retry && <small>{message().recovered ? "Saved answer · " : "Retry needed · "}</small>}{text()}</span>}>{edit => <PendingMessageEditor message={message()} edit={edit()} saving={savingEdit()} load={props.loadPendingImage} onChange={update => setEditingPending(current => current && current.id === edit().id ? update(current) : current)} addFiles={(files, commit) => attachments.addFiles(files, [], commit)} onSave={() => void saveEdit()} onCancel={() => setEditingPending(undefined)} onError={setUploadError} />}</Show>
         {renderPendingMessageActions()}
       </div>;
     }}</Key>}<Show when={props.goal?.error()}>{message => <div class="pending-goal-error" role="alert">{message()}</div>}</Show></div> : renderQueueHold(true)}
