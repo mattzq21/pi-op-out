@@ -80,10 +80,31 @@ test.concurrent('/btw after a stopped response copies the history through the st
     .toEqual([['user', 'Draft the lexer'], ['assistant', 'First answer.'], ['user', 'Keep drafting'], ['assistant', 'Partial draft.']]);
 }, 60000);
 
+test.concurrent('/btw during a goal run copies the history through the last finished agent turn, without the goal', async () => {
+  await agents.enableAgentTools('update_goal_status');
+  agents.scripts.set('Audit the tokens', messages => messages.some((message: any) => message.role === 'tool') ? { text: 'Checking more.', stall: 'bash' } : { tool: 'bash', arguments: { command: 'echo tokens checked' } });
+  const chat = await agents.rootChat({ visible: true });
+  await chat.command({ type: 'follow_up', message: '/goal Audit the tokens', goalSubmissionId: crypto.randomUUID() });
+  const stalled = () => agents.model.requests.some(request => text(request.messages.find((message: any) => message.role === 'user')).includes('Audit the tokens') && request.messages.some((message: any) => message.role === 'tool'));
+  for (let tries = 0; !stalled() && tries < 100; tries++) await Bun.sleep(100);
+  expect(stalled()).toBe(true);
+  const mainGoal = agents.daemon.events.filter(event => event.payload?.runtimeId === chat.runtimeId && event.payload.event?.method === 'setStatus' && event.payload.event.statusKey === 'piop-goal' && event.payload.event.statusText).at(-1);
+  expect(JSON.parse(mainGoal.payload.event.statusText)).toMatchObject({ objective: 'Audit the tokens', status: 'active' });
+  const side = await sideChat(chat, '/btw');
+  const goalStatus = (payload: any) => payload.runtimeId === 'btw-goal' && payload.event?.method === 'setStatus' && payload.event.statusKey === 'piop-goal';
+  await agents.daemon.invoke('start_pi', { runtimeId: 'btw-goal', clientId: 'laptop', cwd: side.cwd, sessionPath: side.sessionPath });
+  expect((await agents.daemon.waitEvent('pi://event', goalStatus, 30000)).event.statusText).toBeFalsy();
+  const entries = (await agents.daemon.invoke('pi_command', { runtimeId: 'btw-goal', command: { type: 'get_entries' } })).entries;
+  const messages = entries.filter((entry: any) => entry.type === 'message').map((entry: any) => entry.message);
+  expect(messages.slice(-2).map((message: any) => message.role)).toEqual(['assistant', 'toolResult']);
+  expect(messages.at(-2).content.some((part: any) => part.type === 'toolCall' && part.name === 'bash')).toBe(true);
+  expect(messages.some((message: any) => text(message) === 'Checking more.')).toBe(false);
+}, 60000);
+
 test.concurrent('/btw before the first answer says to wait for it', async () => {
   const chat = await agents.rootChat({ visible: true });
   await chat.command({ type: 'prompt', message: '/btw Too early' });
-  await notice(chat.runtimeId, '/btw failed: Wait for the first answer');
+  await notice(chat.runtimeId, '/btw failed: Wait for the first agent turn to finish');
   expect(agents.daemon.events.some(event => event.payload?.runtimeId === chat.runtimeId && event.payload.event?.title === OPEN)).toBe(false);
 }, 60000);
 

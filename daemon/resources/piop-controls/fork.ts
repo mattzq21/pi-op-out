@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { AUXILIARY_PARENT, canFork, isCurrent } from "../piop-storage/session-records.cjs";
+import { canFork, isCurrent } from "../piop-storage/session-records.cjs";
 import { reserveSessionId } from "../piop-storage/session-file.ts";
 import type { ExtensionCommandContext, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { realpath, mkdir, rmdir } from "node:fs/promises";
@@ -12,13 +12,13 @@ import { existsSync } from "node:fs";
 import { releaseHistory, retainHistory, rootForDirectory } from "../piop-storage/goal-assets.cjs";
 import { planAuxiliaryCopies, publishAuxiliaryCopies, retryRecord, rewriteForkHistory } from "../piop-storage/auxiliary-copies.cjs";
 import { sessionName } from "../session-broker/session-names.cjs";
-import type { AuxiliaryCopy, ForkMode, ForkResult } from "./interface.ts";
+import type { ForkMode, ForkResult } from "./interface.ts";
 
-export type ForkOptions = { cwd?: string; entryId?: string; position?: "before" | "at"; auxiliary?: AuxiliaryCopy };
+export type ForkOptions = { cwd?: string; entryId?: string; position?: "before" | "at" };
 
 const fileErrorSchema = Type.Object({ code: Type.String() });
 
-function retainedFork(error: Error | undefined, publication?: SessionPublication) {
+export function retainedFork(error: Error | undefined, publication?: SessionPublication) {
   return Boolean(publication) || error !== undefined && publicationRetainsDependencies(error);
 }
 
@@ -41,23 +41,6 @@ export async function forkSession(ctx: ExtensionContext, mode: ForkMode, entryId
   const fork = await forkConversation(ctx, { entryId: selected, position });
 
   return { ...fork, text };
-}
-
-/** The last ended response on the current branch: a final answer without tool calls, or a response the user stopped. */
-function lastFinishedAnswer(ctx: ExtensionContext) {
-  return ctx.sessionManager.getBranch().findLast(entry => entry.type === "message" && entry.message.role === "assistant"
-    && (entry.message.stopReason === "aborted" || entry.message.stopReason === "stop" && !entry.message.content.some(part => part.type === "toolCall")))?.id;
-}
-
-/** SessionControls.copyAuxiliary. */
-export async function copyAuxiliary(ctx: ExtensionContext, copy: AuxiliaryCopy) {
-  assertForkable(ctx);
-  const entryId = lastFinishedAnswer(ctx);
-
-  if (!entryId) throw new Error("Wait for the first answer");
-  const fork = await forkConversation(ctx, { entryId, auxiliary: copy });
-
-  return { ...fork, parentSessionId: ctx.sessionManager.getSessionId() };
 }
 
 /** SessionControls.forkAndForget. */
@@ -84,16 +67,13 @@ export async function forkConversation(ctx: ExtensionContext, options: ForkOptio
   retained.push({ type: "custom", customType: "piop-input-hold", data: { held: true }, id: randomUUID(), parentId: null, timestamp });
   const sessionPath = join(ctx.sessionManager.getSessionDir(), `${timestamp.replace(/[:.]/g, "-")}_${sessionId}.jsonl`);
   // The copy names the chat and entry it came from. A source's own fork source is replaced, so a copy of a branch names the branch.
-  const piopForkSource = options.entryId && !options.auxiliary ? { sessionId: header.id, sessionPath: source, entryId: options.entryId } : undefined;
+  const piopForkSource = options.entryId ? { sessionId: header.id, sessionPath: source, entryId: options.entryId } : undefined;
   // A fork of a root chat copies the auxiliary chats made through its fork point; its history then names the copies.
-  const copies = options.auxiliary ? undefined : planAuxiliaryCopies({ root: rootForDirectory(ctx.sessionManager.getSessionDir()), source: { id: header.id, path: source }, target: { id: sessionId, path: sessionPath }, cutoff: selected.filter(entry => !isCurrent(entry)).at(-1)?.timestamp ?? header.timestamp });
-  if (copies) {
-    retained.splice(0, retained.length, ...rewriteForkHistory(retained, copies));
-    const retries = retryRecord(copies);
-    if (retries) retained.push(retries);
-  }
-  if (options.auxiliary) retained.push(...auxiliaryEntries(ctx, options.auxiliary, sessionId, source, selected.filter(entry => !isCurrent(entry)).at(-1)?.id ?? null, timestamp));
-  const name = options.auxiliary ? options.auxiliary.name : sessionName(source, header.id);
+  const copies = planAuxiliaryCopies({ root: rootForDirectory(ctx.sessionManager.getSessionDir()), source: { id: header.id, path: source }, target: { id: sessionId, path: sessionPath }, cutoff: selected.filter(entry => !isCurrent(entry)).at(-1)?.timestamp ?? header.timestamp });
+  retained.splice(0, retained.length, ...rewriteForkHistory(retained, copies));
+  const retries = retryRecord(copies);
+  if (retries) retained.push(retries);
+  const name = sessionName(source, header.id);
   let publication: SessionPublication | undefined;
   let goalAssets: ReturnType<typeof retainHistory> | undefined;
 
@@ -116,7 +96,7 @@ export async function forkConversation(ctx: ExtensionContext, options: ForkOptio
     throw error;
   }
 
-  if (copies?.copies.length) {
+  if (copies.copies.length) {
     try { await publishAuxiliaryCopies(rootForDirectory(ctx.sessionManager.getSessionDir()), copies, { id: sessionId }, (path: string, entries: unknown[], publication: Parameters<typeof writeSessionFile>[2]) => writeSessionFile(path, entries, publication)); }
     catch (error) {
       throw new Error(`The fork was saved at ${sessionPath}, but copying its side chats, reviews and subagents failed: ${error instanceof Error ? error.message : String(error)}`, { cause: error }); }
@@ -125,14 +105,7 @@ export async function forkConversation(ctx: ExtensionContext, options: ForkOptio
   return { hostId: currentHost(), sessionId, sessionPath, cwd };
 }
 
-/** The entries that make a copy an auxiliary conversation of ctx's conversation: its parent record, after the copied leaf. */
-function auxiliaryEntries(ctx: ExtensionContext, copy: AuxiliaryCopy, sessionId: string, parentSessionPath: string, leafId: string | null, timestamp: string) {
-  const host = currentHost();
-
-  return [{ type: "custom", customType: AUXILIARY_PARENT, id: randomUUID(), parentId: leafId, timestamp, data: { kind: copy.kind, sessionId, hostId: host, parentSessionId: ctx.sessionManager.getSessionId(), parentHostId: host, parentSessionPath } }];
-}
-
-function releaseForkAssets(ctx: ExtensionContext, goalAssets: ReturnType<typeof retainHistory> | undefined, sessionId: string, sessionPath: string) {
+export function releaseForkAssets(ctx: ExtensionContext, goalAssets: ReturnType<typeof retainHistory> | undefined, sessionId: string, sessionPath: string) {
   if (!goalAssets || existsSync(sessionPath)) return;
 
   try { releaseHistory(rootForDirectory(ctx.sessionManager.getSessionDir()), goalAssets, sessionId); }
