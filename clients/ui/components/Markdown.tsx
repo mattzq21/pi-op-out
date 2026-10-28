@@ -135,7 +135,7 @@ export function Markdown(props: { children: string; streaming?: boolean; imagePr
 
     if (!canOpenFileLinks || !root) return;
 
-    for (const link of root.querySelectorAll<HTMLElement>(".message-link[data-file-reference], button.file-link")) {
+    for (const link of root.querySelectorAll<HTMLElement>(".message-link[data-file-reference], .file-link")) {
       const tooltip = fileLinkTooltip(required(link.dataset.fileReference), cwd);
 
       if (link.dataset.tooltip !== tooltip) link.dataset.tooltip = tooltip;
@@ -208,7 +208,7 @@ export function Markdown(props: { children: string; streaming?: boolean; imagePr
     });
   };
 
-  const openFileLink = (link: HTMLButtonElement) => {
+  const openFileLink = (link: HTMLElement) => {
     const reference = fileReference(link.dataset.fileReference ?? "");
 
     if (reference) images.open(reference.path);
@@ -229,7 +229,7 @@ export function Markdown(props: { children: string; streaming?: boolean; imagePr
       return;
     }
 
-    const fileTarget = canOpenFileLinks && event.button === 0 ? event.target.closest<HTMLElement>(".message-link[data-file-reference], button.file-link") : null;
+    const fileTarget = canOpenFileLinks && event.button === 0 ? event.target.closest<HTMLElement>(".message-link[data-file-reference], .file-link") : null;
 
     if (fileTarget) {
       event.preventDefault();
@@ -238,7 +238,7 @@ export function Markdown(props: { children: string; streaming?: boolean; imagePr
       return;
     }
 
-    const fileLink = event.target.closest<HTMLButtonElement>("button.file-link");
+    const fileLink = event.target.closest<HTMLElement>(".file-link");
 
     if (fileLink) {
       event.preventDefault();
@@ -263,7 +263,7 @@ export function Markdown(props: { children: string; streaming?: boolean; imagePr
 
   const contextMenu = (event: MouseEvent) => {
     if (!(event.target instanceof Element)) return;
-    const fileLink = event.target.closest<HTMLElement>(".message-link[data-file-reference], button.file-link");
+    const fileLink = event.target.closest<HTMLElement>(".message-link[data-file-reference], .file-link");
     const link = fileLink ?? event.target.closest<HTMLAnchorElement>("a");
 
     if (!link) return;
@@ -288,7 +288,7 @@ export function Markdown(props: { children: string; streaming?: boolean; imagePr
 
   return <>
     <div ref={imageRoot} class="assistant-message-images" hidden />
-    <div ref={root} class="markdown-content" onClick={click} onContextMenu={contextMenu} onAuxClick={event => event.preventDefault()} />
+    <div ref={root} class="markdown-content" onClick={click} onKeyDown={event => { if (event.key === "Enter" && event.target instanceof HTMLElement && event.target.matches(".file-link")) { event.preventDefault(); event.target.click(); } }} onContextMenu={contextMenu} onAuxClick={event => event.preventDefault()} />
     <Show when={menu()}>{current => <Portal mount={root?.closest(".app") ?? document.body}>
       <div ref={setMenuElement} class="conversation-menu link-context-menu" role="menu" aria-label="Link actions" style={{ left: `${current().x}px`, top: `${current().y}px` }} onContextMenu={event => event.preventDefault()}>
         <button type="button" role="menuitem" onClick={() => void copyLink()}><Copy size={14} />{current().kind === "file" ? "Copy path" : "Copy link"}</button>

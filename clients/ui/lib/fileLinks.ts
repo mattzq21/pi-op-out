@@ -3,8 +3,9 @@ import { fileReference, looksLikeFile } from "./projectFiles";
 import { webUrl } from "./webLinks";
 
 function fileButton(path: string, label: string) {
-  const button = document.createElement("button");
-  button.type = "button";
+  const button = document.createElement("span");
+  button.role = "link";
+  button.tabIndex = 0;
   button.className = "file-link";
   button.dataset.fileReference = path;
   button.textContent = label;
