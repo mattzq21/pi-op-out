@@ -63,6 +63,23 @@ test.concurrent('/btw opens a side chat with the main chat history, which sends 
   await notice('btw-side', '/btw failed: /btw is not available in a side chat');
 }, 60000);
 
+test.concurrent('/btw after a stopped response copies the history through the stopped response', async () => {
+  agents.scripts.set('Draft the lexer', messages => text(messages.at(-1)) === 'Draft the lexer' ? { text: 'First answer.' } : { text: 'Partial draft.', stall: 'bash' });
+  const chat = await agents.rootChat({ visible: true });
+  await chat.command({ type: 'prompt', message: 'Draft the lexer' });
+  await chat.until(history => text(history.at(-1)) === 'First answer.');
+  await chat.command({ type: 'prompt', message: 'Keep drafting' });
+  await agents.daemon.waitEvent('pi://event', payload => payload.runtimeId === chat.runtimeId
+    && payload.event?.type === 'message_update' && payload.event.assistantMessageEvent?.type === 'toolcall_delta');
+  await chat.command({ type: 'abort' });
+  await chat.until(history => history.at(-1)?.role === 'assistant' && history.at(-1).stopReason === 'aborted');
+  const side = await sideChat(chat, '/btw');
+  await agents.daemon.invoke('start_pi', { runtimeId: 'btw-stopped', clientId: 'laptop', cwd: side.cwd, sessionPath: side.sessionPath });
+  const entries = (await agents.daemon.invoke('pi_command', { runtimeId: 'btw-stopped', command: { type: 'get_entries' } })).entries;
+  expect(entries.filter((entry: any) => entry.type === 'message' && entry.message.role !== 'system').map((entry: any) => [entry.message.role, text(entry.message)]))
+    .toEqual([['user', 'Draft the lexer'], ['assistant', 'First answer.'], ['user', 'Keep drafting'], ['assistant', 'Partial draft.']]);
+}, 60000);
+
 test.concurrent('/btw before the first answer says to wait for it', async () => {
   const chat = await agents.rootChat({ visible: true });
   await chat.command({ type: 'prompt', message: '/btw Too early' });

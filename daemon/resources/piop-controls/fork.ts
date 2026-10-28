@@ -43,9 +43,10 @@ export async function forkSession(ctx: ExtensionContext, mode: ForkMode, entryId
   return { ...fork, text };
 }
 
-/** The last finished final answer on the current branch: a stopped assistant message without tool calls. */
+/** The last ended response on the current branch: a final answer without tool calls, or a response the user stopped. */
 function lastFinishedAnswer(ctx: ExtensionContext) {
-  return ctx.sessionManager.getBranch().findLast(entry => entry.type === "message" && entry.message.role === "assistant" && entry.message.stopReason === "stop" && !entry.message.content.some(part => part.type === "toolCall"))?.id;
+  return ctx.sessionManager.getBranch().findLast(entry => entry.type === "message" && entry.message.role === "assistant"
+    && (entry.message.stopReason === "aborted" || entry.message.stopReason === "stop" && !entry.message.content.some(part => part.type === "toolCall")))?.id;
 }
 
 /** SessionControls.copyAuxiliary. */
