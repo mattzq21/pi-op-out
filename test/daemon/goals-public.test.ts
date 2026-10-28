@@ -292,7 +292,7 @@ test('a new goal sent while the queue is on hold waits in the queue and starts o
   await chat.until(history => text(history.at(-1)) === 'Tidied.');
   expect(requests).toBeGreaterThan(0);
 }, 60000);
-test('a paused goal keeps its place but lets the next queued message run', async () => {
+test('a paused goal keeps its place and the follow-ups below it, until one is moved above it', async () => {
   let finish = false;
   agents.scripts.set('Keep shipping', async messages => {
     await Bun.sleep(100);
@@ -303,7 +303,8 @@ test('a paused goal keeps its place but lets the next queued message run', async
     return { text: 'Shipping.' };
   });
   const chat = await agents.rootChat();
-  const entries = async () => ((await chat.command({ type: 'get_state' })).pendingMessages ?? []).map((entry: any) => entry.goal ? (entry.paused ? 'paused goal' : 'goal') : entry.message);
+  const pending = async () => (await chat.command({ type: 'get_state' })).pendingMessages ?? [];
+  const entries = async () => (await pending()).map((entry: any) => entry.goal ? (entry.paused ? 'paused goal' : 'goal') : entry.message);
   const replies = async () => (await chat.history()).filter(message => message.role === 'assistant').map(text).filter(Boolean);
   await send(chat, '/goal Keep shipping');
   await chat.until(history => history.some(message => text(message) === 'Shipping.'));
@@ -311,13 +312,18 @@ test('a paused goal keeps its place but lets the next queued message run', async
   expect(await entries()).toEqual(['goal', 'Question four']);
   await send(chat, '/goal pause');
   await untilGoal(chat.runtimeId, 'paused');
-  await chat.until(history => text(history.at(-1)) === 'Answered four.');
-  expect(await entries()).toEqual(['paused goal']);
-  expect((await chat.command({ type: 'get_state' })).queueHeld).toBe(false);
-  expect(shownGoal(chat.runtimeId)?.status).toBe('paused');
+  await settled(chat.runtimeId);
   const before = (await replies()).length;
   await Bun.sleep(300);
   expect((await replies()).length).toBe(before);
+  expect(await entries()).toEqual(['paused goal', 'Question four']);
+  expect((await chat.command({ type: 'get_state' })).queueHeld).toBe(false);
+
+  const question = (await pending()).find((entry: any) => entry.message === 'Question four');
+  await chat.command({ type: 'change_pending', id: question.id, action: { type: 'move', targetId: 'goal', edge: 'before' } });
+  await chat.until(history => text(history.at(-1)) === 'Answered four.');
+  expect(await entries()).toEqual(['paused goal']);
+  expect(shownGoal(chat.runtimeId)?.status).toBe('paused');
 
   finish = true;
   await send(chat, '/goal resume');
