@@ -9,6 +9,8 @@ mod private_fs;
 use private_fs::ensure_private_dir;
 mod clipboard_image;
 use clipboard_image::{configure_image_copy, read_clipboard_image};
+mod resize_border;
+use resize_border::keep_resize_presses_from_page;
 use client_settings::{load_client_settings, save_client_settings};
 use desktop_daemon::{daemon_invoke, daemon_log_statuses};
 use serde::{Deserialize, Serialize};
@@ -34,6 +36,7 @@ fn new_window(app: AppHandle, target: Value) -> Result<String, String> {
         .title(APP_TITLE).inner_size(1280.0, 800.0).min_inner_size(900.0, 640.0)
         .build().map_err(|error| error.to_string())?;
     configure_image_copy(&window)?;
+    keep_resize_presses_from_page(&window)?;
     Ok(label)
 }
 
@@ -192,6 +195,7 @@ pub fn run() {
     builder.manage(desktop_daemon::DesktopDaemon::default()).setup(move |app| -> Result<(), Box<dyn std::error::Error>> {
         for window in app.webview_windows().values() {
             configure_image_copy(window)?;
+            keep_resize_presses_from_page(window)?;
             let handle = app.handle().clone();
             let label = window.label().to_owned();
             tauri::async_runtime::spawn(async move {
