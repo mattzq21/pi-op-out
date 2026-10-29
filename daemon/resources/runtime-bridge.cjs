@@ -422,7 +422,12 @@ async function dispatchReady(command, session, output) {
     }
 
     if (command.command === "queue_offer") {
-      bindQueuePull(session, output).setOffer(command.payload);
+      // Extensions that wait inside a run, such as await_subagents, end their wait for a new user message.
+      if (bindQueuePull(session, output).setOffer(command.payload)) {
+        const bridge = Object.getOwnPropertyDescriptor(globalThis, Symbol.for("piop.runtime-bridge"));
+        if (!bridge) throw new Error("Piop runtime bridge is unavailable");
+        bridge.value({ command: "queue_offered", payload: null, ctx: session.extensionRunner.createCommandContext() });
+      }
       output({ type: "response", id: command.id, command: command.command, success: true, data: null });
 
       return;

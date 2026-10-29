@@ -464,6 +464,7 @@ export function registerSubagents(pi: ExtensionAPI) {
   pi.on("session_shutdown", async (event) => { detachAbort(); unsubscribeCancellation(); await stop(event.reason !== "reload"); });
   const inputListeners = new Set<() => void>();
   pi.on("input", event => { if (event.source !== "extension") for (const listener of [...inputListeners]) listener(); });
+  pi.events.on("piop:rpc", request => { if (request.command === "queue_offered") for (const listener of [...inputListeners]) listener(); });
   pi.registerTool({
     name: "await_subagents", label: "Await subagents", exposure: "model-only",
     description: "Wait until any of your subagents finishes (for: \"any\", the default) or until all of them finish (for: \"all\"), or until the user sends a new message. Returns the answers of the subagents that finished.",

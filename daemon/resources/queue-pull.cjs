@@ -101,9 +101,13 @@ function queuePull(session, { ask, prompt } = {}) {
     offered,
     take,
     start,
-    /** The daemon's new offer. Pi idle with waiting messages takes the next one. */
+    /** The daemon's new offer. Pi idle with waiting messages takes the next one. Returns true when more messages wait than before. */
     setOffer(next) {
-      if (update(next)) void start().catch(error => console.error(error));
+      const before = offer.steer + offer.followUp;
+
+      if (!update(next)) return false;
+      void start().catch(error => console.error(error));
+      return offer.steer + offer.followUp > before;
     },
   };
 
