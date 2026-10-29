@@ -83,7 +83,7 @@ function linkAllowedFileReferences(root: DocumentFragment, allowFile: (value: st
   linkExplicitPaths(root, allowFile);
 
   for (const code of root.querySelectorAll("code")) {
-    if (code.closest("pre, a, button")) continue;
+    if (code.closest("pre, a, button, .file-link")) continue;
     const path = code.textContent ?? "";
     const link = referenceLink(path, allowFile);
 
@@ -94,7 +94,7 @@ function linkAllowedFileReferences(root: DocumentFragment, allowFile: (value: st
   const nodes: Text[] = [];
 
   for (let node = walker.nextNode(); node; node = walker.nextNode()) {
-    if (node instanceof Text && !node.parentElement?.closest("pre, code, a, button")) nodes.push(node);
+    if (node instanceof Text && !node.parentElement?.closest("pre, code, a, button, .file-link")) nodes.push(node);
   }
 
   for (const node of nodes) linkText(node, allowFile);

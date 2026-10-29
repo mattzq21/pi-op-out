@@ -7,7 +7,11 @@ export const INPUT_HOLD = "piop-input-hold";
  * Core: a chat that must stay idle until the user acts, for example a new branch. Extensions that start work on their own
  * at session start check held() first. The hold ends when the user sends input or any agent run starts.
  */
-export interface InputHold { held(ctx: ExtensionContext): boolean }
+export interface InputHold {
+  held(ctx: ExtensionContext): boolean;
+  /** Calls handler each time the hold ends. Returns the function that removes the handler. */
+  onRelease(handler: (ctx: ExtensionContext) => void): () => void;
+}
 
 /** Extensions emit this request on "piop:session:input-hold" to get the core InputHold. */
 export interface InputHoldRequest { hold?: InputHold }
@@ -34,8 +38,14 @@ export function registerInputHold(pi: ExtensionAPI) {
 
     return entry?.type === "custom" && (entry.data as { held?: unknown } | undefined)?.held === true;
   };
-  const release = (ctx: ExtensionContext) => { if (held(ctx)) pi.appendEntry(INPUT_HOLD, { held: false }); };
-  const off = pi.events.on("piop:session:input-hold", request => { request.hold = { held }; });
+  const handlers = new Set<(ctx: ExtensionContext) => void>();
+  const release = (ctx: ExtensionContext) => {
+    if (!held(ctx)) return;
+    pi.appendEntry(INPUT_HOLD, { held: false });
+    for (const handler of handlers) handler(ctx);
+  };
+  const hold: InputHold = { held, onRelease: handler => { handlers.add(handler); return () => { handlers.delete(handler); }; } };
+  const off = pi.events.on("piop:session:input-hold", request => { request.hold = hold; });
 
   pi.on("input", (event, ctx) => { if (event.source !== "extension") release(ctx); });
   pi.on("agent_start", (_event, ctx) => release(ctx));

@@ -21,7 +21,7 @@ function fixture(t) {
   const pi = { events: { on: (name, fn) => { handlers.set(name, fn); return () => handlers.delete(name); }, emit: (name, request) => handlers.get(name)?.(request) }, appendEntry: (...entry) => entries.push(entry) };
   storageExtension(pi);
   const ctx = { sessionManager: { getSessionId: () => 'chat-1', getSessionFile: () => file }, ui: { setWidget() {}, setStatus() {} } };
-  return { root, file, entries, ctx, state: new GoalState(pi), reopen: () => new GoalState(pi) };
+  return { root, file, entries, ctx, state: new GoalState(pi, () => false), reopen: () => new GoalState(pi, () => false) };
 }
 
 /** Sets a new active goal, as /goal does. */
