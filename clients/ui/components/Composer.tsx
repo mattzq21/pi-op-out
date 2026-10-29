@@ -720,7 +720,7 @@ export function Composer(props: Props) {
           <Show when={!message().goal}><button type="button" class="pending-icon-button" disabled={disabled()} aria-label={`Remove queued message: ${text()}`} data-tooltip="Remove message" onClick={() => change("remove")}><Trash2 size={13} /></button></Show>
         </div>);
 
-      return <div data-pending-id={message().id} class={pendingMessageClass(message().id, expandedPending(), pendingDrag.drop)} classList={{ "editing-pending": isEditingPending(message().id), "pending-goal": Boolean(message().goal), paused: Boolean(message().paused) }}>
+      return <div data-pending-id={message().id} class={pendingMessageClass(message().id, expandedPending(), pendingDrag.drop)} classList={{ "editing-pending": isEditingPending(message().id), "pending-goal": Boolean(message().goal), "pending-steer": message().behavior === "steer" && !message().goal, paused: Boolean(message().paused) }}>
         {renderPendingDragHandle()}
         <PendingImages message={message()} load={props.loadPendingImage} />
         <span class="pending-message-text" data-tooltip={message().recovered ? "This saved answer may not have reached the model. Check the conversation before retrying." : message().retry ? "piop could not confirm whether this message reached the model, for example after a restart, so it is not sent by itself. Retry sends it again. Remove it if the conversation already has it." : text()} onDblClick={() => setExpandedPending((current) => current === message().id ? undefined : message().id)}>{message().goal && <>{message().paused && <small>Paused · </small>}<small class="goal-label">Goal · </small></>}{message().retry && <small>{message().recovered ? "Saved answer · " : "Retry needed · "}</small>}{text()}</span>

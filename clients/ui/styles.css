@@ -492,6 +492,7 @@ textarea::placeholder { color: var(--faint); }
 .pending-message { display: flex; align-items: center; gap: 9px; min-width: 0; min-height: 33px; padding: 3px 3px; font-size: 13px; }
 .pending-message-text { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .pending-goal .pending-message-text small { color: var(--accent); font-weight: 600; }
+.pending-steer .pending-message-text { color: var(--accent); }
 .pending-goal.paused .pending-message-text { color: var(--muted); }
 .pending-goal.paused .pending-message-text small.goal-label { color: var(--muted); }
 .pending-goal-error { padding: 4px 6px 7px; color: var(--accent); font-size: 12px; overflow-wrap: anywhere; }
