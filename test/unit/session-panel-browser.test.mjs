@@ -393,6 +393,19 @@ test('a new group request opens its name field and notifies the caller', async t
   assert.equal(await page.getByLabel('Handled group requests').textContent(), '1');
 });
 
+test('a second new group request closes the open name field', async t => {
+  const { page } = await panelPage(t);
+  const request = page.getByRole('button', { name: 'Request new group', exact: true });
+  await request.click();
+  const name = page.getByRole('textbox', { name: 'Group name', exact: true });
+  await name.waitFor();
+  await request.click();
+  await name.waitFor({ state: 'detached' });
+  assert.equal(await page.getByLabel('Handled group requests').textContent(), '2');
+  await request.click();
+  await name.waitFor();
+});
+
 test('new group names are trimmed and survive reopening', async t => {
   const { page, reload } = await panelPage(t);
   await page.getByRole('button', { name: 'Request new group', exact: true }).click();

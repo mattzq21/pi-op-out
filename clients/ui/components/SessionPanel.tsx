@@ -135,8 +135,10 @@ export function SessionPanel(props: Props) {
   createDependencyEffect(() => { const capturedPanel = panel();
 
     if (!capturedPanel.createGroupRequest) return;
-    setGroupProject(undefined); groupDraftActive.current = true; setEditingGroupId(undefined); setGroupDraftError(undefined); setNewGroupName("");
-    sessionScrollRef.current?.scrollTo({ top: 0 });
+    // The Group button toggles the form for a new group.
+    if (untrack(newGroupName) !== undefined && !untrack(editingGroupId)) void finishGroup(true);
+    else { setGroupProject(undefined); groupDraftActive.current = true; setEditingGroupId(undefined); setGroupDraftError(undefined); setNewGroupName("");
+      sessionScrollRef.current?.scrollTo({ top: 0 }); }
     capturedPanel.onCreateGroupHandled?.();
   }, () => [panel().createGroupRequest, panel().onCreateGroupHandled]);
   // A new chat closes the form for a new group that the Group button opened.
