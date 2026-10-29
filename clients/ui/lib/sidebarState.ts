@@ -222,7 +222,7 @@ export function createSidebarState(source: Accessor<SessionSummary[]>, query: Ac
 
   const visualProjectKey = (session: SessionSummary) => {
     if (session.cwdExists === false) return DIRLESS_KEY;
-    const destination = storedGroups.state?.assignments[sessionKey(session)] ?? draftProjectGroup(session);
+    const destination = storedGroups.state?.assignments[sessionKey(session)] ?? session.groupId ?? draftProjectGroup(session);
 
     if (!destination || destination === DIRLESS_KEY) return RECENT_KEY;
     const group = savedGroupsById().get(destination);

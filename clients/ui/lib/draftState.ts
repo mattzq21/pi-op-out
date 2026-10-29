@@ -6,6 +6,8 @@ export interface DraftDestination {
   cwd?: string;
   sessionPath?: string;
   temporary: boolean;
+  /** The group the new chat goes to, so its pending first message shows there. */
+  groupId?: string;
 }
 
 export interface DraftRecord {

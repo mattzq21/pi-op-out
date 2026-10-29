@@ -186,6 +186,10 @@ export class NativeTransport {
   private worktreeOptions?: { repository: string; branches: string[]; defaultBranch: string | null };
   setNewChatWorktreeOptions(options: { repository: string; branches: string[]; defaultBranch: string | null }) { this.worktreeOptions = options; this.baseBranch = options.defaultBranch ?? options.branches[0]; }
   newChatWorktreeOptions() { return this.worktreeOptions; }
+  private groupId?: string;
+  /** The sidebar group a new chat goes to when its first prompt starts. */
+  setNewChatGroup(id: string) { this.groupId = id; }
+  newChatGroup() { return this.groupId; }
   newChatBaseBranch() { return this.baseBranch; }
   setNewChatBranch(branch?: string) { this.baseBranch = branch; }
   private initializingChat = false;
