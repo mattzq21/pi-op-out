@@ -45,14 +45,14 @@ async function fixture(t) {
   return { home, root, id, file, SessionManager, manager: SessionManager.open(file), physical: () => readFileSync(file, 'utf8').trim().split('\n').map(JSON.parse) };
 }
 
-test('Pi sessions refuse names, and the session broker keeps names of at most 30 characters', async t => {
+test('Pi sessions refuse names, and the session broker keeps names of at most 50 characters', async t => {
   const f = await fixture(t);
   const body = readFileSync(f.file, 'utf8');
   assert.throws(() => f.manager.appendSessionInfo('Pi name'), /session broker owns chat names/);
   assert.equal(readFileSync(f.file, 'utf8'), body);
-  for (const name of ['x'.repeat(30), 'x'.repeat(31), '😀'.repeat(31)]) {
-    assert.equal(sessionNames.renameSession(f.root, f.id, name), Array.from(name).slice(0, 30).join(''));
-    assert.equal(sessionNames.sessionName(f.file, f.id), Array.from(name).slice(0, 30).join(''));
+  for (const name of ['x'.repeat(50), 'x'.repeat(51), '😀'.repeat(51)]) {
+    assert.equal(sessionNames.renameSession(f.root, f.id, name), Array.from(name).slice(0, 50).join(''));
+    assert.equal(sessionNames.sessionName(f.file, f.id), Array.from(name).slice(0, 50).join(''));
   }
   assert.throws(() => sessionNames.renameSession(f.root, f.id, ' \t '), /name can't be empty/);
   assert.equal(f.SessionManager.open(f.file).getSessionName(), undefined);

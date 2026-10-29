@@ -124,7 +124,7 @@ describe('session runtime pool', () => {
     pending.resolve({ model: null, thinkingLevel: 'off', isStreaming: false, sessionId: 'session', sessionFile: '/session', messageCount: 0, pendingMessageCount: 0 });
     await starting;
     await settled();
-    assert.equal(pool.liveSessionSummaries()[0].name, 'New session');
+    assert.equal(pool.liveSessionSummaries()[0].name, '');
     assert.equal(pool.liveSessionSummaries()[0].project, 'repo');
     assert.equal(pool.forSession(session), client);
     const revision = pool.liveSessionRevision();

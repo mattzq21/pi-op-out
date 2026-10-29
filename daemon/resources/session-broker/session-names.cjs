@@ -2,7 +2,7 @@ const database = require('../session-database.cjs');
 
 // Chat names. The session broker owns them: Pi sessions have no name. This module is the only code that reads or writes them.
 
-const MAX_NAME_LENGTH = 30;
+const MAX_NAME_LENGTH = 50;
 
 function capSessionName(name) { return Array.from(name.trim()).slice(0, MAX_NAME_LENGTH).join('').trimEnd(); }
 
