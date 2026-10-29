@@ -41,7 +41,6 @@ button { cursor: pointer; }
 .provider-logo { width: 11px; height: 11px; flex: none; color: #e8e6e1; }
 .icon-rail.compact .codex-usage { display: flex; flex-direction: column; align-items: center; gap: 2px; }
 .icon-rail.compact .rail-bottom { gap: 12px; }
-.icon-rail.compact .codex-usage-left { display: none; }
 .icon-rail.compact .codex-usage-separator { display: none; }
 .codex-usage.stale { color: #66635d; }
 button.codex-usage { background: none; border: 0; padding: 0; cursor: pointer; }
