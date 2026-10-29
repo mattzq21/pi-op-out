@@ -16,6 +16,8 @@ export interface SessionSummary {
   cwdExists: boolean;
   /** True when the folder is a linked Git worktree, not the main worktree of its repository. */
   linkedWorktree?: boolean;
+  /** The main worktree folder of the repository, when the chat works in a worktree that Piop created for it. */
+  worktreeRepository?: string;
   /** Not sent to clients. */
   modifiedAt: number;
   preview: string;
@@ -36,6 +38,7 @@ export function serializeSession(session: SessionSummary): Record<string, unknow
     preview: session.preview, messageCount: session.messageCount, lastMessageAt: session.lastMessageAt, apiCost: session.apiCost, hostId: session.hostId, hostName: session.hostName,
   });
   if (session.linkedWorktree) result.linkedWorktree = true;
+  if (session.worktreeRepository) result.worktreeRepository = session.worktreeRepository;
   return result;
 }
 
@@ -50,6 +53,7 @@ export function parseSession(value: any): SessionSummary {
     groupId: typeof value.groupId === 'string' ? value.groupId : null, path: text('path'), name: text('name'), project: text('project'), cwd: text('cwd'),
     cwdExists: value.cwdExists, modifiedAt: 0, preview: text('preview'), messageCount: number('messageCount'), lastMessageAt: number('lastMessageAt'),
     apiCost: number('apiCost'), hostId: text('hostId'), hostName: text('hostName'), linkedWorktree: value.linkedWorktree === true || undefined,
+    worktreeRepository: typeof value.worktreeRepository === 'string' && value.worktreeRepository ? value.worktreeRepository : undefined,
   };
 }
 

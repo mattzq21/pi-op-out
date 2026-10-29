@@ -1,7 +1,8 @@
 import { afterAll, beforeAll, expect, test } from 'bun:test';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { mkdirSync } from 'node:fs';
+import { mkdirSync, writeFileSync } from 'node:fs';
+import * as SessionDatabase from '../../daemon/resources/session-database.cjs';
 import { join } from 'node:path';
 import { Database } from 'bun:sqlite';
 import { startDaemon, waitForSessions, type TestDaemon } from './harness';
@@ -69,6 +70,29 @@ test('listing a chat in an unseen folder registers its project without a client'
   const notified = await daemon.waitEvent('pi://groups-changed', payload => payload.groups.some((group: any) => group.cwd === folder));
   expect(notified.groups.find((group: any) => group.cwd === folder)).toEqual(project('local:' + folder, 'unseen-project', folder, 'local', 'Local'));
   expect((await load()).assignments['local:' + chat.id]).toBe('local:' + folder);
+});
+
+test('a chat in its own Piop worktree joins the group of the repository folder, also under a name the user chose', async () => {
+  await reset();
+  const repo = join(daemon.home, 'worktree-repo'); mkdirSync(repo, { recursive: true });
+  const named = (await change({ type: 'project', project: project('__pi-desktop-custom-group__:repo', 'My repo', repo) })).groups[0].id;
+  const worktree = join(daemon.home, '.piop/worktrees/abcd'); mkdirSync(worktree, { recursive: true });
+  // The record exists before the transcript, as when Piop starts a chat in a new worktree.
+  const root = join(daemon.home, '.piop');
+  const id = SessionDatabase.reserve(root);
+  const db = new Database(join(root, 'sessions.sqlite'));
+  try {
+    db.prepare('INSERT INTO chat_worktrees VALUES (?, ?)').run(id, JSON.stringify({ version: 1, chatId: id, repository: repo, gitCommonDir: join(repo, '.git'),
+      worktree, branch: 'piop/abcd', state: 'active', archive: null }));
+  } finally { db.close(); }
+  const path = join(root, 'sessions/groups', id + '.jsonl'); mkdirSync(join(root, 'sessions/groups'), { recursive: true });
+  writeFileSync(path, JSON.stringify({ type: 'session', version: 3, id, cwd: worktree }) + '\n' + JSON.stringify({ type: 'message', id: 'user', parentId: null, message: { role: 'user', content: 'Hello' } }) + '\n');
+  const registry = SessionDatabase.open(root);
+  try { SessionDatabase.bind(registry, id, path); } finally { registry.close(); }
+  await waitForSessions(daemon, rows => rows.some(row => row.id === id));
+  const state = await load();
+  expect(state.assignments['local:' + id]).toBe(named);
+  expect(state.groups.filter((group: any) => group.cwd === worktree)).toEqual([]);
 });
 
 test('a folder named like a temporary chat folder but without a random UUID is a project', async () => {

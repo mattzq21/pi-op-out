@@ -12,6 +12,7 @@ import { ProjectMetadataCache } from './project_metadata';
 import { refreshProjectRepository } from './project_repositories';
 import * as sidebarStorage from './sidebar_storage';
 import * as Registry from './session_registry';
+import * as WorktreeRecords from '../resources/chat-worktree-records.cjs';
 import * as restoreRecovery from './restore_recovery';
 import { loadAppSettings } from './settings';
 import { type AppSettings, type RemoteHost } from './settings_types';
@@ -107,7 +108,17 @@ export async function listLocalSessions(index: SessionIndexRuntime, root: string
   await restoreRecovery.recover(dirname(root));
   const sessions = await cachedLocalSessions(index, root);
   await inspectSessionProjects(index, sessions, undefined);
+  attachWorktreeRepositories(sessions, dirname(root));
   return sessions;
+}
+
+/** Marks each chat that works in its own Piop worktree with the main folder of the repository. */
+function attachWorktreeRepositories(sessions: SessionSummary[], profile: string): void {
+  const records = new Map(WorktreeRecords.list(profile).map(record => [record.chatId, record]));
+  for (const session of sessions) {
+    const record = records.get(session.id);
+    if (record && record.worktree === session.cwd) session.worktreeRepository = record.repository;
+  }
 }
 
 async function cachedLocalSessions(index: SessionIndexRuntime, root: string): Promise<SessionSummary[]> {
