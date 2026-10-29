@@ -8,8 +8,8 @@ function stamp(value: any): string { return JSON.stringify(value ?? null); }
 /** The id of the active goal's entry in the queue view. Queue item ids are numbers, so it does not collide with them. */
 export const GOAL_ENTRY_ID = 'goal';
 
-/** The conversation's goal as the goals extension publishes it in its piop-goal status. */
-export type QueueGoal = { id: string; objective: string; status: 'active' | 'paused' | 'complete' };
+/** The conversation's goal as the goals extension publishes it in its piop-goal status. waitingForInput: the active goal cannot start until the user sends a message. */
+export type QueueGoal = { id: string; objective: string; status: 'active' | 'paused' | 'complete'; waitingForInput?: true };
 
 /** Reads the goal from a goals extension status event: null when the goal is cleared, undefined for other events. */
 export function goalStatus(event: any): QueueGoal | null | undefined {
@@ -17,7 +17,7 @@ export function goalStatus(event: any): QueueGoal | null | undefined {
   if (typeof event.statusText !== 'string' || !event.statusText) return null;
   const goal = JSON.parse(event.statusText);
   const status = goal.status === 'active' || goal.status === 'paused' ? goal.status : 'complete';
-  return { id: text(goal, 'id'), objective: text(goal, 'objective'), status };
+  return { id: text(goal, 'id'), objective: text(goal, 'objective'), status, ...(goal.waitingForInput === true ? { waitingForInput: true as const } : {}) };
 }
 
 /** How many waiting messages Pi may take now, of each kind. */

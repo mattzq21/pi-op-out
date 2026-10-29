@@ -29,7 +29,7 @@ function persistent(ctx: ExtensionContext) {
 
 /** Registers goal tracking for the session and publishes its GoalSession. Returns the goal internals for the goal tools and Piop input. */
 export function registerGoals(pi: ExtensionAPI): { session: GoalSession; core: GoalCore } {
-  const state = new GoalState(pi);
+  const state = new GoalState(pi, ctx => inputHold(pi).held(ctx));
 
   const coordination = new GoalCoordination();
 
@@ -146,7 +146,11 @@ export function registerGoals(pi: ExtensionAPI): { session: GoalSession; core: G
     return { continue: true, entries: [{ type: "custom_message", ...promptMessage(state.goal) }] };
   }));
   let released: (() => void) | undefined;
-  pi.on("session_start", () => { released ??= queueHold(pi).onRelease(ctx => schedule(ctx, () => start(ctx))); });
+  let inputReleased: (() => void) | undefined;
+  pi.on("session_start", () => {
+    released ??= queueHold(pi).onRelease(ctx => schedule(ctx, () => start(ctx)));
+    inputReleased ??= inputHold(pi).onRelease(ctx => schedule(ctx, () => state.publish(ctx)));
+  });
   pi.on("agent_settled", (_event, ctx) => coordination.run(ctx, () => {
     starting = false;
 
@@ -191,7 +195,7 @@ export function registerGoals(pi: ExtensionAPI): { session: GoalSession; core: G
   pi.on("session_shutdown", (_event, ctx) => coordination.run(ctx, () => {
     if (context) state.save(context);
 
-    ready(); publish(); released?.(); released = undefined;
+    ready(); publish(); released?.(); released = undefined; inputReleased?.(); inputReleased = undefined;
   }));
 
   return { session, core };

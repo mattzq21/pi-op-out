@@ -15,7 +15,8 @@ export function validateObjective(value: string) {
 export class GoalState {
   goal: Goal | null = null;
   private saved = "null";
-  constructor(private pi: ExtensionAPI) {}
+  /** waitingForInput: true while the chat waits for the user's first message, so an active goal cannot start. */
+  constructor(private pi: ExtensionAPI, private waitingForInput: (ctx: ExtensionContext) => boolean) {}
 
   restore(ctx: ExtensionContext) {
     const file = ctx.sessionManager.getSessionFile();
@@ -59,6 +60,8 @@ export class GoalState {
 
   publish(ctx: ExtensionContext) {
     ctx.ui.setWidget("piop-goal", undefined);
-    ctx.ui.setStatus("piop-goal", this.goal ? JSON.stringify(this.goal) : undefined);
+    // An active goal in a chat that waits for the user's first message cannot start, so the queue lets the user's messages go first.
+    const waitingForInput = this.goal?.status === "active" && this.waitingForInput(ctx);
+    ctx.ui.setStatus("piop-goal", this.goal ? JSON.stringify(waitingForInput ? { ...this.goal, waitingForInput } : this.goal) : undefined);
   }
 }

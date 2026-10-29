@@ -34,7 +34,7 @@ test('project images named in a reply show inside it, a missing one says so, and
   assert.ok(reads.every(read => read.cwd === '/work/project' && read.hostId === 'server'));
   assert.equal(await page.getByRole('button', { name: 'src/main.ts' }).count(), 0, 'paths to other files stay plain text');
 
-  await page.getByRole('button', { name: 'shots/ok.png', exact: true }).click();
+  await page.getByRole('link', { name: 'shots/ok.png', exact: true }).click();
   await page.getByRole('alert').filter({ hasText: 'This file is on the host "server"' }).waitFor();
   await page.getByRole('button', { name: 'Enlarge image: shots/ok.png', exact: true }).click();
   await page.getByRole('dialog', { name: 'shots/ok.png' }).waitFor();

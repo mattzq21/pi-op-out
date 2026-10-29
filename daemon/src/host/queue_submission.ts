@@ -48,7 +48,8 @@ export async function enqueue(queue: QueueDelivery, command: any, name: string):
   try { validateItem(item); } catch (error) { throw new CommandRefusedError(error instanceof Error ? error.message : String(error), 'daemon'); }
   // A new goal objective starts goal work, so it waits like any message, although Pi would run the /goal command at once.
   if (queue.runsAtOnce(text(item, 'message')) && prepared.goalPrepared !== true) return runAtOnce(queue, item);
-  if (name === 'follow_up' && state.queuedGoal()) item.afterGoal = true;
+  // A goal that waits for the user's first message cannot start, so the message goes before it.
+  if (name === 'follow_up' && state.queuedGoal() && !state.queuedGoal()?.waitingForInput) item.afterGoal = true;
   // After the user stopped a response, the next message goes before the messages that waited.
   if (state.stopped && !item.afterGoal) { state.stopped = false; state.pending.unshift(item); } else state.pending.push(item);
   try { await queue.publish(); } catch (error) {
