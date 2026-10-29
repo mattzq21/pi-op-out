@@ -183,6 +183,11 @@ kbd { font: 11px "DM Sans"; border: 1px solid var(--line); padding: 2px 4px; bor
 .user-message-images { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; max-width: 82%; margin-bottom: 8px; }
 .user-message .message-body { width: fit-content; max-width: min(82%, 600px); padding: 10px 13px; border: 1px solid #393732; border-radius: 12px 4px 12px 12px; font-weight: 500; background: #24231f; color: #ffffff; }
 .message-body table { display: block; width: max-content; max-width: 100%; overflow-x: auto; margin: 0 0 12px; border-collapse: collapse; }
+.table-block { position: relative; width: max-content; max-width: 100%; margin: 0 0 12px; }.message-body .table-block > table { margin: 0; }
+.table-copy.icon-button { position: absolute; top: 2px; right: 2px; width: 26px; height: 24px; color: var(--muted); background: var(--paper); opacity: 0; pointer-events: none; transition: opacity .12s; }.table-copy.icon-button:hover { color: var(--ink); background: #2a2925; }
+.table-block:hover > .table-copy, .table-block:focus-within > .table-copy { opacity: 1; pointer-events: auto; }
+@media (hover: none) { .table-copy.icon-button { opacity: 1; pointer-events: auto; } }
+.table-block > .copy-feedback { position: absolute; top: 5px; right: 32px; padding: 0 4px; background: var(--paper); }
 .message-body th, .message-body td { min-width: 5rem; padding: 6px 18px 6px 0; overflow-wrap: normal; word-break: normal; text-align: left; vertical-align: top; }
 .message-body th:last-child, .message-body td:last-child { padding-right: 0; }
 .message-body th { border-bottom: 1px solid var(--line); }

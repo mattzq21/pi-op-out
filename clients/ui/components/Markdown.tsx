@@ -3,7 +3,7 @@ import { sessionReference } from "../lib/sessionDrop";
 import { required } from "../lib/required";
 import DOMPurify from "dompurify";
 import { Copy } from "lucide-solid";
-import { Marked } from "marked";
+import { Marked, Renderer } from "marked";
 import { createEffect, createSignal, onCleanup, Show, useContext } from "solid-js";
 import { Portal } from "solid-js/web";
 import { openExternalUrl } from "../lib/nativeTransport";
@@ -47,6 +47,9 @@ const parser = new Marked({
       if (language?.toLowerCase() === "mermaid") return `<div class="diagram-placeholder" data-complete="${diagramFenceClosed(raw)}"><pre><code>${escapeHtml(text)}</code></pre></div>`;
 
       return `<div class="code-block"><pre><code${language ? ` class="language-${escapeHtml(language)}"` : ""}>${escapeHtml(text)}\n</code></pre><button type="button" class="icon-button code-copy" aria-label="Copy code" data-tooltip="Copy code">⧉</button></div>`;
+    },
+    table(token) {
+      return `<div class="table-block" data-markdown="${escapeHtml(token.raw.trim())}">${Renderer.prototype.table.call(this, token)}<button type="button" class="icon-button table-copy" aria-label="Copy table" data-tooltip="Copy table">⧉</button></div>`;
     },
   },
 });
@@ -181,20 +184,22 @@ export function Markdown(props: { children: string; streaming?: boolean; imagePr
     });
   });
 
-  const copyCode = async (button: HTMLButtonElement) => {
-    button.closest(".code-block")?.querySelector("[role=status]")?.remove();
+  /** kind: the word in the button labels, "code" or "table". */
+  const copyBlock = async (button: HTMLButtonElement, block: HTMLElement, text: string, kind: "code" | "table") => {
+    const name = kind === "code" ? "Code" : "Table";
+    block.querySelector(":scope > [role=status]")?.remove();
 
     try {
-      await copyText((button.closest(".code-block")?.querySelector("code")?.textContent ?? "").replace(/\n$/, ""));
-      button.textContent = "✓"; button.setAttribute("aria-label", "Code copied");
+      await copyText(text);
+      button.textContent = "✓"; button.setAttribute("aria-label", `${name} copied`);
     } catch {
       button.textContent = "!"; button.setAttribute("aria-label", "Copy failed");
       const feedback = document.createElement("span");
       feedback.className = "copy-feedback"; feedback.setAttribute("role", "status"); feedback.textContent = "Could not copy";
-      button.closest(".code-block")?.append(feedback);
+      block.append(feedback);
     }
 
-    const timer = setTimeout(() => { button.textContent = "⧉"; button.setAttribute("aria-label", "Copy code"); button.closest(".code-block")?.querySelector("[role=status]")?.remove(); timers.delete(timer); }, 1800);
+    const timer = setTimeout(() => { button.textContent = "⧉"; button.setAttribute("aria-label", `Copy ${kind}`); block.querySelector(":scope > [role=status]")?.remove(); timers.delete(timer); }, 1800);
     timers.add(timer);
   };
 
@@ -256,9 +261,14 @@ export function Markdown(props: { children: string; streaming?: boolean; imagePr
       if (event.button === 0 && url) { setError(undefined); void openExternalUrl(url).catch(reason => setError(`Could not open link: ${reason instanceof Error ? reason.message : String(reason)}`)); }
     }
 
-    const button = event.target.closest<HTMLButtonElement>("button.code-copy");
+    const codeButton = event.target.closest<HTMLButtonElement>("button.code-copy");
+    const codeBlock = codeButton?.closest<HTMLElement>(".code-block");
 
-    if (button) void copyCode(button);
+    if (codeButton && codeBlock) void copyBlock(codeButton, codeBlock, (codeBlock.querySelector("code")?.textContent ?? "").replace(/\n$/, ""), "code");
+    const tableButton = event.target.closest<HTMLButtonElement>("button.table-copy");
+    const tableBlock = tableButton?.closest<HTMLElement>(".table-block");
+
+    if (tableButton && tableBlock) void copyBlock(tableButton, tableBlock, required(tableBlock.dataset.markdown), "table");
   };
 
   const contextMenu = (event: MouseEvent) => {

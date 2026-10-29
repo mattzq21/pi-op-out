@@ -42,6 +42,18 @@ test('fenced code copying omits the trailing newline and handles write failures'
   assert.equal(await page.evaluate(() => navigator.clipboard.readText()), 'const answer = 42;');
 });
 
+test('table copy button shows on table hover and copies the markdown source', async t => {
+  const page = await messagePage(t, 'table');
+  const button = page.getByRole('button', { name: 'Copy table', exact: true });
+  await page.getByText('Intro').hover();
+  assert.equal(await button.evaluate(node => getComputedStyle(node).opacity), '0');
+  await page.getByRole('table').hover();
+  await page.waitForFunction(() => getComputedStyle(document.querySelector('.table-copy')).opacity === '1');
+  await button.click();
+  await page.getByRole('button', { name: 'Table copied', exact: true }).waitFor();
+  assert.equal(await page.evaluate(() => navigator.clipboard.readText()), '| Name | Size |\n| --- | ---: |\n| **a** | 1 |');
+});
+
 test('link context menus copy the URL, restore focus and report clipboard failures', async t => {
   const page = await messagePage(t, 'link');
   const link = page.getByRole('link', { name: 'link', exact: true });
