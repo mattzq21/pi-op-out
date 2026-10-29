@@ -20,7 +20,10 @@ test('agent startup reads local definitions even when a broker is configured', a
 });
 
 
-test('skill switches save before reload and failed activation restores overrides without history writes', async t => {
+/** The skills that the model sees in the system prompt, by directory. */
+const visibleSkills = async (f, directories) => (await f.prompt({ skills: directories.map(baseDir => ({ filePath: baseDir + '/SKILL.md', baseDir })) })).skills.filter(skill => !skill.disableModelInvocation).map(skill => skill.baseDir);
+
+test('agent switches save state and failed activation restores overrides without history writes', async t => {
   const f = await agentFixture(t, { runtime: { skills: { userInvokedSkills: [], agentInvokedSkills: ['/skills/review', '/skills/broken'] } }, config: null });
   await f.load();
   await f.configure(configured([profile(), profile('reviewer', { skills: ['/skills/review'], model: 'test/review/model', effort: 'low' }), profile('broken', { skills: ['/skills/broken'], tools: ['missing'] })]));
@@ -33,7 +36,8 @@ test('skill switches save before reload and failed activation restores overrides
   await assert.rejects(f.select('broken'), /cannot run because Pi does not have its configured tool: missing/);
   assert.deepEqual(f.entries, before); assert.equal(f.capability().active, 'reviewer');
   assert.deepEqual(f.pi.getActiveTools(), ['read']); assert.deepEqual(f.ctx.model, { provider: 'test', id: 'default' }); assert.equal(f.pi.getThinkingLevel(), 'medium');
-  assert.deepEqual(await f.emit('resources_discover'), { skillPaths: ['/skills/review'] });
+  assert.deepEqual(await f.emit('resources_discover'), { skillPaths: ['/skills/review', '/skills/broken'] });
+  assert.deepEqual(await visibleSkills(f, ['/skills/review', '/skills/broken']), ['/skills/review']);
 });
 
 
@@ -98,26 +102,28 @@ test('fast mode validates configured and override models and applies supported s
 
 
 
-test('agent skills include only globally allowed paths after home expansion', async t => {
+test('every agent loads all globally allowed skills, and the model sees the agent skills after home expansion', async t => {
   const runtime = { enabledTools: ['read', 'bash'] };
   const f = await agentFixture(t, { runtime, config: null });
-  runtime.skills = { userInvokedSkills: [], agentInvokedSkills: [join(f.home, 'allowed')] };
-  f.ctx.reload = f.reloadExtensions;
+  runtime.skills = { userInvokedSkills: [], agentInvokedSkills: [join(f.home, 'allowed'), join(f.home, 'other')] };
   await f.load(); await f.start();
   await f.configure(configured([profile('general', { skills: ['~/allowed', '/blocked'] })]));
   await f.select('general');
-  assert.deepEqual(await f.emit('resources_discover'), { skillPaths: ['~/allowed'] });
+  assert.deepEqual(await f.emit('resources_discover'), { skillPaths: [join(f.home, 'allowed'), join(f.home, 'other')] });
+  assert.deepEqual(await visibleSkills(f, [join(f.home, 'allowed'), join(f.home, 'other')]), [join(f.home, 'allowed')]);
 });
 
-test('configuration edits normalize duplicate profiles and prompt paths', async t => {
+test('configuration edits normalize prompt paths and reject a repeated agent name', async t => {
   const f = await agentFixture(t, { config: null, files: { 'agent.md': 'Review instructions' } }); await f.load(); await f.start();
-  await f.configure({ agents: [profile('reviewer', { model: '', effort: 'high', tools: ['read'], skills: ['/skill'], mcpServers: { remote: remoteMcp }, path_agent_prompt: '  agent.md  ' }), profile('reviewer', { tools: ['bash'] }), profile('default')] });
+  await f.configure({ agents: [profile('reviewer', { model: '', effort: 'high', tools: ['read'], skills: ['/skill'], mcpServers: { remote: remoteMcp }, path_agent_prompt: '  agent.md  ' }), profile('default')] });
   const saved = await f.configuration();
   assert.deepEqual(saved.agents.map(agent => agent.name), ['reviewer', 'general']);
   assert.partialDeepStrictEqual(saved.agents[0], {
     name: 'reviewer', model: '', effort: 'high', tools: ['read'], skills: ['/skill'],
     mcpServers: { remote: { command: 'mcp-server', args: [], enabled: true } }, path_agent_prompt: 'agent.md',
   });
+  await assert.rejects(f.configure({ agents: [...saved.agents, profile('reviewer', { skills: ['/other'] })] }), { message: 'Duplicate agent name: reviewer' });
+  assert.deepEqual(await f.configuration(), saved);
 });
 
 test('first run creates private defaults and preserves existing prompts (production)', async t => {
@@ -259,18 +265,19 @@ test('general becomes the default when no agent has the flag, and two flags are 
 });
 
 const chosenConfig = () => configured([profile('general', { skills: ['/general-skill'] }), profile('chosen', { isDefault: true, skills: ['/chosen-skill'], model: 'openai/gpt-5.4', fastMode: true })]);
+const allSkills = ['/general-skill', '/chosen-skill'];
 const fastModel = { provider: 'openai', id: 'gpt-5.4', api: 'openai-responses' };
 const fastCatalog = [{ slug: 'gpt-5.4', service_tiers: [{ id: 'priority' }] }];
 
 for (const agentFirst of [false, true]) {
-  test(`a new session loads the default agent's skills and fast mode on its first turn (${agentFirst ? 'agents' : 'fast mode'} loads first)`, async t => {
+  test(`a new session shows the model the default agent's skills and starts its fast mode on its first turn (${agentFirst ? 'agents' : 'fast mode'} loads first)`, async t => {
     const f = await agentFixture(t, { config: chosenConfig(), model: fastModel, models: [fastModel], realFastMode: { agentFirst, catalog: fastCatalog } });
     await f.load();
-    assert.deepEqual(await f.emit('resources_discover', {}), { skillPaths: ['/chosen-skill'] });
+    assert.deepEqual(await f.emit('resources_discover', {}), { skillPaths: allSkills });
     await f.start();
     assert.equal(f.capability().active, 'chosen');
     assert.equal(await f.fastEnabled(), true);
-    assert.deepEqual(await f.emit('resources_discover', {}), { skillPaths: ['/chosen-skill'] });
+    assert.deepEqual(await visibleSkills(f, allSkills), ['/chosen-skill']);
     assert.deepEqual(f.notices, []);
   });
 }
@@ -281,16 +288,17 @@ test('a resumed session keeps its saved agent, skills and fast mode choice inste
     entries: [{ type: 'custom', customType: 'pi-define-agents-state', data: { active: 'chosen', locked: true } }, { type: 'custom', customType: 'piop-fast-mode-state', data: { enabled: false } }],
   });
   await f.load();
-  assert.deepEqual(await f.emit('resources_discover', {}), { skillPaths: ['/chosen-skill'] });
+  assert.deepEqual(await f.emit('resources_discover', {}), { skillPaths: allSkills });
   await f.start();
   assert.equal(f.capability().active, 'chosen');
   assert.equal(await f.fastEnabled(), false);
+  assert.deepEqual(await visibleSkills(f, allSkills), ['/chosen-skill']);
 
   const g = await agentFixture(t, { config: chosenConfig(), entries: [{ type: 'custom', customType: 'pi-define-agents-state', data: { active: 'general' } }] });
   await g.load();
-  assert.deepEqual(await g.emit('resources_discover', {}), { skillPaths: ['/general-skill'] });
   await g.start();
   assert.equal(g.capability().active, 'general');
+  assert.deepEqual(await visibleSkills(g, allSkills), ['/general-skill']);
 });
 
 test('a new session whose default agent uses another model than the runtime starts when agents loads before fast mode', async t => {
@@ -1065,12 +1073,16 @@ test('fast mode cannot be selected without a model', async t => {
 });
 
 test('a failed resource reload still permits final shutdown to clear agent status', async t => {
-  const f = await agentFixture(t, { runtime: { skills: { userInvokedSkills: [], agentInvokedSkills: ['/skills/review'] } }, config: null });
+  // A saved, unlocked choice keeps the skills of its own time, so choosing another agent loads the current skills.
+  const reviewer = profile('reviewer');
+  const saved = { tools: { enabledTools: ['read'], registeredTools: ['read'] }, skills: { userInvokedSkills: [], agentInvokedSkills: ['/skills/old'] } };
+  const f = await agentFixture(t, {
+    runtime: { skills: { userInvokedSkills: [], agentInvokedSkills: ['/skills/review'] } }, config: null,
+    entries: [{ type: 'custom', customType: 'pi-define-agents-state', data: { active: 'reviewer', snapshot: { version: 2, resources: saved, definition: reviewer } } }],
+  });
   await f.load();
-  await f.configure(configured([profile(), profile('reviewer', { skills: ['/skills/review'] })]));
+  await f.configure(configured([profile(), reviewer]));
   await f.start();
-  f.ctx.reload = async () => {};
-  await f.select('reviewer');
   f.ctx.reload = async () => {
     await f.emit('session_shutdown');
     assert.ok(f.statuses.get('pi-define-agents'));
@@ -1133,20 +1145,20 @@ test('started agent keeps skill paths and invocation policy across resource chan
   await f.load();
   await f.configure(configured([profile('general', { skills: ['~/allowed'] })]));
   await f.start();
-  assert.deepEqual(await f.emit('resources_discover'), { skillPaths: ['~/allowed'] });
+  assert.deepEqual(await f.emit('resources_discover'), { skillPaths: [join(f.home, 'allowed')] });
   await f.input('Start');
   runtime.skills = { userInvokedSkills: [join(f.home, 'allowed')], agentInvokedSkills: [] };
   await f.reloadExtensions();
-  assert.deepEqual(await f.emit('resources_discover'), { skillPaths: ['~/allowed'] });
+  assert.deepEqual(await f.emit('resources_discover'), { skillPaths: [join(f.home, 'allowed')] });
   const prompt = await f.prompt({ skills: [{ filePath: join(f.home, 'allowed/SKILL.md'), baseDir: join(f.home, 'allowed') }] });
   assert.notEqual(prompt.skills[0].disableModelInvocation, true);
   runtime.skills = { userInvokedSkills: [], agentInvokedSkills: [] };
   await f.reloadExtensions();
-  assert.deepEqual(await f.emit('resources_discover'), { skillPaths: ['~/allowed'] });
+  assert.deepEqual(await f.emit('resources_discover'), { skillPaths: [join(f.home, 'allowed')] });
 
 });
 
-test('agent instructions replace appended instructions without changing discovered skills', async t => {
+test('agent instructions replace appended instructions, and the model does not see skills that the agent does not list', async t => {
   const f = await agentFixture(t, { config: null, files: { 'agent.md': 'Agent instructions' } });
   await f.load();
   await f.configure(configured([profile('general', { path_agent_prompt: 'agent.md' })]));
@@ -1155,7 +1167,7 @@ test('agent instructions replace appended instructions without changing discover
   assert.deepEqual(await f.prompt({ appendSystemPrompt: 'Appended', skills }), {
     customPrompt: 'System instructions', sections: { instructions: 'Agent instructions' },
     contextFiles: [], appendSystemPrompt: '',
-    skills: [{ filePath: '/skills/one', baseDir: '/skills' }, { filePath: '/skills/two', baseDir: '/skills' }],
+    skills: [{ filePath: '/skills/one', baseDir: '/skills', disableModelInvocation: true }, { filePath: '/skills/two', baseDir: '/skills', disableModelInvocation: true }],
   });
 });
 

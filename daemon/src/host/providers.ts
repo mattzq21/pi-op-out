@@ -104,13 +104,20 @@ export class ProviderService {
     if (!owner) throw new Error('Login owner is missing');
     switch (request?.action) {
       case 'fast_models': return this.fastModels.snapshot();
-      case 'draft_catalog': return { ...await this.sdk.request({ method: 'draft_catalog' }), commandDetails: savedCommands(join(this.host!.home, this.host!.storage, 'settings.json')) };
+      case 'draft_catalog': return { ...await this.sdk.request({ method: 'draft_catalog', skillPaths: this.skillPaths() }), commandDetails: savedCommands(join(this.host!.home, this.host!.storage, 'settings.json')) };
       case 'list': return this.listing(flag(request, 'refreshModels'));
       case 'begin': return this.begin(owner, request);
       case 'logout': return this.logout(text(request, 'providerId'));
       case 'create': return this.createProvider(request);
     }
     return this.flowRequest(owner, request);
+  }
+
+  /** The skill paths that every new session loads. */
+  private skillPaths(): string[] {
+    const skills = this.host!.configuration()?.settings?.skills;
+    if (!skills) throw new Error('Daemon is not configured');
+    return [...skills.userInvokedSkills, ...skills.agentInvokedSkills];
   }
 
   private async flowRequest(owner: string, request: any): Promise<any> {

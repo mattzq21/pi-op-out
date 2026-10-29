@@ -134,8 +134,10 @@ function normalize(value: Omit<Partial<Config>, "agents"> & { agents?: StoredAge
     if (legacy) legacy.name = "general";
   }
 
-  const unique = supplied.filter((agent, index) => supplied.findIndex((candidate) => candidate.name === agent.name) === index);
-  const agents = unique.some((agent) => agent.name === "general") ? unique : [generalAgent(pi), ...unique];
+  const duplicate = supplied.find((agent, index) => supplied.findIndex((candidate) => candidate.name === agent.name) !== index);
+
+  if (duplicate) throw new Error(`Duplicate agent name: ${duplicate.name}`);
+  const agents = supplied.some((agent) => agent.name === "general") ? supplied : [generalAgent(pi), ...supplied];
   const defaults = agents.filter(agent => agent.isDefault);
 
   if (defaults.length > 1) throw new Error(`Only one agent can be the default. Default agents: ${defaults.map(agent => agent.name).join(", ")}`);
@@ -318,14 +320,16 @@ export default async function defineAgents(pi: ExtensionAPI) {
   const defaultAgentName = () => required(config.agents.find(agent => agent.isDefault)).name;
   const currentAgent = () => snapshot?.definition ?? findAgent(active);
   const resources = (): AgentResources => snapshot?.resources ?? initialResources;
-  const agentSkills = (_pi: ExtensionAPI, agent: Agent) => {
-    const skills = resources().skills;
-    const allowed = new Set([...skills.userInvokedSkills, ...skills.agentInvokedSkills].map(resourcePath));
-    return agent.skills.filter(path => allowed.has(resourcePath(path)));
-  };
+  /** Every session loads all skills, so the user can invoke any skill with any agent. */
+  const loadedSkills = () => { const skills = resources().skills;
+
+  return [...skills.userInvokedSkills, ...skills.agentInvokedSkills]; };
+  /** The model sees only the skills of the current agent, and never a user-invoked skill. */
   const invocationPolicy = <T extends { filePath: string; baseDir: string }>(skills: readonly T[]): T[] => {
     const user = new Set(resources().skills.userInvokedSkills.map(resourcePath));
-    return skills.map(skill => user.has(resourcePath(skill.filePath)) || user.has(resourcePath(skill.baseDir)) ? { ...skill, disableModelInvocation: true } : { ...skill });
+    const agent = new Set((currentAgent()?.skills ?? []).map(resourcePath));
+    const has = (paths: Set<string>, skill: T) => paths.has(resourcePath(skill.filePath)) || paths.has(resourcePath(skill.baseDir));
+    return skills.map(skill => has(agent, skill) && !has(user, skill) ? { ...skill } : { ...skill, disableModelInvocation: true });
   };
   const agentToolError = (api: ExtensionAPI, agent: Agent) => {
     const available = new Set(api.getAllTools().map(tool => tool.name));
@@ -404,9 +408,7 @@ export default async function defineAgents(pi: ExtensionAPI) {
   };
 
   const currentSkillPaths = () => {
-    const agent = currentAgent();
-
-    return [...new Set(agent ? agentSkills(pi, agent).map(normalizedPath) : [])].sort();
+    return [...new Set(loadedSkills().map(normalizedPath))].sort();
   };
 
   /** Checks an agent's own fast mode default against the host's fast model results. */
@@ -675,7 +677,7 @@ export default async function defineAgents(pi: ExtensionAPI) {
       snapshot = copySnapshot(stored?.snapshot);
       active = startingAgentName(stored);
     }
-    const agent = currentAgent(); const skillPaths = agent ? agentSkills(pi, agent) : [];
+    const skillPaths = loadedSkills();
 
   return skillPaths.length ? { skillPaths } : undefined; });
   pi.on("input", async (event, ctx) => {

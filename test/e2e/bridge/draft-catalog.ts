@@ -11,4 +11,5 @@ export const draftCatalog = {
   commands: ["fast"],
   initialModel: null, initialThinking: 'medium',
   commandDetails: [],
+  skills: [],
 };

@@ -18,7 +18,7 @@ function hostDraft(t) {
   mockIPC(async (command, args) => {
     assert.equal(command, 'daemon_invoke');
     assert.equal(args.args.request.action, 'draft_catalog');
-    return { config: structuredClone(host.config), models, initialModel: host.initialModel ?? null, initialThinking: host.initialThinking ?? 'medium', commands: [], commandDetails: [] };
+    return { config: structuredClone(host.config), models, initialModel: host.initialModel ?? null, initialThinking: host.initialThinking ?? 'medium', commands: [], commandDetails: [], skills: [] };
   });
   const events = [];
   const draft = new DraftRuntime(() => 'local', event => events.push(event));

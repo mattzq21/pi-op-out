@@ -413,6 +413,7 @@ export function registerOrchestration(pi: ExtensionAPI) {
   const inputListeners = new Set<() => void>();
   const newInput = (kind: "user" | "mail" | "subagent") => { revisions[kind]++; for (const listener of inputListeners) listener(); };
   pi.on("input", event => { if (event.source !== "extension") newInput("user"); });
+  pi.events.on("piop:rpc", request => { if (request.command === "queue_offered") newInput("user"); });
   const unsubscribeMail = pi.events.on("piop:agent-mail", event => newInput(event.customType === "piop-subagent-result" ? "subagent" : "mail"));
   pi.on("session_shutdown", unsubscribeMail);
   pi.registerTool({
