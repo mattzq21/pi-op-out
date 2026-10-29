@@ -117,6 +117,27 @@ async fn open_rollout_file(path: String, host_id: Option<String>) -> Result<(), 
 
 #[tauri::command(async)]
 async fn open_local_file(path: String, host_id: Option<String>) -> Result<(), String> {
+    let path = local_file_path(path, host_id)?;
+    tokio::task::spawn_blocking(move || open_system_resource(path.as_os_str())).await.map_err(|error| error.to_string())?
+}
+
+#[tauri::command(async)]
+async fn reveal_local_file(path: String, host_id: Option<String>) -> Result<(), String> {
+    let path = local_file_path(path, host_id)?;
+    tokio::task::spawn_blocking(move || reveal_in_file_manager(&path)).await.map_err(|error| error.to_string())?
+}
+
+/// Select the file in the file manager. If no file manager answers the freedesktop ShowItems call, open the parent directory.
+fn reveal_in_file_manager(path: &Path) -> Result<(), String> {
+    let uri = tauri::Url::from_file_path(path).map_err(|_| format!("File path is not absolute: {}", path.display()))?;
+    let shown = Command::new("dbus-send").args(["--session", "--print-reply", "--reply-timeout=3000", "--dest=org.freedesktop.FileManager1", "/org/freedesktop/FileManager1", "org.freedesktop.FileManager1.ShowItems"])
+        .arg(format!("array:string:{uri}")).arg("string:").stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).status();
+    if shown.is_ok_and(|status| status.success()) { return Ok(()); }
+    let parent = path.parent().ok_or_else(|| format!("{} has no parent directory", path.display()))?;
+    open_system_resource(parent.as_os_str())
+}
+
+fn local_file_path(path: String, host_id: Option<String>) -> Result<PathBuf, String> {
     if std::env::var_os("PIOP_DAEMON_URL").is_some() || host_id.as_deref().unwrap_or("local") != "local" { return Err("This file is on another host. Piop can open only files on this computer".into()); }
     // A path that starts with ~ is in the home directory of this computer.
     let path = match path.strip_prefix('~') {
@@ -125,7 +146,7 @@ async fn open_local_file(path: String, host_id: Option<String>) -> Result<(), St
     };
     if !path.is_absolute() { return Err(format!("File path is not absolute: {}", path.display())); }
     if !path.exists() { return Err(format!("File does not exist: {}", path.display())); }
-    tokio::task::spawn_blocking(move || open_system_resource(path.as_os_str())).await.map_err(|error| error.to_string())?
+    Ok(path)
 }
 
 const LOAD_ERROR_HTML: &str = r#"<!doctype html>
@@ -216,7 +237,7 @@ pub fn run() {
             window.show()?;
         }
         Ok(())
-    }).invoke_handler(tauri::generate_handler![daemon_invoke, daemon_log_statuses, reload_development_window, load_client_settings, save_client_settings, new_window, open_project_directory, open_rollout_file, open_local_file, open_external_url, read_dropped_file, read_clipboard_image]).build(context).expect("error while building piop").run(|app, event| {
+    }).invoke_handler(tauri::generate_handler![daemon_invoke, daemon_log_statuses, reload_development_window, load_client_settings, save_client_settings, new_window, open_project_directory, open_rollout_file, open_local_file, reveal_local_file, open_external_url, read_dropped_file, read_clipboard_image]).build(context).expect("error while building piop").run(|app, event| {
         if let tauri::RunEvent::WindowEvent { label, event: tauri::WindowEvent::Destroyed, .. } = &event {
             let app = app.clone(); let label = label.clone();
             tauri::async_runtime::spawn(async move { app.state::<desktop_daemon::DesktopDaemon>().close_window(&app, &label).await; });
