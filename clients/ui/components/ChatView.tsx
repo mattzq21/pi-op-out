@@ -22,7 +22,8 @@ import { MessagePinContext, PIN_LIMIT, pinId, pinnedMessagesSchema, type Message
 import { resolveMessageEntry } from "../lib/resolveMessageEntry";
 import { hasVisibleText, textOf, thinkingOf } from "../lib/content";
 import { cacheHitStats, isContextInjection, isPromptMessage, toolTitle } from "../lib/messages";
-import { SubagentResults, subagentRuns } from "./SubagentResults";
+import { SubagentResults, subagentRuns, subagentSeed } from "./SubagentResults";
+import { createSubagentLooks, SubagentLookContext } from "../lib/subagentLooks";
 import type { AgentProfile, AgentState, ChatMessage, ComposerUpload, ForkSource, ImageAttachment, Model, PromptContextInfo, SlashCommand } from "../types";
 import { branchingAvailable, canBranchFrom } from "../lib/branching";
 import { Composer, ContainedPicker } from "./Composer";
@@ -538,8 +539,9 @@ export function ChatView(props: Props & { transcriptActions?: JSXElement; follow
   </main>;
 
   const conversationHost = () => props.transport?.currentHostId() ?? "local";
+  const subagentLooks = createSubagentLooks(() => messages().flatMap(message => (message.role === "tool" && ["spawn_subagents", "await_subagents"].includes(message.toolName ?? "")) || message.customType === "piop-subagent-result" ? subagentRuns(message.details).map(subagentSeed) : []), () => `${conversationHost()}:${props.state.sessionId}`);
 
-  return <ConversationHostContext.Provider value={conversationHost}><MessageFileContext.Provider value={{ hostId: conversationHost, cwd: projectCwd, get notify() { return props.onNotice; } }}><PluginMessageContext.Provider value={{ sessionId: () => props.state.sessionId, command: async command => { if (!props.transport) throw new Error("Conversation is unavailable"); return props.transport.command(command); } }}><MessagePinContext.Provider value={messagePins}><ConversationShell /></MessagePinContext.Provider></PluginMessageContext.Provider></MessageFileContext.Provider></ConversationHostContext.Provider>;
+  return <ConversationHostContext.Provider value={conversationHost}><MessageFileContext.Provider value={{ hostId: conversationHost, cwd: projectCwd, get notify() { return props.onNotice; } }}><PluginMessageContext.Provider value={{ sessionId: () => props.state.sessionId, command: async command => { if (!props.transport) throw new Error("Conversation is unavailable"); return props.transport.command(command); } }}><MessagePinContext.Provider value={messagePins}><SubagentLookContext.Provider value={subagentLooks}><ConversationShell /></SubagentLookContext.Provider></MessagePinContext.Provider></PluginMessageContext.Provider></MessageFileContext.Provider></ConversationHostContext.Provider>;
 }
 
 type ConversationGroup = { messages: ChatMessage[]; promptContexts: PromptContextInfo[] };

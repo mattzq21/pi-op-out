@@ -2,6 +2,7 @@ import { Key } from "@solid-primitives/keyed";
 import { createMemo, Index, useContext } from "solid-js";
 import { z } from "zod";
 import { ConversationHostContext, SubagentNavigationContext } from "../lib/subagentNavigation";
+import { SubagentLookContext, subagentLook } from "../lib/subagentLooks";
 import "./subagent-timeline.css";
 
 interface Run { name: string; task: string; status: string; sessionId: string; sessionPath: string; hostId: string; toolCallId?: string; output?: string; apiCost?: number; }
@@ -18,30 +19,21 @@ export const subagentRuns = z.object({
   runs: z.array(runSchema.optional().catch(undefined)).catch([]),
 }).transform(details => details.runs.flatMap(run => run ? [run] : [])).catch([]).parse;
 
-/** The ChatGPT app's string hash, then a mix step so that similar seeds such as "Svg4" and "Svg5" land far apart. */
-function seedHash(seed: string) {
-  let hash = 0;
-  for (let index = 0; index < seed.length; index += 1) hash = (hash * 31 + seed.charCodeAt(index)) % 2147483647;
-  hash = Math.imul(hash ^ (hash >>> 16), 0x85ebca6b);
-  hash = Math.imul(hash ^ (hash >>> 13), 0xc2b2ae35);
-  return (hash ^ (hash >>> 16)) >>> 0;
-}
+/** The key that picks a subagent's look. */
+export const subagentSeed = (run: Pick<Run, "sessionId" | "name">) => run.sessionId || run.name;
 
-/** Hues far enough apart to tell apart at 14px. */
-const AVATAR_HUES = [0, 40, 95, 160, 200, 235, 280, 320];
-const AVATAR_PETALS = [3, 4, 6];
-
-/** A fixed avatar per subagent session: the hue and petal count come from the session ID, so every row of one subagent looks the same. */
+/** A fixed avatar per subagent session: the chat gives each subagent its own look, so every row of one subagent looks the same. */
 function SubagentAvatar(props: { seed: string; status: string; label: string }) {
+  const given = useContext(SubagentLookContext);
+  const number = createMemo(() => given?.(props.seed));
   const look = createMemo(() => {
-    const hash = seedHash(props.seed);
-    const hue = AVATAR_HUES[hash % AVATAR_HUES.length]!;
-    const petals = AVATAR_PETALS[(hash >>> 8) % AVATAR_PETALS.length]!;
-    return { color: `hsl(${hue} 75% 62%)`, size: petals === 3 ? 4.6 : petals === 4 ? 4 : 3.2, angles: Array.from({ length: petals }, (_, index) => index * 360 / petals + ((hash >>> 16) % 45)) };
+    const value = subagentLook(props.seed, number());
+    const size = value.petals === 3 ? 4.6 : value.petals === 4 ? 4 : 3.2;
+    return { color: value.color, size, radius: size * value.roundness, angles: Array.from({ length: value.petals }, (_, index) => index * 360 / value.petals + value.turn) };
   });
   return <span class={`subagent-state subagent-${props.status}`} role="img" aria-label={props.label}>
     <svg class="subagent-avatar" width="18" height="18" viewBox="0 0 20 20" aria-hidden="true">
-      <Index each={look().angles}>{angle => <rect x={9 - look().size / 2} y={9 - 5 - look().size / 2} width={look().size} height={look().size} rx="1" transform={`rotate(${angle()} 9 9) rotate(45 9 4)`} fill={look().color} fill-opacity="0.18" stroke={look().color} stroke-width="1.2" />}</Index>
+      <Index each={look().angles}>{angle => <rect x={9 - look().size / 2} y={9 - 5 - look().size / 2} width={look().size} height={look().size} rx={look().radius} transform={`rotate(${angle()} 9 9) rotate(45 9 4)`} fill={look().color} fill-opacity="0.18" stroke={look().color} stroke-width="1.2" />}</Index>
       <circle cx="9" cy="9" r="1.3" fill={look().color} />
       <circle class="subagent-status-dot" cx="16.5" cy="16.5" r="2.6" />
     </svg>
@@ -60,7 +52,7 @@ export function SubagentResults(props: { runs: Run[] }) {
 
     return <div class="subagent-branch">
       <button type="button" class="subagent-open" disabled={!open || !run().sessionId || !run().sessionPath} aria-label={`Open ${run().name} agent chat — ${statusLabel()}`} onClick={() => open?.({ ...run(), hostId: host?.() ?? run().hostId })}>
-          <SubagentAvatar seed={run().sessionId || run().name} status={run().status} label={statusLabel()} />
+          <SubagentAvatar seed={subagentSeed(run())} status={run().status} label={statusLabel()} />
           <span class="subagent-name">{run().name}</span>
       </button>
     </div>;
