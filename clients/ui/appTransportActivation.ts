@@ -1,9 +1,11 @@
 import { required } from "./lib/required";
-import { createMemo, onCleanup, type Accessor, type Setter } from "solid-js";
+import { createMemo, createRoot, onCleanup, type Accessor, type Setter } from "solid-js";
+import { reportBackgroundError } from "./lib/backgroundErrors";
+import { ConversationChangedError } from "./lib/conversationChanged";
 import type { NativeTransport } from "./lib/nativeTransport";
 import type { SessionRuntimePool } from "./lib/sessionRuntimePool";
 import type { RefObject } from "./lib/solid";
-import type { useChatSession } from "./lib/useChatSession";
+import { useChatSession } from "./lib/useChatSession";
 import type { SessionSummary } from "./types";
 import { flushAllPlugins } from "./plugins/lifecycle";
 
@@ -113,6 +115,20 @@ export function createTransportActivation(context: ActivationContext) {
     let compacting = state.isCompacting;
     let stopped = false;
     let scheduled = false;
+    let stopSync: (() => void) | undefined;
+    /** Loads the finished answer into the cached chat, so the chat shows it at once when it opens. The chat stays connected until the load ends. */
+    const sync = () => {
+      stopSync?.();
+      const release = runtimePool().observe(owner);
+      createRoot(dispose => {
+        let done = false;
+        const finish = () => { if (done) return; done = true; if (stopSync === finish) stopSync = undefined; dispose(); release(); };
+        stopSync = finish;
+        void useChatSession(() => owner, undefined, { poll: false }).refresh()
+          .catch(reason => { if (!done && !(reason instanceof ConversationChangedError)) reportBackgroundError("Could not load the finished answer", reason); })
+          .finally(finish);
+      });
+    };
     const check = () => {
       if (scheduled || stopped) return;
       scheduled = true;
@@ -125,13 +141,13 @@ export function createTransportActivation(context: ActivationContext) {
     const unsubscribe = owner.subscribe(event => {
       if (event.type === "agent_start") streaming = true;
       if (event.type === "runtime_presence") streaming = event.isStreaming === true;
-      if (event.type === "agent_settled") streaming = false;
+      if (event.type === "agent_settled") { streaming = false; sync(); }
       if (event.type === "compaction_start" || event.type === "auto_compaction_start") compacting = true;
       if (event.type === "compaction_end" || event.type === "auto_compaction_end") compacting = false;
       if (["agent_settled", "runtime_presence", "compaction_end", "auto_compaction_end", "queue_update", "settings_applied"].includes(event.type)) check();
     });
     let stopDisposal: (() => void) | undefined;
-    const stop = () => { stopped = true; unsubscribe(); stopDisposal?.(); inactiveCleanups.delete(owner); };
+    const stop = () => { stopped = true; unsubscribe(); stopSync?.(); stopDisposal?.(); inactiveCleanups.delete(owner); };
     inactiveCleanups.set(owner, stop);
     stopDisposal = owner.onDispose(() => { stop(); transportConversationKeys.current.delete(owner); });
     check();
