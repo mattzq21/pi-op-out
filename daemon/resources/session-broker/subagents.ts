@@ -14,6 +14,7 @@ import { activeConversation } from "./conversation-location.ts";
 import { interruptSession, requireMessageLength, sendSessionMessage, sessionSnapshot, snapshotStatus, subagentResponses } from "./orchestration.ts";
 import { SUBAGENT_PARENT, latestRuns, ownedRuns, saveRun, subagentParent, subagentPayload, registerSubagentResults, type SubagentRun } from "./subagent-state.ts";
 import { acceptedSubmission, cancelSubagent, finishRun, observeSubagent, subagentReceiptSchema, SubagentCancellation, type ActiveSubagent } from "./subagent-reconciliation.ts";
+import { releaseLook, reserveLook } from "./subagent-looks.ts";
 import { savedSubagentRuns } from "../piop-storage/subagent-results.ts";
 import { isAuxiliary } from "../piop-storage/session-records.cjs";
 
@@ -75,7 +76,7 @@ function resumeSubagent(runs: SubagentRun[], parentSessionId: string, task: Suba
 
   return { version: 1, toolCallId, parentSessionId, sessionId: previous.sessionId, sessionPath: previous.sessionPath, hostId: previous.hostId,
     name: task.name, task: task.task, status: "running", startedAt: Date.now(), runId: randomUUID(), generation: (previous.generation ?? 0) + 1, submission: "prepared",
-    agent: previous.agent, taskPath: previous.taskPath, cwd: previous.cwd };
+    agent: previous.agent, taskPath: previous.taskPath, cwd: previous.cwd, look: previous.look };
 }
 
 async function createSubagent(pi: ExtensionAPI, ctx: ExtensionContext, task: SubagentTask, toolCallId: string, signal?: AbortSignal): Promise<SubagentRun> {
@@ -95,11 +96,14 @@ async function createSubagent(pi: ExtensionAPI, ctx: ExtensionContext, task: Sub
   if (!header || !ctx.sessionManager.getSessionFile()) throw new Error("Save this conversation before delegating work");
   const profile = await resolveAgentProfile(pi, "subagent", task.agent);
   const fastMode = await childFastModeEntry(pi, profile, Boolean(task.agent));
-  const sessionId = await reserveSessionId();
+  const look = reserveLook(parentSessionId, latestRuns(ctx).map(run => run.look));
+  let sessionId: string;
+  try { sessionId = await reserveSessionId(); }
+  catch (error) { releaseLook(parentSessionId, look); throw error; }
   const timestamp = new Date().toISOString();
   const sessionPath = join(ctx.sessionManager.getSessionDir(), `${timestamp.replace(/[:.]/g, "-")}_${sessionId}.jsonl`);
   const workspace = { cwd: ctx.cwd };
-  const run: SubagentRun = { version: 1, toolCallId, parentSessionId, sessionId, sessionPath, hostId: currentHost(), name: task.name, task: task.task, taskPath: `${scope.taskPath}/${task.name}`, agent: profile.active, status: "running", startedAt: Date.now(), runId: randomUUID(), submission: "prepared", ...workspace };
+  const run: SubagentRun = { version: 1, toolCallId, parentSessionId, sessionId, sessionPath, hostId: currentHost(), name: task.name, task: task.task, taskPath: `${scope.taskPath}/${task.name}`, agent: profile.active, status: "running", startedAt: Date.now(), runId: randomUUID(), submission: "prepared", look, ...workspace };
   let parentId: string | null = null;
 
   const entry = (value: CustomEntryDraft) => { const id = randomUUID(); const result = { ...value, id, parentId, timestamp }; parentId = id;
@@ -112,7 +116,7 @@ async function createSubagent(pi: ExtensionAPI, ctx: ExtensionContext, task: Sub
     entry({ type: "custom", customType: "pi-define-agents-state", data: profile }),
     ...fastMode ? [entry(fastMode)] : [],
   ], { name: `Subagent: ${task.name}`, dependencies: { workspace: { path: workspace.cwd, kind: "existing" } } }); }
-  catch (error) { throw new Error(`Subagent session creation failed in ${workspace.cwd}; chat assets are retained: ${(error instanceof Error ? error.message : String(error))}`, { cause: error }); }
+  catch (error) { releaseLook(parentSessionId, look); throw new Error(`Subagent session creation failed in ${workspace.cwd}; chat assets are retained: ${(error instanceof Error ? error.message : String(error))}`, { cause: error }); }
 
   return run;
 }
@@ -172,11 +176,13 @@ async function executeSubagent(task: SubagentTask, execution: SubagentExecution)
     creationIntent(run, signal);
     lifecycle.run = run;
     active.set(run.sessionId, lifecycle); claimed = true;
-    saveRun(pi, ctx, run); publish(run);
+    saveRun(pi, ctx, run);
+    if (!task.sessionId) releaseLook(run.parentSessionId, run.look);
+    publish(run);
     execution.ready();
     await observeSubagent(run, { ...execution, signal }, lifecycle, true);
   } catch (error) {
-    if (!claimed) { failedCreation(run, signal.aborted, (error instanceof Error ? error.message : String(error))); }
+    if (!claimed) { if (!task.sessionId) releaseLook(run.parentSessionId, run.look); failedCreation(run, signal.aborted, (error instanceof Error ? error.message : String(error))); }
     else { run.observation = "interrupted"; ctx.ui.notify(`Subagent supervision interrupted: ${(error instanceof Error ? error.message : String(error))}`, "error"); }
   }
 

@@ -9,6 +9,7 @@ export const runSchema = Schema.Object({
   startedAt: Schema.Number(), endedAt: Schema.Optional(Schema.Number()), output: Schema.Optional(Schema.String()),
   agent: Schema.Optional(Schema.String()), taskPath: Schema.Optional(Schema.String()),
   cwd: Schema.Optional(Schema.String()),
+  look: Schema.Optional(Schema.Integer({ minimum: 0, maximum: 47 })),
   runId: Schema.Optional(Schema.String()), generation: Schema.Optional(counter),
   observation: Schema.Optional(Schema.Union([Schema.Literal("watching"), Schema.Literal("interrupted")])),
   cancelRequested: Schema.Optional(Schema.Boolean()), cancelReason: Schema.Optional(Schema.String()),

@@ -2,15 +2,16 @@ import { Key } from "@solid-primitives/keyed";
 import { createMemo, Index, useContext } from "solid-js";
 import { z } from "zod";
 import { ConversationHostContext, SubagentNavigationContext } from "../lib/subagentNavigation";
-import { SubagentLookContext, subagentLook } from "../lib/subagentLooks";
+import { subagentLook } from "../lib/subagentLooks";
 import "./subagent-timeline.css";
 
-interface Run { name: string; task: string; status: string; sessionId: string; sessionPath: string; hostId: string; toolCallId?: string; output?: string; apiCost?: number; }
+interface Run { name: string; task: string; status: string; sessionId: string; sessionPath: string; hostId: string; toolCallId?: string; look?: number; output?: string; apiCost?: number; }
 
 const runSchema = z.object({
   name: z.string(), task: z.string(), status: z.string(),
   sessionId: z.string(), sessionPath: z.string(), hostId: z.string(),
   toolCallId: z.string().optional(),
+  look: z.number().int().min(0).max(47).optional().catch(undefined),
   output: z.string().optional().catch(undefined),
   apiCost: z.number().optional().catch(undefined),
 });
@@ -19,15 +20,10 @@ export const subagentRuns = z.object({
   runs: z.array(runSchema.optional().catch(undefined)).catch([]),
 }).transform(details => details.runs.flatMap(run => run ? [run] : [])).catch([]).parse;
 
-/** The key that picks a subagent's look. */
-export const subagentSeed = (run: Pick<Run, "sessionId" | "name">) => run.sessionId || run.name;
-
-/** A fixed avatar per subagent session: the chat gives each subagent its own look, so every row of one subagent looks the same. */
-function SubagentAvatar(props: { seed: string; status: string; label: string }) {
-  const given = useContext(SubagentLookContext);
-  const number = createMemo(() => given?.(props.seed));
+/** A fixed avatar per subagent session: the daemon saves a look with each subagent, so every row of one subagent looks the same. */
+function SubagentAvatar(props: { seed: string; look?: number; status: string; label: string }) {
   const look = createMemo(() => {
-    const value = subagentLook(props.seed, number());
+    const value = subagentLook(props.seed, props.look);
     const size = value.petals === 3 ? 4.6 : value.petals === 4 ? 4 : 3.2;
     return { color: value.color, size, radius: size * value.roundness, angles: Array.from({ length: value.petals }, (_, index) => index * 360 / value.petals + value.turn) };
   });
@@ -52,7 +48,7 @@ export function SubagentResults(props: { runs: Run[] }) {
 
     return <div class="subagent-branch">
       <button type="button" class="subagent-open" disabled={!open || !run().sessionId || !run().sessionPath} aria-label={`Open ${run().name} agent chat — ${statusLabel()}`} onClick={() => open?.({ ...run(), hostId: host?.() ?? run().hostId })}>
-          <SubagentAvatar seed={subagentSeed(run())} status={run().status} label={statusLabel()} />
+          <SubagentAvatar seed={run().sessionId || run().name} look={run().look} status={run().status} label={statusLabel()} />
           <span class="subagent-name">{run().name}</span>
       </button>
     </div>;

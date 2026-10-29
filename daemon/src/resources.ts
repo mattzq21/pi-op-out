@@ -71,6 +71,7 @@ import storageMailbox from '../resources/piop-storage/durable-mailbox.ts?raw';
 import brokerModule23 from '../resources/session-broker/agent-profiles.ts?raw';
 import storageRuns from '../resources/piop-storage/subagent-results.ts?raw';
 import brokerModule29 from '../resources/session-broker/subagent-identity.ts?raw';
+import brokerModule30 from '../resources/session-broker/subagent-looks.ts?raw';
 import sessionStateRecords from '../resources/piop-storage/session-records.cjs?raw';
 import goalsRecords from '../resources/piop-storage/goals.cjs?raw';
 import storageReferencesRaw from '../resources/piop-storage/reference-publication-lock.cjs?raw';
@@ -173,6 +174,7 @@ export const SESSION_BROKER_MODULES: Array<[string, string]> = [
   ['auxiliary.ts', brokerAuxiliary],
   ['agent-profiles.ts', brokerModule23],
   ['subagent-identity.ts', brokerModule29],
+  ['subagent-looks.ts', brokerModule30],
 ];
 
 /** Session extensions installed next to session-broker. Each directory holds one extension with index.ts as its entry. */
