@@ -9,17 +9,18 @@ export const COMPOSER_FIELD_TAG = "piop-composer-field";
 
 const SESSION_LINK = /\[((?:\\.|[^\\\]\n])*)\]\((piop:\/\/session\/[^/()\s]+\/[^/()\s]+)\)/g;
 
-type Segment = { text: string } | { markdown: string; label: string };
+export type Segment = { text: string } | { markdown: string; label: string; hostId: string; sessionId: string };
 
-function segments(value: string): Segment[] {
+export function sessionLinkSegments(value: string): Segment[] {
   const result: Segment[] = [];
   let last = 0;
 
   for (const match of value.matchAll(SESSION_LINK)) {
-    if (!sessionReference(match[2])) continue;
+    const target = sessionReference(match[2]);
+    if (!target) continue;
 
     if (match.index > last) result.push({ text: value.slice(last, match.index) });
-    result.push({ markdown: match[0], label: match[1].replace(/\\(.)/g, "$1") });
+    result.push({ markdown: match[0], label: match[1].replace(/\\(.)/g, "$1"), ...target });
     last = match.index + match[0].length;
   }
 
@@ -121,7 +122,7 @@ export class ComposerFieldElement extends HTMLElement {
   #focused() { return document.activeElement === this; }
 
   #canonical() {
-    const plan = segments(this.#value);
+    const plan = sessionLinkSegments(this.#value);
     const nodes = Array.from(this.childNodes).filter(node => !(node instanceof Text) || node.data);
     const filler = this.#value.endsWith("\n") ? 1 : 0;
 
@@ -135,7 +136,7 @@ export class ComposerFieldElement extends HTMLElement {
   }
 
   #render() {
-    const nodes: Node[] = segments(this.#value).map(segment => {
+    const nodes: Node[] = sessionLinkSegments(this.#value).map(segment => {
       if ("text" in segment) return document.createTextNode(segment.text);
       const link = document.createElement("span");
       link.className = "composer-session-link";
