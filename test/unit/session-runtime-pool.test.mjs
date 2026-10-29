@@ -145,13 +145,13 @@ describe('session runtime pool', () => {
     await send(id, { type: 'message_start', message: { role: 'user', content: [{ type: 'text', text }] } });
     await settled();
     const current = pool.liveSessionSummaries()[0];
-    assert.equal(current.name, 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcd');
+    assert.equal(current.name, 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwx');
     assert.equal(current.preview, text);
     assert.equal(current.messageCount, 4);
     assert.equal(current.apiCost, 2);
     await send(id, { type: 'message_start', message: { role: 'user', content: [{ type: 'text', text: 'A later prompt' }] } });
     await settled();
-    assert.equal(pool.liveSessionSummaries()[0].name, 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcd');
+    assert.equal(pool.liveSessionSummaries()[0].name, 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwx');
     assert.equal(pool.liveSessionSummaries()[0].preview, 'A later prompt');
     await pool.remove(session);
     assert.equal(pool.liveSessionSummaries().length, 0);

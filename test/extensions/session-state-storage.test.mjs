@@ -310,7 +310,7 @@ test('recovered queued-input chats keep their names in SQL when reopened', async
     assert.equal(existsSync(join(f.root, 'sessions', '.queued-input-recovery-' + id)), false);
     db.exec('DROP TRIGGER reject_recovered_name');
     assert.equal(createTranscript(file, id, f.home, 'Important queued request'), true);
-    assert.equal(sessionNames.sessionName(file, id), 'Recovered queued input: Import');
+    assert.equal(sessionNames.sessionName(file, id), 'Recovered queued input: Important queued request');
     assert.equal(readFileSync(file, 'utf8').trim().split('\n').map(JSON.parse).some(entry => entry.type === 'session_info'), false);
     sessionNames.renameSession(f.root, id, 'Renamed recovered chat');
     assert.equal(createTranscript(file, id, f.home, 'Another request'), false);
