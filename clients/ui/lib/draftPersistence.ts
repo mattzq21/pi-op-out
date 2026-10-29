@@ -26,7 +26,7 @@ export function mergeDraftSnapshots(saved: DraftSnapshot, before: DraftSnapshot,
   return { records: merge(saved.records, before.records, after.records, item => item.key, item => item.updatedAt), submissions: merge(saved.submissions, before.submissions, after.submissions, item => item.id, item => item.createdAt) };
 }
 
-const destinationSchema = z.object({ key: z.string(), hostId: z.string(), cwd: z.string().optional(), sessionPath: z.string().optional(), temporary: z.boolean() });
+const destinationSchema = z.object({ key: z.string(), hostId: z.string(), cwd: z.string().optional(), sessionPath: z.string().optional(), temporary: z.boolean(), groupId: z.string().optional() });
 const uploadsSchema = z.array(z.object({ id: z.string(), name: z.string(), kind: z.enum(["image", "text"]), byteSize: z.number(), text: z.string().optional(), image: z.object({ type: z.literal("image"), data: z.string(), mimeType: z.string(), name: z.string().optional() }).optional() }));
 const snapshotSchema = z.object({
   records: z.array(z.object({ key: z.string(), destination: destinationSchema.optional(), text: z.string(), uploads: uploadsSchema, updatedAt: z.number(), retrySubmission: z.object({ id: z.string(), fingerprint: z.string() }).optional() })),

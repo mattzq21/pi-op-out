@@ -503,6 +503,7 @@ export function createAppConversations(preloadChat: () => void) {
     const target = group ?? (projectCwd ? sidebar.state?.groups.find(saved => saved.cwd === projectCwd && (saved.hostId ?? "local") === hostId) : undefined);
 
     if (!target) return;
+    owner.setNewChatGroup(target.id);
     runtimePool().onFirstPrompt(owner, key => updateSessionGroups(target.cwd ? { type: "project", key, project: target } : { type: "assign", key, group: target.id })
       .then(() => undefined, reason => { addNotice({ title: "Could not add chat to group", message: reason instanceof Error ? reason.message : String(reason) }); }));
   };
@@ -582,8 +583,8 @@ export function createAppConversations(preloadChat: () => void) {
 
       if (source && fresh) drafts.discard(source.owner, source.key);
       else if (source) drafts.rekeyDraft(source.key, conversationKey);
-      drafts.bindTransport(nextTransport, conversationKey);
       assignNewSessionGroup(nextTransport, hostId, group, projectCwd);
+      drafts.bindTransport(nextTransport, conversationKey);
       batch(() => {
         setView("chat"); setTerminalOpen(false); setTerminalTarget(undefined);
         updateConnected(false); setDefinedAgents(undefined); capturedSession.discardPendingUpdates();

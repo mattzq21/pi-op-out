@@ -200,8 +200,9 @@ export function createConversationDrafts(reportStorageError: (message: string) =
 
     const sessionPath = owner.currentSessionPath() ?? previous?.sessionPath;
     const temporary = owner.isTemporaryChat();
+    const groupId = owner.newChatGroup() ?? previous?.groupId;
 
-    return { key: keyFor(key), hostId: owner.currentHostId(), cwd: !sessionPath && temporary ? undefined : owner.currentCwd() ?? previous?.cwd, sessionPath, temporary };
+    return { key: keyFor(key), hostId: owner.currentHostId(), cwd: !sessionPath && temporary ? undefined : owner.currentCwd() ?? previous?.cwd, sessionPath, temporary, ...(groupId ? { groupId } : {}) };
   };
 
   const storeSubmission = async (submission: DraftSubmission) => {
@@ -378,7 +379,7 @@ export function createConversationDrafts(reportStorageError: (message: string) =
     const pending = submissions().find(item => keyFor(item.destination.key) === record.key);
     const preview = record.text || pending?.rawText || "Attachments";
 
-    return [{ id: record.key.slice(destination.hostId.length + 1), hostId: destination.hostId, isDraft: !destination.sessionPath, cwd: destination.cwd ?? "", path: destination.sessionPath ?? "", project: destination.cwd?.split(/[\\/]/).filter(Boolean).at(-1) ?? "Temporary chat", name: destination.sessionPath ? preview.slice(0, 60) : "", preview, messageCount: 0, lastMessageAt: record.updatedAt, apiCost: 0 }];
+    return [{ id: record.key.slice(destination.hostId.length + 1), hostId: destination.hostId, isDraft: !destination.sessionPath, cwd: destination.cwd ?? "", path: destination.sessionPath ?? "", project: destination.cwd?.split(/[\\/]/).filter(Boolean).at(-1) ?? "Temporary chat", name: destination.sessionPath ? preview.slice(0, 60) : "", preview, messageCount: 0, lastMessageAt: record.updatedAt, apiCost: 0, ...(destination.groupId ? { groupId: destination.groupId } : {}) }];
   }));
 
   const removeMatchingDrafts = (matches: (key: string, destination?: DraftDestination) => boolean) => {
