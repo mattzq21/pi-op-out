@@ -319,7 +319,7 @@ describe("Conversation acceptance", () => {
       const split = $('section[aria-label="Side chat: Code review"]');
       await expect(split).toBeDisplayed();
       await expect($$(".chat-panes .chat-shell")).toBeElementsArrayOfSize(2);
-      await split.$('textarea[aria-label="Message piop"]').waitForEnabled();
+      await split.$('[aria-label="Message piop"]').waitForEnabled();
       await app.conversationSearch.setValue(indexed.name);
       const session = $(".session-item");
       await expect(session.$(".session-main")).toHaveAttribute("aria-label", expect.stringContaining(indexed.name));

@@ -82,12 +82,12 @@ describe("Conversation lifecycle", () => {
       mainRuntimeId = runtimeId;
       await app.prepareMessage("Main conversation draft");
       let split = await openSplit();
-      await split.$('textarea[aria-label="Message piop"]').setValue("Independent split-pane draft");
+      await split.$('[aria-label="Message piop"]').setValue("Independent split-pane draft");
       await $('button.open-plugins-button').click();
       await expect(app.composer).toHaveValue("Main conversation draft");
 
       split = await openSplit();
-      await expect(split.$('textarea[aria-label="Message piop"]')).toHaveValue("Independent split-pane draft");
+      await expect(split.$('[aria-label="Message piop"]')).toHaveValue("Independent split-pane draft");
       await $('button.open-plugins-button').click();
       await expect(app.composer).toHaveValue("Main conversation draft");
       await app.clearMessage();

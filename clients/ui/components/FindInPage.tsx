@@ -35,7 +35,7 @@ function searchableTextNode(node: Node) {
   if (!(node instanceof Text) || !node.data) return undefined;
   const parent = node.parentElement;
 
-  if (!parent || parent.closest('script, style, textarea, input, [hidden], [aria-hidden="true"]')) return undefined;
+  if (!parent || parent.closest('script, style, textarea, input, piop-composer-field, [hidden], [aria-hidden="true"]')) return undefined;
 
   return { node, parent };
 }
@@ -277,7 +277,7 @@ export function FindInPage(componentProps: { selector: string; scopeKey: string;
       if (!records.some((record) => {
         const element = record.target instanceof Element ? record.target : record.target.parentElement;
 
-        return !element?.closest("textarea, input");
+        return !element?.closest("textarea, input, piop-composer-field");
       })) return;
       window.clearTimeout(timer); timer = window.setTimeout(() => scan(true), 100);
     });

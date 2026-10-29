@@ -10,6 +10,7 @@ import { PluginMessageContext } from "../plugins/messages";
 import { chatSubmission, trackChatSubmission } from "../lib/chatSubmission";
 import { draftUploadsFromImages, stageDraftSubmission, type DraftSubmissionHandle, type DraftSubmissionPayload } from "../lib/draftSubmission";
 import { Key } from "@solid-primitives/keyed";
+import { COMPOSER_FIELD_TAG, type ComposerFieldElement } from "./composerField";
 import { appendToDraft, sessionLink, type SessionDragDetail } from "../lib/sessionDrop";
 import { createComputed, createMemo, createSignal, Index, onCleanup, Show, type Accessor } from "solid-js";
 import type { NativeTransport } from "../lib/nativeTransport";
@@ -97,7 +98,7 @@ export function ChatView(props: Props & { transcriptActions?: JSXElement; follow
     setTakingOwnership(true); setOwnershipError(undefined);
 
     try { await capturedTransport0?.takeOwnership(); }
-    catch (reason) { if (props.transport === capturedTransport0) { setOwnershipError(reason instanceof Error ? reason.message : String(reason)); composerStack.current?.querySelector("textarea")?.blur(); } }
+    catch (reason) { if (props.transport === capturedTransport0) { setOwnershipError(reason instanceof Error ? reason.message : String(reason)); composerStack.current?.querySelector<HTMLElement>(COMPOSER_FIELD_TAG)?.blur(); } }
     finally { setTakingOwnership(false); }
   };
 
@@ -137,7 +138,7 @@ export function ChatView(props: Props & { transcriptActions?: JSXElement; follow
     if (detail.phase !== "drop") { setSessionDragOver(detail.phase === "enter"); return; }
     setSessionDragOver(false);
     props.onDraftChange?.(draft => appendToDraft(draft, sessionLink(detail.session)));
-    const editor = shellRef.current?.querySelector<HTMLTextAreaElement>(".composer-editor textarea");
+    const editor = shellRef.current?.querySelector<ComposerFieldElement>(COMPOSER_FIELD_TAG);
 
     if (!editor || editor.readOnly) { (document.activeElement as HTMLElement | null)?.blur(); return; }
     editor.focus();

@@ -6,7 +6,7 @@ declare global {
 
 class AppPage {
   get root() { return $(".app:not(.app-loading)"); }
-  get composer() { return $('textarea[aria-label="Message piop"]'); }
+  get composer() { return $('[aria-label="Message piop"]'); }
   get sendMessageButton() { return $('button[aria-label="Send message"]'); }
   get agentPicker() { return $('button[aria-label="Agent"]'); }
   get modelPicker() { return $('button[aria-label="Model"]'); }
