@@ -93,7 +93,10 @@ function queueAgentMailbox(pi: ExtensionAPI, ctx: ExtensionContext, message: Mai
 export async function sendAgentMailbox(pi: ExtensionAPI, ctx: ExtensionContext, message: Mail["message"], notificationId: string, deliverAs?: "steer" | "followUp") {
   const generation = mailboxGenerations.get(pi);
   await durableMailbox(pi).send(ctx, message, notificationId, item => {
-    if (generation === mailboxGenerations.get(pi)) queueAgentMailbox(pi, ctx, item, notificationId, false, deliverAs);
+    if (generation !== mailboxGenerations.get(pi)) return false;
+    queueAgentMailbox(pi, ctx, item, notificationId, false, deliverAs);
+
+    return true;
   });
 }
 
@@ -312,7 +315,10 @@ function registerDelivery(pi: ExtensionAPI) {
 
     try {
       await mailbox.replay(ctx, message => {
-        if (version === generation) queueAgentMailbox(pi, ctx, message, message.details.notificationId, defer);
+        if (version !== generation) return false;
+        queueAgentMailbox(pi, ctx, message, message.details.notificationId, defer);
+
+        return true;
       });
       await mailbox.reconcile(ctx);
     } catch (error) { ctx.ui.notify(`Agent mailbox recovery failed: ${(error instanceof Error ? error.message : String(error))}`, "error"); }

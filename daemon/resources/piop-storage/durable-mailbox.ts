@@ -296,7 +296,7 @@ export class DurableMailbox {
 
   private key(ctx: ExtensionContext, id: string) { return `${ctx.sessionManager.getSessionId()}:${id}`; }
 
-  private submit(ctx: ExtensionContext, record: MailboxRecord, send: (message: MailboxMessage) => void) {
+  private submit(ctx: ExtensionContext, record: MailboxRecord, send: (message: MailboxMessage) => boolean) {
     if (record.sessionId !== ctx.sessionManager.getSessionId()) return false;
 
     const key = this.key(ctx, record.deliveryId);
@@ -305,9 +305,11 @@ export class DurableMailbox {
 
     try {
       this.queued.add(key);
-      send(record.message);
 
-      return true;
+      if (send(record.message)) return true;
+      this.queued.delete(key);
+
+      return false;
     } catch (error) {
       this.queued.delete(key);
       this.consumed.delete(key);
@@ -320,6 +322,8 @@ export class DurableMailbox {
   private deliver(message: MailboxMessage) {
     this.pi.sendMessage(message, { triggerTurn: false });
     this.pi.events.emit("piop:agent-mail", { notificationId: message.details.notificationId, customType: message.customType });
+
+    return true;
   }
 
   send(ctx: ExtensionContext, message: SendMessage, deliveryId: string, send = (item: MailboxMessage) => this.deliver(item)) {
@@ -388,7 +392,6 @@ export class DurableMailbox {
 
         if (live.has(record.deliveryId)) continue;
 
-        if (ctx.isIdle()) this.queued.delete(this.key(ctx, record.deliveryId));
         this.submit(ctx, record, send);
       }
     });
