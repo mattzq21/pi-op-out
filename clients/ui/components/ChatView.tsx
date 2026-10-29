@@ -137,6 +137,11 @@ export function ChatView(props: Props & { transcriptActions?: JSXElement; follow
     if (detail.phase !== "drop") { setSessionDragOver(detail.phase === "enter"); return; }
     setSessionDragOver(false);
     props.onDraftChange?.(draft => appendToDraft(draft, sessionLink(detail.session)));
+    const editor = shellRef.current?.querySelector<HTMLTextAreaElement>(".composer-editor textarea");
+
+    if (!editor || editor.readOnly) { (document.activeElement as HTMLElement | null)?.blur(); return; }
+    editor.focus();
+    requestAnimationFrame(() => { if (document.activeElement === editor) editor.setSelectionRange(editor.value.length, editor.value.length); });
   };
   const measureDistance = () => { const element = messagesRef.current;
 
