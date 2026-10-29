@@ -45,7 +45,7 @@ export function useAppKeyboard(context: KeyboardContext) {
       if (target?.closest(".keybind-input")) return true;
       if (target?.closest(".terminal-shell") && isTerminalKey(event) && !matchesShortcut(event, capturedSettings.keybindings.toggleTerminal)) return true;
 
-      return target?.closest("input, textarea, select, [contenteditable='true'], .keybind-input") && !event.ctrlKey && !event.metaKey && !event.altKey;
+      return target?.closest("input, textarea, select, [contenteditable='true'], [contenteditable='plaintext-only'], .keybind-input") && !event.ctrlKey && !event.metaKey && !event.altKey;
     };
 
     const isConversationSearchShortcut = (event: KeyboardEvent) => (event.ctrlKey || event.metaKey) && !event.altKey && !event.shiftKey && event.key.toLowerCase() === "g";

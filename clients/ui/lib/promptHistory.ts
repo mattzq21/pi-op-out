@@ -1,5 +1,6 @@
 import { isMobile } from "./platform";
 import type { KeyboardEvent } from "./solid";
+import type { ComposerFieldElement } from "../components/composerField";
 
 /**
  * Up and Down in an empty composer go through the prompts of this conversation, newest first. Navigation starts only
@@ -43,7 +44,7 @@ function historyKey(event: KeyboardEvent) {
 export function createComposerPromptHistory(read: () => string, write: (value: string) => void, prompts: () => string[], onNavigate: (value: string) => void) {
   const navigation = createPromptHistoryNavigation(prompts);
 
-  const handleKey = (event: KeyboardEvent<HTMLTextAreaElement>) => {
+  const handleKey = (event: KeyboardEvent<ComposerFieldElement>) => {
     if (isMobile || !historyKey(event)) return false;
     const editor = event.currentTarget;
 

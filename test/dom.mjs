@@ -71,7 +71,7 @@ export function captureConsoleErrors() {
 }
 
 const sharedDom = new JSDOM('<!doctype html><html><body></body></html>', { url: 'http://localhost', pretendToBeVisual: true });
-const browserGlobals = ['window', 'document', 'localStorage', 'navigator', 'HTMLElement', 'HTMLHeadElement', 'HTMLInputElement', 'HTMLTextAreaElement', 'Element', 'Node', 'Text', 'DocumentFragment', 'NodeFilter', 'MutationObserver', 'KeyboardEvent', 'MouseEvent', 'Event', 'CustomEvent'];
+const browserGlobals = ['window', 'document', 'localStorage', 'navigator', 'HTMLElement', 'HTMLHeadElement', 'HTMLInputElement', 'HTMLTextAreaElement', 'Element', 'Node', 'Text', 'DocumentFragment', 'NodeFilter', 'MutationObserver', 'KeyboardEvent', 'MouseEvent', 'Event', 'CustomEvent', 'InputEvent', 'customElements'];
 
 // The UI always runs in a browser, so modules may read browser globals while they load.
 for (const key of browserGlobals) if (!(key in globalThis) || key === 'navigator') Object.defineProperty(globalThis, key, { configurable: true, writable: true, value: sharedDom.window[key] });
@@ -277,6 +277,6 @@ export async function renderComponent(Component, props = {}) {
 }
 
 export async function enterText(input, value) {
-  const prototype = input instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
+  const prototype = input instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : input instanceof HTMLInputElement ? HTMLInputElement.prototype : Object.getPrototypeOf(input);
   await act(async () => { Object.getOwnPropertyDescriptor(prototype, 'value').set.call(input, value); input.dispatchEvent(new Event('input', { bubbles: true })); });
 }

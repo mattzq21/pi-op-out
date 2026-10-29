@@ -81,7 +81,7 @@ async function connectedChat(t, host = {}) {
   await page.getByLabel('Host name').fill('Test workspace');
   await page.getByRole('button', { name: 'Connect', exact: true }).click();
   const editor = page.getByRole('textbox', { name: 'Message piop', exact: true });
-  await page.waitForFunction(() => document.querySelector('textarea[aria-label="Message piop"]')?.disabled === false);
+  await page.waitForFunction(() => Boolean(document.querySelector('[aria-label="Message piop"]')));
   return { page, editor };
 }
 
@@ -298,7 +298,7 @@ test('a held disconnect stop locks the chat and Host, and a refused stop gives b
   page.on('dialog', dialog => { prompts.push(dialog.message()); return dialog.accept(); });
   const stops = () => host.received.filter(message => message.command === 'stop_pi');
   const sent = () => host.received.filter(message => message.command === 'pi_command' && message.args.command.type === 'prompt');
-  const editorFocused = () => page.evaluate(() => document.activeElement === document.querySelector('textarea[aria-label="Message piop"]'));
+  const editorFocused = () => page.evaluate(() => document.activeElement === document.querySelector('[aria-label="Message piop"]'));
   const clickCenter = box => page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
   const hostDisabled = () => page.evaluate(() => document.querySelector('button[aria-label="Disconnect from anchor host"]').disabled);
   const [editorBox, sendBox] = [await editor.boundingBox(), await page.getByRole('button', { name: 'Send message', exact: true }).boundingBox()];

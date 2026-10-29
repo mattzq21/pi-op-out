@@ -204,7 +204,7 @@ export function pageBridge(config, serialize, deserialize) {
     getAttribute: (element, name) => element.getAttribute(name),
     inputValue: element => {
       const target = injectedScript().retarget(element, 'follow-label');
-      if (!target || !['INPUT', 'TEXTAREA', 'SELECT'].includes(target.nodeName)) throw new Error('Not an <input>, <textarea> or <select> element');
+      if (!target || (!['INPUT', 'TEXTAREA', 'SELECT'].includes(target.nodeName) && !(target.nodeName.includes('-') && typeof target.value === 'string'))) throw new Error('Not an <input>, <textarea> or <select> element');
       return target.value;
     },
     isEnabled: element => injectedScript().elementState(element, 'enabled').matches,

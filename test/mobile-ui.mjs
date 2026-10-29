@@ -79,7 +79,7 @@ try {
  await page.getByRole('button',{name:'Connect',exact:true}).click();
  await page.getByRole('button',{name:'Toggle conversations'}).waitFor();
  await page.getByRole('textbox',{name:'Message piop'}).waitFor();
- await page.waitForFunction(()=>!document.querySelector('textarea[aria-label="Message piop"]').disabled);
+ await page.waitForFunction(()=>Boolean(document.querySelector('[aria-label="Message piop"]')));
  const usageBadges=await page.locator('.rail-bottom .codex-usage').evaluateAll(elements=>elements.map(element=>({label:element.getAttribute('aria-label'),logo:!!element.querySelector('svg.provider-logo'),text:element.textContent,stale:element.classList.contains('stale')})));
  assert.equal(usageBadges.length,3);
  assert.ok(usageBadges.every(badge=>badge.logo));

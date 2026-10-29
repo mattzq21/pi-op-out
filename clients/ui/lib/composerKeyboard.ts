@@ -1,7 +1,8 @@
 import { isMobile } from "./platform";
 import type { KeyboardEvent } from "./solid";
+import type { ComposerFieldElement } from "../components/composerField";
 
-type EditorEvent = KeyboardEvent<HTMLTextAreaElement>;
+type EditorEvent = KeyboardEvent<ComposerFieldElement>;
 
 function submitShortcut(event: EditorEvent) {
   return event.key === "Enter" && !event.shiftKey && (!isMobile || event.ctrlKey);

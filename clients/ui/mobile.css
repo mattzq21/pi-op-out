@@ -9,7 +9,7 @@ html[data-mobile] .messages::-webkit-scrollbar { display: none; }
 .scroll-indicator { position: absolute; top: 4px; bottom: 4px; right: 2px; z-index: 3; width: 3px; pointer-events: none; }
 .scroll-indicator[hidden] { display: none; }
 .scroll-indicator > div { width: 100%; border-radius: 999px; background: #4a4842; will-change: transform; }
-html[data-mobile] .main-chat .composer textarea { max-height: clamp(31px, calc(var(--mobile-height, 100dvh) - 200px - env(safe-area-inset-top)), 130px); }
+html[data-mobile] .main-chat .composer piop-composer-field { max-height: clamp(31px, calc(var(--mobile-height, 100dvh) - 200px - env(safe-area-inset-top)), 130px); }
 .mobile-sidebar-backdrop { display: none; }
 .composer-settings, .composer-settings-panel, .composer-settings-row { display: contents; }
 .composer-bar .composer-settings-trigger, .composer-settings-row > span { display: none; }
@@ -95,7 +95,7 @@ html[data-mobile] .app:has(.icon-rail:not(.compact)) ~ .mobile-reconnect-banner 
   .composer-bar .fast-mode-indicator svg { width: 20px; height: 20px; }
   .composer-tools { flex-wrap: wrap; }
   .composer-actions { margin-left: auto; }
-  .composer textarea, .composer-highlight-layer { font-size: 16px; }
+  .composer piop-composer-field { font-size: 16px; }
   .composer-picker-menu.compact button { min-height: 44px; }
   .prompt-context-bar { gap: 0; }
   .model-row, .setting-row, .host-row { flex-wrap: wrap; }

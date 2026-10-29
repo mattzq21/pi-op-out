@@ -1,4 +1,6 @@
 import { CacheIcon } from "./CacheIcon";
+import "./composerField";
+import type { ComposerFieldElement } from "./composerField";
 import { required } from "../lib/required";
 import { trackToastMessage } from "../lib/toastHistory";
 import { createComposerPromptHistory } from "../lib/promptHistory";
@@ -251,7 +253,7 @@ export function Composer(props: Props) {
   const [selectedMatch, setSelectedMatch] = createSignal(0);
   const [paletteDismissed, setPaletteDismissed] = createSignal(false);
   const [selection, setSelection] = createSignal<{ start: number; end: number }>();
-  const ref = createRef<HTMLTextAreaElement>(null);
+  const ref = createRef<ComposerFieldElement>(null);
   const focusOwnedEditor = () => { if (!props.ownershipRequired) ref.current?.focus(); };
 
   const composerRef = createRef<HTMLDivElement>(null);
@@ -372,7 +374,7 @@ export function Composer(props: Props) {
     const frame = requestAnimationFrame(() => {
       const editor = ref.current;
 
-      if (!editor?.isConnected || editor.disabled || props.ownershipRequired || document.querySelector("dialog[open]")) return;
+      if (!editor?.isConnected || props.ownershipRequired || document.querySelector("dialog[open]")) return;
       editor.focus({ preventScroll: true });
 
       if (document.activeElement === editor) handledFocusRequest = request;
@@ -521,7 +523,7 @@ export function Composer(props: Props) {
     ref.current?.setSelectionRange(caret, caret);
   };
 
-  const handlePaletteKey = (event: KeyboardEvent<HTMLTextAreaElement>) => {
+  const handlePaletteKey = (event: KeyboardEvent<ComposerFieldElement>) => {
     if (event.currentTarget.selectionStart !== event.currentTarget.selectionEnd) return false;
 
     if (event.key === "Escape" && (matches().length || argumentUsage())) { event.preventDefault(); event.stopPropagation(); setPaletteDismissed(true);
@@ -567,7 +569,7 @@ export function Composer(props: Props) {
     </div>}</Show>);
 
     const renderComposerEditor = () => (<div class="composer-editor">
-        <textarea ref={element => { ref.current = element; }} classList={{ "pending-edit": Boolean(editingPending()) }} aria-label="Message piop" readOnly={props.ownershipRequired || savingEdit()} onFocus={() => { setPaletteDismissed(false); if (props.ownershipRequired) void props.onTakeOwnership?.(); }} placeholder={props.ownershipRequired ? "" : composer().streaming || props.queueHeld ? "Queue a follow-up…" : "Ask piop to build, explain, or change anything…"} value={value()} rows={1} onSelect={(event) => setSelection({ start: event.currentTarget.selectionStart, end: event.currentTarget.selectionEnd })} onInput={(event) => { setSelection({ start: event.target.selectionStart, end: event.target.selectionEnd }); setPaletteDismissed(false); setValue(event.target.value); }} onKeyDown={event => {
+        <piop-composer-field ref={element => { ref.current = element; }} classList={{ "pending-edit": Boolean(editingPending()) }} aria-label="Message piop" readOnly={props.ownershipRequired || savingEdit()} onFocus={() => { setPaletteDismissed(false); if (props.ownershipRequired) void props.onTakeOwnership?.(); }} placeholder={props.ownershipRequired ? "" : composer().streaming || props.queueHeld ? "Queue a follow-up…" : "Ask piop to build, explain, or change anything…"} value={value()} onSelect={(event) => setSelection({ start: event.currentTarget.selectionStart, end: event.currentTarget.selectionEnd })} onInput={(event) => { setSelection({ start: event.currentTarget.selectionStart, end: event.currentTarget.selectionEnd }); setPaletteDismissed(false); setValue(event.currentTarget.value); }} onKeyDown={event => {
           if (editingPending() && event.key === "Escape") { event.preventDefault(); event.stopPropagation(); cancelEdit(); return; }
           handleEditorKey(event);
         }} />
