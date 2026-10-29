@@ -184,7 +184,7 @@ export class NativeTransport {
   private draftTarget = false;
   private baseBranch?: string;
   private worktreeOptions?: { repository: string; branches: string[]; defaultBranch: string | null };
-  setNewChatWorktreeOptions(options: { repository: string; branches: string[]; defaultBranch: string | null }) { this.worktreeOptions = options; }
+  setNewChatWorktreeOptions(options: { repository: string; branches: string[]; defaultBranch: string | null }) { this.worktreeOptions = options; this.baseBranch = options.defaultBranch ?? options.branches[0]; }
   newChatWorktreeOptions() { return this.worktreeOptions; }
   newChatBaseBranch() { return this.baseBranch; }
   setNewChatBranch(branch?: string) { this.baseBranch = branch; }
