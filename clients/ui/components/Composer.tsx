@@ -601,6 +601,7 @@ export function Composer(props: Props) {
         if (next) composer().onModel(next); }} />);
 
         const renderStopButton = () => (<Show when={composer().streaming || composer().compacting}><IconButton title="" label="Stop piop" class="stop-compact" disabled={controls().stopDisabled} onClick={() => void abort()}><CircleStop size={17} /></IconButton></Show>);
+        const renderEffortPicker = () => (<ContainedPicker label="Thinking level" selectedLabel={composer().thinkingLevel.charAt(0).toUpperCase() + composer().thinkingLevel.slice(1)} value={composer().thinkingLevel} disabled={controls().inputDisabled} menuWidth={120} centered compact options={thinkingOptions()} onChange={composer().onThinking} />);
 
         const renderSend = () => <Show when={editingPending()} fallback={<IconButton title="" label="Send message" class="send" disabled={controlsBlocked() || sending() || readingUploads() > 0 || (!hasVisibleText(value()) && uploads().length === 0)} onClick={() => void submit()}><ArrowUp size={18} /></IconButton>}>
           <IconButton title="" label="Cancel editing" disabled={savingEdit()} onClick={cancelEdit}><X size={18} /></IconButton>
@@ -612,9 +613,10 @@ export function Composer(props: Props) {
             <div class="composer-settings-row"><span>Agent</span>{renderAgentPicker()}</div>
             <Show when={!mobileLayout()}>{renderModelPicker()}</Show>
             <Show when={fastModeSupported()}><div class="composer-settings-row"><span>Fast mode</span>{renderFastModeIndicator()}</div></Show>
-            <div class="composer-settings-row composer-effort-row"><span>Effort</span><ContainedPicker label="Thinking level" selectedLabel={composer().thinkingLevel.charAt(0).toUpperCase() + composer().thinkingLevel.slice(1)} value={composer().thinkingLevel} disabled={controls().inputDisabled} menuWidth={120} centered compact options={thinkingOptions()} onChange={composer().onThinking} /></div>
+            <Show when={!mobileLayout()}>{renderEffortPicker()}</Show>
           </ComposerSettingsMenu>
           <Show when={mobileLayout()}>{renderModelPicker()}</Show>
+          <Show when={mobileLayout()}>{renderEffortPicker()}</Show>
           <span class="composer-divider" />
           {renderStopButton()}
           {renderSend()}
