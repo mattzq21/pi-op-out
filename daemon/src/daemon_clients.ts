@@ -112,9 +112,9 @@ export class DaemonClients {
 
   /**
    * Resolves when the daemon should stop. Wakes on stop(), on the last client leaving and when the unused delay ends. A short retry timer runs only
-   * while an unattended daemon still has work (a running terminal, agent or plugin) that keeps it from stopping.
+   * while an unattended daemon still has work (an agent, a storage operation or a plugin) that keeps it from stopping. Terminals do not keep it running.
    */
-  async waitForShutdown(app: App, ensureIdle: () => Promise<void> = () => daemonRestart.ensureLocalIdle(app)): Promise<void> {
+  async waitForShutdown(app: App, ensureIdle: () => Promise<void> = () => daemonRestart.ensureUnattendedIdle(app)): Promise<void> {
     // A daemon that stops at its last disconnect first gives its first client time to connect. The unused delay already counts from the start.
     if (this.automaticFlag) await this.wait(30_000);
     for (;;) {

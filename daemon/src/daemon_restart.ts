@@ -183,8 +183,13 @@ async function preparePluginHandoff(app: App, daemon: Daemon, args: any): Promis
 }
 
 export async function ensureLocalIdle(app: App): Promise<void> {
-  app.broker.ensureIdle();
   if (app.terminals.workingDirectories('local').length) throw new Error('Close running terminals before restarting the daemon');
+  await ensureUnattendedIdle(app);
+}
+
+/** Work that keeps a daemon without clients running. Terminals do not count: the stop closes them. */
+export async function ensureUnattendedIdle(app: App): Promise<void> {
+  app.broker.ensureIdle();
   if (hostOperationsBusy()) throw new Error('Wait for storage operations to finish before restarting the daemon');
   if ((await (await plugins.connection(app)).request({ type: 'check_daemon_idle' })) !== true) throw new Error('Wait for active plugins to finish before restarting the daemon');
 }
