@@ -192,7 +192,7 @@ kbd { font: 11px "DM Sans"; border: 1px solid var(--line); padding: 2px 4px; bor
 .message-body th { border-bottom: 1px solid var(--line); }
 .message-body tbody tr + tr td { border-top: 1px solid color-mix(in srgb, var(--line) 50%, transparent); }
 .skill-reference { display: inline-block; padding: 2px 6px; border-radius: 5px; background: var(--accent-08); color: var(--accent); font: calc(11px + var(--settings-font-offset, 0px)) "DM Sans"; }.skill-reference + p, .skill-reference + ul, .skill-reference + ol { margin-top: 8px; }
-.literal-skill-content { white-space: pre-wrap; }
+.literal-skill-content, .user-message .markdown-content :is(p, li:not(:has(> :is(p, ul, ol, pre, blockquote, table))), h1, h2, h3, h4, h5, h6, td, th) { white-space: pre-wrap; }
 .markdown-content .file-link { border-radius: 3px; padding: 0 2px; background: var(--accent-08); color: var(--accent); box-decoration-break: clone; -webkit-box-decoration-break: clone; overflow-wrap: anywhere; text-decoration: underline; text-decoration-color: color-mix(in srgb, var(--accent) 55%, transparent); text-underline-offset: 3px; cursor: pointer; }
 .markdown-content .file-link:hover { background: var(--accent-14); text-decoration-color: currentColor; }
 .markdown-content .file-link:focus-visible { outline: none; }

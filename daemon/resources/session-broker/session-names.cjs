@@ -4,7 +4,7 @@ const database = require('../session-database.cjs');
 
 const MAX_NAME_LENGTH = 50;
 
-function capSessionName(name) { return Array.from(name.trim()).slice(0, MAX_NAME_LENGTH).join('').trimEnd(); }
+function capSessionName(name) { return Array.from(name.replace(/\s+/g, ' ').trim()).slice(0, MAX_NAME_LENGTH).join('').trimEnd(); }
 
 function validName(name) {
   if (typeof name !== 'string') throw new Error('A conversation name must be text');
