@@ -158,6 +158,22 @@ describe('session runtime pool', () => {
     await pool.remove(session);
   });
 
+  test('the first prompt work of a new chat finishes before the chat joins the list, and runs once', async () => {
+    const client = pool.create({ cwd: '/repo' });
+    const id = await connect(client);
+    const work = Promise.withResolvers(); const keys = [];
+    pool.onFirstPrompt(client, key => { keys.push(key); return work.promise; });
+    await send(id, { type: 'message_start', message: { role: 'user', content: [{ type: 'text', text: 'Hello' }] } });
+    await settled(); await settled();
+    assert.equal(pool.liveSessionSummaries().length, 0);
+    work.resolve();
+    await settled(); await settled();
+    assert.equal(pool.liveSessionSummaries()[0].id, 'session');
+    await send(id, { type: 'message_start', message: { role: 'user', content: [{ type: 'text', text: 'Again' }] } });
+    await settled(); await settled();
+    assert.deepEqual(keys, ['local:session']);
+  });
+
   // The sidebar seeds groups from these summaries before the chat list has a new branch. A summary without its source let
   // the branch's worktree folder become its group, and the daemon keeps that first assignment.
   test('a retained branch summary names its source chat from session state', async () => {

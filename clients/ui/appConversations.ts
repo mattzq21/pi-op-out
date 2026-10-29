@@ -57,7 +57,6 @@ export function createAppConversations(preloadChat: () => void) {
 
   const [view, setView] = createSignal<"chat" | "settings">("chat");
   const activeTransportRef = createRef(transport()); createComputed(() => { activeTransportRef.current = transport(); });
-  const pendingSessionGroups = createRef(new WeakMap<NativeTransport, SessionGroup>());
   const initialConversationKey = createRef(initialTarget.draftKey ?? (initialTarget.sessionId ? `${initialTarget.hostId ?? "local"}:${initialTarget.sessionId}` : `${initialTarget.hostId ?? "local"}:draft-${crypto.randomUUID()}`));
   const [activeConversationKey, setActiveConversationKey] = createSignal(initialConversationKey.current);
   const chatViewKey = createConversationViewKey(transport, activeConversationKey, () => chatSubmission(transport())?.message);
@@ -323,14 +322,6 @@ export function createAppConversations(preloadChat: () => void) {
 
   const refreshSession = async (hostId?: string) => { const capturedTransport = transport(); const capturedSession = { ...chatSession() }; const capturedRuntimePool = runtimePool();
     const nextState = await capturedSession.refresh(); capturedRuntimePool.bind(hostId ?? capturedTransport.currentHostId(), nextState.sessionId, capturedTransport);
-    const group = pendingSessionGroups.current.get(capturedTransport);
-
-    if (group && nextState.sessionId && nextState.messageCount > 0) {
-      try {
-        const key = `${hostId ?? capturedTransport.currentHostId()}:${nextState.sessionId}`; await updateSessionGroups(group.cwd ? { type: "project", key, project: group } : { type: "assign", key, group: group.id });
-        pendingSessionGroups.current.delete(capturedTransport);
-      } catch (reason) { addNotice({ title: "Could not add chat to group", message: reason instanceof Error ? reason.message : String(reason) }); }
-    }
 
     return nextState;
   };
@@ -507,7 +498,14 @@ export function createAppConversations(preloadChat: () => void) {
     return owner; };
 
   const prepareNewSession = (owner: NativeTransport, hostId: string, cwd?: string) => cwd ? owner.validateProjectDirectory(cwd, hostId, true, true) : owner.prepareTemporaryChat(hostId);
-  const assignNewSessionGroup = (owner: NativeTransport, group?: SessionGroup) => { if (group) pendingSessionGroups.current.set(owner, group); };
+  /** A new chat started in a group, or in the folder of a saved project, is put in that group when its first prompt starts. */
+  const assignNewSessionGroup = (owner: NativeTransport, hostId: string, group?: SessionGroup, projectCwd?: string) => {
+    const target = group ?? (projectCwd ? sidebar.state?.groups.find(saved => saved.cwd === projectCwd && (saved.hostId ?? "local") === hostId) : undefined);
+
+    if (!target) return;
+    runtimePool().onFirstPrompt(owner, key => updateSessionGroups(target.cwd ? { type: "project", key, project: target } : { type: "assign", key, group: target.id })
+      .then(() => undefined, reason => { addNotice({ title: "Could not add chat to group", message: reason instanceof Error ? reason.message : String(reason) }); }));
+  };
 
   /** The unsent new chat that New conversation reopens: the newest one, on the current host first. */
   const existingSessionDraft = () => {
@@ -561,7 +559,7 @@ export function createAppConversations(preloadChat: () => void) {
 
     const releaseUnusedTransport = () => {
       if (activated || !nextTransport) return;
-      transportConversationKeys.current.delete(nextTransport); pendingSessionGroups.current.delete(nextTransport);
+      transportConversationKeys.current.delete(nextTransport);
       void pool.release(nextTransport).catch((reason) => addNotice({ title: "Could not clean up the new conversation", message: reason instanceof Error ? reason.message : String(reason) }));
     };
 
@@ -585,7 +583,7 @@ export function createAppConversations(preloadChat: () => void) {
       if (source && fresh) drafts.discard(source.owner, source.key);
       else if (source) drafts.rekeyDraft(source.key, conversationKey);
       drafts.bindTransport(nextTransport, conversationKey);
-      assignNewSessionGroup(nextTransport, group);
+      assignNewSessionGroup(nextTransport, hostId, group, projectCwd);
       batch(() => {
         setView("chat"); setTerminalOpen(false); setTerminalTarget(undefined);
         updateConnected(false); setDefinedAgents(undefined); capturedSession.discardPendingUpdates();
@@ -594,7 +592,6 @@ export function createAppConversations(preloadChat: () => void) {
       activated = true;
 
       if (source) {
-        pendingSessionGroups.current.delete(source.owner);
         await pool.release(source.owner); transportConversationKeys.current.delete(source.owner);
       }
 

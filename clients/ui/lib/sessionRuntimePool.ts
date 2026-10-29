@@ -81,6 +81,10 @@ export class SessionRuntimePool {
     this.liveSessions.set(transport, session);
     this.liveRevision += 1; this.notify();
   }
+  private readonly startHandlers = new Map<NativeTransport, (key: string) => Promise<void>>();
+  private readonly starting = new Map<NativeTransport, Promise<void>>();
+  /** Runs work once, when the first prompt of the new chat starts, before the chat joins the list. */
+  onFirstPrompt(transport: NativeTransport, work: (key: string) => Promise<void>) { this.startHandlers.set(transport, work); }
   private activeTransport?: NativeTransport;
   private errorHandler?: (message: string) => void;
 
@@ -105,8 +109,15 @@ export class SessionRuntimePool {
 
   private retainSession(transport: NativeTransport, prompt?: string, lastMessageAt?: number) {
     this.retainedTransports.add(transport);
-    void transport.command({ type: "get_state" }, agentStateSchema).then((state) => {
+    void transport.command({ type: "get_state" }, agentStateSchema).then(async (state) => {
       if (!state.sessionId || !this.transports.has(transport) || this.releasing.has(transport)) return;
+      const start = prompt !== undefined ? this.startHandlers.get(transport) : undefined;
+
+      if (start) { this.startHandlers.delete(transport); this.starting.set(transport, start(sessionKey(transport.currentHostId(), state.sessionId)).catch(reason => this.reportError(reason instanceof Error ? reason.message : String(reason))).finally(() => this.starting.delete(transport))); }
+      // The chat joins the list only after its start work, such as its group, is done, so it shows in its place at once.
+      await this.starting.get(transport);
+
+      if (!this.transports.has(transport) || this.releasing.has(transport)) return;
 
       if (state.sessionFile && this.removedPaths.has(`${transport.currentHostId()}:${state.sessionFile}`)) return;
       this.bind(transport.currentHostId(), state.sessionId, transport);
@@ -342,7 +353,7 @@ export class SessionRuntimePool {
       forgetSession(transport);
 
       for (const [key, candidate] of this.sessions) if (candidate === transport) this.sessions.delete(key);
-      this.transports.delete(transport); this.retainedTransports.delete(transport); this.runningTransports.delete(transport); this.unseenTransports.delete(transport); this.interactiveTransports.delete(transport);
+      this.transports.delete(transport); this.startHandlers.delete(transport); this.retainedTransports.delete(transport); this.runningTransports.delete(transport); this.unseenTransports.delete(transport); this.interactiveTransports.delete(transport);
       this.idleTransports.delete(transport);
 
       const summary = this.liveSessions.get(transport);
