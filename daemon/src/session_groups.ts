@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 import { homeDir, isDirectory } from './environment';
 import { ensureDesktopSessionsDir } from './process_io';
 import * as Registry from './session_registry';
@@ -218,14 +218,17 @@ const TEMPORARY_CHAT_CWD = /(?:^|\/)\.piop(?:-dev)?\/tmp\/[0-9a-f]{4,32}\/?$/i;
 
 /**
  * A listed chat in an existing project folder. Temporary chat folders and chats with no message are not projects.
+ * A chat in its own Piop worktree belongs to the project of the repository's main folder.
  * A branch takes its source's group; a branch whose source is not listed is a chat of its own.
  */
 function projectSeed(session: SessionSummary, listed: Set<string>): SessionSeed | undefined {
   if (session.messageCount === 0 || !session.cwdExists || !session.cwd || TEMPORARY_CHAT_CWD.test(session.cwd)) return undefined;
   const parentKey = session.forkSourceId ? `${session.hostId}:${session.forkSourceId}` : undefined;
+  const cwd = session.worktreeRepository ?? session.cwd;
+  const name = session.worktreeRepository ? basename(cwd) || 'Workspace' : session.project;
   return {
     sessionKey: `${session.hostId}:${session.id}`,
-    project: { id: `${session.hostId}:${session.cwd}`, name: session.project, cwd: session.cwd, hostId: session.hostId, hostName: session.hostName },
+    project: { id: `${session.hostId}:${cwd}`, name, cwd, hostId: session.hostId, hostName: session.hostName },
     ...(parentKey && listed.has(parentKey) ? { parentKey } : {}),
   };
 }
@@ -252,11 +255,14 @@ function updateSeedMetadata(state: SessionGroups, seed: SessionSeed): boolean {
   return dirty;
 }
 
+/** A project group the user made for the folder, under a name of their choice, takes the chat in place of a new group. */
 function assignSeed(state: SessionGroups, seed: SessionSeed): boolean {
   if (state.assignments.has(seed.sessionKey)) return false;
   if (state.removedProjects.has(seed.project.id)) { state.assignments.set(seed.sessionKey, null); return true; }
-  if (!state.groups.some(group => group.id === seed.project.id)) state.groups.unshift({ ...seed.project });
-  state.assignments.set(seed.sessionKey, seed.project.id);
+  const existing = state.groups.find(group => group.id === seed.project.id)
+    ?? state.groups.find(group => group.cwd === seed.project.cwd && group.hostId === seed.project.hostId);
+  if (!existing) state.groups.unshift({ ...seed.project });
+  state.assignments.set(seed.sessionKey, existing?.id ?? seed.project.id);
   return true;
 }
 
