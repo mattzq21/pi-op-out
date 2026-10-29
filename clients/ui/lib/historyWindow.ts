@@ -1,4 +1,5 @@
 import type { ChatMessage } from "../types";
+import { textOf } from "./content";
 import { isPromptMessage } from "./messages";
 
 export type Usage = NonNullable<ChatMessage["usage"]>;
@@ -36,10 +37,13 @@ function loadedWork(messages: ChatMessage[], index: number) {
 export function keepLoadedHistory(cached: ChatMessage[], next: ChatMessage[]): ChatMessage[] {
   if (!cached.length) return next;
   const positions = new Map(cached.map((message, index) => [key(message), index]));
+  /** Streamed responses have no entry id yet, so they match their saved copy by time and text. */
+  const streamed = (message: ChatMessage) => cached.findIndex(item => !item.entryId && item.role === "assistant" && item.timestamp === message.timestamp && textOf(item.content) === textOf(message.content));
   const loaded = new Map<ChatMessage, ChatMessage[]>();
 
   for (const message of next) {
-    const index = message.deferredWork ? positions.get(key(message)) : undefined;
+    const found = message.deferredWork ? positions.get(key(message)) ?? streamed(message) : undefined;
+    const index = found === undefined || found < 0 ? undefined : found;
 
     if (index !== undefined && !cached[index].deferredWork) loaded.set(message, loadedWork(cached, index));
   }

@@ -12,7 +12,7 @@ import { draftUploadsFromImages, stageDraftSubmission, type DraftSubmissionHandl
 import { Key } from "@solid-primitives/keyed";
 import { COMPOSER_FIELD_TAG, type ComposerFieldElement } from "./composerField";
 import { appendToDraft, sessionLink, type SessionDragDetail } from "../lib/sessionDrop";
-import { createComputed, createMemo, createSignal, Index, onCleanup, Show, type Accessor } from "solid-js";
+import { createComputed, createEffect, createMemo, createSignal, Index, onCleanup, Show, untrack, type Accessor } from "solid-js";
 import type { NativeTransport } from "../lib/nativeTransport";
 import { isDaemonRefusal } from "../lib/commandRejected";
 import { createDependencyEffect, createRef, type JSXElement, type StateUpdate } from "../lib/solid";
@@ -798,14 +798,15 @@ function ConversationTurn(componentProps: ConversationTurnProps) {
   const deferredWork = createMemo(() => finalIndex() >= 0 ? turnMessages()[finalIndex()].deferredWork : undefined);
   const [workError, setWorkError] = createSignal<string>();
   const hasWork = createMemo(() => ((Boolean(deferredWork()) && (componentProps.debug.reasoning || !deferredWork()!.reasoningOnly)) || intermediate().some((message) => !invisibleAssistant(message))));
-  const openWork = (open: boolean) => {
-    setWorkOpen(open);
-    const load = open ? turnMessages()[finalIndex()]?.loadWork : undefined;
+  /** An open work group loads its work also when a refresh leaves the work out again. */
+  const workLoader = createMemo(() => workOpen() && deferredWork() ? turnMessages()[finalIndex()]?.loadWork : undefined);
+  createEffect(() => {
+    const load = workLoader();
 
     if (!load) return;
-    setWorkError(undefined);
-    load().catch(reason => setWorkError(reason instanceof Error ? reason.message : String(reason)));
-  };
+    untrack(() => { setWorkError(undefined);
+    load().catch(reason => setWorkError(reason instanceof Error ? reason.message : String(reason))); });
+  });
   const reasoningOnly = createMemo(() => deferredWork() ? deferredWork()!.reasoningOnly : (compactCompletedTools(intermediate()).every(({ message }) => message.role === "assistant" && hasVisibleText(thinkingOf(message.content)) && !hasVisibleText(textOf(message.content)) && message.stopReason !== "error" && message.stopReason !== "aborted")));
   const finalSource = createMemo(() => (finalIndex() >= 0 ? turnMessages()[finalIndex()] : undefined));
   const finalMessage = createMemo(() => (finalIndex() >= 0 ? { ...turnMessages()[finalIndex()], content: textOf(turnMessages()[finalIndex()].content) } : undefined));
@@ -869,7 +870,7 @@ function ConversationTurn(componentProps: ConversationTurnProps) {
   });
 
   const renderPromptContextBar = () => (<Show when={componentProps.debug.contextBar && firstResponseInputTokens()}>{inputTokens => <Index each={componentProps.promptContexts}>{context => <PromptContextBar context={context()} inputTokens={inputTokens()} />}</Index>}</Show>);
-  const renderWorkGroup = () => <Show when={hasWork()}><details class="work-group" open={workOpen()} onToggle={(event) => openWork(event.currentTarget.open)}><summary>{reasoningOnly() ? "Reasoning" : workedFor() ? `Worked for ${workedFor()}` : "Work"}<ChevronRight size={12} class="work-group-chevron" aria-hidden="true" />{renderFinishedSubagents()}</summary>{workOpen() && <div class={`work-group-content${reasoningOnly() ? " reasoning-group-content" : ""}`}>{deferredWork() ? workError() ? <div class="message-failure" role="alert">Could not load this work: {workError()}</div> : <div class="mcp-loading" role="status"><LoaderCircle class="mcp-loading-spinner" size={14} aria-hidden="true" /><span>Loading work</span></div> : <MessageList messages={intermediate()} expanded debug={componentProps.debug} showActions={false} />}</div>}</details></Show>;
+  const renderWorkGroup = () => <Show when={hasWork()}><details class="work-group" open={workOpen()} onToggle={(event) => setWorkOpen(event.currentTarget.open)}><summary>{reasoningOnly() ? "Reasoning" : workedFor() ? `Worked for ${workedFor()}` : "Work"}<ChevronRight size={12} class="work-group-chevron" aria-hidden="true" />{renderFinishedSubagents()}</summary>{workOpen() && <div class={`work-group-content${reasoningOnly() ? " reasoning-group-content" : ""}`}>{deferredWork() ? workError() ? <div class="message-failure" role="alert">Could not load this work: {workError()}</div> : <div class="mcp-loading" role="status"><LoaderCircle class="mcp-loading-spinner" size={14} aria-hidden="true" /><span>Loading work</span></div> : <MessageList messages={intermediate()} expanded debug={componentProps.debug} showActions={false} />}</div>}</details></Show>;
 
   const renderTurnEnd = () => (<>
     <Show when={componentProps.active} fallback={<>
