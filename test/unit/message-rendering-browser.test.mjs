@@ -81,6 +81,16 @@ test('file link context menus copy the full path', async t => {
   }
 });
 
+test('file link context menus open the directory of the file', async t => {
+  const page = await messagePage(t, 'file');
+  await page.evaluate(() => { window.calls = []; window.__TAURI_INTERNALS__ = { ...window.__TAURI_INTERNALS__, invoke: async (command, args) => { window.calls.push({ command, path: args?.path }); return null; } }; });
+  await page.locator('[data-file-reference]', { hasText: 'app' }).click({ button: 'right' });
+  await page.getByRole('menuitem', { name: 'Open in directory', exact: true }).click();
+  await page.waitForFunction(() => window.calls.some(call => call.command === 'reveal_local_file'));
+  assert.deepEqual(await page.evaluate(() => window.calls.find(call => call.command === 'reveal_local_file')), { command: 'reveal_local_file', path: '/repo/src/app.py' });
+  assert.equal(await page.getByRole('menu').count(), 0);
+});
+
 test('context menus close on Escape, Tab, scrolling and outside clicks and keep focus inside while navigating', async t => {
   const page = await messagePage(t, 'link');
   const link = page.getByRole('link', { name: 'link', exact: true });

@@ -36,11 +36,20 @@ export function messageFilePath(href: string, cwd: string | undefined) {
 }
 
 /** Open the file of a link with the default app of this computer. */
-export async function openMessageFile(href: string, scope: MessageFileScope | undefined) {
+export function openMessageFile(href: string, scope: MessageFileScope | undefined) {
+  return localFileCall("open_local_file", href, scope);
+}
+
+/** Show the file of a link in the file manager of this computer. */
+export function revealMessageFile(href: string, scope: MessageFileScope | undefined) {
+  return localFileCall("reveal_local_file", href, scope);
+}
+
+async function localFileCall(command: "open_local_file" | "reveal_local_file", href: string, scope: MessageFileScope | undefined) {
   if (isMobile) throw new Error("Opening files is not supported on Android");
   if (!scope) throw new Error("This message has no conversation, thus the file host is not known");
   const hostId = scope.hostId();
 
   if (hostId !== "local") throw new Error(`This file is on the host "${hostId}". Piop can open only files on this computer.`);
-  await nativeCall("open_local_file", { path: messageFilePath(href, scope.cwd()), hostId }, voidResultSchema);
+  await nativeCall(command, { path: messageFilePath(href, scope.cwd()), hostId }, voidResultSchema);
 }

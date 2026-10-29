@@ -2,7 +2,7 @@ import { SessionLinkContext } from "../lib/subagentNavigation";
 import { sessionReference } from "../lib/sessionDrop";
 import { required } from "../lib/required";
 import DOMPurify from "dompurify";
-import { Copy } from "lucide-solid";
+import { Copy, FolderOpen } from "lucide-solid";
 import { Marked, Renderer } from "marked";
 import { createEffect, createSignal, onCleanup, Show, useContext } from "solid-js";
 import { Portal } from "solid-js/web";
@@ -16,7 +16,7 @@ import { streamingMarkdown } from "./streamingMarkdown";
 import { imageFileReference, markdownImages } from "./markdownImages";
 import { markdownHooks, markdownTokenizer } from "../lib/markdownTokenizer";
 import { copyText } from "../lib/clipboard";
-import { canOpenFileLinks, fileLinkTooltip, MessageFileContext, openablePath, openMessageFile } from "../lib/messageFiles";
+import { canOpenFileLinks, fileLinkTooltip, MessageFileContext, openablePath, openMessageFile, revealMessageFile } from "../lib/messageFiles";
 
 const escapeHtml = (text: string) => text.replace(/[&<>"']/g, character => required(({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[character]));
 
@@ -76,7 +76,7 @@ function sanitizeMarkdown(html: string, streaming: boolean, detectFiles: boolean
 }
 
 /** text: the web address or the full file path that the menu copies. */
-type LinkMenu = { kind: "web" | "file"; text: string; x: number; y: number; returnFocus?: HTMLElement };
+type LinkMenu = { kind: "web" | "file"; text: string; href?: string; x: number; y: number; returnFocus?: HTMLElement };
 
 /** fileLinks: plain absolute and ~ paths in the text become file links. */
 export function Markdown(props: { children: string; streaming?: boolean; imageProject?: FileProject; fileLinks?: boolean }) {
@@ -164,7 +164,13 @@ export function Markdown(props: { children: string; streaming?: boolean; imagePr
       if (event.key === "Escape" || event.key === "Tab") { if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); }
 
       close(true); }
-      else if (["ArrowUp", "ArrowDown", "Home", "End"].includes(event.key)) event.preventDefault();
+      else if (["ArrowUp", "ArrowDown", "Home", "End"].includes(event.key)) {
+        event.preventDefault();
+        const items = [...element.querySelectorAll<HTMLButtonElement>("[role=menuitem]")];
+        const index = items.indexOf(document.activeElement as HTMLButtonElement);
+        const next = event.key === "Home" ? 0 : event.key === "End" ? items.length - 1 : (index + (event.key === "ArrowDown" ? 1 : -1) + items.length) % items.length;
+        items[next]?.focus({ preventScroll: true });
+      }
     };
 
     const dismiss = () => close();
@@ -282,7 +288,18 @@ export function Markdown(props: { children: string; streaming?: boolean; imagePr
     if (!text) return;
     event.preventDefault();
     const bounds = link.getBoundingClientRect();
-    setMenu({ kind: fileLink ? "file" : "web", text, x: event.clientX || bounds.left, y: event.clientY || bounds.bottom, returnFocus: document.activeElement instanceof HTMLElement ? document.activeElement : link });
+    setMenu({ kind: fileLink ? "file" : "web", text, href: fileLink?.dataset.fileReference, x: event.clientX || bounds.left, y: event.clientY || bounds.bottom, returnFocus: document.activeElement instanceof HTMLElement ? document.activeElement : link });
+  };
+
+  const revealFile = (href: string) => {
+    setError(undefined);
+    close(true);
+    void revealMessageFile(href, fileScope).catch((reason: unknown) => {
+      const message = reason instanceof Error ? reason.message : String(reason);
+
+      if (fileScope?.notify) fileScope.notify("Could not open directory", message);
+      else setError(`Could not open directory: ${message}`);
+    });
   };
 
   const copyLink = async () => { const capturedMenu = menu();
@@ -302,6 +319,7 @@ export function Markdown(props: { children: string; streaming?: boolean; imagePr
     <Show when={menu()}>{current => <Portal mount={root?.closest(".app") ?? document.body}>
       <div ref={setMenuElement} class="conversation-menu link-context-menu" role="menu" aria-label="Link actions" style={{ left: `${current().x}px`, top: `${current().y}px` }} onContextMenu={event => event.preventDefault()}>
         <button type="button" role="menuitem" onClick={() => void copyLink()}><Copy size={14} />{current().kind === "file" ? "Copy path" : "Copy link"}</button>
+        <Show when={canOpenFileLinks && current().href}>{href => <button type="button" role="menuitem" onClick={() => revealFile(href())}><FolderOpen size={14} />Open in directory</button>}</Show>
       </div>
     </Portal>}</Show>
     <Show when={error()}><span class="message-link-error" role="alert">{error()}</span></Show>

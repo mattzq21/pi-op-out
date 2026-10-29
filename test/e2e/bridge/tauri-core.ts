@@ -30,7 +30,7 @@ const consoleError = console.error.bind(console);
 console.error = (...values: unknown[]) => { window.__piopE2eErrors.push("console: " + values.map(describeError).join(" ")); consoleError(...values); };
 
 /** Commands that the app sends through its platform invoke (clients/ui/lib/platform.ts). */
-const localCommands = new Set(["load_client_settings", "save_client_settings", "new_window", "open_external_url", "open_project_directory", "open_rollout_file", "read_dropped_file"]);
+const localCommands = new Set(["load_client_settings", "save_client_settings", "new_window", "open_external_url", "open_project_directory", "open_rollout_file", "open_local_file", "reveal_local_file", "read_dropped_file"]);
 
 const mockMetadataSchema = z.object({ error: z.string().optional(), events: z.array(rpcEventSchema).optional() }).catch({});
 
