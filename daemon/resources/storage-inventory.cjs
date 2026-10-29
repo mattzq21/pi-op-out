@@ -88,7 +88,7 @@ async function archiveDetails(file, header, explicitName, firstPrompt, malformed
 
   const archive = {
     ...archiveLocation(header, file),
-    name: explicitName || firstPrompt || "Untitled conversation",
+    name: explicitName || names.capSessionName(firstPrompt) || "Untitled conversation",
     modifiedAt: Math.floor(metadata.mtimeMs / 1000),
     byteSize: metadata.size,
     byteSizeCoverage: archiveCoverage + ' Queued messages are stored in the shared database and excluded from this size.',
