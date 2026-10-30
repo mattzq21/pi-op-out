@@ -1,4 +1,4 @@
-import { Lexer, Tokenizer, type HooksObject, type Token, type TokenizerObject } from "marked";
+import { Lexer, Tokenizer, type HooksObject, type Token, type TokenizerExtension, type TokenizerObject } from "marked";
 
 export class MarkdownLexer<ParserOutput = string, RendererOutput = string> extends Lexer<ParserOutput, RendererOutput> {
   emailFree = false;
@@ -97,5 +97,31 @@ export const markdownTokenizer: TokenizerObject = {
     const block = blank ? source.slice(0, blank.index + blank[0].length) : source;
 
     return /\n {0,3}(?:=+|-+) *(?:\n|$)/.test(block) ? false : undefined;
+  },
+};
+
+const frontmatterLine = String.raw`(?:[A-Za-z_][\w.-]*[ \t]*:(?:[ \t][^\n]*)?|[ \t]+[^\n]*|- [^\n]*|#[^\n]*|[ \t]*)\n`;
+const frontmatterRule = new RegExp(String.raw`^---[ \t]*\n[A-Za-z_][\w.-]*[ \t]*:(?:[ \t][^\n]*)?\n(?:${frontmatterLine})*?---[ \t]*(?:\n+|$)`);
+
+/** Frontmatter: a "---" line, then "key: value" lines, then a "---" line. It shows as a code block, not as headings. */
+export const frontmatterExtension: TokenizerExtension = {
+  name: "frontmatter",
+  level: "block",
+  tokenizer(source) {
+    const match = frontmatterRule.exec(source);
+
+    if (match) return { type: "code", raw: match[0], lang: "yaml", text: match[0].trimEnd() };
+  },
+};
+
+export const frontmatterTokenizer: TokenizerObject = {
+  ...markdownTokenizer,
+  lheading(source) {
+    const blank = /\n[ \t]*\n/.exec(source);
+    const end = blank ? blank.index + 1 : source.length;
+
+    for (const underline of source.slice(0, end).matchAll(/\n(?=---[ \t]*\n)/g)) if (frontmatterRule.test(source.slice(underline.index + 1))) return undefined;
+
+    return markdownTokenizer.lheading?.call(this, source);
   },
 };
