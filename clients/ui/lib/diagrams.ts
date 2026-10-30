@@ -63,9 +63,10 @@ async function render(source: string) {
     securityLevel: "strict",
     suppressErrorRendering: true,
     theme: "dark",
+    layout: "elk",
+    flowchart: { wrappingWidth: 200, minNodeWidth: 0 },
     fontFamily: "Arial, sans-serif",
     htmlLabels: false,
-    flowchart: { htmlLabels: false },
     maxTextSize: 30_000,
     maxEdges: 300,
   });
