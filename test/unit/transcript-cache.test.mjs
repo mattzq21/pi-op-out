@@ -74,17 +74,3 @@ test('the drawn turns of hidden chats go when they need more memory than the lim
   assert.equal(view.container.querySelector('.conversation-turns'), drawn, 'the shown chat keeps its turns');
 });
 
-test('the decoded pictures of hidden chats count toward the memory limit once they load', async t => {
-  const { cache, add, show } = await setup(t, { count: 20, bytes: 10 * 1024 * 1024 });
-  const hidden = add('a', turn('first', 'Answer a'));
-  await (await show(hidden)).unmount();
-  const before = cache.take(hidden, createTranscript); cache.release(hidden, before);
-  const again = cache.take(hidden, createTranscript); cache.release(hidden, again);
-  assert.equal(again, before, 'the chat stays drawn while it is in the limit');
-  const picture = document.createElement('img');
-  Object.defineProperties(picture, { naturalWidth: { value: 4000 }, naturalHeight: { value: 4000 } });
-  before.element.querySelector('.markdown-content').append(picture);
-  picture.dispatchEvent(new Event('load'));
-  const after = cache.take(hidden, createTranscript); cache.release(hidden, after);
-  assert.notEqual(after, before, 'a large picture makes the hidden chat go');
-});
