@@ -12,6 +12,7 @@ export interface ProviderAccount {
   configured: boolean;
   source?: string;
   storedType?: "oauth" | "api_key";
+  custom?: boolean;
   methods: Array<{ type: "oauth" | "api_key"; name: string; interactive: boolean }>;
 }
 
@@ -44,7 +45,7 @@ type AuthFlowRequest =
 
 type ProviderAuthRequest = AuthFlowRequest
   | { action: "list"; refreshModels: boolean }
-  | { action: "logout"; providerId: string }
+  | { action: "logout" | "remove"; providerId: string }
   | ({ action: "create" } & CustomProviderInput);
 
 const call = <S extends z.ZodType>(hostId: string, request: ProviderAuthRequest, schema: S) => invoke("provider_auth", { hostId, request }, schema);
@@ -185,7 +186,7 @@ export function useProviderAuth(hostId: Accessor<string>) {
     finally { if (current === generation.current) { setWorking(false); requestPending.current = false; } }
   };
 
-  const logout = async (providerId: string) => { const capturedHostId = hostId();
+  const changeProvider = async (action: "logout" | "remove", providerId: string) => { const capturedHostId = hostId();
 
     if (requestPending.current) return;
     requestPending.current = true;
@@ -193,7 +194,7 @@ export function useProviderAuth(hostId: Accessor<string>) {
     setWorking(true); setError(undefined); setFlow(undefined);
 
     try {
-      const result = await call(capturedHostId, { action: "logout", providerId }, providerListingSchema);
+      const result = await call(capturedHostId, { action, providerId }, providerListingSchema);
 
       if (current === generation.current) setProviders(result.providers);
     } catch (reason) { if (current === generation.current) setError(message(reason)); }
@@ -226,6 +227,6 @@ export function useProviderAuth(hostId: Accessor<string>) {
     begin: (providerId: string, authType: string) => perform({ action: "begin", providerId, authType }, true),
     reply: (answer: string) => flow()?.prompt ? perform({ action: "reply", flowId: required((flow())).flowId, promptId: required(required((flow())).prompt).id, answer }) : Promise.resolve(),
     cancel: () => flow() ? perform({ action: "cancel", flowId: required((flow())).flowId }) : Promise.resolve(),
-    get logout() { return logout; }, get createProvider() { return createProvider; },
+    logout: (providerId: string) => changeProvider("logout", providerId), remove: (providerId: string) => changeProvider("remove", providerId), get createProvider() { return createProvider; },
   };
 }

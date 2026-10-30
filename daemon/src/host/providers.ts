@@ -109,6 +109,7 @@ export class ProviderService {
       case 'begin': return this.begin(owner, request);
       case 'logout': return this.logout(text(request, 'providerId'));
       case 'create': return this.createProvider(request);
+      case 'remove': return this.removeProvider(text(request, 'providerId'));
     }
     return this.flowRequest(owner, request);
   }
@@ -140,13 +141,14 @@ export class ProviderService {
   }
 
   private async listing(refresh: boolean): Promise<any> {
-    await this.runtime();
+    const info = await this.runtime();
     // Model scans use the network. Only an explicit refresh waits for them; otherwise the listing shows saved data and the scan reports changes when it ends.
     if (refresh) await this.refreshCatalogs(true, false);
     else this.refreshCatalogsInBackground();
     const snapshot = await this.sdk.request({ method: 'inspect' });
     const credentials = array(snapshot, 'credentials');
-    const providers = array(snapshot, 'providers').map(provider => listedProvider(provider, credentials)).filter(provider => array(provider, 'methods').length > 0);
+    const custom = await this.customProviderIds(info);
+    const providers = array(snapshot, 'providers').map(provider => listedProvider(provider, credentials, custom)).filter(provider => provider.custom || array(provider, 'methods').length > 0);
     providers.sort((left, right) => { const a = text(left, 'id'); const b = text(right, 'id'); return a < b ? -1 : a > b ? 1 : 0; });
     const result: any = { providers };
     const warnings = [this.catalogWarning, providerModelWarning(snapshot), fastModelWarning(this.fastModels.snapshot())].filter((item): item is string => item !== null);
@@ -269,6 +271,24 @@ export class ProviderService {
     this.changed();
     void this.fastModels.scan(id);
     if (failed) throw new Error('Could not remove the saved provider login. Refresh and try again.');
+    return this.listing(false);
+  }
+
+  /** Custom providers are the providers in the saved model settings that Pi does not include. */
+  private async customProviderIds(info: { builtinIds: Set<string> }): Promise<Set<string>> {
+    const data = await this.sdk.request({ method: 'model_config' });
+    const providers = data?.providers && typeof data.providers === 'object' && !Array.isArray(data.providers) ? Object.keys(data.providers) : [];
+    return new Set(providers.filter(id => !info.builtinIds.has(id)));
+  }
+
+  private async removeProvider(id: string): Promise<any> {
+    if (!(await this.customProviderIds(await this.runtime())).has(id)) throw new Error('Only custom providers can be removed');
+    if (this.busy.has(id)) throw new Error('Finish or cancel the current login first');
+    this.busy.add(id);
+    try { await this.sdk.request({ method: 'remove_model_provider', providerId: id }); }
+    finally { this.busy.delete(id); }
+    this.changed();
+    void this.fastModels.scan();
     return this.listing(false);
   }
 
@@ -402,8 +422,9 @@ function customKey(request: any): string | null {
   return key;
 }
 
-function listedProvider(provider: any, credentials: any[]): any {
+function listedProvider(provider: any, credentials: any[], custom: Set<string>): any {
   const result = structuredClone(provider);
+  if (custom.has(result?.id)) result.custom = true;
   const credential = credentials.find(item => jsonEqual(item?.providerId, result?.id));
   if (credential) result.storedType = credential.type ?? null;
   if (Array.isArray(result?.methods)) for (const method of result.methods) if (method && typeof method === 'object' && !Array.isArray(method)) delete method.login;

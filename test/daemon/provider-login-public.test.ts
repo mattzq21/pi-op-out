@@ -56,6 +56,11 @@ test('a custom provider is added with its key and its models become available to
     await daemon.invoke('start_pi', { runtimeId: 'models', clientId: 'laptop', cwd: chat.cwd, sessionId: chat.sessionId });
     const models = await daemon.invoke('pi_command', { runtimeId: 'models', command: { type: 'get_available_models' } });
     expect(models.models.map((model: any) => [model.provider, model.id])).toContainEqual(['local-llm', 'llama-test']);
+    expect(await provider('local-llm')).toMatchObject({ custom: true });
+    expect((await provider('deepseek'))?.custom).toBeUndefined();
+    await auth({ action: 'remove', providerId: 'local-llm' });
+    expect(await provider('local-llm')).toBeUndefined();
+    expect(await daemon.failure('provider_auth', { hostId: 'local', request: { action: 'remove', providerId: 'deepseek' } })).toContain('Only custom providers');
   } finally { server.stop(true); }
 }, 60000);
 

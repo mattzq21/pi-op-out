@@ -84,7 +84,7 @@ export class Sdk {
     return this.gate.run(async () => {
       if (this.stopped) throw new Error('Provider SDK stopped');
       if (this.connection && !this.connection.closed) return this.connection;
-      const storage = "const { installRuntimeStorage, storedModelText, saveStoredModelProvider } = await import('data:text/javascript;base64," + Buffer.from(sdkStorageBundle).toString('base64') + "');";
+      const storage = "const { installRuntimeStorage, storedModelText, saveStoredModelProvider, removeStoredModelProvider } = await import('data:text/javascript;base64," + Buffer.from(sdkStorageBundle).toString('base64') + "');";
       const source = [storage, fastModelDiscovery, providerSdk].join('\n');
       const node = nodeExecutable();
       const child = this.spawnProcess(node, Buffer.from(source).toString('base64'));

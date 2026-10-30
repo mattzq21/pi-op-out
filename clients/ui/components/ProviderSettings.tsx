@@ -107,6 +107,7 @@ function ProviderList(componentProps: { providers: ProviderAccount[]; auth: Auth
         ? <button disabled={componentProps.disabled || componentProps.auth.loading} onClick={() => void componentProps.auth.begin(provider().id, method().type)}>{provider().configured ? "Replace login" : "Sign in"} · {method().name}</button>
         : <small>Configured through the host environment</small>}</Index>
         {provider().storedType && <button disabled={componentProps.disabled || componentProps.auth.loading} onClick={() => void componentProps.auth.logout(provider().id)}>Remove saved login</button>}
+        {provider().custom && <button disabled={componentProps.disabled || componentProps.auth.loading} onClick={() => { if (window.confirm(`Remove ${provider().name}? Its saved login is removed too.`)) void componentProps.auth.remove(provider().id); }}>Remove provider</button>}
       </div>
     </div>
   </section>}</Key></div>

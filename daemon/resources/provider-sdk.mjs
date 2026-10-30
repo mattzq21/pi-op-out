@@ -329,7 +329,7 @@ async function handleRequest(packet) {
 
   if (packet.method === 'initialize') return { builtinIds: loaded.builtinIds, authPath: loaded.authPath };
 
-  if (['model_config', 'save_model_provider'].includes(packet.method)) return storedProviderRequest(loaded, packet);
+  if (['model_config', 'save_model_provider', 'remove_model_provider'].includes(packet.method)) return storedProviderRequest(loaded, packet);
 
 
   return handleProviderRequest(loaded, packet);
@@ -339,6 +339,10 @@ function storedProviderRequest(loaded, packet) {
   if (packet.method === 'model_config') return loaded.parseModels(storedModelText(loaded.modelsPath) ?? '{"providers":{}}');
 
   if (packet.method === 'save_model_provider') return saveStoredModelProvider(loaded.modelsPath, packet.providerId, packet.config, packet.previous ?? undefined, loaded.parseModels);
+
+  if (packet.method === 'remove_model_provider') {
+    return loaded.runtime.logout(packet.providerId).then(() => removeStoredModelProvider(loaded.modelsPath, packet.providerId, loaded.parseModels));
+  }
 
   throw new Error('Unknown provider storage request');
 }

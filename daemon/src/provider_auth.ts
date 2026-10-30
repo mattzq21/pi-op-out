@@ -6,7 +6,7 @@ import type { App } from './app';
 import { discoverPi } from './pi_discovery';
 import type { PiRuntime } from './pi_runtime';
 
-const ACTIONS = ['list', 'begin', 'poll', 'reply', 'cancel', 'logout', 'create', 'fast_models', 'draft_catalog'];
+const ACTIONS = ['list', 'begin', 'poll', 'reply', 'cancel', 'logout', 'create', 'remove', 'fast_models', 'draft_catalog'];
 
 export async function forOwner(app: App, owner: string, hostId: string | undefined | null, request: any): Promise<any> {
   if (!ACTIONS.includes(request?.action)) throw new Error('Unknown provider authentication operation');

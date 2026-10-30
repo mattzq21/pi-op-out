@@ -59,6 +59,17 @@ export function saveStoredModelProvider(path, id, config, previous, parse) {
   });
 }
 
+export function removeStoredModelProvider(path, id, parse) {
+  return new modelFileStorage(path).withLock(body => {
+    const data = modelProviderData(body, parse);
+
+    if (!Object.hasOwn(data.providers, id)) throw new Error("That provider is not a custom provider");
+    delete data.providers[id];
+
+    return { result: true, next: JSON.stringify(data, null, 2) };
+  });
+}
+
 function publishAuthFile(path, body) {
   const target = storageTarget(path);
   const temporary = storagePath.join(storagePath.dirname(target), `.${storagePath.basename(target)}.${storageRandomId()}.tmp`);
