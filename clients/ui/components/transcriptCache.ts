@@ -9,7 +9,17 @@ const MEMORY_LIMIT = 512 * 1024 * 1024;
 /** The memory of one drawn element of a turn, with the state that updates it: an estimate from real chats in Chromium and WebKitGTK. */
 const ELEMENT_BYTES = 4 * 1024;
 
-const size = (transcript: Transcript) => transcript.element.getElementsByTagName("*").length * ELEMENT_BYTES;
+/** The bytes of one pixel of a decoded picture. */
+const PIXEL_BYTES = 4;
+
+/** The estimated memory of drawn turns: their elements and the decoded copies of their pictures. */
+function size(transcript: Transcript) {
+  let bytes = transcript.element.getElementsByTagName("*").length * ELEMENT_BYTES;
+
+  for (const image of transcript.element.getElementsByTagName("img")) bytes += image.naturalWidth * image.naturalHeight * PIXEL_BYTES;
+
+  return bytes;
+}
 
 /**
  * The drawn turns of the recent chats, so a chat opens without drawing them again.
@@ -52,7 +62,11 @@ export function createTranscriptCache(background: (transport: NativeTransport) =
     const entry = { transcript: draw(transport, () => background(transport), owner), users: 0, stop: () => undefined as void };
     entries.set(transport, entry);
     // A closed chat's turns go with it.
-    entry.stop = transport.onDispose(() => drop(transport));
+    const stopDispose = transport.onDispose(() => drop(transport));
+    // A picture gets its size when it loads, so the memory is checked again then.
+    const loaded = (event: Event) => { if ((event.target as Node | null)?.nodeName === "IMG") trim(); };
+    entry.transcript.element.addEventListener("load", loaded, true);
+    entry.stop = () => { stopDispose(); entry.transcript.element.removeEventListener("load", loaded, true); };
 
     return entry;
   };
