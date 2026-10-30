@@ -18,7 +18,7 @@ export async function readClipboardImages(): Promise<File[]> {
   if (isTauri()) {
     const image = z.string().nullable().parse(await invoke("read_clipboard_image"));
 
-    if (image) return [clipboardImageFile(image)];
+    return image ? [clipboardImageFile(image)] : [];
   }
 
   if (!navigator.clipboard?.read) return [];
