@@ -1,5 +1,5 @@
 import { For, Index, Show } from "solid-js";
-import { FileText, Paperclip, X } from "lucide-solid";
+import { FileText, X } from "lucide-solid";
 import type { ComposerUpload, PendingMessage, PendingMessageAction } from "../types";
 import { attachFiles, splitAttachedFiles, type AttachedFile } from "../lib/composerPrompt";
 import { PendingImage, type PendingImageLoader } from "./PendingImages";
@@ -28,12 +28,9 @@ interface Props {
   saving: boolean;
   load?: PendingImageLoader;
   onChange: (update: (edit: PendingEdit) => PendingEdit) => void;
-  addFiles: (files: File[]) => Promise<void>;
 }
 
 export function PendingMessageAttachments(props: Props) {
-  let input: HTMLInputElement | undefined;
-  const add = (files: FileList | null) => { if (files?.length) void props.addFiles([...files]); };
   return (
     <div class="pending-edit-attachments" aria-label="Attachments of the edited message">
       <Index each={props.edit.keep}>{index => <span class="pending-edit-attachment">
@@ -48,8 +45,6 @@ export function PendingMessageAttachments(props: Props) {
         <Show when={upload.image} fallback={<FileText size={12} />}>{image => <img class="pending-image" src={`data:${image().mimeType};base64,${image().data}`} alt={upload.name} />}</Show><b>{upload.name}</b>
         <button type="button" class="pending-icon-button" disabled={props.saving} aria-label={`Remove ${upload.name}`} onClick={() => props.onChange(edit => ({ ...edit, added: edit.added.filter(item => item.id !== upload.id) }))}><X size={11} /></button>
       </span>}</For>
-      <button type="button" class="pending-icon-button" disabled={props.saving} aria-label="Attach files to the edited message" data-tooltip="Attach files" onClick={() => input?.click()}><Paperclip size={13} /></button>
-      <input ref={element => { input = element; }} type="file" multiple hidden onChange={event => { add(event.currentTarget.files); event.currentTarget.value = ""; }} />
     </div>
   );
 }

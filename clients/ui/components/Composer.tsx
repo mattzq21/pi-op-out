@@ -698,7 +698,7 @@ export function Composer(props: Props) {
       {!editingPending() && uploads().length > 0 && <div class="attachments">{<Key each={uploads()} by={(upload) => upload.id}>{(upload, _index) => <span classList={{ "attachment-image": Boolean(upload().image) }}><Show when={upload().image} fallback={<><FileText size={12} /><b>{upload().name}</b></>}>{image => <ZoomableImage src={`data:${image().mimeType};base64,${image().data}`} alt={upload().name} />}</Show><button aria-label={`Remove ${upload().name}`} onClick={() => { updateUploads((current) => current.filter((item) => item.id !== upload().id)); setUploadError(undefined); }}><X size={11} /></button></span>}</Key>}</div>}
       {uploadError() && <div class="upload-error" role="alert">{(uploadError())}</div>}
       {controlError() && <div class="upload-error" role="alert">{(controlError())}</div>}
-      <Show when={editingPending()}>{edit => <PendingMessageAttachments message={composer().pendingMessages.find(message => message.id === edit().id) ?? { id: edit().id, message: edit().prompt, behavior: "followUp" }} edit={edit()} saving={savingEdit()} load={props.loadPendingImage} onChange={update => setEditingPending(current => current?.id === edit().id ? update(current) : current)} addFiles={files => attachments.addFiles(files)} />}</Show>
+      <Show when={editingPending()}>{edit => <PendingMessageAttachments message={composer().pendingMessages.find(message => message.id === edit().id) ?? { id: edit().id, message: edit().prompt, behavior: "followUp" }} edit={edit()} saving={savingEdit()} load={props.loadPendingImage} onChange={update => setEditingPending(current => current?.id === edit().id ? update(current) : current)} />}</Show>
       {renderComposerEditor()}
       <ComposerBar />
     </div>);
