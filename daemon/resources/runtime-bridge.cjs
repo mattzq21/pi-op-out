@@ -309,11 +309,37 @@ function dispatchRetry(command, session, output) {
   void continueRun(session, failed).catch(error => acceptedPromptError(session, error, output));
 }
 
+/**
+ * Gives the retried run the prompt and tools that extensions set when a run starts. Without this the run keeps Pi's default prompt.
+ * Messages that handlers add are dropped, because the run they belong to already received them.
+ */
+async function prepareRetriedRun(session, failed) {
+  const messages = session.agent.state.messages;
+  const end = messages.indexOf(failed);
+  const start = (end < 0 ? messages : messages.slice(0, end)).findLast(message => message.role === "user" || message.role === "custom");
+  if (!start) throw new Error("The retried response has no message that started it");
+  const trigger = start.role === "custom" ? { messageType: "custom", message: start } : typeof start.content === "string"
+    ? { messageType: "user", prompt: start.content }
+    : { messageType: "user", prompt: start.content.filter(part => part.type === "text").map(part => part.text).join("\n"), images: start.content.filter(part => part.type === "image") };
+  const base = session._baseSystemPromptOptions;
+  const toolsBefore = base.selectedTools;
+  const result = await session._extensionRunner.emitBeforeAgentStart(trigger, base);
+  const tools = result.systemPromptOptions.selectedTools;
+  if (tools.length === toolsBefore.length && tools.every((name, index) => name === toolsBefore[index])) result.systemPromptOptions.selectedTools = session.getActiveToolNames();
+  const update = session._preparePromptAndToolLoadout(result.systemPromptOptions);
+  session._runSystemPromptOptions = result.systemPromptOptions;
+  if (!update) return;
+  session.sessionManager.appendMessage(update);
+  session._refreshFinalizedContext();
+}
+
 async function continueRun(session, failed) {
   session._failedResponse = failed;
   session._pendingToolNames.clear();
 
   try {
+    await prepareRetriedRun(session, failed);
+    if (session._agentRunAbortRequested) return;
     await session.agent.continue();
 
     while (!session._agentRunAbortRequested) {
@@ -720,4 +746,6 @@ async function main() {
   await import(pathToFileURL(join(root, "dist/cli.js")).href);
 }
 
-main().catch(error => { console.error(error instanceof Error ? error.message : String(error)); process.exitCode = 1; });
+if (require.main === module) main().catch(error => { console.error(error instanceof Error ? error.message : String(error)); process.exitCode = 1; });
+
+module.exports = { continueRun };
