@@ -1,12 +1,9 @@
 import { closeSync, constants, fstatSync, openSync, readSync, realpathSync } from 'node:fs';
-import { isAbsolute, join, relative, resolve, sep } from 'node:path';
-import { STORAGE_DIRECTORY } from './config';
-import { homeDir } from './environment';
+import { resolve } from 'node:path';
 import { requireLocal } from './host_connection';
 import type { App } from './app';
 
 const IMAGE_LIMIT = 10 * 1024 * 1024;
-const GOAL_IMAGE_PATH = /^(?:sessions|archived)\/(?:[^/]+\/)*attachments\/goal-(?:[a-f0-9]{64}|[A-Za-z0-9]{6})\//;
 
 export async function readImage(_app: App, cwd: string, path: string, hostId: string): Promise<string> {
   requireLocal(hostId);
@@ -17,14 +14,6 @@ export async function readImage(_app: App, cwd: string, path: string, hostId: st
 
 function readLocalImage(cwd: string, path: string): Buffer {
   const target = realpathSync(resolve(cwd, path));
-  let root: string | undefined;
-  try { root = realpathSync(cwd); } catch (error: any) { if (error.code !== 'ENOENT') throw error; }
-  const location = root === undefined ? undefined : relative(root, target);
-  if (location === undefined || location === '..' || location.startsWith('..' + sep) || isAbsolute(location)) {
-    let storage: string | undefined;
-    try { storage = realpathSync(join(homeDir(), STORAGE_DIRECTORY)); } catch (error: any) { if (error.code !== 'ENOENT') throw error; }
-    if (!storage || !GOAL_IMAGE_PATH.test(relative(storage, target).split(sep).join('/'))) throw new Error('Image is outside the project');
-  }
   let fd: number;
   try { fd = openSync(target, constants.O_RDONLY | constants.O_NONBLOCK); } catch (error: any) { throw new Error(`Could not read image: ${error.message}`); }
   try {
