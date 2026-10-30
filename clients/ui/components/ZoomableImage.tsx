@@ -1,5 +1,6 @@
 import { required } from "../lib/required";
 import { createSignal, Show } from "solid-js";
+import { Portal } from "solid-js/web";
 import { LoaderCircle, X } from "lucide-solid";
 import { createDependencyEffect, createRef } from "../lib/solid";
 import { imageTouchGestures } from "./imageTouchGestures";
@@ -116,6 +117,6 @@ export function ZoomableImage(props: { src: string; alt: string; onError?: () =>
       <Show when={state() === "loading"}><ImageLoading /></Show>
       <Show when={state() === "error"}><span class="image-loading" role="status">Image unavailable</span></Show>
     </button>
-    <Show when={open()}><ImageViewer src={props.src} alt={props.alt} onClose={() => setOpen(false)} /></Show>
+    <Show when={open()}><Portal><ImageViewer src={props.src} alt={props.alt} onClose={() => setOpen(false)} /></Portal></Show>
   </>;
 }
