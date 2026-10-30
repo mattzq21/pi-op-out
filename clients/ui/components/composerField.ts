@@ -6,7 +6,7 @@ import { sessionReference } from "../lib/sessionDrop";
  * `readOnly`, `placeholder`, and "input" and "select" events. All offsets are offsets in `value`, the Markdown text.
  * Links to chats show as links. Each link is one unit: the caret goes before or after it, never into it.
  * The `$skill` reference that the message uses shows highlighted. It stays normal editable text.
- * Ctrl+Z undoes and Ctrl+Y or Ctrl+Shift+Z redoes each change of `value`, also changes that the app makes.
+ * Ctrl+Z undoes and Ctrl+Y redoes each change of `value`, also changes that the app makes.
  */
 export const COMPOSER_FIELD_TAG = "piop-composer-field";
 
@@ -337,11 +337,12 @@ export class ComposerFieldElement extends HTMLElement {
   #keyDown = (event: KeyboardEvent) => {
     if (event.isComposing || event.altKey || !(event.ctrlKey || event.metaKey)) return;
     const key = event.key.toLowerCase();
-    const command = key === "z" ? (event.shiftKey ? "redo" : "undo") : key === "y" && !event.shiftKey ? "redo" : undefined;
 
-    if (!command) return;
+    if (key !== "z" && key !== "y") return;
+    /* The browser must not undo or redo by itself. Ctrl+Shift+Z does nothing. */
     event.preventDefault();
-    this.#history(command);
+
+    if (!event.shiftKey) this.#history(key === "z" ? "undo" : "redo");
   };
 
   #replaceSelection(text: string, inputType: string) {

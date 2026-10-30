@@ -370,6 +370,8 @@ test('Ctrl+Z and Ctrl+Y undo and redo typing in the message editor', async t => 
   await page.keyboard.press('Control+y');
   assert.equal(await editor.inputValue(), 'hello world');
   await page.keyboard.press('Control+Shift+z');
+  assert.equal(await editor.inputValue(), 'hello world');
+  await page.keyboard.press('Control+y');
   assert.equal(await editor.inputValue(), 'hello world\n');
   await page.keyboard.type('!');
   assert.equal(await editor.inputValue(), 'hello world\n!');
