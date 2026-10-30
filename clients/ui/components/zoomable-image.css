@@ -1,4 +1,4 @@
-.image-preview { display: block; max-width: 100%; padding: 0; border: 0; background: transparent; cursor: zoom-in; touch-action: manipulation; }
+.image-preview { display: block; max-width: 100%; padding: 0; border: 0; background: transparent; cursor: zoom-in; touch-action: manipulation; -webkit-user-select: none; user-select: none; }
 .image-preview img { display: block; max-width: 100%; max-height: 320px; object-fit: contain; }
 .image-preview img[hidden] { display: none; }
 .image-preview.loading { cursor: progress; }
