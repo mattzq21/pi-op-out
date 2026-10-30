@@ -59,3 +59,36 @@ test('other failures to load older messages are reported', async t => {
   const chat = await olderChat(t, new Error('History is damaged'));
   assert.deepEqual(chat.notices, ['Could not load older messages: History is damaged']);
 });
+
+test('the list of older responses loads once Pi starts, and stays with the chat when its view opens again', async t => {
+  const dom = installDom();
+  const requests = [];
+  const listeners = new Set();
+  const transport = {
+    connected: false, isConnected: () => transport.connected,
+    subscribe: listener => { listeners.add(listener); return () => listeners.delete(listener); },
+    currentHostId: () => 'local', currentCwd: () => '/tmp', ownsConversation: () => true, hasSentMessage: () => true,
+    command: async command => {
+      requests.push(command.type);
+      if (command.type !== 'get_history_outline') return {};
+      if (!transport.connected) throw new Error('Pi is not running');
+      return { responses: [{ id: 'early-answer', start: 'early', preview: 'Early answer' }] };
+    },
+  };
+  let dispose;
+  const memory = createRoot(stop => { dispose = stop; const value = useSessionMemory(() => transport, () => state); value.setMessages([...olderHistoryMarker('recent'), recent]); return value; });
+  const props = { readOnly: true, transport, state, messages: memory.messages, models: [], commands: [], thinkingLevels: [], widgets: [], statuses: {}, onNotice: () => {} };
+  let view = await renderComponent(ChatView, props);
+  t.after(async () => { await view.unmount(); dispose(); dom.restore(); });
+  await dom.flushFrames(); await dom.flushFrames();
+  assert.equal(requests.filter(type => type === 'get_history_outline').length, 1);
+  transport.connected = true;
+  await act(() => [...listeners].forEach(listener => listener({ type: 'pi_started' })));
+  await dom.flushFrames();
+  assert.equal(requests.filter(type => type === 'get_history_outline').length, 2, 'the list loads again once Pi runs');
+  assert.deepEqual(memory.memory.getSnapshot().outline?.items.map(item => item.id), ['early-answer']);
+  await view.unmount();
+  view = await renderComponent(ChatView, props);
+  await dom.flushFrames(); await dom.flushFrames();
+  assert.equal(requests.filter(type => type === 'get_history_outline').length, 2, 'the opened view uses the listed responses');
+});

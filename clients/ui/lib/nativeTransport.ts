@@ -500,6 +500,8 @@ export class NativeTransport {
       this.running = true;
       hostModelConnected(this.currentHostId());
       this.connectedOwnership(attached);
+      // Reads that failed while Pi was not running can run again.
+      this.emit({ type: "pi_started" });
       this.presenceCleanup?.();
       window.addEventListener("focus", this.publishPresence); window.addEventListener("blur", this.publishPresence); window.addEventListener("resize", this.publishPresence); document.addEventListener("visibilitychange", this.publishPresence);
       this.presenceCleanup = () => { window.removeEventListener("focus", this.publishPresence); window.removeEventListener("blur", this.publishPresence); window.removeEventListener("resize", this.publishPresence); document.removeEventListener("visibilitychange", this.publishPresence); };
