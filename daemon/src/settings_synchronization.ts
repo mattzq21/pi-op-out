@@ -11,7 +11,7 @@ import * as daemon from './daemon';
 import * as daemonEndpoint from './daemon_endpoint';
 import * as daemonRestart from './daemon_restart';
 import * as peers from './peers';
-import { onSkillsChanged } from './skill_discovery';
+import { onSkillsChanged, watchSkills } from './skill_discovery';
 import { onToolsChanged } from './tool_inventory';
 import type { App } from './app';
 import type { PiRuntime } from './pi_runtime';
@@ -367,6 +367,7 @@ export function start(app: App): void {
   };
   app.listenAny('pi://settings-changed', requestPass);
   onSkillsChanged(requestPass);
+  watchSkills((error: any) => reportPhaseWarnings(app, [`Skill changes are not watched: ${error?.message ?? error}`]));
   onToolsChanged(requestPass);
   void settingsPath().then(path => watchOtherDaemons(path, requestPass)).catch((error: any) => {
     reportPhaseWarnings(app, [`Settings changes from other daemons are not watched: ${error?.message ?? error}`]);

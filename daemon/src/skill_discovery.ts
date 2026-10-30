@@ -1,4 +1,4 @@
-import { readdirSync, readFileSync, statSync } from 'node:fs';
+import { readdirSync, readFileSync, realpathSync, statSync, watch, type Dirent, type FSWatcher } from 'node:fs';
 import { basename, dirname, join, sep } from 'node:path';
 import { STORAGE_DIRECTORY } from './config';
 import { homeDir } from './environment';
@@ -46,44 +46,89 @@ export function expandSkillPath(path: string, home: string): string {
   return path.startsWith('~/') ? join(home, path.slice(2)) : path;
 }
 
-function walkSkillFiles(root: string): string[] {
-  const found: string[] = [];
+interface SkillTree { skillFiles: string[]; directories: string[] }
+
+/** Walks the skills folder, following links. It stops at a skill folder, so a skill inside another skill is not found. */
+function scanSkillTree(root: string): SkillTree {
+  const tree: SkillTree = { skillFiles: [], directories: [] };
+  const visited = new Set<string>();
   const visit = (directory: string) => {
-    for (const entry of readdirSync(directory, { withFileTypes: true })) {
-      if (entry.name.startsWith('.') || entry.name === 'node_modules') continue;
-      const path = join(directory, entry.name);
-      if (entry.isDirectory()) visit(path);
-      else if (entry.isFile() && entry.name === 'SKILL.md') found.push(path);
+    const real = realpathSync(directory);
+    if (visited.has(real)) return;
+    visited.add(real);
+    tree.directories.push(directory);
+    const entries = readdirSync(directory, { withFileTypes: true }).filter(entry => !entry.name.startsWith('.') && entry.name !== 'node_modules');
+    const kind = (entry: Dirent) => {
+      if (!entry.isSymbolicLink()) return entry.isDirectory() ? 'directory' : entry.isFile() ? 'file' : undefined;
+      try { const target = statSync(join(directory, entry.name)); return target.isDirectory() ? 'directory' : target.isFile() ? 'file' : undefined; }
+      catch (error: any) { if (error?.code === 'ENOENT') return undefined; throw error; }
+    };
+    const skillFile = entries.find(entry => entry.name === 'SKILL.md' && kind(entry) === 'file');
+    if (skillFile) {
+      tree.skillFiles.push(join(directory, skillFile.name));
+      const agents = entries.find(entry => entry.name === 'agents' && kind(entry) === 'directory');
+      if (agents) tree.directories.push(join(directory, agents.name));
+      return;
     }
+    for (const entry of entries) if (kind(entry) === 'directory') visit(join(directory, entry.name));
   };
   visit(root);
-  return found;
+  return tree;
 }
 
-function depth(path: string): number { return path.split(sep).filter(Boolean).length; }
+function rootExists(root: string): boolean {
+  try { return statSync(root).isDirectory(); } catch (error: any) { if (error?.code === 'ENOENT') return false; throw error; }
+}
 
 function discoverInventory(root: string): any[] {
-  try { statSync(root); } catch (error: any) { if (error?.code === 'ENOENT') return []; throw error; }
-  const skillFiles = walkSkillFiles(root).sort((left, right) => depth(left) - depth(right));
-  const skillRoots: string[] = [];
-  const discovered: any[] = [];
-  for (const skillFile of skillFiles) {
+  if (!rootExists(root)) return [];
+  return scanSkillTree(root).skillFiles.map(skillFile => {
     const directory = dirname(skillFile);
-    if (skillRoots.some(known => directory !== known && pathStartsWith(directory, known))) continue;
-    skillRoots.push(directory);
     const content = readFileSync(skillFile, 'utf8');
-    const fallback = basename(directory) || 'skill';
     const claudeUserOnly = frontmatterValue(content, 'disable-model-invocation')?.toLowerCase() === 'true';
-    const codexUserOnly = codexDisablesImplicitInvocation(directory);
-    discovered.push({
-      name: frontmatterValue(content, 'name') ?? fallback,
+    return {
+      name: frontmatterValue(content, 'name') ?? (basename(directory) || 'skill'),
       path: directory,
       description: frontmatterValue(content, 'description') ?? 'Pi skill',
       enabled: true,
-      userInvokedOnly: claudeUserOnly || codexUserOnly,
-    });
+      userInvokedOnly: claudeUserOnly || codexDisablesImplicitInvocation(directory),
+    };
+  });
+}
+
+let skillWatchers: Map<string, FSWatcher> | undefined;
+
+/** Scans the skills folder now and again after each change in it. Failures go to onError. */
+export function watchSkills(onError: (error: unknown) => void): void {
+  if (skillWatchers) return;
+  const watchers = skillWatchers = new Map<string, FSWatcher>();
+  const root = join(homeDir(), '.agents/skills');
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const schedule = () => { clearTimeout(timer); timer = setTimeout(sync, 50); timer.unref(); };
+  function watched(): string[] {
+    if (rootExists(root)) return scanSkillTree(root).directories;
+    let ancestor = dirname(root);
+    while (!rootExists(ancestor)) ancestor = dirname(ancestor);
+    return [ancestor];
   }
-  return discovered;
+  function sync() {
+    try {
+      refreshSkills();
+      const directories = new Set(watched());
+      for (const [directory, watcher] of watchers) if (!directories.has(directory)) { watcher.close(); watchers.delete(directory); }
+      for (const directory of directories) {
+        if (watchers.has(directory)) continue;
+        const watcher = watch(directory, schedule);
+        watcher.on('error', schedule);
+        watcher.unref();
+        watchers.set(directory, watcher);
+      }
+    } catch (error: any) {
+      if (error?.code === 'ENOENT') schedule();
+      else onError(error);
+    }
+  }
+  sync();
 }
 
 export function refreshSkills(): void {

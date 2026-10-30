@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, expect, test } from 'bun:test';
-import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fakeProgram, startDaemon, type TestDaemon } from './harness';
 import { execFileSync } from 'node:child_process';
@@ -85,3 +85,24 @@ require('node:readline').createInterface({ input: process.stdin }).on('line', li
     await daemon.invoke('stop_pi', { runtimeId: 'runtime-settings' });
   } finally { rmSync(root, { recursive: true, force: true }); }
 }, 60_000);
+
+test('a skill added, linked or changed after start reaches the settings without a refresh request', async () => {
+  const skillNames = async () => ((await daemon.invoke('load_app_settings')).skills as any[]).map(skill => skill.name).sort();
+  const eventually = async (expected: string[]) => {
+    for (let attempt = 0; attempt < 100 && JSON.stringify(await skillNames()) !== JSON.stringify(expected); attempt++) await Bun.sleep(50);
+    expect(await skillNames()).toEqual(expected);
+  };
+  const outside = join(daemon.home, 'linked-skill');
+  try {
+    await discovered();
+    write('group/added/SKILL.md', '---\nname: Added\n---\n');
+    await eventually(['Added']);
+    mkdirSync(outside, { recursive: true });
+    writeFileSync(join(outside, 'SKILL.md'), '---\nname: Linked\n---\n');
+    symlinkSync(outside, join(root, 'group/linked'));
+    await eventually(['Added', 'Linked']);
+    writeFileSync(join(outside, 'SKILL.md'), '---\nname: Renamed\n---\n');
+    await eventually(['Added', 'Renamed']);
+  } finally { rmSync(root, { recursive: true, force: true }); rmSync(outside, { recursive: true, force: true }); }
+  await eventually([]);
+});
