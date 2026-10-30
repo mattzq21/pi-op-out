@@ -124,15 +124,19 @@ kbd { font: 11px "DM Sans"; border: 1px solid var(--line); padding: 2px 4px; bor
 .response-navigator-marker { flex: 0 0 10px; width: 24px; min-height: 10px; display: grid; place-items: center; border: 0; padding: 0; background: transparent; cursor: pointer; }
 .response-navigator-marker:first-child { margin-top: auto; }
 .response-navigator-marker:last-child { margin-bottom: auto; }
-.response-navigator-marker span { width: 6px; height: 2px; border-radius: 1px; background: var(--faint); opacity: .55; transition: width .12s, opacity .12s, background .12s; }
-.response-navigator-marker:hover span, .response-navigator-marker:focus-visible span { width: 14px; background: var(--ink); opacity: 1; }
-.response-navigator-marker[aria-current] span { width: 12px; background: var(--accent); opacity: 1; }
-.response-navigator-marker[data-forked] span { position: relative; }
-.response-navigator-marker[data-forked] span:before, .response-navigator-marker[data-forked] span:after { content: ""; position: absolute; left: calc(100% - 1px); top: 0; width: 7px; height: 2px; border-radius: 1px; background: var(--accent); transform-origin: 1px 1px; }
+.response-navigator-marker { --marker-width: 8px; --fork-width: 0px; }
+.response-navigator-marker span { width: calc(var(--marker-width) - var(--fork-width)); height: 2px; border-radius: 1px; background: var(--faint); opacity: .55; transition: width .12s, opacity .12s, background .12s; }
+.response-navigator-marker:hover, .response-navigator-marker:focus-visible { --marker-width: 14px; }
+.response-navigator-marker:hover span, .response-navigator-marker:focus-visible span { background: var(--ink); opacity: 1; }
+.response-navigator-marker[aria-current] { --marker-width: 12px; }
+.response-navigator-marker[aria-current] span { background: var(--accent); opacity: 1; }
+.response-navigator-marker[data-forked] { --fork-width: 4px; }
+.response-navigator-marker[data-forked] span { position: relative; margin-right: var(--fork-width); }
+.response-navigator-marker[data-forked] span:before, .response-navigator-marker[data-forked] span:after { content: ""; position: absolute; left: calc(100% - 1px); top: 0; width: 6px; height: 2px; border-radius: 1px; background: var(--accent); transform-origin: 1px 1px; }
 .response-navigator-marker[data-forked] span:before { transform: rotate(-28deg); }
 .response-navigator-marker[data-forked] span:after { transform: rotate(28deg); }
 .response-navigator-marker:focus-visible { outline: 1px solid var(--accent); outline-offset: -1px; border-radius: 3px; }
-@media (max-width: 600px) { .response-navigator { left: 0; width: 12px; } .response-navigator-marker { width: 12px; } .response-navigator-marker[data-forked] span:before, .response-navigator-marker[data-forked] span:after { width: 5px; } }
+@media (max-width: 600px) { .response-navigator { left: 0; width: 12px; } .response-navigator-marker { width: 12px; } }
 .conversation-unowned .composer-interaction { filter: grayscale(1) brightness(.6); }
 .conversation-unowned .composer piop-composer-field { color: var(--muted); }
 .terminal-surface { position: relative; min-height: 0; min-width: 0; display: grid; }
