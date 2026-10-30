@@ -22,6 +22,7 @@ function fakeTransport(failure) {
     currentHostId: () => 'local', currentCwd: () => '/tmp', ownsConversation: () => true, hasSentMessage: () => true,
     command: async command => {
       requests.push(command.type);
+      if (command.type === 'get_history_outline') return { responses: [] };
       if (command.type !== 'get_older_history') return {};
       if (requests.filter(type => type === 'get_older_history').length === 1) throw failure;
       return olderPage;

@@ -290,15 +290,15 @@ export class SessionMemory {
     return request;
   }
 
-  /** Loads the part of the history just before the loaded messages. */
-  loadOlder() {
+  /** Loads the part of the history just before the loaded messages. With through, the part reaches back to the turn of that entry. */
+  loadOlder(through?: string) {
     const older = olderHistory(this.value.messages);
 
     if (!older) return Promise.resolve();
 
     if (this.olderLoading) return this.olderLoading;
     const generation = this.generation;
-    const request = this.transport.command({ type: "get_older_history", before: older.before }, historyViewSchema).then(history => {
+    const request = this.transport.command({ type: "get_older_history", before: older.before, ...(through ? { through } : {}) }, historyViewSchema).then(history => {
       if (generation !== this.generation) return;
       const page = [...olderHistoryMarker(history.before, history.olderUsage), ...branchMessages(history.entries, history.leafId)];
       this.set("messages", messages => olderHistory(messages)?.before === older.before ? [...page, ...messages.filter(message => message.id !== OLDER_HISTORY)] : messages);
@@ -365,8 +365,17 @@ export class SessionMemory {
   }
 }
 
-export function loadOlderHistory(transport: Transport) {
-  return memoryFor(transport).loadOlder();
+export function loadOlderHistory(transport: Transport, through?: string) {
+  return memoryFor(transport).loadOlder(through);
+}
+
+const historyOutlineSchema = z.object({ responses: z.array(z.object({ id: z.string().min(1), preview: z.string(), compactions: z.array(z.string().min(1)).optional() })) });
+
+export type HistoryOutline = z.infer<typeof historyOutlineSchema>["responses"];
+
+/** The final responses of the history before the entry before, which the client has not loaded. */
+export async function loadHistoryOutline(transport: Transport, before: string): Promise<HistoryOutline> {
+  return (await transport.command({ type: "get_history_outline", before }, historyOutlineSchema)).responses;
 }
 
 export function forgetSession(transport: Transport) {

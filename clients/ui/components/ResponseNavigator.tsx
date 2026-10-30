@@ -2,14 +2,17 @@ import { Key } from "@solid-primitives/keyed";
 import { createSignal, Show } from "solid-js";
 import { createDependencyEffect, createRef, type RefObject } from "../lib/solid";
 
-export interface ResponseDestination { turnId: string; messageId: string; preview: string; }
+/** A final response of the chat. turnId is missing while the response is in the older history that the client has not loaded. */
+export interface ResponseDestination { turnId?: string; messageId: string; preview: string; }
 
-function responseTarget(root: HTMLElement, response: ResponseDestination) {
+function responseTarget(root: HTMLElement, response: ResponseDestination & { turnId: string }) {
   return root.querySelector<HTMLElement>(`[data-response-id="${CSS.escape(response.messageId)}"]`)
     ?? root.querySelector<HTMLElement>(`[data-response-turn="${CSS.escape(response.turnId)}"]`);
 }
 
-export function ResponseNavigator(props: { responses: ResponseDestination[]; forkedTurns: ReadonlySet<string>; scrollRoot: RefObject<HTMLDivElement | null>; onNavigate: () => void }) {
+const loaded = (response: ResponseDestination): response is ResponseDestination & { turnId: string } => response.turnId !== undefined;
+
+export function ResponseNavigator(props: { responses: ResponseDestination[]; forked: ReadonlySet<string>; scrollRoot: RefObject<HTMLDivElement | null>; onNavigate: () => void; onReveal: (messageId: string) => void }) {
   const [active, setActive] = createSignal<string>();
   const [overflowing, setOverflowing] = createSignal(false);
   const frame = createRef<number | undefined>(undefined);
@@ -43,7 +46,7 @@ export function ResponseNavigator(props: { responses: ResponseDestination[]; for
       frame.current = undefined;
       setOverflowing(root.scrollHeight > root.clientHeight + 2);
       targets.length = props.responses.length;
-      let current: string | undefined = props.responses[0]?.messageId;
+      let current: string | undefined = props.responses.find(loaded)?.messageId;
 
       if (root.scrollHeight - root.scrollTop - root.clientHeight <= 2) current = props.responses.at(-1)?.messageId;
       else {
@@ -53,6 +56,9 @@ export function ResponseNavigator(props: { responses: ResponseDestination[]; for
         while (low < high) {
           const index = (low + high) >>> 1;
           const response = props.responses[index];
+
+          // A response that is not loaded is above the loaded history.
+          if (!loaded(response)) { low = index + 1; continue; }
           const cached = targets[index];
           let target = cached?.messageId === response.messageId && cached.turnId === response.turnId && root.contains(cached.element) ? cached.element : responseTarget(root, response);
 
@@ -94,6 +100,7 @@ export function ResponseNavigator(props: { responses: ResponseDestination[]; for
   }, () => [props.responses, props.scrollRoot]);
 
   const navigate = (response: ResponseDestination) => {
+    if (!loaded(response)) { props.onReveal(response.messageId); return; }
     const root = props.scrollRoot.current;
     const turn = root?.querySelector<HTMLElement>(`[data-response-turn="${CSS.escape(response.turnId)}"]`);
 
@@ -114,6 +121,6 @@ export function ResponseNavigator(props: { responses: ResponseDestination[]; for
   };
 
   return <Show when={visible()}><nav ref={element => { rail.current = element; }} class="response-navigator" aria-label="Agent responses">
-    <Key each={props.responses} by={response => response.messageId}>{(response, index) => <button type="button" class="response-navigator-marker" aria-label={`Go to agent response ${index() + 1}: ${response().preview}`} aria-current={active() === response().messageId ? "location" : undefined} data-forked={props.forkedTurns.has(response().turnId) || undefined} title={`Response ${index() + 1}${props.forkedTurns.has(response().turnId) ? " (forks here)" : ""}: ${response().preview}`} onClick={() => navigate(response())}><span /></button>}</Key>
+    <Key each={props.responses} by={response => response.messageId}>{(response, index) => <button type="button" class="response-navigator-marker" aria-label={`Go to agent response ${index() + 1}: ${response().preview}`} aria-current={active() === response().messageId ? "location" : undefined} data-forked={props.forked.has(response().messageId) || undefined} title={`Response ${index() + 1}${props.forked.has(response().messageId) ? " (forks here)" : ""}: ${response().preview}`} onClick={() => navigate(response())}><span /></button>}</Key>
   </nav></Show>;
 }

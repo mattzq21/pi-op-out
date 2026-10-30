@@ -36,3 +36,13 @@ test('the response rail shows only for two or more answers in a chat that scroll
   await page.getByTestId('messages').evaluate(root => { root.style.height = '5000px'; });
   await page.getByRole('navigation', { name: 'Agent responses' }).waitFor({ state: 'detached' });
 });
+
+test('the response rail lists answers that are not loaded and asks for them on a click', async t => {
+  const page = await open(t);
+  await page.getByRole('navigation', { name: 'Agent responses' }).waitFor();
+  await page.evaluate(() => window.setOlder(['Sketch the grammar']));
+  await page.getByRole('button', { name: 'Go to agent response 1: Sketch the grammar' }).waitFor();
+  assert.equal(await current(page), 'Go to agent response 2: Plan the parser', 'the reader is at the first loaded answer');
+  await page.getByRole('button', { name: 'Go to agent response 1: Sketch the grammar' }).click();
+  assert.deepEqual(await page.evaluate(() => window.revealed), ['older-0']);
+});

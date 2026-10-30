@@ -1,14 +1,14 @@
 import { kind, text } from './json';
 import { ownershipError } from './ownership';
 import { savedToolPayload } from './payload';
-import { olderHistory, recentHistory, turnWork } from './history_window';
+import { historyOutline, olderHistory, recentHistory, turnWork } from './history_window';
 import { ToolPayload } from './tool_payload';
 import type { Host } from './controller';
 
 /** A view that reads a conversation that another client owns. */
 export interface ReadonlyView { id: string; path: string | null }
 
-const READ_COMMANDS = ['get_snapshot', 'get_entries', 'get_state', 'get_session_revision', 'get_tool_payload', 'get_session_stats', 'get_older_history', 'get_turn_work'];
+const READ_COMMANDS = ['get_snapshot', 'get_entries', 'get_state', 'get_session_revision', 'get_tool_payload', 'get_session_stats', 'get_older_history', 'get_history_outline', 'get_turn_work'];
 
 /** Answers a read-only view: from the running session when there is one, or else from the saved conversation. */
 export async function readonlyCommand(host: Host, packet: any, target: ReadonlyView): Promise<any> {
@@ -59,7 +59,8 @@ function readSavedConversation(host: Host, target: ReadonlyView, command: any): 
   const snapshot = host.ownership().snapshot(target.id, target.path);
   switch (kind(command)) {
     case 'get_snapshot': if (command.recent === true && snapshot.history) recentHistory(snapshot.history, false); return snapshot;
-    case 'get_older_history': return olderHistory(snapshot.history ?? {}, command.before);
+    case 'get_older_history': return olderHistory(snapshot.history ?? {}, command.before, command.through);
+    case 'get_history_outline': return historyOutline(snapshot.history ?? {}, command.before);
     case 'get_turn_work': return turnWork(snapshot.history ?? {}, command.entryId);
     case 'get_entries': return snapshot.history ?? null;
     case 'get_state': return snapshot.state ?? null;
