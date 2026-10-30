@@ -15,7 +15,7 @@
 .diagram-dialog .diagram-toolbar { position: sticky; top: 0; }
 .diagram-viewport { height: calc(88vh - 44px); overflow: auto; overscroll-behavior: contain; cursor: grab; }
 .diagram-viewport:active { cursor: grabbing; }
-.diagram-canvas { padding: 16px; min-width: 0; }
+.diagram-canvas { padding: 16px; min-width: 0; margin: 0 auto; }
 .diagram-canvas > svg { display: block; width: 100%; height: auto; max-width: none !important; margin: auto; }
 .diagram-status, .message-body .diagram-status { margin: 0; padding: 10px 12px; color: var(--muted); font-size: 12px; }
 .diagram-error, .message-body .diagram-error { margin: 0; padding: 10px 12px; color: #c64f38; font-size: 12px; white-space: pre-wrap; }
