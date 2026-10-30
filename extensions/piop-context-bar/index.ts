@@ -169,7 +169,7 @@ function savedPromptParts(branch: ReturnType<ExtensionContext["sessionManager"][
   return { systemPrompt, tools };
 }
 
-type RequestTool = { name: string; description: string; parameters?: unknown };
+type RequestTool = { name: string; description: string; parameters?: unknown; deferred?: true };
 
 const isRecord = (value: unknown): value is Record<string, unknown> => typeof value === "object" && value !== null && !Array.isArray(value);
 
@@ -185,7 +185,7 @@ function requestTools(payload: unknown): RequestTool[] | undefined {
   const tools: RequestTool[] = [];
   const add = (value: unknown) => {
     if (!isRecord(value) || typeof value.name !== "string") return;
-    tools.push({ name: value.name, description: typeof value.description === "string" ? value.description : "", parameters: value.parameters ?? value.input_schema ?? value.parametersJsonSchema });
+    tools.push({ name: value.name, description: typeof value.description === "string" ? value.description : "", parameters: value.parameters ?? value.input_schema ?? value.parametersJsonSchema, ...value.defer_loading === true ? { deferred: true as const } : {} });
   };
 
   for (const item of lists.flat()) {

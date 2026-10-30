@@ -97,6 +97,7 @@ test('the panel lists the tools the provider request declares, and marks the one
 test('request tools are read from Anthropic and Google request shapes too', () => {
   const read = (payload) => { const chat = session({ tools: [{ name: 'read', description: 'Read files', parameters: {} }] }); chat.say('hi'); chat.turn(payload); return chat.panel().tools; };
   assert.deepEqual(read({ tools: [{ name: 'read', description: 'Read', input_schema: { type: 'object' } }] }), [{ name: 'read', description: 'Read', parameters: { type: 'object' } }]);
+  assert.deepEqual(read({ tools: [{ name: '__pi_deferred_placeholder__', description: 'Never call this.', input_schema: { type: 'object' }, defer_loading: true }] }), [{ name: '__pi_deferred_placeholder__', description: 'Never call this.', parameters: { type: 'object' }, deferred: true }]);
   assert.deepEqual(read({ config: { tools: [{ functionDeclarations: [{ name: 'read', description: 'Read', parametersJsonSchema: { type: 'object' } }] }] } }), [{ name: 'read', description: 'Read', parameters: { type: 'object' } }]);
   assert.deepEqual(read({ tools: [{ type: 'function', function: { name: 'read', description: 'Read', parameters: { type: 'object' } } }] }), [{ name: 'read', description: 'Read', parameters: { type: 'object' } }]);
 });

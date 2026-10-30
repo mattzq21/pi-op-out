@@ -41,7 +41,7 @@ export interface PromptContextInfo {
   systemPrompt: string;
   instructions: Array<{ path: string; content: string }>;
   /** codemode: whether codemode scripts can call the tool. Present only while codemode is active. */
-  tools: Array<{ name: string; description: string; parameters?: unknown; codemode?: boolean }>;
+  tools: Array<{ name: string; description: string; parameters?: unknown; codemode?: boolean; /** The request declares the tool but does not give it to the model yet. */ deferred?: true }>;
   skills: Array<{ name: string; description: string; filePath: string }>;
   userInvokedSkills?: Array<{ id?: string; name: string; description: string; filePath: string; content?: string }>;
   skillTokens?: { defined: number; invoked: number };

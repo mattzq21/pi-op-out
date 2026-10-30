@@ -35,7 +35,7 @@ export const promptContextSchema = z.object({
   inputTokens: z.number().int().positive().optional(),
   systemPrompt: z.string().catch(""),
   instructions: validItems(z.object({ path: z.string(), content: z.string().catch("") })).catch([]),
-  tools: validItems(z.object({ name: z.string(), description: z.string().catch(""), parameters: z.unknown().optional(), codemode: z.boolean().optional() })).catch([]),
+  tools: validItems(z.object({ name: z.string(), description: z.string().catch(""), parameters: z.unknown().optional(), codemode: z.boolean().optional(), deferred: z.literal(true).optional() })).catch([]),
   skills: validItems(skillSchema).catch([]),
   userInvokedSkills: validItems(skillSchema).optional().catch(undefined),
   skillTokens: z.object({ defined: z.number(), invoked: z.number() }).optional().catch(undefined),
