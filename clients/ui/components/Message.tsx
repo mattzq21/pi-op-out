@@ -293,7 +293,7 @@ export function Message(componentProps: Props) {
     return <><article tabIndex={-1} class={`message user-message${componentProps.message.deliveryBehavior === "steer" ? " steering-message" : ""}`} data-pin-id={pinId(componentProps.message)}>
       {images().length > 0 && <div class="user-message-images">{!hasBody() && <PinButton message={componentProps.message} text={pinLabel()} />}<Index each={images()}>{part => <ZoomableImage src={`data:${part().mimeType};base64,${part().data}`} alt="Sent attachment" />}</Index></div>}
       {hasBody() && <div class="message-body"><PinButton message={componentProps.message} text={pinLabel()} />
-      <Show when={parts().command}>{command => <span class="skill-reference command-reference">/{command()}</span>}</Show>{<Key each={parts().skills} by={(skill) => skill}>{(skill, _index) => <span class="skill-reference" >${skill()}</span>}</Key>}<Show when={parts().text}><Show when={parts().literalSkill} fallback={<Markdown>{parts().text}</Markdown>}><span class="literal-skill-content">{parts().text}</span></Show></Show>
+      <Show when={parts().command}>{command => <span class="skill-reference command-reference">/{command()}</span>}</Show>{<Key each={parts().skills} by={(skill) => skill}>{(skill, _index) => <span class="skill-reference" >${skill()}</span>}</Key>}<Show when={parts().text}><Show when={parts().literalSkill} fallback={<Markdown frontmatter>{parts().text}</Markdown>}><span class="literal-skill-content">{parts().text}</span></Show></Show>
       </div>}
       <div class="message-actions">
         {sentTime() && <span class="message-time">{required(sentTime()).short}</span>}

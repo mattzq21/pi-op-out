@@ -3,7 +3,7 @@ import { sessionReference } from "../lib/sessionDrop";
 import { required } from "../lib/required";
 import DOMPurify from "dompurify";
 import { Copy, FolderOpen } from "lucide-solid";
-import { Marked, Renderer } from "marked";
+import { Marked, Renderer, type MarkedExtension } from "marked";
 import { createEffect, createSignal, onCleanup, Show, useContext } from "solid-js";
 import { Portal } from "solid-js/web";
 import { openExternalUrl } from "../lib/nativeTransport";
@@ -14,45 +14,44 @@ import { diagramFenceClosed } from "../lib/diagrams";
 import { markdownBlocks } from "./markdownBlocks";
 import { streamingMarkdown } from "./streamingMarkdown";
 import { imageFileReference, markdownImages } from "./markdownImages";
-import { markdownHooks, markdownTokenizer } from "../lib/markdownTokenizer";
+import { frontmatterExtension, frontmatterTokenizer, markdownHooks, markdownTokenizer } from "../lib/markdownTokenizer";
 import { copyText } from "../lib/clipboard";
 import { canOpenFileLinks, fileLinkTooltip, MessageFileContext, openablePath, openMessageFile, revealMessageFile } from "../lib/messageFiles";
 
 const escapeHtml = (text: string) => text.replace(/[&<>"']/g, character => required(({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[character]));
 
-const parser = new Marked({
-  gfm: true,
-  tokenizer: markdownTokenizer,
-  hooks: markdownHooks,
-  renderer: {
-    html: ({ text }) => escapeHtml(text),
-    image: ({ href, text }) => {
-      if (!fileReference(href)) return `<span class="message-image-placeholder" role="img" aria-label="${escapeHtml(text || "Blocked remote image")}">[Image: ${escapeHtml(text || "blocked")}]</span>`;
-      const label = escapeHtml(text || href);
+const renderer: MarkedExtension["renderer"] = {
+  html: ({ text }) => escapeHtml(text),
+  image: ({ href, text }) => {
+    if (!fileReference(href)) return `<span class="message-image-placeholder" role="img" aria-label="${escapeHtml(text || "Blocked remote image")}">[Image: ${escapeHtml(text || "blocked")}]</span>`;
+    const label = escapeHtml(text || href);
 
-      return `<span class="message-image-placeholder" role="img" data-file-reference="${escapeHtml(href)}" data-image-label="${label}" aria-label="${label}">[Image: ${label}]</span>`;
-    },
-    link({ href, tokens }) {
-      const text = this.parser.parseInline(tokens);
-      if (sessionReference(href)) return `<button type="button" class="message-link" data-session-reference="${escapeHtml(href)}">${text}</button>`;
-      const url = webUrl(href);
-
-      if (url) return `<a class="message-link" href="${escapeHtml(url)}">${text}</a>`;
-
-      return fileReference(href) ? `<span class="message-link" data-file-reference="${escapeHtml(href)}">${text}</span>` : `<span class="message-link">${text}</span>`;
-    },
-    code({ text, lang, raw }) {
-      const language = lang?.split(/\s/)[0];
-
-      if (language?.toLowerCase() === "mermaid") return `<div class="diagram-placeholder" data-complete="${diagramFenceClosed(raw)}"><pre><code>${escapeHtml(text)}</code></pre></div>`;
-
-      return `<div class="code-block"><pre><code${language ? ` class="language-${escapeHtml(language)}"` : ""}>${escapeHtml(text)}\n</code></pre><button type="button" class="icon-button code-copy" aria-label="Copy code" data-tooltip="Copy code">⧉</button></div>`;
-    },
-    table(token) {
-      return `<div class="table-block" data-markdown="${escapeHtml(token.raw.trim())}">${Renderer.prototype.table.call(this, token)}<button type="button" class="icon-button table-copy" aria-label="Copy table" data-tooltip="Copy table">⧉</button></div>`;
-    },
+    return `<span class="message-image-placeholder" role="img" data-file-reference="${escapeHtml(href)}" data-image-label="${label}" aria-label="${label}">[Image: ${label}]</span>`;
   },
-});
+  link({ href, tokens }) {
+    const text = this.parser.parseInline(tokens);
+    if (sessionReference(href)) return `<button type="button" class="message-link" data-session-reference="${escapeHtml(href)}">${text}</button>`;
+    const url = webUrl(href);
+
+    if (url) return `<a class="message-link" href="${escapeHtml(url)}">${text}</a>`;
+
+    return fileReference(href) ? `<span class="message-link" data-file-reference="${escapeHtml(href)}">${text}</span>` : `<span class="message-link">${text}</span>`;
+  },
+  code({ text, lang, raw }) {
+    const language = lang?.split(/\s/)[0];
+
+    if (language?.toLowerCase() === "mermaid") return `<div class="diagram-placeholder" data-complete="${diagramFenceClosed(raw)}"><pre><code>${escapeHtml(text)}</code></pre></div>`;
+
+    return `<div class="code-block"><pre><code${language ? ` class="language-${escapeHtml(language)}"` : ""}>${escapeHtml(text)}\n</code></pre><button type="button" class="icon-button code-copy" aria-label="Copy code" data-tooltip="Copy code">⧉</button></div>`;
+  },
+  table(token) {
+    return `<div class="table-block" data-markdown="${escapeHtml(token.raw.trim())}">${Renderer.prototype.table.call(this, token)}<button type="button" class="icon-button table-copy" aria-label="Copy table" data-tooltip="Copy table">⧉</button></div>`;
+  },
+};
+
+const parser = new Marked({ gfm: true, tokenizer: markdownTokenizer, hooks: markdownHooks, renderer });
+
+const frontmatterParser = new Marked({ gfm: true, tokenizer: frontmatterTokenizer, hooks: markdownHooks, renderer, extensions: [frontmatterExtension] });
 
 let purifier: ReturnType<typeof DOMPurify> | undefined;
 
@@ -78,11 +77,11 @@ function sanitizeMarkdown(html: string, streaming: boolean, detectFiles: boolean
 /** text: the web address or the full file path that the menu copies. */
 type LinkMenu = { kind: "web" | "file"; text: string; href?: string; x: number; y: number; returnFocus?: HTMLElement };
 
-/** fileLinks: plain absolute and ~ paths in the text become file links. */
-export function Markdown(props: { children: string; streaming?: boolean; imageProject?: FileProject; fileLinks?: boolean }) {
+/** fileLinks: plain absolute and ~ paths in the text become file links. frontmatter: "---" blocks of "key: value" lines show as code. */
+export function Markdown(props: { children: string; streaming?: boolean; imageProject?: FileProject; fileLinks?: boolean; frontmatter?: boolean }) {
   const pathLinks = () => Boolean(props.fileLinks) && canOpenFileLinks;
   const allowFile = (value: string) => Boolean(props.imageProject && imageFileReference(value)) || (pathLinks() && openablePath(value));
-  const renderMarkdown = streamingMarkdown(parser, (html, streaming, detectFiles) => sanitizeMarkdown(html, streaming, detectFiles, allowFile));
+  const renderMarkdown = streamingMarkdown(props.frontmatter ? frontmatterParser : parser, (html, streaming, detectFiles) => sanitizeMarkdown(html, streaming, detectFiles, allowFile));
   const [error, setError] = createSignal<string>();
   const fileScope = useContext(MessageFileContext);
   const sessionLinks = useContext(SessionLinkContext);
