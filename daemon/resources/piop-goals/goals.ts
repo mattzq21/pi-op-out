@@ -1,6 +1,7 @@
 import { extendedHooks } from "../hooks-extended/interface.ts";
 import { restoreGoalAttachments } from "../piop-storage/goal-files.ts";
 import type { ExtensionAPI, ExtensionContext, AgentBeforeSettleEventResult } from "@earendil-works/pi-coding-agent";
+import { getCurrentTools } from "@earendil-works/pi-ai";
 import { GoalState, GOAL_CONTEXT, type Goal } from "./state.ts";
 import { goalChangedPrompt, goalPrompt } from "./prompts.ts";
 import { GoalCoordination } from "./coordination.ts";
@@ -12,13 +13,29 @@ import { queueHold } from "../session-broker/queue-hold.ts";
 /** A notice that the user changed the goal. It is saved where the change happened, and the model gets it there as a system message. */
 const GOAL_CHANGE = "piop-goal-change";
 
+const GOAL_TOOL = "update_goal_status";
+
 interface AgentsReady { ctx: ExtensionContext }
+
+interface RequiredToolsRequest { ctx: ExtensionContext; tools: string[]; withheldTools: string[]; availableTools?: string[] }
 
 declare module "@earendil-works/pi-coding-agent" {
   interface EventBus {
     on(channel: "piop:agents:ready", handler: (event: AgentsReady) => void): () => void;
     emit(channel: "piop:agents:ready", event: AgentsReady): void;
+    on(channel: "piop:required-tools", handler: (request: RequiredToolsRequest) => void): () => void;
+    emit(channel: "piop:required-tools", request: RequiredToolsRequest): void;
   }
+}
+
+/** From the transcript: whether the prompt declares the goal tool, and whether a compaction came after the last model reply. */
+function transcriptTool(ctx: ExtensionContext) {
+  const branch = ctx.sessionManager.getBranch();
+  const messages = branch.flatMap(entry => entry.type === "message" ? [entry.message] : []);
+  const compaction = branch.findLastIndex(entry => entry.type === "compaction");
+  const reply = branch.findLastIndex(entry => entry.type === "message" && entry.message.role === "assistant");
+
+  return { declared: getCurrentTools(messages).some(tool => tool.name === GOAL_TOOL), compacted: compaction > reply };
 }
 
 function persistent(ctx: ExtensionContext) {
@@ -42,7 +59,37 @@ export function registerGoals(pi: ExtensionAPI): { session: GoalSession; core: G
   let restored = false;
   let runSignal: AbortSignal | undefined;
 
-  const allowed = () => pi.getActiveTools().includes("update_goal_status");
+  /** The agent's tools include the goal tool. */
+  let permitted = false;
+  /** The goal tool is in the prompt: from goal creation until the first message after a compaction without a goal. */
+  let declared = false;
+  /** A compaction happened and the next message has not started yet. */
+  let recheck = false;
+  let running = false;
+
+  /** A goal that is active or paused. */
+  const live = () => !!state.goal && state.goal.status !== "complete";
+
+  /** Puts the goal tool in the active tools, or takes it out, as declared says. */
+  const syncTool = () => {
+    const active = pi.getActiveTools();
+    const shown = declared && permitted;
+
+    if (shown !== active.includes(GOAL_TOOL)) pi.setActiveTools(shown ? [...active, GOAL_TOOL] : active.filter(name => name !== GOAL_TOOL));
+  };
+
+  const declare = () => { if (live() && !declared) { declared = true; syncTool(); } };
+
+  /** The first message after a compaction drops the goal tool when there is no goal. */
+  const recheckTool = () => {
+    if (!recheck) return;
+    recheck = false;
+
+    if (live()) return;
+    declared = false; syncTool();
+  };
+
+  const allowed = () => permitted && (!declared || pi.getActiveTools().includes(GOAL_TOOL));
 
   const assertAvailable = (ctx: ExtensionContext) => {
     if (!persistent(ctx)) throw new Error("Goals require a saved conversation.");
@@ -74,6 +121,7 @@ export function registerGoals(pi: ExtensionAPI): { session: GoalSession; core: G
   /** Saves the goal and the change notice, unless the notice is null. */
   const changed = (ctx: ExtensionContext, prompt: string | null = goalChangedPrompt(state.goal)) => {
     state.save(ctx);
+    declare();
 
     if (prompt !== null) notice(prompt);
   };
@@ -91,6 +139,9 @@ export function registerGoals(pi: ExtensionAPI): { session: GoalSession; core: G
       state.restore(ctx);
 
       if (!persistent(ctx)) { state.goal = null; state.publish(ctx); }
+
+      const transcript = transcriptTool(ctx);
+      declared = live() || transcript.declared; recheck = transcript.compacted; syncTool();
 
       if (state.goal) await restoreGoalAttachments(ctx, state.goal.objective);
 
@@ -117,6 +168,19 @@ export function registerGoals(pi: ExtensionAPI): { session: GoalSession; core: G
     start(ctx);
     });
   });
+
+  const requiredTools = pi.events.on("piop:required-tools", request => {
+    permitted = request.availableTools?.includes(GOAL_TOOL) ?? false;
+
+    if (!declared) request.withheldTools.push(GOAL_TOOL);
+  });
+
+  // A compaction during a run comes right before the next model request; between runs, the next run's start decides.
+  pi.on("session_compact", () => { recheck = true; if (running) recheckTool(); });
+  pi.on("before_agent_start", () => { recheckTool(); });
+
+  pi.on("agent_start", () => { running = true; });
+  pi.on("agent_settled", () => { running = false; });
 
   pi.on("agent_start", (_event, ctx) => coordination.run(ctx, () => {
     context = ctx; starting = false;
@@ -195,7 +259,7 @@ export function registerGoals(pi: ExtensionAPI): { session: GoalSession; core: G
   pi.on("session_shutdown", (_event, ctx) => coordination.run(ctx, () => {
     if (context) state.save(context);
 
-    ready(); publish(); released?.(); released = undefined; inputReleased?.(); inputReleased = undefined;
+    ready(); publish(); requiredTools(); released?.(); released = undefined; inputReleased?.(); inputReleased = undefined;
   }));
 
   return { session, core };

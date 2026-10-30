@@ -353,7 +353,7 @@ export default async function defineAgents(pi: ExtensionAPI) {
 
   pi.on("tool_call", (event, ctx) => {
     const agent = currentAgent();
-    const required: RequiredToolsRequest = { ctx, tools: [], availableTools: agent?.tools }; pi.events.emit("piop:required-tools", required);
+    const required: RequiredToolsRequest = { ctx, tools: [], withheldTools: [], availableTools: agent?.tools }; pi.events.emit("piop:required-tools", required);
     const allowed = agent && !activeToolError && new Set([...agent.tools, ...extensions.tools(), ...currentMcpTools(true), ...required.tools]);
 
     if (!allowed || !allowed.has(event.toolName) || toolDisabledForAgent(event.toolName, agent)) {
@@ -600,9 +600,11 @@ export default async function defineAgents(pi: ExtensionAPI) {
 
     return unloadExtensions(fastModeFailure, ctx); }
     const tools = new Set([...agent.tools, ...extensions.tools(), ...currentMcpTools()]);
-    const required: RequiredToolsRequest = { ctx, tools: [], availableTools: [...tools] }; pi.events.emit("piop:required-tools", required);
+    const required: RequiredToolsRequest = { ctx, tools: [], withheldTools: [], availableTools: [...tools] }; pi.events.emit("piop:required-tools", required);
 
     for (const tool of required.tools) tools.add(tool);
+
+    for (const tool of required.withheldTools) tools.delete(tool);
     applyCodemode(agent, tools);
     pi.setActiveTools([...tools]);
 
