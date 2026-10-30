@@ -5,6 +5,7 @@ import { mockIPC, clearMocks } from '../mock-ipc.mjs';
 import { emit } from '@tauri-apps/api/event';
 import * as native from '../../clients/ui/lib/nativeTransport.ts';
 import { appSettings } from '../settings-fixture.mjs';
+import { clearDraftCatalogs } from '../../clients/ui/lib/draftRuntime.ts';
 
 describe('native transport', () => {
 let calls, responses, transports, dom;
@@ -30,6 +31,7 @@ beforeEach(() => {
 afterEach(async () => {
   for (const transport of transports) await transport.disconnect();
   clearMocks();
+  clearDraftCatalogs();
   dom.restore();
 });
 
@@ -57,6 +59,31 @@ test('a draft agent reload that finishes after the first message does not replac
   finishReload();
   await assert.rejects(reload, /conversation started before agent definitions finished reloading/);
   assert.deepEqual(statuses, []);
+});
+
+test('starting a draft applies its displayed model and effort after selecting the agent', async () => {
+  clearDraftCatalogs();
+  responses.set('provider_auth', {
+    config: { agents: [{ name: 'general', isDefault: true, model: 'p/shown', effort: 'high', path_systemprompt: 'p.md', path_agent_prompt: '', tools: [], skills: [], mcpServers: {} }] },
+    models: [{ provider: 'p', id: 'shown', reasoning: true }], initialModel: null, initialThinking: 'low', commands: [], commandDetails: [], skills: [],
+  });
+  const state = { isStreaming: false, messageCount: 0, pendingMessageCount: 0, sessionId: 'temporary', sessionFile: '/tmp/chat/session.jsonl', model: { provider: 'p', id: 'fallback' }, thinkingLevel: 'low' };
+  responses.set('pi_command:get_state', () => ({ ...state }));
+  responses.set('pi_command:select_agent', () => { state.model = { provider: 'p', id: 'fallback' }; state.thinkingLevel = 'low'; return {}; });
+  responses.set('pi_command:set_model', ({ command }) => { state.model = { provider: command.provider, id: command.modelId }; return {}; });
+  responses.set('pi_command:set_thinking_level', ({ command }) => { state.thinkingLevel = command.level; return {}; });
+  responses.set('pi_command:set_fast_mode', {});
+  const client = transport({});
+  await client.connect();
+  await client.applyNewChatDefaults('', false);
+  await client.startDraft();
+  assert.deepEqual(state.model, { provider: 'p', id: 'shown' });
+  assert.equal(state.thinkingLevel, 'high');
+  assert.deepEqual(commands('pi_command').map(call => call.args.command).filter(command => ['select_agent', 'set_model', 'set_thinking_level'].includes(command.type)), [
+    { type: 'select_agent', agent: 'general' },
+    { type: 'set_model', provider: 'p', modelId: 'shown' },
+    { type: 'set_thinking_level', level: 'high' },
+  ]);
 });
 
 test('a new worktree draft sends its branch choice once and uses the returned folder', async () => {

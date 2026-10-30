@@ -32,7 +32,7 @@ test('a draft records the default agent it shows, so sending starts that agent e
   const { draft, shown } = hostDraft(t);
   await draft.applyDefaults('medium', false);
   assert.equal(shown(), 'general');
-  assert.deepEqual([...draft.changes.values()], [{ type: 'select_agent', agent: 'general' }]);
+  assert.deepEqual([...draft.changes.values()], [{ type: 'select_agent', agent: 'general' }, { type: 'set_model', provider: 'p', modelId: 'plain' }, { type: 'set_thinking_level', level: 'off' }]);
 });
 
 test('an unchanged draft shows the new default agent with its model, thinking level and fast mode after a reload', async t => {
@@ -40,7 +40,7 @@ test('an unchanged draft shows the new default agent with its model, thinking le
   await draft.applyDefaults('medium', false);
   await changeDefault();
   assert.equal(shown(), 'chosen');
-  assert.deepEqual([...draft.changes.values()], [{ type: 'select_agent', agent: 'chosen' }]);
+  assert.deepEqual([...draft.changes.values()], [{ type: 'select_agent', agent: 'chosen' }, { type: 'set_model', provider: 'p', modelId: 'fast' }, { type: 'set_thinking_level', level: 'low' }]);
   const state = await draft.command({ type: 'get_state' });
   assert.deepEqual([state.model?.id, state.thinkingLevel, draft.fastMode], ['fast', 'low', true]);
 });
@@ -76,6 +76,24 @@ test('choosing an agent without its own model or effort starts the chat with the
   assert.equal(state.model?.id, 'plain');
   assert.deepEqual([...draft.changes.values()], [{ type: 'select_agent', agent: 'bare' }, { type: 'set_model', provider: 'p', modelId: 'plain' }, { type: 'set_thinking_level', level: state.thinkingLevel }]);
 });
+
+for (const selection of ['default', 'selected', 'fallback']) {
+  test(`sending the ${selection} agent passes the shown model and effort even when startup uses different settings`, async t => {
+    const { draft, host } = hostDraft(t);
+    host.config = selection === 'fallback' ? { agents: [agent('general', { isDefault: true })] } : chosenDefault;
+    host.initialModel = 'p/thinker';
+    host.initialThinking = 'high';
+    await draft.applyDefaults('', false);
+    if (selection === 'selected') await draft.command({ type: 'select_agent', agent: 'chosen' });
+    const shown = await draft.command({ type: 'get_state' });
+    const commands = [...draft.changes.values()];
+    assert.deepEqual(commands, [
+      { type: 'select_agent', agent: selection === 'fallback' ? 'general' : 'chosen' },
+      { type: 'set_model', provider: shown.model.provider, modelId: shown.model.id },
+      { type: 'set_thinking_level', level: shown.thinkingLevel },
+    ]);
+  });
+}
 
 for (const [choice, change] of [
   ['agent', draft => draft.command({ type: 'select_agent', agent: 'general' })],

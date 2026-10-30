@@ -114,6 +114,8 @@ export class DraftRuntime {
     this.fast = agent.fastMode ?? fastMode;
     this.changes.delete("set_model"); this.changes.delete("set_thinking_level");
     this.changes.set("select_agent", { type: "select_agent", agent: agent.name }); this.revision++;
+    if (model) this.changes.set("set_model", { type: "set_model", provider: model.provider, modelId: model.id });
+    this.changes.set("set_thinking_level", { type: "set_thinking_level", level: this.state.thinkingLevel });
     this.emit({ type: "extension_ui_request", id: crypto.randomUUID(), method: "setStatus", statusKey: "pi-desktop-fast-mode", statusText: this.fast ? "Fast mode on" : "Fast mode off" });
     this.publishAgents();
   }
@@ -147,9 +149,8 @@ export class DraftRuntime {
     this.fast = agent.fastMode ?? this.defaultFastMode;
     this.changes.delete("set_model"); this.changes.delete("set_thinking_level");
     this.changes.set("select_agent", { type: "select_agent", agent: name }); this.revision++;
-    // An agent without its own model or effort keeps the shown ones. The chat must start with what the composer shows.
-    if (!model && this.state.model) this.changes.set("set_model", { type: "set_model", provider: this.state.model.provider, modelId: this.state.model.id });
-    if (!agent.effort) this.changes.set("set_thinking_level", { type: "set_thinking_level", level: this.state.thinkingLevel });
+    if (this.state.model) this.changes.set("set_model", { type: "set_model", provider: this.state.model.provider, modelId: this.state.model.id });
+    this.changes.set("set_thinking_level", { type: "set_thinking_level", level: this.state.thinkingLevel });
     this.emit({ type: "extension_ui_request", id: crypto.randomUUID(), method: "setStatus", statusKey: "pi-desktop-fast-mode", statusText: this.fastMode ? "Fast mode on" : "Fast mode off" });
     this.publishAgents();
 
