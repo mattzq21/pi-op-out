@@ -15,8 +15,9 @@ function text(message) {
   return Check(Type.String(), message.content) ? message.content : Array.isArray(message.content) ? message.content.filter(p => p.type === 'text').map(p => p.text || '').join('\n') : '';
 }
 
+/** A user prompt as the chat list shows it: each leading skill block becomes "$name". */
 function userPrompt(content) {
-  return content.replace(/^(?:\s*<skill\b[^>]*>\s*[\s\S]*?<\/skill>\s*)+/, '').trim();
+  return content.replace(/^(?:\s*<skill\b[^>]*>[\s\S]*?<\/skill>\s*)+/, blocks => [...blocks.matchAll(/<skill\b[^>]*\bname="([^"]*)"/g)].map(match => `$${match[1]} `).join('')).trim();
 }
 
 function timestamp(value) {

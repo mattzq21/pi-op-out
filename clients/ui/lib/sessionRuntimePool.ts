@@ -1,4 +1,4 @@
-import { capSessionName } from "./sessionName";
+import { capSessionName, promptTitle } from "./sessionName";
 import { agentStateSchema } from "./responseSchemas";
 import { extensionUiSchema } from "./extensionUiSchema";
 import { wireMessageSchema } from "./messageSchemas";
@@ -154,7 +154,7 @@ export class SessionRuntimePool {
 
     if (event.type === "message_start" && parsed.success && parsed.data.role === "user") {
       const message = parsed.data;
-      const prompt = textOf(message.content); const timestamp = Number(message.timestamp);
+      const prompt = promptTitle(textOf(message.content)); const timestamp = Number(message.timestamp);
       this.retainSession(transport, prompt, Number.isFinite(timestamp) && timestamp > 0 ? timestamp : Date.now());
     }
   }
