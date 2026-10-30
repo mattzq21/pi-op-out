@@ -36,7 +36,7 @@ export async function agentFixture(t, options = {}) {
   const previous = { ...process.env };
 
   for (const name of ['PI_DEFINE_AGENTS_RUNTIME_DEFAULTS', 'PI_DEFINE_AGENTS_ACTIVE', 'PIOP_AGENT_DRAFT_STATE', 'PI_DESKTOP_MCP_CONFIG', 'PIOP_STORAGE_DIRECTORY']) delete process.env[name];
-  Object.assign(process.env, { HOME: home }, options.env);
+  Object.assign(process.env, { HOME: home, PIOP_AGENT_CONFIG_PATH: join(dir, 'config.json') }, options.env);
   t.after(async () => {
     for (const key of Object.keys(process.env)) if (!(key in previous)) delete process.env[key];
     Object.assign(process.env, previous);
