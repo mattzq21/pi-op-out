@@ -53,6 +53,7 @@
     "@capacitor/app": "^8.1.1",
     "@capacitor/browser": "^8.0.4",
     "@capacitor/core": "^8.5.2",
+    "@mermaid-js/layout-elk": "^0.2.3",
     "@solid-primitives/keyed": "^1.5.3",
     "@tauri-apps/api": "^2.8.0",
     "@xterm/addon-fit": "^0.10.0",

@@ -1,7 +1,14 @@
 import { required } from "./required";
 import DOMPurify from "dompurify";
 
-let renderer: Promise<typeof import("mermaid")> | undefined;
+let renderer: Promise<typeof import("mermaid").default> | undefined;
+
+async function loadRenderer() {
+  const [{ default: mermaid }, { default: elkLayouts }] = await Promise.all([import("mermaid"), import("@mermaid-js/layout-elk")]);
+  mermaid.registerLayoutLoaders(elkLayouts);
+
+  return mermaid;
+}
 
 let queue = Promise.resolve();
 
@@ -56,13 +63,14 @@ async function render(source: string) {
 
   const body = source.replace(/^\s*---\r?\ntitle:[^\r\n]*\r?\n---\r?\n/, "");
   if (/%%\s*\{|^\s*---/.test(body)) throw new Error("Remove Mermaid configuration directives or frontmatter; piop manages diagram styling.");
-  renderer ??= import("mermaid").catch(error => { renderer = undefined; throw error; });
-  const { default: mermaid } = await renderer;
+  renderer ??= loadRenderer().catch(error => { renderer = undefined; throw error; });
+  const mermaid = await renderer;
   mermaid.initialize({
     startOnLoad: false,
     securityLevel: "strict",
     suppressErrorRendering: true,
     theme: "dark",
+    layout: "elk",
     fontFamily: "Arial, sans-serif",
     htmlLabels: false,
     flowchart: { htmlLabels: false },
