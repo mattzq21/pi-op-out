@@ -1,9 +1,11 @@
+import { findSkillReference } from "../lib/composerPrompt";
 import { sessionReference } from "../lib/sessionDrop";
 
 /**
  * The message box of the composer. It works like a textarea: `value`, `selectionStart`, `selectionEnd`, `setSelectionRange`,
  * `readOnly`, `placeholder`, and "input" and "select" events. All offsets are offsets in `value`, the Markdown text.
  * Links to chats show as links. Each link is one unit: the caret goes before or after it, never into it.
+ * The `$skill` reference that the message uses shows highlighted. It stays normal editable text.
  */
 export const COMPOSER_FIELD_TAG = "piop-composer-field";
 
@@ -29,6 +31,30 @@ export function sessionLinkSegments(value: string): Segment[] {
   return result;
 }
 
+/** The segments of `value`, with the used skill reference split out of its text segment. */
+type FieldSegment = Segment | { skill: string };
+
+function fieldSegments(value: string, skills: ReadonlyMap<string, string>): FieldSegment[] {
+  const segments: FieldSegment[] = sessionLinkSegments(value);
+  const skill = findSkillReference(value, skills);
+
+  if (!skill) return segments;
+  let at = 0;
+
+  return segments.flatMap((segment): FieldSegment[] => {
+    const start = at;
+    at += "markdown" in segment ? segment.markdown.length : "text" in segment ? segment.text.length : segment.skill.length;
+
+    if (!("text" in segment) || skill.start < start || skill.end > at) return [segment];
+    const before = segment.text.slice(0, skill.start - start);
+    const after = segment.text.slice(skill.end - start);
+
+    return [...before ? [{ text: before }] : [], { skill: segment.text.slice(skill.start - start, skill.end - start) }, ...after ? [{ text: after }] : []];
+  });
+}
+
+const isSkillMark = (node: Node) => node instanceof HTMLElement && node.classList.contains("composer-skill");
+
 const linkMarkdown = (node: Node) => node instanceof HTMLElement ? node.dataset.markdown : undefined;
 
 /** A <br> as the last child only keeps an empty last line visible. It is not text. */
@@ -51,6 +77,7 @@ export class ComposerFieldElement extends HTMLElement {
   #value = "";
   #selection = { start: 0, end: 0 };
   #readOnly = false;
+  #skills: ReadonlyMap<string, string> = new Map();
   /** An input method is composing text. The DOM then belongs to it and is not rendered again. */
   #composing = false;
 
@@ -95,6 +122,21 @@ export class ComposerFieldElement extends HTMLElement {
 
   set readOnly(next: boolean) { this.#readOnly = Boolean(next); this.#applyEditable(); }
 
+  /** Known skill names by their lowercase form. */
+  get skills() { return this.#skills; }
+
+  set skills(next: ReadonlyMap<string, string>) {
+    this.#skills = next ?? new Map();
+
+    if (this.#composing || this.#canonical()) return;
+    const focused = this.#focused();
+
+    if (focused) this.#readSelection();
+    this.#render();
+
+    if (focused) this.#applySelection();
+  }
+
   get placeholder() { return this.getAttribute("placeholder") ?? ""; }
 
   set placeholder(next: string) { if (next) this.setAttribute("placeholder", next); else this.removeAttribute("placeholder"); }
@@ -122,7 +164,7 @@ export class ComposerFieldElement extends HTMLElement {
   #focused() { return document.activeElement === this; }
 
   #canonical() {
-    const plan = sessionLinkSegments(this.#value);
+    const plan = fieldSegments(this.#value, this.#skills);
     const nodes = Array.from(this.childNodes).filter(node => !(node instanceof Text) || node.data);
     const filler = this.#value.endsWith("\n") ? 1 : 0;
 
@@ -131,13 +173,25 @@ export class ComposerFieldElement extends HTMLElement {
     return plan.every((segment, index) => {
       const node = nodes[index];
 
-      return "text" in segment ? node instanceof Text && node.data === segment.text : linkMarkdown(node) === segment.markdown && node.textContent === segment.label;
+      if ("text" in segment) return node instanceof Text && node.data === segment.text;
+
+      if ("skill" in segment) return isSkillMark(node) && node.childNodes.length === 1 && node.firstChild instanceof Text && node.textContent === segment.skill;
+
+      return linkMarkdown(node) === segment.markdown && node.textContent === segment.label;
     });
   }
 
   #render() {
-    const nodes: Node[] = sessionLinkSegments(this.#value).map(segment => {
+    const nodes: Node[] = fieldSegments(this.#value, this.#skills).map(segment => {
       if ("text" in segment) return document.createTextNode(segment.text);
+
+      if ("skill" in segment) {
+        const mark = document.createElement("span");
+        mark.className = "composer-skill";
+        mark.textContent = segment.skill;
+
+        return mark;
+      }
       const link = document.createElement("span");
       link.className = "composer-session-link";
       link.setAttribute("contenteditable", "false");
@@ -166,6 +220,8 @@ export class ComposerFieldElement extends HTMLElement {
 
     if (node === top && top instanceof Text) return start + offset;
 
+    if (isSkillMark(top) && node !== top) return start + Math.min(offset, nodeText(top).length);
+
     return start + (node === top && offset === 0 ? 0 : nodeText(top).length);
   }
 
@@ -180,6 +236,8 @@ export class ComposerFieldElement extends HTMLElement {
       if (child instanceof Text && remaining <= length) return [child, remaining];
 
       if (remaining === 0) return [this, index];
+
+      if (isSkillMark(child) && child.firstChild && remaining < length) return [child.firstChild, remaining];
 
       if (remaining < length) return [this, index + 1];
       remaining -= length;
@@ -261,7 +319,7 @@ if (!customElements.get(COMPOSER_FIELD_TAG)) customElements.define(COMPOSER_FIEL
 declare module "solid-js" {
   namespace JSX {
     interface IntrinsicElements {
-      "piop-composer-field": HTMLAttributes<ComposerFieldElement> & { value?: string; readOnly?: boolean; placeholder?: string };
+      "piop-composer-field": HTMLAttributes<ComposerFieldElement> & { value?: string; skills?: ReadonlyMap<string, string>; readOnly?: boolean; placeholder?: string };
     }
   }
 }

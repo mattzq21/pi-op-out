@@ -335,3 +335,19 @@ test('on a wide screen the chat settings show in the message bar without a menu 
   assert.equal(await page.getByRole('button', { name: /^Chat settings: / }).isVisible(), false);
   assert.equal(await page.getByRole('group', { name: 'Chat settings' }).getByRole('button', { name: /^Thinking level/ }).isVisible(), true);
 });
+
+test('the used skill reference is highlighted while it stays editable text', async t => {
+  const page = await controlsPage(t);
+  const editor = page.getByRole('textbox', { name: 'Message piop' });
+  await editor.click();
+  await page.keyboard.type('Make a $research of $research');
+  await page.keyboard.press('Escape');
+  const marks = () => editor.evaluate(node => [...node.querySelectorAll('.composer-skill')].map(mark => mark.textContent));
+  assert.deepEqual(await marks(), ['$research']);
+  assert.equal(await editor.evaluate(node => node.value), 'Make a $research of $research');
+  await editor.evaluate(node => node.setSelectionRange(16, 16));
+  await page.keyboard.type('x');
+  assert.equal(await editor.evaluate(node => node.value), 'Make a $researchx of $research');
+  assert.deepEqual(await marks(), ['$research']);
+  assert.equal(await editor.evaluate(node => node.selectionStart), 17);
+});

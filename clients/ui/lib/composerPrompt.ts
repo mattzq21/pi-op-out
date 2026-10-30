@@ -35,35 +35,36 @@ const proseOnly = (value: string) => value.replace(/(^|\n)( {0,3})(`{3,}|~{3,})[
 
 export const skillReference = (value: string) => value.match(/(?:^|[\s([{])\$([a-zA-Z0-9_-]*)$/)?.[1]?.toLowerCase();
 
-function expandSkillReference(value: string, commands: SlashCommand[]) {
-  if (value.startsWith("/") || !value.includes("$")) return value;
-  let skills: Map<string, string> | undefined;
-  const reference = /(^|[^a-zA-Z0-9_$])\$([a-zA-Z0-9][a-zA-Z0-9_-]*)\b/g;
-  let primary: string | undefined;
-  let rest = value;
-  const prose = proseOnly(value);
+/** Skill names by their lowercase form. */
+export const skillNames = (commands: SlashCommand[]) => new Map(commands.flatMap((command): Array<[string, string]> => { const name = skillName(command);
 
-  for (const match of prose.matchAll(reference)) {
-    skills ??= new Map(commands.flatMap((command): Array<[string, string]> => { const name = skillName(command);
+  return name ? [[name.toLowerCase(), name]] : []; }));
 
-    return name ? [[name.toLowerCase(), name]] : []; }));
+/** The `$skill` reference that the message uses, if any. Only the first known skill in the prose counts. */
+export function findSkillReference(value: string, skills: ReadonlyMap<string, string>) {
+  if (value.trimStart().startsWith("/") || !value.includes("$") || !skills.size) return undefined;
+
+  for (const match of proseOnly(value).matchAll(/(^|[^a-zA-Z0-9_$])\$([a-zA-Z0-9][a-zA-Z0-9_-]*)\b/g)) {
     const name = skills.get(match[2].toLowerCase());
 
-    if (!name || match.index === undefined) continue;
+    if (!name) continue;
+    const start = match.index + match[1].length;
 
-    if (!primary) primary = name;
-    const token = match[0].slice(match[1].length);
-    const at = match.index + match[1].length;
-    const before = rest.slice(0, at);
-    const after = rest.slice(at + token.length);
-    rest = before + (/\s$/.test(before) && /^[ \t]/.test(after) ? after.slice(1) : after);
-    break;
+    return { name, start, end: start + match[2].length + 1 };
   }
 
-  if (!primary) return value;
-  rest = rest.trim();
+  return undefined;
+}
 
-  return `/skill:${primary}${rest ? ` ${rest}` : ""}`;
+function expandSkillReference(value: string, commands: SlashCommand[]) {
+  const found = findSkillReference(value, skillNames(commands));
+
+  if (!found) return value;
+  const before = value.slice(0, found.start);
+  const after = value.slice(found.end);
+  const rest = (before + (/\s$/.test(before) && /^[ \t]/.test(after) ? after.slice(1) : after)).trim();
+
+  return `/skill:${found.name}${rest ? ` ${rest}` : ""}`;
 }
 
 const escapeAttribute = (value: string) => value.replace(/[&<>"']/g, (character) => required(({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&apos;" })[character]));

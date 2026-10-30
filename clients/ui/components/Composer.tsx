@@ -11,7 +11,7 @@ import { isTauri } from "@tauri-apps/api/core";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { createMemo,createSelector,createSignal,Show,splitProps } from "solid-js";
 import { createFilePaste } from "../lib/filePaste";
-import { buildComposerPrompt,composerReference,isPromptCommand,skillName } from "../lib/composerPrompt";
+import { buildComposerPrompt,composerReference,isPromptCommand,skillName,skillNames } from "../lib/composerPrompt";
 import { createDependencyEffect,createMemoFields,createRef,cssPixels,type CSSProperties,type JSXElement,type KeyboardEvent,type StateUpdate } from "../lib/solid";
 import { useComposerAttachments } from "../lib/useComposerAttachments";
 import { stageComposerDraft, type DraftSubmissionHandle, type StageDraftSubmission } from "../lib/draftSubmission";
@@ -271,6 +271,7 @@ export function Composer(props: Props) {
   });
 
   const commandQuery = createMemo(() => reference()?.marker === "/" ? reference()?.query : undefined);
+  const knownSkills = createMemo(() => skillNames(composer().commands));
   const skillQuery = createMemo(() => reference()?.marker === "$" ? reference()?.query : undefined);
 
   const visibleCommands = createMemo(() => {
@@ -570,7 +571,7 @@ export function Composer(props: Props) {
     </div>}</Show>);
 
     const renderComposerEditor = () => (<div class="composer-editor">
-        <piop-composer-field ref={element => { ref.current = element; }} classList={{ "pending-edit": Boolean(editingPending()) }} aria-label="Message piop" readOnly={props.ownershipRequired || savingEdit()} onFocus={() => { setPaletteDismissed(false); if (props.ownershipRequired) void props.onTakeOwnership?.(); }} placeholder={props.ownershipRequired ? "" : composer().streaming || props.queueHeld ? "Queue a follow-up…" : "Ask piop to build, explain, or change anything…"} value={value()} onSelect={(event) => setSelection({ start: event.currentTarget.selectionStart, end: event.currentTarget.selectionEnd })} onInput={(event) => { setSelection({ start: event.currentTarget.selectionStart, end: event.currentTarget.selectionEnd }); setPaletteDismissed(false); setValue(event.currentTarget.value); }} onKeyDown={event => {
+        <piop-composer-field ref={element => { ref.current = element; }} skills={knownSkills()} classList={{ "pending-edit": Boolean(editingPending()) }} aria-label="Message piop" readOnly={props.ownershipRequired || savingEdit()} onFocus={() => { setPaletteDismissed(false); if (props.ownershipRequired) void props.onTakeOwnership?.(); }} placeholder={props.ownershipRequired ? "" : composer().streaming || props.queueHeld ? "Queue a follow-up…" : "Ask piop to build, explain, or change anything…"} value={value()} onSelect={(event) => setSelection({ start: event.currentTarget.selectionStart, end: event.currentTarget.selectionEnd })} onInput={(event) => { setSelection({ start: event.currentTarget.selectionStart, end: event.currentTarget.selectionEnd }); setPaletteDismissed(false); setValue(event.currentTarget.value); }} onKeyDown={event => {
           if (editingPending() && event.key === "Escape") { event.preventDefault(); event.stopPropagation(); cancelEdit(); return; }
           handleEditorKey(event);
         }} />
