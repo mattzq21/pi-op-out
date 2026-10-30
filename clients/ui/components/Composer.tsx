@@ -19,12 +19,13 @@ import { ComposerSettingsMenu } from "./ComposerSettingsMenu";
 import { ComposerPlugins } from "../plugins/composer";
 import { GoalActions, GoalPauseButton, PauseButton, type GoalControls } from "./GoalControls";
 
-import { ArrowUp,Check,ChevronDown,ChevronUp,CircleStop,CircleX,CornerDownRight,FileText,ImagePlus,MoveVertical,Pause,Pencil,Play,RefreshCw,TerminalSquare,Trash2,X,Zap } from "lucide-solid";
+import { ArrowUp,Check,ChevronDown,ChevronUp,CircleStop,CircleX,CornerDownRight,FileText,MoveVertical,Pause,Pencil,Play,RefreshCw,TerminalSquare,Trash2,X,Zap } from "lucide-solid";
 import { hasVisibleText } from "../lib/content";
 import { usePendingMessageDrag } from "../lib/usePendingMessageDrag";
 import type { AgentProfile,ComposerUpload,ContextUsage,ImageAttachment,Model,PendingMessage,SlashCommand } from "../types";
 import { IconButton } from "./IconButton";
 import { PendingImages } from "./PendingImages";
+import { ZoomableImage } from "./ZoomableImage";
 import { PendingMessageAttachments, pendingEditAction, startPendingEdit, type PendingEdit } from "./PendingMessageEditor";
 import { z } from "zod";
 import { queuedCommand } from "../plugins";
@@ -673,7 +674,7 @@ export function Composer(props: Props) {
       {renderComposerDropHint()}
       {renderCommandPalette()}
       {renderArgumentPalette()}
-      {!editingPending() && uploads().length > 0 && <div class="attachments">{<Key each={uploads()} by={(upload) => upload.id}>{(upload, _index) => <span >{upload().kind === "image" ? <ImagePlus size={12} /> : <FileText size={12} />}<b>{upload().name}</b><button aria-label={`Remove ${upload().name}`} onClick={() => { updateUploads((current) => current.filter((item) => item.id !== upload().id)); setUploadError(undefined); }}><X size={11} /></button></span>}</Key>}</div>}
+      {!editingPending() && uploads().length > 0 && <div class="attachments">{<Key each={uploads()} by={(upload) => upload.id}>{(upload, _index) => <span classList={{ "attachment-image": Boolean(upload().image) }}><Show when={upload().image} fallback={<><FileText size={12} /><b>{upload().name}</b></>}>{image => <ZoomableImage src={`data:${image().mimeType};base64,${image().data}`} alt={upload().name} />}</Show><button aria-label={`Remove ${upload().name}`} onClick={() => { updateUploads((current) => current.filter((item) => item.id !== upload().id)); setUploadError(undefined); }}><X size={11} /></button></span>}</Key>}</div>}
       {uploadError() && <div class="upload-error" role="alert">{(uploadError())}</div>}
       {controlError() && <div class="upload-error" role="alert">{(controlError())}</div>}
       <Show when={editingPending()}>{edit => <PendingMessageAttachments message={composer().pendingMessages.find(message => message.id === edit().id) ?? { id: edit().id, message: edit().prompt, behavior: "followUp" }} edit={edit()} saving={savingEdit()} load={props.loadPendingImage} onChange={update => setEditingPending(current => current?.id === edit().id ? update(current) : current)} addFiles={files => attachments.addFiles(files)} />}</Show>
