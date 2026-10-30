@@ -315,7 +315,13 @@ export function finalResponseIndex(messages: ChatMessage[]) {
   for (let index = messages.length - 1; index >= 0; index -= 1) {
     const message = messages[index];
 
-    if (message.role === "assistant" && (canBranchFrom(message) || textOf(message.content).trim().length > 0 || message.stopReason === "aborted" || message.stopReason === "error")) return index;
+    if (message.role !== "assistant") continue;
+
+    if (message.stopReason === "aborted" || message.stopReason === "error") return index;
+
+    if (Array.isArray(message.content) && message.content.some(part => part.type === "toolCall")) return -1;
+
+    if (canBranchFrom(message) || textOf(message.content).trim().length > 0) return index;
   }
 
   return -1;
