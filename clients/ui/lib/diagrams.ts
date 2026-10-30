@@ -64,7 +64,6 @@ async function render(source: string) {
     suppressErrorRendering: true,
     theme: "dark",
     layout: "elk",
-    look: "classic",
     flowchart: { wrappingWidth: 200, minNodeWidth: 0 },
     fontFamily: "Arial, sans-serif",
     htmlLabels: false,
