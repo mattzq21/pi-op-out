@@ -12,7 +12,8 @@ beforeAll(async () => {
   const { isDefault: _isDefault, ...general } = configuration.agents.find((agent: any) => agent.name === 'general');
   const thinker = { ...general, name: 'deep-thinker', model: 'scripted/scripted-thinker', effort: 'low' };
   const reader = { ...general, name: 'reader', model: 'scripted/scripted-model', tools: ['read'] };
-  await chat.command({ type: 'configure_agents', configuration: { revision: configuration.revision, agents: [...configuration.agents, thinker, reader] } });
+  const delegator = { ...general, name: 'delegator', allowed_subagents: ['deep-thinker'] };
+  await chat.command({ type: 'configure_agents', configuration: { revision: configuration.revision, agents: [...configuration.agents, thinker, reader, delegator] } });
 }, 60000);
 afterAll(async () => { await agents?.close(); });
 
@@ -83,4 +84,16 @@ test.concurrent('a child started without a profile keeps the model and thinking 
   for (let tries = 0; !callFor('Copy child task') && tries < 200; tries++) await Bun.sleep(100);
   expect(callFor('Ask a copy of me')).toEqual({ model: 'scripted-thinker', effort: 'minimal' });
   expect(callFor('Copy child task')).toEqual({ model: 'scripted-thinker', effort: 'minimal' });
+}, 60000);
+
+test.concurrent('an agent that can start only one subagent profile gets no agent field and starts that profile', async () => {
+  agents.scripts.set('Delegate it', messages => called(messages, 'spawn_subagents') ? { text: 'Asked.' } : { tool: 'spawn_subagents', arguments: { tasks: [{ nickname: 'Solo', task: 'Solo child task' }] } });
+  agents.scripts.set('Solo child task', () => ({ text: 'Child done.' }));
+  const chat = await profileChat('delegator');
+  await chat.command({ type: 'prompt', message: 'Delegate it' });
+  for (let tries = 0; !callFor('Solo child task') && tries < 200; tries++) await Bun.sleep(100);
+  expect(callFor('Solo child task')).toEqual({ model: 'scripted-thinker', effort: 'low' });
+  const request = agents.model.requests.find(request => text(request.messages[1]) === 'Delegate it');
+  const spawn = request.tools.find((tool: any) => tool.function.name === 'spawn_subagents');
+  expect(Object.keys(spawn.function.parameters.properties.tasks.items.properties).sort()).toEqual(['nickname', 'task']);
 }, 60000);

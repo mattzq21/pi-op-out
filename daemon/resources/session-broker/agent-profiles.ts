@@ -46,12 +46,27 @@ export const PEER_TOOLS = ["create_peer", "branchoff_peer", "message_peer", "sto
 /** Which agents list_agent_profiles lists: for one start purpose, or for both, chosen by an argument. */
 export type AgentProfilesMode = AgentStartPurpose | "both";
 
+/** The agents the current agent can start for purpose. */
+export function startableProfiles(pi: ExtensionAPI, purpose: AgentStartPurpose) {
+  const catalog: AgentProfilesRequest = { purpose };
+  pi.events.emit("piop:agents:profiles", catalog);
+
+  if (!catalog.profiles) throw new Error("Agent profiles are unavailable");
+
+  return catalog as AgentProfilesRequest & { profiles: NonNullable<AgentProfilesRequest["profiles"]> };
+}
+
+/** The agent to start for purpose when the caller names none: the only startable agent, or undefined for the caller's own. */
+export function soleProfile(pi: ExtensionAPI, purpose: AgentStartPurpose) {
+  const catalog = startableProfiles(pi, purpose);
+  const only = catalog.profiles.length === 1 ? catalog.profiles[0].name : undefined;
+
+  return only === catalog.active ? undefined : only;
+}
+
 function profilesTool(pi: ExtensionAPI, mode: AgentProfilesMode) {
   const list = async (purpose: AgentStartPurpose) => {
-    const catalog: AgentProfilesRequest = { purpose };
-    pi.events.emit("piop:agents:profiles", catalog);
-
-    if (!catalog.profiles) throw new Error("Agent profiles are unavailable");
+    const catalog = startableProfiles(pi, purpose);
     const text = catalog.profiles.length ? JSON.stringify(catalog.profiles) : `You cannot start any agent as a ${purpose}.`;
 
     return { content: [{ type: "text" as const, text }], details: catalog };
