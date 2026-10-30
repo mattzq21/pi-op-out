@@ -104,6 +104,15 @@ test('clicking the agent picker trigger again closes it without selection', asyn
 
 const sent = async page => JSON.parse(await page.getByLabel('Sent messages').textContent());
 
+test('the agent list cannot open once the agent is locked, even when agents can be reloaded', async t => {
+  const page = await controlsPage(t);
+  const agent = page.getByRole('button', { name: 'Agent', exact: true });
+  await page.getByRole('checkbox', { name: 'Agents reloadable', exact: true }).check();
+  assert.equal(await agent.isDisabled(), false);
+  await page.getByRole('checkbox', { name: 'Agent locked', exact: true }).check();
+  assert.equal(await agent.isDisabled(), true);
+});
+
 test('an unavailable locked agent shows an error and blocks selection and sending', async t => {
   const page = await controlsPage(t);
   const editor = page.getByRole('textbox', { name: 'Message piop' });
