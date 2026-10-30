@@ -171,6 +171,7 @@ kbd { font: 11px "DM Sans"; border: 1px solid var(--line); padding: 2px 4px; bor
 .messages { display: flex; flex-direction: column; }
 .conversation, .composer-wrap { width: min(740px, calc(100% - 72px)); margin: 0 auto; }
 .messages > .conversation { flex-shrink: 0; margin-top: auto; }
+.conversation-turns { display: contents; }
 .message { display: grid; grid-template-columns: 27px 1fr; gap: 13px; margin-bottom: 5px; }
 .assistant-message { grid-template-columns: 1fr; }
 .avatar { width: 27px; height: 27px; border-radius: 8px; display: grid; place-items: center; font-size: 11px; font-weight: 600; margin-top: -2px; }

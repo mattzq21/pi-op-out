@@ -1,5 +1,6 @@
 import { createSignal } from "solid-js";
-import { createDependencyEffect, createRef, cssPixels, type JSXElement, type RefObject } from "../lib/solid";
+import { createDependencyEffect, createRef, cssPixels, type JSXElement } from "../lib/solid";
+import type { Accessor } from "solid-js";
 
 type ViewportObserver = { observer: IntersectionObserver; callbacks: Map<Element, () => void> };
 
@@ -31,7 +32,7 @@ function observeTurn(root: Element, element: Element, reveal: () => void) {
   };
 }
 
-export function DeferredTurn(componentProps: { children: JSXElement; scrollRoot: RefObject<HTMLDivElement | null>; eager: boolean; navigationId?: string }) {
+export function DeferredTurn(componentProps: { children: JSXElement; /** The scrolling element of the view. A turn without it waits until a view shows it. */ scrollRoot: Accessor<HTMLElement | null | undefined>; eager: boolean; navigationId?: string }) {
   const element = createRef<HTMLDivElement>(null);
   const [revealed, setRevealed] = createSignal(componentProps.eager);
   const [searching, setSearching] = createSignal(false);
@@ -43,7 +44,7 @@ export function DeferredTurn(componentProps: { children: JSXElement; scrollRoot:
     return () => target?.removeEventListener("piop:reveal-turn", reveal);
   }, () => []);
   createDependencyEffect(() => {
-    const root = componentProps.scrollRoot.current?.closest(".chat-shell");
+    const root = componentProps.scrollRoot()?.closest(".chat-shell");
 
     if (!root) return;
     const find = (event: Event) => setSearching(event instanceof CustomEvent && event.detail === true);
@@ -51,19 +52,21 @@ export function DeferredTurn(componentProps: { children: JSXElement; scrollRoot:
     setSearching(root.hasAttribute("data-find-open"));
 
     return () => root.removeEventListener("piop:find-open", find);
-  }, () => [componentProps.scrollRoot]);
-  createDependencyEffect(() => { const capturedRevealed = revealed(); const capturedScrollRoot0 = componentProps.scrollRoot;
+  }, () => [componentProps.scrollRoot()]);
+  createDependencyEffect(() => { const capturedRevealed = revealed();
 
     if (capturedRevealed) return;
-    const root = capturedScrollRoot0.current;
+    const root = componentProps.scrollRoot();
     const target = element.current;
 
-    if (!root || !target || typeof IntersectionObserver === "undefined") { setRevealed(true);
+    if (typeof IntersectionObserver === "undefined") { setRevealed(true);
 
     return; }
 
+    if (!root || !target) return;
+
     return observeTurn(root, target, () => setRevealed(true));
-  }, () => [revealed(), componentProps.scrollRoot]);
+  }, () => [revealed(), componentProps.scrollRoot()]);
 
   return <div ref={node => { element.current = node; }} class="deferred-turn" data-response-turn={componentProps.navigationId} style={{ "min-height": cssPixels(revealed() || componentProps.eager || searching() ? undefined : 180) }}>
     {(revealed() || componentProps.eager || searching()) && componentProps.children}
