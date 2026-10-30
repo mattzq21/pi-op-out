@@ -88,6 +88,8 @@ export class Session {
   isStopping = false;
   isTransient: boolean;
   reservedPathValue: string | null = null;
+  /** The session file that has a saved message, so the session list shows it. */
+  private listedFile: string | null = null;
   startupError: string | null = null;
   /** Last stderr lines from Pi, kept for error reports. */
   stderrTail: string[] = [];
@@ -441,6 +443,7 @@ export class Session {
     }
     if (kind(event) === 'agent_settled' || (kind(event) === 'message_end' && event.message?.role === 'assistant')) Registry.record(this.state, this.cwd);
     this.retainLive(event);
+    this.announceSessionFile(event);
     if (kind(event) === 'extension_ui_request') {
       const next = await this.receiveExtension(event);
       if (next === undefined) return;
@@ -448,6 +451,15 @@ export class Session {
     }
     if (kind(event) === 'extension_error' && event.event === 'command') this.promptErrors.commandFailed(event);
     await this.queue.receive(event);
+  }
+
+  /** Pi saves the first user message before the first reply starts. From then on the session list shows the chat, so the list is told at once. */
+  private announceSessionFile(event: any): void {
+    if (kind(event) !== 'message_start' || event.message?.role !== 'assistant') return;
+    const file = this.state?.sessionFile;
+    if (typeof file !== 'string' || file === this.listedFile) return;
+    this.listedFile = file;
+    this.host.output({ type: 'sessions_changed' });
   }
 
   private retainLive(event: any): void {
@@ -624,6 +636,7 @@ export class Session {
       data.cwd = this.cwd ?? undefined;
       data.repository = queueRoot && this.cwd ? getProjectRepository(dirname(queueRoot), this.cwd) : null;
       if (typeof data.sessionFile === 'string') {
+        if (typeof data.messageCount === 'number' && data.messageCount > 0) this.listedFile = data.sessionFile;
         const header = JSON.parse(readHeaderLine(data.sessionFile));
         if (header.piopForkSource) data.forkSource = header.piopForkSource;
       }
