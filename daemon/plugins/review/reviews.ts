@@ -14,7 +14,7 @@ import { childFastModeEntry } from "../../resources/session-broker/fast-mode.ts"
 import { locateConversation } from "../../resources/session-broker/conversation-location.ts";
 import { acknowledge, pendingReviews, release, type SessionPublication } from "../../resources/piop-storage/session-publication.cjs";
 import { read as readAppSettings } from "../../resources/session-broker/app-settings.cjs";
-import type { ReviewDelegation, ReviewImage, ReviewSession } from "./interface.ts";
+import type { ReviewImage, ReviewSession } from "./interface.ts";
 import { openAuxiliaryChat } from "../../resources/session-broker/auxiliary.ts";
 import { AUXILIARY_PARENT } from "../../resources/piop-storage/session-records.cjs";
 
@@ -138,25 +138,6 @@ async function reviewSettings() {
   return { agent, prompt };
 }
 
-function subagentReviewTask(state: SessionAgentState, delegation: ReviewDelegation, prompt: string) {
-  if (delegation === "none") return prompt;
-
-  if (typeof delegation === "number" && (!Number.isSafeInteger(delegation) || delegation < 1)) throw new Error("The review subagent count must be a positive integer");
-
-  if (!state.snapshot) throw new Error("Reviewer profile is unavailable for subagent review");
-  const limit = state.snapshot.definition.max_subagents ?? 8;
-
-  if (!limit) throw new Error("The review agent's max_subagents must be greater than zero to use /rs");
-  const tools = state.snapshot.definition.tools;
-
-  if (!tools.includes("spawn_subagents")) tools.push("spawn_subagents");
-  state.locked = true;
-
-  const count = delegation === "auto" ? "a proportionate number of" : String(delegation);
-
-  return `${prompt}\n\nSpawn ${count} review subagents. Split the scope between them, and report one consolidated review.`;
-}
-
 async function reviewProfile(pi: ExtensionAPI, agent: string) {
   const profile: SubagentProfileRequest = { agent };
   pi.events.emit("piop:agents:subagent", profile);
@@ -186,11 +167,10 @@ export function registerReviews(pi: ExtensionAPI): ReviewSession {
       // The user scope, or else the changes since the branch point, follows the prompt as its last paragraph.
       const prompt = `${settings.prompt.trimEnd()}\n\n${request.scope?.trim() ? `Review ${request.scope.trim()}` : "Review the scope affected since last branch off."}`;
 
-      const task = subagentReviewTask(profile, request.delegation, prompt);
       const { record, publication, name } = await createReview(pi, ctx, profile, request.scope?.trim() || undefined, signal);
       await publishReview(pi, ctx, record, publication);
       signal?.throwIfAborted();
-      await openReview(ctx, record, name, task, request.images);
+      await openReview(ctx, record, name, prompt, request.images);
     },
   };
 }

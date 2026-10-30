@@ -174,14 +174,14 @@ test('Escape dismisses the command palette without sending', async t => {
 test('the command and its arguments stay above the message box while the command is written', async t => {
   const page = await controlsPage(t);
   const editor = page.getByRole('textbox', { name: 'Message piop' });
-  await editor.fill('/rs');
-  assert.deepEqual(await page.getByRole('listbox', { name: 'piop commands' }).getByRole('option').allTextContents(), ['/rs [n] [scope]']);
-  await editor.fill('/rs ');
-  const rs = page.getByLabel('/rs arguments');
-  await rs.waitFor();
-  assert.equal(await rs.textContent(), '/rs [n] [scope]');
-  await editor.fill('/rs 2 src');
-  assert.equal(await rs.textContent(), '/rs [n] [scope]');
+  await editor.fill('/review');
+  assert.deepEqual(await page.getByRole('listbox', { name: 'piop commands' }).getByRole('option').allTextContents(), ['/review [scope]']);
+  await editor.fill('/review ');
+  const review = page.getByLabel('/review arguments');
+  await review.waitFor();
+  assert.equal(await review.textContent(), '/review [scope]');
+  await editor.fill('/review src');
+  assert.equal(await review.textContent(), '/review [scope]');
   await editor.fill('/fast o');
   const fast = page.getByLabel('/fast arguments');
   assert.equal(await fast.textContent(), '/fast [on | off | toggle]');

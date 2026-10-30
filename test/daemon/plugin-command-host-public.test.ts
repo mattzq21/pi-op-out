@@ -10,9 +10,9 @@ test('new chat commands use the selected host plugin setup', async () => {
     write(join(remote.home, '.piop', 'plugins.json'), { enabled: ['cost'], previous: [], known: ['cost', 'review', 'web-search', 'btw'] });
     await useRemotes(daemon, [remote]);
     expect(await daemon.invoke('plugin_status', { hostId: remote.id })).toMatchObject({ enabled: ['cost'], error: null });
-    const commands = async (hostId: string) => (await daemon.invoke('provider_auth', { hostId, request: { action: 'draft_catalog', reload: true } })).commands.filter((name: string) => ['cost', 'review', 'rs'].includes(name));
+    const commands = async (hostId: string) => (await daemon.invoke('provider_auth', { hostId, request: { action: 'draft_catalog', reload: true } })).commands.filter((name: string) => ['cost', 'review'].includes(name));
     expect(await commands(remote.id)).toEqual(['cost']);
-    expect(await commands('local')).toEqual(['cost', 'review', 'rs']);
+    expect(await commands('local')).toEqual(['cost', 'review']);
   } finally { await remote.stop(); await daemon.stop(); }
 }, 180000);
 

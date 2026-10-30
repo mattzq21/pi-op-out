@@ -2,13 +2,9 @@ import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-a
 
 export type ReviewImage = { type: "image"; data: string; mimeType: string; name?: string };
 
-/** none: the reviewer works alone. auto: the reviewer picks a proportionate number of review subagents. A number: exactly that many subagents. */
-export type ReviewDelegation = "none" | "auto" | number;
-
 export type ReviewRequest = {
   /** Review scope added to the review prompt. */
   scope?: string;
-  delegation: ReviewDelegation;
   /** Images sent with the review task. */
   images?: ReviewImage[];
 };
