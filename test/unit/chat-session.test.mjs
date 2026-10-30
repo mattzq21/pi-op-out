@@ -31,6 +31,20 @@ describe('chat session hook', () => {
 
 
 
+  test('the preview of a chat shows its queue and keeps its outline, so the full load does not send the outline again', async () => {
+    await hook.unmount();
+    const commands = [];
+    const queued = { id: 'q1', message: 'Later question', behavior: 'followUp' };
+    const saved = snapshot({ revision: 'saved', state: { ...initialState, pendingMessageCount: 1, queueHeld: true }, history: { entries: [{ type: 'message', id: 'recent', parentId: null, message: { role: 'user', content: 'Recent', timestamp: 2 } }], leafId: 'recent', before: 'recent-start', outline: [{ id: 'early', start: 'early-start', preview: 'Early answer' }] }, queue: { type: 'queue_update', pendingMessages: [queued] } });
+    const previewing = { subscribe() { return () => {}; }, preview: async () => saved, async command(command) { commands.push(command); return command.type === 'get_session_revision' ? { revision: 'live' } : responses.get(command.type); } };
+    hook = await renderHook(value => useChatSession(value), previewing);
+    await act(async () => {});
+    assert.deepEqual(hook.current.state.pendingMessages.map(item => item.message), ['Later question']);
+    assert.equal(hook.current.state.queueHeld, true);
+    await act(() => hook.current.refresh());
+    assert.equal(commands.find(command => command.type === 'get_snapshot').listedBefore, 'recent-start');
+  });
+
   test('refresh loads model capabilities and filters internal commands', async () => {
     responses.set('get_commands', { commands: [{ name: 'visible', source: 'extension' }, { name: 'inline', source: 'extension', sourceInfo: { source: 'inline' } }] });
     await act(() => hook.current.refresh());

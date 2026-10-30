@@ -7,10 +7,23 @@ import { z } from "zod";
 import { wireMessageSchema } from "./messageSchemas";
 import { pluginMessageMetadata } from "../plugins/messageMetadata";
 import { branchMessages } from "./messages";
-import { historyViewSchema } from "./responseSchemas";
+import { historyOutlineSchema, historyViewSchema } from "./responseSchemas";
+import { isDaemonRefusal } from "./commandRejected";
 import { OLDER_HISTORY, olderHistory, olderHistoryMarker } from "./historyWindow";
 
 type SessionResource = Array<RpcEvent | undefined>;
+
+export type HistoryOutline = z.infer<typeof historyOutlineSchema>["responses"];
+
+/** The part of a listed outline before the entry before. Older history that loads later only shortens the outline, so it needs no new list. */
+function outlineBefore(listed: { before: string; items: HistoryOutline } | undefined, before: string) {
+  if (!listed) return undefined;
+
+  if (listed.before === before) return listed.items;
+  const end = listed.items.findIndex(item => item.start === before);
+
+  return end < 0 ? undefined : listed.items.slice(0, end);
+}
 
 const toolPayloadSchema = wireMessageSchema.pick({ content: true, details: true, toolInput: true, nestedCalls: true });
 
@@ -24,7 +37,7 @@ const SESSION_COUNT = 20;
 
 const TOOL_PAYLOAD_CONCURRENCY = 2;
 
-type Transport = Pick<NativeTransport, "command" | "subscribe">;
+type Transport = Pick<NativeTransport, "command" | "subscribe"> & Partial<Pick<NativeTransport, "isConnected">>;
 
 interface CachedSession {
   state: AgentState;
@@ -33,6 +46,8 @@ interface CachedSession {
   commands: SlashCommand[];
   thinkingLevels: string[];
   resources: Record<string, SessionResource>;
+  /** The final responses before the entry before, as the daemon listed them. */
+  outline?: { before: string; items: HistoryOutline };
 }
 
 const stores = new WeakMap<Transport, SessionMemory>();
@@ -109,6 +124,7 @@ export class SessionMemory {
   private loading = new Map<string, Promise<void>>();
   private workLoading = new Map<string, Promise<void>>();
   private olderLoading?: Promise<void>;
+  private outlineLoading?: { before: string; stop: () => void };
   private toolPayloadTransfers: Promise<void> = Promise.resolve();
   private generation = 0;
   private omitted = 0;
@@ -129,6 +145,7 @@ export class SessionMemory {
 
   evict() {
     this.generation++;
+    this.outlineLoading?.stop(); this.outlineLoading = undefined;
     this.revision = undefined;
     this.loaded.clear();
     this.loading.clear();
@@ -308,6 +325,26 @@ export class SessionMemory {
     return request;
   }
 
+  /** Lists the final responses before the entry before, unless the listed outline already covers them. A load that fails while Pi is not running runs again once it runs. */
+  loadOutline(before: string, onError: (reason: unknown) => void) {
+    if (outlineBefore(this.value.outline, before) || this.outlineLoading?.before === before) return;
+    this.outlineLoading?.stop();
+    const generation = this.generation; let stopped = false; let stopRetry: (() => void) | undefined;
+    const loading = { before, stop: () => { stopped = true; stopRetry?.(); } };
+    this.outlineLoading = loading;
+    const load = () => this.transport.command({ type: "get_history_outline", before }, historyOutlineSchema).then(({ responses }) => {
+      if (stopped || generation !== this.generation) return;
+      this.outlineLoading = undefined;
+      this.set("outline", { before, items: responses });
+    }, reason => {
+      if (stopped || generation !== this.generation) return;
+
+      if (this.transport.isConnected?.() === false || isDaemonRefusal(reason)) stopRetry = this.transport.subscribe(event => { if (event.type === "connection_restored" || event.type === "pi_started") { stopRetry?.(); stopRetry = undefined; if (!stopped) void load(); } });
+      else { this.outlineLoading = undefined; onError(reason); }
+    });
+    void load();
+  }
+
   private toolPayloadVersion(id: string) { return this.value.messages.find((message) => message.deferredToolPayload === id)?.toolPayloadVersion; }
 
   private async fetchToolPayload(id: string, generation: number) {
@@ -369,13 +406,16 @@ export function loadOlderHistory(transport: Transport, through?: string) {
   return memoryFor(transport).loadOlder(through);
 }
 
-const historyOutlineSchema = z.object({ responses: z.array(z.object({ id: z.string().min(1), start: z.string().min(1), preview: z.string(), compactions: z.array(z.string().min(1)).optional() })) });
+/** Lists the final responses of the history before the entry before, which the client has not loaded. */
+export function loadHistoryOutline(transport: Transport, before: string, onError: (reason: unknown) => void) {
+  memoryFor(transport).loadOutline(before, onError);
+}
 
-export type HistoryOutline = z.infer<typeof historyOutlineSchema>["responses"];
+/** The final responses of the history before the entry before, once listed. The list stays with the chat, so it shows at once when the chat opens again. */
+export function useHistoryOutline(transport: Accessor<Transport | undefined>, before: Accessor<string | undefined>): Accessor<HistoryOutline> {
+  const outline = createSubscription(() => { const current = transport(); return current ? memoryFor(current).subscribe : () => () => undefined; }, () => { const current = transport(); return () => current ? memoryFor(current).getSnapshot().outline : undefined; });
 
-/** The final responses of the history before the entry before, which the client has not loaded. */
-export async function loadHistoryOutline(transport: Transport, before: string): Promise<HistoryOutline> {
-  return (await transport.command({ type: "get_history_outline", before }, historyOutlineSchema)).responses;
+  return createMemo(() => { const last = before(); return last ? outlineBefore(outline(), last) ?? [] : []; });
 }
 
 export function forgetSession(transport: Transport) {

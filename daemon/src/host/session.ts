@@ -510,7 +510,7 @@ export class Session {
       case 'get_session_revision': return { revision: this.revision() };
       case 'get_tool_payload': return this.collectToolPayload(command);
       case 'get_queued_image': return this.queuedImage(command);
-      case 'get_snapshot': { const snapshot = await this.collectSnapshot(); if (flag(command, 'recent') && snapshot?.history) recentHistory(snapshot.history, this.isWorking); return snapshot; }
+      case 'get_snapshot': { const snapshot = await this.collectSnapshot(); if (flag(command, 'recent') && snapshot?.history) recentHistory(snapshot.history, this.isWorking, command.listedBefore); return snapshot; }
       case 'get_entries': { const snapshot = await this.collectSnapshot(); return snapshot?.history ?? null; }
       case 'get_older_history': return olderHistory(await this.raw({ type: 'get_entries' }), command.before, command.through);
       case 'get_history_outline': return historyOutline(await this.raw({ type: 'get_entries' }), command.before);

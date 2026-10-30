@@ -31,7 +31,7 @@ import { ScrollIndicator } from "./ScrollIndicator";
 import { isMobile } from "../lib/platform";
 import { ConversationHostContext } from "../lib/subagentNavigation";
 import { OLDER_HISTORY, olderHistory } from "../lib/historyWindow";
-import { loadHistoryOutline, loadOlderHistory, type HistoryOutline } from "../lib/sessionMemory";
+import { loadHistoryOutline, loadOlderHistory, useHistoryOutline } from "../lib/sessionMemory";
 import { MessageFileContext } from "../lib/messageFiles";
 import { applyPlace, savedPlace, savePlace, type ScrollPlace } from "./scrollPlace";
 
@@ -162,7 +162,7 @@ export function ChatView(props: Props & { transcriptActions?: JSXElement; follow
     if (olderRetry.current?.transport === transport) return;
     olderRetry.current?.stop();
     const stop = transport.subscribe(event => {
-      if (event.type !== "connection_restored") return;
+      if (event.type !== "connection_restored" && event.type !== "pi_started") return;
       stop();
       if (olderRetry.current?.transport === transport) olderRetry.current = undefined;
       if (props.transport === transport) loadOlder();
@@ -213,38 +213,15 @@ export function ChatView(props: Props & { transcriptActions?: JSXElement; follow
   }));
 
   const olderBefore = createMemo(() => older()?.before);
-  /** The final responses before the entry before, as the daemon listed them for the chat of transport. */
-  type Outline = { transport: NativeTransport; before: string; items: HistoryOutline };
-  const [outline, setOutline] = createSignal<Outline>();
-  /** The part of the outline before the entry before. Older history that loads later only shortens the outline, so it does not ask the daemon again. */
-  const outlineBefore = (listed: Outline | undefined, transport: NativeTransport | undefined, before: string) => {
-    if (!listed || listed.transport !== transport) return undefined;
-
-    if (listed.before === before) return listed.items;
-    const end = listed.items.findIndex(item => item.start === before);
-
-    return end < 0 ? undefined : listed.items.slice(0, end);
-  };
   /** The final responses in the older history that is not loaded yet. The response rail lists them, and loads one when the user goes to it. */
-  const unloadedResponses = createMemo<HistoryOutline>(() => { const before = olderBefore();
-
-    return before ? outlineBefore(outline(), props.transport, before) ?? [] : []; });
+  const unloadedResponses = useHistoryOutline(() => props.transport, olderBefore);
   createDependencyEffect(() => { const before = olderBefore(); const transport = props.transport;
 
-    if (!before || !transport) { setOutline(undefined); return; }
-
-    if (outlineBefore(untrack(outline), transport, before)) return;
-    let current = true; let stopRetry: (() => void) | undefined;
-    const load = () => loadHistoryOutline(transport, before).then(items => { if (current) setOutline({ transport, before, items }); }, reason => {
-      if (!current) return;
-
-      if (!transport.isConnected() || isDaemonRefusal(reason)) stopRetry = transport.subscribe(event => { if (event.type === "connection_restored") { stopRetry?.(); stopRetry = undefined; if (current) void load(); } });
-      else props.onNotice?.("Could not list older responses", reason instanceof Error ? reason.message : String(reason));
-    });
+    if (!before || !transport) return;
     // The list waits for the first frame, so it does not delay the chat as it opens.
-    const frame = requestAnimationFrame(() => void load());
+    const frame = requestAnimationFrame(() => loadHistoryOutline(transport, before, reason => props.onNotice?.("Could not list older responses", reason instanceof Error ? reason.message : String(reason))));
 
-    return () => { current = false; cancelAnimationFrame(frame); stopRetry?.(); };
+    return () => cancelAnimationFrame(frame);
   }, () => [olderBefore(), props.transport]);
 
   const responses = createMemo<ResponseDestination[]>(() => { const loaded = loadedResponses(); const unloaded = unloadedResponses();

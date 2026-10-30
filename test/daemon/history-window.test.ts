@@ -92,3 +92,10 @@ test('the outline lists the final responses before the loaded history, and a loa
   expect(users(olderHistory(source, before, 'e3'))).toEqual(['Question 0', 'Question 1', 'Question 2']);
   expect(() => olderHistory(source, before, 'e15')).toThrow();
 });
+
+test('a chat opens with the outline of its older answers, unless the client listed them for the same place', () => {
+  const opened = recentHistory(chat(8, 'x'.repeat(2000)), false);
+  expect(opened.outline.map((item: any) => item.id)).toEqual(['e3', 'e7', 'e11']);
+  expect(recentHistory(chat(8, 'x'.repeat(2000)), false, opened.before).outline).toBeUndefined();
+  expect(recentHistory(chat(2, 'x'), false).outline).toBeUndefined();
+});

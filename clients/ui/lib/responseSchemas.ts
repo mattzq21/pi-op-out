@@ -72,9 +72,11 @@ export const agentStateSchema = z.object({ canFork: z.boolean().optional(), view
 export const forkAfterResultSchema = z.object({ cancelled: z.boolean().optional(), state: z.object({ cwd: z.union([z.string(), z.null()]).optional() }).optional() });
 
 /** A part of a chat's history: before is the first entry left out of older history, if any. */
+export const historyOutlineSchema = z.object({ responses: z.array(z.object({ id: z.string().min(1), start: z.string().min(1), preview: z.string(), compactions: z.array(z.string().min(1)).optional() })) });
+
 export const historyViewSchema = z.object({ entries: z.array(entrySchema), leafId: z.union([z.string(), z.null()]), before: z.string().nullable().optional(), olderUsage: usageSchema.optional() });
 
-export const sessionSnapshotSchema = z.object({ revision: z.string(), state: agentStateSchema, history: historyViewSchema.extend({ omittedEntries: z.number().optional(), incomplete: z.boolean().optional(), damagedLines: z.array(z.number().int().positive()).optional() }), sequence: z.number(), epoch: z.string(), liveTools: z.array(rpcEventSchema), queue: rpcEventSchema });
+export const sessionSnapshotSchema = z.object({ revision: z.string(), state: agentStateSchema, history: historyViewSchema.extend({ outline: historyOutlineSchema.shape.responses.optional(), omittedEntries: z.number().optional(), incomplete: z.boolean().optional(), damagedLines: z.array(z.number().int().positive()).optional() }), sequence: z.number(), epoch: z.string(), liveTools: z.array(rpcEventSchema), queue: rpcEventSchema });
 
 export const slashCommandSchema = z.object({ name: z.string(), description: z.string().optional(), source: z.union([z.literal("builtin"), z.literal("extension"), z.literal("prompt"), z.literal("skill")]), sourceInfo: z.object({ source: z.string().optional() }).optional(), options: z.array(z.object({ value: z.string(), label: z.string(), description: z.string().optional() })).optional() });
 
