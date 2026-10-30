@@ -28,7 +28,7 @@ describe("BUGS-3 regressions", () => {
       if (!item) throw new Error("Conversation item was not found");
       item.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, clientX: 100, clientY: 100 }));
     });
-    await $('//div[@role="menu"]//button[normalize-space(.)="Rename conversation"]').click();
+    await $('//div[@role="menu"]//button[normalize-space(.)="Rename"]').click();
 
     const input = $('input[aria-label="Rename conversation"]');
     await input.setValue("Name to retry");

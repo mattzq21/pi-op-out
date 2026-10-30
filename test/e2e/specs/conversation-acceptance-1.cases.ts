@@ -347,7 +347,7 @@ describe("Conversation acceptance", () => {
         if (!(element instanceof HTMLElement)) throw new Error("Expected page element was not found");
         element.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, clientX: 100, clientY: 100 }));
       });
-      await $('//div[@role="menu"]//button[normalize-space(.)="Rename conversation"]').click();
+      await $('//div[@role="menu"]//button[normalize-space(.)="Rename"]').click();
 
       const input = $('input[aria-label="Rename conversation"]');
       await expect(input).toHaveValue(indexed.name);

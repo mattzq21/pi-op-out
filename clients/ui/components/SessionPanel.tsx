@@ -40,7 +40,7 @@ function isBlockedDirlessTarget(drag: MouseDrag, target?: DropTarget) {
 }
 
 const actions: ReadonlyArray<readonly [SessionAction, typeof AppWindow, string]> = [
-  ["new-window", AppWindow, "Open in new window"], ["rename", Pencil, "Rename conversation"], ["open-directory", FolderOpen, "Open project directory"], ["copy-id", Copy, "Copy session ID"], ["open-rollout", FileText, "Open rollout file"]
+  ["new-window", AppWindow, "Open in new window"], ["rename", Pencil, "Rename"], ["open-directory", FolderOpen, "Open project directory"], ["copy-id", Copy, "Copy session ID"], ["open-rollout", FileText, "Open rollout file"]
 ];
 
 function directoryLabel(session: SessionSummary) {

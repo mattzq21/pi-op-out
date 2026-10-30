@@ -203,7 +203,7 @@ export default function App(props: { suppressConnectionNotices?: boolean } = {})
     <BranchActivity />
     {renderExtensionDialog()}
     {renderProjectDialog()}
-    {renameSession() && <Rerun on={() => renameSession()?.session.id}>{(_key) => <ExtensionDialog request={{ type: "extension_ui_request", id: "rename-session", method: "input", title: "Rename conversation", prefill: required((renameSession())).session.name }} onRespond={async (response) => {
+    {renameSession() && <Rerun on={() => renameSession()?.session.id}>{(_key) => <ExtensionDialog selectPrefill request={{ type: "extension_ui_request", id: "rename-session", method: "input", title: "Rename conversation", prefill: required((renameSession())).session.name }} onRespond={async (response) => {
       const capturedRenameSession = renameSession(); const capturedSession = { ...chatSession() }; const capturedActiveHostId = activeHostId();
 
       if (response.cancelled) { setRenameSession(undefined);
