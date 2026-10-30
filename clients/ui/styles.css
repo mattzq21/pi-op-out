@@ -124,7 +124,7 @@ kbd { font: 11px "DM Sans"; border: 1px solid var(--line); padding: 2px 4px; bor
 .response-navigator-marker { flex: 0 0 10px; width: 24px; min-height: 10px; display: grid; place-items: center; border: 0; padding: 0; background: transparent; cursor: pointer; }
 .response-navigator-marker:first-child { margin-top: auto; }
 .response-navigator-marker:last-child { margin-bottom: auto; }
-.response-navigator-marker { --marker-width: 8px; --fork-width: 0px; }
+.response-navigator-marker { --marker-width: 10px; --fork-width: 0px; }
 .response-navigator-marker span { width: calc(var(--marker-width) - var(--fork-width)); height: 2px; border-radius: 1px; background: var(--faint); opacity: .55; transition: width .12s, opacity .12s, background .12s; }
 .response-navigator-marker:hover, .response-navigator-marker:focus-visible { --marker-width: 14px; }
 .response-navigator-marker:hover span, .response-navigator-marker:focus-visible span { background: var(--ink); opacity: 1; }
