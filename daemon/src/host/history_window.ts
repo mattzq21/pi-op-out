@@ -119,10 +119,13 @@ function view(branch: any[], start: number, end: number, keepLastTurn: boolean):
   return result;
 }
 
-/** The newest part of a chat's history that the client shows when it opens the chat. */
-export function recentHistory(history: any, working: boolean): any {
+/** The newest part of a chat's history that the client shows when it opens the chat, with the outline of the older final responses unless the client listed them before listedBefore. */
+export function recentHistory(history: any, working: boolean, listedBefore?: unknown): any {
   const branch = branchEntries(history);
-  return Object.assign(history, view(branch, windowStart(branch, branch.length), branch.length, working));
+  const start = windowStart(branch, branch.length);
+  const result = view(branch, start, branch.length, working);
+  // The client lists the older final responses at once, without a second request. A client that listed them for the same place already has them.
+  return Object.assign(history, result, start > 0 && branch[start].id !== listedBefore ? { outline: outline(branch, start) } : {});
 }
 
 function position(branch: any[], id: unknown): number {
@@ -151,11 +154,11 @@ export function olderHistory(history: any, before: unknown, through?: unknown): 
 
 const PREVIEW_LENGTH = 160;
 
-/** The final responses of the turns before the entry before, with the first entry of each turn, so the client can list them before it loads them. */
-export function historyOutline(history: any, before: unknown): { responses: { id: string; start: string; preview: string; compactions?: string[] }[] } {
-  const branch = branchEntries(history);
-  const end = position(branch, before);
-  const responses: { id: string; start: string; preview: string; compactions?: string[] }[] = [];
+type OutlineResponse = { id: string; start: string; preview: string; compactions?: string[] };
+
+/** The final responses of the turns before end, with the first entry of each turn. */
+function outline(branch: any[], end: number): OutlineResponse[] {
+  const responses: OutlineResponse[] = [];
   let turn: any[] = [];
   const close = () => {
     const final = finalResponse(turn);
@@ -172,7 +175,13 @@ export function historyOutline(history: any, before: unknown): { responses: { id
     turn.push(branch[index]);
   }
   close();
-  return { responses };
+  return responses;
+}
+
+/** The final responses of the turns before the entry before, so the client can list them before it loads them. */
+export function historyOutline(history: any, before: unknown): { responses: OutlineResponse[] } {
+  const branch = branchEntries(history);
+  return { responses: outline(branch, position(branch, before)) };
 }
 
 /** The work, compactions and full final response of the turn whose final response is entry id. */

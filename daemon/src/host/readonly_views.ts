@@ -58,7 +58,7 @@ function readSavedConversation(host: Host, target: ReadonlyView, command: any): 
   if (kind(command) === 'get_tool_payload') return readSavedToolPayload(host, target, command);
   const snapshot = host.ownership().snapshot(target.id, target.path);
   switch (kind(command)) {
-    case 'get_snapshot': if (command.recent === true && snapshot.history) recentHistory(snapshot.history, false); return snapshot;
+    case 'get_snapshot': if (command.recent === true && snapshot.history) recentHistory(snapshot.history, false, command.listedBefore); return snapshot;
     case 'get_older_history': return olderHistory(snapshot.history ?? {}, command.before, command.through);
     case 'get_history_outline': return historyOutline(snapshot.history ?? {}, command.before);
     case 'get_turn_work': return turnWork(snapshot.history ?? {}, command.entryId);

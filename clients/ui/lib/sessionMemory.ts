@@ -7,13 +7,11 @@ import { z } from "zod";
 import { wireMessageSchema } from "./messageSchemas";
 import { pluginMessageMetadata } from "../plugins/messageMetadata";
 import { branchMessages } from "./messages";
-import { historyViewSchema } from "./responseSchemas";
+import { historyOutlineSchema, historyViewSchema } from "./responseSchemas";
 import { isDaemonRefusal } from "./commandRejected";
 import { OLDER_HISTORY, olderHistory, olderHistoryMarker } from "./historyWindow";
 
 type SessionResource = Array<RpcEvent | undefined>;
-
-const historyOutlineSchema = z.object({ responses: z.array(z.object({ id: z.string().min(1), start: z.string().min(1), preview: z.string(), compactions: z.array(z.string().min(1)).optional() })) });
 
 export type HistoryOutline = z.infer<typeof historyOutlineSchema>["responses"];
 

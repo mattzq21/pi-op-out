@@ -12,6 +12,8 @@ import { detectRepository } from '../chat_worktrees';
 import { publishBranchHistory } from '../chat_branch_operations';
 import { rememberProjectRepository } from '../project_repositories';
 import { recentHistory } from './history_window';
+import { QueueStorage } from './queue_storage';
+import { QueueState } from './queue_state';
 import { renameSession } from '../../resources/session-broker/session-names.cjs';
 import type { Host } from './controller';
 import type { Session } from './session';
@@ -78,6 +80,18 @@ export class Orchestration {
     if (session && !session.transient() && session.savedState() !== null) return session.execute({ type: 'get_snapshot', recent: true });
     const snapshot = this.host.ownership().snapshot(id);
     if (snapshot.history) recentHistory(snapshot.history, false);
+    // The saved queue shows with the history, before Pi starts.
+    const root = this.host.queueRoot();
+    if (root && isUuid(id)) {
+      const storage = new QueueStorage(root, id);
+      const queue = new QueueState();
+      queue.pending = storage.load();
+      queue.held = storage.held();
+      queue.order();
+      snapshot.queue = queue.view();
+      snapshot.state.pendingMessageCount = snapshot.queue.steering.length + snapshot.queue.followUp.length;
+      snapshot.state.queueHeld = queue.held;
+    }
     return snapshot;
   }
 

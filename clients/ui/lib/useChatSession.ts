@@ -14,11 +14,11 @@ import { contextUsageAfterCompaction } from "./contextUsage";
 import { CONTEXT_CAP_STATUS_KEY } from "../../../extensions/piop-context-window-cap/interface";
 import { appendQueuedProjectContext, applyAssistantMessageEvent, branchMessages, isContextInjection, normalizeMessage, promptContextAnchors, type PiEntry } from "./messages";
 import type { NativeTransport } from "./nativeTransport";
-import { useSessionMemory } from "./sessionMemory";
+import { useSessionMemory, type HistoryOutline } from "./sessionMemory";
 import { keepLoadedHistory, olderHistoryMarker } from "./historyWindow";
 import { matchesSubmittedMessage, reconcileMessages, reconcilePendingMessages, sameUserContent, upsertLiveMessage } from "./reconcileMessages";
 
-interface SessionSnapshot { revision: string; state: AgentState; history: { entries: PiEntry[]; leafId: string | null; before?: string | null; olderUsage?: ChatMessage["usage"]; omittedEntries?: number; incomplete?: boolean; damagedLines?: number[] }; sequence: number; epoch: string; liveTools: RpcEvent[]; queue: RpcEvent; }
+interface SessionSnapshot { revision: string; state: AgentState; history: { entries: PiEntry[]; leafId: string | null; before?: string | null; outline?: HistoryOutline; olderUsage?: ChatMessage["usage"]; omittedEntries?: number; incomplete?: boolean; damagedLines?: number[] }; sequence: number; epoch: string; liveTools: RpcEvent[]; queue: RpcEvent; }
 
 type MessageUpdate = (messages: ChatMessage[], positions: (id: string | undefined) => number[]) => boolean;
 
@@ -254,6 +254,8 @@ function createChatSession(transport: Accessor<Pick<NativeTransport, "command" |
 
     for (const message of nextMessages.filter((message) => message.streaming)) trackLiveId(message.role, message.id);
     session.setMessages(reconcileMessages(cachedMessages, nextMessages, pendingMessagesSchema.parse(snapshot.queue.pendingMessages)));
+
+    if (snapshot.history.before && snapshot.history.outline) session.memory.set("outline", { before: snapshot.history.before, items: snapshot.history.outline });
   };
 
   /** Shows the saved history of a chat that has nothing cached while its Pi starts. The first refresh replaces it. */
@@ -266,7 +268,7 @@ function createChatSession(transport: Accessor<Pick<NativeTransport, "command" |
       const { sessionId, sessionFile, cwd, repository, forkSource, canFork, messageCount } = snapshot.state;
       session.memory.batch(() => {
         restoreHistory(snapshot);
-        session.setState(current => current.sessionId && current.sessionId !== sessionId ? current : { ...current, sessionId, sessionFile, cwd, repository, forkSource, canFork, messageCount });
+        session.setState(current => current.sessionId && current.sessionId !== sessionId ? current : { ...current, sessionId, sessionFile, cwd, repository, forkSource, canFork, messageCount, pendingMessages: pendingMessagesSchema.parse(snapshot.queue.pendingMessages), pendingMessageCount: snapshot.state.pendingMessageCount, queueHeld: snapshot.state.queueHeld });
       });
       session.memory.markRevision(snapshot.revision);
     }, reason => console.warn("Saved conversation preview failed; waiting for the full load", reason));
@@ -316,7 +318,8 @@ function createChatSession(transport: Accessor<Pick<NativeTransport, "command" |
           return session.memory.getSnapshot().state;
         }
 
-        const snapshotRequest = load({ type: "get_snapshot", recent: true }, sessionSnapshotSchema);
+        const listed = session.memory.getSnapshot().outline;
+        const snapshotRequest = load({ type: "get_snapshot", recent: true, ...(listed ? { listedBefore: listed.before } : {}) }, sessionSnapshotSchema);
 
         const snapshot = await snapshotRequest;
 
