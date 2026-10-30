@@ -29,12 +29,12 @@ test('an image anywhere the user can read is sent, through relative paths, absol
   }
 }, 60000);
 
-test('files that are not images, or are over 10 MB, are refused with the reason', async () => {
+test('files that are not images, or are over 25 MB, are refused with the reason', async () => {
   writeFileSync(join(project, 'docs/notes.png'), 'just text');
-  writeFileSync(join(project, 'docs/huge.png'), Buffer.concat([png, Buffer.alloc(10 * 1024 * 1024)]));
+  writeFileSync(join(project, 'docs/huge.png'), Buffer.concat([png, Buffer.alloc(25 * 1024 * 1024)]));
   const failure = (path: string) => daemon.failure('read_image_file', { hostId: 'local', cwd: project, path });
   expect(await failure('docs/notes.png')).toBe('Unsupported image format');
-  expect(await failure('docs/huge.png')).toBe('Image is larger than 10 MB');
+  expect(await failure('docs/huge.png')).toBe('Image is larger than 25 MB');
   expect(await failure('docs')).toBe('Select a regular image file');
 }, 60000);
 
@@ -58,25 +58,25 @@ test.concurrent('an image read that failed for a missing, folder or non-image pa
   } finally { await daemon.stop(); }
 }, 60_000);
 
-test.concurrent('an image read accepts a PNG of exactly 10 MiB with all its bytes, rejects one byte more, and then reads a small image at the same path', async () => {
+test.concurrent('an image read accepts a PNG of exactly 25 MiB with all its bytes, rejects one byte more, and then reads a small image at the same path', async () => {
   const daemon = await startDaemon();
   try {
     const cwd = join(daemon.home, 'project');
     mkdirSync(cwd, { recursive: true });
     const read = { hostId: 'local', cwd, path: 'large.png' };
     // A PNG signature, then a repeating pattern so a lost, added or moved byte changes the content.
-    const large = Buffer.alloc(10_485_760, Buffer.from(Array.from({ length: 251 }, (_, index) => index)));
+    const large = Buffer.alloc(26_214_400, Buffer.from(Array.from({ length: 251 }, (_, index) => index)));
     Buffer.from(PNG, 'base64').copy(large, 0, 0, 8);
     writeFileSync(join(cwd, 'large.png'), large);
 
     const url: string = await daemon.invoke('read_image_file', read);
     expect(url.slice(0, 41)).toBe('data:image/png;base64,iVBORw0KGgoICQoLDA0');
     const bytes = Buffer.from(url.slice('data:image/png;base64,'.length), 'base64');
-    expect(bytes.length).toBe(10_485_760);
+    expect(bytes.length).toBe(26_214_400);
     expect(bytes.equals(large)).toBe(true);
 
     writeFileSync(join(cwd, 'large.png'), Buffer.concat([large, Buffer.from([0])]));
-    expect(await daemon.failure('read_image_file', read)).toBe('Image is larger than 10 MB');
+    expect(await daemon.failure('read_image_file', read)).toBe('Image is larger than 25 MB');
 
     writeFileSync(join(cwd, 'large.png'), Buffer.from(PNG, 'base64'));
     expect(await daemon.invoke('read_image_file', read)).toBe('data:image/png;base64,' + PNG);

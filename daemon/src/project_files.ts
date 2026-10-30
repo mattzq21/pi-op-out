@@ -3,12 +3,12 @@ import { resolve } from 'node:path';
 import { requireLocal } from './host_connection';
 import type { App } from './app';
 
-const IMAGE_LIMIT = 10 * 1024 * 1024;
+const IMAGE_LIMIT = 25 * 1024 * 1024;
 
 export async function readImage(_app: App, cwd: string, path: string, hostId: string): Promise<string> {
   requireLocal(hostId);
   const bytes = readLocalImage(cwd, path);
-  if (bytes.length > IMAGE_LIMIT) throw new Error('Image is larger than 10 MB');
+  if (bytes.length > IMAGE_LIMIT) throw new Error('Image is larger than 25 MB');
   return `data:${imageMime(bytes)};base64,${bytes.toString('base64')}`;
 }
 
@@ -20,7 +20,7 @@ function readLocalImage(cwd: string, path: string): Buffer {
     const stats = fstatSync(fd, { bigint: true });
     if (realpathSync('/proc/self/fd/' + fd) !== target) throw new Error('Image file changed while opening');
     if (!stats.isFile()) throw new Error('Select a regular image file');
-    if (stats.size > IMAGE_LIMIT) throw new Error('Image is larger than 10 MB');
+    if (stats.size > IMAGE_LIMIT) throw new Error('Image is larger than 25 MB');
     const buffer = Buffer.alloc(IMAGE_LIMIT + 1);
     let length = 0;
     for (;;) {
