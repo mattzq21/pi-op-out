@@ -234,7 +234,6 @@ function createChatSession(transport: Accessor<Pick<NativeTransport, "command" |
   };
 
   createDependencyEffect(() => discardPendingUpdates, () => [discardPendingUpdates]);
-  createDependencyEffect(() => { liveRevision.current += 1; activeAssistantId.current = undefined; activeMessageIds.current.clear(); bufferedEvents.current = undefined; snapshotSequence.current = -1; discardPendingUpdates(); }, () => [discardPendingUpdates, transport()]);
 
   const restoreHistory = (snapshot: SessionSnapshot) => {
     const cachedSession = session.memory.getSnapshot();
