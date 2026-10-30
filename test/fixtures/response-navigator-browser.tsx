@@ -19,5 +19,5 @@ render(() => <main style={{ position: 'relative' }}>
       <article data-response-id={response.messageId}>{response.preview}</article>
     </section>)}</div>
   </div>
-  <ResponseNavigator responses={responses()} scrollRoot={scrollRoot} onNavigate={() => { (window as any).navigated++; }} />
+  <ResponseNavigator responses={responses()} forkedTurns={new Set(['turn-1'])} scrollRoot={scrollRoot} onNavigate={() => { (window as any).navigated++; }} />
 </main>, document.getElementById('root')!);

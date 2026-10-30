@@ -51,6 +51,7 @@ const sessionSummarySchema = z.object({
   auxiliaryParentId: z.string().min(1).optional(),
   auxiliaryKind: z.string().min(1).optional(),
   forkSourceId: z.string().min(1).optional(),
+  forkEntryId: z.string().min(1).optional(),
 });
 const indexSessions = hostOperation<{ paths: string[] }, { summaries: z.infer<typeof sessionSummarySchema>[]; warnings: string[] }>('index-sessions', 'general', STORAGE_TIMEOUT,
   value => z.object({ summaries: z.array(sessionSummarySchema), warnings: z.array(z.string()) }).parse(value));
@@ -94,7 +95,7 @@ async function readSummaryBatch(candidates: SessionCandidate[]): Promise<Map<str
     const item = items.get(value.path);
     if (!item) throw new Error(`Unexpected session summary path: ${value.path}`);
     const summary: SessionSummary = {
-      groupId: null, auxiliaryParentId: value.auxiliaryParentId, auxiliaryKind: value.auxiliaryKind, forkSourceId: value.forkSourceId,
+      groupId: null, auxiliaryParentId: value.auxiliaryParentId, auxiliaryKind: value.auxiliaryKind, forkSourceId: value.forkSourceId, forkEntryId: value.forkEntryId,
       id: value.id, path: value.path, name: value.name, project: basename(value.cwd) || 'Workspace', cwd: value.cwd, cwdExists: true,
       modifiedAt: item[2], preview: value.preview, messageCount: value.messageCount, lastMessageAt: value.lastMessageAt, apiCost: value.apiCost,
       hostId: 'local', hostName: 'Local',

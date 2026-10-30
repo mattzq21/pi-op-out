@@ -70,7 +70,7 @@ export function createBranchConversation({ transport, activeConversationKeyRef, 
       if (cwd !== undefined) ownerTransport.adoptBranchCwd(cwd);
 
       if (parentSession) {
-        runtimePool.setLiveSession(ownerTransport, { ...parentSession, id: nextState.sessionId, forkSourceId: parentSession.id, path: nextState.sessionFile ?? "", cwd: cwd ?? parentSession.cwd, name: nextState.sessionName || parentSession.name, messageCount: nextState.messageCount });
+        runtimePool.setLiveSession(ownerTransport, { ...parentSession, id: nextState.sessionId, forkSourceId: parentSession.id, forkEntryId: entryId, path: nextState.sessionFile ?? "", cwd: cwd ?? parentSession.cwd, name: nextState.sessionName || parentSession.name, messageCount: nextState.messageCount });
       }
 
       rekeyConversationUi(previousKey, nextKey, ownerTransport, mode === "copy" ? "rename" : "branch");
