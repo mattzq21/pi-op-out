@@ -128,7 +128,7 @@ export function createAppConversations(preloadChat: () => void) {
 
     if (ownerTransport.currentSessionPath() && (uploadsByTransport().get(ownerTransport)?.length ?? 0) > 0) return;
 
-    if (activeTransportRef.current !== ownerTransport) await capturedRuntimePool.release(ownerTransport);
+    if (activeTransportRef.current !== ownerTransport) await capturedRuntimePool.closePluginPane(ownerTransport, () => !hasRetainedDraft(ownerTransport) && !(ownerTransport.currentSessionPath() && (uploadsByTransport().get(ownerTransport)?.length ?? 0) > 0));
   };
 
   const [renameSession, setRenameSession] = createSignal<RenameTarget>();

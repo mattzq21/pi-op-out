@@ -201,6 +201,12 @@ export class SessionRuntimePool {
     return transport;
   }
 
+  /** Keeps a closed side pane chat in memory like an idle chat, so it shows at once when it opens again. A busy one is released. */
+  async closePluginPane(transport: NativeTransport, canDetach: () => boolean) {
+    if (this.busy(transport)) return this.release(transport);
+    this.detachIdle(transport, canDetach);
+  }
+
   forReadOnly(session: SessionSummary) {
     return this.create({ cwd: session.cwd || undefined, sessionPath: session.path, sessionId: session.id, hostId: session.hostId ?? "local", readOnly: true });
   }
