@@ -311,6 +311,8 @@ export function Composer(props: Props) {
     composerRef.current?.querySelector<HTMLElement>('.command-palette [aria-selected="true"]')?.scrollIntoView({ block: "nearest", inline: "nearest" });
   }, () => [selectedMatch(), matches()]);
   createDependencyEffect(() => { setPaletteDismissed(false); }, () => [value()]);
+  /* Undo must not move text between the draft and a queued message that the user edits. */
+  createDependencyEffect(() => { ref.current?.clearHistory(); }, () => [editingPending()?.id]);
   createDependencyEffect(() => {
     const dismissOutside = (event: PointerEvent) => { if (!(event.target instanceof Node) || !composerRef.current?.contains(event.target)) setPaletteDismissed(true); };
 

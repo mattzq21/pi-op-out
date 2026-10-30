@@ -6,6 +6,7 @@ import { sessionReference } from "../lib/sessionDrop";
  * `readOnly`, `placeholder`, and "input" and "select" events. All offsets are offsets in `value`, the Markdown text.
  * Links to chats show as links. Each link is one unit: the caret goes before or after it, never into it.
  * The `$skill` reference that the message uses shows highlighted. It stays normal editable text.
+ * Ctrl+Z undoes and Ctrl+Y redoes each change of `value`, also changes that the app makes.
  */
 export const COMPOSER_FIELD_TAG = "piop-composer-field";
 
@@ -73,8 +74,29 @@ function nodeText(node: Node): string {
   return /^(DIV|P)$/.test(node.nodeName) && node.previousSibling ? "\n" + text : text;
 }
 
+type Snapshot = { value: string; selection: { start: number; end: number } };
+
+/** Typing of the same kind within this time is one undo step. */
+const GROUP_TIME = 1000;
+const HISTORY_LIMIT = 200;
+
+/** The kind of a user edit that can join the undo step of the edit before it. Other edits are a step each. */
+function editKind(event: Event) {
+  if (!(event instanceof InputEvent)) return undefined;
+
+  if (event.inputType === "insertText") return "insertText";
+
+  return event.inputType === "deleteContentBackward" || event.inputType === "deleteContentForward" ? event.inputType : undefined;
+}
+
 export class ComposerFieldElement extends HTMLElement {
   #value = "";
+  #undo: Snapshot[] = [];
+  #redo: Snapshot[] = [];
+  /** The kind and time of the last recorded user edit. Next edits of the same kind join its undo step. */
+  #group: { kind: string; at: number } | undefined;
+  /** The state before the user edit that the browser does now. */
+  #before: Snapshot | undefined;
   #selection = { start: 0, end: 0 };
   #readOnly = false;
   #skills: ReadonlyMap<string, string> = new Map();
@@ -90,11 +112,13 @@ export class ComposerFieldElement extends HTMLElement {
     this.addEventListener("focus", this.#focus);
     this.addEventListener("copy", this.#copy);
     this.addEventListener("cut", this.#copy);
+    this.addEventListener("keydown", this.#keyDown);
   }
 
   connectedCallback() {
     this.setAttribute("role", "textbox");
     this.setAttribute("aria-multiline", "true");
+    this.setAttribute("data-custom-history", "");
 
     if (!this.hasAttribute("tabindex")) this.tabIndex = 0;
     this.#applyEditable();
@@ -111,12 +135,17 @@ export class ComposerFieldElement extends HTMLElement {
 
     if (next === this.#value && (this.#composing || this.#canonical())) return;
     const focused = this.#focused();
+
+    if (next !== this.#value && this.isConnected) { this.#before = undefined; this.#record(this.#snapshot()); }
     this.#value = next;
     this.#render();
     this.#selection = { start: Math.min(this.#selection.start, next.length), end: Math.min(this.#selection.end, next.length) };
 
     if (focused) this.#applySelection();
   }
+
+  /** Forgets all undo and redo steps. */
+  clearHistory() { this.#undo = []; this.#redo = []; this.#group = undefined; this.#before = undefined; }
 
   get readOnly() { return this.#readOnly; }
 
@@ -268,9 +297,58 @@ export class ComposerFieldElement extends HTMLElement {
     selection.setBaseAndExtent(startNode, startOffset, endNode, endOffset);
   }
 
+  #snapshot(): Snapshot { return { value: this.#value, selection: { ...this.#selection } }; }
+
+  /** Saves the state before a change as an undo step. A change of the same `kind` soon after the last one joins its step. */
+  #record(before: Snapshot, kind?: string) {
+    const now = performance.now();
+    const joins = kind !== undefined && this.#group?.kind === kind && now - this.#group.at < GROUP_TIME;
+    this.#group = kind === undefined ? undefined : { kind, at: now };
+    this.#redo = [];
+
+    if (joins) return;
+    this.#undo.push(before);
+
+    if (this.#undo.length > HISTORY_LIMIT) this.#undo.shift();
+  }
+
+  #restore(from: Snapshot[], to: Snapshot[], inputType: "historyUndo" | "historyRedo") {
+    const target = from.pop();
+
+    if (!target) return;
+    this.#readSelection();
+    to.push(this.#snapshot());
+    this.#group = undefined;
+    this.#value = target.value;
+    this.#selection = { ...target.selection };
+    this.#render();
+
+    if (this.#focused()) this.#applySelection();
+    this.dispatchEvent(new InputEvent("input", { bubbles: true, inputType }));
+  }
+
+  #history(command: "undo" | "redo") {
+    if (this.#readOnly || this.#composing) return;
+
+    if (command === "undo") this.#restore(this.#undo, this.#redo, "historyUndo");
+    else this.#restore(this.#redo, this.#undo, "historyRedo");
+  }
+
+  #keyDown = (event: KeyboardEvent) => {
+    if (event.isComposing || event.altKey || !(event.ctrlKey || event.metaKey)) return;
+    const key = event.key.toLowerCase();
+
+    if (key !== "z" && key !== "y") return;
+    /* The browser must not undo or redo by itself. Ctrl+Shift+Z does nothing. */
+    event.preventDefault();
+
+    if (!event.shiftKey) this.#history(key === "z" ? "undo" : "redo");
+  };
+
   #replaceSelection(text: string, inputType: string) {
     this.#readSelection();
     const { start, end } = this.#selection;
+    this.#record(this.#snapshot());
     this.#value = this.#value.slice(0, start) + text + this.#value.slice(end);
     this.#render();
     this.#selection = { start: start + text.length, end: start + text.length };
@@ -279,6 +357,18 @@ export class ComposerFieldElement extends HTMLElement {
   }
 
   #beforeInput = (event: InputEvent) => {
+    if (event.inputType === "historyUndo" || event.inputType === "historyRedo") {
+      event.preventDefault();
+      this.#history(event.inputType === "historyUndo" ? "undo" : "redo");
+
+      return;
+    }
+
+    if (!this.#before && event.inputType !== "insertParagraph" && event.inputType !== "insertLineBreak") {
+      this.#readSelection();
+      this.#before = this.#snapshot();
+    }
+
     if (event.inputType !== "insertParagraph" && event.inputType !== "insertLineBreak") return;
     event.preventDefault();
 
@@ -287,7 +377,20 @@ export class ComposerFieldElement extends HTMLElement {
 
   #input = (event: Event) => {
     this.#readSelection();
+    const before = this.#before ?? this.#snapshot();
     this.#value = nodeText(this);
+    const composing = this.#composing || (event instanceof InputEvent && event.isComposing);
+
+    if (!composing) {
+      this.#before = undefined;
+
+      const kind = editKind(event);
+
+      /* A space starts a new word, so it starts a new undo step. */
+      if (event instanceof InputEvent && event.inputType === "insertText" && event.data && /\s/.test(event.data)) this.#group = undefined;
+
+      if (before.value !== this.#value) this.#record(before, kind);
+    }
 
     if (this.#composing || (event instanceof InputEvent && event.isComposing) || this.#canonical()) return;
     this.#render();
