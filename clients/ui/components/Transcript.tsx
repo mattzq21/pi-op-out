@@ -315,7 +315,13 @@ export function finalResponseIndex(messages: ChatMessage[]) {
   for (let index = messages.length - 1; index >= 0; index -= 1) {
     const message = messages[index];
 
-    if (message.role === "assistant" && (canBranchFrom(message) || textOf(message.content).trim().length > 0 || message.stopReason === "aborted" || message.stopReason === "error")) return index;
+    if (message.role !== "assistant") continue;
+
+    if (message.stopReason === "aborted" || message.stopReason === "error") return index;
+
+    if (Array.isArray(message.content) && message.content.some(part => part.type === "toolCall")) return -1;
+
+    if (canBranchFrom(message) || textOf(message.content).trim().length > 0) return index;
   }
 
   return -1;
@@ -471,7 +477,7 @@ function ConversationTurn(componentProps: ConversationTurnProps) {
     </>}>
       <div class="active-work-content"><MessageList messages={activeWork()} expanded compact={false} debug={componentProps.debug} showActions={false} /></div>
     </Show>
-    <Show when={finalShown()}><Message message={required(finalMessage())} turnCacheUsage={turnCacheUsage()} debug={componentProps.debug} showActions={!componentProps.active} onBranch={!componentProps.active && canBranchFrom(finalSource()) ? componentProps.onBranch : undefined} onFork={!componentProps.active && canBranchFrom(finalSource()) ? componentProps.onFork : undefined} onForkAndForget={componentProps.active ? undefined : forgetFrom(finalSource())} lastPoint={finalSource()?.id === lastPointId()} retrying={retrying()} onRetry={retryTarget() ? retry : undefined} /></Show>
+    <Show when={finalShown()}><Message message={required(finalMessage())} turnCacheUsage={turnCacheUsage()} debug={componentProps.debug} showActions={!componentProps.active} onBranch={!componentProps.active && canBranchFrom(finalSource()) ? componentProps.onBranch : undefined} onFork={!componentProps.active && canBranchFrom(finalSource()) ? componentProps.onFork : undefined} onForkAndForget={!componentProps.active && canBranchFrom(finalSource()) ? forgetFrom(finalSource()) : undefined} lastPoint={finalSource()?.id === lastPointId()} retrying={retrying()} onRetry={retryTarget() ? retry : undefined} /></Show>
     <Show when={!componentProps.active} fallback={renderForkLink()}>
       <Show when={retryError()}>{error => <div class="message-failure retry-error" role="alert">Retry failed: {error()}</div>}</Show>
       {renderSystemMessages(false)}
