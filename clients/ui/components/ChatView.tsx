@@ -96,7 +96,7 @@ export function ChatView(props: Props & { transcriptActions?: JSXElement; follow
 
   const goalControls = createGoalControls(() => ({ value: props.statuses["piop-goal"], disabled: Boolean(props.controlsDisabled || !ownsConversation() || !props.transport), onCommand: action => required(props.transport).command({ type: "prompt", message: `/goal ${action}` }) }));
   const messagesRef = createRef<HTMLDivElement>(null);
-  /** The place the chat had when a view last showed it. The view goes back to it, also when new messages came meanwhile. */
+  /** The place the chat had when a view last showed it. The view goes back to it, also when new messages came meanwhile. A chat left at the latest message has no place and opens at the latest message. */
   const restoring = createRef<ScrollPlace | undefined>(untrack(() => props.transport && !props.revealEntryId ? savedPlace(props.transport) : undefined));
   const followLatest = createRef(!restoring.current);
   /** Scrolls to the restored place again, after older history loads. */
@@ -511,7 +511,7 @@ export function ChatView(props: Props & { transcriptActions?: JSXElement; follow
         if (atBottom) followLatest.current = true;
         else if (movedUp) followLatest.current = false;
         lastScrollTop.current = element.scrollTop;
-        if (props.transport) savePlace(props.transport, element);
+        if (props.transport) savePlace(props.transport, element, followLatest.current);
         scrollToLatest();
         measureDistance();
 

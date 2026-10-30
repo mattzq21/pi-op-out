@@ -8,9 +8,10 @@ const places = new WeakMap<NativeTransport, ScrollPlace>();
 
 const turnOf = (root: HTMLElement, turnId: string) => root.querySelector<HTMLElement>(`[data-response-turn="${CSS.escape(turnId)}"]`);
 
-/** Records the place of the view. A view without turns keeps the place recorded before. */
-export function savePlace(transport: NativeTransport, root: HTMLElement) {
+/** Records the place of the view. A view at the latest message records no place, so it opens at the latest message again. A view without turns keeps the place recorded before. */
+export function savePlace(transport: NativeTransport, root: HTMLElement, atLatest: boolean) {
   if (!root.isConnected) return;
+  if (atLatest) { places.delete(transport); return; }
   const turns = root.querySelectorAll<HTMLElement>("[data-response-turn]");
   const top = root.getBoundingClientRect().top;
   // The turns are in order, so a binary search finds the first turn whose bottom is below the top of the view.

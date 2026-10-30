@@ -60,12 +60,11 @@ try {
   assert.deepEqual(await place(), before, 'a chat opens at its old place');
   await messages.evaluate(el => el.scrollTop = el.scrollHeight);
   await page.waitForTimeout(200);
-  const bottom = await place();
   await page.evaluate(() => window.setShown(false));
   await page.evaluate(() => window.appendMessage());
   await page.evaluate(() => window.setShown(true));
   await page.waitForTimeout(300);
-  assert.deepEqual(await place(), bottom, 'new messages do not move the old place');
+  assert.ok(await messages.evaluate(el => el.scrollHeight - el.scrollTop - el.clientHeight <= 2), 'a chat left at the bottom opens at the new bottom');
   assert.deepEqual(errors, []);
   console.log('PASS: chats open at their old scroll place');
 } finally {
