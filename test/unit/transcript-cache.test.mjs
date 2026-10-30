@@ -15,11 +15,11 @@ function chat(name) {
 }
 
 /** A cache whose chats show the messages of their signals while no view shows them, and a view that shows one chat. */
-async function setup(t) {
+async function setup(t, limits) {
   const dom = installDom();
   const chats = new Map();
   let dispose;
-  const cache = createRoot(stop => { dispose = stop; return createTranscriptCache(transport => () => ({ messages: chats.get(transport)[0](), state, actions: {} })); });
+  const cache = createRoot(stop => { dispose = stop; return createTranscriptCache(transport => () => ({ messages: chats.get(transport)[0](), state, actions: {} }), limits); });
   const add = (name, messages) => { const transport = chat(name); chats.set(transport, createSignal(messages)); return transport; };
   const views = [];
   const show = async transport => { const view = await renderComponent(ChatView, { readOnly: true, transcripts: cache, transport, state, get messages() { return chats.get(transport)[0](); }, models: [], commands: [], thinkingLevels: [], widgets: [], statuses: {} }); views.push(view); return view; };
@@ -60,3 +60,17 @@ test('closing a chat lets its turns go', async t => {
   const after = cache.take(transport, createTranscript); cache.release(transport, after);
   assert.notEqual(after, before);
 });
+
+test('the drawn turns of hidden chats go when they need more memory than the limit, but the turns that a view shows stay', async t => {
+  const { cache, add, show } = await setup(t, { count: 20, bytes: 1 });
+  const hidden = add('a', turn('first', 'Answer a'));
+  await (await show(hidden)).unmount();
+  const before = cache.take(hidden, createTranscript); cache.release(hidden, before);
+  const shown = add('b', turn('first', 'Answer b'));
+  const view = await show(shown);
+  const drawn = view.container.querySelector('.conversation-turns');
+  const after = cache.take(hidden, createTranscript); cache.release(hidden, after);
+  assert.notEqual(after, before, 'the hidden chat is drawn again');
+  assert.equal(view.container.querySelector('.conversation-turns'), drawn, 'the shown chat keeps its turns');
+});
+

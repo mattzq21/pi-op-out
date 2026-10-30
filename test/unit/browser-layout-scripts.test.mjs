@@ -13,6 +13,10 @@ test('the chat keeps following new output at the bottom, and keeps a reader in h
   assert.match(await script('test/chat-scroll-follow.mjs'), /^PASS: /m);
 });
 
+test('a chat opens at the scroll place it had, also after new messages', async () => {
+  assert.match(await script('test/chat-scroll-place.mjs'), /^PASS: /m);
+});
+
 test('the desktop terminal and its shell agree on the width, so the cursor returns to the prompt', async () => {
   assert.equal((await script('test/terminal-cursor.mjs')).match(/^PASS /gm)?.length, 3);
 });

@@ -33,6 +33,7 @@ import { ConversationHostContext } from "../lib/subagentNavigation";
 import { OLDER_HISTORY, olderHistory } from "../lib/historyWindow";
 import { loadOlderHistory } from "../lib/sessionMemory";
 import { MessageFileContext } from "../lib/messageFiles";
+import { applyPlace, savedPlace, savePlace, type ScrollPlace } from "./scrollPlace";
 
 interface Props { transcripts?: TranscriptCache; refreshError?: string; capabilityErrors?: string[]; capabilitiesLoading?: boolean; onRetryCapabilities?: () => void; transport?: NativeTransport; agentHostLabel?: string; state: AgentState; messages: ChatMessage[]; debug?: DebugView; agents?: AgentProfile[]; activeAgent?: string; agentLocked?: boolean; agentSaved?: boolean; agentUnavailable?: boolean; modelAliases?: Record<string, string>; models: Model[]; commands: SlashCommand[]; thinkingLevels: string[]; widgets: string[]; statuses: Record<string, string>; projectCwd?: string; readOnly?: boolean; controlsDisabled?: boolean; draft?: string; onDraftChange?: (value: StateUpdate<string>) => void; focusRequest?: number; onActivate?: () => void; uploads?: ComposerUpload[]; onUploadsChange?: (uploads: StateUpdate<ComposerUpload[]>) => void; onSend: (text: string, behavior?: "steer" | "followUp", images?: ImageAttachment[], submission?: DraftSubmissionHandle) => void | boolean | Promise<void | boolean>; onChangePending?: (id: string, behavior: import("../types").PendingMessageAction) => Promise<void>; onAbort: () => void | Promise<void>; onOpenTerminal?: () => void; hosts?: Array<{ id: string; name: string; disabled?: boolean }>; onChooseHost?: (hostId: string) => void; onOpenProject: () => void; onClearProject?: () => void; onBranch: (message: ChatMessage) => void; onFork?: (message: ChatMessage) => void | Promise<void>; onForkAndForget?: (message: ChatMessage) => void | Promise<void>; forkSourceName?: string; onOpenForkSource?: (source: ForkSource) => void; revealEntryId?: string; onEntryRevealed?: () => void; onAgent?: (name: string) => void; onModel: (model: Model) => void; onToggleFastMode: () => void | Promise<void>; onThinking: (level: string) => void; }
 
@@ -95,7 +96,11 @@ export function ChatView(props: Props & { transcriptActions?: JSXElement; follow
 
   const goalControls = createGoalControls(() => ({ value: props.statuses["piop-goal"], disabled: Boolean(props.controlsDisabled || !ownsConversation() || !props.transport), onCommand: action => required(props.transport).command({ type: "prompt", message: `/goal ${action}` }) }));
   const messagesRef = createRef<HTMLDivElement>(null);
-  const followLatest = createRef(true);
+  /** The place the chat had when a view last showed it. The view goes back to it, also when new messages came meanwhile. */
+  const restoring = createRef<ScrollPlace | undefined>(untrack(() => props.transport && !props.revealEntryId ? savedPlace(props.transport) : undefined));
+  const followLatest = createRef(!restoring.current);
+  /** Scrolls to the restored place again, after older history loads. */
+  const holdPlace = createRef<(() => void) | undefined>(undefined);
   /** True when the view is far enough above the latest message to offer the jump button. */
   const [awayFromLatest, setAwayFromLatest] = createSignal(false);
   const shellRef = createRef<HTMLElement | null>(null);
@@ -172,12 +177,14 @@ export function ChatView(props: Props & { transcriptActions?: JSXElement; follow
     olderAnchor.current = element.scrollHeight - element.scrollTop;
     loadOlderHistory(transport).catch(reason => {
       if (!transport.isConnected() || isDaemonRefusal(reason)) retryOlderAfterReconnect(transport);
-      else props.onNotice?.("Could not load older messages", reason instanceof Error ? reason.message : String(reason));
+      else { restoring.current = undefined; props.onNotice?.("Could not load older messages", reason instanceof Error ? reason.message : String(reason)); }
     }).finally(() => requestAnimationFrame(() => {
       const anchor = olderAnchor.current; olderAnchor.current = undefined;
 
       if (anchor !== undefined && !followLatest.current) { element.scrollTop = element.scrollHeight - anchor; lastScrollTop.current = element.scrollTop; }
-      fillView();
+      // A restore that waits for the turn of its place continues. A failed load ends it.
+      if (holdPlace.current) holdPlace.current();
+      else fillView();
     }));
   };
 
@@ -352,6 +359,29 @@ export function ChatView(props: Props & { transcriptActions?: JSXElement; follow
 
     return () => cancelAnimationFrame(frame);
   }, () => [pinReveal(), turns()]);
+  // Turns above the place change height when they are drawn, so the place is kept until the user acts or the view follows the latest message.
+  createDependencyEffect(() => { const root = messagesRef.current; const content = root?.querySelector(".conversation"); const shell = shellRef.current;
+
+    if (!root || !content || !shell || !restoring.current || typeof ResizeObserver === "undefined") return;
+    const inputs = ["wheel", "touchstart", "pointerdown", "keydown"] as const;
+    const stop = () => { restoring.current = undefined; holdPlace.current = undefined; observer.disconnect(); for (const type of inputs) shell.removeEventListener(type, stop, true); };
+    const hold = () => {
+      const place = restoring.current;
+
+      if (!place || followLatest.current) { stop(); return; }
+      if (applyPlace(root, place)) { lastScrollTop.current = root.scrollTop; measureDistance(); return; }
+      // The turn of the place is in the older history, so it loads.
+      if (untrack(older)) { loadOlder(); return; }
+      // The turn of the place is not in the chat, such as after a branch change, so the view shows the latest message.
+      if (untrack(messages).length) { stop(); followLatest.current = true; scrollToLatest(); }
+    };
+    holdPlace.current = hold;
+    const observer = new ResizeObserver(hold);
+    observer.observe(content);
+    for (const type of inputs) shell.addEventListener(type, stop, { capture: true, passive: true });
+
+    return stop;
+  }, () => []);
   createDependencyEffect(() => {
     const messages = messagesRef.current;
 
@@ -406,6 +436,7 @@ export function ChatView(props: Props & { transcriptActions?: JSXElement; follow
         if (atBottom) followLatest.current = true;
         else if (movedUp) followLatest.current = false;
         lastScrollTop.current = element.scrollTop;
+        if (props.transport) savePlace(props.transport, element);
         scrollToLatest();
         measureDistance();
 
