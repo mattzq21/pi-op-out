@@ -132,7 +132,7 @@ kbd { font: 11px "DM Sans"; border: 1px solid var(--line); padding: 2px 4px; bor
 .response-navigator-marker[aria-current] span { background: var(--accent); opacity: 1; }
 .response-navigator-marker[data-forked] { --fork-width: 4px; }
 .response-navigator-marker[data-forked] span { position: relative; margin-right: var(--fork-width); }
-.response-navigator-marker[data-forked] span:before, .response-navigator-marker[data-forked] span:after { content: ""; position: absolute; left: calc(100% - 1px); top: 0; width: 6px; height: 2px; border-radius: 1px; background: var(--accent); transform-origin: 1px 1px; }
+.response-navigator-marker[data-forked] span:before, .response-navigator-marker[data-forked] span:after { content: ""; position: absolute; left: calc(100% - 1px); top: 0; width: 6px; height: 2px; border-radius: 1px; background: inherit; transform-origin: 1px 1px; }
 .response-navigator-marker[data-forked] span:before { transform: rotate(-28deg); }
 .response-navigator-marker[data-forked] span:after { transform: rotate(28deg); }
 .response-navigator-marker:focus-visible { outline: 1px solid var(--accent); outline-offset: -1px; border-radius: 3px; }
