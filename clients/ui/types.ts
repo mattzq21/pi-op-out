@@ -117,4 +117,4 @@ export interface ChatMessage { submissionId?: string; piopQueueId?: string; piop
 /** The daemon left out the work of this finished turn. loadWork fetches it. */
 export interface ChatMessage { deferredWork?: { reasoningOnly: boolean; usage?: ChatMessage["usage"]; firstUsage?: ChatMessage["usage"] }; loadWork?: () => Promise<void>; }
 
-export type PendingMessageAction = "steer" | "followUp" | "remove" | "moveUp" | "moveDown" | { type: "move"; targetId: string; edge: "before" | "after" } | { type: "edit"; message: string; images: { keep: number[]; add: ImageAttachment[] } };
+export type PendingMessageAction = "steer" | "followUp" | "remove" | "pause" | "resume" | "moveUp" | "moveDown" | { type: "move"; targetId: string; edge: "before" | "after" } | { type: "edit"; message: string; images: { keep: number[]; add: ImageAttachment[] } };

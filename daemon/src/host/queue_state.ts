@@ -30,7 +30,8 @@ export type QueueOffer = { steer: number; followUp: number };
  *
  * An active or paused goal is an entry of the follow-ups. Follow-ups below it have afterGoal set; they wait until the goal completes or is cleared,
  * or until the user moves them above the goal. Steering messages never wait for the goal.
- * Pi may take an item that is not taken, not below the goal and not marked for retry, while the queue is not held and not stopped.
+ * A paused item keeps its place, and the items after it can run.
+ * Pi may take an item that is not taken, not paused, not below the goal and not marked for retry, while the queue is not held and not stopped.
  */
 export class QueueState {
   pending: any[] = [];
@@ -57,7 +58,7 @@ export class QueueState {
 
   /** True when Pi may take the item now. */
   available(item: any): boolean {
-    return !this.held && !this.stopped && !flag(item, 'taken') && !flag(item, 'afterGoal') && !flag(item, 'retry') && !this.sending.has(text(item, 'id'));
+    return !this.held && !this.stopped && !flag(item, 'taken') && !flag(item, 'paused') && !flag(item, 'afterGoal') && !flag(item, 'retry') && !this.sending.has(text(item, 'id'));
   }
 
   offer(): QueueOffer {
@@ -100,7 +101,7 @@ export class QueueState {
       const index = visible.findIndex(item => flag(item, 'afterGoal') || flag(item, 'retry'));
       visible.splice(index < 0 ? visible.length : index, 0, { id: GOAL_ENTRY_ID, message: goal.objective, behavior: 'followUp', goal: true, ...(goal.status === 'paused' ? { paused: true } : {}) });
     }
-    const queued = pending.filter(item => !flag(item, 'retry') && !flag(item, 'afterGoal'));
+    const queued = pending.filter(item => !flag(item, 'retry') && !flag(item, 'paused') && !flag(item, 'afterGoal'));
     return {
       type: 'queue_update',
       steering: queued.filter(item => item.behavior === 'steer').map(item => clone(item.message)),

@@ -17,7 +17,7 @@ import { useComposerAttachments } from "../lib/useComposerAttachments";
 import { stageComposerDraft, type DraftSubmissionHandle, type StageDraftSubmission } from "../lib/draftSubmission";
 import { ComposerSettingsMenu } from "./ComposerSettingsMenu";
 import { ComposerPlugins } from "../plugins/composer";
-import { GoalActions, type GoalControls } from "./GoalControls";
+import { GoalActions, GoalPauseButton, PauseButton, type GoalControls } from "./GoalControls";
 
 import { ArrowUp,Check,ChevronDown,ChevronUp,CircleStop,CircleX,CornerDownRight,FileText,ImagePlus,MoveVertical,Pause,Pencil,Play,RefreshCw,TerminalSquare,Trash2,X,Zap } from "lucide-solid";
 import { hasVisibleText } from "../lib/content";
@@ -713,6 +713,10 @@ export function Composer(props: Props) {
           if (event.key === "ArrowUp" || event.key === "ArrowDown") { event.preventDefault(); change(event.key === "ArrowUp" ? "moveUp" : "moveDown"); }
         }} onPointerDown={(event) => pendingDrag.begin(event, message().id)}><MoveVertical size={16} /></button>);
 
+      const renderPendingPause = () => (composer().onChangePending && (message().goal
+        ? <Show when={props.goal?.goal()}>{goal => <GoalPauseButton controls={required(props.goal)} goal={goal()} />}</Show>
+        : <Show when={!message().retry}><PauseButton paused={Boolean(message().paused)} subject="message" disabled={disabled()} onToggle={() => change(message().paused ? "resume" : "pause")} /></Show>));
+
       const renderPendingMessageActions = () => (composer().onChangePending && <div class="pending-message-actions">
           <Show when={!message().goal && !queuedCompaction(text())}><button type="button" class="pending-icon-button" disabled={disabled() || savingEdit()} aria-label={`Edit queued message: ${label()}`} data-tooltip="Edit message" onClick={() => beginEdit(message())}><Pencil size={12} /></button></Show>
           <div class="pending-order-actions">
@@ -720,14 +724,15 @@ export function Composer(props: Props) {
             <button type="button" class="pending-icon-button" disabled={disabled() || position() < 0 || position() >= peerCount() - 1} aria-label={`Move queued message down: ${label()}`} data-tooltip="Move later in this delivery queue" onClick={() => change("moveDown")}><ChevronDown size={13} /></button>
           </div>
           <Show when={!message().goal && (message().retry || !queuedCommand(text()))}><button type="button" disabled={disabled()} data-tooltip={message().retry ? (props.queueHeld ? "Keep it in the held queue. It is sent when you resume." : "Send it again") : message().behavior === "steer" ? "Queue after the current response" : "Steer at the next turn"} onClick={() => change(message().retry ? message().behavior : message().behavior === "steer" ? "followUp" : "steer")}><CornerDownRight size={13} />{message().retry ? "Retry" : message().behavior === "steer" ? "Queue" : "Steer"}</button></Show>
-          <Show when={message().goal && props.goal?.goal()}>{goal => <GoalActions controls={required(props.goal)} goal={goal()} />}</Show>
+          <Show when={message().goal && props.goal?.goal()}><GoalActions controls={required(props.goal)} /></Show>
           <Show when={!message().goal}><button type="button" class="pending-icon-button" disabled={disabled()} aria-label={`Remove queued message: ${label()}`} data-tooltip="Remove message" onClick={() => change("remove")}><Trash2 size={13} /></button></Show>
         </div>);
 
       return <div data-pending-id={message().id} class={pendingMessageClass(message().id, expandedPending(), pendingDrag.drop)} classList={{ "editing-pending": isEditingPending(message().id), "pending-goal": Boolean(message().goal), "pending-steer": message().behavior === "steer" && !message().goal, paused: Boolean(message().paused) }}>
         {renderPendingDragHandle()}
+        {renderPendingPause()}
         <PendingImages message={message()} load={props.loadPendingImage} />
-        <span class="pending-message-text" data-tooltip={message().recovered ? "This saved answer may not have reached the model. Check the conversation before retrying." : message().retry ? "piop could not confirm whether this message reached the model, for example after a restart, so it is not sent by itself. Retry sends it again. Remove it if the conversation already has it." : label()} onDblClick={() => setExpandedPending((current) => current === message().id ? undefined : message().id)}>{message().goal && <>{message().paused && <small>Paused · </small>}<small class="goal-label">Goal · </small></>}{message().retry && <small>{message().recovered ? "Saved answer · " : "Retry needed · "}</small>}<PendingMessageText segments={segments()} /></span>
+        <span class="pending-message-text" data-tooltip={message().recovered ? "This saved answer may not have reached the model. Check the conversation before retrying." : message().retry ? "piop could not confirm whether this message reached the model, for example after a restart, so it is not sent by itself. Retry sends it again. Remove it if the conversation already has it." : label()} onDblClick={() => setExpandedPending((current) => current === message().id ? undefined : message().id)}>{message().paused && <small>Paused · </small>}{message().goal && <small class="goal-label">Goal · </small>}{message().retry && <small>{message().recovered ? "Saved answer · " : "Retry needed · "}</small>}<PendingMessageText segments={segments()} /></span>
         {renderPendingMessageActions()}
       </div>;
     }}</Key>}<Show when={props.goal?.error()}>{message => <div class="pending-goal-error" role="alert">{message()}</div>}</Show></div> : renderQueueHold(true)}
