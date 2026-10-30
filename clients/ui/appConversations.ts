@@ -583,7 +583,8 @@ export function createAppConversations(preloadChat: () => void) {
 
       if (source && fresh) drafts.discard(source.owner, source.key);
       else if (source) drafts.rekeyDraft(source.key, conversationKey);
-      assignNewSessionGroup(nextTransport, hostId, group, projectCwd);
+      // A chat in a worktree belongs to its repository's project, so the group is found by the repository folder.
+      assignNewSessionGroup(nextTransport, hostId, group, cwd ?? projectCwd);
       drafts.bindTransport(nextTransport, conversationKey);
       batch(() => {
         setView("chat"); setTerminalOpen(false); setTerminalTarget(undefined);

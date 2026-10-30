@@ -190,6 +190,18 @@ describe('session runtime pool', () => {
     assert.equal(pool.liveSessionSummaries()[0].forkSourceId, 'source');
   });
 
+  test('a new chat that starts in its own worktree is listed as a worktree chat', async () => {
+    responses.set('start_pi', ({ cwd }) => ({ attached: false, cwd: cwd === '/repo' ? '/worktrees/abcd' : cwd }));
+    const client = pool.create({ cwd: '/repo' });
+    client.setNewChatWorktreeOptions({ repository: '/repo', branches: ['main'], defaultBranch: 'main' });
+    const id = await connect(client);
+    assert.equal(commands('start_pi').at(-1).args.baseBranch, 'main');
+    await send(id, { type: 'message_start', message: { role: 'user', content: [{ type: 'text', text: 'Hello' }] } });
+    await settled(); await settled();
+    assert.equal(pool.liveSessionSummaries()[0].cwd, '/worktrees/abcd');
+    assert.equal(pool.liveSessionSummaries()[0].linkedWorktree, true);
+  });
+
   test('malformed MCP statuses and late state responses cannot resurrect released sessions', async () => {
     const pending = Promise.withResolvers();
     const started = Promise.withResolvers();

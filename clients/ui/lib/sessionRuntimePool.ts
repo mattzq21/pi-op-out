@@ -123,7 +123,7 @@ export class SessionRuntimePool {
       this.bind(transport.currentHostId(), state.sessionId, transport);
       const cwd = transport.currentCwd() || "";
       const previous = this.liveSessions.get(transport);
-      const projectDetails = this.retainedProjectDetails(previous, cwd, transport.currentHostId());
+      const projectDetails = { ...this.retainedProjectDetails(previous, cwd, transport.currentHostId()), ...(transport.startedInLinkedWorktree() ? { linkedWorktree: true } : {}) };
       this.releasedSessions.delete(sessionKey(transport.currentHostId(), state.sessionId));
       const forkSourceId = state.forkSource?.sessionId;
       this.liveSessions.set(transport, { ...projectDetails, id: state.sessionId, ...(forkSourceId ? { forkSourceId } : {}), path: state.sessionFile || "", name: retainedName(state, prompt, previous), project: cwd.split(/[\\/]/).filter(Boolean).at(-1) || "Workspace", cwd, ...retainedActivity(state, previous, prompt, lastMessageAt), daemonId: transport.currentDaemonId(), hostId: transport.currentHostId() });
@@ -132,7 +132,7 @@ export class SessionRuntimePool {
   }
 
   private retainedProjectDetails(previous: SessionSummary | undefined, cwd: string, hostId: string) {
-    return previous?.cwd === cwd && previous.hostId === hostId ? { cwdExists: previous.cwdExists } : {};
+    return previous?.cwd === cwd && previous.hostId === hostId ? { cwdExists: previous.cwdExists, ...(previous.linkedWorktree ? { linkedWorktree: true } : {}) } : {};
   }
 
   private retainMcpSession(transport: NativeTransport, event: RpcEvent) {
