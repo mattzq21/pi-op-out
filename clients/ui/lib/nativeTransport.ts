@@ -298,6 +298,9 @@ export class NativeTransport {
     } finally { this.listeners.delete(listener); }
   }
   currentCwd() { return this.cwd; }
+  private inLinkedWorktree = false;
+  /** True after this new chat started in the Piop worktree that start_pi made for it. */
+  startedInLinkedWorktree() { return this.inLinkedWorktree; }
   adoptBranchCwd(cwd: string) { this.cwd = cwd; }
   currentSessionPath() { return this.sessionPath; }
   isTemporaryChat() { return this.temporaryChat; }
@@ -485,11 +488,13 @@ export class NativeTransport {
     return; }
 
     this.unlisten = unlisten; this.stderrUnlisten = stderrUnlisten;
-    const attached = await this.runProcessCommand(() => version !== this.connectionVersion ? Promise.resolve(undefined) : call("start_pi", { runtimeId: this.runtimeId, cwd: this.cwd, baseBranch: !this.sessionId && !this.sessionPath ? this.baseBranch : undefined, sessionPath: !this.readOnly && this.sessionId ? undefined : this.sessionPath, sessionId: this.sessionId, forkPath, hostId: this.hostId, presence: this.presence() }, z.object({ attached: z.boolean(), owned: z.boolean().optional(), daemonId: z.string().optional(), cwd: z.string().nullable().optional() })));
+    const baseBranch = !this.sessionId && !this.sessionPath ? this.baseBranch : undefined;
+    const attached = await this.runProcessCommand(() => version !== this.connectionVersion ? Promise.resolve(undefined) : call("start_pi", { runtimeId: this.runtimeId, cwd: this.cwd, baseBranch, sessionPath: !this.readOnly && this.sessionId ? undefined : this.sessionPath, sessionId: this.sessionId, forkPath, hostId: this.hostId, presence: this.presence() }, z.object({ attached: z.boolean(), owned: z.boolean().optional(), daemonId: z.string().optional(), cwd: z.string().nullable().optional() })));
 
     if (version !== this.connectionVersion || !attached) throw new Error("The conversation disconnected while starting. Reconnect to try again.");
     this.daemonId = attached.daemonId;
     if (attached.cwd) this.cwd = attached.cwd;
+    if (baseBranch !== undefined) this.inLinkedWorktree = true;
 
     if (version === this.connectionVersion) {
       this.running = true;
