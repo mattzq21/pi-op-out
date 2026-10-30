@@ -15,9 +15,20 @@ export function Diagram(props: { source: string; complete: boolean }) {
   let revision = 0;
   let timer: ReturnType<typeof setTimeout> | undefined;
   let drag: { x: number; y: number; left: number; top: number } | undefined;
+  let pinch: { distance: number; zoom: number } | undefined;
   onMount(() => {
     root.addEventListener("wheel", wheel, { passive: false });
-    onCleanup(() => root.removeEventListener("wheel", wheel));
+    viewport.addEventListener("touchstart", touchStart, { passive: false });
+    viewport.addEventListener("touchmove", touchMove, { passive: false });
+    viewport.addEventListener("touchend", touchEnd);
+    viewport.addEventListener("touchcancel", touchEnd);
+    onCleanup(() => {
+      root.removeEventListener("wheel", wheel);
+      viewport.removeEventListener("touchstart", touchStart);
+      viewport.removeEventListener("touchmove", touchMove);
+      viewport.removeEventListener("touchend", touchEnd);
+      viewport.removeEventListener("touchcancel", touchEnd);
+    });
   });
   onCleanup(() => { revision++; clearTimeout(timer); });
   createEffect(() => {
@@ -55,6 +66,34 @@ export function Diagram(props: { source: string; complete: boolean }) {
     event.preventDefault();
     event.stopPropagation();
     setZoom(value => Math.max(0.5, Math.min(4, value - Math.sign(event.deltaY) * 0.25)));
+  };
+
+  const span = (touches: TouchList) => Math.hypot(touches[0].clientX - touches[1].clientX, touches[0].clientY - touches[1].clientY);
+
+  const touchStart = (event: TouchEvent) => {
+    if (event.touches.length !== 2) return;
+    event.preventDefault();
+    pinch = { distance: span(event.touches), zoom: zoom() };
+  };
+
+  const touchMove = (event: TouchEvent) => {
+    if (!pinch || event.touches.length !== 2) return;
+    event.preventDefault();
+    const before = zoom();
+    const next = Math.max(0.5, Math.min(4, pinch.zoom * span(event.touches) / pinch.distance));
+    if (next === before) return;
+    const box = viewport.getBoundingClientRect();
+    const x = (event.touches[0].clientX + event.touches[1].clientX) / 2 - box.left;
+    const y = (event.touches[0].clientY + event.touches[1].clientY) / 2 - box.top;
+    const left = viewport.scrollLeft + x;
+    const top = viewport.scrollTop + y;
+    setZoom(next);
+    viewport.scrollLeft = left * next / before - x;
+    viewport.scrollTop = top * next / before - y;
+  };
+
+  const touchEnd = (event: TouchEvent) => {
+    if (event.touches.length < 2) pinch = undefined;
   };
 
   const pointerDown = (event: PointerEvent) => {
