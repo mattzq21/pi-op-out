@@ -503,12 +503,12 @@ export function registerSubagents(pi: ExtensionAPI) {
       return answers();
     },
   });
-  /** single: the agent can start only one agent as a subagent, so the tool has no agent field. */
-  const spawnTool = (single: boolean) => ({
+  /** single: the agent can start only one agent as a subagent, so the tool has no agent field. limit: the agent's max_subagents. */
+  const spawnTool = (single: boolean, limit: number) => ({
     name: "spawn_subagents", label: "Spawn subagents",
     exposure: "model-only" as const,
     description: "Start subagents in the background, each with its own task. A subagent starts with no context, so fill him in just enough to complete the handoff. Avoid giving two subagents overlapping edits." + (single ? "" : " Pick an agent profile from list_agent_profiles or omit it to use your own."),
-    parameters: Type.Object({ tasks: Type.Array(Type.Object({ nickname: Type.String({ pattern: NICKNAME, description: "Unique, used to address this subagent" }), task: Type.String({ minLength: 1 }), ...single ? {} : { agent: Type.Optional(Type.String({ minLength: 1 })) } }), { minItems: 1 }) }),
+    parameters: Type.Object({ tasks: Type.Array(Type.Object({ nickname: Type.String({ pattern: NICKNAME, description: "Unique, used to address this subagent" }), task: Type.String({ minLength: 1 }), ...single ? {} : { agent: Type.Optional(Type.String({ minLength: 1 })) } }), { minItems: 1, maxItems: limit }) }),
     async execute(toolCallId: string, params: { tasks: Array<{ nickname: string; task: string; agent?: string }> }, signal: AbortSignal | undefined, onUpdate: ((update: AgentToolResult<unknown>) => void) | undefined, ctx: ExtensionContext) {
       signal?.throwIfAborted();
 
@@ -546,11 +546,13 @@ export function registerSubagents(pi: ExtensionAPI) {
     },
   });
   let spawnSingle = false;
-  pi.registerTool(spawnTool(spawnSingle));
-  /** Keeps spawn_subagents without an agent field while the agent can start only one agent as a subagent. */
+  let spawnLimit = subagentLimit(pi);
+  pi.registerTool(spawnTool(spawnSingle, spawnLimit));
+  /** Keeps the spawn_subagents schema in line with the agent: no agent field while it can start only one agent as a subagent, and at most max_subagents tasks. */
   useSpawnTool = () => {
     const single = startableProfiles(pi, "subagent").profiles.length === 1;
+    const limit = subagentLimit(pi);
 
-    if (single !== spawnSingle) { pi.registerTool(spawnTool(single)); spawnSingle = single; }
+    if (single !== spawnSingle || limit !== spawnLimit) { pi.registerTool(spawnTool(single, limit)); spawnSingle = single; spawnLimit = limit; }
   };
 }
