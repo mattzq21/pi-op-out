@@ -3,7 +3,7 @@ import type { AgentToolResult, ExtensionAPI, ExtensionContext, CustomEntryDraft 
 import type { SubagentLimitsRequest } from "../../../extensions/piop-define-agents/contracts.ts";
 import { Type } from "@earendil-works/pi-ai";
 import { Parse } from "typebox/value";
-import { agentProfilesTool, resolveAgentProfile, SUBAGENT_TOOLS, PEER_TOOLS } from "./agent-profiles.ts";
+import { agentProfilesTool, resolveAgentProfile, soleProfile, startableProfiles, SUBAGENT_TOOLS, PEER_TOOLS } from "./agent-profiles.ts";
 import { childFastModeEntry } from "./fast-mode.ts";
 import { randomUUID } from "node:crypto";
 import { execFileSync } from "node:child_process";
@@ -260,6 +260,7 @@ export function registerSubagents(pi: ExtensionAPI) {
   };
 
   const useProfilesTool = agentProfilesTool(pi);
+  let useSpawnTool = () => {};
   /** Whether the session's folder is in a Git repository, checked once per session. */
   let repository: { sessionId: string; inside: boolean } | undefined;
   const sessionInRepository = (ctx: ExtensionContext) => {
@@ -284,6 +285,8 @@ export function registerSubagents(pi: ExtensionAPI) {
 
     // branchoff_peer makes a Git worktree, so only a chat in a Git repository gets it.
     if (peers) tools.push(...PEER_TOOLS.filter(tool => tool !== "branchoff_peer" || sessionInRepository(ctx)));
+
+    if (subagents) useSpawnTool();
 
     if (useProfilesTool(subagents, peers)) tools.push("list_agent_profiles");
   });
@@ -500,12 +503,13 @@ export function registerSubagents(pi: ExtensionAPI) {
       return answers();
     },
   });
-  pi.registerTool({
+  /** single: the agent can start only one agent as a subagent, so the tool has no agent field. */
+  const spawnTool = (single: boolean) => ({
     name: "spawn_subagents", label: "Spawn subagents",
-    exposure: "model-only",
-    description: "Start subagents in the background, each with its own task. A subagent starts with no context, so fill him in just enough to complete the handoff. Avoid giving two subagents overlapping edits. Pick an agent profile from list_agent_profiles or omit it to use your own.",
-    parameters: Type.Object({ tasks: Type.Array(Type.Object({ nickname: Type.String({ pattern: NICKNAME, description: "Unique, used to address this subagent" }), task: Type.String({ minLength: 1 }), agent: Type.Optional(Type.String({ minLength: 1 })) }), { minItems: 1 }) }),
-    async execute(toolCallId, params, signal, onUpdate, ctx) {
+    exposure: "model-only" as const,
+    description: "Start subagents in the background, each with its own task. A subagent starts with no context, so fill him in just enough to complete the handoff. Avoid giving two subagents overlapping edits." + (single ? "" : " Pick an agent profile from list_agent_profiles or omit it to use your own."),
+    parameters: Type.Object({ tasks: Type.Array(Type.Object({ nickname: Type.String({ pattern: NICKNAME, description: "Unique, used to address this subagent" }), task: Type.String({ minLength: 1 }), ...single ? {} : { agent: Type.Optional(Type.String({ minLength: 1 })) } }), { minItems: 1 }) }),
+    async execute(toolCallId: string, params: { tasks: Array<{ nickname: string; task: string; agent?: string }> }, signal: AbortSignal | undefined, onUpdate: ((update: AgentToolResult<unknown>) => void) | undefined, ctx: ExtensionContext) {
       signal?.throwIfAborted();
 
       requireDelegation(ctx);
@@ -536,9 +540,17 @@ export function registerSubagents(pi: ExtensionAPI) {
         resultsDelivery.publish(ctx, run);
       };
 
-      await Promise.all(params.tasks.map((task) => launchSubagent({ name: task.nickname, task: task.task, agent: task.agent }, { pi, ctx, toolCallId, active, results, signal: backgroundSignal, publish }, pending)));
+      await Promise.all(params.tasks.map((task) => launchSubagent({ name: task.nickname, task: task.task, agent: task.agent ?? soleProfile(pi, "subagent") }, { pi, ctx, toolCallId, active, results, signal: backgroundSignal, publish }, pending)));
 
       return { ...subagentPayload(results), isError: results.some((run) => run.status === "failed" || run.status === "cancelled") };
     },
   });
+  let spawnSingle = false;
+  pi.registerTool(spawnTool(spawnSingle));
+  /** Keeps spawn_subagents without an agent field while the agent can start only one agent as a subagent. */
+  useSpawnTool = () => {
+    const single = startableProfiles(pi, "subagent").profiles.length === 1;
+
+    if (single !== spawnSingle) { pi.registerTool(spawnTool(single)); spawnSingle = single; }
+  };
 }
