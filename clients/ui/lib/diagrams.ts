@@ -54,7 +54,8 @@ function instanceSvg(svg: string) {
 async function render(source: string) {
   if (source.length > 30_000) throw new Error("Diagram is too large (maximum 30,000 characters).");
 
-  if (/%%\s*\{|^\s*---/.test(source)) throw new Error("Remove Mermaid configuration directives or frontmatter; piop manages diagram styling.");
+  const body = source.replace(/^\s*---\r?\ntitle:[^\r\n]*\r?\n---\r?\n/, "");
+  if (/%%\s*\{|^\s*---/.test(body)) throw new Error("Remove Mermaid configuration directives or frontmatter; piop manages diagram styling.");
   renderer ??= import("mermaid").catch(error => { renderer = undefined; throw error; });
   const { default: mermaid } = await renderer;
   mermaid.initialize({
