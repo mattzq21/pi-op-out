@@ -26,6 +26,10 @@ function recentSessionOrder(left: SessionSummary, right: SessionSummary) {
   return right.lastMessageAt - left.lastMessageAt || stableSessionOrder(left, right);
 }
 
+function addedSessionOrder(left: SessionSummary, right: SessionSummary) {
+  return left.lastMessageAt - right.lastMessageAt || stableSessionOrder(left, right);
+}
+
 function validSessionOrders(orders: Record<string, string[] | undefined>) {
   return Object.fromEntries(Object.entries(orders).flatMap(([key, sessions]): [string, string[]][] => sessions ? [[key, sessions]] : []));
 }
@@ -44,6 +48,7 @@ function orderedSessions(projectKey: string, sessions: SessionSummary[], orders:
 
   if (!customOrder) return [...sessions].sort(defaultOrder);
   const positions = new Map(customOrder.map((key, index) => [key, index]));
+  const unsavedOrder = isFixedGroup(projectKey) ? defaultOrder : addedSessionOrder;
 
   return [...sessions].sort((left, right) => {
     const leftPosition = positions.get(sessionKey(left)); const rightPosition = positions.get(sessionKey(right));
@@ -54,7 +59,7 @@ function orderedSessions(projectKey: string, sessions: SessionSummary[], orders:
 
     if (rightPosition !== undefined) return projectKey === RECENT_KEY ? -1 : 1;
 
-    return defaultOrder(left, right);
+    return unsavedOrder(left, right);
   });
 }
 
