@@ -351,3 +351,28 @@ test('the used skill reference is highlighted while it stays editable text', asy
   assert.deepEqual(await marks(), ['$research']);
   assert.equal(await editor.evaluate(node => node.selectionStart), 17);
 });
+
+test('Ctrl+Z and Ctrl+Y undo and redo typing in the message editor', async t => {
+  const page = await controlsPage(t);
+  const editor = page.getByRole('textbox', { name: 'Message piop' });
+  await editor.click();
+  await page.keyboard.type('hello');
+  await page.waitForTimeout(1100);
+  await page.keyboard.type(' world');
+  await page.keyboard.press('Shift+Enter');
+  await page.keyboard.type('x');
+  await page.keyboard.press('Control+z');
+  assert.equal(await editor.inputValue(), 'hello world\n');
+  await page.keyboard.press('Control+z');
+  assert.equal(await editor.inputValue(), 'hello world');
+  await page.keyboard.press('Control+z');
+  assert.equal(await editor.inputValue(), 'hello');
+  await page.keyboard.press('Control+y');
+  assert.equal(await editor.inputValue(), 'hello world');
+  await page.keyboard.press('Control+Shift+z');
+  assert.equal(await editor.inputValue(), 'hello world\n');
+  await page.keyboard.type('!');
+  assert.equal(await editor.inputValue(), 'hello world\n!');
+  await page.keyboard.press('Control+y');
+  assert.equal(await editor.inputValue(), 'hello world\n!');
+});
