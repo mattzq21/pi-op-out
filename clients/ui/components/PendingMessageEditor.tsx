@@ -2,7 +2,8 @@ import { For, Index, Show } from "solid-js";
 import { FileText, X } from "lucide-solid";
 import type { ComposerUpload, PendingMessage, PendingMessageAction } from "../types";
 import { attachFiles, splitAttachedFiles, type AttachedFile } from "../lib/composerPrompt";
-import { PendingImage, type PendingImageLoader } from "./PendingImages";
+import { PendingImagePreview, type PendingImageLoader } from "./PendingImages";
+import { ZoomableImage } from "./ZoomableImage";
 
 /** A queued message being edited: its prompt, its text files, the indexes of the images it keeps, and the files added in the editor. */
 export interface PendingEdit { id: string; prompt: string; files: AttachedFile[]; keep: number[]; added: ComposerUpload[] }
@@ -32,19 +33,19 @@ interface Props {
 
 export function PendingMessageAttachments(props: Props) {
   return (
-    <div class="pending-edit-attachments" aria-label="Attachments of the edited message">
-      <Index each={props.edit.keep}>{index => <span class="pending-edit-attachment">
-        <PendingImage message={props.message} index={index()} load={props.load} />
-        <button type="button" class="pending-icon-button" disabled={props.saving} aria-label={`Remove ${props.message.images?.[index()]?.name ?? "image"}`} onClick={() => props.onChange(edit => ({ ...edit, keep: edit.keep.filter(kept => kept !== index()) }))}><X size={11} /></button>
+    <Show when={props.edit.keep.length + props.edit.files.length + props.edit.added.length > 0}><div class="attachments" aria-label="Attachments of the edited message">
+      <Index each={props.edit.keep}>{index => <span class="attachment-image">
+        <PendingImagePreview message={props.message} index={index()} load={props.load} />
+        <button type="button" disabled={props.saving} aria-label={`Remove ${props.message.images?.[index()]?.name ?? "image"}`} onClick={() => props.onChange(edit => ({ ...edit, keep: edit.keep.filter(kept => kept !== index()) }))}><X size={11} /></button>
       </span>}</Index>
-      <For each={props.edit.files}>{file => <span class="pending-edit-attachment">
+      <For each={props.edit.files}>{file => <span>
         <FileText size={12} /><b>{file.name}</b>
-        <button type="button" class="pending-icon-button" disabled={props.saving} aria-label={`Remove ${file.name}`} onClick={() => props.onChange(edit => ({ ...edit, files: edit.files.filter(item => item !== file) }))}><X size={11} /></button>
+        <button type="button" disabled={props.saving} aria-label={`Remove ${file.name}`} onClick={() => props.onChange(edit => ({ ...edit, files: edit.files.filter(item => item !== file) }))}><X size={11} /></button>
       </span>}</For>
-      <For each={props.edit.added}>{upload => <span class="pending-edit-attachment">
-        <Show when={upload.image} fallback={<FileText size={12} />}>{image => <img class="pending-image" src={`data:${image().mimeType};base64,${image().data}`} alt={upload.name} />}</Show><b>{upload.name}</b>
-        <button type="button" class="pending-icon-button" disabled={props.saving} aria-label={`Remove ${upload.name}`} onClick={() => props.onChange(edit => ({ ...edit, added: edit.added.filter(item => item.id !== upload.id) }))}><X size={11} /></button>
+      <For each={props.edit.added}>{upload => <span classList={{ "attachment-image": Boolean(upload.image) }}>
+        <Show when={upload.image} fallback={<><FileText size={12} /><b>{upload.name}</b></>}>{image => <ZoomableImage src={`data:${image().mimeType};base64,${image().data}`} alt={upload.name} />}</Show>
+        <button type="button" disabled={props.saving} aria-label={`Remove ${upload.name}`} onClick={() => props.onChange(edit => ({ ...edit, added: edit.added.filter(item => item.id !== upload.id) }))}><X size={11} /></button>
       </span>}</For>
-    </div>
+    </div></Show>
   );
 }

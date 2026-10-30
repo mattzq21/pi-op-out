@@ -1,6 +1,7 @@
 import { createResource, Index, Show } from "solid-js";
 import { ImageOff } from "lucide-solid";
 import type { PendingMessage } from "../types";
+import { ImageLoading, ZoomableImage } from "./ZoomableImage";
 
 /** Loads the data of one image of a queued message. */
 export type PendingImageLoader = (id: string, index: number) => Promise<{ data: string; mimeType: string }>;
@@ -32,6 +33,16 @@ export function PendingImage(props: { message: PendingMessage; index: number; lo
 
   return <Show when={!src.error} fallback={<span class="pending-image pending-image-missing" role="img" aria-label={`${label()} could not load`} data-tooltip={`Could not show the image: ${src.error instanceof Error ? src.error.message : String(src.error)}`}><ImageOff size={12} /></span>}>
     <img class="pending-image" src={src()} alt={label()} />
+  </Show>;
+}
+
+/** A large preview of one image of a queued message, the same as a composer attachment. */
+export function PendingImagePreview(props: { message: PendingMessage; index: number; load?: PendingImageLoader }) {
+  const [src] = createResource(() => [props.message, props.index] as const, ([message, index]) => source(message, index, props.load));
+  const label = () => props.message.images?.[props.index]?.name ?? "Attached image";
+
+  return <Show when={!src.error} fallback={<span class="image-loading" role="status" data-tooltip={`Could not show the image: ${src.error instanceof Error ? src.error.message : String(src.error)}`}>Image unavailable</span>}>
+    <Show when={src()} fallback={<ImageLoading />}>{loaded => <ZoomableImage src={loaded()} alt={label()} />}</Show>
   </Show>;
 }
 

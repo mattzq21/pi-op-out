@@ -30,7 +30,7 @@ for (const way of ['a paste event', 'Ctrl+V without a paste event']) test('an im
   }, PNG);
   if (way === 'a paste event') await page.keyboard.press('Control+V');
   else await editor.dispatchEvent('keydown', { key: 'v', ctrlKey: true, bubbles: true });
-  await page.locator('.pending-edit-attachment img').waitFor({ timeout: 5000 });
+  await page.locator('.composer .attachment-image img').waitFor({ timeout: 5000 });
   await editor.press('Enter');
   await editor.waitFor({ state: 'detached' });
   await page.locator('.pending-message .pending-images img').waitFor({ timeout: 5000 });

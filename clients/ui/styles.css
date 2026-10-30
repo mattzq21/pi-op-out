@@ -503,10 +503,6 @@ textarea::placeholder { color: var(--faint); }
 .pending-goal.paused .pending-message-text small.goal-label { color: var(--muted); }
 .pending-goal-error { padding: 4px 6px 7px; color: var(--accent); font-size: 12px; overflow-wrap: anywhere; }
 .pending-images { flex: none; display: flex; gap: 4px; }.pending-image { width: 26px; height: 26px; border-radius: 5px; object-fit: cover; border: 1px solid var(--line); }.pending-image-missing { display: grid; place-items: center; color: var(--muted); }
-.pending-edit-attachments { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; }
-.pending-edit-attachment { display: inline-flex; align-items: center; gap: 3px; max-width: 220px; min-height: 26px; padding: 0 2px 0 4px; border: 1px solid var(--line); border-radius: 6px; color: var(--muted); font-size: 12px; }
-.pending-edit-attachment b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 500; }
-.pending-edit-attachment .pending-image { width: 22px; height: 22px; }
 .pending-message.expanded { align-items: flex-start; }
 .pending-message.expanded .pending-message-text { white-space: pre-wrap; overflow-wrap: anywhere; padding-top: 4px; }
 .pending-message small { color: var(--muted); font-size: 11px; }
