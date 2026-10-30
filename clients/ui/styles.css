@@ -492,7 +492,7 @@ textarea::placeholder { color: var(--faint); }
 .composer-above > .new-chat-project { justify-self: start; width: auto; min-width: 0; margin: 0; }
 .composer-above > .new-chat-project .project-picker { min-height: 30px; }
 .pending-messages { flex: 1; min-width: 0; display: grid; max-height: 190px; overflow-y: auto; margin: 0; padding: 0 7px; border: 1px solid var(--line); border-radius: 10px; background: #252523; border-color: #353532; }
-.pending-messages::-webkit-scrollbar-thumb, .pending-messages::-webkit-scrollbar-thumb:window-inactive { background: #4a4842; background-clip: padding-box; }.pending-messages::-webkit-scrollbar-thumb:hover, .pending-messages::-webkit-scrollbar-thumb:active { background: #5c5a53; background-clip: padding-box; }
+:is(.pending-messages, .code-block pre)::-webkit-scrollbar-thumb, :is(.pending-messages, .code-block pre)::-webkit-scrollbar-thumb:window-inactive { background: #4a4842; background-clip: padding-box; }:is(.pending-messages, .code-block pre)::-webkit-scrollbar-thumb:hover, :is(.pending-messages, .code-block pre)::-webkit-scrollbar-thumb:active { background: #5c5a53; background-clip: padding-box; }
 .pending-message { display: flex; align-items: center; gap: 9px; min-width: 0; min-height: 33px; padding: 3px 3px; font-size: 13px; }
 .pending-message-text { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .pending-goal .pending-message-text small { color: var(--accent); font-weight: 600; }
