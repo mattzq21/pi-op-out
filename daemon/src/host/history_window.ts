@@ -36,11 +36,16 @@ function windowStart(branch: any[], end: number): number {
   return 0;
 }
 
-function isFinalResponse(entry: any): boolean {
-  const message = entry?.type === 'message' ? entry.message : undefined;
-  if (message?.role !== 'assistant') return false;
-  const ended = message.stopReason === 'stop' && !(Array.isArray(message.content) && message.content.some((part: any) => part?.type === 'toolCall'));
-  return ended || visibleText(entry).trim().length > 0 || message.stopReason === 'aborted' || message.stopReason === 'error';
+/** The place of the final response of a turn, or -1. A response that calls a tool is work, so a turn that ends on one has no final response. */
+function finalResponse(turn: any[]): number {
+  for (let index = turn.length - 1; index >= 0; index--) {
+    const message = turn[index]?.type === 'message' ? turn[index].message : undefined;
+    if (message?.role !== 'assistant') continue;
+    if (message.stopReason === 'aborted' || message.stopReason === 'error') return index;
+    if (Array.isArray(message.content) && message.content.some((part: any) => part?.type === 'toolCall')) return -1;
+    if (message.stopReason === 'stop' || visibleText(turn[index]).trim().length > 0) return index;
+  }
+  return -1;
 }
 
 function isWork(entry: any): boolean { const name = role(entry); return name === 'assistant' || name === 'toolResult'; }
@@ -54,8 +59,7 @@ function addUsage(total: any, usage: any): any {
 
 /** Replaces the work of a finished turn with a note on its final response. The client loads the work when the user opens it. */
 function deferWork(turn: any[]): any[] {
-  let final = -1;
-  for (let index = turn.length - 1; index >= 0; index--) if (isFinalResponse(turn[index])) { final = index; break; }
+  const final = finalResponse(turn);
   if (final < 0) return turn;
   const work = turn.filter((entry, index) => index !== final && isWork(entry));
   const content = turn[final].message.content;
