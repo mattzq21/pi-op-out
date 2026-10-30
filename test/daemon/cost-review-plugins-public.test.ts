@@ -41,7 +41,7 @@ async function openChat(client: Client, saved?: { sessionId: string; cwd: string
   /** The cost limit this chat shows above the composer. */
   const costStatus = (match: (text: string) => boolean) => client.waitEvent('pi://event', payload => payload.runtimeId === runtimeId && payload.event?.method === 'setStatus' && payload.event.statusKey === 'piop-session-cost' && typeof payload.event.statusText === 'string' && match(payload.event.statusText), 30_000);
   const costStatuses = () => client.events.filter(event => event.payload?.runtimeId === runtimeId && event.payload.event?.statusKey === 'piop-session-cost');
-  const owned = async () => (await commands()).filter((name: string) => ['cost', 'review', 'rs'].includes(name)).sort();
+  const owned = async () => (await commands()).filter((name: string) => ['cost', 'review'].includes(name)).sort();
   return { sessionId: chat.sessionId as string, cwd: chat.cwd as string, command, failure, commands, owned, notice, review, costStatus, costStatuses };
 }
 
@@ -55,15 +55,14 @@ test('cost and review are plugins: enabled by default, gone with an explicit err
   // No chat ran on this host yet, so the catalog starts a short Pi run for the command hints.
   const fresh = await client.invoke('provider_auth', { hostId: 'local', request: { action: 'draft_catalog', reload: true } });
   expect(fresh.commandDetails.find((item: any) => item.name === 'review').options).toEqual([{ value: '', label: '[scope]', description: expect.stringContaining('limits the review') }]);
-  expect(await catalog(client)).toEqual(expect.arrayContaining(['cost', 'review', 'rs']));
+  expect(await catalog(client)).toEqual(expect.arrayContaining(['cost', 'review']));
 
   const first = await openChat(client);
-  expect(await first.commands()).toEqual(expect.arrayContaining(['cost', 'review', 'rs']));
+  expect(await first.commands()).toEqual(expect.arrayContaining(['cost', 'review']));
   const listed = (await first.command({ type: 'get_commands' })).commands;
-  expect(listed.find((item: any) => item.name === 'rs').options).toEqual([{ value: '', label: '[n] [scope]', description: expect.stringContaining('review subagents') }]);
   expect(listed.find((item: any) => item.name === 'review').options).toEqual([{ value: '', label: '[scope]', description: expect.stringContaining('limits the review') }]);
   const draft = await client.invoke('provider_auth', { hostId: 'local', request: { action: 'draft_catalog', reload: true } });
-  expect(draft.commandDetails.find((item: any) => item.name === 'rs').options).toEqual([{ value: '', label: '[n] [scope]', description: expect.stringContaining('review subagents') }]);
+  expect(draft.commandDetails.find((item: any) => item.name === 'review').options).toEqual([{ value: '', label: '[scope]', description: expect.stringContaining('limits the review') }]);
   await first.command({ type: 'prompt', message: 'Plugin chat' });
   const replied = async () => (await first.command({ type: 'get_entries' })).entries.some((entry: any) => entry.type === 'message' && text(entry.message) === 'Plugin chat ready.');
   for (let tries = 0; !(await replied()) && tries < 300; tries++) await Bun.sleep(100);
@@ -78,25 +77,24 @@ test('cost and review are plugins: enabled by default, gone with an explicit err
 
   client = await restartWith(client, []);
   expect(await catalog(client)).not.toEqual(expect.arrayContaining(['cost']));
-  expect((await catalog(client)).filter((name: string) => ['cost', 'review', 'rs'].includes(name))).toEqual([]);
+  expect((await catalog(client)).filter((name: string) => ['cost', 'review'].includes(name))).toEqual([]);
   const disabled = await openChat(client, first);
-  expect((await disabled.commands()).filter((name: string) => ['cost', 'review', 'rs'].includes(name))).toEqual([]);
+  expect((await disabled.commands()).filter((name: string) => ['cost', 'review'].includes(name))).toEqual([]);
   expect(await disabled.failure({ type: 'prompt', message: '/cost 3' })).toBe('The Cost limit plugin is disabled. Enable it to use /cost.');
   expect(await disabled.failure({ type: 'follow_up', message: '/review after.ts' })).toBe('The Code review plugin is disabled. Enable it to use /review.');
-  expect(await disabled.failure({ type: 'steer', message: '/rs 2' })).toBe('The Code review plugin is disabled. Enable it to use /rs.');
-  for (const words of ['/cost 3', '/review after.ts', '/rs 2']) expect(modelSaw(words)).toBe(false);
+  for (const words of ['/cost 3', '/review after.ts']) expect(modelSaw(words)).toBe(false);
   expect(disabled.costStatuses()).toEqual([]);
 
   // Each plugin loads on its own: review without cost, then cost without review.
   client = await restartWith(client, ['review']);
-  expect((await catalog(client)).filter((name: string) => ['cost', 'review', 'rs'].includes(name)).sort()).toEqual(['review', 'rs']);
+  expect((await catalog(client)).filter((name: string) => ['cost', 'review'].includes(name)).sort()).toEqual(['review']);
   const reviewOnly = await openChat(client, first);
-  expect(await reviewOnly.owned()).toEqual(['review', 'rs']);
+  expect(await reviewOnly.owned()).toEqual(['review']);
   expect(await reviewOnly.failure({ type: 'prompt', message: '/cost 3' })).toBe('The Cost limit plugin is disabled. Enable it to use /cost.');
   expect(reviewOnly.costStatuses()).toEqual([]);
 
   client = await restartWith(client, ['cost']);
-  expect((await catalog(client)).filter((name: string) => ['cost', 'review', 'rs'].includes(name))).toEqual(['cost']);
+  expect((await catalog(client)).filter((name: string) => ['cost', 'review'].includes(name))).toEqual(['cost']);
   const costOnly = await openChat(client, first);
   expect(await costOnly.owned()).toEqual(['cost']);
   await costOnly.costStatus(status => status.endsWith(' / $5.00'));
@@ -104,9 +102,9 @@ test('cost and review are plugins: enabled by default, gone with an explicit err
   expect(modelSaw('/review only-cost.ts')).toBe(false);
 
   client = await restartWith(client, ALL);
-  expect(await catalog(client)).toEqual(expect.arrayContaining(['cost', 'review', 'rs']));
+  expect(await catalog(client)).toEqual(expect.arrayContaining(['cost', 'review']));
   const again = await openChat(client, first);
-  expect(await again.commands()).toEqual(expect.arrayContaining(['cost', 'review', 'rs']));
+  expect(await again.commands()).toEqual(expect.arrayContaining(['cost', 'review']));
   // The limit saved before cost was disabled is still in force.
   await again.costStatus(status => status.endsWith(' / $5.00'));
   const raised = again.notice(message => message.startsWith('Session cost limit set to $4.00'));

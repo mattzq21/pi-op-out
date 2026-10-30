@@ -6,7 +6,7 @@ import prompt from './review-prompt.txt?raw';
 import { reviewSettings } from './settings';
 import type { BundledPlugin } from '../types';
 
-/** Code reviews in linked review conversations, with /review and /rs. */
+/** Code reviews in linked review conversations, with /review. */
 export const review: BundledPlugin = {
   id: 'review',
   name: 'Code review',
@@ -14,6 +14,6 @@ export const review: BundledPlugin = {
     after: 'goals',
     files: [['interface.ts', face], ['review-prompt.txt', prompt], ['reviews.ts', reviews], ['commands.ts', commands], ['index.ts', index]],
   },
-  commands: { review: 'queued', rs: 'queued' },
+  commands: { review: 'queued' },
   settings: reviewSettings,
 };

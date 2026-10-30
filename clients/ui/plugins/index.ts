@@ -9,7 +9,7 @@ export const plugins: PluginDefinition[] = [
   { id: "cost", scope: "host", name: "Cost limit", description: "Per-conversation API cost limit, set with /cost.", load: () => import("./cost/plugin") },
   { id: "review", scope: "host", name: "Review", description: "Code reviews in a split pane, started with /review.", load: () => import("./review/plugin"),
     settings: { section: "review", label: "Review", description: "Choose the agent that runs /review.", icon: ClipboardCheck, load: () => import("./review/ReviewSettings").then(module => ({ default: module.ReviewSettings })) },
-    queuedCommands: ["review", "rs"],
+    queuedCommands: ["review"],
     messages: { "piop-review-link": () => import("./review/ReviewLink").then(module => ({ default: module.ReviewLink })) } },
   { id: "web-search", scope: "host", name: "Web search", description: "The web_search tool for agents, through the host's OpenAI ChatGPT sign-in.",
     settings: { section: "web-search", label: "Web search", description: "Choose the OpenAI model that runs web searches.", icon: Globe, load: () => import("./web-search/WebSearchSettings").then(module => ({ default: module.WebSearchSettings })) } },

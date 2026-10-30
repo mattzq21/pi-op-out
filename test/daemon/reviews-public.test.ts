@@ -36,23 +36,11 @@ test.concurrent('a review chat sends its result to the reviewed chat with send_t
   expect(request.tools.find((tool: any) => tool.function.name === 'send_to_main')?.function.description).toBe('Send the review result to agent whose work you reviewed, when user asks');
 }, 60000);
 
-test.concurrent('/rs takes an optional subagent count, then an optional scope; a count that is not positive only shows how to use it', async () => {
+test.concurrent('a review is named by its scope; reviews without a scope are numbered', async () => {
   const chat = await agents.rootChat({ visible: true });
-  for (const command of ['/rs 0', '/rs -1 src']) await chat.command({ type: 'follow_up', message: command });
-  const notices = () => agents.daemon.events.filter(event => event.payload?.runtimeId === chat.runtimeId && event.payload.event?.method === 'notify').map(event => event.payload.event.message);
-  for (let tries = 0; notices().length < 2 && tries < 100; tries++) await Bun.sleep(100);
-  expect(notices()).toEqual(Array(2).fill('Usage: /rs [n] [scope] — n is a positive number of review subagents'));
-  expect(uiRequests(chat.runtimeId, 'input').filter(request => request.title === '__pi_desktop_auxiliary__')).toEqual([]);
-  const counted = await openReview(chat, '/rs 2 src/parser.ts');
-  expect(counted.task).toContain('Spawn 2 review subagents.');
-  expect(counted.task).toContain('src/parser.ts');
-  const scoped = await openReview(chat, '/rs the lexer');
-  expect(scoped.task).toContain('Spawn a proportionate number of review subagents.');
+  const scoped = await openReview(chat, '/review the lexer');
   expect(scoped.task).toContain('the lexer');
-  const unscoped = await openReview(chat, '/rs');
-  expect(unscoped.task).toContain('Spawn a proportionate number of review subagents.');
-  // A review is named by its scope; reviews without a scope are numbered.
-  expect([counted.name, scoped.name, unscoped.name, (await openReview(chat, '/review')).name]).toEqual(['Review src/parser.ts', 'Review the lexer', 'Review 1', 'Review 2']);
+  expect([scoped.name, (await openReview(chat, '/review')).name, (await openReview(chat, '/review')).name]).toEqual(['Review the lexer', 'Review 1', 'Review 2']);
 }, 60000);
 
 test.concurrent('a review opens a separate code review chat in the side pane, linked to the conversation and listed as its auxiliary chat', async () => {
