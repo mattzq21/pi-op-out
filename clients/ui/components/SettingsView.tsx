@@ -344,11 +344,14 @@ export function SettingsView(props: SettingsViewProps) {
   });
 
   const filteredModelChoices = createMemo(() => {
-    const query = modelFilter().trim().toLocaleLowerCase();
+    const words = modelFilter().toLocaleLowerCase().split(/\s+/).filter(Boolean);
     const { modelChoices, hiddenModels } = modelCatalog();
 
     return modelChoices
-      .filter((model) => `${draft().modelAliases?.[model.id] ?? ""} ${model.name} ${model.id}`.toLocaleLowerCase().includes(query))
+      .filter((model) => {
+        const text = `${draft().modelAliases?.[model.id] ?? ""} ${model.name} ${model.id}`.toLocaleLowerCase();
+        return words.every((word) => text.includes(word));
+      })
       .sort((left, right) => Number(hiddenModels.has(left.id)) - Number(hiddenModels.has(right.id)));
   });
 
