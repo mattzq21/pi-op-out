@@ -474,7 +474,7 @@ export function SettingsView(props: SettingsViewProps) {
         </div>
       </SettingsSection>);
 
-      const renderModels = () => (formValidation().visibleSection === "inference" && inferenceView() === "models" && <SettingsSection title="Models" description="Set model aliases and choose which models appear in chat pickers. Saved aliases apply immediately. Clear an alias to restore the original name. Newly arrived models start hidden." headerAction={<label class="section-filter"><Search size={14} /><input aria-label="Filter models" placeholder="Filter by name or provider" value={modelFilter()} onInput={(event) => setModelFilter(event.target.value)} /></label>}>
+      const renderModels = () => (formValidation().visibleSection === "inference" && inferenceView() === "models" && <SettingsSection title="Models" headerAction={<label class="section-filter"><Search size={14} /><input aria-label="Filter models" placeholder="Filter by name or provider" value={modelFilter()} onInput={(event) => setModelFilter(event.target.value)} /></label>}>
         <div class="model-bulk-actions" role="group" aria-label="All model visibility">
           <button type="button" class="section-toggle-all" disabled={saving() || !agentValidation().modelChoices.some(model => agentValidation().hiddenModels.has(model.id))} onClick={() => patch({ hiddenModels: draft().hiddenModels.filter(id => !agentValidation().availableModelIds.has(id)) })}>Enable all models</button>
           <button type="button" class="section-toggle-all" disabled={saving() || !agentValidation().modelChoices.some(model => !agentValidation().hiddenModels.has(model.id))} onClick={() => patch({ hiddenModels: [...new Set([...draft().hiddenModels, ...agentValidation().modelChoices.map(model => model.id)])] })}>Disable all models</button>
@@ -558,7 +558,7 @@ export function SettingsView(props: SettingsViewProps) {
   </main>;
 }
 
-function SettingsSection(componentProps: { title: string; description: string; headerAction?: JSXElement; children: JSXElement }) { return <div class="settings-section"><div class="section-title"><div><h2>{componentProps.title}</h2><p>{componentProps.description}</p></div>{componentProps.headerAction}</div>{componentProps.children}</div>; }
+function SettingsSection(componentProps: { title: string; description?: string; headerAction?: JSXElement; children: JSXElement }) { return <div class="settings-section"><div class="section-title"><div><h2>{componentProps.title}</h2>{componentProps.description && <p>{componentProps.description}</p>}</div>{componentProps.headerAction}</div>{componentProps.children}</div>; }
 
 function AgentAllowlist(componentProps: { title: string; titleAction?: JSXElement; query: string; onQuery: (query: string) => void; children: JSXElement }) {
   return <fieldset class="agent-allowlist"><legend><span>{componentProps.title}</span>{componentProps.titleAction}<span class="agent-allowlist-line" /><label class="agent-allowlist-search"><Search size={14} aria-hidden="true" /><input type="search" placeholder="Search" aria-label={`Search ${componentProps.title.toLowerCase()}`} value={componentProps.query} onInput={event => componentProps.onQuery(event.currentTarget.value)} /></label></legend><div>{componentProps.children}</div></fieldset>;
