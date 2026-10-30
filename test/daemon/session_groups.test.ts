@@ -93,6 +93,12 @@ test('a chat in its own Piop worktree joins the group of the repository folder, 
   const state = await load();
   expect(state.assignments['local:' + id]).toBe(named);
   expect(state.groups.filter((group: any) => group.cwd === worktree)).toEqual([]);
+  // Another chat that starts in the same worktree also joins the repository's group.
+  const other = publicSession(worktree);
+  await waitForSessions(daemon, rows => rows.some(row => row.id === other.id));
+  const after = await load();
+  expect(after.assignments['local:' + other.id]).toBe(named);
+  expect(after.groups.filter((group: any) => group.cwd === worktree)).toEqual([]);
 });
 
 test('a folder named like a temporary chat folder but without a random UUID is a project', async () => {

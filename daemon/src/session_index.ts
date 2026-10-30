@@ -112,12 +112,12 @@ export async function listLocalSessions(index: SessionIndexRuntime, root: string
   return sessions;
 }
 
-/** Marks each chat that works in its own Piop worktree with the main folder of the repository. */
+/** Marks each chat that works in a Piop worktree, its own or another chat's, with the main folder of the repository. */
 function attachWorktreeRepositories(sessions: SessionSummary[], profile: string): void {
-  const records = new Map(WorktreeRecords.list(profile).map(record => [record.chatId, record]));
+  const records = WorktreeRecords.list(profile).filter(record => record.state !== 'archived');
   for (const session of sessions) {
-    const record = records.get(session.id);
-    if (record && record.worktree === session.cwd) session.worktreeRepository = record.repository;
+    const record = records.find(item => session.cwd === item.worktree || session.cwd.startsWith(item.worktree + '/'));
+    if (record) session.worktreeRepository = record.repository;
   }
 }
 
