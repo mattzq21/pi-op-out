@@ -69,3 +69,18 @@ test('a goal status the app cannot read is reported, not hidden', async () => {
   await goalComposer({ value: goal({ status: 'waiting' }), pendingMessages: [] });
   assert.match(document.querySelector('.pending-goal-error')?.textContent ?? '', /^Could not show the goal: /);
 });
+
+test('a queued message has a pause button on its left side, and a paused one shows as paused with a resume button', async () => {
+  const changes = [];
+  const message = { id: '1', message: 'Check the tests', behavior: 'followUp' };
+  const props = { streaming: true, queued: 1, pendingMessages: [message], commands: [], agents: [], models: [], model: null, thinkingLevel: 'off', thinkingLevels: ['off'],
+    onChangePending: async (id, action) => { changes.push([id, action]); }, onSend: async () => {}, onAbort: async () => {}, onAgent: () => {}, onModel: () => {}, onThinking: () => {}, onToggleFastMode: async () => {} };
+  view = await renderComponent(Composer, props);
+  const pause = control('Pause message');
+  assert.ok(pause.compareDocumentPosition(document.querySelector('.pending-message-text')) & Node.DOCUMENT_POSITION_FOLLOWING);
+  await click(pause);
+  await view.rerender({ ...props, pendingMessages: [{ ...message, paused: true }] });
+  assert.equal(document.querySelector('.pending-message-text').textContent, 'Paused · Check the tests');
+  await click(control('Resume message'));
+  assert.deepEqual(changes, [['1', 'pause'], ['1', 'resume']]);
+});

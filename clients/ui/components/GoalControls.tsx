@@ -37,14 +37,23 @@ export function createGoalControls(source: Accessor<{ value?: string; disabled: 
 
 export type GoalControls = ReturnType<typeof createGoalControls>;
 
-/** The pause or resume, edit and clear buttons of the goal's queue entry. */
-export function GoalActions(props: { controls: GoalControls; goal: Goal }) {
+/** The pause or resume button of a queue entry. */
+export function PauseButton(props: { paused: boolean; subject: string; disabled: boolean; onToggle: () => void }) {
+  return <button type="button" class="pending-icon-button" data-tooltip={props.paused ? `Resume ${props.subject}` : `Pause ${props.subject}`} aria-label={props.paused ? `Resume ${props.subject}` : `Pause ${props.subject}`} aria-pressed={props.paused} disabled={props.disabled} onClick={() => props.onToggle()}>
+    <Show when={props.paused} fallback={<CirclePause size={13} />}><CirclePlay size={13} /></Show>
+  </button>;
+}
+
+/** The pause or resume button of the goal's queue entry. */
+export function GoalPauseButton(props: { controls: GoalControls; goal: Goal }) {
   const active = () => props.goal.status === "active";
 
+  return <PauseButton paused={!active()} subject="goal" disabled={props.controls.disabled()} onToggle={() => void props.controls.run(active() ? "pause" : "resume")} />;
+}
+
+/** The edit and clear buttons of the goal's queue entry. */
+export function GoalActions(props: { controls: GoalControls }) {
   return <>
-    <button type="button" class="pending-icon-button" data-tooltip={active() ? "Pause goal" : "Resume goal"} aria-label={active() ? "Pause goal" : "Resume goal"} disabled={props.controls.disabled()} onClick={() => void props.controls.run(active() ? "pause" : "resume")}>
-      <Show when={active()} fallback={<CirclePlay size={13} />}><CirclePause size={13} /></Show>
-    </button>
     <button type="button" class="pending-icon-button" data-tooltip="Edit goal" aria-label="Edit goal" disabled={props.controls.disabled()} onClick={() => void props.controls.run("edit")}><Pencil size={12} /></button>
     <button type="button" class="pending-icon-button" data-tooltip="Clear goal" aria-label="Clear goal" disabled={props.controls.disabled()} onClick={() => void props.controls.run("clear")}><Trash2 size={13} /></button>
   </>;
