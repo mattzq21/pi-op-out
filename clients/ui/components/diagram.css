@@ -13,7 +13,7 @@
 .diagram-dialog { width: 92vw; height: 88vh; max-width: 92vw; max-height: 88vh; padding: 0; border: 1px solid var(--line); border-radius: 9px; background: var(--paper); color: var(--ink); overflow: hidden; }
 .diagram-dialog::backdrop { background: rgba(0, 0, 0, .6); }
 .diagram-dialog .diagram-toolbar { position: sticky; top: 0; }
-.diagram-viewport { height: calc(88vh - 44px); overflow: auto; overscroll-behavior: contain; cursor: grab; }
+.diagram-viewport { height: calc(88vh - 44px); overflow: auto; overscroll-behavior: contain; cursor: grab; touch-action: pan-x pan-y; }
 .diagram-viewport:active { cursor: grabbing; }
 .diagram-canvas { padding: 16px; min-width: 0; margin: 0 auto; }
 .diagram-canvas > svg { display: block; width: 100%; height: auto; max-width: none !important; margin: auto; }
