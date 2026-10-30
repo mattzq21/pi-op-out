@@ -295,6 +295,17 @@ test('a turn started by a subagent result shows the result once and its context 
   assert.match(view.container.textContent, /System\s*\d+%/);
 });
 
+test('the finished subagents label stays while the root agent works on their result', async t => {
+  const result = { id: 'result', role: 'custom', customType: 'piop-subagent-result', timestamp: 1, content: 'Subagent finished',
+    details: { notificationId: 'r1', runs: [{ name: 'painter', task: 'Draw', status: 'completed', sessionId: 's1', sessionPath: '/s1.jsonl', hostId: 'local' }] } };
+  const thinking = { id: 'thinking', role: 'assistant', content: [{ type: 'thinking', thinking: 'Checking' }], streaming: true, timestamp: 2 };
+  const view = await conversation(t, { debug: allDebug, state: { model: null, thinkingLevel: 'off', isStreaming: true, messageCount: 2 }, messages: [result, thinking] });
+  assert.equal(view.container.querySelectorAll('[aria-label="Delegated work"]').length, 1);
+  const reply = { id: 'reply', role: 'assistant', content: [{ type: 'text', text: 'Done' }], stopReason: 'stop', timestamp: 3 };
+  await view.update({ state: { model: null, thinkingLevel: 'off', isStreaming: false, messageCount: 3 }, messages: [result, { ...thinking, streaming: false }, reply] });
+  assert.equal(view.container.querySelectorAll('[aria-label="Delegated work"]').length, 1);
+});
+
 test('image context follows the context injections debug feature', async t => {
   const note = '[Image: original 1080x2400, displayed at 900x2000. Multiply coordinates by 1.20 to map to original image.]';
   const message = { id: 'shot', role: 'user', timestamp: 1, content: [{ type: 'image', data: 'iVBORw0KGgo=', mimeType: 'image/png' }, { type: 'text', text: 'Look at this\n' + note }] };
