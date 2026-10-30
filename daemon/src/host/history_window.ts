@@ -131,11 +131,48 @@ function position(branch: any[], id: unknown): number {
   return index;
 }
 
-/** The part of the history just before the entry before. */
-export function olderHistory(history: any, before: unknown): History {
+function turnStart(branch: any[], index: number): number {
+  while (index > 0 && !startsTurn(branch[index])) index--;
+  return index;
+}
+
+/** The part of the history just before the entry before. With through, the part also reaches back to the turn of that entry. */
+export function olderHistory(history: any, before: unknown, through?: unknown): History {
   const branch = branchEntries(history);
   const end = position(branch, before);
-  return view(branch, windowStart(branch, end), end, false);
+  let start = windowStart(branch, end);
+  if (through !== undefined) {
+    const target = position(branch, through);
+    if (target >= end) throw new Error('The entry is not in the older history');
+    start = Math.min(start, turnStart(branch, target));
+  }
+  return view(branch, start, end, false);
+}
+
+const PREVIEW_LENGTH = 160;
+
+/** The final responses of the turns before the entry before, with the first entry of each turn, so the client can list them before it loads them. */
+export function historyOutline(history: any, before: unknown): { responses: { id: string; start: string; preview: string; compactions?: string[] }[] } {
+  const branch = branchEntries(history);
+  const end = position(branch, before);
+  const responses: { id: string; start: string; preview: string; compactions?: string[] }[] = [];
+  let turn: any[] = [];
+  const close = () => {
+    const final = finalResponse(turn);
+    if (final >= 0) {
+      const entry = turn[final];
+      const preview = visibleText(entry).replace(/\s+/g, ' ').trim().slice(0, PREVIEW_LENGTH) || (entry.message.stopReason === 'stop' ? 'Empty response' : 'Response interrupted');
+      const compactions = turn.filter(item => item?.type === 'compaction').map(item => item.id);
+      responses.push({ id: entry.id, start: turn[0].id, preview, ...(compactions.length ? { compactions } : {}) });
+    }
+    turn = [];
+  };
+  for (let index = 0; index < end; index++) {
+    if (startsTurn(branch[index]) && turn.length) close();
+    turn.push(branch[index]);
+  }
+  close();
+  return { responses };
 }
 
 /** The work, compactions and full final response of the turn whose final response is entry id. */

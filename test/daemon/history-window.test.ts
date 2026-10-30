@@ -1,5 +1,5 @@
 import { expect, test } from 'bun:test';
-import { olderHistory, recentHistory, turnWork } from '../../daemon/src/host/history_window';
+import { historyOutline, olderHistory, recentHistory, turnWork } from '../../daemon/src/host/history_window';
 
 function chat(turns: number, reply: string) {
   const entries: any[] = [];
@@ -83,4 +83,12 @@ test('a compaction does not infer a token count from the next model call', () =>
   ]) { const id = 'e' + entries.length; entries.push({ ...entry, id, parentId }); parentId = id; }
   const history = recentHistory({ entries, leafId: parentId }, false);
   expect(history.entries.find((entry: any) => entry.type === 'compaction').tokensAfter).toBeUndefined();
+});
+
+test('the outline lists the final responses before the loaded history, and a load can reach back to one of them', () => {
+  const source = chat(8, 'x'.repeat(2000));
+  const before = recentHistory(chat(8, 'x'.repeat(2000)), false).before;
+  expect(historyOutline(source, before).responses).toEqual([0, 4, 8].map(index => ({ id: 'e' + (index + 3), start: 'e' + index, preview: 'x'.repeat(160) })));
+  expect(users(olderHistory(source, before, 'e3'))).toEqual(['Question 0', 'Question 1', 'Question 2']);
+  expect(() => olderHistory(source, before, 'e15')).toThrow();
 });

@@ -8,9 +8,14 @@ import '../../clients/ui/styles.css';
 const answers = ['Plan the parser', 'Write the lexer', 'Add the tests'];
 const [count, setCount] = createSignal(Number(new URLSearchParams(location.search).get('answers') ?? answers.length));
 const responses = (): ResponseDestination[] => answers.slice(0, count()).map((preview, index) => ({ turnId: 'turn-' + index, messageId: 'answer-' + index, preview }));
+/** Answers in older history that the chat has not loaded. */
+const [older, setOlder] = createSignal<string[]>([]);
+const rail = (): ResponseDestination[] => [...older().map((preview, index) => ({ messageId: 'older-' + index, preview })), ...responses()];
 const scrollRoot = createRef<HTMLDivElement | null>(null);
 (window as any).navigated = 0;
+(window as any).revealed = [];
 (window as any).setAnswers = setCount;
+(window as any).setOlder = setOlder;
 
 render(() => <main style={{ position: 'relative' }}>
   <div ref={element => { scrollRoot.current = element; }} data-testid="messages" style={{ height: '400px', overflow: 'auto', position: 'relative' }}>
@@ -19,5 +24,5 @@ render(() => <main style={{ position: 'relative' }}>
       <article data-response-id={response.messageId}>{response.preview}</article>
     </section>)}</div>
   </div>
-  <ResponseNavigator responses={responses()} forkedTurns={new Set(['turn-1'])} scrollRoot={scrollRoot} onNavigate={() => { (window as any).navigated++; }} />
+  <ResponseNavigator responses={rail()} forked={new Set(['answer-1'])} scrollRoot={scrollRoot} onNavigate={() => { (window as any).navigated++; }} onReveal={id => (window as any).revealed.push(id)} />
 </main>, document.getElementById('root')!);

@@ -31,7 +31,7 @@ import { ScrollIndicator } from "./ScrollIndicator";
 import { isMobile } from "../lib/platform";
 import { ConversationHostContext } from "../lib/subagentNavigation";
 import { OLDER_HISTORY, olderHistory } from "../lib/historyWindow";
-import { loadOlderHistory } from "../lib/sessionMemory";
+import { loadHistoryOutline, loadOlderHistory, type HistoryOutline } from "../lib/sessionMemory";
 import { MessageFileContext } from "../lib/messageFiles";
 import { applyPlace, savedPlace, savePlace, type ScrollPlace } from "./scrollPlace";
 
@@ -170,18 +170,20 @@ export function ChatView(props: Props & { transcriptActions?: JSXElement; follow
     olderRetry.current = { transport, stop };
   };
 
-  const loadOlder = () => {
+  /** Loads the older history just above the loaded messages. With through, it loads back to the turn of that entry. */
+  const loadOlder = (through?: string) => {
     const element = messagesRef.current; const transport = props.transport;
 
     if (!element || !transport || !older() || olderAnchor.current !== undefined || olderRetry.current?.transport === transport) return;
     olderAnchor.current = element.scrollHeight - element.scrollTop;
-    loadOlderHistory(transport).catch(reason => {
+    loadOlderHistory(transport, through).catch(reason => {
       if (!transport.isConnected() || isDaemonRefusal(reason)) retryOlderAfterReconnect(transport);
-      else { restoring.current = undefined; props.onNotice?.("Could not load older messages", reason instanceof Error ? reason.message : String(reason)); }
+      else { restoring.current = undefined; setRequestedResponse(undefined); props.onNotice?.("Could not load older messages", reason instanceof Error ? reason.message : String(reason)); }
     }).finally(() => requestAnimationFrame(() => {
       const anchor = olderAnchor.current; olderAnchor.current = undefined;
 
       if (anchor !== undefined && !followLatest.current) { element.scrollTop = element.scrollHeight - anchor; lastScrollTop.current = element.scrollTop; }
+      showRequestedResponse();
       // A restore that waits for the turn of its place continues. A failed load ends it.
       if (holdPlace.current) holdPlace.current();
       else fillView();
@@ -197,18 +199,109 @@ export function ChatView(props: Props & { transcriptActions?: JSXElement; follow
   /** The queued messages, without those the conversation already shows, then the sent messages that the daemon has not queued yet. */
   const pendingMessages = createMemo<import("../types").PendingMessage[]>(() => [...(props.state.pendingMessages ?? []).filter(item => !split().started.has(item.id) && !split().delivered.has(item.id)), ...split().sending.map(message => ({ id: message.id, goalSubmissionId: message.id, message: textOf(message.content), behavior: message.deliveryBehavior ?? "followUp", sending: true, images: Array.isArray(message.content) ? message.content.flatMap(part => part.type === "image" && part.data && part.mimeType ? [{ type: "image" as const, data: part.data, mimeType: part.mimeType }] : []) : [] }))]);
 
-  const responses = createMemo(() => turns().flatMap(turn => {
+  /** The rail entry of each final response, kept while the message stays the same, so streaming does not rebuild the entries of earlier turns. */
+  const destinations = new WeakMap<ChatMessage, ResponseDestination>();
+  const loadedResponses = createMemo(() => turns().flatMap(turn => {
     const message = turn.messages[finalResponseIndex(turn.messages)];
 
     if (!message) return [];
+    let destination = destinations.get(message);
 
-    return [{ turnId: turn.messages[0].id, messageId: message.id, preview: textOf(message.content).replace(/\s+/g, " ").trim().slice(0, 160) || (message.stopReason === "stop" ? "Empty response" : "Response interrupted") } satisfies ResponseDestination];
+    if (destination?.turnId !== turn.messages[0].id) destinations.set(message, destination = { turnId: turn.messages[0].id, messageId: message.id, preview: textOf(message.content).replace(/\s+/g, " ").trim().slice(0, 160) || (message.stopReason === "stop" ? "Empty response" : "Response interrupted") });
+
+    return [destination];
   }));
 
-  /** The turns that hold a place where the chat forks. */
-  const forkedTurns = createMemo(() => { const points = props.forkPoints;
+  const olderBefore = createMemo(() => older()?.before);
+  /** The final responses before the entry before, as the daemon listed them for the chat of transport. */
+  type Outline = { transport: NativeTransport; before: string; items: HistoryOutline };
+  const [outline, setOutline] = createSignal<Outline>();
+  /** The part of the outline before the entry before. Older history that loads later only shortens the outline, so it does not ask the daemon again. */
+  const outlineBefore = (listed: Outline | undefined, transport: NativeTransport | undefined, before: string) => {
+    if (!listed || listed.transport !== transport) return undefined;
 
-    return new Set(points?.size ? turns().flatMap(turn => turn.messages.some(message => points.has(message.entryId ?? message.id)) ? [turn.messages[0].id] : []) : []); });
+    if (listed.before === before) return listed.items;
+    const end = listed.items.findIndex(item => item.start === before);
+
+    return end < 0 ? undefined : listed.items.slice(0, end);
+  };
+  /** The final responses in the older history that is not loaded yet. The response rail lists them, and loads one when the user goes to it. */
+  const unloadedResponses = createMemo<HistoryOutline>(() => { const before = olderBefore();
+
+    return before ? outlineBefore(outline(), props.transport, before) ?? [] : []; });
+  createDependencyEffect(() => { const before = olderBefore(); const transport = props.transport;
+
+    if (!before || !transport) { setOutline(undefined); return; }
+
+    if (outlineBefore(untrack(outline), transport, before)) return;
+    let current = true; let stopRetry: (() => void) | undefined;
+    const load = () => loadHistoryOutline(transport, before).then(items => { if (current) setOutline({ transport, before, items }); }, reason => {
+      if (!current) return;
+
+      if (!transport.isConnected() || isDaemonRefusal(reason)) stopRetry = transport.subscribe(event => { if (event.type === "connection_restored") { stopRetry?.(); stopRetry = undefined; if (current) void load(); } });
+      else props.onNotice?.("Could not list older responses", reason instanceof Error ? reason.message : String(reason));
+    });
+    // The list waits for the first frame, so it does not delay the chat as it opens.
+    const frame = requestAnimationFrame(() => void load());
+
+    return () => { current = false; cancelAnimationFrame(frame); stopRetry?.(); };
+  }, () => [olderBefore(), props.transport]);
+
+  const responses = createMemo<ResponseDestination[]>(() => { const loaded = loadedResponses(); const unloaded = unloadedResponses();
+
+    return unloaded.length ? [...unloaded.map(item => ({ messageId: item.id, preview: item.preview })), ...loaded] : loaded; });
+
+  /** For each turn, its final response when the turn holds a place where the chat forks, or null. Kept per turn for the current fork places. */
+  let forkedTurns = new WeakMap<object, string | null>();
+  const forkPoints = createMemo(() => { forkedTurns = new WeakMap(); return props.forkPoints; });
+  /** The final responses of the turns that hold a place where the chat forks. */
+  const forkedResponses = createMemo(() => { const points = forkPoints(); const result = new Set<string>();
+
+    if (!points?.size) return result;
+
+    for (const turn of turns()) {
+      let forked = forkedTurns.get(turn);
+
+      if (forked === undefined) {
+        const final = turn.messages[finalResponseIndex(turn.messages)];
+        forked = final && turn.messages.some(message => points.has(message.entryId ?? message.id)) ? final.id : null;
+        forkedTurns.set(turn, forked);
+      }
+
+      if (forked) result.add(forked);
+    }
+
+    for (const item of unloadedResponses()) if (points.has(item.id) || item.compactions?.some(id => points.has(id))) result.add(item.id);
+
+    return result; }, undefined, { equals: (previous, next) => previous.size === next.size && [...next].every(id => previous.has(id)) });
+
+  /** The response that the rail asked for. It loads with the older history, and then the view goes to it. */
+  const [requestedResponse, setRequestedResponse] = createSignal<string>();
+  const showRequestedResponse = () => { const id = untrack(requestedResponse); const root = messagesRef.current;
+
+    if (!id || !root || olderAnchor.current !== undefined) return;
+    const turn = untrack(turns).find(candidate => candidate.messages.some(message => message.id === id || message.entryId === id));
+
+    if (!turn) {
+      if (untrack(older)) loadOlder(id);
+      else setRequestedResponse(undefined);
+
+      return;
+    }
+    setRequestedResponse(undefined);
+    followLatest.current = false;
+    const turnElement = root.querySelector<HTMLElement>("[data-response-turn=\"" + CSS.escape(turn.messages[0]?.id ?? "") + "\"]");
+    turnElement?.dispatchEvent(new Event("piop:reveal-turn"));
+    requestAnimationFrame(() => {
+      const target = root.querySelector<HTMLElement>("[data-response-id=\"" + CSS.escape(id) + "\"]") ?? turnElement;
+
+      if (!target) return;
+      followLatest.current = false;
+      root.scrollTop += target.getBoundingClientRect().top - root.getBoundingClientRect().top - 24;
+      lastScrollTop.current = root.scrollTop;
+    });
+  };
+  createDependencyEffect(showRequestedResponse, () => [requestedResponse(), turns()]);
 
   const hasSentPrompt = createMemo(() => messages().some((message) => message.role === "user"));
 
@@ -470,7 +563,7 @@ export function ChatView(props: Props & { transcriptActions?: JSXElement; follow
       {isMobile && <ScrollIndicator scrollRoot={messagesRef} />}
       <Show when={pins().length > 0}><PinnedMessages /></Show>
       <SkillMcpStatus value={props.statuses["piop-skill-mcp"]} disabled={props.readOnly || props.controlsDisabled || !ownsConversation() || !props.transport} onAction={(name, action) => required(props.transport).command({ type: "skill_mcp", name, action })} />
-      <ResponseNavigator responses={responses()} forkedTurns={forkedTurns()} scrollRoot={messagesRef} onNavigate={() => { followLatest.current = false; }} />
+      <ResponseNavigator responses={responses()} forked={forkedResponses()} scrollRoot={messagesRef} onNavigate={() => { followLatest.current = false; }} onReveal={id => { followLatest.current = false; setRequestedResponse(id); }} />
       <ComposerStack />
     </div>);
   };
