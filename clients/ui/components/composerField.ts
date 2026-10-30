@@ -33,7 +33,16 @@ export function sessionLinkSegments(value: string): Segment[] {
 }
 
 /** The segments of `value`, with the used skill reference split out of its text segment. */
-type FieldSegment = Segment | { skill: string };
+export type FieldSegment = Segment | { skill: string };
+
+/** The segments of a queued message. A queued `/skill:name` message shows as `$name`, the same as in the composer. */
+export function queuedSegments(value: string): FieldSegment[] {
+  const invocation = value.match(/^\/skill:([a-zA-Z0-9][a-zA-Z0-9_-]*)(?:(\s+)([\s\S]*))?$/);
+
+  if (!invocation) return sessionLinkSegments(value);
+
+  return [{ skill: `$${invocation[1]}` }, ...invocation[3] ? [{ text: " " }, ...sessionLinkSegments(invocation[3])] : []];
+}
 
 function fieldSegments(value: string, skills: ReadonlyMap<string, string>): FieldSegment[] {
   const segments: FieldSegment[] = sessionLinkSegments(value);

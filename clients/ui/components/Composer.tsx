@@ -1,6 +1,6 @@
 import { CacheIcon } from "./CacheIcon";
 import "./composerField";
-import { sessionLinkSegments, type ComposerFieldElement } from "./composerField";
+import { queuedSegments, type ComposerFieldElement } from "./composerField";
 import { PendingMessageText } from "./PendingMessageText";
 import { required } from "../lib/required";
 import { trackToastMessage } from "../lib/toastHistory";
@@ -703,8 +703,8 @@ export function Composer(props: Props) {
     {renderStreamBanner()}
     {showPendingBox() ? <div class="pending-messages" aria-label="Pending messages">{renderQueueHold()}{<Key each={composer().pendingMessages.filter((message) => pendingMessageIdentitySchema.safeParse(message).success)} by={pendingKey}>{(message, _index) => {
       const text = createMemo(() => String(message().message ?? ""));
-      const segments = createMemo(() => sessionLinkSegments(text()));
-      const label = createMemo(() => segments().map((segment) => "text" in segment ? segment.text : segment.label).join(""));
+      const segments = createMemo(() => queuedSegments(text()));
+      const label = createMemo(() => segments().map((segment) => "text" in segment ? segment.text : "skill" in segment ? segment.skill : segment.label).join(""));
       const change = (action: import("../types").PendingMessageAction) => changePending(message().id, action);
       const disabled = createMemo(() => (queueDisabled() || changingPending() || Boolean(message().sending)));
       const queue = createMemo(() => pendingQueues().get(message().behavior));
