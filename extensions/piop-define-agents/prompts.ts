@@ -6,6 +6,8 @@ import { link, mkdir, open, readFile, realpath, rm } from "node:fs/promises";
 import { homedir } from "node:os";
 import { basename, dirname, extname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { Type } from "typebox";
+import { Check } from "typebox/value";
 import type { Config } from "./index.ts";
 import type { Agent, AgentSnapshot } from "./contracts.ts";
 import { readText as readSettings, write as writeSettings } from "../app-settings.cjs";
@@ -38,6 +40,9 @@ async function writeTemporary(path: string, contents: string) {
   finally { await file.close(); }
 }
 
+/** Only entries with a nonblank name are agents. Piop skips other entries but keeps them in the file. */
+export const isNamedAgent = (agent: unknown): agent is { name: string } => Check(Type.Object({ name: Type.String({ pattern: "\\S" }) }), agent);
+
 export async function readConfigDocument() {
   const body = readSettings(configPath);
 
@@ -59,14 +64,18 @@ async function configLock() {
   } catch (error) { await file.close(); throw error; }
 }
 
-async function existingConfigRevision() {
-  try { return (await readConfigDocument()).revision; }
-  catch (error) { if (hasErrorCode(error, "ENOENT")) return "missing"; throw error; }
+async function existingConfig(): Promise<{ revision: string; unnamed: unknown[] }> {
+  try {
+    const document = await readConfigDocument();
+
+    return { revision: document.revision, unnamed: Array.isArray(document.agents) ? document.agents.filter((agent: unknown) => !isNamedAgent(agent)) : [] };
+  }
+  catch (error) { if (hasErrorCode(error, "ENOENT")) return { revision: "missing", unnamed: [] }; throw error; }
 }
 
-async function publishConfig(value: Config) {
+async function publishConfig(value: Config, unnamed: unknown[]) {
   const { revision: _revision, ...configuration } = value;
-  const body = `${JSON.stringify({ ...configuration, _revision: randomUUID() }, null, 2)}\n`;
+  const body = `${JSON.stringify({ ...configuration, agents: [...configuration.agents, ...unnamed], _revision: randomUUID() }, null, 2)}\n`;
   writeSettings(configPath, body);
   value.revision = createHash("sha256").update(body).digest("hex");
   const warnings: string[] = [];
@@ -79,7 +88,7 @@ export async function writeConfig(value: Config, createOnly = false): Promise<{ 
   let saved: Awaited<ReturnType<typeof publishConfig>> | undefined;
 
   try {
-    const current = await existingConfigRevision();
+    const { revision: current, unnamed } = await existingConfig();
 
     if (createOnly && current !== "missing") { value.revision = current;
 
@@ -87,7 +96,7 @@ export async function writeConfig(value: Config, createOnly = false): Promise<{ 
 
     if (!createOnly && (!value.revision || value.revision !== current)) throw new Error("Agent definitions changed in another window or client. Reload them before saving.");
 
-    saved = await publishConfig(value);
+    saved = await publishConfig(value, unnamed);
 
     return saved;
   } finally {

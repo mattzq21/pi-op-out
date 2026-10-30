@@ -4,7 +4,7 @@ import { Check } from "typebox/value";
 import { Type } from "typebox";
 import { loadConfig } from "./index.ts";
 import { agentSchema, agentThinkingLevels } from "./state.ts";
-import { configPath, readConfigDocument, readPrompt, resolvePromptPath } from "./prompts.ts";
+import { configPath, readConfigDocument, readPrompt, resolvePromptPath, isNamedAgent } from "./prompts.ts";
 import { parseAgentResources, parsePluginAgentTools } from "./resources.ts";
 import { extensionPaths } from "./extension-loader.ts";
 import { extensionValidator } from "./validation-runtime.ts";
@@ -43,7 +43,7 @@ export async function loadAgentDefinitions({ settings, initial: initialize }: Ag
     if (!stored || !Array.isArray(stored.agents) || stored.agents.length === 0) throw new Error("Agent configuration must contain an agents array");
     const names = new Set<string>();
 
-    for (const agent of stored.agents) {
+    for (const agent of stored.agents.filter(isNamedAgent)) {
       if (!Check(sourceAgentSchema, agent)) throw new Error("Invalid agent definition: check names, prompts, tools, skills and options");
       validateEffort(agent.name, agent.effort);
 

@@ -15,11 +15,15 @@ test('subagent migration adds the available tool once', async t => {
 });
 
 
-test('obsolete voice agents are removed and restored voice selections fall back to general', async t => {
-  const f = await agentFixture(t, { config: configured([profile(), profile('voice-orchestrator')]), entries: [{ type: 'custom', customType: 'pi-define-agents-state', data: { active: 'voice-orchestrator' } }] });
+test('voice-orchestrator stays an agent, and entries without names are skipped but stay in the file', async t => {
+  const unnamed = { model: 'kept' };
+  const f = await agentFixture(t, { config: configured([profile(), profile('voice-orchestrator'), unnamed, { name: ' ', fastMode: 'bad' }]), entries: [{ type: 'custom', customType: 'pi-define-agents-state', data: { active: 'voice-orchestrator' } }] });
   await f.load(); await f.start();
-  assert.deepEqual((await f.configuration()).agents.map(agent => agent.name), ['general']);
-  assert.equal(f.capability().active, 'general');
+  const configuration = await f.configuration();
+  assert.deepEqual(configuration.agents.map(agent => agent.name), ['general', 'voice-orchestrator']);
+  assert.equal(f.capability().active, 'voice-orchestrator');
+  await f.configure({ agents: configuration.agents });
+  assert.deepEqual((await f.config()).agents.slice(2), [unnamed, { name: ' ', fastMode: 'bad' }]);
 });
 
 

@@ -2,7 +2,7 @@ import { readAgentResources, readPluginAgentTools, resourcePath, type AgentResou
 import { STATE_ENTRY, DEFAULTS_ENV, DRAFT_STATE_ENV, type RuntimeDefaults, agentSchema, agentThinkingLevels, persistedAgentIdentity, storedRuntimeDefaults, sessionIsLocked, readAgentState, subagentLimit, registerSubagentLimits, agentFlag, agentAccess, agentDescription, startRefusal } from "./state.ts";
 import { Type } from "typebox";
 import { Check, Errors, Parse } from "typebox/value";
-import { configPath, DEFAULT_PROMPT_PATH, DEFAULT_SYSTEM_PROMPT, resolvePromptPath, ensurePromptFile, snapshotPrompts, ensureDefaultAgentPrompt, readPrompt, readConfigDocument, writeConfig } from "./prompts.ts";
+import { configPath, DEFAULT_PROMPT_PATH, DEFAULT_SYSTEM_PROMPT, resolvePromptPath, ensurePromptFile, snapshotPrompts, ensureDefaultAgentPrompt, readPrompt, readConfigDocument, writeConfig, isNamedAgent } from "./prompts.ts";
 import { mcpServersSchema } from "./mcp-schema.ts";
 import { BUNDLED_MODEL, fallbackConfig, copySnapshot, selectedProfileState } from "./profiles.ts";
 import { mcpServers, type McpServers, type LegacyMcpServer } from "./mcp-config.ts";
@@ -90,7 +90,7 @@ async function migratePrompts(stored: StoredConfig, pi: ConfigRuntime, storage: 
   const agents = [];
 
   for (const agent of Array.isArray(stored.agents) ? stored.agents : []) {
-    if (!Check(Type.Object({ name: Type.String({ minLength: 1 }) }), agent)) continue;
+    if (!isNamedAgent(agent)) continue;
     const path = await migrateSystemPrompt(agent, storage);
     const agentPromptPath = await migrateAgentPrompt(agent, storage);
     const { systemPrompt: _inline, developerPrompt: _legacy, agentsMd: _instructions, path_agentprompt: _oldPromptPath, ignoreGeneralAgentsMd: _oldIgnore, ...profile } = agent;
@@ -109,16 +109,18 @@ function promptPath(agent: StoredAgent): string {
 }
 
 function normalize(value: Omit<Partial<Config>, "agents"> & { agents?: StoredAgent[] }, pi: ConfigRuntime): Config {
-  for (const agent of Array.isArray(value.agents) ? value.agents : []) {
-    if (agent && agent.fastMode !== undefined && !Check(Type.Boolean(), agent.fastMode)) throw new Error(`Agent "${agent.name}" fastMode must be a boolean`);
+  const named = Array.isArray(value.agents) ? value.agents.filter(isNamedAgent) : [];
 
-    if (agent && agent.isDefault !== undefined && !Check(Type.Boolean(), agent.isDefault)) throw new Error(`Agent "${agent.name}" isDefault must be a boolean`);
-    const capError = agent?.contextWindowCap === undefined || agent.contextWindowCap === null ? undefined : typeof agent.contextWindowCap === "number" ? capRangeError(agent.contextWindowCap, `Agent "${agent.name}" context cap`) : `Agent "${agent.name}" context cap must be a number or null`;
+  for (const agent of named) {
+    if (agent.fastMode !== undefined && !Check(Type.Boolean(), agent.fastMode)) throw new Error(`Agent "${agent.name}" fastMode must be a boolean`);
+
+    if (agent.isDefault !== undefined && !Check(Type.Boolean(), agent.isDefault)) throw new Error(`Agent "${agent.name}" isDefault must be a boolean`);
+    const capError = agent.contextWindowCap === undefined || agent.contextWindowCap === null ? undefined : typeof agent.contextWindowCap === "number" ? capRangeError(agent.contextWindowCap, `Agent "${agent.name}" context cap`) : `Agent "${agent.name}" context cap must be a number or null`;
 
     if (capError) throw new Error(capError);
   }
 
-  const supplied = Array.isArray(value.agents) ? value.agents.filter((agent) => Check(Type.Object({ name: Type.String({ minLength: 1 }) }), agent)).map((agent) => ({
+  const supplied = named.map((agent) => ({
     name: agent.name, ...(agent.isDefault === true ? { isDefault: true } : {}), description: agentDescription(agent.description, agent.name), model: Check(Type.String(), agent.model) ? agent.model : "", effort: Check(Type.String(), agent.effort) ? agent.effort : fallbackConfig.agents[0].effort,
     fastMode: agent.fastMode, contextWindowCap: agent.contextWindowCap, codemode: agent.codemode, extensions: extensionPaths(agent.extensions),
     max_subagents: subagentLimit(agent.max_subagents, agent.name, "max_subagents"),
@@ -126,7 +128,7 @@ function normalize(value: Omit<Partial<Config>, "agents"> & { agents?: StoredAge
     allowed_subagents: agentAccess(agent.allowed_subagents, agent.name, "allowed_subagents"), allowed_peers: agentAccess(agent.allowed_peers, agent.name, "allowed_peers"),
     path_systemprompt: promptPath(agent), path_agent_prompt: Check(Type.String(), agent.path_agent_prompt) ? agent.path_agent_prompt.trim() : "",
     tools: Array.isArray(agent.tools) ? agent.tools.filter((item): item is string => Check(Type.String(), item)) : generalAgent(pi).tools, skills: Array.isArray(agent.skills) ? agent.skills.filter((item): item is string => Check(Type.String(), item)) : [], mcpServers: mcpServers(agent.mcpServers),
-  })) : [];
+  }));
 
   if (!supplied.some((agent) => agent.name === "general")) {
     const legacy = supplied.find((agent) => agent.name === "default");
@@ -161,7 +163,7 @@ async function readConfig(pi: ConfigRuntime, supplied: StoredConfig | undefined,
     const stored = supplied ?? await readConfigDocument();
     const config = await migratePrompts(stored, pi, storage);
 
-    if (Array.isArray(stored.agents) && stored.agents.some((agent: StoredAgent) => agent && (Array.isArray(agent.mcpServers) || agent.name === "default" && !stored.agents.some((item: StoredAgent) => item?.name === "general") || agent.path_systemprompt === undefined || agent.path_agent_prompt === undefined || ["path_agentprompt", "ignoreGeneralAgentsMd", "agentsMd", "systemPrompt", "developerPrompt"].some(key => key in agent)))) await storage.writeConfig(config);
+    if (Array.isArray(stored.agents) && stored.agents.some((agent: StoredAgent) => isNamedAgent(agent) && (Array.isArray(agent.mcpServers) || agent.name === "default" && !stored.agents.some((item: StoredAgent) => item?.name === "general") || agent.path_systemprompt === undefined || agent.path_agent_prompt === undefined || ["path_agentprompt", "ignoreGeneralAgentsMd", "agentsMd", "systemPrompt", "developerPrompt"].some(key => key in agent)))) await storage.writeConfig(config);
 
     return config;
   }
@@ -238,10 +240,6 @@ async function loadMigratedConfig(pi: ConfigRuntime, supplied: StoredConfig | un
   }
 
   changed = migratePluginTools(config, pi) || changed;
-
-  const retainedAgents = config.agents.filter(agent => agent.name !== "voice-orchestrator");
-
-  if (retainedAgents.length !== config.agents.length) { config.agents = retainedAgents; changed = true; }
 
   changed = addBundledAgents(config, pi) || changed;
 
@@ -398,13 +396,7 @@ export default async function defineAgents(pi: ExtensionAPI) {
 
   /** The agent a session starts as. Subagent and review sessions store their agent before they start, so only a new root session has no stored state and starts as the default agent. */
   const startingAgentName = (stored: SessionAgentState | undefined) => {
-    const name = snapshot?.definition.name ?? (stored ? restoredAgentName(stored.active) : defaultAgentName());
-
-    if (name === "voice-orchestrator") { snapshot = undefined;
-
-      return "general"; }
-
-    return name;
+    return snapshot?.definition.name ?? (stored ? restoredAgentName(stored.active) : defaultAgentName());
   };
 
   const currentSkillPaths = () => {
