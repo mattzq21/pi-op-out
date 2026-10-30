@@ -42,7 +42,6 @@ type AppEventsContext = {
   setActiveHostId: Dispatch<StateUpdate<string>>;
   setActiveCwd: Dispatch<StateUpdate<string | undefined>>;
   activateConversationKey: (key: string) => void;
-  setTerminalOpen: Dispatch<StateUpdate<boolean>>;
   setTerminalTarget: Dispatch<StateUpdate<TerminalTarget | undefined>>;
   configureRuntime: (value: AppSettings) => Promise<void>;
   setError: Dispatch<StateUpdate<string | undefined>>;
@@ -181,7 +180,7 @@ export function useAppEvents(options: Accessor<AppEventsContext>) {
           const conversationKey = `local:draft-${crypto.randomUUID()}`;
           capturedOptions.setActiveHostId(capturedOptions.transport.currentHostId()); capturedOptions.setActiveCwd(capturedOptions.transport.currentCwd());
           capturedOptions.transportConversationKeys.current.set(capturedOptions.transport, conversationKey); capturedOptions.activateConversationKey(conversationKey);
-          capturedOptions.setTerminalOpen(false); capturedOptions.setTerminalTarget(undefined);
+          capturedOptions.setTerminalTarget(undefined);
         }
 
         if (!initializing) void capturedOptions.refresh().then((value) => current() ? capturedOptions.configureRuntime(value) : undefined).then(() => { if (current()) { capturedOptions.setError(undefined); capturedOptions.updateConnected(true); } }).catch((reason) => { if (current() && !isConversationChanged(reason)) capturedOptions.setError((reason instanceof Error ? reason.message : String(reason))); });

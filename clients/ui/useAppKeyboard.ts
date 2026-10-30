@@ -21,7 +21,7 @@ type KeyboardContext = {
   settingsDirty: Accessor<boolean>;
   view: Accessor<"chat" | "settings">;
   terminalOpen: Accessor<boolean>;
-  setTerminalOpen: Setter<boolean>;
+  setTerminalOpen: (open: boolean) => void;
 };
 
 /** Keys that send control codes to the shell, plus terminal copy and paste. */

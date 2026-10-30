@@ -41,8 +41,9 @@ export function createTerminalController({ transport, sessionTransport, conversa
 
   onCleanup(() => { void restartListener.then(stop => stop()); void reconnectListener.then(stop => stop()); });
 
-  const [terminalOpen, setTerminalOpen] = createSignal(false);
   const [terminalTarget, setTerminalTarget] = createSignal<TerminalTarget>();
+  // Keys of conversations whose terminal panel is open. Kept in memory until shutdown.
+  const [openSessions, setOpenSessions] = createSignal<ReadonlySet<string>>(new Set());
   const [terminalsBySession, storeTerminalsBySession] = createSignal<Record<string, SessionTerminals>>({});
   const closingTerminals = createRef(new Set<string>());
   const startingTerminals = createRef(new Set<string>());
@@ -51,6 +52,14 @@ export function createTerminalController({ transport, sessionTransport, conversa
   const terminalSessionId = createMemo(() => terminalConversationKey(terminalTarget(), conversationKey()));
   const terminalSessionIdRef = createRef(terminalSessionId());
   createComputed(() => { terminalSessionIdRef.current = terminalSessionId(); });
+  const terminalOpen = createMemo(() => openSessions().has(terminalSessionId()));
+  const setTerminalOpen = (open: boolean, key = terminalSessionIdRef.current) => setOpenSessions(current => {
+    if (current.has(key) === open) return current;
+    const next = new Set(current);
+    if (open) next.add(key); else next.delete(key);
+
+    return next;
+  });
   const recentSessions = new Map<string, number>();
   let terminalAccess = 0;
   const trimTerminalHistory = (sessions: Record<string, SessionTerminals>) => {
@@ -163,7 +172,7 @@ export function createTerminalController({ transport, sessionTransport, conversa
           const merged = mergeSharedTabs(tabs, previous);
 
           if (!merged.length) {
-            if (synchronized && previous?.tabs.some(tab => tab.generation)) { setPrepareTerminal(false); setTerminalOpen(false); }
+            if (synchronized && previous?.tabs.some(tab => tab.generation)) { if (key === terminalSessionIdRef.current) setPrepareTerminal(false); setTerminalOpen(false, key); }
 
             return { ...current, [key]: initialTerminals(key) };
           }
@@ -365,20 +374,16 @@ export function createTerminalController({ transport, sessionTransport, conversa
   const allTerminalIds = () => Object.values(terminalsBySession()).flatMap(session => session.tabs.map(terminal => terminal.id));
   const draftTerminalIds = () => Object.entries(terminalsBySession()).filter(([key]) => key.slice(key.lastIndexOf(":") + 1).startsWith("draft-")).flatMap(([, session]) => session.tabs.map(terminal => terminal.id));
 
-  const forgetConversation = (key: string) => setTerminalsBySession(current => {
+  const forgetConversation = (key: string) => { setTerminalOpen(false, key); setTerminalsBySession(current => {
     if (!(key in current)) return current;
 
     for (const tab of current[key].tabs) draftRevisions.delete(tab.id);
     const next = { ...current }; delete next[key];
 
     return next;
-  });
+  }); };
 
-  const removeConversationTerminals = (key: string) => {
-    forgetConversation(key);
-
-    if (key === terminalSessionIdRef.current) setTerminalOpen(false);
-  };
+  const removeConversationTerminals = forgetConversation;
 
   const resetConversation = (key: string) => {
     forgetConversation(key);
@@ -394,6 +399,7 @@ export function createTerminalController({ transport, sessionTransport, conversa
 
       return next;
     });
+    if (openSessions().has(previousKey)) { setTerminalOpen(false, previousKey); setTerminalOpen(true, nextKey); }
     setTerminalTarget(current => current?.sessionKey === previousKey ? { ...current, sessionKey: nextKey } : current);
   };
 
@@ -411,7 +417,7 @@ export function createTerminalController({ transport, sessionTransport, conversa
     const closing = terminalOpen() && terminalSessionId() === target.sessionKey;
     if (terminalOpen()) void close();
     terminalPanelRevision.current += 1;
-    setTerminalTarget(target); setTerminalOpen(!closing);
+    setTerminalTarget(target); setTerminalOpen(!closing, target.sessionKey);
   };
 
   const toggle = (target: () => TerminalTarget) => {
@@ -420,7 +426,7 @@ export function createTerminalController({ transport, sessionTransport, conversa
     if (!chatStartedFor(next.sessionKey)) return;
     terminalPanelRevision.current += 1;
     setTerminalTarget(next);
-    setTerminalOpen(true);
+    setTerminalOpen(true, next.sessionKey);
   };
 
   const close = async () => {
