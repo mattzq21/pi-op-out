@@ -121,7 +121,7 @@ function normalize(value: Omit<Partial<Config>, "agents"> & { agents?: StoredAge
   const supplied = Array.isArray(value.agents) ? value.agents.filter((agent) => Check(Type.Object({ name: Type.String({ minLength: 1 }) }), agent)).map((agent) => ({
     name: agent.name, ...(agent.isDefault === true ? { isDefault: true } : {}), description: agentDescription(agent.description, agent.name), model: Check(Type.String(), agent.model) ? agent.model : "", effort: Check(Type.String(), agent.effort) ? agent.effort : fallbackConfig.agents[0].effort,
     fastMode: agent.fastMode, contextWindowCap: agent.contextWindowCap, codemode: agent.codemode, extensions: extensionPaths(agent.extensions),
-    max_subagents: subagentLimit(agent.max_subagents, agent.name, "max_subagents"), max_sub_subagents: subagentLimit(agent.max_sub_subagents, agent.name, "max_sub_subagents"),
+    max_subagents: subagentLimit(agent.max_subagents, agent.name, "max_subagents"),
     allow_as_subagent: agentFlag(agent.allow_as_subagent, agent.name, "allow_as_subagent"), allow_as_peer: agentFlag(agent.allow_as_peer, agent.name, "allow_as_peer"),
     allowed_subagents: agentAccess(agent.allowed_subagents, agent.name, "allowed_subagents"), allowed_peers: agentAccess(agent.allowed_peers, agent.name, "allowed_peers"),
     path_systemprompt: promptPath(agent), path_agent_prompt: Check(Type.String(), agent.path_agent_prompt) ? agent.path_agent_prompt.trim() : "",

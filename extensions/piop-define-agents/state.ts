@@ -19,7 +19,7 @@ export const agentThinkingLevels: Array<Parameters<ExtensionAPI["setThinkingLeve
 const accessSchema = Type.Union([Type.Literal("all"), Type.Literal("none"), Type.Array(Type.String())]);
 
 export const agentSchema = Type.Object({
-  max_subagents: Type.Optional(Type.Integer({ minimum: 0, maximum: Number.MAX_SAFE_INTEGER })), max_sub_subagents: Type.Optional(Type.Integer({ minimum: 0, maximum: Number.MAX_SAFE_INTEGER })),
+  max_subagents: Type.Optional(Type.Integer({ minimum: 0, maximum: Number.MAX_SAFE_INTEGER })),
   allow_as_subagent: Type.Optional(Type.Boolean()), allow_as_peer: Type.Optional(Type.Boolean()), allowed_subagents: Type.Optional(accessSchema), allowed_peers: Type.Optional(accessSchema),
   name: Type.String(), description: Type.Optional(Type.String()), isDefault: Type.Optional(Type.Boolean()), model: Type.String(), effort: Type.String(), fastMode: Type.Optional(Type.Boolean()),
   contextWindowCap: Type.Optional(Type.Union([Type.Null(), Type.Integer({ minimum: MIN_CAP, maximum: MAX_CAP })])), codemode: Type.Optional(Type.Union([Type.Literal("on"), Type.Literal("off")])), extensions: Type.Optional(Type.Array(Type.String())),
@@ -37,7 +37,6 @@ export function subagentLimit(value: number | undefined, name: string, field: st
 export function registerSubagentLimits(pi: ExtensionAPI, currentAgent: () => Agent | undefined) {
   const stop = pi.events.on("piop:agents:subagent-limits", request => {
     request.max_subagents = currentAgent()?.max_subagents ?? 8;
-    request.max_sub_subagents = currentAgent()?.max_sub_subagents ?? 8;
   });
 
   pi.on("session_shutdown", stop);

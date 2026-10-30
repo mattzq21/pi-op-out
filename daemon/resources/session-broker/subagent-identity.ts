@@ -7,7 +7,7 @@ export const runSchema = Schema.Object({
   version: Schema.Literal(1), toolCallId: Schema.String(), parentSessionId: Schema.String(), sessionId: Schema.String(), sessionPath: Schema.String(),
   hostId: Schema.String(), name: Schema.String(), task: Schema.String(), status: Schema.Union([Schema.Literal("running"), Schema.Literal("completed"), Schema.Literal("failed"), Schema.Literal("cancelled")]),
   startedAt: Schema.Number(), endedAt: Schema.Optional(Schema.Number()), output: Schema.Optional(Schema.String()),
-  agent: Schema.Optional(Schema.String()), taskPath: Schema.Optional(Schema.String()),
+  agent: Schema.Optional(Schema.String()),
   cwd: Schema.Optional(Schema.String()),
   look: Schema.Optional(Schema.Integer({ minimum: 0, maximum: 47 })),
   runId: Schema.Optional(Schema.String()), generation: Schema.Optional(counter),

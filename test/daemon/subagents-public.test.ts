@@ -63,19 +63,15 @@ const delegating = (name: string, task: string) => (messages: any[]) => {
   return { text: delivered ? delivered[0] : 'Waiting for ' + name + '.' };
 };
 
-test.concurrent('a grandchild cannot start its own child, and its parents hear why', async () => {
-  agents.scripts.set('Start a chain', delegating('Child', 'Delegate further'));
-  agents.scripts.set('Delegate further', delegating('Grandkid', 'Delegate once more'));
-  agents.scripts.set('Delegate once more', messages => {
-    const last = messages.at(-1);
-    if (!called(messages, 'spawn_subagents')) return { tool: 'spawn_subagents', arguments: { tasks: [{ nickname: 'Toodeep', task: 'Unreachable task' }] } };
-    return { text: 'Relay: ' + text(last) };
-  });
+test.concurrent('a child gets no subagent tools', async () => {
+  agents.scripts.set('Start a helper', delegating('Helper', 'Help without help'));
+  agents.scripts.set('Help without help', () => ({ text: 'Relay: done' }));
   const root = await agents.rootChat();
-  await root.command({ type: 'prompt', message: 'Start a chain' });
-  const messages = await root.until(history => text(history.at(-1)).startsWith('Relay: '));
-  expect(text(messages.at(-1))).toBe('Relay: Delegation is limited to two levels: root → child → grandchild. Return your findings to the parent.');
-  expect(agents.model.requests.some(request => JSON.stringify(request.messages).includes('Unreachable task') && !JSON.stringify(request.messages).includes('Delegate once more'))).toBe(false);
+  await root.command({ type: 'prompt', message: 'Start a helper' });
+  await root.until(history => text(history.at(-1)).startsWith('Relay: '));
+  const names = (prompt: string) => agents.model.requests.find(request => text(request.messages.find((message: any) => message.role === 'user')) === prompt).tools.map((tool: any) => tool.function.name);
+  expect(names('Start a helper')).toContain('spawn_subagents');
+  expect(names('Help without help').filter((name: string) => /subagent|agent_profiles/.test(name))).toEqual([]);
 }, 120000);
 
 for (const delivery of ['steer', 'follow_up']) test.concurrent('a message to a busy child arrives ' + (delivery === 'steer' ? 'before its next model call when steered' : 'after its current work as a follow-up'), async () => {

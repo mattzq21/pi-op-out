@@ -91,7 +91,6 @@ export function AgentTools(props: { tools: ToolConfig[]; query: string; selected
         <Show when={group.name === "Subagents" && props.selected.includes("spawn_subagents")}>
           <div class="agent-subagent-limits">
             <label class="field"><span>Max subagents</span><input type="number" aria-label="Max subagents" min="0" max={Number.MAX_SAFE_INTEGER} step="1" value={props.agent.max_subagents ?? 8} onInput={event => props.onLimitsChange({ max_subagents: event.currentTarget.valueAsNumber })} /></label>
-            <label class="field"><span>Max 2nd level subagents</span><input type="number" aria-label="Max 2nd level subagents" min="0" max={Number.MAX_SAFE_INTEGER} step="1" value={props.agent.max_sub_subagents ?? 8} onInput={event => props.onLimitsChange({ max_sub_subagents: event.currentTarget.valueAsNumber })} /></label>
           </div>
           <AgentAccessPicker label="Callable subagents" value={props.agent.allowed_subagents} names={props.agentNames} onChange={allowed_subagents => props.onLimitsChange({ allowed_subagents })} />
         </Show>

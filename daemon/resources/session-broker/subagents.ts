@@ -21,8 +21,6 @@ import { isAuxiliary } from "../piop-storage/session-records.cjs";
 /** A subagent nickname: 1–8 characters, an upper case letter first, then lower case letters or digits. */
 const NICKNAME = "^[A-Z][a-z0-9]{0,7}$";
 
-const MAX_DELEGATION_DEPTH = 2;
-
 /** Whether folder is inside a Git work tree. */
 function inGitRepository(folder: string) {
   try { return execFileSync("git", ["-C", folder, "rev-parse", "--is-inside-work-tree"], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], timeout: 5000 }).trim() === "true"; }
@@ -38,32 +36,21 @@ declare module "@earendil-works/pi-coding-agent" {
   }
 }
 
-function subagentLimits(pi: ExtensionAPI, ctx: ExtensionContext) {
+function subagentLimit(pi: ExtensionAPI) {
   const limits: SubagentLimitsRequest = {};
   pi.events.emit("piop:agents:subagent-limits", limits);
-  const parent = subagentParent(ctx);
 
-  return { max_subagents: Math.min(limits.max_subagents ?? 8, parent?.max_subagents ?? Number.MAX_SAFE_INTEGER), max_sub_subagents: limits.max_sub_subagents ?? 8 };
+  return limits.max_subagents ?? 8;
 }
 
-function requireSubagentSlots(pi: ExtensionAPI, ctx: ExtensionContext, occupied: number, requested: number) {
-  const limit = subagentLimits(pi, ctx).max_subagents;
+function requireSubagentSlots(pi: ExtensionAPI, occupied: number, requested: number) {
+  const limit = subagentLimit(pi);
 
   if (occupied + requested > limit) throw new Error(`This agent allows at most ${limit} concurrent subagents; ${occupied} slots are occupied`);
 }
 
-function delegationScope(ctx: ExtensionContext) {
-  const parent = subagentParent(ctx);
-
-  return { depth: parent ? parent.depth ?? 1 : 0, taskPath: parent ? parent.taskPath ?? `/root/${ctx.sessionManager.getSessionId()}` : "/root" };
-}
-
 function requireDelegation(ctx: ExtensionContext) {
-  const scope = delegationScope(ctx);
-
-  if (scope.depth >= MAX_DELEGATION_DEPTH) throw new Error("Delegation is limited to two levels: root → child → grandchild. Return your findings to the parent.");
-
-  return scope;
+  if (subagentParent(ctx)) throw new Error("Subagents cannot start subagents");
 }
 
 type SubagentTask = { task: string; name: string; agent?: string; sessionId?: string };
@@ -76,11 +63,11 @@ function resumeSubagent(runs: SubagentRun[], parentSessionId: string, task: Suba
 
   return { version: 1, toolCallId, parentSessionId, sessionId: previous.sessionId, sessionPath: previous.sessionPath, hostId: previous.hostId,
     name: task.name, task: task.task, status: "running", startedAt: Date.now(), runId: randomUUID(), generation: (previous.generation ?? 0) + 1, submission: "prepared",
-    agent: previous.agent, taskPath: previous.taskPath, cwd: previous.cwd, look: previous.look };
+    agent: previous.agent, cwd: previous.cwd, look: previous.look };
 }
 
 async function createSubagent(pi: ExtensionAPI, ctx: ExtensionContext, task: SubagentTask, toolCallId: string, signal?: AbortSignal): Promise<SubagentRun> {
-  const scope = requireDelegation(ctx);
+  requireDelegation(ctx);
   const parentSessionId = ctx.sessionManager.getSessionId();
   const runs = latestRuns(ctx);
 
@@ -103,7 +90,7 @@ async function createSubagent(pi: ExtensionAPI, ctx: ExtensionContext, task: Sub
   const timestamp = new Date().toISOString();
   const sessionPath = join(ctx.sessionManager.getSessionDir(), `${timestamp.replace(/[:.]/g, "-")}_${sessionId}.jsonl`);
   const workspace = { cwd: ctx.cwd };
-  const run: SubagentRun = { version: 1, toolCallId, parentSessionId, sessionId, sessionPath, hostId: currentHost(), name: task.name, task: task.task, taskPath: `${scope.taskPath}/${task.name}`, agent: profile.active, status: "running", startedAt: Date.now(), runId: randomUUID(), submission: "prepared", look, ...workspace };
+  const run: SubagentRun = { version: 1, toolCallId, parentSessionId, sessionId, sessionPath, hostId: currentHost(), name: task.name, task: task.task, agent: profile.active, status: "running", startedAt: Date.now(), runId: randomUUID(), submission: "prepared", look, ...workspace };
   let parentId: string | null = null;
 
   const entry = (value: CustomEntryDraft) => { const id = randomUUID(); const result = { ...value, id, parentId, timestamp }; parentId = id;
@@ -112,7 +99,7 @@ async function createSubagent(pi: ExtensionAPI, ctx: ExtensionContext, task: Sub
 
   try { await writeSessionFile(sessionPath, [
     { type: "session", version: header.version, id: sessionId, timestamp, cwd: workspace.cwd },
-    entry({ type: "custom", customType: SUBAGENT_PARENT, data: { kind: "subagent", version: 1, sessionId, hostId: currentHost(), parentSessionId, parentHostId: currentHost(), parentSessionPath: ctx.sessionManager.getSessionFile(), toolCallId, task: task.task, depth: scope.depth + 1, taskPath: run.taskPath, parentTaskPath: scope.taskPath, max_subagents: subagentLimits(pi, ctx).max_sub_subagents } }),
+    entry({ type: "custom", customType: SUBAGENT_PARENT, data: { kind: "subagent", version: 1, sessionId, hostId: currentHost(), parentSessionId, parentHostId: currentHost(), parentSessionPath: ctx.sessionManager.getSessionFile(), toolCallId, task: task.task } }),
     entry({ type: "custom", customType: "pi-define-agents-state", data: profile }),
     ...fastMode ? [entry(fastMode)] : [],
   ], { name: `Subagent: ${task.name}`, dependencies: { workspace: { path: workspace.cwd, kind: "existing" } } }); }
@@ -244,10 +231,9 @@ export function registerSubagents(pi: ExtensionAPI) {
   const pending = new Set<Promise<void>>();
   let controller = new AbortController();
   let context: ExtensionContext | undefined;
-  const taskPath = (ctx: ExtensionContext, run: SubagentRun) => run.taskPath ?? `${delegationScope(ctx).taskPath}/${run.name}`;
 
   const targetRun = (ctx: ExtensionContext, target: string) => {
-    const runs = latestRuns(ctx).filter(run => run.sessionId === target || run.name === target || taskPath(ctx, run) === target);
+    const runs = latestRuns(ctx).filter(run => run.sessionId === target || run.name === target);
 
     if (runs.length !== 1) throw new Error("No subagent has this nickname; list_subagents shows their nicknames");
 
@@ -262,7 +248,7 @@ export function registerSubagents(pi: ExtensionAPI) {
 
     if (latestRuns(ctx).some(run => run.sessionId === task.sessionId && run.status === "running")) throw new Error("This subagent's previous task is unresolved; stop it with stop_subagent first");
 
-    requireSubagentSlots(pi, ctx, pending.size, 1);
+    requireSubagentSlots(pi, pending.size, 1);
     const results: SubagentRun[] = [];
     const backgroundSignal = controller.signal;
     await launchSubagent(task, { pi, ctx, toolCallId, active, results, signal: backgroundSignal, publish(run) {
@@ -284,7 +270,11 @@ export function registerSubagents(pi: ExtensionAPI) {
     return repository.inside;
   };
   pi.on("session_start", (_event, ctx) => { sessionInRepository(ctx); });
-  const unsubscribeTools = pi.events.on("piop:required-tools", ({ ctx, tools, availableTools }) => {
+  const unsubscribeTools = pi.events.on("piop:required-tools", ({ ctx, tools, withheldTools, availableTools }) => {
+    // A subagent cannot start subagents or peers, so it gets none of their tools.
+    if (subagentParent(ctx)) { withheldTools.push(...SUBAGENT_TOOLS, "list_agent_profiles");
+
+    return; }
     const allowed = availableTools ?? pi.getActiveTools();
     const subagents = allowed.some(tool => SUBAGENT_TOOLS.includes(tool));
     const peers = !isAuxiliary(ctx.sessionManager.getEntries()) && allowed.some(tool => PEER_TOOLS.includes(tool));
@@ -460,11 +450,7 @@ export function registerSubagents(pi: ExtensionAPI) {
   });
 
   pi.on("agent_before_settle", async (event, ctx) => {
-    if (event.outcome === "aborted" || ctx.signal?.aborted) { await stop();
-
-    return; }
-
-    if (subagentParent(ctx)) while (pending.size) await Promise.allSettled([...pending]);
+    if (event.outcome === "aborted" || ctx.signal?.aborted) await stop();
   });
   pi.on("session_before_switch", () => stop());
   pi.on("session_shutdown", async (event) => { detachAbort(); unsubscribeCancellation(); await stop(event.reason !== "reload"); });
@@ -536,7 +522,7 @@ export function registerSubagents(pi: ExtensionAPI) {
 
       if (params.tasks.some(task => latestRuns(ctx).some(run => run.name === task.nickname))) throw new Error("A subagent with this nickname exists; use message_subagent to give it more work");
 
-      requireSubagentSlots(pi, ctx, pending.size, params.tasks.length);
+      requireSubagentSlots(pi, pending.size, params.tasks.length);
       const results: SubagentRun[] = [];
       const backgroundSignal = controller.signal;
 
