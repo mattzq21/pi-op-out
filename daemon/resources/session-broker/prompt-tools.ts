@@ -2,7 +2,8 @@ import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-a
 import { getCurrentTools } from "@earendil-works/pi-ai";
 
 /**
- * Core: tools that are in the prompt only while a plugin needs them. A registered tool stays out of the prompt until show().
+ * Core: tools that are in the prompt only while a plugin needs them. They belong to the plugin, not to agent definitions: every
+ * agent has them. A registered tool stays out of the prompt until show().
  * On the first message after a compaction, each shown tool whose keep() is false leaves the prompt. Between compactions
  * the prompt does not lose tools, so the model provider can reuse its cache. On the first message after the chat opens,
  * each tool whose keep() is true enters the prompt, so plugins may load their state at any point before that message.
@@ -10,10 +11,8 @@ import { getCurrentTools } from "@earendil-works/pi-ai";
 export interface PromptTools {
   /** keep tells whether the tool must be in the prompt after a compaction or when the chat opens. Returns the function that removes the registration. */
   register(tool: string, keep: () => boolean): () => void;
-  /** Puts a registered tool in the prompt, if the agent's tools include it. */
+  /** Puts a registered tool in the prompt. */
   show(tool: string): void;
-  /** The agent's tools include the tool, and it is in the prompt when shown. */
-  allowed(tool: string): boolean;
 }
 
 /** Extensions emit this request on "piop:session:prompt-tools" to get the core PromptTools. */
@@ -50,7 +49,7 @@ function transcript(ctx: ExtensionContext) {
 }
 
 export function registerPromptTools(pi: ExtensionAPI) {
-  const registered = new Map<string, { keep: () => boolean; shown: boolean; permitted: boolean }>();
+  const registered = new Map<string, { keep: () => boolean; shown: boolean }>();
   /** A compaction happened and the next message has not started yet. */
   let recheck = false;
   /** The chat opened and its first message has not started yet. */
@@ -61,9 +60,8 @@ export function registerPromptTools(pi: ExtensionAPI) {
     const state = registered.get(tool);
     if (!state) return;
     const active = pi.getActiveTools();
-    const wanted = state.shown && state.permitted;
 
-    if (wanted !== active.includes(tool)) pi.setActiveTools(wanted ? [...active, tool] : active.filter(name => name !== tool));
+    if (state.shown !== active.includes(tool)) pi.setActiveTools(state.shown ? [...active, tool] : active.filter(name => name !== tool));
   };
 
   /** Asks keep() of each tool: a tool that must stay enters the prompt, and after a compaction a tool that need not stay leaves it. */
@@ -83,7 +81,7 @@ export function registerPromptTools(pi: ExtensionAPI) {
   const tools: PromptTools = {
     register(tool, keep) {
       if (registered.has(tool)) throw new Error(`${tool} is already registered as a prompt tool`);
-      registered.set(tool, { keep, shown: false, permitted: false });
+      registered.set(tool, { keep, shown: false });
 
       return () => { registered.delete(tool); };
     },
@@ -92,11 +90,6 @@ export function registerPromptTools(pi: ExtensionAPI) {
       if (!state) throw new Error(`${tool} is not registered as a prompt tool`);
       if (state.shown) return;
       state.shown = true; sync(tool);
-    },
-    allowed(tool) {
-      const state = registered.get(tool);
-
-      return !!state?.permitted && (!state.shown || pi.getActiveTools().includes(tool));
     },
   };
 
@@ -110,11 +103,7 @@ export function registerPromptTools(pi: ExtensionAPI) {
 
   const offRequest = pi.events.on("piop:session:prompt-tools", request => { request.tools = tools; });
   const offRequired = pi.events.on("piop:required-tools", request => {
-    for (const [tool, state] of registered) {
-      state.permitted = request.availableTools?.includes(tool) ?? false;
-
-      if (!state.shown) request.withheldTools.push(tool);
-    }
+    for (const [tool, state] of registered) (state.shown ? request.tools : request.withheldTools).push(tool);
   });
 
   pi.on("session_start", (_event, ctx) => restore(ctx));
@@ -125,4 +114,7 @@ export function registerPromptTools(pi: ExtensionAPI) {
   pi.on("agent_start", () => { running = true; });
   pi.on("agent_settled", () => { running = false; });
   pi.on("session_shutdown", () => { offRequest(); offRequired(); });
+
+  /** Whether the tool is a prompt tool, so it is not part of agent definitions. */
+  return { has: (tool: string) => registered.has(tool) };
 }

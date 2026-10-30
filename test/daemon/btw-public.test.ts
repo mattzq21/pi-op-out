@@ -81,7 +81,6 @@ test.concurrent('/btw after a stopped response copies the history through the st
 }, 60000);
 
 test.concurrent('/btw during a goal run copies the history through the last finished agent turn, without the goal', async () => {
-  await agents.enableAgentTools('update_goal_status');
   agents.scripts.set('Audit the tokens', messages => messages.some((message: any) => message.role === 'tool') ? { text: 'Checking more.', stall: 'bash' } : { tool: 'bash', arguments: { command: 'echo tokens checked' } });
   const chat = await agents.rootChat({ visible: true });
   await chat.command({ type: 'follow_up', message: '/goal Audit the tokens', goalSubmissionId: crypto.randomUUID() });

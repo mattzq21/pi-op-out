@@ -39,10 +39,10 @@ export default function sessionBroker(pi: ExtensionAPI) {
   pi.on("session_shutdown", unsubscribeTaskSuccess);
   registerInputHold(pi);
   registerQueueHold(pi);
-  registerPromptTools(pi);
+  const promptTools = registerPromptTools(pi);
   registerConversationClient(pi);
   registerOrchestration(pi);
   registerSubagents(pi);
-  registerToolInventory(pi);
+  registerToolInventory(pi, promptTools);
   registerAuxiliaryChats(pi);
 }
