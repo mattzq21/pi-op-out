@@ -10,7 +10,6 @@ test.concurrent('an active goal stops with the daemon and goes on when its chat 
   const held = Promise.withResolvers<{ text: string }>();
   let second: Awaited<ReturnType<typeof startDaemon>> | undefined;
   try {
-    await agents.enableAgentTools('update_goal_status');
     let turns = 0;
     agents.scripts.set('Goal across a restart', () => {
       turns++;

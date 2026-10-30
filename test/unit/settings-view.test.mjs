@@ -265,17 +265,17 @@ describe('settings editor', () => {
   });
 
   test('tool and skill searches filter by name and by group name', async () => {
-    props.settings.tools = [{ name: 'read', description: '', source: 'builtin:read' }, { name: 'bash', description: '', source: 'builtin:bash' }, { name: 'update_goal_status', description: '', source: '/x/piop-goals/index.ts' }];
+    props.settings.tools = [{ name: 'read', description: '', source: 'builtin:read' }, { name: 'bash', description: '', source: 'builtin:bash' }, { name: 'spawn_subagents', description: '', source: '/x/session-broker.ts' }];
     props.settings.skills = [{ name: 'tdd', path: '/h/.agents/skills/using/tdd', enabled: true }, { name: 'retro', path: '/h/.agents/skills/mine/retro', enabled: true }];
     await render({ agentConfig: { agents: [profile('general'), profile('review')] } });
     await section('Agents'); await selectAgent('review');
     await enterText(control('Search tools'), 'EAD');
-    assert.ok(control('Allow read')); assert.equal(control('Allow bash'), null); assert.equal(control('Allow all Goal tools'), null);
-    await enterText(control('Search tools'), 'update');
-    assert.equal(control('Allow read'), null); assert.ok(control('Allow update_goal_status')); assert.equal(control('Allow bash'), null);
-    await click(control('Allow all Goal tools'));
-    await enterText(control('Search tools'), 'goal');
-    assert.equal(control('Allow update_goal_status').checked, true);
+    assert.ok(control('Allow read')); assert.equal(control('Allow bash'), null); assert.equal(control('Allow all Subagents tools'), null);
+    await enterText(control('Search tools'), 'spawn');
+    assert.equal(control('Allow read'), null); assert.ok(control('Allow spawn_subagents')); assert.equal(control('Allow bash'), null);
+    await click(control('Allow all Subagents tools'));
+    await enterText(control('Search tools'), 'subagents');
+    assert.equal(control('Allow spawn_subagents').checked, true);
     await enterText(control('Search skills'), 'mine');
     assert.ok(control('Allow retro')); assert.equal(control('Allow tdd'), null);
     await enterText(control('Search skills'), '');

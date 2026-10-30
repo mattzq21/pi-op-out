@@ -6,10 +6,9 @@ type Agents = Awaited<ReturnType<typeof agentDaemon>>;
 type Daemon = Agents['daemon'] | Awaited<ReturnType<typeof startDaemon>>;
 type Chat = { runtimeId: string; command: (value: any) => Promise<any> };
 
-/** A daemon whose agents have update_goal_status. Each chat follows its script; compaction summaries name the script, so it goes on after them. */
+/** A daemon for goal chats. Each chat follows its script; compaction summaries name the script, so it goes on after them. */
 async function goalAgents(script: string, reply: (last: string, messages: any[]) => any) {
   const agents = await agentDaemon();
-  await agents.enableAgentTools('update_goal_status');
   // The summary of the part of a turn that a compaction cuts off.
   agents.scripts.set('[User]: Filler: ', () => ({ text: 'Summary: filler.' }));
   agents.scripts.set(script, async messages => {

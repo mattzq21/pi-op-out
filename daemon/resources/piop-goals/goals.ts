@@ -52,12 +52,8 @@ export function registerGoals(pi: ExtensionAPI): { session: GoalSession; core: G
   const tools = promptTools(pi);
   const unregisterTool = tools.register(GOAL_TOOL, live);
 
-  const allowed = () => tools.allowed(GOAL_TOOL);
-
   const assertAvailable = (ctx: ExtensionContext) => {
     if (!persistent(ctx)) throw new Error("Goals require a saved conversation.");
-
-    if (!allowed()) throw new Error("Enable update_goal_status for this agent under Settings → Agents → Tools before starting a goal.");
   };
 
   /** Saves a change notice in the history. While the agent works, Pi adds it at the end of the current turn. */
@@ -119,10 +115,6 @@ export function registerGoals(pi: ExtensionAPI): { session: GoalSession; core: G
     schedule(ctx, () => {
     if (!restored || state.goal?.status !== "active") return;
 
-    if (!allowed()) { state.setStatus(ctx, "paused");
-
-    return; }
-
     // A chat waiting for the user's first message keeps its goal active; the user's message starts the work.
     if (inputHold(pi).held(ctx)) return;
 
@@ -133,7 +125,6 @@ export function registerGoals(pi: ExtensionAPI): { session: GoalSession; core: G
   pi.on("agent_start", (_event, ctx) => coordination.run(ctx, () => {
     context = ctx; starting = false;
     runSignal = ctx.signal;
-    if (state.goal?.status === "active" && !allowed()) state.setStatus(ctx, "paused");
   }));
 
   pi.on("agent_before_settle", (event, ctx) => coordination.run(ctx, (): AgentBeforeSettleEventResult | void => {
@@ -143,10 +134,6 @@ export function registerGoals(pi: ExtensionAPI): { session: GoalSession; core: G
     }
 
     if (state.goal?.status !== "active") return;
-
-    if (!allowed()) { state.setStatus(ctx, "paused");
-
-    return; }
 
     // Waiting messages run first. Pi runs them only when asked to continue: a message that does not start a turn by itself,
     // such as the goal prompt sent after a compaction, would otherwise wait and the goal would stop.
@@ -193,7 +180,6 @@ export function registerGoals(pi: ExtensionAPI): { session: GoalSession; core: G
   const publish = pi.events.on("piop:goals:session", request => { request.session = session; });
 
   pi.on("context", (event, ctx) => coordination.run(ctx, () => {
-    if (state.goal?.status === "active" && !allowed()) state.setStatus(ctx, "paused");
     // Change notices stay where they happened, as system messages. Goal prompts stay as the user messages they were saved as.
     const messages = event.messages.map(message => message.role === "custom" && message.customType === GOAL_CHANGE ? { role: "system" as const, content: message.content, timestamp: message.timestamp } : message);
 

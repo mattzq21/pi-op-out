@@ -276,8 +276,7 @@ export function Composer(props: Props) {
   const skillQuery = createMemo(() => reference()?.marker === "$" ? reference()?.query : undefined);
 
   const visibleCommands = createMemo(() => {
-    const agent = composer().agents.find(agent => agent.name === composer().activeAgent);
-    const goalEnabled = !composer().agentUnavailable && Boolean(agent?.tools.includes("update_goal_status"));
+    const goalEnabled = !composer().agentUnavailable;
 
     return composer().commands.filter(command => (command.name !== "goal" || goalEnabled) && (!reference()?.start || isPromptCommand(command)));
   });

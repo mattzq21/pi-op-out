@@ -14,17 +14,8 @@ const turnsSoFar = (messages: any[]) => messages.filter(message => message.role 
 const shownGoal = (runtimeId: string) => { const status = agents.daemon.events.filter(event => event.payload?.runtimeId === runtimeId && event.payload.event?.method === 'setStatus' && event.payload.event.statusKey === 'piop-goal').at(-1)?.payload.event.statusText; return status ? JSON.parse(status) : null; };
 const untilGoal = async (runtimeId: string, status: string) => { for (let tries = 0; shownGoal(runtimeId)?.status !== status && tries < 50; tries++) await Bun.sleep(100); return shownGoal(runtimeId); };
 const settled = (runtimeId: string) => agents.daemon.waitEvent('pi://event', payload => payload.runtimeId === runtimeId && payload.event?.type === 'agent_settled', 60000);
-const notices = (runtimeId: string) => agents.daemon.events.filter(event => event.payload?.runtimeId === runtimeId && event.payload.event?.method === 'notify').map(event => event.payload.event.message);
 
-test('a goal needs the goal tools, and without them the user is told how to enable them', async () => {
-  const chat = await agents.rootChat();
-  expect(await send(chat, '/goal Write the report')).toBe(false);
-  expect(notices(chat.runtimeId)).toContain('Enable update_goal_status for this agent under Settings → Agents → Tools before starting a goal.');
-  expect(await chat.history()).toEqual([]);
-}, 60000);
-
-describe('goals with update_goal_status enabled', () => {
-  beforeAll(() => agents.enableAgentTools('update_goal_status'), 60000);
+describe('goals', () => {
 
 test('a goal keeps the agent working turn after turn until the agent marks it complete', async () => {
   agents.scripts.set('Write the report', messages => {
