@@ -69,7 +69,7 @@ export function SessionPanel(props: Props) {
   const panelFields = createMemoFields(() => sessionPanelDefaults(props));
   const panel = () => panelFields;
   const storedGroups = props.sidebar;
-  const { collapsedProjects, customGroupsByKey, groupDestination, projectDetails, normalizedQuery, visualProjectKey, filtered, groups, sidebarEntries, validateGroupName, saveGroup, removeGroup, toggleProject, expandProject, moveSession, placeSidebarEntry } = storedGroups;
+  const { collapsedProjects, customGroupsByKey, groupDestination, normalizedQuery, visualProjectKey, filtered, groups, sidebarEntries, validateGroupName, saveGroup, removeGroup, toggleProject, expandProject, moveSession, placeSidebarEntry } = storedGroups;
   const { projectParent, canMoveProject, moveProject, groupEntries, placeGroupEntry } = storedGroups;
   const siblingEntries = (parent?: string) => sidebarEntries().filter(token => projectParent(token.slice("group:".length)) === parent);
 
@@ -606,7 +606,7 @@ export function SessionPanel(props: Props) {
             const renderGroupNameInput = () => (<input ref={element => { groupNameRef.current = element; }} disabled={groupSaving()} aria-label="Rename session group" aria-invalid={Boolean(groupDraftError())} aria-describedby={groupDraftError() ? "rename-group-error" : undefined} value={newGroupName() ?? ""} onInput={(event) => { setNewGroupName(event.target.value); setGroupDraftError(undefined); }} onBlur={() => finishGroup()} onKeyDown={(event) => { if (event.key === "Enter" && !event.isComposing) { event.preventDefault(); finishGroup(); } else if (event.key === "Escape") { event.preventDefault(); finishGroup(true); } }} />);
 
             return (isEditingGroup(projectKey) ? <div class="project-label">{renderGroupNameInput()}{groupDraftError() && <small id="rename-group-error" class="group-error">{(groupDraftError())}</small>}</div> : <>
-              <button class="project-disclosure" aria-label={disclosureLabel()} aria-expanded={!collapsed()} aria-controls={groupId} onClick={() => toggleProject(projectKey)}><ChevronDown class={collapsed() ? "collapsed" : ""} size={13} /></button><button class="project-label" disabled={Boolean(normalizedQuery())} {...projectDragProps(projectKey)}>{projectDetails().get(projectKey)?.cwd && <Folder size={14} aria-hidden="true" />}<span class={projectKey === activeProjectKey() ? "active" : undefined}>{label()}</span></button>
+              <button class="project-disclosure" aria-label={disclosureLabel()} aria-expanded={!collapsed()} aria-controls={groupId} onClick={() => toggleProject(projectKey)}><ChevronDown class={collapsed() ? "collapsed" : ""} size={13} /></button><button class="project-label" disabled={Boolean(normalizedQuery())} {...projectDragProps(projectKey)}>{groupDestination(projectKey)?.cwd && <Folder size={14} aria-hidden="true" />}<span class={projectKey === activeProjectKey() ? "active" : undefined}>{label()}</span></button>
               {!isFixedGroup(projectKey) && <div class="project-actions">
                 <button aria-label={`New chat in ${label()}`} data-tooltip="New chat in group" onClick={() => {
                   const destination = groupDestination(projectKey);

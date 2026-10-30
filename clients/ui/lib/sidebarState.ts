@@ -1,7 +1,7 @@
 import { createMemo,type Accessor } from "solid-js";
 import type { SessionSummary } from "../types";
 import { hasVisibleText } from "./content";
-import { DIRLESS_KEY,projectGroupId,isTemporaryChatCwd,useSessionGroups, type SessionGroup } from "./sessionGroups";
+import { DIRLESS_KEY,isTemporaryChatCwd,useSessionGroups, type SessionGroup } from "./sessionGroups";
 import { useSessionProjects } from "./sessionProjects";
 import { createDependencyEffect } from "./solid";
 import { createSidebarPersistence, moveSidebarToken } from "./sidebarPersistence";
@@ -211,15 +211,6 @@ export function createSidebarState(source: Accessor<SessionSummary[]>, query: Ac
 
   const groupDestination = (id: string) => savedGroupsById().get(id);
 
-  const projectDetails = createMemo(() => {
-    const details = new Map<string, SessionSummary>();
-    sessions().forEach(session => { const key = projectGroupId(session);
-
-    if (!details.has(key)) details.set(key, session); });
-
-    return details;
-  });
-
   const normalizedQuery = createMemo(() => (query().trim().toLowerCase()));
   const customGroupsByKey = createMemo(() => (new Map(customGroups().map((group) => [group.id, group]))));
 
@@ -341,7 +332,7 @@ export function createSidebarState(source: Accessor<SessionSummary[]>, query: Ac
 
   return {
     get state() { return storedGroups.state; }, get error() { return storedGroups.error ?? persistence.error(); },
-    sessions, collapsedProjects, customGroupsByKey, groupDestination, projectDetails,
+    sessions, collapsedProjects, customGroupsByKey, groupDestination,
     normalizedQuery, visualProjectKey, filtered, groups, sidebarEntries, groupedSessions: displayedSessions,
     validateGroupName, saveGroup, removeGroup, toggleProject, expandProject, moveSession, placeSidebarEntry, projectParent, canMoveProject, moveProject, groupEntries, placeGroupEntry,
   };

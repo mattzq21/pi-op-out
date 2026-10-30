@@ -3,7 +3,6 @@ import { z } from "zod";
 import { createSignal } from "solid-js";
 import { createDependencyEffect, createRef } from "./solid";
 
-import type { SessionSummary } from "../types";
 import { changeSessionGroups, loadSessionGroups } from "./nativeTransport";
 import { listen } from "./platform";
 import { cacheSessionGroups, restoreSessionGroups } from "./sessionGroupsCache";
@@ -45,10 +44,6 @@ function enqueue<T>(work: () => Promise<T>): Promise<T> {
   queue = result.then(() => undefined, () => undefined);
 
   return result;
-}
-
-export function projectGroupId(session: SessionSummary) {
-  return `${session.hostId ?? "local"}:${session.cwd}`;
 }
 
 export function useSessionGroups() {
