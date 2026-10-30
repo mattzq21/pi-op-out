@@ -99,6 +99,8 @@ export function ChatView(props: Props & { transcriptActions?: JSXElement; follow
   /** The place the chat had when a view last showed it. The view goes back to it, also when new messages came meanwhile. */
   const restoring = createRef<ScrollPlace | undefined>(untrack(() => props.transport && !props.revealEntryId ? savedPlace(props.transport) : undefined));
   const followLatest = createRef(!restoring.current);
+  /** Scrolls to the restored place again, after older history loads. */
+  const holdPlace = createRef<(() => void) | undefined>(undefined);
   /** True when the view is far enough above the latest message to offer the jump button. */
   const [awayFromLatest, setAwayFromLatest] = createSignal(false);
   const shellRef = createRef<HTMLElement | null>(null);
@@ -175,12 +177,14 @@ export function ChatView(props: Props & { transcriptActions?: JSXElement; follow
     olderAnchor.current = element.scrollHeight - element.scrollTop;
     loadOlderHistory(transport).catch(reason => {
       if (!transport.isConnected() || isDaemonRefusal(reason)) retryOlderAfterReconnect(transport);
-      else props.onNotice?.("Could not load older messages", reason instanceof Error ? reason.message : String(reason));
+      else { restoring.current = undefined; props.onNotice?.("Could not load older messages", reason instanceof Error ? reason.message : String(reason)); }
     }).finally(() => requestAnimationFrame(() => {
       const anchor = olderAnchor.current; olderAnchor.current = undefined;
 
       if (anchor !== undefined && !followLatest.current) { element.scrollTop = element.scrollHeight - anchor; lastScrollTop.current = element.scrollTop; }
-      fillView();
+      // A restore that waits for the turn of its place continues. A failed load ends it.
+      if (holdPlace.current) holdPlace.current();
+      else fillView();
     }));
   };
 
@@ -360,15 +364,18 @@ export function ChatView(props: Props & { transcriptActions?: JSXElement; follow
 
     if (!root || !content || !shell || !restoring.current || typeof ResizeObserver === "undefined") return;
     const inputs = ["wheel", "touchstart", "pointerdown", "keydown"] as const;
-    const stop = () => { restoring.current = undefined; observer.disconnect(); for (const type of inputs) shell.removeEventListener(type, stop, true); };
+    const stop = () => { restoring.current = undefined; holdPlace.current = undefined; observer.disconnect(); for (const type of inputs) shell.removeEventListener(type, stop, true); };
     const hold = () => {
       const place = restoring.current;
 
       if (!place || followLatest.current) { stop(); return; }
       if (applyPlace(root, place)) { lastScrollTop.current = root.scrollTop; measureDistance(); return; }
-      // The messages came without the turn of the place, so the view shows the latest message.
+      // The turn of the place is in the older history, so it loads.
+      if (untrack(older)) { loadOlder(); return; }
+      // The turn of the place is not in the chat, such as after a branch change, so the view shows the latest message.
       if (untrack(messages).length) { stop(); followLatest.current = true; scrollToLatest(); }
     };
+    holdPlace.current = hold;
     const observer = new ResizeObserver(hold);
     observer.observe(content);
     for (const type of inputs) shell.addEventListener(type, stop, { capture: true, passive: true });
