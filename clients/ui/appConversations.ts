@@ -46,7 +46,8 @@ type RemovedSession = z.infer<typeof removedSessionSchema>;
 
 const removedSessionHost = (removed: RemovedSession) => removed.hostId ?? "local";
 
-export function createAppConversations(preloadChat: () => void) {
+/** prepareTranscript: draws the turns of a chat that is not shown, after its new answer loads. */
+export function createAppConversations(preloadChat: () => void, prepareTranscript: (transport: NativeTransport) => void = () => undefined) {
   const runtimePool = createMemo(() => new SessionRuntimePool());
   const initialTarget = initialWindowTarget();
   const drafts = createConversationDrafts(message => addNotice({ title: "Could not save drafts", message }));
@@ -421,7 +422,7 @@ export function createAppConversations(preloadChat: () => void) {
   const openSubagent = (target: SubagentTarget) => { sidepane.openSubagent(target); setActivePane("split"); };
 
   const canLeaveSettings = () => view() !== "settings" || !settingsDirty() || window.confirm("Discard unsaved settings changes?");
-  const activateTransport = createTransportActivation({ savedSessions: sessions, transport, transportConversationKeys, transportHasDraft, conversationTerminalIds, runtimePool, chatSession, composerDrafts, activeTransportRef, setTransport, discardDraft: drafts.discard, forgetTerminals: terminals.forgetConversation });
+  const activateTransport = createTransportActivation({ savedSessions: sessions, transport, transportConversationKeys, transportHasDraft, conversationTerminalIds, runtimePool, chatSession, composerDrafts, activeTransportRef, setTransport, discardDraft: drafts.discard, forgetTerminals: terminals.forgetConversation, prepareTranscript });
   useWorkspaceDisconnect(() => settingsDirty() || drafts.draftSummaries().length > 0 || drafts.submissions().length > 0, runtimePool, terminals.draftTerminalIds, () => activeTransportRef.current);
 
   /** "rename" moves the draft and terminals to the new key; "branch" leaves them with the original conversation. */
@@ -441,6 +442,7 @@ export function createAppConversations(preloadChat: () => void) {
 
   const [revealEntry, setRevealEntry] = createSignal<{ key: string; entryId: string }>();
   const forkSourceSession = (source: ForkSource, hostId = activeHostId()) => sessions().find(session => session.id === source.sessionId && (session.hostId ?? "local") === hostId);
+  const forkSourceNameOf = (source: ForkSource | undefined, hostId: string) => source ? forkSourceSession(source, hostId)?.name : undefined;
   const forkSourceName = createMemo(() => { const source = chatSession().state.forkSource;
 
     return source ? forkSourceSession(source)?.name : undefined; });
@@ -846,6 +848,6 @@ export function createAppConversations(preloadChat: () => void) {
       } });
   };
 
- return { modelVisibility, drafts, isArchiving: archives.isPending, missingDirectoryDialog, archivesOpen, setArchivesOpen, runtimePool, transport, view, setView, activeConversationKey, chatViewKey, runningSessions, unseenSessions, pendingSettingsCount, chatSession, sessions, settings, settingsSaving, debugModeSaving, setSettingsDirty, panelOpen, setPanelOpen, query, setQuery, connected, error, setError, createGroupRequest, setCreateGroupRequest, handleCreateGroup, newChatRequest, activeHostId, codexUsage, anthropicUsage, usageClock, opencodeGoBadge, usageError, refreshUsage, refreshingUsage, setDialogs, notices, setNotices, addNotice, queueExtensionDialog, resolveExtensionDialog, closeTransportDialogs, releaseSplitTransport, statuses, widgets, renameSession, setRenameSession, projectOpen, setProjectOpen, projectOpenRef, uploadsByTransport, setComposerDraft, setComposerUploads, splitPane, setSplitPane, subagentPane, hasSidePane, sidepane, listedRunningSessions, archiveSession: (session: SessionSummary) => archives.archiveSession(session), mainComposerFocusRequest, splitComposerFocusRequest, activePane, setActivePane, terminals, terminalOpen, terminalSessionId, terminalLocationState, startTerminal, addTerminal, selectTerminal, saveTerminalSnapshot, deleteTerminal, reconnectPending, splitSessionId, composerState, terminalViewKey, syncSessionIndex, composerControls, resolveHomeDirectory, send, respondToSplitRequest, closeSplitPane, openSubagent, canLeaveSettings, rekeyConversationUi, branch, forkAndForget, forkSourceName, openForkSource, revealEntryId, entryRevealed, startNewSession, newSession, clearChatProject, chooseChatHost, selectSession, setModel, setThinking, abortInteraction, saveSettings, setAgent, openProject, chooseChatProject, sessionAction, draftChangeFor, uploadsChangeFor, toggleComposerTerminal, toggleDebugMode, toggleDebugFeature, reconnectMain, extensionStateIsCurrent, activeDialog, projectCwd, mobileSidebarOpen, sidebar, chatAgentProps, chatModels, chatCommands, chatWidgets, composerView };
+ return { forkSourceNameOf, modelVisibility, drafts, isArchiving: archives.isPending, missingDirectoryDialog, archivesOpen, setArchivesOpen, runtimePool, transport, view, setView, activeConversationKey, chatViewKey, runningSessions, unseenSessions, pendingSettingsCount, chatSession, sessions, settings, settingsSaving, debugModeSaving, setSettingsDirty, panelOpen, setPanelOpen, query, setQuery, connected, error, setError, createGroupRequest, setCreateGroupRequest, handleCreateGroup, newChatRequest, activeHostId, codexUsage, anthropicUsage, usageClock, opencodeGoBadge, usageError, refreshUsage, refreshingUsage, setDialogs, notices, setNotices, addNotice, queueExtensionDialog, resolveExtensionDialog, closeTransportDialogs, releaseSplitTransport, statuses, widgets, renameSession, setRenameSession, projectOpen, setProjectOpen, projectOpenRef, uploadsByTransport, setComposerDraft, setComposerUploads, splitPane, setSplitPane, subagentPane, hasSidePane, sidepane, listedRunningSessions, archiveSession: (session: SessionSummary) => archives.archiveSession(session), mainComposerFocusRequest, splitComposerFocusRequest, activePane, setActivePane, terminals, terminalOpen, terminalSessionId, terminalLocationState, startTerminal, addTerminal, selectTerminal, saveTerminalSnapshot, deleteTerminal, reconnectPending, splitSessionId, composerState, terminalViewKey, syncSessionIndex, composerControls, resolveHomeDirectory, send, respondToSplitRequest, closeSplitPane, openSubagent, canLeaveSettings, rekeyConversationUi, branch, forkAndForget, forkSourceName, openForkSource, revealEntryId, entryRevealed, startNewSession, newSession, clearChatProject, chooseChatHost, selectSession, setModel, setThinking, abortInteraction, saveSettings, setAgent, openProject, chooseChatProject, sessionAction, draftChangeFor, uploadsChangeFor, toggleComposerTerminal, toggleDebugMode, toggleDebugFeature, reconnectMain, extensionStateIsCurrent, activeDialog, projectCwd, mobileSidebarOpen, sidebar, chatAgentProps, chatModels, chatCommands, chatWidgets, composerView };
 
 }

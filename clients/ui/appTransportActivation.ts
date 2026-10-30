@@ -69,6 +69,7 @@ type ActivationContext = {
   setTransport: Setter<NativeTransport>;
   discardDraft: (owner: NativeTransport, key?: string) => void;
   forgetTerminals: (key: string) => void;
+  prepareTranscript: (owner: NativeTransport) => void;
 };
 
 export function createTransportActivation(context: ActivationContext) {
@@ -116,7 +117,7 @@ export function createTransportActivation(context: ActivationContext) {
     let stopped = false;
     let scheduled = false;
     let stopSync: (() => void) | undefined;
-    /** Loads the finished answer into the cached chat, so the chat shows it at once when it opens. The chat stays connected until the load ends. */
+    /** Loads the finished answer into the cached chat and draws its turns, so the chat shows it at once when it opens. The chat stays connected until the load ends. */
     const sync = () => {
       stopSync?.();
       const release = runtimePool().observe(owner);
@@ -125,6 +126,7 @@ export function createTransportActivation(context: ActivationContext) {
         const finish = () => { if (done) return; done = true; if (stopSync === finish) stopSync = undefined; dispose(); release(); };
         stopSync = finish;
         void useChatSession(() => owner, undefined, { poll: false }).refresh()
+          .then(() => { if (!done) context.prepareTranscript(owner); })
           .catch(reason => { if (!done && !(reason instanceof ConversationChangedError)) reportBackgroundError("Could not load the finished answer", reason); })
           .finally(finish);
       });

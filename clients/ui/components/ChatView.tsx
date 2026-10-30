@@ -12,51 +12,35 @@ import { draftUploadsFromImages, stageDraftSubmission, type DraftSubmissionHandl
 import { Key } from "@solid-primitives/keyed";
 import { COMPOSER_FIELD_TAG, type ComposerFieldElement } from "./composerField";
 import { appendToDraft, sessionLink, type SessionDragDetail } from "../lib/sessionDrop";
-import { createComputed, createEffect, createMemo, createSignal, Index, onCleanup, Show, untrack, type Accessor } from "solid-js";
+import { createMemo, createSignal, Index, onCleanup, Show, untrack, type Accessor } from "solid-js";
 import type { NativeTransport } from "../lib/nativeTransport";
 import { isDaemonRefusal } from "../lib/commandRejected";
 import { createDependencyEffect, createRef, type JSXElement, type StateUpdate } from "../lib/solid";
 
-import { ArrowDown, Bot, ChevronRight, Folder, LoaderCircle, Monitor, PinOff, User, X } from "lucide-solid";
-import { MessagePinContext, PIN_LIMIT, pinId, pinnedMessagesSchema, type MessagePin, type MessagePins } from "../lib/messagePins";
-import { resolveMessageEntry } from "../lib/resolveMessageEntry";
-import { hasVisibleText, textOf, thinkingOf } from "../lib/content";
-import { cacheHitStats, isContextInjection, isPromptMessage, toolTitle } from "../lib/messages";
-import { SubagentResults, subagentRuns } from "./SubagentResults";
-import type { AgentProfile, AgentState, ChatMessage, ComposerUpload, ForkSource, ImageAttachment, Model, PromptContextInfo, SlashCommand } from "../types";
-import { branchingAvailable, canBranchFrom } from "../lib/branching";
+import { ArrowDown, Bot, Folder, LoaderCircle, Monitor, PinOff, User, X } from "lucide-solid";
+import { pinId } from "../lib/messagePins";
+import { textOf } from "../lib/content";
+import { cacheHitStats } from "../lib/messages";
+import type { AgentProfile, AgentState, ChatMessage, ComposerUpload, ForkSource, ImageAttachment, Model, SlashCommand } from "../types";
 import { Composer, ContainedPicker } from "./Composer";
-import { DeferredTurn } from "./DeferredTurn";
-import { noDebug, type DebugView } from "../lib/debugFeatures";
+import { createTranscript, finalResponseIndex, type TranscriptInput } from "./Transcript";
+import type { TranscriptCache } from "./transcriptCache";
+import type { DebugView } from "../lib/debugFeatures";
 import { ResponseNavigator, type ResponseDestination } from "./ResponseNavigator";
 import { ScrollIndicator } from "./ScrollIndicator";
 import { isMobile } from "../lib/platform";
-import { Message } from "./Message";
-import { ConversationImageProject } from "./markdownImages";
-import { PromptContextBar } from "./PromptContextBar";
 import { ConversationHostContext } from "../lib/subagentNavigation";
 import { OLDER_HISTORY, olderHistory } from "../lib/historyWindow";
 import { loadOlderHistory } from "../lib/sessionMemory";
 import { MessageFileContext } from "../lib/messageFiles";
-import { formatElapsed } from "../lib/duration";
 
-interface Props { refreshError?: string; capabilityErrors?: string[]; capabilitiesLoading?: boolean; onRetryCapabilities?: () => void; transport?: NativeTransport; agentHostLabel?: string; state: AgentState; messages: ChatMessage[]; debug?: DebugView; agents?: AgentProfile[]; activeAgent?: string; agentLocked?: boolean; agentSaved?: boolean; agentUnavailable?: boolean; modelAliases?: Record<string, string>; models: Model[]; commands: SlashCommand[]; thinkingLevels: string[]; widgets: string[]; statuses: Record<string, string>; projectCwd?: string; readOnly?: boolean; controlsDisabled?: boolean; draft?: string; onDraftChange?: (value: StateUpdate<string>) => void; focusRequest?: number; onActivate?: () => void; uploads?: ComposerUpload[]; onUploadsChange?: (uploads: StateUpdate<ComposerUpload[]>) => void; onSend: (text: string, behavior?: "steer" | "followUp", images?: ImageAttachment[], submission?: DraftSubmissionHandle) => void | boolean | Promise<void | boolean>; onChangePending?: (id: string, behavior: import("../types").PendingMessageAction) => Promise<void>; onAbort: () => void | Promise<void>; onOpenTerminal?: () => void; hosts?: Array<{ id: string; name: string; disabled?: boolean }>; onChooseHost?: (hostId: string) => void; onOpenProject: () => void; onClearProject?: () => void; onBranch: (message: ChatMessage) => void; onFork?: (message: ChatMessage) => void | Promise<void>; onForkAndForget?: (message: ChatMessage) => void | Promise<void>; forkSourceName?: string; onOpenForkSource?: (source: ForkSource) => void; revealEntryId?: string; onEntryRevealed?: () => void; onAgent?: (name: string) => void; onModel: (model: Model) => void; onToggleFastMode: () => void | Promise<void>; onThinking: (level: string) => void; }
+interface Props { transcripts?: TranscriptCache; refreshError?: string; capabilityErrors?: string[]; capabilitiesLoading?: boolean; onRetryCapabilities?: () => void; transport?: NativeTransport; agentHostLabel?: string; state: AgentState; messages: ChatMessage[]; debug?: DebugView; agents?: AgentProfile[]; activeAgent?: string; agentLocked?: boolean; agentSaved?: boolean; agentUnavailable?: boolean; modelAliases?: Record<string, string>; models: Model[]; commands: SlashCommand[]; thinkingLevels: string[]; widgets: string[]; statuses: Record<string, string>; projectCwd?: string; readOnly?: boolean; controlsDisabled?: boolean; draft?: string; onDraftChange?: (value: StateUpdate<string>) => void; focusRequest?: number; onActivate?: () => void; uploads?: ComposerUpload[]; onUploadsChange?: (uploads: StateUpdate<ComposerUpload[]>) => void; onSend: (text: string, behavior?: "steer" | "followUp", images?: ImageAttachment[], submission?: DraftSubmissionHandle) => void | boolean | Promise<void | boolean>; onChangePending?: (id: string, behavior: import("../types").PendingMessageAction) => Promise<void>; onAbort: () => void | Promise<void>; onOpenTerminal?: () => void; hosts?: Array<{ id: string; name: string; disabled?: boolean }>; onChooseHost?: (hostId: string) => void; onOpenProject: () => void; onClearProject?: () => void; onBranch: (message: ChatMessage) => void; onFork?: (message: ChatMessage) => void | Promise<void>; onForkAndForget?: (message: ChatMessage) => void | Promise<void>; forkSourceName?: string; onOpenForkSource?: (source: ForkSource) => void; revealEntryId?: string; onEntryRevealed?: () => void; onAgent?: (name: string) => void; onModel: (model: Model) => void; onToggleFastMode: () => void | Promise<void>; onThinking: (level: string) => void; }
 
 const knownFastMode = new WeakMap<NativeTransport, { status: string; model: string | undefined }>();
 
-function canRetry(props: Props, ownsConversation: boolean) {
-  // Retry shows with the saved history while Pi starts; the retry command waits for Pi.
-  return ownsConversation && !props.readOnly && !props.state.isStreaming;
-}
 
 export function ChatView(props: Props & { transcriptActions?: JSXElement; followConversation?: () => Accessor<PluginConversation>; onNotice?: (title: string, message: string) => void }) {
   const projectCwd = () => props.projectCwd ?? (props.state.sessionId ? props.transport?.currentCwd() : undefined);
-
-  const imageProject = () => {
-    const cwd = projectCwd();
-
-    return cwd ? { cwd, hostId: props.transport?.currentHostId() ?? "local" } : undefined;
-  };
 
   const agentDefinitionHost = () => props.agentHostLabel ?? props.transport?.currentHostId();
   const agentReloadScope = () => `${props.transport?.currentHostId()}:${props.state.sessionId}`;
@@ -68,25 +52,32 @@ export function ChatView(props: Props & { transcriptActions?: JSXElement; follow
     await transport.reloadAgentDefinitions(props.state.sessionId);
   };
 
-  const [ownsConversation, setOwnsConversation] = createSignal((() => props.transport?.ownsConversation() !== false)());
+  const [scrollRoot, setScrollRoot] = createSignal<HTMLDivElement>();
+  const viewInput = (): TranscriptInput => ({ messages: props.messages, state: props.state, debug: props.debug, readOnly: props.readOnly, scrollRoot: scrollRoot(), cwd: projectCwd(), notify: props.onNotice, forkSourceName: props.forkSourceName, actions: { onBranch: props.onBranch, onFork: props.onFork, onForkAndForget: props.onForkAndForget, onOpenForkSource: props.onOpenForkSource } });
+  /** The turns of the chat. The main view takes them from the cache, so a chat drawn before it opens is not drawn again. */
+  const transcriptTarget = createMemo(() => ({ transport: props.transport, cache: props.transcripts }), undefined, { equals: (left, right) => left?.transport === right.transport && left?.cache === right.cache });
+  const transcript = createMemo(() => {
+    const { transport, cache } = transcriptTarget();
+    const shown = untrack(() => cache && transport ? cache.take(transport, createTranscript) : createTranscript(transport, () => viewInput));
+    const restore = shown.use(viewInput);
+    onCleanup(() => { restore(); if (cache && transport) cache.release(transport, shown); else shown.dispose(); });
+
+    return shown;
+  });
+  const ownsConversation = () => transcript().ownsConversation();
+  const pins = () => transcript().pins();
   const [terminalAvailable, setTerminalAvailable] = createSignal((() => props.transport?.hasSentMessage() ?? false)());
   const [takingOwnership, setTakingOwnership] = createSignal(false);
   const [ownershipError, setOwnershipError] = createSignal<string>();
-  /** The pinned messages of this chat, as the daemon last sent them. */
-  const [pins, setPins] = createSignal<MessagePin[]>([]);
   createDependencyEffect(() => { const capturedTransport0 = props.transport;
-    setOwnsConversation(capturedTransport0?.ownsConversation() !== false);
     setTerminalAvailable(capturedTransport0?.hasSentMessage() ?? false);
     setOwnershipError(undefined);
-    setPins([]);
 
     const unsubscribe = capturedTransport0?.subscribe((event) => {
-      if (event.type === "pinned_messages") { setPins(pinnedMessagesSchema.parse(event.pins)); return; }
+      if (event.type === "pinned_messages") return;
       setTerminalAvailable(capturedTransport0.hasSentMessage());
-      // A local disconnect also reports ownership_lost; only a real loss changes ownsConversation.
-      if (event.type === "ownership_lost") setOwnsConversation(capturedTransport0.ownsConversation() !== false);
 
-      if (event.type === "ownership_acquired") { setOwnsConversation(true); setOwnershipError(undefined); }
+      if (event.type === "ownership_acquired") setOwnershipError(undefined);
     });
 
     return () => { unsubscribe?.(); };
@@ -194,8 +185,8 @@ export function ChatView(props: Props & { transcriptActions?: JSXElement; follow
   const fillView = () => { const element = messagesRef.current;
 
     if (element && element.scrollHeight <= element.clientHeight) loadOlder(); };
-  const split = createMemo(() => splitTranscript(messages(), props.state.isStreaming, props.state.queueHeld === true));
-  const turns = createMemo<ConversationGroup[]>(previous => groupTurns(split().transcript, previous), []);
+  const split = () => transcript().split();
+  const turns = () => transcript().turns();
   /** The queued messages, without those the conversation already shows, then the sent messages that the daemon has not queued yet. */
   const pendingMessages = createMemo<import("../types").PendingMessage[]>(() => [...(props.state.pendingMessages ?? []).filter(item => !split().started.has(item.id) && !split().delivered.has(item.id)), ...split().sending.map(message => ({ id: message.id, goalSubmissionId: message.id, message: textOf(message.content), behavior: message.deliveryBehavior ?? "followUp", sending: true, images: Array.isArray(message.content) ? message.content.flatMap(part => part.type === "image" && part.data && part.mimeType ? [{ type: "image" as const, data: part.data, mimeType: part.mimeType }] : []) : [] }))]);
 
@@ -260,50 +251,9 @@ export function ChatView(props: Props & { transcriptActions?: JSXElement; follow
     return trackChatSubmission(durable.owner(), text, images, durable, () => Promise.resolve(capturedOnSend(text, behavior, images, durable)), props.controlsDisabled ? "Getting ready..." : "Sending message…", shown);
   };
 
-  const actions = createRef({ onSend: send, onBranch: props.onBranch, onFork: props.onFork, onForkAndForget: props.onForkAndForget });
-  createComputed(() => { actions.current = { onSend: send, onBranch: props.onBranch, onFork: props.onFork, onForkAndForget: props.onForkAndForget }; });
-
-  /** Runs the failed or stopped response again in Pi, which hides the failed attempt from the model. */
-  const onRetry = async (message: ChatMessage) => {
-    const transport = props.transport;
-
-    if (!transport) throw new Error("Conversation is unavailable");
-    // The saved history can show before the chat has begun to start its Pi; connect joins a start in progress.
-    if (!transport.isConnected()) await transport.connect();
-    await transport.command({ type: "retry_response", entryId: await resolveMessageEntry(transport, message) });
-  };
-
-  const pinnedIds = createMemo(() => new Set(pins().map(pin => pin.entryId)));
-  const noticeError = (title: string, reason: unknown) => props.onNotice?.(title, reason instanceof Error ? reason.message : String(reason));
-  const unpin = (entryId: string) => {
-    const transport = props.transport;
-
-    if (!transport) { noticeError("Could not unpin message", "Conversation is unavailable"); return Promise.resolve(); }
-
-    return transport.command({ type: "unpin_message", entryId }).then(() => undefined, reason => noticeError("Could not unpin message", reason));
-  };
-  const messagePins: MessagePins = {
-    pinned: id => pinnedIds().has(id),
-    toggle: async (message, text) => {
-      const transport = props.transport;
-
-      if (pinnedIds().has(pinId(message))) return unpin(pinId(message));
-
-      try {
-        if (!transport) throw new Error("Conversation is unavailable");
-        if (pins().length >= PIN_LIMIT) throw new Error(`Only ${PIN_LIMIT} messages can be pinned. Unpin one first.`);
-        if (message.timestamp === undefined) throw new Error("This message has no time, so its place in the chat is unknown");
-        await transport.command({ type: "pin_message", entryId: await resolveMessageEntry(transport, message), role: message.role === "user" ? "prompt" : "response", text, timestamp: message.timestamp });
-      } catch (reason) { noticeError("Could not pin message", reason); }
-    },
-  };
   /** The pinned message to scroll to. It stays set while older history loads to find it. */
   const [pinReveal, setPinReveal] = createSignal<string>();
 
-  const onBranch: Props["onBranch"] = (message) => actions.current.onBranch(message);
-  const onFork: NonNullable<Props["onFork"]> = message => actions.current.onFork?.(message);
-  const branchAction = createMemo(() => (branchingAvailable(props.state) ? onBranch : undefined));
-  const onForkAndForget: NonNullable<Props["onForkAndForget"]> = (message) => actions.current.onForkAndForget?.(message);
   /** The last fast mode status of this chat. A chat switch clears the statuses until Pi reports them again, and the indicator keeps its last state meanwhile. The kept state is for one model only: a model without fast mode has no status. */
   const fastModeStatus = createMemo(() => {
     const status = props.statuses["pi-desktop-fast-mode"];
@@ -342,7 +292,6 @@ export function ChatView(props: Props & { transcriptActions?: JSXElement; follow
   const activity = createMemo(() => (mcpLoading() ? undefined : props.state.activity));
   const displayedProjectCwd = () => props.projectCwd;
   const projectName = createMemo(() => (displayedProjectCwd()?.split(/[\\/]/).filter(Boolean).at(-1)));
-  const retryable = createMemo(() => (canRetry(props, ownsConversation())));
 
   let scrollFrame: number | undefined;
 
@@ -440,7 +389,7 @@ export function ChatView(props: Props & { transcriptActions?: JSXElement; follow
   }, () => [props.readOnly, scrollToLatest]);
 
   const ConversationContent = () => {
-    const MessagesSection = () => (<div ref={element => { messagesRef.current = element; }} class="messages" aria-live="polite"
+    const MessagesSection = () => (<div ref={element => { messagesRef.current = element; setScrollRoot(element); }} class="messages" aria-live="polite"
       onWheel={(event) => { if (event.deltaY < 0 && event.currentTarget.scrollTop > 0) followLatest.current = false; }}
       onTouchStart={(event) => { touchY.current = event.touches[0]?.clientY; }}
       onTouchMove={(event) => { const y = event.touches[0]?.clientY;
@@ -464,7 +413,7 @@ export function ChatView(props: Props & { transcriptActions?: JSXElement; follow
         if (movedUp && element.scrollTop < element.clientHeight) loadOlder();
       }}><div class="conversation">
         {!messages().length && !mcpLoading() && !pendingSubmission() && <div class="empty-chat"><span>π<sup>op</sup></span></div>}
-        {<Key each={turns()} by={turn => turn.messages[0]?.id ?? "empty"}>{(turn, index) => <DeferredTurn navigationId={turn().messages[0]?.id} scrollRoot={messagesRef} eager={index() >= turns().length - 3}><ConversationTurn latest={index() === turns().length - 1} messages={turn().messages} promptContexts={turn().promptContexts} cwd={props.projectCwd} debug={props.debug ?? noDebug} active={props.state.isStreaming && index() === turns().length - 1} retryable={retryable() && index() === turns().length - 1} onRetry={onRetry} onBranch={branchAction()} onFork={props.state.canFork !== false && props.onFork ? onFork : undefined} onForkAndForget={props.state.canFork !== false && props.onForkAndForget && ownsConversation() ? onForkAndForget : undefined} forkSource={props.state.forkSource} forkSourceName={props.forkSourceName} onOpenForkSource={props.onOpenForkSource} /></DeferredTurn>}</Key>}
+        {transcript().element}
         {sendingSubmission() && !mcpLoading() && <section class="mcp-pending-turn" aria-label="Preparing message" aria-busy="true"><div class="mcp-loading" role="status"><LoaderCircle class="mcp-loading-spinner" size={14} aria-hidden="true" /><span>{required(sendingSubmission()).status}</span></div></section>}
         {mcpLoading() && <section class="mcp-pending-turn" aria-label="Message waiting for MCP" aria-busy="true">
           <div class="mcp-loading-list" role="status">{props.debug?.mcpServers ? <Key each={loadingServers()} by={(server) => server.id}>{(server, _index) => <div class="mcp-loading" ><LoaderCircle class="mcp-loading-spinner" size={14} aria-hidden="true" /><span>Loading {server().name}</span></div>}</Key> : <div class="mcp-loading"><LoaderCircle class="mcp-loading-spinner" size={14} aria-hidden="true" /><span>Loading MCPs</span></div>}</div>
@@ -481,7 +430,7 @@ export function ChatView(props: Props & { transcriptActions?: JSXElement; follow
     };
 
     return (<div class="conversation-content">
-      <ConversationImageProject.Provider value={imageProject}><MessagesSection /></ConversationImageProject.Provider>
+      <MessagesSection />
       {isMobile && <ScrollIndicator scrollRoot={messagesRef} />}
       <Show when={pins().length > 0}><PinnedMessages /></Show>
       <SkillMcpStatus value={props.statuses["piop-skill-mcp"]} disabled={props.readOnly || props.controlsDisabled || !ownsConversation() || !props.transport} onAction={(name, action) => required(props.transport).command({ type: "skill_mcp", name, action })} />
@@ -526,7 +475,7 @@ export function ChatView(props: Props & { transcriptActions?: JSXElement; follow
     return <div ref={element => { frame.current = element; }} class="pinned-messages-frame"><div ref={element => { bar.current = element; }} class="pinned-messages" role="list" aria-label="Pinned messages">
       <Key each={pins()} by={pin => pin.entryId}>{pin => <div class="pinned-message" classList={{ "pinned-prompt": pin().role === "prompt" }} role="listitem">
         <button type="button" class="pinned-message-text" aria-label={(pin().role === "prompt" ? "Prompt: " : "Response: ") + (pin().text || "Attachment")} onClick={() => setPinReveal(pin().entryId)}>{pin().role === "prompt" ? <User size={15} aria-hidden="true" /> : <Bot size={15} aria-hidden="true" />}<span>{pin().text || <em>Attachment</em>}</span></button>
-        <button type="button" class="pinned-message-unpin" aria-label="Unpin message" data-tooltip="Unpin" onClick={() => void unpin(pin().entryId)}><PinOff size={15} /></button>
+        <button type="button" class="pinned-message-unpin" aria-label="Unpin message" data-tooltip="Unpin" onClick={() => void transcript().unpin(pin().entryId)}><PinOff size={15} /></button>
       </div>}</Key>
     </div></div>;
   };
@@ -539,360 +488,5 @@ export function ChatView(props: Props & { transcriptActions?: JSXElement; follow
 
   const conversationHost = () => props.transport?.currentHostId() ?? "local";
 
-  return <ConversationHostContext.Provider value={conversationHost}><MessageFileContext.Provider value={{ hostId: conversationHost, cwd: projectCwd, get notify() { return props.onNotice; } }}><PluginMessageContext.Provider value={{ sessionId: () => props.state.sessionId, command: async command => { if (!props.transport) throw new Error("Conversation is unavailable"); return props.transport.command(command); } }}><MessagePinContext.Provider value={messagePins}><ConversationShell /></MessagePinContext.Provider></PluginMessageContext.Provider></MessageFileContext.Provider></ConversationHostContext.Provider>;
-}
-
-type ConversationGroup = { messages: ChatMessage[]; promptContexts: PromptContextInfo[] };
-
-function startsTurn(message: ChatMessage | undefined) {
-  return message !== undefined && isPromptMessage(message);
-}
-
-const isSubagentResult = (message: ChatMessage) => message.customType === "piop-subagent-result";
-
-/** A subagent result joins a turn that holds only subagent results, so results with no answer between them share one line. */
-function joinsTurn(turn: ChatMessage[], message: ChatMessage) {
-  return isSubagentResult(message) && turn.length > 0 && turn.every(isSubagentResult);
-}
-
-function sameTurn(turn: ConversationGroup, messages: ChatMessage[], start: number) {
-  let context = 0;
-
-  return turn.messages.every((previous, index) => {
-    const message = messages[start + index];
-
-    if (message !== previous || (index > 0 && startsTurn(message) && !joinsTurn(turn.messages.slice(0, index), message))) return false;
-
-    if (!isPromptMessage(message) || !message.promptContext) return true;
-
-    return turn.promptContexts[context++] === message.promptContext;
-  }) && context === turn.promptContexts.length;
-}
-
-function reusableTurns(messages: ChatMessage[], previous: ConversationGroup[]) {
-  let start = 0;
-  let count = 0;
-
-  for (const turn of previous) {
-    const end = start + turn.messages.length;
-
-    if (!turn.messages.length || end > messages.length || (end < messages.length && (!startsTurn(messages[end]) || joinsTurn(turn.messages, messages[end])))) break;
-
-    if (!sameTurn(turn, messages, start)) break;
-    start = end;
-    count++;
-  }
-
-  return { start, count };
-}
-
-function turnPromptContexts(messages: ChatMessage[]) {
-  const contexts: PromptContextInfo[] = [];
-
-  for (const message of messages) if (isPromptMessage(message) && message.promptContext) contexts.push(message.promptContext);
-
-  return contexts;
-}
-
-function associateQueuedContext(messages: ChatMessage[]) {
-  const contexts = new Map<number, ChatMessage[]>();
-
-  for (const message of messages) {
-    if (message.contextUserTimestamp === undefined) continue;
-    const matching = contexts.get(message.contextUserTimestamp) ?? [];
-    matching.push(message);
-    contexts.set(message.contextUserTimestamp, matching);
-  }
-
-  if (!contexts.size) return messages;
-
-  return messages.flatMap(message => {
-    if (message.contextUserTimestamp !== undefined) return [];
-
-    if (message.role !== "user" || message.timestamp === undefined) return [message];
-    const matching = contexts.get(message.timestamp);
-
-    if (!matching) return [message];
-    contexts.delete(message.timestamp);
-
-    return [message, ...matching];
-  });
-}
-
-/**
- * Splits the messages into the transcript and the sent messages that wait for the daemon's queue.
- * A sent message that the daemon has not queued yet waits in the queue above the message box while an earlier user message still waits for its reply: Pi delivers it only after that reply.
- * An earlier user message waits for its reply while it is still being sent, or while the agent works. A message whose task ended without a reply does not wait.
- * While the queue is on hold, every sent message waits in the queue: the daemon keeps it there.
- * A message sent as a steer or follow-up while the agent worked also waits there, even after the reply started: Pi queues it.
- * A queued message that starts a turn stays in the conversation, and its queue entry is left out of the queue (started), so it does not move to the queue while Pi takes it.
- */
-function splitTranscript(messages: ChatMessage[], working: boolean, held: boolean) {
-  let waiting = false;
-  const sending: ChatMessage[] = [];
-  const started = new Set<string>();
-  const delivered = new Set(messages.flatMap(message => !message.submissionId && message.piopQueueId ? [message.piopQueueId] : []));
-  const transcript = messages.filter(message => {
-    if (message.submissionId && message.piopQueueId) {
-      if (delivered.has(message.piopQueueId) || waiting || held || message.deliveryBehavior) return false;
-      started.add(message.piopQueueId);
-    }
-
-    if (message.role === "assistant") waiting = false;
-    else if (message.role === "user") {
-      if (message.submissionId && (waiting || held || message.deliveryBehavior)) { sending.push(message); return false; }
-      waiting = working || Boolean(message.submissionId);
-    }
-
-    return true;
-  });
-
-  return { transcript, sending, started, waiting, delivered };
-}
-
-function groupTurns(messages: ChatMessage[], previous: ConversationGroup[] = []) {
-  messages = associateQueuedContext(messages);
-  const prefix = reusableTurns(messages, previous);
-
-  if (prefix.start === messages.length && prefix.count === previous.length) return previous;
-  const groups: ChatMessage[][] = [];
-
-  for (let index = prefix.start; index < messages.length; index++) {
-    const message = messages[index];
-
-    if (groups.length === 0 || (startsTurn(message) && !joinsTurn(groups[groups.length - 1], message))) groups.push([]);
-    groups[groups.length - 1].push(message);
-  }
-
-  const turns = groups.map(messages => ({ messages, promptContexts: turnPromptContexts(messages) }));
-  const prior = new Map(previous.slice(prefix.count).map(turn => [turn.messages[0]?.id, turn]));
-  const same = <T,>(left: T[], right: T[]) => left.length === right.length && left.every((item, index) => item === right[index]);
-
-  return [...previous.slice(0, prefix.count), ...turns.map(turn => {
-    const old = prior.get(turn.messages[0]?.id);
-
-    if (!old) return turn;
-    const messages = same(old.messages, turn.messages) ? old.messages : turn.messages;
-    const promptContexts = same(old.promptContexts, turn.promptContexts) ? old.promptContexts : turn.promptContexts;
-
-    return messages === old.messages && promptContexts === old.promptContexts ? old : { messages, promptContexts };
-  })];
-}
-
-function compactCompletedTools(messages: ChatMessage[], groupRepeated = true) {
-  return messages.reduce<Array<{ message: ChatMessage; count: number }>>((runs, message) => {
-    if (invisibleAssistant(message)) return runs;
-    const previous = runs.at(-1);
-
-    if (groupRepeated && previous && repeatedCompletedTool(message, previous.message)) {
-      const outputs = [textOf(previous.message.content), textOf(message.content)].filter(Boolean);
-      previous.message = { ...previous.message, content: outputs.join("\n\n") };
-      previous.count += 1;
-    } else runs.push({ message, count: 1 });
-
-    return runs;
-  }, []);
-}
-
-function ForkSourceLink(props: { source: ForkSource; name?: string; onOpen?: (source: ForkSource) => void }) {
-  const label = () => props.name ? "Branched from “" + props.name + "”" : "Branched from " + props.source.sessionId.slice(0, 8);
-
-  return <div class="fork-source" role="note">{props.onOpen ? <button type="button" class="fork-source-link" onClick={() => props.onOpen?.(props.source)}>{label()}</button> : <span>{label()}</span>}</div>;
-}
-
-const reasoningFree = new WeakMap<ChatMessage, ChatMessage>();
-
-function withoutReasoning(message: ChatMessage) {
-  if (message.role !== "assistant" || !Array.isArray(message.content) || !message.content.some(part => part.type === "thinking")) return message;
-  let result = reasoningFree.get(message);
-  if (!result) reasoningFree.set(message, result = { ...message, content: message.content.filter(part => part.type !== "thinking") } as ChatMessage);
-  return result;
-}
-
-function invisibleAssistant(message: ChatMessage) {
-  const hasToolCall = Array.isArray(message.content) && message.content.some((part) => part.type === "toolCall");
-
-  return message.role === "assistant" && !hasVisibleText(textOf(message.content)) && !hasVisibleText(thinkingOf(message.content)) && message.stopReason !== "aborted" && message.stopReason !== "error" && (hasToolCall || !message.streaming);
-}
-
-function repeatedCompletedTool(message: ChatMessage, previous: ChatMessage) {
-  return message.role === "tool" && message.toolName !== "spawn_subagents" && (message.toolStatus ?? "done") === "done" && previous.role === "tool" && (previous.toolStatus ?? "done") === "done" && toolTitle(previous) === toolTitle(message);
-}
-
-function finalResponseIndex(messages: ChatMessage[]) {
-  for (let index = messages.length - 1; index >= 0; index -= 1) {
-    const message = messages[index];
-
-    if (message.role === "assistant" && (canBranchFrom(message) || textOf(message.content).trim().length > 0 || message.stopReason === "aborted" || message.stopReason === "error")) return index;
-  }
-
-  return -1;
-}
-
-function turnTiming(messages: ChatMessage[], userIndex: number, finalMessage?: ChatMessage) {
-  return formatElapsed(userIndex >= 0 ? messages[userIndex].timestamp : messages[0]?.timestamp, finalMessage?.completedAt ?? finalMessage?.timestamp);
-}
-
-/** The last message of the turn when it is a failed or stopped response. */
-function retryableResponse(messages: ChatMessage[]) {
-  const message = messages.at(-1);
-
-  return message?.role === "assistant" && (message.stopReason === "error" || message.stopReason === "aborted") ? message : undefined;
-}
-
-function MessageList(props: { messages: ChatMessage[]; expanded: boolean; compact?: boolean; debug?: DebugView; showActions?: boolean }) {
-  const entries = createMemo<Array<{ message: ChatMessage; count: number }>>(previous => {
-    const retained = new Map(previous.map(entry => [entry.message, entry]));
-
-    return compactCompletedTools(props.messages, (props.compact ?? true) && !props.debug?.toolDetails).map(entry => {
-      const prior = retained.get(entry.message);
-
-      return prior?.count === entry.count ? prior : entry;
-    });
-  }, []);
-
-  return <Key each={entries()} by={entry => entry.message.id}>{entry => <Message message={entry().message} toolCount={entry().count} showActions={props.showActions ?? true} expanded={props.expanded} debug={props.debug} />}</Key>;
-}
-
-type ConversationTurnProps = { latest?: boolean; messages: ChatMessage[]; promptContexts: PromptContextInfo[]; cwd?: string; debug: DebugView; active: boolean; retryable: boolean; onRetry: (message: ChatMessage) => Promise<void>; onBranch?: Props["onBranch"]; onFork?: Props["onFork"]; onForkAndForget?: Props["onForkAndForget"]; forkSource?: ForkSource; forkSourceName?: string; onOpenForkSource?: Props["onOpenForkSource"]; };
-
-function ConversationTurn(componentProps: ConversationTurnProps) {
-  const turnMessages = createMemo(() => componentProps.debug.reasoning ? componentProps.messages : componentProps.messages.map(withoutReasoning));
-  const [retryError, setRetryError] = createSignal<string>();
-  const [workOpen, setWorkOpen] = createSignal(false);
-  const [retrying, setRetrying] = createSignal(false); const retryingRef = createRef(false);
-  const userIndex = createMemo(() => (turnMessages().findIndex(isPromptMessage)));
-  /** The place of the message this chat branched from. The link to the parent chat shows after it, before later notes such as a compaction. */
-  const forkIndex = createMemo(() => { const entryId = componentProps.forkSource?.entryId;
-
-    return entryId ? turnMessages().findIndex(message => (message.entryId ?? message.id) === entryId) : -1; });
-  /** A compaction before the final response happened during the turn's work, so it shows in its place in the work. */
-  const inWork = (message: ChatMessage, index: number) => message.customType === "compaction" && index < finalIndex();
-  const systemMessages = (after: boolean) => turnMessages().filter((message, index) => message.role === "system" && !inWork(message, index) && (forkIndex() >= 0 && index > forkIndex()) === after);
-  const renderForkLink = () => <Show when={forkIndex() >= 0 ? componentProps.forkSource : undefined}>{source => <ForkSourceLink source={source()} name={componentProps.forkSourceName} onOpen={componentProps.onOpenForkSource} />}</Show>;
-
-  const finalIndex = createMemo(() => (finalResponseIndex(turnMessages())));
-  /** The last point of the chat: the latest final response or compaction. Fork and forget from it would change nothing. */
-  const lastPointId = createMemo(() => componentProps.latest ? turnMessages().filter((message, index) => index === finalIndex() || message.customType === "compaction").at(-1)?.id : undefined);
-  const forgetFrom = (message: ChatMessage | undefined) => (message?.id === lastPointId() ? undefined : componentProps.onForkAndForget);
-  const renderSystemMessages = (after: boolean) => <Key each={systemMessages(after)} by={message => message.id}>{message => <Message message={message()} expanded={false} onFork={canBranchFrom(message()) ? componentProps.onFork : undefined} onBranch={canBranchFrom(message()) ? componentProps.onBranch : undefined} onForkAndForget={canBranchFrom(message()) ? forgetFrom(message()) : undefined} lastPoint={message().id === lastPointId()} />}</Key>;
-  const finalThinking = createMemo(() => (finalIndex() >= 0 ? thinkingOf(turnMessages()[finalIndex()].content) : ""));
-
-  const intermediate = createMemo(() => (turnMessages().flatMap((message, index): ChatMessage[] => {
-    if (isPromptMessage(message) || isContextInjection(message) || (message.role === "system" && !inWork(message, index))) return [];
-
-    if (index !== finalIndex()) return [message];
-
-    if (!finalThinking()) return [];
-    const { promptContext: _promptContext, ...reasoningMessage } = message;
-
-    return [{ ...reasoningMessage, id: `${message.id}:reasoning`, content: [{ type: "thinking", thinking: finalThinking() }], stopReason: undefined, errorMessage: undefined }];
-  })));
-
-  const userMessages = createMemo(() => (turnMessages().filter(message => isPromptMessage(message) && message.customType !== "piop-subagent-result")));
-  /** Subagents whose answers started this turn. They show on the turn's "Worked for" line instead of as a message. */
-  const finishedSubagents = createMemo(() => turnMessages().filter(message => isPromptMessage(message) && message.customType === "piop-subagent-result").flatMap(message => subagentRuns(message.details)));
-  // A click on a subagent opens its chat and must not open or close the work group around it.
-  const renderFinishedSubagents = () => finishedSubagents().length > 0 && <span class="subagent-finished" onClick={event => event.preventDefault()}><SubagentResults runs={finishedSubagents()} /></span>;
-  /** The work that the daemon left out of this turn until the user opens it. */
-  const deferredWork = createMemo(() => finalIndex() >= 0 ? turnMessages()[finalIndex()].deferredWork : undefined);
-  const [workError, setWorkError] = createSignal<string>();
-  const hasWork = createMemo(() => ((Boolean(deferredWork()) && (componentProps.debug.reasoning || !deferredWork()!.reasoningOnly)) || intermediate().some((message) => !invisibleAssistant(message))));
-  /** An open work group loads its work also when a refresh leaves the work out again. */
-  const workLoader = createMemo(() => workOpen() && deferredWork() ? turnMessages()[finalIndex()]?.loadWork : undefined);
-  createEffect(() => {
-    const load = workLoader();
-
-    if (!load) return;
-    untrack(() => { setWorkError(undefined);
-    load().catch(reason => setWorkError(reason instanceof Error ? reason.message : String(reason))); });
-  });
-  const reasoningOnly = createMemo(() => deferredWork() ? deferredWork()!.reasoningOnly : (compactCompletedTools(intermediate()).every(({ message }) => message.role === "assistant" && hasVisibleText(thinkingOf(message.content)) && !hasVisibleText(textOf(message.content)) && message.stopReason !== "error" && message.stopReason !== "aborted")));
-  const finalSource = createMemo(() => (finalIndex() >= 0 ? turnMessages()[finalIndex()] : undefined));
-  const finalMessage = createMemo(() => (finalIndex() >= 0 ? { ...turnMessages()[finalIndex()], content: textOf(turnMessages()[finalIndex()].content) } : undefined));
-  /**
-   * The final response shows in one place while the turn runs and after it ends, so the end of the turn does not build it again.
-   * While the turn runs, a response is final only while it is the last message of the turn and calls no tool.
-   */
-  const finalShown = createMemo(() => {
-    const index = finalIndex();
-
-    if (index < 0) return false;
-
-    if (!componentProps.active) return true;
-    const message = turnMessages()[index];
-
-    const later = turnMessages().slice(index + 1).some(item => !isPromptMessage(item) && !isContextInjection(item));
-
-    return !later && !(Array.isArray(message.content) && message.content.some(part => part.type === "toolCall"));
-  });
-  /** The work of a running turn: every message but the prompt and the final response. The reasoning of the final response stays here. */
-  const activeWork = createMemo(() => turnMessages().flatMap((message, index): ChatMessage[] => {
-    if (isPromptMessage(message) || isContextInjection(message)) return [];
-
-    if (!finalShown() || index !== finalIndex()) return [message];
-
-    if (!finalThinking()) return [];
-    const { promptContext: _promptContext, ...reasoningMessage } = message;
-
-    return [{ ...reasoningMessage, id: `${message.id}:reasoning`, content: [{ type: "thinking", thinking: finalThinking() }], stopReason: undefined, errorMessage: undefined }];
-  }));
-
-  const turnCacheUsage = createMemo(() => (turnMessages().reduce((total, message) => {
-    for (const usage of message.role === "assistant" ? [message.usage, message.deferredWork?.usage] : []) if (usage) {
-      total.input += usage.input;
-      total.cacheRead += usage.cacheRead; total.cacheWrite += usage.cacheWrite ?? 0;
-    }
-
-    return total;
-  }, { input: 0, cacheRead: 0, cacheWrite: 0 })));
-
-
-  const workedFor = createMemo(() => (turnTiming(turnMessages(), userIndex(), finalMessage())));
-  /** Pi runs a failed response again from the prompt before it, so a turn without a prompt that has content cannot be retried. */
-  const hasRetryPrompt = createMemo(() => turnMessages().some(message => isPromptMessage(message) && (message.role !== "user" || hasVisibleText(textOf(message.content)) || (Array.isArray(message.content) && message.content.some(part => part.type === "image")))));
-  const retryTarget = createMemo(() => (componentProps.retryable && hasRetryPrompt() ? retryableResponse(turnMessages()) : undefined));
-  const retry = () => {
-    const target = retryTarget();
-
-    if (!target || retryingRef.current) return;
-    retryingRef.current = true; setRetrying(true); setRetryError(undefined);
-    void componentProps.onRetry(target).catch((reason) => setRetryError(reason instanceof Error ? reason.message : String(reason))).finally(() => { retryingRef.current = false; setRetrying(false); });
-  };
-
-  const firstResponseInputTokens = createMemo(() => {
-    const earlyTokens = componentProps.promptContexts[0]?.inputTokens;
-
-    if (earlyTokens !== undefined) return earlyTokens;
-    const response = turnMessages().find(message => message.role === "assistant");
-
-    return cacheHitStats(response?.deferredWork?.firstUsage ?? response?.usage)?.promptTokens;
-  });
-
-  const renderPromptContextBar = () => (<Show when={componentProps.debug.contextBar && firstResponseInputTokens()}>{inputTokens => <Index each={componentProps.promptContexts}>{context => <PromptContextBar context={context()} inputTokens={inputTokens()} />}</Index>}</Show>);
-  const renderWorkGroup = () => <Show when={hasWork()}><details class="work-group" open={workOpen()} onToggle={(event) => setWorkOpen(event.currentTarget.open)}><summary>{reasoningOnly() ? "Reasoning" : workedFor() ? `Worked for ${workedFor()}` : "Work"}<ChevronRight size={12} class="work-group-chevron" aria-hidden="true" />{renderFinishedSubagents()}</summary>{workOpen() && <div class={`work-group-content${reasoningOnly() ? " reasoning-group-content" : ""}`}>{deferredWork() ? workError() ? <div class="message-failure" role="alert">Could not load this work: {workError()}</div> : <div class="mcp-loading" role="status"><LoaderCircle class="mcp-loading-spinner" size={14} aria-hidden="true" /><span>Loading work</span></div> : <MessageList messages={intermediate()} expanded debug={componentProps.debug} showActions={false} />}</div>}</details></Show>;
-
-  const renderTurnEnd = () => (<>
-    <Show when={componentProps.active} fallback={<>
-      {renderWorkGroup()}
-      <Show when={finalShown() && !hasWork() && finishedSubagents().length === 0}><hr class="turn-divider" /></Show>
-    </>}>
-      <div class="active-work-content"><MessageList messages={activeWork()} expanded compact={false} debug={componentProps.debug} showActions={false} /></div>
-    </Show>
-    <Show when={finalShown()}><Message message={required(finalMessage())} turnCacheUsage={turnCacheUsage()} debug={componentProps.debug} showActions={!componentProps.active} onBranch={!componentProps.active && canBranchFrom(finalSource()) ? componentProps.onBranch : undefined} onFork={!componentProps.active && canBranchFrom(finalSource()) ? componentProps.onFork : undefined} onForkAndForget={componentProps.active ? undefined : forgetFrom(finalSource())} lastPoint={finalSource()?.id === lastPointId()} retrying={retrying()} onRetry={retryTarget() ? retry : undefined} /></Show>
-    <Show when={!componentProps.active} fallback={renderForkLink()}>
-      <Show when={retryError()}>{error => <div class="message-failure retry-error" role="alert">Retry failed: {error()}</div>}</Show>
-      {renderSystemMessages(false)}
-      {renderForkLink()}
-      {renderSystemMessages(true)}
-    </Show>
-  </>);
-
-  return <section class="conversation-turn" classList={{ "latest-turn": componentProps.latest === true }}>
-    {<Key each={userMessages()} by={(message) => message.id}>{(message, _index) => <Message  message={message()} debug={componentProps.debug} />}</Key>}
-    {(componentProps.active || !hasWork()) && finishedSubagents().length > 0 && <div class="subagent-finished-line">{renderFinishedSubagents()}</div>}
-    {renderPromptContextBar()}
-    {componentProps.debug.contextInjections && <MessageList messages={turnMessages().filter(isContextInjection)} expanded={false} debug={componentProps.debug} />}
-    {renderTurnEnd()}
-  </section>;
+  return <ConversationHostContext.Provider value={conversationHost}><MessageFileContext.Provider value={{ hostId: conversationHost, cwd: projectCwd, get notify() { return props.onNotice; } }}><PluginMessageContext.Provider value={{ sessionId: () => props.state.sessionId, command: async command => { if (!props.transport) throw new Error("Conversation is unavailable"); return props.transport.command(command); } }}><ConversationShell /></PluginMessageContext.Provider></MessageFileContext.Provider></ConversationHostContext.Provider>;
 }
