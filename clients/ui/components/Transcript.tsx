@@ -357,9 +357,10 @@ type ConversationTurnProps = { latest?: boolean; messages: ChatMessage[]; prompt
 function ConversationTurn(componentProps: ConversationTurnProps) {
   const turnMessages = createMemo(() => componentProps.debug.reasoning ? componentProps.messages : componentProps.messages.map(withoutReasoning));
   const [retryError, setRetryError] = createSignal<string>();
-  /** The user's choice wins; without one, the work stays open when a steer cut it. */
+  /** The user's choice wins; without one, the work stays open when a steer cuts it while the chat shows. A loaded chat shows past steered work closed. */
+  const steeredAtStart = untrack(() => componentProps.steered === true);
   const [workChoice, setWorkOpen] = createSignal<boolean>();
-  const workOpen = () => workChoice() ?? componentProps.steered === true;
+  const workOpen = () => workChoice() ?? (!steeredAtStart && componentProps.steered === true);
   const [retrying, setRetrying] = createSignal(false); const retryingRef = createRef(false);
   const userIndex = createMemo(() => (turnMessages().findIndex(isPromptMessage)));
   /** The place of the message this chat branched from. The link to the parent chat shows after it, before later notes such as a compaction. */
