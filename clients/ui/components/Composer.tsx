@@ -344,6 +344,61 @@ export function Composer(props: Props) {
     };
   }, () => []);
 
+  /** Files dropped anywhere in the chat pane that holds this composer are attached. */
+  const dropZone = () => composerRef.current?.closest<HTMLElement>(".chat-shell") ?? composerRef.current;
+  const carriesFiles = (event: DragEvent): event is DragEvent & { dataTransfer: DataTransfer } => Boolean(event.dataTransfer && (event.dataTransfer.types.includes("Files") || (isTauri() && event.dataTransfer.types.includes("text/uri-list"))));
+  createDependencyEffect(() => {
+    const zone = dropZone();
+
+    if (!zone) return;
+    const enter = (event: DragEvent) => {
+      if (!carriesFiles(event)) return;
+      event.preventDefault(); dragDepth.current += 1; setDraggingFiles(true);
+    };
+    const over = (event: DragEvent) => {
+      if (!carriesFiles(event)) return;
+      event.preventDefault(); event.dataTransfer.dropEffect = controls().inputDisabled ? "none" : "copy";
+    };
+    const leave = () => {
+      dragDepth.current = Math.max(0, dragDepth.current - 1);
+
+      if (!dragDepth.current) setDraggingFiles(false);
+    };
+    const drop = (event: DragEvent) => {
+      if (!carriesFiles(event)) return;
+      event.preventDefault(); dragDepth.current = 0; setDraggingFiles(false);
+
+      if (controls().inputDisabled) return;
+      const files = Array.from(event.dataTransfer.files);
+
+      const paths = event.dataTransfer.getData("text/uri-list").split(/\r?\n/).flatMap((line) => {
+        try {
+          const url = new URL(line);
+
+          return url.protocol === "file:" && (!url.hostname || url.hostname === "localhost") ? [decodeURIComponent(url.pathname)] : [];
+        } catch { return []; }
+      });
+
+      void (async () => {
+        if (files.length) await addFiles(files);
+        else await nativeDropRef.current.addPaths(paths);
+      })().catch((reason) => setUploadError(reason instanceof Error ? reason.message : String(reason)));
+      focusOwnedEditor();
+    };
+
+    zone.addEventListener("dragenter", enter);
+    zone.addEventListener("dragover", over);
+    zone.addEventListener("dragleave", leave);
+    zone.addEventListener("drop", drop);
+
+    return () => {
+      zone.removeEventListener("dragenter", enter);
+      zone.removeEventListener("dragover", over);
+      zone.removeEventListener("dragleave", leave);
+      zone.removeEventListener("drop", drop);
+    };
+  }, () => []);
+
   const resizeEditor = () => {
     const editor = ref.current;
 
@@ -406,7 +461,7 @@ export function Composer(props: Props) {
 
       return; }
 
-      const bounds = composerRef.current?.getBoundingClientRect();
+      const bounds = dropZone()?.getBoundingClientRect();
       const x = payload.position.x / window.devicePixelRatio;
       const y = payload.position.y / window.devicePixelRatio;
       const inside = insideBounds(bounds, x, y);
@@ -636,41 +691,7 @@ export function Composer(props: Props) {
     };
 
     return (<div ref={element => { composerRef.current = element; }} classList={{ "editing-pending": Boolean(editingPending()) }} class={`composer${draggingFiles() && !controls().inputDisabled ? " dragging-files" : ""}`}
-      onPaste={event => filePaste.onPaste(event)}
-      onDragEnter={(event) => {
-        if (!event.dataTransfer || (!event.dataTransfer.types.includes("Files") && !(isTauri() && event.dataTransfer.types.includes("text/uri-list")))) return;
-        event.preventDefault(); dragDepth.current += 1; setDraggingFiles(true);
-      }}
-      onDragOver={(event) => {
-        if (!event.dataTransfer || (!event.dataTransfer.types.includes("Files") && !(isTauri() && event.dataTransfer.types.includes("text/uri-list")))) return;
-        event.preventDefault(); event.dataTransfer.dropEffect = controls().inputDisabled ? "none" : "copy";
-      }}
-      onDragLeave={() => {
-        dragDepth.current = Math.max(0, dragDepth.current - 1);
-
-        if (!dragDepth.current) setDraggingFiles(false);
-      }}
-      onDrop={(event) => {
-        if (!event.dataTransfer || (!event.dataTransfer.types.includes("Files") && !(isTauri() && event.dataTransfer.types.includes("text/uri-list")))) return;
-        event.preventDefault(); dragDepth.current = 0; setDraggingFiles(false);
-
-        if (controls().inputDisabled) return;
-        const files = Array.from(event.dataTransfer?.files ?? []);
-
-        const paths = event.dataTransfer.getData("text/uri-list").split(/\r?\n/).flatMap((line) => {
-          try {
-            const url = new URL(line);
-
-            return url.protocol === "file:" && (!url.hostname || url.hostname === "localhost") ? [decodeURIComponent(url.pathname)] : [];
-          } catch { return []; }
-        });
-
-        void (async () => {
-          if (files.length) await addFiles(files);
-          else await nativeDropRef.current.addPaths(paths);
-        })().catch((reason) => setUploadError(reason instanceof Error ? reason.message : String(reason)));
-        focusOwnedEditor();
-      }}>
+      onPaste={event => filePaste.onPaste(event)}>
       {renderComposerDropHint()}
       {renderCommandPalette()}
       {renderArgumentPalette()}
