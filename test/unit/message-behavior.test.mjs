@@ -255,3 +255,13 @@ test('chat links in prompts open the referenced chat on its host', async t => {
   await click(link);
   assert.deepEqual(opened, [['remote host', 'chat/id']]);
 });
+
+test('a subagent wait step loads its answers by itself and shows an icon for each finished subagent', async t => {
+  const run = { name: 'Reader', task: 'Read', status: 'completed', sessionId: 'reader-id', sessionPath: '/s/reader.jsonl', hostId: 'local', look: 5 };
+  let loads = 0;
+  const message = { id: 'tool-id', role: 'tool', toolName: 'await_subagents', content: '', deferredToolPayload: 'call-1', toolPayloadVersion: 1, loadToolPayload: async () => { loads++; } };
+  const view = await renderMessage(t, message);
+  await untilDom(() => loads === 1);
+  await view.rerender({ message: { ...message, details: { finished: true, version: 1, runs: [run] }, toolPayloadLoaded: true, loadedToolPayloadVersion: 1 } });
+  assert.deepEqual([...document.querySelectorAll('.subagent-name')].map(element => element.textContent), ['Reader']);
+});

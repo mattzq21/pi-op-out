@@ -19,7 +19,7 @@ import type { ChatMessage } from "../types";
 import { IconButton } from "./IconButton";
 import { Markdown } from "./Markdown";
 import { ZoomableImage } from "./ZoomableImage";
-import { SubagentResults, subagentRuns } from "./SubagentResults";
+import { showsSubagents, SubagentResults, subagentRuns } from "./SubagentResults";
 import { copyText } from "../lib/clipboard";
 import type { DebugView } from "../lib/debugFeatures";
 import { formatDateTime, formatDayTime, formatTime } from "../lib/dateTime";
@@ -184,8 +184,9 @@ function ToolPayload(componentProps: { message: ChatMessage; loading: boolean; e
 
 function ToolResult(componentProps: Pick<Props, "message" | "toolCount"> & { debug?: boolean;  status?: "running" | "done" | "error" | "unfinished" }) {
   const isSubagent = () => componentProps.message.toolName === "spawn_subagents";
-  // spawn_subagents shows the subagents it started; await_subagents shows the ones whose answers it returned.
-  const runs = createMemo(() => ["spawn_subagents", "await_subagents"].includes(componentProps.message.toolName ?? "") ? subagentRuns(componentProps.message.details) : []);
+  /** The row loads its payload by itself, so its subagent icons show without a click. */
+  const hasSubagents = () => showsSubagents(componentProps.message.toolName);
+  const runs = createMemo(() => hasSubagents() ? subagentRuns(componentProps.message.details) : []);
   const [open, setOpen] = createSignal(false);
   const [loading, setLoading] = createSignal(false);
   const [error, setError] = createSignal<string>();
@@ -198,7 +199,7 @@ function ToolResult(componentProps: Pick<Props, "message" | "toolCount"> & { deb
     const retryAttempt = retry();
     if (failed && (failed.version !== componentProps.message.toolPayloadVersion || failed.retry !== retryAttempt)) failed = undefined;
 
-    if (!open() && !isSubagent()) return;
+    if (!open() && !hasSubagents()) return;
     let active = true; let pending = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
 
@@ -242,7 +243,7 @@ function ToolResult(componentProps: Pick<Props, "message" | "toolCount"> & { deb
     refresh();
 
     return () => { active = false; clearTimeout(timer); };
-  }, () => [open(), retry(), isSubagent(), componentProps.message.toolPayloadVersion, componentProps.message.loadedToolPayloadVersion, componentProps.message.toolPayloadLoaded, componentProps.message.toolPayloadEvicted, componentProps.message.loadToolPayload]);
+  }, () => [open(), retry(), hasSubagents(), componentProps.message.toolPayloadVersion, componentProps.message.loadedToolPayloadVersion, componentProps.message.toolPayloadLoaded, componentProps.message.toolPayloadEvicted, componentProps.message.loadToolPayload]);
   const status = createMemo(() => (componentProps.status ?? componentProps.message.toolStatus ?? "done"));
   const label = createMemo(() => (<ToolLabel message={componentProps.message} toolCount={componentProps.toolCount ?? 1} status={status()} />));
 
@@ -251,7 +252,7 @@ function ToolResult(componentProps: Pick<Props, "message" | "toolCount"> & { deb
     {open() && <ToolPayload message={componentProps.message} loading={loading()} error={error()} retry={() => setRetry((value) => value + 1)} />}
   </details>)}
     {runs().length > 0 && <SubagentResults runs={runs()} />}
-    {isSubagent() && !open() && error() && <div role="alert">{error()} <button type="button" onClick={() => setRetry(value => value + 1)}>Retry</button></div>}
+    {hasSubagents() && !open() && error() && <div role="alert">{error()} <button type="button" onClick={() => setRetry(value => value + 1)}>Retry</button></div>}
   </>;
 }
 

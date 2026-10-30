@@ -66,7 +66,14 @@ function resumeSubagent(runs: SubagentRun[], parentSessionId: string, task: Suba
     agent: previous.agent, cwd: previous.cwd, look: previous.look };
 }
 
-async function createSubagent(pi: ExtensionAPI, ctx: ExtensionContext, task: SubagentTask, toolCallId: string, signal?: AbortSignal): Promise<SubagentRun> {
+/** The look of a subagent, known before its chat exists: a resumed one keeps its look, a new one reserves a look among its siblings. */
+function subagentLook(ctx: ExtensionContext, task: SubagentTask) {
+  const runs = latestRuns(ctx);
+
+  return task.sessionId ? runs.find(run => run.sessionId === task.sessionId)?.look : reserveLook(ctx.sessionManager.getSessionId(), runs.map(run => run.look));
+}
+
+async function createSubagent(pi: ExtensionAPI, ctx: ExtensionContext, task: SubagentTask, toolCallId: string, look: number | undefined, signal?: AbortSignal): Promise<SubagentRun> {
   requireDelegation(ctx);
   const parentSessionId = ctx.sessionManager.getSessionId();
   const runs = latestRuns(ctx);
@@ -83,10 +90,7 @@ async function createSubagent(pi: ExtensionAPI, ctx: ExtensionContext, task: Sub
   if (!header || !ctx.sessionManager.getSessionFile()) throw new Error("Save this conversation before delegating work");
   const profile = await resolveAgentProfile(pi, "subagent", task.agent);
   const fastMode = await childFastModeEntry(pi, profile, Boolean(task.agent));
-  const look = reserveLook(parentSessionId, latestRuns(ctx).map(run => run.look));
-  let sessionId: string;
-  try { sessionId = await reserveSessionId(); }
-  catch (error) { releaseLook(parentSessionId, look); throw error; }
+  const sessionId = await reserveSessionId();
   const timestamp = new Date().toISOString();
   const sessionPath = join(ctx.sessionManager.getSessionDir(), `${timestamp.replace(/[:.]/g, "-")}_${sessionId}.jsonl`);
   const workspace = { cwd: ctx.cwd };
@@ -103,7 +107,7 @@ async function createSubagent(pi: ExtensionAPI, ctx: ExtensionContext, task: Sub
     entry({ type: "custom", customType: "pi-define-agents-state", data: profile }),
     ...fastMode ? [entry(fastMode)] : [],
   ], { name: `Subagent: ${task.name}`, dependencies: { workspace: { path: workspace.cwd, kind: "existing" } } }); }
-  catch (error) { releaseLook(parentSessionId, look); throw new Error(`Subagent session creation failed in ${workspace.cwd}; chat assets are retained: ${(error instanceof Error ? error.message : String(error))}`, { cause: error }); }
+  catch (error) { throw new Error(`Subagent session creation failed in ${workspace.cwd}; chat assets are retained: ${(error instanceof Error ? error.message : String(error))}`, { cause: error }); }
 
   return run;
 }
@@ -149,13 +153,14 @@ async function executeSubagent(task: SubagentTask, execution: SubagentExecution)
   const done = new Promise<void>(resolve => { finished = resolve; });
   const ready = new Promise<void>(resolve => { started = resolve; });
   const lifecycle: ActiveSubagent = { controller, done, ready, started, closing: false, revision: 0, pendingDeliveries: 0, deliveryIds: new Set() };
-  const run: SubagentRun = { version: 1, toolCallId, parentSessionId: ctx.sessionManager.getSessionId(), sessionId: task.sessionId ?? "", sessionPath: "", hostId: currentHost(), name: task.name, task: task.task, status: "running", startedAt: Date.now() };
+  // The look is on the run before the chat exists, so the row of a starting subagent already shows its own icon.
+  const run: SubagentRun = { version: 1, toolCallId, parentSessionId: ctx.sessionManager.getSessionId(), sessionId: task.sessionId ?? "", sessionPath: "", hostId: currentHost(), name: task.name, task: task.task, status: "running", startedAt: Date.now(), look: subagentLook(ctx, task) };
   results.push(run);
   let claimed = false;
 
   try {
     signal?.throwIfAborted();
-    const child = await createSubagent(pi, ctx, task, toolCallId, signal);
+    const child = await createSubagent(pi, ctx, task, toolCallId, run.look, signal);
 
     if (active.has(child.sessionId)) throw new Error("This subagent is already running");
     Object.assign(run, child);

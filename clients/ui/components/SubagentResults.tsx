@@ -16,11 +16,14 @@ const runSchema = z.object({
   apiCost: z.number().optional().catch(undefined),
 });
 
+/** Tools whose rows show subagent icons: spawn_subagents shows the subagents it started, await_subagents the ones whose answers it returned. */
+export const showsSubagents = (toolName?: string) => toolName === "spawn_subagents" || toolName === "await_subagents";
+
 export const subagentRuns = z.object({
   runs: z.array(runSchema.optional().catch(undefined)).catch([]),
 }).transform(details => details.runs.flatMap(run => run ? [run] : [])).catch([]).parse;
 
-/** A fixed avatar per subagent session: the daemon saves a look with each subagent, so every row of one subagent looks the same. */
+/** A fixed avatar per subagent: the daemon saves a look with each subagent before its chat exists, and the seed is its nickname, so every row of one subagent looks the same. */
 function SubagentAvatar(props: { seed: string; look?: number; status: string; label: string }) {
   const look = createMemo(() => {
     const value = subagentLook(props.seed, props.look);
@@ -48,7 +51,7 @@ export function SubagentResults(props: { runs: Run[] }) {
 
     return <div class="subagent-branch">
       <button type="button" class="subagent-open" disabled={!open || !run().sessionId || !run().sessionPath} aria-label={`Open ${run().name} agent chat — ${statusLabel()}`} onClick={() => open?.({ ...run(), hostId: host?.() ?? run().hostId })}>
-          <SubagentAvatar seed={run().sessionId || run().name} look={run().look} status={run().status} label={statusLabel()} />
+          <SubagentAvatar seed={run().name} look={run().look} status={run().status} label={statusLabel()} />
           <span class="subagent-name">{run().name}</span>
       </button>
     </div>;

@@ -17,7 +17,7 @@ import { MessageFileContext } from "../lib/messageFiles";
 import { ConversationHostContext } from "../lib/subagentNavigation";
 import { PluginMessageContext } from "../plugins/messages";
 import { ConversationImageProject } from "./markdownImages";
-import { SubagentResults, subagentRuns } from "./SubagentResults";
+import { showsSubagents, SubagentResults, subagentRuns } from "./SubagentResults";
 import { PromptContextBar } from "./PromptContextBar";
 import { DeferredTurn } from "./DeferredTurn";
 import { Message } from "./Message";
@@ -308,7 +308,7 @@ function invisibleAssistant(message: ChatMessage) {
 }
 
 function repeatedCompletedTool(message: ChatMessage, previous: ChatMessage) {
-  return message.role === "tool" && message.toolName !== "spawn_subagents" && (message.toolStatus ?? "done") === "done" && previous.role === "tool" && (previous.toolStatus ?? "done") === "done" && toolTitle(previous) === toolTitle(message);
+  return message.role === "tool" && !showsSubagents(message.toolName) && (message.toolStatus ?? "done") === "done" && previous.role === "tool" && (previous.toolStatus ?? "done") === "done" && toolTitle(previous) === toolTitle(message);
 }
 
 export function finalResponseIndex(messages: ChatMessage[]) {

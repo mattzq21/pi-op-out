@@ -40,3 +40,11 @@ test('a child that has no saved chat yet cannot be opened, and a malformed run i
   const { buttons } = await render({ runs: [run('starting', 'running', { sessionId: '', sessionPath: '' }), { name: 'broken' }, run('reader', 'completed')] });
   assert.deepEqual(buttons().map(button => [button.querySelector('.subagent-name').textContent, button.disabled]), [['starting', true], ['reader', false]]);
 });
+
+test('a starting child shows the same icon that it keeps once its chat exists', async () => {
+  await render({ runs: [run('starting', 'running', { sessionId: '', sessionPath: '', look: 5 })] });
+  const before = document.querySelector('.subagent-avatar').innerHTML;
+  await view.unmount(); view = undefined;
+  await render({ runs: [run('starting', 'running', { look: 5 })] });
+  assert.equal(document.querySelector('.subagent-avatar').innerHTML, before);
+});
