@@ -114,7 +114,7 @@ export function createTranscript(transport: TranscriptTransport | undefined, inp
     // The providers give their content lazily; reading it draws the turns now, with the contexts.
     const view: unknown = <ConversationHostContext.Provider value={hostId}><MessageFileContext.Provider value={{ hostId, cwd, get notify() { return current().notify; } }}><PluginMessageContext.Provider value={pluginMessages}><MessagePinContext.Provider value={messagePins}><ConversationImageProject.Provider value={imageProject}>
       <div ref={node => { element = node; }} class="conversation-turns">
-        <Key each={turns()} by={turn => turn.messages[0]?.id ?? "empty"}>{(turn, index) => <DeferredTurn navigationId={turn().messages[0]?.id} scrollRoot={scrollRoot} eager={index() >= turns().length - 3}><ConversationTurn latest={index() === turns().length - 1} messages={turn().messages} promptContexts={turn().promptContexts} debug={debug()} active={isStreaming() && index() === turns().length - 1} retryable={retryable() && index() === turns().length - 1} onRetry={onRetry} onBranch={branching() ? onBranch : undefined} onFork={canFork() && hasFork() ? onFork : undefined} onForkAndForget={canFork() && hasForkAndForget() && ownsConversation() ? onForkAndForget : undefined} forkSource={forkSource()} forkSourceName={forkSourceName()} onOpenForkSource={hasOpenForkSource() ? onOpenForkSource : undefined} /></DeferredTurn>}</Key>
+        <Key each={turns()} by={turn => turn.messages[0]?.id ?? "empty"}>{(turn, index) => <DeferredTurn navigationId={turn().messages[0]?.id} scrollRoot={scrollRoot} eager={index() >= turns().length - 3}><ConversationTurn latest={index() === turns().length - 1} messages={turn().messages} promptContexts={turn().promptContexts} debug={debug()} active={isStreaming() && index() === turns().length - 1} steered={turns()[index() + 1]?.messages[0]?.deliveryBehavior === "steer"} retryable={retryable() && index() === turns().length - 1} onRetry={onRetry} onBranch={branching() ? onBranch : undefined} onFork={canFork() && hasFork() ? onFork : undefined} onForkAndForget={canFork() && hasForkAndForget() && ownsConversation() ? onForkAndForget : undefined} forkSource={forkSource()} forkSourceName={forkSourceName()} onOpenForkSource={hasOpenForkSource() ? onOpenForkSource : undefined} /></DeferredTurn>}</Key>
       </div>
     </ConversationImageProject.Provider></MessagePinContext.Provider></PluginMessageContext.Provider></MessageFileContext.Provider></ConversationHostContext.Provider>;
     if (typeof view === "function") (view as () => unknown)();
@@ -352,12 +352,14 @@ function MessageList(props: { messages: ChatMessage[]; expanded: boolean; compac
   return <Key each={entries()} by={entry => entry.message.id}>{entry => <Message message={entry().message} toolCount={entry().count} showActions={props.showActions ?? true} expanded={props.expanded} debug={props.debug} />}</Key>;
 }
 
-type ConversationTurnProps = { latest?: boolean; messages: ChatMessage[]; promptContexts: PromptContextInfo[]; debug: DebugView; active: boolean; retryable: boolean; onRetry: (message: ChatMessage) => Promise<void>; onBranch?: TranscriptActions["onBranch"]; onFork?: TranscriptActions["onFork"]; onForkAndForget?: TranscriptActions["onForkAndForget"]; forkSource?: ForkSource; forkSourceName?: string; onOpenForkSource?: TranscriptActions["onOpenForkSource"]; };
+type ConversationTurnProps = { latest?: boolean; messages: ChatMessage[]; promptContexts: PromptContextInfo[]; debug: DebugView; active: boolean; /** A steer message started the next turn, so this turn's work stays open. */ steered?: boolean; retryable: boolean; onRetry: (message: ChatMessage) => Promise<void>; onBranch?: TranscriptActions["onBranch"]; onFork?: TranscriptActions["onFork"]; onForkAndForget?: TranscriptActions["onForkAndForget"]; forkSource?: ForkSource; forkSourceName?: string; onOpenForkSource?: TranscriptActions["onOpenForkSource"]; };
 
 function ConversationTurn(componentProps: ConversationTurnProps) {
   const turnMessages = createMemo(() => componentProps.debug.reasoning ? componentProps.messages : componentProps.messages.map(withoutReasoning));
   const [retryError, setRetryError] = createSignal<string>();
-  const [workOpen, setWorkOpen] = createSignal(false);
+  /** The user's choice wins; without one, the work stays open when a steer cut it. */
+  const [workChoice, setWorkOpen] = createSignal<boolean>();
+  const workOpen = () => workChoice() ?? componentProps.steered === true;
   const [retrying, setRetrying] = createSignal(false); const retryingRef = createRef(false);
   const userIndex = createMemo(() => (turnMessages().findIndex(isPromptMessage)));
   /** The place of the message this chat branched from. The link to the parent chat shows after it, before later notes such as a compaction. */
