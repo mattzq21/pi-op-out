@@ -151,11 +151,11 @@ export function olderHistory(history: any, before: unknown, through?: unknown): 
 
 const PREVIEW_LENGTH = 160;
 
-/** The final responses of the turns before the entry before, so the client can list them before it loads them. */
-export function historyOutline(history: any, before: unknown): { responses: { id: string; preview: string; compactions?: string[] }[] } {
+/** The final responses of the turns before the entry before, with the first entry of each turn, so the client can list them before it loads them. */
+export function historyOutline(history: any, before: unknown): { responses: { id: string; start: string; preview: string; compactions?: string[] }[] } {
   const branch = branchEntries(history);
   const end = position(branch, before);
-  const responses: { id: string; preview: string; compactions?: string[] }[] = [];
+  const responses: { id: string; start: string; preview: string; compactions?: string[] }[] = [];
   let turn: any[] = [];
   const close = () => {
     const final = finalResponse(turn);
@@ -163,7 +163,7 @@ export function historyOutline(history: any, before: unknown): { responses: { id
       const entry = turn[final];
       const preview = visibleText(entry).replace(/\s+/g, ' ').trim().slice(0, PREVIEW_LENGTH) || (entry.message.stopReason === 'stop' ? 'Empty response' : 'Response interrupted');
       const compactions = turn.filter(item => item?.type === 'compaction').map(item => item.id);
-      responses.push(compactions.length ? { id: entry.id, preview, compactions } : { id: entry.id, preview });
+      responses.push({ id: entry.id, start: turn[0].id, preview, ...(compactions.length ? { compactions } : {}) });
     }
     turn = [];
   };

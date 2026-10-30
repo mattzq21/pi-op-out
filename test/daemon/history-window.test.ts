@@ -88,7 +88,7 @@ test('a compaction does not infer a token count from the next model call', () =>
 test('the outline lists the final responses before the loaded history, and a load can reach back to one of them', () => {
   const source = chat(8, 'x'.repeat(2000));
   const before = recentHistory(chat(8, 'x'.repeat(2000)), false).before;
-  expect(historyOutline(source, before).responses).toEqual(['e3', 'e7', 'e11'].map(id => ({ id, preview: 'x'.repeat(160) })));
+  expect(historyOutline(source, before).responses).toEqual([0, 4, 8].map(index => ({ id: 'e' + (index + 3), start: 'e' + index, preview: 'x'.repeat(160) })));
   expect(users(olderHistory(source, before, 'e3'))).toEqual(['Question 0', 'Question 1', 'Question 2']);
   expect(() => olderHistory(source, before, 'e15')).toThrow();
 });

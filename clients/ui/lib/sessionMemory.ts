@@ -369,7 +369,7 @@ export function loadOlderHistory(transport: Transport, through?: string) {
   return memoryFor(transport).loadOlder(through);
 }
 
-const historyOutlineSchema = z.object({ responses: z.array(z.object({ id: z.string().min(1), preview: z.string(), compactions: z.array(z.string().min(1)).optional() })) });
+const historyOutlineSchema = z.object({ responses: z.array(z.object({ id: z.string().min(1), start: z.string().min(1), preview: z.string(), compactions: z.array(z.string().min(1)).optional() })) });
 
 export type HistoryOutline = z.infer<typeof historyOutlineSchema>["responses"];
 
