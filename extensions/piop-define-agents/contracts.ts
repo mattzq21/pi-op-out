@@ -4,7 +4,8 @@ import type { ExtensionContext, ExtensionCommandContext } from "@earendil-works/
 
 export interface AppRequest { command: string; payload: unknown; ctx: ExtensionCommandContext; ready?: Promise<unknown> }
 
-export interface RequiredToolsRequest { ctx: ExtensionContext; tools: string[]; availableTools?: string[] }
+/** Plugins add tools the agent needs to tools, and remove allowed tools from the prompt for now with withheldTools. */
+export interface RequiredToolsRequest { ctx: ExtensionContext; tools: string[]; withheldTools: string[]; availableTools?: string[] }
 
 export interface McpToolsRequest { tools?: string[]; availableTools?: string[] }
 

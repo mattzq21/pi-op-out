@@ -29,7 +29,7 @@ function inGitRepository(folder: string) {
   catch { return false; }
 }
 
-interface RequiredToolsRequest { ctx: ExtensionContext; tools: string[]; availableTools?: string[] }
+interface RequiredToolsRequest { ctx: ExtensionContext; tools: string[]; withheldTools: string[]; availableTools?: string[] }
 
 declare module "@earendil-works/pi-coding-agent" {
   interface EventBus {

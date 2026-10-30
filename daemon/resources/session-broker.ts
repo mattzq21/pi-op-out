@@ -6,6 +6,7 @@ import { registerConversationClient } from "./session-broker/client.ts";
 import { registerOrchestration } from "./session-broker/orchestration.ts";
 import { registerInputHold } from "./session-broker/input-hold.ts";
 import { registerQueueHold } from "./session-broker/queue-hold.ts";
+import { registerPromptTools } from "./session-broker/prompt-tools.ts";
 import { registerToolInventory } from "./session-broker/tool-inventory.ts";
 import { registerAuxiliaryChats } from "./session-broker/auxiliary.ts";
 import { existsSync } from "node:fs";
@@ -38,6 +39,7 @@ export default function sessionBroker(pi: ExtensionAPI) {
   pi.on("session_shutdown", unsubscribeTaskSuccess);
   registerInputHold(pi);
   registerQueueHold(pi);
+  registerPromptTools(pi);
   registerConversationClient(pi);
   registerOrchestration(pi);
   registerSubagents(pi);

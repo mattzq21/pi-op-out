@@ -8,9 +8,12 @@ import type { GoalSession } from "./interface.ts";
 import type { GoalCore } from "./preparation.ts";
 import { inputHold } from "../session-broker/input-hold.ts";
 import { queueHold } from "../session-broker/queue-hold.ts";
+import { promptTools } from "../session-broker/prompt-tools.ts";
 
 /** A notice that the user changed the goal. It is saved where the change happened, and the model gets it there as a system message. */
 const GOAL_CHANGE = "piop-goal-change";
+
+const GOAL_TOOL = "update_goal_status";
 
 interface AgentsReady { ctx: ExtensionContext }
 
@@ -42,7 +45,14 @@ export function registerGoals(pi: ExtensionAPI): { session: GoalSession; core: G
   let restored = false;
   let runSignal: AbortSignal | undefined;
 
-  const allowed = () => pi.getActiveTools().includes("update_goal_status");
+  /** A goal that is active or paused. */
+  const live = () => !!state.goal && state.goal.status !== "complete";
+
+  // The goal tool enters the prompt with a goal, and leaves it after a compaction when there is no goal.
+  const tools = promptTools(pi);
+  const unregisterTool = tools.register(GOAL_TOOL, live);
+
+  const allowed = () => tools.allowed(GOAL_TOOL);
 
   const assertAvailable = (ctx: ExtensionContext) => {
     if (!persistent(ctx)) throw new Error("Goals require a saved conversation.");
@@ -74,6 +84,8 @@ export function registerGoals(pi: ExtensionAPI): { session: GoalSession; core: G
   /** Saves the goal and the change notice, unless the notice is null. */
   const changed = (ctx: ExtensionContext, prompt: string | null = goalChangedPrompt(state.goal)) => {
     state.save(ctx);
+
+    if (live()) tools.show(GOAL_TOOL);
 
     if (prompt !== null) notice(prompt);
   };
@@ -195,7 +207,7 @@ export function registerGoals(pi: ExtensionAPI): { session: GoalSession; core: G
   pi.on("session_shutdown", (_event, ctx) => coordination.run(ctx, () => {
     if (context) state.save(context);
 
-    ready(); publish(); released?.(); released = undefined; inputReleased?.(); inputReleased = undefined;
+    ready(); publish(); unregisterTool(); released?.(); released = undefined; inputReleased?.(); inputReleased = undefined;
   }));
 
   return { session, core };
