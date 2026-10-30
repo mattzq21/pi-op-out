@@ -4,10 +4,11 @@ import { getCurrentTools } from "@earendil-works/pi-ai";
 /**
  * Core: tools that are in the prompt only while a plugin needs them. A registered tool stays out of the prompt until show().
  * On the first message after a compaction, each shown tool whose keep() is false leaves the prompt. Between compactions
- * the prompt does not lose tools, so the model provider can reuse its cache.
+ * the prompt does not lose tools, so the model provider can reuse its cache. On the first message after the chat opens,
+ * each tool whose keep() is true enters the prompt, so plugins may load their state at any point before that message.
  */
 export interface PromptTools {
-  /** keep tells whether the tool must stay in the prompt after a compaction. Returns the function that removes the registration. */
+  /** keep tells whether the tool must be in the prompt after a compaction or when the chat opens. Returns the function that removes the registration. */
   register(tool: string, keep: () => boolean): () => void;
   /** Puts a registered tool in the prompt, if the agent's tools include it. */
   show(tool: string): void;
@@ -52,6 +53,8 @@ export function registerPromptTools(pi: ExtensionAPI) {
   const registered = new Map<string, { keep: () => boolean; shown: boolean; permitted: boolean }>();
   /** A compaction happened and the next message has not started yet. */
   let recheck = false;
+  /** The chat opened and its first message has not started yet. */
+  let opened = false;
   let running = false;
 
   const sync = (tool: string) => {
@@ -63,11 +66,18 @@ export function registerPromptTools(pi: ExtensionAPI) {
     if (wanted !== active.includes(tool)) pi.setActiveTools(wanted ? [...active, tool] : active.filter(name => name !== tool));
   };
 
-  const recheckTools = () => {
-    if (!recheck) return;
-    recheck = false;
+  /** Asks keep() of each tool: a tool that must stay enters the prompt, and after a compaction a tool that need not stay leaves it. */
+  const review = () => {
+    const compacted = recheck;
 
-    for (const [tool, state] of registered) if (state.shown && !state.keep()) { state.shown = false; sync(tool); }
+    if (!compacted && !opened) return;
+    recheck = false; opened = false;
+
+    for (const [tool, state] of registered) {
+      const keep = state.keep();
+
+      if (keep !== state.shown && (keep || compacted)) { state.shown = keep; sync(tool); }
+    }
   };
 
   const tools: PromptTools = {
@@ -90,12 +100,12 @@ export function registerPromptTools(pi: ExtensionAPI) {
     },
   };
 
-  // Plugins restore their state on the extended session_restore hook, which runs before these handlers, so keep() is current here.
+  /** Until the first message, the prompt keeps the tools that the transcript has. */
   const restore = (ctx: ExtensionContext) => {
     const saved = transcript(ctx);
-    recheck = saved.compacted;
+    recheck = saved.compacted; opened = true;
 
-    for (const [tool, state] of registered) { state.shown = state.keep() || saved.tools.has(tool); sync(tool); }
+    for (const [tool, state] of registered) { state.shown = saved.tools.has(tool); sync(tool); }
   };
 
   const offRequest = pi.events.on("piop:session:prompt-tools", request => { request.tools = tools; });
@@ -110,8 +120,8 @@ export function registerPromptTools(pi: ExtensionAPI) {
   pi.on("session_start", (_event, ctx) => restore(ctx));
   pi.on("session_tree", (_event, ctx) => restore(ctx));
   // A compaction during a run comes right before the next model request; between runs, the next run's start decides.
-  pi.on("session_compact", () => { recheck = true; if (running) recheckTools(); });
-  pi.on("before_agent_start", () => { recheckTools(); });
+  pi.on("session_compact", () => { recheck = true; if (running) review(); });
+  pi.on("before_agent_start", () => { review(); });
   pi.on("agent_start", () => { running = true; });
   pi.on("agent_settled", () => { running = false; });
   pi.on("session_shutdown", () => { offRequest(); offRequired(); });
