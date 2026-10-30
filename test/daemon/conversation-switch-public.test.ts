@@ -89,7 +89,7 @@ test.concurrent('branching after an answer opens a new conversation with the his
   const sessions = await agents.daemon.invoke('list_sessions');
   expect(sessions.find((session: any) => session.id === original.sessionId)).toMatchObject({ preview: 'Answer to Second question' });
   expect(sessions.find((session: any) => session.id === branch.sessionId)).toMatchObject({ preview: 'Answer to Different second question' });
-  expect(sessions.find((session: any) => session.id === branch.sessionId).forkSourceId).toBe(original.sessionId);
+  expect(sessions.find((session: any) => session.id === branch.sessionId)).toMatchObject({ forkSourceId: original.sessionId, forkEntryId: firstAnswer.id });
   expect(sessions.find((session: any) => session.id === original.sessionId).forkSourceId).toBeUndefined();
 }, 60000);
 

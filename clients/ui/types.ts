@@ -15,7 +15,7 @@ export type ContentPart = ImageAttachment | { type: "text"; text: string } | { t
 
 export interface ChatMessage { deliveryBehavior?: "steer" | "followUp"; id: string; entryId?: string; role: Role; content: string | ContentPart[]; customType?: string; timestamp?: number; startedAt?: number; completedAt?: number; model?: string; streaming?: boolean; stopReason?: "pending" | "stop" | "length" | "toolUse" | "error" | "aborted" | "deferred"; errorMessage?: string; toolName?: string; toolInput?: unknown; toolStatus?: "running" | "done" | "error"; promptContext?: PromptContextInfo; usage?: { input: number; output: number; cacheRead: number; cacheWrite: number; reasoning?: number; totalTokens: number }; }
 
-export interface SessionSummary { id: string; isDraft?: boolean; auxiliaryParentId?: string; auxiliaryKind?: string; forkSourceId?: string; daemonId?: string; isRunning?: boolean; groupId?: string | null; path: string; name: string; project: string; cwd: string; cwdExists?: boolean; linkedWorktree?: boolean; preview: string; messageCount: number; lastMessageAt: number; apiCost: number; hostId?: string; hostName?: string; }
+export interface SessionSummary { id: string; isDraft?: boolean; auxiliaryParentId?: string; auxiliaryKind?: string; forkSourceId?: string; forkEntryId?: string; daemonId?: string; isRunning?: boolean; groupId?: string | null; path: string; name: string; project: string; cwd: string; cwdExists?: boolean; linkedWorktree?: boolean; preview: string; messageCount: number; lastMessageAt: number; apiCost: number; hostId?: string; hostName?: string; }
 
 export type StorageOwnership = "owned" | "referenced" | "shared" | "unattributed";
 

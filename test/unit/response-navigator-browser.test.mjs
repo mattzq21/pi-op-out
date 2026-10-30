@@ -13,6 +13,7 @@ test('the response rail jumps to an answer, marks where the reader is, and follo
   await rail.waitFor();
   assert.equal(await page.locator('.response-navigator-marker').count(), 3);
   assert.equal(await current(page), 'Go to agent response 1: Plan the parser');
+  assert.deepEqual(await page.locator('.response-navigator-marker').evaluateAll(markers => markers.map(marker => marker.hasAttribute('data-forked'))), [false, true, false], 'only the answer where the chat forks has the fork mark');
 
   await page.getByRole('button', { name: 'Go to agent response 2: Write the lexer' }).click();
   await page.waitForFunction(() => document.querySelector('[aria-current="location"]')?.getAttribute('aria-label')?.startsWith('Go to agent response 2'));

@@ -159,9 +159,12 @@ class SessionIndex {
     }
     if (!this.header) return;
 
-    const forkSourceId = typeof this.header.piopForkSource?.sessionId === 'string' && this.header.piopForkSource.sessionId ? this.header.piopForkSource.sessionId : undefined;
+    const source = this.header.piopForkSource;
+    const forked = typeof source?.sessionId === 'string' && source.sessionId && typeof source.entryId === 'string' && source.entryId;
+    const forkSourceId = forked ? source.sessionId : undefined;
+    const forkEntryId = forked ? source.entryId : undefined;
 
-    return { path, id: this.header.id || '', cwd: this.header.cwd || 'Unknown project', name: names.capSessionName(this.name || this.first || 'Untitled session'), preview: this.preview, messageCount: this.count, lastMessageAt: this.lastMessageAt, apiCost: this.cost, explicitlyNamed: !!this.name, hasUserMessage: this.hasUserMessage, bytes: this.bytes, auxiliaryParentId: (this.ownAuxiliary ?? this.inheritedAuxiliary)?.parentId, auxiliaryKind: (this.ownAuxiliary ?? this.inheritedAuxiliary)?.kind, forkSourceId };
+    return { path, id: this.header.id || '', cwd: this.header.cwd || 'Unknown project', name: names.capSessionName(this.name || this.first || 'Untitled session'), preview: this.preview, messageCount: this.count, lastMessageAt: this.lastMessageAt, apiCost: this.cost, explicitlyNamed: !!this.name, hasUserMessage: this.hasUserMessage, bytes: this.bytes, auxiliaryParentId: (this.ownAuxiliary ?? this.inheritedAuxiliary)?.parentId, auxiliaryKind: (this.ownAuxiliary ?? this.inheritedAuxiliary)?.kind, forkSourceId, forkEntryId };
   }
 }
 

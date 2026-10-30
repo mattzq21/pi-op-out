@@ -124,9 +124,17 @@ kbd { font: 11px "DM Sans"; border: 1px solid var(--line); padding: 2px 4px; bor
 .response-navigator-marker { flex: 0 0 10px; width: 24px; min-height: 10px; display: grid; place-items: center; border: 0; padding: 0; background: transparent; cursor: pointer; }
 .response-navigator-marker:first-child { margin-top: auto; }
 .response-navigator-marker:last-child { margin-bottom: auto; }
-.response-navigator-marker span { width: 6px; height: 2px; border-radius: 1px; background: var(--faint); opacity: .55; transition: width .12s, opacity .12s, background .12s; }
-.response-navigator-marker:hover span, .response-navigator-marker:focus-visible span { width: 14px; background: var(--ink); opacity: 1; }
-.response-navigator-marker[aria-current] span { width: 12px; background: var(--accent); opacity: 1; }
+.response-navigator-marker { --marker-width: 10px; --fork-width: 0px; }
+.response-navigator-marker span { width: calc(var(--marker-width) - var(--fork-width)); height: 2px; border-radius: 1px; background: var(--faint); opacity: .55; transition: width .12s, opacity .12s, background .12s; }
+.response-navigator-marker:hover, .response-navigator-marker:focus-visible { --marker-width: 14px; }
+.response-navigator-marker:hover span, .response-navigator-marker:focus-visible span { background: var(--ink); opacity: 1; }
+.response-navigator-marker[aria-current] { --marker-width: 12px; }
+.response-navigator-marker[aria-current] span { background: var(--accent); opacity: 1; }
+.response-navigator-marker[data-forked] { --fork-width: 4px; }
+.response-navigator-marker[data-forked] span { position: relative; margin-right: var(--fork-width); }
+.response-navigator-marker[data-forked] span:before, .response-navigator-marker[data-forked] span:after { content: ""; position: absolute; left: calc(100% - 3px); top: 0; width: 8px; height: 2px; border-radius: 1px; background: inherit; transform-origin: 1px 1px; }
+.response-navigator-marker[data-forked] span:before { transform: rotate(-28deg); }
+.response-navigator-marker[data-forked] span:after { transform: rotate(28deg); }
 .response-navigator-marker:focus-visible { outline: 1px solid var(--accent); outline-offset: -1px; border-radius: 3px; }
 @media (max-width: 600px) { .response-navigator { left: 0; width: 12px; } .response-navigator-marker { width: 12px; } }
 .conversation-unowned .composer-interaction { filter: grayscale(1) brightness(.6); }
@@ -645,7 +653,7 @@ textarea::placeholder { color: var(--faint); }
 .review-feedback-button { padding: 5px 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--paper); color: var(--ink); font-size: 11px; }
 .review-feedback-button:hover:not(:disabled), .review-feedback-button[aria-pressed="true"] { background: var(--hover); }
 .review-feedback-button:disabled { opacity: .5; }
-.fork-source { display: flex; align-items: center; justify-content: center; gap: 10px; margin: 4px 0 12px; color: var(--muted); font-size: 11px; }.fork-source:before, .fork-source:after { content: ""; flex: 1; height: 1px; background: linear-gradient(to right, transparent, color-mix(in srgb, var(--accent) 35%, transparent), transparent); }.fork-source-link { border: 0; padding: 2px 6px; border-radius: 5px; color: var(--accent); background: transparent; font: inherit; text-decoration: underline; }.fork-source-link:hover { color: var(--accent); background: var(--hover); }
+.fork-source { display: flex; align-items: center; justify-content: center; gap: 12px; margin: 4px 0 12px; color: var(--muted); font-size: 13px; }.fork-source:before, .fork-source:after { content: ""; flex: 1; height: 2px; border-radius: 2px; background: linear-gradient(to right, transparent, var(--accent), transparent); }.fork-source-link { border: 0; padding: 2px 6px; border-radius: 5px; color: var(--accent); background: transparent; font: inherit; text-decoration: underline; }.fork-source-link:hover { color: var(--accent); background: var(--hover); }
 
 .worktree-picker { display: inline-flex; align-items: center; min-width: 0; max-width: 100%; height: 31px; padding: 1px; border: 1px solid var(--line); border-radius: 6px; background: var(--dark-subtle); }
 .worktree-picker .composer-picker { min-width: 0; }
