@@ -97,12 +97,11 @@ export function registerSubagentResults(pi: ExtensionAPI) {
     if (message.role === "custom" && message.customType === "piop-subagent-result" && Check(notificationSchema, message.details)) acknowledge(ctx, message.details.notificationId);
   });
 
-  const flush = (ctx: ExtensionContext, boundary: boolean) => {
-    for (const run of ownedRuns(ctx)) if (run.resultDelivery === "pending") publish(ctx, structuredClone(run), boundary);
+  const flush = (ctx: ExtensionContext) => {
+    for (const run of ownedRuns(ctx)) if (run.resultDelivery === "pending") publish(ctx, structuredClone(run));
   };
 
-  pi.on("turn_end", (_event, ctx) => flush(ctx, true));
-  pi.on("agent_settled", (_event, ctx) => flush(ctx, false));
+  pi.on("agent_settled", (_event, ctx) => flush(ctx));
 
   const notification = (ctx: ExtensionContext, run: SubagentRun) => {
     if (!run.resultNotificationId) {
@@ -114,7 +113,7 @@ export function registerSubagentResults(pi: ExtensionAPI) {
     return run.resultNotificationId;
   };
 
-  const publish = (ctx: ExtensionContext, run: SubagentRun, boundary = false) => {
+  const publish = (ctx: ExtensionContext, run: SubagentRun) => {
     if (run.status === "running" || run.resultDelivery === "delivered") return;
     const id = notification(ctx, run);
 
@@ -124,7 +123,7 @@ export function registerSubagentResults(pi: ExtensionAPI) {
 
     if (outstanding.has(id)) return;
 
-    if (!boundary && !ctx.isIdle()) { pi.events.emit("piop:agent-mail", { notificationId: id, customType: "piop-subagent-result" });
+    if (!ctx.isIdle()) { pi.events.emit("piop:agent-mail", { notificationId: id, customType: "piop-subagent-result" });
 
     return; }
 
@@ -161,6 +160,6 @@ export function registerSubagentResults(pi: ExtensionAPI) {
       return claimed;
     },
     publish,
-    flush(ctx: ExtensionContext) { flush(ctx, false); },
+    flush,
   };
 }

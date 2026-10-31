@@ -36,3 +36,19 @@ test('results of subagents that finish while their parent is busy reach the pare
   expect(delivered.length).toBe(new Set(delivered).size);
   expect(new Set(delivered).size).toBe(names.length);
 }, 120000);
+
+test('a subagent that finishes during a busy turn is returned by the next await_subagents in the same run', async () => {
+  let awaited = '';
+  agents.scripts.set('Spawn then keep working', messages => {
+    if (!called(messages, 'spawn_subagents')) return { tool: 'spawn_subagents', arguments: { tasks: [{ nickname: 'Quick', task: 'Report quickly' }] } };
+    if (!called(messages, 'bash')) return { tool: 'bash', arguments: { command: 'sleep 3' } };
+    if (!called(messages, 'await_subagents')) return { tool: 'await_subagents' };
+    if (!awaited) awaited = JSON.stringify(messages.at(-1));
+    return { text: 'Run done.' };
+  });
+  agents.scripts.set('Report quickly', () => ({ text: 'Quick report.' }));
+  const root = await agents.rootChat();
+  await root.command({ type: 'prompt', message: 'Spawn then keep working' });
+  await root.until(history => history.some((message: any) => message.role === 'assistant' && JSON.stringify(message.content).includes('Run done.')));
+  expect(awaited).toContain('Quick report.');
+}, 120000);
