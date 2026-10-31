@@ -615,6 +615,7 @@ textarea::placeholder { color: var(--faint); }
 .filter-select-menu button { min-height: 30px; padding: 0 8px; border: 0; border-radius: 6px; background: transparent; color: var(--ink); font-size: calc(12px + var(--settings-font-offset, 0px)); text-align: left; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .filter-select-menu button[data-active] { background: var(--dark-control-hover); }.filter-select-menu button[aria-selected="true"] { color: var(--accent); }.filter-select-menu button:disabled { color: var(--faint); opacity: .55; cursor: default; }
 .filter-select-menu .empty-small { padding: 6px 8px; }
+.filter-select-divider { width: 100%; margin: 4px 0; border: 0; border-top: 1px solid var(--line); }
 .general-fast-mode > div { display: flex; align-items: center; justify-content: center; min-height: 35px; }
 .general-fast-mode .fast-mode-indicator { width: 35px; height: 35px; flex-basis: 35px; }
 .general-fast-mode .fast-mode-indicator svg { width: 22px; height: 22px; }
