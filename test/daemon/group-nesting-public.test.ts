@@ -108,3 +108,24 @@ test.concurrent('removing a nested parent ungroups only its own chats and tells 
     expect(listed).toEqual({ [rootChat]: root, [childChat]: null, [leafChat]: leaf });
   } finally { await daemon.stop(); }
 }, 60_000);
+
+test.concurrent('a project group holds custom groups but no project group', async () => {
+  const daemon = await startDaemon();
+  try {
+    await load(daemon);
+    const project = (folder: string) => ({ id: `__pi-desktop-custom-group__:${folder}`, name: folder, cwd: `${daemon.home}/${folder}`, hostId: 'local', hostName: null });
+    await change(daemon, { type: 'project', project: project('alpha') });
+    await change(daemon, { type: 'project', project: project('beta') });
+    const alpha = project('alpha').id;
+    const beta = project('beta').id;
+    const custom = await create(daemon, 'Notes');
+    await change(daemon, { type: 'move', id: custom, parent: alpha });
+    expect((await load(daemon)).parents).toEqual({ [custom]: alpha });
+
+    expect(await daemon.failure('change_session_groups', { change: { type: 'move', id: beta, parent: custom } }))
+      .toBe('Project groups cannot nest inside project groups');
+    expect(await daemon.failure('change_session_groups', { change: { type: 'move', id: beta, parent: alpha } }))
+      .toBe('Project groups cannot nest inside project groups');
+    expect((await load(daemon)).parents).toEqual({ [custom]: alpha });
+  } finally { await daemon.stop(); }
+}, 60_000);

@@ -412,15 +412,17 @@ function validateNesting(state: SessionGroups): void {
   const groups = new Map(state.groups.map(group => [group.id, group]));
   for (const [id, parent] of state.parents) {
     if (!groups.has(id)) throw new Error('Group no longer exists');
-    if (groups.get(parent)?.cwd !== null || !groups.has(parent)) throw new Error('Groups can only nest inside custom groups');
+    if (!groups.has(parent)) throw new Error('Group no longer exists');
     let cursor: string | undefined = id;
     const seen = new Set<string>();
     let depth = 0;
+    let projects = 0;
     while (cursor !== undefined) {
       if (seen.has(cursor)) throw new Error('A group cannot be moved inside itself or its children');
       seen.add(cursor);
-      if (groups.has(cursor) && groups.get(cursor)!.cwd === null) depth += 1;
+      if (groups.get(cursor)?.cwd === null) depth += 1; else projects += 1;
       if (depth > 3) throw new Error('Groups cannot exceed three levels');
+      if (projects > 1) throw new Error('Project groups cannot nest inside project groups');
       cursor = state.parents.get(cursor);
     }
   }

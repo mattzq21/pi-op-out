@@ -74,6 +74,8 @@ export function createSidebarState(source: Accessor<SessionSummary[]>, query: Ac
   const savedGroups = createMemo(() => storedGroups.state?.groups ?? []);
   const savedGroupsById = createMemo(() => new Map(savedGroups().map((group): [string, SessionGroup] => [group.id, group]).reverse()));
   const customGroups = createMemo(() => savedGroups().filter(group => !group.cwd && group.id !== DIRLESS_KEY));
+  /** Groups that can hold other groups: custom groups and project groups. */
+  const parentGroupsByKey = createMemo(() => new Map(savedGroups().filter(group => group.id !== DIRLESS_KEY && !(group.cwd && isTemporaryChatCwd(group.cwd))).map((group): [string, SessionGroup] => [group.id, group])));
   const persistence = createSidebarPersistence();
   const collapsedProjects = createMemo(() => new Set(persistence.layout().collapsed));
   const sessionOrders = createMemo(() => validSessionOrders(persistence.layout().sessions));
@@ -88,7 +90,7 @@ export function createSidebarState(source: Accessor<SessionSummary[]>, query: Ac
   const projectParent = (id: string) => {
     const parent = projectGroups()[id];
 
-    return !isFixedGroup(id) && savedGroupsById().has(id) && customGroups().some(group => group.id === parent) ? parent : undefined;
+    return !isFixedGroup(id) && savedGroupsById().has(id) && parent !== undefined && parentGroupsByKey().has(parent) ? parent : undefined;
   };
 
   const groupAncestors = (id: string) => {
@@ -110,17 +112,17 @@ export function createSidebarState(source: Accessor<SessionSummary[]>, query: Ac
 
     if (parent === undefined) return true;
 
-    if (!customGroups().some(group => group.id === parent) || parent === id) return false;
-    const ancestors = groupAncestors(parent);
+    if (!parentGroupsByKey().has(parent) || parent === id) return false;
+    const ancestors = [parent, ...groupAncestors(parent)];
 
     if (ancestors.includes(id)) return false;
-    const customIds = new Set(customGroups().map(group => group.id));
+    const isProject = (key: string) => Boolean(savedGroupsById().get(key)?.cwd);
+    const children = (key: string) => savedGroups().filter(group => projectParent(group.id) === key).map(group => group.id);
+    const subtreeHeight = (key: string): number => (isProject(key) ? 0 : 1) + Math.max(0, ...children(key).map(subtreeHeight));
+    const subtreeProjects = (key: string): number => (isProject(key) ? 1 : 0) + Math.max(0, ...children(key).map(subtreeProjects));
+    const projects = ancestors.filter(isProject).length;
 
-    const subtreeHeight = (key: string): number => customIds.has(key)
-      ? 1 + Math.max(0, ...customGroups().filter(group => projectParent(group.id) === key).map(group => subtreeHeight(group.id)))
-      : 0;
-
-    return ancestors.length + 1 + subtreeHeight(id) <= 3;
+    return ancestors.length - projects + subtreeHeight(id) <= 3 && projects + subtreeProjects(id) <= 1;
   };
 
   const moveProject = (id: string, parent?: string) => {
@@ -192,7 +194,7 @@ export function createSidebarState(source: Accessor<SessionSummary[]>, query: Ac
       return next;
     });
 
-    if (customGroupsByKey().has(destinationKey)) {
+    if (parentGroupsByKey().has(destinationKey)) {
       placeSessionEntry(destinationKey, drag.sessionKey, targetKey, edge);
     }
 
@@ -279,7 +281,7 @@ export function createSidebarState(source: Accessor<SessionSummary[]>, query: Ac
 
   const groups = createMemo<SidebarGroup[]>(() => ([
     ...customVisualGroups().filter(([key, , , , projectSessions]) => !normalizedQuery() || projectSessions.length > 0 || [...customVisualGroups(), ...physicalGroups()].some(([id, , , , children]) => children.length > 0 && groupAncestors(id).includes(key))),
-    ...physicalGroups().filter(([, , , , projectSessions]) => !normalizedQuery() || projectSessions.length > 0),
+    ...physicalGroups().filter(([key, , , , projectSessions]) => !normalizedQuery() || projectSessions.length > 0 || [...customVisualGroups(), ...physicalGroups()].some(([id, , , , children]) => children.length > 0 && groupAncestors(id).includes(key))),
     [RECENT_KEY, RECENT_LABEL, "", undefined, recentSessions()],
     ...(groupedSessions()[DIRLESS_KEY]?.length ? [[DIRLESS_KEY, "Dirless", "", undefined, orderedSessions(DIRLESS_KEY, groupedSessions()[DIRLESS_KEY] ?? [], sessionOrders())] satisfies SidebarGroup] : []),
   ]));
@@ -332,7 +334,7 @@ export function createSidebarState(source: Accessor<SessionSummary[]>, query: Ac
 
   return {
     get state() { return storedGroups.state; }, get error() { return storedGroups.error ?? persistence.error(); },
-    sessions, collapsedProjects, customGroupsByKey, groupDestination,
+    sessions, collapsedProjects, customGroupsByKey, parentGroupsByKey, groupDestination,
     normalizedQuery, visualProjectKey, filtered, groups, sidebarEntries, groupedSessions: displayedSessions,
     validateGroupName, saveGroup, removeGroup, toggleProject, expandProject, moveSession, placeSidebarEntry, projectParent, canMoveProject, moveProject, groupEntries, placeGroupEntry,
   };

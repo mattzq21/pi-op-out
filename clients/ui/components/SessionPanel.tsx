@@ -69,7 +69,7 @@ export function SessionPanel(props: Props) {
   const panelFields = createMemoFields(() => sessionPanelDefaults(props));
   const panel = () => panelFields;
   const storedGroups = props.sidebar;
-  const { collapsedProjects, customGroupsByKey, groupDestination, normalizedQuery, visualProjectKey, filtered, groups, sidebarEntries, validateGroupName, saveGroup, removeGroup, toggleProject, expandProject, moveSession, placeSidebarEntry } = storedGroups;
+  const { collapsedProjects, customGroupsByKey, parentGroupsByKey, groupDestination, normalizedQuery, visualProjectKey, filtered, groups, sidebarEntries, validateGroupName, saveGroup, removeGroup, toggleProject, expandProject, moveSession, placeSidebarEntry } = storedGroups;
   const { projectParent, canMoveProject, moveProject, groupEntries, placeGroupEntry } = storedGroups;
   const siblingEntries = (parent?: string) => sidebarEntries().filter(token => projectParent(token.slice("group:".length)) === parent);
 
@@ -276,7 +276,7 @@ export function SessionPanel(props: Props) {
     const customDropDestination = (hit: Element | null) => {
       const destination = hit?.closest<HTMLElement>("[data-drop-project-key]")?.dataset.dropProjectKey;
 
-      return destination && customGroupsByKey().has(destination) ? destination : undefined;
+      return destination && parentGroupsByKey().has(destination) ? destination : undefined;
     };
 
     const entryDropLocation = (parentKey: string | undefined, token: string, edge: "before" | "after") => {
@@ -504,7 +504,7 @@ export function SessionPanel(props: Props) {
       if (parent) placeGroupEntry(parent, token, before);
       else placeSidebarEntry(token, before);
     },
-    "aria-description": isFixedGroup(projectKey) ? "Always shown below project groups." : !normalizedQuery() ? "Drag to reorder or move into a group. Custom groups can nest up to three levels. Press Alt plus Up or Down to reorder." : undefined,
+    "aria-description": isFixedGroup(projectKey) ? "Always shown below project groups." : !normalizedQuery() ? "Drag to reorder or move into a group. Custom groups can nest up to three levels. Project groups can hold custom groups but not other project groups. Press Alt plus Up or Down to reorder." : undefined,
     "aria-keyshortcuts": !isFixedGroup(projectKey) && !normalizedQuery() ? "Alt+ArrowUp Alt+ArrowDown" : undefined,
   });
 
@@ -638,7 +638,7 @@ export function SessionPanel(props: Props) {
         return [projectKey !== DIRLESS_KEY && renderDropZone(token(), parentKey), <section data-sidebar-token={token()} class={`project ${!normalizedQuery() ? "reorderable" : ""} ${draggedProject() === projectKey ? "dragging" : ""} ${projectKey !== DIRLESS_KEY && (draggedSession() || draggedProject()) && dropTarget()?.projectKey === projectKey && dropTarget()?.layoutBefore === undefined ? "drop-project" : ""}`} >
           {renderProjectHeading()}
           <div id={groupId} class={!isFixedGroup(projectKey) ? "project-children" : undefined} hidden={collapsed()}>
-            <Show when={customGroupsByKey().has(projectKey)} fallback={<Key each={visibleSessions()} by={sessionKey}>{session => <SessionRow session={session()} projectKey={projectKey} />}</Key>}>
+            <Show when={parentGroupsByKey().has(projectKey)} fallback={<Key each={visibleSessions()} by={sessionKey}>{session => <SessionRow session={session()} projectKey={projectKey} />}</Key>}>
               <Key each={groupEntries(projectKey)} by={entry => entry}>{entry => {
                 const session = () => visibleSessions().find(item => sessionLayoutToken(sessionKey(item)) === entry());
 
