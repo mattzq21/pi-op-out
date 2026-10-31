@@ -1,4 +1,3 @@
-import { debugView } from "../lib/debugFeatures";
 import { mergeModelIds } from "../lib/modelVisibility";
 import { RefreshSkills, RefreshTools } from "./RefreshResources";
 import { stableSnapshot, settingsSnapshot, agentEditsSnapshot, settingKeys } from "../lib/settingsSnapshots";
@@ -56,7 +55,7 @@ export const sections: SettingsSection[] = [
 
 export const clientSections = new Set<Section>(["keybinds", "connections", "toasts"]);
 
-export const visibleClientSections = (toastHistory: boolean) => sections.filter(item => clientSections.has(item.id) && (item.id !== "toasts" || toastHistory) && (!item.plugin || pluginSettingsEnabled("local", item.id)));
+export const visibleClientSections = () => sections.filter(item => clientSections.has(item.id) && (!item.plugin || pluginSettingsEnabled("local", item.id)));
 
 export const daemonSections = (hostId: string) => sections.filter((item) => !clientSections.has(item.id) && (item.id !== "hosts" || (hostId === "local" && !isMobile)) && (!item.plugin || pluginSettingsEnabled(hostId, item.id)));
 
@@ -436,8 +435,8 @@ export function SettingsView(props: SettingsViewProps) {
     const fastModeValidationError = invalidFastModeAgent ? `${invalidFastModeAgent.name}: model ${invalidFastModeAgent.model} does not support fast mode` : undefined;
     const formValid = agentValidation().agentsValid && !validationError() && !fastModeValidationError;
     const searchTerms = settingsQuery().trim().toLocaleLowerCase().split(/\s+/).filter(Boolean);
-    const matchingSections = (settingsProps().scope === "client" ? visibleClientSections(debugView(settingsProps().settings).toastHistory) : daemonSections(settingsProps().providerHostId ?? "local")).filter((item) => searchTerms.every((term) => item.label.toLocaleLowerCase().includes(term)));
-    const selectedSection = settingsProps().selectedSection === "toasts" && !debugView(settingsProps().settings).toastHistory ? "keybinds" : settingsProps().selectedSection;
+    const matchingSections = (settingsProps().scope === "client" ? visibleClientSections() : daemonSections(settingsProps().providerHostId ?? "local")).filter((item) => searchTerms.every((term) => item.label.toLocaleLowerCase().includes(term)));
+    const selectedSection = settingsProps().selectedSection;
     const visibleSection = selectedSection ?? (matchingSections.some((item) => item.id === section()) ? section() : matchingSections[0]?.id);
 
     return { invalidFastModeAgent, fastModeValidationError, formValid, searchTerms, matchingSections, visibleSection };

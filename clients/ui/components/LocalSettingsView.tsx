@@ -17,7 +17,6 @@ import { SettingsSaveError } from "../lib/clientPreferenceMerge";
 import { isMobile, listen } from "../lib/platform";
 import type { AgentConfig, AppSettings, Model, SessionSummary, SettingsChange, SettingsPublication as Publication } from "../types";
 import { visibleClientSections, daemonSections, SettingsView, type Section } from "./SettingsView";
-import { debugView } from "../lib/debugFeatures";
 
 interface Props {
   settings: AppSettings;
@@ -53,7 +52,7 @@ export function LocalSettingsView(props: Props) {
 
   return <div class="settings-workspace">
     <nav class="settings-nav settings-host-nav" aria-label="Settings">
-      <div class="settings-nav-group"><p class="eyebrow">Client</p>{<Key each={visibleClientSections(debugView(props.settings).toastHistory)} by={(item) => item.id}>{(item, _index) => <button  disabled={target() !== "client" && (dirty() || saving())} class={target() === "client" && selectedSection() === item().id ? "active" : ""} aria-current={target() === "client" && selectedSection() === item().id ? "page" : undefined} onClick={() => { setTarget("client"); setSelectedSection(item().id); }}><Dynamic component={item().icon} size={16} /><span>{item().label}</span></button>}</Key>}</div>
+      <div class="settings-nav-group"><p class="eyebrow">Client</p>{<Key each={visibleClientSections()} by={(item) => item.id}>{(item, _index) => <button  disabled={target() !== "client" && (dirty() || saving())} class={target() === "client" && selectedSection() === item().id ? "active" : ""} aria-current={target() === "client" && selectedSection() === item().id ? "page" : undefined} onClick={() => { setTarget("client"); setSelectedSection(item().id); }}><Dynamic component={item().icon} size={16} /><span>{item().label}</span></button>}</Key>}</div>
       <div class="settings-nav-group"><p class="eyebrow">Daemons</p>{<Key each={[{ id: "local", name: localHostLabel() }, ...props.settings.hosts.filter((host) => host.enabled !== false)]} by={(host) => host.id}>{(host, _index) => <div ><button class={target() === host().id ? "active" : ""} disabled={target() !== host().id && (dirty() || saving())} aria-expanded={target() === host().id} onClick={() => { if (target() !== host().id) { setTarget(host().id); setSelectedSection("general"); } }}><Monitor size={16} /><span>{host().name}</span></button>{target() === host().id && <div class="settings-daemon-tabs">{<Key each={daemonSections(host().id)} by={(item) => item.id}>{(item, _index) => <button  class={[selectedSection() === item().id ? "active" : "", item().parent ? "sub" : ""].filter(Boolean).join(" ")} aria-current={selectedSection() === item().id ? "page" : undefined} onClick={() => setSelectedSection(item().id)}><Dynamic component={item().icon} size={16} /><span>{item().label}</span></button>}</Key>}</div>}</div>}</Key>}</div>
     </nav>
     <div class="settings-editor-content"><Rerun on={() => target()}>{(_key) => <DaemonSettingsEditor  {...props} preserveHostSettings={preserveHostSettings} target={target()} label={label()} selectedSection={selectedSection()} onDirtyChange={changeDirty} onSavingChange={setSaving} />}</Rerun></div>

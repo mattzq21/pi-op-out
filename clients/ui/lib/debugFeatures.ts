@@ -6,7 +6,6 @@ export const debugFeatures = [
   { id: "toolDetails", label: "Tool details" },
   { id: "mcpServers", label: "MCP server names" },
   { id: "sessionActions", label: "Session ID and file actions" },
-  { id: "toastHistory", label: "Toast history" },
 ] as const;
 
 export type DebugFeature = typeof debugFeatures[number]["id"];
