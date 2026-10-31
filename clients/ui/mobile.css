@@ -11,6 +11,10 @@ html[data-mobile] .messages::-webkit-scrollbar { display: none; }
 .scroll-indicator > div { width: 100%; border-radius: 999px; background: #4a4842; will-change: transform; }
 html[data-mobile] .main-chat .composer piop-composer-field { max-height: clamp(31px, calc(var(--mobile-height, 100dvh) - 200px - env(safe-area-inset-top)), 130px); }
 .mobile-sidebar-backdrop { display: none; }
+html[data-mobile] .app > .icon-rail { position: absolute; top: env(safe-area-inset-top); bottom: env(safe-area-inset-bottom); left: 0; width: calc(min(85vw, 340px) + env(safe-area-inset-left)); padding-left: env(safe-area-inset-left); z-index: 19; }
+html[data-mobile] .app > .icon-rail.compact { display: none; }
+html[data-mobile] .mobile-sidebar-backdrop { display: block; position: absolute; inset: 0; z-index: 18; border: 0; background: #0008; }
+html[data-mobile] .sidebar-resizer { display: none; }
 .composer-settings, .composer-settings-panel, .composer-settings-row { display: contents; }
 .composer-bar .composer-settings-trigger, .composer-settings-row > span { display: none; }
 @media (max-width: 700px) {

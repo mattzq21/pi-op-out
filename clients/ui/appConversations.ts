@@ -82,7 +82,8 @@ export function createAppConversations(preloadChat: () => void, prepareTranscrip
   const sessionIndexRequest = createRef<Promise<void> | undefined>(undefined);
   const sessionIndexDirty = createRef(false);
   const [archivesOpen, setArchivesOpen] = createSignal(false);
-  const [panelOpen, setPanelOpen] = createSignal((() => !window.matchMedia("(max-width: 700px)").matches)());
+  const sidebarFloats = () => isMobile || window.matchMedia("(max-width: 700px)").matches;
+  const [panelOpen, setPanelOpen] = createSignal(!sidebarFloats());
   const [query, setQuery] = createSignal("");
   const [connected, setConnected] = createSignal(false);
   const pendingSettingsCount = createSettingsPendingCount(connected, message => addNotice({ title: "Could not read which sessions still apply saved settings", message }));
@@ -553,7 +554,7 @@ export function createAppConversations(preloadChat: () => void, prepareTranscrip
     return true;
   };
 
-  const closeMobileSidebar = () => { if (window.matchMedia("(max-width: 700px)").matches) setPanelOpen(false); };
+  const closeMobileSidebar = () => { if (sidebarFloats()) setPanelOpen(false); };
 
   const reusableDraftSource = () => {
     const draft = existingSessionDraft();
@@ -680,7 +681,7 @@ export function createAppConversations(preloadChat: () => void, prepareTranscrip
     if (archives.isPending(session) || !canLeaveSettings()) return undefined;
     setArchivesOpen(false);
 
-    if (window.matchMedia("(max-width: 700px)").matches) setPanelOpen(false);
+    if (sidebarFloats()) setPanelOpen(false);
 
     if (session.cwdExists === false) { void openDirlessSession(session, "select");
 
