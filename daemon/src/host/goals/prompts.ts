@@ -1,4 +1,4 @@
-import type { Goal } from "./state.ts";
+import type { Goal } from "./state";
 
 const objectiveUpdated = "The goal was edited by the user. Current goal is:\n{{ objective }}\nAvoid continuing work that only served the previous objective unless it also helps the updated objective.";
 

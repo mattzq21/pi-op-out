@@ -4,7 +4,8 @@ import type { Mutex } from '../util/sync';
 import { GOAL_ENTRY_ID, type QueueState } from './queue_state';
 import { piImages, type QueueDelivery } from './queue_delivery';
 import { commandName } from '../plugin_contributions';
-import { goalSubmission, prepareSubmission, queuedCommand, withImageIds } from './queue_submission';
+import { queuedCommand, withImageIds } from './queue_submission';
+import { activateGoal, goalArgument, goalSubmission, prepareGoal } from './goals/commands';
 
 /**
  * Changes one queued item: removes it, edits it, pauses or resumes it, switches it between steer and follow-up, moves it, or makes an item marked for retry wait again.
@@ -90,15 +91,16 @@ async function editPending(queue: QueueDelivery, target: any, action: { message:
   if (target.behavior === 'steer' && queuedCommand(message)) throw new Error('/' + commandName(message) + ' can only be queued as a follow-up');
   if (jsonEqual(target.message, message) && jsonEqual(current, images)) return null;
   const update: any = { message, images };
-  if (goalSubmission({ message, images })) {
+  if (goalSubmission({ message })) {
     if (images.length) throw new Error('Goals do not accept attachments. Remove the files and images before saving.');
-    const prepared = await prepareSubmission(queue, { message, goalSubmissionId: randomUUID() });
+    const prepared = await prepareGoal(queue, goalArgument(message)!, randomUUID());
     if (prepared === undefined) throw new Error('The goal was not prepared, so the message was not changed.');
-    Object.assign(update, { message: prepared.message, goalSubmissionId: prepared.goalSubmissionId, goalPrepared: true });
-  } else update.goalPrepared = false;
+    Object.assign(update, prepared);
+  } else if (goalArgument(message) !== undefined) throw new Error('Only a goal objective can wait in the queue. Send /goal ' + goalArgument(message) + ' as a new message.');
+  else update.preparedGoal = undefined;
   Object.assign(target, clone(update));
   if (!target.images.length) delete target.images;
-  if (!target.goalPrepared) delete target.goalPrepared;
+  if (!target.preparedGoal) delete target.preparedGoal;
   await queue.publish();
   return null;
 }
@@ -201,20 +203,35 @@ export async function resumeQueue(queue: QueueDelivery): Promise<void> {
 /**
  * Gives Pi the next message it may take, of the given kind, and marks it taken. Pi names the messages it already has, so a daemon that restarted
  * while Pi ran does not give Pi a message twice. Returns the message, or null when none waits, with the offer that is left.
+ * The kind goal gives the goal prompt, when the goal may continue and no message waits before it. A taken /goal message makes its objective the goal;
+ * context lists the messages that go to the model before it.
  */
 export async function takeNext(queue: QueueDelivery, behavior: unknown, holding: unknown): Promise<any> {
-  if (behavior !== 'steer' && behavior !== 'followUp') throw new Error('queue_take needs behavior steer or followUp');
+  if (behavior !== 'steer' && behavior !== 'followUp' && behavior !== 'goal') throw new Error('queue_take needs behavior steer, followUp or goal');
   const state = queue.state;
   const has = new Set(Array.isArray(holding) ? holding.filter(id => typeof id === 'string') : []);
   for (const item of state.pending) if (has.has(text(item, 'id'))) item.taken = true;
+  if (behavior === 'goal') {
+    if (has.size) await queue.publish();
+    const ready = state.goalAvailable() && !state.pending.some(entry => state.available(entry));
+    return { item: ready ? { id: GOAL_ENTRY_ID, insertion: state.goals.prompt() } : null, offer: queue.currentOffer() };
+  }
   const item = state.pending.find(entry => entry.behavior === behavior && state.available(entry));
   if (!item) { if (has.size) await queue.publish(); return { item: null, offer: queue.currentOffer() }; }
+  let context: any[] = [];
+  if (item.preparedGoal) {
+    try { context = [activateGoal(queue, item.preparedGoal)].filter(Boolean); } catch (error) {
+      await takeFailed(queue, item.id, 'The goal could not be set: ' + (error instanceof Error ? error.message : String(error)));
+      return { item: null, offer: queue.currentOffer() };
+    }
+  }
   item.taken = true;
   item.deliveryStarted = true;
   if (item.behavior === 'steer') state.steerTaken.add(text(item, 'id'));
   await queue.publish();
   const taken: any = { id: item.id, message: item.message, behavior: item.behavior };
-  for (const field of ['goalSubmissionId', 'goalPrepared']) if (item[field] !== undefined) taken[field] = clone(item[field]);
+  if (item.goalSubmissionId !== undefined) taken.goalSubmissionId = clone(item.goalSubmissionId);
+  if (context.length) taken.context = context;
   const images = piImages(item);
   if (images) taken.images = images;
   return { item: taken, offer: queue.currentOffer() };
@@ -233,7 +250,7 @@ export async function releaseTaken(queue: QueueDelivery, ids: unknown): Promise<
   if (changed) await queue.publish();
 }
 
-/** Pi could not take the message, for example because its goal preparation is gone. The message stays, marked for retry, and the user sees why. */
+/** Pi could not take the message, for example because its goal could not be set. The message stays, marked for retry, and the user sees why. */
 export async function takeFailed(queue: QueueDelivery, id: unknown, error: unknown): Promise<void> {
   const item = queue.state.pending.find(entry => entry.id === id);
   const reason = typeof error === 'string' && error ? error : 'Pi could not take the message';

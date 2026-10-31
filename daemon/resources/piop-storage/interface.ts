@@ -1,11 +1,6 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
-import type { GoalView } from "../piop-goals/interface.ts";
-
 export interface SessionStorage {
-  knownGoal(file: string, sessionId: string, goalId: string): boolean;
-  readGoal(file: string, sessionId: string): GoalView | null;
-  writeGoal(file: string, sessionId: string, goal: GoalView | null): void;
   append(type: string, data: unknown): void;
 }
 

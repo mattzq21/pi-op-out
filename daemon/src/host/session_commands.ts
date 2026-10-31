@@ -2,7 +2,7 @@ import { kind, text } from './json';
 import { lockGate } from './lock_gate';
 import * as Branching from './branching';
 import * as Contributions from '../plugin_contributions';
-import { goalSubmission } from './queue_submission';
+import { goalSubmission } from './goals/commands';
 import type { Host } from './controller';
 import type { Session } from './session';
 
@@ -61,7 +61,7 @@ async function answerDialog(host: Host, session: Session, runtime: string, comma
     assertOwner();
     const dialog = session.dialogs.get(id);
     if (!dialog || dialog.owner !== runtime) throw new Error('This question is no longer owned by this view. Reopen the conversation to refresh it.');
-    await session.send(command);
+    if (!session.dialogs.answer(id, command)) await session.send(command);
     session.dialogs.resolve(id);
     return null;
   } finally { release(); }

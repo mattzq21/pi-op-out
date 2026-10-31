@@ -1,21 +1,28 @@
-import { lockSync as lockSync } from "../file-lock.cjs";
-import { begin as beginDirectoryRecovery, finish as finishDirectoryRecovery, recoverPublished } from "./goal-directory-recovery.cjs";
-import { read as readDependencies, textContents, savePreparedText, removePreparedText } from "./goal-dependencies.cjs";
-import { markCleanup } from "../session-database.cjs";
+import { lockSync } from "../../../resources/file-lock.cjs";
+import { begin as beginDirectoryRecovery, finish as finishDirectoryRecovery, recoverPublished } from "../../../resources/piop-storage/goal-directory-recovery.cjs";
+import { read as readDependencies, textContents, savePreparedText, removePreparedText } from "../../../resources/piop-storage/goal-dependencies.cjs";
+import { markCleanup } from "../../../resources/session-database.cjs";
 import { link, mkdir, open, rename, rm } from "node:fs/promises";
 import { createHash, randomUUID } from "node:crypto";
 import { closeSync, constants, existsSync, fstatSync, openSync } from "node:fs";
 import { dirname, join } from "node:path";
-import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { validateObjective } from "../piop-goals/state.ts";
 import { Type, type Static } from "typebox";
 import { Parse } from "typebox/value";
-import { read as readPreparation } from "./goal-prepared-files.cjs";
-import { save as savePreparation } from "./goal-preparations.cjs";
-import { allocate as allocateGoalDirectory } from "./goal-ownership.cjs";
-import { acquire as acquireGoalAssets, exists as goalDirectoryExists, claim, directReferences, validPath, discardPreparation, rootForDirectory } from "./goal-assets.cjs";
-import { acquireReferencePublicationLockAsync } from "./reference-publication-lock.cjs";
-import { homedir } from "node:os";
+import { read as readPreparation } from "../../../resources/piop-storage/goal-prepared-files.cjs";
+import { save as savePreparation } from "../../../resources/piop-storage/goal-preparations.cjs";
+import { allocate as allocateGoalDirectory } from "../../../resources/piop-storage/goal-ownership.cjs";
+import { acquire as acquireGoalAssets, exists as goalDirectoryExists, claim, directReferences, validPath, discardPreparation, rootForDirectory } from "../../../resources/piop-storage/goal-assets.cjs";
+import { acquireReferencePublicationLockAsync } from "../../../resources/piop-storage/reference-publication-lock.cjs";
+
+/** The saved conversation that a goal belongs to: its transcript, identity and working folder. */
+export interface GoalPlace { file: string; sessionId: string; cwd: string }
+
+/** Checks the length of an objective and returns it trimmed. */
+export function validateObjective(value: string) {
+  const objective = value.trim();
+  if (!objective || [...objective].length > 4000) throw new Error("Goal objective must contain 1–4,000 characters. Reference a file for longer instructions.");
+  return objective;
+}
 
 const imageSchema = Type.Object({ data: Type.String(), mimeType: Type.Union([Type.Literal("image/png"), Type.Literal("image/jpeg"), Type.Literal("image/gif"), Type.Literal("image/webp")]) });
 
@@ -25,8 +32,6 @@ const draftSchema = Type.Object({ objective: Type.String(), attachments: Type.Ar
 
 const savedFileSchema = Type.Object({ name: Type.String({ pattern: "^(?:goal-objective\\.md|attachment-[1-9][0-9]*\\.(?:txt|png|jpg|gif|webp))$" }), data: Type.String(), digest: Type.String({ pattern: "^[a-f0-9]{64}$" }) });
 
-export const goalImagesSchema = Type.Array(Type.Object({ data: Type.String(), mimeType: Type.String(), name: Type.Optional(Type.String()) }));
-
 const preparationSchema = Type.Object({ version: Type.Literal(1), submissionId: Type.String(), digest: Type.String(), objective: Type.String(), sessionId: Type.String(), sessionPath: Type.Optional(Type.String()), cwd: Type.String(), goalId: Type.Optional(Type.String()), expectedState: Type.Optional(Type.String()), input: Type.Optional(draftSchema), files: Type.Optional(Type.Array(savedFileSchema)) });
 
 export type GoalPreparation = Static<typeof preparationSchema>;
@@ -35,10 +40,14 @@ type Attachment = Static<typeof attachmentSchema>;
 
 const hash = (value: string) => createHash("sha256").update(value).digest("hex");
 
-const preparationDirectory = (ctx: ExtensionContext, id: string) => join(ctx.sessionManager.getSessionDir(), "attachments", `goal-${hash(id)}`);
+const sessionDir = (place: GoalPlace) => dirname(place.file);
 
-async function withGoalPublication<T>(operation: () => Promise<T>) {
-  const publication = await acquireReferencePublicationLockAsync(join(homedir(), process.env.PIOP_STORAGE_DIRECTORY || ".piop"));
+const storageRoot = (place: GoalPlace) => rootForDirectory(sessionDir(place));
+
+const preparationDirectory = (place: GoalPlace, id: string) => join(sessionDir(place), "attachments", `goal-${hash(id)}`);
+
+async function withGoalPublication<T>(place: GoalPlace, operation: () => Promise<T>) {
+  const publication = await acquireReferencePublicationLockAsync(storageRoot(place));
 
   try { return await operation(); }
   finally { publication(); }
@@ -57,9 +66,8 @@ function ownGoalDirectory(directory: string) {
   } catch (error) { closeSync(descriptor); throw error; }
 }
 
-async function markGoalAllocation(ctx: ExtensionContext) {
-  const root = rootForDirectory(ctx.sessionManager.getSessionDir());
-  markCleanup(root, "goal");
+function markGoalAllocation(place: GoalPlace) {
+  markCleanup(storageRoot(place), "goal");
 }
 
 async function syncDirectory(path: string) {
@@ -68,8 +76,8 @@ async function syncDirectory(path: string) {
   try { await directory.sync(); } finally { await directory.close(); }
 }
 
-async function syncPreparation(ctx: ExtensionContext, directory: string) {
-  await syncDirectory(directory); await syncDirectory(dirname(directory)); await syncDirectory(ctx.sessionManager.getSessionDir());
+async function syncPreparation(place: GoalPlace, directory: string) {
+  await syncDirectory(directory); await syncDirectory(dirname(directory)); await syncDirectory(sessionDir(place));
 }
 
 async function writeContent(path: string, content: string | Buffer, restore = false) {
@@ -127,8 +135,8 @@ async function restoreSavedFiles(preparation: GoalPreparation, directory: string
   } finally { release(); }
 }
 
-async function restoreGoalDirectory(ctx: ExtensionContext, preparation: GoalPreparation, directory: string) {
-  const root = rootForDirectory(ctx.sessionManager.getSessionDir());
+async function restoreGoalDirectory(place: GoalPlace, preparation: GoalPreparation, directory: string) {
+  const root = storageRoot(place);
   const release = acquireGoalAssets(root);
 
   try {
@@ -148,16 +156,16 @@ async function restoreGoalDirectory(ctx: ExtensionContext, preparation: GoalPrep
   } finally { release(); }
 }
 
-function retainGoalInput(ctx: ExtensionContext, preparation: GoalPreparation, directory: string, input: Static<typeof draftSchema>) {
+function retainGoalInput(place: GoalPlace, preparation: GoalPreparation, directory: string, input: Static<typeof draftSchema>) {
   if (preparation.input) return;
   preparation.input = input;
-  savePreparation(rootForDirectory(ctx.sessionManager.getSessionDir()), directory, preparation);
+  savePreparation(storageRoot(place), directory, preparation);
 }
 
-export async function readGoalPreparation(ctx: ExtensionContext, id: string) {
-  const root = rootForDirectory(ctx.sessionManager.getSessionDir());
-  recoverPublished(root, preparationDirectory(ctx, id));
-  const saved = readPreparation(root, preparationDirectory(ctx, id));
+async function readGoalPreparation(place: GoalPlace, id: string) {
+  const root = storageRoot(place);
+  recoverPublished(root, preparationDirectory(place, id));
+  const saved = readPreparation(root, preparationDirectory(place, id));
 
   if (saved === undefined) return;
   const preparation = Parse(preparationSchema, saved);
@@ -168,8 +176,9 @@ export async function readGoalPreparation(ctx: ExtensionContext, id: string) {
   return preparation;
 }
 
-export async function goalPreparationView(ctx: ExtensionContext, id: string) {
-  const preparation = await readGoalPreparation(ctx, id);
+/** The saved preparation of a goal submission, for saved input recovery, or null when there is none. */
+export async function goalPreparationView(place: GoalPlace, id: string) {
+  const preparation = await readGoalPreparation(place, id);
 
   if (!preparation) return null;
 
@@ -178,15 +187,16 @@ export async function goalPreparationView(ctx: ExtensionContext, id: string) {
   return { ...view, sessionSaved: Boolean(preparation.sessionPath && existsSync(preparation.sessionPath)) };
 }
 
-function materializedGoal(preparation: GoalPreparation, directory: string, created: boolean) {
+function materializedGoal(place: GoalPlace, preparation: GoalPreparation, directory: string, created: boolean) {
   let bound = Boolean(preparation.goalId);
 
   return {
-    objective: preparation.objective, goalId: preparation.goalId, submissionId: preparation.submissionId,
-    cleanup: () => withGoalPublication(async () => { if (created && !bound) discardPreparation(rootForDirectory(dirname(dirname(directory))), directory, preparation.sessionId); }),
-    bind: (goalId: string, ctx: ExtensionContext, expectedState: string) => withGoalPublication(async () => {
-      const next: GoalPreparation = { ...preparation, goalId, expectedState, sessionId: ctx.sessionManager.getSessionId(), sessionPath: ctx.sessionManager.getSessionFile(), cwd: ctx.cwd };
-      const root = rootForDirectory(ctx.sessionManager.getSessionDir());
+    objective: preparation.objective,
+    cleanup: () => withGoalPublication(place, async () => { if (created && !bound) discardPreparation(storageRoot(place), directory, preparation.sessionId); }),
+    /** Records that the goal goalId uses the prepared files, so they stay while the conversation uses them. */
+    bind: (goalId: string) => withGoalPublication(place, async () => {
+      const next: GoalPreparation = { ...preparation, goalId, sessionId: place.sessionId, sessionPath: place.file, cwd: place.cwd };
+      const root = storageRoot(place);
       claim(root, directory, next.sessionId, next.sessionPath, next.objective);
       savePreparation(root, directory, next);
       bound = true;
@@ -194,18 +204,19 @@ function materializedGoal(preparation: GoalPreparation, directory: string, creat
   };
 }
 
-export async function restoreGoalAttachments(ctx: ExtensionContext, objective: string) {
-  const root = rootForDirectory(ctx.sessionManager.getSessionDir());
+/** Restores the saved files that the objective names, and claims them for the conversation. */
+export async function restoreGoalAttachments(place: GoalPlace, objective: string) {
+  const root = storageRoot(place);
   const directories = directReferences([objective], root);
 
   if (!directories.size) return;
-  await withGoalPublication(async () => {
+  await withGoalPublication(place, async () => {
     for (const directory of directories) {
       if (!validPath(root, directory)) throw new Error("Goal attachment is outside shared storage");
       recoverPublished(root, directory);
       const record = readPreparation(root, directory);
 
-      if (record !== undefined) await restoreGoalDirectory(ctx, Parse(preparationSchema, record), directory);
+      if (record !== undefined) await restoreGoalDirectory(place, Parse(preparationSchema, record), directory);
       const dependencies = readDependencies(root, directory);
 
       for (const dependency of dependencies?.directories ?? []) directories.add(dependency.path);
@@ -213,58 +224,41 @@ export async function restoreGoalAttachments(ctx: ExtensionContext, objective: s
       for (const dependency of directReferences(textContents(root, directory).map(entry => entry.text), root)) directories.add(dependency);
     }
 
-    claim(root, [...directories][0], ctx.sessionManager.getSessionId(), ctx.sessionManager.getSessionFile(), objective);
+    claim(root, [...directories][0], place.sessionId, place.file, objective);
   });
 }
 
-export async function loadMaterializedGoal(ctx: ExtensionContext, id: string) {
-  return withGoalPublication(() => loadPreparedGoal(ctx, id));
+/**
+ * Prepares an objective for a goal: an objective over 4,000 characters goes to a file that the objective then names.
+ * The preparation is saved under the submission ID, so a repeated submission gets the same files.
+ */
+export async function materializeGoal(place: GoalPlace, value: string, submissionId?: string) {
+  return withGoalPublication(place, () => materializeLocked(place, value, submissionId));
 }
 
-async function loadPreparedGoal(ctx: ExtensionContext, id: string) {
-  const preparation = await readGoalPreparation(ctx, id);
-
-  if (!preparation) throw new Error("The queued goal preparation is unavailable. Restore the original submission from saved input recovery.");
-  const directory = preparationDirectory(ctx, id);
-  await restoreGoalDirectory(ctx, preparation, directory);
-  claim(rootForDirectory(ctx.sessionManager.getSessionDir()), directory, ctx.sessionManager.getSessionId(), ctx.sessionManager.getSessionFile(), preparation.objective);
-  await syncPreparation(ctx, directory);
-
-  return materializedGoal(preparation, directory, false);
-}
-
-export async function materializeGoal(value: string, ctx: ExtensionContext, submissionId?: string, images: Static<typeof goalImagesSchema> = []) {
-  return withGoalPublication(() => materializeLocked(value, ctx, submissionId, images));
-}
-
-async function materializeLocked(value: string, ctx: ExtensionContext, submissionId: string | undefined, images: Static<typeof goalImagesSchema>) {
-  const input = value.startsWith("__piop_draft ") ? JSON.parse(value.slice(13)) : { objective: value, attachments: [] };
-
-  const parsed = Parse(draftSchema, input);
-
-  if (parsed.attachments.length || images.length) throw new Error("Goals do not accept attachments. Remove the files and images before sending.");
-  const draft = parsed;
+async function materializeLocked(place: GoalPlace, value: string, submissionId: string | undefined) {
+  const draft = { objective: value, attachments: [] as Attachment[] };
 
   if (!draft.objective.trim()) throw new Error("Goal objective must not be empty.");
   const digest = hash(JSON.stringify(draft));
   const id = submissionId ?? `content:${digest}`;
-  const directory = preparationDirectory(ctx, id);
-  const previous = await readGoalPreparation(ctx, id);
+  const directory = preparationDirectory(place, id);
+  const previous = await readGoalPreparation(place, id);
 
   if (previous) {
     if (previous.digest !== digest) throw new Error("The saved goal submission has different input. Edit the draft before sending a new goal.");
-    await restoreGoalDirectory(ctx, previous, directory);
-    retainGoalInput(ctx, previous, directory, draft);
-    claim(rootForDirectory(ctx.sessionManager.getSessionDir()), directory, ctx.sessionManager.getSessionId(), ctx.sessionManager.getSessionFile(), previous.objective);
-    await syncPreparation(ctx, directory);
+    await restoreGoalDirectory(place, previous, directory);
+    retainGoalInput(place, previous, directory, draft);
+    claim(storageRoot(place), directory, place.sessionId, place.file, previous.objective);
+    await syncPreparation(place, directory);
 
-    return materializedGoal(previous, directory, false);
+    return materializedGoal(place, previous, directory, false);
   }
 
-  const root = join(ctx.sessionManager.getSessionDir(), "attachments");
-  await markGoalAllocation(ctx);
+  const root = join(sessionDir(place), "attachments");
+  markGoalAllocation(place);
   await mkdir(root, { recursive: true, mode: 0o700 });
-  const profile = rootForDirectory(ctx.sessionManager.getSessionDir());
+  const profile = storageRoot(place);
   const allocation = allocateGoalDirectory(profile, root);
   const staging = allocation.directory;
   let savedIdentity: string | undefined;
@@ -274,15 +268,15 @@ async function materializeLocked(value: string, ctx: ExtensionContext, submissio
   try {
     release = ownGoalDirectory(staging);
     const { objective, textFiles } = await saveObjective(staging, directory, draft);
-    const preparation: GoalPreparation = { version: 1, submissionId: id, digest, objective, input: draft, sessionId: ctx.sessionManager.getSessionId(), sessionPath: ctx.sessionManager.getSessionFile(), cwd: ctx.cwd };
+    const preparation: GoalPreparation = { version: 1, submissionId: id, digest, objective, input: draft, sessionId: place.sessionId, sessionPath: place.file, cwd: place.cwd };
     savedIdentity = savePreparedText(profile, staging, textFiles, JSON.stringify(preparation), directory);
     await syncDirectory(staging);
     await rename(staging, directory);
     published = true;
-    claim(rootForDirectory(ctx.sessionManager.getSessionDir()), directory, preparation.sessionId, preparation.sessionPath, preparation.objective);
-    await syncPreparation(ctx, directory);
+    claim(profile, directory, preparation.sessionId, preparation.sessionPath, preparation.objective);
+    await syncPreparation(place, directory);
 
-    return materializedGoal(preparation, directory, true);
+    return materializedGoal(place, preparation, directory, true);
   } finally {
     release?.();
     await rm(staging, { recursive: true, force: true });

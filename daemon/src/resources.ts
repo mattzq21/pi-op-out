@@ -64,6 +64,8 @@ import brokerModule18 from '../resources/session-broker/subagent-state.ts?raw';
 import brokerModule19 from '../resources/session-broker/subagent-reconciliation.ts?raw';
 import brokerModule21 from '../resources/session-broker/orchestration.ts?raw';
 import brokerInputHold from '../resources/session-broker/input-hold.ts?raw';
+import brokerQueueTools from '../resources/session-broker/queue-tools.ts?raw';
+import brokerContextInsertions from '../resources/session-broker/context-insertions.ts?raw';
 import brokerQueueHold from '../resources/session-broker/queue-hold.ts?raw';
 import brokerPromptTools from '../resources/session-broker/prompt-tools.ts?raw';
 import brokerToolInventory from '../resources/session-broker/tool-inventory.ts?raw';
@@ -88,16 +90,6 @@ import controlsFork from '../resources/piop-controls/fork.ts?raw';
 import controlsAuxiliaryCopy from '../resources/piop-controls/auxiliary-copy.ts?raw';
 import controlsCommands from '../resources/piop-controls/commands.ts?raw';
 import controlsFastMode from '../resources/piop-controls/fast-mode.ts?raw';
-import goalsIndex from '../resources/piop-goals/index.ts?raw';
-import goalsInterface from '../resources/piop-goals/interface.ts?raw';
-import goalsGoals from '../resources/piop-goals/goals.ts?raw';
-import goalsState from '../resources/piop-goals/state.ts?raw';
-import goalsPreparation from '../resources/piop-goals/preparation.ts?raw';
-import storageGoalFilesRaw from '../resources/piop-storage/goal-files.ts?raw';
-import goalsPrompts from '../resources/piop-goals/prompts.ts?raw';
-import goalsCoordination from '../resources/piop-goals/coordination.ts?raw';
-import goalsTools from '../resources/piop-goals/tools.ts?raw';
-import goalsCommands from '../resources/piop-goals/commands.ts?raw';
 
 
 const bunEnvironment = 'process.env.PIOP_BUN = ' + JSON.stringify(process.execPath) + ';\n';
@@ -116,7 +108,6 @@ const agentPrompts = embedFileLock(agentPromptsRaw);
 const storagePublicationIo = embedFileLock(storagePublicationIoRaw);
 const storageReferences = embedFileLock(storageReferencesRaw);
 const storageGoalAssets = embedFileLock(storageGoalAssetsRaw);
-const storageGoalFiles = embedFileLock(storageGoalFilesRaw);
 
 export {
   sessionDatabase,
@@ -172,6 +163,8 @@ export const SESSION_BROKER_MODULES: Array<[string, string]> = [
   ['input-hold.ts', brokerInputHold],
   ['queue-hold.ts', brokerQueueHold],
   ['prompt-tools.ts', brokerPromptTools],
+  ['queue-tools.ts', brokerQueueTools],
+  ['context-insertions.ts', brokerContextInsertions],
   ['tool-inventory.ts', brokerToolInventory],
   ['auxiliary.ts', brokerAuxiliary],
   ['agent-profiles.ts', brokerModule23],
@@ -191,7 +184,6 @@ export const SESSION_EXTENSIONS: Array<[string, Array<[string, string]>]> = [
     ['goals.cjs', goalsRecords],
     ['session-records.cjs', sessionStateRecords],
     ['session-storage.mjs', embedFileLock(sessionStorageRaw)],
-    ['goal-files.ts', storageGoalFiles],
     ['goal-directory-recovery.cjs', storageGoalRecovery],
     ['goal-assets.cjs', storageGoalAssets],
     ['goal-dependencies.cjs', storageGoalDependencies],
@@ -212,10 +204,5 @@ export const SESSION_EXTENSIONS: Array<[string, Array<[string, string]>]> = [
   ['piop-controls', [
     ['interface.ts', controlsInterface], ['stop.ts', controlsStop], ['fork.ts', controlsFork], ['auxiliary-copy.ts', controlsAuxiliaryCopy],
     ['commands.ts', controlsCommands], ['fast-mode.ts', controlsFastMode], ['index.ts', controlsIndex],
-  ]],
-  ['piop-goals', [
-    ['interface.ts', goalsInterface], ['state.ts', goalsState], ['prompts.ts', goalsPrompts], ['coordination.ts', goalsCoordination],
-    ['preparation.ts', goalsPreparation], ['goals.ts', goalsGoals], ['tools.ts', goalsTools],
-    ['commands.ts', goalsCommands], ['index.ts', goalsIndex],
   ]],
 ];

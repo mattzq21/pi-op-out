@@ -22,6 +22,9 @@ import { CommandRefusedError } from '../pi_rejection';
 import { ToolPayload, type ToolPayloadCache } from './tool_payload';
 import type { RuntimeEvent, RuntimeEventSource } from './runtime_events';
 import { RuntimeWorker, type Request, type WorkerObserver } from './worker';
+import { QueueGoal } from './goals/state';
+import { GOAL_COMMAND } from './goals/commands';
+import { goalPreparationView, restoreGoalAttachments, type GoalPlace } from './goals/files';
 
 /** The controller functions that a session calls. */
 export interface SessionHost {
@@ -34,7 +37,7 @@ export interface SessionHost {
   finished(key: string, epoch: string, transient: boolean): void;
   maintenance(key: string): void;
   canStopIdle(session: Session): boolean;
-  /** True when name is an extension command that Pi runs at once, such as goal. */
+  /** True when name is an extension command that Pi runs at once, such as cap. */
   extensionCommand(name: string): boolean;
   refreshProviders(): Promise<number>;
   /** Called when the state of the conversation identity changes, starts or stops. */
@@ -94,8 +97,10 @@ export class Session {
   /** Last stderr lines from Pi, kept for error reports. */
   stderrTail: string[] = [];
   providerRevision = 0;
+  /** Errors that came while no view showed the chat. The first view that opens it gets them. */
+  private unseenErrors: any[] = [];
 
-  private constructor(launch: SessionLaunch, identity: string, pending: any[], storage: QueueStorage | null, private host: SessionHost, private toolPayloads: ToolPayloadCache, held: boolean) {
+  private constructor(launch: SessionLaunch, identity: string, pending: any[], storage: QueueStorage | null, private host: SessionHost, private toolPayloads: ToolPayloadCache, held: boolean, goal: QueueGoal) {
     this.identity = identity;
     this.clientIdValue = launch.clientId;
     this.spec = launch.spec;
@@ -112,8 +117,12 @@ export class Session {
         this.spec.env.PIOP_QUEUE_HELD = held ? '1' : '0';
         await this.execute({ type: 'queue_hold', held });
       },
+      ask: dialog => this.dialogs.ask(dialog),
+      goalPlace: () => this.goalPlace(),
+      goalStatus: event => { setEntry(this.statuses, 'setStatus:piop-goal', event); this.publish(event, null); },
     };
-    this.queue = new SessionQueue(executor, pending, storage, held);
+    this.queue = new SessionQueue(executor, pending, storage, held, goal);
+    setEntry(this.statuses, 'setStatus:piop-goal', this.queue.goalStatus());
     this.dialogs = new SessionDialogs({
       views: () => this.viewsList,
       readonly: runtime => this.host.readonly(runtime),
@@ -132,18 +141,46 @@ export class Session {
     const held = storage?.held() ?? false;
     const recovered = storage ? await storage.recover(pending) : pending;
     const identity = argument(launch.spec, '--session') !== undefined ? launch.key : (argument(launch.spec, '--session-id') ?? launch.key);
-    const session = new Session(launch, identity, recovered, storage, host, toolPayloads, held);
+    // The queue owns the goal, so the chat shows it before Pi starts.
+    let goal = new QueueGoal();
+    let goalError: string | undefined;
+    try { goal = QueueGoal.restore(argument(launch.spec, '--session')); } catch (error) { goalError = 'Could not restore goal: ' + errorText(error); }
+    const session = new Session(launch, identity, recovered, storage, host, toolPayloads, held, goal);
+    if (goalError) session.goalError(goalError);
     session.spec.env.PIOP_QUEUE_HELD = held ? '1' : '0';
     await session.reconcileQueue();
     assertRunning();
     session.worker = RuntimeWorker.spawn(session.spec, session.identity, launch.timeout, session.observer(), home);
+    session.restoreGoalFiles();
     return session;
+  }
+
+  /** The saved conversation that the goal belongs to. */
+  private goalPlace(): GoalPlace {
+    const file = typeof this.state?.sessionFile === 'string' ? this.state.sessionFile : argument(this.spec, '--session');
+    if (!file) throw new Error('Goals require a saved conversation.');
+    const sessionId = typeof this.state?.sessionId === 'string' ? this.state.sessionId : this.identity;
+    return { file, sessionId, cwd: this.cwd ?? (typeof this.state?.cwd === 'string' ? this.state.cwd : dirname(file)) };
+  }
+
+  /** Restores the saved files that the goal's objective names, so the agent can read them. Runs while the chat opens. */
+  private restoreGoalFiles(): void {
+    const goal = this.queue.liveGoal();
+    if (!goal) return;
+    void restoreGoalAttachments(this.goalPlace(), goal.objective).catch(error => this.goalError('Could not restore the goal files: ' + errorText(error)));
+  }
+
+  /** Reports a goal failure to the daemon log and to the views. A chat that no view shows yet tells the first view that opens it. */
+  private goalError(message: string): void {
+    this.host.output({ type: 'diagnostic', line: this.key + ': ' + message });
+    const event = { type: 'extension_ui_request', id: randomUUID(), method: 'notify', notifyType: 'error', message };
+    if (this.viewsList.length) this.publish(event, null); else this.unseenErrors.push(event);
   }
 
   private observer(): WorkerObserver {
     return {
       // inOrder already reports a failed event; the returned promise only tells the worker when the event is done.
-      event: event => this.inOrder(() => this.receive(event)).then(() => {}, () => {}),
+      event: event => { this.queue.observe(event); return this.inOrder(() => this.receive(event)).then(() => {}, () => {}); },
       // Queue requests wait for the queue's lock, which a queue command can hold while it waits for a Pi response. They skip the event order, so that response is not stuck behind them.
       runtimeEvent: event => event.name.startsWith('queue_') ? this.receiveRuntimeEvent(event) : this.inOrder(() => this.receiveRuntimeEvent(event)),
       // The requester receives a failed response, so it is not also reported as a diagnostic.
@@ -297,6 +334,7 @@ export class Session {
     this.idleStop.cancel();
     setEntry(this.viewsList, runtime, presence);
     for (const [, event] of [...this.statuses]) this.publish(event, runtime);
+    for (const event of this.unseenErrors.splice(0)) this.publish(event, runtime);
     this.publish(this.queue.view(), runtime);
     this.publish({ type: 'settings_pending', pending: this.settings.pending() }, runtime);
     const error = this.settings.lastError();
@@ -510,6 +548,13 @@ export class Session {
       case 'get_session_revision': return { revision: this.revision() };
       case 'get_tool_payload': return this.collectToolPayload(command);
       case 'get_queued_image': return this.queuedImage(command);
+      case 'get_goal_preparation': return goalPreparationView(this.goalPlace(), text(command, 'goalSubmissionId'));
+      case 'get_commands': {
+        // Piop runs /goal itself, so Pi does not list it.
+        const result = await this.executeWorker(command);
+        if (Array.isArray(result?.commands)) result.commands.unshift({ ...clone(GOAL_COMMAND), source: 'extension' });
+        return result;
+      }
       case 'get_snapshot': { const snapshot = await this.collectSnapshot(); if (flag(command, 'recent') && snapshot?.history) recentHistory(snapshot.history, this.isWorking, command.listedBefore); return snapshot; }
       case 'get_entries': { const snapshot = await this.collectSnapshot(); return snapshot?.history ?? null; }
       case 'get_older_history': return olderHistory(await this.raw({ type: 'get_entries' }), command.before, command.through);
@@ -603,8 +648,6 @@ export class Session {
   // Responses from Pi.
 
   private async response(event: any, request: Request): Promise<any> {
-    const goal = await this.rejectGoalPreparation(event, request);
-    if (goal) { if ('error' in goal) throw new CommandRefusedError(goal.error); return goal.value; }
     try { this.responseError(event, request); } catch (error) {
       if (flag(request.command, 'discardOnRejection')) await this.queue.rejected(text(request.command, 'queueId'));
       throw error;
@@ -619,15 +662,6 @@ export class Session {
   private responseError(event: any, request: Request): void {
     if (request.requestType === 'prompt' || request.requestType === 'queue_prompt') this.promptErrors.check(request.command, event?.data?.submittedText);
     if (!flag(event, 'success')) throw new CommandRefusedError(typeof event?.error === 'string' ? event.error : 'Pi command failed');
-  }
-
-  private async rejectGoalPreparation(event: any, request: Request): Promise<{ value: any } | { error: string } | undefined> {
-    if (flag(event, 'success') || event?.rejection !== 'goal_preparation') return undefined;
-    if (request.requestType === 'queue_prompt' && !flag(request.command, 'discardOnRejection')) {
-      return { error: typeof event.error === 'string' ? event.error : 'Goal prompt preparation failed' };
-    }
-    if (flag(request.command, 'discardOnRejection')) await this.queue.rejected(text(request.command, 'queueId'));
-    return { value: false };
   }
 
   private async receiveState(data: any): Promise<void> {

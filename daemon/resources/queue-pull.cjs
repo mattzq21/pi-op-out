@@ -5,8 +5,13 @@
  *
  * The daemon offers how many steering messages and follow-ups wait (queue_offer). Pi's checks for queued messages count them, so a run goes on while messages wait,
  * and an extension that starts work on its own sees them. Pi takes a message at a steering poll, at a follow-up poll, when a run could continue,
- * and when Pi is idle while messages wait. A taken message goes through prompt like a sent message, so commands, templates and goal objectives work as before.
+ * and when Pi is idle while messages wait. A taken message goes through prompt like a sent message, so commands and templates work as before.
  * When a run settles, the messages that Pi took but did not use go back to the daemon. The transcript decides which messages Pi used.
+ *
+ * The queue also owns the conversation's goal. The offer tells whether the goal may continue its work. Pi then takes the goal prompt when a run
+ * that completed would end, and when Pi is idle with no message waiting. The goal prompt is a context insertion: a custom message that the daemon
+ * builds. A taken message may bring context insertions that go before it. Pi tells the daemon when a run fails or stops, so an active goal pauses.
+ * The offer also names the tools that the queue answers and whether each must stay in the prompt.
  */
 
 const pullState = Symbol("piop.queue-pull");
@@ -16,16 +21,22 @@ const userText = message => message?.role === "user" && Array.isArray(message.co
 /**
  * The queue pull of a session. ask(name, data) sends a runtime event that the daemon answers. prompt(session, item) passes a taken message to Pi
  * and resolves with Pi's preflight disposition: "queued" or "started" when Pi took it, "handled" when an extension handled it at once.
+ * insert(session, message) adds a context insertion that starts or continues a turn. tools(state) shows the queue's tools that state keeps in the prompt.
  */
-function queuePull(session, { ask, prompt } = {}) {
+function queuePull(session, { ask, prompt, insert, tools } = {}) {
   if (session[pullState]) return session[pullState];
-  if (!ask || !prompt) throw new Error("The queue pull of this session is not bound");
+  if (!ask || !prompt || !insert || !tools) throw new Error("The queue pull of this session is not bound");
 
-  /** How many messages of each kind the daemon offers, numbered by the daemon, and the ids of the daemon's messages that Pi took and has not used yet. */
-  const offer = { steer: 0, followUp: 0, sequence: 0 };
+  /**
+   * How many messages of each kind the daemon offers, whether the goal may continue (goal is 1), numbered by the daemon,
+   * and the ids of the daemon's messages that Pi took and has not used yet.
+   */
+  const offer = { steer: 0, followUp: 0, goal: 0, sequence: 0 };
   const holding = new Set();
   let starting = false;
+  let toolState = "";
 
+  /** True when messages of a kind wait. Without a kind, true when any message waits; the goal is not a waiting message. */
   const offered = kind => kind ? offer[kind] > 0 : offer.steer + offer.followUp > 0;
 
   /** Keeps the newest offer. An offer and the answer to a take can cross, so an older one is ignored. */
@@ -34,10 +45,24 @@ function queuePull(session, { ask, prompt } = {}) {
     offer.sequence = next.sequence;
     offer.steer = Number.isInteger(next.steer) && next.steer > 0 ? next.steer : 0;
     offer.followUp = Number.isInteger(next.followUp) && next.followUp > 0 ? next.followUp : 0;
+    offer.goal = next.goal === 1 ? 1 : 0;
+    const state = next.tools && typeof next.tools === "object" ? JSON.stringify(next.tools) : toolState;
+
+    if (state !== toolState) {
+      toolState = state;
+      try { tools(next.tools); } catch (error) { console.error(`Could not update the queue's tools: ${error instanceof Error ? error.message : String(error)}`); }
+    }
+
     return true;
   };
 
-  /** Takes the next message of a kind and passes it to Pi. Returns true when Pi queued it or started a run with it. */
+  /** Tells the daemon that a run failed or stopped, so an active goal pauses before Pi could take its next turn. */
+  const report = async outcome => {
+    try { update(await ask("queue_outcome", { outcome })); }
+    catch (error) { console.error(`Could not report how the run ended: ${error instanceof Error ? error.message : String(error)}`); }
+  };
+
+  /** Takes the next message of a kind, or the goal prompt, and passes it to Pi. Returns true when Pi queued it or started a run with it. */
   const take = async kind => {
     if (!offered(kind)) return false;
     let answer;
@@ -49,9 +74,17 @@ function queuePull(session, { ask, prompt } = {}) {
     const item = answer?.item;
 
     if (!item) return false;
+
+    if (item.insertion) {
+      try { await insert(session, item.insertion); return true; }
+      catch (error) { console.error(`Could not add the goal prompt: ${error instanceof Error ? error.message : String(error)}`); return false; }
+    }
+
     holding.add(item.id);
 
     try {
+      // Messages that go to the model before the taken message, such as the notice that a new goal is set.
+      for (const message of Array.isArray(item.context) ? item.context : []) await session.sendCustomMessage(message, { triggerTurn: false });
       const disposition = await prompt(session, item);
 
       if (disposition !== "handled") return true;
@@ -66,12 +99,12 @@ function queuePull(session, { ask, prompt } = {}) {
     }
   };
 
-  /** Starts a run with the next message when Pi is idle while messages wait. Steering messages go first. */
+  /** Starts a run with the next message when Pi is idle while messages wait. Steering messages go first, the goal last. */
   const start = async () => {
-    if (starting || session.isStreaming || session.isCompacting || !offered()) return;
+    if (starting || session.isStreaming || session.isCompacting || !(offered() || offered("goal"))) return;
     starting = true;
 
-    try { if (!(await take("steer"))) await take("followUp"); }
+    try { if (!(await take("steer")) && !(await take("followUp"))) await take("goal"); }
     finally { starting = false; }
   };
 
@@ -114,13 +147,29 @@ function queuePull(session, { ask, prompt } = {}) {
   bindAgent(session, pull);
   const settled = session._emitAgentSettled;
   session._emitAgentSettled = async function (...args) {
+    const aborted = this._agentRunAbortRequested;
     try { await releaseUnused(); } catch (error) { console.error(`Could not return unused queued messages: ${error instanceof Error ? error.message : String(error)}`); }
+    if (aborted) await report("aborted");
     const result = await settled.apply(this, args);
     void start().catch(error => console.error(error));
     return result;
   };
 
-  // The goals extension and others ask whether messages wait; the daemon's waiting messages count.
+  // A run that completed and would end goes on with the goal's next turn, after the messages that wait. A run that failed pauses the goal.
+  const beforeSettle = session._runBeforeSettleBoundary;
+  session._runBeforeSettleBoundary = async function (...args) {
+    const outcome = this._lastActivityOutcome;
+
+    if (outcome !== "completed") await report(outcome);
+
+    if (await beforeSettle.apply(this, args)) return true;
+
+    if (outcome !== "completed" || this._agentRunAbortRequested) return false;
+
+    return take("goal");
+  };
+
+  // Extensions ask whether messages wait; the daemon's waiting messages count, and the goal does not.
   const count = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(session), "pendingMessageCount") ?? Object.getOwnPropertyDescriptor(session.constructor.prototype, "pendingMessageCount");
   Object.defineProperty(session, "pendingMessageCount", { configurable: true, get() { return (count?.get?.call(this) ?? 0) + offer.steer + offer.followUp; } });
 

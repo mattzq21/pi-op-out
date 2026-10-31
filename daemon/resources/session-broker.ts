@@ -7,6 +7,8 @@ import { registerOrchestration } from "./session-broker/orchestration.ts";
 import { registerInputHold } from "./session-broker/input-hold.ts";
 import { registerQueueHold } from "./session-broker/queue-hold.ts";
 import { registerPromptTools } from "./session-broker/prompt-tools.ts";
+import { registerQueueTools } from "./session-broker/queue-tools.ts";
+import { registerContextInsertions } from "./session-broker/context-insertions.ts";
 import { registerToolInventory } from "./session-broker/tool-inventory.ts";
 import { registerAuxiliaryChats } from "./session-broker/auxiliary.ts";
 import { existsSync } from "node:fs";
@@ -40,6 +42,8 @@ export default function sessionBroker(pi: ExtensionAPI) {
   registerInputHold(pi);
   registerQueueHold(pi);
   const promptTools = registerPromptTools(pi);
+  registerQueueTools(pi);
+  registerContextInsertions(pi);
   registerConversationClient(pi);
   registerOrchestration(pi);
   registerSubagents(pi);

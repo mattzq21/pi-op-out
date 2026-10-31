@@ -1,5 +1,6 @@
-import { clone, text } from './json';
+import { clone, jsonEqual, text } from './json';
 import { errorText } from '../util/sync';
+import type { GoalPlace } from './goals/files';
 import type { QueueOffer, QueueState } from './queue_state';
 import type { QueueRecord } from './queue_record';
 
@@ -12,6 +13,12 @@ export interface Execution {
   extensionCommand?(name: string): boolean;
   /** Tells Pi whether the queue is on hold, so extensions do not send queued work on their own while it is. */
   queueHeld(held: boolean): Promise<void>;
+  /** Asks the user in a dialog, the way a Pi extension does. Resolves with the answer: { value }, { confirmed } or { cancelled }. */
+  ask?(dialog: any): Promise<any>;
+  /** The saved conversation, for its goal. Throws when the conversation is not saved. */
+  goalPlace?(): GoalPlace;
+  /** Shows the goal status to clients now, and to each client that opens the chat later. */
+  goalStatus?(event: any): void;
 }
 
 /** Saves the queue, publishes it to clients, and tells Pi how many messages it may take. Delivers the commands that Pi runs at once. */
@@ -36,6 +43,18 @@ export class QueueDelivery {
   /** Tells Pi whether the queue is on hold. */
   tellHeld(held: boolean): Promise<void> { return this.executor.queueHeld(held); }
 
+  ask(dialog: any): Promise<any> {
+    if (!this.executor.ask) return Promise.reject(new Error('This conversation cannot ask questions'));
+    return this.executor.ask(dialog);
+  }
+
+  goalPlace(): GoalPlace {
+    if (!this.executor.goalPlace) throw new Error('Goals require a saved conversation.');
+    return this.executor.goalPlace();
+  }
+
+  goalStatus(event: any): void { this.executor.goalStatus?.(event); }
+
   async publish(): Promise<void> {
     this.state.order();
     this.state.durableMessages();
@@ -48,7 +67,7 @@ export class QueueDelivery {
   /** Tells Pi how many messages it may take. force sends it again, for a Pi that just started. */
   offer(force = false): void {
     const offer = this.state.offer();
-    if (!force && this.offered && this.offered.steer === offer.steer && this.offered.followUp === offer.followUp) return;
+    if (!force && this.offered && jsonEqual(this.offered, offer)) return;
     this.offered = offer;
     const sequence = ++this.sequence;
     this.offers = this.offers.then(() => this.executor.execute({ type: 'queue_offer', ...offer, sequence })).then(() => undefined, error => {
@@ -71,7 +90,7 @@ export class QueueDelivery {
     const id = text(item, 'id');
     this.state.sending.add(id);
     const command: any = { type: 'queue_prompt', queueId: id, message: item.message ?? null, streamingBehavior: item.behavior ?? null, discardOnRejection };
-    for (const field of ['goalSubmissionId', 'goalPrepared']) if (item[field] !== undefined) command[field] = clone(item[field]);
+    if (item.goalSubmissionId !== undefined) command.goalSubmissionId = clone(item.goalSubmissionId);
     const images = piImages(item);
     if (images) command.images = images;
     try {

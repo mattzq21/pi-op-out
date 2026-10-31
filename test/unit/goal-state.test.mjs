@@ -4,7 +4,6 @@ import { test } from 'node:test';
 import { mkdtempSync, mkdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { GoalState } from '../../daemon/resources/piop-goals/state.ts';
 import goals from '../../daemon/resources/piop-storage/goals.cjs';
 import database from '../../daemon/resources/session-database.cjs';
 
@@ -16,71 +15,60 @@ function fixture(t) {
   const db = database.open(root);
   db.prepare('INSERT INTO sessions VALUES (?, ?)').run('chat-1', file);
   db.close();
-  const handlers = new Map();
-  const entries = [];
-  const pi = { events: { on: (name, fn) => { handlers.set(name, fn); return () => handlers.delete(name); }, emit: (name, request) => handlers.get(name)?.(request) }, appendEntry: (...entry) => entries.push(entry) };
-  storageExtension(pi);
-  const ctx = { sessionManager: { getSessionId: () => 'chat-1', getSessionFile: () => file }, ui: { setWidget() {}, setStatus() {} } };
-  return { root, file, entries, ctx, state: new GoalState(pi, () => false), reopen: () => new GoalState(pi, () => false) };
+  return { root, file };
 }
 
-/** Sets a new active goal, as /goal does. */
+/** Saves a new active goal, as /goal does. */
 function setGoal(f, objective) {
-  f.state.goal = { id: crypto.randomUUID(), sessionId: 'chat-1', objective, status: 'active' };
-  f.state.save(f.ctx);
+  const goal = { id: crypto.randomUUID(), sessionId: 'chat-1', objective, status: 'active' };
+  goals.write(f.file, 'chat-1', goal);
+  return goal;
 }
 
-test('goal changes and clearing survive reload without transcript entries', t => {
+test('goal changes and clearing are saved without transcript entries, and an opened chat reads them', t => {
   const f = fixture(t);
-  setGoal(f, 'Finish the task');
-  const id = f.state.goal.id;
-  f.state.setStatus(f.ctx, 'paused');
-  const restored = f.reopen();
-  restored.restore(f.ctx);
-  assert.deepEqual(restored.response(), { goal: { id, sessionId: 'chat-1', objective: 'Finish the task', status: 'paused' } });
-  restored.clear(f.ctx);
-  assert.equal(restored.known(f.ctx, id), true);
-  f.state.restore(f.ctx);
-  assert.equal(f.state.goal, null);
-  assert.deepEqual(f.entries, []);
+  const goal = setGoal(f, 'Finish the task');
+  goals.write(f.file, 'chat-1', { ...goal, status: 'paused' });
+  assert.deepEqual(goals.restore(f.file), { goal: { ...goal, status: 'paused' }, waitingForInput: false });
+  goals.write(f.file, 'chat-1', null);
+  assert.deepEqual(goals.restore(f.file), { goal: null, waitingForInput: false });
+  assert.deepEqual(goals.restore(join(f.root, 'sessions', 'unregistered.jsonl')), { goal: null, waitingForInput: false });
+});
+
+test('an opened branch reads that its goal waits for the user\'s first message', t => {
+  const f = fixture(t);
+  setGoal(f, 'Keep the branch going');
+  const db = database.open(f.root);
+  db.prepare("INSERT INTO session_extension_state VALUES ('chat-1', 'piop-input-hold', ?)").run(JSON.stringify({ type: 'custom', customType: 'piop-input-hold', data: { held: true } }));
+  db.close();
+  assert.equal(goals.restore(f.file).waitingForInput, true);
 });
 
 test('forks copy current goal with independent identity and state', t => {
   const f = fixture(t);
-  setGoal(f, 'First objective');
+  const goal = setGoal(f, 'First objective');
   const target = join(f.root, 'sessions', 'fork.jsonl');
   const db = database.open(f.root);
   db.prepare('INSERT INTO sessions VALUES (?, ?)').run('chat-2', target);
   db.close();
   goals.copy(f.file, target, 'chat-2');
   const fork = goals.read(target);
-  assert.notEqual(fork.id, f.state.goal.id);
+  assert.notEqual(fork.id, goal.id);
   assert.equal(fork.sessionId, 'chat-2');
   assert.equal(fork.objective, 'First objective');
-  f.state.clear(f.ctx);
+  goals.write(f.file, 'chat-1', null);
   assert.deepEqual(goals.read(target), fork);
-});
-
-test('a failed save restores the last saved in-memory state', t => {
-  const f = fixture(t);
-  setGoal(f, 'Keep working');
-  const db = database.open(f.root);
-  db.exec("CREATE TRIGGER reject_goal BEFORE UPDATE ON session_goals BEGIN SELECT RAISE(ABORT, 'Save failed'); END");
-  db.close();
-  assert.throws(() => f.state.setStatus(f.ctx, 'paused'), /Save failed/);
-  assert.equal(f.state.goal.status, 'active');
-  assert.equal(goals.read(f.file).status, 'active');
 });
 
 test('archive and restore keep goals; deletion removes them', t => {
   const f = fixture(t);
-  setGoal(f, 'Keep working');
+  const goal = setGoal(f, 'Keep working');
   const archived = join(f.root, 'archived', 'chat.jsonl');
   const db = database.open(f.root);
   db.prepare('UPDATE sessions SET session_path=? WHERE session_id=?').run(archived, 'chat-1');
-  assert.deepEqual(goals.read(archived), f.state.goal);
+  assert.deepEqual(goals.read(archived), goal);
   db.prepare('UPDATE sessions SET session_path=? WHERE session_id=?').run(f.file, 'chat-1');
-  assert.deepEqual(goals.read(f.file), f.state.goal);
+  assert.deepEqual(goals.read(f.file), goal);
   db.prepare('DELETE FROM sessions WHERE session_id=?').run('chat-1');
   assert.equal(db.prepare('SELECT count(*) AS n FROM session_goals').get().n, 0);
   db.close();
@@ -89,8 +77,8 @@ test('archive and restore keep goals; deletion removes them', t => {
 test('invalid or mismatched goals are rejected', t => {
   const f = fixture(t);
   assert.throws(() => goals.write(f.file, 'chat-1', { status: 'blocked' }), /Invalid saved goal/);
-  setGoal(f, 'Finish');
-  assert.throws(() => goals.write(f.file, 'chat-1', { ...f.state.goal, sessionId: 'other' }), /another conversation/);
+  const goal = setGoal(f, 'Finish');
+  assert.throws(() => goals.write(f.file, 'chat-1', { ...goal, sessionId: 'other' }), /another conversation/);
 });
 
 test('storage remains available while other extensions save during shutdown', async () => {

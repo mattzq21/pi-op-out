@@ -1,17 +1,20 @@
 import { CancelScope, clone, flag, kind, text } from './json';
 import { Mutex, errorText } from '../util/sync';
 import type { QueueStorage } from './queue_storage';
-import { QueueState, goalStatus, type QueueGoal } from './queue_state';
+import { QueueState } from './queue_state';
 import { QueueRecord, track } from './queue_record';
 import { QueueDelivery, type Execution } from './queue_delivery';
 import { changePending, holdQueue, releaseTaken, resumeQueue, takeFailed, takeNext } from './queue_changes';
 import { enqueue, queuedCommand } from './queue_submission';
+import { QueueGoal } from './goals/state';
+import { goalArgument, goalChanged, goalCommand, queueTool, runEnded } from './goals/commands';
 
 const TIMEOUT = 'Pi command timed out';
 
 /**
  * The queued input of one session. The daemon is the only owner of the queue and saves it: Pi takes a message when it is ready for one,
  * and a message leaves the queue when Pi's transcript holds it. A message that Pi took but did not use, or that Pi lost when it stopped, waits again.
+ * The queue also owns the conversation's goal: /goal messages change it, Pi takes its turns from the queue, and the agent's goal tool calls come here.
  */
 export class SessionQueue {
   private s = new QueueState();
@@ -22,8 +25,9 @@ export class SessionQueue {
   /** Serializes commands that change the queue. */
   readonly gate = new Mutex();
 
-  constructor(executor: Execution, pending: any[] = [], storage: QueueStorage | null = null, held = false) {
+  constructor(executor: Execution, pending: any[] = [], storage: QueueStorage | null = null, held = false, goal = new QueueGoal()) {
     this.s.held = held;
+    this.s.goals = goal;
     this.s.retained = clone(pending);
     this.s.pending = clone(pending);
     this.s.order();
@@ -48,6 +52,17 @@ export class SessionQueue {
 
   tagEntries(entries: any): void { this.s.tagEntries(entries); }
 
+  /** The goal status event that clients show. */
+  goalStatus(): any { return this.s.goals.status(); }
+
+  /** The goal while it has a place in the queue: active or paused. */
+  liveGoal() { return this.s.goals.live(); }
+
+  /** Sees an event from Pi as soon as it arrives, before events that came earlier are handled. A goal tool call that comes after it then knows what the model got. */
+  observe(event: any): void {
+    if (kind(event) === 'message_end') this.s.goals.added(event.message);
+  }
+
   /** Tells a Pi that just started how many messages it may take. */
   offer(): void { this.delivery.offer(true); }
 
@@ -59,8 +74,8 @@ export class SessionQueue {
     }
     // The transcript confirmed messages as used, so they left the queue.
     if (this.s.pending.length !== before) await this.delivery.reportStorageError(() => this.delivery.publish());
-    const goal = goalStatus(event);
-    if (goal !== undefined) this.goalChanged(goal);
+    // A run started, so a chat that waited for the user's first message no longer waits.
+    if (kind(event) === 'agent_start' && this.s.goals.waitingForInput) { this.s.goals.waitingForInput = false; this.delivery.offer(); }
     // Pi lost what it took. Those messages wait again; the transcript already removed the ones Pi used.
     if (kind(event) === 'disconnected') await this.delivery.reportStorageError(() => this.untake());
     // Pi's own queue holds at most a message it just took, so clients see the daemon's queue only.
@@ -69,29 +84,27 @@ export class SessionQueue {
     this.delivery.announce(event);
   }
 
+  private async pauseGoal(): Promise<void> {
+    const goal = this.s.goals.active();
+    if (!goal) return;
+    this.s.goals.save(this.delivery.goalPlace(), { ...goal, status: 'paused' });
+    await goalChanged(this.delivery);
+  }
+
   private async untake(): Promise<void> {
     let changed = false;
     for (const item of this.s.pending) if (flag(item, 'taken')) { delete item.taken; item.deliveryStarted = false; changed = true; }
     if (changed) await this.delivery.publish();
   }
 
-  private goalChanged(goal: QueueGoal | null): void {
-    const previous = this.s.goal;
-    this.s.goal = goal;
-    if (previous?.id === goal?.id && previous?.status === goal?.status && previous?.objective === goal?.objective) return;
-    track(this.operations, this.followGoal()).catch(error => this.record.reportError(errorText(error)));
-  }
-
-  private async followGoal(): Promise<void> {
-    const release = await this.gate.lock();
-    try {
-      if (!this.s.queuedGoal()) for (const item of this.s.waiting()) delete item.afterGoal;
-      await this.delivery.publish();
-    } finally { release(); }
-  }
-
-  /** Answers Pi: queue_take gives the next message, queue_release returns messages Pi did not use, queue_used forgets a message an extension handled at once, queue_failed marks a message Pi could not take. */
+  /**
+   * Answers Pi: queue_take gives the next message, queue_release returns messages Pi did not use, queue_used forgets a message an extension handled at once,
+   * queue_failed marks a message Pi could not take, queue_outcome tells how a run ended, and queue_tool runs a tool call that the queue answers.
+   */
   async runtimeEvent(name: string, data: any): Promise<any> {
+    // Pi reports these while a stop can hold the lock and wait for Pi, so they do not wait for the lock. They change the goal at once.
+    if (name === 'queue_outcome') return runEnded(this.delivery, data?.outcome);
+    if (name === 'queue_tool') return queueTool(this.delivery, data?.tool, data?.params);
     const release = await this.gate.lock();
     try {
       if (name === 'queue_take') return await takeNext(this.delivery, data.behavior, data.holding);
@@ -130,11 +143,16 @@ export class SessionQueue {
       return this.stop(result);
     }
     if (name === 'compact' || name.startsWith('get_')) return this.delivery.execute(command);
+    if (goalArgument(text(command, 'message')) !== undefined) {
+      return goalCommand(this.delivery, this.gate, command, assertOwner, item => enqueue(this.delivery, item, 'follow_up'));
+    }
     const release = await this.gate.lock();
     try { assertOwner(); return await this.serialCommand(command, name); } finally { release(); }
   }
 
   private async abort(command: any, assertOwner: () => void): Promise<{ ok: true; value: any } | { ok: false; error: unknown }> {
+    // A stop pauses the active goal, so no goal turn starts after it.
+    await this.delivery.reportStorageError(() => this.pauseGoal());
     const scope = new CancelScope();
     const operation = (async () => {
       // The first stop cancels preparation and the running response together, so a wait it ends cannot start another model call.

@@ -101,7 +101,7 @@ function controlAction(command: string): string | undefined {
   }
 }
 
-const APP_REQUESTS = new Set(['queue_prompt', 'prepare_goal_prompt', 'get_goal_preparation', 'orchestration_message', 'provider_auth_refresh', 'context_cap_settings',
+const APP_REQUESTS = new Set(['queue_prompt', 'insert_context', 'orchestration_message', 'provider_auth_refresh', 'context_cap_settings',
   'fork_and_forget', 'fork_after', 'copy_after', 'prepare_fork', 'select_agent', 'configure_agents', 'get_agent_configuration',
   'set_fast_mode', 'conversation_client', 'retry_response', 'queue_hold', 'queue_offer', 'skill_mcp']);
 

@@ -3,7 +3,6 @@ import type { AssistantMessage } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 import { Check } from "typebox/value";
 import type { ContextEvent, ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { goalSession } from "../piop-goals/interface.ts";
 
 type StoppedAssistantMessage = AssistantMessage & { piopCompletedBlocks?: true };
 
@@ -86,7 +85,6 @@ export function registerStopControl(pi: ExtensionAPI): StopController {
 
   const controller: StopController = {
     async stop(ctx) {
-      void goalSession(pi)?.stopped(ctx).catch(error => ctx.ui.notify((error instanceof Error ? error.message : String(error)), "error"));
       controller.cancelPreparation();
       stopping = true;
       ctx.abort();
