@@ -148,9 +148,15 @@ function resultNotificationId(run) {
  * The fork sends a working subagent its task again (see FORK_RETRIES). Its run then waits for the answer to that delivery,
  * which the new parent reads whenever it runs, whether or not the parent itself is working.
  */
-/** The notification IDs of the subagent results in entries. */
+/** The notification IDs of the subagent results in entries: sent as their own message, or returned by await_subagents. */
 function deliveredResults(entries) {
-  return new Set(entries.flatMap(entry => entry.type === 'custom_message' && entry.customType === 'piop-subagent-result' && typeof entry.details?.notificationId === 'string' ? [entry.details.notificationId] : []));
+  return new Set(entries.flatMap(entry => {
+    if (entry.type === 'custom_message' && entry.customType === 'piop-subagent-result') return typeof entry.details?.notificationId === 'string' ? [entry.details.notificationId] : [];
+    const message = entry.type === 'message' ? entry.message : undefined;
+    if (message?.role !== 'toolResult' || message.toolName !== 'await_subagents' || !Array.isArray(message.details?.runs)) return [];
+
+    return message.details.runs.flatMap(run => typeof run?.resultNotificationId === 'string' ? [run.resultNotificationId] : []);
+  }));
 }
 
 function copySubagentRuns(root, plan, parents) {

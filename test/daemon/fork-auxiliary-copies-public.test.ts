@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, expect, test } from 'bun:test';
-import { agentDaemon, text } from './agent-chats';
+import { agentDaemon, called, text } from './agent-chats';
 
 let agents: Awaited<ReturnType<typeof agentDaemon>>;
 beforeAll(async () => { agents = await agentDaemon(); await agents.enableAgentTools('spawn_subagents'); }, 60000);
@@ -134,6 +134,26 @@ test.concurrent('a fork made before a finished subagent reported gets that resul
   // The fork's history ends before the result, so the fork gets it and answers it again.
   await chat.until(history => text(history.at(-1)) === 'Read the report.');
   expect((await chat.command({ type: 'get_state' })).sessionId).toBe(forked.state.sessionId);
+}, 120000);
+
+test.concurrent('a fork made after await_subagents returned a result does not get that result again', async () => {
+  let reports = 0;
+  agents.scripts.set('Await then fork', messages => {
+    if (!called(messages, 'spawn_subagents')) return { tool: 'spawn_subagents', arguments: { tasks: [{ nickname: 'Waited', task: 'Report while awaited' }] } };
+    if (!called(messages, 'await_subagents')) return { tool: 'await_subagents', arguments: { for: 'all' } };
+    if (messages.at(-1)?.role === 'user' && text(messages.at(-1)).includes('Awaited report.')) reports++;
+    return { text: 'Awaited.' };
+  });
+  agents.scripts.set('Report while awaited', () => ({ text: 'Awaited report.' }));
+  const chat = await agents.rootChat({ visible: true });
+  await chat.command({ type: 'prompt', message: 'Await then fork' });
+  await chat.until(history => text(history.at(-1)) === 'Awaited.');
+  const forked = await chat.command({ type: 'copy_after', entryId: (await answer(chat, 'Awaited.')).id });
+  expect(forked.state.sessionId).not.toBe(chat.sessionId);
+  await Bun.sleep(1500);
+  const entries = (await chat.command({ type: 'get_entries' })).entries;
+  expect(entries.filter((entry: any) => entry.customType === 'piop-subagent-result')).toEqual([]);
+  expect(reports).toBe(0);
 }, 120000);
 
 test.concurrent('a side chat working on a prompt with only an image retries it after a fork', async () => {
