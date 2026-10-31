@@ -12,7 +12,7 @@ import { AuxiliaryChatsContext, type AuxiliaryChats } from "./lib/auxiliaryChats
 import { required } from "./lib/required";
 import { trackToastMessage, trackToastNotices } from "./lib/toastHistory";
 import { Key,Rerun } from "@solid-primitives/keyed";
-import { Archive,ArrowLeft,Bug,FolderPlus,MessageSquare,PanelRight,Server,Settings } from "lucide-solid";
+import { Archive,Bug,FolderPlus,MessageSquare,PanelRight,Server,Settings } from "lucide-solid";
 import { createComponent,lazy,onCleanup,Show } from "solid-js";
 import { createAppConversations } from "./appConversations";
 import { AppLoading,LimitBadge,selectedProjectCwd,splitConversationKey,UsageError } from "./appSupport";
@@ -101,16 +101,12 @@ export default function App(props: { suppressConnectionNotices?: boolean } = {})
   };
 
   const renderSidebar = () => {
-    const renderNavigation = () => (<nav><IconButton label="New conversation" onClick={newSession}><MessageSquare size={18} /></IconButton><IconButton label="Group" onClick={() => { if (!canLeaveSettings()) return; setView("chat"); setArchivesOpen(false); setPanelOpen(true); setQuery(""); setCreateGroupRequest((request) => request + 1); }}><FolderPlus size={18} /></IconButton><DebugModeButton debugMode={required(settings()).debugMode} featuresOff={required(settings()).debugFeaturesOff ?? []} disabled={debugModeSaving() || settingsSaving()} onToggle={toggleDebugMode} onToggleFeature={toggleDebugFeature}><Bug size={18} /></DebugModeButton>{renderArchiveButton()}<IconButton label={view() === "settings" ? "Go back" : "Settings"} class={view() === "settings" ? "active" : ""} onPointerEnter={() => { if (view() !== "settings") preloadSettingsResources(); }} onFocus={() => { if (view() !== "settings") preloadSettingsResources(); }} onClick={() => { if (view() !== "settings") { setView("settings");
+    const renderNavigation = () => (<nav><IconButton label="New conversation" onClick={newSession}><MessageSquare size={18} /></IconButton><IconButton label="Group" onClick={() => { if (!canLeaveSettings()) return; setView("chat"); setArchivesOpen(false); setPanelOpen(true); setQuery(""); setCreateGroupRequest((request) => request + 1); }}><FolderPlus size={18} /></IconButton><DebugModeButton debugMode={required(settings()).debugMode} featuresOff={required(settings()).debugFeaturesOff ?? []} disabled={debugModeSaving() || settingsSaving()} onToggle={toggleDebugMode} onToggleFeature={toggleDebugFeature}><Bug size={18} /></DebugModeButton>{renderArchiveButton()}<IconButton label="Settings" onPointerEnter={() => preloadSettingsResources()} onFocus={() => preloadSettingsResources()} onClick={() => setView("settings")}><Settings size={19} /></IconButton>{isMobile && <IconButton label="Host" onClick={() => { window.dispatchEvent(new Event("piop-mobile-disconnect")); }}><Server size={18} /></IconButton>}</nav>);
 
-        return; }
-
-      if (canLeaveSettings()) setView("chat"); }}>{view() === "settings" ? <ArrowLeft size={19} /> : <Settings size={19} />}</IconButton>{isMobile && <IconButton label="Host" onClick={() => { window.dispatchEvent(new Event("piop-mobile-disconnect")); }}><Server size={18} /></IconButton>}</nav>);
-
-    const renderSessionPanel = () => (view() === "chat" && panelOpen() && <Show when={archivesOpen()} fallback={<SessionPanel transport={transport()} settings={required(settings())} isArchiving={isArchiving} debug={debugView(required(settings())).sessionActions} sidebar={sidebar} activeId={activeConversationKey().slice(activeHostId().length + 1)} activeHostId={activeHostId()} runningSessions={listedRunningSessions()} unseenSessions={unseenSessions()} query={query()} onQuery={setQuery} onSelect={selectSession} onAction={sessionAction} onNewChat={(group) => void startNewSession(false, group)} createGroupRequest={createGroupRequest()} onCreateGroupHandled={handleCreateGroup} newChatRequest={newChatRequest()} />}><ArchivedSessionPanel /></Show>);
+    const renderSessionPanel = () => (panelOpen() && <Show when={archivesOpen()} fallback={<SessionPanel transport={transport()} settings={required(settings())} isArchiving={isArchiving} debug={debugView(required(settings())).sessionActions} sidebar={sidebar} activeId={activeConversationKey().slice(activeHostId().length + 1)} activeHostId={activeHostId()} runningSessions={listedRunningSessions()} unseenSessions={unseenSessions()} query={query()} onQuery={setQuery} onSelect={selectSession} onAction={sessionAction} onNewChat={(group) => void startNewSession(false, group)} createGroupRequest={createGroupRequest()} onCreateGroupHandled={handleCreateGroup} newChatRequest={newChatRequest()} />}><ArchivedSessionPanel /></Show>);
     const renderUsageBadges = () => (<div class="rail-bottom"><Show when={usageError()}>{message => <UsageError message={message()} />}</Show><Show when={opencodeGoBadge()}>{badge => <LimitBadge clock={usageClock()} refreshing={refreshingUsage("opencodeGo")} onRefresh={() => refreshUsage("opencodeGo")} label="OpenCode Go" provider="opencode" detail={badge().detail} remainingPercent={badge().window.remainingPercent} resetAt={badge().window.resetAt} stale={badge().error} />}</Show><Show when={anthropicUsage()}>{entry => <LimitBadge clock={usageClock()} refreshing={refreshingUsage("anthropic")} onRefresh={() => refreshUsage("anthropic")} label="Anthropic" provider="anthropic" remainingPercent={entry().usage.remainingPercent} resetAt={entry().usage.resetAt} stale={entry().error} />}</Show><Show when={codexUsage()}>{entry => <LimitBadge clock={usageClock()} refreshing={refreshingUsage("codex")} onRefresh={() => refreshUsage("codex")} label="Codex" provider="openai" remainingPercent={entry().usage.remainingPercent} resetAt={entry().usage.resetAt} stale={entry().error} />}</Show></div>);
 
-    return (<ResizableSidebar compact={view() === "settings" || !panelOpen()}>{renderNavigation()}{renderSessionPanel()}<Show when={view() !== "settings"}>{renderUsageBadges()}</Show></ResizableSidebar>);
+    return (<ResizableSidebar compact={!panelOpen()}>{renderNavigation()}{renderSessionPanel()}{renderUsageBadges()}</ResizableSidebar>);
   };
 
   const renderChatWorkspace = () => {
@@ -161,7 +157,7 @@ export default function App(props: { suppressConnectionNotices?: boolean } = {})
     </div>);
   };
 
-  const renderSettingsView = () => (view() === "settings" && <LocalSettingsView pendingSettingsCount={pendingSettingsCount()} settings={required((settings()))} sessions={sessions()} onSave={saveSettings} onDirtyChange={setSettingsDirty} />);
+  const renderSettingsView = () => (view() === "settings" && <LocalSettingsView pendingSettingsCount={pendingSettingsCount()} settings={required((settings()))} sessions={sessions()} onSave={saveSettings} onDirtyChange={setSettingsDirty} onBack={() => { if (canLeaveSettings()) setView("chat"); }} />);
 
   const connectionError = () => props.suppressConnectionNotices ? undefined : error();
   trackToastNotices("Chat", notices);
@@ -201,7 +197,7 @@ export default function App(props: { suppressConnectionNotices?: boolean } = {})
   return <SessionLinkContext.Provider value={sessionLinks}><AuxiliaryChatsContext.Provider value={auxiliaryChats}><SubagentNavigationContext.Provider value={openSubagent}>{!settings() ? (<AppLoading error={error()} />) : (<div role="region" aria-label={workspaceLabel()} class={`app ${panelOpen() && view() === "chat" ? "mobile-panel-open" : ""}`}>
     {!mobileSidebarOpen() && renderMobileSidebarToggle()}
     {renderMobileSidebarBackdrop()}
-    {renderSidebar()}
+    <Show when={view() !== "settings"}>{renderSidebar()}</Show>
     <ComposerPluginsContext.Provider value={pluginPane.composers}><TranscriptPluginsContext.Provider value={pluginPane.transcripts}><transcriptCache.Host />{renderChatWorkspace()}</TranscriptPluginsContext.Provider></ComposerPluginsContext.Provider>
     {renderSettingsView()}
     <FindInPage selector=".chat-panes > .main-chat > .chat-shell" scopeKey={activeConversationKey()} onActivate={() => setActivePane("main")} active={activePane() === "main" || !hasSidePane()} enabled={view() === "chat"} />

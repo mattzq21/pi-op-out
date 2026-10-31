@@ -6,7 +6,7 @@ import { createMemo, createSignal } from "solid-js";
 import { Dynamic } from "solid-js/web";
 import { createDependencyEffect } from "../lib/solid";
 
-import { Monitor } from "lucide-solid";
+import { ArrowLeft, Monitor } from "lucide-solid";
 import { agentConfigChangeSchema } from "../lib/agentSchemas";
 import { settingsChangeSchema } from "../lib/responseSchemas";
 import { restoreAgentConfiguration, saveAgentConfiguration } from "../lib/agentConfiguration";
@@ -24,6 +24,7 @@ interface Props {
   sessions: SessionSummary[];
   onSave: (settings: AppSettings, config?: AgentConfig, previousConfig?: AgentConfig, baseline?: AppSettings, scope?: "all" | "client" | "daemon") => Promise<void>;
   onDirtyChange: (dirty: boolean) => void;
+  onBack: () => void;
   onSavingChange?: (saving: boolean) => void;
   selectedSection?: Section;
 }
@@ -52,6 +53,7 @@ export function LocalSettingsView(props: Props) {
 
   return <div class="settings-workspace">
     <nav class="settings-nav settings-host-nav" aria-label="Settings">
+      <button class="settings-back" aria-label="Go back" onClick={() => props.onBack()}><ArrowLeft size={16} /><span>Back</span></button>
       <div class="settings-nav-group"><p class="eyebrow">Client</p>{<Key each={visibleClientSections()} by={(item) => item.id}>{(item, _index) => <button  disabled={target() !== "client" && (dirty() || saving())} class={target() === "client" && selectedSection() === item().id ? "active" : ""} aria-current={target() === "client" && selectedSection() === item().id ? "page" : undefined} onClick={() => { setTarget("client"); setSelectedSection(item().id); }}><Dynamic component={item().icon} size={16} /><span>{item().label}</span></button>}</Key>}</div>
       <div class="settings-nav-group"><p class="eyebrow">Daemons</p>{<Key each={[{ id: "local", name: localHostLabel() }, ...props.settings.hosts.filter((host) => host.enabled !== false)]} by={(host) => host.id}>{(host, _index) => <div ><button class={target() === host().id ? "active" : ""} disabled={target() !== host().id && (dirty() || saving())} aria-expanded={target() === host().id} onClick={() => { if (target() !== host().id) { setTarget(host().id); setSelectedSection("general"); } }}><Monitor size={16} /><span>{host().name}</span></button>{target() === host().id && <div class="settings-daemon-tabs">{<Key each={daemonSections(host().id)} by={(item) => item.id}>{(item, _index) => <button  class={[selectedSection() === item().id ? "active" : "", item().parent ? "sub" : ""].filter(Boolean).join(" ")} aria-current={selectedSection() === item().id ? "page" : undefined} onClick={() => setSelectedSection(item().id)}><Dynamic component={item().icon} size={16} /><span>{item().label}</span></button>}</Key>}</div>}</div>}</Key>}</div>
     </nav>
