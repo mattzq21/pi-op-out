@@ -43,6 +43,21 @@ export function pending(root: string, work: 'transaction' | 'recovery' | 'retent
   try { return SessionTables.pending(database, work); } finally { database.close(); }
 }
 
+/** Marks a task of the session as running, or as ended. A mark left after a daemon stop shows a task to start again. */
+export function setTaskRunning(root: string, id: string, running: boolean): void {
+  const database = open(root);
+  try {
+    if (running) database.prepare('INSERT OR IGNORE INTO running_tasks SELECT session_id FROM sessions WHERE session_id=?').run(id);
+    else database.prepare('DELETE FROM running_tasks WHERE session_id=?').run(id);
+  } finally { database.close(); }
+}
+
+export function runningTasks(root: string): string[] {
+  const database = open(root);
+  try { return (database.prepare('SELECT session_id FROM running_tasks').all() as Array<{ session_id: string }>).map(row => row.session_id); }
+  finally { database.close(); }
+}
+
 export function requestCleanup(root: string, kind: 'goal'): void {
   SessionTables.markCleanup(root, kind);
 }

@@ -12,6 +12,7 @@ import * as piRuntime from './pi_runtime';
 import * as terminals from './terminals';
 import * as daemon from './daemon';
 import { startSessionBroker } from './broker';
+import { resumeInterruptedTasks } from './interrupted_tasks';
 import { stopOrphanedProcesses } from './process_cleanup';
 import { loadAppSettings } from './settings';
 import { prepareDefinedAgentsExtension } from './extensions';
@@ -72,6 +73,12 @@ async function runBackend(): Promise<void> {
     await step(() => mobile.start(app));
     await step(() => app.usage.start(app));
     await step(() => daemonRestart.ready());
+    // Runs alongside: a Pi start can take minutes, and clients may connect meanwhile.
+    void resumeInterruptedTasks(app).catch(error => {
+      const line = 'Could not start again the interrupted tasks: ' + errorText(error);
+      console.error(line);
+      app.emit('pi://daemon-error', { hostId: 'local', line });
+    });
     // Quit in the tray menu stops this daemon the same way as piopd stop.
     await step(async () => { removeTray = await startTray(() => app.clients.stop()); });
     await Promise.race([signalled.stopped, app.clients.waitForShutdown(app).catch(error => console.error('Shutdown wait failed:', error))]);

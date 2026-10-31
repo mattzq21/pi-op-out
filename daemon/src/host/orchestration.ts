@@ -105,6 +105,7 @@ export class Orchestration {
     if (action === 'watch') return this.watch(id, typeof packet.stateKey === 'string' ? packet.stateKey : null, typeof packet.waitMs === 'number' ? packet.waitMs : 0);
     if (action === 'branch_off') return this.branchOff(id);
     if (action === 'settle_first_message') return this.settleFirstMessage(packet);
+    if (action === 'resume') return this.resume(packet);
     if (action === 'interrupt') {
       if (this.cancelDeliveries(id, typeof packet.deliveryId === 'string' ? packet.deliveryId : undefined)) return { sessionId: id, completed: false };
       return this.cancel(id);
@@ -117,6 +118,31 @@ export class Orchestration {
       case 'send': return this.send(packet, session);
       default: throw new Error('Unknown orchestration action');
     }
+  }
+
+  /**
+   * Starts again the task that a daemon stop interrupted, in a hidden view of the client that owned the conversation.
+   * The mark is removed when the conversation is gone or archived, or when its task already ended.
+   */
+  private async resume(packet: any): Promise<null> {
+    const host = this.host;
+    const id = text(packet, 'sessionKey');
+    const root = host.storageRoot();
+    const saved = host.ownership().lookupSaved(id, true);
+    if (!saved || saved[1]) { Registry.setTaskRunning(root, id, false); return null; }
+    if (!packet.spec) throw new Error('No launch spec');
+    const record = host.ownership().read(id);
+    const client = [record?.client, record?.previousClient].find(value => typeof value === 'string' && value !== '');
+    if (!client) throw new Error('The conversation has no owning client');
+    const runtime = 'resume-' + randomUUID();
+    await this.attachHidden({ ...packet, clientId: client }, runtime, id);
+    try {
+      const session = host.findSession(id);
+      if (!session) throw new Error('Conversation is no longer running');
+      const result = await session.execute({ type: 'resume_interrupted' });
+      if (result?.state === 'finished') Registry.setTaskRunning(root, id, false);
+    } finally { await this.detach(runtime); }
+    return null;
   }
 
   private cancelDeliveries(id: string, delivery: string | undefined): boolean {

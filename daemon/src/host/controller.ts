@@ -154,6 +154,13 @@ export class Host implements SessionHost {
 
   stateChanged(identity: string): void { this.orchestration.stateChanged(identity); }
 
+  /** A task that a daemon stop ends keeps its mark, so the next daemon starts it again. */
+  taskRunning(id: string, running: boolean, stopped: boolean): void {
+    if (stopped && this.shuttingDown) return;
+    try { Registry.setTaskRunning(this.storageRoot(), id, running); }
+    catch (error) { this.output({ type: 'diagnostic', line: id + ': could not record whether its task runs: ' + errorText(error) }); }
+  }
+
   findSession(identity: string): Session | undefined {
     for (const session of this.sessions.values()) if (session.identity === identity && !session.closed()) return session;
     return undefined;

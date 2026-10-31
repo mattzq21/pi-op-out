@@ -44,6 +44,8 @@ export interface SessionHost {
   stateChanged(identity: string): void;
   /** Handles an event that Pi waits on. Pi continues when the promise settles; a rejection is reported to the chat. */
   runtimeEvent(source: RuntimeEventSource, event: RuntimeEvent): Promise<void>;
+  /** Records that a task of the conversation started or ended. stopped is true when Pi stopped during the task. */
+  taskRunning(id: string, running: boolean, stopped: boolean): void;
 }
 
 const STATE_CHANGES = new Set(['session_info_changed', 'session_switched', 'model_select', 'thinking_level_changed', 'agent_start', 'agent_end', 'agent_settled',
@@ -219,6 +221,8 @@ export class Session {
     if (path === undefined) return [];
     return savedUserMessages(path, specIdentity(this.spec, this.key));
   }
+
+  private sessionId(): string { return typeof this.state?.sessionId === 'string' ? this.state.sessionId : this.identity; }
 
   clientId(): string { return this.clientIdValue; }
   async setClientId(client: string): Promise<void> {
@@ -404,6 +408,7 @@ export class Session {
   private finish(): void {
     if (this.isClosed) return;
     this.isClosed = true;
+    if (this.isWorking) this.host.taskRunning(this.sessionId(), false, true);
     this.host.stateChanged(this.identity);
     this.idleStop.cancel();
     this.dialogs.stopTimers();
@@ -504,8 +509,8 @@ export class Session {
     const name = kind(event);
     if (stateChange(name) || name.startsWith('tool_execution_')) this.toolPayloadRevision += 1;
     switch (name) {
-      case 'agent_start': this.isWorking = true; this.isSubmitted = true; break;
-      case 'agent_settled': this.isWorking = false; this.live.clear(); break;
+      case 'agent_start': this.isWorking = true; this.isSubmitted = true; this.host.taskRunning(this.sessionId(), true, false); break;
+      case 'agent_settled': this.isWorking = false; this.live.clear(); this.host.taskRunning(this.sessionId(), false, false); break;
       case 'compaction_start': this.isCompacting = true; this.manualCompactions += 1; break;
       case 'auto_compaction_start': this.isCompacting = true; break;
       case 'compaction_end': case 'auto_compaction_end': this.isCompacting = false; break;

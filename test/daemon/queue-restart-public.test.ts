@@ -68,7 +68,10 @@ test('a held queue stays on hold after the daemon restarts, and its messages go 
     await second.waitEvent('pi://event', payload => payload.runtimeId === 'after' && payload.event?.type === 'queue_update' && payload.event.pendingMessages?.length === 2);
     expect((await command(second, 'after', { type: 'get_state' })).queueHeld).toBe(true);
     expect(pending(second, 'after').map((item: any) => [item.message, item.behavior, item.retry ?? false])).toEqual([['Queued before the hold', 'followUp', false], ['Held steer', 'steer', false]]);
-    expect(model.requests).toHaveLength(1);
+    // The interrupted task starts again; the held messages still wait.
+    for (let tries = 0; (await messages(second, 'after')).at(-1)?.role !== 'assistant' && tries < 100; tries++) await Bun.sleep(100);
+    expect(model.requests.map(request => text(request.messages.at(-1)))).toEqual(['Long job', 'Long job']);
+    expect(pending(second, 'after')).toHaveLength(2);
 
     const seen = new Set(second.events.map(event => event.payload));
     await command(second, 'after', { type: 'hold_queue', held: false });

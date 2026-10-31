@@ -371,6 +371,38 @@ async function continueRun(session, failed) {
   }
 }
 
+const INTERRUPTED_TOOL = "The Piop daemon stopped before this tool call finished. Its result is unknown; check its effects before you repeat it.";
+
+/**
+ * Continues the task that a daemon stop interrupted. Tool calls of the last response that have no result get an error result first.
+ * The state is "running" when a run already goes on, and "finished" when the last response ended the task.
+ */
+function dispatchResume(command, session, output) {
+  const respond = state => output({ type: "response", id: command.id, command: command.command, success: true, data: { state } });
+  if (session.isStreaming || session.isCompacting) return respond("running");
+  const messages = session.agent.state.messages;
+  const index = messages.findLastIndex(message => message.role === "assistant");
+  const calls = index < 0 ? [] : messages[index].content.filter(part => part.type === "toolCall");
+  const answered = new Set(messages.slice(index + 1).filter(message => message.role === "toolResult").map(message => message.toolCallId));
+  const last = messages.at(-1);
+  if (!last || last.role === "system" || (last.role === "assistant" && !calls.length)) return respond("finished");
+  session._isAgentRunActive = true;
+  session._agentRunAbortRequested = false;
+  try {
+    for (const call of calls) {
+      if (answered.has(call.id)) continue;
+      session.sessionManager.appendMessage({ role: "toolResult", toolCallId: call.id, toolName: call.name, content: [{ type: "text", text: INTERRUPTED_TOOL }], isError: true, timestamp: Date.now() });
+    }
+    session._refreshFinalizedContext();
+  } catch (error) {
+    session._isAgentRunActive = false;
+    session._resolveIdleWaitIfIdle();
+    throw error;
+  }
+  respond("resumed");
+  void continueRun(session, undefined).catch(error => acceptedPromptError(session, error, output));
+}
+
 async function dispatch(command, currentSession, sessionReady, output) {
   try {
     if (!currentSession()) await sessionReady;
@@ -394,6 +426,12 @@ async function dispatchReady(command, session, output) {
 
     if (command.command === "retry_response") {
       dispatchRetry(command, session, output);
+
+      return;
+    }
+
+    if (command.command === "resume_interrupted") {
+      dispatchResume(command, session, output);
 
       return;
     }
