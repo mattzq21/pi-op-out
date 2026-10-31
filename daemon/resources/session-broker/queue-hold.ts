@@ -2,7 +2,7 @@ import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-a
 
 /**
  * Core: the user's hold on the conversation queue. The daemon owns the hold and saves it.
- * While held, extensions must not send queued work on their own, such as goal turns. When the hold ends, they may start again.
+ * While held, extensions must not send queued work on their own. When the hold ends, they may start again.
  */
 export interface QueueHold {
   held(): boolean;

@@ -136,14 +136,15 @@ test('a Pi start installs the bundled extensions as private files and refreshes 
     ['piop-providers-refresh.ts', 'extensions/piop-providers-refresh/index.ts'],
     ['piop-context-window-cap/defaults.ts', 'extensions/piop-context-window-cap/defaults.ts'],
     ['piop-controls/index.ts', 'daemon/resources/piop-controls/index.ts'],
-    ['piop-goals/index.ts', 'daemon/resources/piop-goals/index.ts'],
+    ['session-broker/queue-tools.ts', 'daemon/resources/session-broker/queue-tools.ts'],
+    ['session-broker/context-insertions.ts', 'daemon/resources/session-broker/context-insertions.ts'],
     ['plugins/review/index.ts', 'daemon/plugins/review/index.ts'],
     ['piop-openai-cache-fork.ts', 'extensions/piop-openai-cache-fork/index.ts'],
     ['plugins/web-search/index.ts', 'daemon/plugins/web-search/index.ts'],
   ];
   const extensions = extensionPaths(await launchPublicPi(daemon));
-  for (const name of ['hooks-extended/index.ts', 'piop-controls/index.ts', 'session-broker.ts', 'piop-goals/index.ts', 'plugins/review/index.ts', 'piop-openai-cache-fork.ts', 'plugins/web-search/index.ts']) expect(extensions).toContain(join(generated, name));
-  for (const removed of ['runtime-settings.ts', 'piop-skills-store/index.ts', 'piop-tool-store/index.ts', 'piop-codemode-tools-description.ts']) expect(extensions).not.toContain(join(generated, removed));
+  for (const name of ['hooks-extended/index.ts', 'piop-controls/index.ts', 'session-broker.ts', 'plugins/review/index.ts', 'piop-openai-cache-fork.ts', 'plugins/web-search/index.ts']) expect(extensions).toContain(join(generated, name));
+  for (const removed of ['piop-goals/index.ts', 'runtime-settings.ts', 'piop-skills-store/index.ts', 'piop-tool-store/index.ts', 'piop-codemode-tools-description.ts']) expect(extensions).not.toContain(join(generated, removed));
   expect(extensions).toContain(join(generated, 'piop-providers-refresh.ts'));
   for (const [name, relative] of bundles) {
     expect(readFileSync(join(generated, name), 'utf8')).toBe(installed(name, relative));

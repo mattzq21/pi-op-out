@@ -13,6 +13,7 @@ import { sessionWorkerCommand } from './session_worker';
 import type { BrokerRuntime } from './broker';
 import { brokerEnvironment } from './broker';
 import { requireLocal } from './host_connection';
+import { QUEUE_TOOLS } from './host/goals/commands';
 
 export { validateRemoteHost };
 export { remoteHost, remoteLoginCommand, ssh, sshBase, userSshConfig } from './host_connection';
@@ -170,8 +171,7 @@ function configureLocalExtensions(command: LaunchCommand, settings: AppSettings,
   const after = (core: Contributions.CoreExtension) => plugins.filter(plugin => plugin.after === core).flatMap(plugin => ['--extension', plugin.path]);
   command.args.push('--extension', 'builtin:codemode', '--extension', 'builtin:tool-search');
   command.args.push('--session-dir', sessionDir, '--approve', '--no-skills',
-    '--extension', Ext.prepareProvidersRefreshExtension(), '--extension', mcpExtension, '--extension', session.storage, '--extension', session.hooks, '--extension', session.controls, '--extension', session.broker,
-    '--extension', session.goals, ...after('goals'),
+    '--extension', Ext.prepareProvidersRefreshExtension(), '--extension', mcpExtension, '--extension', session.storage, '--extension', session.hooks, '--extension', session.controls, '--extension', session.broker, ...after('session'),
     '--extension', contextWindowCapExtension, '--extension', contextBarExtension, ...after('context-bar'),
     '--extension', Ext.prepareFastModeExtension(), '--extension', openaiCacheForkExtension, '--extension', Ext.prepareCompactionTimingExtension(),
     '--extension', definedAgentsExtension);
@@ -180,6 +180,7 @@ function configureLocalExtensions(command: LaunchCommand, settings: AppSettings,
     PIOP_MCP_EXTENSION: mcpExtension,
     PI_DESKTOP_CONTEXT_WINDOW_CAP_EXTENSION: contextWindowCapExtension,
     PIOP_COMMAND_POLICY: JSON.stringify(Contributions.commandPolicy()),
+    PIOP_QUEUE_TOOLS: JSON.stringify(QUEUE_TOOLS),
     PIOP_BROKER_URL: `http://127.0.0.1:${brokerPort}`,
     PIOP_BROKER_TOKEN: brokerToken,
     PI_DESKTOP_HOST_ID: hostId,

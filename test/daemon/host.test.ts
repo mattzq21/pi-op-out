@@ -33,8 +33,8 @@ require('node:readline').createInterface({ input: process.stdin }).on('line', li
     send({ type: 'fixture_waiting', command: 'stop' });
     return;
   }
-  if (sessionFile.includes('/abort-gate/') && request.type === 'piop_request' && request.command === 'prepare_goal_prompt') {
-    send({ type: 'fixture_waiting', command: 'prepare_goal_prompt' });
+  if (sessionFile.includes('/abort-gate/') && request.type === 'piop_request' && request.command === 'queue_hold') {
+    send({ type: 'fixture_waiting', command: 'queue_hold' });
     return;
   }
   const data = request.type === 'get_state' ? state : request.type === 'get_entries' ? { entries: sessionFile ? fs.readFileSync(sessionFile, 'utf8').trim().split('\\n').filter(Boolean).map(line => JSON.parse(line)) : [] } : null;
@@ -339,13 +339,13 @@ test('a replacement host rejects the previous host’s released ownership until 
 
 
 
-test('abort stops Pi while both a goal preparation and the stop request are stuck', async () => {
+test('abort stops Pi while both a queue command and the stop request are stuck', async () => {
   const session = publicSession(daemon.home, 'abort-gate');
   const runtime = await open(session.path, 'abort-gate-client');
-  const preparation = command(runtime.runtimeId, { type: 'follow_up', message: '/goal inspect the project' })
+  const preparation = command(runtime.runtimeId, { type: 'hold_queue', held: true })
     .then(() => 'answered', (error: Error) => error.message);
   await daemon.waitEvent('pi://event', packet => packet.runtimeId === runtime.runtimeId
-    && packet.event?.type === 'fixture_waiting' && packet.event.command === 'prepare_goal_prompt');
+    && packet.event?.type === 'fixture_waiting' && packet.event.command === 'queue_hold');
   const started = Date.now();
   const abort = command(runtime.runtimeId, { type: 'abort' });
   await daemon.waitEvent('pi://event', packet => packet.runtimeId === runtime.runtimeId

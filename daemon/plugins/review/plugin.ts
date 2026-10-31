@@ -11,7 +11,7 @@ export const review: BundledPlugin = {
   id: 'review',
   name: 'Code review',
   extension: {
-    after: 'goals',
+    after: 'session',
     files: [['interface.ts', face], ['review-prompt.txt', prompt], ['reviews.ts', reviews], ['commands.ts', commands], ['index.ts', index]],
   },
   commands: { review: 'queued' },

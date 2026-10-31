@@ -29,6 +29,23 @@ function read(file, sessionId) {
   });
 }
 
+/**
+ * The saved goal of the conversation at file, and whether it waits for the user's first message (core input hold).
+ * A conversation that is not registered has no goal.
+ */
+function restore(file) {
+  const db = database.open(database.storageRoot(file));
+  try {
+    const row = db.prepare('SELECT session_id FROM sessions WHERE session_path=?').get(file);
+    if (!row) return { goal: null, waitingForInput: false };
+    const saved = db.prepare('SELECT goal_id AS id, session_id AS sessionId, objective, status FROM session_goals WHERE session_id=?').get(row.session_id);
+    const goal = saved ? { ...saved } : null;
+    validate(goal);
+    const hold = db.prepare("SELECT entry_json FROM session_extension_state WHERE session_id=? AND state_key='piop-input-hold'").get(row.session_id);
+    return { goal, waitingForInput: hold ? JSON.parse(hold.entry_json)?.data?.held === true : false };
+  } finally { db.close(); }
+}
+
 function write(file, sessionId, goal) {
   validate(goal);
   if (goal && goal.sessionId !== sessionId) throw new Error('Goal belongs to another conversation');
@@ -54,8 +71,4 @@ function copy(source, target, sessionId) {
   }
 }
 
-function known(file, sessionId, goalId) {
-  return access(file, sessionId, (db, id) => Boolean(db.prepare('SELECT 1 FROM session_goal_ids WHERE session_id=? AND goal_id=?').get(id, goalId)));
-}
-
-module.exports = { read, write, copy, validate, known };
+module.exports = { read, restore, write, copy, validate };

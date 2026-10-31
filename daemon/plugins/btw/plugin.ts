@@ -5,6 +5,6 @@ import type { BundledPlugin } from '../types';
 export const btw: BundledPlugin = {
   id: 'btw',
   name: 'Side chats',
-  extension: { after: 'goals', files: [['index.ts', index]] },
+  extension: { after: 'session', files: [['index.ts', index]] },
   commands: { btw: 'immediate' },
 };

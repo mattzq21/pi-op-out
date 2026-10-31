@@ -9,8 +9,6 @@ const { randomUUID } = require("node:crypto");
 
 const queuePromptContext = new AsyncLocalStorage();
 
-const goalPromptContext = new AsyncLocalStorage();
-
 const queuePromptScope = Symbol("piop.queue-prompt");
 
 const wrappedSessions = new WeakSet();
@@ -27,13 +25,8 @@ const configurationCommands = new Set(["context_cap_settings", "provider_auth_re
 
 let queueValidation;
 
-class GoalPreparationError extends Error {}
-
 function promptError(command, error, output) {
-  const response = { type: "response", id: command.id, command: command.command, success: false, error: error instanceof Error ? error.message : String(error) };
-
-  if (error instanceof GoalPreparationError) response.rejection = "goal_preparation";
-  output(response);
+  output({ type: "response", id: command.id, command: command.command, success: false, error: error instanceof Error ? error.message : String(error) });
 }
 
 function acceptedPromptError(session, error, output) {
@@ -60,7 +53,7 @@ async function queueContracts(root) {
     import(pathToFileURL(runtimeRequire.resolve("typebox/value")).href),
   ]);
 
-  const prompt = Type.Object({ queueId: Type.String({ minLength: 1 }), message: Type.String(), streamingBehavior: Type.Union([Type.Literal("steer"), Type.Literal("followUp")]), images: Type.Optional(Type.Array(Type.Unknown())), goalSubmissionId: Type.Optional(Type.String()), goalPrepared: Type.Optional(Type.Boolean()) });
+  const prompt = Type.Object({ queueId: Type.String({ minLength: 1 }), message: Type.String(), streamingBehavior: Type.Union([Type.Literal("steer"), Type.Literal("followUp")]), images: Type.Optional(Type.Array(Type.Unknown())), goalSubmissionId: Type.Optional(Type.String()) });
   const user = Type.Object({ role: Type.Literal("user"), piopQueueId: Type.String({ minLength: 1 }) });
 
   return { parse: payload => Parse(prompt, payload), check: message => Check(user, message) };
@@ -225,8 +218,6 @@ async function dispatchQueuedPrompt(command, session, output) {
     images: payload.images,
     streamingBehavior: payload.streamingBehavior,
     source: "rpc",
-    goalSubmissionId: payload.goalSubmissionId,
-    goalPrepared: payload.goalPrepared,
     [queuePromptScope]: { session, queueId: payload.queueId, submissionId: payload.goalSubmissionId, tagged: false },
     preflightResult: (disposition, submittedText) => {
       preflightSucceeded = true;
@@ -244,7 +235,27 @@ function bindQueuePull(session, output) {
 
   if (!ask) throw new Error("Piop runtime events are unavailable");
 
-  return queuePull(session, { ask, prompt: (target, item) => promptTaken(target, item, output) });
+  return queuePull(session, {
+    ask,
+    prompt: (target, item) => promptTaken(target, item, output),
+    insert: (target, message) => insertTaken(target, message, output),
+    tools: state => {
+      const bridge = Object.getOwnPropertyDescriptor(globalThis, Symbol.for("piop.runtime-bridge"));
+      if (!bridge) throw new Error("Piop runtime bridge is unavailable");
+      bridge.value({ command: "queue_tools", payload: state, ctx: session.extensionRunner.createCommandContext() });
+    },
+  });
+}
+
+/** Adds a message from the daemon's queue to the context as a custom message that starts or continues a turn. Resolves once Pi took it. */
+function insertTaken(session, message, output) {
+  const streaming = session.isStreaming;
+  const run = session.sendCustomMessage(message, { triggerTurn: true, deliverAs: "followUp" });
+
+  // A run that this message started reports its own failure; a message added to a running turn is added at once.
+  if (!streaming) { void run.catch(error => acceptedPromptError(session, error, output)); return Promise.resolve(); }
+
+  return run;
 }
 
 function promptTaken(session, item, output) {
@@ -254,8 +265,6 @@ function promptTaken(session, item, output) {
       images: item.images,
       streamingBehavior: item.behavior,
       source: "rpc",
-      goalSubmissionId: item.goalSubmissionId,
-      goalPrepared: item.goalPrepared,
       [queuePromptScope]: { session, queueId: item.id, submissionId: item.goalSubmissionId, tagged: false },
       preflightResult: disposition => { preflightSucceeded = true; resolve(disposition); },
     }).catch(error => {
@@ -268,7 +277,7 @@ function promptTaken(session, item, output) {
 function dispatchPrompt(command, session, output) {
   let preflightSucceeded = false;
   void session.prompt(command.message, {
-    images: command.images, streamingBehavior: command.streamingBehavior, source: "rpc", goalSubmissionId: command.goalSubmissionId,
+    images: command.images, streamingBehavior: command.streamingBehavior, source: "rpc",
     preflightResult: (disposition, submittedText) => {
       preflightSucceeded = true;
       output({ type: "response", id: command.id, command: command.command, success: true, data: { disposition, submittedText } });
@@ -362,58 +371,6 @@ async function continueRun(session, failed) {
   }
 }
 
-async function prepareGoalPrompt(text, session, goalSubmissionId, images, prepared) {
-  if (!/^\/goal(?:\s|$)/.test(text.trimStart()) && !prepared) return { message: text };
-
-  try {
-    const result = await runtimeRequest(session, "prepare_goal_prompt", { message: text, goalSubmissionId, images, prepared });
-
-    if (!result?.message) throw new Error("Goal prompt preparation did not produce an objective");
-
-    return result;
-  } catch (error) { throw new GoalPreparationError(error instanceof Error ? error.message : String(error)); }
-}
-
-function acceptGoalPrompt(prepared) {
-  try { prepared.accept(); }
-  catch (error) { throw new GoalPreparationError(error instanceof Error ? error.message : String(error)); }
-}
-
-function installGoalAcceptance(AgentSession) {
-  for (const name of ["_queueSteer", "_queueFollowUp"]) {
-    const queue = AgentSession.prototype[name];
-    AgentSession.prototype[name] = async function (...args) {
-      const scope = goalPromptContext.getStore();
-
-      if (scope?.session === this) acceptGoalPrompt(scope.prepared);
-
-      return queue.apply(this, args);
-    };
-  }
-
-  const prompt = AgentSession.prototype.prompt;
-  AgentSession.prototype.prompt = async function (text, options) {
-    const prepared = await prepareGoalPrompt(text, this, options?.goalSubmissionId, options?.images, options?.goalPrepared);
-    const goal = Boolean(prepared.goalSubmissionId);
-
-    const preflightResult = disposition => {
-      if (goal) {
-        if (disposition === "handled") throw new GoalPreparationError("The prepared goal prompt was handled before submission. Restore the objective from saved input recovery.");
-        acceptGoalPrompt(prepared);
-
-        // A goal message that starts a run is accepted after Pi flushed the messages held while the run started. Flush the set notice now, so it lands before the goal message. No run exists yet, so it cannot split a tool call from its result.
-        if (disposition === "started") this._flushPendingCustomMessages();
-      }
-
-      options?.preflightResult?.(disposition, goal ? prepared.message : undefined);
-    };
-
-    const preparedOptions = goal ? { ...options, preflightResult, goalSubmissionId: prepared.goalSubmissionId, goalPrepared: true, images: undefined, expandPromptTemplates: false } : { ...options, preflightResult };
-
-    return goalPromptContext.run(goal ? { session: this, prepared } : undefined, () => prompt.call(this, prepared.message, preparedOptions));
-  };
-}
-
 async function dispatch(command, currentSession, sessionReady, output) {
   try {
     if (!currentSession()) await sessionReady;
@@ -468,7 +425,7 @@ async function dispatchReady(command, session, output) {
     const data = await runtimeRequest(session, command.command, command.payload);
     output({ type: "response", id: command.id, command: command.command, success: true, data });
   } catch (error) {
-    promptError(command, command.command === "prepare_goal_prompt" ? new GoalPreparationError(error instanceof Error ? error.message : String(error)) : error, output);
+    promptError(command, error, output);
   }
 }
 
@@ -718,8 +675,6 @@ async function main() {
 
     return prompt.call(this, text, options);
   };
-
-  installGoalAcceptance(AgentSession);
 
   let session;
   let markSessionReady;

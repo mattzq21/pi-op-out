@@ -1,34 +1,29 @@
 import { clone, flag, kind, text } from './json';
+import { GOAL_TOOL, QueueGoal } from './goals/state';
 
 /** Fields that record how Pi took a queued item. Clients do not see them. */
 export const CONSUMPTION_FIELDS = ['consumedContent', 'consumedTimestamp', 'consumedInputId', 'deliveryStarted'];
+
+/** Fields that only the queue uses. preparedGoal: the goal that a /goal item sets when Pi takes it. */
+const PRIVATE_FIELDS = [...CONSUMPTION_FIELDS, 'preparedGoal'];
 
 function stamp(value: any): string { return JSON.stringify(value ?? null); }
 
 /** The id of the active goal's entry in the queue view. Queue item ids are numbers, so it does not collide with them. */
 export const GOAL_ENTRY_ID = 'goal';
 
-/** The conversation's goal as the goals extension publishes it in its piop-goal status. waitingForInput: the active goal cannot start until the user sends a message. */
-export type QueueGoal = { id: string; objective: string; status: 'active' | 'paused' | 'complete'; waitingForInput?: true };
-
-/** Reads the goal from a goals extension status event: null when the goal is cleared, undefined for other events. */
-export function goalStatus(event: any): QueueGoal | null | undefined {
-  if (kind(event) !== 'extension_ui_request' || event.method !== 'setStatus' || event.statusKey !== 'piop-goal') return undefined;
-  if (typeof event.statusText !== 'string' || !event.statusText) return null;
-  const goal = JSON.parse(event.statusText);
-  const status = goal.status === 'active' || goal.status === 'paused' ? goal.status : 'complete';
-  return { id: text(goal, 'id'), objective: text(goal, 'objective'), status, ...(goal.waitingForInput === true ? { waitingForInput: true as const } : {}) };
-}
-
-/** How many waiting messages Pi may take now, of each kind. */
-export type QueueOffer = { steer: number; followUp: number };
+/**
+ * What Pi may take now: how many waiting messages of each kind, whether the goal may continue its work (goal is 1),
+ * and which tools that the queue answers must stay in the prompt.
+ */
+export type QueueOffer = { steer: number; followUp: number; goal: number; tools: Record<string, boolean> };
 
 /**
  * The queue of one conversation. The daemon is its only owner and saves it. Pi keeps no queue of its own:
  * when it is ready for a message, it takes the next one (the item is then taken), and the item leaves the queue when Pi's transcript holds it.
  * An item that Pi took but did not use goes back to waiting.
  *
- * An active or paused goal is an entry of the follow-ups. Follow-ups below it have afterGoal set; they wait until the goal completes or is cleared,
+ * The queue also owns the conversation's goal. An active or paused goal is an entry of the follow-ups. Follow-ups below it have afterGoal set; they wait until the goal completes or is cleared,
  * or until the user moves them above the goal. Steering messages never wait for the goal.
  * A paused item keeps its place, and the items after it can run.
  * Pi may take an item that is not taken, not paused, not below the goal and not marked for retry, while the queue is not held and not stopped.
@@ -42,16 +37,14 @@ export class QueueState {
   /** Ids of taken steering messages, so their user messages show as steering. */
   steerTaken = new Set<string>();
   steeringTimestamps = new Set<string>();
-  goal: QueueGoal | null = null;
+  goals = new QueueGoal();
   /** True while the user holds the queue. */
   held = false;
   /** True after the user stopped a response: waiting items stay until the user sends a message, which goes first. */
   stopped = false;
 
-  activeGoal(): QueueGoal | undefined { return this.goal?.status === 'active' ? this.goal : undefined; }
-
   /** The goal while it has a place in the queue: active or paused. */
-  queuedGoal(): QueueGoal | undefined { return this.goal && this.goal.status !== 'complete' ? this.goal : undefined; }
+  queuedGoal() { return this.goals.live(); }
 
   /** Follow-ups below the goal entry, in queue order. */
   waiting(): any[] { return this.pending.filter(item => flag(item, 'afterGoal') && !flag(item, 'retry')); }
@@ -61,8 +54,11 @@ export class QueueState {
     return !this.held && !this.stopped && !flag(item, 'taken') && !flag(item, 'paused') && !flag(item, 'afterGoal') && !flag(item, 'retry') && !this.sending.has(text(item, 'id'));
   }
 
+  /** True when Pi may give the goal its next turn. The goal waits while the queue is held and while the chat waits for the user's first message. */
+  goalAvailable(): boolean { return Boolean(this.goals.active()) && !this.held && !this.goals.waitingForInput; }
+
   offer(): QueueOffer {
-    const offer = { steer: 0, followUp: 0 };
+    const offer = { steer: 0, followUp: 0, goal: this.goalAvailable() ? 1 : 0, tools: { [GOAL_TOOL]: Boolean(this.goals.live()) } };
     for (const item of this.pending) if (this.available(item)) offer[item.behavior === 'steer' ? 'steer' : 'followUp'] += 1;
     return offer;
   }
@@ -90,7 +86,7 @@ export class QueueState {
   view(pending: any[] = this.pending): any {
     const visible = pending.map(original => {
       const item = clone(original);
-      for (const field of CONSUMPTION_FIELDS) delete item[field];
+      for (const field of PRIVATE_FIELDS) delete item[field];
       if (flag(item, 'taken')) item.sending = true;
       delete item.taken;
       if (Array.isArray(item?.images)) for (const image of item.images) if (image && typeof image === 'object' && !Array.isArray(image)) delete image.data;

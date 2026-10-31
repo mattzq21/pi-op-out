@@ -1,4 +1,3 @@
-import { read as readGoal } from "../../resources/piop-storage/goals.cjs";
 import { join } from 'node:path';
 import { CommandRefusedError } from '../pi_rejection';
 import { getProjectRepository, refreshProjectRepository } from '../project_repositories';
@@ -264,9 +263,7 @@ export class Host implements SessionHost {
     const database = Registry.open(this.storageRoot());
     try {
       const id = session.identity;
-      const file = session.savedState()?.sessionFile;
-      const goal = typeof file === 'string' ? readGoal(file) : null;
-      if (goal && goal.status !== 'complete') return false;
+      if (session.queue.liveGoal()) return false;
       if (database.prepare('SELECT 1 FROM session_mailbox WHERE session_id=? LIMIT 1').get(id)) return false;
       const runs = database.prepare('SELECT run_json FROM session_subagent_runs WHERE session_id=?').all(id);
       return !runs.some(row => {

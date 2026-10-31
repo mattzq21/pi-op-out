@@ -66,7 +66,7 @@ export function prepareRuntimeBridge(): void {
 export const SESSION_BROKER_MODULES = R.SESSION_BROKER_MODULES;
 
 /** Installs session-broker and the session extensions that share its modules. Returns the entries in load order. */
-export function prepareSessionExtensions(): { hooks: string; storage: string; controls: string; broker: string; goals: string } {
+export function prepareSessionExtensions(): { hooks: string; storage: string; controls: string; broker: string } {
   const dir = generatedExtensionRoot();
   ensurePrivateDir(dir);
   prepareBrokerStorage(dir);
@@ -79,7 +79,7 @@ export function prepareSessionExtensions(): { hooks: string; storage: string; co
   }
   const broker = join(dir, 'session-broker.ts');
   atomicWritePrivate(broker, R.sessionBroker);
-  return { hooks: join(dir, 'hooks-extended/index.ts'), storage: join(dir, 'piop-storage/index.ts'), controls: join(dir, 'piop-controls/index.ts'), broker, goals: join(dir, 'piop-goals/index.ts') };
+  return { hooks: join(dir, 'hooks-extended/index.ts'), storage: join(dir, 'piop-storage/index.ts'), controls: join(dir, 'piop-controls/index.ts'), broker };
 }
 
 /**

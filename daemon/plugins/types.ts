@@ -1,7 +1,7 @@
 import type { SettingsContribution } from './settings';
 
 /** Core Pi extensions, in load order. A plugin extension loads right after the one it names. */
-export type CoreExtension = 'goals' | 'context-bar';
+export type CoreExtension = 'session' | 'context-bar';
 
 /**
  * How Piop delivers a plugin's slash command.
