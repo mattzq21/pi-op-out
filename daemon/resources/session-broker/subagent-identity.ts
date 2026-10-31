@@ -14,7 +14,7 @@ export const runSchema = Schema.Object({
   observation: Schema.Optional(Schema.Union([Schema.Literal("watching"), Schema.Literal("interrupted")])),
   cancelRequested: Schema.Optional(Schema.Boolean()), cancelReason: Schema.Optional(Schema.String()),
   submission: Schema.Optional(Schema.Union([Schema.Literal("prepared"), Schema.Literal("submitted"), Schema.Literal("accepted")])),
-  deliveryIds: Schema.Optional(Schema.Array(Schema.String())), taskNotificationId: Schema.Optional(Schema.String()), taskStartedAt: Schema.Optional(Schema.Number()), activeMs: Schema.Optional(Schema.Number({ minimum: 0 })),
+  deliveryIds: Schema.Optional(Schema.Array(Schema.String())), taskNotificationId: Schema.Optional(Schema.String()), taskStartedAt: Schema.Optional(Schema.Number()),
   resultNotificationId: Schema.Optional(Schema.String()), resultDelivery: Schema.Optional(Schema.Union([Schema.Literal("pending"), Schema.Literal("delivered")])),
 });
 
