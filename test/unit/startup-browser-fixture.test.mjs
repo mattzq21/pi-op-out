@@ -5,7 +5,7 @@ import { startupPage } from '../startup-browser-fixture.mjs';
 test('shared browser keeps test storage separate and closes each completed context', async t => {
   const cleanup = [];
   const fixture = { after: callback => cleanup.push(callback) };
-  const options = { entryPoint: 'test/fixtures/chat-scroll-browser.tsx', ready: '.messages', holdStorage: false };
+  const options = { entryPoint: 'test/fixtures/browser-context.ts', holdStorage: false };
   let first;
   try {
     first = await startupPage(fixture, 'production', options);
@@ -20,7 +20,7 @@ test('shared browser keeps test storage separate and closes each completed conte
     assert.equal(first.isClosed(), true);
     assert.equal(second.isClosed(), false);
     assert.equal(second.context().browser().contexts().length, 1);
-    assert.equal(await second.locator('.messages').count(), 1);
+    assert.equal(await second.getByRole('status').textContent(), 'Ready');
   } finally {
     for (const close of cleanup) await close();
   }
