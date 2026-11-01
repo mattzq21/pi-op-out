@@ -20,10 +20,10 @@ async function render(details, { host } = {}) {
   return { opened, buttons };
 }
 
-test('delegated work shows each child with its state, and a click opens that child chat', async () => {
+test('delegated work shows each child without a state, and a click opens that child chat', async () => {
   const { opened, buttons } = await render({ version: 1, runs: [run('reader', 'completed'), run('writer', 'running'), run('tester', 'cancelled'), run('linter', 'failed')] });
   assert.deepEqual(buttons().map(button => button.getAttribute('aria-label')), [
-    'Open reader agent chat — Subagent succeeded', 'Open writer agent chat — Subagent started', 'Open tester agent chat — Subagent cancelled', 'Open linter agent chat — Subagent failed',
+    'Open reader agent chat', 'Open writer agent chat', 'Open tester agent chat', 'Open linter agent chat',
   ]);
   await act(async () => buttons()[1].click());
   assert.deepEqual(opened.map(target => [target.name, target.sessionId, target.sessionPath, target.hostId]), [['writer', 'writer-id', '/sessions/writer.jsonl', 'local']]);

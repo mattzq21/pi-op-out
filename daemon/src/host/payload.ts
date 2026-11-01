@@ -19,7 +19,7 @@ export function clientPayload(value: any): any {
 }
 
 const SUBAGENT_TOOLS = new Set(['spawn_subagents', 'await_subagents']);
-const SUBAGENT_FIELDS = ['name', 'status', 'sessionId', 'sessionPath', 'hostId', 'toolCallId', 'look'];
+const SUBAGENT_FIELDS = ['name', 'sessionId', 'sessionPath', 'hostId', 'toolCallId', 'look'];
 
 function keepSubagents(value: any, details: any): void {
   if (!SUBAGENT_TOOLS.has(value.toolName) || !Array.isArray(details?.runs)) return;

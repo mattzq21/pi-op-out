@@ -268,7 +268,7 @@ test('chat links in prompts open the referenced chat on its host', async t => {
 });
 
 test('a subagent wait step shows an icon for each subagent without loading the tool payload', async t => {
-  const run = { name: 'Reader', status: 'completed', sessionId: 'reader-id', sessionPath: '/s/reader.jsonl', hostId: 'local', look: 5 };
+  const run = { name: 'Reader', sessionId: 'reader-id', sessionPath: '/s/reader.jsonl', hostId: 'local', look: 5 };
   let loads = 0;
   const message = { id: 'tool-id', role: 'tool', toolName: 'await_subagents', content: '', subagents: [run], deferredToolPayload: 'call-1', toolPayloadVersion: 1, toolPayloadEvicted: true, loadToolPayload: async () => { loads++; } };
   await renderMessage(t, message);
