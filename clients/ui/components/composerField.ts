@@ -191,6 +191,71 @@ export class ComposerFieldElement extends HTMLElement {
     if (this.#focused()) this.#applySelection();
   }
 
+  /** The offset in `value` under the window point when the point is on this field, else the caret offset. */
+  dropOffset(x: number, y: number) {
+    const bounds = this.getBoundingClientRect();
+
+    if (x < bounds.left || x > bounds.right || y < bounds.top || y > bounds.bottom) { this.#readSelection(); return this.#selection.end; }
+    const caret = document.caretPositionFromPoint?.(x, y);
+    const range = caret ? undefined : document.caretRangeFromPoint?.(x, y);
+    const node = caret?.offsetNode ?? range?.startContainer;
+    const offset = caret?.offset ?? range?.startOffset ?? 0;
+
+    return node && this.contains(node) ? this.#offset(node, offset) : this.#value.length;
+  }
+
+  /** Shows a caret at `offset` where a dragged item goes, or hides it. It is not part of `value` or the selection. */
+  showDropCaret(offset: number | undefined) {
+    if (offset === undefined) { this.removeAttribute("data-drop-caret"); return; }
+    const rect = this.#caretRect(offset);
+    const bounds = this.getBoundingClientRect();
+    this.style.setProperty("--drop-x", `${rect.left - bounds.left - this.clientLeft + this.scrollLeft}px`);
+    this.style.setProperty("--drop-y", `${rect.top - bounds.top - this.clientTop + this.scrollTop}px`);
+    this.style.setProperty("--drop-height", `${rect.height}px`);
+    this.setAttribute("data-drop-caret", "");
+  }
+
+  /** Puts `text` at `offset` as one undo step, with the caret after it. */
+  insertAt(offset: number, text: string) {
+    const at = Math.max(0, Math.min(offset, this.#value.length));
+    this.#readSelection();
+    this.#record(this.#snapshot());
+    this.#value = this.#value.slice(0, at) + text + this.#value.slice(at);
+    this.#render();
+    this.#selection = { start: at + text.length, end: at + text.length };
+
+    if (this.#focused()) this.#applySelection();
+    this.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertFromDrop", data: text }));
+  }
+
+  /** The screen box of a caret at `offset`. */
+  #caretRect(offset: number) {
+    const [node, at] = this.#position(offset);
+    const range = document.createRange();
+    range.setStart(node, at);
+    const rect = range.getClientRects()[0];
+
+    if (rect) return rect;
+    const lineHeight = parseFloat(getComputedStyle(this).lineHeight) || 20;
+    const after = node === this ? this.childNodes[at] : undefined;
+    const before = node === this ? this.childNodes[at - 1] : undefined;
+    const box = (child: ChildNode) => { const span = document.createRange(); span.selectNode(child);
+
+      return span.getClientRects(); };
+    const next = after && after.nodeName !== "BR" ? box(after)[0] : undefined;
+
+    if (next) return new DOMRect(next.left, next.top, 0, next.height);
+    const previous = before ? box(before) : undefined;
+    const last = previous?.[previous.length - 1];
+
+    if (last && before?.nodeName !== "BR") return new DOMRect(last.right, last.top, 0, last.height);
+    const bounds = this.getBoundingClientRect();
+    const style = getComputedStyle(this);
+    const top = last ? last.bottom : bounds.top + this.clientTop + parseFloat(style.paddingTop);
+
+    return new DOMRect(bounds.left + this.clientLeft + parseFloat(style.paddingLeft), top, 0, lineHeight);
+  }
+
   #applyEditable() {
     if (!this.isConnected) return;
     this.setAttribute("contenteditable", this.#readOnly ? "false" : "plaintext-only");
@@ -239,6 +304,7 @@ export class ComposerFieldElement extends HTMLElement {
 
     if (this.#value.endsWith("\n")) nodes.push(document.createElement("br"));
     this.replaceChildren(...nodes);
+    this.#markSelectedLinks(this.#focused());
   }
 
   /** The offset in `value` of a DOM position inside this field. */
@@ -419,9 +485,24 @@ export class ComposerFieldElement extends HTMLElement {
 
   #selectionChange = () => {
     const before = this.#selection;
+    const inside = this.#readSelection();
+    this.#markSelectedLinks(inside);
 
-    if (this.#readSelection() && (before.start !== this.#selection.start || before.end !== this.#selection.end)) this.dispatchEvent(new Event("select"));
+    if (inside && (before.start !== this.#selection.start || before.end !== this.#selection.end)) this.dispatchEvent(new Event("select"));
   };
+
+  /** Marks each chat link that the selection holds. The browser does not show the selection on them clearly. */
+  #markSelectedLinks(inside: boolean) {
+    const { start, end } = this.#selection;
+    let at = 0;
+
+    for (const child of Array.from(this.childNodes)) {
+      const length = nodeText(child).length;
+
+      if (child instanceof HTMLElement && linkMarkdown(child) !== undefined) child.classList.toggle("selected", inside && start < end && start <= at && at + length <= end);
+      at += length;
+    }
+  }
 }
 
 if (!customElements.get(COMPOSER_FIELD_TAG)) customElements.define(COMPOSER_FIELD_TAG, ComposerFieldElement);

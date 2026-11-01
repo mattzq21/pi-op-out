@@ -376,6 +376,28 @@ test('the used skill reference is highlighted while it stays editable text', asy
   assert.equal(await editor.evaluate(node => node.selectionStart), 17);
 });
 
+test('a dropped chat link goes where the pointer is, and a selected link shows as selected', async t => {
+  const page = await controlsPage(t);
+  const editor = page.getByRole('textbox', { name: 'Message piop' });
+  await editor.click();
+  await page.keyboard.type('alpha omega');
+  const link = '[Other](piop://session/local/other)';
+  const point = await editor.evaluate(node => { const range = document.createRange(); range.setStart(node.firstChild, 6); const rect = range.getClientRects()[0]; return { x: rect.left + 1, y: rect.top + rect.height / 2 }; });
+  const offset = await editor.evaluate((node, { x, y }) => node.dropOffset(x, y), point);
+  assert.equal(offset, 6);
+  await editor.evaluate((node, offset) => { node.showDropCaret(offset); }, offset);
+  assert.equal(await editor.evaluate(node => node.hasAttribute('data-drop-caret')), true);
+  await editor.evaluate((node, { offset, link }) => { node.showDropCaret(undefined); node.insertAt(offset, link + ' '); }, { offset, link });
+  assert.equal(await editor.inputValue(), `alpha ${link} omega`);
+  assert.equal(await editor.evaluate(node => node.dropOffset(-100, -100)), 6 + link.length + 1, 'away from the box it uses the caret');
+  await editor.evaluate((node, end) => node.setSelectionRange(6, end), 6 + link.length);
+  await page.waitForFunction(() => document.querySelector('.composer-session-link')?.classList.contains('selected'));
+  await editor.evaluate(node => node.setSelectionRange(0, 3));
+  await page.waitForFunction(() => !document.querySelector('.composer-session-link')?.classList.contains('selected'));
+  await page.keyboard.press('Control+z');
+  assert.equal(await editor.inputValue(), 'alpha omega');
+});
+
 test('Ctrl+Z and Ctrl+Y undo and redo typing in the message editor', async t => {
   const page = await controlsPage(t);
   const editor = page.getByRole('textbox', { name: 'Message piop' });

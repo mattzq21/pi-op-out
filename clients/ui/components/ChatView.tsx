@@ -11,7 +11,7 @@ import { chatSubmission, trackChatSubmission } from "../lib/chatSubmission";
 import { draftUploadsFromImages, stageDraftSubmission, type DraftSubmissionHandle, type DraftSubmissionPayload } from "../lib/draftSubmission";
 import { Key } from "@solid-primitives/keyed";
 import { COMPOSER_FIELD_TAG, type ComposerFieldElement } from "./composerField";
-import { appendToDraft, sessionLink, type SessionDragDetail } from "../lib/sessionDrop";
+import { appendToDraft, sessionLink, spacedInsert, type SessionDragDetail } from "../lib/sessionDrop";
 import { createMemo, createSignal, Index, onCleanup, Show, untrack, type Accessor } from "solid-js";
 import type { NativeTransport } from "../lib/nativeTransport";
 import { isDaemonRefusal } from "../lib/commandRejected";
@@ -127,18 +127,25 @@ export function ChatView(props: Props & { transcriptActions?: JSXElement; follow
   const [sessionDragOver, setSessionDragOver] = createSignal(false);
   const acceptsSessionDrop = () => !props.readOnly && Boolean(props.onDraftChange);
 
-  /** A chat dropped here adds a link to it at the end of the draft. */
+  /** A chat dropped here adds a link to it in the draft: at the pointer when it is on the message box, else at the caret. A caret shows the place while the chat moves. */
   const sessionDrag = (event: CustomEvent<SessionDragDetail>) => {
     const detail = event.detail;
-
-    if (detail.phase !== "drop") { setSessionDragOver(detail.phase === "enter"); return; }
-    setSessionDragOver(false);
-    props.onDraftChange?.(draft => appendToDraft(draft, sessionLink(detail.session)));
     const editor = shellRef.current?.querySelector<ComposerFieldElement>(COMPOSER_FIELD_TAG);
+    const usable = editor && !editor.readOnly ? editor : undefined;
 
-    if (!editor || editor.readOnly) { (document.activeElement as HTMLElement | null)?.blur(); return; }
-    editor.focus();
-    requestAnimationFrame(() => { if (document.activeElement === editor) editor.setSelectionRange(editor.value.length, editor.value.length); });
+    if (detail.phase !== "drop") {
+      setSessionDragOver(detail.phase === "over");
+      usable?.showDropCaret(detail.phase === "over" ? usable.dropOffset(detail.x, detail.y) : undefined);
+
+      return;
+    }
+    setSessionDragOver(false);
+    editor?.showDropCaret(undefined);
+
+    if (!usable) { props.onDraftChange?.(draft => appendToDraft(draft, sessionLink(detail.session))); (document.activeElement as HTMLElement | null)?.blur(); return; }
+    const offset = usable.dropOffset(detail.x, detail.y);
+    usable.focus();
+    usable.insertAt(offset, spacedInsert(usable.value, offset, sessionLink(detail.session)));
   };
   const measureDistance = () => { const element = messagesRef.current;
 
