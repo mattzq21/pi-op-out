@@ -6,7 +6,7 @@ import { startDaemon, temporaryDirectory } from './harness';
 const alive = (pid: number) => { try { process.kill(pid, 0); return true; } catch { return false; } };
 
 test('an open shell keeps a daemon without clients running only until its unused delay ends', async () => {
-  const daemon = await startDaemon({ env: { PIOP_UNUSED_STOP_MS: '2000' } });
+  const daemon = await startDaemon({ unusedStopMs: 2000 });
   const directory = temporaryDirectory('piop-terminal-stop-');
   writeFileSync(join(daemon.home, '.bashrc'), 'exec sh ./.terminal-script\n');
   writeFileSync(join(directory, '.terminal-script'), "trap '' INT\necho $$ > pid\nprintf READY\nwhile :; do sleep 1; done\n");

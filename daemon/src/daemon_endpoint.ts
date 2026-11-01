@@ -9,8 +9,6 @@ import * as restartStorage from './restart_storage';
 import { tryLockFileSync, type FileLock } from './util/flock';
 import { generatedExtensionRoot } from './extensions';
 
-export const STARTUP_TIMEOUT = 90_000;
-
 export const ALREADY_RUNNING_EXIT_CODE = 3;
 
 export class DaemonAlreadyRunningError extends Error {}
