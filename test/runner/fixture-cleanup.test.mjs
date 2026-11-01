@@ -14,11 +14,17 @@ test('fixture cleanup closes its servers and reports only cleanup failures', asy
   const script = join(directory, 'failure.test.mjs');
   const controls = join(directory, 'controls.mjs');
   const noisyControls = join(directory, 'noisy-controls.mjs');
+  const failedControls = join(directory, 'failed-controls.mjs');
   await buildTraceControls(controls);
   await writeFile(noisyControls, `
 export { default } from './controls.mjs';
 import { writeSync } from 'node:fs';
 process.on('exit', () => writeSync(1, 'unexpected publisher output\\n'));
+`);
+  await writeFile(failedControls, `
+export { default } from './controls.mjs';
+import { writeSync } from 'node:fs';
+process.on('exit', () => { writeSync(2, 'publisher shutdown failed\\n'); process.exitCode = 23; });
 `);
   await writeFile(script, `
 import { test } from 'node:test';
@@ -37,7 +43,7 @@ for (const failures of [0, 1, 2]) test('cleanup with ' + failures + ' failures',
     await writeFile(${JSON.stringify(closed)} + failures, 'closed');
   });
 });
-for (const [name, controlsBundle] of ${JSON.stringify([['normal output', controls], ['unexpected output', noisyControls]])}) test('publisher cleanup with ' + name, async t => {
+for (const [name, controlsBundle] of ${JSON.stringify([['normal output', controls], ['unexpected output', noisyControls], ['failed process', failedControls]])}) test('publisher cleanup with ' + name, async t => {
   const publish = chatPublisher(t, { home: ${JSON.stringify(directory)}, controlsBundle });
   await publish({ content: '' });
 });
@@ -48,10 +54,12 @@ for (const [name, controlsBundle] of ${JSON.stringify([['normal output', control
     assert.equal(error.killed, false, 'cleanup must finish without killing the test process');
     assert.equal(error.code, 1, 'cleanup errors must fail the tests');
     assert.match(error.stdout, /^# pass 2$/m);
-    assert.match(error.stdout, /^# fail 3$/m);
+    assert.match(error.stdout, /^# fail 4$/m);
     assert.match(error.stdout, /first cleanup failure/);
     assert.match(error.stdout, /second cleanup failure/);
     assert.match(error.stdout, /Unexpected chat publisher response/);
+    assert.match(error.stdout, /Chat publisher closed \(23\)/);
+    assert.match(error.stdout, /publisher shutdown failed/);
     assert.doesNotMatch(error.stdout, /unhandledRejection|asynchronous activity/);
     return true;
   });
