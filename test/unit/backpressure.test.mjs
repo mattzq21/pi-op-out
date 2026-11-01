@@ -13,7 +13,9 @@ test('desktop daemon requests recover from explicit busy rejections', { timeout:
   const home = '/home/test-user';
   mockWindows('main');
   const busyReplies = ['Host is busy; try again', 'Host is busy; try again'];
+  let attempts = 0;
   mockNativeIPC((command, args) => {
+    attempts++;
     assert.equal(command, 'daemon_invoke');
     assert.equal(args.command, 'home_directory');
     assert.equal(args.args.hostId, 'local');
@@ -28,6 +30,7 @@ test('desktop daemon requests recover from explicit busy rejections', { timeout:
     context.mock.timers.runAll();
   }
   assert.deepEqual(await result, { value: home });
+  assert.equal(attempts, 3, 'two busy replies require exactly three requests');
 });
 
 test('desktop requests report persistent saturation instead of retrying forever', { timeout: 10000 }, async context => {
