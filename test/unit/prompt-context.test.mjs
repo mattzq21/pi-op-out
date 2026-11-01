@@ -53,32 +53,16 @@ test('context shares clear when context becomes empty', async () => {
   ]);
 });
 
-test("System prompt explains an empty context", async () => {
+for (const [label, explanation] of [
+  ['System', 'No system prompt'],
+  ['Instructions', 'No project instructions'],
+  ['Tools', 'No active tools'],
+  ['Skills', 'No defined skills'],
+]) test(`${label} explains an empty context`, async () => {
   view = await renderComponent(PromptContextBar, { context: context(), inputTokens: 3 });
   await view.rerender({ context: emptyContext(), inputTokens: 0 });
-  await act(() => button("System").click());
-  assert.ok(document.body.textContent.includes("No system prompt"));
-});
-
-test("Instructions explains an empty context", async () => {
-  view = await renderComponent(PromptContextBar, { context: context(), inputTokens: 3 });
-  await view.rerender({ context: emptyContext(), inputTokens: 0 });
-  await act(() => button("Instructions").click());
-  assert.ok(document.body.textContent.includes("No project instructions"));
-});
-
-test("Tools explains an empty context", async () => {
-  view = await renderComponent(PromptContextBar, { context: context(), inputTokens: 3 });
-  await view.rerender({ context: emptyContext(), inputTokens: 0 });
-  await act(() => button("Tools").click());
-  assert.ok(document.body.textContent.includes("No active tools"));
-});
-
-test("Skills explains an empty context", async () => {
-  view = await renderComponent(PromptContextBar, { context: context(), inputTokens: 3 });
-  await view.rerender({ context: emptyContext(), inputTokens: 0 });
-  await act(() => button("Skills").click());
-  assert.ok(document.body.textContent.includes("No defined skills"));
+  await act(() => button(label).click());
+  assert.ok(document.body.textContent.includes(explanation));
 });
 
 test('empty skills display zero shares for defined, invoked and shared instructions', async () => {
