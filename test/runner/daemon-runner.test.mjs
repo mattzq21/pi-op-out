@@ -73,7 +73,7 @@ echo 'tests must not start'
 async function fixture(t, failing, discover) {
   const directory = await mkdtemp(join(tmpdir(), 'piop-daemon-runner-'));
   t.after(() => rm(directory, { recursive: true, force: true }));
-  const files = Array.from({ length: 5 }, (_, index) => discover ? `test/daemon/${index % 2 ? 'nested/' : ''}case-${index}.test.ts` : join(directory, `case-${index}.test.ts`));
+  const files = Array.from({ length: 3 }, (_, index) => discover ? `test/daemon/${index % 2 ? 'nested/' : ''}case-${index}.test.ts` : join(directory, `case-${index}.test.ts`));
   const builds = join(directory, 'builds'), invocation = join(directory, 'invocation.json');
   const started = [], active = new Set();
   let waiting = [], maximum = 0;

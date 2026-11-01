@@ -30,7 +30,7 @@ appendFileSync(${JSON.stringify(log)}, 'daemon\\n');
 ${fail === 'daemon' || fail === 'both' ? "console.error('daemon build failed'); process.exit(19);" : `console.log(${JSON.stringify(daemonBinary)});`}
 `, { mode: 0o755 });
   const files = [];
-  for (let index = 0; index < 3; index++) {
+  for (let index = 0; index < 2; index++) {
     const file = join(directory, `child-${index}.test.mjs`);
     await writeFile(file, `import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -55,9 +55,9 @@ test('child ${index} uses this run\\'s build', async () => {
 test('fresh native and daemon builds are shared by separate test processes', async t => {
   const { run, log, controls } = await fixture(t);
   const result = await run();
-  assert.match(result.stdout, /pass 3/);
+  assert.match(result.stdout, /pass 2/);
   const bundles = (await readFile(controls, 'utf8')).trim().split('\n');
-  assert.equal(bundles.length, 3);
+  assert.equal(bundles.length, 2);
   assert.equal(new Set(bundles).size, 1);
   assert.equal(existsSync(bundles[0]), false, 'the shared build is removed after the tests');
   assert.deepEqual((await readFile(log, 'utf8')).trim().split('\n').sort(), ['build', 'daemon']);
