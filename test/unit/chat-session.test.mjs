@@ -45,6 +45,18 @@ describe('chat session hook', () => {
     assert.equal(commands.find(command => command.type === 'get_snapshot').listedBefore, 'recent-start');
   });
 
+  test('the full load after a preview with the same revision still loads the model and thinking level', async () => {
+    await hook.unmount();
+    const saved = snapshot({ revision: 'same' });
+    const live = snapshot({ revision: 'same', state: { ...initialState, model: { provider: 'p', id: 'm' }, thinkingLevel: 'high' } });
+    const previewing = { subscribe() { return () => {}; }, preview: async () => saved, async command(command) { return command.type === 'get_session_revision' ? { revision: 'same' } : command.type === 'get_snapshot' ? live : responses.get(command.type); } };
+    hook = await renderHook(value => useChatSession(value), previewing);
+    await act(async () => {});
+    await act(() => hook.current.refresh());
+    assert.equal(hook.current.state.model?.id, 'm');
+    assert.equal(hook.current.state.thinkingLevel, 'high');
+  });
+
   test('refresh loads model capabilities and filters internal commands', async () => {
     responses.set('get_commands', { commands: [{ name: 'visible', source: 'extension' }, { name: 'inline', source: 'extension', sourceInfo: { source: 'inline' } }] });
     await act(() => hook.current.refresh());

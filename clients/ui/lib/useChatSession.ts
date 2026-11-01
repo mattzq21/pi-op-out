@@ -270,7 +270,6 @@ function createChatSession(transport: Accessor<Pick<NativeTransport, "command" |
         restoreHistory(snapshot);
         session.setState(current => current.sessionId && current.sessionId !== sessionId ? current : { ...current, sessionId, sessionFile, cwd, repository, forkSource, canFork, messageCount, pendingMessages: pendingMessagesSchema.parse(snapshot.queue.pendingMessages), pendingMessageCount: snapshot.state.pendingMessageCount, queueHeld: snapshot.state.queueHeld });
       });
-      session.memory.markRevision(snapshot.revision);
     }, reason => console.warn("Saved conversation preview failed; waiting for the full load", reason));
   };
   showPreview();
