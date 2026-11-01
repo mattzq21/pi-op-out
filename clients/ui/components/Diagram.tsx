@@ -104,6 +104,7 @@ export function Diagram(props: { source: string; complete: boolean }) {
 
   const pointerMove = (event: PointerEvent) => {
     if (!drag) return;
+    if (!(event.buttons & 1)) { drag = undefined; return; }
     viewport.scrollLeft = drag.left + drag.x - event.clientX;
     viewport.scrollTop = drag.top + drag.y - event.clientY;
   };
@@ -133,7 +134,7 @@ export function Diagram(props: { source: string; complete: boolean }) {
         <button type="button" aria-label="Zoom in" disabled={zoom() >= 4} onClick={() => setZoom(Math.min(4, zoom() + 0.25))}>+</button>
         <button type="button" onClick={close}>Close</button>
       </div>
-      <div ref={viewport} class="diagram-viewport" tabindex="0" role="region" aria-label="Diagram preview; scroll or drag to pan, Ctrl+scroll to zoom" data-tooltip="Ctrl+scroll up to zoom in, Ctrl+scroll down to zoom out" onPointerDown={pointerDown} onPointerMove={pointerMove} onPointerUp={() => { drag = undefined; }} onLostPointerCapture={() => { drag = undefined; }}>
+      <div ref={viewport} class="diagram-viewport" tabindex="0" role="region" aria-label="Diagram preview; scroll or drag to pan, Ctrl+scroll to zoom" data-tooltip="Ctrl+scroll up to zoom in, Ctrl+scroll down to zoom out" onPointerDown={pointerDown} onPointerMove={pointerMove} onPointerUp={() => { drag = undefined; }} onPointerCancel={() => { drag = undefined; }} onDragStart={event => event.preventDefault()} onLostPointerCapture={() => { drag = undefined; }}>
         <div class="diagram-canvas" style={{ width: `${zoom() * 100}%` }} innerHTML={svg()} />
       </div>
     </dialog>
