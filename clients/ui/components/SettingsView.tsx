@@ -345,13 +345,15 @@ export function SettingsView(props: SettingsViewProps) {
   const filteredModelChoices = createMemo(() => {
     const words = modelFilter().toLocaleLowerCase().split(/\s+/).filter(Boolean);
     const { modelChoices, hiddenModels } = modelCatalog();
+    const aliases = draft().modelAliases ?? {};
+    const rank = (id: string) => Number(hiddenModels.has(id)) * 2 + Number(!aliases[id]);
 
     return modelChoices
       .filter((model) => {
-        const text = `${draft().modelAliases?.[model.id] ?? ""} ${model.name} ${model.id}`.toLocaleLowerCase();
+        const text = `${aliases[model.id] ?? ""} ${model.name} ${model.id}`.toLocaleLowerCase();
         return words.every((word) => text.includes(word));
       })
-      .sort((left, right) => Number(hiddenModels.has(left.id)) - Number(hiddenModels.has(right.id)));
+      .sort((left, right) => rank(left.id) - rank(right.id));
   });
 
   const validateAgentResources = () => {
