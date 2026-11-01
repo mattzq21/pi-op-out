@@ -53,6 +53,7 @@ test('terminal recovery dismisses its sync error without dismissing unrelated no
   assert.deepEqual([...notices].map(notice => notice.title), ['Unrelated problem']);
   offline = true;
   await act(view.current.takeOwnership);
+  assert.equal(view.current.ready(), false, 'a later sync failure must clear terminal readiness');
   assert.equal(notices.size, 2);
   assert.ok([...notices].some(notice => notice.title === 'Could not sync terminals'));
 });
