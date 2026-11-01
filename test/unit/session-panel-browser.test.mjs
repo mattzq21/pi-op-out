@@ -446,17 +446,48 @@ test('projects can be renamed to free names, including names of forgotten groups
   await page.getByRole('dialog').waitFor({ state: 'detached' });
   await page.getByRole('button', { name: 'Group actions for repo', exact: true }).click();
   await page.getByRole('menuitem', { name: 'Edit project', exact: true }).click();
-  const input = page.getByRole('textbox', { name: 'Rename session group', exact: true });
-  await input.fill('research');
-  await page.keyboard.press('Enter');
-  assert.equal(await page.locator('#rename-group-error').textContent(), 'A project or group already uses that name.');
-  await input.fill('Old');
-  await page.keyboard.press('Enter');
+  const dialog = page.getByRole('dialog');
+  await dialog.getByRole('textbox', { name: 'Name', exact: true }).fill('research');
+  await dialog.getByRole('button', { name: 'Save', exact: true }).click();
+  assert.equal(await dialog.getByRole('alert').textContent(), 'A project or group already uses that name.');
+  await dialog.getByRole('textbox', { name: 'Name', exact: true }).fill('Old');
+  await dialog.getByRole('button', { name: 'Save', exact: true }).click();
+  await dialog.getByRole('button', { name: 'Save changes', exact: true }).click();
+  await dialog.getByRole('heading', { name: 'Project saved', exact: true }).waitFor();
+  await dialog.getByRole('button', { name: 'Done', exact: true }).click();
   await page.getByRole('button', { name: 'Group actions for Old', exact: true }).waitFor();
   assert.equal(await page.getByRole('button', { name: 'Group actions for repo', exact: true }).count(), 0);
   await page.evaluate(() => window.settlePanelStorage());
   await reload('Old');
   assert.equal(await page.getByRole('button', { name: 'Group actions for Old', exact: true }).count(), 1);
+});
+
+test('a project directory change is confirmed and reports success or failure', async t => {
+  const folders = await mkdtemp(join(tmpdir(), 'piop-edit-project-'));
+  t.after(() => rm(folders, { recursive: true, force: true }));
+  const moved = join(folders, 'moved');
+  await mkdir(join(folders, 'repo'));
+  const { page, service } = await panelPage(t, { cwd: join(folders, 'repo') });
+  const choose = async path => {
+    await dialog.getByRole('button', { name: 'Change directory', exact: true }).click();
+    const input = page.getByRole('combobox');
+    await input.fill(path);
+    await page.getByText('Loading folder suggestions…', { exact: true }).waitFor({ state: 'detached' });
+    await input.press('Enter');
+    await input.waitFor({ state: 'detached' });
+  };
+  await page.getByRole('button', { name: 'Group actions for repo', exact: true }).click();
+  await page.getByRole('menuitem', { name: 'Edit project', exact: true }).click();
+  const dialog = page.getByRole('dialog').first();
+  await choose(moved);
+  await dialog.getByRole('button', { name: 'Save', exact: true }).click();
+  await dialog.getByRole('button', { name: 'Save changes', exact: true }).click();
+  assert.match(await dialog.getByRole('alert').textContent(), /^Could not save the project: /);
+  await mkdir(moved);
+  await dialog.getByRole('button', { name: 'Try again', exact: true }).click();
+  await dialog.getByRole('heading', { name: 'Project saved', exact: true }).waitFor();
+  const state = await service.invoke('load_session_groups', { seeds: [] });
+  assert.equal(state.groups.find(group => group.name === 'repo').cwd, moved);
 });
 
 async function rejectGroupName(page, name, message) {
