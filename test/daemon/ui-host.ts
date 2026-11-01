@@ -10,6 +10,12 @@ const model = process.env.PIOP_TEST_UI_MODEL === 'echo' ? await scriptedModel(da
   return { text: 'Reply to ' + content };
 }) : undefined;
 try {
+  if (model) {
+    const settings = await daemon.invoke('load_app_settings');
+    settings.knownModels = ['scripted/scripted-model', 'scripted/scripted-thinker'];
+    settings.hiddenModels = [];
+    await daemon.invoke('save_app_settings', { settings });
+  }
   for (const remote of JSON.parse(process.env.PIOP_TEST_UI_REMOTES ?? '[]')) remotes.push(await remoteMachine(daemon, remote.id, remote.name, remote.target));
   if (remotes.length) await useRemotes(daemon, remotes);
   process.stdout.write(JSON.stringify(daemon.endpoint) + '\n');
