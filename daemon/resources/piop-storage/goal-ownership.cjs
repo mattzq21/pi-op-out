@@ -132,7 +132,7 @@ function directories(root, sessionId) {
       db.exec('COMMIT');
 
       return result;
-    } catch (error) { db.exec('ROLLBACK'); throw error; }
+    } catch (error) { throw database.rollback(db, error); }
   });
 }
 

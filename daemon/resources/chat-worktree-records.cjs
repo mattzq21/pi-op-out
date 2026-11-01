@@ -98,7 +98,7 @@ function replace(root, chatId, before, after) {
       else if (expected === null) db.prepare('INSERT INTO chat_worktrees VALUES (?, ?)').run(chatId, next);
       else db.prepare('UPDATE chat_worktrees SET record_json=? WHERE chat_id=?').run(next, chatId);
       db.exec('COMMIT');
-    } catch (error) { db.exec('ROLLBACK'); throw error; }
+    } catch (error) { throw database.rollback(db, error); }
   });
 
   return after;

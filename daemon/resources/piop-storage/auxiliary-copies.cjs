@@ -175,7 +175,7 @@ function copySubagentRuns(root, plan, parents) {
     }
 
     db.exec('COMMIT');
-  } catch (error) { if (db.isTransaction) db.exec('ROLLBACK'); throw error; }
+  } catch (error) { throw database.rollback(db, error); }
   finally { db.close(); }
 }
 

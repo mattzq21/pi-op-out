@@ -6,7 +6,7 @@ import { dirname, join } from "node:path";
 import { Type, type Static } from "typebox";
 import { Check, Parse } from "typebox/value";
 import type { DatabaseSync } from "node:sqlite";
-import { open as openDatabase, register, storageRoot } from "../session-database.cjs";
+import { open as openDatabase, register, rollback, storageRoot } from "../session-database.cjs";
 
 const detailsSchema = Type.Object({ notificationId: Type.String(), mailboxSessionId: Type.String(), mailboxFingerprint: Type.String() });
 
@@ -213,7 +213,7 @@ function initializeMailbox(db: DatabaseSync, sessionId: string, file: string) {
     }
 
     db.exec("COMMIT");
-  } catch (error) { db.exec("ROLLBACK"); throw error; }
+  } catch (error) { throw rollback(db, error); }
 }
 
 function insertPending(db: DatabaseSync, record: MailboxRecord) {

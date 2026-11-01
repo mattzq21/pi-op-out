@@ -20,13 +20,29 @@ export function transaction<T>(database: DatabaseSync, behavior: 'IMMEDIATE' | '
     database.exec('COMMIT');
     return result;
   } catch (error) {
-    try { database.exec('ROLLBACK'); } catch {}
+    if (!database.isTransaction) throw error;
+    try { database.exec('ROLLBACK'); } catch (failure) { throw attachFailure(error, failure, 'rollback'); }
     throw error;
   }
 }
 
 export function withDatabase<T>(database: DatabaseSync, operation: (database: DatabaseSync) => T): T {
-  try { return operation(database); } finally { try { database.close(); } catch {} }
+  let result: T;
+  try { result = operation(database); }
+  catch (error) {
+    try { database.close(); } catch (failure) { throw attachFailure(error, failure, 'close'); }
+    throw error;
+  }
+  database.close();
+  return result;
+}
+
+function attachFailure(error: unknown, failure: unknown, step: 'rollback' | 'close'): unknown {
+  const detail = failure instanceof Error ? failure.message : String(failure);
+  if (!(error instanceof Error)) return new AggregateError([error, failure], `Database operation failed; ${step} also failed: ${detail}`);
+  error.message += `; ${step} also failed: ${detail}`;
+  Object.assign(error, { [`${step}Error`]: failure });
+  return error;
 }
 
 export function blob(value: unknown): Buffer | undefined {

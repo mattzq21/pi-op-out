@@ -62,7 +62,7 @@ function store(root, value) {
     db.exec('BEGIN IMMEDIATE');
     write(db, value);
     db.exec('COMMIT');
-  } catch (error) { if (db.isTransaction) db.exec('ROLLBACK'); throw error; }
+  } catch (error) { throw tables.rollback(db, error); }
   finally { db.close(); }
 }
 
@@ -96,7 +96,7 @@ function add(root, parentSessionId, parentSessionPath, child) {
     }
 
     db.exec('COMMIT');
-  } catch (error) { if (db.isTransaction) db.exec('ROLLBACK'); throw error; }
+  } catch (error) { throw tables.rollback(db, error); }
   finally { db.close(); }
 }
 

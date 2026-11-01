@@ -1,6 +1,7 @@
 import type { DatabaseSync } from "node:sqlite";
 
 export function open(root: string): DatabaseSync;
+export function rollback(database: DatabaseSync, error: unknown): unknown;
 export function initialize(database: DatabaseSync): void;
 export function reserveId(database: DatabaseSync): string;
 export function pending(database: DatabaseSync, work: "transaction" | "recovery" | "retention"): boolean;

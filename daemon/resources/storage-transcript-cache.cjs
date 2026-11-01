@@ -46,7 +46,7 @@ function save(db, file, stamp, value) {
     if (fingerprint(file) === stamp) db.prepare('INSERT INTO storage_transcript_summaries VALUES (?, ?, ?) ON CONFLICT(session_path) DO UPDATE SET fingerprint=excluded.fingerprint, body=excluded.body')
       .run(file, stamp, serialize({ version: 2, value }));
     db.exec('COMMIT');
-  } catch (error) { db.exec('ROLLBACK'); throw error; }
+  } catch (error) { throw database.rollback(db, error); }
 }
 
 async function read(db, file, inspect) {
