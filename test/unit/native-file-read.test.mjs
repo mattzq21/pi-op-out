@@ -22,33 +22,17 @@ async function reader(t) {
   return native.directory;
 }
 
-test('reading an uppercase PNG filename preserves its name, type and contents', async t => {
+for (const [description, name, type] of [
+  ['reading an uppercase PNG filename preserves its name, type and contents', 'picture.PNG', 'image/png'],
+  ['reading a JPEG file supplies its image type and original contents', 'a.jpeg', 'image/jpeg'],
+  ['reading a text file does not label it as an image', 'a.txt', ''],
+]) test(description, async t => {
   const directory = await reader(t);
-  const path = join(directory, 'picture.PNG');
+  const path = join(directory, name);
   await writeFile(path, 'AB');
   const file = await readDroppedFile(path);
-  assert.equal(file.name, 'picture.PNG');
-  assert.equal(file.type, 'image/png');
-  assert.equal(await file.text(), 'AB');
-});
-
-test('reading a JPEG file supplies its image type and original contents', async t => {
-  const directory = await reader(t);
-  const path = join(directory, 'a.jpeg');
-  await writeFile(path, 'AB');
-  const file = await readDroppedFile(path);
-  assert.equal(file.name, 'a.jpeg');
-  assert.equal(file.type, 'image/jpeg');
-  assert.equal(await file.text(), 'AB');
-});
-
-test('reading a text file does not label it as an image', async t => {
-  const directory = await reader(t);
-  const path = join(directory, 'a.txt');
-  await writeFile(path, 'AB');
-  const file = await readDroppedFile(path);
-  assert.equal(file.name, 'a.txt');
-  assert.equal(file.type, '');
+  assert.equal(file.name, name);
+  assert.equal(file.type, type);
   assert.equal(await file.text(), 'AB');
 });
 
