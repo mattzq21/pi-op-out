@@ -22,20 +22,22 @@ async function reader(t) {
   return native.directory;
 }
 
-for (const [description, name, type] of [
+for (const [description, name, type, content = 'AB', size = 2] of [
   ['reading an uppercase PNG filename preserves its name, type and contents', 'picture.PNG', 'image/png'],
   ['reading a JPEG file supplies its image type and original contents', 'a.jpeg', 'image/jpeg'],
   ['reading a JPG file supplies the JPEG type and original contents', 'photo.jpg', 'image/jpeg'],
   ['reading a GIF file supplies its image type and original contents', 'animation.gif', 'image/gif'],
   ['reading a text file does not label it as an image', 'a.txt', ''],
+  ['reading an empty text file preserves its name and zero length', 'empty.txt', '', '', 0],
 ]) test(description, async t => {
   const directory = await reader(t);
   const path = join(directory, name);
-  await writeFile(path, 'AB');
+  await writeFile(path, content);
   const file = await readDroppedFile(path);
   assert.equal(file.name, name);
   assert.equal(file.type, type);
-  assert.equal(await file.text(), 'AB');
+  assert.equal(file.size, size);
+  assert.equal(await file.text(), content);
 });
 
 test('reading a binary image returns a file with its exact original bytes', async t => {
