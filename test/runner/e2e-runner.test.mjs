@@ -31,3 +31,28 @@ process.exit(73);
   });
   assert.equal(existsSync(builds), false, 'unmatched selections must not start builds');
 });
+
+test('a failed E2E batch does not omit or repeat selected tests', async t => {
+  const directory = await mkdtemp(join(tmpdir(), 'piop-e2e-batches-'));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const specs = join(directory, 'test/e2e/specs');
+  const command = join(directory, 'node_modules/@wdio/cli/bin');
+  await Promise.all([mkdir(specs, { recursive: true }), mkdir(command, { recursive: true })]);
+  const selected = ['chat case [draft]?', ...Array.from({ length: 10 }, (_, index) => `chat case ${index}`)];
+  const titles = [...selected, 'chat omitted'];
+  await writeFile(join(specs, 'conversation.acceptance.spec.ts'),
+    titles.map(title => `it(${JSON.stringify(title)}, () => {});`).join('\n'));
+  await writeFile(join(command, 'wdio.js'), `
+const pattern = new RegExp(process.argv[process.argv.indexOf('--mochaOpts.grep') + 1]);
+const selected = ${JSON.stringify(titles)}.filter(title => pattern.test(title));
+console.log(JSON.stringify(selected));
+process.exitCode = selected.includes('chat case [draft]?') ? 1 : 0;
+`);
+  await assert.rejects(execute(process.execPath, [runner, '--grep', '^chat case'], { cwd: directory }), error => {
+    assert.equal(error.code, 1);
+    const batches = error.stdout.split('\n').filter(line => line.startsWith('[')).map(line => JSON.parse(line));
+    assert.deepEqual(batches.flat(), selected);
+    assert.deepEqual(batches.map(batch => batch.length), [10, 1]);
+    return true;
+  });
+});
