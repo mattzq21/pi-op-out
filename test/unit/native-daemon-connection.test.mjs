@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { on } from 'node:events';
+import { on, once } from 'node:events';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { WebSocketServer } from 'ws';
@@ -40,7 +40,10 @@ async function fakeDaemon(t, { buildId, answer = () => null }) {
     });
   });
   t.after(() => new Promise(resolve => { for (const socket of server.clients) socket.terminate(); server.close(resolve); }));
-  return { url: 'ws://127.0.0.1:' + server.address().port, sockets, connections: () => sockets.length };
+  return {
+    url: 'ws://127.0.0.1:' + server.address().port, sockets, connections: () => sockets.length,
+    nextConnection: () => once(server, 'connection', { signal: AbortSignal.timeout(10000) }),
+  };
 }
 
 async function desktop(t, url, env = {}) {
@@ -110,7 +113,9 @@ test('after a daemon restart notice, the desktop app reconnects by itself when t
   await app.invoke('list_sessions');
   daemon.sockets[0].send(JSON.stringify({ event: 'pi://daemon-restarting', payload: { hostId: 'local' } }));
   await until(async () => (await app.events()).some(event => event.event === 'pi://daemon-restarting'), 'the restart notice reached the window');
+  const reconnected = daemon.nextConnection();
   daemon.sockets[0].close();
-  await until(() => daemon.connections() === 2, 'the app reconnected without a command');
+  await assert.doesNotReject(reconnected, 'the app must reconnect without a command');
+  assert.equal(daemon.connections(), 2);
   await until(async () => (await app.events()).some(event => event.payload?.type === 'connection_restored'), 'the window heard the connection is back');
 });
