@@ -7,7 +7,6 @@ let daemon: TestDaemon;
 beforeAll(async () => { daemon = await startDaemon(); }, 60_000);
 afterAll(() => daemon?.stop());
 
-/** Waits for a restart to end, as the app does: the daemon is gone for a while, so failed reads are expected. */
 async function restartResult(restartId: string, target: TestDaemon = daemon) {
   for (const deadline = Date.now() + 120_000; Date.now() < deadline; await Bun.sleep(300)) {
     const result = await target.connect().then(client => client.invoke('daemon_restart_status', { hostId: 'local', restartId }).finally(() => client.close())).catch(() => undefined);

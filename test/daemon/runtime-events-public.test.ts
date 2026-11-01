@@ -16,7 +16,6 @@ const pending = (runtimeId: string): any[] =>
 const errors = (runtimeId: string) => agents.daemon.events.filter(event => event.payload?.runtimeId === runtimeId && event.payload.event?.type === 'extension_error').map(event => event.payload.event);
 
 let chats = 0;
-/** A new chat whose folder is a Git repository with one commit. */
 async function repositoryChat() {
   const runtimeId = 'repository-' + ++chats;
   const repository = join(agents.daemon.home, runtimeId);
@@ -66,7 +65,6 @@ test.concurrent('the final response is committed before a waiting follow-up star
   expect(seen.afterTool).toEqual(['initial']);
   expect(seen.followUp).toEqual(['Piop saving progress', 'initial']);
   expect(seen.files).toEqual(['one.txt']);
-  // The second final response changed nothing, so it adds no commit.
   await agents.daemon.waitEvent('pi://event', payload => payload.runtimeId === chat.runtimeId && payload.event?.type === 'agent_settled');
   expect(subjects(chat.repository)).toEqual(['Piop saving progress', 'initial']);
   expect(git(chat.repository, 'status', '--porcelain', '--ignored')).toBe('!! ignored.txt');
@@ -86,7 +84,6 @@ test.concurrent('a failed save goes back to Pi as the hook error, shows once in 
   const [failure, ...rest] = errors(chat.runtimeId);
   expect(rest).toEqual([]);
   expect(failure.event).toBe('turn_end');
-  // Pi itself reported the error, so the daemon's rejection reached Pi's turn_end hook.
   expect(failure.extensionPath).toContain('hooks-extended');
   expect(failure.error).toContain('index.lock');
   expect(subjects(chat.repository)).toEqual(['initial']);

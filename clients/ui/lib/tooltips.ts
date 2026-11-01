@@ -91,7 +91,6 @@ export function installTooltips() {
     if (event.key === "Escape") close();
   };
 
-  // Touch has no hover, so a tap on an anchor marked data-tooltip-tap shows its tooltip. A second tap on it, or any other tap, closes it.
   let touchDown = false;
   let openAtDown: Element | null = null;
 

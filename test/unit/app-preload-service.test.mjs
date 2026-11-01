@@ -26,7 +26,6 @@ test('settings data loads without Pi only when the user points at Settings, and 
   let cleanup, closed = false;
   t.after(async () => { try { if (!closed) await cleanup?.(); } finally { errors.release(); } });
   const { root, daemon, settle } = await appService({ after(callback) { cleanup = callback; } });
-  // The settings page reads the host catalog. It must never start a Pi session for that.
   const reads = [], readers = [];
   const invoke = daemon.invoke;
   t.mock.method(daemon, 'invoke', (command, args) => {

@@ -14,7 +14,6 @@ import { appSettings } from '../settings-fixture.mjs';
 const SESSION_KEY = 'local:session';
 const MODEL = { provider: 'p', id: 'base', reasoning: true };
 
-// The split pane as the app assembles it: a pooled session transport, the app's draft store and model visibility, with only the daemon IPC faked.
 describe('split conversation lifecycle', () => {
   let daemonResponses, waiters, dom, view, props, calls, daemon, responses, pool, transport, drafts, released, dialogs, notices, storageErrors, disposeRoot;
   beforeEach(() => {
@@ -76,7 +75,6 @@ describe('split conversation lifecycle', () => {
   view = await renderComponent(SplitChatPane, live); await untilDom(() => controlsEnabled() || document.querySelector('.split-pane-status.error')); }
 
   const control = label => document.querySelector('[aria-label="' + label + '"]');
-  /** Resolves with the first runtime command matching `matches`, including one already sent. */
   const received = (matches, timeout = 2000) => {
     const sent = calls.find(matches);
 
@@ -136,7 +134,6 @@ describe('split conversation lifecycle', () => {
     await event({ type: 'agent_start' }); await type('Direction');
     await act(async () => control('Message piop').dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', ctrlKey: true, bubbles: true })));
     await received(command => command.type === 'steer' && command.message === 'Direction');
-    // A steer goes into the queue, so the conversation shows no sending status. Send accepts the next message once the steer is sent.
     await type('/catch-up latest'); await untilDom(() => control('Send message')?.disabled === false);
     await act(async () => control('Message piop').dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true })));
     await received(command => command.type === 'follow_up' && command.message === '/catch-up latest');

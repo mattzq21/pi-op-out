@@ -4,7 +4,6 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { startupPage } from '../startup-browser-fixture.mjs';
 import { testBrowserName } from '../test-browser.mjs';
 
-/** One assistant reply in the real message view. */
 async function reply(t, content) {
   const page = await startupPage(t, 'development', {
     entryPoint: 'test/fixtures/message-links-browser.tsx', ready: 'article', holdStorage: false,
@@ -73,7 +72,6 @@ test('panning a preview stops when the button is released, also after a double c
   const label = viewport.locator('svg text', { hasText: 'Cart' }).first();
   await label.evaluate(element => element.scrollIntoView({ block: 'center', inline: 'center' }));
   const box = await label.boundingBox(), x = box.x + box.width / 2, y = box.y + box.height / 2;
-  // Real X input: a press on selected text starts a native drag, and WebKitGTK then gives the page no pointerup.
   const [left, top] = await page._xOrigin(), input = await page._context._session.xInput();
   const move = async (dx, dy) => { await input.request({ action: 'move', x: Math.round(left + x + dx), y: Math.round(top + y + dy) }); await delay(16); };
   const button = async down => { await input.request({ action: 'button', button: 1, down }); await delay(40); };

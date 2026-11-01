@@ -25,7 +25,7 @@ import { sentSkillPrompt } from "../lib/composerPrompt";
 import type { DebugView } from "../lib/debugFeatures";
 import { formatDateTime, formatDayTime, formatTime } from "../lib/dateTime";
 
-interface Props { message: ChatMessage; turnCacheUsage?: { input: number; cacheRead: number }; expanded?: boolean; showActions?: boolean; toolCount?: number; debug?: DebugView; onBranch?: (message: ChatMessage) => void | Promise<void>; onFork?: (message: ChatMessage) => void | Promise<void>; onForkAndForget?: (message: ChatMessage) => void | Promise<void>; onRetry?: () => void; retrying?: boolean; /** The latest point a new chat can start from. Its actions always show. */ lastPoint?: boolean; }
+interface Props { message: ChatMessage; turnCacheUsage?: { input: number; cacheRead: number }; expanded?: boolean; showActions?: boolean; toolCount?: number; debug?: DebugView; onBranch?: (message: ChatMessage) => void | Promise<void>; onFork?: (message: ChatMessage) => void | Promise<void>; onForkAndForget?: (message: ChatMessage) => void | Promise<void>; onRetry?: () => void; retrying?: boolean; lastPoint?: boolean; }
 
 function cacheTokenDigits(tokens: number) {
   const groups = String(tokens).match(/\d{1,3}(?=(?:\d{3})*$)/g) ?? [];
@@ -33,7 +33,6 @@ function cacheTokenDigits(tokens: number) {
   return groups.map((group, index) => <span style={{ color: "var(--accent)", opacity: [0.33, 0.66, 1][Math.min(2, groups.length - index - 1)] }}>{group}</span>);
 }
 
-/** The Fork, Branch off and Fork and forget buttons of a point in the chat. Only one of them runs at a time. label names the point, such as "response". */
 function createForkActions(props: Props, label: () => string) {
   const [running, setRunning] = createSignal(false);
   const runningRef = createRef(false);
@@ -83,7 +82,6 @@ function ContextInjection(props: { title: string; content: string }) {
   return <details class="context-injection"><summary>{props.title}<ChevronRight size={12} aria-hidden="true" /></summary><div class="context-injection-content">{props.content}</div></details>;
 }
 
-/** The button outside a message that pins it to the top of the chat or unpins it. text is the message text that the pin shows. A message without a time, such as one still being sent, has no place in the chat yet, so it shows no button. */
 function PinButton(props: { message: ChatMessage; text: string }) {
   const pins = useContext(MessagePinContext);
   const [busy, setBusy] = createSignal(false);
@@ -148,7 +146,6 @@ function ToolLabel(componentProps: { message: ChatMessage; toolCount: number; st
   return <>{componentProps.message.toolName !== "codemode" && <Wrench size={14} />}<span><strong>{toolTitle(componentProps.message)}{componentProps.toolCount > 1 ? ` x${componentProps.toolCount}` : ""}</strong><small>{componentProps.status === "running" ? "Running…" : componentProps.status === "error" ? "Failed" : componentProps.status === "unfinished" ? "Unfinished" : "Completed"}</small><Show when={componentProps.status === "running" && componentProps.message.timestamp}>{startedAt => <ToolElapsed startedAt={startedAt()} />}</Show></span></>;
 }
 
-/** Time since a running tool started, updated each second. */
 function ToolElapsed(componentProps: { startedAt: number }) {
   const [now, setNow] = createSignal(Date.now());
   const timer = setInterval(() => setNow(Date.now()), 1000);
@@ -183,7 +180,6 @@ function ToolPayload(componentProps: { message: ChatMessage; loading: boolean; e
 
 function ToolResult(componentProps: Pick<Props, "message" | "toolCount"> & { debug?: boolean;  status?: "running" | "done" | "error" | "unfinished" }) {
   const isSubagent = () => componentProps.message.toolName === "spawn_subagents";
-  /** The row loads its payload by itself, so its subagent icons show without a click. */
   const hasSubagents = () => showsSubagents(componentProps.message.toolName);
   const runs = createMemo(() => hasSubagents() ? subagentRuns(componentProps.message.details) : []);
   const [open, setOpen] = createSignal(false);
@@ -192,7 +188,6 @@ function ToolResult(componentProps: Pick<Props, "message" | "toolCount"> & { deb
   const [retry, setRetry] = createSignal(0);
   let nextLoadAt = 0;
   let failed: { version?: number; retry: number } | undefined;
-  /** The retry count when the memory limit removed the payload. Only a later retry loads it again, so open outputs do not evict each other in a loop. */
   let evictedAt: number | undefined;
   createDependencyEffect(() => {
     const retryAttempt = retry();
@@ -271,7 +266,6 @@ export function Message(componentProps: Props) {
     window.setTimeout(() => setCopyState("idle"), 1800);
   };
 
-  /** The time and copy bar under a message from another agent, the same as under a user message. */
   const renderSentActions = (sent: string) => {
     const sentTime = formatMessageTime(componentProps.message.timestamp);
 
@@ -351,7 +345,6 @@ export function Message(componentProps: Props) {
 
   const renderToolMessage = () => (<ToolResult message={componentProps.message} toolCount={(componentProps.toolCount === undefined ? 1 : componentProps.toolCount)} debug={componentProps.debug?.toolDetails ?? false} />);
 
-  /** A compaction is a point a new chat can start from, so it has the fork buttons. */
   const renderCompaction = () => {
     const forkActions = createForkActions(componentProps, () => "compaction");
     const finishedTime = createMemo(() => formatMessageTime(componentProps.message.timestamp));

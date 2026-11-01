@@ -15,10 +15,8 @@ const agentCapability = () => {
   return capability;
 };
 
-/** The host catalog that the app reads, with these agent definitions. */
 const catalogWith = (config: AgentConfig) => ({ ...draftCatalog, config });
 
-// Read or restore the real agent definitions through the daemon, as the settings page does.
 async function nativeAgentConfiguration(agents?: ReturnType<typeof agentConfigSchema.parse>["agents"]) {
   const result = await browser.execute(async replacement => {
     const invoke = (command: string, args: Record<string, unknown>) => window.__TAURI_INTERNALS__.invoke("daemon_invoke", { command, args: { ...args, clientId: "desktop:e2e-agent-profiles" } });
@@ -132,7 +130,6 @@ describe("Agent profiles acceptance", () => {
     const saved = agentConfigSchema.parse(calls.find(({ command }) => command === "save_agent_definitions")?.args.configuration);
     expect(saved.revision).toBe("acceptance-agent-revision");
     expect(saved.agents.find((agent) => agent.name === "reviewer")?.path_agent_prompt).toBe("review-acceptance.md");
-    // Only the agents changed, so the settings are not saved, and no Pi session starts for the save.
     expect(calls.filter(({ command }) => command === "save_app_settings")).toHaveLength(0);
     expect(calls.some(({ command }) => command === "start_pi")).toBe(false);
   });
@@ -165,7 +162,6 @@ describe("Agent profiles acceptance", () => {
       const calls = await backendCalls();
       expect(calls.some(({ command, mocked }) => command === "save_agent_definitions" && !mocked)).toBe(true);
       expect(calls.some(({ command }) => command === "start_pi")).toBe(false);
-      // A separate read verifies that the definitions were saved.
       const saved = await nativeAgentConfiguration();
       expect(saved.agents.find(agent => agent.name === agentName)).toMatchObject({
         path_agent_prompt: "~/.agents/prompts/system/default.md", path_systemprompt: "~/.agents/prompts/system/default.md",

@@ -1,4 +1,3 @@
-// DOM mirror rebuilt from rrweb events, so node ids can be read as element paths without a browser.
 import fs from 'node:fs';
 
 export const TYPE = ['DomContentLoaded', 'Load', 'FullSnapshot', 'Incremental', 'Meta', 'Custom', 'Plugin'];
@@ -20,7 +19,6 @@ export function markers(events) {
   return events.filter(isCustom).map(e => ({ tag: e.data.tag, payload: e.data.payload, timestamp: e.timestamp, offsetMs: e.timestamp - t0 }));
 }
 
-// Resolve "label", "label#2" (second with that label) or a number of seconds to an absolute timestamp.
 export function resolveTime(events, spec) {
   const t0 = events[0].timestamp;
   if (/^[+-]?\d+(\.\d+)?s?$/.test(spec)) return t0 + parseFloat(spec) * 1000;
@@ -69,8 +67,6 @@ export class Mirror {
 
   static serializedSize(n) { return 1 + (n.childNodes || []).reduce((s, c) => s + Mirror.serializedSize(c), 0); }
 
-  // Apply one mutation and return human-readable change records. Attribute records carry `changed: false` when the
-  // value equals the value already in the mirror (rrweb re-emits unchanged inline styles on every write).
   applyMutation(d) {
     const out = [];
     for (const r of d.removes || []) {
@@ -81,7 +77,6 @@ export class Mirror {
       this.removeNode(r.id);
     }
     for (const a of d.adds || []) {
-      // A node that is still attached elsewhere moves: drop it from its old parent first.
       const old = this.nodes.get(a.node.id);
       const oldParent = old && this.nodes.get(old.parent);
       if (oldParent) oldParent.children = oldParent.children.filter(c => c !== a.node.id);
@@ -114,7 +109,6 @@ export class Mirror {
     return out;
   }
 
-  // Walk events up to and including timestamp `untilMs` (null = all). onEvent sees each event and the change records.
   replay(events, untilMs = null, onEvent = null) {
     for (const e of events) {
       if (untilMs != null && e.timestamp > untilMs) break;
@@ -149,13 +143,11 @@ export class Mirror {
 
   root() { return [...this.nodes.values()].find(m => m.parent === null)?.id; }
 
-  // Nodes whose tag, attributes or text contain the query (case-insensitive).
   find(query) {
     const q = query.toLowerCase();
     return [...this.nodes.values()].filter(m => m.type === 2 && (m.tag + ' ' + JSON.stringify(m.attrs) + ' ' + (m.text || '')).toLowerCase().includes(q));
   }
 
-  // Indented tag listing; style/script/svg are skipped.
   outline(id, { depth = 40, indent = 0, lines = [], maxLines = 2000 } = {}) {
     const m = this.nodes.get(id);
     if (!m || indent > depth || lines.length >= maxLines) return lines;
@@ -173,7 +165,6 @@ export class Mirror {
   }
 }
 
-// Solid's <Show>/<For> leave empty text or comment nodes where content can appear.
 function isPlaceholder(m) {
   return !!m && ((m.type === 3 && !(m.text || '').trim()) || m.type === 5);
 }

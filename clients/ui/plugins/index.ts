@@ -16,10 +16,8 @@ export const plugins: PluginDefinition[] = [
   { id: "btw", scope: "host", name: "Side chats", description: "Side chats started with /btw." },
 ];
 
-/** Core slash commands that wait in the follow-up queue like a message. */
 const coreQueuedCommands = ["compact"];
 
-/** True when text is a core or plugin slash command that waits in the follow-up queue like a message. */
 export function queuedCommand(text: string) {
   const [word] = text.trim().split(/\s/, 1);
 
@@ -135,7 +133,6 @@ async function waitForRestart(host: string, restartId: string) {
 
   while (Date.now() < deadline) {
     await new Promise(resolve => setTimeout(resolve, 500));
-    // The daemon stops and starts during the restart, so a failed status read is expected until it is back.
     const result = await invoke("daemon_restart_status", { hostId: host, restartId }, restartStatusSchema).catch((reason: unknown) => { lastError = reason; return undefined; });
 
     if (result?.phase === "failed") throw new Error(result.error ?? "Daemon restart failed");

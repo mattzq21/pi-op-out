@@ -10,7 +10,6 @@ export const debugFeatures = [
 
 export type DebugFeature = typeof debugFeatures[number]["id"];
 
-/** Which debug features show now. All are off while debug mode is off. */
 export type DebugView = Readonly<Record<DebugFeature, boolean>>;
 
 export const noDebug: DebugView = Object.fromEntries(debugFeatures.map(feature => [feature.id, false])) as Record<DebugFeature, boolean>;

@@ -5,7 +5,6 @@ type Props = { label: string; placeholder: string; value: number | null | undefi
 
 const formatCap = (value: number | null | undefined) => value === undefined ? "" : value === null ? "model_default" : value % 1_000_000 === 0 ? value / 1_000_000 + "m" : value % 1000 === 0 ? value / 1000 + "k" : String(value);
 
-/** Reads empty text as inherit, model_default as the model's own window, or a token count such as 500k. */
 function readCap(text: string): { value: number | null | undefined; error?: string } {
   const trimmed = text.trim();
 

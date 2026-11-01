@@ -107,7 +107,6 @@ function DaemonSettingsEditor(componentProps: Props & { target: string; label: s
 
         if (cancelled) return;
         receiveChange(loaded, capturedHostId);
-        // The first load uses the resources loaded in the background; a later one follows a change and loads them again.
         const loadedResources = await settingsResources(capturedHostId, capturedRevision !== 0);
 
         if (cancelled) return;
@@ -145,7 +144,6 @@ function DaemonSettingsEditor(componentProps: Props & { target: string; label: s
     } finally { await writer.dispose().catch(() => undefined); }
   };
 
-  /** Saves the agent definitions first, then the settings. Each save is complete on its own, so saved agents stay when the settings fail. */
   const save = async (next: AppSettings, config?: AgentConfig, baseline?: AppSettings) => {
     const capturedHostId = hostId(); const capturedTarget = componentProps.target; const capturedOnSave = componentProps.onSave;
     setSaveWarnings(undefined);

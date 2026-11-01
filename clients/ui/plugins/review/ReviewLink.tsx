@@ -6,7 +6,6 @@ import { ConversationHostContext } from "../../lib/subagentNavigation";
 
 const reviewLinkSchema = z.object({ sessionId: z.string().optional(), parentSessionId: z.string().optional(), hostId: z.string().optional() });
 
-/** The row in the main chat that opens a review in the side pane. An archived review shows a disabled button. */
 export function ReviewLink(props: { details: unknown }) {
   const conversation = useContext(PluginMessageContext);
   const chats = useContext(AuxiliaryChatsContext);

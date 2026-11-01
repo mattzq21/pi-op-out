@@ -17,7 +17,6 @@ test('pins reach every view of a chat, stop at four, and come back when a view a
     const shown = pinsOf('second', pins => pins.length === 1);
     await chat.command({ type: 'pin_message', entryId: 'one', role: 'response', timestamp: 1, text: '\n  Release plan ready.\nSecond line' });
     expect((await shown).event.pins).toEqual([{ entryId: 'one', role: 'response', text: 'Release plan ready.', timestamp: 1 }]);
-    // A pin of an earlier message goes before the pins of later messages.
     for (const [entryId, timestamp] of [['two', 2], ['three', 3], ['four', 0]] as const) await chat.command({ type: 'pin_message', entryId, role: 'prompt', timestamp, text: entryId });
     expect(await agents.daemon.failure('pi_command', { runtimeId: 'second', command: { type: 'pin_message', entryId: 'five', role: 'prompt', timestamp: 5, text: 'five' } })).toBe('Only 4 messages can be pinned. Unpin one first.');
 

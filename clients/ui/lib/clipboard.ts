@@ -1,4 +1,3 @@
-/** Copies text. Android WebView refuses the Clipboard API, so a refusal falls back to the copy command. */
 export async function copyText(text: string): Promise<void> {
   try {
     if (!navigator.clipboard) throw new Error("Clipboard access is unavailable");

@@ -2,15 +2,10 @@ import { randomUUID } from 'node:crypto';
 import { readdirSync, readFileSync } from 'node:fs';
 import { sleep } from './util/sync';
 
-/**
- * The environment variable that marks every process started by one worker, also after they leave its process tree.
- * Its value is "<daemon pid>.<daemon start time>.<uuid>", so a later daemon can find the processes of a daemon that died.
- */
 export const PROCESS_TAG = 'PIOP_PROCESS_TAG';
 
 let ownerPrefix: string | undefined;
 
-/** Returns a new tag for one worker of this daemon. */
 export function newProcessTag(): string {
   if (ownerPrefix === undefined) {
     const started = startTime(process.pid);
@@ -60,7 +55,6 @@ export function descendantProcesses(parent: number, group?: number, session?: nu
 
 const TAG_PREFIX = Buffer.from('\0' + PROCESS_TAG + '=');
 
-/** Returns every process with a PROCESS_TAG in its environment. Processes of other users are skipped. */
 function tagged(): Array<{ pid: number; started: string; tag: string }> {
   const found: Array<{ pid: number; started: string; tag: string }> = [];
   let entries: string[] = [];
@@ -82,12 +76,10 @@ function tagged(): Array<{ pid: number; started: string; tag: string }> {
   return found;
 }
 
-/** Returns the processes whose environment contains PROCESS_TAG=tag. */
 export function taggedProcesses(tag: string): Array<{ pid: number; started: string }> {
   return tagged().filter(item => item.tag === tag).map(({ pid, started }) => ({ pid, started }));
 }
 
-/** Stops the tagged processes whose daemon is no longer running, for example after it crashed or was killed. */
 export async function stopOrphanedProcesses(): Promise<void> {
   const orphans = tagged().filter(({ tag }) => {
     const [pid, started] = tag.split('.');

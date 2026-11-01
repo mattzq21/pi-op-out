@@ -4,46 +4,31 @@ import type { GoalPlace } from './goals/files';
 import type { QueueOffer, QueueState } from './queue_state';
 import type { QueueRecord } from './queue_record';
 
-/** The session side that a queue sends commands to and publishes events through. */
 export interface Execution {
   execute(command: any): Promise<any>;
   publish(event: any): void;
   savedUserMessages?(): any[];
-  /** True when name is an extension command that Pi runs at once instead of sending it to the model. */
   extensionCommand?(name: string): boolean;
-  /** Tells Pi whether the queue is on hold, so extensions do not send queued work on their own while it is. */
   queueHeld(held: boolean): Promise<void>;
-  /** Asks the user in a dialog, the way a Pi extension does. Resolves with the answer: { value }, { confirmed } or { cancelled }. */
   ask?(dialog: any): Promise<any>;
-  /** The saved conversation, for its goal. Throws when the conversation is not saved. */
   goalPlace?(): GoalPlace;
-  /** Shows the goal status to clients now, and to each client that opens the chat later. */
   goalStatus?(event: any): void;
 }
 
-/** Saves the queue, publishes it to clients, and tells Pi how many messages it may take. Delivers the commands that Pi runs at once. */
 export class QueueDelivery {
-  /** The offer Pi has, so an unchanged queue sends nothing. Pi asks for messages by itself; the offer tells it when to ask. */
   private offered: QueueOffer | undefined;
   private offers: Promise<void> = Promise.resolve();
-  /** Numbers the offers, so Pi keeps the newest one when an offer and an answer to a take cross. */
   private sequence = 0;
 
   constructor(readonly state: QueueState, readonly record: QueueRecord, private executor: Execution) {}
 
-  /** True when the message starts with an extension command, which Pi runs at once. */
   runsAtOnce(message: string): boolean {
     const name = /^\/(\S+)/.exec(message.trimStart())?.[1];
     return name !== undefined && this.executor.extensionCommand?.(name) === true;
   }
 
-  /** Sends an event to the session without changing the queue. */
   announce(event: any): void { this.executor.publish(event); }
 
-  /**
-   * Holds or resumes the queue. The hold is the only pause: it stops the waiting messages and the goal. Pi's offer changes at once, then the hold is saved and Pi is told.
-   * Resuming lets Pi take the waiting messages, steering messages first, then follow-ups, each in queue order.
-   */
   async hold(held: boolean): Promise<void> {
     if (this.state.held === held) return;
     this.state.held = held;
@@ -82,7 +67,6 @@ export class QueueDelivery {
     this.offer();
   }
 
-  /** Tells Pi how many messages it may take. force sends it again, for a Pi that just started. */
   offer(force = false): void {
     const offer = this.state.offer();
     if (!force && this.offered && jsonEqual(this.offered, offer)) return;
@@ -94,7 +78,6 @@ export class QueueDelivery {
     });
   }
 
-  /** The offer as it is now, for the answer to a take. */
   currentOffer(): QueueOffer & { sequence: number } {
     const offer = this.state.offer();
     this.offered = offer;
@@ -103,7 +86,6 @@ export class QueueDelivery {
 
   execute(command: any): Promise<any> { return this.executor.execute(command); }
 
-  /** Sends a command that Pi runs at once. It never waits in the queue; its saved copy goes when Pi handled it. */
   async deliver(item: any, discardOnRejection: boolean): Promise<any> {
     const id = text(item, 'id');
     this.state.sending.add(id);
@@ -129,7 +111,6 @@ export class QueueDelivery {
   }
 }
 
-/** The images of an item as Pi gets them: without the ids that tell them apart in the queue view. */
 export function piImages(item: any): any[] | undefined {
   if (!Array.isArray(item.images) || !item.images.length) return undefined;
   return item.images.map((image: any) => { const { id: _id, ...content } = clone(image); return content; });

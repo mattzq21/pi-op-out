@@ -40,7 +40,6 @@ function temporaryConversation(owner: NativeTransport, session: SessionSummary) 
 export function createConversationArchive(context: ArchiveContext) {
   const { runtimePool, transport, chatSession, activeHostId, activeTransportRef, activeConversationKeyRef, transportConversationKeys, isSelectedSession, isSplitSession, conversationTerminalIds, removeConversationTerminals, removeDraft, setSessions, setActiveCwd, activateTransport, activateConversationKey, updateConnected, closeSplitPane, syncSessionIndex, addNotice } = context;
   const [archivePending, setArchivePending] = createSignal(new Set<string>());
-  // Each archived key keeps the archive count at the time it was archived, so a session list loaded before the archive can not restore it.
   const archivedSessionKeys = createRef(new Map<string, number>());
   const { archiveCount } = context;
   const removalPending = new Set<string>();
@@ -177,7 +176,6 @@ export function createConversationArchive(context: ArchiveContext) {
     return activeHostId() === hostId && (current.sessionId === sessionId || Boolean(sessionPath && current.sessionFile === sessionPath));
   };
 
-  // The daemon stops the terminals of a removed conversation before it reports the removal.
   const forgetRemovedTerminals = (keys: Set<string>) => { for (const key of keys) removeConversationTerminals(key); };
 
   const replaceRemovedConversation = (pool: SessionRuntimePool, hostId: string) => {

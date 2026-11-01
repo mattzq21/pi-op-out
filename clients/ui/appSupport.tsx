@@ -15,7 +15,6 @@ type SessionTerminals = { activeId: string; tabs: TerminalTabState[] };
 
 type QueuedTerminalOutput = { data: string; length: number };
 
-/** The chat of the selected side pane tab. request carries the first prompt of a chat that a command opened. */
 type SplitPaneState = { key: string; session: SessionSummary; request?: import("./plugins/types").SidepaneOpening };
 
 type OwnedExtensionDialog = { request: ExtensionUiRequest; transport: NativeTransport; owner: string; queueId: string };
@@ -77,7 +76,6 @@ function usageWindowsDescription(usage: OpencodeGoUsage): string {
   return `rolling ${usage.rolling.remainingPercent}% left, weekly ${usage.weekly.remainingPercent}% left, monthly ${usage.monthly.remainingPercent}% left`;
 }
 
-/** One provider's usage left. stale: why the latest refresh failed; the badge then shows the older value darkened. A click refreshes this provider only. */
 function LimitBadge(componentProps: { label: string; provider: UsageProvider; detail?: string; remainingPercent: number; resetAt?: number; clock?: number; stale?: string; refreshing: boolean; onRefresh: () => void }) {
   const resetLabel = () => { componentProps.clock;
 
@@ -104,7 +102,6 @@ function AppLoading(componentProps: { error?: string }) {
   </main>;
 }
 
-/** Ticks the clock each minute while any shown reset time exists, so the reset labels count down. */
 function useUsageClock(resetTimes: Accessor<Array<number | undefined>>, setUsageClock: Accessor<Dispatch<StateUpdate<number>>>) {
   createDependencyEffect(() => { const capturedSetUsageClock = setUsageClock();
 

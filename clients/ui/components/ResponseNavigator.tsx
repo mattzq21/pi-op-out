@@ -2,7 +2,6 @@ import { Key } from "@solid-primitives/keyed";
 import { createSignal, Show } from "solid-js";
 import { createDependencyEffect, createRef, type RefObject } from "../lib/solid";
 
-/** A final response of the chat. turnId is missing while the response is in the older history that the client has not loaded. */
 export interface ResponseDestination { turnId?: string; messageId: string; preview: string; }
 
 function responseTarget(root: HTMLElement, response: ResponseDestination & { turnId: string }) {
@@ -30,7 +29,6 @@ export function ResponseNavigator(props: { responses: ResponseDestination[]; for
 
       if (!container) return;
 
-      // No marker while the user reads a turn that has no response yet, such as the turn the agent works on.
       if (!marker) { container.scrollTop = container.scrollHeight; return; }
 
       if (marker.offsetTop < container.scrollTop) container.scrollTop = marker.offsetTop;
@@ -54,7 +52,6 @@ export function ResponseNavigator(props: { responses: ResponseDestination[]; for
       const top = root.getBoundingClientRect().top + 24;
       const lastResponse = props.responses.at(-1);
       const lastTurn = Array.from(root.querySelectorAll<HTMLElement>("[data-response-turn]")).at(-1);
-      // The last turn has no response yet, for example while the agent works on it.
       const tail = lastResponse && lastTurn && lastTurn.dataset.responseTurn !== lastResponse.turnId ? lastTurn : undefined;
       const atBottom = root.scrollHeight - root.scrollTop - root.clientHeight <= 2;
 
@@ -67,7 +64,6 @@ export function ResponseNavigator(props: { responses: ResponseDestination[]; for
           const index = (low + high) >>> 1;
           const response = props.responses[index];
 
-          // A response that is not loaded is above the loaded history.
           if (!loaded(response)) { low = index + 1; continue; }
           const cached = targets[index];
           let target = cached?.messageId === response.messageId && cached.turnId === response.turnId && root.contains(cached.element) ? cached.element : responseTarget(root, response);

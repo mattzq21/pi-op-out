@@ -11,12 +11,10 @@ import { forgetSession } from "./sessionMemory";
 
 const sessionKey = (hostId: string, sessionId: string) => `${hostId}:${sessionId}`;
 
-/** The number of detached idle conversations that stay in memory for a fast return. Older ones are released. */
 const IDLE_LIMIT = 8;
 
 const startsUserMessage = (event: RpcEvent) => event.type === "message_start" && z.object({ role: z.literal("user") }).safeParse(event.message).success;
 
-/** The name of a chat without a set name is its first prompt, so a later prompt keeps the name the chat already has. An unsent chat has no name. */
 function retainedName(state: AgentState, prompt: string | undefined, previous: SessionSummary | undefined) {
   if (!state.sessionName && retainedDraft(state, previous, prompt)) return "";
   const named = previous && !previous.isDraft ? previous.name : undefined;
@@ -49,7 +47,6 @@ export class SessionRuntimePool {
   private readonly observers = new Map<NativeTransport, number>();
   private readonly deferredReleases = new Set<NativeTransport>();
   private readonly retainedTransports = new Set<NativeTransport>();
-  /** Detached idle conversations, oldest first, with the check that they have no unsent work. */
   private readonly idleTransports = new Map<NativeTransport, () => boolean>();
   private readonly listeners = new Set<() => void>();
   private runningSessionKeys: ReadonlySet<string> = new Set();
@@ -83,7 +80,6 @@ export class SessionRuntimePool {
   }
   private readonly startHandlers = new Map<NativeTransport, (key: string) => Promise<void>>();
   private readonly starting = new Map<NativeTransport, Promise<void>>();
-  /** Runs work once, when the first prompt of the new chat starts, before the chat joins the list. */
   onFirstPrompt(transport: NativeTransport, work: (key: string) => Promise<void>) { this.startHandlers.set(transport, work); }
   private activeTransport?: NativeTransport;
   private errorHandler?: (message: string) => void;
@@ -114,7 +110,6 @@ export class SessionRuntimePool {
       const start = prompt !== undefined ? this.startHandlers.get(transport) : undefined;
 
       if (start) { this.startHandlers.delete(transport); this.starting.set(transport, start(sessionKey(transport.currentHostId(), state.sessionId)).catch(reason => this.reportError(reason instanceof Error ? reason.message : String(reason))).finally(() => this.starting.delete(transport))); }
-      // The chat joins the list only after its start work, such as its group, is done, so it shows in its place at once.
       await this.starting.get(transport);
 
       if (!this.transports.has(transport) || this.releasing.has(transport)) return;
@@ -144,7 +139,7 @@ export class SessionRuntimePool {
           const statuses: unknown = JSON.parse(request.statusText.slice(5));
 
           if (Array.isArray(statuses) && statuses.some((value) => value?.status === "starting")) this.retainSession(transport);
-        } catch { }
+        } catch {}
       }
     }
   }
@@ -201,7 +196,6 @@ export class SessionRuntimePool {
     return transport;
   }
 
-  /** Keeps a closed side pane chat in memory like an idle chat, so it shows at once when it opens again. A busy one is released. */
   async closePluginPane(transport: NativeTransport, canDetach: () => boolean) {
     if (this.busy(transport)) return this.release(transport);
     this.detachIdle(transport, canDetach);
@@ -272,7 +266,6 @@ export class SessionRuntimePool {
     for (const [candidate, idle] of this.idleTransports) {
       if (this.idleTransports.size <= IDLE_LIMIT) return;
 
-      // A conversation with an unread result or unsent work stays in memory. A released one keeps its list summary.
       if (this.busy(candidate) || this.observers.has(candidate) || this.unseenTransports.has(candidate) || !idle()) continue;
       this.idleTransports.delete(candidate);
       void this.release(candidate, true).catch(reason => this.reportError(`Could not release idle conversation: ${(reason instanceof Error ? reason.message : String(reason))}`));

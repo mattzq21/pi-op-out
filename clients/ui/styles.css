@@ -19,7 +19,6 @@
 ::selection { background: #e8e5dd1a; }
 input:not(:focus), textarea:not(:focus) { -webkit-user-select: none; user-select: none; }
 :focus-visible { outline: 2px solid color-mix(in srgb, var(--accent) 45%, var(--paper)); outline-offset: 2px; }
-/* Keep a standard pointer everywhere except editable controls. */
 *, *::before, *::after { cursor: default !important; }
 input, textarea, select { cursor: auto !important; }
 [contenteditable="true"], [contenteditable="true"] *, [contenteditable="plaintext-only"], [contenteditable="plaintext-only"] * { cursor: text !important; }
@@ -119,7 +118,6 @@ kbd { font: 11px "DM Sans"; border: 1px solid var(--line); padding: 2px 4px; bor
 .conversation-content { display: contents; }
 .response-navigator { position: absolute; top: 14px; bottom: 14px; left: 5px; z-index: 3; width: 24px; display: flex; flex-direction: column; align-items: center; overflow-y: auto; scrollbar-width: none; }
 .response-navigator::-webkit-scrollbar { display: none; }
-/* Only the markers take clicks, so the pin buttons beside responses stay clickable under the rail. */
 .response-navigator { pointer-events: none; } .response-navigator-marker { pointer-events: auto; }
 .response-navigator-marker { flex: 0 0 10px; width: 24px; min-height: 10px; display: grid; place-items: center; border: 0; padding: 0; background: transparent; cursor: pointer; }
 .response-navigator-marker:first-child { margin-top: auto; }
@@ -225,7 +223,6 @@ button.agent-delivery-source:hover { color: var(--accent-soft); text-decoration:
 .assistant-message .message-actions { opacity: 0; pointer-events: none; }
 .assistant-message:focus-within .message-actions { opacity: 1; pointer-events: auto; }
 @media (hover: hover) { .assistant-message:hover .message-actions { opacity: 1; pointer-events: auto; } }
-/* The actions under the last response stay visible. */
 .message.last-point .message-actions { opacity: 1; pointer-events: auto; }
 .message-time { margin-left: 6px; color: var(--muted); font: 500 11px "DM Sans", sans-serif; white-space: nowrap; opacity: 0; transition: opacity .15s; cursor: default; }
 .assistant-message .message-time { margin-left: 6px; font-weight: 400; }
@@ -233,7 +230,6 @@ button.agent-delivery-source:hover { color: var(--accent-soft); text-decoration:
 .message:focus-visible { outline: none; }
 @media (hover: hover) { .message:hover .message-time { opacity: 1; } }
 .cache-hit-rate { margin-left: 5px; color: var(--muted); font: 12px "DM Sans"; }
-/* Trim the line box to the digit height, so flex centering centers the ink. */
 .cache-rate-value, .message-time { line-height: 1; text-box: trim-both cap alphabetic; }.cache-hit-rate.low { color: #d77865; }
 .cache-hit-rate, .session-cache-hit { position: relative; }
 .cache-hit-rate, .session-cache-hit { display: inline-flex; align-items: center; gap: 4px; }
@@ -307,7 +303,6 @@ button.agent-delivery-source:hover { color: var(--accent-soft); text-decoration:
 .prompt-context-content > pre, .prompt-context-content div pre, .prompt-context-content small { overflow-wrap: anywhere; }
 .prompt-context-copy { float: right; position: sticky; top: 0; margin: 0 0 4px 8px; background: var(--paper); }
 .prompt-context-content > .prompt-context-item { position: relative; padding-right: 40px; }.prompt-context-item-copy { float: none; position: absolute; top: 6px; right: 2px; margin: 0; }
-/* An item's copy button shows only while the pointer is on that item, or the item has focus. */
 .prompt-context-item-copy { opacity: 0; pointer-events: none; transition: opacity .12s; }
 .prompt-context-item:hover > .prompt-context-item-copy, .prompt-context-item:focus-within > .prompt-context-item-copy { opacity: 1; pointer-events: auto; }
 @media (hover: none) { .prompt-context-item-copy { opacity: 1; pointer-events: auto; } }
@@ -437,8 +432,6 @@ button.agent-delivery-source:hover { color: var(--accent-soft); text-decoration:
 .directory-palette-hints span { display: flex; align-items: center; gap: 3px; }
 .directory-palette > .dialog-error { margin: 0; padding: 8px 20px; max-height: 80px; overflow-y: auto; }
 
-/* Raised surfaces and native controls need explicit dark colors. color-scheme alone
-   does not reliably recolor selects in every desktop webview. */
 select option { background: var(--dark-control); color: var(--ink); }
 input::placeholder { color: var(--faint); }
 textarea::placeholder { color: var(--faint); }
@@ -673,12 +666,9 @@ textarea::placeholder { color: var(--faint); }
 @media (max-width: 600px) { .app .new-chat-project .worktree-picker .composer-picker-trigger { max-width: 132px; } }
 .composer-settling .composer-tools .composer-terminal:disabled:not([data-unavailable]), .composer-settling .fast-mode-indicator:disabled { opacity: 1; }
 
-/* A loading chat keeps its controls looking the same; they only stop taking input. */
 .composer-loading .composer-tools .icon-button:disabled:not([data-unavailable]), .composer-loading .fast-mode-indicator:disabled { opacity: 1; }
 .message-body, .user-message-images { position: relative; }
-/* A turn clips what it paints to its box. Its padding holds the pin buttons outside the messages. */
 .deferred-turn { margin-inline: -36px; padding-inline: 36px; }
-/* The button takes the line height of the message, so 1lh is the height of its first line. */
 .message-pin { position: absolute; top: 2px; left: -35px; width: 30px; height: 30px; font: inherit; display: grid; place-items: center; padding: 0; border: 0; border-radius: 6px; background: transparent; color: var(--faint); cursor: pointer; opacity: 0; transition: opacity .15s; }
 .user-message .message-pin { left: auto; right: -35px; top: calc(10px + (1lh - 30px) / 2); }
 .user-message-images > .message-pin { top: 4px; }
@@ -696,7 +686,6 @@ textarea::placeholder { color: var(--faint); }
 .pinned-message-text { flex: 1; min-width: 0; display: flex; align-items: center; gap: 7px; padding: 4px 8px; border: 1px solid transparent; border-radius: 6px; text-align: left; background: transparent; color: var(--ink); font: calc(14.5px + var(--settings-font-offset, 0px)) "DM Sans", sans-serif; cursor: pointer; }
 .pinned-message-text > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .pinned-message-text > svg { flex: none; color: var(--faint); }
-/* A pinned prompt looks like the prompt bubble; a pinned response is plain, like the response. */
 .pinned-prompt .pinned-message-text { border-color: #2a2925; background: #1f1e1b; font-weight: 500; }
 .pinned-messages { gap: 2px; }
 .pinned-message-text em { color: var(--muted); }

@@ -4,7 +4,6 @@ import { PluginService } from './plugins';
 import { ProviderService } from './providers';
 import type { Host } from './controller';
 
-/** Groups the provider login service and the plugin service that one host uses. */
 export class HostServices {
   private providers: ProviderService;
   private plugins: PluginService;

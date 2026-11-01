@@ -6,7 +6,6 @@ import { injectedScriptSource, playwrightInternals } from './sources.mjs';
 
 let certificate;
 
-/** Turns a Playwright URL matcher (glob string, RegExp or predicate) into a predicate of URL strings. */
 export function urlMatcher(match) {
   if (typeof match === 'function') return url => match(new URL(url));
   if (match instanceof RegExp) return url => match.test(url);
@@ -25,14 +24,9 @@ function readBody(stream) {
 
 const corsHeaders = { 'access-control-allow-origin': '*', 'access-control-allow-headers': '*', 'access-control-allow-methods': 'GET, POST' };
 
-/**
- * The HTTP proxy of one browser context. It serves the page bridge at /__pw/ on every origin, adds the bridge to HTML documents,
- * and answers requests that match a route. host: { bridgeScript(pageId): string, onBridge(kind, body): Promise<object>, routes(): Route[], webSocketRoutes(): WebSocketRoute[] }.
- */
 export async function startProxy(host) {
   const sockets = new Set();
   const webSockets = new WebSocketServer({ noServer: true });
-  /** The page whose next document the proxy is about to serve, set by page.goto. */
   let claim;
 
   const respond = async (request, response, url) => {
@@ -58,7 +52,6 @@ export async function startProxy(host) {
     return forward(request, response, url, request.headers, postData);
   };
 
-  /** Sends a response, with the bridge added to an HTML document. */
   const send = async (request, response, status, headers, body) => {
     const type = String(headers['content-type'] ?? '');
     if (/text\/html/i.test(type) && request.method === 'GET') {
@@ -120,7 +113,6 @@ export async function startProxy(host) {
   const proxy = http.createServer(handler('http'));
   proxy.on('upgrade', upgrade('ws'));
   proxy.on('connection', socket => { sockets.add(socket); socket.on('close', () => sockets.delete(socket)); });
-  // HTTPS and secure WebSockets: the proxy ends TLS with its own certificate; the browser runs with --ignore-tls-errors.
   proxy.on('connect', (request, socket, head) => {
     certificate ??= playwrightInternals.utils.generateSelfSignedCertificate();
     socket.write('HTTP/1.1 200 Connection Established\r\n\r\n');
@@ -136,7 +128,6 @@ export async function startProxy(host) {
 
   return {
     url: 'http://127.0.0.1:' + proxy.address().port,
-    /** The next HTML document belongs to pageId. */
     claim(pageId) { claim = pageId; },
     async close() {
       for (const socket of sockets) socket.destroy();

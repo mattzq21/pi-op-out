@@ -20,18 +20,15 @@ export interface AppSettings extends PluginSettings {
   defaultFastMode: boolean;
   contextWindowCap: number;
   contextWindowCapEnabled: boolean;
-  /** Context caps by provider/model. A missing model inherits; null selects the model default. */
   modelContextWindowCaps: Record<string, number | null>;
   autoRetry: boolean;
   debugMode: boolean;
   keybindings: Record<string, string>;
-  /** The tools that Pi reported on this host. Filled when settings load, and never saved. */
   tools: ToolConfig[];
   skills: SkillConfig[];
   hosts: RemoteHost[];
 }
 
-/** A tool that Pi offers. source is the path of the extension that registered it, or builtin:<name> for a Pi built-in. */
 export interface ToolConfig { name: string; description: string; source: string }
 export interface SkillConfig { name: string; path: string; description: string; enabled: boolean; userInvokedOnly?: boolean }
 
@@ -111,7 +108,6 @@ function modelCaps(value: any): Record<string, number | null> {
   return caps;
 }
 
-/** Throws when a saved context cap is outside the accepted range. */
 export function validateContextCaps(settings: AppSettings): void {
   const error = capRangeError(settings.contextWindowCap, 'General context cap');
   if (error) throw new Error(error);
@@ -122,7 +118,6 @@ export function validateContextCaps(settings: AppSettings): void {
   }
 }
 
-/** Parses settings with the same defaults and required fields as the saved settings format. */
 export function parseAppSettings(value: any): AppSettings {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('invalid type: expected struct AppSettings');
   let contextWindowCap = 300_000;
@@ -158,7 +153,6 @@ export function parseAppSettings(value: any): AppSettings {
   return settings;
 }
 
-/** Serializes settings in the saved field order, leaving out absent optional fields. */
 export function serializeAppSettings(settings: AppSettings): Record<string, unknown> {
   const result: Record<string, unknown> = {};
   if (settings.settingsRevision !== undefined) result.settingsRevision = settings.settingsRevision;

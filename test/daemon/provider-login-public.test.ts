@@ -11,7 +11,6 @@ afterAll(async () => { await daemon?.stop(); });
 
 const auth = (request: any) => daemon.invoke('provider_auth', { hostId: 'local', request });
 const provider = async (id: string) => (await auth({ action: 'list', refreshModels: false })).providers.find((item: any) => item.id === id);
-/** Polls a login flow, as the app does, until check accepts it. */
 async function flowUntil(flowId: string, check: (flow: any) => boolean) {
   for (let tries = 0; tries < 100; tries++) {
     const flow = await auth({ action: 'poll', flowId });

@@ -141,8 +141,6 @@ def start_mcp(directory, instance_id, stderr):
         env={
             **os.environ,
             "TAURI_WEBDRIVER_INSTANCE": instance_id,
-            # WDIO's logger binds console methods before MCP redirects them.
-            # Keep diagnostic output out of the JSON-RPC stdout stream.
             "WDIO_LOG_PATH": str(directory / "webdriver.log"),
         },
         stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=stderr,
@@ -334,7 +332,6 @@ def runtime_root():
 
 
 def acquire_daemon_launch_lock(project, deadline):
-    """Wait for other Piop launchers to finish building and connecting this worktree's daemon."""
     path = Path(project) / "target" / ".piop-daemon-launch.lock"
     path.parent.mkdir(parents=True, exist_ok=True)
     lock = os.open(path, os.O_CREAT | os.O_RDWR | os.O_CLOEXEC, 0o600)
@@ -351,8 +348,6 @@ def acquire_daemon_launch_lock(project, deadline):
 
 @contextlib.contextmanager
 def reserve_port(root):
-    # Keep the file lock through shutdown, including the socket handoff to the child.
-    # Other launchers cannot reuse this port during a slow build or app restart.
     for _ in range(256):
         listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         lease = None
@@ -431,7 +426,6 @@ def webdriver_request(port, route, *, method="GET", payload=None, timeout=30):
         f"http://127.0.0.1:{port}{route}", data=data, method=method,
         headers={"Content-Type": "application/json"},
     )
-    # Local automation must not go through an inherited HTTP proxy.
     opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
     try:
         with opener.open(request, timeout=timeout) as response:
@@ -450,7 +444,6 @@ def webdriver_request(port, route, *, method="GET", payload=None, timeout=30):
 def signal_owned(marker, signum):
     for pid in owned_pids(marker):
         try:
-            # Recheck immediately before signaling to avoid acting on a stale PID.
             if has_marker(pid, marker):
                 os.kill(int(pid), signum)
         except ProcessLookupError:
@@ -484,8 +477,6 @@ Promise.resolve().then(() => window.__TAURI_INTERNALS__.invoke("daemon_invoke", 
 
 
 def stop_children(children, marker):
-    # Give supervisors time to stop before sweeping descendants, including daemons
-    # and watchers that created new process groups.
     for _, child in reversed(children):
         if child.poll() is None:
             with contextlib.suppress(ProcessLookupError):

@@ -27,7 +27,6 @@ const address = { peerId: Type.String({ minLength: 1 }) };
 type Target = { peerId: string; afterCursor?: string };
 
 
-/** The name of ctx's chat, which other chats see as the sender of its messages. */
 function ownName(ctx: ExtensionContext) {
   const file = ctx.sessionManager.getSessionFile();
 
@@ -69,7 +68,6 @@ function deliverMailbox(pi: ExtensionAPI, mail: Mail[]) {
   }
 }
 
-/** deliverAs: a busy recipient gets the message in Pi's steering or follow-up queue. Without it, the message waits in the mailbox until the agent settles. */
 function queueAgentMailbox(pi: ExtensionAPI, ctx: ExtensionContext, message: Mail["message"], notificationId: string, defer = false, deliverAs?: "steer" | "followUp") {
   const mail = { message, notificationId };
 
@@ -86,7 +84,6 @@ function queueAgentMailbox(pi: ExtensionAPI, ctx: ExtensionContext, message: Mai
   const queued = mailboxes.get(pi) ?? [];
   queued.push(mail);
   mailboxes.set(pi, queued);
-  // A message from a peer ends a wait in the running turn, so the turn can finish and the agent reads the message.
   if (!defer && message.customType === "piop-agent-message") pi.events.emit("piop:agent-mail", { notificationId, customType: message.customType });
 }
 
@@ -104,7 +101,6 @@ export async function sessionSnapshot(sessionId: string, hostId: string, signal?
   return Parse(snapshotSchema, await request("/orchestration", { action: "read", sessionId, hostId }, signal, 30_000));
 }
 
-/** The longest message or task a chat or subagent may get from message_peer, create_peer, message_subagent or spawn_subagents. The tool definitions leave it out. */
 export const MAX_MESSAGE_LENGTH = 100_000;
 
 export function requireMessageLength(message: string) {
@@ -112,7 +108,6 @@ export function requireMessageLength(message: string) {
   if (message.length > MAX_MESSAGE_LENGTH) throw new Error(`The message is ${message.length} characters; the limit is ${MAX_MESSAGE_LENGTH}`);
 }
 
-/** discardOnFailure: the recipient is a new chat that is deleted when the message cannot be delivered. deliverAs: how a busy recipient gets it. */
 export async function sendSessionMessage(ctx: ExtensionContext, sessionId: string, hostId: string, message: string, wake: boolean, signal?: AbortSignal, deliveryId: string = randomUUID(), discardOnFailure = false, deliverAs?: "steer" | "followUp") {
   if (sessionId === ctx.sessionManager.getSessionId() && hostId === currentHost()) throw new Error("Choose another conversation as the recipient");
   await activeConversation(sessionId, hostId, signal);
@@ -222,10 +217,6 @@ function readItem(entry: Static<typeof entrySchema>, includeOutputs: boolean, ca
     stopReason: message.stopReason, error: message.errorMessage };
 }
 
-/**
- * Waits until the state of one of the peers that were read changes after its snapshot, or until waitMs passes. Each
- * watch request returns after at most a few minutes; the caller reads the peers again and waits again.
- */
 async function nextChange(polls: Awaited<ReturnType<typeof poll>>[], waitMs: number, signal: AbortSignal) {
   if (!polls.length) { await delay(waitMs, undefined, { signal }); return; }
   const local = new AbortController();
@@ -235,7 +226,6 @@ async function nextChange(polls: Awaited<ReturnType<typeof poll>>[], waitMs: num
   } finally { local.abort(); }
 }
 
-/** all: wake only when every target finished with a new answer or failed; otherwise when any one finished. */
 async function waitSnapshot(targets: Target[], signal: AbortSignal | undefined, stop: AbortSignal, all: boolean) {
   const round = signal ? AbortSignal.any([signal, stop]) : stop;
   const settled = await Promise.allSettled(targets.map(target => poll(target, round)));
@@ -250,8 +240,6 @@ async function waitSnapshot(targets: Target[], signal: AbortSignal | undefined, 
   return { polls, errors, wake };
 }
 
-/** The new answers of the chats that finished, each in a <peer_message> tag with the chat's name on the first line. */
-/** What ended a wait besides the peers: a message from the user, a message from another chat, or a subagent result. */
 type Interruption = "user" | "mail" | "subagent" | undefined;
 
 function peerAnswers(snapshot: Awaited<ReturnType<typeof waitSnapshot>>, interruption: Interruption) {
@@ -280,17 +268,14 @@ const parentMessageSchema = Schema.Object({ message: Schema.String(), sourceSess
 
 const resultDetailsSchema = Schema.Object({ runs: Schema.Array(Schema.Object({ name: Schema.String(), status: Schema.String(), agent: Schema.Optional(Schema.String()), output: Schema.Optional(Schema.String()) })) });
 
-/** A parent sees each finished subagent's name and answer in a <subagent_response> tag. */
 export function subagentResponses(runs: Array<{ name: string; output?: string }>) {
   return runs.map(run => "<subagent_response>\nSubagent " + run.name + ":\n" + (run.output ?? "") + "\n</subagent_response>").join("\n\n");
 }
 
-/** The sender and text of a delivered agent message. */
 function agentMessage(content: string) {
   try { const value = JSON.parse(content); return Check(parentMessageSchema, value) ? value : undefined; } catch { return undefined; }
 }
 
-/** A chat sees a message from another chat in a <peer_message> tag, with the sender's chat name on the first line. */
 function peerMessage(value: Static<typeof parentMessageSchema>) {
   return "<peer_message>\nPeer " + (value.sourceName || value.sourceSessionId || "unknown") + ":\n" + value.message + "\n</peer_message>";
 }
@@ -393,7 +378,6 @@ function registerDelivery(pi: ExtensionAPI) {
       if (Check(mailboxMessageSchema, message)) mailbox.consume(ctx, message.details.notificationId);
       const sent = message.role === "custom" && message.customType === "piop-agent-message" ? agentMessage(messageText(message)) : undefined;
 
-      // An auxiliary chat, such as a subagent, sees only the text its owner wrote; a chat sees a message from another chat as a <peer_message>.
       if (sent) return [{ role: "user", content: [{ type: "text", text: auxiliary ? sent.message : peerMessage(sent) }], timestamp: message.timestamp }];
 
       if (message.role === "custom" && message.customType === "piop-subagent-result" && Check(resultDetailsSchema, message.details)) {
@@ -405,15 +389,12 @@ function registerDelivery(pi: ExtensionAPI) {
   });
 }
 
-/** How long await_peers waits when the agent gives no timeoutMs. */
 const DEFAULT_WAIT_MS = 5 * 60_000;
 
-/** The longest await_peers waits, whatever timeoutMs asks for. The tool definition leaves it out. */
 const MAX_WAIT_MS = 6 * 60 * 60_000;
 
 export function registerOrchestration(pi: ExtensionAPI) {
   registerDelivery(pi);
-  /** The last answer each wait returned, by waiting chat and target chat. */
   const seenAnswers = new Map<string, string>();
   const revisions = { user: 0, mail: 0, subagent: 0 };
   const inputListeners = new Set<() => void>();
@@ -438,7 +419,6 @@ export function registerOrchestration(pi: ExtensionAPI) {
       try { await sendSessionMessage(ctx, created.peerId, created.hostId, params.message, true, signal, deliveryId, true); }
       catch (error) {
         const reason = error instanceof Error ? error.message : String(error);
-        // The sender may have lost the answer; Piop then keeps the peer if the message arrived and removes it otherwise.
         const settled = await request("/orchestration", { action: "settle_first_message", sessionId: created.peerId, hostId: created.hostId, sessionPath: created.sessionPath, deliveryId }, undefined, 180_000)
           .catch(settle => { throw new Error(`The first message of peer ${created.peerId} failed, and Piop could not settle it: ${reason}; ${settle instanceof Error ? settle.message : String(settle)}`); });
         if (Parse(Schema.Object({ arrived: Schema.Boolean() }), settled).arrived !== true) throw new Error(`The peer was not created: ${reason}`);
@@ -528,17 +508,14 @@ export function registerOrchestration(pi: ExtensionAPI) {
       inputListeners.add(onInput);
 
       const finish = (snapshot: Awaited<ReturnType<typeof waitSnapshot>>) => {
-        // Mail also waits as a pending message, so pending messages count as the user's only when no mail came.
         const mail = revisions.mail !== start.mail; const subagent = revisions.subagent !== start.subagent;
         const interruption: Interruption = revisions.user !== start.user || (!mail && !subagent && ctx.hasPendingMessages()) ? "user" : mail ? "mail" : subagent ? "subagent" : undefined;
         const interrupted = interruption !== undefined;
-        // With for: "all", a peer that cannot be read counts as done, so the wait still ends when the others finish.
         const failed = params.for === "all" ? snapshot.errors.length === params.targets.length : snapshot.errors.length > 0;
         const actionable = Boolean(snapshot.wake || failed || interrupted);
 
         if (!actionable && !stop.signal.aborted && Date.now() < deadline) return undefined;
 
-        // An answer returned once is not returned again by a later wait.
         for (const item of snapshot.polls) if (item.peer.status !== "running" && item.changed) seenAnswers.set(key({ peerId: item.peer.id }), item.cursor);
 
         return { content: [{ type: "text" as const, text: peerAnswers(snapshot, interruption) }], details: { interrupted, ...snapshot } };

@@ -7,7 +7,6 @@ import { mockIPC, mockWindows, clearMocks } from '@tauri-apps/api/mocks';
 import { daemonClient } from '../daemon-client.mjs';
 import { SubagentPane } from '../../clients/ui/components/SubagentPane.tsx';
 
-/** The subagent pane against a real test daemon, with one saved chat on it. */
 async function pane(t) {
   const dom = installDom();
   HTMLElement.prototype.scrollIntoView = () => {};

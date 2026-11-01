@@ -18,7 +18,6 @@ export function followConversation(pool: SessionRuntimePool, transport: NativeTr
   let stopped = false;
   let reconnecting = false;
   let retryTimer: ReturnType<typeof setTimeout> | undefined;
-  /** Wait before the next reconnect after a failure. It doubles up to 30 seconds and resets after a success. */
   let retryDelay = 2000;
   const following = () => !stopped && !pool.isInteractive(transport) && !pool.isActive(transport);
   const ownsSession = (current: ReturnType<typeof useChatSession>) => following() && session === current;

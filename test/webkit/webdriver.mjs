@@ -13,7 +13,6 @@ const miniBrowser = process.env.PIOP_TEST_MINIBROWSER ?? '/usr/lib/x86_64-linux-
 
 let configDirectory;
 
-/** A GTK configuration that shrinks MiniBrowser's toolbar to almost nothing, so the window can be as narrow as a phone; otherwise the toolbar keeps the viewport at least 447 pixels wide. */
 function gtkConfig() {
   configDirectory ??= (async () => {
     const directory = await mkdtemp(join(tmpdir(), 'piop-minibrowser-'));
@@ -36,14 +35,12 @@ const listening = port => new Promise(resolve => {
   socket.once('error', () => resolve(false));
 });
 
-/** A helper process on the hidden screen that answers one JSON line per JSON command line. request({ action, ... }) answers in order. */
 async function lineHelper(name, executable, args, waitForReady, display) {
   const helper = spawn(executable, [fileURLToPath(new URL(name, import.meta.url)), ...args], { stdio: ['pipe', 'pipe', 'inherit'], env: await hiddenDisplayEnv(process.env, display) });
   helper.unref();
   helper.stdin.unref?.();
   process.once('exit', () => helper.kill());
   const waiting = [];
-  // The helper keeps the test process alive only while an answer is pending.
   const track = () => { if (waiting.length) helper.stdout.ref?.(); else helper.stdout.unref?.(); };
   const exited = new Promise((_, reject) => helper.once('exit', code => reject(new Error(name + ' exited with ' + code))));
   exited.catch(() => undefined);
@@ -70,15 +67,9 @@ export class WebDriverError extends Error {
   constructor(error, message) { super(error + ': ' + message); this.error = error; this.name = 'WebDriverError'; }
 }
 
-/**
- * A MiniBrowser session through WebKitWebDriver. Commands run one at a time; each names the window it acts on.
- * options: { proxy: string, scale?: number }.
- */
 export async function startSession({ proxy, scale = 1 }) {
-  // Each session has its own screen, so tests that run at once share no focus, pointer or window stack.
   const display = await startHiddenDisplay();
   const port = await freePort();
-  // Playwright's browser contexts default to the en-US locale.
   const env = { ...await hiddenDisplayEnv(process.env, display.name), GDK_SCALE: String(scale), XDG_CONFIG_HOME: await gtkConfig(), LANG: 'en_US.UTF-8', LC_ALL: 'en_US.UTF-8', LANGUAGE: 'en_US', GTK_IM_MODULE: 'gtk-im-context-simple', XMODIFIERS: '' };
   const driver = spawn('WebKitWebDriver', ['--port=' + port], { stdio: ['ignore', 'ignore', 'pipe'], env });
   let driverErrors = '';
@@ -98,13 +89,11 @@ export async function startSession({ proxy, scale = 1 }) {
   const options = { binary: miniBrowser, args: ['--automation', '--proxy=' + proxy, '--ignore-host=', '--ignore-tls-errors', '--enable-page-cache=false', '--javascript-can-access-clipboard=true'] };
   const created = await raw('POST', '/session', { capabilities: { alwaysMatch: { acceptInsecureCerts: true, unhandledPromptBehavior: 'ignore', pageLoadStrategy: 'normal', 'webkitgtk:browserOptions': options } } });
   const path = '/session/' + created.sessionId;
-  // No script timeout: WebKitWebDriver times scripts with the page's setTimeout, which tests may replace with fake timers.
   await raw('POST', path + '/timeouts', { script: null, pageLoad: 60000, implicit: 0 });
   let current = await raw('GET', path + '/window');
   let queue = Promise.resolve();
   let closed = false;
 
-  /** Runs fn(command) with the session switched to window; other work waits. */
   const inWindow = (window, fn) => {
     const run = queue.then(async () => {
       if (closed) throw new Error('The browser has been closed');
@@ -119,9 +108,7 @@ export async function startSession({ proxy, scale = 1 }) {
   return {
     initialWindow: current,
     inWindow,
-    /** Real X input on this session's screen (test/webkit/x-input.py). */
     xInput() { return xHelper ??= lineHelper('./x-input.py', 'python3', [], false, display.name); },
-    /** A GTK drag source at the bottom right corner of this session's screen (test/webkit/x-drag.py). It needs a Python with GTK 3 bindings. */
     dragSource() { return dragHelper ??= lineHelper('./x-drag.py', process.env.PIOP_TEST_GTK_PYTHON ?? '/usr/bin/python3', ['3740', '2060'], true, display.name); },
     newWindow() { return inWindow(undefined, async command => (await command('POST', '/window/new', { type: 'window' })).handle); },
     closeWindow(window) { return inWindow(window, async command => { await command('DELETE', '/window'); current = undefined; }); },

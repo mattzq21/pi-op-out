@@ -18,7 +18,6 @@ async function sessionFile(name, id, parentSession) {
   return path;
 }
 
-/** One Pi session running the extension. send() returns the payload the provider would receive. */
 function session({ id, file, header, branch = [], model = { provider: 'openai-codex', api: 'openai-codex-responses' } }) {
   const handlers = new Map();
   const entries = [...branch];

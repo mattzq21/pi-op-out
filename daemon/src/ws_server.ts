@@ -9,12 +9,10 @@ const MAX_AUTH_BYTES = 4096;
 const MAX_QUEUED_BYTES = 16 * 1024 * 1024;
 const MAX_QUEUED_MESSAGES = 256;
 const MAX_PENDING_PONGS = 32;
-/** Unsent output allowed on one socket: the largest response plus room for events queued behind it. */
 const MAX_BUFFERED_BYTES = MAX_RESPONSE_BYTES + 16 * 1024 * 1024;
 
 export type Incoming = { type: 'text'; data: string } | { type: 'binary'; data: Buffer };
 
-/** Answers a WebSocket upgrade request. Returns undefined and rejects the request when it is not valid. */
 export function acceptUpgrade(request: IncomingMessage, socket: Duplex, head: Buffer, maxMessage: number): WebSocketConnection | undefined {
   const key = request.headers['sec-websocket-key'];
   const upgrade = String(request.headers.upgrade ?? '').toLowerCase();
@@ -30,11 +28,10 @@ export function acceptUpgrade(request: IncomingMessage, socket: Duplex, head: Bu
 export function reject(socket: Duplex, status: number, text: string, body = ''): void {
   try {
     socket.end('HTTP/1.1 ' + status + ' ' + text + '\r\nConnection: close\r\nContent-Type: text/plain\r\nContent-Length: ' + Buffer.byteLength(body) + '\r\n\r\n' + body);
-  } catch { /* socket already closed */ }
+  } catch {}
   setTimeout(() => socket.destroy(), 1000).unref();
 }
 
-/** One server side WebSocket connection. */
 export class WebSocketConnection {
   private chunks: Buffer[] = [];
   private buffered = 0;
@@ -60,7 +57,6 @@ export class WebSocketConnection {
     if (head.length) this.receive(head);
   }
 
-  /** Returns the next text or binary message, or undefined after the connection closes. */
   async next(): Promise<Incoming | undefined> {
     const entry = await this.messages.recv();
     if (!entry) return undefined;
@@ -102,11 +98,11 @@ export class WebSocketConnection {
     const body = Buffer.alloc(2);
     body.writeUInt16BE(code);
     try { await this.frame(0x8, body, true); } catch { this.terminate(); return; }
-    try { this.socket.end(); } catch { /* closed */ }
+    try { this.socket.end(); } catch {}
   }
 
   terminate(): void {
-    try { this.socket.destroy(); } catch { /* closed */ }
+    try { this.socket.destroy(); } catch {}
     this.finish();
   }
 
@@ -115,7 +111,7 @@ export class WebSocketConnection {
     this.closed = true;
     clearTimeout(this.closeTimer);
     this.stopReceiving(false);
-    try { this.socket.destroy(); } catch { /* closed */ }
+    try { this.socket.destroy(); } catch {}
   }
 
   private stopReceiving(discardReceived = true): void {

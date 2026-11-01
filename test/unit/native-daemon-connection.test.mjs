@@ -12,15 +12,10 @@ const bundledDaemon = () => executable ??= process.env.PIOP_TEST_DAEMON_EXECUTAB
   ?? execFileSync('bun', ['test/daemon/build.ts'], { cwd: REPOSITORY, encoding: 'utf8' }).trim();
 const TOKEN = 'test-token-0123456789abcdef0123456789';
 
-/**
- * The desktop app reads the build of the daemon it ships with from piopd beside its own executable,
- * and connects to the daemon named by PIOP_DAEMON_URL.
- */
 async function bundledBuild() {
   return bundledBuildId ??= execFileSync(bundledDaemon(), ['--build-id'], { encoding: 'utf8' }).trim();
 }
 
-/** A daemon that speaks the desktop protocol; answer(request, socket) decides each reply. */
 async function fakeDaemon(t, { buildId, answer = () => null }) {
   const server = new WebSocketServer({ host: '127.0.0.1', port: 0 });
   await new Promise(resolve => server.once('listening', resolve));

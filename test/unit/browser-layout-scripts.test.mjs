@@ -3,7 +3,6 @@ import { execFile } from 'node:child_process';
 import { test } from 'node:test';
 import { promisify } from 'node:util';
 
-/** Runs a browser check that is written as a script and fails by throwing. */
 async function script(path) {
   try { return (await promisify(execFile)(process.execPath, [path], { timeout: 120000, maxBuffer: 16 * 1024 * 1024 })).stdout; }
   catch (error) { assert.fail(`${path} failed:\n${error.stdout ?? ''}${error.stderr ?? error.message}`); }

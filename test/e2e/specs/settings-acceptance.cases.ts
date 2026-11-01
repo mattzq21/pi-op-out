@@ -102,7 +102,6 @@ describe("Settings acceptance", () => {
     const target = await card.$('input[placeholder="user@example.com"]');
     const executable = await card.$('input[aria-label$="Piop daemon executable"]');
     await target.setValue("tester@example.com");
-    // Apply the whole edit in one input event; the field normalizes legacy /pi paths while typing.
     await browser.execute(() => {
       const field = document.querySelector<HTMLInputElement>('input[aria-label="Acceptance machine Piop daemon executable"]');
       if (!field) throw new Error("Machine executable input is missing");

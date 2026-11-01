@@ -15,14 +15,12 @@ import { readHeaderLine } from './protocol';
 
 export function ownershipError(): string { return 'Take ownership of this conversation before changing it'; }
 
-/** Releases a conversation that this process owns, when another client takes it. */
 export interface Revocation { revoke(id: string, intent: string): Promise<void> }
 
 export interface SavedConversation { path: string; header: any; lines: string[]; revision: string }
 
 const UUID = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/;
 
-/** True when the path is the root or inside it, compared by whole path parts. */
 export function within(path: string, root: string): boolean {
   return path === root || path.startsWith(root.endsWith(sep) ? root : root + sep);
 }
@@ -63,7 +61,6 @@ export class Guard {
     } finally { this.drop(); }
   }
 
-  /** Lets go of the file locks without other changes. */
   drop(): void {
     this.workerLock?.release(); this.workerLock = null;
     this.lock?.release(); this.lock = null;
@@ -323,7 +320,6 @@ export class ConversationOwnership {
     return { sessionId: id, sessionPath: saved.path, cwd: saved.header.cwd ?? null, archived, revision: saved.revision };
   }
 
-  /** lookup, and for an archived chat whether it is auxiliary: such a chat is only restored with its root. */
   location(id: string): any {
     const location = this.lookup(id);
     if (!location.archived) return location;

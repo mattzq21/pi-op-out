@@ -8,16 +8,11 @@ export type Outcome = { accepted: true } | { accepted: false; error: string };
 
 const KEPT_MS = 30 * 24 * 3600 * 1000;
 
-/**
- * The outcome of each sent message, by the submission ID the client gave it.
- * A client that lost the reply asks for the outcome, so it always knows if the message was accepted.
- */
 export class SubmissionLedger {
   private live = new Map<string, Promise<Outcome>>();
 
   constructor(private root: string, private diagnostic: (line: string) => void) {}
 
-  /** Decides the messages that a stopped daemon left without an outcome, and forgets old outcomes. */
   recover(): void {
     this.use(db => {
       db.prepare('DELETE FROM submission_outcomes WHERE updated_at<?').run(Date.now() - KEPT_MS);
@@ -26,10 +21,6 @@ export class SubmissionLedger {
     });
   }
 
-  /**
-   * Runs one submission and records its outcome. A submission that was not accepted fails as refused, so the client can send it again.
-   * settle waits until Pi can no longer accept the message, after a failure that came after Pi got it.
-   */
   async run(id: string, sessionId: string, work: () => Promise<any>, settle: () => Promise<void>): Promise<any> {
     const running = this.live.get(id);
     if (running) return this.repeat(await running);
@@ -61,7 +52,6 @@ export class SubmissionLedger {
     }
   }
 
-  /** The outcome of a submission. It waits while the submission runs. An unknown ID never reached this daemon. */
   async outcome(id: string): Promise<Outcome> {
     const running = this.live.get(id);
     if (running) return running;
@@ -83,7 +73,6 @@ export class SubmissionLedger {
     return outcome;
   }
 
-  /** A message is accepted when the saved queue or the saved transcript holds it. */
   private decide(db: Database, id: string, sessionId: string, error: string): Outcome {
     if (db.prepare("SELECT 1 FROM queue_items WHERE json_extract(details_json, '$.goalSubmissionId')=?").get(id)) return { accepted: true };
     const row = db.prepare('SELECT session_path FROM sessions WHERE session_id=?').get(sessionId) as { session_path: string | null } | undefined;

@@ -13,10 +13,6 @@ const catalogs = new Map<string, Promise<z.infer<typeof catalogSchema>>>();
 
 export function clearDraftCatalogs() { catalogs.clear(); }
 
-/**
- * The host's models, agent definitions, commands and skills, which the daemon reads without starting Pi.
- * cached: the kept copy when there is one. fresh: read again. reload: the host also reads its agent definitions again.
- */
 export function hostCatalog(hostId: string, mode: "cached" | "fresh" | "reload" = "cached") {
   const connection = captureDaemonTransport();
   const key = JSON.stringify([connection.identity, hostId]);
@@ -43,23 +39,19 @@ export class DraftRuntime {
   readonly changes = new Map<string, RpcCommand>();
   private fast = false;
   defaultFastMode = false;
-  /** The settings fallbacks for the default agent. Set once the draft shows the host's default agent. */
   private defaults?: { thinking: string; fastMode: boolean };
-  /** True after the user changes the agent, model, thinking level or fast mode. A changed draft keeps its choices when the host's default agent changes. */
   private chosen = false;
 
   constructor(private hostId: () => string, private emit: (event: RpcEvent) => void) {}
 
   get fastMode() { return this.fast; }
 
-  /** The user's fast mode choice for this draft. */
   setFastMode(enabled: boolean) { this.fast = enabled; this.chosen = true; }
 
   async load() {
     this.catalog = await hostCatalog(this.hostId());
   }
 
-  /** Reads the agent definitions on the host again and publishes the new list while `current` still returns true. A draft the user has not changed shows the new default agent. */
   async reload(current: () => boolean) {
     const catalog = await hostCatalog(this.hostId(), "reload");
 
@@ -96,23 +88,19 @@ export class DraftRuntime {
 
   private levels() { return this.state.model ? modelLevels(this.state.model) : ["off"]; }
 
-  /** Shows the host's default agent with its own model, effort, and fast mode. */
   async applyDefaults(thinking: string, fastMode: boolean) {
     await this.load();
     this.defaults = { thinking, fastMode }; this.chosen = false;
     this.showDefault(this.defaults);
   }
 
-  /** Records the shown default agent, so the session starts as this agent even if the host's default changes before sending. */
   private showDefault({ thinking, fastMode }: { thinking: string; fastMode: boolean }) {
     const agent = this.catalog?.config.agents.find(agent => agent.isDefault);
 
     if (!agent) throw new Error("This host has no default agent");
     this.agent = agent.name;
-    // An agent without its own model uses the model Pi starts with on this host.
     const name = agent.model || this.catalog?.initialModel;
     const model = this.catalog?.models.find(model => `${model.provider}/${model.id}` === name) ?? null;
-    // Piop starts Pi with the default thinking level from Settings when it has one; else Pi uses its own. Pi then limits the level to what the model supports.
     const level = agent.effort || thinking || this.catalog?.initialThinking || "medium";
     this.state = { ...this.state, model, thinkingLevel: model ? clampEffort(level, model) : "off" };
     this.fast = agent.fastMode ?? fastMode;

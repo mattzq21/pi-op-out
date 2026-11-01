@@ -16,7 +16,6 @@ export function isSupportedProvider(provider: string): boolean {
   return SUPPORTED_PROVIDER_SET.has(provider);
 }
 
-/** Adds the priority service tier when fast mode is on and the request goes to a provider that this extension can change. */
 export function getFastModePayload(enabled: boolean, model: ModelRef | undefined, payload: BeforeProviderRequestEvent["payload"]) {
   if (!enabled || !model || !isSupportedProvider(model.provider)) return undefined;
   const parsed = payloadSchema.safeParse(payload);

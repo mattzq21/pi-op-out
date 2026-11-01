@@ -215,12 +215,10 @@ test('a read-only client cannot clear pending messages until it takes ownership'
       .toContain('ownership');
     expect((await command(owner.runtimeId, { type: 'get_state' })).pendingMessages).toEqual(pending);
     expect(await command(reader.runtimeId, { type: 'take_ownership' })).toMatchObject({ owned: true });
-    // The former owner loses the right to edit the queue as soon as ownership moves.
     expect(await daemon.failure('pi_command', {
       runtimeId: owner.runtimeId, command: { type: 'change_pending', id: pending[0].id, action: 'remove' },
     })).toContain('ownership');
     expect((await command(reader.runtimeId, { type: 'get_state' })).pendingMessages).toEqual(pending);
-    // Closing the former owner must keep the shared worker and its queued work alive.
     await daemon.invoke('stop_pi', { runtimeId: owner.runtimeId });
     ownerStopped = true;
     expect((await command(reader.runtimeId, { type: 'get_state' })).pendingMessages).toEqual(pending);
@@ -239,7 +237,6 @@ test('a second client stays read-only until it takes ownership of the live conve
   const second = await open(session.path, 'second');
   expect(second.owned).toBe(false);
   expect(await daemon.failure('pi_command', { runtimeId: second.runtimeId, command: { type: 'prompt', message: 'blocked' } })).toContain('ownership');
-  // A rejected claim leaves the first client's right to send commands intact.
   await command(first.runtimeId, { type: 'prompt', message: 'still owned' });
   expect(await command(second.runtimeId, { type: 'take_ownership' })).toMatchObject({ owned: true });
   expect(await daemon.failure('pi_command', { runtimeId: first.runtimeId, command: { type: 'prompt', message: 'blocked' } })).toContain('ownership');
@@ -281,7 +278,6 @@ test('only the last released client can reassign its terminal, until another cli
   await daemon.invoke('stop_pi', { runtimeId: reopened.runtimeId });
   const second = await open(session.path, 'released-second');
   await expect(shared('reassign', 'released-first', { sessionKey: 'local:draft-stale' })).rejects.toThrow('Take ownership');
-  // Listing transfers the terminal to the client that now owns its conversation.
   expect(await shared('list', 'released-second')).toEqual([expect.objectContaining({ id: terminalId, owned: true })]);
   await daemon.invoke('stop_pi', { runtimeId: second.runtimeId });
   await expect(shared('reassign', '', { sessionKey: 'local:draft-empty' })).rejects.toThrow('Take ownership');

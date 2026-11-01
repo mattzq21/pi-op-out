@@ -16,14 +16,12 @@ const runSchema = z.object({
   apiCost: z.number().optional().catch(undefined),
 });
 
-/** Tools whose rows show subagent icons: spawn_subagents shows the subagents it started, await_subagents the ones whose answers it returned. */
 export const showsSubagents = (toolName?: string) => toolName === "spawn_subagents" || toolName === "await_subagents";
 
 export const subagentRuns = z.object({
   runs: z.array(runSchema.optional().catch(undefined)).catch([]),
 }).transform(details => details.runs.flatMap(run => run ? [run] : [])).catch([]).parse;
 
-/** A fixed avatar per subagent: the daemon saves a look with each subagent before its chat exists, and the seed is its nickname, so every row of one subagent looks the same. */
 function SubagentAvatar(props: { seed: string; look?: number; status: string; label: string }) {
   const look = createMemo(() => {
     const value = subagentLook(props.seed, props.look);

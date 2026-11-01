@@ -127,7 +127,6 @@ test('input before session startup preserves the selected prompt across reload',
   assert.deepEqual(await f.input('early'), { action: 'continue' });
   assert.equal(f.capability().active, 'general');
   assert.equal(f.capability().locked, true);
-  // Pi records an accepted user message after extension input handlers finish.
   f.entries.push({ type: 'message', message: { role: 'user', content: [{ type: 'text', text: 'early' }], timestamp: 1 } });
   await f.file('prompt.md', 'Changed after input');
   await f.reloadExtensions();

@@ -23,12 +23,10 @@ const sourceAgentSchema = Type.Object({
   systemPrompt: Type.Optional(Type.String()), agentsMd: Type.Optional(Type.String()), developerPrompt: Type.Optional(Type.String()),
 });
 
-/** settings holds startup tool/skill lists and host model validation results. */
 export interface AgentDefinitionsRequest { settings: any; initial: boolean }
 
 export interface AgentDefinitions { config: any; prompts: Record<string, string> }
 
-/** The definitions to save, with the revision they were edited from. */
 export interface SaveAgentDefinitionsRequest { settings: any; configuration: unknown }
 
 const savedConfigurationSchema = Type.Object({ revision: Type.String({ minLength: 1 }), agents: Type.Array(agentSchema) });
@@ -39,7 +37,6 @@ function configRuntime(settings: any) {
   return { tools, api: { enabledTools: tools.enabledTools, pluginTools: parsePluginAgentTools(settings) } };
 }
 
-/** Rejects agents whose prompt files cannot be read. */
 async function requireReadablePrompts(agents: Config["agents"]) {
   for (const agent of agents) {
     for (const [label, path] of [["System prompt", agent.path_systemprompt], ["Agent prompt", agent.path_agent_prompt]] as const) {
@@ -54,7 +51,6 @@ async function requireReadablePrompts(agents: Config["agents"]) {
   }
 }
 
-/** Checks every agent as a new agent would start: thinking level, model, extensions and prompts. A missing model only marks the agent unavailable. */
 async function checkAgents(config: Config, settings: any, registeredTools: readonly string[], prompts: Record<string, string>) {
   if (!Check(Type.Array(agentSchema), config.agents)) throw new Error("Invalid agent definitions");
 
@@ -80,10 +76,6 @@ async function checkAgents(config: Config, settings: any, registeredTools: reado
   }
 }
 
-/**
- * Reads and checks the agent definitions for the daemon. initial moves old definitions, creates missing ones and saves migrations.
- * The paths come from the environment of the calling thread, which the daemon sets for each load.
- */
 export async function loadAgentDefinitions({ settings, initial: initialize }: AgentDefinitionsRequest): Promise<AgentDefinitions> {
   if (initialize) { await mkdir(agentDirectory, { recursive: true, mode: 0o700 }); moveLegacyDefinitions(); }
 
@@ -114,7 +106,6 @@ export async function loadAgentDefinitions({ settings, initial: initialize }: Ag
   return { config, prompts };
 }
 
-/** Storage that writes nothing: it collects the prompts that migrations would write. */
 function readOnlyStorage(prompts: Record<string, string>) {
   return {
     async writeConfig() {},
@@ -130,10 +121,6 @@ function readOnlyStorage(prompts: Record<string, string>) {
   };
 }
 
-/**
- * Checks the supplied agent definitions like a load does and saves them when their revision is still the saved one.
- * Returns the saved definitions as a load would read them, so they need no second load.
- */
 export async function saveAgentDefinitions({ settings, configuration }: SaveAgentDefinitionsRequest): Promise<{ revision: string; warnings: string[]; definitions: AgentDefinitions }> {
   const errors = [...Errors(savedConfigurationSchema, configuration)];
 

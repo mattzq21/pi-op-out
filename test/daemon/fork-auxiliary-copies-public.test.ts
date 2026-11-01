@@ -9,7 +9,6 @@ const OPEN = '__pi_desktop_auxiliary__';
 
 type Chat = Awaited<ReturnType<typeof agents.rootChat>>;
 
-/** Sends a /btw or /review command in chat and returns what the side pane receives. */
 async function sideChat(chat: Chat, type: 'prompt' | 'follow_up', message: string) {
   const seen = new Set(agents.daemon.events.map(event => event.payload));
   await chat.command({ type, message });
@@ -45,7 +44,6 @@ for (const mode of ['copy_after', 'fork_after'] as const) test.concurrent(`${mod
   const forkPoint = await answer(chat, 'Second answer.');
   await Bun.sleep(5);
   const late = await sideChat(chat, 'prompt', '/btw');
-  // A subagent of an earlier side chat, made after the fork point, stays out of the fork too.
   await agents.daemon.invoke('start_pi', { runtimeId: 'nested-' + mode, clientId: 'laptop', cwd: kept.cwd, sessionPath: kept.sessionPath });
   await agents.daemon.invoke('pi_command', { runtimeId: 'nested-' + mode, command: { type: 'prompt', message: 'Nested help ' + mode } });
   let nested: any;
@@ -64,17 +62,14 @@ for (const mode of ['copy_after', 'fork_after'] as const) test.concurrent(`${mod
   const btwCopy = copies.find((session: any) => session.auxiliaryKind === 'btw');
   expect(listed.filter((session: any) => session.auxiliaryParentId === btwCopy.id)).toEqual([]);
 
-  // The fork's review row names the copy, owned by the fork.
   const reviewCopy = copies.find((session: any) => session.auxiliaryKind === 'review');
   const link = (await chat.command({ type: 'get_entries' })).entries.find((entry: any) => entry.customType === 'piop-review-link');
   expect(link.details).toMatchObject({ sessionId: reviewCopy.id, parentSessionId: forkId });
 
-  // A fork of the fork at the same answer copies the copies, which keep their creation time.
   const again = await chat.command({ type: mode, entryId: forkPoint.id });
   const second = (await sessions()).filter((session: any) => session.auxiliaryParentId === again.state.sessionId);
   expect(second.map((session: any) => session.auxiliaryKind).sort()).toEqual(['btw', 'review', 'subagent']);
 
-  // Archiving the fork archives its copies, which needs each copy linked to the fork's saved transcript.
   await agents.daemon.invoke('archive_session', { hostId: 'local', sessionPath: listed.find((session: any) => session.id === forkId).path, terminalIds: [], clientId: 'fork-test' });
   const left = (await sessions()).map((session: any) => session.id);
   expect(copies.filter((copy: any) => left.includes(copy.id))).toEqual([]);
@@ -108,7 +103,6 @@ test.concurrent('a working subagent of an idle side chat gets its task again fro
     const forked = await chat.command({ type: 'copy_after', entryId: (await answer(chat, 'Second nested answer.')).id });
     const sideCopy = (await sessions()).find((session: any) => session.auxiliaryParentId === forked.state.sessionId && session.auxiliaryKind === 'btw');
     expect((await sessions()).find((session: any) => session.auxiliaryParentId === sideCopy.id)).toMatchObject({ auxiliaryKind: 'subagent', name: 'Subagent: Worker' });
-    // Only the fork runs; the copied side chat stays closed while its subagent works again.
     for (let tries = 0; nestedRequests < 2 && tries < 300; tries++) await Bun.sleep(100);
     expect(nestedRequests).toBe(2);
     await agents.daemon.invoke('start_pi', { runtimeId: 'nested-retry-copy', clientId: 'laptop', cwd: sideCopy.cwd, sessionPath: sideCopy.path });
@@ -131,7 +125,6 @@ test.concurrent('a fork made before a finished subagent reported gets that resul
   await chat.until(history => text(history.at(-1)) === 'Read the report.');
   const forked = await chat.command({ type: 'copy_after', entryId: (await answer(chat, 'Started.')).id });
   expect(forked.state.sessionId).not.toBe(chat.sessionId);
-  // The fork's history ends before the result, so the fork gets it and answers it again.
   await chat.until(history => text(history.at(-1)) === 'Read the report.');
   expect((await chat.command({ type: 'get_state' })).sessionId).toBe(forked.state.sessionId);
 }, 120000);
@@ -185,7 +178,6 @@ test.concurrent('a side chat working on a prompt with only an image retries it a
     for (let tries = 0; text((await copyHistory()).at(-1)) !== 'Image done.' && tries < 300; tries++) await Bun.sleep(100);
     const history = await copyHistory();
     expect(text(history.at(-1))).toBe('Image done.');
-    // The copied prompt keeps its image above the fork error.
     const error = history.findIndex(message => message.stopReason === 'error');
     expect(history[error - 1].content.some((part: any) => part.type === 'image')).toBe(true);
   } finally { stalled.resolve({ text: 'Late image answer.' }); }
@@ -204,7 +196,6 @@ test.concurrent('a side chat that was working when its main chat was forked gets
   await chat.until(history => text(history.at(-1)) === 'Main answer.');
   const side = await sideChat(chat, 'prompt', '/btw');
   await agents.daemon.invoke('start_pi', { runtimeId: 'retry-side', clientId: 'laptop', cwd: side.cwd, sessionPath: side.sessionPath });
-  // The prompt names the main chat, so its copy must name the fork.
   await agents.daemon.invoke('pi_command', { runtimeId: 'retry-side', command: { type: 'prompt', message: 'Long side task for ' + chat.sessionId } });
   for (let tries = 0; sideRequests < 1 && tries < 100; tries++) await Bun.sleep(100);
   await chat.command({ type: 'prompt', message: 'Next main step' });

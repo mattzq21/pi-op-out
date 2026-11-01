@@ -18,7 +18,6 @@ const DEFAULT_EXTENSION_DIR = dirname(fileURLToPath(import.meta.url));
 
 const savedStateSchema = z.object({ enabled: z.boolean() });
 
-/** Returns the latest saved choice on the current branch, or undefined when the session has none. */
 function savedChoice(ctx: Pick<ExtensionContext, "sessionManager">): boolean | undefined {
   for (const entry of [...ctx.sessionManager.getBranch()].reverse()) {
     if (entry.type !== "custom" || entry.customType !== STATE_ENTRY) continue;
@@ -51,7 +50,6 @@ export function createPiFastModeExtension(options: FastModeExtensionOptions = {}
 
     pi.events.on("piop:fast-mode:session", request => { request.session = session; });
 
-    /** A saved choice wins; a session without one starts from the config file. */
     async function load(ctx: ExtensionContext): Promise<void> {
       session.reset();
       statusContext = ctx;
@@ -83,7 +81,6 @@ export function createPiFastModeExtension(options: FastModeExtensionOptions = {}
     pi.on("session_start", (_event, ctx) => load(ctx));
     pi.on("session_tree", (_event, ctx) => load(ctx));
 
-    // The saved choice loads in this extension's session_start. Another extension can change the model before then, so the status waits for the load without holding up the model change.
     pi.on("model_select", (event, ctx) => {
       const model = toModelRef(event.model) ?? toModelRef(ctx.model);
       currentModel = model;

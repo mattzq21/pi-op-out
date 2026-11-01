@@ -11,19 +11,12 @@ import { goalArgument, goalCommand, queueTool, runEnded } from './goals/commands
 
 const TIMEOUT = 'Pi command timed out';
 
-/**
- * The queued input of one session. The daemon is the only owner of the queue and saves it: Pi takes a message when it is ready for one,
- * and a message leaves the queue when Pi's transcript holds it. A message that Pi took but did not use, or that Pi lost when it stopped, waits again.
- * The queue also owns the conversation's goal: /goal messages change it, Pi takes its turns from the queue, and the agent's goal tool calls come here.
- * The queue hold is the only pause, for messages and goal alike.
- */
 export class SessionQueue {
   private s = new QueueState();
   private record: QueueRecord;
   private delivery: QueueDelivery;
   private closed = false;
   private operations = new Set<Promise<unknown>>();
-  /** Serializes commands that change the queue. */
   readonly gate = new Mutex();
 
   constructor(executor: Execution, pending: any[] = [], storage: QueueStorage | null = null, held = false, goal = new QueueGoal()) {
@@ -48,24 +41,19 @@ export class SessionQueue {
   view(): any { return this.record.view(); }
   pending(): any[] { return clone(this.s.durableMessages()); }
   isEmpty(): boolean { return this.s.pending.length === 0; }
-  /** True when storage holds the current queue. Storage is then the only copy, because another host can change it later. */
   saved(): boolean { return this.record.saved(); }
 
   tagEntries(entries: any): void { this.s.tagEntries(entries); }
 
-  /** The goal status event that clients show. */
   goalStatus(): any { return this.s.goals.status(); }
 
-  /** The goal while it has a place in the queue. */
   liveGoal() { return this.s.goals.live(); }
 
-  /** Sees an event from Pi as soon as it arrives, before events that came earlier are handled. A goal tool call that comes after it then knows what the model got. */
   observe(event: any): void {
     this.s.markUsed(event);
     if (kind(event) === 'message_end') this.s.goals.added(event.message);
   }
 
-  /** Tells a Pi that just started how many messages it may take. */
   offer(): void { this.delivery.offer(true); }
 
   async receive(event: any): Promise<void> {
@@ -74,13 +62,9 @@ export class SessionQueue {
       console.error(error);
       this.record.reportError(errorText(error));
     }
-    // The transcript confirmed messages as used, so they left the queue.
     if (this.s.pending.length !== before) await this.delivery.reportStorageError(() => this.delivery.publish());
-    // A run started, so a chat that waited for the user's first message no longer waits.
     if (kind(event) === 'agent_start' && this.s.goals.waitingForInput) { this.s.goals.waitingForInput = false; this.delivery.offer(); }
-    // Pi lost what it took. Those messages wait again; the transcript already removed the ones Pi used.
     if (kind(event) === 'disconnected') await this.delivery.reportStorageError(() => this.untake());
-    // Pi's own queue holds at most a message it just took, so clients see the daemon's queue only.
     if (kind(event) === 'queue_update') return;
     this.s.tagMessage(event);
     this.delivery.announce(event);
@@ -92,12 +76,7 @@ export class SessionQueue {
     if (changed) await this.delivery.publish();
   }
 
-  /**
-   * Answers Pi: queue_take gives the next message, queue_release returns messages Pi did not use, queue_used forgets a message an extension handled at once,
-   * queue_failed marks a message Pi could not take, queue_outcome tells how a run ended, and queue_tool runs a tool call that the queue answers.
-   */
   async runtimeEvent(name: string, data: any): Promise<any> {
-    // Pi reports these while a stop can hold the lock and wait for Pi, so they do not wait for the lock. They change the goal at once.
     if (name === 'queue_outcome') return runEnded(this.delivery, data?.outcome);
     if (name === 'queue_tool') return queueTool(this.delivery, data?.tool, data?.params);
     const release = await this.gate.lock();
@@ -115,7 +94,6 @@ export class SessionQueue {
     } finally { release(); }
   }
 
-  /** Stops the running response for a delegated message. Unlike a stop by the user, the waiting messages keep going. */
   interruptDelegation(): Promise<any> {
     if (this.closed) return Promise.reject(new Error('Pi is not running'));
     return track(this.operations, this.abort({ type: 'abort' }, () => {}).then(result => this.stop(result)));
@@ -130,9 +108,7 @@ export class SessionQueue {
     assertOwner();
     const name = kind(command);
     if (name === 'abort') {
-      // A stop holds the queue when the goal or messages wait, so nothing starts after it. The next message the user sends goes first.
       this.s.stopped = true;
-      // Messages that Pi took but did not use come back after the stop, so they count as waiting.
       if (this.s.goals.live() || this.s.hasUnused()) await this.delivery.reportStorageError(() => this.delivery.hold(true));
       const result = await this.abort(command, assertOwner);
       assertOwner();
@@ -149,7 +125,6 @@ export class SessionQueue {
   private async abort(command: any, assertOwner: () => void): Promise<{ ok: true; value: any } | { ok: false; error: unknown }> {
     const scope = new CancelScope();
     const operation = (async () => {
-      // The first stop cancels preparation and the running response together, so a wait it ends cannot start another model call.
       const [cancelled, gate] = await Promise.allSettled([this.delivery.execute({ type: 'abort' }), this.gate.lock()]);
       const release = gate.status === 'fulfilled' ? gate.value : undefined;
       if (release) scope.add(release);
@@ -184,7 +159,6 @@ export class SessionQueue {
     return null;
   }
 
-  /** Removes every waiting message. Messages that Pi took are already on their way. */
   private async clear(): Promise<any> {
     const removed = this.s.pending.filter(item => !flag(item, 'taken'));
     for (const item of removed) this.s.remove(text(item, 'id'));
@@ -210,7 +184,6 @@ export class SessionQueue {
     return track(this.operations, changePending(this.delivery, this.gate, id, action, assertOwner));
   }
 
-  /** Removes items that Pi's saved transcript already holds. */
   confirmConsumed(): Promise<void> { return this.record.confirmConsumed(); }
 
   async rejected(id: string): Promise<void> {
@@ -218,7 +191,6 @@ export class SessionQueue {
     await this.consumed(id);
   }
 
-  /** Pi's transcript holds the message, so it left the queue. */
   async consumed(id: string): Promise<void> {
     await this.delivery.consumed(id);
     await this.delivery.reportStorageError(() => this.delivery.publish());

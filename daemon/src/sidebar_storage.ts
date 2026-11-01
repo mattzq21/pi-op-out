@@ -22,7 +22,6 @@ export function load(connection: Database): Map<string, CachedSession> {
 }
 
 export function save(connection: Database, cache: Map<string, CachedSession>): void {
-  // A deferred transaction that reads and then writes fails at once when another connection wrote in between; the busy timeout does not apply.
   transaction(connection, 'IMMEDIATE', () => {
     connection.exec('CREATE TEMP TABLE IF NOT EXISTS sidebar_seen (session_id TEXT PRIMARY KEY); DELETE FROM sidebar_seen;');
     const registered = connection.prepare('SELECT EXISTS(SELECT 1 FROM sessions WHERE session_id=? AND session_path=?) AS present');
@@ -31,7 +30,6 @@ export function save(connection: Database, cache: Map<string, CachedSession>): v
             WHERE session_sidebar.fingerprint != excluded.fingerprint OR session_sidebar.summary_json != excluded.summary_json`);
     const seen = connection.prepare('INSERT OR IGNORE INTO sidebar_seen VALUES (?)');
     for (const cached of cache.values()) {
-      // A saved entry loads as listed, so a blank transcript is read again after a restart.
       if (cached.blank) continue;
       const summary = cached.summary;
       const value = serializeSession(summary);
@@ -47,7 +45,6 @@ export function save(connection: Database, cache: Map<string, CachedSession>): v
 
 export interface SidebarDatabase { root: string; connection: Database }
 
-/** Loads the saved sidebar once per storage root. Returns true when the cache must be saved. */
 export function prepare(holder: { database?: SidebarDatabase }, root: string, cache: Map<string, CachedSession>): boolean {
   if (holder.database?.root === root) return false;
   try { holder.database?.connection.close(); } catch {}

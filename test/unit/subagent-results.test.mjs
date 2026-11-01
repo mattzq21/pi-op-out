@@ -9,7 +9,6 @@ let dom, view;
 beforeEach(() => { dom = installDom(); });
 afterEach(async () => { await view?.unmount(); view = undefined; dom.restore(); });
 
-/** A run as the daemon delivers it in a piop-subagent-result message. */
 const run = (name, status, extra = {}) => ({ version: 1, toolCallId: 'call_1', parentSessionId: 'parent', sessionId: name + '-id', sessionPath: `/sessions/${name}.jsonl`, hostId: 'local', name, task: 'Task for ' + name, status, startedAt: 1, agent: 'general', ...extra });
 
 async function render(details, { host } = {}) {

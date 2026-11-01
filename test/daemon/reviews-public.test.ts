@@ -10,7 +10,6 @@ afterAll(async () => { await agents?.close(); });
 
 const uiRequests = (runtimeId: string, method: string, host = agents) => host.daemon.events.filter(event => event.payload?.runtimeId === runtimeId && event.payload.event?.type === 'extension_ui_request' && event.payload.event.method === method).map(event => event.payload.event);
 
-/** Starts a review from chat and returns what the side pane receives. */
 async function openReview(chat: Awaited<ReturnType<typeof agents.rootChat>>, command: string, host = agents) {
   const seen = new Set(host.daemon.events.map(event => event.payload));
   await chat.command({ type: 'follow_up', message: command });
@@ -22,7 +21,6 @@ test.concurrent('a review chat sends its result to the reviewed chat with send_t
   agents.scripts.set('Write the lexer', messages => ({ text: text(messages.at(-1)).includes('Missing EOF token') ? 'Fixed the EOF token.' : 'Lexer done.' }));
   agents.scripts.set('You are the dedicated code review agent', messages => called(messages, 'send_to_main') ? { text: 'Sent.' } : { tool: 'send_to_main', arguments: { message: 'Missing EOF token' } });
   const chat = await agents.rootChat({ visible: true });
-  // The review agent answers with the scripted model.
   await agents.saveAgents(saved => saved.map((agent: any) => agent.name === 'reviewer' ? { ...agent, model: 'scripted/scripted-model' } : agent));
   await chat.command({ type: 'prompt', message: 'Write the lexer' });
   await chat.until(history => text(history.at(-1)) === 'Lexer done.');
@@ -71,10 +69,8 @@ test.concurrent('a review opens a separate code review chat in the side pane, li
     expect(records.map(row => JSON.parse(row.entry_json)).find(entry => entry.customType === 'piop-auxiliary-parent')?.data).toMatchObject({ kind: 'review', parentSessionId: chat.sessionId, sessionId: review.sessionId });
   } finally { db.close(); }
   expect(saved.some(entry => entry.type === 'session_info')).toBe(false);
-  // The chat list has the review with its parent, so the sidebar leaves it out and the side pane shows it as a tab.
   expect((await agents.daemon.invoke('list_sessions')).find((session: any) => session.id === review.sessionId)).toMatchObject({ auxiliaryParentId: chat.sessionId, auxiliaryKind: 'review' });
   const entries = (await chat.command({ type: 'get_entries' })).entries;
-  // The chat view opens the review from sessionId and hides it in forks by comparing parentSessionId.
   expect(entries.find((entry: any) => entry.customType === 'piop-review-link')?.details).toMatchObject({ sessionId: review.sessionId, parentSessionId: chat.sessionId });
 }, 60000);
 
@@ -97,7 +93,6 @@ test.concurrent('a dialog waits until a window shows the chat, then goes to that
 test.concurrent('a review uses the built-in review prompt and the agent from Settings → Agents, and says what is wrong when the agent is missing', async () => {
   const isolated = await agentDaemon();
   const original = await isolated.daemon.invoke('load_app_settings');
-  /** Saves on top of the latest settings, as the settings view does after each save. */
   const save = async (patch: any) => isolated.daemon.invoke('save_app_settings', { settings: { ...await isolated.daemon.invoke('load_app_settings'), reviewAgent: original.reviewAgent, ...patch } });
   try {
     const chat = await isolated.rootChat({ visible: true });

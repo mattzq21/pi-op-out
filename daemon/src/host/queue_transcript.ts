@@ -3,7 +3,6 @@ import { dirname } from 'node:path';
 import { errorText } from '../util/sync';
 import { parseIdentity } from './queue_storage';
 
-/** Reads user messages from a saved transcript, so the queue can tell which items Pi already took. */
 export function savedUserMessages(path: string, sessionId: string): any[] {
   let fd: number;
   try { fd = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW); } catch (error: any) {

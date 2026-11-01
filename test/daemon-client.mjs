@@ -6,10 +6,6 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-/**
- * A real daemon for UI tests. With model 'echo', its only model answers each message with "Reply to " and the message text; messages that start with "Slow " get it after 3 seconds.
- * restart() restarts the daemon the way the desktop app sees it; modelRequests() gives the last user text of each model request.
- */
 export async function daemonClient(t, onEvent = () => {}, { remotes = [], model } = {}) {
   const directory = await mkdtemp(join(tmpdir(), 'piop-ui-'));
   const worker = spawn('bun', [fileURLToPath(new URL('./daemon/ui-host.ts', import.meta.url))], { env: { ...process.env, TMPDIR: directory, PIOP_TEST_UI_REMOTES: JSON.stringify(remotes), ...(model ? { PIOP_TEST_UI_MODEL: model } : {}) }, stdio: ['pipe', 'pipe', 'pipe'] });
@@ -29,7 +25,6 @@ export async function daemonClient(t, onEvent = () => {}, { remotes = [], model 
       await rm(directory, { recursive: true });
     } finally { clearTimeout(timer); }
   });
-  /** Each line of the test host answers the oldest waiting reader. */
   const readers = [];
   createInterface({ input: worker.stdout }).on('line', line => {
     const reader = readers.shift();
@@ -43,9 +38,7 @@ export async function daemonClient(t, onEvent = () => {}, { remotes = [], model 
     readers.push({ resolve: value => { clearTimeout(timer); resolve(value); }, reject: error => { clearTimeout(timer); reject(error); } });
   });
   let endpoint = await readLine();
-  /** The chat runtimes the app started; the desktop app tells each one that it disconnected when the daemon goes away. */
   const runtimes = new Set();
-  /** Set while restart() waits for the new daemon. Requests wait for it, as the desktop app connects again before it sends one. */
   let reconnecting;
   async function connect() {
     socket = new WebSocket(endpoint.url);
@@ -88,7 +81,6 @@ export async function daemonClient(t, onEvent = () => {}, { remotes = [], model 
         socket.send(JSON.stringify({ id, command, args }));
       });
     },
-    /** Restarts the daemon on the same home. The app gets the events the desktop app sends: restarting, a disconnect per chat, then connection_restored. */
     async restart() {
       await onEvent('pi://daemon-restarting', { hostId: 'local' });
       const next = readLine(60000);
@@ -109,10 +101,6 @@ export async function daemonClient(t, onEvent = () => {}, { remotes = [], model 
       worker.stdin.write('requests\n');
       return answer;
     },
-    /**
-     * Registers the projects of chats that the test lists in place of the daemon, as the daemon does for chats it lists:
-     * a chat with a message in an existing, non-temporary folder joins that folder's project, and a branch joins its listed source.
-     */
     async listChats(sessions) {
       if (!sessions.length) return;
       const before = await client.invoke('load_session_groups', { seeds: [] });
@@ -132,5 +120,4 @@ export async function daemonClient(t, onEvent = () => {}, { remotes = [], model 
   return client;
 }
 
-/** Temporary chat folders are named with a random (version 4) UUID. */
 const TEMPORARY_CHAT_CWD = /(?:^|\/)\.piop(?:-dev)?\/tmp\/[0-9a-f]{4,32}\/?$/i;

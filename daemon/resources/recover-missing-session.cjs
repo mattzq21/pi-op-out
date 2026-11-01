@@ -11,7 +11,6 @@ function assertMissingDirectory(header) {
   } catch (error) { if (error.code !== 'ENOENT') throw error; }
 }
 
-/** Gives the session at request.sessionPath a new empty directory in the profile at request.profile when its directory is missing. */
 function recoverMissingSession(request) {
   if (request.action !== 'empty') throw new Error('Unknown recovery action');
   if (typeof request.profile !== 'string' || typeof request.sessionPath !== 'string') throw new Error('Invalid recovery request');

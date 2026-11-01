@@ -2,7 +2,6 @@ import { For, useContext } from "solid-js";
 import { SessionLinkContext } from "../lib/subagentNavigation";
 import type { FieldSegment } from "./composerField";
 
-/** Queued message text. Links to chats show as links that open the chat. Skills show as in the composer. */
 export function PendingMessageText(props: { segments: FieldSegment[] }) {
   const sessionLinks = useContext(SessionLinkContext);
 

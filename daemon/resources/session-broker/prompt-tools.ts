@@ -1,21 +1,11 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { getCurrentTools } from "@earendil-works/pi-ai";
 
-/**
- * Core: tools that are in the prompt only while a plugin needs them. They belong to the plugin, not to agent definitions: every
- * agent has them. A registered tool stays out of the prompt until show().
- * On the first message after a compaction, each shown tool whose keep() is false leaves the prompt. Between compactions
- * the prompt does not lose tools, so the model provider can reuse its cache. On the first message after the chat opens,
- * each tool whose keep() is true enters the prompt, so plugins may load their state at any point before that message.
- */
 export interface PromptTools {
-  /** keep tells whether the tool must be in the prompt after a compaction or when the chat opens. Returns the function that removes the registration. */
   register(tool: string, keep: () => boolean): () => void;
-  /** Puts a registered tool in the prompt. */
   show(tool: string): void;
 }
 
-/** Extensions emit this request on "piop:session:prompt-tools" to get the core PromptTools. */
 export interface PromptToolsRequest { tools?: PromptTools }
 
 interface RequiredToolsRequest { ctx: ExtensionContext; tools: string[]; withheldTools: string[]; availableTools?: string[] }
@@ -29,7 +19,6 @@ declare module "@earendil-works/pi-coding-agent" {
   }
 }
 
-/** The core PromptTools. Throws when the core session broker is not loaded. */
 export function promptTools(pi: ExtensionAPI): PromptTools {
   const request: PromptToolsRequest = {};
   pi.events.emit("piop:session:prompt-tools", request);
@@ -38,7 +27,6 @@ export function promptTools(pi: ExtensionAPI): PromptTools {
   return request.tools;
 }
 
-/** From the transcript: the tools in the prompt, and whether a compaction came after the last model reply. */
 function transcript(ctx: ExtensionContext) {
   const branch = ctx.sessionManager.getBranch();
   const messages = branch.flatMap(entry => entry.type === "message" ? [entry.message] : []);
@@ -50,9 +38,7 @@ function transcript(ctx: ExtensionContext) {
 
 export function registerPromptTools(pi: ExtensionAPI) {
   const registered = new Map<string, { keep: () => boolean; shown: boolean }>();
-  /** A compaction happened and the next message has not started yet. */
   let recheck = false;
-  /** The chat opened and its first message has not started yet. */
   let opened = false;
   let running = false;
 
@@ -64,7 +50,6 @@ export function registerPromptTools(pi: ExtensionAPI) {
     if (state.shown !== active.includes(tool)) pi.setActiveTools(state.shown ? [...active, tool] : active.filter(name => name !== tool));
   };
 
-  /** Asks keep() of each tool: a tool that must stay enters the prompt, and after a compaction a tool that need not stay leaves it. */
   const review = () => {
     const compacted = recheck;
 
@@ -93,7 +78,6 @@ export function registerPromptTools(pi: ExtensionAPI) {
     },
   };
 
-  /** Until the first message, the prompt keeps the tools that the transcript has. */
   const restore = (ctx: ExtensionContext) => {
     const saved = transcript(ctx);
     recheck = saved.compacted; opened = true;
@@ -108,13 +92,11 @@ export function registerPromptTools(pi: ExtensionAPI) {
 
   pi.on("session_start", (_event, ctx) => restore(ctx));
   pi.on("session_tree", (_event, ctx) => restore(ctx));
-  // A compaction during a run comes right before the next model request; between runs, the next run's start decides.
   pi.on("session_compact", () => { recheck = true; if (running) review(); });
   pi.on("before_agent_start", () => { review(); });
   pi.on("agent_start", () => { running = true; });
   pi.on("agent_settled", () => { running = false; });
   pi.on("session_shutdown", () => { offRequest(); offRequired(); });
 
-  /** Whether the tool is a prompt tool, so it is not part of agent definitions. */
   return { has: (tool: string) => registered.has(tool) };
 }

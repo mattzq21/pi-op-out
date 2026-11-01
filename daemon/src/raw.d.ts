@@ -3,7 +3,6 @@ declare module '*?raw' {
   export default content;
 }
 
-/** The agent definition loader of the piop-define-agents extension. The daemon build resolves it to extensions/piop-define-agents/daemon-loader.ts. */
 declare module 'piop-agent-loader' {
   export function loadAgentDefinitions(request: { settings: any; initial: boolean }): Promise<{ config: any; prompts: Record<string, string> }>;
   export function saveAgentDefinitions(request: { settings: any; configuration: unknown }): Promise<{ revision: string; warnings: string[]; definitions: { config: any; prompts: Record<string, string> } }>;

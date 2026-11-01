@@ -10,10 +10,8 @@ const jobs: Array<() => Promise<void>> = [];
 afterEach(async () => { for (const close of jobs.splice(0)) await close(); });
 
 const stoppedEntry = async (chat: any) => (await chat.command({ type: 'get_entries' })).entries.findLast((entry: any) => entry.message?.role === 'assistant');
-/** The scripted model answers "Continued." once the last message asks it to go on. */
 const goingOn = (messages: any[]) => text(messages.at(-1)).startsWith('Go on');
 
-/** Sends a prompt in the chat and returns the history the model got for it. */
 async function continueIn(chat: any, prompt: string) {
   await chat.command({ type: 'prompt', message: prompt });
   await chat.until((history: any[]) => text(history.at(-1)) === 'Continued.');
@@ -55,7 +53,6 @@ test('fork starts from a response stopped while its command ran', async () => {
   await job.stopped();
   await chat.until(messages => messages.at(-1)?.role === 'assistant' && messages.at(-1).stopReason === 'aborted');
   const stopped = await stoppedEntry(chat);
-  // The stopped response is empty. The tool call is in the response before it.
   expect(stopped.message.content).toEqual([]);
   const source = await chat.command({ type: 'get_state' });
   await chat.command({ type: 'copy_after', entryId: stopped.id });
@@ -70,7 +67,6 @@ test('fork and branch off start from a compaction, with its summary and without 
   agents.scripts.set('Remember the otter', messages => /context summarization assistant/.test(text(messages[0])) ? { text: summary }
     : goingOn(messages) ? { text: 'Continued.' } : { text: 'Noted: ' + text(messages.at(-1)).slice(0, 20) });
   const chat = await agents.rootChat({ repository: true });
-  // Compaction keeps the most recent part, so the chat needs enough later text to have an older part to summarize.
   for (const prompt of ['Remember the otter', ...[1, 2, 3].map(fact => `Fact ${fact}: ` + 'filler words '.repeat(3000)), 'After the compaction']) {
     if (prompt === 'After the compaction') await chat.command({ type: 'compact' });
     await chat.command({ type: 'prompt', message: prompt });

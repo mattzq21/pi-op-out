@@ -17,10 +17,8 @@ import type { RemoteHost } from './settings_types';
 import type { App } from './app';
 
 const REQUEST_TIMEOUT = 660_000;
-/** Requests not yet taken by SSH. More than this means the remote side has stopped reading. */
 const MAX_UNSENT_BYTES = MAX_REQUEST_BYTES + 16 * 1024 * 1024;
 
-/** One SSH connection to the Piop daemon on another machine. */
 export class Connection {
   alive = true;
   sequence = 1;
@@ -44,7 +42,6 @@ export class Connection {
       const timer = setTimeout(() => {
         this.pending.delete(id);
         if (!sent) {
-          // An unsent request would run whenever SSH resumes, after its caller has given up.
           console.error('Closing SSH connection: a request was not sent before its timeout');
           this.close();
           reject(new Error('Remote daemon stopped reading requests; reconnect before retrying'));
@@ -129,13 +126,11 @@ export class Connection {
 
 interface Route { owner: string; hostId: string; connection: Connection }
 
-/** The last session list read from one remote host, with the host settings used to read it. */
 interface RemoteSessionList { target: string; piPath: string; daemonId: string; rows: SessionSummary[] }
 
 function routeKey(kind: string, id: string): string { return kind + '\u0000' + id; }
 function splitKey(key: string): [string, string] { const index = key.indexOf('\u0000'); return [key.slice(0, index), key.slice(index + 1)]; }
 
-/** State for connections to Piop daemons on other machines. */
 export class PeerRuntime {
   connections = new Map<string, [RemoteHost, Connection]>();
   starting = new Map<string, Mutex>();
@@ -251,7 +246,6 @@ export async function connect(app: App, hostId: string): Promise<Connection> {
   });
 }
 
-/** Splits a child's stdout into lines. Lines longer than 128 MiB end the stream. */
 function lineReader(child: ChildProcess): { next(): Promise<string | undefined> } {
   const lines: string[] = [];
   const waiters: Array<(line: string | undefined) => void> = [];
@@ -306,7 +300,6 @@ async function listRemoteHost(app: App, host: RemoteHost): Promise<RemoteSession
   return { target: host.target, piPath: host.piPath, daemonId: connection.daemonId, rows };
 }
 
-/** Reads the session list of a remote host and reports a change with pi://sessions-changed. A request during a read starts one more read after it. */
 function refreshRemoteHost(app: App, host: RemoteHost): Promise<void> {
   const state = app.peers;
   const running = state.remoteListing.get(host.id);
@@ -325,8 +318,6 @@ function refreshRemoteHost(app: App, host: RemoteHost): Promise<void> {
   return listing;
 }
 
-/** Lists local and remote sessions. Without waitForRemote, remote hosts give their last read list and are read again in the background. */
-/** The sessions of this host only, with their projects. */
 export async function localSummaries(app: App, index: SessionIndexRuntime): Promise<SessionSummary[]> {
   const settings = await loadAppSettings(app);
   const sessions = settings.localEnabled ? await listLocalSessions(index, ensureDesktopSessionsDir(homeDir())) : [];

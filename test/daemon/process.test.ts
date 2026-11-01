@@ -14,11 +14,6 @@ function publicSession(home: string, options: { cwd: string; folder: string }): 
   }));
 }
 
-/**
- * Installs a fake Pi in ~/.local/bin, where the daemon looks first. The daemon starts Pi through
- * "node runtime-bridge.cjs <pi> --mode rpc ...", with the node next to Pi, so the fake node plays Pi's RPC side.
- * Each start appends its arguments, working directory, process ID and the launch environment variables the tests check to ~/launches.jsonl.
- */
 function installFakePi(home: string): void {
   const bin = join(home, '.local/bin');
   fakeProgram(bin, 'pi', '#!/bin/sh\nexit 1\n');
@@ -29,7 +24,6 @@ const at = flag => { const index = args.lastIndexOf(flag); return index < 0 ? un
 fs.appendFileSync(require('node:path').join(process.env.HOME, 'launches.jsonl'), JSON.stringify({ args, cwd: process.cwd(), pid: process.pid, env: Object.fromEntries(['HOME', 'PI_DESKTOP_HOST_ID', 'PIOP_STORAGE_DIRECTORY', 'PI_CODING_AGENT_DIR'].map(key => [key, process.env[key]])) }) + '\\n');
 const sessionFile = at('--session');
 const sessionId = sessionFile ? JSON.parse(fs.readFileSync(sessionFile, 'utf8').split('\\n')[0]).id : at('--session-id');
-// Pi keeps running after its input closes, so only the daemon can end it.
 setInterval(() => {}, 1 << 30);
 const state = { sessionFile, sessionId, isStreaming: false, messageCount: 0, pendingMessageCount: 0, model: null, thinkingLevel: 'medium' };
 require('node:readline').createInterface({ input: process.stdin }).on('line', line => {
@@ -147,7 +141,6 @@ test('a shutdown packet gets no reply, later packets are ignored, and the host f
   const host = await startHost();
   try {
     expect(await host.request({ type: 'configure', configuration })).toBeNull();
-    // Requests the host never answers end only when the host process ends, which the fixture reports as "Host stopped".
     const unanswered = [{ type: 'shutdown' }, { type: 'configure', configuration }, { type: 'shutdown' }].map(packet => host.request(packet, 30_000).then(() => 'answered', (error: Error) => error.message));
     await host.finished;
     expect(await Promise.all(unanswered)).toEqual(['Host stopped', 'Host stopped', 'Host stopped']);

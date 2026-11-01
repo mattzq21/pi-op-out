@@ -5,7 +5,6 @@ import { promptContextSchema, wireMessageSchema, type WireMessage } from "./mess
 
 const SYSTEM_MESSAGES = new Set(["pi-desktop-mcp-status"]);
 
-/** The user message that a goal sends to continue its work. */
 export const GOAL_PROMPT = "piop-goal-context";
 
 export function isContextInjection(message: { role?: string; customType?: string }) {
@@ -23,10 +22,8 @@ function replaceMessage(messages: ChatMessage[], index: number, message: ChatMes
   return result;
 }
 
-/** A message that starts a turn: one the user sent, a goal prompt, or a message or subagent result from another agent session. */
 export const isPromptMessage = (message: ChatMessage) => message.role === "user" || (message.role === "custom" && (message.customType === "piop-agent-message" || message.customType === "piop-subagent-result" || message.customType === GOAL_PROMPT));
 
-/** Whether a prompt context snapshot belongs to this message. */
 export const promptContextAnchors = (message: ChatMessage, context: { userTimestamp?: number; agentNotificationId?: string }) => message.role === "user"
   ? context.userTimestamp !== undefined && message.timestamp === context.userTimestamp
   : context.agentNotificationId !== undefined && isPromptMessage(message) && (message.details as { notificationId?: unknown } | undefined)?.notificationId === context.agentNotificationId;
@@ -94,7 +91,6 @@ export function normalizeMessage(message: Partial<WireMessage> | null | undefine
 
 export { applyAssistantMessageEvent } from "./messageEvents";
 
-/** The tool entry title, such as "read" or "read(image)" when the result contains an image. */
 export function toolTitle(message: ChatMessage): string {
   const name = message.toolName || "tool";
   return message.toolImage ? `${name}(image)` : name;
@@ -126,7 +122,6 @@ const savedPromptContextSchema = z.looseObject({
   sameAsPrevious: z.object({ systemPrompt: z.boolean().optional(), tools: z.boolean().optional() }).optional(),
 });
 
-/** Saved snapshots omit the system prompt and tools when they match the previous snapshot on the branch. */
 function appendPromptContext(messages: ChatMessage[], entry: PiEntry, previous: SavedPromptParts) {
   const saved = savedPromptContextSchema.safeParse(entry.data);
 
@@ -167,7 +162,6 @@ function applyCustomEntry(messages: ChatMessage[], entry: PiEntry, promptParts: 
 
 const compactionTimingSchema = z.object({ compactionId: z.string(), startedAt: z.number() });
 
-/** Adds the start time that the compaction timing extension saved to its compaction. */
 function applyCompactionTiming(messages: ChatMessage[], entry: PiEntry) {
   const timing = compactionTimingSchema.parse(entry.data);
   const index = messages.findIndex(message => message.id === timing.compactionId);

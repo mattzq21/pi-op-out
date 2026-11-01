@@ -14,7 +14,6 @@ function fresh(details: ProjectDetails, cwd: string, local: boolean): boolean {
 
 class HostProjects { target = ''; entries = new Map<string, ProjectDetails>(); lock = new Mutex(); }
 
-/** Remembers for a short time whether each conversation folder exists. */
 export class ProjectMetadataCache {
   private hosts = new Map<string, HostProjects>();
 
@@ -28,7 +27,6 @@ export class ProjectMetadataCache {
     return host;
   }
 
-  /** Clears the cache for the host when the returned function is called. */
   invalidateAfter(hostId: string): () => void {
     const host = this.host(hostId);
     return () => host.entries.clear();

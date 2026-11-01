@@ -131,7 +131,6 @@ function localPiCommand(settings: AppSettings, hostId: string, launch: PiLaunch,
   const command = localWorkerCommand(piPath);
   configureLocalExtensions(command, settings, hostId, brokerPort, brokerToken, sessionDir);
   command.env.PIOP_RPC_ENTRY = join(Ext.generatedExtensionRoot(), 'runtime-bridge.cjs');
-  // Pi gives each extension its own uncached jiti, which transformed typebox again for every extension.
   command.env.JITI_NATIVE_MODULES = '["typebox"]';
   command.env.NODE_COMPILE_CACHE = join(homeDir(), STORAGE_DIRECTORY, 'node-compile-cache');
   const node = nodeExecutable();

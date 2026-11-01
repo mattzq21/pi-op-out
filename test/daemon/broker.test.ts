@@ -14,14 +14,9 @@ function publicSession(): { id: string; path: string } {
   }));
 }
 
-/*
- * The session broker is the HTTP service that Pi's extensions use to list and message other agents. A fake Pi
- * gets its address and token the same way real Pi does, from the environment of the Pi start.
- */
 let daemon: TestDaemon;
 let broker: { url: string; token: string; port: number };
 
-/** The fake node plays Pi in RPC mode. It saves its environment and answers each request with success. */
 function installFakePi(home: string): void {
   const bin = join(home, '.local/bin');
   fakeProgram(bin, 'pi', '#!/bin/sh\nexit 1\n');
@@ -53,7 +48,6 @@ afterAll(async () => { await daemon?.stop(); });
 
 type Answer = { status: number; headers: string; body: string; bytes: number };
 
-/** Sends raw HTTP bytes to the broker and reads the full answer until the broker closes the connection. */
 function raw(request: Buffer | string): Promise<Answer> {
   return new Promise((resolve, reject) => {
     const socket = connect(broker.port, '127.0.0.1');
@@ -105,11 +99,8 @@ test('request headers past the 16 KiB budget are refused and the broker keeps se
 
 test('header lines with bytes that are not UTF-8 are refused or read safely, and the broker keeps serving', async () => {
   const head = (lines: Buffer[]) => Buffer.concat([...lines.flatMap(line => [line, Buffer.from('\r\n')]), Buffer.from('\r\n')]);
-  // A request line that is not text is a bad request.
   expect((await raw(head([Buffer.from([0xff])]))).status).toBe(400);
-  // A token with such bytes can never match.
   expect((await raw(head([Buffer.from('GET /agents HTTP/1.1'), Buffer.from('Host: 127.0.0.1'), Buffer.concat([Buffer.from('Authorization: Bearer '), Buffer.from([0xff, 0xfe]), Buffer.from(broker.token.slice(2))])]))).status).toBe(401);
-  // Other header values with such bytes do not change the answer.
   const answer = await raw(head([Buffer.from('GET /agents HTTP/1.1'), Buffer.from('Host: 127.0.0.1'), Buffer.from('Authorization: Bearer ' + broker.token), Buffer.concat([Buffer.from('X-Other: '), Buffer.from([0xff, 0xc3])])]));
   expect(answer.status).toBe(200);
   expect(JSON.parse(answer.body).data).toEqual(await agents());

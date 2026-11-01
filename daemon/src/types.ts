@@ -2,13 +2,9 @@ export interface AgentAddress { hostId: string; sessionId?: string; sessionPath?
 
 export interface SessionSummary {
   id: string;
-  /** The root or auxiliary session that owns this auxiliary session. */
   auxiliaryParentId?: string;
-  /** What kind of auxiliary session this is, for example "subagent", "review" or "btw". */
   auxiliaryKind?: string;
-  /** The conversation this one was branched from, on the same machine. */
   forkSourceId?: string;
-  /** The entry of the source conversation that this one was branched after. Set with forkSourceId. */
   forkEntryId?: string;
   groupId: string | null;
   path: string;
@@ -16,11 +12,8 @@ export interface SessionSummary {
   project: string;
   cwd: string;
   cwdExists: boolean;
-  /** True when the folder is a linked Git worktree, not the main worktree of its repository. */
   linkedWorktree?: boolean;
-  /** The main worktree folder of the repository, when the chat works in a worktree that Piop created for it. */
   worktreeRepository?: string;
-  /** Not sent to clients. */
   modifiedAt: number;
   preview: string;
   messageCount: number;
@@ -30,7 +23,6 @@ export interface SessionSummary {
   hostName: string;
 }
 
-/** Serializes a session summary in the client field order, without modifiedAt. */
 export function serializeSession(session: SessionSummary): Record<string, unknown> {
   const result: Record<string, unknown> = { id: session.id };
   if (session.auxiliaryParentId !== undefined && session.auxiliaryKind !== undefined) Object.assign(result, { auxiliaryParentId: session.auxiliaryParentId, auxiliaryKind: session.auxiliaryKind });
@@ -44,7 +36,6 @@ export function serializeSession(session: SessionSummary): Record<string, unknow
   return result;
 }
 
-/** Reads a session summary from its client form. A missing modifiedAt becomes 0. */
 export function parseSession(value: any): SessionSummary {
   const text = (key: string): string => { if (typeof value?.[key] !== 'string') throw new Error(`missing field \`${key}\``); return value[key]; };
   const number = (key: string): number => { if (typeof value?.[key] !== 'number') throw new Error(`missing field \`${key}\``); return value[key]; };

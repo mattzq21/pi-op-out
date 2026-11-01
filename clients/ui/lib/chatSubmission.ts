@@ -38,7 +38,6 @@ export async function trackChatSubmission<T>(owner: NativeTransport, text: strin
     const error = reason instanceof Error ? reason.message : String(reason);
 
     if (!durable.wasDispatched() || reason instanceof CommandRejectedError) { await durable.reject(error); throw reason; }
-    // The reply was lost, so the host tells whether it accepted the message.
     updateChatPreparation(owner, "Confirming the message…");
     const outcome = await confirmSubmission(durable.owner().currentHostId(), durable.id, failure => updateChatPreparation(owner, `Confirming the message… ${failure}`));
 

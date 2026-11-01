@@ -35,7 +35,6 @@ function describe(value: unknown): string {
   return typeof value + ' ' + JSON.stringify(value);
 }
 
-/** Reads one request argument and checks its type. */
 function argument(args: any, key: string, kind: Kind): any {
   const value = args?.[key];
   const optional = kind.endsWith('?');
@@ -201,7 +200,6 @@ const COMMANDS: Record<string, Handler> = {
   list_directories: (app, _owner, args) => sessionIndex.listDirectories(app, hostId(args), argument(args, 'path', 'string?')),
   read_image_file: (app, _owner, args) => projectFiles.readImage(app, argument(args, 'cwd', 'string'), argument(args, 'path', 'string'), argument(args, 'hostId', 'string')),
   archive_session: async (app, owner, args) => {
-    // Terminals of the archived sessions stop in any case. Other terminals stop only when this connection owns them.
     const terminalIds = (argument(args, 'terminalIds', 'strings') as string[]).filter(id => app.terminals.ownedByConnection(id, owner));
     await archives.archiveSession(app, app.terminals, argument(args, 'sessionPath', 'string'), argument(args, 'hostId', 'string?'), terminalIds, argument(args, 'clientId', 'string'));
     return null;

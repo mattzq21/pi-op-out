@@ -17,7 +17,6 @@ type TerminalCommandOptions = { sessionKey?: string; cwd?: string; cols?: number
 export const TRANSCRIPT_BYTE_LIMIT = 32 * 1024 * 1024;
 
 class NativeTerminals {
-  /** Per terminal: the end of its command queue, and a draft write that has not started. A newer draft replaces the text of that write. */
   private writes = new Map<string, { tail: Promise<void>; draft?: { args: TerminalCommandOptions; result: Promise<void> } }>();
   private starts = new Map<string, Promise<void>>();
   private hosts = new Map<string, string>();
@@ -169,7 +168,6 @@ class NativeTerminals {
     return this.enqueue("write_and_clear_draft", terminalId, { data, expectedDraft });
   }
 
-  /** Sends Ctrl+C at once, before queued input. The draft clears through the queue, so an older draft write cannot restore it. */
   async interrupt(terminalId: string) {
     const connection = captureDaemonTransport();
     const clearing = this.write(terminalId, "", "draft");

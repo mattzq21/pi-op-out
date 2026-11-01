@@ -3,7 +3,6 @@ import { test } from 'node:test';
 import { installDom, renderHook, act, whenReactive } from '../dom.mjs';
 import { useChatSession } from '../../clients/ui/lib/useChatSession.ts';
 
-/** A view of a conversation that another view owns. connected: whether Pi runs for this view. */
 async function view(t, connected) {
   const dom = installDom();
   const calls = [];

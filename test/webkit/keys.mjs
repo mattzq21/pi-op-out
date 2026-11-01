@@ -1,4 +1,3 @@
-/** WebDriver key values of Playwright key names. */
 const named = {
   Cancel: '\uE001', Help: '\uE002', Backspace: '\uE003', Tab: '\uE004', Clear: '\uE005', Enter: '\uE007', Shift: '\uE008', ShiftLeft: '\uE008',
   Control: '\uE009', ControlLeft: '\uE009', ControlOrMeta: '\uE009', Alt: '\uE00A', AltLeft: '\uE00A', Pause: '\uE00B', Escape: '\uE00C', Space: ' ',
@@ -9,7 +8,6 @@ const named = {
 };
 for (let index = 1; index <= 12; index++) named['F' + index] = String.fromCharCode(0xE031 + index - 1);
 
-/** The WebDriver key value of a Playwright key name such as 'Enter', 'KeyA', 'Digit1' or 'a'. */
 export function keyValue(key) {
   if (Object.hasOwn(named, key)) return named[key];
   if (/^Key[A-Z]$/.test(key)) return key.slice(3).toLowerCase();
@@ -18,7 +16,6 @@ export function keyValue(key) {
   throw new Error('Unknown key: "' + key + '"');
 }
 
-/** The keys of a Playwright shortcut such as 'Control+Shift+K' or 'Control++'. */
 export function shortcutKeys(shortcut) {
   const parts = [];
   let rest = shortcut;

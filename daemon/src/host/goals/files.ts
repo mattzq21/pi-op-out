@@ -14,10 +14,8 @@ import { allocate as allocateGoalDirectory } from "../../../resources/piop-stora
 import { acquire as acquireGoalAssets, exists as goalDirectoryExists, claim, directReferences, validPath, discardPreparation, rootForDirectory } from "../../../resources/piop-storage/goal-assets.cjs";
 import { acquireReferencePublicationLockAsync } from "../../../resources/piop-storage/reference-publication-lock.cjs";
 
-/** The saved conversation that a goal belongs to: its transcript, identity and working folder. */
 export interface GoalPlace { file: string; sessionId: string; cwd: string }
 
-/** Checks the length of an objective and returns it trimmed. */
 export function validateObjective(value: string) {
   const objective = value.trim();
   if (!objective || [...objective].length > 4000) throw new Error("Goal objective must contain 1–4,000 characters. Reference a file for longer instructions.");
@@ -176,7 +174,6 @@ async function readGoalPreparation(place: GoalPlace, id: string) {
   return preparation;
 }
 
-/** The saved preparation of a goal submission, for saved input recovery, or null when there is none. */
 export async function goalPreparationView(place: GoalPlace, id: string) {
   const preparation = await readGoalPreparation(place, id);
 
@@ -193,7 +190,6 @@ function materializedGoal(place: GoalPlace, preparation: GoalPreparation, direct
   return {
     objective: preparation.objective,
     cleanup: () => withGoalPublication(place, async () => { if (created && !bound) discardPreparation(storageRoot(place), directory, preparation.sessionId); }),
-    /** Records that the goal goalId uses the prepared files, so they stay while the conversation uses them. */
     bind: (goalId: string) => withGoalPublication(place, async () => {
       const next: GoalPreparation = { ...preparation, goalId, sessionId: place.sessionId, sessionPath: place.file, cwd: place.cwd };
       const root = storageRoot(place);
@@ -204,7 +200,6 @@ function materializedGoal(place: GoalPlace, preparation: GoalPreparation, direct
   };
 }
 
-/** Restores the saved files that the objective names, and claims them for the conversation. */
 export async function restoreGoalAttachments(place: GoalPlace, objective: string) {
   const root = storageRoot(place);
   const directories = directReferences([objective], root);
@@ -228,10 +223,6 @@ export async function restoreGoalAttachments(place: GoalPlace, objective: string
   });
 }
 
-/**
- * Prepares an objective for a goal: an objective over 4,000 characters goes to a file that the objective then names.
- * The preparation is saved under the submission ID, so a repeated submission gets the same files.
- */
 export async function materializeGoal(place: GoalPlace, value: string, submissionId?: string) {
   return withGoalPublication(place, () => materializeLocked(place, value, submissionId));
 }

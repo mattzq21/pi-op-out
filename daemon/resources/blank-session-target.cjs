@@ -3,7 +3,6 @@ const path = require('node:path');
 const database = require('./session-database.cjs');
 const { validSessionHeader } = require('./session-header.cjs');
 
-/** Returns the blank session that target names in the sessions directory target.root, or undefined when nothing needs deletion. */
 function prepare(target) {
   const directory = target.root;
 

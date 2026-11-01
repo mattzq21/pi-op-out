@@ -4,7 +4,6 @@ import { startupPage } from '../startup-browser-fixture.mjs';
 
 const PIXEL = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGP4z8AAAAMBAQDJ/pLvAAAAAElFTkSuQmCC';
 
-/** A reply in a chat whose project is /work/project on the machine "server"; only shots/ok.png exists there. */
 async function replyPage(t, content) {
   const reads = [];
   const page = await startupPage(t, 'development', {

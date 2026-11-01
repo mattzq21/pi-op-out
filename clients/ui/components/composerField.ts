@@ -1,13 +1,6 @@
 import { findSkillReference, queuedSkillPrompt } from "../lib/composerPrompt";
 import { sessionReference } from "../lib/sessionDrop";
 
-/**
- * The message box of the composer. It works like a textarea: `value`, `selectionStart`, `selectionEnd`, `setSelectionRange`,
- * `readOnly`, `placeholder`, and "input" and "select" events. All offsets are offsets in `value`, the Markdown text.
- * Links to chats show as links. Each link is one unit: the caret goes before or after it, never into it.
- * The `$skill` reference that the message uses shows highlighted. It stays normal editable text.
- * Ctrl+Z undoes and Ctrl+Y redoes each change of `value`, also changes that the app makes.
- */
 export const COMPOSER_FIELD_TAG = "piop-composer-field";
 
 const SESSION_LINK = /\[((?:\\.|[^\\\]\n])*)\]\((piop:\/\/session\/[^/()\s]+\/[^/()\s]+)\)/g;
@@ -32,10 +25,8 @@ export function sessionLinkSegments(value: string): Segment[] {
   return result;
 }
 
-/** The segments of `value`, with the used skill reference split out of its text segment. */
 export type FieldSegment = Segment | { skill: string };
 
-/** The segments of a queued message. A queued `/skill:name` call shows the prompt that the user wrote, with its skill reference highlighted. */
 export function queuedSegments(value: string): FieldSegment[] {
   const call = queuedSkillPrompt(value);
 
@@ -65,12 +56,6 @@ const isSkillMark = (node: Node) => node instanceof HTMLElement && node.classLis
 
 const linkMarkdown = (node: Node) => node instanceof HTMLElement ? node.dataset.markdown : undefined;
 
-/**
- * A link with no text node after it leaves the browser no place to show the caret after it: the caret shows on the next line,
- * and a selection of it marks the whole line. So such a link gets a filler text node after it. Its zero-width space is not text.
- * A selection that starts at the end of the text before a link marks all of the line before the link in WebKit.
- * So each link also gets a filler before it.
- */
 const FILLER = "\u200B";
 const fillers = new WeakSet<Text>();
 
@@ -81,10 +66,8 @@ function filler() {
   return node;
 }
 
-/** The length in `value` of the first `offset` characters of a text node. */
 const textLength = (node: Text, offset: number) => fillers.has(node) ? node.data.slice(0, offset).replaceAll(FILLER, "").length : offset;
 
-/** A <br> as the last child only keeps an empty last line visible. It is not text. */
 const placeholderBreak = (node: Node) => node.nodeName === "BR" && !node.nextSibling;
 
 function nodeText(node: Node): string {
@@ -102,11 +85,9 @@ function nodeText(node: Node): string {
 
 type Snapshot = { value: string; selection: { start: number; end: number } };
 
-/** Typing of the same kind within this time is one undo step. */
 const GROUP_TIME = 1000;
 const HISTORY_LIMIT = 200;
 
-/** The kind of a user edit that can join the undo step of the edit before it. Other edits are a step each. */
 function editKind(event: Event) {
   if (!(event instanceof InputEvent)) return undefined;
 
@@ -115,7 +96,6 @@ function editKind(event: Event) {
   return event.inputType === "deleteContentBackward" || event.inputType === "deleteContentForward" ? event.inputType : undefined;
 }
 
-/** The segments with a filler before each link and after each link that no text follows. */
 function withFillers(segments: FieldSegment[]): (FieldSegment | { filler: true })[] {
   return segments.flatMap((segment, index): (FieldSegment | { filler: true })[] => {
     if (!("markdown" in segment)) return [segment];
@@ -130,14 +110,11 @@ export class ComposerFieldElement extends HTMLElement {
   #value = "";
   #undo: Snapshot[] = [];
   #redo: Snapshot[] = [];
-  /** The kind and time of the last recorded user edit. Next edits of the same kind join its undo step. */
   #group: { kind: string; at: number } | undefined;
-  /** The state before the user edit that the browser does now. */
   #before: Snapshot | undefined;
   #selection = { start: 0, end: 0 };
   #readOnly = false;
   #skills: ReadonlyMap<string, string> = new Map();
-  /** An input method is composing text. The DOM then belongs to it and is not rendered again. */
   #composing = false;
 
   constructor() {
@@ -181,14 +158,12 @@ export class ComposerFieldElement extends HTMLElement {
     if (focused) this.#applySelection();
   }
 
-  /** Forgets all undo and redo steps. */
   clearHistory() { this.#undo = []; this.#redo = []; this.#group = undefined; this.#before = undefined; }
 
   get readOnly() { return this.#readOnly; }
 
   set readOnly(next: boolean) { this.#readOnly = Boolean(next); this.#applyEditable(); }
 
-  /** Known skill names by their lowercase form. */
   get skills() { return this.#skills; }
 
   set skills(next: ReadonlyMap<string, string>) {
@@ -221,7 +196,6 @@ export class ComposerFieldElement extends HTMLElement {
     if (this.#focused()) this.#applySelection();
   }
 
-  /** The offset in `value` under the window point when the point is on this field, else the caret offset. */
   dropOffset(x: number, y: number) {
     const bounds = this.getBoundingClientRect();
 
@@ -234,7 +208,6 @@ export class ComposerFieldElement extends HTMLElement {
     return node && this.contains(node) ? this.#offset(node, offset) : this.#value.length;
   }
 
-  /** Shows a caret at `offset` where a dragged item goes, or hides it. It is not part of `value` or the selection. */
   showDropCaret(offset: number | undefined) {
     if (offset === undefined) { this.removeAttribute("data-drop-caret"); return; }
     const rect = this.#caretRect(offset);
@@ -245,7 +218,6 @@ export class ComposerFieldElement extends HTMLElement {
     this.setAttribute("data-drop-caret", "");
   }
 
-  /** Puts `text` at `offset` as one undo step, with the caret after it. */
   insertAt(offset: number, text: string) {
     const at = Math.max(0, Math.min(offset, this.#value.length));
     this.#readSelection();
@@ -258,7 +230,6 @@ export class ComposerFieldElement extends HTMLElement {
     this.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertFromDrop", data: text }));
   }
 
-  /** The screen box of a caret at `offset`. */
   #caretRect(offset: number) {
     const [node, at] = this.#position(offset);
     const range = document.createRange();
@@ -341,7 +312,6 @@ export class ComposerFieldElement extends HTMLElement {
     this.#markSelectedLinks(this.#focused());
   }
 
-  /** The offset in `value` of a DOM position inside this field. */
   #offset(node: Node, offset: number) {
     const children = Array.from(this.childNodes);
     const before = (count: number) => children.slice(0, count).reduce((sum, child) => sum + nodeText(child).length, 0);
@@ -361,7 +331,6 @@ export class ComposerFieldElement extends HTMLElement {
     return start + (node === top && offset === 0 ? 0 : nodeText(top).length);
   }
 
-  /** The DOM position of an offset in `value`. An offset inside a link goes to the end of the link. */
   #position(offset: number): [Node, number] {
     let remaining = offset;
     const children = Array.from(this.childNodes);
@@ -406,7 +375,6 @@ export class ComposerFieldElement extends HTMLElement {
 
   #snapshot(): Snapshot { return { value: this.#value, selection: { ...this.#selection } }; }
 
-  /** Saves the state before a change as an undo step. A change of the same `kind` soon after the last one joins its step. */
   #record(before: Snapshot, kind?: string) {
     const now = performance.now();
     const joins = kind !== undefined && this.#group?.kind === kind && now - this.#group.at < GROUP_TIME;
@@ -441,14 +409,12 @@ export class ComposerFieldElement extends HTMLElement {
     else this.#restore(this.#redo, this.#undo, "historyRedo");
   }
 
-  /** Moves the caret over the zero-width space of a filler before the browser does a move or delete, so that no key press is lost on it. */
   #skipFiller(event: KeyboardEvent) {
     const forward = event.key === "ArrowRight" || event.key === "Delete";
 
     if (!forward && event.key !== "ArrowLeft" && event.key !== "Backspace") return;
     const selection = document.getSelection();
     const focus = selection?.focusNode;
-    // The caret at the end of a text next to a filler is also on the filler.
     const next = focus instanceof Text && !fillers.has(focus) && selection?.focusOffset === (forward ? focus.length : 0) ? forward ? focus.nextSibling : focus.previousSibling : focus;
     const node = next instanceof Text && fillers.has(next) ? next : focus;
 
@@ -469,7 +435,6 @@ export class ComposerFieldElement extends HTMLElement {
     const key = event.key.toLowerCase();
 
     if (key !== "z" && key !== "y") return;
-    /* The browser must not undo or redo by itself. Ctrl+Shift+Z does nothing. */
     event.preventDefault();
 
     if (!event.shiftKey) this.#history(key === "z" ? "undo" : "redo");
@@ -516,7 +481,6 @@ export class ComposerFieldElement extends HTMLElement {
 
       const kind = editKind(event);
 
-      /* A space starts a new word, so it starts a new undo step. */
       if (event instanceof InputEvent && event.inputType === "insertText" && event.data && /\s/.test(event.data)) this.#group = undefined;
 
       if (before.value !== this.#value) this.#record(before, kind);
@@ -550,7 +514,6 @@ export class ComposerFieldElement extends HTMLElement {
     if (inside && (before.start !== this.#selection.start || before.end !== this.#selection.end)) this.dispatchEvent(new Event("select"));
   };
 
-  /** Moves an end of a selection from the end of the filler before a link to its start. From there, WebKit marks all of the line before the link. */
   #leaveFillerEnd() {
     const selection = document.getSelection();
 
@@ -562,7 +525,6 @@ export class ComposerFieldElement extends HTMLElement {
     if (anchor[1] !== selection.anchorOffset || focus[1] !== selection.focusOffset) selection.setBaseAndExtent(anchor[0], anchor[1], focus[0], focus[1]);
   }
 
-  /** Marks each chat link that the selection holds. The browser does not show the selection on them clearly. */
   #markSelectedLinks(inside: boolean) {
     const { start, end } = this.#selection;
     let at = 0;

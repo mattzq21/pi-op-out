@@ -209,7 +209,6 @@ export function DesktopTerminalView(componentProps: TerminalViewProps) {
     for (const event of mouseEvents) inputHost.removeEventListener(event, mouseInput, true);
     keyInput.dispose();
     if (cursorFrame !== undefined) cancelAnimationFrame(cursorFrame); cursor.dispose(); draftRender.dispose(); draftScroll.dispose(); data.dispose(); sizeHandler.dispose();
-    // xterm 5.5 syncs its viewport one task after open() and throws if the terminal is disposed before that, so the old terminal leaves the page now and is disposed after that task.
     instance.element?.remove(); setTimeout(() => instance.dispose());
     terminal.current = undefined; lastOutputEnd.current = 0; queuedOutputEnd.current = 0; };
   }, () => [componentProps.activeId, componentProps.cwd]);

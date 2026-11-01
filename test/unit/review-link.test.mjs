@@ -10,7 +10,6 @@ let dom, view;
 beforeEach(() => { dom = installDom(); });
 afterEach(async () => { await view?.unmount(); view = undefined; dom.restore(); });
 
-/** A review link as the daemon saves it, shown in the chat with sessionId current. listed tells whether the review is not archived. */
 async function render(current, listed) {
   const opened = [];
   const chats = { listed: (hostId, sessionId) => hostId === 'local' && sessionId === 'review-1' && listed, open: (hostId, sessionId) => opened.push(`${hostId}:${sessionId}`) };

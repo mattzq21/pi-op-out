@@ -127,7 +127,6 @@ async fn reveal_local_file(path: String, host_id: Option<String>) -> Result<(), 
     tokio::task::spawn_blocking(move || reveal_in_file_manager(&path)).await.map_err(|error| error.to_string())?
 }
 
-/// Select the file in the file manager. If no file manager answers the freedesktop ShowItems call, open the parent directory.
 fn reveal_in_file_manager(path: &Path) -> Result<(), String> {
     let uri = tauri::Url::from_file_path(path).map_err(|_| format!("File path is not absolute: {}", path.display()))?;
     let shown = Command::new("dbus-send").args(["--session", "--print-reply", "--reply-timeout=3000", "--dest=org.freedesktop.FileManager1", "/org/freedesktop/FileManager1", "org.freedesktop.FileManager1.ShowItems"])
@@ -139,7 +138,6 @@ fn reveal_in_file_manager(path: &Path) -> Result<(), String> {
 
 fn local_file_path(path: String, host_id: Option<String>) -> Result<PathBuf, String> {
     if std::env::var_os("PIOP_DAEMON_URL").is_some() || host_id.as_deref().unwrap_or("local") != "local" { return Err("This file is on another host. Piop can open only files on this computer".into()); }
-    // A path that starts with ~ is in the home directory of this computer.
     let path = match path.strip_prefix('~') {
         Some(rest) if rest.is_empty() || rest.starts_with('/') => PathBuf::from(std::env::var_os("HOME").ok_or("HOME is not set, thus ~ cannot be found")?).join(rest.trim_start_matches('/')),
         _ => PathBuf::from(path),

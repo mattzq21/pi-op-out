@@ -152,7 +152,6 @@ function invocationWindow(branch: ReturnType<ExtensionContext["sessionManager"][
   return new Set(branch.slice(compacted + 1).flatMap(entry => entry.type === "message" && entry.message.role === "user" ? [entry.message.timestamp] : []));
 }
 
-/** Returns the system prompt and tools of the latest saved snapshot on the branch, following "same as previous" markers. */
 function savedPromptParts(branch: ReturnType<ExtensionContext["sessionManager"]["getBranch"]>) {
   let systemPrompt: string | undefined;
   let tools: string | undefined;
@@ -173,10 +172,6 @@ type RequestTool = { name: string; description: string; parameters?: unknown; de
 
 const isRecord = (value: unknown): value is Record<string, unknown> => typeof value === "object" && value !== null && !Array.isArray(value);
 
-/**
- * The tools a provider request declares to the model, as sent: OpenAI chat and responses, Anthropic and Google request shapes.
- * Undefined when the request has no tool list this reads.
- */
 function requestTools(payload: unknown): RequestTool[] | undefined {
   if (!isRecord(payload)) return undefined;
   const lists = [payload.tools, isRecord(payload.config) ? payload.config.tools : undefined].filter(Array.isArray);
@@ -198,7 +193,6 @@ function requestTools(payload: unknown): RequestTool[] | undefined {
   return tools;
 }
 
-/** Messages from other agent sessions that start a turn: orchestration messages and subagent results. */
 const AGENT_MESSAGES = new Set(["piop-agent-message", "piop-subagent-result"]);
 
 const agentMessageDetails = Type.Object({ notificationId: Type.String() });
@@ -206,13 +200,11 @@ const agentMessageDetails = Type.Object({ notificationId: Type.String() });
 export default function contextBar(pi: ExtensionAPI) {
   let promptOptions: BuildSystemPromptOptions | undefined;
   let publishInputTokens: ((tokens: number, ctx: ExtensionContext) => void) | undefined;
-  /** The snapshot of the latest user message until its first model request is sent. It is saved with the tools of that request. */
   let pending: { save: (sent: RequestTool[] | undefined, ctx: ExtensionContext) => void } | undefined;
 
   const publishPromptContext = (ctx: ExtensionContext, messages: ContextMessages) => {
     const branch = ctx.sessionManager.getBranch();
 
-    // A turn starts with a user message, or with a message or result from another agent session.
     const userIndex = branch.findLastIndex((entry) => (entry.type === "message" && entry.message.role === "user") || (entry.type === "custom_message" && AGENT_MESSAGES.has(entry.customType)));
     const user = branch[userIndex];
     const anchor = user?.type === "message" ? { userTimestamp: user.message.timestamp } : user?.type === "custom_message" && Check(agentMessageDetails, user.details) ? { agentNotificationId: user.details.notificationId } : undefined;
@@ -234,11 +226,9 @@ export default function contextBar(pi: ExtensionAPI) {
     if (changeInstruction) instructions.push({ path: changeInstruction.path, content: changeInstruction.content });
     const activeTools = new Set(pi.getActiveTools());
     const codemode = activeTools.has("codemode");
-    // Codemode scripts can call every active direct tool, but no model-only tool.
     const inCodemode = (tool: { name: string; exposure?: string }) => tool.name !== "codemode" && tool.exposure !== "model-only";
     const activeInfo = pi.getAllTools().filter((tool) => activeTools.has(tool.name));
     const tools = activeInfo.map(tool => ({ name: tool.name, description: tool.description, parameters: tool.parameters, ...codemode && tool.name !== "codemode" ? { codemode: inCodemode(tool) } : {} }));
-    // A provider can rename tools in its request, such as bash to Bash for Anthropic subscriptions, so names match without case.
     const codemodeFlags = new Map(tools.map(tool => [tool.name.toLowerCase(), tool.codemode]));
     const estimate = (value: string) => Math.ceil(value.length / 4);
     const skillTokens = { defined: estimate(skillPrompt), invoked: invokedSkills.reduce((sum, skill) => sum + estimate(skill.content), 0) };

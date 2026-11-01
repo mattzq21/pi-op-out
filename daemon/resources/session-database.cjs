@@ -89,7 +89,6 @@ function initialize(db) {
       CREATE TABLE IF NOT EXISTS running_tasks (session_id TEXT PRIMARY KEY REFERENCES sessions(session_id) ON DELETE CASCADE);
 `);
 
-    // Version 1: chat names moved out of the Pi session state into session_names.
     if (db.prepare('PRAGMA user_version').get().user_version < 1) {
       db.exec(`INSERT INTO session_names (session_id, name) SELECT session_id, trim(json_extract(entry_json, '$.name')) FROM session_extension_state
           WHERE state_key='piop-session-name' AND trim(coalesce(json_extract(entry_json, '$.name'), '')) <> '' ON CONFLICT(session_id) DO NOTHING;
@@ -97,7 +96,6 @@ function initialize(db) {
         PRAGMA user_version=1;`);
     }
 
-    // Version 2: the queue hold is the only pause. Paused goals and paused queue items become a held queue.
     if (db.prepare('PRAGMA user_version').get().user_version < 2) {
       db.exec(`INSERT OR IGNORE INTO session_queue_holds (session_id) SELECT session_id FROM session_goals WHERE status='paused';
         INSERT OR IGNORE INTO session_queue_holds (session_id) SELECT DISTINCT session_id FROM queue_items WHERE json_extract(details_json, '$.paused') = 1;

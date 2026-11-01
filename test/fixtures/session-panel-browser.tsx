@@ -14,7 +14,6 @@ const { SessionPanel } = await import('../../clients/ui/components/SessionPanel'
 const { createSidebarState } = await import('../../clients/ui/lib/sidebarState');
 const { NativeTransport } = await import('../../clients/ui/lib/nativeTransport');
 const { invoke: daemonInvoke } = await import('../../clients/ui/lib/platform');
-// The panel gets the same transport and settings as in the app, so project pickers can browse the daemon's folders.
 const transport = new NativeTransport({ hostId: 'local' });
 const settings = await daemonInvoke('load_app_settings');
 const [sessions, setSessions] = createSignal(await window.panelSessions());

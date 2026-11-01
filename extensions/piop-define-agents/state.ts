@@ -44,7 +44,6 @@ export function registerSubagentLimits(pi: ExtensionAPI, currentAgent: () => Age
 
 export const MAX_DESCRIPTION = 500;
 
-/** The agent's description, trimmed. An empty description is left out. */
 export function agentDescription(value: unknown, name: string): string | undefined {
   if (value === undefined) return undefined;
 
@@ -70,7 +69,6 @@ export function agentAccess(value: unknown, name: string, field: string): AgentA
   return Array.isArray(value) ? [...new Set(value)] : value;
 }
 
-/** Why the caller may not start the target agent for this purpose, or undefined when it may. */
 export function startRefusal(caller: Agent | undefined, target: Agent, purpose: AgentStartPurpose): string | undefined {
   const role = purpose === "subagent" ? "a subagent" : "a peer";
 
@@ -121,7 +119,7 @@ export function storedRuntimeDefaults(session: string): RuntimeDefaults | undefi
     const stored = JSON.parse(process.env[DEFAULTS_ENV] || "null");
 
     if (Check(defaultsSchema, stored) && stored.session === session) return { model: stored.model, effort: stored.effort };
-  } catch { }
+  } catch {}
 }
 
 export function sessionIsLocked(states: SessionAgentState[], branch: Branch) {

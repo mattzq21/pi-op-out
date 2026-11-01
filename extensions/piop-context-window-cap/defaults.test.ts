@@ -18,7 +18,6 @@ const fixtureRoot = mkdtempSync(join(tmpdir(), "piop-context-cap-defaults-"));
 const settingsPath = join(fixtureRoot, "present", "context-cap-settings.json");
 const absentSettingsPath = join(fixtureRoot, "absent", "context-cap-settings.json");
 
-/** Persists app settings through the app settings store before an event reads them. */
 function save(settings: unknown, path = settingsPath) { write(path, JSON.stringify(settings)); }
 
 beforeEach(() => { process.env.PIOP_CONTEXT_CAP_SETTINGS_PATH = settingsPath; });
@@ -29,7 +28,6 @@ afterAll(() => {
   rmSync(fixtureRoot, { recursive: true, force: true });
 });
 
-/** A Pi host for the context cap extension. */
 function host() {
   const handlers = new Map<string, Array<(event: any, ctx: any) => any>>();
   const bus = new Map<string, Set<(value: any) => void>>();

@@ -1,5 +1,3 @@
-"""Exercise the real WDIO MCP transport against a minimal WebDriver endpoint."""
-
 import contextlib
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
@@ -93,7 +91,6 @@ class WdioStdioTest(unittest.TestCase):
                 self.assertEqual(json.loads(line).get("jsonrpc"), "2.0")
             self.assertIn("COMMAND", (Path(directory.name) / "webdriver.log").read_text())
         except Exception:
-            # This fixture uses synthetic data and no credentials.
             for line in captured.lines:
                 try:
                     json.loads(line)

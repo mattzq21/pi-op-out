@@ -8,7 +8,6 @@ import { errorText } from './util/sync';
 const { Interface } = dbus.interface;
 const { Variant } = dbus;
 
-/** What started this daemon: a test (PIOP_DAEMON_ORIGIN=test), a debug build, or a release build. */
 export function daemonOrigin(): 'test' | 'dev' | 'release' {
   if (process.env.PIOP_DAEMON_ORIGIN === 'test') return 'test';
   return DEVELOPMENT ? 'dev' : 'release';
@@ -57,7 +56,6 @@ StatusNotifierItem.configureMembers({
 
 const QUIT = 2;
 
-/** The menu: the daemon's origin as a disabled line, then Quit. */
 class DBusMenu extends Interface {
   constructor(private readonly title: string, private readonly quit: () => void) { super('com.canonical.dbusmenu'); }
   get Version() { return 3; }
@@ -98,11 +96,6 @@ DBusMenu.configureMembers({
   signals: { LayoutUpdated: { signature: 'ui' }, ItemsPropertiesUpdated: { signature: 'a(ia{sv})a(ias)' } },
 });
 
-/**
- * Shows this daemon in the desktop tray (StatusNotifierItem on the session bus): its origin and a Quit item.
- * Each daemon process owns its own bus name, so each daemon has its own icon. Without a session bus or tray host it reports why and runs on.
- * Returns the function that removes the icon.
- */
 export async function startTray(quit: () => void): Promise<() => void> {
   if (!process.env.DBUS_SESSION_BUS_ADDRESS) { console.error('Tray icon not shown: no desktop session bus'); return () => {}; }
   const bus = dbus.sessionBus();
@@ -121,7 +114,6 @@ export async function startTray(quit: () => void): Promise<() => void> {
       await watcher.getInterface('org.kde.StatusNotifierWatcher').RegisterStatusNotifierItem(name);
     };
     await register();
-    // A restarted tray host forgets its items, so the icon registers again when the watcher comes back.
     const daemonBus = (await bus.getProxyObject('org.freedesktop.DBus', '/org/freedesktop/DBus')).getInterface('org.freedesktop.DBus');
     daemonBus.on('NameOwnerChanged', (owner: string, _old: string, current: string) => {
       if (owner === 'org.kde.StatusNotifierWatcher' && current) register().catch(error => console.error('Tray icon could not register again: ' + errorText(error)));

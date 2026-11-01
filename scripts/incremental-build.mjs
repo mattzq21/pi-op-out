@@ -42,7 +42,7 @@ async function isCurrent(cachePath, signature, fixedInputs, output) {
   const saved = await readOptional(cachePath);
   let cached;
 
-  try { cached = saved && JSON.parse(saved.toString()); } catch { }
+  try { cached = saved && JSON.parse(saved.toString()); } catch {}
 
   if (cached?.signature !== signature || !Array.isArray(cached.dependencies)) return false;
 
@@ -79,7 +79,6 @@ export async function buildArtifact({ output, inputs, key }, generate) {
     const { content, dependencies = [] } = await generate();
     const after = await fingerprint([...fixedInputs, ...dependencies]);
 
-    // A pass that discovers new dependencies cannot publish output; fingerprint them before retrying.
     if (after.some(([path, digest]) => !before.has(path) || before.get(path) !== digest)) {
       if (attempt === 3) throw new Error(`Inputs changed or new dependencies were found during 3 build attempts: ${output}`);
 

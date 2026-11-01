@@ -8,7 +8,6 @@ const alive = (pid: number) => { try { process.kill(pid, 0); return true; } catc
 test('an open shell keeps a daemon without clients running only until its unused delay ends', async () => {
   const daemon = await startDaemon({ env: { PIOP_UNUSED_STOP_MS: '2000' } });
   const directory = temporaryDirectory('piop-terminal-stop-');
-  // A shell that ignores the Ctrl+C sent at the last disconnect, like an interactive shell at its prompt.
   writeFileSync(join(daemon.home, '.bashrc'), 'exec sh ./.terminal-script\n');
   writeFileSync(join(directory, '.terminal-script'), "trap '' INT\necho $$ > pid\nprintf READY\nwhile :; do sleep 1; done\n");
   try {

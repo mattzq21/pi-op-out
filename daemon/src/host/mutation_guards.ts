@@ -5,7 +5,6 @@ import { clearSaved } from './queue_storage';
 import { announceRemoved } from './readonly_views';
 import type { Host } from './controller';
 
-/** Ownership guards that the daemon holds while a storage transaction changes a conversation. */
 export class MutationGuards {
   private guards = new Map<string, [Guard, string]>();
 
@@ -13,7 +12,6 @@ export class MutationGuards {
 
   active(): boolean { return this.guards.size > 0; }
 
-  /** Takes the guard and returns a token for end(). Throws when this client does not own the conversation. */
   async begin(packet: any): Promise<any> {
     const operation = text(packet, 'operation');
     const guard = await this.host.ownership().begin(text(packet, 'sessionId'), text(packet, 'clientId'), {

@@ -3,7 +3,6 @@ import { $, $$, browser, expect } from "@wdio/globals";
 import { app } from "../pageobjects/app.page.js";
 import { resetBackend, resetApp, emitPiEvent, startTemporaryConversation } from "./acceptance-fixture.js";
 
-/** A conversation of 20 questions with long answers, so most turns are off screen. */
 const longHistory = () => {
   const entries = Array.from({ length: 20 }, (_, index) => [
     { type: "message", id: `selection-user-${index}`, parentId: index ? `selection-assistant-${index - 1}` : null, message: { role: "user", content: "Another question", timestamp: index * 2 + 1 } },
@@ -15,7 +14,6 @@ const longHistory = () => {
 
 const nextFrames = () => browser.execute(() => new Promise<null>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve(null)))));
 
-/** Scrolls the messages to a position. Repeated, because turns drawn near the view change the height. */
 const scrollMessages = async (position: "bottom" | "middle") => {
   for (let jump = 0; jump < 3; jump++) {
     await browser.execute(where => {
@@ -30,7 +28,6 @@ const scrollMessages = async (position: "bottom" | "middle") => {
   }
 };
 
-/** Changes the selection and returns how far the turn at the center of the view moved, measured after the view handled the change and before the next frame is drawn. */
 const centerTurnMovement = (change: "select" | "clear") => browser.execute(action => new Promise<number>((resolve, reject) => {
   const view = document.querySelector(".messages")?.getBoundingClientRect();
   const turn = view && document.elementFromPoint(view.left + view.width / 2, view.top + view.height / 2)?.closest(".deferred-turn");
@@ -38,7 +35,6 @@ const centerTurnMovement = (change: "select" | "clear") => browser.execute(actio
 
   if (!turn || !selection) { reject(new Error("No turn is at the center of the view")); return; }
   const top = turn.getBoundingClientRect().top;
-  // Listeners run in order, so this one runs after the view's own listener.
   document.addEventListener("selectionchange", () => resolve(turn.getBoundingClientRect().top - top), { once: true });
 
   if (action === "clear") { selection.removeAllRanges(); return; }

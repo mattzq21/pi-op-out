@@ -15,7 +15,6 @@ type SessionResource = Array<RpcEvent | undefined>;
 
 export type HistoryOutline = z.infer<typeof historyOutlineSchema>["responses"];
 
-/** The part of a listed outline before the entry before. Older history that loads later only shortens the outline, so it needs no new list. */
 function outlineBefore(listed: { before: string; items: HistoryOutline } | undefined, before: string) {
   if (!listed) return undefined;
 
@@ -46,7 +45,6 @@ interface CachedSession {
   commands: SlashCommand[];
   thinkingLevels: string[];
   resources: Record<string, SessionResource>;
-  /** The final responses before the entry before, as the daemon listed them. */
   outline?: { before: string; items: HistoryOutline };
 }
 
@@ -281,7 +279,6 @@ export class SessionMemory {
     this.commit();
   }
 
-  /** Loads the work of a finished turn that the daemon left out, and puts it in front of the turn's final response. Its compactions move into their place in the work. */
   private loadWork(entryId: string) {
     const previous = this.workLoading.get(entryId);
 
@@ -307,7 +304,6 @@ export class SessionMemory {
     return request;
   }
 
-  /** Loads the part of the history just before the loaded messages. With through, the part reaches back to the turn of that entry. */
   loadOlder(through?: string) {
     const older = olderHistory(this.value.messages);
 
@@ -325,7 +321,6 @@ export class SessionMemory {
     return request;
   }
 
-  /** Lists the final responses before the entry before, unless the listed outline already covers them. A load that fails while Pi is not running runs again once it runs. */
   loadOutline(before: string, onError: (reason: unknown) => void) {
     if (outlineBefore(this.value.outline, before) || this.outlineLoading?.before === before) return;
     this.outlineLoading?.stop();
@@ -406,12 +401,10 @@ export function loadOlderHistory(transport: Transport, through?: string) {
   return memoryFor(transport).loadOlder(through);
 }
 
-/** Lists the final responses of the history before the entry before, which the client has not loaded. */
 export function loadHistoryOutline(transport: Transport, before: string, onError: (reason: unknown) => void) {
   memoryFor(transport).loadOutline(before, onError);
 }
 
-/** The final responses of the history before the entry before, once listed. The list stays with the chat, so it shows at once when the chat opens again. */
 export function useHistoryOutline(transport: Accessor<Transport | undefined>, before: Accessor<string | undefined>): Accessor<HistoryOutline> {
   const outline = createSubscription(() => { const current = transport(); return current ? memoryFor(current).subscribe : () => () => undefined; }, () => { const current = transport(); return () => current ? memoryFor(current).getSnapshot().outline : undefined; });
 

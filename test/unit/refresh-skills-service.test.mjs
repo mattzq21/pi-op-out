@@ -26,7 +26,6 @@ test('refreshing skills finds new and removed skills on the host and keeps which
   const { root, write, render, changes, button } = await skillsHost(t);
   write('review-code', 'Reviews code');
   write('write-tests', 'Writes tests');
-  // Before the refresh the settings knew review-code, switched off, and a skill that is no longer on disk.
   await render({ hostId: 'local', skills: [
     { name: 'review-code', path: join(root, 'review-code'), description: 'Reviews code', enabled: false, userInvokedOnly: false },
     { name: 'gone', path: join(root, 'gone'), description: 'Removed', enabled: true, userInvokedOnly: false },

@@ -18,7 +18,6 @@ function fixture(t) {
   return { root, file };
 }
 
-/** Saves a new active goal, as /goal does. */
 function setGoal(f, objective) {
   const goal = { id: crypto.randomUUID(), sessionId: 'chat-1', objective, status: 'active' };
   goals.write(f.file, 'chat-1', goal);

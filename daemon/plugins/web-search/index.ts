@@ -1,29 +1,3 @@
-/*!
-Adapted from nicobailon/pi-web-access openai-search.ts, commit
-811ef82a6dd04fe4abd73fa40b079aa39ee1870d.
-
-MIT License
-
-Copyright (c) 2025 Nico Bailon
-
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
-
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
-*/
 import { Type } from "@earendil-works/pi-ai";
 import { Type as Schema, type Static } from "typebox";
 import { Check } from "typebox/value";
@@ -53,7 +27,6 @@ function record(value: unknown): value is RecordValue {
   return Check(responseValueSchema, value);
 }
 
-/** The model chosen in Settings → Plugins → Web search, read at each search so a change applies at once. */
 function searchModelId(): string {
   const settings = readAppSettings(join(homedir(), process.env.PIOP_STORAGE_DIRECTORY || ".piop")) ?? {};
 
@@ -69,7 +42,6 @@ async function selectModel(ctx: ExtensionContext) {
   if (!model) throw new Error(`The web search model openai/${id} is not available on this host. Pick another in Settings → Plugins → Web search.`);
   const auth = await ctx.modelRegistry.getApiKeyAndHeaders(model);
 
-  // OpenAI API keys start with sk-; any other OpenAI credential is a Sign in with ChatGPT token.
   if (!auth.ok || !auth.apiKey || auth.apiKey.startsWith("sk-")) throw new Error(`Web search needs an OpenAI ChatGPT sign-in. ${LOGIN_HINT}`);
 
   return { model, apiKey: auth.apiKey, extraHeaders: auth.headers };

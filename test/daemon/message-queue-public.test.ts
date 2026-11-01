@@ -5,10 +5,8 @@ let agents: Awaited<ReturnType<typeof agentDaemon>>;
 beforeAll(async () => { agents = await agentDaemon(); }, 60000);
 afterAll(async () => { await agents?.close(); });
 
-/** A promise that the test settles later, to keep the agent busy. */
 const held = <T>() => { let release!: (value: T) => void; const promise = new Promise<T>(resolve => { release = resolve; }); return { promise, release }; };
 
-/** The queued messages the app shows for this chat, from its latest queue update. */
 const pending = (runtimeId: string): Array<{ id: string; message: string; behavior: string }> =>
   agents.daemon.events.filter(event => event.payload?.runtimeId === runtimeId && event.payload.event?.type === 'queue_update').at(-1)?.payload.event.pendingMessages ?? [];
 

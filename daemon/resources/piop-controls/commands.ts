@@ -9,7 +9,6 @@ const branchRequestSchema = Schema.Object({ entryId: Schema.String() });
 
 const preparationSchema = Schema.Object({ mode: Schema.Union([Schema.Literal("fork"), Schema.Literal("fork_after"), Schema.Literal("clone")]), entryId: Schema.Optional(Schema.String()) });
 
-/** Connects Piop control and fork requests to the session controls. */
 export function registerControlCommands(pi: ExtensionAPI, controls: SessionControls) {
   const applyControl = async (action: string, ctx: ExtensionContext) => {
     if (action === "stop") await controls.stop(ctx);

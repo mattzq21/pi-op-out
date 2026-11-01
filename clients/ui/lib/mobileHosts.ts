@@ -2,10 +2,8 @@ import { validateHost } from "./remoteClient";
 import { isMobile } from "./platform";
 import { z } from "zod";
 
-/** The one daemon that the phone connects to. Its added machines are reached through it. */
 export interface MobileAnchor { name: string; url: string }
 
-/** The current anchor and every anchor host that this device has saved. The current anchor is always in the saved list. */
 export interface MobileHosts { anchor?: MobileAnchor; saved: MobileAnchor[] }
 
 const anchorSchema = z.object({ name: z.string().trim().min(1), url: z.string() });
@@ -54,7 +52,6 @@ function storedHosts(anchorValue: unknown, savedValue: unknown): MobileHosts {
   return { anchor, saved: anchor && !saved.some(host => host.url === anchor.url) ? [anchor, ...saved] : saved };
 }
 
-/** Reads the hosts, and with `change` replaces them in the same transaction. `"reset"` removes them without reading, so unreadable data can be cleared. */
 async function hostsTransaction(change?: ((current: MobileHosts) => MobileHosts) | "reset"): Promise<MobileHosts> {
   const database = await openDatabase();
   let timer: ReturnType<typeof setTimeout> | undefined;
@@ -106,33 +103,28 @@ export function validateMobileAnchor(address: string, name: string): MobileAncho
   return { url, name: label };
 }
 
-/** The saved hosts with the host added, or replacing the saved name of the same address. */
 function withHost(saved: MobileAnchor[], host: MobileAnchor) {
   return saved.some(item => item.url === host.url) ? saved.map(item => item.url === host.url ? host : item) : [...saved, host];
 }
 
-/** Makes the host the current anchor and saves it. */
 export function saveMobileAnchor(address: string, name: string) {
   const anchor = validateMobileAnchor(address, name);
 
   return hostsTransaction(current => ({ anchor, saved: withHost(current.saved, anchor) }));
 }
 
-/** Saves the host without connecting. A saved current anchor takes the new name too. */
 export function saveMobileHost(address: string, name: string) {
   const host = validateMobileAnchor(address, name);
 
   return hostsTransaction(current => ({ anchor: current.anchor?.url === host.url ? host : current.anchor, saved: withHost(current.saved, host) }));
 }
 
-/** Uses a development connection for this run only, so it never replaces the saved anchor. */
 export function useDevelopmentAnchor(address: string) {
   anchorCache = { url: address, name: "Development" };
 
   return anchorCache;
 }
 
-/** Removes one saved host, or every host when `url` is undefined. Removing the current anchor clears it. */
 export function forgetMobileHost(url?: string) {
   return hostsTransaction(url === undefined ? "reset" : current => ({ anchor: current.anchor?.url === url ? undefined : current.anchor, saved: current.saved.filter(host => host.url !== url) }));
 }

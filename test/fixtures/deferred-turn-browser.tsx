@@ -3,7 +3,6 @@ import { DeferredTurn } from '../../clients/ui/components/DeferredTurn';
 import { createRef } from '../../clients/ui/lib/solid';
 import '../../clients/ui/styles.css';
 
-/** A chat of 30 turns, laid out as the chat view does: only the last 3 render at once. */
 const scrollRoot = createRef<HTMLDivElement | null>(null);
 render(() => <div class="chat-shell">
   <div ref={element => { scrollRoot.current = element; }} data-testid="messages" style={{ height: '600px', overflow: 'auto' }}>

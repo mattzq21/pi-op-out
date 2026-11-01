@@ -7,7 +7,6 @@ import { ChatView } from '../../clients/ui/components/ChatView.tsx';
 
 test('sending a message keeps the controls of the queued messages and the hold button usable', async t => {
   const dom = installDom();
-  // The transport methods that this view does not need answer with nothing.
   const base = { subscribe() { return () => {}; }, async command() { return {}; }, ownsConversation: () => true, hasConfirmedOwnership: () => true, isConnected: () => true, currentHostId: () => 'local' };
   const transport = new Proxy(base, { get: (target, name) => name in target || name === 'then' || typeof name === 'symbol' ? target[name] : () => undefined });
   const hook = await renderHook(value => useChatSession(value), transport);
@@ -20,7 +19,6 @@ test('sending a message keeps the controls of the queued messages and the hold b
   const settle = async () => { await dom.flushFrames(); await view.rerender(props()); await dom.flushFrames(); };
   await act(() => hook.current.handleEvent({ type: 'queue_update', steering: [], followUp: [], pendingMessages: [{ id: 'queue-1', goalSubmissionId: 'submission-1', message: 'Queued one', behavior: 'followUp', held: true }, { id: 'queue-2', goalSubmissionId: 'submission-2', message: 'Queued two', behavior: 'followUp', held: true }], held: true }));
   await settle();
-  /** Whether each button of the first queued message, then the hold button, can be used. */
   const usable = () => [...view.container.querySelector('.pending-message').querySelectorAll('button'), view.container.querySelector('.pending-queue-hold button')].map(button => !button.disabled);
   const before = usable();
   let finish;

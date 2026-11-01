@@ -12,7 +12,6 @@ function compileGoalFiles() {
   }).then(result => result.outputFiles[0].contents);
 }
 
-/** Prepares a goal objective for the chat at a session path, as the daemon's queue does for a /goal message. Resolves with the prepared /goal message. */
 export async function goalCommand(t) {
   const directory = await mkdtemp(join(tmpdir(), 'piop-goal-command-'));
   t.after(() => rm(directory, { recursive: true, force: true }));

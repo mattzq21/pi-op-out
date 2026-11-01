@@ -5,11 +5,9 @@ export type { ToastHistoryEntry } from "./toastHistoryStorage";
 
 type Notice = { id: string; title: string; message: string };
 
-/** The history keeps the newest 10 notices, so unsaved notices are limited the same way. */
 const HISTORY_LIMIT = 10;
 
 const [toastHistory, setToastHistory] = createSignal<ToastHistoryEntry[]>([]);
-/** Why the last history save failed, until a save succeeds. */
 const [toastHistoryError, setToastHistoryError] = createSignal<string>();
 
 export { toastHistory, toastHistoryError };

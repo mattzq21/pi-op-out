@@ -63,7 +63,6 @@ function appendChildren(root, index, traversal, args) {
   }
 }
 
-/** Returns the auxiliary sessions of args.path, also of its auxiliary sessions. With args.kinds, only children of those kinds, through children of those kinds. args.root is the sessions or archived directory that contains args.path. */
 async function sessionDescendants(args) {
   const root = await fs.realpath(args.root);
   const source = await fs.realpath(args.path);

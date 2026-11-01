@@ -84,7 +84,6 @@ test('a reopened saved session keeps its reached limit and refuses new prompts',
   assert.ok(path && existsSync(path));
   first.session.dispose();
   const reopened = await fixture(t, { dir, sessionManager: cwd => SessionManager.open(path, join(cwd, 'sessions')) });
-  // After hooks run in registration order; remove the shared directory after both sessions are disposed.
   t.after(() => rm(dir, { recursive: true, force: true }));
   assert.equal(reopened.statuses.get('piop-session-cost'), 'Session cost limit reached ($1.00 / $1.00)');
   await reopened.session.prompt('after reopening');
@@ -182,7 +181,6 @@ for (const kind of ['compaction', 'cache_warm']) test(`${kind} charges added dur
   const prepare = f.session.agent.prepareRequest;
   f.session.agent.prepareRequest = async (...args) => {
     const prepared = await prepare(...args);
-    // Model routing can compact after turn_start, before the request context is built.
     const manager = f.session.sessionManager;
     if (kind === 'compaction') manager.appendCompaction('Summary', manager.getLeafId(), 100, undefined, false, usage(1));
     else manager.appendUsage(kind, f.model.provider, f.model.id, usage(1));
@@ -216,7 +214,6 @@ for (const operation of ['tree success', 'tree cancelled', 'compact cancelled', 
     const target = f.session.sessionManager.getLeafId();
     await f.session.prompt('second');
     await f.session.waitForIdle();
-    // Finish the notification for the preceding run before starting the history operation.
     await new Promise(resolve => setImmediate(resolve));
     operationStarted = true;
     if (operation.startsWith('tree')) {
@@ -225,7 +222,6 @@ for (const operation of ['tree success', 'tree cancelled', 'compact cancelled', 
     } else {
       if (operation === 'compact cancelled') await assert.rejects(f.session.compact(), /cancelled/i);
       else if (operation === 'compact failed') {
-        // A missing model fails before session_before_compact is reached.
         const currentModel = f.session.agent.state.model;
         f.session.agent.state.model = undefined;
         await assert.rejects(f.session.compact());

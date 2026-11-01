@@ -6,7 +6,6 @@ const outcomeSchema = z.union([z.object({ accepted: z.literal(true) }), z.object
 
 export type SubmissionOutcome = z.infer<typeof outcomeSchema>;
 
-/** A peer host has no reconnect event, so a failed check on it runs again after this delay. */
 const RETRY_MS = 15000;
 
 function reconnected() {
@@ -19,7 +18,6 @@ function reconnected() {
   });
 }
 
-/** Asks the host if it accepted a sent message. The host waits while the message is still being sent. A failed check runs again after a reconnect, until the asker closes. */
 export async function confirmSubmission(hostId: string, submissionId: string, failed?: (reason: string) => void, open = () => true): Promise<SubmissionOutcome | undefined> {
   while (open()) {
     try { return await call("submission_outcome", { hostId, submissionId }, outcomeSchema); }

@@ -48,7 +48,6 @@ export function expandSkillPath(path: string, home: string): string {
 
 interface SkillTree { skillFiles: string[]; directories: string[] }
 
-/** Walks the skills folder, following links. It stops at a skill folder, so a skill inside another skill is not found. */
 function scanSkillTree(root: string): SkillTree {
   const tree: SkillTree = { skillFiles: [], directories: [] };
   const visited = new Set<string>();
@@ -98,7 +97,6 @@ function discoverInventory(root: string): any[] {
 
 let skillWatchers: Map<string, FSWatcher> | undefined;
 
-/** Scans the skills folder now and again after each change in it. Failures go to onError. */
 export function watchSkills(onError: (error: unknown) => void): void {
   if (skillWatchers) return;
   const watchers = skillWatchers = new Map<string, FSWatcher>();
@@ -153,7 +151,6 @@ export function mergeDiscoveredSkills(settings: AppSettings): void {
   mergeSkills(settings, home, savedSkills(home, false));
 }
 
-/** Replaces the settings skills with the discovered skills. A user-invoked skill is always enabled; other skills keep their saved state. */
 function mergeSkills(settings: AppSettings, home: string, skills: any[]): void {
   const enabledByPath = new Map<string, boolean>();
   for (const skill of settings.skills) {

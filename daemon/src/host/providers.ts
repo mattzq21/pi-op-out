@@ -9,7 +9,6 @@ import type { Host } from './controller';
 import { join } from 'node:path';
 import { savedCommands } from '../command_inventory';
 
-/** One login attempt that a client started for a provider. */
 class Flow {
   status = 'pending';
   notices: any[] = [];
@@ -115,7 +114,6 @@ export class ProviderService {
     return this.flowRequest(owner, request);
   }
 
-  /** The skill paths that every new session loads. */
   private skillPaths(): string[] {
     const skills = this.host!.configuration()?.settings?.skills;
     if (!skills) throw new Error('Daemon is not configured');
@@ -143,7 +141,6 @@ export class ProviderService {
 
   private async listing(refresh: boolean): Promise<any> {
     const info = await this.runtime();
-    // Model scans use the network. Only an explicit refresh waits for them; otherwise the listing shows saved data and the scan reports changes when it ends.
     if (refresh) await this.refreshCatalogs(true, false);
     else this.refreshCatalogsInBackground();
     const snapshot = await this.sdk.request({ method: 'inspect' });
@@ -170,7 +167,6 @@ export class ProviderService {
     return result;
   }
 
-  /** A client that lost track of its login starts again; its earlier login for the provider is cancelled first. */
   private async replaceOwnLogin(owner: string, providerId: string): Promise<void> {
     const running = this.logins.get(providerId);
     if (!running || this.flows.get(running.flowId)?.owner !== owner) return;
@@ -275,7 +271,6 @@ export class ProviderService {
     return this.listing(false);
   }
 
-  /** Custom providers are the providers in the saved model settings that Pi does not include. */
   private async customProviderIds(info: { builtinIds: Set<string> }): Promise<Set<string>> {
     const data = await this.sdk.request({ method: 'model_config' });
     const providers = data?.providers && typeof data.providers === 'object' && !Array.isArray(data.providers) ? Object.keys(data.providers) : [];
@@ -317,7 +312,6 @@ export class ProviderService {
     if (login?.status !== 'complete') throw new Error('Provider login could not be confirmed');
   }
 
-  /** Built-in providers need no model scan. The fast model scan still uses the network for them, so the listing does not wait for it. */
   private async refreshCatalogs(force: boolean, waitForFastModels = true): Promise<void> {
     await this.catalogs.run(async () => {
       if (!force && this.nextCatalog !== null && Date.now() < this.nextCatalog) return;
@@ -334,7 +328,6 @@ export class ProviderService {
 
   private listingWarnings(): string { return JSON.stringify([this.catalogWarning, fastModelWarning(this.fastModels.snapshot())]); }
 
-  /** Clients read the warnings with the listing, so they list again when the warnings change. */
   private announceWarnings(before: string): void {
     if (this.listingWarnings() !== before) this.host?.output({ type: 'provider_auth_changed', flow: null });
   }
@@ -348,7 +341,6 @@ export class ProviderService {
     );
   }
 
-  /** Regular model scans cover custom providers only; fast model scans have their own provider filter. */
   private async refreshCustomCatalogs(): Promise<void> {
     const info = await this.runtime();
     const snapshot = await this.sdk.request({ method: 'inspect' });

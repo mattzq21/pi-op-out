@@ -1,6 +1,3 @@
-// JavaScript that runs inside the app's WebView. Each export is a script body for WebDriver execute/sync.
-
-// arguments[0] = { mask, track: [selectors], intervalMs }
 export const START = String.raw`
 const options = arguments[0];
 if (typeof rrwebRecord === 'undefined') return { error: 'rrwebRecord is not loaded' };
@@ -35,7 +32,6 @@ const sample = () => {
   }
 };
 if ((options.track || []).length) {
-  // requestAnimationFrame never fires under WebDriver here (document.visibilityState is "hidden"), so poll and observe.
   state.timer = setInterval(sample, options.intervalMs || 20);
   let queued = false;
   const schedule = () => { if (queued) return; queued = true; queueMicrotask(() => { queued = false; sample(); }); };
@@ -69,13 +65,11 @@ return { visibilityState: document.visibilityState, href: location.href, viewpor
   tracked: (options.track || []).map(selector => ({ selector, present: !!document.querySelector(selector) })) };
 `;
 
-// arguments[0] = label, arguments[1] = payload
 export const MARK = String.raw`
 if (!window.__piopRrweb || !window.__piopRrweb.stop) return { skipped: 'no recording is running', label: arguments[0] };
 return window.__piopRrweb.mark(arguments[0], arguments[1]);
 `;
 
-// arguments[0] = label, arguments[1] = selector string or { text, within, selector }. Marks and clicks in one call so the mark time is exact.
 export const CLICK = String.raw`
 const target = arguments[1];
 let el;
@@ -95,8 +89,6 @@ el.click();
 return { clicked: el.tagName.toLowerCase() + (el.getAttribute('aria-label') ? '[aria-label="' + el.getAttribute('aria-label') + '"]' : '') + ' ' + el.textContent.trim().slice(0, 40) };
 `;
 
-// arguments[0] = label, arguments[1] = selector, arguments[2] = dx, arguments[3] = dy, arguments[4] = steps, arguments[5] = intervalMs, callback last.
-// W3C pointer actions hang WebKitWebDriver, so the drag is synthesized with PointerEvents.
 export const DRAG = String.raw`
 const done = arguments[arguments.length - 1];
 const [label, selector, dx, dy, steps, intervalMs] = arguments;
@@ -125,7 +117,6 @@ export const STOP = String.raw`
 const state = window.__piopRrweb;
 if (!state) return { error: 'No recording was started' };
 if (state.stop) {
-  // Pad the end so the replayer applies the last real event when seeking to the end.
   rrwebRecord.record.addCustomEvent('end', { t: Date.now() });
   state.stop();
 }

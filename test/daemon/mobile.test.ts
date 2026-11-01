@@ -9,7 +9,6 @@ let daemon: TestDaemon;
 beforeAll(async () => { daemon = await startDaemon(); }, 60_000);
 afterAll(() => daemon?.stop());
 
-/** A WebSocket that records each text packet the daemon sends and whether the daemon closed it. */
 async function rawSocket(url: string) {
   const socket = new WebSocket(url);
   const packets: any[] = [];
@@ -19,7 +18,6 @@ async function rawSocket(url: string) {
   socket.onmessage = message => { packets.push(JSON.parse(String(message.data))); for (const wake of [...changed]) wake(); };
   socket.onclose = event => { closed = true; closeCode = event.code; for (const wake of [...changed]) wake(); };
   await new Promise<void>((resolve, reject) => { socket.onopen = () => resolve(); socket.onerror = () => reject(new Error('Could not connect')); });
-  /** Resolves when the daemon has closed the socket. */
   const close = () => new Promise<void>((resolve, reject) => {
     const timer = setTimeout(() => reject(new Error('The daemon kept the socket open')), 10_000);
     const check = () => { if (closed) { clearTimeout(timer); changed.delete(check); resolve(); } };
@@ -47,7 +45,6 @@ test('after logging in, a request of a megabyte is accepted', async () => {
   expect(await socket.packet()).toMatchObject({ type: 'ready' });
   socket.send({ id: 1, command: 'load_app_settings', args: { padding: 'x'.repeat(1024 * 1024) } });
   let reply = await socket.packet();
-  // Events such as the daemon log status can arrive first.
   while (reply.event) reply = await socket.packet();
   expect(reply).toMatchObject({ id: 1, result: expect.objectContaining({ keybindings: expect.any(Object) }) });
   socket.end();
@@ -115,11 +112,9 @@ test('a malformed request after authentication closes only that connection with 
       expect(socket.packets.filter(packet => !('event' in packet)), malformed).toEqual([{ error }]);
     }
     expect(await temporaryChats()).toBe(0);
-    // The other connection still runs commands and receives events.
     const settings = await other.invoke('load_app_settings');
     const saved = await other.invoke('save_app_settings', { settings });
     await other.waitEvent('pi://settings-changed', payload => payload.revision === saved.revision);
-    // A new client still connects and runs commands.
     const fresh = await open();
     fresh.send({ type: 'authenticate', token });
     expect(await fresh.packet()).toMatchObject({ type: 'ready', backend: 'daemon' });
@@ -133,10 +128,6 @@ test('a malformed request after authentication closes only that connection with 
   }
 });
 
-/**
- * A unix socket that external programs connect to when they start. arrivals(n) resolves once n programs have
- * connected, so a test knows that the requests that started them hold their slot.
- */
 async function arrivalSocket() {
   const path = join(temporaryDirectory('piop-arrivals-'), 'arrivals.sock');
   let count = 0;
@@ -148,7 +139,6 @@ async function arrivalSocket() {
     const check = () => { if (count >= wanted) { clearTimeout(timer); waiters.delete(check); resolve(); } };
     waiters.add(check); check();
   });
-  /** An executable that reports its start on the socket and then stays silent until it is killed. */
   const program = '#!' + process.execPath + '\nrequire("node:net").connect(' + JSON.stringify(path) + ').on("error", () => {});\nsetTimeout(() => {}, 60_000);\n';
   return { arrivals, program, close: () => server.close() };
 }
@@ -156,9 +146,7 @@ async function arrivalSocket() {
 test('stop, abort and cancel requests still run when every work slot is busy, within their own small limit', async () => {
   const codex = await arrivalSocket();
   const ssh = await arrivalSocket();
-  // Each usage refresh waits for the one Codex run, which never answers, so it holds a work slot until the 8 s timeout.
   fakeProgram(daemon.bin, 'codex', codex.program);
-  // Provider cancellations for this machine wait for its SSH connection, which never answers, so they hold their slot too.
   const slow = join(daemon.home, '.test-remotes', 'slow');
   mkdirSync(slow, { recursive: true }); fakeProgram(slow, '.ssh-hold', ssh.program);
   const settings = await daemon.invoke('load_app_settings');
@@ -169,20 +157,16 @@ test('stop, abort and cancel requests still run when every work slot is busy, wi
   const refresh = (target = client) => target.invoke('provider_usage', { refresh: true });
   const work = Array.from({ length: 16 }, () => settled(refresh()));
   try {
-    // The connection handles requests in order, so once the one Codex run starts, all 16 refreshes hold a slot.
     await codex.arrivals(1);
     expect(await refresh().then(() => 'answered', (error: Error) => error.message)).toBe('Host is busy; try again');
-    // Each of these gets a reserved slot and runs; its answer for an unknown runtime or terminal proves it was dispatched.
     expect(await client.invoke('stop_pi', { runtimeId: 'missing' })).toBe(false);
     expect(await client.failure('pi_command', { runtimeId: 'missing', command: { type: 'abort' } })).toBe('Pi is not running');
     expect(await client.invoke('close_terminal', { terminalId: 'missing' })).toBeNull();
-    // Two cancellations that wait for the slow machine take both reserved slots of this connection.
     const cancel = () => settled(client.invoke('provider_auth', { hostId: 'slow', request: { action: 'cancel' } }));
     const held = [cancel(), cancel()];
     await ssh.arrivals(1);
     expect(await cancel()).toBe('Host is busy; try again');
     expect(await client.failure('stop_pi', { runtimeId: 'missing' })).toBe('Host is busy; try again');
-    // Another connection has its own reserved slots.
     const other = await daemon.connect();
     expect(await refresh(other).then(() => 'answered', (error: Error) => error.message)).toBe('Host is busy; try again');
     expect(await other.invoke('stop_pi', { runtimeId: 'missing' })).toBe(false);

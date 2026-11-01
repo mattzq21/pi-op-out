@@ -40,7 +40,6 @@ const TerminalView = lazy(() => import("./components/TerminalView").then(module 
 
 function preloadSettings() {
   let disposed = false;
-  // The page code only; its data needs a Pi session, so it loads when the user points at or focuses Settings.
   const timer = setTimeout(() => {
     if (!disposed) void import("./components/LocalSettingsView").catch(reason => console.error("Could not preload the settings page:", reason));
   }, 1000);
@@ -62,7 +61,6 @@ const SubagentPane = lazy(() => import("./components/SubagentPane").then(module 
 
 export default function App(props: { suppressConnectionNotices?: boolean } = {}) {
  const { forkSourceNameOf, modelVisibility, drafts, isArchiving, missingDirectoryDialog, archivesOpen, setArchivesOpen, runtimePool, transport, view, setView, activeConversationKey, chatViewKey, runningSessions, unseenSessions, pendingSettingsCount, chatSession, sessions, settings, settingsSaving, debugModeSaving, setSettingsDirty, panelOpen, setPanelOpen, query, setQuery, connected, error, setError, createGroupRequest, setCreateGroupRequest, handleCreateGroup, newChatRequest, activeHostId, codexUsage, anthropicUsage, usageClock, opencodeGoBadge, usageError, refreshUsage, refreshingUsage, setDialogs, notices, setNotices, addNotice, queueExtensionDialog, resolveExtensionDialog, closeTransportDialogs, releaseSplitTransport, statuses, renameSession, setRenameSession, projectOpen, setProjectOpen, projectOpenRef, uploadsByTransport, setComposerUploads, splitPane, subagentPane, hasSidePane, sidepane, listedRunningSessions, archiveSession, mainComposerFocusRequest, splitComposerFocusRequest, activePane, setActivePane, terminals, terminalOpen, terminalLocationState, startTerminal, addTerminal, selectTerminal, deleteTerminal, reconnectPending, splitSessionId, composerState, terminalViewKey, syncSessionIndex, composerControls, resolveHomeDirectory, send, respondToSplitRequest, closeSplitPane, openSubagent, canLeaveSettings, branch, forkAndForget, forkSourceName, forkPoints, openForkSource, revealEntryId, entryRevealed, startNewSession, newSession, clearChatProject, chooseChatHost, selectSession, setModel, setThinking, abortInteraction, saveSettings, setAgent, openProject, chooseChatProject, sessionAction, draftChangeFor, uploadsChangeFor, toggleComposerTerminal, toggleDebugMode, toggleDebugFeature, reconnectMain, extensionStateIsCurrent, activeDialog, projectCwd, mobileSidebarOpen, sidebar, chatAgentProps, chatModels, chatCommands, chatWidgets, composerView } = createAppConversations(() => { void ChatView.preload().catch(() => undefined); }, owner => transcriptCache.prepare(owner));
-  /** The drawn turns of recent chats. A chat that is not shown has the input that the main view would give it. */
   const transcriptCache = createTranscriptCache(owner => {
     const session = useSessionMemory(() => owner, () => ({ model: null, thinkingLevel: "off", isStreaming: false, sessionId: "", messageCount: 0, pendingMessageCount: 0 }));
     const hostId = owner.currentHostId();
@@ -73,10 +71,6 @@ export default function App(props: { suppressConnectionNotices?: boolean } = {})
 
   const pluginPane = createPluginWorkspace(conversationSource(activeHostId, chatSession));
 
-  /**
-   * X on a tab: a btw or review chat is archived with its own auxiliary chats, such as its subagents, after a confirmation
-   * while any of them works. A subagent tab only closes.
-   */
   const closeTab = async (tab: SidepaneTab) => {
     if (tab.kind === "subagent") { sidepane.forget(tab.key); return; }
 
@@ -84,7 +78,6 @@ export default function App(props: { suppressConnectionNotices?: boolean } = {})
     await archiveSession(tab.session);
   };
 
-  /** The side pane shows its tabs, or a plugin load error when there are no tabs. */
   const sideVisible = () => sidepane.open() && (sidepane.tabs().length > 0 || Boolean(pluginPane.error()));
   const sidepaneButton = () => <Show when={sidepane.tabs().length || pluginPane.error()}><IconButton class="open-plugins-button" label={sidepane.working() ? "Open side pane, a side chat is working" : "Open side pane"} aria-controls="plugin-sidepane" aria-expanded={sideVisible()} onClick={() => { if (sideVisible()) closeSplitPane(); else { sidepane.setOpen(true); setActivePane("split"); } }}><PanelRight size={19} /><Show when={sidepane.working()}><span class="sidepane-dot" /></Show></IconButton></Show>;
 
@@ -188,7 +181,6 @@ export default function App(props: { suppressConnectionNotices?: boolean } = {})
   const renderSplitFind = () => splitPane() && <Rerun on={() => splitSessionId()}>{(_key) => <FindInPage selector=".split-chat .chat-shell" scopeKey={splitSessionId()} onActivate={() => setActivePane("split")} active={activePane() === "split"} enabled={view() === "chat"} />}</Rerun>;
 
   const listedSession = (hostId: string, sessionId: string) => sessions().find(session => session.id === sessionId && (session.hostId ?? "local") === hostId);
-  // A chat that a command just opened has a tab before the session list has it.
   const auxiliaryTab = (hostId: string, sessionId: string) => sidepane.tabs().find(tab => tab.key === `${hostId}:${sessionId}`);
   const auxiliaryChats: AuxiliaryChats = {
     listed: (hostId, sessionId) => Boolean(listedSession(hostId, sessionId)?.auxiliaryParentId || auxiliaryTab(hostId, sessionId)),
@@ -198,7 +190,6 @@ export default function App(props: { suppressConnectionNotices?: boolean } = {})
     },
   };
   const [archivedLink, setArchivedLink] = createSignal<ArchivedLink>();
-  // A restored chat opens when the chat list has it.
   const [openWhenListed, setOpenWhenListed] = createSignal<{ hostId: string; sessionId: string }>();
   createDependencyEffect(() => {
     const target = openWhenListed();

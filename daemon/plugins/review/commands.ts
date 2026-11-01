@@ -5,7 +5,6 @@ import type { ReviewImage, ReviewSession } from "./interface.ts";
 
 const reviewRequestSchema = Schema.Object({ command: Schema.Optional(Schema.Literal("review")), args: Schema.String(), images: Schema.Array(Schema.Object({ type: Schema.Literal("image"), data: Schema.String(), mimeType: Schema.String(), name: Schema.Optional(Schema.String()) })) });
 
-/** Connects /review and Piop review requests to the review feature. */
 export function registerReviewCommands(pi: ExtensionAPI, reviews: ReviewSession) {
   const start = async (args: string, ctx: ExtensionContext, images?: ReviewImage[]) => {
     ctx.signal?.throwIfAborted();

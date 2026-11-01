@@ -7,7 +7,6 @@ import { ChatView } from '../../clients/ui/components/ChatView.tsx';
 
 const text = value => [{ type: 'text', text: value }];
 
-/** Renders a chat with three finished turns, then reports the elements that a step removed from the page. */
 async function chat(t) {
   const dom = installDom();
   const transport = { subscribe() { return () => {}; }, async command() { return {}; } };
@@ -20,7 +19,6 @@ async function chat(t) {
   const settle = async () => { await dom.flushFrames(); await view.rerender(props()); await dom.flushFrames(); };
   const events = async (...items) => { await act(() => items.forEach(event => hook.current.handleEvent(event))); await settle(); };
   for (let turn = 0; turn < 3; turn++) await events({ type: 'agent_start' }, { type: 'message_end', message: { role: 'user', content: text('Question ' + turn), timestamp: 10 + turn * 3 } }, { type: 'message_end', message: { role: 'assistant', content: text('Answer ' + turn), timestamp: 11 + turn * 3, stopReason: 'stop' } }, { type: 'agent_end' }, { type: 'agent_settled' });
-  /** The elements that step removed from the page, as tag and first class. */
   const removedBy = async step => {
     const before = [...view.container.querySelectorAll('*')];
     await step();

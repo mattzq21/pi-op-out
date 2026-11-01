@@ -48,7 +48,6 @@ test('session listing rejects an invalid cost total and succeeds after the trans
     const second = JSON.stringify({ type: 'message', id: 'second', parentId: 'first',
       message: { role: 'assistant', content: 'Second answer', timestamp: 2000, usage: { cost: { total: 1e308 } } },
     }) + '\n';
-    // A transcript with no user message is listed only when it has a name.
     const name = JSON.stringify({ type: 'session_info', id: 'name', parentId: null, name: 'Costs' }) + '\n';
     const chat = JSON.parse(execFileSync('node', [fileURLToPath(new URL('../fixtures/publish-chat.mjs', import.meta.url))], {
       encoding: 'utf8', input: JSON.stringify({ home: daemon.home, content: name + first + second }), timeout: 30000,

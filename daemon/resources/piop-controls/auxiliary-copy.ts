@@ -11,10 +11,6 @@ import type { AuxiliaryCopy } from "./interface.ts";
 
 type Branch = ReturnType<ExtensionContext["sessionManager"]["getBranch"]>;
 
-/**
- * The index of the last entry of the last finished agent turn: an assistant response that stopped or failed,
- * or one whose tool calls all have results. -1 when no turn has finished.
- */
 function lastTurnEnd(branch: Branch) {
   for (let index = branch.length - 1; index >= 0; index--) {
     const entry = branch[index];
@@ -36,7 +32,6 @@ function lastTurnEnd(branch: Branch) {
   return -1;
 }
 
-/** SessionControls.copyAuxiliary. */
 export async function copyAuxiliary(ctx: ExtensionContext, copy: AuxiliaryCopy) {
   if (!canFork(ctx.sessionManager.getEntries())) throw new Error("Only main chats can have side chats");
   const branch = ctx.sessionManager.getBranch();
@@ -65,7 +60,6 @@ export async function copyAuxiliary(ctx: ExtensionContext, copy: AuxiliaryCopy) 
   let publication: SessionPublication | undefined;
   let goalAssets: ReturnType<typeof retainHistory> | undefined;
 
-  // The copy keeps the files its history names, but gets no goal and no fork source of its own.
   try {
     goalAssets = retainHistory(root, [{ ...header, parentSession: source }, ...entries], sessionId, sessionPath);
     publication = await writeSessionFile(sessionPath, [{ ...header, id: sessionId, timestamp, cwd, parentSession: source, piopForkSource: undefined, goalAssets }, ...entries], {

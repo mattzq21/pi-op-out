@@ -6,7 +6,6 @@ import { daemonExecutable, temporaryDirectory } from './harness';
 
 const MAX = 10 * 1024 * 1024;
 
-/** Feeds text to the daemon log collector for a folder, as the daemon feeds it its output, and returns the status lines it reports. */
 async function collect(directory: string, chunks: string[]) {
   const child = spawn(await daemonExecutable(), ['--daemon-log-sink', directory], { stdio: ['pipe', 'pipe', 'pipe'] });
   const ready = Promise.withResolvers<void>();

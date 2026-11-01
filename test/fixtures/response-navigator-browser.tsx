@@ -4,11 +4,9 @@ import { ResponseNavigator, type ResponseDestination } from '../../clients/ui/co
 import { createRef } from '../../clients/ui/lib/solid';
 import '../../clients/ui/styles.css';
 
-/** A scrolling chat with tall answers, marked the way the chat view marks its turns and responses. */
 const answers = ['Plan the parser', 'Write the lexer', 'Add the tests'];
 const [count, setCount] = createSignal(Number(new URLSearchParams(location.search).get('answers') ?? answers.length));
 const responses = (): ResponseDestination[] => answers.slice(0, count()).map((preview, index) => ({ turnId: 'turn-' + index, messageId: 'answer-' + index, preview }));
-/** Answers in older history that the chat has not loaded. */
 const [older, setOlder] = createSignal<string[]>([]);
 const rail = (): ResponseDestination[] => [...older().map((preview, index) => ({ messageId: 'older-' + index, preview })), ...responses()];
 const scrollRoot = createRef<HTMLDivElement | null>(null);
@@ -16,7 +14,6 @@ const scrollRoot = createRef<HTMLDivElement | null>(null);
 (window as any).revealed = [];
 (window as any).setAnswers = setCount;
 (window as any).setOlder = setOlder;
-/** A last turn that the agent still works on, so it has no response yet. */
 const [working, setWorking] = createSignal(false);
 (window as any).setWorking = setWorking;
 

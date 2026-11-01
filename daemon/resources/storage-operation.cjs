@@ -7,13 +7,8 @@ const transaction = require('./storage-transaction.cjs');
 
 const busy = { state: 'skipped', reason: 'busy' };
 
-/** Returned when the caller gave up before the operation started, so nothing changed. */
 const cancelled = { state: 'cancelled' };
 
-/**
- * Takes the storage locks in the order that other writers use: restore, then session transactions.
- * Returns false when nonblocking is set and one of them is busy.
- */
 function lockAll(locks, nonblocking) {
   for (const descriptor of [locks.restore, locks.transactions]) {
     if (!lockSync(descriptor, false, nonblocking)) return false;
@@ -22,10 +17,6 @@ function lockAll(locks, nonblocking) {
   return true;
 }
 
-/**
- * Runs operation while the storage locks are held. context.locks are descriptors that the caller opened and closes after the reply.
- * context.begin() returns false when the caller already gave up; then the operation does not start.
- */
 async function underStorageLock(context, nonblocking, operation) {
   if (!lockAll(context.locks, nonblocking)) return busy;
 
@@ -95,17 +86,12 @@ async function start(context, request) {
   throw new Error(`Unknown storage transaction action: ${request.action}`);
 }
 
-/** Committed, skipped and cancelled outcomes are results. Rolled-back and pending outcomes are failures that carry their state. */
 function settle(outcome) {
   if (outcome.state === 'committed' || outcome.state === 'skipped' || outcome.state === 'cancelled') return outcome;
 
   throw Object.assign(new Error(outcome.error ?? `Storage transaction ${outcome.state}`), { state: outcome.state, warning: outcome.warning });
 }
 
-/**
- * Runs one storage transaction in the storage at context.root, which must be its real path.
- * Every write happens inside a journaled transaction that reports its own state, so any other error changed nothing.
- */
 function runStorageTransaction(context, request) {
   transaction.resetCrashPoint();
 

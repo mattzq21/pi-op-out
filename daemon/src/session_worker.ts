@@ -32,10 +32,6 @@ export function claimPath(id: string): string {
   return join(claimsDir(), `id-${hashClaimKey(canonical)}.lock`);
 }
 
-/**
- * The shell wrapper that replaces the Rust session worker. It opens the claim file,
- * locks it with flock, and then replaces itself with Pi so Pi keeps holding the lock.
- */
 const WORKER_SCRIPT = [
   'info=$("$PIOP_SESSION_NODE" ${PIOP_SESSION_DAEMON:+"$PIOP_SESSION_DAEMON"} --piop-session-claim "$@") || exit 1',
   'lock=$(printf "%s\\n" "$info" | sed -n 1p)',
@@ -63,7 +59,6 @@ function flagValue(args: string[], flag: string): string | undefined {
   return index >= 0 ? args[index + 1] : undefined;
 }
 
-/** Prints the claim lock path and, when a new session was reserved, its identity. */
 export function runSessionClaim(): never {
   try {
     const args = process.argv.slice(3);

@@ -53,5 +53,4 @@ function requireStorageMethods(prototype, names) {
   if (names.some(name => !(prototype[name] instanceof Function))) throw new Error("This Pi SDK does not support Piop's storage protection. Update Piop before using this SDK.");
 }
 
-/** Replaces the file in one step, so a crash or a full disk cannot leave credentials or provider settings empty or partial. */
 export { storagePublish, storageTarget, requireStorageMethods };

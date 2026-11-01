@@ -8,7 +8,6 @@ let daemon: TestDaemon;
 beforeAll(async () => { daemon = await startDaemon(); }, 60_000);
 afterAll(() => daemon?.stop());
 
-/** Saves a real conversation file and returns its id and path. */
 const publishChat = (): { id: string; path: string } => JSON.parse(execFileSync('node', [fileURLToPath(new URL('../fixtures/publish-chat.mjs', import.meta.url))], {
   encoding: 'utf8', timeout: 30000, input: JSON.stringify({ home: daemon.home, cwd: daemon.home, folder: 'ids', content: '' }),
 }));
@@ -37,7 +36,6 @@ test('settings saved from another machine change this host, but keep its own sho
 });
 
 test('the daemon is not idle for a restart while a terminal runs, and is idle again once it closes', async () => {
-  // A new daemon does storage work at start; wait for that to end.
   for (const deadline = Date.now() + 10_000; await daemon.failure('check_daemon_idle', {}).catch(() => null) && Date.now() < deadline;) await Bun.sleep(100);
   expect(await daemon.invoke('check_daemon_idle', {})).toBeNull();
   await daemon.invoke('start_terminal', { terminalId: 'busy-terminal', sessionKey: 'local:idle-check', cwd: temporaryDirectory('piop-idle-'), cols: 80, rows: 24 });

@@ -6,7 +6,6 @@ import { agentDaemon, called } from './agent-chats';
 let agents: Awaited<ReturnType<typeof agentDaemon>>;
 beforeAll(async () => {
   agents = await agentDaemon();
-  // Pi holds messages sent while it settles and runs each as its own turn. A slow settle handler keeps that window open.
   const extensions = join(agents.daemon.home, '.piop/extensions');
   mkdirSync(extensions, { recursive: true });
   writeFileSync(join(extensions, 'slow-settle.ts'), "import { writeFileSync } from 'node:fs';\nexport default (pi: any) => { writeFileSync(" + JSON.stringify(join(agents.daemon.home, 'slow-settle-loaded')) + ", ''); pi.on('agent_settled', () => new Promise(resolve => setTimeout(resolve, 300))); };\n");

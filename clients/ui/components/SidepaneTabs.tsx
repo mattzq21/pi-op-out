@@ -3,7 +3,6 @@ import { Key } from "@solid-primitives/keyed";
 import { X } from "lucide-solid";
 import type { SidepaneTab } from "../lib/sidepaneTabs";
 
-/** The tab bar of the side pane: one tab per chat, a dot while its agent works, and a close button. */
 export function SidepaneTabs(props: { tabs: SidepaneTab[]; selected?: string; error?: string; onSelect: (key: string) => void; onClose: (tab: SidepaneTab) => void; children: JSX.Element }) {
   const change = (event: KeyboardEvent) => {
     const index = props.tabs.findIndex(tab => tab.key === props.selected);

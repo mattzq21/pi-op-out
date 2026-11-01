@@ -7,7 +7,6 @@ import { fileURLToPath } from 'node:url';
 import { appService } from '../app-service-fixture.mjs';
 import { act, untilDom } from '../dom.mjs';
 
-/** The app with one saved chat whose project folder was deleted before the app opened. */
 async function appWithMissingFolder(t) {
   let chat, cwd;
   const app = await appService(t, { beforeMount: async ({ daemon }) => {

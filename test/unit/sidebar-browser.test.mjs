@@ -30,7 +30,6 @@ before(async () => {
 });
 after(async () => { await browser?.close(); if (server) await new Promise(resolve => server.close(resolve)); });
 
-// WebKit knows user-select only by its prefixed name.
 const bodyUserSelect = page => page.evaluate(() => { const style = getComputedStyle(document.body); return style.userSelect ?? style.webkitUserSelect; });
 
 async function openSidebar(t, { storageUnavailable = false } = {}) {
@@ -49,7 +48,6 @@ async function openSidebar(t, { storageUnavailable = false } = {}) {
       assert.deepEqual(errors.filter(message => !/Could not (restore panel size|save panel sizes).*blocked/s.test(message)), []);
     } else assert.deepEqual(errors, []);
   });
-  // Wait on the browser's storage events, without knowing database names or records.
   await page.addInitScript(() => {
     const pending = new Set();
     function track(target, done) {

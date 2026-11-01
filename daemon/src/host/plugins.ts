@@ -7,13 +7,10 @@ import { RwLock, errorText } from '../util/sync';
 
 const BUNDLED = Contributions.CATALOG.map(plugin => plugin.id);
 
-/** The bundled plugins of the last daemon that saved a configuration without a known list. */
 const KNOWN_WITHOUT_LIST = ['cost', 'review'];
 
-/** known: the bundled plugins that the daemon has offered. A bundled plugin that is not known is new and turns on once. */
 interface Configuration { enabled: string[]; previous: string[]; known: string[] }
 
-/** The plugin configuration that a restart saves. This daemon offered all of its bundled plugins. */
 export function restartConfiguration(enabled: string[], previous: string[]): Configuration {
   return { enabled, previous, known: [...BUNDLED] };
 }
@@ -44,7 +41,6 @@ function configuration(): Configuration | null {
   return { enabled: value.enabled, previous: value.previous, known: 'known' in value ? value.known : KNOWN_WITHOUT_LIST };
 }
 
-/** Turns on the bundled plugins that are new to the configuration, and saves it when that changes it. */
 function withNewPlugins(config: Configuration): Configuration {
   const added = BUNDLED.filter(id => !config.known.includes(id));
   if (!added.length) return config;
@@ -53,7 +49,6 @@ function withNewPlugins(config: Configuration): Configuration {
   return next;
 }
 
-/** Plugins only add Pi extensions, commands and settings, so a valid list of bundled plugins always starts. */
 export async function validateConfiguration(_executable: string, enabled: string[]): Promise<void> { validate(enabled); }
 
 interface State { enabled: string[]; revision: string; error: string | null }

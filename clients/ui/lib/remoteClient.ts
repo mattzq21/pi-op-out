@@ -34,7 +34,6 @@ export class RemoteClient {
   private heartbeatCleanup?: () => void;
   onDisconnect?: (message: string) => void;
   connectionIdentity() { return this.destination; }
-  /** True while the socket is open and the host accepted it. */
   isConnected() { return this.ready && this.socket?.readyState === WebSocket.OPEN; }
   async connect(connection: HostConnection): Promise<void> {
     const destination = validateHost(connection);
@@ -47,7 +46,6 @@ export class RemoteClient {
       let lastHeartbeat = Date.now();
       let pongs = 0;
       let settled = false;
-      /** Why the connection ends, when the host or this client gave a reason. */
       let closeReason: string | undefined;
       const settleReject = (error: Error) => { if (!settled) { settled = true; reject(error); } };
 
@@ -106,7 +104,6 @@ export class RemoteClient {
             this.socket = undefined; this.failPending(); socket.close();
             this.onDisconnect?.("Connection stopped responding. Reconnecting…");
           };
-          // Android can end the socket while the app is in the background without a close event. After a resume, a missing pong shows this fast.
           const resumeHeartbeat = () => {
             if (document.hidden || this.socket !== socket || socket.readyState !== WebSocket.OPEN) return;
             const answered = pongs;

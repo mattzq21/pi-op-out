@@ -5,7 +5,6 @@ import { homeDir } from './environment';
 import { ensurePrivateDir, setPrivateFilePermissions } from './private_fs';
 import { lockFile, type FileLock } from './util/flock';
 
-/** Changes the extension of the file name, the same as Rust Path::with_extension. */
 export function withExtension(path: string, extension: string): string {
   const name = basename(path);
   const dot = name.lastIndexOf('.');
@@ -17,7 +16,6 @@ export function settingsRevision(body: Buffer | undefined): string {
   return body ? createHash('sha256').update(body).digest('hex') : 'missing';
 }
 
-/** Longest wait for a settings lock. Another process that keeps a lock longer than this is reported, not waited for. */
 export const SETTINGS_LOCK_TIMEOUT_MS = 10_000;
 
 export async function lockSettings(path: string): Promise<FileLock> {
@@ -28,7 +26,6 @@ export async function lockSettings(path: string): Promise<FileLock> {
   return lock;
 }
 
-/** Locks the settings mutation file. Settings changes hold this lock. */
 export async function storageLock(path: string): Promise<FileLock> {
   const parent = dirname(path);
   ensurePrivateDir(parent);

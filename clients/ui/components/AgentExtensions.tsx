@@ -2,7 +2,6 @@ import { createSignal, Index, Show } from "solid-js";
 import { Plus, Puzzle, X } from "lucide-solid";
 import { IconButton } from "./IconButton";
 
-/** The piop extension paths of an agent: one editable row per path, and a row to add one. */
 export function AgentExtensions(props: { paths: string[]; onChange: (paths: string[]) => void }) {
   const [draft, setDraft] = createSignal("");
   const [error, setError] = createSignal<string>();

@@ -1,4 +1,3 @@
-/** The element whose scrollbar is under the mouse event, or undefined when the event is on content. */
 function scrollbarOwner(event: MouseEvent) {
   const element = event.target;
 
@@ -11,10 +10,6 @@ function scrollbarOwner(event: MouseEvent) {
   return vertical || horizontal ? element : undefined;
 }
 
-/**
- * WebKitGTK forgets a dragged scrollbar when another mouse button is pressed during the drag. The release then does not reach the scrollbar,
- * so its thumb follows the pointer over it until the next click on it. A new scrollbar has no drag, so the scrollbar is made again.
- */
 export function installScrollbarRelease() {
   let dragged: HTMLElement | undefined;
 

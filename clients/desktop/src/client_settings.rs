@@ -4,7 +4,6 @@ use crate::settings_concurrency::{lock_settings, settings_revision};
 #[path = "settings_records.rs"]
 pub(crate) mod records;
 
-/// Sent to all windows after a save. The payload is the saved client settings object.
 pub(crate) const CLIENT_SETTINGS_CHANGED: &str = "pi://client-settings-changed";
 
 #[derive(Clone, Deserialize, Serialize)]

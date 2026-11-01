@@ -4,7 +4,6 @@ import { Portal } from "solid-js/web";
 import { debugFeatures, type DebugFeature } from "../lib/debugFeatures";
 import { IconButton } from "./IconButton";
 
-/** The debug mode button. A right click opens a menu that turns each debug feature on or off. */
 export function DebugModeButton(props: { debugMode: boolean; featuresOff: readonly string[]; disabled: boolean; onToggle: () => void; onToggleFeature: (feature: DebugFeature) => void; children: JSXElement }) {
   const [menu, setMenu] = createSignal<{ x: number; y: number }>();
   let menuElement: HTMLDivElement | undefined;

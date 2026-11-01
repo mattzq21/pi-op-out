@@ -5,7 +5,6 @@ import { lockGate } from './lock_gate';
 import type { Host } from './controller';
 import type { Session } from './session';
 
-/** Attaches a view to a conversation. The owning client's view starts the session when needed; other views attach read-only. */
 export async function attach(host: Host, packet: any): Promise<any> {
   const attachment = new Attachment(host, packet);
   if (flag(attachment.packet.presence, 'readOnly')) return attachment.readonly();
@@ -32,7 +31,6 @@ class Attachment {
   readonly spec: LaunchSpec;
   readonly identity: string;
   readonly path: string | null;
-  /** The record this attachment keeps in host.attachments; remember() replaces the original packet with a copy. */
   private stored: any;
 
   constructor(private host: Host, readonly packet: any) {

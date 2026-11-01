@@ -9,7 +9,6 @@ const [activeId, setActiveId] = createSignal('shell');
 const [drafts, setDrafts] = createSignal<Record<string, string>>({ second: 'draft two' });
 const [output, setOutput] = createSignal('demo$ ');
 const pending: Array<(accepted: boolean) => void> = [];
-// Tests play shell output with this, for example a bash history redraw.
 (window as unknown as { emitShell: (data: string) => void }).emitShell = data => setOutput(text => text + data);
 
 render(() => <>

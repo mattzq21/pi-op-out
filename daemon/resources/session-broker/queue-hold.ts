@@ -1,16 +1,10 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 
-/**
- * Core: the user's hold on the conversation queue. The daemon owns the hold and saves it.
- * While held, extensions must not send queued work on their own. When the hold ends, they may start again.
- */
 export interface QueueHold {
   held(): boolean;
-  /** Calls handler each time the hold ends. Returns the function that removes the handler. */
   onRelease(handler: (ctx: ExtensionContext) => void): () => void;
 }
 
-/** Extensions emit this request on "piop:session:queue-hold" to get the core QueueHold. */
 export interface QueueHoldRequest { hold?: QueueHold }
 
 declare module "@earendil-works/pi-coding-agent" {
@@ -20,7 +14,6 @@ declare module "@earendil-works/pi-coding-agent" {
   }
 }
 
-/** The core QueueHold. Throws when the core session broker is not loaded, so callers never send work by mistake. */
 export function queueHold(pi: ExtensionAPI): QueueHold {
   const request: QueueHoldRequest = {};
   pi.events.emit("piop:session:queue-hold", request);
@@ -29,7 +22,6 @@ export function queueHold(pi: ExtensionAPI): QueueHold {
   return request.hold;
 }
 
-/** The daemon gives the hold in PIOP_QUEUE_HELD when Pi starts, and sends queue_hold requests when it changes. */
 export function registerQueueHold(pi: ExtensionAPI) {
   let held = process.env.PIOP_QUEUE_HELD === "1";
   const handlers = new Set<(ctx: ExtensionContext) => void>();

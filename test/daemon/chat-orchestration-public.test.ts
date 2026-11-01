@@ -15,7 +15,6 @@ const toolText = (messages: any[], tool: string) => {
   return call && text(messages.find(message => message.role === 'tool' && message.tool_call_id === call.id));
 };
 const toolResult = (messages: any[], tool: string) => JSON.parse(toolText(messages, tool));
-/** The answer in an await_peers result. */
 const peerAnswer = (result: string) => result.match(/^<peer_message>\nPeer [^\n]+:\n([\s\S]*)\n<\/peer_message>$/)?.[1];
 
 test.concurrent('a chat can message another chat, wait for its answer and read it', async () => {
@@ -38,9 +37,7 @@ test.concurrent('a chat can message another chat, wait for its answer and read i
   expect(toolResult(seen, 'message_peer')).toMatchObject({ sessionId: worker.sessionId, accepted: true });
   expect(toolText(seen, 'await_peers')).toBe('<peer_message>\nPeer ' + worker.sessionId + ':\nWorker status: green\n</peer_message>');
   const delivered = JSON.parse(toolResult(seen, 'read_peer').items[0].text);
-  // The chat view shows the sender from sourceHostId and sourceSessionId.
   expect(delivered).toMatchObject({ sourceSessionId: coordinator.sessionId, sourceHostId: 'local', message: 'What is the build status?' });
-  // The worker's model sees only a <peer_message> tag with the sender's chat name and the text.
   const workerSaw = agents.model.requests.findLast(request => startedWith(request, 'You are the worker')).messages.at(-1);
   expect([workerSaw.role, text(workerSaw)]).toEqual(['user', '<peer_message>\nPeer ' + (coordinator.name ?? coordinator.sessionId) + ':\nWhat is the build status?\n</peer_message>']);
 }, 120000);
@@ -91,7 +88,6 @@ test.concurrent('a message from another chat ends an await_peers wait, and the r
   try {
     await coordinator.command({ type: 'prompt', message: 'Wait on the busy chat' });
     await started;
-    // Let the wait begin before the message arrives.
     await Bun.sleep(1000);
     const sender = await agents.rootChat();
     agents.scripts.set('Tell the coordinator', messages => called(messages, 'message_peer') ? { text: 'Sent.' } : { tool: 'message_peer', arguments: { peerId: coordinator.sessionId, message: 'Status?' } });
@@ -159,7 +155,6 @@ test.concurrent('branchoff_peer starts a peer in a new worktree with only the co
   writeFileSync(join(coordinator.cwd, 'README.md'), 'uncommitted\n');
   writeFileSync(join(coordinator.cwd, 'staged.txt'), 'staged\n');
   execFileSync('git', ['-C', coordinator.cwd, 'add', 'staged.txt']);
-  // The coordinator commits its files when it answers, so the commit to branch from is the one before this turn.
   const baseCommit = execFileSync('git', ['-C', coordinator.cwd, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
   writeFileSync(join(coordinator.cwd, 'untracked.txt'), 'untracked\n');
   await coordinator.command({ type: 'prompt', message: 'Now branch off' });
@@ -172,13 +167,11 @@ test.concurrent('branchoff_peer starts a peer in a new worktree with only the co
   expect(session.forkSourceId).toBe(coordinator.sessionId);
   expect(git(session.cwd, 'rev-parse', 'HEAD')).toBe(baseCommit);
   expect(git(session.cwd, 'symbolic-ref', '--short', 'HEAD')).not.toBe(git(coordinator.cwd, 'symbolic-ref', '--short', 'HEAD'));
-  // Uncommitted, staged and untracked files stay in the source folder.
   expect(readFileSync(join(session.cwd, 'README.md'), 'utf8')).toBe('start\n');
   expect(existsSync(join(session.cwd, 'staged.txt'))).toBe(false);
   expect(existsSync(join(session.cwd, 'untracked.txt'))).toBe(false);
   expect(git(session.cwd, 'status', '--porcelain')).toBe('');
   expect(readFileSync(join(coordinator.cwd, 'untracked.txt'), 'utf8')).toBe('untracked\n');
-  // The peer's model sees the history through the last finished answer, then the message.
   for (const deadline = Date.now() + 60000; !agents.model.requests.some(request => text(request.messages.at(-1)).includes('Continue in the branch')) && Date.now() < deadline;) await Bun.sleep(100);
   const peerSaw = agents.model.requests.find(request => text(request.messages.at(-1)).includes('Continue in the branch')).messages.filter((message: any) => !['system', 'developer'].includes(message.role)).map(text);
   expect(peerSaw).toEqual(['Branch me', 'Base answer.', '<peer_message>\nPeer ' + (coordinator.name ?? coordinator.sessionId) + ':\nContinue in the branch\n</peer_message>']);
@@ -191,7 +184,6 @@ test.concurrent('branchoff_peer removes the peer, its worktree and its branch wh
   agents.scripts.set('Fail a branch', messages => {
     const last = text(messages.at(-1));
     if (last === 'Fail a branch') return { text: 'Base answer.' };
-    // A message of only spaces passes the tool's schema but is refused by the daemon before delivery.
     return called(messages, 'branchoff_peer') ? { text: 'Told: ' + last } : { tool: 'branchoff_peer', arguments: { message: '   ' } };
   });
   await coordinator.command({ type: 'prompt', message: 'Fail a branch' });
@@ -200,7 +192,6 @@ test.concurrent('branchoff_peer removes the peer, its worktree and its branch wh
   const told = text((await coordinator.until(history => text(history.at(-1)).startsWith('Told: '))).at(-1));
   expect(told).toStartWith('Told: The peer was not created');
   expect({ worktrees: git('worktree', 'list'), branches: git('branch', '--list') }).toEqual(before);
-  // Other tests make chats at the same time, so only branches of this chat count.
   expect((await agents.daemon.invoke('list_sessions')).filter((item: any) => item.forkSourceId === coordinator.sessionId)).toEqual([]);
 }, 120000);
 
@@ -237,7 +228,6 @@ test.concurrent('create_peer starts the peer in another registered project and r
   expect(results.slice(1)).toEqual(['Home is your own project; omit project to use it', 'Piop has no project named Nowhere']);
 }, 120000);
 
-/** A promise that the test settles later, to keep an agent's model reply waiting. */
 const held = <T>() => { let release!: (value: T) => void; const promise = new Promise<T>(resolve => { release = resolve; }); return { promise, release }; };
 
 test.concurrent('a chat can stop another chat\'s running work, which keeps its history and stays usable', async () => {
@@ -325,7 +315,6 @@ test('list_agent_profiles follows the tool groups and lists the descriptions of 
   await setTools(['read', 'create_peer']);
   const peers = await listed('List peer agents', {});
   expect(peers.tool.parameters.properties).toEqual({});
-  // helper is not usable as a peer.
   expect(JSON.parse(peers.answer).map((profile: any) => profile.name)).not.toContain('helper');
 
   await setTools(['read', 'spawn_subagents', 'create_peer']);

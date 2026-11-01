@@ -19,7 +19,6 @@ export async function resolveAgentProfile(pi: ExtensionAPI, purpose: AgentStartP
   return profile.state;
 }
 
-/** cwd: the new chat's folder, the caller's by default. */
 export async function createProfileSession(pi: ExtensionAPI, ctx: ExtensionContext, title: string, agent?: string, cwd = ctx.cwd) {
   const header = ctx.sessionManager.getHeader();
 
@@ -39,14 +38,11 @@ export async function createProfileSession(pi: ExtensionAPI, ctx: ExtensionConte
   return { peerId: sessionId, hostId: currentHost(), sessionPath, agent: state.active };
 }
 
-/** The tools that make a tool group on for an agent. One tool of a group is enough. */
 export const SUBAGENT_TOOLS = ["spawn_subagents", "message_subagent", "stop_subagent", "list_subagents", "await_subagents"];
 export const PEER_TOOLS = ["create_peer", "branchoff_peer", "message_peer", "stop_peer", "list_peers", "read_peer", "await_peers"];
 
-/** Which agents list_agent_profiles lists: for one start purpose, or for both, chosen by an argument. */
 export type AgentProfilesMode = AgentStartPurpose | "both";
 
-/** The agents the current agent can start for purpose. */
 export function startableProfiles(pi: ExtensionAPI, purpose: AgentStartPurpose) {
   const catalog: AgentProfilesRequest = { purpose };
   pi.events.emit("piop:agents:profiles", catalog);
@@ -56,7 +52,6 @@ export function startableProfiles(pi: ExtensionAPI, purpose: AgentStartPurpose) 
   return catalog as AgentProfilesRequest & { profiles: NonNullable<AgentProfilesRequest["profiles"]> };
 }
 
-/** The agent to start for purpose when the caller names none: the only startable agent, or undefined for the caller's own. */
 export function soleProfile(pi: ExtensionAPI, purpose: AgentStartPurpose) {
   const catalog = startableProfiles(pi, purpose);
   const only = catalog.profiles.length === 1 ? catalog.profiles[0].name : undefined;
@@ -87,9 +82,7 @@ function profilesTool(pi: ExtensionAPI, mode: AgentProfilesMode) {
   };
 }
 
-/** Keeps list_agent_profiles in the shape for the agent's tool groups, and returns whether the agent has it. */
 export function agentProfilesTool(pi: ExtensionAPI) {
-  // Registered at load, so the tool exists before an agent's tools are checked.
   let registered: AgentProfilesMode = "both";
   pi.registerTool(profilesTool(pi, registered));
 

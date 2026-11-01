@@ -24,7 +24,6 @@ type AppEventsContext = {
   terminalExited: (terminalId: string) => void;
   addNotice: (notice: { title: string; message: string; }) => void;
   activeTransportRef: RefObject<NativeTransport>;
-  /** Opens the auxiliary chat that an extension request of the main chat names. */
   openAuxiliaryRequest: (owner: NativeTransport, request: { id: string; placeholder?: string }) => void;
   activeHostIdRef: RefObject<string>;
   setExtensionOwner: Dispatch<StateUpdate<NativeTransport>>;

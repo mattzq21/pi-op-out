@@ -21,7 +21,6 @@ test('toast history keeps the newest 10 notices, newest first, after a reload an
   const newest = Array.from({ length: 10 }, (_, index) => 'Notice ' + (12 - index));
   await first.waitForFunction(() => document.querySelectorAll('.toast-history-entry').length === 10);
   assert.deepEqual(await shown(first), newest);
-  // The other window hears about the saved notices without a reload.
   await second.waitForFunction(() => document.querySelector('.toast-history-entry p')?.textContent === 'Notice 12');
   assert.deepEqual(await shown(second), newest);
 

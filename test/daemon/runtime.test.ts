@@ -7,13 +7,11 @@ let daemon: TestDaemon;
 
 beforeAll(async () => {
   daemon = await startDaemon();
-  // Interactive bash reads ~/.bashrc; a test controls its terminal with a script in the terminal directory.
   writeFileSync(join(daemon.home, '.bashrc'), '[ -f ./.terminal-script ] && exec sh ./.terminal-script\n');
 }, 60_000);
 afterAll(() => daemon?.stop());
 
 let counter = 0;
-/** A directory whose terminal runs the given shell script instead of an interactive prompt. */
 function terminalDirectory(script: string, name = 'terminal'): string {
   const directory = join(temporaryDirectory('piop-terminal-'), name);
   mkdirSync(directory, { recursive: true });
@@ -60,7 +58,6 @@ test('input and a resize reach the shell, and the size starts at least 1 by 1', 
 });
 
 test('UTF-8 split across output reads stays whole and invalid or unfinished bytes become replacement characters', async () => {
-  // Each part ends inside a character and the shell waits for a line before the next part, so each part is a separate read.
   const cwd = terminalDirectory([
     'stty -echo',
     "printf 'A\\360'; read x",
@@ -85,11 +82,9 @@ test('large output across many chunks arrives complete', async () => {
   const id = await start(daemon, cwd);
   await exited(daemon, id);
   expect(terminalEvents(daemon, id, from).filter(packet => packet.type === 'terminal_output').length).toBeGreaterThan(2);
-  // The terminal turns each newline into a carriage return and newline.
   expect(output(daemon, id, from)).toBe('\u001b[8;24;80t' + 'line λ 😀\r\n'.repeat(30000));
 });
 
-/** The shell writes its PID before READY, so read it once READY has arrived. */
 const pidOf = (directory: string) => Number(readFileSync(join(directory, 'pid'), 'utf8'));
 const alive = (pid: number) => { try { process.kill(pid, 0); return true; } catch { return false; } };
 const SLEEPER = "echo $$ > pid; printf READY; exec sleep 60\n";
@@ -205,7 +200,6 @@ test('input messages reach the shell in order with control bytes intact', async 
   await daemon.invoke('close_terminal', { terminalId: id });
 });
 
-/** A fake Codex app server: it answers each request with the saved body for its method and the request's id. */
 const FAKE_CODEX = `#!/bin/sh
 while IFS= read -r line; do
   id=$(printf '%s' "$line" | sed -n 's/.*"id":\\([0-9]*\\).*/\\1/p')
@@ -293,7 +287,6 @@ test('a remote machine starts piopd from a home, absolute or relative executable
       symlinkSync(executable, link);
       settings.push({ id, name: id, target: id, piPath });
     }
-    // useRemotes fails unless each machine answers through its configured executable.
     await useRemotes(daemon, settings);
     for (const machine of machines) expect(await daemon.invoke('home_directory', { hostId: machine.id })).toBe(realpathSync(machine.home));
   } finally {
@@ -328,12 +321,10 @@ test('a remote machine with the plain pi executable starts piopd found on its PA
   const harnessSsh = readFileSync(sshPath, 'utf8');
   const server = await remoteMachine(daemon, 'plain', 'Plain');
   try {
-    // The remote login sees only its own ~/.local/bin and system programs, so no piopd of this user can start.
     const bin = join(server.home, '.local/bin');
     mkdirSync(bin, { recursive: true });
     symlinkSync(await daemonExecutable(), join(bin, 'piopd'));
     symlinkSync(process.execPath, join(bin, 'bun'));
-    // The daemon validates extensions with the Pi package and Node.js that this machine has installed.
     for (const program of ['pi', 'node']) {
       const path = Bun.which(program);
       if (!path) throw new Error(program + ' is needed on PATH for the remote machine fixture');
@@ -352,7 +343,6 @@ test('a remote machine with the plain pi executable starts piopd found on its PA
   }
 });
 
-/** The number of running processes whose command line contains marker. */
 const running = (marker: string) => readdirSync('/proc').filter(name => /^\d+$/.test(name)).filter(pid => {
   try { return readFileSync(`/proc/${pid}/cmdline`, 'utf8').split('\0').join(' ').includes(marker); } catch { return false; }
 }).length;

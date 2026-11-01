@@ -12,22 +12,17 @@ import { isRuntimeEvent, parseRuntimeEvent, runtimeEventResult, type RuntimeEven
 export interface Request { command: any; requestType: string; snapshotState: any }
 
 export interface WorkerObserver {
-  /** Settles when the event is handled. The worker stops reading Pi's output while too many events wait. */
   event(event: any): Promise<void>;
-  /** Settles when Piop handled an event that Pi waits on. A rejection goes back to Pi, which reports it as the hook's error. */
-  /** Handles an event that Pi waits on. The result goes back to Pi as the answer's data. */
   runtimeEvent(event: RuntimeEvent): Promise<unknown>;
   response(event: any, request: Request): any;
   stderr(line: string): void;
   diagnostic(line: string): void;
   finished(): void;
-  /** status describes how Pi ended, for example "exit code 1" or "signal SIGKILL"; null when it has not exited. */
   disconnectError(status: string | null): string;
 }
 
 interface Pending extends Request { resolve(value: any): void; reject(error: Error): void }
 
-/** Events that may wait for the session before the worker stops reading Pi's output, by count and by size. */
 const BACKLOG_EVENTS = 1000;
 const BACKLOG_BYTES = 16 * 1024 * 1024;
 
@@ -69,7 +64,6 @@ export class RuntimeWorker {
 
   static spawn(spec: LaunchSpec, identity: string, timeout: number, observer: WorkerObserver, home: string): RuntimeWorker {
     const command = launchCommand(spec, identity, home);
-    // Pi starts tools in new process sessions, so they leave its process tree when Pi dies. The tag finds them after that.
     const tag = newProcessTag();
     const child = spawn(command.program, command.args, {
       cwd: spec.cwd ? spec.cwd : undefined,
@@ -129,7 +123,6 @@ export class RuntimeWorker {
     try { request.resolve(this.observer.response(event, request)); } catch (error: any) { request.reject(error instanceof Error ? error : new Error(String(error))); }
   }
 
-  /** Answers an event that Pi waits on, after Piop handled it. A malformed event gets its error back, so Pi reports it. */
   private async answerRuntimeEvent(value: any): Promise<void> {
     let event: RuntimeEvent;
     try { event = parseRuntimeEvent(value); } catch (error: any) {
@@ -144,7 +137,6 @@ export class RuntimeWorker {
     await this.write(runtimeEventResult(event.id, failure, data ?? undefined)).catch(error => this.observer.diagnostic('Could not answer Pi runtime event ' + event.name + ': ' + error.message));
   }
 
-  /** Pauses reading Pi's output while the backlog is over its limit, and resumes at half of it. */
   private track(handled: Promise<void>, size: number): void {
     this.backlog += 1;
     this.backlogBytes += size;
@@ -162,7 +154,6 @@ export class RuntimeWorker {
     });
   }
 
-  /** Sends SIGKILL when hard is true; otherwise SIGTERM, then SIGKILL after five seconds. */
   private signal(hard: boolean): void {
     this.exited = true;
     if (this.child.pid === undefined) return;
@@ -190,7 +181,6 @@ export class RuntimeWorker {
     }, 5000);
   }
 
-  /** Pi's process tree, and the processes it started that have since left that tree. */
   private processes(): ReturnType<typeof descendantProcesses> {
     return [...descendantProcesses(this.child.pid!, this.child.pid!), ...taggedProcesses(this.tag)];
   }
@@ -210,8 +200,6 @@ export class RuntimeWorker {
     const wire = wireCommand(command, id);
     const abort = kind(command) === 'abort';
     const timeout = abort ? 5000 : this.timeout;
-    // After a timed-out prompt, Pi may still accept it. A retry would then add it twice, and the sender could not know
-    // the outcome, so Pi stops; the next start reconciles the queue with the saved transcript.
     const stopOnTimeout = abort || ['queue_prompt', 'prompt', 'compact'].includes(requestType);
     let entry!: Pending;
     const reply = new Promise<any>((resolve, reject) => { entry = { command, requestType, snapshotState, resolve, reject }; });
@@ -250,7 +238,6 @@ export class RuntimeWorker {
     await new Promise<void>(resolve => { if (this.closedFlag) resolve(); else this.closedWaiters.push(resolve); });
   }
 
-  /** Resolves when Pi can no longer act on a request: at once while it runs, or once a stopping Pi has exited. */
   async settled(): Promise<void> {
     if (!this.exited || this.closedFlag) return;
     await new Promise<void>(resolve => { if (this.closedFlag) resolve(); else this.closedWaiters.push(resolve); });

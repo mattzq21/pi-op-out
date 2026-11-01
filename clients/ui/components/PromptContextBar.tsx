@@ -33,7 +33,6 @@ function ContextCopyButton(props: { content: () => string; label?: string; class
   return <IconButton class={props.class ?? "prompt-context-copy"} label={state() === "copied" ? "Copied" : state() === "error" ? "Copy failed" : props.label ?? "Copy tab content"} onClick={copy}>{state() === "copied" ? <Check size={14} /> : state() === "error" ? <CircleAlert size={14} /> : <Copy size={14} />}</IconButton>;
 }
 
-/** The copy button of one item: a tool with its JSON, an instruction file or a skill. */
 function ItemCopy(props: { name?: string; content: () => string }) {
   return <ContextCopyButton class="prompt-context-copy prompt-context-item-copy" label={`Copy ${props.name ?? "item"}`} content={props.content} />;
 }

@@ -34,7 +34,6 @@ type Context = {
 
 const sessionStatsSchema = z.object({ contextUsage: agentStateSchema.shape["contextUsage"].nullish() });
 
-/** Agent state with the context size, which `get_state` does not carry. */
 async function loadState(transport: NativeTransport): Promise<AgentState> {
   const [state, stats] = await Promise.all([transport.command({ type: "get_state" }, agentStateSchema), transport.command({ type: "get_session_stats" }, sessionStatsSchema)]);
 
@@ -42,7 +41,6 @@ async function loadState(transport: NativeTransport): Promise<AgentState> {
 }
 
 export function createBranchConversation({ transport, activeConversationKeyRef, branchPending, state, sessions, runtimePool, rekeyConversationUi, activeTransportRef, setActiveCwd, setState, setMessages, updateConnected, configureRuntime, transportConversationKeys, activateConversationKey, syncSessionIndex, requestComposerFocus }: Context) {
-  /** "branch" creates a worktree; "fork" keeps the folder; "copy" also transfers the draft for Fork and forget. */
   return async (message: ChatMessage, mode: "branch" | "fork" | "copy" = "branch") => {
     const ownerTransport = transport; const previousKey = activeConversationKeyRef.current;
     const entryId = await resolveMessageEntry(ownerTransport, message);

@@ -11,11 +11,6 @@ import * as Records from '../../daemon/src/chat_worktree_records';
 import * as Lifecycle from '../../daemon/src/chat_worktree_lifecycle';
 import { getProjectRepository, rememberProjectRepository } from '../../daemon/src/project_repositories';
 
-/*
- * ADR 0006 archive, restore and deletion of chat worktrees through the real daemon, with real Git. Crash states are made
- * by running single lifecycle steps in this process while the daemon is stopped; the next daemon start must recover them.
- */
-
 const daemons: TestDaemon[] = [];
 afterEach(async () => { for (const daemon of daemons.splice(0)) await daemon.stop(); }, 60000);
 
@@ -35,19 +30,16 @@ function publish(home: string, cwd: string, content = 'Worktree chat'): { id: st
   }));
 }
 
-/** Runs fn with HOME set to home, as the daemon of that home sees it. */
 async function asHome<T>(home: string, fn: () => Promise<T> | T): Promise<T> {
   const saved = process.env.HOME;
   process.env.HOME = home;
   try { return await fn(); } finally { process.env.HOME = saved; }
 }
 
-/** The first n hex digits of the chat ID: the worktree folder and branch name Piop tries first. */
 const short = (chatId: string, n = 4) => chatId.replaceAll('-', '').slice(0, n);
 
 interface Scene { daemon: TestDaemon; home: string; profile: string; repo: string; chat: { id: string; path: string }; worktree: string }
 
-/** A daemon with a project repository and one chat that works in a Piop worktree, created the way branching does. */
 async function scene(): Promise<Scene> {
   const daemon = await start();
   const home = daemon.home;

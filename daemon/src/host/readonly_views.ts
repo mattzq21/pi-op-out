@@ -5,12 +5,10 @@ import { historyOutline, olderHistory, recentHistory, turnWork } from './history
 import { ToolPayload } from './tool_payload';
 import type { Host } from './controller';
 
-/** A view that reads a conversation that another client owns. */
 export interface ReadonlyView { id: string; path: string | null }
 
 const READ_COMMANDS = ['get_snapshot', 'get_entries', 'get_state', 'get_session_revision', 'get_tool_payload', 'get_session_stats', 'get_older_history', 'get_history_outline', 'get_turn_work'];
 
-/** Answers a read-only view: from the running session when there is one, or else from the saved conversation. */
 export async function readonlyCommand(host: Host, packet: any, target: ReadonlyView): Promise<any> {
   const runtime = text(packet, 'runtimeId');
   if (kind(packet) === 'detach') return detachReadonly(host, runtime, target);
@@ -32,7 +30,6 @@ export async function readonlyCommand(host: Host, packet: any, target: ReadonlyV
   return readSavedConversation(host, target, command);
 }
 
-/** Tells read-only viewers of a conversation that it was deleted or archived. */
 export function announceRemoved(host: Host, id: string): void {
   let path: string | null | undefined;
   for (const view of host.readonlyMap.values()) if (view.id === id) { path = view.path; break; }

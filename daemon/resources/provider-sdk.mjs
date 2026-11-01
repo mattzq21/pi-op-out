@@ -25,7 +25,7 @@ async function resolveExecutable() {
   let entry;
 
   for (const candidate of candidates) {
-    try { entry = await realpath(candidate); break; } catch { }
+    try { entry = await realpath(candidate); break; } catch {}
   }
 
   if (!entry) throw new Error('Pi is unavailable on this host. Check its Pi executable setting.');
@@ -40,7 +40,7 @@ async function loadRuntime() {
   while (directory !== dirname(directory)) {
     let metadata;
 
-    try { metadata = JSON.parse(await readFile(join(directory, 'package.json'), 'utf8')); } catch { }
+    try { metadata = JSON.parse(await readFile(join(directory, 'package.json'), 'utf8')); } catch {}
 
     if (['@earendil-works/pi-coding-agent', '@mariozechner/pi-coding-agent'].includes(metadata?.name)) {
       const sdk = await import(pathToFileURL(join(directory, 'dist/core/model-runtime.js')).href).catch(() => undefined);
@@ -105,7 +105,7 @@ function providerModelCopy(model) {
     const copy = JSON.parse(JSON.stringify(model));
 
     if (providerModelValid(copy)) return copy;
-  } catch { }
+  } catch {}
 }
 
 function providerModelGroups(entries, diagnostics) {
@@ -166,7 +166,7 @@ function providerModels(loaded, providers) {
   const { previous, ids } = providerModelPrevious(loaded.runtime, providers);
   let entries;
 
-  try { entries = loaded.runtime.getModels(); } catch { }
+  try { entries = loaded.runtime.getModels(); } catch {}
 
   if (!Array.isArray(entries)) {
     const models = [...previous.values()].flat();
@@ -193,7 +193,7 @@ async function prepareBrowserReturn(notice, login) {
     const server = createServer((request, response) => {
       let returned;
 
-      try { returned = new URL(request.url || '/', destination.origin); } catch { }
+      try { returned = new URL(request.url || '/', destination.origin); } catch {}
       const valid = returned !== undefined && request.method === 'GET' && returned.origin === destination.origin && returned.pathname === destination.pathname
         && returned.searchParams.get('state') === expectedState
         && (returned.searchParams.has('code') || returned.searchParams.has('error'));
@@ -385,17 +385,12 @@ async function handleProviderRequest(loaded, packet) {
   throw new Error('Unknown provider SDK operation');
 }
 
-/** The skills a new session offers. Pi loads them as it does for a session that starts with these skill paths. */
 function sessionSkills(loaded, skillPaths) {
   if (!Array.isArray(skillPaths) || skillPaths.some(path => typeof path !== 'string')) throw new Error('Invalid skill paths');
 
   return skillPaths.length ? loaded.loadSkills({ cwd: homedir(), agentDir: loaded.agentDir, skillPaths, includeDefaults: false }).skills.map(skill => ({ name: skill.name, description: skill.description })) : [];
 }
 
-/**
- * The model and thinking level that a new Pi session on this host starts with, before Piop's --thinking option and before Pi limits the level to what the model supports.
- * Follows Pi's own choice: the enabled models scope first, then the saved default, then the provider defaults. The model is "provider/id", or null when no model is available.
- */
 async function initialSelection(loaded) {
   await loaded.settings.reload();
   const settings = loaded.settings;
@@ -418,7 +413,6 @@ async function initialSelection(loaded) {
   return { model: model ? model.provider + '/' + model.id : null, thinkingLevel };
 }
 
-/** The SDK records configuration and provider errors during refresh and still resolves, so they are read back here. */
 async function refreshProviders(runtime) {
   const result = await runtime.refresh({ allowNetwork: false }).catch(() => { throw new Error('Could not refresh providers on this host. Check Pi configuration.'); });
   const diagnostics = [];

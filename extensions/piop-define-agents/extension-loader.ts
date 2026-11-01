@@ -20,11 +20,6 @@ type Command = Parameters<ExtensionAPI["registerCommand"]>[1];
 
 type ProviderConfig = Extract<Parameters<ExtensionAPI["registerProvider"]>, [string, unknown]>[1];
 
-/**
- * The provider registration that was in place before a group changed it, and the changes the group made.
- * "native" is the provider object the group registered, if any. "values" are the config values the group set.
- * "restored" is true after the earlier registration was put back.
- */
 type ProviderOverride = { before?: ProviderConfig | Provider; native?: Provider; values: Record<string, unknown>; restored?: boolean };
 
 const isNativeProvider = (value: ProviderConfig | Provider | undefined): value is Provider => value !== undefined && "id" in value && typeof value.id === "string" && "auth" in value;
@@ -105,14 +100,9 @@ export function agentExtensions(pi: ExtensionAPI, baseDirectory: string, importe
   const handlerExtensions = new WeakMap<object, string>();
   let registry: ExtensionContext["modelRegistry"] | undefined;
   let latest: ExtensionContext | undefined;
-  /** Pi replaces the session model object after provider changes without an event; tell model listeners, such as the context cap. */
   const modelsChanged = () => { if (latest) pi.events.emit("piop:models-refreshed", { ctx: latest }); };
   const registeredProvider = (name: string): ProviderConfig | Provider | undefined => registry?.getRegisteredNativeProvider?.(name) ?? registry?.getRegisteredProviderConfig?.(name);
 
-  /**
-   * Puts back the provider that was in place before the group registered its own.
-   * Pi merges configs, so a value that another extension set later stays. A value the group set goes back to its earlier value.
-   */
   const restoreProvider = (name: string, override: ProviderOverride) => {
     if (override.restored) return;
     restoreRegistration(name, override);
@@ -153,7 +143,6 @@ export function agentExtensions(pi: ExtensionAPI, baseDirectory: string, importe
 
     if (isNativeProvider(override.before)) { pi.registerProvider(override.before); return; }
 
-    // Pi requires "api" when "streamSimple" is set. A later "streamSimple" can depend on the "api" that the group set.
     const tries = [result];
 
     if (result.streamSimple !== undefined && result.api === undefined && now.api !== undefined) tries.push({ ...result, api: now.api });
@@ -737,10 +726,6 @@ export function agentExtensions(pi: ExtensionAPI, baseDirectory: string, importe
     }
   }
 
-  /**
-   * Runs the shutdown handlers of the active group, then removes its providers and listeners.
-   * With no event, the group is also unloaded for a reload and its tools are hidden.
-   */
   async function deactivate(ctx: ExtensionContext, event?: SDK.SessionShutdownEvent) {
     const group = current;
 

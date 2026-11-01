@@ -10,7 +10,6 @@ const ALL = ['cost', 'review', 'web-search', 'btw'];
 const REVIEW = '__pi_desktop_auxiliary__';
 let runtimes = 0;
 
-/** Restarts the daemon with the given plugins, as Settings → Plugins does, and returns a new connection to it. */
 async function restartWith(client: Client, enabled: string[]): Promise<Client> {
   const status = await client.invoke('plugin_status', { hostId: 'local' });
   const { restartId } = await client.invoke('restart_daemon', { hostId: 'local', enabled, revision: status.revision, closeTerminals: true });
@@ -26,7 +25,6 @@ async function restartWith(client: Client, enabled: string[]): Promise<Client> {
   throw new Error('The daemon restart never ended');
 }
 
-/** Opens a chat in a shown window over client: a new one, or the saved one with sessionId. */
 async function openChat(client: Client, saved?: { sessionId: string; cwd: string }) {
   const chat = saved ?? await client.invoke('create_temporary_chat', { hostId: 'local' });
   const runtimeId = 'plugins-' + ++runtimes;
@@ -36,9 +34,7 @@ async function openChat(client: Client, saved?: { sessionId: string; cwd: string
   const failure = (value: any) => command(value).then(() => 'sent', (error: Error) => error.message);
   const commands = async () => (await command({ type: 'get_commands' })).commands.map((item: any) => item.name);
   const notice = (match: (message: string) => boolean) => client.waitEvent('pi://event', payload => payload.runtimeId === runtimeId && payload.event?.method === 'notify' && match(payload.event.message), 30_000);
-  /** The next review this chat opens that matches. */
   const review = (match: (review: any) => boolean) => client.waitEvent('pi://event', payload => payload.runtimeId === runtimeId && payload.event?.title === REVIEW && match(JSON.parse(payload.event.placeholder)), 30_000).then(payload => JSON.parse(payload.event.placeholder));
-  /** The cost limit this chat shows above the composer. */
   const costStatus = (match: (text: string) => boolean) => client.waitEvent('pi://event', payload => payload.runtimeId === runtimeId && payload.event?.method === 'setStatus' && payload.event.statusKey === 'piop-session-cost' && typeof payload.event.statusText === 'string' && match(payload.event.statusText), 30_000);
   const costStatuses = () => client.events.filter(event => event.payload?.runtimeId === runtimeId && event.payload.event?.statusKey === 'piop-session-cost');
   const owned = async () => (await commands()).filter((name: string) => ['cost', 'review'].includes(name)).sort();
@@ -52,7 +48,6 @@ test('cost and review are plugins: enabled by default, gone with an explicit err
   agents.scripts.set('Plugin chat', () => ({ text: 'Plugin chat ready.' }));
   let client: Client = agents.daemon;
   expect(await client.invoke('plugin_status', { hostId: 'local' })).toMatchObject({ enabled: ALL, configured: ALL, error: null });
-  // No chat ran on this host yet, so the catalog starts a short Pi run for the command hints.
   const fresh = await client.invoke('provider_auth', { hostId: 'local', request: { action: 'draft_catalog', reload: true } });
   expect(fresh.commandDetails.find((item: any) => item.name === 'review').options).toEqual([{ value: '', label: '[scope]', description: expect.stringContaining('limits the review') }]);
   expect(await catalog(client)).toEqual(expect.arrayContaining(['cost', 'review']));
@@ -85,7 +80,6 @@ test('cost and review are plugins: enabled by default, gone with an explicit err
   for (const words of ['/cost 3', '/review after.ts']) expect(modelSaw(words)).toBe(false);
   expect(disabled.costStatuses()).toEqual([]);
 
-  // Each plugin loads on its own: review without cost, then cost without review.
   client = await restartWith(client, ['review']);
   expect((await catalog(client)).filter((name: string) => ['cost', 'review'].includes(name)).sort()).toEqual(['review']);
   const reviewOnly = await openChat(client, first);
@@ -105,7 +99,6 @@ test('cost and review are plugins: enabled by default, gone with an explicit err
   expect(await catalog(client)).toEqual(expect.arrayContaining(['cost', 'review']));
   const again = await openChat(client, first);
   expect(await again.commands()).toEqual(expect.arrayContaining(['cost', 'review']));
-  // The limit saved before cost was disabled is still in force.
   await again.costStatus(status => status.endsWith(' / $5.00'));
   const raised = again.notice(message => message.startsWith('Session cost limit set to $4.00'));
   await again.command({ type: 'prompt', message: '/cost 4' });

@@ -23,7 +23,6 @@ const request = async (key: string) => {
   throw new Error('The model never got ' + key);
 };
 const system = (found: any) => found.messages.filter((message: any) => ['system', 'developer'].includes(message.role)).map(text).join('\n');
-/** Waits until the chat finished its turn. */
 const idle = async (chat: { command: (value: any) => Promise<any> }) => {
   for (let tries = 0; tries < 100; tries++) { if (!(await chat.command({ type: 'get_state' })).isStreaming) return; await Bun.sleep(100); }
   throw new Error('The chat never finished its turn');

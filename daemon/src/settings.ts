@@ -79,7 +79,6 @@ async function lockSettingsRevision(path: string, expected: string | undefined) 
   return lock;
 }
 
-/** The saved form of the settings. Tools are left out: Pi reports them on each host. */
 export function settingsBody(settings: AppSettings): Buffer {
   const { tools: _tools, ...saved } = serializeAppSettings(settings);
   return Buffer.from(JSON.stringify(saved, null, 2));

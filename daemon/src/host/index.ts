@@ -5,10 +5,8 @@ import { HostServices } from './services';
 export { restartConfiguration, validateConfiguration } from './plugins';
 export { resolveProviderAuth } from './provider_sdk';
 
-/** Runs the session host. Send packets to input(); replies and events go to the output callback. */
 export interface Supervisor {
   input(packet: any): void;
-  /** Resolves after a shutdown packet and the host shutdown finish. */
   finished: Promise<void>;
 }
 

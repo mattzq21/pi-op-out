@@ -6,7 +6,6 @@ import { startupPage } from '../startup-browser-fixture.mjs';
 const settings = { hiddenModels: [], defaultThinking: 'high', defaultFastMode: false, contextWindowCap: 200000, contextWindowCapEnabled: true, modelContextWindowCaps: {}, autoRetry: true, debugMode: false, keybindings: { newConversation: 'Ctrl+N', toggleConversations: 'Ctrl+B', toggleTerminal: 'Ctrl+J', toggleDebugMode: 'Ctrl+D', focusComposer: 'Ctrl+E', openSettings: 'Ctrl+,' }, tools: [], skills: [], hosts: [] };
 const state = { model: { id: 'model', provider: 'test', name: 'Test model' }, thinkingLevel: 'high', isStreaming: false, sessionId: 'mobile-test', sessionFile: '/tmp/mobile-test.jsonl', messageCount: 0, pendingMessageCount: 0 };
 
-// Test controls: `host.stopFailure` makes the host refuse to stop agent runs with this error; `host.stopHeld` is a promise that delays every stop reply until it resolves; `host.received` collects every request the host gets, and `host.onRequest` sees each one.
 function answerHost(ws, host) {
   ws.onMessage(raw => {
     const message = JSON.parse(raw);
@@ -34,12 +33,10 @@ function reply(ws, host, message) {
   ws.send(JSON.stringify(result === undefined ? { id: message.id, error: 'Command is not available on the daemon: ' + message.command } : { id: message.id, result }));
 }
 
-// The Android side of the Capacitor bridge: the back button callback and the minimize request.
 function androidBridge(initialSettings) {
   const listeners = new Map();
   window.androidMinimized = 0;
   window.androidMinimizeAttempts = 0;
-  // Test control: the next minimize request fails with this native error message.
   window.failNextAndroidMinimize = undefined;
   window.pressAndroidBack = () => { for (const callback of listeners.get('backButton') ?? []) callback({ canGoBack: false }); };
   window.Capacitor = {
@@ -67,7 +64,6 @@ function androidBridge(initialSettings) {
   };
 }
 
-// Connects the mobile app to the test host and returns the chat with an enabled message box.
 async function connectedChat(t, host = {}) {
   const page = await startupPage(t, 'mobile', {
     entryPoint: fileURLToPath(new URL('../../clients/ui/main.tsx', import.meta.url)), ready: 'input[type="url"]', holdStorage: false,

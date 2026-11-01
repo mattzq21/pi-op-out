@@ -2,21 +2,13 @@ const path = require('node:path');
 const fs = require('node:fs');
 const database = require('./session-database.cjs');
 
-/*
- * Durable record of each worktree Piop created for a chat, in the chat_worktrees table of the profile database.
- * The record is also the journal of creation, archive and restore: each Git change is recorded before or after it, so
- * recovery can finish or undo it. This module only reads and writes records; Git work happens in chat_worktrees.ts.
- */
-
 const UUID = '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}';
 const CHAT_ID = new RegExp('^' + UUID + '$');
 const COMMIT = /^[0-9a-f]{40}([0-9a-f]{24})?$/;
 const STATES = ['preparing', 'active', 'archiving', 'archived', 'restoring'];
 
-/** The Git reference that keeps the saved commit of an archived chat. */
 function archiveRef(chatId) { return 'refs/piop/archives/' + chatIdOf(chatId); }
 
-/** A chat branch: piop/ and the shortest free start of the chat ID. Older chats used the full ID. */
 const BRANCH = new RegExp(`^piop/([0-9a-f]{4,32}|${UUID}(-${UUID})?)$`);
 
 function chatIdOf(value) {
@@ -41,7 +33,6 @@ function checkArchive(chatId, archive) {
   if (archive?.ref !== archiveRef(chatId) || !COMMIT.test(archive?.commit ?? '')) throw new Error('Invalid chat archive');
 }
 
-/** Throws when record is not a valid chat worktree record. Returns it. */
 function check(record) {
   if (!record || typeof record !== 'object' || record.version !== 1) throw new Error('Invalid chat worktree record');
   const chatId = chatIdOf(record.chatId);
@@ -81,22 +72,16 @@ function withDatabase(root, operation) {
 
 function selectBody(db, chatId) { return db.prepare('SELECT record_json FROM chat_worktrees WHERE chat_id=?').get(chatIdOf(chatId))?.record_json ?? null; }
 
-/** Returns the worktree record of the chat, or null when Piop did not create a worktree for it. */
 function read(root, chatId) {
   const text = withDatabase(root, db => selectBody(db, chatId));
 
   return text === null ? null : check(JSON.parse(text));
 }
 
-/** Returns every chat worktree record. */
 function list(root) {
   return withDatabase(root, db => db.prepare('SELECT record_json FROM chat_worktrees ORDER BY chat_id').all()).map(row => check(JSON.parse(row.record_json)));
 }
 
-/**
- * Replaces the record of the chat only while it still equals before. A null before expects no record; a null after removes it.
- * Throws when the record changed, so two writers never overwrite each other.
- */
 function replace(root, chatId, before, after) {
   chatIdOf(chatId);
   const expected = before === null ? null : JSON.stringify(check(before));
@@ -119,14 +104,12 @@ function replace(root, chatId, before, after) {
   return after;
 }
 
-/** Identifies a process across PID reuse: PID and its start time from /proc. */
 function processToken(pid = process.pid) {
   const stat = fs.readFileSync(`/proc/${pid}/stat`, 'utf8');
 
   return `${pid}:${stat.slice(stat.lastIndexOf(')') + 2).split(' ')[19]}`;
 }
 
-/** True while the process that wrote token still runs. */
 function ownerAlive(token) {
   const pid = Number(String(token).split(':')[0]);
 
@@ -134,7 +117,6 @@ function ownerAlive(token) {
   catch { return false; }
 }
 
-/** Records that this process starts creating a worktree for a new chat. Throws when the chat already has a record. */
 function prepare(root, fields) {
   const chatId = chatIdOf(fields?.chatId);
 
@@ -144,7 +126,6 @@ function prepare(root, fields) {
   });
 }
 
-/** Marks the creation of the chat complete. */
 function activate(root, chatId) {
   const record = read(root, chatId);
 
@@ -158,7 +139,6 @@ function activate(root, chatId) {
   return replace(root, chatId, record, { ...rest, state: 'active' });
 }
 
-/** Saves the error of a failed cleanup on the record, so recovery and the storage report show it. */
 function fail(root, record, message) {
   try { replace(root, record.chatId, record, { ...record, lastError: message }); }
   catch (error) { return `${message}\nCleanup record could not be updated: ${error.message}`; }

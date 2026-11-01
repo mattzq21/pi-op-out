@@ -50,7 +50,6 @@ describe('terminal view', () => {
     assert.equal(terminal.cursorDisposed, true);
     assert.equal(terminal.renderDisposed, true);
     assert.equal(terminal.scrollDisposed, true);
-    // xterm throws when it is disposed before its first viewport sync, so the view disposes it one task later.
     t.mock.timers.runAll();
     assert.equal(terminal.disposed, true);
   });

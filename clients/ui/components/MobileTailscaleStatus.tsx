@@ -16,7 +16,6 @@ const messages: Record<State, { title: string; detail: string }> = {
   unknown: { title: "Tailscale status unavailable", detail: "Open Tailscale to check whether it is connected." },
 };
 
-/** The Tailscale state of the phone. With hideDetail it shows only the state title. */
 export function MobileTailscaleStatus(props: { hideDetail?: boolean }) {
   const [state, setState] = createSignal<State>("checking");
   const [error, setError] = createSignal("");

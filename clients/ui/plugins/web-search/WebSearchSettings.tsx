@@ -1,7 +1,6 @@
 import { For, Show } from "solid-js";
 import type { PluginSettingsProps } from "../types";
 
-/** The OpenAI model that answers web_search on this host. */
 export function WebSearchSettings(props: PluginSettingsProps) {
   const selected = () => props.settings.webSearchModel ?? "gpt-6.1-sol";
   const models = () => props.models.filter(model => model.provider === "openai");

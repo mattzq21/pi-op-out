@@ -51,7 +51,6 @@ export interface TestHost {
   finished: Promise<void>;
 }
 
-/** Runs the exported Supervisor start/input/finished interface in a child with its own HOME. */
 export async function startHost(options: { home?: string; env?: Record<string, string> } = {}): Promise<TestHost> {
   const home = options.home ?? temporaryDirectory('piop-host-home-');
   if (!options.home) {

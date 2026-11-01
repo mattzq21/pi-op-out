@@ -23,7 +23,6 @@ export function codexUsageValues(response: any): CodexUsage | undefined {
   return usage;
 }
 
-/** undefined: OpenAI Codex is not added to Pi. The usage comes from the Codex app, which has its own login. */
 export async function codexUsage(): Promise<CodexUsage | undefined> {
   if (await resolveProviderAuth(piExecutable(), 'openai-codex') === null) return undefined;
   return codexAppUsage();

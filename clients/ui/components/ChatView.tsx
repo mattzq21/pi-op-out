@@ -55,7 +55,6 @@ export function ChatView(props: Props & { transcriptActions?: JSXElement; follow
 
   const [scrollRoot, setScrollRoot] = createSignal<HTMLDivElement>();
   const viewInput = (): TranscriptInput => ({ messages: props.messages, state: props.state, debug: props.debug, readOnly: props.readOnly, scrollRoot: scrollRoot(), cwd: projectCwd(), notify: props.onNotice, forkSourceName: props.forkSourceName, actions: { onBranch: props.onBranch, onFork: props.onFork, onForkAndForget: props.onForkAndForget, onOpenForkSource: props.onOpenForkSource } });
-  /** The turns of the chat. The main view takes them from the cache, so a chat drawn before it opens is not drawn again. */
   const transcriptTarget = createMemo(() => ({ transport: props.transport, cache: props.transcripts }), undefined, { equals: (left, right) => left?.transport === right.transport && left?.cache === right.cache });
   const transcript = createMemo(() => {
     const { transport, cache } = transcriptTarget();
@@ -96,22 +95,17 @@ export function ChatView(props: Props & { transcriptActions?: JSXElement; follow
 
   const goalControls = createGoalControls(() => ({ value: props.statuses["piop-goal"], disabled: Boolean(props.controlsDisabled || !ownsConversation() || !props.transport), onCommand: action => required(props.transport).command({ type: "prompt", message: `/goal ${action}` }) }));
   const messagesRef = createRef<HTMLDivElement>(null);
-  /** The place the chat had when a view last showed it. The view goes back to it, also when new messages came meanwhile. A chat left at the latest message has no place and opens at the latest message. */
   const restoring = createRef<ScrollPlace | undefined>(untrack(() => props.transport && !props.revealEntryId ? savedPlace(props.transport) : undefined));
   const followLatest = createRef(!restoring.current);
-  /** Scrolls to the restored place again, after older history loads. */
   const holdPlace = createRef<(() => void) | undefined>(undefined);
-  /** True when the view is far enough above the latest message to offer the jump button. */
   const [awayFromLatest, setAwayFromLatest] = createSignal(false);
   const shellRef = createRef<HTMLElement | null>(null);
-  /** Text in this view is selected. Off-screen turns are then drawn too, because the engine can leave a stale highlight in turns it skips. */
   const [textSelected, setTextSelected] = createSignal(false);
   const selectionChanged = () => {
     const selection = document.getSelection(); const shell = shellRef.current;
     const selected = Boolean(shell && selection && !selection.isCollapsed && (shell.contains(selection.anchorNode) || shell.contains(selection.focusNode)));
 
     if (selected === textSelected()) return;
-    // Drawing or skipping the off-screen turns changes their height. The first turn on screen keeps its place, so the content does not jump.
     const root = messagesRef.current; const viewTop = root?.getBoundingClientRect().top;
     const anchor = root && viewTop !== undefined ? Array.from(root.querySelectorAll(".deferred-turn")).find(turn => turn.getBoundingClientRect().bottom > viewTop) : undefined;
     const before = anchor?.getBoundingClientRect().top;
@@ -123,11 +117,9 @@ export function ChatView(props: Props & { transcriptActions?: JSXElement; follow
   };
   document.addEventListener("selectionchange", selectionChanged);
   onCleanup(() => document.removeEventListener("selectionchange", selectionChanged));
-  /** A chat from the sidebar is dragged over this view. */
   const [sessionDragOver, setSessionDragOver] = createSignal(false);
   const acceptsSessionDrop = () => !props.readOnly && Boolean(props.onDraftChange);
 
-  /** A chat dropped here adds a link to it in the draft: at the pointer when it is on the message box, else at the caret. A caret shows the place while the chat moves. */
   const sessionDrag = (event: CustomEvent<SessionDragDetail>) => {
     const detail = event.detail;
     const editor = shellRef.current?.querySelector<ComposerFieldElement>(COMPOSER_FIELD_TAG);
@@ -154,17 +146,13 @@ export function ChatView(props: Props & { transcriptActions?: JSXElement; follow
   const lastScrollTop = createRef(0);
   const touchY = createRef<number | undefined>(undefined);
   const composerStack = createRef<HTMLDivElement>(null);
-  /** The messages without the marker of the older history that is not loaded yet. */
   const messages = createMemo(() => props.messages[0]?.id === OLDER_HISTORY ? props.messages.slice(1) : props.messages);
   const older = createMemo(() => olderHistory(props.messages));
-  /** The distance from the bottom to keep while older history comes in above the view. */
   const olderAnchor = createRef<number | undefined>(undefined);
 
-  /** The transport whose reconnection loads older history again, and the function that stops waiting for it. */
   const olderRetry = createRef<{ transport: NativeTransport; stop: () => void } | undefined>(undefined);
   onCleanup(() => olderRetry.current?.stop());
 
-  /** A load during a reconnect, such as a daemon restart, had no effect, so it runs again once the conversation is connected. */
   const retryOlderAfterReconnect = (transport: NativeTransport) => {
     if (olderRetry.current?.transport === transport) return;
     olderRetry.current?.stop();
@@ -177,7 +165,6 @@ export function ChatView(props: Props & { transcriptActions?: JSXElement; follow
     olderRetry.current = { transport, stop };
   };
 
-  /** Loads the older history just above the loaded messages. With through, it loads back to the turn of that entry. */
   const loadOlder = (through?: string) => {
     const element = messagesRef.current; const transport = props.transport;
 
@@ -191,22 +178,18 @@ export function ChatView(props: Props & { transcriptActions?: JSXElement; follow
 
       if (anchor !== undefined && !followLatest.current) { element.scrollTop = element.scrollHeight - anchor; lastScrollTop.current = element.scrollTop; }
       showRequestedResponse();
-      // A restore that waits for the turn of its place continues. A failed load ends it.
       if (holdPlace.current) holdPlace.current();
       else fillView();
     }));
   };
 
-  /** Loads older history while the loaded messages are too short to scroll. */
   const fillView = () => { const element = messagesRef.current;
 
     if (element && element.scrollHeight <= element.clientHeight) loadOlder(); };
   const split = () => transcript().split();
   const turns = () => transcript().turns();
-  /** The queued messages, without those the conversation already shows, then the sent messages that the daemon has not queued yet. */
   const pendingMessages = createMemo<import("../types").PendingMessage[]>(() => [...(props.state.pendingMessages ?? []).filter(item => !split().started.has(item.id) && !split().delivered.has(item.id)), ...split().sending.map(message => ({ id: message.id, goalSubmissionId: message.id, message: textOf(message.content), behavior: message.deliveryBehavior ?? "followUp", sending: true, images: Array.isArray(message.content) ? message.content.flatMap(part => part.type === "image" && part.data && part.mimeType ? [{ type: "image" as const, data: part.data, mimeType: part.mimeType }] : []) : [] }))]);
 
-  /** The rail entry of each final response, kept while the message stays the same, so streaming does not rebuild the entries of earlier turns. */
   const destinations = new WeakMap<ChatMessage, ResponseDestination>();
   const loadedResponses = createMemo(() => turns().flatMap(turn => {
     const message = turn.messages[finalResponseIndex(turn.messages)];
@@ -220,12 +203,10 @@ export function ChatView(props: Props & { transcriptActions?: JSXElement; follow
   }));
 
   const olderBefore = createMemo(() => older()?.before);
-  /** The final responses in the older history that is not loaded yet. The response rail lists them, and loads one when the user goes to it. */
   const unloadedResponses = useHistoryOutline(() => props.transport, olderBefore);
   createDependencyEffect(() => { const before = olderBefore(); const transport = props.transport;
 
     if (!before || !transport) return;
-    // The list waits for the first frame, so it does not delay the chat as it opens.
     const frame = requestAnimationFrame(() => loadHistoryOutline(transport, before, reason => props.onNotice?.("Could not list older responses", reason instanceof Error ? reason.message : String(reason))));
 
     return () => cancelAnimationFrame(frame);
@@ -235,10 +216,8 @@ export function ChatView(props: Props & { transcriptActions?: JSXElement; follow
 
     return unloaded.length ? [...unloaded.map(item => ({ messageId: item.id, preview: item.preview })), ...loaded] : loaded; });
 
-  /** For each turn, its final response when the turn holds a place where the chat forks, or null. Kept per turn for the current fork places. */
   let forkedTurns = new WeakMap<object, string | null>();
   const forkPoints = createMemo(() => { forkedTurns = new WeakMap(); return props.forkPoints; });
-  /** The final responses of the turns that hold a place where the chat forks. */
   const forkedResponses = createMemo(() => { const points = forkPoints(); const result = new Set<string>();
 
     if (!points?.size) return result;
@@ -259,7 +238,6 @@ export function ChatView(props: Props & { transcriptActions?: JSXElement; follow
 
     return result; }, undefined, { equals: (previous, next) => previous.size === next.size && [...next].every(id => previous.has(id)) });
 
-  /** The response that the rail asked for. It loads with the older history, and then the view goes to it. */
   const [requestedResponse, setRequestedResponse] = createSignal<string>();
   const showRequestedResponse = () => { const id = untrack(requestedResponse); const root = messagesRef.current;
 
@@ -303,11 +281,6 @@ export function ChatView(props: Props & { transcriptActions?: JSXElement; follow
 
   const sessionCache = createMemo(() => hasSentPrompt() ? cacheHitStats(sessionUsage()) : undefined);
   const pendingSubmission = createMemo(() => chatSubmission(props.transport));
-  /**
-   * The submission whose status shows in the conversation: a message that starts a turn.
-   * A message that goes into the queue, as a steer or follow-up or while the queue is on hold, shows in the queue instead.
-   * A /compact request stays open until compaction ends, but it is sent when Pi starts compacting.
-   */
   const sendingSubmission = createMemo(() => {
     const submission = pendingSubmission();
     if (!submission || submission.message.deliveryBehavior || props.state.queueHeld) return undefined;
@@ -334,16 +307,13 @@ export function ChatView(props: Props & { transcriptActions?: JSXElement; follow
     }
 
     const durable = staged ?? await stageSubmission({ rawText: text, uploads: draftUploadsFromImages(images), consume: props.draft === text && !props.uploads?.length });
-    // A message sent while an earlier one still waits for its reply, or while messages wait in the queue, goes into the queue, even before the agent reports that it works.
     const shown = behavior ?? (split().waiting || (props.state.pendingMessages?.length ?? 0) > 0 ? "followUp" : undefined);
 
     return trackChatSubmission(durable.owner(), text, images, durable, () => Promise.resolve(capturedOnSend(text, behavior, images, durable)), props.controlsDisabled ? "Getting ready..." : "Sending message…", shown);
   };
 
-  /** The pinned message to scroll to. It stays set while older history loads to find it. */
   const [pinReveal, setPinReveal] = createSignal<string>();
 
-  /** The last fast mode status of this chat. A chat switch clears the statuses until Pi reports them again, and the indicator keeps its last state meanwhile. The kept state is for one model only: a model without fast mode has no status. */
   const fastModeStatus = createMemo(() => {
     const status = props.statuses["pi-desktop-fast-mode"];
     const transport = props.transport;
@@ -357,7 +327,6 @@ export function ChatView(props: Props & { transcriptActions?: JSXElement; follow
 
     return status ?? (known?.model === model ? known?.status : undefined);
   });
-  /** True for a short time after the controls become unavailable, so a chat switch that reconnects at once does not dim them. */
   const [settling, setSettling] = createSignal((() => Boolean(props.controlsDisabled))());
   createDependencyEffect(() => {
     if (!props.controlsDisabled) { setSettling(false); return; }
@@ -441,7 +410,6 @@ export function ChatView(props: Props & { transcriptActions?: JSXElement; follow
 
     return () => cancelAnimationFrame(frame);
   }, () => [pinReveal(), turns()]);
-  // Turns above the place change height when they are drawn, so the place is kept until the user acts or the view follows the latest message.
   createDependencyEffect(() => { const root = messagesRef.current; const content = root?.querySelector(".conversation"); const shell = shellRef.current;
 
     if (!root || !content || !shell || !restoring.current || typeof ResizeObserver === "undefined") return;
@@ -452,9 +420,7 @@ export function ChatView(props: Props & { transcriptActions?: JSXElement; follow
 
       if (!place || followLatest.current) { stop(); return; }
       if (applyPlace(root, place)) { lastScrollTop.current = root.scrollTop; measureDistance(); return; }
-      // The turn of the place is in the older history, so it loads.
       if (untrack(older)) { loadOlder(); return; }
-      // The turn of the place is not in the chat, such as after a branch change, so the view shows the latest message.
       if (untrack(messages).length) { stop(); followLatest.current = true; scrollToLatest(); }
     };
     holdPlace.current = hold;
@@ -477,7 +443,6 @@ export function ChatView(props: Props & { transcriptActions?: JSXElement; follow
       composer.style.left = `${messages.clientLeft}px`;
       composer.style.right = `${messages.offsetWidth - messages.clientWidth - messages.clientLeft}px`;
       messages.style.setProperty("--composer-height", `${composer.getBoundingClientRect().height}px`);
-      // Resize observers run before paint, so the new space and the scroll show in the same frame and the history does not jump.
       if (followLatest.current) { messages.scrollTop = messages.scrollHeight; lastScrollTop.current = messages.scrollTop; }
       measureDistance();
     };
@@ -508,7 +473,6 @@ export function ChatView(props: Props & { transcriptActions?: JSXElement; follow
 
       if (y !== undefined && touchY.current !== undefined && y > touchY.current && event.currentTarget.scrollTop > 0) followLatest.current = false; touchY.current = y; }}
       oncapture:keydown={(event) => { if (["ArrowUp", "PageUp", "Home"].includes(event.key) || (event.key === " " && event.shiftKey)) followLatest.current = false; }}
-      // A context bar tab opens below the bar, so the view must not follow the new bottom.
       onClick={(event) => { if (event.target instanceof Element && event.target.closest(".prompt-context")) followLatest.current = false; }}
       onScroll={(event) => {
         const element = event.currentTarget;
@@ -522,7 +486,6 @@ export function ChatView(props: Props & { transcriptActions?: JSXElement; follow
         scrollToLatest();
         measureDistance();
 
-        // The scroll to the latest message when a chat opens moves down, so only scrolling up loads older history.
         if (movedUp && element.scrollTop < element.clientHeight) loadOlder();
       }}><div class="conversation">
         {!messages().length && !mcpLoading() && !pendingSubmission() && <div class="empty-chat"><span>π<sup>op</sup></span></div>}
@@ -552,20 +515,17 @@ export function ChatView(props: Props & { transcriptActions?: JSXElement; follow
     </div>);
   };
 
-  /** The pinned messages at the top of the chat. The messages leave room for them with --pins-height. The frame covers the messages without their scrollbar, so the bar lines up with the conversation. */
   const PinnedMessages = () => {
     const frame = createRef<HTMLDivElement | null>(null);
     const bar = createRef<HTMLDivElement | null>(null);
     createDependencyEffect(() => { const element = bar.current; const area = frame.current; const root = messagesRef.current;
 
       if (!element || !area || !root || typeof ResizeObserver === "undefined") return;
-      /** The height that the messages leave for the bar now. A change scrolls the messages by the same amount in the same frame, so the conversation stays still. */
       let reserved = 0;
       const reserve = (height: number) => {
         if (height === reserved) return;
         const change = height - reserved;
         reserved = height;
-        // A smaller space can lower the scroll position on its own, so the new position comes from the one before the change.
         const before = root.scrollTop;
         if (height) root.style.setProperty("--pins-height", `${height}px`);
         else root.style.removeProperty("--pins-height");

@@ -1,6 +1,5 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
-/** A custom entry that saves when the compaction it names started. Pi saves only when a compaction ends. */
 const TIMING_ENTRY = "piop-compaction-timing";
 
 export default function compactionTiming(pi: ExtensionAPI) {

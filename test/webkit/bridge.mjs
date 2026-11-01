@@ -1,10 +1,3 @@
-/**
- * The page side of the WebKit test browser. The proxy adds it to every HTML document before the page's own scripts.
- * It reports page errors, console messages, dialogs and navigations to the proxy, runs evaluations whose results arrive later,
- * forwards calls of exposed functions, and answers locator queries with Playwright's injected script.
- */
-
-/** Encodes a value that JSON cannot carry: undefined, NaN, ±Infinity, -0, BigInt, Date, RegExp, Error, Map, Set and typed arrays. */
 export function serialize(value, seen = new Set()) {
   if (value === undefined || typeof value === 'function' || typeof value === 'symbol') return { $u: 1 };
   if (value === null || typeof value === 'boolean' || typeof value === 'string') return value;
@@ -33,7 +26,6 @@ export function serialize(value, seen = new Set()) {
   } finally { seen.delete(value); }
 }
 
-/** Decodes a value of serialize. */
 export function deserialize(value) {
   if (value === null || typeof value !== 'object') return value;
   if ('$u' in value) return undefined;
@@ -50,10 +42,6 @@ export function deserialize(value) {
   throw new Error('Unknown serialized value: ' + JSON.stringify(value));
 }
 
-/**
- * Installs the bridge in the page. config: { pageId?: string, pageScripts: { [pageId]: string[] }, contextScripts: string[], exposed: string[], injectedOptions }.
- * pageId is set when the proxy knows which page loads this document; otherwise the page id that an earlier document of this tab saved is used.
- */
 export function pageBridge(config, serialize, deserialize) {
   const page = window;
   if (page.__pw) {
@@ -85,13 +73,10 @@ export function pageBridge(config, serialize, deserialize) {
   };
   const describeError = error => error instanceof Error ? { name: error.name, message: error.message, stack: error.stack } : { name: '', message: String(error), stack: undefined };
 
-  // Page errors and console messages.
-  // Only thrown exceptions are page errors, as in Playwright; an error event without an error, such as a ResizeObserver loop notice, is not.
   page.addEventListener('error', event => { if (event.error != null) post('event', { type: 'pageerror', error: describeError(event.error) }); });
   page.addEventListener('unhandledrejection', event => post('event', { type: 'pageerror', error: describeError(event.reason) }));
   const text = value => {
     if (typeof value === 'string') return value;
-    // As in Chromium, an error shows its name and message before its stack, which in WebKit holds only the frames.
     if (value instanceof Error) return value.stack?.startsWith(String(value)) ? value.stack : String(value) + (value.stack ? '\n' + value.stack : '');
     try { return typeof value === 'object' && value !== null ? builtins.stringify(value) : String(value); } catch { return String(value); }
   };
@@ -103,8 +88,6 @@ export function pageBridge(config, serialize, deserialize) {
     };
   }
 
-  // Dialogs wait for the test's dialog handler, as Playwright's dialogs do.
-  // A context menu that the page leaves alone is cancelled after every page listener ran, so MiniBrowser shows no native menu, as headless Chromium shows none.
   page.addEventListener('contextmenu', () => {
     page.addEventListener('contextmenu', event => { if (!event.defaultPrevented) event.preventDefault(); }, { once: true });
   }, true);
@@ -115,7 +98,6 @@ export function pageBridge(config, serialize, deserialize) {
     return answer.accept ? answer.promptText ?? (defaultValue === undefined ? '' : String(defaultValue)) : null;
   };
 
-  // Navigation: the test side tracks the URL and abandons evaluations of a document that unloads.
   const navigated = () => post('event', { type: 'url', url: location.href });
   for (const method of ['pushState', 'replaceState']) {
     const original = page.history[method];
@@ -138,7 +120,6 @@ export function pageBridge(config, serialize, deserialize) {
 
   const sleep = ms => new builtins.Promise(resolve => builtins.setTimeout(resolve, ms));
   const CONTINUE = Symbol('continue');
-  /** Checks predicate every 16 ms until it returns a value other than CONTINUE. The last reason it gave is part of the timeout error. */
   const waitUntil = async (predicate, timeout, describe) => {
     const deadline = builtins.now() + timeout;
     let reason = '';
@@ -167,7 +148,6 @@ export function pageBridge(config, serialize, deserialize) {
     return element;
   }, timeout, describe);
 
-  /** The point of an action on the element: it waits until the element is visible, stable, enabled if needed, and receives the pointer there. */
   const actionPoint = (selector, { timeout, force, position, enabled }) => {
     let previous;
     return waitUntil(why => {
@@ -184,7 +164,6 @@ export function pageBridge(config, serialize, deserialize) {
       const box = target.getBoundingClientRect();
       const key = [box.x, box.y, box.width, box.height].join();
       if (!force && key !== previous) { previous = key; why('element is not stable'); return CONTINUE; }
-      // As in Playwright, the default point is the center of the element's part inside the viewport.
       const left = Math.max(box.left, 0), top = Math.max(box.top, 0), right = Math.min(box.right, innerWidth), bottom = Math.min(box.bottom, innerHeight);
       if (!position && (right <= left || bottom <= top)) { why('element is outside of the viewport'); return CONTINUE; }
       const x = position ? box.x + position.x : (left + right) / 2;
@@ -247,7 +226,6 @@ export function pageBridge(config, serialize, deserialize) {
       call.__pwExposed = true;
       page[name] = call;
     },
-    /** Runs an evaluation. A result within one task returns at once; a later result arrives through the proxy as id. */
     async start(id, source, isFunction, args, selector, timeout) {
       const run = async () => {
         const values = args.map(deserialize);

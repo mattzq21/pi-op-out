@@ -144,9 +144,7 @@ export function registerSubagentResults(pi: ExtensionAPI) {
 
   return {
     reset() { outstanding.clear(); },
-    /** True when a finished run's result was not sent yet, so claim would return it. */
     waiting(ctx: ExtensionContext) { return ownedRuns(ctx).some(run => claimable(ctx, run)); },
-    /** Marks finished runs whose results were not sent yet as delivered and returns them, so the caller hands them to the model itself. */
     claim(ctx: ExtensionContext) {
       const claimed: SubagentRun[] = [];
 

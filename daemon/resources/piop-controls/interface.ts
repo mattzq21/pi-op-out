@@ -1,36 +1,19 @@
 import type { ExtensionAPI, ExtensionCommandContext, ExtensionContext } from "@earendil-works/pi-coding-agent";
 
-/**
- * fork: copy the history before the user message entryId and return its text.
- * fork_after: copy the history up to the assistant response entryId and its tool results.
- * clone: copy the history up to the current leaf; entryId is ignored.
- */
 export type ForkMode = "fork" | "fork_after" | "clone";
 
 export type ForkResult = { hostId: string; sessionId: string; sessionPath: string; cwd: string; text?: string };
 
-/** An auxiliary copy: kind is the auxiliary kind, name the chat name. */
 export type AuxiliaryCopy = { kind: string; name: string };
 
-/** One instance per Pi session. Operations act on the conversation of the given context. */
 export interface SessionControls {
-  /** Stops the current run. The queue is held when the goal or messages wait. Resolves when Pi is idle. */
   stop(ctx: ExtensionContext): Promise<void>;
-  /** Cancels child sessions that are still being prepared. */
   cancelPreparation(): void;
-  /** Saves a copy of this conversation as a new conversation. Does not switch to it. */
   fork(ctx: ExtensionContext, mode: ForkMode, entryId?: string): Promise<ForkResult>;
-  /**
-   * Saves a copy of this root conversation through its last finished agent turn as an auxiliary conversation that this one owns.
-   * The copy keeps the agent, model, thinking level and fast mode, but not the goal, and waits for its first message.
-   * Rejects in an auxiliary conversation and when no agent turn has finished yet.
-   */
   copyAuxiliary(ctx: ExtensionContext, copy: AuxiliaryCopy): Promise<ForkResult & { parentSessionId: string }>;
-  /** Moves this conversation back to the assistant response entryId and records that the later branch was dropped. */
   forkAndForget(ctx: ExtensionCommandContext, entryId: string): Promise<{ cancelled: boolean }>;
 }
 
-/** Other extensions emit this request on "piop:controls:session" to get the session interface. */
 export interface SessionControlsRequest { session?: SessionControls }
 
 declare module "@earendil-works/pi-coding-agent" {
@@ -40,7 +23,6 @@ declare module "@earendil-works/pi-coding-agent" {
   }
 }
 
-/** The controls extension's session interface, or undefined when the extension is not loaded. */
 export function sessionControls(pi: ExtensionAPI): SessionControls | undefined {
   const request: SessionControlsRequest = {};
   pi.events.emit("piop:controls:session", request);

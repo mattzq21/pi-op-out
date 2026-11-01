@@ -115,7 +115,6 @@ test.concurrent('copying after an answer outside a Git repository opens a new co
   const sessions = await agents.daemon.invoke('list_sessions');
   expect(sessions.find((session: any) => session.id === original.sessionId)).toMatchObject({ preview: 'Copy answer to Later question' });
   expect(sessions.find((session: any) => session.id === copy.sessionId)).toMatchObject({ preview: 'Copy answer to Other question' });
-  // The chat list names the source, so the copy takes the source's sidebar group without any client write.
   expect(sessions.find((session: any) => session.id === copy.sessionId).forkSourceId).toBe(original.sessionId);
 }, 60000);
 

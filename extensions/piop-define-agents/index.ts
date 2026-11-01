@@ -19,13 +19,10 @@ const STATUS_KEY = "pi-define-agents";
 
 const sessionTools = ["spawn_subagents"];
 
-/** pluginToolsApplied: plugin default tools already added to every existing agent. */
 export type Config = { revision?: string; agents: Agent[]; pluginToolsApplied?: string[]; sessionToolsDefaultApplied?: boolean; subagentsDefaultApplied?: boolean; bundledAgentsApplied?: string[]; };
 
-/** Agents that are added once as copies of the general agent. The user can then edit or remove them. */
 const BUNDLED_AGENTS = ["workhorse", "reviewer"];
 
-/** pluginTools: the default agent tools of the enabled plugins. */
 type ConfigRuntime = { enabledTools?: readonly string[]; pluginTools: readonly string[] };
 
 export type ConfigStorage = { ensurePromptFile: typeof ensurePromptFile; writeConfig: typeof writeConfig };
@@ -193,7 +190,6 @@ function migrateSubagents(config: Config, pi: ConfigRuntime) {
   return false;
 }
 
-/** Adds each plugin default tool to every agent once, when Pi reports the tool. Later removals stay. */
 function migratePluginTools(config: Config, pi: ConfigRuntime) {
   const applied = config.pluginToolsApplied ?? [];
   const missing = availablePluginTools(pi).filter(tool => !applied.includes(tool));
@@ -278,7 +274,6 @@ export default async function defineAgents(pi: ExtensionAPI) {
   const extensions = agentExtensions(pi, agentDirectory);
   const initialResources = readAgentResources();
   const configRuntime = { enabledTools: initialResources.tools.enabledTools, pluginTools: readPluginAgentTools() };
-  /** The daemon owns the agent definitions: it creates, migrates and saves them. A session only reads them. */
   const readOnlyStorage: ConfigStorage = { ensurePromptFile: async () => {}, writeConfig: async () => {} };
   const readConfigNow = () => loadConfig(configRuntime, undefined, false, readOnlyStorage);
   let config = await readConfigNow();
@@ -297,18 +292,15 @@ export default async function defineAgents(pi: ExtensionAPI) {
   let modelOverride: string | undefined;
   let effortOverride: string | undefined;
   let reloading = false;
-  /** The default agent's fast mode for a new session. The fast mode extension loads its state in its own session_start, so startup cannot wait for it; the first message does. */
   let startingFastMode: Promise<string | undefined> | undefined;
   process.env.PI_DEFINE_AGENTS_ACTIVE = "1";
   const findAgent = (name: string) => config.agents.find((agent) => agent.name === name);
   const defaultAgentName = () => required(config.agents.find(agent => agent.isDefault)).name;
   const currentAgent = () => snapshot?.definition ?? findAgent(active);
   const resources = (): AgentResources => snapshot?.resources ?? initialResources;
-  /** Every session loads all skills, so the user can invoke any skill with any agent. */
   const loadedSkills = () => { const skills = resources().skills;
 
   return [...skills.userInvokedSkills, ...skills.agentInvokedSkills]; };
-  /** The model sees only the skills of the current agent, and never a user-invoked skill. */
   const invocationPolicy = <T extends { filePath: string; baseDir: string }>(skills: readonly T[]): T[] => {
     const user = new Set(resources().skills.userInvokedSkills.map(resourcePath));
     const agent = new Set((currentAgent()?.skills ?? []).map(resourcePath));
@@ -328,7 +320,6 @@ export default async function defineAgents(pi: ExtensionAPI) {
 
   const toolDisabledForAgent = (name: string, agent: Agent | undefined) => name === "codemode" && agent?.codemode === "off";
 
-  /** Codemode on: the agent gets the codemode tool next to its other tools. Off: it has no codemode tool. Pi without the codemode extension is left as it is. */
   const applyCodemode = (agent: Agent, tools: Set<string>) => {
     if (!pi.getAllTools().some(tool => tool.name === "codemode")) return;
 
@@ -380,7 +371,6 @@ export default async function defineAgents(pi: ExtensionAPI) {
 
   const restoredAgentName = (name: string | undefined) => !name || (name === "default" && !findAgent("default")) ? "general" : name;
 
-  /** The agent a session starts as. Subagent and review sessions store their agent before they start, so only a new root session has no stored state and starts as the default agent. */
   const startingAgentName = (stored: SessionAgentState | undefined) => {
     return snapshot?.definition.name ?? (stored ? restoredAgentName(stored.active) : defaultAgentName());
   };
@@ -389,7 +379,6 @@ export default async function defineAgents(pi: ExtensionAPI) {
     return [...new Set(loadedSkills().map(normalizedPath))].sort();
   };
 
-  /** Checks an agent's own fast mode default against the host's fast model results. */
   const fastModeError = async (agent: Agent, model: string | undefined) => agent.fastMode === true ? fastModelProblem(await hostFastModels(), agent.name, model) : undefined;
 
   const modelUnavailable = (agent: Agent, ctx: ExtensionContext) => {
@@ -397,7 +386,6 @@ export default async function defineAgents(pi: ExtensionAPI) {
     const [provider, ...parts] = agent.model.split("/");
     return ctx.modelRegistry.find(provider, parts.join("/")) ? undefined : `Agent "${agent.name}" cannot run because model ${agent.model} is unavailable`;
   };
-  /** The session's own agent. The client takes the list of agents from the host. */
   const publish = (ctx: ExtensionContext) => {
     const agent = currentAgent();
     ctx.ui.setStatus(STATUS_KEY, `json:${encode({ version: 1, active: agent?.name ?? active, locked, saved: !!snapshot, unavailable: !agent || Boolean(modelUnavailable(agent, ctx)) })}`);
@@ -538,7 +526,6 @@ export default async function defineAgents(pi: ExtensionAPI) {
     return `Agent "${agent.name}" could not register its MCP servers:\n${error instanceof Error ? error.message : String(error)}`; }
   };
 
-  /** A newly selected agent applies its fast mode default through the fast mode extension's session interface. */
   const applyAgentFastMode = async (agent: Agent) => {
     if (agent.fastMode === undefined) return undefined;
     const session = fastModeSession(pi);
@@ -549,7 +536,6 @@ export default async function defineAgents(pi: ExtensionAPI) {
     catch (error) { return `Agent "${agent.name}" could not change fast mode: ${error instanceof Error ? error.message : String(error)}`; }
   };
 
-  /** Unloads the piop extensions of an agent that cannot run, so their providers do not stay registered. */
   const unloadExtensions = async (error: string, ctx: ExtensionContext) => {
     try { await extensions.deactivate(ctx); }
     catch (cleanupError) { ctx.ui.notify(`piop extension cleanup failed: ${String(cleanupError)}`, "error"); }
@@ -628,7 +614,6 @@ export default async function defineAgents(pi: ExtensionAPI) {
   effortOverride = event.level; saveState(); saveRuntimeDefaults({ model: runtimeDefaults?.model || "", effort: event.level }); });
 
   const restoreSession = async (ctx: ExtensionContext) => {
-    // A session start is an agent start, so it uses the latest saved definitions.
     config = await readConfigNow();
     restore(ctx);
     const branch = ctx.sessionManager.getBranch();
@@ -646,7 +631,6 @@ export default async function defineAgents(pi: ExtensionAPI) {
     const error = await useAgent(active, ctx, { applyMcp: true });
     const agent = currentAgent();
 
-    // A new session applies its agent's fast mode. A stored session keeps the fast mode choice that the fast mode extension saved.
     if (!stored && !error && agent) {
       const pending = applyAgentFastMode(agent);
       startingFastMode = pending;
@@ -674,7 +658,6 @@ export default async function defineAgents(pi: ExtensionAPI) {
   pi.on("input", async (event, ctx) => {
     const error = await useAgent(active, ctx) ?? await startingFastMode;
 
-    // useAgent turns the tools on again, so a fast mode failure must turn them off here.
     if (error) { pi.setActiveTools([]); ctx.ui.setStatus("piop-input-rejected", JSON.stringify({ text: event.text, error })); ctx.ui.notify(error, "error");
 
     return { action: "handled" }; }
@@ -695,7 +678,6 @@ export default async function defineAgents(pi: ExtensionAPI) {
   });
   pi.events.on("piop:rpc", request => {
     if (request.command !== "agent_definitions_changed") return;
-    // Agents that start later use the saved definitions. The running agent keeps its own.
     request.ready = readConfigNow().then(next => { config = next; });
   });
   pi.events.on("piop:rpc", request => {
@@ -715,7 +697,6 @@ export default async function defineAgents(pi: ExtensionAPI) {
       throw new Error("This conversation's agent is fixed. Start a new conversation to use another agent.");
     }
 
-    // A chosen agent starts as a new agent, so it uses the latest saved definitions.
     config = await readConfigNow();
     const agent = findAgent(name);
 

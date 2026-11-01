@@ -6,7 +6,6 @@ import type { Execution } from './queue_delivery';
 
 let nextLocalId = 1;
 
-/** Keeps operation in pending until it settles, and logs its failure. */
 export function track<T>(pending: Set<Promise<unknown>>, operation: Promise<T>): Promise<T> {
   pending.add(operation);
   void operation.then(() => { pending.delete(operation); }, error => {
@@ -16,10 +15,6 @@ export function track<T>(pending: Set<Promise<unknown>>, operation: Promise<T>):
   return operation;
 }
 
-/**
- * Keeps the saved copy of a queue in step with its state, and removes items once Pi's transcript holds them.
- * Without storage, it keeps only the view that clients last received.
- */
 export class QueueRecord {
   private saves = new Set<Promise<unknown>>();
   private savedView: any;
@@ -30,14 +25,11 @@ export class QueueRecord {
     this.savedView = state.view(state.pending);
   }
 
-  /** True when items are kept in storage. */
   get durable(): boolean { return this.storage !== null; }
 
-  /** The queue view of the last successful save. */
   view(): any { return clone(this.savedView); }
   setView(view: any): void { this.savedView = view; }
 
-  /** True when storage holds the current queue. Storage is then the only copy, because another host can change it later. */
   saved(): boolean { return this.storage !== null && !this.lastSaveFailed && this.saves.size === 0; }
 
   async flush(): Promise<void> {
@@ -49,7 +41,6 @@ export class QueueRecord {
     return String(nextLocalId++);
   }
 
-  /** Saves whether the queue is on hold. */
   async saveHeld(held: boolean): Promise<void> {
     if (this.storage) await track(this.saves, this.storage.saveHeld(held));
   }
@@ -61,7 +52,6 @@ export class QueueRecord {
     await this.commitView(saved);
   }
 
-  /** Saves without waiting. Calls saved() after success, and reports a failure to clients. */
   persistInBackground(saved: () => void): void {
     track(this.saves, this.persist().then(() => {
       saved();
@@ -91,7 +81,6 @@ export class QueueRecord {
     this.executor.publish({ type: 'extension_ui_request', method: 'notify', notifyType: 'error', message: 'Queued input recovery could not be updated: ' + error });
   }
 
-  /** Records which saved item a user message from Pi consumed. */
   async observe(event: any): Promise<void> {
     if (this.storage === null) return;
     if (kind(event) === 'message_end' && event.message?.role === 'user') {
@@ -102,7 +91,6 @@ export class QueueRecord {
     }
   }
 
-  /** Removes items that Pi's saved transcript already holds. */
   async confirmConsumed(): Promise<void> {
     if (!this.state.retained.length) return;
     const messages = this.executor.savedUserMessages?.() ?? [];

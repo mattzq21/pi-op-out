@@ -36,7 +36,6 @@ type CoreSection = "inference" | "general" | "storage" | "agents" | "hosts" | "k
 
 export type Section = CoreSection | (string & Record<never, never>);
 
-/** A settings tab. A tab with a parent shows below the parent tab, as its sub-tab. */
 type SettingsSection = { id: Section; label: string; icon: typeof Settings2; plugin?: boolean; parent?: Section };
 
 const mobileSections: SettingsSection[] = isMobile ? [{ id: "connections", label: "Anchor host", icon: Server }] : [];
@@ -297,7 +296,6 @@ export function SettingsView(props: SettingsViewProps) {
   const agentFastModeEnabled = createMemo(() => (agent()?.fastMode ?? draft().defaultFastMode));
   const updateAgent = (value: Partial<AgentProfile>) => setAgentDrafts((current) => current.map((item, index) => index === agentIndex() ? { ...item, ...value } : item));
 
-  /** Changes one agent name in every agent's subagent and peer allowlists. A missing name removes it. */
   const renamedAccess = (items: AgentProfile[], from: string, to?: string) => items.map(item => {
     const rename = (access: AgentAccess | undefined) => Array.isArray(access) && access.includes(from) ? access.flatMap(name => name !== from ? [name] : to ? [to] : []) : access;
 

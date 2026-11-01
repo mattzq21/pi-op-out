@@ -40,15 +40,13 @@ export interface PromptContextInfo {
   userTimestamp?: number;
   systemPrompt: string;
   instructions: Array<{ path: string; content: string }>;
-  /** codemode: whether codemode scripts can call the tool. Present only while codemode is active. */
-  tools: Array<{ name: string; description: string; parameters?: unknown; codemode?: boolean; /** The request declares the tool but does not give it to the model yet. */ deferred?: true }>;
+  tools: Array<{ name: string; description: string; parameters?: unknown; codemode?: boolean; deferred?: true }>;
   skills: Array<{ name: string; description: string; filePath: string }>;
   userInvokedSkills?: Array<{ id?: string; name: string; description: string; filePath: string; content?: string }>;
   skillTokens?: { defined: number; invoked: number };
   tokens: { system: number; instructions: number; tools: number; skills: number };
 }
 
-/** sending: the message was sent, but the daemon has not queued it yet. It cannot be changed yet. */
 export interface PendingMessage { id: string; goalSubmissionId?: string; message: string; behavior: "steer" | "followUp"; images?: (Omit<ImageAttachment, "data"> & { data?: string; id?: string })[]; retry?: boolean; recovered?: boolean; sending?: boolean; goal?: boolean; }
 
 export interface GitRepository { root: string; gitDir: string; }
@@ -63,7 +61,6 @@ export interface ExtensionUiResponse { cancelled?: boolean; confirmed?: boolean;
 
 export interface Model { provider: string; id: string; name?: string; reasoning?: boolean; thinkingLevelMap?: Record<string, JSONType>; contextWindow?: number; input?: ("text" | "image")[]; }
 
-/** Which agents an agent may start: all of them, none, or the named ones. Missing means all. */
 export type AgentAccess = "all" | "none" | string[];
 export interface AgentProfile { unavailableReason?: string; name: string; description?: string; isDefault?: boolean; model: string; effort: string; fastMode?: boolean; contextWindowCap?: number | null; codemode?: "on" | "off"; extensions?: string[]; max_subagents?: number; allow_as_subagent?: boolean; allow_as_peer?: boolean; allowed_subagents?: AgentAccess; allowed_peers?: AgentAccess; path_systemprompt: string; path_agent_prompt: string; tools: string[]; skills: string[]; mcpServers: McpServers; }
 
@@ -80,7 +77,6 @@ export type RpcCommand = z.infer<typeof rpcCommandSchema>;
 
 export type RpcEvent = z.infer<typeof rpcEventSchema>;
 
-/** A tool that Pi offers on a host. source is the path of the extension that registered it, or builtin:<name> for a Pi built-in. */
 export interface ToolConfig { name: string; description: string; source: string; }
 
 export interface SkillConfig { name: string; path: string; description: string; enabled: boolean; userInvokedOnly?: boolean; }
@@ -91,7 +87,6 @@ export interface RemoteHost { enabled?: boolean; id: string; name: string; targe
 
 export interface DirectoryListing { path: string; parent?: string; directories: string[]; }
 
-/** An argument choice of a slash command. An empty value is a hint that describes a free argument. */
 export interface CommandOption { value: string; label: string; description?: string; }
 export interface SlashCommand { name: string; description?: string; source: "builtin" | "extension" | "prompt" | "skill"; sourceInfo?: { source?: string }; options?: CommandOption[]; }
 
@@ -109,11 +104,10 @@ export interface OpencodeGoUsage { rolling: UsageWindow; weekly: UsageWindow; mo
 
 export interface ChatMessage { toolCallId?: string; details?: unknown; }
 
-export interface ChatMessage { deferredToolPayload?: string; toolPayloadLoaded?: boolean; /** The tool result contains an image. */ toolImage?: boolean; /** The memory limit removed the loaded tool payload. It loads again only on request. */ toolPayloadEvicted?: boolean; toolPayloadVersion?: number; loadedToolPayloadVersion?: number; loadToolPayload?: () => Promise<void>; }
+export interface ChatMessage { deferredToolPayload?: string; toolPayloadLoaded?: boolean; toolImage?: boolean; toolPayloadEvicted?: boolean; toolPayloadVersion?: number; loadedToolPayloadVersion?: number; loadToolPayload?: () => Promise<void>; }
 
 export interface ChatMessage { submissionId?: string; piopQueueId?: string; piopSubmissionId?: string; }
 
-/** The daemon left out the work of this finished turn. loadWork fetches it. */
 export interface ChatMessage { deferredWork?: { reasoningOnly: boolean; usage?: ChatMessage["usage"]; firstUsage?: ChatMessage["usage"] }; loadWork?: () => Promise<void>; }
 
 export type PendingMessageAction = "steer" | "followUp" | "remove" | "moveUp" | "moveDown" | { type: "move"; targetId: string; edge: "before" | "after" } | { type: "edit"; message: string; images: { keep: number[]; add: ImageAttachment[] } };

@@ -38,7 +38,6 @@ test('files that are not images, or are over 25 MB, are refused with the reason'
   expect(await failure('docs')).toBe('Select a regular image file');
 }, 60000);
 
-// A real 1x1 PNG image.
 const PNG = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==';
 
 test.concurrent('an image read that failed for a missing, folder or non-image path succeeds with the exact bytes once the path holds an image', async () => {
@@ -64,7 +63,6 @@ test.concurrent('an image read accepts a PNG of exactly 25 MiB with all its byte
     const cwd = join(daemon.home, 'project');
     mkdirSync(cwd, { recursive: true });
     const read = { hostId: 'local', cwd, path: 'large.png' };
-    // A PNG signature, then a repeating pattern so a lost, added or moved byte changes the content.
     const large = Buffer.alloc(26_214_400, Buffer.from(Array.from({ length: 251 }, (_, index) => index)));
     Buffer.from(PNG, 'base64').copy(large, 0, 0, 8);
     writeFileSync(join(cwd, 'large.png'), large);
@@ -105,7 +103,6 @@ test.concurrent('an image read for a remote machine whose project folder is gone
       const sessions = join(server.home, '.piop', 'sessions', folder);
       const attachments = join(sessions, 'attachments', 'goal-a1b2c3');
       mkdirSync(attachments, { recursive: true });
-      // Different bytes in each file, so a read of the wrong file shows.
       const image = (marker: number) => Buffer.concat([Buffer.from(PNG, 'base64'), Buffer.from([marker])]);
       writeFileSync(join(attachments, 'attachment-1.png'), image(1));
       const read = (hostId: string, path: string) => ({ hostId, cwd, path });

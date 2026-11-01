@@ -19,27 +19,18 @@ import type { Host } from './controller';
 import type { Session } from './session';
 
 const CANCELLED_DELIVERY_TTL_MS = 10 * 60_000;
-/** The longest one watch request waits. A reader that waits longer sends another. */
 const MAX_WATCH_MS = 5 * 60_000;
 
-/**
- * Orchestration requests for conversations on this host: locate, read, send a message, and interrupt.
- * A conversation that is not running is started in a hidden view for the request.
- */
 export class Orchestration {
   private deliveries = new Map<string, Set<string>>();
-  /** First messages of new chats that are being delivered, by delivery ID. Each ends with the chat kept or removed. */
   private firstDeliveries = new Map<string, Promise<boolean>>();
   private cancelledDeliveries = new Map<string, number>();
-  /** Readers that wait for the next state change of a conversation, by conversation ID. */
   private watchers = new Map<string, Set<() => void>>();
 
   constructor(private host: Host) {}
 
-  /** True while a message is being delivered to the conversation. */
   delivering(id: string): boolean { return Boolean(this.deliveries.get(id)?.size); }
 
-  /** Wakes the readers that wait for a state change of the conversation id. */
   stateChanged(id: string): void {
     const waiting = this.watchers.get(id);
     if (!waiting) return;
@@ -47,10 +38,6 @@ export class Orchestration {
     for (const wake of waiting) wake();
   }
 
-  /**
-   * Returns once the state of the conversation differs from stateKey, the key of the reader's last snapshot (null when
-   * it was not running), or after waitMs. changed tells which.
-   */
   private watch(id: string, stateKey: string | null, waitMs: number): Promise<{ changed: boolean }> {
     const current = () => this.host.findSession(id)?.stateKey() ?? null;
     if (current() !== stateKey) return Promise.resolve({ changed: true });
@@ -63,7 +50,6 @@ export class Orchestration {
     });
   }
 
-  /** Renames a saved chat. Pi does not know chat names, so the chat does not have to run. */
   private rename(id: string, name: unknown): { name: string } {
     const renamed = renameSession(this.host.storageRoot(), id, name as string);
     this.host.findSession(id)?.renamed(renamed);
@@ -71,16 +57,13 @@ export class Orchestration {
     return { name: renamed };
   }
 
-  /** True while any message is being delivered. */
   busy(): boolean { return this.deliveries.size > 0; }
 
-  /** The view a chat opens with. It reads the saved transcript while the chat's Pi is not ready, so opening a chat does not wait for Pi to start. */
   private async preview(id: string): Promise<any> {
     const session = this.host.findSession(id);
     if (session && !session.transient() && session.savedState() !== null) return session.execute({ type: 'get_snapshot', recent: true });
     const snapshot = this.host.ownership().snapshot(id);
     if (snapshot.history) recentHistory(snapshot.history, false);
-    // The saved queue shows with the history, before Pi starts.
     const root = this.host.queueRoot();
     if (root && isUuid(id)) {
       const storage = new QueueStorage(root, id);
@@ -120,10 +103,6 @@ export class Orchestration {
     }
   }
 
-  /**
-   * Starts again the task that a daemon stop interrupted, in a hidden view of the client that owned the conversation.
-   * The mark is removed when the conversation is gone or archived, or when its task already ended.
-   */
   private async resume(packet: any): Promise<null> {
     const host = this.host;
     const id = text(packet, 'sessionKey');
@@ -217,10 +196,6 @@ export class Orchestration {
     }
   }
 
-  /**
-   * discardOnFailure marks a new chat: creating it is all or nothing. When the delivery fails, Piop finds out from storage
-   * whether the first message arrived: the chat is kept and the send succeeds, or the chat is removed and the send fails.
-   */
   private async send(packet: any, existing: Session | undefined): Promise<any> {
     if (!flag(packet, 'discardOnFailure')) return this.sendNow(packet, existing);
     const id = text(packet, 'sessionKey'); const path = text(packet, 'sessionPath'); const delivery = text(packet, 'deliveryId');
@@ -240,10 +215,6 @@ export class Orchestration {
     } finally { if (this.firstDeliveries.get(delivery) === settled) this.firstDeliveries.delete(delivery); }
   }
 
-  /**
-   * Called when the sender of a first message lost the answer: waits for the delivery to end, then tells whether the chat
-   * was kept. A delivery that never reached this host is cancelled, and the chat is removed.
-   */
   private async settleFirstMessage(packet: any): Promise<{ arrived: boolean }> {
     const id = text(packet, 'sessionKey'); const path = text(packet, 'sessionPath'); const delivery = text(packet, 'deliveryId');
     if (!isUuid(delivery)) throw new Error('A valid deliveryId is required');
@@ -255,7 +226,6 @@ export class Orchestration {
     return { arrived: false };
   }
 
-  /** Reads storage once nothing can write the message any more: Pi stopped, or Pi has the message. */
   private async firstMessageArrived(id: string, path: string, delivery: string): Promise<boolean> {
     if (this.stored(id, path, delivery)) return true;
     const session = this.host.findSession(id);
@@ -263,7 +233,6 @@ export class Orchestration {
     return this.stored(id, path, delivery);
   }
 
-  /** True when the message waits in the chat's mailbox or is in its transcript. */
   private stored(id: string, path: string, delivery: string): boolean {
     const database = Registry.open(this.host.storageRoot());
     try { if (database.prepare('SELECT 1 FROM session_mailbox WHERE session_id=? AND delivery_id=?').get(id, delivery)) return true; }
@@ -276,7 +245,6 @@ export class Orchestration {
     });
   }
 
-  /** Keeps a chat whose first message arrived. A stopped one is started again with the launch spec of packet, so it reads the message. */
   private async keepNewChat(id: string, packet: any, restart: boolean): Promise<true> {
     const root = this.host.storageRoot();
     if (Worktrees.read(id, root)?.state === 'preparing') Worktrees.activate(id, root);
@@ -290,7 +258,6 @@ export class Orchestration {
     return true;
   }
 
-  /** Removes a new chat whose first message did not arrive: its transcript, and for a branched-off chat its worktree and branch. */
   private async removeNewChat(id: string, path: string): Promise<void> {
     const session = this.host.findSession(id);
     if (session && !session.closed()) { await session.stop(); this.host.maintenance(session.key); }
@@ -299,11 +266,6 @@ export class Orchestration {
     else await storageTransactions.deleteBlank({ path, id });
   }
 
-  /**
-   * Makes a new worktree on a new branch from the last commit of the conversation id, and a new conversation there
-   * with its agent and its history through its last finished answer. The worktree stays preparing until the first
-   * message arrives; abandonBranch or recovery undoes it otherwise.
-   */
   private async branchOff(id: string): Promise<{ sessionId: string; sessionPath: string }> {
     const host = this.host;
     const root = host.storageRoot();
@@ -380,7 +342,6 @@ export class Orchestration {
   }
 }
 
-/** The last finished final answer on the branch that ends at leafId. */
 function lastFinishedAnswer(entries: any[], leafId: string | null): string | null {
   const byId = new Map(entries.map(entry => [entry.id, entry]));
   const seen = new Set<string>();

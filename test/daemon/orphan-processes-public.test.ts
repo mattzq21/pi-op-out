@@ -3,7 +3,6 @@ import { readdirSync, readFileSync } from 'node:fs';
 import { agentDaemon, called, text } from './agent-chats';
 import { startDaemon } from './harness';
 
-/** Processes whose command line contains marker, with the PIOP_PROCESS_TAG they carry. */
 function processes(marker: string) {
   return readdirSync('/proc').filter(name => /^\d+$/.test(name)).flatMap(pid => {
     try {
@@ -14,7 +13,6 @@ function processes(marker: string) {
   });
 }
 
-/** Has an agent of agents start a background sleep with marker, and returns that process. */
 async function backgroundSleep(agents: Awaited<ReturnType<typeof agentDaemon>>, marker: string) {
   agents.scripts.set('Start a long job', messages => called(messages, 'bash') ? { text: 'Job started.' } : { tool: 'bash', arguments: { command: `setsid sleep ${marker} > /dev/null 2>&1 &` } });
   const chat = await agents.rootChat();
@@ -35,7 +33,6 @@ test.concurrent('programs an agent left running are stopped when the next daemon
     expect(left[0].tag).toMatch(/^\d+\.\d+\./);
     expect(await backgroundSleep(running, kept)).toHaveLength(1);
 
-    // The daemon crashes: it and everything in its process tree that it would have stopped are killed at once.
     const daemonPid = Number(left[0].tag!.split('.')[0]);
     process.kill(daemonPid, 'SIGKILL');
     for (let tries = 0; tries < 100 && readdirSync('/proc').includes(String(daemonPid)); tries++) await Bun.sleep(50);

@@ -31,7 +31,6 @@ async function retryConversation(t, extra = {}) {
   }, { background: false, shouldMockEvents: true });
   target = await daemon.invoke('create_temporary_chat', { hostId: 'local' });
   transport = new NativeTransport({ cwd: target.cwd, sessionId: target.sessionId });
-  // Retry starts the chat's Pi and sends retry_response. The test records both and answers with extra.onRetry.
   const retries = [];
   let connected = false;
   transport.connect = async () => { connected = true; };

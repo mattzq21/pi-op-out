@@ -4,7 +4,6 @@ import { ToastHistory } from '../../clients/ui/components/ToastHistory';
 import { trackToastMessage } from '../../clients/ui/lib/toastHistory';
 import '../../clients/ui/styles.css';
 
-/** A window that shows its toast history and raises a notice for each submitted text, as app toasts do. */
 function Window() {
   const [notice, setNotice] = createSignal<string>();
   let input!: HTMLInputElement;

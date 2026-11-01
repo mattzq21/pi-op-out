@@ -25,7 +25,6 @@ try {
     writeFileSync(path, stateRecords.stored(entries).map(entry => JSON.stringify(entry)).join('\n') + '\n');
     bind(db, id, path);
     const captured = stateRecords.capture(entries);
-    // A session_info line in the content names the chat; the session broker keeps the name.
     const name = entries.findLast(entry => entry.type === 'session_info')?.name;
     if (captured.length || name) records.push({ path, id, captured, name });
     chats.push({ id, path, preview });

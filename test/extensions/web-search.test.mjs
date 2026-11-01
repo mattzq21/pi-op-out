@@ -9,7 +9,6 @@ import { pathToFileURL } from 'node:url';
 import { build } from 'esbuild';
 
 const dir = await mkdtemp(join(tmpdir(), 'piop-web-search-'));
-// The extension reads the chosen model from the Piop settings in this home.
 const home = join(dir, 'home');
 const previousHome = process.env.HOME;
 process.env.HOME = home;
@@ -21,7 +20,6 @@ await build({ entryPoints: ['daemon/plugins/web-search/index.ts'], outfile, bund
   plugins: [{ name: 'pi-ai', setup(api) { api.onResolve({ filter: /^@earendil-works\/pi-ai$/ }, () => ({ path: 'pi-ai', namespace: 'sdk' })); api.onLoad({ filter: /.*/, namespace: 'sdk' }, () => ({ contents: 'export { Type } from "typebox";', resolveDir: process.cwd() })); } }] });
 const { default: register } = await import(pathToFileURL(outfile));
 
-/** The OpenAI Responses endpoint. reply decides each answer; requests keeps what the tool sent. */
 const requests = [];
 let reply = () => ({ status: 500, body: 'no reply set' });
 let baseUrl;

@@ -74,7 +74,6 @@ export function createSidebarState(source: Accessor<SessionSummary[]>, query: Ac
   const savedGroups = createMemo(() => storedGroups.state?.groups ?? []);
   const savedGroupsById = createMemo(() => new Map(savedGroups().map((group): [string, SessionGroup] => [group.id, group]).reverse()));
   const customGroups = createMemo(() => savedGroups().filter(group => !group.cwd && group.id !== DIRLESS_KEY));
-  /** Groups that can hold other groups: custom groups and project groups. */
   const parentGroupsByKey = createMemo(() => new Map(savedGroups().filter(group => group.id !== DIRLESS_KEY && !(group.cwd && isTemporaryChatCwd(group.cwd))).map((group): [string, SessionGroup] => [group.id, group])));
   const persistence = createSidebarPersistence();
   const collapsedProjects = createMemo(() => new Set(persistence.layout().collapsed));

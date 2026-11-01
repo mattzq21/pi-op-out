@@ -5,10 +5,6 @@ import { useChatSession } from '../../clients/ui/lib/useChatSession.ts';
 import { retainSubmittedMessage } from '../../clients/ui/lib/sessionMemory.ts';
 import { ChatView } from '../../clients/ui/components/ChatView.tsx';
 
-// Message B, sent while message A has no reply yet, must not show directly under A. Pi delivers B only after the reply to A.
-// Each scenario sends events in an order that Pi and Piop produce. The test records the transcript after each step.
-// At no step can two user messages show one after the other, because B is delivered only after the reply to A.
-
 const text = value => [{ type: 'text', text: value }];
 const user = (type, content, timestamp, submission, queue) => ({ type, message: { role: 'user', content: text(content), timestamp, piopSubmissionId: submission, piopQueueId: queue } });
 const assistant = (type, content, timestamp) => ({ type, message: { role: 'assistant', content: text(content), timestamp } });
@@ -45,7 +41,6 @@ async function harness(t, responses = new Map()) {
   return { events, submit, refresh, check, steps };
 }
 
-// The run of A starts: the daemon publishes its queue after delivery ("started" preflight), then Pi starts the run.
 async function startA(chat, { userEvents = true } = {}) {
   await chat.submit('A submitted', 'submission-a', 'Message A');
   await chat.events('A preflight "started", daemon queue_update []', { type: 'queue_update', steering: [], followUp: [], pendingMessages: [] });
@@ -53,7 +48,6 @@ async function startA(chat, { userEvents = true } = {}) {
   await chat.events('agent_start, user A message_start/message_end', { type: 'agent_start' }, user('message_start', 'Message A', 100, 'submission-a', 'queue-a'), user('message_end', 'Message A', 100, 'submission-a', 'queue-a'));
 }
 
-// The reply to A ends. Pi takes B from its queue (queue_update first, then the user message), and replies to B.
 async function finish(chat, behavior) {
   await chat.events('assistant message_end', assistant('message_end', 'Reply to A', 200));
   await chat.events('Pi releases B: queue_update [], user B message_start/message_end', { type: 'queue_update', steering: [], followUp: [], pendingMessages: [] }, user('message_start', 'Message B', 300, 'submission-b', 'queue-b'), user('message_end', 'Message B', 300, 'submission-b', 'queue-b'));
@@ -88,7 +82,6 @@ for (const behavior of ['followUp', 'steer']) {
 test('B sent before agent_start and user A message_start arrive does not show directly under A', async t => {
   const chat = await harness(t);
   await startA(chat, { userEvents: false });
-  // The prompt response of A arrived, but its run events did not. The composer is not streaming, so B goes as a prompt that the daemon queues as a follow-up.
   await chat.submit('B submitted as prompt (waits for the daemon)', 'submission-b', 'Message B');
   await chat.events('agent_start, user A message_start/message_end', { type: 'agent_start' }, user('message_start', 'Message A', 100, 'submission-a', 'queue-a'), user('message_end', 'Message A', 100, 'submission-a', 'queue-a'));
   await chat.events('daemon queue_update with B', { type: 'queue_update', steering: [], followUp: ['Message B'], pendingMessages: [queued('followUp')] });

@@ -4,7 +4,6 @@ import { sessionIdentity } from './pi_launch';
 import * as daemon from './daemon';
 import type { App } from './app';
 
-/** Holds a conversation change lease from the host supervisor until finished or released. */
 export class MutationGuard {
   private finished = false;
   private committed = false;
@@ -34,7 +33,6 @@ export class MutationGuard {
     await this.connection.request({ type: 'conversation_mutation_end', token: this.token, success: true, restoredPath: path });
   }
 
-  /** Ends the lease when it was not finished. */
   async release(): Promise<void> {
     if (this.finished) return;
     try {

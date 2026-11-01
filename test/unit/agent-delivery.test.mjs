@@ -9,10 +9,8 @@ let dom, view;
 beforeEach(() => { dom = installDom(); });
 afterEach(async () => { await view?.unmount(); view = undefined; dom.restore(); });
 
-/** A message from another chat, as the daemon delivers it. */
 const delivered = content => ({ id: 'delivery', role: 'custom', customType: 'piop-agent-message', content, details: { notificationId: 'n1' } });
 
-/** Renders the message with a session list that knows only chat-7 on the local host. */
 function renderWithSessions(message, opened) {
   const links = { name: (hostId, sessionId) => hostId === 'local' && sessionId === 'chat-7' ? 'Build chat' : undefined, open: (hostId, sessionId) => opened.push([hostId, sessionId]) };
   return renderComponent(props => createComponent(SessionLinkContext.Provider, { value: links, get children() { return createComponent(Message, props); } }), { message });

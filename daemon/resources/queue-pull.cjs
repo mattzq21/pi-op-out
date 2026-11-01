@@ -1,45 +1,20 @@
 "use strict";
 
-/**
- * The daemon owns the conversation's queue and saves it. Pi keeps no queued message of its own: when it is ready for one, it takes the next one from the daemon.
- *
- * The daemon offers how many steering messages and follow-ups wait (queue_offer). Pi's checks for queued messages count them, so a run goes on while messages wait,
- * and an extension that starts work on its own sees them. Pi takes a message at a steering poll, at a follow-up poll, when a run could continue,
- * and when Pi is idle while messages wait. A taken message goes through prompt like a sent message, so commands and templates work as before.
- * When a run settles, the messages that Pi took but did not use go back to the daemon. The transcript decides which messages Pi used.
- *
- * The queue also owns the conversation's goal. The offer tells whether the goal may continue its work. Pi then takes the goal prompt when a run
- * that completed would end, and when Pi is idle with no message waiting. The goal prompt is a context insertion: a custom message that the daemon
- * builds. A taken message may bring context insertions that go before it. Pi tells the daemon when a run fails or stops; a failed run holds the queue while a goal is set.
- * The offer also names the tools that the queue answers and whether each must stay in the prompt.
- */
-
 const pullState = Symbol("piop.queue-pull");
 
 const userText = message => message?.role === "user" && Array.isArray(message.content) ? message.content.filter(part => part.type === "text").map(part => part.text).join("") : "";
 
-/**
- * The queue pull of a session. ask(name, data) sends a runtime event that the daemon answers. prompt(session, item) passes a taken message to Pi
- * and resolves with Pi's preflight disposition: "queued" or "started" when Pi took it, "handled" when an extension handled it at once.
- * insert(session, message) adds a context insertion that starts or continues a turn. tools(state) shows the queue's tools that state keeps in the prompt.
- */
 function queuePull(session, { ask, prompt, insert, tools } = {}) {
   if (session[pullState]) return session[pullState];
   if (!ask || !prompt || !insert || !tools) throw new Error("The queue pull of this session is not bound");
 
-  /**
-   * How many messages of each kind the daemon offers, whether the goal may continue (goal is 1), numbered by the daemon,
-   * and the ids of the daemon's messages that Pi took and has not used yet.
-   */
   const offer = { steer: 0, followUp: 0, goal: 0, sequence: 0 };
   const holding = new Set();
   let starting = false;
   let toolState = "";
 
-  /** True when messages of a kind wait. Without a kind, true when any message waits; the goal is not a waiting message. */
   const offered = kind => kind ? offer[kind] > 0 : offer.steer + offer.followUp > 0;
 
-  /** Keeps the newest offer. An offer and the answer to a take can cross, so an older one is ignored. */
   const update = next => {
     if (!Number.isInteger(next?.sequence) || next.sequence <= offer.sequence) return false;
     offer.sequence = next.sequence;
@@ -56,13 +31,11 @@ function queuePull(session, { ask, prompt, insert, tools } = {}) {
     return true;
   };
 
-  /** Tells the daemon that a run failed or stopped, so a failed run with a goal holds the queue before Pi could take its next turn. */
   const report = async outcome => {
     try { update(await ask("queue_outcome", { outcome })); }
     catch (error) { console.error(`Could not report how the run ended: ${error instanceof Error ? error.message : String(error)}`); }
   };
 
-  /** Takes the next message of a kind, or the goal prompt, and passes it to Pi. Returns true when Pi queued it or started a run with it. */
   const take = async kind => {
     if (!offered(kind)) return false;
     let answer;
@@ -83,12 +56,10 @@ function queuePull(session, { ask, prompt, insert, tools } = {}) {
     holding.add(item.id);
 
     try {
-      // Messages that go to the model before the taken message, such as the notice that a new goal is set.
       for (const message of Array.isArray(item.context) ? item.context : []) await session.sendCustomMessage(message, { triggerTurn: false });
       const disposition = await prompt(session, item);
 
       if (disposition !== "handled") return true;
-      // An extension handled the message at once, so it is used without a transcript entry.
       holding.delete(item.id);
       await ask("queue_used", { id: item.id });
       return false;
@@ -99,7 +70,6 @@ function queuePull(session, { ask, prompt, insert, tools } = {}) {
     }
   };
 
-  /** Starts a run with the next message when Pi is idle while messages wait. Steering messages go first, the goal last. */
   const start = async () => {
     if (starting || session.isStreaming || session.isCompacting || !(offered() || offered("goal"))) return;
     starting = true;
@@ -108,7 +78,6 @@ function queuePull(session, { ask, prompt, insert, tools } = {}) {
     finally { starting = false; }
   };
 
-  /** Returns the daemon's messages that wait in Pi's own queues unused, so the daemon offers them again in their place. */
   const releaseUnused = async () => {
     const agent = session.agent;
     const released = [];
@@ -134,7 +103,6 @@ function queuePull(session, { ask, prompt, insert, tools } = {}) {
     offered,
     take,
     start,
-    /** The daemon's new offer. Pi idle with waiting messages takes the next one. Returns true when more messages wait than before. */
     setOffer(next) {
       const before = offer.steer + offer.followUp;
 
@@ -155,7 +123,6 @@ function queuePull(session, { ask, prompt, insert, tools } = {}) {
     return result;
   };
 
-  // A run that completed and would end goes on with the goal's next turn, after the messages that wait. A run that failed holds the queue.
   const beforeSettle = session._runBeforeSettleBoundary;
   session._runBeforeSettleBoundary = async function (...args) {
     const outcome = this._lastActivityOutcome;
@@ -169,7 +136,6 @@ function queuePull(session, { ask, prompt, insert, tools } = {}) {
     return take("goal");
   };
 
-  // Extensions ask whether messages wait; the daemon's waiting messages count, and the goal does not.
   const count = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(session), "pendingMessageCount") ?? Object.getOwnPropertyDescriptor(session.constructor.prototype, "pendingMessageCount");
   Object.defineProperty(session, "pendingMessageCount", { configurable: true, get() { return (count?.get?.call(this) ?? 0) + offer.steer + offer.followUp; } });
 
@@ -178,7 +144,6 @@ function queuePull(session, { ask, prompt, insert, tools } = {}) {
   return pull;
 }
 
-/** Makes the agent take messages from the daemon at its polls, and count the daemon's waiting messages when it decides whether to continue. */
 function bindAgent(session, pull) {
   const agent = session.agent;
   const createLoopConfig = agent.createLoopConfig;
@@ -205,7 +170,6 @@ function bindAgent(session, pull) {
     return config;
   };
 
-  // A run continues with a queued message after its last reply. When Pi's own queues are empty, it takes the next message from the daemon first.
   agent.continue = async function (...args) {
     const last = this.state?.messages?.at(-1) ?? this._state?.messages?.at(-1);
 

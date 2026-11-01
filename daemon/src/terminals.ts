@@ -11,9 +11,7 @@ import * as terminalSessions from './terminal_sessions';
 import type { App } from './app';
 
 const MAX_INPUT_BYTES = 1024 * 1024;
-/** Input accepted since the PTY last reported it was drained. */
 const INPUT_PENDING_BYTES = 4 * 1024 * 1024;
-/** Output chunks are merged for this long before one terminal_output event is sent. */
 const OUTPUT_FLUSH_MS = 16;
 const OUTPUT_FLUSH_BYTES = 256 * 1024;
 
@@ -23,18 +21,15 @@ export interface TerminalProcess {
   cwd: string;
   hostId: string;
   windowLabel: string;
-  /** The shell process. It runs in a Bun pseudo-terminal (PTY), available as child.terminal. */
   child: Subprocess;
   processSessionId: number;
   rows: number;
   cols: number;
-  /** Input bytes written since the last drain. Bun reports a drain each time its input queue is empty again, also after a write it did not buffer. */
   pendingInput: number;
   exited: boolean;
   stopping?: Promise<void>;
 }
 
-/** State for all running shell terminals and their saved output. */
 export class TerminalRuntime {
   processes = new Map<string, TerminalProcess>();
   history = new Map<string, terminalSessions.Transcript>();
@@ -44,7 +39,6 @@ export class TerminalRuntime {
     const process = this.processes.get(id);
     if (process && process.windowLabel !== owner) throw new Error('Terminal belongs to another connection');
   }
-  /** True when no other connection runs this terminal. Shared session terminals of this connection count as its own. */
   ownedByConnection(id: string, owner: string): boolean {
     const label = this.processes.get(id)?.windowLabel;
     return label === undefined || label === owner || label.startsWith('shared:' + owner + ':');
@@ -147,7 +141,6 @@ function startTerminalWith(runtime: TerminalRuntime, launch: TerminalLaunch, com
   terminalSessions.record(runtime.history, terminalId, size);
   emit(terminalSessions.event(runtime.history, terminalId, { type: 'terminal_output', terminalId, data: size }));
   void child.exited.then(async () => {
-    // Let the PTY deliver the last output before the terminal closes.
     await Promise.race([ptyClosed, new Promise(resolve => setTimeout(resolve, 1000))]);
     await stopTerminalProcess(started);
     try { child.terminal?.close(); } catch (error) { console.error('Could not close terminal PTY ' + terminalId + ':', error); }

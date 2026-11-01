@@ -7,7 +7,6 @@ import { flushPlugins, registerPluginReadiness } from "./lifecycle";
 
 interface RunningPlugin { id: string; name: string; host: string; revision: string | undefined; instance: PluginInstance; dispose: () => void }
 
-/** Runs the enabled client plugins for the conversation in source, and gives their composer and transcript parts to the app. */
 export function createPluginWorkspace(source: Accessor<PluginConversation>) {
   const [running, setRunning] = createSignal<RunningPlugin[]>([]);
   const [loadError, setLoadError] = createSignal<string>();

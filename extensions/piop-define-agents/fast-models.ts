@@ -16,10 +16,6 @@ export function parseFastModelSnapshot(value: unknown): FastModelSnapshot | null
   return value === null || value === undefined ? null : Parse(snapshotSchema, value);
 }
 
-/**
- * Checks an agent that turns fast mode on against the host's fast model results.
- * Returns undefined when the model is supported or when the host cannot confirm it yet.
- */
 export function fastModelProblem(snapshot: FastModelSnapshot | null, agent: string, model: string | undefined): string | undefined {
   if (!model) return 'Agent "' + agent + '" cannot enable fast mode because it has no model';
 
@@ -32,7 +28,6 @@ export function fastModelProblem(snapshot: FastModelSnapshot | null, agent: stri
   return 'Agent "' + agent + '" cannot enable fast mode because model ' + model + " does not support it";
 }
 
-/** Reads the host's fast model results through the daemon. Returns null outside piop. */
 export async function hostFastModels(): Promise<FastModelSnapshot | null> {
   const broker = process.env.PIOP_BROKER_URL;
   const token = process.env.PIOP_BROKER_TOKEN;
@@ -49,7 +44,6 @@ export async function hostFastModels(): Promise<FastModelSnapshot | null> {
   return parseFastModelSnapshot(body.data);
 }
 
-/** The fast mode extension's session interface, or undefined when the extension is not loaded. */
 export function fastModeSession(pi: ExtensionAPI): FastModeSession | undefined {
   const request: FastModeSessionRequest = {};
   pi.events.emit("piop:fast-mode:session", request);

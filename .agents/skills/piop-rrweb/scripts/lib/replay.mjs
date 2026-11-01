@@ -1,4 +1,3 @@
-// Build a self-contained replay viewer and verify it in headless Chromium.
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -84,7 +83,6 @@ function serve(dir) {
   return new Promise(resolve => server.listen(0, '127.0.0.1', () => resolve({ server, port: server.address().port })));
 }
 
-// points: [{ label, offsetMs }]. selectors: CSS selectors to describe inside the replayed document at each point.
 export async function verifyViewer(viewerFile, { points = [], selectors = [], speed = 4, durationMs, viewport = [1400, 900] }) {
   const dir = path.dirname(viewerFile);
   const { server, port } = await serve(dir);

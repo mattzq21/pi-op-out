@@ -2,7 +2,6 @@ import { Mutex, errorText } from '../util/sync';
 import { clone, jsonEqual, kind } from './json';
 import type { Session, SessionHost } from './session';
 
-/** Applies the host's saved settings to a running session while it is idle, and reports settings that cannot be applied. */
 export class SessionSettings {
   private gate = new Mutex();
   private applied: any | null = null;
@@ -13,30 +12,25 @@ export class SessionSettings {
 
   constructor(private session: Session, private host: SessionHost) {}
 
-  /** True when the host has settings that this session does not have yet. */
   pending(): boolean {
     const configuration = this.host.configuration();
     return configuration !== null && configuration !== undefined && !(this.applied !== null && jsonEqual(this.applied, configuration));
   }
 
-  /** The error of the last failed attempt, while the settings are still not applied. */
   error(): string | null {
     const error = this.failure;
     return error !== null && this.pending() ? error : null;
   }
 
-  /** The error of the last failed attempt. */
   lastError(): string | null { return this.failure; }
 
   applying(): boolean { return this.applyingValue; }
 
-  /** Records the automatic options that a command sent to Pi sets. */
   remember(command: any): void {
     if (kind(command) === 'set_auto_compaction') this.autoCompaction = typeof command.enabled === 'boolean' ? command.enabled : null;
     if (kind(command) === 'set_auto_retry') this.autoRetry = typeof command.enabled === 'boolean' ? command.enabled : null;
   }
 
-  /** Applies pending settings when the session is idle. After a failure, it waits for retry. */
   async reconcile(retry: boolean): Promise<void> {
     const session = this.session;
     if (retry) this.failure = null;

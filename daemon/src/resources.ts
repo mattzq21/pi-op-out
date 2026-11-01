@@ -171,7 +171,6 @@ export const SESSION_BROKER_MODULES: Array<[string, string]> = [
   ['subagent-looks.ts', brokerModule30],
 ];
 
-/** Session extensions installed next to session-broker. Each directory holds one extension with index.ts as its entry. */
 export const SESSION_EXTENSIONS: Array<[string, Array<[string, string]>]> = [
   ['hooks-extended', [['index.ts', hooksExtendedIndex], ['interface.ts', hooksExtendedInterface], ['availability.ts', hooksAvailability]]],
   ['piop-storage', [

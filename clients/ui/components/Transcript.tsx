@@ -26,13 +26,8 @@ type TranscriptTransport = NativeTransport;
 
 export type TranscriptActions = { onBranch?: (message: ChatMessage) => void; onFork?: (message: ChatMessage) => void | Promise<void>; onForkAndForget?: (message: ChatMessage) => void | Promise<void>; onOpenForkSource?: (source: ForkSource) => void };
 
-/** What a transcript shows and the view it shows in. scrollRoot: the scrolling element of the view; without it, the turns that are not drawn at once wait. */
 export type TranscriptInput = { messages: ChatMessage[]; state: AgentState; debug?: DebugView; readOnly?: boolean; scrollRoot?: HTMLElement | null; cwd?: string; notify?: (title: string, message: string) => void; forkSourceName?: string; actions: TranscriptActions };
 
-/**
- * The turns of one chat, drawn into an element that can move between views. A chat drawn while it is not shown opens without drawing it again.
- * use: shows the transcript with the input of a view. The returned function gives back the input it had before.
- */
 export type Transcript = {
   element: HTMLElement;
   split: Accessor<TranscriptSplit>;
@@ -44,7 +39,6 @@ export type Transcript = {
   dispose: () => void;
 };
 
-/** input: makes the input that the transcript has while no view uses it. It runs inside the transcript. owner: gives the contexts of the app. */
 export function createTranscript(transport: TranscriptTransport | undefined, input: () => Accessor<TranscriptInput>, owner: Owner | null = getOwner()): Transcript {
   return createRoot(dispose => {
     const [source, setSource] = createSignal(input());
@@ -62,7 +56,6 @@ export function createTranscript(transport: TranscriptTransport | undefined, inp
     const [pins, setPins] = createSignal<MessagePin[]>([]);
     const stop = transport?.subscribe(event => {
       if (event.type === "pinned_messages") setPins(pinnedMessagesSchema.parse(event.pins));
-      // A local disconnect also reports ownership_lost; only a real loss changes ownsConversation.
       else if (event.type === "ownership_lost") setOwnsConversation(transport.ownsConversation?.() !== false);
       else if (event.type === "ownership_acquired") setOwnsConversation(true);
     });
@@ -75,10 +68,8 @@ export function createTranscript(transport: TranscriptTransport | undefined, inp
     const hostId = () => transport?.currentHostId() ?? "local";
     const notice = (title: string, reason: unknown) => current().notify?.(title, reason instanceof Error ? reason.message : String(reason));
 
-    /** Runs the failed or stopped response again in Pi, which hides the failed attempt from the model. */
     const onRetry = async (message: ChatMessage) => {
       if (!transport) throw new Error("Conversation is unavailable");
-      // The saved history can show before the chat has begun to start its Pi; connect joins a start in progress.
       if (!transport.isConnected()) await transport.connect();
       await transport.command({ type: "retry_response", entryId: await resolveMessageEntry(transport, message) });
     };
@@ -111,7 +102,6 @@ export function createTranscript(transport: TranscriptTransport | undefined, inp
     const pluginMessages = { sessionId: () => sessionId(), command: async (command: Parameters<TranscriptTransport["command"]>[0]) => { if (!transport) throw new Error("Conversation is unavailable"); return transport.command(command); } };
 
     let element: HTMLElement | undefined;
-    // The providers give their content lazily; reading it draws the turns now, with the contexts.
     const view: unknown = <ConversationHostContext.Provider value={hostId}><MessageFileContext.Provider value={{ hostId, cwd, get notify() { return current().notify; } }}><PluginMessageContext.Provider value={pluginMessages}><MessagePinContext.Provider value={messagePins}><ConversationImageProject.Provider value={imageProject}>
       <div ref={node => { element = node; }} class="conversation-turns">
         <Key each={turns()} by={turn => turn.messages[0]?.id ?? "empty"}>{(turn, index) => <DeferredTurn navigationId={turn().messages[0]?.id} scrollRoot={scrollRoot} eager={index() >= turns().length - 3}><ConversationTurn latest={index() === turns().length - 1} messages={turn().messages} promptContexts={turn().promptContexts} debug={debug()} active={isStreaming() && index() === turns().length - 1} steered={turns()[index() + 1]?.messages[0]?.deliveryBehavior === "steer"} retryable={retryable() && index() === turns().length - 1} onRetry={onRetry} onBranch={branching() ? onBranch : undefined} onFork={canFork() && hasFork() ? onFork : undefined} onForkAndForget={canFork() && hasForkAndForget() && ownsConversation() ? onForkAndForget : undefined} forkSource={forkSource()} forkSourceName={forkSourceName()} onOpenForkSource={hasOpenForkSource() ? onOpenForkSource : undefined} /></DeferredTurn>}</Key>
@@ -120,7 +110,6 @@ export function createTranscript(transport: TranscriptTransport | undefined, inp
     if (typeof view === "function") (view as () => unknown)();
 
     const use = (next: Accessor<TranscriptInput>) => {
-      // A chat can take its conversation without an event, such as a new chat that loads its draft, so a view reads it when it shows the chat.
       setOwnsConversation(transport?.ownsConversation?.() !== false);
       const previous = untrack(source);
       setSource(() => next);
@@ -140,7 +129,6 @@ function startsTurn(message: ChatMessage | undefined) {
 
 const isSubagentResult = (message: ChatMessage) => message.customType === "piop-subagent-result";
 
-/** A subagent result joins a turn that holds only subagent results, so results with no answer between them share one line. */
 function joinsTurn(turn: ChatMessage[], message: ChatMessage) {
   return isSubagentResult(message) && turn.length > 0 && turn.every(isSubagentResult);
 }
@@ -209,14 +197,6 @@ function associateQueuedContext(messages: ChatMessage[]) {
   });
 }
 
-/**
- * Splits the messages into the transcript and the sent messages that wait for the daemon's queue.
- * A sent message that the daemon has not queued yet waits in the queue above the message box while an earlier user message still waits for its reply: Pi delivers it only after that reply.
- * An earlier user message waits for its reply while it is still being sent, or while the agent works. A message whose task ended without a reply does not wait.
- * While the queue is on hold, every sent message waits in the queue: the daemon keeps it there.
- * A message sent as a steer or follow-up while the agent worked also waits there, even after the reply started: Pi queues it.
- * A queued message that starts a turn stays in the conversation, and its queue entry is left out of the queue (started), so it does not move to the queue while Pi takes it.
- */
 export type TranscriptSplit = ReturnType<typeof splitTranscript>;
 
 function splitTranscript(messages: ChatMessage[], working: boolean, held: boolean) {
@@ -331,7 +311,6 @@ function turnTiming(messages: ChatMessage[], userIndex: number, finalMessage?: C
   return formatElapsed(userIndex >= 0 ? messages[userIndex].timestamp : messages[0]?.timestamp, finalMessage?.completedAt ?? finalMessage?.timestamp);
 }
 
-/** The last message of the turn when it is a failed or stopped response. */
 function retryableResponse(messages: ChatMessage[]) {
   const message = messages.at(-1);
 
@@ -352,28 +331,24 @@ function MessageList(props: { messages: ChatMessage[]; expanded: boolean; compac
   return <Key each={entries()} by={entry => entry.message.id}>{entry => <Message message={entry().message} toolCount={entry().count} showActions={props.showActions ?? true} expanded={props.expanded} debug={props.debug} />}</Key>;
 }
 
-type ConversationTurnProps = { latest?: boolean; messages: ChatMessage[]; promptContexts: PromptContextInfo[]; debug: DebugView; active: boolean; /** A steer message started the next turn, so this turn's work stays open. */ steered?: boolean; retryable: boolean; onRetry: (message: ChatMessage) => Promise<void>; onBranch?: TranscriptActions["onBranch"]; onFork?: TranscriptActions["onFork"]; onForkAndForget?: TranscriptActions["onForkAndForget"]; forkSource?: ForkSource; forkSourceName?: string; onOpenForkSource?: TranscriptActions["onOpenForkSource"]; };
+type ConversationTurnProps = { latest?: boolean; messages: ChatMessage[]; promptContexts: PromptContextInfo[]; debug: DebugView; active: boolean; steered?: boolean; retryable: boolean; onRetry: (message: ChatMessage) => Promise<void>; onBranch?: TranscriptActions["onBranch"]; onFork?: TranscriptActions["onFork"]; onForkAndForget?: TranscriptActions["onForkAndForget"]; forkSource?: ForkSource; forkSourceName?: string; onOpenForkSource?: TranscriptActions["onOpenForkSource"]; };
 
 function ConversationTurn(componentProps: ConversationTurnProps) {
   const turnMessages = createMemo(() => componentProps.debug.reasoning ? componentProps.messages : componentProps.messages.map(withoutReasoning));
   const [retryError, setRetryError] = createSignal<string>();
-  /** The user's choice wins; without one, the work stays open when a steer cuts it while the chat shows. A loaded chat shows past steered work closed. */
   const steeredAtStart = untrack(() => componentProps.steered === true);
   const [workChoice, setWorkOpen] = createSignal<boolean>();
   const workOpen = () => workChoice() ?? (!steeredAtStart && componentProps.steered === true);
   const [retrying, setRetrying] = createSignal(false); const retryingRef = createRef(false);
   const userIndex = createMemo(() => (turnMessages().findIndex(isPromptMessage)));
-  /** The place of the message this chat branched from. The link to the parent chat shows after it, before later notes such as a compaction. */
   const forkIndex = createMemo(() => { const entryId = componentProps.forkSource?.entryId;
 
     return entryId ? turnMessages().findIndex(message => (message.entryId ?? message.id) === entryId) : -1; });
-  /** A compaction before the final response happened during the turn's work, so it shows in its place in the work. */
   const inWork = (message: ChatMessage, index: number) => message.customType === "compaction" && index < finalIndex();
   const systemMessages = (after: boolean) => turnMessages().filter((message, index) => message.role === "system" && !inWork(message, index) && (forkIndex() >= 0 && index > forkIndex()) === after);
   const renderForkLink = () => <Show when={forkIndex() >= 0 ? componentProps.forkSource : undefined}>{source => <ForkSourceLink source={source()} name={componentProps.forkSourceName} onOpen={componentProps.onOpenForkSource} />}</Show>;
 
   const finalIndex = createMemo(() => (finalResponseIndex(turnMessages())));
-  /** The last point of the chat: the latest final response or compaction. Fork and forget from it would change nothing. */
   const lastPointId = createMemo(() => componentProps.latest ? turnMessages().filter((message, index) => index === finalIndex() || message.customType === "compaction").at(-1)?.id : undefined);
   const forgetFrom = (message: ChatMessage | undefined) => (message?.id === lastPointId() ? undefined : componentProps.onForkAndForget);
   const renderSystemMessages = (after: boolean) => <Key each={systemMessages(after)} by={message => message.id}>{message => <Message message={message()} expanded={false} onFork={canBranchFrom(message()) ? componentProps.onFork : undefined} onBranch={canBranchFrom(message()) ? componentProps.onBranch : undefined} onForkAndForget={canBranchFrom(message()) ? forgetFrom(message()) : undefined} lastPoint={message().id === lastPointId()} />}</Key>;
@@ -391,15 +366,11 @@ function ConversationTurn(componentProps: ConversationTurnProps) {
   })));
 
   const userMessages = createMemo(() => (turnMessages().filter(message => isPromptMessage(message) && message.customType !== "piop-subagent-result")));
-  /** Subagents whose answers started this turn. They show on the turn's "Worked for" line instead of as a message. */
   const finishedSubagents = createMemo(() => turnMessages().filter(message => isPromptMessage(message) && message.customType === "piop-subagent-result").flatMap(message => subagentRuns(message.details)));
-  // A click on a subagent opens its chat and must not open or close the work group around it.
   const renderFinishedSubagents = () => finishedSubagents().length > 0 && <span class="subagent-finished" onClick={event => event.preventDefault()}><SubagentResults runs={finishedSubagents()} /></span>;
-  /** The work that the daemon left out of this turn until the user opens it. */
   const deferredWork = createMemo(() => finalIndex() >= 0 ? turnMessages()[finalIndex()].deferredWork : undefined);
   const [workError, setWorkError] = createSignal<string>();
   const hasWork = createMemo(() => ((Boolean(deferredWork()) && (componentProps.debug.reasoning || !deferredWork()!.reasoningOnly)) || intermediate().some((message) => !invisibleAssistant(message))));
-  /** An open work group loads its work also when a refresh leaves the work out again. */
   const workLoader = createMemo(() => workOpen() && deferredWork() ? turnMessages()[finalIndex()]?.loadWork : undefined);
   createEffect(() => {
     const load = workLoader();
@@ -411,10 +382,6 @@ function ConversationTurn(componentProps: ConversationTurnProps) {
   const reasoningOnly = createMemo(() => deferredWork() ? deferredWork()!.reasoningOnly : (compactCompletedTools(intermediate()).every(({ message }) => message.role === "assistant" && hasVisibleText(thinkingOf(message.content)) && !hasVisibleText(textOf(message.content)) && message.stopReason !== "error" && message.stopReason !== "aborted")));
   const finalSource = createMemo(() => (finalIndex() >= 0 ? turnMessages()[finalIndex()] : undefined));
   const finalMessage = createMemo(() => (finalIndex() >= 0 ? { ...turnMessages()[finalIndex()], content: textOf(turnMessages()[finalIndex()].content) } : undefined));
-  /**
-   * The final response shows in one place while the turn runs and after it ends, so the end of the turn does not build it again.
-   * While the turn runs, a response is final only while it is the last message of the turn and calls no tool.
-   */
   const finalShown = createMemo(() => {
     const index = finalIndex();
 
@@ -427,7 +394,6 @@ function ConversationTurn(componentProps: ConversationTurnProps) {
 
     return !later && !(Array.isArray(message.content) && message.content.some(part => part.type === "toolCall"));
   });
-  /** The work of a running turn: every message but the prompt and the final response. The reasoning of the final response stays here. */
   const activeWork = createMemo(() => turnMessages().flatMap((message, index): ChatMessage[] => {
     if (isPromptMessage(message) || isContextInjection(message)) return [];
 
@@ -450,7 +416,6 @@ function ConversationTurn(componentProps: ConversationTurnProps) {
 
 
   const workedFor = createMemo(() => (turnTiming(turnMessages(), userIndex(), finalMessage())));
-  /** Pi runs a failed response again from the prompt before it, so a turn without a prompt that has content cannot be retried. */
   const hasRetryPrompt = createMemo(() => turnMessages().some(message => isPromptMessage(message) && (message.role !== "user" || hasVisibleText(textOf(message.content)) || (Array.isArray(message.content) && message.content.some(part => part.type === "image")))));
   const retryTarget = createMemo(() => (componentProps.retryable && hasRetryPrompt() ? retryableResponse(turnMessages()) : undefined));
   const retry = () => {

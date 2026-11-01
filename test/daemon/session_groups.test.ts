@@ -16,7 +16,6 @@ const load = (seeds: any[] = []) => daemon.invoke('load_session_groups', { seeds
 const change = (value: any) => daemon.invoke('change_session_groups', { change: value });
 const project = (id: string, name: string, cwd: string | null, hostId: string | null = 'local', hostName: string | null = null) => ({ id, name, cwd, hostId, hostName });
 const names = (state: any) => state.groups.map((group: any) => group.name);
-/** Deletes every group, and forgets removed projects, so each test starts from an empty but loaded state. */
 async function reset(): Promise<any> {
   let state = await load();
   for (const group of state.groups) state = await change({ type: 'remove', id: group.id });
@@ -25,7 +24,6 @@ async function reset(): Promise<any> {
   return load();
 }
 
-// Assignments of sessions that do not exist on their machine are cleaned up, so tests use real session IDs.
 function publicSession(cwd = daemon.home): { id: string; path: string } {
   return JSON.parse(execFileSync('node', [fileURLToPath(new URL('../fixtures/publish-chat.mjs', import.meta.url))], {
     encoding: 'utf8', timeout: 30000,
@@ -77,7 +75,6 @@ test('a chat in its own Piop worktree joins the group of the repository folder, 
   const repo = join(daemon.home, 'worktree-repo'); mkdirSync(repo, { recursive: true });
   const named = (await change({ type: 'project', project: project('__pi-desktop-custom-group__:repo', 'My repo', repo) })).groups[0].id;
   const worktree = join(daemon.home, '.piop/worktrees/abcd'); mkdirSync(worktree, { recursive: true });
-  // The record exists before the transcript, as when Piop starts a chat in a new worktree.
   const root = join(daemon.home, '.piop');
   const id = SessionDatabase.reserve(root);
   const db = new Database(join(root, 'sessions.sqlite'));
@@ -93,7 +90,6 @@ test('a chat in its own Piop worktree joins the group of the repository folder, 
   const state = await load();
   expect(state.assignments['local:' + id]).toBe(named);
   expect(state.groups.filter((group: any) => group.cwd === worktree)).toEqual([]);
-  // Another chat that starts in the same worktree also joins the repository's group.
   const other = publicSession(worktree);
   await waitForSessions(daemon, rows => rows.some(row => row.id === other.id));
   const after = await load();
@@ -356,7 +352,6 @@ test('a branch takes its source chat\'s group, and its own worktree folder never
   await change({ type: 'assign', key: 'local:' + inCustom.id, group: custom });
   await change({ type: 'assign', key: 'local:' + ungrouped.id, group: null });
 
-  // A branch of a branch is listed before its own source here; its group still comes from the chain.
   const state = await load([seed(fromBranch, fromBranch.cwd, fromProject), seed(fromProject, fromProject.cwd, inProject),
     seed(fromCustom, fromCustom.cwd, inCustom), seed(fromUngrouped, fromUngrouped.cwd, ungrouped), seed(inProject, repo)]);
   expect(state.assignments['local:' + fromProject.id]).toBe('local:' + repo);
@@ -365,7 +360,6 @@ test('a branch takes its source chat\'s group, and its own worktree folder never
   expect(state.assignments['local:' + fromUngrouped.id]).toBeNull();
   expect(state.groups.filter((group: any) => group.cwd?.startsWith(worktreeRoot))).toEqual([]);
 
-  // A branch the user moves stays where it was moved.
   await change({ type: 'assign', key: 'local:' + fromProject.id, group: custom });
   expect((await load([seed(fromProject, fromProject.cwd, inProject)])).assignments['local:' + fromProject.id]).toBe(custom);
 });

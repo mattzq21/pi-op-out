@@ -17,13 +17,11 @@ beforeAll(async () => {
 }, 60000);
 afterAll(async () => { await agents?.close(); });
 
-/** The model and thinking level of the model call that started with key. */
 const callFor = (key: string) => {
   const request = agents.model.requests.findLast(request => text(request.messages.find((message: any) => !['system', 'developer'].includes(message.role) && text(message))).includes(key));
   return request && { model: request.model, effort: request.reasoning_effort };
 };
 
-/** A new chat on the agent profile named agent. */
 const profileChat = async (agent: string) => {
   const chat = await agents.daemon.invoke('create_temporary_chat', { hostId: 'local' });
   const runtimeId = 'profile-' + agent + '-' + crypto.randomUUID();

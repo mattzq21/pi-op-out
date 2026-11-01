@@ -1,19 +1,12 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 
-/** Current-state record. data.held is true while a new chat waits for the user's first message. */
 export const INPUT_HOLD = "piop-input-hold";
 
-/**
- * Core: a chat that must stay idle until the user acts, for example a new branch. Extensions that start work on their own
- * at session start check held() first. The hold ends when the user sends input or any agent run starts.
- */
 export interface InputHold {
   held(ctx: ExtensionContext): boolean;
-  /** Calls handler each time the hold ends. Returns the function that removes the handler. */
   onRelease(handler: (ctx: ExtensionContext) => void): () => void;
 }
 
-/** Extensions emit this request on "piop:session:input-hold" to get the core InputHold. */
 export interface InputHoldRequest { hold?: InputHold }
 
 declare module "@earendil-works/pi-coding-agent" {
@@ -23,7 +16,6 @@ declare module "@earendil-works/pi-coding-agent" {
   }
 }
 
-/** The core InputHold. Throws when the core session broker is not loaded, so callers never start work by mistake. */
 export function inputHold(pi: ExtensionAPI): InputHold {
   const request: InputHoldRequest = {};
   pi.events.emit("piop:session:input-hold", request);

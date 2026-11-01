@@ -7,23 +7,15 @@ const SOURCES: Record<'codex' | 'anthropic' | 'opencodeGo', UsageSource> = { cod
 export type Provider = keyof typeof SOURCES;
 export const isUsageProvider = (value: string): value is Provider => Object.hasOwn(SOURCES, value);
 
-/** A source gives undefined when its provider is not added to Pi; such a provider has no entry. */
 export type UsageSource = () => Promise<unknown>;
 
-/** The last usage a provider reported, if any. error: why the latest refresh failed, so the usage is stale. */
 export interface ProviderUsage { usage?: unknown; error?: string }
 export type UsageSnapshot = Partial<Record<Provider, ProviderUsage>>;
 
 export const USAGE_CHANGED = 'pi://usage-changed';
 const INTERVAL_MS = Number(process.env.PIOP_USAGE_REFRESH_MS ?? 5 * 60_000);
-/** A refresh of all providers skips a provider read this recently. Back-to-back reads, such as the daemon start and a client start, hit provider rate limits. */
 const MIN_GAP_MS = 60_000;
 
-/**
- * Plan usage of every provider, shared by all clients of this daemon. It refreshes at start, every 5 minutes
- * and when a client asks, for all providers or one; one refresh per provider runs at a time. A refresh of one
- * provider, a click on its badge, always reads it.
- */
 export class UsageRuntime {
   private state: UsageSnapshot = {};
   private failures = new Map<Provider, string>();
@@ -41,7 +33,6 @@ export class UsageRuntime {
 
   snapshot(): UsageSnapshot { return structuredClone(this.state); }
 
-  /** all: read every provider, also one read recently, such as after a provider login changes. */
   async refresh(app: App, only?: Provider, all = false): Promise<UsageSnapshot> {
     const now = Date.now();
     const recent = (provider: Provider) => !all && !this.running.has(provider) && now - (this.readAt.get(provider) ?? -Infinity) < MIN_GAP_MS;

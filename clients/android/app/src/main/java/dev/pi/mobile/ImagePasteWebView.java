@@ -83,7 +83,6 @@ public class ImagePasteWebView extends CapacitorWebView {
         for (ImageRead read : new HashSet<>(reads)) read.finish(null, new IllegalStateException("Image paste cancelled"));
     }
 
-    /** Input connection calls run on Chromium's input thread, so all WebView and read-list work moves to the main thread. */
     private void deliver(Uri uri, Runnable release) {
         MAIN.post(() -> deliverOnMain(uri, release));
     }

@@ -6,7 +6,6 @@ import { promisify } from 'node:util';
 import { nativeTestExecutable } from '../test/native-file-command.mjs';
 import { buildTraceControls } from '../test/trace-command-fixture.mjs';
 
-// Resolve fresh builds once, before Node starts the separate test processes.
 delete process.env.PIOP_TEST_NATIVE_EXECUTABLE;
 delete process.env.PIOP_TEST_DAEMON_EXECUTABLE;
 delete process.env.PIOP_TEST_CONTROLS_BUNDLE;

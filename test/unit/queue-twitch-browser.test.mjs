@@ -15,7 +15,6 @@ test('queueing a message moves the chat history once, in the frame its queue row
   }
   await page.getByRole('button', { name: 'Hold queue', exact: true }).click();
   await page.getByText('Queue on hold').waitFor();
-  // Each sample is taken after its frame is painted, so it shows what the reader saw.
   await page.evaluate(() => {
     window.frames = [];
     const channel = new MessageChannel();

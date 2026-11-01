@@ -1,5 +1,3 @@
-"""A GTK drag source on the test browser's X screen. Tests drag files or text from it into a page through XDND, as a user drags them
-from a file manager, so the page receives trusted drag events. Reads one JSON command per line and answers one JSON line."""
 import json
 import sys
 

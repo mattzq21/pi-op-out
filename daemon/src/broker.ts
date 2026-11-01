@@ -22,7 +22,6 @@ export function agentIsActive(session: SessionSummary, agent: AgentAddress): boo
   return !agent.messageable && agent.hostId === session.hostId && (agent.sessionId === session.id || agent.sessionPath === session.path);
 }
 
-/** A claim that marks an agent as busy until released. */
 export class BusyAgent {
   private released = false;
   constructor(private key: string, private busy: Set<string>) {}
@@ -144,7 +143,6 @@ async function enqueueOrchestration(app: App, broker: BrokerRuntime, response: S
     delivery = registerDelivery(broker, value);
   }
   catch (error: any) { respond(response, 400, { error: error.message }); return; }
-  // Only turns that run an agent take a worker slot. Interrupt, read and locate must still get through when every worker is busy.
   const worker = value?.action === 'send' || value?.action === 'branch_off';
   if ((worker && broker.messageCount >= BROKER_WORKERS) || broker.closing) { delivery?.(); respond(response, 503, { error: 'Session broker is busy' }); return; }
   if (worker) broker.messageCount += 1;
@@ -212,10 +210,6 @@ async function brokerOrchestration(app: App, broker: BrokerRuntime, value: any):
   return brokerConversationOperation(app, broker, value, host, id, action);
 }
 
-/**
- * Branches the conversation id off into a new peer in its own worktree and sends the peer its first message.
- * All or nothing: when the message does not arrive, the peer, its worktree and its branch are removed.
- */
 async function brokerBranchOff(app: App, broker: BrokerRuntime, value: any, host: string, id: string): Promise<{ peerId: string }> {
   const settings = await loadAppSettings(app);
   const connection = await daemon.connect(app, app.pi, broker, settings, host);
@@ -233,10 +227,6 @@ async function brokerBranchOff(app: App, broker: BrokerRuntime, value: any, host
   return { peerId };
 }
 
-/**
- * Settles the first message of a new chat whose sender lost the answer: the chat is kept when the message arrived and
- * removed otherwise. A chat that has no location any more was already removed.
- */
 async function brokerSettleFirstMessage(app: App, broker: BrokerRuntime, value: any, host: string, id: string): Promise<{ arrived: boolean }> {
   if (typeof value.sessionPath !== 'string') throw new Error('sessionPath is required');
   const settings = await loadAppSettings(app);

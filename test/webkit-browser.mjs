@@ -9,19 +9,12 @@ import { pageBridge, serialize, deserialize } from './webkit/bridge.mjs';
 import { clockSource, playwrightInternals } from './webkit/sources.mjs';
 import { keyValue, shortcutKeys } from './webkit/keys.mjs';
 
-/*
- * A Playwright-like browser on WebKitGTK: WebKitWebDriver drives MiniBrowser on a hidden Xvfb screen.
- * Each context is one MiniBrowser with its own HTTP proxy, which adds a bridge script to every page (test/webkit/bridge.mjs).
- * It covers the part of Playwright's API that Piop's browser tests use.
- */
-
 const { escapeForAttributeSelector, escapeForTextSelector } = playwrightInternals.iso;
 
 export class TimeoutError extends Error { constructor(message) { super(message); this.name = 'TimeoutError'; } }
 
 const injectedOptions = { isUnderTest: false, sdkLanguage: 'javascript', frameSeq: 0, testIdAttributeName: 'data-testid', stableRafCount: 1, browserName: 'webkit', shouldPrependErrorPrefix: true, isUtilityWorld: false, customEngines: [] };
 
-// Selector builders of Playwright's locatorUtils.
 const attributeSelector = (name, text, options) => 'internal:attr=[' + name + '=' + escapeForAttributeSelector(text, options?.exact || false) + ']';
 const selectors = {
   role(role, options = {}) {
@@ -60,13 +53,8 @@ function scriptSource(script, arg) {
   throw new Error('Unsupported init script');
 }
 
-/** Runs an init script so that its error is reported as a page error and the other scripts still run. */
 const guarded = source => 'try { (0, eval)(' + JSON.stringify(source) + '); } catch (error) { setTimeout(() => { throw error; }); }';
 
-/**
- * What scripts see of a phone in Playwright's hasTouch and isMobile contexts: touch points, coarse pointer media queries and a mobile user agent.
- * CSS media queries keep the desktop values, and touch input itself is unavailable (noTouch).
- */
 const mobileScript = ({ hasTouch, isMobile }) => {
   if (hasTouch) {
     Object.defineProperty(Navigator.prototype, 'maxTouchPoints', { configurable: true, get: () => 5 });
@@ -95,7 +83,6 @@ class Deferred {
   constructor() { this.promise = new Promise((resolve, reject) => { this.resolve = resolve; this.reject = reject; }); }
 }
 
-/** Launches the browser. Each context is a separate MiniBrowser. */
 export async function launchWebKit() { return new WebKitBrowser(); }
 
 class WebKitBrowser extends EventEmitter {
@@ -259,7 +246,6 @@ class WebKitContext extends EventEmitter {
   async grantPermissions() {}
   async clearPermissions() {}
 
-  /** Cookies through WebDriver, which reads and writes the cookies of a page's current document. */
   async addCookies(cookies) {
     for (const cookie of cookies) {
       const host = cookie.url ? new URL(cookie.url).hostname : cookie.domain;
@@ -391,7 +377,6 @@ class WebKitPage extends EventEmitter {
 
   _execute(script, args = []) { return this._command(command => command('POST', '/execute/sync', { script, args })); }
 
-  /** The X window of this page. MiniBrowser shows the document title as the window name, so a unique title finds it. */
   async _xWindow() {
     if (this._xid) return this._xid;
     const input = await this._context._session.xInput();
@@ -407,14 +392,12 @@ class WebKitPage extends EventEmitter {
     } finally { await this._execute('document.title = arguments[0];', [previous]); }
   }
 
-  /** Raises and focuses this page's window, so real X input reaches it. */
   async _xFocus() {
     const window = await this._xWindow();
     await (await this._context._session.xInput()).request({ action: 'focus', window });
     return window;
   }
 
-  /** The screen position of the viewport's top left corner, measured with a real pointer move. */
   async _xOrigin() {
     const window = await this._xFocus();
     const input = await this._context._session.xInput();
@@ -437,11 +420,9 @@ class WebKitPage extends EventEmitter {
     throw new Error('The page did not receive a real pointer move');
   }
 
-  /** Real X pointer input at viewport coordinates: steps of { button?: 1|2|3, down?: boolean, pause?: ms }. */
   async _xPointer(x, y, steps) {
     const [left, top] = await this._xOrigin();
     const input = await this._context._session.xInput();
-    // X events reach the page after the request returns, so the page counts the trusted button events it receives.
     const expected = steps.filter(step => step.button).length;
     await this._execute('const expected = arguments[0]; let seen = 0; window.__pwXSeen = new Promise(resolve => { const count = event => { if (event.isTrusted && ++seen === expected) { removeEventListener("mousedown", count, true); removeEventListener("mouseup", count, true); resolve(); } }; addEventListener("mousedown", count, true); addEventListener("mouseup", count, true); });', [expected]);
     await input.request({ action: 'move', x: Math.round(left + x), y: Math.round(top + y) });
@@ -453,7 +434,6 @@ class WebKitPage extends EventEmitter {
     if (!await Promise.race([seen.then(() => true), delay(5000).then(() => false)])) throw new Error('mouse: the page did not receive the X pointer buttons');
   }
 
-  /** Waits until the page receives one of the trusted events, which real X input delivers after the request returns. */
   async _xExpect(types, action) {
     await this._execute('const types = arguments[0]; window.__pwXEvent = new Promise(resolve => { const seen = event => { if (!event.isTrusted) return; for (const type of types) removeEventListener(type, seen, true); resolve(event.type); }; for (const type of types) addEventListener(type, seen, true); });', [types]);
     await action();
@@ -463,7 +443,6 @@ class WebKitPage extends EventEmitter {
     return type;
   }
 
-  /** A file drag made in the page, in the order of Chrome's Input.dispatchDragEvent. Its events are not trusted. */
   async _fileDrag(type, x, y, data = {}) {
     const files = type === 'dragEnter' ? (data.files ?? []).map(path => ({ name: path.split('/').pop(), type: playwrightInternals.iso.getMimeTypeForPath(path) ?? '', data: readFileSync(path).toString('base64') })) : [];
     this._fileDragActive = type === 'dragEnter' || type === 'dragOver';
@@ -496,10 +475,6 @@ class WebKitPage extends EventEmitter {
     }, { type, x, y, files, mask: data.dragOperationsMask ?? 1 });
   }
 
-  /**
-   * A real XDND drag from the GTK drag source (test/webkit/x-drag.py) in the shape of Chrome's Input.dispatchDragEvent:
-   * dragEnter starts the drag and enters the page at the point, dragOver moves, drop releases and dragCancel cancels.
-   */
   async _drag(type, x, y, data = {}) {
     const input = await this._context._session.xInput();
     const source = await this._context._session.dragSource();
@@ -528,7 +503,6 @@ class WebKitPage extends EventEmitter {
     }
     if (!this._context._activeDrag) throw new Error('drag: no drag is in progress');
     if (type === 'dragOver') {
-      // A drag position that does not change sends no XDND position, so the pointer passes next to the point first.
       await this._xExpect(['dragover', 'dragleave'], async () => { await move({ x: point.x + 1, y: point.y }, 1); await move(point, 1); });
       return;
     }
@@ -554,7 +528,6 @@ class WebKitPage extends EventEmitter {
     try { await this._execute('if (window.__pw) window.__pw.expose(arguments[0]);', [name]); } catch {}
   }
 
-  /** Evaluates fn in the page; a long evaluation returns through the proxy so that other commands can run meanwhile. */
   async _evaluate(api, fn, args, { selector = null, timeout } = {}) {
     const isFunction = typeof fn === 'function';
     const source = isFunction ? fn.toString() : String(fn);
@@ -623,7 +596,6 @@ class WebKitPage extends EventEmitter {
         const rect = await command('GET', '/window/rect');
         const [innerWidth, innerHeight] = await command('POST', '/execute/sync', { script: 'return [innerWidth, innerHeight];', args: [] });
         if (innerWidth === width && innerHeight === height) return;
-        // Away from the screen's top left corner, where other test windows open without a window manager.
         await command('POST', '/window/rect', { x: 1900, y: 0, width: width + rect.width - innerWidth, height: height + rect.height - innerHeight });
       }
       const [innerWidth, innerHeight] = await command('POST', '/execute/sync', { script: 'return [innerWidth, innerHeight];', args: [] });
@@ -883,7 +855,6 @@ class Mouse {
     this._x = x; this._y = y;
     await this._pointer(actions);
   }
-  // WebKitGTK's WebDriver releases every button as the left one, so the middle and right buttons use real X input.
   async down({ button = 'left' } = {}) {
     if (button !== 'left') return this._page._xPointer(this._x, this._y, [{ button: xButtons[button], down: true }]);
     await this._pointer([{ type: 'pointerDown', button: buttons[button] }]);
@@ -914,10 +885,6 @@ class Mouse {
     await this._page._actions({ type: 'wheel', id: 'wheel', actions: [{ type: 'scroll', origin: 'viewport', x: Math.round(this._x), y: Math.round(this._y), deltaX: Math.round(deltaX), deltaY: Math.round(deltaY), duration: 0 }] });
   }
 
-  /**
-   * WebKitGTK's WebDriver leaves held modifier keys out of wheel events, and MiniBrowser keeps a real Ctrl+wheel for its own zoom,
-   * so a wheel with a held modifier is made in the page at the element under the pointer. It is not trusted and does not scroll by itself.
-   */
   async _modifiedWheel(deltaX, deltaY, keys) {
     await this._page.evaluate(({ x, y, deltaX, deltaY, keys }) => {
       const target = document.elementFromPoint(x, y) ?? document.documentElement;
@@ -928,8 +895,6 @@ class Mouse {
 
 const modifierKeys = new Set(['Control', 'ControlOrMeta', 'Shift', 'Alt', 'Meta']);
 
-/** The Chrome DevTools commands that the tests use, made with page events because WebKit has no such protocol. */
-/** Xvfb has no touch device and WebKitGTK's WebDriver has no touch pointer, so touch input cannot run. */
 const noTouch = 'WebKitGTK on the test screen has no touch input';
 
 class Touchscreen {
@@ -943,23 +908,18 @@ class EmulatedCDPSession {
     const page = this._page;
     if (method === 'Emulation.setFocusEmulationEnabled') return {};
     if (method === 'Input.insertText') {
-      // Escape ends the open composition; the input method consumes it.
       if (page._composing) { await page.keyboard.press('Escape'); page._composing = false; }
       await page.keyboard.insertText(params.text);
       return {};
     }
     if (method === 'Input.imeSetComposition') {
-      // A real composition of GTK's own input method: Ctrl+Shift+U starts Unicode entry, and keys pressed meanwhile go to the input method.
-      // It cannot compose the given text; the composition stays open until Input.insertText.
       if (page._composing) return {};
-      // The composition replaces this range, so the text that ends it replaces the range too.
       if (params.replacementStart !== undefined) await page.evaluate(({ start, end }) => document.activeElement?.setSelectionRange?.(start, end), { start: params.replacementStart, end: params.replacementEnd ?? params.replacementStart });
       await page.keyboard.press('Control+Shift+u');
       page._composing = true;
       return {};
     }
     if (method === 'Input.dispatchDragEvent') {
-      // WebKitGTK 2.52 loses the files of a real drop (https://bugs.webkit.org/show_bug.cgi?id=323277), so a drag with files is made in the page; a text drag is real.
       if (params.data?.files?.length || page._fileDragActive) await page._fileDrag(params.type, params.x, params.y, params.data);
       else await page._drag(params.type, params.x, params.y, params.data);
       return {};

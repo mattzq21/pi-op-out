@@ -4,7 +4,6 @@ type Subscriber = { listener: (enabled: boolean) => void; onError: (error: Error
 
 const asError = (cause: unknown) => cause instanceof Error ? cause : new Error(String(cause));
 
-/** Keeps the saved choice for the current Pi session and tells subscribers about changes. */
 export class FastModeSessionState implements FastModeSession {
   private enabled = false;
   private loaded!: Promise<void>;
@@ -16,7 +15,6 @@ export class FastModeSessionState implements FastModeSession {
     this.reset();
   }
 
-  /** Holds requests until the next load, for example when Pi switches to another session. */
   reset(): void {
     if (!this.settled) return;
     this.settled = false;

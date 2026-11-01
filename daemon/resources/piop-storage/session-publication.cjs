@@ -91,7 +91,6 @@ function prepareBody(body, id) {
   return { header: values[0], entries: values, body: values.map(value => JSON.stringify(value)).join('\n') + '\n' };
 }
 
-/** Saves the settings and the name of the published chat. Recovery repeats it, so it only sets values. */
 function seedState(journal) {
   stateRecords.seed(journal.target, journal.sessionId, journal.state);
   if (journal.name !== undefined) names.nameSession(journal.target, journal.sessionId, journal.name);
@@ -408,7 +407,6 @@ function retainedDependencies(root) {
   return io.locked(root, () => readRetainedDependencies(root));
 }
 
-/** Same as retainedDependencies, but waits for a running storage transaction to end. */
 function awaitRetainedDependencies(root) {
   return io.lockedAsync(root, () => readRetainedDependencies(root));
 }

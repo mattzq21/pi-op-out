@@ -13,7 +13,6 @@ export function modelLevels(model: Model) {
   return effortLevels.filter(level => model.thinkingLevelMap?.[level] !== null && (!(level === "xhigh" || level === "max") || model.thinkingLevelMap?.[level] !== undefined));
 }
 
-/** The nearest thinking level that the model supports, as Pi chooses it: the same or the next higher level, else the next lower one. */
 export function clampEffort(level: string, model?: Model) {
   if (!model) return level;
   const levels = modelLevels(model);
@@ -35,9 +34,7 @@ export class PromptControls {
     return selected !== this.applied && (Boolean(selected.model) || selected.thinkingLevel !== undefined || selected.fastMode !== undefined);
   }
   reset() { this.selection[1]({}); this.applied = undefined; }
-  /** True when the user chose no model, thinking level or fast mode. */
   untouched() { const selected = this.selection[0](); return selected.model === undefined && selected.thinkingLevel === undefined && selected.fastMode === undefined; }
-  /** Show no model until the user chooses one. */
   clearModel() { this.effectiveModel[1](null); this.selection[1](current => ({ ...current, model: null })); }
   useEffectiveModel(model: Model | null) { this.effectiveModel[1](model); if (model && this.selection[0]().model === null) this.selection[1](current => ({ ...current, model: undefined })); }
   missingModel() { const selected = this.selection[0]().model; return (selected === undefined ? this.effectiveModel[0]() : selected) == null; }
@@ -56,7 +53,6 @@ export class PromptControls {
 
     return { ...state, model: model === undefined ? state.model : model, thinkingLevel: selected.thinkingLevel ?? state.thinkingLevel };
   }
-  /** Shows the fast mode choice only for a model in the host's fast model list. The session status gives the saved choice. */
   statuses(statuses: Record<string, string>, fastModels: string[] | undefined, model: Model | null | undefined) {
     const { [fastKey]: status, ...rest } = statuses;
 

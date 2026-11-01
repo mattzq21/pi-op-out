@@ -1,6 +1,5 @@
 import { stringSetting, type SettingsContribution } from '../settings';
 
-/** The agent that runs /review, chosen in Settings → Agents. */
 export interface ReviewSettings {
   reviewAgent: string;
 }

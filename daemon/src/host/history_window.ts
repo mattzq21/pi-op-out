@@ -1,8 +1,6 @@
 import { branchEntries } from './payload';
 
-/** A chat opens with at least this many turns... */
 const RECENT_TURNS = 5;
-/** ...and at least this many characters of message text, whichever needs more history. */
 const RECENT_TEXT = 5000;
 
 const PROMPT_CONTEXTS = new Set(['piop-context', 'pi-desktop-prompt-context']);
@@ -25,7 +23,6 @@ function visibleText(entry: any): string {
   return result;
 }
 
-/** The index of the turn start where a view that ends before end begins. */
 function windowStart(branch: any[], end: number): number {
   let turns = 0;
   let size = 0;
@@ -36,7 +33,6 @@ function windowStart(branch: any[], end: number): number {
   return 0;
 }
 
-/** The place of the final response of a turn, or -1. A response that calls a tool is work, so a turn that ends on one has no final response. */
 function finalResponse(turn: any[]): number {
   for (let index = turn.length - 1; index >= 0; index--) {
     const message = turn[index]?.type === 'message' ? turn[index].message : undefined;
@@ -57,7 +53,6 @@ function addUsage(total: any, usage: any): any {
   return next;
 }
 
-/** Replaces the work of a finished turn with a note on its final response. The client loads the work when the user opens it. */
 function deferWork(turn: any[]): any[] {
   const final = finalResponse(turn);
   if (final < 0) return turn;
@@ -76,7 +71,6 @@ function deferWork(turn: any[]): any[] {
   return turn.flatMap((entry, index) => index === final ? [response] : isWork(entry) ? [] : [entry]);
 }
 
-/** Fills the first prompt context of a view with the system prompt and tools that it shares with an earlier, omitted context. */
 function resolvePromptContext(branch: any[], start: number, entries: any[]): void {
   if (start === 0) return;
   let systemPrompt: unknown;
@@ -95,7 +89,6 @@ function resolvePromptContext(branch: any[], start: number, entries: any[]): voi
   entries[index] = { ...entries[index], data };
 }
 
-/** Links the entries of a view in order, so the client reads them as one branch. */
 function linked(entries: any[], before: string | null): History {
   let parentId: string | null = null;
   const result = entries.map(entry => { const next = { ...entry, parentId }; parentId = entry.id; return next; });
@@ -119,12 +112,10 @@ function view(branch: any[], start: number, end: number, keepLastTurn: boolean):
   return result;
 }
 
-/** The newest part of a chat's history that the client shows when it opens the chat, with the outline of the older final responses unless the client listed them before listedBefore. */
 export function recentHistory(history: any, working: boolean, listedBefore?: unknown): any {
   const branch = branchEntries(history);
   const start = windowStart(branch, branch.length);
   const result = view(branch, start, branch.length, working);
-  // The client lists the older final responses at once, without a second request. A client that listed them for the same place already has them.
   return Object.assign(history, result, start > 0 && branch[start].id !== listedBefore ? { outline: outline(branch, start) } : {});
 }
 
@@ -139,7 +130,6 @@ function turnStart(branch: any[], index: number): number {
   return index;
 }
 
-/** The part of the history just before the entry before. With through, the part also reaches back to the turn of that entry. */
 export function olderHistory(history: any, before: unknown, through?: unknown): History {
   const branch = branchEntries(history);
   const end = position(branch, before);
@@ -156,7 +146,6 @@ const PREVIEW_LENGTH = 160;
 
 type OutlineResponse = { id: string; start: string; preview: string; compactions?: string[] };
 
-/** The final responses of the turns before end, with the first entry of each turn. */
 function outline(branch: any[], end: number): OutlineResponse[] {
   const responses: OutlineResponse[] = [];
   let turn: any[] = [];
@@ -178,13 +167,11 @@ function outline(branch: any[], end: number): OutlineResponse[] {
   return responses;
 }
 
-/** The final responses of the turns before the entry before, so the client can list them before it loads them. */
 export function historyOutline(history: any, before: unknown): { responses: OutlineResponse[] } {
   const branch = branchEntries(history);
   return { responses: outline(branch, position(branch, before)) };
 }
 
-/** The work, compactions and full final response of the turn whose final response is entry id. */
 export function turnWork(history: any, id: unknown): History {
   const branch = branchEntries(history);
   const final = position(branch, id);

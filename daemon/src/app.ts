@@ -9,7 +9,6 @@ import { UsageRuntime } from './provider_usage';
 
 type Listener = (payload: any) => void;
 
-/** Holds all daemon state and sends named events to listeners. */
 export class App {
   clients = new DaemonClients(() => this.emit('pi://daemon-restarting', { hostId: 'local' }), () => interruptTerminals(this.terminals));
   restart = new daemonRestart.Runtime();

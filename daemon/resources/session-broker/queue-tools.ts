@@ -3,10 +3,6 @@ import { Type as Schema } from "typebox";
 import { Parse } from "typebox/value";
 import { promptTools } from "./prompt-tools.ts";
 
-/**
- * Core: tools that the daemon's conversation queue answers, such as update_goal_status. The daemon defines them in PIOP_QUEUE_TOOLS.
- * Each is a prompt tool: the queue's offer tells whether it must be in the prompt, and a tool that must be enters it at once.
- */
 const definitions = Schema.Array(Schema.Object({
   name: Schema.String({ minLength: 1 }), label: Schema.String(), description: Schema.String(), parameters: Schema.Record(Schema.String(), Schema.Unknown()),
   exposure: Schema.Optional(Schema.Union([Schema.Literal("direct"), Schema.Literal("model-only")])),

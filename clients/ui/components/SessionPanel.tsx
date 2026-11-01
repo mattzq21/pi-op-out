@@ -19,7 +19,6 @@ import { RemoveGroupDialog } from "./RemoveGroupDialog";
 export type SessionAction = "new-window" | "rename" | "open-directory" | "archive" | "copy-id" | "open-rollout";
 
 
-/** A chat in a project folder that the user picked, in the main worktree. A chat without a project has a temporary folder from Piop. */
 const pickedProject = (session: SessionSummary) => Boolean(session.cwd) && !isTemporaryChatCwd(session.cwd) && !session.linkedWorktree;
 
 interface Props { transport: NativeTransport; settings: AppSettings; isArchiving: (session: SessionSummary) => boolean; debug?: boolean; sidebar: SidebarState; activeId?: string; activeHostId?: string; runningSessions?: ReadonlySet<string>; unseenSessions?: ReadonlySet<string>; query: string; onQuery: (query: string) => void; onSelect: (session: SessionSummary) => NativeTransport | undefined; onAction: (session: SessionSummary, action: SessionAction) => void; onNewChat: (group: SessionGroup) => void; createGroupRequest?: number; onCreateGroupHandled?: () => void; newChatRequest?: number; }
@@ -135,13 +134,11 @@ export function SessionPanel(props: Props) {
   createDependencyEffect(() => { const capturedPanel = panel();
 
     if (!capturedPanel.createGroupRequest) return;
-    // The Group button toggles the form for a new group.
     if (untrack(newGroupName) !== undefined && !untrack(editingGroupId)) void finishGroup(true);
     else { setGroupProject(undefined); groupDraftActive.current = true; setEditingGroupId(undefined); setGroupDraftError(undefined); setNewGroupName("");
       sessionScrollRef.current?.scrollTo({ top: 0 }); }
     capturedPanel.onCreateGroupHandled?.();
   }, () => [panel().createGroupRequest, panel().onCreateGroupHandled]);
-  // A new chat closes the form for a new group that the Group button opened.
   createDependencyEffect(() => { if (panel().newChatRequest && untrack(newGroupName) !== undefined && !untrack(editingGroupId)) void finishGroup(true); }, () => [panel().newChatRequest]);
   createDependencyEffect(() => { const capturedNewGroupName = newGroupName();
 
@@ -246,7 +243,6 @@ export function SessionPanel(props: Props) {
     mouseDragRef.current = mouseDrag;
     let holdTimer: number | undefined;
     let touchMoved = false;
-    /** The chat view under a dragged chat. */
     let chatZone: HTMLElement | undefined;
 
     const changeChatZone = (next: HTMLElement | undefined, x = 0, y = 0) => {
@@ -522,8 +518,6 @@ export function SessionPanel(props: Props) {
       if (!archiving()) void panel().onAction(session(), "archive");
     };
 
-    // A tap reveals the hidden archive button through hover or focus before the browser picks the click target, so the click then lands on it.
-    // A touch click counts only when the touch began on the already visible button. Other touch clicks select the session, as the user tapped the row.
     let touchBeganOnArchive = false;
 
     const clickArchive = (event: MouseEvent & { currentTarget: HTMLButtonElement }) => {

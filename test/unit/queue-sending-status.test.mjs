@@ -8,7 +8,6 @@ import { ChatView } from '../../clients/ui/components/ChatView.tsx';
 const text = value => [{ type: 'text', text: value }];
 for (const [name, behavior, held, expected] of [['queueing while the agent works shows no', 'followUp', false, [null, null, null]], ['queueing while the queue is on hold shows no', undefined, true, [null, null, null]], ['sending while the agent is idle shows the', undefined, false, ['Sending message…', 'Sending message…', null]]]) test(name + ' Sending message status in the conversation', async t => {
   const dom = installDom();
-  // The transport methods that this view does not need answer with nothing.
   const base = { subscribe() { return () => {}; }, async command() { return {}; }, ownsConversation: () => true, hasConfirmedOwnership: () => true, isConnected: () => true, currentHostId: () => 'local' };
   const transport = new Proxy(base, { get: (target, name) => name in target || name === 'then' || typeof name === 'symbol' ? target[name] : () => undefined });
   const hook = await renderHook(value => useChatSession(value), transport);

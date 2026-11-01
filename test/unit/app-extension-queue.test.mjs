@@ -8,7 +8,6 @@ import { useChatSession } from '../../clients/ui/lib/useChatSession.ts';
 
 const request = id => ({ type: 'extension_ui_request', id, method: 'confirm', title: id });
 
-// Records every response sent to Pi for each transport; fails the response for one chosen request.
 function piTransport(failingId) {
   const transport = new NativeTransport({});
   const responses = [];

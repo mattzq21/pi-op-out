@@ -11,11 +11,6 @@ import { developmentEndpointKey } from '../../daemon/src/config';
 const root = resolve(import.meta.dir, '../..');
 const bundles = new Map<string, Promise<string>>();
 
-/**
- * Stops of the daemons that this test file started and did not stop yet. Local daemons stop first, because a running local daemon can start a remote daemon again.
- * Each test file gets its own copy of this module, and its last step runs these stops, so no daemon outlives its test file.
- * Scripts that use this module outside the test runner (ui-host.ts, build.ts) stop their daemons themselves.
- */
 const runningLocals = new Set<() => Promise<void>>();
 const runningRemotes = new Set<() => Promise<void>>();
 if (/\.test\.[cm]?[jt]s$/.test(Bun.main)) afterAll(async () => {
@@ -26,10 +21,8 @@ if (/\.test\.[cm]?[jt]s$/.test(Bun.main)) afterAll(async () => {
   if (failures.length) throw new Error('Could not stop the daemons that the tests left running:\n' + failures.join('\n'));
 }, 120_000);
 
-/** A development build runs like "scripts/build-daemon.mjs --debug": it is scoped to a project directory. */
 export interface BuildOptions { development?: boolean; projectRoot?: string; fakeTailscale?: boolean }
 
-/** Bundles the daemon the same way scripts/build-daemon.mjs does, without compiling a release build to a binary. */
 export function daemonExecutable(options: BuildOptions = {}): Promise<string> {
   const development = options.development === true;
   if (!development && !options.fakeTailscale && process.env.PIOP_TEST_DAEMON_EXECUTABLE) {
@@ -60,7 +53,6 @@ export function daemonExecutable(options: BuildOptions = {}): Promise<string> {
         },
       }],
     });
-    // Same build ID rule as scripts/build-daemon.mjs: a hash of the bundle without its placeholder.
     const bundle = readFileSync(outfile, 'utf8');
     const buildId = 'piop-build-' + createHash('sha256').update(bundle.replaceAll(placeholder, '')).digest('hex');
     writeFileSync(outfile, bundle.replaceAll(placeholder, buildId));
@@ -71,7 +63,6 @@ export function daemonExecutable(options: BuildOptions = {}): Promise<string> {
   return bundled;
 }
 
-/** The directory that holds the daemon endpoint, its log and its settings database for a build. Development builds use .piop-dev. */
 export function daemonDirectory(home: string, options: BuildOptions = {}): string {
   if (options.development !== true) return join(home, '.piop');
   return join(home, '.piop-dev/daemons', developmentEndpointKey((options.projectRoot ?? root).replace(/[\\/]+$/, '')));
@@ -88,7 +79,6 @@ export function temporaryDirectory(prefix = 'piop-test-'): string {
   return mkdtempSync(join(tmpdir(), prefix));
 }
 
-/** Writes an executable script into a directory that tests put first on PATH. */
 export function fakeProgram(bin: string, name: string, source: string): string {
   mkdirSync(bin, { recursive: true });
   const path = join(bin, name);
@@ -97,11 +87,6 @@ export function fakeProgram(bin: string, name: string, source: string): string {
   return path;
 }
 
-/** Last lines of a log with long lines cut, so failures stay readable. */
-/**
- * A fake ssh client: the target names a directory in .test-remotes next to the fake-program directory, and the
- * command runs there with that directory as HOME. A target without a directory fails like an unreachable host.
- */
 const FAKE_SSH = `#!/bin/sh
 while [ $# -gt 0 ]; do case "$1" in -F|-o|-p|-i|-l) shift 2;; -*) shift;; *) break;; esac; done
 target=$1; shift
@@ -114,33 +99,21 @@ cd "$remote" && HOME="$remote" PIOP_MOBILE_BIND=127.0.0.1:0 exec sh -c "$*"
 
 export interface RemoteMachine { id: string; name: string; target: string; home: string; stop(): Promise<void> }
 
-/**
- * Creates a remote machine for the daemon: its own HOME reached through the fake ssh, with piopd installed in
- * ~/.bun/bin like a user install. Its daemon starts on demand when the local daemon attaches with --stdio-client.
- */
 export async function remoteMachine(daemon: TestDaemon, id: string, name = id, target = id): Promise<RemoteMachine> {
   const executable = await daemonExecutable();
   const home = join(daemon.home, '.test-remotes', target);
   mkdirSync(join(home, '.bun/bin'), { recursive: true });
   symlinkSync(executable, join(home, '.bun/bin/piopd'));
   const env = { ...process.env, HOME: home, PIOP_MOBILE_BIND: '127.0.0.1:0' };
-  // The local daemon can start this daemon again after a test stops it, so the file's last step stops it once more.
   const stop = () => control(executable, 'stop', env).then(() => {});
   runningRemotes.add(stop);
   return { id, name, target, home, stop };
 }
 
-/** Adds remote machines to the saved settings. */
 type RemoteSetting = { id: string; name: string; target: string; enabled?: boolean; piPath?: string; unreachable?: boolean };
 
-/**
- * Saves the remote machines and waits until the settings synchronization pass for that save has finished, which is
- * the "pi://settings-changed" event without committedRevision. That pass invalidates SSH connections again. Then
- * each enabled machine must answer, and each machine marked unreachable must fail to attach.
- */
 export async function useRemotes(client: Client, remotes: RemoteSetting[]): Promise<void> {
   const settings = await client.invoke('load_app_settings');
-  // An explicit piopd path, because the PATH of this machine also reaches the user's own piopd.
   settings.hosts = remotes.map(remote => ({ enabled: remote.enabled ?? true, id: remote.id, name: remote.name, target: remote.target, piPath: remote.piPath ?? '~/.bun/bin/piopd' }));
   const saved = await client.invoke('save_app_settings', { settings });
   await synchronizationFinished(client, saved.revision);
@@ -152,12 +125,10 @@ export async function useRemotes(client: Client, remotes: RemoteSetting[]): Prom
   }
 }
 
-/** Resolves when the background settings synchronization pass has published the saved revision. */
 export function synchronizationFinished(client: Client, revision: number): Promise<any> {
   return client.waitEvent('pi://settings-changed', payload => !('committedRevision' in payload) && payload.revision === revision, 20_000);
 }
 
-/** Adds a provider login to the Pi of a daemon home: an OAuth login that stays valid for a day, or an API key. */
 export function addProviderLogin(home: string, providerId: string, type: 'oauth' | 'api_key' = 'api_key'): void {
   const path = join(home, '.piop/auth.json');
   let saved: Record<string, unknown> = {};
@@ -168,7 +139,6 @@ export function addProviderLogin(home: string, providerId: string, type: 'oauth'
     : { type, key: 'test-' + providerId + '-key' } }), { mode: 0o600 });
 }
 
-/** Refreshes plan usage now and returns what the daemon then holds for one provider. */
 export async function refreshedUsage(client: Client, provider: 'codex' | 'anthropic' | 'opencodeGo'): Promise<{ usage?: any; error?: string }> {
   return (await client.invoke('provider_usage', { refresh: true, provider }))[provider] ?? {};
 }
@@ -183,7 +153,6 @@ export type DaemonEvent = { event: string; payload: any };
 export interface Client {
   events: DaemonEvent[];
   invoke(command: string, args?: any): Promise<any>;
-  /** Resolves with the error message of a failed command. */
   failure(command: string, args?: any): Promise<string>;
   waitEvent(name: string, match?: (payload: any) => boolean, timeout?: number): Promise<any>;
   close(): void;
@@ -192,7 +161,6 @@ export interface Client {
 export interface TestDaemon extends Client {
   home: string;
   bin: string;
-  /** The mobile WebSocket address and its token, for tests that speak the protocol directly. */
   endpoint: { url: string; token: string };
   connect(): Promise<Client>;
   stop(): Promise<void>;
@@ -215,7 +183,6 @@ async function openClient(url: string, token: string, scope = 'client'): Promise
     if (packet.type === 'error') { ready.reject(new Error('Daemon rejected the connection: ' + packet.error)); return; }
     if (typeof packet.id === 'number' && pending.has(packet.id)) {
       const entry = pending.get(packet.id)!; pending.delete(packet.id);
-      // The client reads the refusal mark; tests compare the message.
       if (typeof packet.error === 'string') entry.reject(new Error(packet.error.replace(/^piop-refused:(pi|daemon)\n/, ''))); else entry.resolve(packet.result);
       return;
     }
@@ -272,18 +239,12 @@ function control(executable: string, action: 'start' | 'stop', env: Record<strin
   });
 }
 
-/**
- * Starts a real daemon with its own HOME, its own mobile port and a fake-program directory first on PATH.
- * It uses the same public launch path as users: "piopd start" returns once the daemon answers on its control socket.
- */
 export async function startDaemon(options: BuildOptions & { home?: string; env?: Record<string, string> } = {}): Promise<TestDaemon> {
   const executable = await daemonExecutable(options);
   const home = options.home ?? temporaryDirectory('piop-home-');
   const bin = join(home, '.test-bin');
   mkdirSync(bin, { recursive: true });
   fakeProgram(bin, 'ssh', FAKE_SSH);
-  // A daemon of a test that fails before it stops the daemon stops by itself after 5 minutes without clients.
-  // Plan usage refreshes only when a test asks, so no timer starts provider programs during a test.
   const env = { ...process.env, HOME: home, PATH: bin + ':' + process.env.PATH, PIOP_MOBILE_BIND: '127.0.0.1:0', PIOP_UNUSED_STOP_MS: '300000', PIOP_DAEMON_ORIGIN: 'test', PIOP_USAGE_REFRESH_MS: '0', ...options.env };
   const directory = daemonDirectory(home, options);
   const daemonLog = join(directory, 'daemon.log');
@@ -297,7 +258,6 @@ export async function startDaemon(options: BuildOptions & { home?: string; env?:
   runningLocals.add(stop);
   try {
     await control(executable, 'start', env);
-    /** The current endpoint; a restarted daemon publishes a new token. */
     const readEndpoint = () => {
       const database = new Database(join(directory, 'sessions.sqlite'), { readonly: true });
       try { return JSON.parse(Buffer.from((database.query("SELECT body FROM application_settings WHERE name='daemon.json'").get() as any).body).toString('utf8')); }

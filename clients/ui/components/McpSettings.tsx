@@ -11,14 +11,12 @@ export type McpEditorDraft = { text: string; error?: string };
 type Servers = Record<string, Record<string, unknown>>;
 type Issue = { path: PropertyKey[]; message: string };
 
-/** Fields the form edits. Other fields stay as they are and are edited in the JSON view. */
 const FORM_FIELDS = new Set(["type", "command", "args", "url", "enabled"]);
 const COMMAND_FIELDS = ["command", "args", "env", "cwd"];
 const URL_FIELDS = ["url", "headers", "oauth"];
 
 const isObject = (value: unknown): value is Record<string, unknown> => typeof value === "object" && value !== null && !Array.isArray(value);
 
-/** The servers in the draft text, or undefined when the text is not an object of server objects. */
 function parseServers(text: string): Servers | undefined {
   try {
     const value: unknown = JSON.parse(text);

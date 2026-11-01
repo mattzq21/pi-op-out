@@ -12,7 +12,6 @@ export class StorageTransactionError extends Error {
   }
 }
 
-/** Turns a daemon error that carries a storage transaction state back into a typed error. Other errors pass through unchanged. */
 export function daemonError(reason: unknown): unknown {
   const text = typeof reason === "string" ? reason : reason instanceof Error ? reason.message : undefined;
   const rejected = text === undefined ? undefined : commandRejection(text);

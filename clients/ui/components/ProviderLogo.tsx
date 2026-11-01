@@ -8,7 +8,6 @@ const paths: Record<UsageProvider, string> = {
   opencode: "M22 24H2V0h20zM17 4.8H7v14.4h10z",
 };
 
-/** A one color provider logo, drawn in the current text color. */
 export function ProviderLogo(props: { provider: UsageProvider }): JSX.Element {
   return <svg class="provider-logo" viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d={paths[props.provider]} /></svg>;
 }

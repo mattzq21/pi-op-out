@@ -1,4 +1,3 @@
-// Fetch and cache the rrweb record/replay UMD bundles outside the repo.
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';

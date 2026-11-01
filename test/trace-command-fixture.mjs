@@ -84,7 +84,6 @@ export async function publishedTrace(t, traceReader, content, { folder = '', hom
       try { return { line, entry: JSON.parse(line) }; } catch { return { line }; }
     });
     const names = lines.flatMap(({ entry }) => entry?.type === 'session_info' ? [entry] : []);
-    // A session_info line in the content names the chat; the session broker keeps the name.
     const name = names.findLast(entry => entry.name?.trim())?.name;
     if (name) sessionNames.nameSession(fork.sessionPath, fork.sessionId, name);
     const parents = new Map(names.filter(entry => typeof entry.id === 'string').map(entry => [entry.id, entry.parentId]));

@@ -1,25 +1,21 @@
 import { text } from './json';
 
-/** A message pinned to the top of a chat. text is the first line of the message; it is empty for a prompt that has only attachments. timestamp is when the message was sent, and puts the pins in chat order. */
 export interface MessagePin { entryId: string; role: 'prompt' | 'response'; text: string; timestamp: number }
 
 export const PIN_LIMIT = 4;
 const TEXT_LIMIT = 300;
 
-/** The host parts that the pins use to find and reach the views of a chat. */
 export interface PinViews {
   subscriptions: Map<string, { identity: string }>;
   readonlyViews(identity: string): string[];
   output(packet: any): void;
 }
 
-/** The pinned messages of each chat, by chat identity. They are kept only in daemon memory. */
 export class MessagePins {
   private chats = new Map<string, MessagePin[]>();
 
   constructor(private host: PinViews) {}
 
-  /** Runs pin_message or unpin_message from a view of the chat, then sends the new pins to all views of the chat. */
   command(identity: string, command: any): null {
     const entryId = text(command, 'entryId');
     if (!entryId) throw new Error('A pin needs a saved message');
@@ -45,7 +41,6 @@ export class MessagePins {
     return null;
   }
 
-  /** Sends the pins of the chat to a view that attached to it. */
   attached(runtime: string, identity: string): void { this.send(runtime, this.chats.get(identity) ?? []); }
 
   private views(identity: string): Set<string> {

@@ -32,7 +32,6 @@ for (const [mode, repository] of [['fork_after', true], ['copy_after', true], ['
     const goal = () => db.query('SELECT objective, status FROM session_goals WHERE session_id=?').get(branch.sessionId) as any;
     const hold = () => JSON.parse((db.query("SELECT entry_json FROM session_extension_state WHERE session_id=? AND state_key='piop-input-hold'").get(branch.sessionId) as any).entry_json).data.held;
     try {
-      // Long enough for the copied goal to have started several turns if the branch were not held.
       await Bun.sleep(2000);
       expect(await visible()).toEqual(['Idle branch question', 'First answer.']);
       expect((await source.command({ type: 'get_state' })).isStreaming).toBe(false);
@@ -40,11 +39,9 @@ for (const [mode, repository] of [['fork_after', true], ['copy_after', true], ['
       expect(hold()).toBe(true);
 
       finish = true;
-      // Sent the way the composer sends it.
       expect(await source.command({ type: 'follow_up', message: 'Branch prompt', goalSubmissionId: crypto.randomUUID() })).not.toBe(false);
       const messages = await source.until(history => text(history.at(-1)) === 'Goal done.');
       const replies = messages.filter(message => ['user', 'assistant'].includes(message.role)).map(text);
-      // The user's message runs first; the still active goal then continues on its own until the agent completes it.
       expect(replies.slice(0, 4)).toEqual(['Idle branch question', 'First answer.', 'Branch prompt', 'Branch answer.']);
       expect(messages.slice(4).some(message => message.role === 'assistant' && message.content.some((part: any) => part.type === 'toolCall' && part.name === 'update_goal_status'))).toBe(true);
       expect(hold()).toBe(false);

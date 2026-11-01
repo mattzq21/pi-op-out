@@ -20,7 +20,6 @@ import type { App } from './app';
 
 let PREPARING = false;
 
-/** The restart gate. Requests hold a read lock; a restart or idle shutdown holds the write lock. */
 export class Runtime { gate = new RwLock(); }
 
 interface Plan {
@@ -49,7 +48,6 @@ function readPlan(): Plan {
   return plan;
 }
 
-/** True while this daemon prepares or owns an active restart. */
 export async function blocking(): Promise<boolean> {
   if (PREPARING) return true;
   try { return await artifacts.activePlan(process.pid) || PREPARING; }
@@ -186,7 +184,6 @@ export async function ensureLocalIdle(app: App): Promise<void> {
   await ensureUnattendedIdle(app);
 }
 
-/** Work that keeps a daemon without clients running. Terminals do not count: the stop closes them. */
 export async function ensureUnattendedIdle(app: App): Promise<void> {
   app.broker.ensureIdle();
   if (hostOperationsBusy()) throw new Error('Wait for storage operations to finish before restarting the daemon');
@@ -222,7 +219,6 @@ async function arm(plan: Plan): Promise<void> {
   catch (error) { coordinator.kill('SIGKILL'); throw error; }
   coordinator.unref();
   coordinators.set(plan.id, coordinator);
-  // Only the coordinator starts the replacement daemon. When it dies before the restart, the restart cannot go on.
   coordinator.once('exit', () => {
     coordinators.delete(plan.id);
     const armed = () => { try { return readPlan().id === plan.id && status(plan.id).phase === 'armed'; } catch { return false; } };
@@ -232,7 +228,6 @@ async function arm(plan: Plan): Promise<void> {
 
 const COORDINATOR_STOPPED = 'The restart coordinator stopped before the restart; the previous daemon is still running';
 
-/** The coordinator of each restart that this daemon armed. */
 const coordinators = new Map<string, ChildProcess>();
 
 async function waitArmed(plan: Plan, coordinator: ChildProcess): Promise<void> {
@@ -261,7 +256,6 @@ export async function commit(app: App, id: string): Promise<void> {
     restartStorage.write(path('restart-status.json'), statusRecord(plan, 'restarting'));
     app.emit('pi://daemon-restarting', { hostId: 'local', restartId: id });
     setTimeout(() => {
-      // Check again just before the stop, because nothing would start a replacement after it.
       if (!exited(coordinator)) { app.clients.stop(); return; }
       console.error(COORDINATOR_STOPPED);
       publish(plan, 'failed', COORDINATOR_STOPPED, undefined, () => { try { return status(id).phase === 'restarting'; } catch { return false; } })
@@ -328,7 +322,6 @@ async function startCandidate(plan: Plan, fallback: boolean): Promise<number> {
   const child = watch(await launch(plan, fallback ? plan.fallback : plan.executable, '--restart-candidate'));
   try { return await waitReady(plan, child); }
   catch (error: any) {
-    // The fallback claims the daemon lock without waiting, so the failed candidate must have exited and released it.
     try { await killAndWait(child); }
     catch (failure: any) { throw new Error((error?.message ?? String(error)) + '. ' + (failure?.message ?? String(failure))); }
     throw error;
@@ -361,7 +354,6 @@ async function coordinate(plan: Plan): Promise<void> {
   await waitForHandoff(plan);
   let pid: number;
   try {
-    // Each start attempt renews the status so it stays unexpired while this coordinator runs.
     await publish(plan, 'restarting');
     pid = await startCandidate(plan, false);
   }
@@ -378,7 +370,6 @@ async function coordinate(plan: Plan): Promise<void> {
   await publish(plan, 'complete', undefined, pid);
 }
 
-/** Runs --restart-coordinator or --validate-plugins. Returns undefined for other modes. */
 export function specialMode(): Promise<void> | undefined {
   const mode = process.argv[2];
   if (mode !== '--restart-coordinator' && mode !== '--validate-plugins') return undefined;

@@ -229,7 +229,6 @@ async function dispatchQueuedPrompt(command, session, output) {
   });
 }
 
-/** Passes a message taken from the daemon's queue to Pi. Resolves with Pi's preflight disposition; a later failure of the run it started is reported as a run error. */
 function bindQueuePull(session, output) {
   const ask = Object.getOwnPropertyDescriptor(globalThis, Symbol.for("piop.runtime-events"))?.value;
 
@@ -247,12 +246,10 @@ function bindQueuePull(session, output) {
   });
 }
 
-/** Adds a message from the daemon's queue to the context as a custom message that starts or continues a turn. Resolves once Pi took it. */
 function insertTaken(session, message, output) {
   const streaming = session.isStreaming;
   const run = session.sendCustomMessage(message, { triggerTurn: true, deliverAs: "followUp" });
 
-  // A run that this message started reports its own failure; a message added to a running turn is added at once.
   if (!streaming) { void run.catch(error => acceptedPromptError(session, error, output)); return Promise.resolve(); }
 
   return run;
@@ -288,11 +285,6 @@ function dispatchPrompt(command, session, output) {
   });
 }
 
-/**
- * Runs the latest failed or stopped response again, the same way Pi's automatic retry does. The failed attempt stays in the transcript,
- * hidden from the model, and the run continues from the message before it, so the prompt is not sent twice.
- * Pi has no public continue call, so this repeats the run loop of AgentSession._startRun.
- */
 function dispatchRetry(command, session, output) {
   const entryId = command.payload?.entryId;
 
@@ -318,10 +310,6 @@ function dispatchRetry(command, session, output) {
   void continueRun(session, failed).catch(error => acceptedPromptError(session, error, output));
 }
 
-/**
- * Gives the retried run the prompt and tools that extensions set when a run starts. Without this the run keeps Pi's default prompt.
- * Messages that handlers add are dropped, because the run they belong to already received them.
- */
 async function prepareRetriedRun(session, failed) {
   const messages = session.agent.state.messages;
   const end = messages.indexOf(failed);
@@ -373,10 +361,6 @@ async function continueRun(session, failed) {
 
 const INTERRUPTED_TOOL = "The Piop daemon stopped before this tool call finished. Its result is unknown; check its effects before you repeat it.";
 
-/**
- * Continues the task that a daemon stop interrupted. Tool calls of the last response that have no result get an error result first.
- * The state is "running" when a run already goes on, and "finished" when the last response ended the task.
- */
 function dispatchResume(command, session, output) {
   const respond = state => output({ type: "response", id: command.id, command: command.command, success: true, data: { state } });
   if (session.isStreaming || session.isCompacting) return respond("running");
@@ -443,7 +427,6 @@ async function dispatchReady(command, session, output) {
     }
 
     if (command.command === "queue_offer") {
-      // Extensions that wait inside a run, such as await_subagents, end their wait for a new user message.
       if (bindQueuePull(session, output).setOffer(command.payload)) {
         const bridge = Object.getOwnPropertyDescriptor(globalThis, Symbol.for("piop.runtime-bridge"));
         if (!bridge) throw new Error("Piop runtime bridge is unavailable");
@@ -467,7 +450,6 @@ async function dispatchReady(command, session, output) {
   }
 }
 
-/** Pi's command list, with the argument options of each extension command. Options come from the command's argument completions for an empty argument. */
 async function listCommands(session) {
   const commands = [];
 
@@ -494,7 +476,6 @@ async function commandOptions(session, command) {
   }
 }
 
-/** Sends the extension commands of this Pi to its Piop host, which saves them for chats that have not started Pi yet. */
 async function reportCommands(session) {
   try {
     const commands = (await listCommands(session)).filter(command => command.source === "extension").map(({ name, description, options }) => ({ name, description, options }));
@@ -506,13 +487,10 @@ if (process.env.PIOP_COMMAND_POLICY === undefined) throw new Error("Piop command
 
 const commandPolicy = JSON.parse(process.env.PIOP_COMMAND_POLICY);
 
-/** Commands of enabled plugins that wait in the follow-up queue and run in order when the conversation reaches them. They never reach the model. */
 const queuedCommands = new Set(commandPolicy.queued);
 
-/** Commands of disabled plugins, with the error to show. They are rejected so they never reach the model as text. */
 const disabledCommands = new Map(Object.entries(commandPolicy.disabled));
 
-/** The slash command at the start of a message, without the slash. Matches commandName in the daemon. */
 const commandName = text => /^\/(\S+)/.exec(text)?.[1];
 
 const queuedCommand = text => queuedCommands.has(commandName(text));
@@ -600,16 +578,10 @@ async function drainQueuedCommands(session, drain) {
 
 const compactionText = text => commandName(text) === "compact";
 
-/** The queued /compact that the run reached. The run compacts after its turn ends, before it takes the next queued message. */
 const reachedCompaction = Symbol("piop.reachedCompaction");
 
-/** Settles when a queued compaction ends. Prompts that arrive meanwhile wait for it, because Pi refuses prompts during a manual compaction. */
 const runningCompaction = Symbol("piop.runningCompaction");
 
-/**
- * Compacts at the position of a queued /compact. Pi's compact() stops the agent run first; here the run reached the compaction in order,
- * so that one stop is skipped. A later Stop from the user still stops the compaction and the run.
- */
 async function runQueuedCompaction(session, reached, output) {
   const instructions = reached.text.slice("/compact".length).trim() || undefined;
   let finish;
@@ -636,7 +608,6 @@ function bindQueuedCompaction(session, output) {
     if (!reached) return post.call(this);
     this[reachedCompaction] = undefined;
 
-    // A stop before the compaction starts keeps it first in the queue.
     if (this._agentRunAbortRequested) {
       this.agent.followUpQueue.messages.unshift(reached.message);
       this.getFollowUpMessages().unshift(reached.text);

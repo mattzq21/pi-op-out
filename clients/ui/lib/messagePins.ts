@@ -6,18 +6,14 @@ export const PIN_LIMIT = 4;
 
 export const pinnedMessagesSchema = z.array(z.object({ entryId: z.string(), role: z.enum(["prompt", "response"]), text: z.string(), timestamp: z.number() }));
 
-/** A message pinned to the top of the chat. An empty text is a prompt that has only attachments. */
 export type MessagePin = z.infer<typeof pinnedMessagesSchema>[number];
 
-/** pinned tells if a message is pinned. toggle pins or unpins a message, with the text that its pin shows. */
 export interface MessagePins { pinned: (id: string) => boolean; toggle: (message: ChatMessage, text: string) => Promise<void> }
 
 export const MessagePinContext = createContext<MessagePins>();
 
-/** The ID that a pin uses for a message: its saved entry. */
 export const pinId = (message: ChatMessage) => message.entryId ?? message.id;
 
-/** The first line of a message as plain text, for its pin. Text files sent with a prompt are not part of it. */
 export function pinText(value: string) {
   const text = value.replace(/<file name="[^"]*">\n[\s\S]*?\n<\/file>/g, "");
   const line = text.split("\n").find(part => part.trim())?.trim() ?? "";

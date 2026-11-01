@@ -32,7 +32,6 @@ export interface NativeConnectionTarget { cwd?: string; sessionPath?: string; se
 
 export const loadSessionGroups = () => call("load_session_groups", { seeds: [] }, sessionGroupsSchema);
 
-/** provider: refresh only this provider; without it a refresh reads all of them. */
 export const loadProviderUsage = (refresh: boolean, provider?: UsageProviderKey) => call("provider_usage", { refresh, provider }, providerUsageSchema);
 export type UsageProviderKey = "codex" | "anthropic" | "opencodeGo";
 
@@ -44,7 +43,6 @@ export const openRolloutFile = (path: string, hostId: string) => call("open_roll
 
 export const openExternalUrl = (url: string) => call("open_external_url", { url }, voidResultSchema);
 
-/** With archivesOnly, the report has only the archived conversations, which is much faster to read. archivesLimit keeps only that many of the last changed ones of one host. */
 export const loadStorageReport = async (hostId?: string, archivesOnly = false, archivesLimit?: number) => {
   if (hostId === undefined) return call("storage_report", { archivesOnly }, storageReportSchema);
   const report = await call("host_storage_report", { hostId, archivesOnly, archivesLimit }, storageReportSchema);
@@ -91,11 +89,8 @@ export class NativeTransport {
   private archived = false;
   isArchived() { return this.archived; }
   ownsConversation() { return this.owns; }
-  /** True while Pi runs for this view. A detached view has no Pi to read from. */
   isConnected() { return this.running; }
-  /** True when commands have something to answer them: a running Pi or the draft runtime. */
   canLoadModels() { return this.running || this.draftOnly(); }
-  /** The saved history of this chat while its Pi starts, or undefined when there is nothing saved to show. */
   preview() { return this.sessionId && !this.running && !this.readOnly && !this.draftOnly() ? previewConversation(this.sessionId, this.hostId) : undefined; }
   hasConfirmedOwnership() { return this.running && this.owns; }
   async takeOwnership() {
@@ -109,7 +104,6 @@ export class NativeTransport {
   private fresh = true;
   needsDefaults() { return this.fresh; }
   defaultsApplied() { this.fresh = false; }
-  /** A draft shows the host's default agent. A started session already runs it, because the agents extension picks it when the session starts. */
   async applyNewChatDefaults(thinking: string, fastMode: boolean) {
     if (this.draftOnly()) await this.settings.runCommand(() => this.draftRuntime.applyDefaults(thinking, fastMode));
   }
@@ -133,7 +127,6 @@ export class NativeTransport {
   }
   private readonly runtimeId = globalThis.crypto?.randomUUID?.() ?? `runtime-${Date.now()}-${Math.random()}`;
   private queueSnapshot: RpcEvent = { type: "queue_update", steering: [], followUp: [], pendingMessages: [] };
-  /** The last pinned_messages event of this chat. The daemon sends it each time the view attaches. */
   private pinsSnapshot: RpcEvent = { type: "pinned_messages", pins: [] };
   private visible = false;
   private presenceCleanup?: () => void;
@@ -188,7 +181,6 @@ export class NativeTransport {
   setNewChatWorktreeOptions(options: { repository: string; branches: string[]; defaultBranch: string | null }) { this.worktreeOptions = options; this.baseBranch = options.defaultBranch ?? options.branches[0]; }
   newChatWorktreeOptions() { return this.worktreeOptions; }
   private groupId?: string;
-  /** The sidebar group a new chat goes to when its first prompt starts. */
   setNewChatGroup(id: string) { this.groupId = id; }
   newChatGroup() { return this.groupId; }
   newChatBaseBranch() { return this.baseBranch; }
@@ -248,7 +240,6 @@ export class NativeTransport {
 
       return this.settings.runCommand(async () => {
         await this.draftRuntime.reload(() => this.draftOnly() && version === this.connectionVersion && hostId === this.hostId);
-        // The reload can show a new default agent, so the composer's fallback model follows the draft. A model the user picked still wins.
         this.promptControls.useEffectiveModel(agentStateSchema.parse(await this.draftRuntime.command({ type: "get_state" })).model);
       });
     }
@@ -300,7 +291,6 @@ export class NativeTransport {
   }
   currentCwd() { return this.cwd; }
   private inLinkedWorktree = false;
-  /** True after this new chat started in the Piop worktree that start_pi made for it. */
   startedInLinkedWorktree() { return this.inLinkedWorktree; }
   adoptBranchCwd(cwd: string) { this.cwd = cwd; }
   currentSessionPath() { return this.sessionPath; }
@@ -390,7 +380,6 @@ export class NativeTransport {
     this.settings.afterEvent(event);
   }
   private connectionLost() {
-    // Ownership stays as last known: losing the connection does not mean another client took the conversation.
     ++this.connectionVersion; this.connectPromise = undefined; this.running = false;
     this.retainedStatuses.clear(); this.retainedWidgets.clear(); this.retainedRequests.clear();
     this.presenceCleanup?.(); this.presenceCleanup = undefined;
@@ -501,7 +490,6 @@ export class NativeTransport {
       this.running = true;
       hostModelConnected(this.currentHostId());
       this.connectedOwnership(attached);
-      // Reads that failed while Pi was not running can run again.
       this.emit({ type: "pi_started" });
       this.presenceCleanup?.();
       window.addEventListener("focus", this.publishPresence); window.addEventListener("blur", this.publishPresence); window.addEventListener("resize", this.publishPresence); document.addEventListener("visibilitychange", this.publishPresence);
@@ -580,7 +568,6 @@ export class NativeTransport {
   }
   private async executeCommandNow<S extends z.ZodType>(command: RpcCommand, schema: S) {
     if (this.draftOnly()) return schema.parse(await this.draftRuntime.command(command));
-    // A command sent while Pi starts, such as loading a turn of the saved history, waits for Pi.
     if (!this.running && this.connectPromise) await this.connectPromise.catch(() => undefined);
     command = this.conversationCommands.normalize(command);
 
@@ -607,7 +594,6 @@ export class NativeTransport {
     if (!["new_session", "switch_session", "fork", "fork_after", "copy_after", "clone"].includes(command.type) || result.cancelled) return;
     forgetSession(this); this.sessionId = undefined;
 
-    // Any view can fork or branch a chat, and it owns the new chat.
     if (["fork_after", "copy_after"].includes(command.type) && !this.owns && !this.readOnly) { this.owns = true; this.emit({ type: "ownership_acquired" }); }
   }
   subscribe(listener: (event: RpcEvent) => void) { this.listeners.add(listener); listener(this.queueView()); listener(this.pinsSnapshot); this.retainedStatuses.forEach((event) => listener(event)); this.retainedWidgets.forEach((event) => listener(event)); this.retainedRequests.forEach((event) => listener(event));

@@ -14,7 +14,6 @@ test('a window that initializes preferences from a stale empty read keeps the pr
   const native = await nativeFileCommand(t, { desktop: true });
   assert.equal((await native.invoke('load_client_settings')).settings, null);
   assert.equal((await native.invoke('load_client_settings')).settings, null);
-  // Both windows read the same old local preference (debug mode on) on top of the defaults before either window saved.
   const local = { ...initial, debugMode: true };
 
   await native.invoke('save_client_settings', { settings: local, baseline: initial, initialize: true });

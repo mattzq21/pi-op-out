@@ -7,9 +7,7 @@ import { IconButton } from "./IconButton";
 
 import type { TerminalViewProps } from "./TerminalView";
 
-/** Bash's end-of-history key (Alt+>). It returns bash from a history entry to its empty new line. */
 const endOfHistory = "\u001b>";
-/** Time after which another up or down press is allowed when the shell has not replied. */
 const historyReplyTime = 2000;
 
 function sharedStart(first: string, second: string) {
@@ -26,9 +24,7 @@ export function MobileTerminalView(componentProps: TerminalViewProps) {
   const host = createRef<HTMLDivElement>(null);
   const input = createRef<HTMLSpanElement>(null);
   const tabRefs = createRef(new Map<string, HTMLButtonElement>());
-  /** Set while bash shows a history entry that the box holds a copy of. Bash's own line then has that entry, not an empty line. */
   const [recall, setRecall] = createSignal<{ terminal: string; prompt: string; draft: string }>();
-  /** Terminals left while bash showed a history entry. Each gets the end of history key when it is shown again. */
   const awayTerminals = new Set<string>();
   let lineWaiter: { outputEnd: number; before: string; created: number; resolve: (line: string | undefined) => void } | undefined;
   let historyMove: Promise<void> | undefined;
@@ -60,7 +56,6 @@ export function MobileTerminalView(componentProps: TerminalViewProps) {
     return { line: parser.currentLine(), outputEnd: componentProps.outputEnd };
   });
 
-  // The box shows the recalled command, so the shell's copy of it after the prompt is hidden.
   const segments = createMemo(() => {
     transcript();
     const current = recall();
@@ -108,7 +103,6 @@ export function MobileTerminalView(componentProps: TerminalViewProps) {
     void componentProps.onData(endOfHistory);
   }, () => [componentProps.activeId, disabled()]);
 
-  /** Bash's line holds a history entry, or may hold one because an up or down key has no reply yet. */
   const shellAway = () => Boolean(recall() || lineWaiter);
 
   const finishInput = (revision: number) => {
@@ -131,7 +125,6 @@ export function MobileTerminalView(componentProps: TerminalViewProps) {
     try {
       if (historyMove) { await historyMove; value = command(); revision = commandRevision; }
 
-      // Ctrl+C also returns bash to its empty line.
       accepted = await componentProps.onData(interrupting ? "\u0003" : (shellAway() ? endOfHistory : "") + value + "\r", true);
     }
     finally { if (!disposed) setSending(false); }
@@ -176,7 +169,6 @@ export function MobileTerminalView(componentProps: TerminalViewProps) {
     componentProps.onDraft(value);
   };
 
-  /** Shows a command in the box, with the caret at its end when the box has focus. */
   const showCommand = (value: string) => {
     editCommand(value);
     const element = input.current;
@@ -190,7 +182,6 @@ export function MobileTerminalView(componentProps: TerminalViewProps) {
     window.getSelection()?.removeAllRanges(); window.getSelection()?.addRange(range);
   };
 
-  /** Sends a history key to the shell and gives the shell's current line after its reply, or undefined if the line did not change. */
   const historyLine = (key: string, before: string) => new Promise<string | undefined>(resolve => {
     lineWaiter?.resolve(undefined);
     const waiter = { outputEnd: componentProps.outputEnd, before, created: Date.now(), resolve: (line: string | undefined) => {
@@ -201,7 +192,6 @@ export function MobileTerminalView(componentProps: TerminalViewProps) {
     componentProps.onData(key).then(accepted => { if (!accepted) waiter.resolve(undefined); }, () => waiter.resolve(undefined));
   });
 
-  // Bash moves through its history and the box gets a copy of the entry. Bash returns to its empty line before the next command.
   const moveHistory = async (direction: -1 | 1) => {
     if (disabled() || sending() || (lineWaiter && Date.now() - lineWaiter.created < historyReplyTime)) return;
     const current = recall();
@@ -213,7 +203,6 @@ export function MobileTerminalView(componentProps: TerminalViewProps) {
     const draft = current?.draft ?? command();
     const pending = historyLine(direction < 0 ? "\u001b[A" : "\u001b[B", before);
     const move = pending.then(line => {
-      // A program without line editing shows the key as text, for example ^[[A.
       if (line === undefined || disposed || componentProps.activeId !== id || /\^\[\[[AB]$/.test(line)) return;
 
       if (line === prompt) { setRecall(undefined); showCommand(draft); return; }
@@ -226,7 +215,6 @@ export function MobileTerminalView(componentProps: TerminalViewProps) {
     if (historyMove === move) historyMove = undefined;
   };
 
-  // Android keyboards send Enter during word composition as a new line in the text, with no Enter key event.
   const acceptInput = (element: HTMLElement, composing: boolean) => {
     const value = element.textContent ?? "";
 

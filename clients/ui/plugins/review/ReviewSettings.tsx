@@ -1,7 +1,6 @@
 import { For, Show } from "solid-js";
 import type { PluginSettingsProps } from "../types";
 
-/** The agent that runs /review, chosen in the Agents settings tab. */
 export function ReviewSettings(props: PluginSettingsProps) {
   const selected = () => props.settings.reviewAgent ?? "reviewer";
   const available = () => props.agents.some(agent => agent.name === selected());

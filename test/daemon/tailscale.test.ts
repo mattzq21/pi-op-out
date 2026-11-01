@@ -38,7 +38,6 @@ function expectLog(text: string): Promise<void> {
 
 type Upgrade = { status: number; packets: any[]; send(value: unknown): void; next(): Promise<any>; closed(): Promise<void>; end(): void };
 
-/** Opens the Tailscale socket like the tailscaled proxy and asks for a WebSocket upgrade with the given headers. */
 function upgrade(headers: Record<string, string>): Promise<Upgrade> {
   return new Promise((resolve, reject) => {
     const socket: Socket = connect(socketPath);
@@ -92,7 +91,6 @@ function upgrade(headers: Record<string, string>): Promise<Upgrade> {
       }
       frames();
     });
-    // Status 0: the daemon dropped the connection before any HTTP answer, with a close or a reset.
     const refused = () => { if (!result) resolve({ status: 0, packets, send() {}, next: () => Promise.reject(new Error('Socket closed')), closed: () => Promise.resolve(), end() {} }); };
     socket.on('close', () => { ended = true; wake(); refused(); });
     socket.on('error', error => { if (['ECONNRESET', 'EPIPE'].includes((error as any).code)) refused(); else if (!result) reject(error); });
@@ -215,7 +213,6 @@ test('startup replaces a stale Tailscale socket but refuses to remove a file or 
   const home = temporaryDirectory('piop-home-');
   const path = join(home, '.piop/tailscale.sock');
   mkdirSync(join(home, '.piop'), { recursive: true, mode: 0o700 });
-  // A socket file left behind by a daemon that did not stop cleanly.
   expect(spawnSync('python3', ['-c', 'import socket,sys; socket.socket(socket.AF_UNIX).bind(sys.argv[1])', path]).status).toBe(0);
   const started = await startDaemon({ home });
   try { expect(lstatSync(path).isSocket()).toBe(true); expect(existsSync(path)).toBe(true); }

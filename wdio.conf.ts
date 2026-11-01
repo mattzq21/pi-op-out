@@ -7,7 +7,6 @@ import { homedir, tmpdir } from "node:os";
 import { z } from "zod";
 import { selectWindowBounds } from "./scripts/window-placement.mjs";
 
-// The E2E app and its daemon both keep their data under HOME, so a temporary HOME isolates the run from the user's profile.
 const binary = path.resolve(process.env.PI_E2E_BINARY ?? "target/e2e/release/piop");
 const ownsFixtureHome = !process.env.PIOP_TEST_HOME;
 const fixtureHome = process.env.PIOP_TEST_HOME || mkdtempSync(path.join(tmpdir(), "piop-e2e-"));
@@ -21,8 +20,6 @@ for (const name of ["auth.json", "models.json", "models-store.json"]) {
   if (existsSync(source) && !existsSync(destination)) { copyFileSync(source, destination); chmodSync(destination, 0o600); }
 }
 
-// Only the isolated E2E profile waits for Pi readiness. The normal-startup
-// regression deliberately runs without this wrapper.
 const fixtureBin = path.join(fixtureHome, ".local", "bin");
 const installedPi = process.env.PIOP_E2E_REAL_PI ?? [
   path.join(homedir(), ".local", "bin", "pi"),
@@ -56,7 +53,6 @@ const freePort = () => new Promise<number>((resolve, reject) => {
   });
 });
 
-// Workers load this file again, so the launcher's ports pass to them through the environment.
 process.env.PIOP_E2E_DRIVER_PORT ||= String(await freePort());
 process.env.PIOP_E2E_NATIVE_PORT ||= String(await freePort());
 const driverPort = Number(process.env.PIOP_E2E_DRIVER_PORT);
@@ -79,7 +75,6 @@ const stopDriver = async () => {
   if (!await Promise.race([exited.then(() => true), delay(3000, undefined, { ref: false }).then(() => false)])) { child.kill("SIGKILL"); await exited; }
 };
 
-/** Stops app and daemon processes that still run with this run's test HOME, for example after a page froze and the driver could not close the app. */
 const stopFixtureProcesses = () => {
   for (const pid of readdirSync("/proc").filter(name => /^\d+$/.test(name))) {
     let environment: string;

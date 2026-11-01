@@ -15,10 +15,8 @@ function fail(prefix: string, error: unknown): never {
 }
 
 async function main(): Promise<void> {
-  // Host operation workers load this same bundle; they only run the jobs that the daemon sends them.
   if (isHostOperationWorker()) { runHostOperationWorker(); return; }
   const first = process.argv[2];
-  // A daemon started from an agent's shell inherits that agent's tag. Removing it keeps the processes this daemon starts from being stopped with that agent.
   delete process.env[PROCESS_TAG];
   installFailureHandlers();
   if (first === '--daemon-log-sink' || first === '--daemon-log-writer') {

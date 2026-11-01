@@ -1,16 +1,9 @@
 import * as records from './settings_records';
 import { reported } from './pi_discovery';
 
-/** An argument choice or hint of a command. A hint has an empty value. */
 export interface CommandOption { value: string; label: string; description?: string }
 
-/** An extension command as Pi reported it: its name, description and argument options. */
 export interface CommandInfo { name: string; description?: string; options?: CommandOption[] }
-
-/**
- * The extension commands that Pi offers on this host, with their descriptions and argument options.
- * Each Pi session reports them when it starts, and the latest report is saved. Chats that have not started Pi use the saved report.
- */
 
 const optionalText = (value: unknown, what: string): string | undefined => {
   if (value !== undefined && typeof value !== 'string') throw new Error(what + ' must be text');
@@ -35,13 +28,11 @@ export function parseCommands(value: unknown): CommandInfo[] {
   return value.map(command);
 }
 
-/** The saved commands of this host, or null before Pi first reported them. settingsFile locates the host storage. */
 export function savedCommands(settingsFile: string): CommandInfo[] | null {
   const saved = records.commandInventory(settingsFile);
   return saved === null ? null : parseCommands(saved);
 }
 
-/** Saves the commands that a Pi session reported. */
 export function recordCommands(value: unknown, settingsFile: string): void {
   records.saveCommandInventory(settingsFile, parseCommands(value));
   reported('commands');

@@ -1,10 +1,6 @@
 #!/usr/bin/env node
 'use strict';
 
-// E2E-only process gate. Piop's bridge can accept app requests before its SDK
-// session is bound. Buffer input in the pipe until real Pi answers get_state.
-// native_startup.test.ts deliberately uses normal launch and retains that bug.
-// Usage: node pi-ready-launcher.cjs --node /absolute/real/node -- <original Node args>
 const { spawn } = require('node:child_process');
 const { randomUUID } = require('node:crypto');
 const { isAbsolute, basename } = require('node:path');
@@ -56,8 +52,6 @@ function run(node, args) {
     if (!closing) process.stdin.pipe(child.stdin);
   }
 
-  // Transform and pipe preserve stdout backpressure. Before readiness, only
-  // complete JSON lines are inspected; every other byte is forwarded unchanged.
   const output = new Transform({
     transform(chunk, _encoding, done) {
       if (!waiting) { this.push(chunk); done(); return; }
@@ -100,8 +94,6 @@ function run(node, args) {
     process.stdin.destroy();
     for (const [name, handler] of handlers) process.removeListener(name, handler);
     if (waiting && !closing) { failed = true; console.error('Pi readiness launcher: Pi exited before its readiness response'); }
-    // Allow queued stdout to drain before exit. Preserve the child's exit code
-    // or signal unless this launcher itself encountered a protocol/I/O failure.
     if (receivedSignal && !failed) process.stdout.write('', () => process.kill(process.pid, receivedSignal));
     else process.exitCode = failed ? 1 : (code ?? 1);
   });

@@ -172,7 +172,6 @@ async function registeredSessions(root, warnings) {
   }
 }
 
-/** Reads only the archived conversations, without the disk scan of the full report. With limit, reads only that many of the last changed ones. */
 async function archivedConversations(piopRoot, profile, limit) {
   const warnings = [];
   const archived = await registeredSessions(path.join(profile, 'archived'), warnings);
@@ -198,7 +197,6 @@ async function archivedConversations(piopRoot, profile, limit) {
   return { categories: [], archives, warnings: [...new Set(warnings)] };
 }
 
-/** Reports storage use and archived conversations of the profile at request.profile. With request.archivesOnly, reports only the archived conversations; with request.archivesLimit too, only that many of the last changed ones. */
 async function storageInventory(request) {
   if (!Check(Type.String({ minLength: 1 }), request.profile) || !path.isAbsolute(request.profile)) throw new Error('Invalid profile directory');
   const piopRoot = request.profile;

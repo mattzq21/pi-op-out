@@ -14,7 +14,6 @@ function chat(name) {
   return { name, isConnected: () => true, subscribe: () => () => {}, currentHostId: () => 'local', currentCwd: () => '/tmp', ownsConversation: () => true, hasSentMessage: () => true, command: async () => ({}), onDispose(listener) { disposers.add(listener); return () => disposers.delete(listener); }, close() { disposers.forEach(listener => listener()); } };
 }
 
-/** A cache whose chats show the messages of their signals while no view shows them, and a view that shows one chat. */
 async function setup(t, limits) {
   const dom = installDom();
   const chats = new Map();

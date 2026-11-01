@@ -38,7 +38,6 @@ export function publish(path: string, body: Buffer | string): Publication {
   return { committed: true, durable: true };
 }
 
-/** Deletes a record when its body still equals the expected value. Returns true when a row was removed. */
 export function removeIfEqual(path: string, expected: Buffer | string): boolean {
   const wanted = typeof expected === 'string' ? Buffer.from(expected) : expected;
   return withDatabase(open(path), database => transaction(database, 'IMMEDIATE', () => {
@@ -64,7 +63,6 @@ export function readOrCreate(path: string, initial: Buffer | string): Buffer {
 
 const TOOL_INVENTORY = 'CREATE TABLE IF NOT EXISTS tool_inventory (id INTEGER PRIMARY KEY CHECK (id = 1), entries_json TEXT NOT NULL)';
 
-/** The tools that Pi last reported on this host, or an empty list before the first report. */
 export function toolInventory(path: string): unknown[] {
   return withDatabase(open(path), database => {
     database.exec(TOOL_INVENTORY);
@@ -73,7 +71,6 @@ export function toolInventory(path: string): unknown[] {
   });
 }
 
-/** Saves the reported tools. Returns whether they differ from the saved ones. */
 export function saveToolInventory(path: string, tools: unknown[]): boolean {
   const entries = JSON.stringify(tools);
   return withDatabase(open(path), database => {
@@ -89,7 +86,6 @@ export function saveToolInventory(path: string, tools: unknown[]): boolean {
 
 const COMMAND_INVENTORY = 'CREATE TABLE IF NOT EXISTS command_inventory (id INTEGER PRIMARY KEY CHECK (id = 1), entries_json TEXT NOT NULL)';
 
-/** The extension commands that Pi last reported on this host, or null before the first report. */
 export function commandInventory(path: string): unknown[] | null {
   return withDatabase(open(path), database => {
     database.exec(COMMAND_INVENTORY);
@@ -98,7 +94,6 @@ export function commandInventory(path: string): unknown[] | null {
   });
 }
 
-/** Saves the reported commands. */
 export function saveCommandInventory(path: string, commands: unknown[]): void {
   const entries = JSON.stringify(commands);
   withDatabase(open(path), database => {

@@ -30,7 +30,6 @@ function storageRoot(root, sessionPath) {
   return canonical;
 }
 
-/** Entries from the first entry through entryId on the branch that ends at leafId, without current-state entries. */
 function selectHistory(entries, leafId, entryId) {
   if (!stateRecords.canFork(entries)) throw new Error("Only main chats can be forked");
   const byId = new Map(entries.filter(entry => entry?.type !== 'session' && typeof entry?.id === 'string').map(entry => [entry.id, entry]));
@@ -80,11 +79,6 @@ function withReferences(root) {
   };
 }
 
-/**
- * Publishes a new conversation with the history of sourcePath through the finished final response entryId,
- * the current settings of the source, and a fork source link. On failure it removes everything it created.
- * keepName keeps the name of the source; else the copy is named as its branch.
- */
 async function publishBranchHistory(request) {
   const { sourcePath, sessionId, entries, leafId, entryId } = request ?? {};
   requirePath(sourcePath, 'source conversation path');
@@ -100,19 +94,16 @@ async function publishBranchHistory(request) {
   const timestamp = new Date().toISOString();
   const sessionPath = path.join(path.dirname(sourcePath), timestamp.replace(/[:.]/g, '-') + '_' + sessionId + '.jsonl');
   const cwd = fs.realpathSync(request.cwd);
-  // The branch copies the auxiliary chats made through the selected response, in its own folder; its history then names the copies.
   const copies = auxiliaryCopies.planAuxiliaryCopies({ root, source: { id: source.id, path: sourcePath }, target: { id: sessionId, path: sessionPath }, cutoff: selected.at(-1)?.timestamp, cwd: { from: source.cwd, to: cwd } });
   const history = auxiliaryCopies.rewriteForkHistory(selected, copies);
   const retries = auxiliaryCopies.retryRecord(copies);
   if (retries) current.set(auxiliaryCopies.FORK_RETRIES, retries);
-  // The branch stays idle until the user sends a message (core input hold).
   current.set('piop-input-hold', { type: 'custom', customType: 'piop-input-hold', data: { held: true }, id: randomUUID(), parentId: null, timestamp });
   const forkSource = { sessionId: source.id, sessionPath: sourcePath, entryId };
   const header = { type: 'session', version: source.version, id: sessionId, timestamp, cwd, parentSession: sourcePath, piopForkSource: forkSource };
   const body = [header, ...history, ...current.values()].map(entry => JSON.stringify(entry)).join('\n') + '\n';
   try {
     const published = await publication.publish(sessionPath, body, withReferences(root), { name: request.keepName === true ? names.sessionName(sourcePath, source.id) : branchName(names.sessionName(sourcePath, source.id), history), goalSource: sourcePath, dependencies: { workspace: { path: cwd, kind: 'existing' } } });
-    // A warning means the transcript exists but saving it did not fully finish. The branch is not usable then.
     if (published.warnings.length) throw new Error(published.warnings.join('; '));
   } catch (error) {
     try { await discardBranchHistory(root, sessionId, sessionPath); }
@@ -197,10 +188,6 @@ function forget(root, sessionId, target) {
   require('./registry-deletion.cjs').forget(root, [{ sessionId, path: target }]);
 }
 
-/**
- * Removes the transcript, publication records, attachment claims and registry entries of the branch sessionId.
- * sessionPath may be null when the caller did not learn it. Things already gone count as removed.
- */
 async function discardBranchHistory(root, sessionId, sessionPath) {
   requireUuid(sessionId, 'branch identity');
   if (sessionPath !== null) {

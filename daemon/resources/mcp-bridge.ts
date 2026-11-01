@@ -119,7 +119,6 @@ export default function agentMcp(pi: ExtensionAPI) {
         const { piopInjectAgentId, ...config } = structuredClone(supplied);
         const instance = selection.sessionId;
         const namespace = `mcp__${name.replaceAll("-", "_")}`;
-        // The agent's codemode choice decides how MCP tools are reached: through codemode, or directly when codemode is off.
         config.exposure = codemodeEnabled ? "codemode" : "direct";
         delete config.toolExposure;
 

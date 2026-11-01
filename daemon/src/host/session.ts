@@ -26,7 +26,6 @@ import { QueueGoal } from './goals/state';
 import { GOAL_COMMAND } from './goals/commands';
 import { goalPreparationView, restoreGoalAttachments, type GoalPlace } from './goals/files';
 
-/** The controller functions that a session calls. */
 export interface SessionHost {
   queueRoot(): string | null;
   output(packet: any): void;
@@ -37,14 +36,10 @@ export interface SessionHost {
   finished(key: string, epoch: string, transient: boolean): void;
   maintenance(key: string): void;
   canStopIdle(session: Session): boolean;
-  /** True when name is an extension command that Pi runs at once, such as cap. */
   extensionCommand(name: string): boolean;
   refreshProviders(): Promise<number>;
-  /** Called when the state of the conversation identity changes, starts or stops. */
   stateChanged(identity: string): void;
-  /** Handles an event that Pi waits on. Pi continues when the promise settles; a rejection is reported to the chat. */
   runtimeEvent(source: RuntimeEventSource, event: RuntimeEvent): Promise<void>;
-  /** Records that a task of the conversation started or ended. stopped is true when Pi stopped during the task. */
   taskRunning(id: string, running: boolean, stopped: boolean): void;
 }
 
@@ -53,7 +48,6 @@ const STATE_CHANGES = new Set(['session_info_changed', 'session_switched', 'mode
 
 function stateChange(name: string): boolean { return STATE_CHANGES.has(name); }
 
-/** Stops other work on the session until the promise settles; it is like an abortable task handle. */
 export interface InterruptTask { finished: boolean; promise: Promise<any> }
 
 export class Session {
@@ -86,20 +80,16 @@ export class Session {
   toolPayloadRevision = 0;
   isWorking = false;
   isCompacting = false;
-  /** Counts the compactions Pi started on request. */
   manualCompactions = 0;
   isSubmitted = false;
   isClosed = false;
   isStopping = false;
   isTransient: boolean;
   reservedPathValue: string | null = null;
-  /** The session file that has a saved message, so the session list shows it. */
   private listedFile: string | null = null;
   startupError: string | null = null;
-  /** Last stderr lines from Pi, kept for error reports. */
   stderrTail: string[] = [];
   providerRevision = 0;
-  /** Errors that came while no view showed the chat. The first view that opens it gets them. */
   private unseenErrors: any[] = [];
 
   private constructor(launch: SessionLaunch, identity: string, pending: any[], storage: QueueStorage | null, private host: SessionHost, private toolPayloads: ToolPayloadCache, held: boolean, goal: QueueGoal) {
@@ -143,7 +133,6 @@ export class Session {
     const held = storage?.held() ?? false;
     const recovered = storage ? await storage.recover(pending) : pending;
     const identity = argument(launch.spec, '--session') !== undefined ? launch.key : (argument(launch.spec, '--session-id') ?? launch.key);
-    // The queue owns the goal, so the chat shows it before Pi starts.
     let goal = new QueueGoal();
     let goalError: string | undefined;
     try { goal = QueueGoal.restore(argument(launch.spec, '--session')); } catch (error) { goalError = 'Could not restore goal: ' + errorText(error); }
@@ -157,7 +146,6 @@ export class Session {
     return session;
   }
 
-  /** The saved conversation that the goal belongs to. */
   private goalPlace(): GoalPlace {
     const file = typeof this.state?.sessionFile === 'string' ? this.state.sessionFile : argument(this.spec, '--session');
     if (!file) throw new Error('Goals require a saved conversation.');
@@ -165,14 +153,12 @@ export class Session {
     return { file, sessionId, cwd: this.cwd ?? (typeof this.state?.cwd === 'string' ? this.state.cwd : dirname(file)) };
   }
 
-  /** Restores the saved files that the goal's objective names, so the agent can read them. Runs while the chat opens. */
   private restoreGoalFiles(): void {
     const goal = this.queue.liveGoal();
     if (!goal) return;
     void restoreGoalAttachments(this.goalPlace(), goal.objective).catch(error => this.goalError('Could not restore the goal files: ' + errorText(error)));
   }
 
-  /** Reports a goal failure to the daemon log and to the views. A chat that no view shows yet tells the first view that opens it. */
   private goalError(message: string): void {
     this.host.output({ type: 'diagnostic', line: this.key + ': ' + message });
     const event = { type: 'extension_ui_request', id: randomUUID(), method: 'notify', notifyType: 'error', message };
@@ -181,11 +167,8 @@ export class Session {
 
   private observer(): WorkerObserver {
     return {
-      // inOrder already reports a failed event; the returned promise only tells the worker when the event is done.
       event: event => { this.queue.observe(event); return this.inOrder(() => this.receive(event)).then(() => {}, () => {}); },
-      // Queue requests wait for the queue's lock, which a queue command can hold while it waits for a Pi response. They skip the event order, so that response is not stuck behind them.
       runtimeEvent: event => event.name.startsWith('queue_') ? this.receiveRuntimeEvent(event) : this.inOrder(() => this.receiveRuntimeEvent(event)),
-      // The requester receives a failed response, so it is not also reported as a diagnostic.
       response: (event, request) => this.inOrder(() => this.response(event, request), false),
       stderr: line => {
         if (this.stderrTail.push(line) > 20) this.stderrTail.shift();
@@ -249,7 +232,6 @@ export class Session {
   submitted(): boolean { return this.isSubmitted; }
   views(): Array<[string, any]> { return this.viewsList.map(([id, view]) => [id, clone(view)]); }
   revision(): string { return this.epoch + ':' + this.contentRevision; }
-  /** Changes with each state change, and with each start of Pi. */
   stateKey(): string { return this.epoch + ':' + this.stateRevision; }
 
   private visibleViewers(): number { return this.viewsList.filter(([, view]) => flag(view, 'visible')).length; }
@@ -316,7 +298,6 @@ export class Session {
     return [this.key, targets];
   }
 
-  /** Shows the new chat name to the views of this session. */
   renamed(name: string): void {
     if (this.state && typeof this.state === 'object') this.state.sessionName = name;
     this.publish({ type: 'session_info_changed' }, null);
@@ -345,7 +326,6 @@ export class Session {
     if (error !== null) this.publish({ type: 'extension_error', error }, runtime);
     this.dialogs.route();
     this.publishPresence();
-    // Pi takes waiting messages by itself; the offer tells it how many wait. It goes after the view attached, so the view gets the events of the run they start.
     this.queue.offer();
   }
 
@@ -454,10 +434,7 @@ export class Session {
     await this.worker.send(command);
   }
 
-  /** Resolves when Pi can no longer accept a request that failed. */
   settled(): Promise<void> { return this.worker?.settled() ?? Promise.resolve(); }
-
-  // Events from Pi.
 
   private async receive(event: any): Promise<void> {
     this.idleStop.cancel();
@@ -465,7 +442,6 @@ export class Session {
     finally { this.idleStop.schedule(); }
   }
 
-  /** Handles an event that Pi waits on. Queue requests go to the queue, whose answer Pi gets; other events go to the host. */
   private async receiveRuntimeEvent(event: RuntimeEvent): Promise<unknown> {
     this.idleStop.cancel();
     try {
@@ -496,7 +472,6 @@ export class Session {
     await this.queue.receive(event);
   }
 
-  /** Pi saves the first user message before the first reply starts. From then on the session list shows the chat, so the list is told at once. */
   private announceSessionFile(event: any): void {
     if (kind(event) !== 'message_start' || event.message?.role !== 'assistant') return;
     const file = this.state?.sessionFile;
@@ -546,8 +521,6 @@ export class Session {
     }
   }
 
-  // Requests.
-
   async execute(command: any): Promise<any> {
     switch (kind(command)) {
       case 'get_session_revision': return { revision: this.revision() };
@@ -555,7 +528,6 @@ export class Session {
       case 'get_queued_image': return this.queuedImage(command);
       case 'get_goal_preparation': return goalPreparationView(this.goalPlace(), text(command, 'goalSubmissionId'));
       case 'get_commands': {
-        // Piop runs /goal itself, so Pi does not list it.
         const result = await this.executeWorker(command);
         if (Array.isArray(result?.commands)) result.commands.unshift({ ...clone(GOAL_COMMAND), source: 'extension' });
         return result;
@@ -568,11 +540,9 @@ export class Session {
       case 'get_state': return this.collectState(command);
       case 'force_stop': await this.stop(); return null;
       case 'get_available_models': await this.refreshProviders(); break;
-      // Pi stops the running response before it compacts, even when there is nothing to compact.
       case 'compact': {
         if (this.working()) throw new CommandRefusedError('piop is working. Send /compact as a message to compact after the current response.', 'daemon');
         const started = this.manualCompactions;
-        // After Pi starts, the chat shows the result, so the request is done.
         try { return await this.executeWorker(command); } catch (error) { if (this.manualCompactions !== started) return null; throw error; }
       }
       case 'retry_response': if (this.working()) throw new CommandRefusedError('Wait for the current response to finish before retrying.', 'daemon'); break;
@@ -610,7 +580,6 @@ export class Session {
     return result;
   }
 
-  /** The data of one image of a queued message. The queue view leaves image data out, so clients ask for it when they show the image. */
   private queuedImage(command: any): { data: string; mimeType: string } {
     const item = this.queue.pending().find(entry => entry?.id === text(command, 'id'));
     const image = Array.isArray(item?.images) ? item.images[Number(command.index)] : undefined;
@@ -644,13 +613,10 @@ export class Session {
         const snapshot = await this.rawAs({ type: 'get_entries' }, 'get_snapshot_entries', state);
       const current = snapshot?.stateRevision;
       if (snapshot && typeof snapshot === 'object') delete snapshot.stateRevision;
-      // stateKey lets a reader wait for the next state change after this snapshot.
       if (current === revision) { if (snapshot && typeof snapshot === 'object') snapshot.stateKey = this.stateKey(); return snapshot; }
       if (Date.now() >= deadline) throw new Error('Session kept changing while collecting its snapshot');
     }
   }
-
-  // Responses from Pi.
 
   private async response(event: any, request: Request): Promise<any> {
     try { this.responseError(event, request); } catch (error) {
@@ -680,7 +646,6 @@ export class Session {
         const header = JSON.parse(readHeaderLine(data.sessionFile));
         if (header.piopForkSource) data.forkSource = header.piopForkSource;
       }
-      // Pi sessions have no name: the session broker owns it.
       const name = typeof data.sessionFile === 'string' && typeof data.sessionId === 'string' ? sessionName(data.sessionFile, data.sessionId) : undefined;
       if (name === undefined) delete data.sessionName; else data.sessionName = name;
     }

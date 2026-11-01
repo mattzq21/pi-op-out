@@ -8,7 +8,6 @@ import { daemonClient } from '../daemon-client.mjs';
 import { chatPublisher } from '../chat-publisher-fixture.mjs';
 import { ArchivedSessionPanel } from '../../clients/ui/components/ArchivedSessionPanel.tsx';
 
-/** The archived chats panel against a real test daemon holding two archived chats, from the alpha and beta projects. */
 async function archivePanel(t) {
   const dom = installDom();
   let view;
@@ -53,7 +52,6 @@ test('archived chats can be searched by project and restored to the chat list', 
 
 test('a restore that fails says why, and the panel then shows the archive as it is now', async t => {
   const { daemon, archived, rows } = await archivePanel(t);
-  // Another client deletes the archived chat first, so this panel's list is out of date.
   const path = (await daemon.invoke('storage_report')).hosts[0].archives.find(archive => archive.cwd === archived.alpha.cwd).path;
   await daemon.invoke('delete_archived_session', { sessionPath: path, hostId: 'local', clientId: 'other-client' });
   const row = [...document.querySelectorAll('.session-item')].find(item => item.textContent.includes(archived.alpha.cwd));

@@ -6,7 +6,6 @@ export interface DraftDestination {
   cwd?: string;
   sessionPath?: string;
   temporary: boolean;
-  /** The group the new chat goes to, so its pending first message shows there. */
   groupId?: string;
 }
 
@@ -24,7 +23,6 @@ export interface DraftSubmission {
   destination: DraftDestination;
   rawText: string;
   uploads: ComposerUpload[];
-  /** dispatched: sent to the host, and its outcome is not known yet. */
   status: "preparing" | "dispatched";
   createdAt: number;
   error?: string;

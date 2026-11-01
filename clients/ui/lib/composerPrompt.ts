@@ -35,12 +35,10 @@ const proseOnly = (value: string) => value.replace(/(^|\n)( {0,3})(`{3,}|~{3,})[
 
 export const skillReference = (value: string) => value.match(/(?:^|[\s([{])\$([a-zA-Z0-9_-]*)$/)?.[1]?.toLowerCase();
 
-/** Skill names by their lowercase form. */
 export const skillNames = (commands: SlashCommand[]) => new Map(commands.flatMap((command): Array<[string, string]> => { const name = skillName(command);
 
   return name ? [[name.toLowerCase(), name]] : []; }));
 
-/** The `$skill` or `/skill:name` reference that the message uses, if any. Only the first known skill in the prose counts. */
 export function findSkillReference(value: string, skills: ReadonlyMap<string, string>) {
   if (/^\s*\/(?!skill:)/.test(value) || !skills.size) return undefined;
 
@@ -56,7 +54,6 @@ export function findSkillReference(value: string, skills: ReadonlyMap<string, st
   return undefined;
 }
 
-/** Calls the skill that the message references. The message keeps the reference where the user wrote it. */
 function expandSkillReference(value: string, commands: SlashCommand[]) {
   const found = findSkillReference(value, skillNames(commands));
 
@@ -67,17 +64,14 @@ const SKILL_BLOCK = /^<skill\s+name="([^"]+)"\s+location="[^"]+">\nReferences ar
 
 const QUEUED_SKILL = /^\/skill:([a-zA-Z0-9][a-zA-Z0-9_-]*)(?:\s+([\s\S]*))?$/;
 
-/** The prompt as the user wrote it. A prompt without its skill reference gets `$name` first. */
 const withSkillReference = (skill: string, text: string) => ({ skill, text: findSkillReference(text, new Map([[skill.toLowerCase(), skill]])) ? text : `$${skill}${text ? ` ${text}` : ""}` });
 
-/** The skill and the user's prompt of a sent skill call: the `<skill>` block, then the prompt. */
 export function sentSkillPrompt(message: string) {
   const block = message.match(SKILL_BLOCK);
 
   return block ? withSkillReference(block[1], (block[2] ?? "").trim()) : undefined;
 }
 
-/** The skill and the user's prompt of a queued `/skill:name prompt` message. */
 export function queuedSkillPrompt(message: string) {
   const call = message.match(QUEUED_SKILL);
 
@@ -86,19 +80,16 @@ export function queuedSkillPrompt(message: string) {
 
 const escapeAttribute = (value: string) => value.replace(/[&<>"']/g, (character) => required(({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&apos;" })[character]));
 
-/** A text file attached to a message. The message ends with one block per file, so the model reads the file with the prompt. */
 export interface AttachedFile { name: string; text: string }
 
 const unescapeAttribute = (value: string) => value.replace(/&(amp|lt|gt|quot|apos);/g, (_match, name: string) => required(({ amp: "&", lt: "<", gt: ">", quot: '"', apos: "'" } as Record<string, string>)[name]));
 
-/** The message for a prompt and its text files. File text cannot end its block early, because a closing tag inside it is escaped. */
 export function attachFiles(prompt: string, files: AttachedFile[]) {
   return [prompt, ...files.map((file) => '<file name="' + escapeAttribute(file.name) + '">\n' + file.text.replace(/<\/file>/gi, "<\\/file>") + "\n</file>")].filter(Boolean).join("\n\n");
 }
 
 const FILE_BLOCK = /<file name="([^"]*)">\n([\s\S]*?)\n<\/file>/y;
 
-/** Splits a message made by attachFiles into its prompt and text files. A message without file blocks at its end is all prompt. */
 export function splitAttachedFiles(message: string): { prompt: string; files: AttachedFile[] } {
   for (let start = message.indexOf('<file name="'); start >= 0; start = message.indexOf('<file name="', start + 1)) {
     if (start > 0 && !message.slice(0, start).endsWith("\n\n")) continue;

@@ -37,7 +37,6 @@ fn attachment_command_bridge() {
     } else { None };
     println!("PIOP_TEST_NATIVE_READY");
     let serve = move |handle: Option<AppHandle>| {
-    // Events the app sends to its windows, for tests of the daemon connection.
     let events = std::sync::Arc::new(std::sync::Mutex::new(Vec::<Value>::new()));
     if let Some(app) = handle.as_ref() {
         use tauri::Listener;
@@ -54,7 +53,6 @@ fn attachment_command_bridge() {
         None => tauri::WebviewWindowBuilder::new(app, "daemon-test", tauri::WebviewUrl::External(tauri::Url::parse("about:blank").unwrap())).visible(false).build(),
     }.map_err(|error| error.to_string());
     let (mut stream, _) = listener.accept().expect("connect native test client");
-    // A Rust listener that blocks keeps Tauri's event handlers locked, as a slow listener does while another event is sent.
     let mut held_dispatch: Option<(std::sync::mpsc::Sender<()>, std::thread::JoinHandle<()>)> = None;
     for line in BufReader::new(stream.try_clone().unwrap()).lines() {
         let request: Value = serde_json::from_str(&line.expect("read native test request")).unwrap();

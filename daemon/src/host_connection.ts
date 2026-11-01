@@ -3,7 +3,6 @@ import { homeDir, isFile } from './environment';
 import { shellQuote, type CommandSpec } from './process_io';
 import { validateRemoteHost, type AppSettings, type RemoteHost } from './settings_types';
 
-/** Stored data of another machine changes only through the Piop daemon of that machine. Requests for it go there through peers. */
 export function requireLocal(hostId: string): void {
   if (hostId !== 'local') throw new Error('Requests for another host must go through the Piop daemon of that host');
 }

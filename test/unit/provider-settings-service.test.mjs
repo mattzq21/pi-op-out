@@ -6,7 +6,6 @@ import { mockIPC, mockWindows, clearMocks } from '@tauri-apps/api/mocks';
 import { daemonClient } from '../daemon-client.mjs';
 import { ProviderSettings } from '../../clients/ui/components/ProviderSettings.tsx';
 
-/** The provider settings against a real test daemon whose host has no stored logins. */
 async function providers(t) {
   const dom = installDom();
   let view;
@@ -55,7 +54,6 @@ test('a login can be cancelled, and the filter finds providers by name', async t
   await untilDom(() => /No providers match/.test(document.querySelector('.provider-settings').textContent), 15000);
 });
 
-/** An OpenAI-compatible server on this machine that lists one model and records the keys it receives. */
 async function modelServer(t) {
   const keys = [];
   const server = createServer((request, response) => {

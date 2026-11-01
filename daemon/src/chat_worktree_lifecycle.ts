@@ -13,12 +13,6 @@ import { forgetProjectRepository, rememberProjectRepository } from './project_re
 import * as storageTransactions from './storage_transactions';
 import type { FolderMove } from './storage_transactions';
 
-/*
- * Archive, restore and permanent deletion of the worktrees Piop created for chats (ADR 0006). Each step that changes Git
- * is recorded in the chat worktree record first or right after, so recovery() can finish or undo it after a crash. The
- * transcript storage transaction is the commit point: a record in a middle state follows where the transcript is.
- */
-
 function errorText(error: any): string { return error?.message ?? String(error); }
 
 function worktreeOf(record: ChatWorktreeRecord): ChatWorktree {
@@ -38,17 +32,14 @@ function without<T extends object, K extends keyof T>(value: T, ...keys: K[]): O
 
 function settled(record: ChatWorktreeRecord): ChatWorktreeRecord { return without(record, 'lastError') as ChatWorktreeRecord; }
 
-/** Runs every cleanup and throws one error that lists each failure. */
 async function each<T>(items: T[], step: (item: T) => Promise<void>): Promise<void> {
   const failures: string[] = [];
   for (const item of items) { try { await step(item); } catch (error) { failures.push(errorText(error)); } }
   if (failures.length) throw new Error(failures.join('\n'));
 }
 
-/** Chats whose archive or restore this daemon runs now; their middle states are not reported as unfinished. */
 const running = new Set<string>();
 
-/** Ends tracking of records whose operation stopped without finishing, so the storage report lists them. */
 export function stopped(records: ChatWorktreeRecord[]): void { for (const record of records) running.delete(record.chatId); }
 
 function records(chatIds: string[], root: string): ChatWorktreeRecord[] {
@@ -60,7 +51,6 @@ function canonicalFolder(folder: string): string {
   catch (error: any) { if (error.code === 'ENOENT') return resolve(folder); throw error; }
 }
 
-/** Archived chats still need their shared folder when restored. Read current headers, not sidebar caches. */
 function sharedFolder(record: ChatWorktreeRecord, root: string, folder = record.worktree, excludeArchivedChildren = false): boolean {
   const db = SessionTables.open(root);
   let sessions: Array<{ session_id: string; session_path: string }>;
@@ -89,10 +79,6 @@ function sharedFolder(record: ChatWorktreeRecord, root: string, folder = record.
   return false;
 }
 
-/**
- * Protects the last commit of each Piop worktree of chatIds with its archive reference and records the chat as archiving.
- * Chats without a Piop worktree are skipped. On failure, undoes what it did and throws; the worktrees stay.
- */
 export async function beginArchive(chatIds: string[], root = profileRoot()): Promise<ChatWorktreeRecord[]> {
   const done: ChatWorktreeRecord[] = [];
   try {
@@ -127,11 +113,6 @@ export async function beginArchive(chatIds: string[], root = profileRoot()): Pro
   }
 }
 
-/**
- * Marks an active record before its archive reference is created, so a crash between the reference and the record
- * write leaves a mark. An earlier mark means such a crash happened: its reference is released first. A reference that
- * exists without a mark was not made by Piop and stops the archive.
- */
 async function recordProtection(record: ChatWorktreeRecord, root: string): Promise<ChatWorktreeRecord> {
   const current = record.protecting ? await releaseUnrecordedArchive(record, root) : record;
   const ref = archiveRef(record.chatId);
@@ -140,7 +121,6 @@ async function recordProtection(record: ChatWorktreeRecord, root: string): Promi
   return Worktrees.replace(current, { ...settled(current), protecting: true }, root)!;
 }
 
-/** Releases the archive reference that an interrupted beginArchive created for an active record, then clears its mark. */
 async function releaseUnrecordedArchive(record: ChatWorktreeRecord, root: string): Promise<ChatWorktreeRecord> {
   const ref = archiveRef(record.chatId);
   const commit = await archivedCommit(record);
@@ -151,7 +131,6 @@ async function releaseUnrecordedArchive(record: ChatWorktreeRecord, root: string
   return Worktrees.replace(Worktrees.read(record.chatId, root), without(settled(record), 'protecting') as ChatWorktreeRecord, root)!;
 }
 
-/** Undoes beginArchive after the transcripts stayed active: releases each archive reference and marks the chat active again. */
 export async function rollbackArchive(archiving: ChatWorktreeRecord[], root = profileRoot()): Promise<void> {
   for (const record of archiving) running.delete(record.chatId);
   await each(archiving, async record => {
@@ -161,10 +140,6 @@ export async function rollbackArchive(archiving: ChatWorktreeRecord[], root = pr
   });
 }
 
-/**
- * Finishes the archive after the transcripts were archived: marks each chat archived, then removes its worktree folder.
- * Changes after the saved commit and ignored files are discarded. Returns warnings for folders that remain.
- */
 export async function finishArchive(archiving: ChatWorktreeRecord[], root = profileRoot()): Promise<string[]> {
   for (const record of archiving) running.delete(record.chatId);
   const warnings: string[] = [];
@@ -188,10 +163,6 @@ export async function finishArchive(archiving: ChatWorktreeRecord[], root = prof
   return warnings;
 }
 
-/**
- * Recreates the worktree of each archived chat of chatIds from its saved commit, and records the plan first so a crash
- * can undo it. Keeps the archive references. On failure, removes what it created and throws; the chats stay archived.
- */
 export async function beginRestore(chatIds: string[], root = profileRoot()): Promise<ChatWorktreeRecord[]> {
   const done: ChatWorktreeRecord[] = [];
   try {
@@ -214,7 +185,6 @@ export async function beginRestore(chatIds: string[], root = profileRoot()): Pro
   }
 }
 
-/** Undoes beginRestore after the transcripts stayed archived: removes the restored folders and new branches. */
 export async function rollbackRestore(restoring: ChatWorktreeRecord[], root = profileRoot()): Promise<void> {
   for (const record of restoring) running.delete(record.chatId);
   await each([...restoring].reverse(), async record => {
@@ -224,16 +194,10 @@ export async function rollbackRestore(restoring: ChatWorktreeRecord[], root = pr
   });
 }
 
-/** The folder changes of a restore: transcripts that worked in an archived folder work in its restored folder. */
 export function folderMoves(restoring: ChatWorktreeRecord[]): FolderMove[] {
   return restoring.filter(record => record.restore!.worktree !== record.worktree).map(record => ({ from: record.worktree, to: record.restore!.worktree }));
 }
 
-/**
- * Finishes the restore after the transcripts were restored: releases each archive reference and marks the chat active
- * with its restored folder and branch. Throws when a reference cannot be released; the record stays restoring so
- * recovery retries.
- */
 export async function finishRestore(restoring: ChatWorktreeRecord[], root = profileRoot()): Promise<void> {
   for (const record of restoring) running.delete(record.chatId);
   await each(restoring, async record => {
@@ -247,13 +211,8 @@ export async function finishRestore(restoring: ChatWorktreeRecord[], root = prof
   });
 }
 
-/**
- * Releases what permanently deleted chats held in Git: worktree folder, archive reference and branch, then the record.
- * Call after the deletion committed. Returns warnings for parts that remain; recovery retries them.
- */
 export async function releaseDeleted(chatIds: string[], root = profileRoot()): Promise<string[]> {
   const warnings: string[] = [];
-  // A previous owner's record stays until the last sharing chat is deleted, even if that chat owns no worktree.
   for (const record of Worktrees.list(root).filter(record => record.state !== 'preparing' && (chatIds.includes(record.chatId) || transcriptArea(root, record.chatId) === 'missing'))) {
     try {
       if (sharedFolder(record, root) || (record.restore && sharedFolder(record, root, record.restore.worktree))) continue;
@@ -263,7 +222,6 @@ export async function releaseDeleted(chatIds: string[], root = profileRoot()): P
       for (const folder of new Set([record.worktree, record.restore?.worktree].filter((path): path is string => Boolean(path)))) forgetProjectRepository(root, folder);
     } catch (error) { warnings.push(Worktrees.fail(record, `Deletion committed, but the Git data of chat ${record.chatId} was kept: ${errorText(error)}`, root)); }
   }
-  // Deleting the last sharing chat may also free a folder whose owner is still archived.
   for (const record of Worktrees.list(root)) {
     if (record.state !== 'archived' || transcriptArea(root, record.chatId) !== 'archived') continue;
     warnings.push(...await finishArchive([record], root));
@@ -273,10 +231,6 @@ export async function releaseDeleted(chatIds: string[], root = profileRoot()): P
 
 type Area = 'sessions' | 'archived' | 'missing';
 
-/**
- * Describes each chat worktree that needs attention: a failed cleanup, or a step that a crash or failure left unfinished.
- * Steps that this daemon runs now are not listed. Reads records only.
- */
 export function pendingWarnings(root = profileRoot()): string[] {
   return Worktrees.list(root).flatMap(record => {
     const unfinished = (!running.has(record.chatId) && (record.state === 'archiving' || record.state === 'restoring' || record.protecting === true)) || (record.state === 'preparing' && !Records.ownerAlive(record.owner));
@@ -293,11 +247,6 @@ function transcriptArea(root: string, chatId: string): Area {
   throw new Error(`Transcript of chat ${chatId} is outside Piop storage: ${path}`);
 }
 
-/**
- * Brings every chat worktree record to a final state after a crash: undoes creations whose process ended, and finishes or
- * undoes archive, restore and deletion steps according to where the transcript is. Run while no chat lifecycle
- * operation runs. Throws with every failure that remains.
- */
 export async function recover(root = profileRoot()): Promise<void> {
   await storageTransactions.recover({ root });
   const failures = await Worktrees.recoverPreparing(root);

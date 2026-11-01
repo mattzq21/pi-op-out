@@ -4,7 +4,6 @@ let show: ((notice: Notice) => void) | undefined;
 
 const waiting: Notice[] = [];
 
-/** Tells the user about a failed background task, such as a save. Before a window shows notices, the latest few wait for it. */
 export function reportBackgroundError(title: string, reason: unknown) {
   console.error(title, reason);
   const notice = { title, message: reason instanceof Error ? reason.message : String(reason) };
@@ -13,7 +12,6 @@ export function reportBackgroundError(title: string, reason: unknown) {
   else { waiting.push(notice); waiting.splice(0, Math.max(0, waiting.length - 10)); }
 }
 
-/** Shows background errors, also the ones that waited, with next until the returned function is called. */
 export function showBackgroundErrors(next: (notice: Notice) => void) {
   show = next;
 

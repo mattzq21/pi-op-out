@@ -18,10 +18,8 @@ import { releaseLook, reserveLook } from "./subagent-looks.ts";
 import { savedSubagentRuns } from "../piop-storage/subagent-results.ts";
 import { isAuxiliary } from "../piop-storage/session-records.cjs";
 
-/** A subagent nickname: 1–8 characters, an upper case letter first, then lower case letters or digits. */
 const NICKNAME = "^[A-Z][a-z0-9]{0,7}$";
 
-/** Whether folder is inside a Git work tree. */
 function inGitRepository(folder: string) {
   try { return execFileSync("git", ["-C", folder, "rev-parse", "--is-inside-work-tree"], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], timeout: 5000 }).trim() === "true"; }
   catch { return false; }
@@ -66,7 +64,6 @@ function resumeSubagent(runs: SubagentRun[], parentSessionId: string, task: Suba
     agent: previous.agent, cwd: previous.cwd, look: previous.look };
 }
 
-/** The look of a subagent, known before its chat exists: a resumed one keeps its look, a new one reserves a look among its siblings. */
 function subagentLook(ctx: ExtensionContext, task: SubagentTask) {
   const runs = latestRuns(ctx);
 
@@ -152,7 +149,6 @@ async function executeSubagent(task: SubagentTask, execution: SubagentExecution)
   const done = new Promise<void>(resolve => { finished = resolve; });
   const ready = new Promise<void>(resolve => { started = resolve; });
   const lifecycle: ActiveSubagent = { controller, done, ready, started, closing: false, revision: 0, pendingDeliveries: 0, deliveryIds: new Set() };
-  // The look is on the run before the chat exists, so the row of a starting subagent already shows its own icon.
   const run: SubagentRun = { version: 1, toolCallId, parentSessionId: ctx.sessionManager.getSessionId(), sessionId: task.sessionId ?? "", sessionPath: "", hostId: currentHost(), name: task.name, task: task.task, status: "running", startedAt: Date.now(), look: subagentLook(ctx, task) };
   results.push(run);
   let claimed = false;
@@ -265,7 +261,6 @@ export function registerSubagents(pi: ExtensionAPI) {
 
   const useProfilesTool = agentProfilesTool(pi);
   let useSpawnTool = () => {};
-  /** Whether the session's folder is in a Git repository, checked once per session. */
   let repository: { sessionId: string; inside: boolean } | undefined;
   const sessionInRepository = (ctx: ExtensionContext) => {
     const sessionId = ctx.sessionManager.getSessionId();
@@ -276,7 +271,6 @@ export function registerSubagents(pi: ExtensionAPI) {
   };
   pi.on("session_start", (_event, ctx) => { sessionInRepository(ctx); });
   const unsubscribeTools = pi.events.on("piop:required-tools", ({ ctx, tools, withheldTools, availableTools }) => {
-    // A subagent cannot start subagents or peers, so it gets none of their tools.
     if (subagentParent(ctx)) { withheldTools.push(...SUBAGENT_TOOLS, "list_agent_profiles");
 
     return; }
@@ -284,10 +278,8 @@ export function registerSubagents(pi: ExtensionAPI) {
     const subagents = allowed.some(tool => SUBAGENT_TOOLS.includes(tool));
     const peers = !isAuxiliary(ctx.sessionManager.getEntries()) && allowed.some(tool => PEER_TOOLS.includes(tool));
 
-    // Saved children stay reachable after their tools are turned off.
     if (subagents || latestRuns(ctx).length) tools.push(...SUBAGENT_TOOLS);
 
-    // branchoff_peer makes a Git worktree, so only a chat in a Git repository gets it.
     if (peers) tools.push(...PEER_TOOLS.filter(tool => tool !== "branchoff_peer" || sessionInRepository(ctx)));
 
     if (subagents) useSpawnTool();
@@ -480,7 +472,6 @@ export function registerSubagents(pi: ExtensionAPI) {
         return { content: [{ type: "text" as const, text: pending.size ? text + "\n\nOther subagents are still running." : text }], details: { finished: !pending.size, version: 1, runs: finished } };
       };
 
-      // An answer that is already waiting ends a wait for any subagent at once.
       if (!pending.size || (!all && resultsDelivery.waiting(ctx))) return answers();
       let onInput = () => {};
       const input = new Promise<"input">(resolve => { onInput = () => resolve("input"); inputListeners.add(onInput); });
@@ -507,7 +498,6 @@ export function registerSubagents(pi: ExtensionAPI) {
       return answers();
     },
   });
-  /** single: the agent can start only one agent as a subagent, so the tool has no agent field. limit: the agent's max_subagents. */
   const spawnTool = (single: boolean, limit: number) => ({
     name: "spawn_subagents", label: "Spawn subagents",
     exposure: "model-only" as const,
@@ -521,7 +511,6 @@ export function registerSubagents(pi: ExtensionAPI) {
       if (!params.tasks.length || params.tasks.some((task) => !task.task.trim())) throw new Error("Provide at least one nonempty task");
       for (const task of params.tasks) requireMessageLength(task.task);
 
-      // A nickname is shown on its own line, as in "Subagent <nickname>:".
       if (params.tasks.some(task => !new RegExp(NICKNAME).test(task.nickname))) throw new Error("Give each subagent a nickname of 1–8 characters: an upper case letter, then lower case letters or digits");
 
       if (new Set(params.tasks.map(task => task.nickname)).size !== params.tasks.length) throw new Error("Give each subagent a different nickname");
@@ -552,7 +541,6 @@ export function registerSubagents(pi: ExtensionAPI) {
   let spawnSingle = false;
   let spawnLimit = subagentLimit(pi);
   pi.registerTool(spawnTool(spawnSingle, spawnLimit));
-  /** Keeps the spawn_subagents schema in line with the agent: no agent field while it can start only one agent as a subagent, and at most max_subagents tasks. */
   useSpawnTool = () => {
     const single = startableProfiles(pi, "subagent").profiles.length === 1;
     const limit = subagentLimit(pi);

@@ -2,14 +2,12 @@ import { isMainThread, parentPort, workerData, type MessagePort } from 'node:wor
 import { BUILD_ID } from './config';
 import { QUEUED, STARTED, type HostOperationName, type WorkerJob, type WorkerReply } from './host_operation_protocol';
 
-/** What a handler gets besides its request. begin() returns false when the caller already gave up; the handler must then stop without changes. */
 interface Context { begin(): boolean; storage?: WorkerJob['storage'] }
 
 const CANCELLED_RESULT = Symbol('cancelled');
 
 type Handler = (input: any, context: Context) => Promise<unknown> | unknown;
 
-/** Runs operation only when the caller still waits for it. */
 function started(operation: (input: any) => Promise<unknown> | unknown): Handler {
   return (input, context) => context.begin() ? operation(input) : CANCELLED_RESULT;
 }
@@ -56,12 +54,10 @@ async function run(port: MessagePort, job: WorkerJob): Promise<void> {
   catch (error) { port.postMessage(failure(job.id, new Error('Could not send the result: ' + (error instanceof Error ? error.message : String(error))))); }
 }
 
-/** True in a worker thread that the daemon started for host operations. */
 export function isHostOperationWorker(): boolean {
   return !isMainThread && typeof workerData?.piopHostOperations === 'string';
 }
 
-/** Runs the jobs the daemon sends, one at a time per worker. */
 export function runHostOperationWorker(): void {
   const port = parentPort!;
   if (workerData.piopHostOperations !== BUILD_ID) {

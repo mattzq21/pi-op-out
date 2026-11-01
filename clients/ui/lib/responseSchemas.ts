@@ -51,7 +51,6 @@ export const opencodeGoUsageSchema = z.object({ rolling: usageWindowSchema, week
 
 const providerUsage = <T extends z.ZodType>(usage: T) => z.object({ usage: usage.optional(), error: z.string().optional() }).optional();
 
-/** The usage the daemon last read per provider; error means its latest refresh failed, so the usage is stale. */
 export const providerUsageSchema = z.object({ codex: providerUsage(codexUsageSchema), anthropic: providerUsage(codexUsageSchema), opencodeGo: providerUsage(opencodeGoUsageSchema) });
 
 export const directoryListingSchema = z.object({ path: z.string(), parent: z.string().optional(), directories: z.array(z.string()) });
@@ -70,7 +69,6 @@ export const agentStateSchema = z.object({ canFork: z.boolean().optional(), view
 
 export const forkAfterResultSchema = z.object({ cancelled: z.boolean().optional(), state: z.object({ cwd: z.union([z.string(), z.null()]).optional() }).optional() });
 
-/** A part of a chat's history: before is the first entry left out of older history, if any. */
 export const historyOutlineSchema = z.object({ responses: z.array(z.object({ id: z.string().min(1), start: z.string().min(1), preview: z.string(), compactions: z.array(z.string().min(1)).optional() })) });
 
 export const historyViewSchema = z.object({ entries: z.array(entrySchema), leafId: z.union([z.string(), z.null()]), before: z.string().nullable().optional(), olderUsage: usageSchema.optional() });

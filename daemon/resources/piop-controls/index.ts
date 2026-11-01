@@ -6,7 +6,6 @@ import { registerControlCommands } from "./commands.ts";
 import { registerFastModeControl } from "./fast-mode.ts";
 import type { SessionControls } from "./interface.ts";
 
-/** Session controls: stop and forks of the current session, and Piop's fast mode switch. Publishes SessionControls on "piop:controls:session". */
 export default function controls(pi: ExtensionAPI) {
   const stop = registerStopControl(pi);
   const session: SessionControls = {

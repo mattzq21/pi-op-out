@@ -1,5 +1,4 @@
 #!/usr/bin/env node
-// Record, replay and read rrweb recordings of the Piop WebView. Run with --help for commands.
 import fs from 'node:fs';
 import path from 'node:path';
 import { openSession, chordActions } from './lib/webdriver.mjs';

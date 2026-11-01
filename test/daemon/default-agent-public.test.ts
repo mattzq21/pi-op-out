@@ -20,13 +20,11 @@ const callFor = (key: string) => {
   return request && { model: request.model, effort: request.reasoning_effort };
 };
 
-/** The agent that a runtime last reported as active. */
 const activeAgent = (runtimeId: string) => {
   const status = agents.daemon.events.filter(event => event.payload?.runtimeId === runtimeId && event.payload.event?.method === 'setStatus' && event.payload.event.statusKey === 'pi-define-agents' && event.payload.event.statusText).at(-1)?.payload.event.statusText;
   return status && JSON.parse(Buffer.from(status.slice(5), 'base64url').toString('utf8')).active;
 };
 
-/** A new chat that the client starts without choosing an agent or a model. */
 const plainChat = async (runtimeId: string, extra: Record<string, unknown> = {}) => {
   const chat = await agents.daemon.invoke('create_temporary_chat', { hostId: 'local' });
   await agents.daemon.invoke('start_pi', { runtimeId, clientId: 'laptop', cwd: chat.cwd, sessionId: chat.sessionId, ...extra });
@@ -47,7 +45,6 @@ test.concurrent('a new chat starts as the flagged agent and calls its model with
 test.concurrent('the agent list for a chat that is not started yet shows which agent is the default', async () => {
   const catalog = await agents.daemon.invoke('provider_auth', { hostId: 'local', request: { action: 'draft_catalog', reload: true } });
   expect(catalog.config.agents.filter((agent: any) => agent.isDefault).map((agent: any) => agent.name)).toEqual(['deep-thinker']);
-  // An agent without its own model runs the model Pi starts with, as the general child below does.
   expect(catalog.initialModel).toBe('scripted/scripted-model');
 }, 60000);
 

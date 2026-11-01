@@ -7,10 +7,6 @@ import { commandName } from '../plugin_contributions';
 import { queuedCommand, withImageIds } from './queue_submission';
 import { activateGoal, goalArgument, goalSubmission, prepareGoal } from './goals/commands';
 
-/**
- * Changes one queued item: removes it, edits it, switches it between steer and follow-up, moves it, or makes an item marked for retry wait again.
- * The daemon owns the queue, so every change is a change of its saved list. An item that Pi took cannot change.
- */
 export async function changePending(queue: QueueDelivery, gate: Mutex, id: string, action: any, assertOwner: () => void): Promise<any> {
   const release = await gate.lock();
   try {
@@ -32,7 +28,6 @@ export async function changePending(queue: QueueDelivery, gate: Mutex, id: strin
       clearDelivery(target);
       target.behavior = action;
       delete target.retry;
-      // A message made into steering leaves the place below the goal; a follow-up there stays below it.
       if (action === 'steer') delete target.afterGoal;
     } else {
       const neighbor = queueNeighbor(state.pending, target, action);
@@ -44,7 +39,6 @@ export async function changePending(queue: QueueDelivery, gate: Mutex, id: strin
   } finally { release(); }
 }
 
-/** Clears the fields that record a delivery to Pi. */
 function clearDelivery(item: any): void {
   delete item.used;
   item.deliveryStarted = false;
@@ -53,17 +47,12 @@ function clearDelivery(item: any): void {
   item.consumedInputId = null;
 }
 
-/**
- * An edit of a queued message: { type: 'edit', message, images? }. images keeps the listed indexes of the current images, in that order,
- * and adds new ones: { keep: number[], add: { data, mimeType, name? }[] }. Without images, the images stay as they are.
- */
 function isEdit(action: any): action is { type: 'edit'; message: unknown; images?: unknown } {
   return action !== null && typeof action === 'object' && !Array.isArray(action) && action.type === 'edit';
 }
 
 const IMAGE_TYPES = new Set(['image/png', 'image/jpeg', 'image/gif', 'image/webp']);
 
-/** The images of an edited message, from the current images and the edit. */
 function editedImages(current: any[], change: unknown): any[] {
   if (change === undefined) return clone(current);
   const edit = change as any;
@@ -77,7 +66,6 @@ function editedImages(current: any[], change: unknown): any[] {
   return [...keep.map(index => clone(current[index as number])), ...withImageIds(added)];
 }
 
-/** Replaces the text and images of a queued message. A queued /compact cannot be edited. An edited goal objective is prepared again, as when it was sent. */
 async function editPending(queue: QueueDelivery, target: any, action: { message: unknown; images?: unknown }): Promise<any> {
   const message = action.message;
   if (typeof message !== 'string') throw new Error('The edited message must be text.');
@@ -131,7 +119,6 @@ function moveItem(items: any[], id: string, neighbor: string, action: any): void
   }
 }
 
-/** True for a move of the goal entry, and for any follow-up move while the goal has its entry, because the goal entry is one of the follow-ups. */
 function movesAroundGoal(state: QueueState, id: string, action: any): boolean {
   if (!state.queuedGoal()) return false;
   const moving = action === 'moveUp' || action === 'moveDown' || (action !== null && typeof action === 'object' && !Array.isArray(action) && action.type !== 'edit');
@@ -141,7 +128,6 @@ function movesAroundGoal(state: QueueState, id: string, action: any): boolean {
   return item !== undefined && item.behavior === 'followUp' && !flag(item, 'retry') && !flag(item, 'taken');
 }
 
-/** The follow-up order with the entry moved, or undefined when the move changes nothing. */
 function movedOrder(order: string[], id: string, action: any): string[] | undefined {
   const next = [...order];
   const from = next.indexOf(id);
@@ -158,7 +144,6 @@ function movedOrder(order: string[], id: string, action: any): string[] | undefi
   return next.every((entry, index) => entry === order[index]) ? undefined : next;
 }
 
-/** Moves the goal entry or a follow-up. Follow-ups that end above the goal wait for Pi; the rest wait below the goal. */
 async function moveAroundGoal(queue: QueueDelivery, id: string, action: any): Promise<any> {
   const state = queue.state;
   const followUps = state.pending.filter(item => item.behavior === 'followUp' && !flag(item, 'retry') && !flag(item, 'taken'));
@@ -180,12 +165,6 @@ async function moveAroundGoal(queue: QueueDelivery, id: string, action: any): Pr
   return null;
 }
 
-/**
- * Gives Pi the next message it may take, of the given kind, and marks it taken. Pi names the messages it already has, so a daemon that restarted
- * while Pi ran does not give Pi a message twice. Returns the message, or null when none waits, with the offer that is left.
- * The kind goal gives the goal prompt, when the goal may continue and no message waits before it. A taken /goal message makes its objective the goal;
- * context lists the messages that go to the model before it.
- */
 export async function takeNext(queue: QueueDelivery, behavior: unknown, holding: unknown): Promise<any> {
   if (behavior !== 'steer' && behavior !== 'followUp' && behavior !== 'goal') throw new Error('queue_take needs behavior steer, followUp or goal');
   const state = queue.state;
@@ -217,7 +196,6 @@ export async function takeNext(queue: QueueDelivery, behavior: unknown, holding:
   return { item: taken, offer: queue.currentOffer() };
 }
 
-/** Messages that Pi took but did not use wait again, in their place. */
 export async function releaseTaken(queue: QueueDelivery, ids: unknown): Promise<void> {
   const released = new Set(Array.isArray(ids) ? ids.filter(id => typeof id === 'string') : []);
   let changed = false;
@@ -230,7 +208,6 @@ export async function releaseTaken(queue: QueueDelivery, ids: unknown): Promise<
   if (changed) await queue.publish();
 }
 
-/** Pi could not take the message, for example because its goal could not be set. The message stays, marked for retry, and the user sees why. */
 export async function takeFailed(queue: QueueDelivery, id: unknown, error: unknown): Promise<void> {
   const item = queue.state.pending.find(entry => entry.id === id);
   const reason = typeof error === 'string' && error ? error : 'Pi could not take the message';

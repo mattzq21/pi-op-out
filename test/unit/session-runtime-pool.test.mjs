@@ -177,8 +177,6 @@ describe('session runtime pool', () => {
     assert.deepEqual(keys, ['local:session']);
   });
 
-  // The sidebar seeds groups from these summaries before the chat list has a new branch. A summary without its source let
-  // the branch's worktree folder become its group, and the daemon keeps that first assignment.
   test('a retained branch summary names its source chat from session state', async () => {
     responses.set('pi_command:get_state', { model: null, thinkingLevel: 'off', isStreaming: false, sessionId: 'branch', sessionFile: '/branch.jsonl', messageCount: 2, pendingMessageCount: 0,
       forkSource: { sessionId: 'source', sessionPath: '/source.jsonl', entryId: 'answer' } });

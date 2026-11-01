@@ -2,12 +2,6 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type as Schema } from "typebox";
 import { Parse } from "typebox/value";
 
-/**
- * Core: context insertions. Piop adds a message to the conversation context without starting a turn: an insert_context request.
- * The message is a custom message that the daemon builds. While the agent works, Pi adds it at the end of the current turn.
- * A message whose details have contextRole "system" goes to the model as a system message, in its place; other custom messages go as user messages.
- * The daemon's queue gives the insertions that start or continue a turn, such as the goal prompt, through the queue pull.
- */
 const insertion = Schema.Object({
   message: Schema.Object({ customType: Schema.String({ minLength: 1 }), content: Schema.String(), display: Schema.Boolean(), details: Schema.Optional(Schema.Record(Schema.String(), Schema.Unknown())) }),
 });

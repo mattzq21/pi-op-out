@@ -122,7 +122,6 @@ for (const event of ['agent_start', 'session_before_compact', 'session_before_tr
     extendedHooks(f.pi).on('session_available', (event, ctx) => { seen.push(event, ctx.isIdle()); notify(); });
     await f.emit(event);
     expect(seen).toEqual([]);
-    // Multiple overlapping operations share one notification.
     await f.emit('session_before_compact');
     f.finish();
     await notified;

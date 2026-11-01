@@ -2,10 +2,6 @@ import { isMobile } from "./platform";
 import type { KeyboardEvent } from "./solid";
 import type { ComposerFieldElement } from "../components/composerField";
 
-/**
- * Up and Down in an empty composer go through the prompts of this conversation, newest first. Navigation starts only
- * from an empty composer; Down past the newest prompt empties it again.
- */
 export function createPromptHistoryNavigation(prompts: () => string[]) {
   let position: number | undefined;
   let list: string[] = [];

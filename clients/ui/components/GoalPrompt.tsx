@@ -3,7 +3,6 @@ import { ChevronRight, Target } from "lucide-solid";
 import { textOf } from "../lib/content";
 import type { ChatMessage } from "../types";
 
-/** The goal prompt that the goal sent as a user message to continue its work. Its full text opens on request. */
 export function GoalPrompt(props: { message: ChatMessage }) {
   const [open, setOpen] = createSignal(false);
 

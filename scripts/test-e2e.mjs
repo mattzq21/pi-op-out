@@ -14,7 +14,6 @@ function run(command, args, env = process.env) {
   if (result.status !== 0) throw new Error(`${command} ${args.join(' ')} failed with ${result.signal ?? result.status}`);
 }
 
-/** Builds the release app with the test-only bridge entry (test/e2e/bridge/main.ts) into target/e2e. */
 async function buildE2E() {
   run('bun', ['scripts/build-daemon.mjs', '--skip-extensions', '--skip-copy']);
   const { build } = await import('vite');
@@ -28,7 +27,6 @@ async function buildE2E() {
     app: { windows: [{ title: 'piop', width: 1440, height: 900, minWidth: 900, minHeight: 640, focus: false, decorations: false, transparent: false, backgroundColor: '#181817', dragDropEnabled: true }] } };
   run('cargo', ['build', '--locked', '--release', '-p', 'piop-desktop', '--bin', 'piop'], { ...process.env, CARGO_TARGET_DIR: resolve('target/e2e'), TAURI_CONFIG: JSON.stringify(tauriConfig) });
   mkdirSync('target/e2e/release', { recursive: true });
-  // A rename replaces the daemon even while an old test app still runs it.
   copyFileSync('target/release/piopd', 'target/e2e/release/piopd.new');
   renameSync('target/e2e/release/piopd.new', 'target/e2e/release/piopd');
 }

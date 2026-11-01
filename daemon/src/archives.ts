@@ -31,10 +31,6 @@ const storageInventory = hostOperation<{ profile: string; archivesOnly: boolean;
   return { categories: value.categories.map(normalizeCategory), archives: value.archives.map(normalizeArchive), warnings: Array.isArray(value.warnings) ? value.warnings : [] };
 });
 
-/**
- * Reads the storage report of this machine. With archivesOnly, it reads only the archived conversations, which is fast;
- * with archivesLimit too, only that many of the last changed ones. Other machines report through their Piop daemon.
- */
 export async function inspectStorage(archivesOnly = false, archivesLimit?: number): Promise<HostStorage> {
   await restoreRecovery.recover(profileRoot());
   let inventory: Inventory;
@@ -87,7 +83,6 @@ export async function archivedSessionFile(_settings: AppSettings, hostId: string
   return locateSessionFile(path, true);
 }
 
-/** Returns the real path of a session file in the active or archived area of this machine. */
 export async function locateSessionFile(path: string, archived: boolean): Promise<string> {
   const locate = () => (archived ? localArchivedSessionFileAt : localDesktopSessionFileAt)(homeDir(), path);
   try { return locate(); }
@@ -108,7 +103,6 @@ async function retireArchivedSession(app: App, client: PiRuntime, hostId: string
 
 async function releaseAll(guards: MutationGuard[]): Promise<void> { for (const guard of guards) await guard.release(); }
 
-/** True when a failed storage transaction may have changed storage, so Git steps must wait for recovery. */
 function maybeCommitted(error: unknown): boolean { return error instanceof StorageTransactionError && error.state !== 'rolled-back'; }
 
 function reportWarnings(app: App, hostId: string, warnings: string[]): void {
@@ -118,7 +112,6 @@ function reportWarnings(app: App, hostId: string, warnings: string[]): void {
   app.emit('pi://daemon-error', { hostId, line });
 }
 
-/** Undoes Git steps after a failed transcript step that changed nothing, keeping the first error. */
 async function undoAfter(error: unknown, undo: () => Promise<void>): Promise<never> {
   if (maybeCommitted(error)) throw error;
   try { await undo(); }
@@ -178,10 +171,8 @@ const descendantsOperation = hostOperation<DescendantsRequest, unknown[]>('sessi
   return value;
 });
 
-/** Kinds of auxiliary sessions that a restore of their root brings back. Other kinds, such as reviews and btw chats, stay archived. */
 export const RESTORED_KINDS = ['subagent'];
 
-/** Returns the auxiliary sessions of the session at sessionPath. With includeOtherArea, each item also tells if it is archived. With kinds, only sessions of those kinds. */
 export async function sessionDescendants(sessionPath: string, archived: boolean, includeOtherArea: boolean, kinds?: string[]): Promise<Array<[string, boolean]>> {
   const root = join(profileRoot(), archived ? 'archived' : 'sessions');
   let value: unknown[];
@@ -267,11 +258,6 @@ export function deleteArchivedSession(app: App, runtime: PiRuntime, sessionPath:
 
 const restores = new Map<string, Promise<void>>();
 
-/**
- * Restores an archived chat tree: first its Piop worktrees, then its transcripts in one storage transaction that also
- * points them at a moved worktree folder. The chats return to the active list unopened. Concurrent requests for the same
- * chat share one restore; a later repeat returns the saved restore receipt.
- */
 export function restoreArchivedSession(app: App, sessionPath: string, hostIdOption: string | undefined | null, clientId: string): Promise<void> {
   const hostId = hostIdOption ?? 'local';
   const key = hostId + '\0' + sessionPath;
@@ -294,7 +280,6 @@ async function restoreTree(app: App, hostId: string, sessionPath: string, client
   app.emit('pi://sessions-changed', {});
 }
 
-/** Restores the worktrees of the archived tree at sessionPath. Returns none when the tree is no longer archived, so the restore receipt answers. */
 async function beginTreeRestore(app: App, hostId: string, sessionPath: string): Promise<Awaited<ReturnType<typeof chatWorktrees.beginRestore>>> {
   let source: string;
   try { source = localArchivedSessionFileAt(homeDir(), sessionPath); }
@@ -307,10 +292,6 @@ async function beginTreeRestore(app: App, hostId: string, sessionPath: string): 
   return chatWorktrees.beginRestore(chatIds);
 }
 
-/**
- * Finishes or undoes chat worktree steps that a crash interrupted. Call once at daemon startup, before clients connect.
- * Records that still need recovery are logged and reported to clients; the daemon keeps running.
- */
 export async function recoverChatWorktrees(app: App): Promise<void> {
   try { await app.pi.lifecycle.run(() => chatWorktrees.recover()); }
   catch (error: any) { reportWarnings(app, 'local', [error?.message ?? String(error)]); }

@@ -36,7 +36,7 @@ function saved(db, file, stamp) {
     const stored = deserialize(row.body);
 
     if (stored?.version === 2) return stored.value;
-  } catch { }
+  } catch {}
 }
 
 function save(db, file, stamp, value) {
@@ -62,7 +62,6 @@ async function read(db, file, inspect) {
   return value;
 }
 
-/** Runs operation with a cached transcript reader and the open database of the profile at root, which operation may also use. */
 async function withCache(root, operation) {
   const db = open(root);
 

@@ -38,10 +38,6 @@ function piOnPath(): string | undefined {
   return paths.split(delimiter).map(directory => join(directory, 'pi')).find(isFile);
 }
 
-/**
- * The Node.js executable that runs Pi. It prefers the Node.js that installed Pi (for example an nvm
- * install next to Pi), so a daemon started without the user's shell PATH still finds it.
- */
 export function nodeExecutable(): string {
   const pi = piExecutable();
   if (isAbsolute(pi)) {
@@ -60,7 +56,6 @@ export function nodeExecutable(): string {
   return ['/usr/local/bin/node', '/usr/bin/node'].find(isFile) ?? 'node';
 }
 
-/** PATH with the directory of the given Node.js first, so Pi and its child processes use the same Node.js. */
 export function pathWithNode(node: string): string | undefined {
   const paths = process.env.PATH;
   if (!isAbsolute(node)) return paths;

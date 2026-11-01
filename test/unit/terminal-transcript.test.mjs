@@ -40,7 +40,6 @@ test('a history redraw that moves the cursor over the prompt keeps the prompt', 
   const prompt = 'matt@mattPC:~/proj/piop$ ';
   const overPrompt = '\r' + '\u001b[C'.repeat(prompt.length);
   transcript.append(prompt + 'echo a very long command here to recall');
-  // Bash output when the up key recalls a shorter command, captured from a real shell.
   const recalled = "PS1='matt@mattPC:~/proj/piop$ '";
   assert.equal(transcript.append(overPrompt + '\u001b[8P' + recalled), prompt + recalled);
   assert.equal(transcript.currentLine(), prompt + recalled);
@@ -77,7 +76,6 @@ test('a history redraw of a command longer than the terminal width keeps the pro
   const prompt = 'matt@mattPC:~/.piop-dev/tmp/2974b710-efa0-4325-a013-d71584a78669$ ';
   const right = count => '\u001b[C'.repeat(count);
   transcript.append('\u001b[8;24;80t' + prompt);
-  // Bash output in an 80 column terminal for three up keys, captured from a real shell. The first entry wraps to a second row.
   transcript.append('echo mid length');
   assert.equal(transcript.currentLine(), prompt + 'echo mid length');
   transcript.append('\u001b[A' + right(65) + 'ls\u001b[K\r\n\r\u001b[K\u001b[A' + right(68));

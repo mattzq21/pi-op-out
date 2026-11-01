@@ -18,7 +18,6 @@ const STATUS_FD = 'PIOP_DAEMON_LOG_STATUS_FD';
 const CAPTURED = 'PIOP_DAEMON_LOG_CAPTURED';
 const LOGGED_MODES = ['--serve', '--restart-candidate', '--restart-coordinator', '--validate-plugins'];
 
-/** A child process description for daemon processes that write to daemon.log. */
 export interface DaemonCommand { program: string; args: string[]; env: Record<string, string | undefined>; stderr?: any; logStatus?: Socket; logStatusFd?: number }
 
 function privateFile(path: string, flags: string): number {
@@ -334,7 +333,7 @@ function waitReady(child: ChildProcess, output: Readable, timeout: number): Prom
           if (line === 'ready') finish();
           else {
             let cause = Buffer.from(line, 'latin1').toString('utf8');
-            try { cause = JSON.parse(cause).error ?? cause; } catch { /* plain startup error */ }
+            try { cause = JSON.parse(cause).error ?? cause; } catch {}
             finish(new Error('Daemon logging failed to initialize: ' + cause));
           }
           return;
@@ -414,7 +413,6 @@ function readStatus(input: Readable): void {
   lines.on('close', () => { if (!broken) setStatus('Daemon log status closed; logging is unavailable.'); });
 }
 
-/** Sends the stderr of the command to a new log sink process. Returns the log path. */
 export async function configure(command: DaemonCommand, executable: string): Promise<string> {
   const directory = endpoint.directory();
   const sink = await startConsumer(executable, directory);
@@ -450,7 +448,6 @@ function launchDetached(command: DaemonCommand): Promise<ChildProcess> {
   });
 }
 
-/** Starts a daemon process in its own session, with its stderr in daemon.log. */
 export async function spawnDaemon(command: DaemonCommand): Promise<ChildProcess> {
   if (command.env[CAPTURED] !== undefined) return launchDetached(command);
   const writer = await startConsumer(daemonScript(), endpoint.directory(), true);
@@ -463,7 +460,6 @@ export async function spawnDaemon(command: DaemonCommand): Promise<ChildProcess>
 
 let sink: Awaited<ReturnType<typeof startConsumer>> | undefined;
 
-/** In the serving modes, sends this process's stderr to daemon.log. */
 export async function initialize(): Promise<void> {
   if (!LOGGED_MODES.includes(process.argv[2] ?? '')) return;
   const statusFd = process.env[STATUS_FD];
@@ -476,7 +472,6 @@ export async function initialize(): Promise<void> {
   const input = sink.child.stdin!;
   (input as any).unref?.();
   process.stderr.write = ((chunk: any, encoding?: any, callback?: any) => input.write(chunk, encoding, callback)) as any;
-  // Bun's console writes to file descriptor 2 directly and skips process.stderr.write, so route it through the sink too.
   for (const method of ['error', 'warn'] as const) {
     console[method] = (...values: unknown[]) => { process.stderr.write(formatWithOptions({ colors: false }, ...values) + '\n'); };
   }

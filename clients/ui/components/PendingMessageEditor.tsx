@@ -5,17 +5,14 @@ import { attachFiles, splitAttachedFiles, type AttachedFile } from "../lib/compo
 import { PendingImagePreview, type PendingImageLoader } from "./PendingImages";
 import { ZoomableImage } from "./ZoomableImage";
 
-/** A queued message being edited: its prompt, its text files, the indexes of the images it keeps, and the files added in the editor. */
 export interface PendingEdit { id: string; prompt: string; files: AttachedFile[]; keep: number[]; added: ComposerUpload[] }
 
-/** Starts an edit with the message as it is: its text files come out of the message, so they show as attachments. */
 export function startPendingEdit(message: PendingMessage): PendingEdit {
   const { prompt, files } = splitAttachedFiles(message.message);
 
   return { id: message.id, prompt, files, keep: (message.images ?? []).map((_image, index) => index), added: [] };
 }
 
-/** The edit action for the daemon: the message with its text files, and the images to keep and to add. */
 export function pendingEditAction(edit: PendingEdit): Extract<PendingMessageAction, { type: "edit" }> {
   const addedFiles = edit.added.flatMap(upload => upload.kind === "text" ? [{ name: upload.name, text: upload.text ?? "" }] : []);
   const addedImages = edit.added.flatMap(upload => upload.image ? [upload.image] : []);

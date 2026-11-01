@@ -3,7 +3,6 @@ import type { Session, SessionHost } from './session';
 
 const IDLE_STOP_DELAY_MS = 120_000;
 
-/** Stops a session after it stays idle for two minutes, when the host allows it. */
 export class IdleStop {
   private timer: ReturnType<typeof setTimeout> | undefined;
   private revision = 0;
@@ -11,7 +10,6 @@ export class IdleStop {
 
   constructor(private session: Session, private host: SessionHost) {}
 
-  /** True while the final idle check runs. Its own state requests must not cancel it. */
   checking(): boolean { return this.checkingValue; }
 
   cancel(): void {
@@ -20,7 +18,6 @@ export class IdleStop {
     this.timer = undefined;
   }
 
-  /** Starts the delay when the session is idle, and cancels it when the session is not idle. */
   schedule(): void {
     if (this.checkingValue) return;
     if (!this.session.idle()) { this.cancel(); return; }

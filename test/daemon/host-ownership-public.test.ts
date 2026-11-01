@@ -23,7 +23,6 @@ test('ended archive leases and completed deletes cannot authorize terminal reass
       clientId: 'archive-owner', archived: true, operation: 'delete' };
     const lease = await host.request(mutation);
     expect(await host.request(owner)).toBe(true);
-    // Abandoning an archive mutation must release its owner as well as its locks.
     await host.request({ type: 'conversation_mutation_end', token: lease.token, success: false });
     expect(await host.request(owner)).toBe(false);
     expect(await host.request({ ...owner, allowReleased: false })).toBe(false);

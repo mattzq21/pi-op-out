@@ -15,7 +15,6 @@ import unittest
 ROOT = Path(__file__).resolve().parents[2]
 RUNNER = ROOT / 'scripts/test-run.py'
 
-# The child deliberately detaches and ignores TERM, like an unresponsive daemon.
 CHILD = "import signal,time; signal.signal(signal.SIGTERM, signal.SIG_IGN); print('ready', flush=True); time.sleep(300)"
 FIXTURE = '''
 import json, os, pathlib, signal, subprocess, sys, tempfile, time

@@ -12,7 +12,6 @@ export const encoded = value => Buffer.from(JSON.stringify(value)).toString('bas
 
 export const profile = (name = 'general', extra = {}) => ({ name, model: '', effort: '', path_systemprompt: 'prompt.md', path_agent_prompt: '', tools: ['read'], skills: [], mcpServers: {}, extensions: [], ...extra });
 
-/** The agent definitions are a row of the settings database in the storage directory, the parent of the agent directory. */
 const definitionsPath = dir => join(dirname(dir), 'agent-definitions.json');
 
 export const readStoredConfig = dir => { const body = appSettings.readText(definitionsPath(dir));
@@ -30,13 +29,8 @@ export function writeCorruptConfig(dir, content) {
   try { db.prepare('UPDATE application_settings SET body=? WHERE name=?').run(Buffer.from(content), 'agent-definitions.json'); } finally { db.close(); }
 }
 
-/** The startup resources that the daemon gives the agent definitions: the same ones Pi gets. */
 const startupResources = () => JSON.parse(process.env.PIOP_AGENT_RESOURCES ?? 'null') ?? { tools: { enabledTools: [], registeredTools: [] }, skills: { userInvokedSkills: [], agentInvokedSkills: [] }, pluginAgentTools: [] };
 
-/**
- * Reads and saves agent definitions as the daemon does, with the loader compiled into dir.
- * initialize: the load at daemon start, which creates and migrates the definitions.
- */
 export async function agentDefinitions(dir) {
   const loader = await import(pathToFileURL(join(dir, 'daemon-loader.mjs')));
   const configuration = async () => {
@@ -149,7 +143,6 @@ export async function agentFixture(t, options = {}) {
       skills: input.skills ?? { userInvokedSkills: [], agentInvokedSkills: (options.config?.agents ?? []).flatMap(agent => agent?.skills ?? []) },
       pluginAgentTools: input.pluginAgentTools ?? ['web_search'],
     });
-    // The daemon creates and migrates the agent definitions when it starts, before any agent.
     if (!initialized) { await definitions.initialize(); initialized = true; }
     if (!options.realFastMode) return defineLocal();
     const loadFast = async () => {
@@ -185,7 +178,6 @@ export async function agentFixture(t, options = {}) {
     },
     select: name => rpc('select_agent', { agent: name }),
     configure: definitions.configure,
-    /** Writes definitions as saved earlier, without the checks of a save: the files they name may have changed since. */
     store: async value => writeStoredConfig(dir, JSON.stringify(value)),
     configuration: definitions.configuration,
     config: async () => readStoredConfig(dir),

@@ -51,7 +51,6 @@ test('skill discovery reads metadata, skips hidden and package folders and stops
 });
 
 test('a started Pi receives the reported tools and only the enabled skills', async () => {
-  // A fake Pi whose node side reads the startup records the way Pi's runtime settings, skills store and tool store extensions do.
   const bin = join(daemon.home, '.local/bin');
   fakeProgram(bin, 'pi', '#!/bin/sh\nexit 1\n');
   fakeProgram(bin, 'node', `#!${process.execPath}
@@ -80,7 +79,6 @@ require('node:readline').createInterface({ input: process.stdin }).on('line', li
     expect(runtime.tools.registeredTools).toEqual(saved.tools.map((tool: any) => tool.name));
     expect(runtime.tools.enabledTools).toEqual(['read']);
     expect(runtime.skills).toEqual({ userInvokedSkills: [join(root, 'explicit')], agentInvokedSkills: [join(root, 'plain')] });
-    // Building the runtime settings does not change the saved settings.
     expect(await daemon.invoke('load_app_settings')).toEqual(saved);
     await daemon.invoke('stop_pi', { runtimeId: 'runtime-settings' });
   } finally { rmSync(root, { recursive: true, force: true }); }

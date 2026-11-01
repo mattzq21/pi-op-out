@@ -531,7 +531,6 @@ test('archive inspection does not turn a reference into a new attachment owner',
   assert.deepEqual(goalOwners(current.profile, goal), before);
 });
 
-/** Gives the fixture chat the ownership record that a restore updates. */
 function own(current) {
   conversationStorage.writeRecord(current.profile, conversationStorage.key(sessionId), JSON.stringify({ path: current.target, deleted: false, client: null }));
 }

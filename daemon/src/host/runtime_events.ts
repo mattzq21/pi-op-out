@@ -1,9 +1,7 @@
 import { isObject, kind } from './json';
 
-/** An event Pi sends from a lifecycle hook and waits on until Piop answers. name is the hook name, for example "task_success". */
 export interface RuntimeEvent { id: string; name: string; data: Record<string, unknown> }
 
-/** The chat whose Pi sent the event. */
 export interface RuntimeEventSource { sessionKey: string; identity: string; cwd: string | null }
 
 export function isRuntimeEvent(value: unknown): boolean { return kind(value) === 'piop_runtime_event'; }
@@ -15,7 +13,6 @@ export function parseRuntimeEvent(value: any): RuntimeEvent {
   return { id: value.id, name: value.name, data: value.data };
 }
 
-/** The answer to a runtime event: its error, or the data Piop answers with. */
 export function runtimeEventResult(id: string, error?: string, data?: unknown): any {
   if (error !== undefined) return { type: 'piop_runtime_event_result', id, error };
   return data === undefined ? { type: 'piop_runtime_event_result', id } : { type: 'piop_runtime_event_result', id, data };

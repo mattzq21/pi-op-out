@@ -8,7 +8,6 @@ import * as Registry from './session_registry';
 import { errorText } from './util/sync';
 import type { App } from './app';
 
-/** Starts again the tasks that the last daemon stop interrupted. A task that cannot start is reported to clients. */
 export async function resumeInterruptedTasks(app: App): Promise<void> {
   const ids = Registry.runningTasks(join(homeDir(), STORAGE_DIRECTORY));
   if (!ids.length) return;

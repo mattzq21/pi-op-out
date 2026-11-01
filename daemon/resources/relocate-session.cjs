@@ -4,7 +4,6 @@ const { randomUUID } = require('node:crypto');
 const io = require('./session-transactions.cjs');
 const { acquireReferencePublicationLock } = require('./piop-storage/reference-publication-lock.cjs');
 
-/** Points the session header at another working directory. */
 function relocateSession(profile, sessionPath, requestedReplacement) {
   const release = acquireReferencePublicationLock(profile, true);
 
@@ -43,7 +42,6 @@ function rewriteHeader(sessionPath, replacement) {
   }
 }
 
-/** Accepts only a session file inside the sessions directory of request.profile and an existing project directory. */
 function checkedRelocation(request) {
   if (typeof request.profile !== 'string' || typeof request.sessionPath !== 'string' || typeof request.cwd !== 'string') throw new Error('Invalid relocation request');
   let root, source;

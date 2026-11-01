@@ -67,7 +67,6 @@ test('valid edge-case shortcuts, a minimum context cap and machines are saved', 
 
 test('saving drops retired shortcut actions and moves Ctrl+L focus to Ctrl+E before it validates', async () => {
   const settings = await load();
-  // The retired action would collide with search; it must be dropped before validation.
   Object.assign(settings.keybindings, { retiredAction: 'Ctrl+G', focusComposer: 'Ctrl+L' });
   const change = await save(settings);
   expect(change.settings.keybindings.retiredAction).toBeUndefined();
@@ -140,7 +139,6 @@ test('a save fails and keeps the settings while another process holds the settin
   const failed = await daemon.invoke('load_settings_change');
   expect(failed.revision).toBe(baseline.revision);
   expect(failed.settings).toEqual(baseline.settings);
-  // The retry uses the original baseline, so it succeeds only if the failed save released its locks and kept the revision.
   const retried = await save({ ...before, reviewAgent: 'retried-model' });
   expect(retried.committedRevision).toBe(baseline.revision + 1);
   const after = await daemon.invoke('load_settings_change');

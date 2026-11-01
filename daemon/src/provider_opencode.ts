@@ -29,7 +29,6 @@ export function opencodeGoUsageValues(response: any): OpencodeGoUsage | undefine
   return { rolling, weekly, monthly };
 }
 
-/** undefined: OpenCode Go is not added to Pi. */
 export async function opencodeGoUsage(): Promise<OpencodeGoUsage | undefined> {
   const auth = await resolveProviderAuth(piExecutable(), 'opencode-go');
   if (auth === null) return undefined;

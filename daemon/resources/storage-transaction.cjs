@@ -24,7 +24,6 @@ class Rejected extends Error {}
 
 let writes = 0;
 
-/** Starts the crash test count again for one storage transaction. */
 function resetCrashPoint() { writes = 0; }
 
 function point() {
@@ -465,7 +464,6 @@ function planRestore(root, request) {
   };
 }
 
-/** Reads the folder moves of a restore: each restored session whose folder is from gets the folder to instead. */
 function folderMoves(value) {
   const moves = new Map();
 

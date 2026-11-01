@@ -9,13 +9,11 @@ let dom, view, dispose;
 beforeEach(() => { dom = installDom(); });
 afterEach(async () => { await view?.unmount(); view = undefined; dispose?.(); dom.restore(); });
 
-/** The goal status text as the daemon's goal extension publishes it. */
 const goal = (fields = {}) => JSON.stringify({ id: 'goal-1', sessionId: 'chat-1', objective: 'Ship the parser', status: 'active', ...fields });
 const goalEntry = { id: 'goal', message: 'Ship the parser', behavior: 'followUp', goal: true };
 const control = label => document.querySelector(`[aria-label="${label}"]`);
 const click = element => act(async () => element.click());
 
-/** A composer whose goal status, disabled state and goal command can change. */
 async function goalComposer({ value = goal(), pendingMessages = [goalEntry], disabled = false, command = async () => {} } = {}) {
   const sent = [];
   let set;

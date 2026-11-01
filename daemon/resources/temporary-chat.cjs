@@ -23,7 +23,6 @@ function sync(directory) {
   finally { fs.closeSync(descriptor); }
 }
 
-/** Claims the chat's folder: its saved folder on a retry, or else the shortest start of its ID that no folder or other chat uses. Returns the folder. */
 function create(db, root, id) {
   const tmp = path.join(root, 'tmp');
   db.exec('BEGIN IMMEDIATE');
@@ -181,7 +180,6 @@ function remove(db, directory, id) {
   db.prepare('DELETE FROM sessions WHERE session_id=? AND session_path IS NULL').run(id);
 }
 
-/** Creates the temporary chat directory of request.id, or removes the one at request.path, in the profile at request.root. Returns the directory for create, or null for remove. */
 function temporaryChat(request) {
   if (!['create', 'remove'].includes(request.action)) throw new Error('Invalid temporary chat action');
   if (typeof request.root !== 'string' || !path.isAbsolute(request.root)) throw new Error('Invalid temporary chat profile directory');
@@ -209,7 +207,6 @@ function temporaryChat(request) {
       return directory;
     }
 
-    // The folder name is only a start of the chat ID, so the saved record names the chat. Without one, nothing is left to remove.
     const id = db.prepare('SELECT session_id FROM temporary_chat_allocations WHERE original_path=?').get(request.path)?.session_id;
 
     if (id === undefined) return null;

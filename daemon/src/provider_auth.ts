@@ -17,17 +17,14 @@ export async function forOwner(app: App, owner: string, hostId: string | undefin
   if (request.action === 'draft_catalog') {
     const definitions = await connection.request({ type: 'agent_definitions', reload: request.reload === true });
     let catalog = await connection.request({ type: 'provider_auth', owner, request: { action: 'draft_catalog' } });
-    // A host where Pi never ran has no saved command hints. A short Pi run reports them.
     if (catalog?.commandDetails === null) {
       try {
         await discoverPi(app);
         catalog = await connection.request({ type: 'provider_auth', owner, request: { action: 'draft_catalog' } });
       } catch (error) { console.error('Piop could not get the command hints of this host: ' + (error instanceof Error ? error.message : String(error))); }
     }
-    // Plugin commands depend on the plugins that run on the target host.
     const plugins = await connection.request({ type: 'plugin_status' });
     if (!Array.isArray(plugins?.enabled) || plugins.enabled.some((id: unknown) => typeof id !== 'string')) throw new Error('The host returned an invalid plugin status');
-    // Piop runs /goal itself, so Pi does not report it.
     const commands = Contributions.agentCommands([...JSON.parse(agentCommands), GOAL_COMMAND.name], plugins.enabled);
     const details = new Map([...(catalog?.commandDetails ?? []), GOAL_COMMAND].map((command: any) => [command.name, command]));
     return { config: definitions?.config ?? null, models: catalog?.models ?? null, initialModel: catalog?.initialModel ?? null, initialThinking: catalog?.initialThinking ?? 'medium', commands, commandDetails: commands.flatMap(name => details.has(name) ? [details.get(name)] : []), skills: catalog?.skills ?? null };

@@ -1,12 +1,9 @@
 const database = require('../session-database.cjs');
 
-// Chat names. The session broker owns them: Pi sessions have no name. This module is the only code that reads or writes them.
-
 const MAX_NAME_LENGTH = 50;
 
 function capSessionName(name) { return Array.from(name.replace(/\s+/g, ' ').trim()).slice(0, MAX_NAME_LENGTH).join('').trimEnd(); }
 
-/** The name a chat gets from its first prompt: the prompt without its Markdown links. */
 function promptName(prompt) { return capSessionName(prompt.replace(/\[(?:\\.|[^\]\\])*\]\([^)\s]*\)/g, ' ')); }
 
 function validName(name) {
@@ -37,7 +34,6 @@ function transaction(root, work) {
   finally { db.close(); }
 }
 
-/** The name of the chat sessionId whose transcript is file, or undefined. connection: an open database of the same storage profile. */
 function sessionName(file, sessionId, connection) {
   const db = connection ?? database.open(database.storageRoot(file));
 
@@ -45,7 +41,6 @@ function sessionName(file, sessionId, connection) {
   finally { if (!connection) db.close(); }
 }
 
-/** Names the new chat sessionId whose transcript is file. replace: false keeps a name it already has. */
 function nameSession(file, sessionId, name, replace = true) {
   transaction(database.storageRoot(file), db => {
     database.register(db, sessionId, file);
@@ -53,7 +48,6 @@ function nameSession(file, sessionId, name, replace = true) {
   });
 }
 
-/** Renames the saved chat sessionId of the storage profile root and returns its new name. */
 function renameSession(root, sessionId, name) {
   return transaction(root, db => {
     if (!db.prepare('SELECT 1 FROM sessions WHERE session_id=? AND session_path IS NOT NULL').get(sessionId)) throw new Error('Conversation not found');

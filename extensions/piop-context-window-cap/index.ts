@@ -22,7 +22,6 @@ type ContextCapDefaults = { agentDefinition: number | null | undefined; modelCon
 
 type Model = NonNullable<ExtensionContext["model"]>;
 
-/** Set on every model object whose window this extension changed, to the model's true window. A copy of that object keeps it. */
 const NATIVE_WINDOW = Symbol("piop-context-cap-native-window");
 
 type Marked = Model & { [NATIVE_WINDOW]?: number };
@@ -62,7 +61,6 @@ export function readLog(entries: Branch): Logged {
   return { choice: { cap: data.cap, source: data.source }, clamp: data.clamp };
 }
 
-/** Resolves agent definition, provider/model config, general config, then the model default. */
 export function resolveDefaults(defaults: ContextCapDefaults): Choice {
   if (defaults.agentDefinition !== undefined) return { cap: defaults.agentDefinition, source: "agent_definition" };
 
@@ -90,11 +88,8 @@ function describe(state: ContextCapState) {
 }
 
 export default function contextWindowCap(pi: ExtensionAPI) {
-  /** True model windows by provider/model key. */
   const natives = new Map<string, number>();
-  /** The window this extension last wrote, by provider/model key. */
   const written = new Map<string, number>();
-  /** Every model object this extension has seen. */
   const objects = new Set<Model>();
   const pending: Pending[] = [];
   const subscribers = new Set<Subscriber>();
@@ -103,7 +98,6 @@ export default function contextWindowCap(pi: ExtensionAPI) {
   let choice: Choice | undefined;
   let settings: ContextCapSettings | undefined;
   let defaults: ContextCapDefaults | undefined;
-  /** The provider/model key of the model when the current defaults were accepted. Its model cap belongs to that model. */
   let logged: Logged = {};
   let restored = false;
   let closed = false;
@@ -117,10 +111,6 @@ export default function contextWindowCap(pi: ExtensionAPI) {
 
   const keyOf = (target: Model) => target.provider + "/" + target.id;
 
-  /**
-   * Pi can build a replacement model object by copying the object this extension changed, so the copy carries the applied window and its mark.
-   * Use the marked true window in that case. A fresh object, such as one from a provider refresh, has no mark: its window is the true window.
-   */
   const track = (next: Model | undefined) => {
     if (next && !objects.has(next)) {
       const key = keyOf(next);
@@ -173,7 +163,6 @@ export default function contextWindowCap(pi: ExtensionAPI) {
     context?.ui.notify(error.message, "error");
   };
 
-  /** Tells clients that the applied window may have changed, so they can read context usage again. */
   const announce = (value: ContextCapState) => { context?.ui.setStatus(CONTEXT_CAP_STATUS_KEY, "json:" + JSON.stringify(value)); };
 
   const publish = () => {
@@ -206,7 +195,6 @@ export default function contextWindowCap(pi: ExtensionAPI) {
     logged = { choice: next, clamp };
   };
 
-  /** Writes the effective window to the current model and restores every other model this extension changed. */
   const apply = () => {
     for (const target of objects) if (target !== model && (target.contextWindow !== nativeWindow(target) || NATIVE_WINDOW in target)) restoreNative(target);
 
@@ -320,7 +308,6 @@ export default function contextWindowCap(pi: ExtensionAPI) {
 
     if (broken) return Promise.reject(broken);
 
-    // Another handler of the same model_select event can send this request before this extension sees the new model.
     sync();
 
     try { validate(); } catch (error) { return Promise.reject(asError(error)); }
@@ -349,7 +336,6 @@ export default function contextWindowCap(pi: ExtensionAPI) {
     subscribe(listener, onError) {
       const subscriber: Subscriber = { listener, onError, delivered: false };
       subscribers.add(subscriber);
-      // initialize() delivers the first state to subscribers that exist then; this covers later subscribers.
       ready.then(() => {
         const current = state();
 
@@ -409,7 +395,6 @@ export default function contextWindowCap(pi: ExtensionAPI) {
     if (settings) enqueue({ kind: "refresh" }, () => undefined).catch(error => report(asError(error)));
   };
 
-  /** Pi replaces the session model object after provider changes without an event. Apply to the new object before Pi reads its window. */
   function sync() {
     if (!closed && context && context.model !== model) modelChanged(context.model);
   }
@@ -421,7 +406,6 @@ export default function contextWindowCap(pi: ExtensionAPI) {
   pi.registerCommand("cap", {
     description: "Set this conversation's context cap. Usage: /cap [500k | 0.75m | reset | model_default]",
     getArgumentCompletions: prefix => [...(prefix.trim() ? [] : [{ value: "", label: "[500k | 0.75m | reset | model_default]" }]), ...["reset", "model_default"].filter(value => value.startsWith(prefix.trim())).map(value => ({ value, label: value }))],
-    // Report errors to the user here. A thrown error is an extension failure, and the client then treats the command as a failed message.
     handler: async (args, ctx) => {
       try {
         const command = parseCapCommand(args);
@@ -457,7 +441,6 @@ export default function contextWindowCap(pi: ExtensionAPI) {
     const window = choice ? appliedFor(choice, model) : null;
     const error = model && window !== null ? budgetError(window, model) : undefined;
 
-    // Pi runs extension commands such as /cap before this event, so slash text here is a prompt, skill, or template.
     if (!error) return;
     ctx.ui.setStatus("piop-input-rejected", JSON.stringify({ text: event.text, error }));
     ctx.ui.notify(error, "error");

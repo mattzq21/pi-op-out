@@ -3,11 +3,6 @@ import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fakeProgram, startDaemon, type TestDaemon } from './harness';
 
-/*
- * Closing a new conversation that the user never used removes its transcript. A fake Pi creates the transcript the
- * way a faulty external process can, outside the session store, and reports it in get_state.
- * The file "pi-mode.json" in HOME tells the fake Pi what to write for the next start.
- */
 let daemon: TestDaemon;
 
 beforeAll(async () => {

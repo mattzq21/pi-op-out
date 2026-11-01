@@ -3,10 +3,8 @@ import { ImageOff } from "lucide-solid";
 import type { PendingMessage } from "../types";
 import { ImageLoading, ZoomableImage } from "./ZoomableImage";
 
-/** Loads the data of one image of a queued message. */
 export type PendingImageLoader = (id: string, index: number) => Promise<{ data: string; mimeType: string }>;
 
-/** Loaded image sources, by message ID and image index. A queued message keeps its images, so each loads once. */
 const sources = new Map<string, Promise<string>>();
 
 function source(message: PendingMessage, index: number, load: PendingImageLoader | undefined) {
@@ -14,7 +12,6 @@ function source(message: PendingMessage, index: number, load: PendingImageLoader
 
   if (image?.data) return Promise.resolve(`data:${image.mimeType};base64,${image.data}`);
   if (!load) return Promise.reject(new Error("This view cannot load queued images"));
-  // An edit can remove or add images, so a position may hold another image later. The image id names one image.
   const key = `${message.id}:${image?.id ?? index}`;
   let pending = sources.get(key);
 
@@ -36,7 +33,6 @@ export function PendingImage(props: { message: PendingMessage; index: number; lo
   </Show>;
 }
 
-/** A large preview of one image of a queued message, the same as a composer attachment. */
 export function PendingImagePreview(props: { message: PendingMessage; index: number; load?: PendingImageLoader }) {
   const [src] = createResource(() => [props.message, props.index] as const, ([message, index]) => source(message, index, props.load));
   const label = () => props.message.images?.[props.index]?.name ?? "Attached image";
@@ -46,7 +42,6 @@ export function PendingImagePreview(props: { message: PendingMessage; index: num
   </Show>;
 }
 
-/** Small previews of the images of a queued message. */
 export function PendingImages(props: { message: PendingMessage; load?: PendingImageLoader }) {
   return <Show when={props.message.images?.length}><span class="pending-images"><Index each={props.message.images}>{(_image, index) => <PendingImage message={props.message} index={index} load={props.load} />}</Index></span></Show>;
 }

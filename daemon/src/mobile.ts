@@ -25,7 +25,6 @@ const MAX_OUTGOING_MESSAGES = 1024;
 const MAX_CONNECTIONS = 8;
 const EVENTS = ['pi://event', 'pi://stderr', 'pi://settings-changed', 'pi://settings-pending', 'pi://groups-changed', 'pi://sessions-changed', 'pi://daemon-error', 'pi://daemon-log-status', 'pi://provider-auth-changed', 'pi://session-removed', 'pi://session-restored', 'pi://host-settings-changed', 'pi://plugins-changed', 'pi://fast-models-changed', 'pi://agent-definitions-changed', 'pi://daemon-restarting', 'pi://usage-changed'];
 
-/** A counter that limits how many items may run at once. */
 class Slots {
   private used = 0;
   constructor(private limit: number) {}
@@ -40,7 +39,6 @@ class Slots {
 interface Broadcast { packet: any; text: string }
 type Subscriber = (event: Broadcast) => void;
 
-/** Values shared by all mobile listeners. */
 interface Shared { app: App; subscribers: Set<Subscriber>; handshakes: Slots; connections: Slots; jobs: Slots }
 
 const listeners = new WeakMap<App, Set<NetServer>>();
@@ -71,7 +69,6 @@ export function closeConnections(app: App): void {
   for (const socket of sockets.get(app) ?? []) socket.destroy();
 }
 
-/** Removes the endpoint records this daemon published, if they still describe this daemon. */
 export function unpublish(app: App): void {
   const remove = published.get(app);
   published.delete(app);
@@ -102,7 +99,6 @@ function listen(server: Server, bind: string): Promise<{ address: string; port: 
   });
 }
 
-/** An HTTP server that only answers WebSocket upgrades and limits sockets that have not authenticated yet. */
 function upgradeServer(shared: Shared, onUpgrade: (request: IncomingMessage, socket: Duplex, head: Buffer) => void): Server {
   const server = createServer((_request, response) => { response.writeHead(426, { Connection: 'close' }); response.end(); });
   trackListener(shared.app, server);
@@ -127,14 +123,12 @@ export async function start(app: App): Promise<void> {
   daemonLog.listenStatus(failure => app.setLogStatus('local', failure));
   let token = process.env.PIOP_MOBILE_TOKEN;
   if (token === undefined && DEVELOPMENT) {
-    // Debug phones retain their connection token between daemon restarts.
     try {
       const saved = records.read(join(endpoint.directory(), 'debug-mobile-identity.json'));
       if (saved) token = JSON.parse(saved.toString('utf8')).token;
     }
     catch (error) { if (errorText(error) !== 'Daemon connection is not available') console.error('Could not read the saved daemon endpoint; using a new token: ' + errorText(error)); }
   }
-  // Production clients read daemon.json before every connection, so each daemon gets its own token.
   if (typeof token !== 'string') token = randomUUID() + randomUUID();
   if (token.length < 32) throw new Error('PIOP_MOBILE_TOKEN must contain at least 32 characters');
   const bind = process.env.PIOP_MOBILE_BIND ?? (DEVELOPMENT ? '127.0.0.1:0' : '127.0.0.1:9847');
@@ -223,7 +217,7 @@ async function connection(shared: Shared, ws: WebSocketConnection, token: string
 }
 
 async function sendError(ws: WebSocketConnection, error: string): Promise<void> {
-  try { await withTimeout(ws.sendText(JSON.stringify({ type: 'error', error })), 2000, 'Send timeout'); } catch { /* the client is already gone */ }
+  try { await withTimeout(ws.sendText(JSON.stringify({ type: 'error', error })), 2000, 'Send timeout'); } catch {}
 }
 
 async function controlConnection(app: App, ws: WebSocketConnection): Promise<void> {
@@ -267,7 +261,6 @@ async function serveClient(shared: Shared, ws: WebSocketConnection, peer: boolea
   let queuedBytes = 0;
   let chain = Promise.resolve();
   let lastSeen = Date.now();
-  // A restart the client asked for goes ahead even when the reply cannot reach it; clients learn about it from the restarting event.
   const commitRestart = async (restartId: string) => {
     try { await daemonRestart.commit(app, restartId); }
     catch (error) { console.error('Could not commit daemon restart ' + restartId + ': ' + errorText(error)); ws.terminate(); }
@@ -276,7 +269,6 @@ async function serveClient(shared: Shared, ws: WebSocketConnection, peer: boolea
     if (ws.closed) { if (restartId !== undefined) void commitRestart(restartId); return; }
     let bytes = Buffer.byteLength(text, 'utf8');
     if (bytes > MAX_RESPONSE_BYTES) {
-      // One oversized reply fails on its own instead of closing the connection and every other request on it.
       if (id === undefined) { console.error('Dropped an event to ' + owner + ' of ' + bytes + ' bytes: it exceeds the response limit'); return; }
       text = JSON.stringify({ id, error: 'Response of ' + bytes + ' bytes exceeds the ' + Math.floor(MAX_RESPONSE_BYTES / 1024 / 1024) + ' MiB limit' });
       bytes = Buffer.byteLength(text, 'utf8');
@@ -300,7 +292,6 @@ async function serveClient(shared: Shared, ws: WebSocketConnection, peer: boolea
     });
   };
   const subscriber: Subscriber = event => {
-    // Groups and plan usage belong to the daemon that clients connect to, so they do not go on to another daemon.
     if (peer && (event.packet.payload?._peer === true || event.packet.event === 'pi://groups-changed' || event.packet.event === 'pi://usage-changed')) return;
     send(event.text);
   };
@@ -331,7 +322,6 @@ async function serveClient(shared: Shared, ws: WebSocketConnection, peer: boolea
       const command: string = request.command;
       const args = request.args === undefined ? {} : request.args;
       if (app.clients.closing()) { send(JSON.stringify({ id, error: refusalText('Piop daemon is shutting down', 'daemon') })); continue; }
-      // Stop, abort and cleanup commands may use reserved slots, so a busy host still frees resources.
       const control = command === 'stop_pi' || command === 'close_terminal'
         || (command === 'pi_command' && args?.command?.type === 'abort')
         || (command === 'shared_terminal' && args?.action === 'discard_drafts')
@@ -354,7 +344,6 @@ async function serveClient(shared: Shared, ws: WebSocketConnection, peer: boolea
   } finally {
     clearInterval(heartbeat);
     shared.subscribers.delete(subscriber);
-    // Let queued replies, such as the error for an invalid request, reach the client before the close.
     await withTimeout(chain, 2000, 'Send timeout').catch(() => undefined);
     await withTimeout(ws.close(), 2000, 'Close timeout').catch(() => undefined);
     ws.terminate();

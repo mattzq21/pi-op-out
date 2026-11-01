@@ -15,7 +15,6 @@ function validateEndpoint(protocol: number, token: string, address: string): voi
   }
 }
 
-/** A WebSocket with a queue of received text messages. */
 class Socket {
   private messages: string[] = [];
   private waiters: Array<(message: string | undefined) => void> = [];
@@ -52,7 +51,6 @@ class Socket {
   }
 
   send(text: string): void { this.socket.send(text); }
-  /** Bytes accepted by send but not yet handed to the network. */
   bufferedAmount(): number { return this.socket.bufferedAmount; }
   close(): void { try { this.socket.close(); } catch {} }
 }
@@ -94,10 +92,6 @@ async function startDaemon(mode: string): Promise<[string, ChildProcess]> {
   return [logPath, await daemonLog.spawnDaemon(command)];
 }
 
-/**
- * Starts a daemon and opens a socket to it. When the new daemon exits because another daemon still holds
- * the lock, attaches to that daemon or starts again once after its lock is released.
- */
 async function startAndOpen(mode: string, scope: string): Promise<[Socket, any]> {
   const deadline = Date.now() + endpoint.STARTUP_TIMEOUT;
   let logPath: string;
@@ -178,7 +172,6 @@ async function waitUntilStopped(previous: endpoint.Endpoint): Promise<void> {
   throw new Error('Daemon is still shutting down; check daemon.log');
 }
 
-/** Runs piopd start or piopd stop. */
 export async function control(action: string): Promise<void> {
   const socket = await controlSocket(action);
   if (!socket) { console.log('Piop daemon is not running.'); return; }
@@ -195,7 +188,6 @@ const INPUT_HIGH_WATER_BYTES = 16 * 1024 * 1024;
 const INPUT_LOW_WATER_BYTES = 8 * 1024 * 1024;
 const INPUT_STALL_MS = 60_000;
 
-/** Runs --stdio-client: bridges stdin and stdout lines to the local daemon. */
 export async function run(): Promise<void> {
   const [socket, ready] = await connect();
   const write = (text: string) => new Promise<void>((resolve, reject) => process.stdout.write(text + '\n', error => error ? reject(error) : resolve()));
@@ -221,7 +213,6 @@ export async function run(): Promise<void> {
       socket.close();
       input.close();
     };
-    // The WebSocket API has no drain event, so while input is paused the send buffer is checked on a short timer.
     const resumeInputWhenDrained = () => {
       if (failed) return;
       if (socket.bufferedAmount() > INPUT_LOW_WATER_BYTES) { inputDrainTimer = setTimeout(resumeInputWhenDrained, 50); return; }

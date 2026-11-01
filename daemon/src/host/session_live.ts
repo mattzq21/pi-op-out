@@ -1,11 +1,9 @@
 import { clone, jsonEqual, kind, merge, setEntry, text } from './json';
 import { assistantDelta } from './payload';
 
-/** Messages and tool runs that Pi streams before it saves them to the transcript. */
 export class LiveOutput {
   private messages: Array<[string, any]> = [];
   private tools: Array<[string, any]> = [];
-  /** When each running tool started, by tool call id. */
   private started = new Map<string, number>();
 
   receive(event: any): void {
@@ -52,7 +50,6 @@ export class LiveOutput {
     this.started.clear();
   }
 
-  /** The payload of a running tool, or undefined when the tool is not running. */
   toolPayload(id: string): any | undefined {
     const live = this.tools.find(([key]) => key === id)?.[1];
     if (live === undefined) return undefined;
@@ -62,13 +59,11 @@ export class LiveOutput {
     return result;
   }
 
-  /** Running tools as start events. elapsedMs is the time since the tool started, so clients do not depend on the host clock. */
   runningTools(): any[] {
     const now = Date.now();
     return this.tools.map(([id, value]) => ({ ...clone(value), elapsedMs: now - (this.started.get(id) ?? now) }));
   }
 
-  /** Adds streamed messages that the saved history does not hold yet to its end. */
   addTo(history: any): void {
     for (const [, live] of this.messages) {
       const entries = Array.isArray(history?.entries) ? history.entries : [];

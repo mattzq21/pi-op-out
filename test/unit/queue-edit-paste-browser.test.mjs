@@ -4,7 +4,6 @@ import { appBrowser } from '../app-browser-fixture.mjs';
 
 const PNG = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGP4z8AAAAMBAQDJ/pLvAAAAAElFTkSuQmCC';
 
-// WebKitGTK sends no paste event when an image is pasted, so the editor reads the clipboard after Ctrl+V. Chromium sends a paste event with the image.
 for (const way of ['a paste event', 'Ctrl+V without a paste event']) test('an image pasted into a queued message being edited is attached to it, through ' + way, { timeout: 120000 }, async t => {
   const page = await appBrowser(t, { model: 'echo' });
   await page.context().grantPermissions(['clipboard-read', 'clipboard-write']);

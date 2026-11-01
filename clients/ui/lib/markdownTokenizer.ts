@@ -103,7 +103,6 @@ export const markdownTokenizer: TokenizerObject = {
 const frontmatterLine = String.raw`(?:[A-Za-z_][\w.-]*[ \t]*:(?:[ \t][^\n]*)?|[ \t]+[^\n]*|- [^\n]*|#[^\n]*|[ \t]*)\n`;
 const frontmatterRule = new RegExp(String.raw`^---[ \t]*\n[A-Za-z_][\w.-]*[ \t]*:(?:[ \t][^\n]*)?\n(?:${frontmatterLine})*?---[ \t]*(?:\n+|$)`);
 
-/** Frontmatter: a "---" line, then "key: value" lines, then a "---" line. It shows as a code block, not as headings. */
 export const frontmatterExtension: TokenizerExtension = {
   name: "frontmatter",
   level: "block",

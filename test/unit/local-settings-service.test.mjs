@@ -6,7 +6,6 @@ import { act, enterText, untilDom } from '../dom.mjs';
 const navButton = (root, text) => [...root.querySelectorAll('.settings-host-nav button')].find(button => button.textContent.trim() === text);
 const click = element => act(async () => element.click());
 
-/** The app with the settings of the local daemon open. */
 async function daemonSettings(t) {
   const app = await appService(t);
   await click(app.root.querySelector('[aria-label="Settings"]'));

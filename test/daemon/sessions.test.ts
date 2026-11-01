@@ -22,7 +22,6 @@ const listed = async (path: string) => (await daemon.invoke('list_sessions')).fi
 
 test('session list shows new transcripts, refreshes changed ones and drops deleted ones', async () => {
   const { id, path } = publicSession(daemon.home, { cwd: daemon.home });
-  // A transcript with no user message and no name, as Pi writes for a draft, is not listed.
   expect(await listed(path)).toEqual([]);
   execFileSync('node', [fileURLToPath(new URL('../fixtures/append-chat.mjs', import.meta.url))], {
     encoding: 'utf8', timeout: 30_000,
@@ -215,7 +214,6 @@ test('session list takes machine and file time from the daemon and gives default
   const header = JSON.parse(readFileSync(path, 'utf8').split('\n')[0]!);
   writeFileSync(path, JSON.stringify({ ...header, cwd: '', hostId: 'untrusted', hostName: 'Untrusted', modifiedAt: 999, fingerprint: 'untrusted' }) + '\n' + JSON.stringify({ type: 'message', message: { role: 'user', content: '' } }) + '\n');
   const [row] = await listed(path);
-  // The list does not send file times; recency order shows them (remote_sessions.test.ts).
   expect(row).toMatchObject({ id, path, name: 'Untitled session', preview: '', project: 'Unknown project', cwd: 'Unknown project', cwdExists: false, messageCount: 1, lastMessageAt: 0, apiCost: 0, hostId: 'local', hostName: 'Local' });
   expect(row).not.toHaveProperty('fingerprint');
 });

@@ -22,7 +22,6 @@ export interface SessionGroups {
   removedProjects: Set<string>;
 }
 
-/** A chat the client lists. parentKey names the chat it was branched from; the branch then takes that chat's group. */
 export interface SessionSeed { sessionKey: string; project: SessionGroup; parentKey?: string }
 
 export type GroupChange =
@@ -94,10 +93,6 @@ function read(path: string): SessionGroups | undefined {
   finally { connection.close(); }
 }
 
-/**
- * Reads the groups, lets change edit them, and saves what change returns as save, in one database transaction.
- * The transaction keeps other writers out, so no lock file is needed.
- */
 function update<T>(path: string, change: (stored: SessionGroups | undefined) => { save?: SessionGroups; value: T }): T {
   const connection = database(path);
   try {
@@ -133,7 +128,6 @@ function writeWith(connection: Database, groups: SessionGroups): void {
       connection.exec('UPDATE session_group_state SET initialized=1 WHERE id=1');
 }
 
-/** Returns the session IDs registered on the machine. Other machines answer through their Piop daemon. */
 async function discover(app: App, hostId: string): Promise<string[]> {
   try {
     if (hostId === 'local') return Registry.ids(profileRoot());
@@ -146,11 +140,6 @@ async function discover(app: App, hostId: string): Promise<string[]> {
 
 function hostOf(key: string): string | undefined { const index = key.lastIndexOf(':'); return index >= 0 ? key.slice(0, index) : undefined; }
 
-/**
- * Removes assignments of sessions that no longer exist. Hosts are asked in parallel and without any lock held,
- * so a slow machine does not block other group and session reads. Only assignments that existed before the
- * hosts were asked can be removed, so a session created during the check keeps its assignment.
- */
 async function refreshDeletionsAt(path: string, app: App, seeds: SessionSeed[], key: string | undefined): Promise<void> {
   const snapshot = read(path) ?? emptyGroups();
   const hosts = new Set<string>(['local']);
@@ -182,10 +171,6 @@ function changeKey(change: GroupChange): string | undefined {
   return undefined;
 }
 
-/**
- * The folder of the registered project named name on this machine, for a new peer of the chat sessionKey in folder cwd.
- * Fails when no such project is registered or when it is the chat's own project.
- */
 export async function peerProjectFolder(name: string, sessionKey: string, cwd: string): Promise<string> {
   const state = await STORAGE_LOCK.run(() => read(storagePath()));
   const projects = (state?.groups ?? []).filter(group => group.cwd !== null && group.hostId === 'local');
@@ -213,14 +198,8 @@ export async function loadSessionGroups(app: App, seeds: SessionSeed[]): Promise
   return STORAGE_LOCK.run(async () => (await loadAt(path, seeds)).state);
 }
 
-/** Temporary chat folders are named with the first 4 to 32 hex digits of the chat ID. */
 const TEMPORARY_CHAT_CWD = /(?:^|\/)\.piop(?:-dev)?\/tmp\/[0-9a-f]{4,32}\/?$/i;
 
-/**
- * A listed chat in an existing project folder. Temporary chat folders and chats with no message are not projects.
- * A chat in its own Piop worktree belongs to the project of the repository's main folder.
- * A branch takes its source's group; a branch whose source is not listed is a chat of its own.
- */
 function projectSeed(session: SessionSummary, listed: Set<string>): SessionSeed | undefined {
   if (session.messageCount === 0 || !session.cwdExists || !session.cwd || TEMPORARY_CHAT_CWD.test(session.cwd)) return undefined;
   const parentKey = session.forkSourceId ? `${session.hostId}:${session.forkSourceId}` : undefined;
@@ -233,10 +212,6 @@ function projectSeed(session: SessionSummary, listed: Set<string>): SessionSeed 
   };
 }
 
-/**
- * Registers the project of each listed chat that has no assignment yet, and reports a change to clients.
- * The groups are written only when such a chat shows up. A removed project stays removed.
- */
 export async function registerProjects(app: App, sessions: SessionSummary[]): Promise<void> {
   const listed = new Set(sessions.map(session => `${session.hostId}:${session.id}`));
   const known = await STORAGE_LOCK.run(() => read(storagePath())?.assignments);
@@ -255,7 +230,6 @@ function updateSeedMetadata(state: SessionGroups, seed: SessionSeed): boolean {
   return dirty;
 }
 
-/** A project group the user made for the folder, under a name of their choice, takes the chat in place of a new group. */
 function assignSeed(state: SessionGroups, seed: SessionSeed): boolean {
   if (state.assignments.has(seed.sessionKey)) return false;
   if (state.removedProjects.has(seed.project.id)) { state.assignments.set(seed.sessionKey, null); return true; }
@@ -266,10 +240,6 @@ function assignSeed(state: SessionGroups, seed: SessionSeed): boolean {
   return true;
 }
 
-/**
- * Gives each new branch the group its source chat has: a project group, a custom group or no group. The branch's own
- * folder never makes a group. A branch whose source has no assignment yet waits for a later load.
- */
 function inheritSeeds(state: SessionGroups, branches: SessionSeed[]): boolean {
   let dirty = false;
   let waiting = branches.filter(seed => !state.assignments.has(seed.sessionKey));
@@ -387,7 +357,6 @@ function renameGroup(state: SessionGroups, id: string, raw: string): void {
   group.name = name;
 }
 
-/** Removing a project group keeps it removed: chats listed later in its folder get no group until the user adds the project again. */
 function removeGroup(state: SessionGroups, id: string): void {
   const removed = state.groups.find(group => group.id === id);
   if (!removed) throw new Error('Group no longer exists');

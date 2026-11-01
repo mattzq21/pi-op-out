@@ -6,7 +6,6 @@ import { channelsClosed, installDom } from '../dom.mjs';
 import { createConversationDrafts } from '../../clients/ui/appDrafts.ts';
 import { NativeTransport } from '../../clients/ui/lib/nativeTransport.ts';
 
-// A draft saved before each case. Its presence proves a window has finished loading saved drafts.
 const SENTINEL = ['local:sentinel', 'Saved earlier'];
 
 let dom, windows, storageErrors;
@@ -30,7 +29,6 @@ function openWindow() {
 
 const leavePage = () => window.dispatchEvent(new Event('pagehide'));
 
-/** Resolves when the drafts shown by `drafts` match `check`, observed on each change. */
 function whenDrafts(drafts, check, description, onSettled = () => {}) {
   return new Promise((resolve, reject) => {
     createRoot(stop => {
@@ -50,7 +48,6 @@ function whenDrafts(drafts, check, description, onSettled = () => {}) {
 
 const loaded = drafts => whenDrafts(drafts, value => value[SENTINEL[0]] === SENTINEL[1], 'saved drafts to load');
 
-/** Opens one fresh window and waits until its loaded drafts equal `expected` plus the sentinel. */
 function restoredDrafts(expected) {
   const wanted = { ...expected, [SENTINEL[0]]: SENTINEL[1] };
   let dispose;

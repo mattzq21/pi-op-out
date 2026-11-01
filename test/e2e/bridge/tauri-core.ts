@@ -4,13 +4,6 @@ import type { NativeArguments } from "../../../clients/ui/lib/transportSchemas";
 import { mockSharedTerminal } from "../native-terminal-fixture";
 import { draftCatalog } from "./draft-catalog";
 
-/*
- * Test-only entry of the E2E build. The specs control the backend through two text fields:
- * "E2E responses" holds mocked results by command key, and "E2E calls" records each command that the app sends.
- * Commands without a mocked result go to the real desktop backend.
- * The E2E build maps "@tauri-apps/api/core" to this module, because Tauri does not let a page replace window.__TAURI_INTERNALS__.invoke.
- */
-
 import * as tauriCore from "../../../node_modules/@tauri-apps/api/core.js";
 
 export * from "../../../node_modules/@tauri-apps/api/core.js";
@@ -21,7 +14,6 @@ declare global {
   interface Window { __piopE2eErrors: string[] }
 }
 
-// Page errors are kept for failure reports.
 window.__piopE2eErrors = [];
 const describeError = (error: unknown) => error instanceof Error ? error.message + " " + (error.stack ?? "") : typeof error === "string" ? error : JSON.stringify(error) ?? String(error);
 window.addEventListener("error", event => window.__piopE2eErrors.push("error: " + describeError(event.error ?? event.message)));
@@ -29,7 +21,6 @@ window.addEventListener("unhandledrejection", event => window.__piopE2eErrors.pu
 const consoleError = console.error.bind(console);
 console.error = (...values: unknown[]) => { window.__piopE2eErrors.push("console: " + values.map(describeError).join(" ")); consoleError(...values); };
 
-/** Commands that the app sends through its platform invoke (clients/ui/lib/platform.ts). */
 const localCommands = new Set(["load_client_settings", "save_client_settings", "new_window", "open_external_url", "open_project_directory", "open_rollout_file", "open_local_file", "reveal_local_file", "read_dropped_file"]);
 
 const mockMetadataSchema = z.object({ error: z.string().optional(), events: z.array(rpcEventSchema).optional() }).catch({});
@@ -46,7 +37,6 @@ function responseKey(command: string, args?: NativeArguments) {
 
 const locationsSchema = z.object({ bySession: z.record(z.string(), z.json()) });
 
-/** A mocked conversation lookup or preview answers per conversation; conversations without a mocked answer go to the real daemon. */
 function mockedValue(key: string, args: NativeArguments | undefined, responses: Record<string, JSONType>) {
   if (!(key in responses)) return undefined;
   const locations = key === "broker_request:locate" || key === "broker_request:preview" ? locationsSchema.safeParse(responses[key]) : undefined;
@@ -94,7 +84,6 @@ async function mockResponse(command: string, response: JSONType, args: NativeArg
 
 export const invoke = async <T>(cmd: string, payload?: Record<string, unknown>, options?: unknown): Promise<T> => (await bridgedInvoke(cmd, payload, options)) as T;
 
-/** A command loop in the app would grow the call record without end and freeze the page, so the bridge reports it and stops recording that command. */
 const runawayLimit = 300;
 const callCounts = new Map<string, number>();
 
@@ -105,7 +94,6 @@ const bridgedInvoke: Invoke = async (cmd, payload, options) => {
   const args = routed.args as NativeArguments | undefined;
   const key = responseKey(routed.command, args);
   const responses = z.record(z.string(), z.json()).parse(JSON.parse(responseField.value || "{}"));
-  // The host catalog is mocked unless a spec mocks its own, or asks for the real one with "native".
   if (key === "provider_auth:draft_catalog" && !(key in responses)) return draftCatalog;
 
   const mocked = responses[key] === "native" ? undefined : mockedValue(key, args, responses);
@@ -113,7 +101,6 @@ const bridgedInvoke: Invoke = async (cmd, payload, options) => {
   if (callField.value) {
     const calls = z.array(z.json()).parse(JSON.parse(callField.value));
 
-    // Counts start again when a spec clears the record.
     if (!calls.length) callCounts.clear();
     const count = (callCounts.get(key) ?? 0) + 1;
     callCounts.set(key, count);

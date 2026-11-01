@@ -3,10 +3,6 @@ import { mockIPC as mockNativeIPC, mockWindows } from '@tauri-apps/api/mocks';
 
 export { clearMocks, mockWindows } from '@tauri-apps/api/mocks';
 
-/**
- * Desktop services that every composer starts in the background: prompt history sync.
- * They answer like an idle desktop, so tests only see the commands they exercise. Pass `{ background: false }` to handle them yourself.
- */
 function desktopBackground() {
   return {};
 }

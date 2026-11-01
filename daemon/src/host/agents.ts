@@ -13,7 +13,6 @@ function readDefinitions(value: unknown): any {
 
 const definitions = hostOperation<{ settings: any; initial: boolean }, any>('agent-definitions', 'agents', 30_000, readDefinitions);
 
-/** A save result: the saved revision, its warnings, and the saved definitions as a load reads them. */
 export interface Saved { revision: string; warnings: string[]; definitions: any }
 
 const saved = hostOperation<{ settings: any; configuration: unknown }, Saved>('save-agent-definitions', 'agents', 30_000, value => {
@@ -22,7 +21,6 @@ const saved = hostOperation<{ settings: any; configuration: unknown }, Saved>('s
   return { revision: result.revision, warnings: result.warnings, definitions: readDefinitions(result.definitions) };
 });
 
-/** The worker environment: the loader reads its paths from the environment once. */
 function environment(home: string, storage: string): Record<string, string> {
   const profile = join(home, storage);
   return {
@@ -35,12 +33,10 @@ function loaderSettings(settings: any, fastModels: FastModelSnapshot | null): an
   return { ...settings, pluginAgentTools: Contributions.agentTools(), fastModels };
 }
 
-/** Loads the agent definitions of the profile at home/storage in a new worker. */
 export function load(home: string, storage: string, settings: any, initial: boolean, fastModels: FastModelSnapshot | null): Promise<any> {
   return runHostOperation(definitions, { settings: loaderSettings(settings, fastModels), initial }, { env: environment(home, storage) });
 }
 
-/** Checks and saves agent definitions of the profile at home/storage in a new worker. */
 export function save(home: string, storage: string, settings: any, configuration: unknown, fastModels: FastModelSnapshot | null): Promise<Saved> {
   return runHostOperation(saved, { settings: loaderSettings(settings, fastModels), configuration }, { env: environment(home, storage) });
 }

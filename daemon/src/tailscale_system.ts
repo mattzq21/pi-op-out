@@ -13,14 +13,12 @@ export function run(program: string, args: string[]): Promise<{ ok: boolean; std
   });
 }
 
-/** Linux socket option values: SOL_SOCKET level and the SO_PEERCRED option. */
 const SOL_SOCKET = 1;
 const SO_PEERCRED = 17;
 
 type GetSockOpt = (fd: number, level: number, option: number, value: any, length: any) => number;
 let getsockopt: GetSockOpt | undefined;
 
-/** Loads getsockopt from the C library (glibc or musl) through bun:ffi. */
 function loadGetsockopt(): GetSockOpt {
   if (getsockopt) return getsockopt;
   let failure: unknown;
@@ -34,11 +32,9 @@ function loadGetsockopt(): GetSockOpt {
   throw new Error('Cannot load the C library to read socket credentials: ' + errorText(failure));
 }
 
-/** Reads the process and user identity of the other end of a unix socket. */
 export async function peerCredentials(socket: Socket): Promise<{ pid: number; uid: number }> {
   const fd = (socket as any)._handle?.fd;
   if (!Number.isInteger(fd) || fd < 0) throw new Error('Missing proxy peer socket');
-  // struct ucred is three 32-bit integers: pid, uid, gid.
   const credentials = new Int32Array(3);
   const length = new Uint32Array([credentials.byteLength]);
   const result = loadGetsockopt()(fd, SOL_SOCKET, SO_PEERCRED, ptr(credentials), ptr(length));

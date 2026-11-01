@@ -100,7 +100,6 @@ test('the arrow above the composer appears away from the latest message and jump
 
 test('selecting text at the latest message keeps the content in place while the hidden turns are drawn', async t => {
   const page = await startupPage(t, 'production', { entryPoint: 'test/fixtures/chat-scroll-browser.tsx', ready: '.messages' });
-  // The desktop engine (WebKitGTK) does not keep the content in place when the height above it changes.
   await page.addStyleTag({ content: '.messages { overflow-anchor: none; }' });
   const frames = () => page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
   await page.evaluate(() => { for (let index = 0; index < 20; index++) window.appendScrollTurn(); });
@@ -113,7 +112,6 @@ test('selecting text at the latest message keeps the content in place while the 
     const view = document.querySelector('.messages').getBoundingClientRect();
     const turn = document.elementFromPoint(view.left + view.width / 2, view.top + view.height / 2).closest('.deferred-turn');
     const top = turn.getBoundingClientRect().top;
-    // Listeners run in order, so this one measures after the view handled the selection and before the next frame is drawn.
     document.addEventListener('selectionchange', () => resolve(turn.getBoundingClientRect().top - top), { once: true });
     const range = document.createRange();
     range.selectNodeContents(turn);

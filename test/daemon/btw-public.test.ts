@@ -7,7 +7,6 @@ afterAll(async () => { await agents?.close(); });
 
 const OPEN = '__pi_desktop_auxiliary__';
 
-/** Sends /btw in chat and returns what the side pane receives. */
 async function sideChat(chat: Awaited<ReturnType<typeof agents.rootChat>>, message: string) {
   const seen = new Set(agents.daemon.events.map(event => event.payload));
   await chat.command({ type: 'prompt', message });
@@ -22,7 +21,6 @@ async function notice(runtimeId: string, expected: string) {
   expect(notices(runtimeId)).toContain(expected);
 }
 
-/** A chat that answered once, so /btw has history to copy. */
 async function answeredChat(prompt: string) {
   agents.scripts.set(prompt, messages => {
     const last = text(messages.at(-1));

@@ -11,7 +11,6 @@ const home = homedir();
 
 const args = process.argv.slice(2);
 
-/** A release build has the release screen and no debug daemon. It is signed with the debug key, so it installs over a debug build and keeps the app data. */
 const release = args.includes('--release');
 
 const env = { ...process.env, VITE_PIOP_DEBUG: String(!release) };

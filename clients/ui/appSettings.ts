@@ -150,7 +150,6 @@ export function createAppSettings({ transport, runtimePool, chatSession, addNoti
     const next = value;
     let savedChange: SettingsChange;
 
-    // Client preferences stay on this device, so they save without the host and also while it is unreachable.
     if (scope === "client") {
       const shortcutError = keybindingsError(next.keybindings);
 

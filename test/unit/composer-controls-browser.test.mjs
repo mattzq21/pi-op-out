@@ -238,7 +238,6 @@ test('submission trims text, ignores blank and composed input, and respects newl
     }));
     await input.send('Input.imeSetComposition', { text: '  Build it  ', selectionStart: 12, selectionEnd: 12, replacementStart: 0, replacementEnd: 13 });
     await page.keyboard.press('Enter');
-    // WebKitGTK's input method consumes keys during a composition, so the page gets no Enter keydown.
     assert.deepEqual(await page.evaluate(() => window.composingEnter), testBrowserName === 'webkit' ? undefined : { composing: true, trusted: true });
     assert.deepEqual(await sent(page), []);
     await input.send('Input.insertText', { text: '  Build it  ' });
@@ -323,7 +322,6 @@ test('on a narrow screen the chat settings sit behind one button that opens and 
   assert.equal(await agent.isVisible(), false);
   assert.equal(await page.getByRole('button', { name: /^Thinking level/ }).isVisible(), true, 'effort stays outside the menu');
 
-  // With the agent list open, the first Escape closes only that list.
   await trigger.click();
   await agent.click();
   await page.getByRole('listbox').waitFor();
@@ -346,7 +344,6 @@ test('on a narrow screen the chat settings sit behind one button that opens and 
   await agent.waitFor();
   await page.getByRole('textbox', { name: 'Message piop' }).click();
   assert.equal(await trigger.getAttribute('aria-expanded'), 'false', 'a click outside closes it');
-  // A click on an empty spot moves no focus, so only the outside click closes the menu.
   await trigger.click();
   await agent.waitFor();
   await page.mouse.click(590, 790);

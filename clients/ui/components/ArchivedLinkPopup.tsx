@@ -3,12 +3,10 @@ import { Portal } from "solid-js/web";
 import { restoreArchivedConversation } from "../lib/nativeTransport";
 import { storageFailureText } from "../lib/storageFailure";
 
-/** An archived chat that a chat link points to. anchor: the clicked link. */
 export type ArchivedLink = { hostId: string; sessionId: string; sessionPath: string; name: string; anchor: HTMLElement };
 
 const margin = 8;
 
-/** The small popup under a link to an archived chat. It restores the chat, then onRestored opens it. */
 export function ArchivedLinkPopup(props: { link: ArchivedLink; onClose: () => void; onRestored: () => void }) {
   const [position, setPosition] = createSignal({ left: 0, top: 0 });
   const [restoring, setRestoring] = createSignal(false);

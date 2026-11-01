@@ -6,7 +6,6 @@ import prompt from './review-prompt.txt?raw';
 import { reviewSettings } from './settings';
 import type { BundledPlugin } from '../types';
 
-/** Code reviews in linked review conversations, with /review. */
 export const review: BundledPlugin = {
   id: 'review',
   name: 'Code review',

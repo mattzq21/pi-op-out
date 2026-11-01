@@ -66,7 +66,6 @@ test('reading a named pipe rejects without waiting for a writer, and later files
   t.after(() => clearTimeout(timer));
   const hung = new Promise((_, reject) => {
     timer = setTimeout(async () => {
-      // A blocked native open waits for a writer; opening one releases the bridge so cleanup can finish.
       try { await (await open(pipe, constants.O_WRONLY | constants.O_NONBLOCK)).close(); } catch {}
       reject(new Error('Reading a named pipe did not settle within 3 s'));
     }, 3000);

@@ -24,7 +24,6 @@ type KeyboardContext = {
   setTerminalOpen: (open: boolean) => void;
 };
 
-/** Keys that send control codes to the shell, plus terminal copy and paste. */
 function isTerminalKey(event: KeyboardEvent) {
   if (!event.ctrlKey || event.altKey || event.metaKey) return false;
   const key = event.key.toLowerCase();
@@ -34,7 +33,6 @@ function isTerminalKey(event: KeyboardEvent) {
 
 export function useAppKeyboard(context: KeyboardContext) {
   const { settings, activePane, splitPane, canLeaveSettings, setView, panelOpen, setPanelOpen, newSession, toggleTerminal, toggleDebugMode, setSplitComposerFocusRequest, setMainComposerFocusRequest, settingsDirty, view, terminalOpen, setTerminalOpen } = context;
-  // Tab never moves focus; elements that use Tab handle it before this bubble-phase listener.
   const blockTabFocus = (event: KeyboardEvent) => { if (event.key === "Tab" && !event.ctrlKey && !event.metaKey && !event.altKey) event.preventDefault(); };
   window.addEventListener("keydown", blockTabFocus);
   onCleanup(() => window.removeEventListener("keydown", blockTabFocus));
@@ -93,7 +91,6 @@ export function useAppKeyboard(context: KeyboardContext) {
   createDependencyEffect(() => { const capturedView = view(); const capturedTerminalOpen = terminalOpen();
 
     if (!isMobile) return;
-    // A handled back press cancels the event. An unhandled one lets the app go to the background.
     const back = (event: Event) => {
       if (capturedView === "settings") { if (canLeaveSettings()) setView("chat"); }
       else if (capturedTerminalOpen) setTerminalOpen(false);

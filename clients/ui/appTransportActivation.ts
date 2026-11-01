@@ -117,7 +117,6 @@ export function createTransportActivation(context: ActivationContext) {
     let stopped = false;
     let scheduled = false;
     let stopSync: (() => void) | undefined;
-    /** Loads the finished answer into the cached chat and draws its turns, so the chat shows it at once when it opens. The chat stays connected until the load ends. */
     const sync = () => {
       stopSync?.();
       const release = runtimePool().observe(owner);

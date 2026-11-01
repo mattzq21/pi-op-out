@@ -8,19 +8,11 @@ import { recordTools } from '../../daemon/src/tool_inventory';
 
 const root = join(import.meta.dir, '../..');
 const source = (relative: string) => readFileSync(join(root, relative), 'utf8');
-/** A plugin file as installed: its imports of daemon resources point at the installed copies. */
 const pluginSource = (relative: string) => source(relative).replaceAll('"../../resources/', '"../../');
-/** The expected content of the generated file name, installed from the source file relative. */
 const installed = (name: string, relative: string) => name === 'piop-context-window-cap/defaults.ts'
   ? source(relative).replace('../../daemon/resources/session-broker/app-settings.cjs', './app-settings.cjs')
   : name.startsWith('plugins/') ? pluginSource(relative) : source(relative);
 
-/**
- * Installs a fake Pi in ~/.local/bin, where the daemon looks first. The daemon starts Pi through
- * "node runtime-bridge.cjs <pi> --mode rpc ...", with the node next to Pi, so the fake node plays Pi's RPC side.
- * Each start reads its runtime and context window settings the way Pi's extensions do, through the generated
- * app-settings.cjs, and appends them with its arguments to ~/launches.jsonl.
- */
 function installFakePi(home: string): void {
   const bin = join(home, '.local/bin');
   fakeProgram(bin, 'pi', '#!/bin/sh\nexit 1\n');
@@ -55,7 +47,6 @@ const lastLaunch = (home: string): Launch => JSON.parse(readFileSync(join(home, 
 const extensionPaths = ({ args }: Launch) => args.flatMap((arg, index) => args[index - 1] === '--extension' ? [arg] : []);
 
 let launches = 0;
-/** Opens a new conversation in Pi through the given client and resolves with what that Pi start received. */
 async function launchPublicPi(daemon: TestDaemon, client: Client = daemon): Promise<Launch> {
   const { path } = JSON.parse(execFileSync('node', [fileURLToPath(new URL('../fixtures/publish-chat.mjs', import.meta.url))], {
     encoding: 'utf8', timeout: 30000,
@@ -180,7 +171,6 @@ test('a started Pi receives the reported tools, skill lists and separate context
     expect(readFileSync(join(generated, 'piop-context-window-cap/index.ts'), 'utf8')).toBe(source('extensions/piop-context-window-cap/index.ts').replace('../../daemon/resources/hooks-extended/interface.ts', '../hooks-extended/interface.ts'));
     for (const file of ['piop-mcp-bridge.ts', 'piop-context-window-cap/index.ts']) expect(mode(join(generated, file))).toBe(0o600);
     expect(launch.contextSettings).toEqual({ contextWindowCap: enabled ? 123456 : 200000, contextWindowCapEnabled: enabled, modelContextWindowCaps: {} });
-    // A new Pi gets the tools that Pi last reported on the host.
     expect(launch.tools).toEqual({ enabledTools: ['read', 'web_search'], registeredTools: ['read', 'web_search'] });
     expect(launch.skills).toEqual({ userInvokedSkills: [], agentInvokedSkills: enabled ? [skill] : [] });
   }
@@ -234,10 +224,6 @@ test('daemon startup ignores an obstructed old Pi agent configuration and leaves
 }, 60_000);
 
 
-/**
- * Runs a separate process that keeps reading a file until stopped and then prints how often it saw each allowed
- * content, plus the sizes of any other content and any read errors.
- */
 async function watchFile(path: string, allowed: Record<string, string>): Promise<{ stop(): Promise<any> }> {
   const stopFile = path + '.watch-stop';
   const allowedFile = join(temporaryDirectory('piop-watch-'), 'allowed.json');
@@ -282,7 +268,6 @@ test('another process never reads a partial extension file while two clients sta
   const watcher = await watchFile(entry, { stale: 'stale bundle', expected });
   try {
     for (let round = 0; round < 10; round++) {
-      // Make the file stale with a rename, so the watcher never sees a partial stale file.
       writeFileSync(join(daemon.home, 'stale-bundle'), 'stale bundle');
       renameSync(join(daemon.home, 'stale-bundle'), entry);
       await Promise.all([launchPublicPi(daemon), launchPublicPi(daemon, second)]);

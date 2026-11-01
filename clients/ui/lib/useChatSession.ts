@@ -80,7 +80,6 @@ function createChatSession(transport: Accessor<Pick<NativeTransport, "command" |
   const [refreshError, setRefreshError] = createSignal<string>();
   const [capabilitiesLoading, setCapabilitiesLoading] = createSignal(false);
   const sessionEpoch = createRef("");
-  /** The sequence of the last snapshot shown. It already holds the effect of every event up to it, so such an event that arrives later is stale. */
   const snapshotSequence = createRef(-1);
   const statsOperation = createRef<{ sessionId: string; revision: number; promise: Promise<void> } | undefined>(undefined);
   const refreshOperation = createRef<{ transport: ReturnType<typeof transport>; promise: Promise<AgentState>; buffer: RpcEvent[] } | undefined>(undefined);
@@ -89,7 +88,6 @@ function createChatSession(transport: Accessor<Pick<NativeTransport, "command" |
   const liveRevision = createRef(0); const activeAssistantId = createRef<string | undefined>(undefined); const activeMessageIds = createRef(new Map<string, string>()); const liveMessageSequence = createRef(0); const pendingUpdates = createRef<MessageUpdate[]>([]); const frame = createRef<number | undefined>(undefined);
   const pendingRevision = createRef<{ base: string | undefined; next: string } | undefined>(undefined);
 
-  /** Live events add messages but do not carry the saved message count, so it is read from the host after a message is saved. */
   const syncMessageCount = () => {
     const capturedTransport = transport(); const sessionId = session.state.sessionId;
 
@@ -116,7 +114,6 @@ function createChatSession(transport: Accessor<Pick<NativeTransport, "command" |
   };
 
   const refreshCapabilities = () => {
-    // A read-only view cannot ask the session for its choices. Taking ownership applies settings, which loads them.
     if (transport().ownsConversation?.() === false) { capabilityRequest.current++; capabilityKey.current = undefined; setCapabilityErrors([]); setCapabilitiesLoading(false); return; }
     const key = `${sessionEpoch.current}:${session.state.sessionId}`;
 
@@ -158,7 +155,6 @@ function createChatSession(transport: Accessor<Pick<NativeTransport, "command" |
 
   onCleanup(registerModelSession(() => transport().currentHostId?.() ?? "local", async () => {
     capabilityKey.current = undefined;
-    // Without a running Pi there is nothing to ask. The chat loads its models when Pi starts.
     if (transport().canLoadModels?.() === false) return;
     const request = ++capabilityRequest.current;
     setCapabilitiesLoading(true);
@@ -258,7 +254,6 @@ function createChatSession(transport: Accessor<Pick<NativeTransport, "command" |
     if (snapshot.history.before && snapshot.history.outline) session.memory.set("outline", { before: snapshot.history.before, items: snapshot.history.outline });
   };
 
-  /** Shows the saved history of a chat that has nothing cached while its Pi starts. The first refresh replaces it. */
   const showPreview = () => {
     const capturedTransport = transport();
     const request = session.memory.revision === undefined && !session.messages.length ? capturedTransport.preview?.() : undefined;
@@ -372,7 +367,6 @@ function createChatSession(transport: Accessor<Pick<NativeTransport, "command" |
     if (options.poll === false) return;
     let stopped = false;
     setRefreshError(undefined);
-    // Only a running Pi that another view owns needs reading. A detached view has no Pi, so reading it fails until the view connects again.
     const viewable = () => capturedTransport.ownsConversation?.() === false && capturedTransport.isConnected?.() !== false;
     let viewing = viewable();
     let pending = false;
@@ -384,7 +378,6 @@ function createChatSession(transport: Accessor<Pick<NativeTransport, "command" |
       pending = true;
       do { dirty = false; await refreshView(); } while (dirty && viewing && !stopped);
       pending = false;
-      // The owning daemon runs elsewhere; this daemon only reads the saved file, so no change event exists for a read-only view.
       clearTimeout(timer);
       if (viewing && !stopped) timer = setTimeout(() => void update(), 2000);
     };
@@ -444,7 +437,7 @@ function createChatSession(transport: Accessor<Pick<NativeTransport, "command" |
             liveRevision.current += 1;
             session.setMessages((current) => current.map((message) => promptContextAnchors(message, context) && (!message.promptContext || (message.promptContext.inputTokens === undefined && context.inputTokens !== undefined)) ? { ...message, promptContext: context } : message));
           }
-        } catch { }
+        } catch {}
       }
     };
 
@@ -562,7 +555,6 @@ function createChatSession(transport: Accessor<Pick<NativeTransport, "command" |
       session.setMessages((current) => current.map((item) => item.id === event.toolCallId ? { ...item, toolPayloadVersion: Number(event.sequence), toolStatus: event.isError ? "error" : "done", ...(event.toolImage ? { toolImage: true } : {}) } : item));
     };
 
-    /** One update, so a sent message moves from sending to its queue entry without a frame where it shows twice or not at all. */
     const handleQueueUpdate = () => session.memory.batch(() => {
       session.setMessages(current => reconcilePendingMessages(current, event.pendingMessages));
       session.setState((current) => ({ ...current, pendingMessages: event.pendingMessages, pendingMessageCount: (event.steering?.length ?? 0) + (event.followUp?.length ?? 0), queueHeld: event.held === true }));

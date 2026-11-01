@@ -9,7 +9,6 @@ let dom, view, restarts, status;
 beforeEach(() => {
   dom = installDom(); restarts = [];
   status = { enabled: ['cost', 'review'], configured: ['cost', 'review'], revision: 'first', error: null };
-  // The daemon side of a restart has its own test; this daemon answers as one with one open terminal.
   mockIPC((command, args) => {
     if (command === 'plugin_status') return status;
     if (command === 'restart_daemon') {

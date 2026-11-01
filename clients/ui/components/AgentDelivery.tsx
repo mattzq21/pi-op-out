@@ -12,8 +12,6 @@ function parseDelivery(content: ChatMessage["content"]) {
   catch { return { sourceSessionId: "", sourceHostId: "", message: textOf(content) }; }
 }
 
-/** A message from another agent session, shown like a sent message, with a link to the session that sent it. */
-/** actions: the time and copy bar under the message, given the text the sender wrote. */
 export function AgentDelivery(props: { message: ChatMessage; actions?: (text: string) => JSXElement }) {
   const delivery = createMemo(() => parseDelivery(props.message.content));
   const links = useContext(SessionLinkContext);

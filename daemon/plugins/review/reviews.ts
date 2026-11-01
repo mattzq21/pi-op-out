@@ -50,7 +50,6 @@ async function requireSavedReviewParent(ctx: ExtensionContext) {
   } finally { await file.close(); }
 }
 
-/** "Review <scope>", or "Review <n>" where n counts this chat's reviews without a scope. */
 function reviewName(ctx: ExtensionContext, scope: string | undefined) {
   if (scope) return `Review ${scope}`;
   const unscoped = ctx.sessionManager.getEntries().filter(entry => entry.type === "custom" && entry.customType === "piop-review" && Check(reviewSchema, entry.data) && entry.data.parentSessionId === ctx.sessionManager.getSessionId() && !entry.data.scope).length;
@@ -148,7 +147,6 @@ async function reviewProfile(pi: ExtensionAPI, agent: string) {
   return profile.state;
 }
 
-/** Registers review publication recovery and send_to_main for review chats, and returns the review feature. */
 export function registerReviews(pi: ExtensionAPI): ReviewSession {
   const unsubscribe = pi.events.on("piop:auxiliary:kind", request => { if (request.kind === "review") request.sendToMain = "Send the review result to agent whose work you reviewed, when user asks"; });
   pi.on("session_shutdown", () => { unsubscribe(); });
@@ -164,7 +162,6 @@ export function registerReviews(pi: ExtensionAPI): ReviewSession {
       const profile = await reviewProfile(pi, settings.agent);
       signal?.throwIfAborted();
 
-      // The user scope, or else the changes since the branch point, follows the prompt as its last paragraph.
       const prompt = `${settings.prompt.trimEnd()}\n\n${request.scope?.trim() ? `Review ${request.scope.trim()}` : "Review the scope affected since last branch off."}`;
 
       const { record, publication, name } = await createReview(pi, ctx, profile, request.scope?.trim() || undefined, signal);

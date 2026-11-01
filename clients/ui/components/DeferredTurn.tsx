@@ -32,7 +32,7 @@ function observeTurn(root: Element, element: Element, reveal: () => void) {
   };
 }
 
-export function DeferredTurn(componentProps: { children: JSXElement; /** The scrolling element of the view. A turn without it waits until a view shows it. */ scrollRoot: Accessor<HTMLElement | null | undefined>; eager: boolean; navigationId?: string }) {
+export function DeferredTurn(componentProps: { children: JSXElement; scrollRoot: Accessor<HTMLElement | null | undefined>; eager: boolean; navigationId?: string }) {
   const element = createRef<HTMLDivElement>(null);
   const [revealed, setRevealed] = createSignal(componentProps.eager);
   const [searching, setSearching] = createSignal(false);

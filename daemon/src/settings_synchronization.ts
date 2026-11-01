@@ -41,7 +41,6 @@ function progressPath(path: string): string {
   return withExtension(path, `synchronization-${owner()}.json`);
 }
 
-/** Daemons that share a storage directory share settings. Each one marks its saves here, so the others can apply them. */
 function changesDirectory(path: string): string { return join(dirname(path), 'settings-changes'); }
 
 function markChanged(path: string, revision: number): void {

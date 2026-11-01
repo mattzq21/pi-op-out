@@ -33,7 +33,6 @@ function run(command, args, cwd) {
   if (result.status !== 0) throw new Error(`${command} ${args.join(" ")} failed`);
 }
 
-/** Lets only this script change a shared installation. Directories only: files are hard links into bun's cache. */
 function protect(path, writable) {
   run("find", [path, "-type", "d", "-exec", "chmod", writable ? "u+w" : "a-w", "{}", "+"], root);
 }
@@ -46,7 +45,6 @@ async function linkedTo(entry) {
   }
 }
 
-/** Installs one shared copy per dependency key. Concurrent callers race on the final rename; the loser uses the winner's copy. */
 async function populate(entry, files) {
   if (await optional(join(entry, "ready"))) return;
   console.log("Installing shared dependencies…");
@@ -73,7 +71,6 @@ async function populate(entry, files) {
   }
 }
 
-/** Swaps node_modules for a link to the shared copy in one rename. */
 async function link(entry, key) {
   await mkdir(join(root, ".trace"), { recursive: true });
   const temporary = join(root, ".trace/dependencies-" + randomUUID());

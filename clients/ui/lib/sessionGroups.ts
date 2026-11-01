@@ -65,7 +65,6 @@ export function useSessionGroups() {
     if (revision === eventRevision) publish(state); }).catch((reason) => { if (mounted.current) setError((reason instanceof Error ? reason.message : String(reason))); });
   };
   reload();
-  // Group events sent while the phone was offline are lost, so a restored connection loads the groups again.
   createDependencyEffect(() => {
     const stop = listen("pi://event", ({ payload }) => { if (payload.type === "connection_restored") reload(); }, z.object({ type: z.string().optional() }).catch({}));
 

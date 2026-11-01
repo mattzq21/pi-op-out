@@ -16,9 +16,6 @@ let runningBytesError: string | undefined;
 
 function mode(): string | undefined { return process.argv[2]; }
 
-/**
- * Checks script bytes against the running daemon's build ID.
- */
 function isRunningBuild(bytes: Buffer, id: string): boolean {
   return id === 'piop-build-' + createHash('sha256').update(bytes.toString('utf8').replaceAll(id, '')).digest('hex');
 }
@@ -38,7 +35,6 @@ function identity(id: unknown): string {
 
 function name(id: string): string { return 'restart-' + id; }
 
-/** True when the locked descriptor is still the file at its path. A lease file can be removed while a waiter holds an old descriptor. */
 function lockedCurrentFile(lock: FileLock): boolean {
   let current;
   try { current = statSync(lock.path); } catch (error: any) { if (error?.code === 'ENOENT') return false; throw error; }
@@ -86,7 +82,6 @@ async function withGate<T>(root: string, operation: () => T | Promise<T>): Promi
   } finally { lock.release(); }
 }
 
-/** Holds the lock that keeps restart files from removal. Call release() when done. */
 export function publicationLock(): Promise<FileLock> { return gate(directory()); }
 
 function leaseAt(root: string, id: string): Promise<FileLock> {
@@ -98,7 +93,6 @@ function recordPath(root: string, id: string): string { return join(root, 'resta
 
 function hash(path: string): string { return createHash('sha256').update(readFileSync(path)).digest('hex'); }
 
-/** Copies /proc/self/exe or saved script bytes so a failed restart can roll back. */
 export class Backup {
   private handedOff = false;
   private constructor(readonly path: string, private id: string, private lease: FileLock | undefined, private references: FileLock[]) {}
@@ -188,7 +182,6 @@ function activePlanAt(root: string, plan: any): boolean {
   const status = planStatus(root, id);
   if (!activePhase(status)) return false;
   const lease = tryExclusive(root, id);
-  // A running replacement daemon holds the lease for its lifetime. Once the status expires, the coordinator is gone.
   if (!lease) return !expired(status);
   lease.release();
   if (recordMatches(join(root, name(id)), id) === true) return false;
@@ -324,7 +317,6 @@ function removePlan(root: string, id: string): void {
 }
 
 function removeBackup(root: string, id: string): void {
-  // The caller holds the exclusive lease, so the lease file goes too. Waiters on the old file see it is gone and retry.
   for (const path of [join(root, name(id)), recordPath(root, id), join(root, name(id) + '.lock')]) {
     try { unlinkSync(path); } catch (error: any) { if (error?.code !== 'ENOENT') throw error; }
   }
@@ -376,7 +368,6 @@ function removableBackup(path: string, id: string): boolean | undefined {
 
 const LEASE_FILE = /^restart-([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\.lock$/;
 
-/** Removes lease files that no backup record or plan uses and that no process holds. The caller holds the gate. */
 function removeOrphanLeases(root: string, recorded: Set<string>, plan: any): void {
   for (const entry of readdirSync(root)) {
     const id = LEASE_FILE.exec(entry)?.[1];

@@ -14,7 +14,6 @@ type Notice = (notice: { title: string; message: string }) => void;
 
 const message = (reason: unknown) => reason instanceof Error ? reason.message : String(reason);
 
-/** Model visibility of each machine. "local" comes from the local daemon settings; remote machines load on first use. */
 export function createHostModelVisibility(localSettings: Accessor<AppSettings | undefined>, addNotice: Notice, saveLocal?: (settings: AppSettings, baseline: AppSettings) => Promise<SettingsChange>) {
   const [remote, setRemote] = createStore<Record<string, Visibility>>({});
   const loading = new Set<string>();
@@ -75,7 +74,6 @@ export function createHostModelVisibility(localSettings: Accessor<AppSettings | 
   });
   onCleanup(() => { disposed = true; stopConnections(); void unlisten.then(stop => stop()); void unlistenLocal.then(stop => stop()); });
 
-  /** Hidden model ids of the machine, or undefined while they load. */
   const hidden = (hostId: string): readonly string[] | undefined => {
     if (hostId === "local") return localSettings()?.hiddenModels;
     const value = remote[hostId];
@@ -85,7 +83,6 @@ export function createHostModelVisibility(localSettings: Accessor<AppSettings | 
     return value?.hiddenModels;
   };
 
-  /** Hide models that the machine reports for the first time. */
   const recordSeen = (hostId: string, ids: string[], retry = true): Promise<void> => {
     if (disposed) return Promise.resolve();
     if (ids.length) pending.set(hostId, [...new Set([...(pending.get(hostId) ?? []), ...ids])]);

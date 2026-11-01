@@ -88,7 +88,6 @@ test('saving one window preserves drafts edited or cleared in another window', a
   await trackBrowserStorage(first);
   await trackBrowserStorage(second);
   const editor = page => page.getByRole('textbox', { name: 'Message piop' });
-  // The newest unsent chat is the one New conversation reopens.
   await editor(second).fill('Second window draft');
   await editor(first).fill('First window draft');
   await first.evaluate(() => window.savedDraft());
@@ -134,7 +133,6 @@ test('local and remote drafts remain separate across full browser reloads', asyn
   assert.equal(await page.getByRole('button', { name: 'Host: Remote', exact: true }).count(), 1);
 });
 
-// Fixes the page clock and holds its timers, so the page saves only when the test makes it hidden.
 async function holdBrowserClock(page, now) {
   await page.evaluate(now => {
     const { setTimeout, clearTimeout } = window, realNow = Date.now, held = new Map();

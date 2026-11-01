@@ -17,7 +17,6 @@ const { default: register } = await bundle('extensions/piop-context-bar/index.ts
 const { separatePromptInstructions } = await bundle('clients/ui/lib/promptInstructions.ts', 'panel.mjs');
 
 const project = join(homedir(), 'code/app');
-/** The end of a system prompt as Pi 1.1.0 renders it (core/system-prompt.js buildSystemPrompt). */
 const systemPrompt = `You are an expert coding assistant.
 
 <project_context>
@@ -62,7 +61,6 @@ function session({ prompt = () => systemPrompt, tools = [], settings = {} } = {}
     branch,
     emit: (name, event = {}) => handlers.get(name)(event, ctx),
     say: text => branch.push({ type: 'message', message: { role: 'user', content: text, timestamp: branch.length + 1 } }),
-    /** One model call: Pi builds the context, then sends the provider request. */
     turn: (payload = {}) => { handlers.get('context')({ messages: [] }, ctx); handlers.get('before_provider_request')({ payload }, ctx); },
     panel: () => separatePromptInstructions(JSON.parse(status.slice('json:'.length))),
   };

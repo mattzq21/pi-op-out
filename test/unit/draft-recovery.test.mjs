@@ -20,7 +20,6 @@ afterEach(async () => {
 
 const openWindow = () => createRoot(dispose => { windows.push(dispose); return createConversationDrafts(message => storageErrors.push(message)); });
 
-/** A window that starts sending a message to a chat and is closed before the send ends. */
 async function interruptedSend(text, { dispatched = false } = {}) {
   const drafts = openWindow();
   const owner = new NativeTransport({ hostId: 'local', draftKey: 'local:chat-1' });
@@ -33,7 +32,6 @@ async function interruptedSend(text, { dispatched = false } = {}) {
   return handle.id;
 }
 
-/** The next window, with its recovery list shown. */
 async function nextWindow(onSelected = () => {}) {
   const [conversationKey, setConversationKey] = createSignal("local:chat-1");
   const drafts = openWindow();

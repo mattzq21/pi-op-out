@@ -1,6 +1,5 @@
 import { createDependencyEffect, createRef, type RefObject } from "../lib/solid";
 
-/** A thin bar that shows the scroll position of the messages. It does not take touches or clicks. */
 export function ScrollIndicator(props: { scrollRoot: RefObject<HTMLDivElement | null> }) {
   const track = createRef<HTMLDivElement | null>(null);
   const thumb = createRef<HTMLDivElement | null>(null);

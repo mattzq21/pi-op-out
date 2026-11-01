@@ -6,10 +6,6 @@ import { beforeAll, expect, test } from 'bun:test';
 import * as Worktrees from '../../daemon/src/chat_worktrees';
 import { temporaryDirectory } from './harness';
 
-/*
- * Real Git repositories in a temporary folder. Each test makes its own repository and home folder.
- */
-
 beforeAll(() => {
   Object.assign(process.env, {
     GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_NOSYSTEM: '1',
@@ -26,7 +22,6 @@ function write(path: string, content: string): void {
   writeFileSync(path, content);
 }
 
-/** A repository with one commit: tracked.txt, gone.txt, .gitignore (ignores *.log). */
 function repository(): { repo: string; home: string; base: string } {
   const base = realpathSync(temporaryDirectory('piop-worktrees-'));
   const repo = join(base, 'project');
@@ -42,7 +37,6 @@ function repository(): { repo: string; home: string; base: string } {
   return { repo, home, base };
 }
 
-/** Untracked and ignored files with their contents, without the .git file. */
 function files(root: string): Record<string, string> {
   const listed = git(root, 'ls-files', '--cached', '--others', '--exclude-standard', '-z').split('\0').filter(Boolean);
   return Object.fromEntries([...new Set(listed)].filter(name => existsSync(join(root, name))).sort().map(name => [name, readFileSync(join(root, name), 'utf8')]));
@@ -56,10 +50,8 @@ function hasRef(repo: string, ref: string): boolean {
   try { git(repo, 'rev-parse', '--verify', '--quiet', ref); return true; } catch { return false; }
 }
 
-/** The first n hex digits of the chat ID: the worktree folder and branch name Piop tries first. */
 function short(chatId: string, n = 4): string { return chatId.replaceAll('-', '').slice(0, n); }
 
-/** Claims the shortest free name, as Piop does, then creates the worktree there. */
 async function create(input: { sourceCwd: string; chatId: string; home: string; baseBranch?: string }) {
   const repository = await Worktrees.detectRepository(input.sourceCwd);
   if (!repository) return Worktrees.createWorktree({ ...input, worktree: join(Worktrees.worktreesRoot(input.home), short(input.chatId)), branch: 'piop/' + short(input.chatId) });

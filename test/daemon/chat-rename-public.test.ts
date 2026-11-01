@@ -13,7 +13,6 @@ test('a renamed chat shows its new name in the chat list, for other connections 
     const phone = await agents.daemon.connect();
     const named = async (client: { invoke(command: string, args?: any): Promise<any> }) => (await client.invoke('list_sessions')).find((session: any) => session.id === chat.sessionId)?.name;
 
-    // The other connection is told that the list changed, so it reloads it instead of polling.
     const told = phone.waitEvent('pi://sessions-changed');
     await agents.daemon.invoke('broker_request', { hostId: 'local', path: '/orchestration', body: { action: 'rename', sessionId: chat.sessionId, hostId: 'local', name: 'Release 2.0 plan' } });
     await told;

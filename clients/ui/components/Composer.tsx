@@ -42,7 +42,6 @@ interface Props {
   ownershipRequired?: boolean;
   onTakeOwnership?: () => Promise<void>;
   toolbar?: JSXElement;
-  /** The conversation goal. Its queue entry carries the goal buttons. */
   goal?: GoalControls;
   streaming: boolean;
   compacting?: boolean;
@@ -62,7 +61,6 @@ interface Props {
   sessionCache?: { rate: number; low: boolean; cachedTokens: number; promptTokens: number };
   contextUsage?: ContextUsage;
   controlsDisabled?: boolean;
-  /** Disables the controls of the queued messages and the hold button. A message being sent does not disable them, because the daemon changes the queue one step at a time. Defaults to controlsDisabled. */
   queueControlsDisabled?: boolean;
   submissionDisabled?: boolean;
   draft?: string;
@@ -72,12 +70,9 @@ interface Props {
   onUploadsChange?: (uploads: StateUpdate<ComposerUpload[]>) => void;
   focusRequest?: number;
   pendingMessages?: import("../types").PendingMessage[];
-  /** Loads an image of a queued message for its preview. */
   loadPendingImage?: import("./PendingImages").PendingImageLoader;
   onChangePending?: (id: string, behavior: import("../types").PendingMessageAction) => Promise<void>;
-  /** True while the queue is on hold: queued messages wait until the user resumes it. */
   queueHeld?: boolean;
-  /** Holds the queue, or resumes it and sends the held messages. */
   onHoldQueue?: (held: boolean) => Promise<void>;
   onStageSubmission?: StageDraftSubmission;
   onSend: (message: string, behavior?: "steer" | "followUp", images?: ImageAttachment[], submission?: DraftSubmissionHandle) => void | boolean | Promise<void | boolean>;
@@ -111,7 +106,6 @@ function commandMatches(commands: SlashCommand[], query: string) {
   return [...exact, ...matches].slice(0, 7);
 }
 
-/** The arguments a command takes, for example "[scope]" or "[on|off|toggle]". Hints (options with an empty value) give the full form; without hints the choices make it. Undefined when the command declares none. */
 function commandUsage(command: SlashCommand) {
   const options = command.options ?? [];
   const hints = options.filter(option => !option.value).map(option => option.label);
@@ -144,10 +138,8 @@ function insideBounds(bounds: DOMRect | undefined, x: number, y: number) {
   return Boolean(bounds && x >= bounds.left && x <= bounds.right && y >= bounds.top && y <= bounds.bottom);
 }
 
-/** True for a queued /compact. It runs as it is, so it cannot be edited. */
 const queuedCompaction = (text: string) => /^\/compact(?:\s|$)/.test(text.trimStart());
 
-/** A sent message keeps its row when the daemon queues it: the row of the message still being sent has the submission ID that the queued item carries. */
 const pendingKey = (message: import("../types").PendingMessage) => message.goalSubmissionId ?? message.id;
 
 function pendingControlsDisabled(controlsDisabled: boolean, changingPending: boolean, onChangePending: Props['onChangePending']) {
@@ -287,7 +279,6 @@ export function Composer(props: Props) {
       ? skillMatches(composer().commands, required(skillQuery()))
       : []);
 
-  /** The command and argument text while the user types the argument of a command that has options. */
   const argumentInput = createMemo(() => {
     const caret = selection();
     const text = value();
@@ -299,7 +290,6 @@ export function Composer(props: Props) {
     return typed && command?.options?.length ? { command, options: command.options, prefix: typed[2].trimStart().toLowerCase() } : undefined;
   });
 
-  /** The command and its arguments, shown while the user writes the command. */
   const argumentUsage = createMemo(() => {
     const input = argumentInput();
 
@@ -311,7 +301,6 @@ export function Composer(props: Props) {
     composerRef.current?.querySelector<HTMLElement>('.command-palette [aria-selected="true"]')?.scrollIntoView({ block: "nearest", inline: "nearest" });
   }, () => [selectedMatch(), matches()]);
   createDependencyEffect(() => { setPaletteDismissed(false); }, () => [value()]);
-  /* Undo must not move text between the draft and a queued message that the user edits. */
   createDependencyEffect(() => { ref.current?.clearHistory(); }, () => [editingPending()?.id]);
   createDependencyEffect(() => {
     const dismissOutside = (event: PointerEvent) => { if (!(event.target instanceof Node) || !composerRef.current?.contains(event.target)) setPaletteDismissed(true); };
@@ -343,7 +332,6 @@ export function Composer(props: Props) {
     };
   }, () => []);
 
-  /** Files dropped anywhere in the chat pane that holds this composer are attached. */
   const dropZone = () => composerRef.current?.closest<HTMLElement>(".chat-shell") ?? composerRef.current;
   const carriesFiles = (event: DragEvent): event is DragEvent & { dataTransfer: DataTransfer } => Boolean(event.dataTransfer && (event.dataTransfer.types.includes("Files") || (isTauri() && event.dataTransfer.types.includes("text/uri-list"))));
   createDependencyEffect(() => {
@@ -412,7 +400,6 @@ export function Composer(props: Props) {
   createDependencyEffect(resizeEditor, () => [value()]);
 
   createDependencyEffect(() => {
-    // Measure after the mobile viewport height is updated.
     let frame = 0;
     const resize = () => { cancelAnimationFrame(frame); frame = requestAnimationFrame(resizeEditor); };
     window.addEventListener("resize", resize);
@@ -486,7 +473,6 @@ export function Composer(props: Props) {
     ref.current?.setSelectionRange(value().length, value().length);
   };
 
-  /** Saves the edited queued message. The editor stays open with the error when the save fails. */
   const saveEdit = async () => {
     const edit = editingPending();
 
@@ -511,9 +497,7 @@ export function Composer(props: Props) {
     void props.onHoldQueue(held).catch((reason) => setControlError(reason instanceof Error ? reason.message : String(reason))).finally(() => setChangingPending(false));
   };
 
-  /** The queue box shows while it has messages, a goal error, or a hold. */
   const showPendingBox = () => composer().pendingMessages.length > 0 || Boolean(props.goal?.error()) || Boolean(props.queueHeld);
-  /** The hold button. Without a queue box it stands alone, so the user can hold the queue before sending. */
   const renderQueueHold = (alone = false) => (<Show when={props.onHoldQueue}><div class="pending-queue-hold" classList={{ held: Boolean(props.queueHeld), alone }}><span>{props.queueHeld ? "Queue on hold. Messages wait until you resume." : ""}</span><button type="button" disabled={queueDisabled() || changingPending()} aria-pressed={Boolean(props.queueHeld)} data-tooltip={props.queueHeld ? "Send the held messages" : "Keep messages in the queue until you resume"} onClick={() => holdQueue(!props.queueHeld)}>{props.queueHeld ? <><Play size={13} />Resume queue</> : <><Pause size={13} />Hold queue</>}</button></div></Show>);
   const queueDisabled = () => props.queueControlsDisabled ?? composer().controlsDisabled;
   const pendingDrag = usePendingMessageDrag(() => (composer().pendingMessages), () => (pendingControlsDisabled(queueDisabled(), changingPending(), composer().onChangePending)), () => (changePending));

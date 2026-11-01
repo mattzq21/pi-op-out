@@ -14,7 +14,6 @@ beforeAll(async () => {
   home = realpathSync(mkdtempSync(join(tmpdir(), 'piop-branch-history-')));
   root = join(home, '.piop');
   mkdirSync(join(root, 'sessions', 'project'), { recursive: true });
-  // Storage code finds its root from the home folder and this setting.
   process.env.PIOP_STORAGE_DIRECTORY = relative(realpathSync(homedir()), root);
   modules = {
     history: await import('../../daemon/src/chat_branch_history'),
@@ -36,7 +35,6 @@ afterAll(() => {
 const text = (value: string) => [{ type: 'text', text: value }];
 const message = (id: string, parentId: string | null, role: string, content: any, extra: any = {}) => ({ type: 'message', id, parentId, timestamp: new Date().toISOString(), message: { role, content, timestamp: 1, ...extra } });
 
-/** A published source chat whose first message references a shared goal attachment, with a saved goal. */
 async function sourceChat() {
   const { database, dependencies, publication, lock, goals } = modules;
   const attachment = join(root, 'sessions', 'project', 'attachments', 'goal-' + randomUUID().replace(/-/g, '').slice(0, 6));
@@ -67,7 +65,6 @@ async function sourceChat() {
   return { id, path, cwd, attachment, entries: [...entries, ...current] };
 }
 
-/** Deletes a chat the way the daemon's storage worker does. */
 async function deleteChat(path: string) {
   const open = (file: string) => openSync(file, constants.O_CREAT | constants.O_RDWR | constants.O_NOFOLLOW, 0o600);
   const locks = { restore: open(join(root, 'restore.lock')), transactions: open(join(root, 'session-transactions.lock')) };
@@ -112,7 +109,6 @@ test('a branch copies history through the selected final response, current setti
   expect(modules.names.sessionName(result.sessionPath, sessionId)).toBe('Source (branch)');
   const settings = modules.records.records(result.sessionPath, sessionId).map((record: any) => record.entry);
   expect(settings.map((entry: any) => entry.customType ?? entry.type).sort()).toEqual(['piop-input-hold', 'thinking_level_change']);
-  // The branch waits for the user's first message.
   expect(settings.find((entry: any) => entry.customType === 'piop-input-hold').data).toEqual({ held: true });
   expect(settings.find((entry: any) => entry.type === 'thinking_level_change').thinkingLevel).toBe('high');
   expect(modules.goals.read(result.sessionPath, sessionId)).toMatchObject({ objective: 'Keep going', sessionId });
@@ -188,7 +184,6 @@ test('a publication that saves the transcript but cannot finish is removed', asy
   const sessionId = modules.database.reserve(root);
   const locksBefore = leftovers(source.id, source.path).locks;
   const db = modules.database.open(root);
-  // The transcript is linked before its publication record is retired; failing that retirement leaves it only partly saved.
   db.exec("CREATE TRIGGER keep_branch_publication BEFORE DELETE ON session_publications WHEN json_extract(OLD.record_json, '$.sessionId')='" + sessionId + "' AND json_extract(OLD.record_json, '$.phase')='linked' BEGIN SELECT RAISE(ABORT, 'Retirement failed'); END");
   db.close();
   try {
@@ -199,7 +194,6 @@ test('a publication that saves the transcript but cannot finish is removed', asy
     cleanup.exec('DROP TRIGGER keep_branch_publication');
     cleanup.close();
   }
-  // Recovery retries with only the branch identity.
   await modules.history.discardBranchHistory(root, sessionId, null);
   expect(readdirSync(join(root, 'sessions', 'project')).filter(name => name.includes(sessionId))).toEqual([]);
   expect(leftovers(sessionId, join(root, 'missing'))).toMatchObject({ registry: false, goal: false, state: 0, journals: 0, quarantine: 0, locks: locksBefore });

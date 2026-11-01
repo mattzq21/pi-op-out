@@ -14,7 +14,6 @@ const REQUEST_TIMEOUT = 660_000;
 
 type Pending = { resolve(value: any): void; reject(error: Error): void };
 
-/** A connection to the in-process session host (the "host daemon"). */
 export class Daemon {
   alive = true;
   readonly remotePort: number | undefined = undefined;
@@ -40,7 +39,6 @@ export class Daemon {
 
   async configure(settings: AppSettings): Promise<void> {
     const configuration = { contextCapSettings: contextCapSettings(settings), settings: agentResources(settings), autoCompaction: true, autoRetry: settings.autoRetry };
-    // Every request to the host connects first, so an unchanged configuration must not write storage or reconfigure the sessions again.
     const key = JSON.stringify(configuration);
     if (key === this.appliedConfiguration) return;
     this.appliedConfiguration = undefined;
@@ -88,7 +86,6 @@ function connectionConfig(settings: AppSettings, hostId: string): string | undef
   return JSON.stringify([remote.target, remote.piPath]);
 }
 
-/** All open host-daemon connections, by host id. */
 export class DaemonRegistry {
   daemons = new Map<string, Daemon>();
   lock = new Mutex();
@@ -178,7 +175,6 @@ function handleEvent(app: App, connection: Daemon, packet: any): void {
   app.emit('pi://event', { runtimeId: packet.runtimeId ?? null, event: packet.event ?? null });
 }
 
-/** Records whether a local session still has saved settings to apply, and sends the new count to clients. */
 function updateSettingsPending(app: App, hostId: string, key: string, pending: boolean): void {
   const sessions = app.pi.settingsPendingSessions;
   if (hostId !== 'local' || sessions.has(key) === pending) return;
@@ -194,7 +190,6 @@ function handleSessionState(app: App, connection: Daemon, hostId: string, packet
   const sessionId = typeof state.sessionId === 'string' ? state.sessionId : undefined;
   const sessionPath = typeof state.sessionFile === 'string' ? state.sessionFile : undefined;
   const previous = app.pi.activeAgents.get(key);
-  // The chat list shows only these facts of a running chat; other state changes do not change it.
   const listChanged = !previous || previous.working !== working || previous.sessionId !== sessionId || previous.sessionPath !== sessionPath;
   if (sessionId !== undefined) {
     for (const agent of app.pi.activeAgents.values()) if (agent.hostId === hostId && agent.sessionId === sessionId) agent.working = working;
@@ -229,7 +224,6 @@ function handlePacket(app: App, connection: Daemon, hostId: string, packet: any)
     case 'stderr': app.emit('pi://stderr', packet); return;
     case 'provider_auth_changed':
       app.emit('pi://provider-auth-changed', { hostId, flow: packet.flow ?? null });
-      // Plan usage comes from the logins of the local Pi, so a login change there can add or remove a provider.
       if (hostId === 'local') void app.usage.refresh(app, undefined, true);
       return;
     case 'plugins_changed': app.emit('pi://plugins-changed', { hostId }); return;

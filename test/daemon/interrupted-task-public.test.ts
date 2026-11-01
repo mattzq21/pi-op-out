@@ -7,7 +7,6 @@ import { text } from './agent-chats';
 
 const command = (daemon: TestDaemon, runtimeId: string, value: any) => daemon.invoke('pi_command', { runtimeId, command: value });
 
-/** The saved messages of the chat, read from its transcript. */
 async function saved(daemon: TestDaemon, sessionId: string): Promise<any[]> {
   const path = (await daemon.invoke('list_sessions')).find((session: any) => session.id === sessionId)?.path;
   if (!path) return [];
@@ -22,7 +21,6 @@ async function until<T>(read: () => Promise<T>, done: (value: T) => boolean): Pr
   }
 }
 
-/** Ends the daemon of home at once, as a crash does: no shutdown runs. */
 async function crash(home: string): Promise<void> {
   const executable = await daemonExecutable();
   for (const pid of readdirSync('/proc').filter(name => /^\d+$/.test(name))) {

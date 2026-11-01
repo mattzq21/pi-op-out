@@ -1,9 +1,7 @@
-// Needless re-render report: DOM that is recreated, moved, or flipped and set back between two times.
 import { Mirror, isMutation } from './mirror.mjs';
 
 const clip = (v, max = 40) => (v == null ? 'null' : JSON.stringify(String(v).replace(/\s+/g, ' ').trim().slice(0, max)));
 
-// Tag, class and text of a subtree. Empty text and comments (SolidJS placeholders) are skipped.
 function signature(mirror, id) {
   const m = mirror.nodes.get(id);
   if (!m) return '';
@@ -19,7 +17,6 @@ function textOf(mirror, id) {
   return m.children.map(c => textOf(mirror, c)).join(' ');
 }
 
-// Labels that hold numbers (dates, counts, message text) differ per item; mask them so one line covers all items.
 const norm = s => s.replace(/\[aria-label="[^"]*\d[^"]*"\]/g, '[aria-label=*]');
 
 const blank = (mirror, id) => {
@@ -27,7 +24,6 @@ const blank = (mirror, id) => {
   return !m || (m.type === 3 && !(m.text || '').trim()) || m.type === 5;
 };
 
-/** Returns { lines, totals } for mutations with from <= timestamp <= to. */
 export function refreshReport(events, from, to, { flipMs = 1000, limit = 60 } = {}) {
   const mirror = new Mirror();
   const removed = [], added = [], values = new Map(), rewrites = new Map();
@@ -65,10 +61,8 @@ export function refreshReport(events, from, to, { flipMs = 1000, limit = 60 } = 
     }
   }
 
-  // Pair removed and added subtrees with the same signature.
   const groups = new Map();
   const used = new Set();
-  // Prefer the same node, then the same parent, then any parent.
   for (const r of removed) {
     let match = -1;
     for (const same of [a => a.id === r.id, a => a.parent === r.parent, () => true]) {
@@ -85,7 +79,6 @@ export function refreshReport(events, from, to, { flipMs = 1000, limit = 60 } = 
     g.count++; g.parents.add(r.parent); groups.set(key, g);
   }
 
-  // Values that change and return to the old value within flipMs.
   const flips = new Map();
   for (const v of values.values()) {
     const c = v.changes;

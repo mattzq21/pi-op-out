@@ -1,6 +1,5 @@
 import { stringSetting, type SettingsContribution } from '../settings';
 
-/** The OpenAI model that answers web_search, chosen in Settings → Plugins → Web search. */
 export interface WebSearchSettings {
   webSearchModel: string;
 }

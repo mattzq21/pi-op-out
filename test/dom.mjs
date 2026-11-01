@@ -6,7 +6,6 @@ import { mockIPC, clearMocks } from './mock-ipc.mjs';
 
 export async function act(action) { await action(); await new Promise(resolve => setImmediate(resolve)); }
 
-/** Retries an assertion. Only for state without a change signal, such as values stored in IndexedDB. */
 export async function retryUntil(check, timeout = 2000) {
   const deadline = Date.now() + timeout;
 
@@ -17,7 +16,6 @@ export async function retryUntil(check, timeout = 2000) {
   }
 }
 
-/** Resolves with the first truthy result of `read()`, a reactive Solid expression re-run on each change. */
 export function whenReactive(read, timeout = 2000) {
   return new Promise((resolve, reject) => createRoot(stop => {
     let latest;
@@ -26,7 +24,6 @@ export function whenReactive(read, timeout = 2000) {
   }));
 }
 
-/** Resolves with the first truthy result of `check()`, re-checked on every DOM mutation. */
 export function untilDom(check, timeout = 2000) {
   const first = check();
 
@@ -39,7 +36,6 @@ export function untilDom(check, timeout = 2000) {
   });
 }
 
-/** Resolves when `element` has attribute `name` equal to `value`, observed through DOM mutations. */
 export function attributeBecomes(element, name, value, timeout = 2000) {
   if (element.getAttribute(name) === value) return Promise.resolve();
 
@@ -50,7 +46,6 @@ export function attributeBecomes(element, name, value, timeout = 2000) {
   });
 }
 
-/** Captures console.error until `release()`, and resolves `reported(pattern)` when a matching error is logged. */
 export function captureConsoleErrors() {
   const original = console.error; const lines = []; const waiters = new Set();
   console.error = (...args) => { const line = args.map(String).join(' '); lines.push(line); for (const waiter of [...waiters]) waiter(line); };
@@ -73,7 +68,6 @@ export function captureConsoleErrors() {
 const sharedDom = new JSDOM('<!doctype html><html><body></body></html>', { url: 'http://localhost', pretendToBeVisual: true });
 const browserGlobals = ['window', 'document', 'localStorage', 'navigator', 'HTMLElement', 'HTMLHeadElement', 'HTMLInputElement', 'HTMLTextAreaElement', 'Element', 'Node', 'Text', 'DocumentFragment', 'NodeFilter', 'MutationObserver', 'KeyboardEvent', 'MouseEvent', 'Event', 'CustomEvent', 'InputEvent', 'customElements'];
 
-// The UI always runs in a browser, so modules may read browser globals while they load.
 for (const key of browserGlobals) if (!(key in globalThis) || key === 'navigator') Object.defineProperty(globalThis, key, { configurable: true, writable: true, value: sharedDom.window[key] });
 Object.defineProperty(globalThis, 'indexedDB', { configurable: true, writable: true, value: new IDBFactory() });
 Object.defineProperty(globalThis, 'IDBKeyRange', { configurable: true, writable: true, value: IDBKeyRange });
@@ -83,7 +77,6 @@ const channelWaiters = new Set();
 
 const openChannels = name => [...channels].filter(channel => channel.name === name).length;
 
-/** Resolves once every open BroadcastChannel called `name` has been closed by its owner. */
 export function channelsClosed(name, timeout = 2000) {
   if (!openChannels(name)) return Promise.resolve();
 
@@ -123,7 +116,6 @@ class BrowserBroadcastChannel {
 
 Object.defineProperty(globalThis, 'BroadcastChannel', { configurable: true, writable: true, value: BrowserBroadcastChannel });
 
-// jsdom lacks CSS.escape; this follows the CSSOM "serialize an identifier" algorithm.
 function cssEscape(value) {
   const string = String(value); let result = '';
 
@@ -144,7 +136,6 @@ sharedDom.window.CSS ??= {};
 sharedDom.window.CSS.escape ??= cssEscape;
 Object.defineProperty(globalThis, 'CSS', { configurable: true, writable: true, value: sharedDom.window.CSS });
 
-// jsdom computes no layout, so size changes are reported only when a test calls notifyResize(element).
 const resizeObservers = new Set();
 
 class BrowserResizeObserver {
@@ -161,7 +152,6 @@ export function notifyResize(element) { for (const observer of [...resizeObserve
 sharedDom.window.ResizeObserver = BrowserResizeObserver;
 Object.defineProperty(globalThis, 'ResizeObserver', { configurable: true, writable: true, value: BrowserResizeObserver });
 
-// jsdom has no media queries. Width queries follow window.innerWidth and report changes on resize.
 function mediaMatches(query) {
   const conditions = [...query.matchAll(/\((min|max)-width:\s*(\d+(?:\.\d+)?)px\)/g)];
 

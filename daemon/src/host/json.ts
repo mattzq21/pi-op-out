@@ -24,10 +24,8 @@ function normalize(value: Json): Json {
   return value;
 }
 
-/** Compares two JSON values the way serde_json compares Value (missing equals null at the top level). */
 export function jsonEqual(left: Json, right: Json): boolean { return isDeepStrictEqual(normalize(left), normalize(right)); }
 
-/** Serializes a JSON value with sorted keys, so equal values give equal text. */
 export function canon(value: Json): string { return JSON.stringify(normalize(value)); }
 
 export function messageText(content: Json, separator: string): string {
@@ -54,7 +52,6 @@ export function take(value: Json, field: string): Json {
 
 export function fail(message: string): never { throw new Error(message); }
 
-/** Holds cleanup actions that run when an operation is abandoned, the way dropping a Rust future runs destructors. */
 export class CancelScope {
   cancelled = false;
   private actions = new Set<() => void>();

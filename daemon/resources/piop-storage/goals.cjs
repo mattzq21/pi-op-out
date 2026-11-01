@@ -29,10 +29,6 @@ function read(file, sessionId) {
   });
 }
 
-/**
- * The saved goal of the conversation at file, and whether it waits for the user's first message (core input hold).
- * A conversation that is not registered has no goal.
- */
 function restore(file) {
   const db = database.open(database.storageRoot(file));
   try {

@@ -17,16 +17,13 @@ const FORKS = ['fork', 'fork_after', 'copy_after', 'clone'];
 
 interface Destination { key: string; spec: LaunchSpec; path: string; existing: boolean; cwd: string | null }
 
-/** The conversation that a view forks from: the session that it owns, or a conversation that another client owns. */
 interface BranchSource {
   spec: LaunchSpec;
   timeout: number;
   clientId: string;
-  /** The source session when the view owns it. Only the owner can let Pi prepare a fork. */
   owned?: Session;
   read(): Promise<{ state: any; snapshot: any; cwd: string | null }>;
   current(): boolean;
-  /** Takes the view off the source. Returns the presence of the view and the session that it watched. */
   detach(): { presence: any; session?: Session };
 }
 
@@ -49,7 +46,6 @@ export async function switchSession(host: Host, session: Session, runtime: strin
   return result;
 }
 
-/** Forks or branches the conversation that a read-only view shows. The view then owns the new conversation. */
 export function forkFromView(host: Host, runtime: string, view: ReadonlyView, command: any): Promise<any> {
   const packet = host.attachments.get(runtime);
   if (packet === undefined) throw new Error('This conversation has been deleted or closed');
@@ -231,7 +227,6 @@ class Branch {
     return this.source.owned.raw(request);
   }
 
-  /** Saves the copy of the history through entryId. A branch (worktree) runs in a new worktree; a fork stays in the source folder and keeps its name. */
   private async publish(entryId: string, worktree: boolean): Promise<any> {
     const cwd = this.read.cwd;
     const savedRepository = worktree && cwd ? getProjectRepository(this.host.storageRoot(), cwd) : null;

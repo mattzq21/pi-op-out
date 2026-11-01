@@ -10,10 +10,8 @@ type UsageSnapshot = z.output<typeof providerUsageSchema>;
 
 const sameValue = (previous: unknown, next: unknown) => JSON.stringify(previous) === JSON.stringify(next);
 
-/** A provider shows only once it has usage; a provider that never answered, such as one without a login, stays hidden. */
 const loaded = <T>(entry?: { usage?: T; error?: string }) => (entry?.usage === undefined ? undefined : { usage: entry.usage, error: entry.error });
 
-/** Plan usage that the daemon reads for all clients. A start or reload asks for one fresh read; later values come as events. A click on a badge asks for a fresh read of its provider only. */
 export function useAppUsage() {
   const [snapshot, setSnapshot] = createSignal<UsageSnapshot>({});
   const [usageError, setUsageError] = createSignal<string>();
@@ -25,7 +23,6 @@ export function useAppUsage() {
     if (active) next.add(provider); else next.delete(provider);
     return next;
   });
-  // The daemon sends the new usage to every client as an event, so only a failed request needs handling here.
   const refreshUsage = (provider: UsageProviderKey) => {
     if (refreshingUsage(provider)) return;
     setProviderRefreshing(provider, true);
@@ -44,7 +41,6 @@ export function useAppUsage() {
         .catch(reason => { if (!stopped) setUsageError(`Usage unavailable: ${reason instanceof Error ? reason.message : String(reason)}`); });
     };
     const changes = listen("pi://usage-changed", ({ payload }) => { if (!stopped) show(payload); }, providerUsageSchema);
-    // Events sent while the phone was offline are lost, so a restored connection loads the usage again.
     const restored = listen("pi://event", ({ payload }) => { if (payload.type === "connection_restored") load(false); }, z.object({ type: z.string().optional() }).catch({}));
     load(true);
 

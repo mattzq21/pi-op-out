@@ -26,7 +26,6 @@ function hostTriple() {
   return arch + '-unknown-linux-gnu';
 }
 
-/** Loads files imported with a "?raw" suffix as text. */
 const rawText = {
   name: 'raw-text',
   setup(context) {
@@ -35,7 +34,6 @@ const rawText = {
   },
 };
 
-/** Resolves the agent definition loader of the piop-define-agents extension and the settings module it shares with the daemon. */
 const agentLoader = {
   name: 'agent-loader',
   setup(context) {
@@ -48,7 +46,6 @@ const source = join(root, 'target', debug ? 'debug' : 'release', 'piopd');
 mkdirSync(dirname(source), { recursive: true });
 const temporaryBuild = join(dirname(source), '.piopd-' + randomUUID() + '.mjs');
 const temporaryExecutable = join(dirname(source), '.piopd-' + randomUUID());
-// The placeholder has the same length as the final ID, so the inline source map stays correct.
 const buildIdPlaceholder = 'piop-build-' + randomBytes(32).toString('hex');
 
 try {
@@ -59,7 +56,7 @@ try {
     platform: 'node',
     format: 'esm',
     target: 'esnext',
-    external: ['bun', 'bun:*', 'x11', 'usocket'], // dbus-next loads these optional modules only for bus addresses Piop does not use.
+    external: ['bun', 'bun:*', 'x11', 'usocket'],
     banner: { js: "#!/usr/bin/env bun\nimport { createRequire as __piopCreateRequire } from 'node:module';\nconst require = __piopCreateRequire(import.meta.url);\nif (process.argv[2] === '--build-id') { process.stdout.write(" + JSON.stringify(buildIdPlaceholder) + " + '\\n'); process.exit(0); }" },
     define: {
       __PIOP_BUILD_ID__: JSON.stringify(buildIdPlaceholder),
@@ -78,7 +75,6 @@ try {
   const buildId = 'piop-build-' + createHash('sha256').update(bundle.replaceAll(buildIdPlaceholder, '')).digest('hex');
   if (buildId.length !== buildIdPlaceholder.length) throw new Error('Daemon build ID length changed');
   writeFileSync(temporaryBuild, bundle.replaceAll(buildIdPlaceholder, buildId));
-  // Agent definition loads import the installed Pi package in a worker thread. Without package.json reads, imports of its dependencies fail.
   if (!debug) run(process.execPath, ['build', '--compile', '--compile-autoload-package-json', temporaryBuild, '--outfile', temporaryExecutable]);
   const output = debug ? temporaryBuild : temporaryExecutable;
   chmodSync(output, 0o755);

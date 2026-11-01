@@ -12,7 +12,6 @@ const SOURCE_LOADER = "await import('data:text/javascript;base64,' + process.arg
 const REQUEST_TIMEOUT_MS = 630_000;
 const PROBE_TIMEOUT_MS = 10_000;
 
-/** Receives event packets that the provider SDK process sends without a request, and its unexpected stops. */
 export interface Events { event(packet: any): void; stopped?(error: Error): void }
 
 const quiet: Events = { event() {} };
@@ -66,7 +65,6 @@ export async function resolveProviderAuth(executable: string, providerId: string
   }
 }
 
-/** Runs the bundled provider SDK script in a Node process and sends it JSON line requests. */
 export class Sdk {
   private connection: Connection | undefined;
   private gate = new Mutex();
@@ -128,7 +126,6 @@ export class Sdk {
     });
   }
 
-  /** Checks that a worker still answers after a request timed out, and stops it when it does not. */
   private async probe(connection: Connection): Promise<void> {
     if (connection.closed || connection.probing) return;
     connection.probing = true;

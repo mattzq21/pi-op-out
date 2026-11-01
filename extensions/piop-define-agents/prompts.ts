@@ -38,16 +38,12 @@ async function writeTemporary(path: string, contents: string) {
   finally { await file.close(); }
 }
 
-/** Piop's storage directory. The extension is installed in its piop-define-agents folder. */
 export const storageRoot = process.env.PIOP_STORAGE_ROOT || dirname(dirname(fileURLToPath(import.meta.url)));
 
-/** Relative prompt paths and agent extension paths start here. */
 export const agentDirectory = join(storageRoot, "piop-define-agents");
 
-/** The agent definitions are one JSON document in Piop's settings database, next to the app settings. */
 const DEFINITIONS = "agent-definitions.json";
 
-/** Opens the settings database to write, creating it and its tables when they are missing. */
 function openDatabase(root: string) {
   const path = join(root, "sessions.sqlite");
   fs.mkdirSync(root, { recursive: true, mode: 0o700 });
@@ -64,7 +60,6 @@ function openDatabase(root: string) {
   } catch (error) { db.close(); throw error; }
 }
 
-/** Reads one row of the settings database without writing to it. undefined when the database, its table or the row is missing. */
 function readRow(root: string, table: "application_settings" | "agent_prompt_snapshots", sql: string, key: string): Record<string, unknown> | undefined {
   const path = join(root, "sessions.sqlite");
   let metadata;
@@ -84,7 +79,6 @@ function readRow(root: string, table: "application_settings" | "agent_prompt_sna
   } finally { db.close(); }
 }
 
-/** Runs change in one write transaction of the settings database. */
 function transaction<T>(change: (db: DatabaseSync) => T, root = storageRoot): T {
   const db = openDatabase(root);
 
@@ -106,7 +100,6 @@ function storedBody(db: DatabaseSync, name: string): string | undefined {
 
 function revisionOf(body: string) { return createHash("sha256").update(body).digest("hex"); }
 
-/** Only entries with a nonblank name are agents. Piop skips other entries but keeps them in the document. */
 export const isNamedAgent = (agent: unknown): agent is { name: string } => Check(Type.Object({ name: Type.String({ pattern: "\\S" }) }), agent);
 
 export async function readConfigDocument() {
@@ -117,10 +110,6 @@ export async function readConfigDocument() {
   return { ...JSON.parse(body), revision: revisionOf(body) };
 }
 
-/**
- * Saves the agent definitions when value.revision is still the saved revision, in one transaction.
- * createOnly saves them only when none are saved yet.
- */
 export async function writeConfig(value: Config, createOnly = false): Promise<{ revision?: string; warnings: string[] } | void> {
   return transaction(db => {
     const current = storedBody(db, DEFINITIONS);
@@ -142,10 +131,6 @@ export async function writeConfig(value: Config, createOnly = false): Promise<{ 
   });
 }
 
-/**
- * Moves the agent definitions and prompt snapshots from the old database in the agent directory into the settings database, once.
- * Saved rows win over moved ones. The old database is removed after the move commits, so a crash before that repeats the move.
- */
 export function moveLegacyDefinitions() {
   const path = join(agentDirectory, "sessions.sqlite");
 
@@ -167,7 +152,6 @@ export function moveLegacyDefinitions() {
   for (const name of ["sessions.sqlite", "sessions.sqlite-wal", "sessions.sqlite-shm", "config.lock"]) fs.rmSync(join(agentDirectory, name), { force: true });
 }
 
-/** Default prompt files live with the user's own agent files in ~/.agents, shared by every Piop profile. */
 export const DEFAULT_PROMPT_PATH = "~/.agents/prompts/system/default.md";
 
 export const DEFAULT_AGENT_PROMPT_PATH = "~/.agents/AGENTS.md";
@@ -239,7 +223,6 @@ function verifiedPrompt(contents: string, digest: string) {
   return contents;
 }
 
-/** A snapshot path names its storage directory: <storage>/piop-define-agents/prompt-snapshots/<digest>.md. */
 function snapshotRoot(path: string) { return dirname(dirname(dirname(path))); }
 
 function savePromptSnapshot(path: string, digest: string, contents: string) {

@@ -53,7 +53,6 @@ const parser = new Marked({ gfm: true, tokenizer: markdownTokenizer, hooks: mark
 
 const frontmatterParser = new Marked({ gfm: true, tokenizer: frontmatterTokenizer, hooks: markdownHooks, renderer, extensions: [frontmatterExtension] });
 
-/** Highlights each `$name` and `/skill:name` reference to the skill, where the text has it. */
 function skillReferenceExtension(name: string): TokenizerAndRendererExtension {
   const reference = `(?:\\$|/skill:)${name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?![a-zA-Z0-9_-])`;
   const anywhere = new RegExp(`(^|[^a-zA-Z0-9_$/])${reference}`, "i");
@@ -95,10 +94,8 @@ function sanitizeMarkdown(html: string, streaming: boolean, detectFiles: boolean
   return template.innerHTML;
 }
 
-/** text: the web address or the full file path that the menu copies. */
 type LinkMenu = { kind: "web" | "file"; text: string; href?: string; x: number; y: number; returnFocus?: HTMLElement };
 
-/** fileLinks: plain absolute and ~ paths in the text become file links. frontmatter: "---" blocks of "key: value" lines show as code. skill: the skill whose references show highlighted. */
 export function Markdown(props: { children: string; streaming?: boolean; imageProject?: FileProject; fileLinks?: boolean; frontmatter?: boolean; skill?: string }) {
   const pathLinks = () => Boolean(props.fileLinks) && canOpenFileLinks;
   const allowFile = (value: string) => Boolean(props.imageProject && imageFileReference(value)) || (pathLinks() && openablePath(value));
@@ -210,7 +207,6 @@ export function Markdown(props: { children: string; streaming?: boolean; imagePr
     });
   });
 
-  /** kind: the word in the button labels, "code" or "table". */
   const copyBlock = async (button: HTMLButtonElement, block: HTMLElement, text: string, kind: "code" | "table") => {
     const name = kind === "code" ? "Code" : "Table";
     block.querySelector(":scope > [role=status]")?.remove();

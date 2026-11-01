@@ -4,7 +4,6 @@ import { isPromptMessage } from "./messages";
 
 export type Usage = NonNullable<ChatMessage["usage"]>;
 
-/** The id of the marker that stands for the history older than the loaded messages. */
 export const OLDER_HISTORY = "piop-older-history";
 
 export type OlderHistory = { before: string; usage?: Usage };
@@ -21,7 +20,6 @@ export function olderHistory(messages: ChatMessage[]): OlderHistory | undefined 
 
 const key = (message: ChatMessage) => message.entryId ?? message.id;
 
-/** The work messages and compactions around a loaded final response, up to the prompts of its turn. */
 function loadedWork(messages: ChatMessage[], index: number) {
   let start = index;
 
@@ -33,11 +31,9 @@ function loadedWork(messages: ChatMessage[], index: number) {
   return messages.slice(start, end).filter(message => message === messages[index] || message.role === "assistant" || message.role === "tool" || message.customType === "compaction");
 }
 
-/** Keeps the older history and the turn work that the client already loaded when a newer view of the same chat replaces it. */
 export function keepLoadedHistory(cached: ChatMessage[], next: ChatMessage[]): ChatMessage[] {
   if (!cached.length) return next;
   const positions = new Map(cached.map((message, index) => [key(message), index]));
-  /** Streamed responses have no entry id yet, so they match their saved copy by time and text. */
   const streamed = (message: ChatMessage) => cached.findIndex(item => !item.entryId && item.role === "assistant" && item.timestamp === message.timestamp && textOf(item.content) === textOf(message.content));
   const loaded = new Map<ChatMessage, ChatMessage[]>();
 
@@ -47,7 +43,6 @@ export function keepLoadedHistory(cached: ChatMessage[], next: ChatMessage[]): C
 
     if (index !== undefined && !cached[index].deferredWork) loaded.set(message, loadedWork(cached, index));
   }
-  /** The loaded work holds the compactions of its turn in their place, so their copies in the newer view go. */
   const moved = new Set([...loaded.values()].flat().map(key));
   let result = next.flatMap(message => loaded.get(message) ?? (moved.has(key(message)) ? [] : [message]));
   const first = result.find(message => message.id !== OLDER_HISTORY);

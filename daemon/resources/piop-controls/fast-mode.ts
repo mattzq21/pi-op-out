@@ -5,7 +5,6 @@ import { fastModeSession } from "../session-broker/fast-mode.ts";
 
 const statusKey = "pi-desktop-fast-mode";
 
-/** Publishes the session's fast mode choice to Piop and applies Piop changes through the fast mode extension's session interface. */
 export function registerFastModeControl(pi: ExtensionAPI) {
   let stop: (() => void) | undefined;
 

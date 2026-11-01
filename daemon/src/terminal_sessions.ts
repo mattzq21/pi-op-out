@@ -4,7 +4,6 @@ import { launchTerminalForOwner, queueInput, resizeProcess, stopTerminalProcess,
 import type { App } from './app';
 
 const RETAINED_BYTES = 4 * 1024 * 1024;
-/** Small appends are merged into blocks of this size, so many tiny outputs do not each keep a separate Buffer. */
 const BLOCK_BYTES = 64 * 1024;
 const EXITED_LIMIT = 64;
 const MAX_INPUT_BYTES = 1024 * 1024;
@@ -14,7 +13,6 @@ function sessionPart(key: string): string {
   return index < 0 ? key : key.slice(index + 1);
 }
 
-/** Saved terminal output. textEnd counts UTF-16 units. */
 export class Transcript {
   chunks: Buffer[] = [];
   length = 0;
@@ -23,7 +21,6 @@ export class Transcript {
   updated = Date.now();
   running = true;
   used = false;
-  /** The block that small appends are copied into, and the view of it that is the last chunk. */
   private block: Buffer | undefined;
   private blockView: Buffer | undefined;
   private blockUsed = 0;
@@ -34,7 +31,6 @@ export class Transcript {
     const bytes = Buffer.from(data, 'utf8');
     if (bytes.length > BLOCK_BYTES / 4) this.chunks.push(bytes);
     else {
-      // A trim or bytes() replaces the last chunk; then a new block starts.
       if (!this.block || this.chunks.at(-1) !== this.blockView || this.blockUsed + bytes.length > BLOCK_BYTES) {
         this.block = Buffer.allocUnsafe(BLOCK_BYTES);
         this.blockUsed = 0;

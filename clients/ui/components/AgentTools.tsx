@@ -3,16 +3,13 @@ import type { AgentAccess, AgentProfile, SkillConfig, ToolConfig } from "../type
 import { createDependencyEffect, createRef } from "../lib/solid";
 import "./agent-tools.css";
 
-/** Groups for related tools, by tool name. Other tools are grouped by the extension that registered them. */
 const toolGroups = [
   { name: "Subagents", tools: ["spawn_subagents", "message_subagent", "stop_subagent", "list_subagents", "await_subagents"] },
   { name: "Orchestration", tools: ["create_peer", "branchoff_peer", "message_peer", "stop_peer", "list_peers", "read_peer", "await_peers"] },
 ];
 
-/** Tools that have their own setting. codemode follows the agent's Codemode switch; list_agent_profiles is on when the Subagents or Orchestration group is. */
 const HIDDEN_TOOLS = new Set(["codemode", "list_agent_profiles", "send_to_main"]);
 
-/** The name of the extension that registered a tool, from its source path, or undefined for a Pi built-in. */
 function sourceName(source: string): string | undefined {
   if (source.startsWith("builtin:")) return undefined;
   const parts = source.split("/").filter(Boolean);
@@ -20,20 +17,16 @@ function sourceName(source: string): string | undefined {
   return file === "index" && parts.length > 1 ? parts.at(-2) : file;
 }
 
-/** The group a tool belongs to, or undefined for a tool shown without a group. */
 const toolGroup = (tool: ToolConfig) => toolGroups.find(group => group.tools.includes(tool.name))?.name ?? sourceName(tool.source);
 
 const SKILLS_ROOT = "/.agents/skills/";
 
 type Item = { key: string; label: string };
 
-/** Whether the text contains the search query, ignoring case. An empty query matches everything. */
 const matches = (text: string, query: string) => text.toLowerCase().includes(query.trim().toLowerCase());
 
-/** The items to show: all of them when the group name matches, otherwise the items whose label matches. */
 const visible = (name: string, items: Item[], query: string) => matches(name, query) ? items : items.filter(item => matches(item.label, query));
 
-/** Adds or removes keys from the selection. */
 const toggled = (selected: string[], keys: string[], enabled: boolean) => enabled
   ? [...new Set([...selected, ...keys])]
   : selected.filter(key => !keys.includes(key));
@@ -42,7 +35,6 @@ function ItemCheckbox(props: { item: Item; selected: string[]; onToggle: (keys: 
   return <label><input type="checkbox" aria-label={`Allow ${props.item.label}`} checked={props.selected.includes(props.item.key)} onInput={event => props.onToggle([props.item.key], event.currentTarget.checked)} />{props.item.label}</label>;
 }
 
-/** A titled group of checkboxes with one checkbox that selects all of them. */
 function AllowGroup(props: { name: string; kind: string; items: Item[]; selected: string[]; onToggle: (keys: string[], enabled: boolean) => void; children?: JSXElement }) {
   const all = () => props.items.every(item => props.selected.includes(item.key));
   const some = () => props.items.some(item => props.selected.includes(item.key));
@@ -58,7 +50,6 @@ function AllowGroup(props: { name: string; kind: string; items: Item[]; selected
 
 const ACCESS_MODES = [{ mode: "all", label: "All" }, { mode: "none", label: "None" }, { mode: "list", label: "Only these" }] as const;
 
-/** Chooses which agents this agent may start: all, none, or the checked ones. */
 function AgentAccessPicker(props: { label: string; value: AgentAccess | undefined; names: string[]; onChange: (value: AgentAccess) => void }) {
   const list = () => Array.isArray(props.value) ? props.value : undefined;
 
@@ -100,7 +91,6 @@ export function AgentTools(props: { tools: ToolConfig[]; query: string; selected
   </>;
 }
 
-/** The folder directly under ~/.agents/skills that holds the skill, or undefined for skills at the top of it. */
 function skillFolder(path: string): string | undefined {
   const start = path.indexOf(SKILLS_ROOT);
   if (start < 0) return undefined;

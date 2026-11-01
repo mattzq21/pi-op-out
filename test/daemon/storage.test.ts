@@ -14,7 +14,6 @@ beforeAll(async () => {
 }, 60_000);
 afterAll(() => daemon?.stop());
 
-/** A listed chat needs a user message or a name, so the default content has one user message. */
 function publicSession(home: string, cwd: string, folder: string, content = JSON.stringify({ type: 'message', message: { role: 'user', content: 'Hello' } }) + '\n'): { id: string; path: string } {
   return JSON.parse(execFileSync('node', [fileURLToPath(new URL('../fixtures/publish-chat.mjs', import.meta.url))], {
     encoding: 'utf8', timeout: 30000,
@@ -22,14 +21,12 @@ function publicSession(home: string, cwd: string, folder: string, content = JSON
   }));
 }
 
-/** Allocated bytes of a file tree as reported by du. */
 function allocatedBytes(path: string): number {
   const result = Bun.spawnSync(['du', '-s', '-B1', path]);
   if (result.exitCode !== 0) throw new Error('du failed: ' + result.stderr.toString());
   return Number(result.stdout.toString().split('\t')[0]);
 }
 
-// Placed first: no test has stored anything in this home yet, as on a new machine.
 test('a new machine, where Pi has stored nothing yet, has a storage report without warnings', async () => {
   expect((await daemon.invoke('storage_report')).hosts[0].warnings).toEqual([]);
 });
@@ -69,7 +66,6 @@ test('storage report shows each machine under its own name and reports machines 
     const before = await remote.invoke('storage_report');
     const archived = before.hosts.find((host: any) => host.hostId === 'local').archives.find((chat: any) => chat.id === toArchive.id);
     expect(archived).toBeDefined();
-    // Each SSH target picks one behavior. "working" runs the command on this machine as the remote daemon's user.
     fakeProgram(daemon.bin, 'ssh', `#!/usr/bin/env bash
 while [ "$#" -gt 0 ]; do case "$1" in -o|-F) shift 2 ;; -*) shift ;; *) break ;; esac; done
 target="$1"; shift
@@ -157,7 +153,6 @@ test('deleting a transcript with invalid chat data fails and keeps the file', as
   expect(readFileSync(path, 'utf8')).toBe('invalid json');
 });
 
-/** Installs a fake Codex app server. It gives the reply in ~/codex-reply to the usage request, closes on "close" and stays silent on "silent". */
 function installFakeCodex(reply: string): void {
   addProviderLogin(daemon.home, 'openai-codex', 'oauth');
   writeFileSync(join(daemon.home, 'codex-reply'), reply);
@@ -204,7 +199,6 @@ test('deletion refused for another client keeps the open conversation readable a
     const remove = (path: string, clientId = 'other-client') => ({ sessionPath: path, hostId: 'local', clientId });
     const listedIds = async () => (await local.invoke('list_sessions')).map((row: any) => row.id).filter((id: string) => [blocked.id, ownDelete.id].includes(id));
     expect(await local.failure('delete_session', remove(blocked.path))).toBe('Take ownership of this conversation before changing it');
-    // The client that owns a running conversation may still delete it.
     expect(await local.invoke('delete_session', remove(ownDelete.path, 'test-client'))).toEqual([ownDelete.path]);
     expect(await listedIds()).toEqual([blocked.id]);
     await local.invoke('stop_pi', { runtimeId: 'blocked-runtime' });

@@ -5,12 +5,10 @@ export interface ArchivedSession { sessionId: string; sourcePath: string; sessio
 export interface RestoredSession extends ArchivedSession { path: string }
 export interface RestoreResult { path: string; sessionPath: string; sessionId: string; sessions: RestoredSession[] }
 export interface DeletionTarget { path: string; area: 'sessions' | 'archived' }
-/** A restored session whose working folder is from gets the folder to, written in the same transaction. */
 export interface FolderMove { from: string; to: string }
 
 export type StorageFailureState = 'rolled-back' | 'pending' | 'unknown';
 
-/** Daemon replies carry errors as text, so the state rides on a first line that the client reads back. */
 const STATE_MARK = 'piop-storage-state:';
 
 export class StorageTransactionError extends Error {
@@ -56,7 +54,6 @@ function failure(error: unknown): StorageTransactionError {
   return new StorageTransactionError('unknown', error.message);
 }
 
-/** Runs the transaction in the storage at root, or in the Piop profile of this machine. */
 async function run(request: Request, options: { root?: string; signal?: AbortSignal; busyIsOk?: boolean } = {}): Promise<unknown> {
   let response: Outcome;
   try { response = await runHostOperation(storageTransaction, request, { signal: options.signal, storageRoot: options.root }); }

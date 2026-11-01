@@ -186,12 +186,10 @@ export function lockFd(lock: FileLock): number { return lock.fd; }
 export interface LockPathOptions {
   shared?: boolean;
   nofollow?: boolean;
-  /** Error text used when the path is not a regular file. */
   regularFile?: string;
   blocking?: boolean;
 }
 
-/** Opens a lock file with private permissions and takes a flock on it. Returns undefined only for a non-blocking conflict. */
 export function lockPathSync(path: string, options: LockPathOptions & { blocking: false }): FileLock | undefined;
 export function lockPathSync(path: string, options?: LockPathOptions): FileLock;
 export function lockPathSync(path: string, options: LockPathOptions = {}): FileLock | undefined {

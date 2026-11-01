@@ -6,7 +6,6 @@ import { recoverMissingTranscripts, type Recovery } from './queue_recovery';
 
 type Output = (packet: any) => void;
 
-/** Recovers missing transcripts for saved queued input, and retries in the background until done or the host stops. */
 export function recoverQueuedInput(root: string, ownership: ConversationOwnership, output: Output): void {
   let recovery = recoverMissingTranscripts(root, ownership);
   const reported = new Set<string>();
@@ -40,7 +39,6 @@ function report(recovery: Recovery, reported: Set<string>, output: Output): void
   if (recovery.recovered) output({ type: 'sessions_changed' });
 }
 
-/** Runs deferred retention cleanup now and every 30 seconds until the host stops. Returns the timer. */
 export function watchRetention(root: string, ownership: ConversationOwnership, output: Output): NodeJS.Timeout {
   let reported: string | null = null;
   let initialized = false;

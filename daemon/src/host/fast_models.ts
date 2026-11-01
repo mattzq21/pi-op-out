@@ -4,19 +4,10 @@ export type FastModelScanResult =
   | Readonly<{ provider: string; status: 'ok'; supportedModelIds: readonly string[]; context: string }>
   | Readonly<{ provider: string; status: 'error'; message: string; context?: string }>;
 
-/**
- * Finds the models that accept fast mode, with one host's model runtime and logins.
- * Omit provider to scan all registered providers that the module supports; supply it to scan one.
- * Unsupported providers produce no result; an unknown provider produces an error result.
- * context identifies the provider's account and configuration at the end of the scan.
- * An error result has no context when the login could not be read; the saved login is then unchanged.
- * Failures that stop the whole scan reject. Every call attempts discovery.
- */
 export interface FastModelDiscovery {
   scan(provider?: string): Promise<readonly FastModelScanResult[]>;
 }
 
-/** What the host knows about fast models. ready is false until the first full scan finishes. */
 export type FastModelSnapshot = {
   ready: boolean;
   providers: Record<string, { supportedModelIds: string[]; error?: string }>;
@@ -25,7 +16,6 @@ export type FastModelSnapshot = {
 
 type Saved = { context: string; supportedModelIds: string[]; error?: string };
 
-/** Saves one host's fast model results per provider and account/configuration context. */
 export class FastModelStore {
   private saved = new Map<string, Saved>();
   private ready = false;
@@ -34,7 +24,6 @@ export class FastModelStore {
 
   constructor(private discovery: FastModelDiscovery, private changed: () => void) {}
 
-  /** Scans and saves the results. A failed scan is reported in the snapshot; the last good results stay. */
   scan(provider?: string): Promise<void> {
     return this.scans.run(() => this.scanNow(provider));
   }

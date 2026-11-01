@@ -1,7 +1,6 @@
 export interface ConversationChild {
   sessionId: string;
   sessionPath: string;
-  /** "subagent", "review" or a kind that a plugin owns, such as "btw". */
   kind: string;
 }
 

@@ -124,11 +124,9 @@ test('Enter during text composition preserves the current search result', async 
     await input.send('Input.imeSetComposition', { text: 'alpha', selectionStart: 5, selectionEnd: 5, replacementStart: 0, replacementEnd: 5 });
     const composing = await count(page);
     await page.keyboard.press('Enter');
-    // WebKitGTK's input method consumes keys during a composition, so the page gets no Enter keydown.
     assert.deepEqual(await page.evaluate(() => window.compositionKey), testBrowserName === 'webkit' ? undefined : { composing: true, prevented: false });
     assert.equal(await count(page), composing);
     await input.send('Input.insertText', { text: 'alpha' });
-    // The composition of WebKitGTK's input method shows other text than "alpha", so its search starts again when the text is committed.
     const committed = testBrowserName === 'webkit' ? '1 / 2' : '2 / 2';
     assert.equal(await count(page), committed);
     await page.keyboard.press('Enter');
@@ -155,7 +153,6 @@ test('Find during text composition leaves search closed', async t => {
   try {
     await input.send('Input.imeSetComposition', { text: '日本', selectionStart: 2, selectionEnd: 2 });
     await page.keyboard.press('Control+f');
-    // WebKitGTK's input method consumes the shortcut during a composition, so the page gets no keydown.
     assert.equal(await page.evaluate(() => window.findShortcutComposing), testBrowserName === 'webkit' ? undefined : true);
     assert.equal(await page.evaluate(() => window.findShortcutPrevented), testBrowserName === 'webkit' ? undefined : false);
     assert.equal(await page.getByRole('search').count(), 0);
@@ -181,7 +178,6 @@ test('an open modal dialog leaves the Find shortcut unhandled', async t => {
   assert.equal(await page.evaluate(() => window.findShortcutPrevented), false);
   assert.equal(await page.getByRole('search').count(), 0);
   await page.keyboard.press('Escape');
-  // Closing the dialog gives focus back to the earlier element a moment later, so Find may need a moment to take it.
   await page.waitForFunction(() => !document.querySelector('dialog[open]'));
   const input = await openSearch(page);
   await input.evaluate(node => new Promise((resolve, reject) => {

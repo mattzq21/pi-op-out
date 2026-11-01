@@ -10,7 +10,6 @@ const models = [{ provider: 'p', id: 'plain' }, { provider: 'p', id: 'fast', rea
 const generalDefault = { agents: [agent('general', { isDefault: true, model: 'p/plain' }), agent('chosen', { model: 'p/fast', effort: 'low', fastMode: true }), agent('bare')] };
 const chosenDefault = { agents: [agent('general', { model: 'p/plain' }), agent('chosen', { isDefault: true, model: 'p/fast', effort: 'low', fastMode: true })] };
 
-/** A draft on a host whose agent definitions the test can change. */
 function hostDraft(t) {
   const dom = installDom();
   const host = { config: generalDefault };
@@ -23,7 +22,6 @@ function hostDraft(t) {
   const events = [];
   const draft = new DraftRuntime(() => 'local', event => events.push(event));
   const shown = () => decodeAgentValue(events.filter(event => event.statusKey === 'pi-define-agents').at(-1).statusText.slice(5)).active;
-  /** Changes the host's default agent and reloads the definitions, as Settings does after a save. */
   const changeDefault = async () => { host.config = chosenDefault; clearDraftCatalogs(); await draft.reload(() => true); };
   return { draft, shown, changeDefault, host };
 }

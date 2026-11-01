@@ -133,7 +133,6 @@ def run(command):
              executable, *command[1:]]
 
     def cancel(signum, _frame):
-        # Wait for every child and its temporary directory to be removed before returning.
         result = subprocess.run(['systemctl', '--user', 'stop', unit + '.service'])
         raise SystemExit(128 + signum if result.returncode == 0 else 1)
 

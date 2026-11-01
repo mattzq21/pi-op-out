@@ -13,7 +13,6 @@ function configuredModel(registry: ModelRegistry, name: string) {
   return model;
 }
 
-/** fastModels holds the host's fast model results, or null before the host has scanned. */
 export async function modelValidator(fastModels: FastModelSnapshot | null) {
   const directory = await piDirectory();
   await installRuntimeStorage(directory);

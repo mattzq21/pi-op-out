@@ -5,11 +5,6 @@ import { connect, createServer, type Server } from 'node:net';
 import { join } from 'node:path';
 import { refreshedUsage, startDaemon, temporaryDirectory, type TestDaemon } from './harness';
 
-/*
- * The daemon asks https://opencode.ai/zen/go/v1/usage for OpenCode Go usage. The test daemon reaches it through an
- * HTTPS proxy in this process, which sends the connection to a local TLS server with a certificate for opencode.ai
- * that only the test daemon trusts. The server answers with the body the test sets.
- */
 let daemon: TestDaemon;
 let gateway: ReturnType<typeof Bun.serve>;
 let proxy: Server;
@@ -38,7 +33,6 @@ beforeAll(async () => {
   await new Promise<void>(resolve => proxy.listen(0, '127.0.0.1', resolve));
   const proxyUrl = 'http://127.0.0.1:' + (proxy.address() as any).port;
   const home = temporaryDirectory('piop-home-');
-  // Pi keeps API keys in auth.json of its agent directory, which is the piop profile.
   mkdirSync(join(home, '.piop'), { recursive: true, mode: 0o700 });
   writeFileSync(join(home, '.piop/auth.json'), JSON.stringify({ 'opencode-go': { type: 'api_key', key: 'test-opencode-key' } }), { mode: 0o600 });
   daemon = await startDaemon({ home, env: { HTTPS_PROXY: proxyUrl, https_proxy: proxyUrl, NODE_EXTRA_CA_CERTS: cert } });

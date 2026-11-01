@@ -1,9 +1,7 @@
-// Write a stopped recording (events.json, geometry.json, recording.json). Shared by the WebDriver and Playwright recorders.
 import fs from 'node:fs';
 import path from 'node:path';
 import { TYPE } from './mirror.mjs';
 
-// Per mark and tracked selector: when did the geometry last change before the next mark?
 function settleReport(marks, geometry) {
   const report = [];
   for (let i = 0; i < marks.length; i++) {
@@ -21,7 +19,6 @@ function settleReport(marks, geometry) {
   return report;
 }
 
-// result is what PAGE.STOP returns; track is the list of tracked selectors. Returns a short summary.
 export function writeRecording(outDir, result, track = []) {
   fs.mkdirSync(outDir, { recursive: true });
   const eventsFile = path.join(outDir, 'events.json');

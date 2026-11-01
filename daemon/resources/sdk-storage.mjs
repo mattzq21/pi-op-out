@@ -77,7 +77,6 @@ function publishAuthFile(path, body) {
   storagePublish(target, temporary, body, false);
 }
 
-/** The SDK writes auth.json and models.json in place; this keeps its lock and changes only the write. */
 function installAuthStorage(FileAuthStorageBackend) {
   if (installedStorageClasses.has(FileAuthStorageBackend)) return;
   const prototype = FileAuthStorageBackend.prototype;

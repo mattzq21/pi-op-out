@@ -39,7 +39,6 @@ test.concurrent('a remote machine rejects its own app storage as a project even 
         .toBe('Piop storage directories cannot be selected as projects');
     }
     expect(await daemon.invoke('validate_project_directory', { hostId: 'server', path: sibling })).toBe(sibling);
-    // The local machine has its own storage, so the remote storage folder is an ordinary folder there.
     expect(await daemon.invoke('validate_project_directory', { hostId: 'local', path: child })).toBe(child);
 
     const chat = await daemon.invoke('create_temporary_chat', { hostId: 'server' });

@@ -33,10 +33,8 @@ test('on mobile the keyboard Enter key starts a new line and only Send queues th
   ]);
 });
 
-/** Types text, then leaves a word open in the input method and returns that word. */
 async function typeAndCompose(page, text) {
   if (testBrowserName === 'webkit') {
-    // GTK's own input method composes only Unicode entry: Ctrl+Shift+U, then hex digits, open as "u" and the digits.
     await page.keyboard.type(text);
     await page.keyboard.press('Control+Shift+u');
     await page.keyboard.type('cafe');

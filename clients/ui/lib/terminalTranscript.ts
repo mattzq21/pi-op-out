@@ -33,7 +33,6 @@ const zeroWidth = /^[\p{M}\u200b-\u200f\u2060\ufe00-\ufe0f]$/u;
 const wide = /^[\p{Extended_Pictographic}\u1100-\u115f\u2e80-\ua4cf\uac00-\ud7a3\uf900-\ufaff\ufe30-\ufe4f\uff00-\uff60\uffe0-\uffe6\u{20000}-\u{3fffd}]$/u;
 const simpleText = /^[\x20-\x7e]*$/;
 
-/** Screen columns that a character takes, as a terminal shows it. */
 function columns(char: string) {
   if (simpleText.test(char)) return 1;
 
@@ -55,14 +54,12 @@ function styleOf(rendition: TerminalRendition) {
   return style;
 }
 
-/** One screen row: its text, the styles of the text, and whether the text continues on the next row because it was too long. */
 function createRow() {
   let text = "";
   let runs: Run[] = [];
   let simple = true;
   let wraps = false;
 
-  /** The text index of a screen column. A column inside a wide character gives its start, or its end with "after". */
   const indexAt = (column: number, after = false) => {
     if (simple) return Math.min(column, text.length);
     let used = 0;
@@ -80,7 +77,6 @@ function createRow() {
 
   const width = () => simple ? text.length : [...text].reduce((total, char) => total + columns(char), 0);
 
-  /** Replaces text from start to end with value in the given rendition, and keeps the styles of the other text. */
   const splice = (start: number, end: number, value: string, rendition: TerminalRendition) => {
     const shift = value.length - (end - start);
     const parts: Run[] = [];
@@ -106,7 +102,6 @@ function createRow() {
     runs: () => runs,
     wraps: () => wraps,
     setWraps(value: boolean) { wraps = value; },
-    /** Writes a character at a column and gives the columns it takes. */
     write(column: number, char: string, rendition: TerminalRendition) {
       const charWidth = columns(char);
       const rowWidth = width();
@@ -134,11 +129,6 @@ function createRow() {
 
 type Row = ReturnType<typeof createRow>;
 
-/**
- * Turns shell output into styled text, as a terminal shows it. The last screen of rows stays editable by cursor moves,
- * for example when the shell redraws its command line. Rows that scroll off the screen become fixed text.
- * The screen size comes from the size report (ESC[8;rows;columns t) that the daemon writes into the output.
- */
 export function createTerminalTranscript() {
   let text = "";
   let runs: Run[] = [];
@@ -152,7 +142,6 @@ export function createTerminalTranscript() {
   let column = 0;
   let screenSegments: Segment[] = [];
 
-  /** Moves a row, with its styles, to the fixed text. */
   const finishRow = (finished: Row) => {
     const start = text.length;
 
@@ -177,7 +166,6 @@ export function createTerminalTranscript() {
     row = screen.length - 1;
   };
 
-  /** The rows of the line that holds the cursor. A long line takes more than one row. */
   const cursorLine = () => {
     let first = row;
     let last = row;
@@ -231,7 +219,6 @@ export function createTerminalTranscript() {
 
   const appendText = (char: string) => {
     if (char === "\r") column = 0;
-    // The terminal device sends each new line as CR LF, so a new line also starts at column 0.
     else if (char === "\n") { lineFeed(); column = 0; }
     else if (char === "\b") column = Math.max(0, onScreen() - 1);
     else if (char === "\t") column = Math.min(width - 1, (Math.floor(column / 8) + 1) * 8);
@@ -250,7 +237,6 @@ export function createTerminalTranscript() {
     appendText(char);
   };
 
-  /** The rows shown: up to the cursor or the last row with text. With lineLimit, the cursor's line shows only its first lineLimit characters. */
   const visibleScreen = (lineLimit?: number) => {
     let last = row;
 
@@ -275,7 +261,6 @@ export function createTerminalTranscript() {
 
   const screenText = () => visibleScreen().map(part => part.text).join("");
 
-  /** Drops the oldest fixed text so that the whole transcript stays within the size limit. */
   const limit = () => {
     const discard = Math.min(text.length, text.length + screenText().length - TERMINAL_OUTPUT_LIMIT);
 
@@ -292,13 +277,11 @@ export function createTerminalTranscript() {
 
       return text + screenText();
     },
-    /** The text of the line the cursor is on, for example a shell prompt and the command typed after it. */
     currentLine() {
       const { first, last } = cursorLine();
 
       return screen.slice(first, last + 1).map(screenRow => screenRow.text()).join("");
     },
-    /** Styled runs of the transcript. With lineLimit, the cursor's line shows only its first lineLimit characters. */
     segments(lineLimit?: number) {
       const fixed = runs.map((run, index) => {
         const value = text.slice(run.start, runs[index + 1]?.start);

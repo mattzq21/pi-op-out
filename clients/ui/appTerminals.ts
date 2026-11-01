@@ -42,7 +42,6 @@ export function createTerminalController({ transport, sessionTransport, conversa
   onCleanup(() => { void restartListener.then(stop => stop()); void reconnectListener.then(stop => stop()); });
 
   const [terminalTarget, setTerminalTarget] = createSignal<TerminalTarget>();
-  // Keys of conversations whose terminal panel is open. Kept in memory until shutdown.
   const [openSessions, setOpenSessions] = createSignal<ReadonlySet<string>>(new Set());
   const [terminalsBySession, storeTerminalsBySession] = createSignal<Record<string, SessionTerminals>>({});
   const closingTerminals = createRef(new Set<string>());
@@ -60,7 +59,6 @@ export function createTerminalController({ transport, sessionTransport, conversa
 
     return next;
   });
-  // Composer pane that last had focus in a conversation whose terminal panel is open. No entry means the terminal had it.
   const composerFocus = new Map<string, "main" | "split">();
   const noteFocus = (target: "terminal" | "main" | "split") => { if (target === "terminal") composerFocus.delete(terminalSessionIdRef.current); else composerFocus.set(terminalSessionIdRef.current, target); };
   const focusedComposer = () => composerFocus.get(terminalSessionIdRef.current);
@@ -451,7 +449,6 @@ export function createTerminalController({ transport, sessionTransport, conversa
     const revision = { data };
     draftRevisions.set(id, revision);
     void nativeTerminals.write(id, data, "draft").catch(reason => {
-      // The host kept its older draft. Send must expect that draft; the unsent text stays in the input.
       if (draftRevisions.get(id) === revision) draftRevisions.delete(id);
       addNotice({ title: "Could not sync terminal input", message: reason instanceof Error ? reason.message : String(reason) });
     });

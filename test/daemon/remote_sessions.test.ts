@@ -79,7 +79,6 @@ for (const hostId of ['local', 'server']) {
     const validate = (path: string) => daemon.invoke('validate_project_directory', { hostId, path });
     for (const path of [project, alias, join(project, '.')]) expect(await validate(path)).toBe(path);
     for (const blank of ['', ' ', '\t\n']) await expect(validate(blank)).rejects.toThrow("Path can't be empty");
-    // A remote machine validates through its own daemon, so it reports the same errors as the local machine.
     await expect(validate(file)).rejects.toThrow('Project path is not a directory');
     for (const path of [dangling, join(home(), 'missing')]) await expect(validate(path)).rejects.toThrow('Could not open project directory:');
     expect(readFileSync(file, 'utf8')).toBe('untouched');
@@ -160,17 +159,11 @@ test('commands for an unreachable machine report the connection failure and chan
 });
 
 
-// Regression for a user-visible race, found while migrating. The save (settings.ts saveAppSettings) and the later
-// synchronization pass (settings_synchronization.ts applyEffects) both call peers.invalidate, which raises the SSH
-// revision even when no machine changed. A connect that read the revision before either call fails with
-// "SSH settings changed for <name>; retry the command" (peers.ts connect). No client retries that error.
-// This test fails on the current code because of that defect.
 test('a machine command sent right after a settings save does not fail with an SSH retry error', async () => {
   const results: string[] = [];
   try {
     for (let round = 0; round < 4; round++) {
       const settings = await daemon.invoke('load_app_settings');
-      // A changed piopd path makes the next command open a new SSH connection, as after a user edits a machine.
       settings.hosts = [{ enabled: true, id: 'server', name: 'Server', target: 'server', piPath: round % 2 ? '~/.bun/bin/../bin/piopd' : '~/.bun/bin/piopd' }];
       if (round % 2) settings.hosts.push({ enabled: true, id: 'offline', name: 'Offline', target: 'offline', piPath: 'pi' });
       const saved = await daemon.invoke('save_app_settings', { settings });
@@ -208,7 +201,6 @@ test('remote session commands accept only transcripts inside the matching storag
 
 test('remote relocation changes only the header and keeps permissions and line endings', async () => {
   const project = join(server.home, "project ' $(touch injected) 日本語"); mkdirSync(project);
-  // Pi ends every line with a newline; a header without one is an interrupted write, which the daemon refuses.
   for (const body of ['\n', '\n{"type":"message","text":"hello 日本語"}\n']) {
     const previousProject = join(server.home, 'old-relocate');
     mkdirSync(previousProject);
@@ -274,7 +266,6 @@ test('the session list combines reachable machines, skips failing ones, sorts by
     const byId = new Map(rows.map((row: any) => [row.id, row]));
     expect(byId.get(recent.id)).toMatchObject({ hostName: 'Server', groupId: serverGroup });
     expect(byId.get(local.id)).toMatchObject({ hostName: 'Local', groupId: localGroup });
-    // A listed chat that nobody assigned joins the project of its folder.
     expect(byId.get(old.id)).toMatchObject({ groupId: 'server:' + server.home });
     expect(await daemon.waitEvent('pi://daemon-error', payload => payload.hostId === 'offline')).toMatchObject({ line: expect.stringContaining('Could not attach to Offline') });
   } finally { await useRemotes(daemon, [server]); await empty.stop(); }

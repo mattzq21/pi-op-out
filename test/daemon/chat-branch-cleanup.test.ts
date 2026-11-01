@@ -12,12 +12,6 @@ import * as Records from '../../daemon/src/chat_worktree_records';
 import * as History from '../../daemon/src/chat_branch_history';
 import { getProjectRepository, rememberProjectRepository } from '../../daemon/src/project_repositories';
 
-/*
- * Cleanup of a "Branch from here" whose creator stopped before handing the chat to the user. This process builds that
- * state with the real storage and Git code while the daemon is stopped. The daemon's startup recovery then runs the
- * cleanup through its real worker: first with a failure that must keep the recovery record, then to completion.
- */
-
 const database = require('../../daemon/resources/session-database.cjs');
 const publication = require('../../daemon/resources/piop-storage/session-publication.cjs');
 const dependencies = require('../../daemon/resources/piop-storage/goal-dependencies.cjs');
@@ -38,7 +32,6 @@ async function stop(daemon: TestDaemon): Promise<void> {
   daemons.splice(daemons.indexOf(daemon), 1);
 }
 
-/** Runs fn with storage code pointed at profile. Storage code finds its root from the real home folder and this setting. */
 async function inStorage<T>(profile: string, fn: () => Promise<T>): Promise<T> {
   const saved = process.env.PIOP_STORAGE_DIRECTORY;
   process.env.PIOP_STORAGE_DIRECTORY = relative(realpathSync(homedir()), profile);
@@ -53,7 +46,6 @@ const owners = (profile: string, directory: string): string[] => assets.readOwne
 const warnings = async (daemon: TestDaemon, id: string): Promise<string[]> =>
   (await daemon.invoke('storage_report')).hosts.find((host: any) => host.hostId === 'local').warnings.filter((line: string) => line.includes(id));
 
-/** A published chat in repo whose first message references a shared attachment, so a branch of it claims that attachment. */
 async function sourceChat(profile: string, repo: string) {
   const folder = join(profile, 'sessions', 'project');
   const attachment = join(folder, 'attachments', 'goal-' + randomUUID().replace(/-/g, '').slice(0, 6));
@@ -73,7 +65,6 @@ async function sourceChat(profile: string, repo: string) {
   return { id, path, attachment, entries };
 }
 
-/** A stopped daemon's home with a branch creation that published its transcript and claims. The creator still owns it. */
 async function unfinishedBranch() {
   const first = await start();
   const home = first.home;
@@ -92,7 +83,6 @@ async function unfinishedBranch() {
   return { home, profile, repo, ...parts };
 }
 
-/** Checks that a daemon start removed every part of the branch and kept the source chat. */
 async function expectRemoved(daemon: TestDaemon, branch: Awaited<ReturnType<typeof unfinishedBranch>>, sourceBody: string) {
   const { profile, repo, source, id, created, published } = branch;
   expect(Records.read(id, profile)).toBeNull();
@@ -111,7 +101,6 @@ async function expectRemoved(daemon: TestDaemon, branch: Awaited<ReturnType<type
 test('recovery keeps an unfinished branch creation whose cleanup failed, reports it, and later removes all its parts', async () => {
   const branch = await unfinishedBranch();
   const { home, profile, repo, source, id, created, published } = branch;
-  // The creator died.
   const db = new DatabaseSync(join(profile, 'sessions.sqlite'));
   try { db.prepare("UPDATE chat_worktrees SET record_json=json_set(record_json, '$.owner', '1:0') WHERE chat_id=?").run(id); }
   finally { db.close(); }
@@ -119,7 +108,6 @@ test('recovery keeps an unfinished branch creation whose cleanup failed, reports
   expect(existsSync(published.sessionPath)).toBe(true);
   const sourceBody = readFileSync(source.path, 'utf8');
 
-  // A read-only session folder makes the transcript discard fail during startup recovery.
   const folder = dirname(published.sessionPath);
   chmodSync(folder, 0o555);
   let failing: TestDaemon;
@@ -135,7 +123,6 @@ test('recovery keeps an unfinished branch creation whose cleanup failed, reports
   } finally { chmodSync(folder, 0o755); }
   await stop(failing!);
 
-  // The next start finishes the cleanup.
   await expectRemoved(await start(home), branch, sourceBody);
 }, 180000);
 
@@ -143,8 +130,6 @@ test('a failed cleanup of an activated branch that was never handed to the user 
   const branch = await unfinishedBranch();
   const { home, profile, repo, source, id, created, published } = branch;
   const sourceBody = readFileSync(source.path, 'utf8');
-  // Branching activated the record, then the hand-off failed and Branch.cleanup runs abandonCreation. Host operation
-  // workers only start inside the bundled daemon, so here the transcript discard fails before it changes anything.
   Records.activate(id, profile);
   const failure = await Records.abandonCreation(id, published.sessionPath, profile).then(() => null, error => String(error?.message ?? error));
   expect(failure).toContain('Could not undo the creation of chat ' + id);

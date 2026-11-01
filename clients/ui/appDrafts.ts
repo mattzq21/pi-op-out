@@ -40,7 +40,6 @@ export function createConversationDrafts(reportStorageError: (message: string) =
   let ready: Promise<void> | undefined;
   const initialize = (): Promise<void> => ready ??= persistence.read().then(saved => {
     batch(() => {
-      // Edits before the load were made on an empty composer, so the saved content merges with them. A draft moved before the load takes its saved content along.
       const next = new Map<string, DraftRecord>();
       for (const record of saved.records) {
         if (removedBeforeLoad.some(matches => matches(record.key, record.destination))) continue;
@@ -173,7 +172,6 @@ export function createConversationDrafts(reportStorageError: (message: string) =
 
   const visibleRecords = createMemo(() => [...records()].filter(([key, record]) => allows(key, record.destination)));
   const visibleSubmissions = createMemo(() => submissions().filter(item => allows(item.destination.key, item.destination)));
-  /** Submissions that this window is sending, from staging until they are accepted or rejected. They are not interrupted, so recovery does not offer them. */
   const [inFlight, setInFlight] = createSignal<ReadonlySet<string>>(new Set());
   const flying = (id: string, sending: boolean) => setInFlight(current => { const next = new Set(current); if (sending) next.add(id); else next.delete(id); return next; });
   const recoveries = createMemo(() => visibleSubmissions().filter(item => !isChatSubmissionActive(item.id) && !inFlight().has(item.id)));
@@ -232,7 +230,6 @@ export function createConversationDrafts(reportStorageError: (message: string) =
 
     return next; });
 
-  /** A message sent by an earlier window whose outcome it did not learn. The host tells it: an accepted one is done, a refused one can be restored. */
   const settleDispatched = async (submission: DraftSubmission) => {
     try {
       const outcome = await confirmSubmission(submission.destination.hostId, submission.id, failure => setConfirmationError(submission.id, failure), () => !disposed);

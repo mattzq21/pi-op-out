@@ -37,7 +37,6 @@ test('a retried response keeps the prompt that extensions set for the run', asyn
   const { session } = await createAgentSession({ cwd: directory, agentDir: directory, modelRuntime, model, resourceLoader, settingsManager, sessionManager: SessionManager.inMemory(), tools: ['read'] });
   t.after(() => session.dispose());
   await session.bindExtensions({});
-  // Tool call, failure; after the retry: tool call, answer. The tool call after the retry makes Pi rebuild the prompt for the next request.
   const replies = [['toolUse'], ['error'], ['toolUse'], ['stop']];
   session.agent.streamFunction = model => {
     const [stopReason] = replies.shift();

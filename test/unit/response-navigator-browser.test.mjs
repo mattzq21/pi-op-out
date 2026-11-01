@@ -4,7 +4,6 @@ import { startupPage } from '../startup-browser-fixture.mjs';
 
 const open = t => startupPage(t, 'development', { entryPoint: 'test/fixtures/response-navigator-browser.tsx', ready: '[data-testid="messages"]', holdStorage: false });
 const current = page => page.locator('.response-navigator-marker[aria-current="location"]').getAttribute('aria-label');
-/** How far the answer's top is below the top of the scrolling chat. */
 const answerOffset = (page, id) => page.evaluate(id => document.querySelector(`[data-response-id="${id}"]`).getBoundingClientRect().top - document.querySelector('[data-testid="messages"]').getBoundingClientRect().top, id);
 
 test('the response rail jumps to an answer, marks where the reader is, and follows scrolling', async t => {

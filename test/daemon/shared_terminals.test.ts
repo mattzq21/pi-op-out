@@ -3,16 +3,11 @@ import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { startDaemon, temporaryDirectory, type Client, type TestDaemon } from './harness';
 
-/*
- * Shared terminals belong to a conversation and to the connection that opened them. A client that reconnects with
- * the same client ID takes them over when it lists the terminals of a conversation it owns.
- */
 let daemon: TestDaemon;
 let cwd: string;
 
 beforeAll(async () => {
   daemon = await startDaemon();
-  // Interactive bash reads ~/.bashrc; the terminal directory holds the script that the terminal runs.
   writeFileSync(join(daemon.home, '.bashrc'), '[ -f ./.terminal-script ] && exec sh ./.terminal-script\n');
   cwd = join(temporaryDirectory('piop-shared-terminal-'), 'terminal');
   mkdirSync(cwd);
@@ -21,7 +16,6 @@ beforeAll(async () => {
 afterAll(() => daemon?.stop());
 
 let runtimes = 0;
-/** A saved conversation that the given client owns through a running Pi. */
 async function ownedSession(client: Client, clientId: string): Promise<string> {
   const chat = await client.invoke('create_temporary_chat', { hostId: 'local' });
   expect(await client.invoke('start_pi', { runtimeId: 'runtime-' + ++runtimes, clientId, cwd: chat.cwd, sessionId: chat.sessionId })).toMatchObject({ owned: true });
@@ -31,7 +25,6 @@ async function ownedSession(client: Client, clientId: string): Promise<string> {
 const shared = (client: Client, clientId: string, action: string, sessionId: string, args: Record<string, unknown> = {}) =>
   client.invoke('shared_terminal', { action, clientId, sessionKey: 'local:' + sessionId, hostId: 'local', ...args });
 
-/** Starts a shared terminal and resolves with the generation of its first output once "$ preserved" has arrived. */
 async function startTerminal(client: Client, clientId: string, sessionId: string, terminalId: string): Promise<string> {
   const from = client.events.length;
   await shared(client, clientId, 'start', sessionId, { sharedTerminalId: terminalId, cwd, cols: 80, rows: 24 });
@@ -369,7 +362,6 @@ test('sending oversized Unicode terminal input is rejected, keeps the draft, and
   try {
     await shared(client, 'input-size-owner', 'start', sessionId, { sharedTerminalId: terminalId, cwd: directory, cols: 80, rows: 24 });
     await shared(client, 'input-size-owner', 'draft', sessionId, { sharedTerminalId: terminalId, data: 'Keep this command' });
-    // 262145 ducks are 524290 UTF-16 characters but 1048580 bytes.
     expect(await client.failure('shared_terminal', {
       action: 'write_and_clear_draft', clientId: 'input-size-owner', hostId: 'local', sessionKey: 'local:' + sessionId,
       sharedTerminalId: terminalId, data: '🦆'.repeat(262145) + '\n', expectedDraft: 'Keep this command',
@@ -505,7 +497,6 @@ test('a reconnected owner takes over the listed terminals of its conversation an
     owned: true, generation, exited: false, inputDraft: 'Continue after moving', output: expect.stringContaining('$ preserved'),
   });
   expect(await entry(old, 'owner', 'draft-wrong', 'restored')).toBeUndefined();
-  // The terminal of the other conversation still belongs to the old connection.
   expect(await entry(old, 'owner', 'draft-other', 'unrelated')).toMatchObject({ owned: true });
   expect(await entry(reconnected, 'owner', 'draft-other', 'unrelated')).toMatchObject({ owned: false });
   await shared(reconnected, 'owner', 'close', 'draft-child', { sharedTerminalId: 'restored' });
@@ -530,7 +521,6 @@ test('listing a conversation another client owns, or a draft of another connecti
 }, 30_000);
 
 test('a saved chat terminal outlives its closed connection and returns to the same client after it takes the chat again', async () => {
-  // A separate daemon, so that this test alone holds its 8 connection slots.
   const isolated = await startDaemon();
   const fillers: Client[] = [];
   let reconnected: Client | undefined;
@@ -546,7 +536,6 @@ test('a saved chat terminal outlives its closed connection and returns to the sa
     const generation = await startTerminal(original, 'returning-owner', chat.sessionId, 'outlives-connection');
     await shared(original, 'returning-owner', 'draft', chat.sessionId, { sharedTerminalId: 'outlives-connection', data: 'Unsent after disconnect' });
 
-    // The daemon frees a connection slot only after it has cleaned up that connection, and it sends no event for it.
     for (let attempt = 0; ; attempt++) {
       if (attempt === 10) throw new Error('The daemon accepted 10 more connections without becoming full');
       const filler = await connectUnlessFull();

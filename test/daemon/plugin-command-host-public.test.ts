@@ -21,7 +21,6 @@ test('a bundled plugin that a host has not offered yet turns on once, and the ot
   const remote = await remoteMachine(daemon, 'plugin-upgrade', 'Upgraded host');
   try {
     const file = join(remote.home, '.piop', 'plugins.json');
-    // A setup saved before web-search existed, by a daemon that kept no known list.
     write(file, { enabled: ['cost'], previous: [] });
     await useRemotes(daemon, [remote]);
     expect(await daemon.invoke('plugin_status', { hostId: remote.id })).toMatchObject({ enabled: ['cost', 'web-search', 'btw'], error: null });

@@ -10,7 +10,6 @@ test.concurrent('compacting a chat replaces its oldest part with a summary, tell
     const chat = await agents.rootChat();
     await chat.command({ type: 'prompt', message: 'My favourite animal is the otter' });
     await chat.until(history => text(history.at(-1)).startsWith('Noted'));
-    // Compaction keeps the most recent part, so the chat needs enough later text to have an older part to summarize.
     for (const fact of [1, 2, 3]) {
       await chat.command({ type: 'prompt', message: `Fact ${fact}: ` + 'filler words '.repeat(3000) });
       await chat.until(history => text(history.at(-1)).startsWith(`Noted: Fact ${fact}`));
@@ -21,7 +20,6 @@ test.concurrent('compacting a chat replaces its oldest part with a summary, tell
     const phases = agents.daemon.events.slice(from).filter(event => event.payload?.runtimeId === chat.runtimeId).map(event => event.payload.event?.type).filter(type => /compaction/.test(type));
     expect(phases).toEqual(['compaction_start', 'compaction_end']);
 
-    /** What the model receives for the next message, as role and text. */
     const nextRequest = async (send: (message: any) => Promise<unknown>, message: string) => {
       const before = agents.model.requests.length;
       await send({ type: 'prompt', message });
@@ -41,7 +39,6 @@ test.concurrent('compacting a chat replaces its oldest part with a summary, tell
   } finally { await agents.close(); }
 }, 120000);
 
-/** Runs three long turns that each report 95,000 input tokens, in a chat started with the given context cap settings. */
 async function longChat(cap: { contextWindowCap: number; contextWindowCapEnabled: boolean }) {
   const agents = await agentDaemon();
   const settings = await agents.daemon.invoke('load_app_settings');
@@ -51,9 +48,7 @@ async function longChat(cap: { contextWindowCap: number; contextWindowCapEnabled
     ? { text: 'Summary of Long project: earlier steps are done.' }
     : { text: 'Step ' + ++step, tokens: 95_000 });
   const chat = await agents.rootChat();
-  // The app turns automatic compaction on for each chat it opens.
   await chat.command({ type: 'set_auto_compaction', enabled: true });
-  // Compaction keeps the most recent part, so the turns carry enough text to leave an older part to summarize.
   for (const turn of [1, 2, 3]) {
     const seen = new Set(agents.daemon.events.map(event => event.payload));
     await chat.command({ type: 'prompt', message: turn === 1 ? 'Long project' : `Continue ${turn} ` + 'filler '.repeat(12000) });
@@ -72,7 +67,6 @@ test.concurrent('a chat that reaches the context cap from Settings is compacted 
   expect(capped.summaries.every((summary: string) => summary === 'Summary of Long project: earlier steps are done.')).toBe(true);
   expect(new Set(capped.reasons)).toEqual(new Set(['threshold']));
 
-  // The scripted model allows 200,000 tokens, so 95,000 leaves plenty of room.
   const uncapped = await longChat({ contextWindowCap: 100_000, contextWindowCapEnabled: false });
   expect(uncapped.summaries).toEqual([]);
 }, 240000);

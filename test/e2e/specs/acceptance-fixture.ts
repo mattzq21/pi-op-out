@@ -47,7 +47,6 @@ export const callBridge = () => $('textarea[aria-label="E2E calls"]');
 
 export const responseBridge = () => $('textarea[aria-label="E2E responses"]');
 
-/** WebDriver setValue types each character, which takes minutes for large mocked responses, so the fields are set directly. */
 export const setBridgeValue = async (label: "E2E calls" | "E2E responses", value: string) => {
   await browser.execute((fieldLabel, fieldValue) => {
     const field = document.querySelector<HTMLTextAreaElement>(`textarea[aria-label="${fieldLabel}"]`);
@@ -81,7 +80,6 @@ const withKnownModels = (responses: BackendResponses) => {
 export const withSessionSnapshot = (responses: BackendResponses) => {
   responses = withKnownModels(responses);
 
-  // The app reads the daemon's settings through load_settings_change, which wraps them as { settings }.
   if (responses.load_app_settings) responses.load_settings_change = { settings: responses.load_app_settings };
 
   if (Object.keys(responses).some(key => key.startsWith("shared_terminal:"))) {
@@ -90,10 +88,8 @@ export const withSessionSnapshot = (responses: BackendResponses) => {
 
   if (Array.isArray(responses.list_sessions)) {
     responses.list_sessions = responses.list_sessions.map(session => ({ lastMessageAt: 0, apiCost: 0, ...session }));
-    // The app looks up a saved conversation's file and folder before it connects to it.
     const sessions = z.array(z.looseObject({ id: z.string(), path: z.string().optional(), cwd: z.string().optional(), archived: z.boolean().optional() })).catch([]).parse(responses.list_sessions);
     responses["broker_request:locate"] = { bySession: Object.fromEntries(sessions.map(session => [session.id, { sessionId: session.id, sessionPath: session.path ?? `/tmp/${session.id}.jsonl`, cwd: session.cwd ?? "/tmp", archived: session.archived ?? false, revision: "e2e" }])) };
-    // It also shows the saved history of a chat while the chat starts. The listed chats have no saved messages.
     responses["broker_request:preview"] = { bySession: Object.fromEntries(sessions.map(session => [session.id, {
       revision: "e2e-preview", sequence: 0, epoch: "e2e", liveTools: [], queue: { type: "queue_state", pendingMessages: [] }, history: { entries: [], leafId: null },
       state: { model: null, thinkingLevel: "off", isStreaming: false, sessionId: session.id, sessionFile: session.path ?? `/tmp/${session.id}.jsonl`, cwd: session.cwd ?? "/tmp", messageCount: 0, pendingMessageCount: 0 },
@@ -167,7 +163,6 @@ export const resetBackend = async () => {
   await setBridgeValue("E2E responses", JSON.stringify(isolatedUsageResponses));
 };
 
-/** Page state for failure messages: page errors, the app root classes and the start of the visible text. */
 const pageDiagnostics = async () => JSON.stringify(await browser.execute(() => ({
   errors: (window.__piopE2eErrors ?? []).slice(-10).map(error => error.slice(0, 600)),
   bridge: Boolean(document.querySelector("#pi-e2e-responses")),
@@ -175,11 +170,6 @@ const pageDiagnostics = async () => JSON.stringify(await browser.execute(() => (
   text: document.body.innerText.slice(0, 400),
 })).catch(error => ({ diagnosticsFailed: String(error) })));
 
-/**
- * Opens the script-free cleanup page in place of the app page.
- * A normal navigation keeps the app page in WebKitGTK's back/forward cache, and a database request that was running there then blocks the deletion of that database forever.
- * A replaced page has no history entry, so WebKitGTK does not cache it.
- */
 const openCleanupPage = async (cleanupUrl: string) => {
   await browser.execute(url => { location.replace(url); return null; }, cleanupUrl);
   await $("[data-piop-fixture-cleanup]").waitForExist();
@@ -187,7 +177,6 @@ const openCleanupPage = async (cleanupUrl: string) => {
 
 export const resetApp = async () => {
   const appUrl = await browser.getUrl();
-  // Keep the current IPC fixtures until the old runtimes have detached.
   try {
     const runtimes = [...new Map((await backendCalls()).filter(call => call.command === "start_pi" && !call.mocked).map(call => {
       const { runtimeId, clientId } = call.args;
@@ -200,8 +189,6 @@ export const resetApp = async () => {
     await resetBackend();
   } catch (cause) { throw new Error(`Backend reset failed: ${String(cause)} ${await pageDiagnostics()}`, { cause }); }
 
-  // The E2E build includes a script-free same-origin page. Unloading the app
-  // destroys its timers and writers before storage is cleared.
   const cleanupUrl = new URL("/e2e-cleanup.html", appUrl).href;
   try {
     await openCleanupPage(cleanupUrl);
@@ -315,7 +302,6 @@ export const startTemporaryConversation = async (responses: BackendResponses) =>
   });
   await $('button[aria-label="New conversation"]').click();
   await app.composer.waitForEnabled();
-  // A new conversation is a draft until its first message is sent.
   await app.chooseComposerOption("Model", "Acceptance model");
   await app.prepareMessage("Start the test conversation");
   await app.sendMessageButton.click();

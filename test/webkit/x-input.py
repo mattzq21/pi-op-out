@@ -1,5 +1,3 @@
-"""Real X input on the test browser's Xvfb screen through XTest, for what WebKitWebDriver gets wrong:
-middle and right mouse buttons, and window focus. Reads one JSON command per line, answers one JSON line."""
 import ctypes
 import json
 import sys
@@ -56,7 +54,6 @@ def origin(window):
     x, y, child = ctypes.c_int(), ctypes.c_int(), Window()
     x11.XTranslateCoordinates(display, window, root, 0, 0, ctypes.byref(x), ctypes.byref(y), ctypes.byref(child))
     return [x.value, y.value]
-
 
 
 def run(command):

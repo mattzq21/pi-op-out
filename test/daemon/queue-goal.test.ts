@@ -12,7 +12,6 @@ afterAll(() => rmSync(root, { recursive: true, force: true }));
 mkdirSync(join(root, 'sessions'));
 let chats = 0;
 
-/** A saved chat with a goal, and its queue. The queue reads the goal when it opens, as when the chat opens. */
 function chat(status: 'active' | null, pending: any[] = [], extra: { held?: boolean; waiting?: boolean } = {}) {
   const sessionId = 'chat-' + ++chats;
   const file = join(root, 'sessions', sessionId + '.jsonl');

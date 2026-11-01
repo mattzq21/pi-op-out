@@ -31,7 +31,6 @@ function userText(ctx: ExtensionContext, entryId?: string) {
   return Array.isArray(content) ? content.filter(part => part.type === "text").map(part => part.text).join("") : content;
 }
 
-/** SessionControls.fork. */
 export async function forkSession(ctx: ExtensionContext, mode: ForkMode, entryId?: string): Promise<ForkResult> {
   assertForkable(ctx);
   if (mode !== "clone" && !entryId) throw new Error("Select a message to branch from");
@@ -43,7 +42,6 @@ export async function forkSession(ctx: ExtensionContext, mode: ForkMode, entryId
   return { ...fork, text };
 }
 
-/** SessionControls.forkAndForget. */
 export async function forkAndForget(ctx: ExtensionCommandContext, entryId: string) {
   assertForkable(ctx);
   const entry = ctx.sessionManager.getEntry(entryId);
@@ -66,9 +64,7 @@ export async function forkConversation(ctx: ExtensionContext, options: ForkOptio
   const timestamp = new Date().toISOString();
   retained.push({ type: "custom", customType: "piop-input-hold", data: { held: true }, id: randomUUID(), parentId: null, timestamp });
   const sessionPath = join(ctx.sessionManager.getSessionDir(), `${timestamp.replace(/[:.]/g, "-")}_${sessionId}.jsonl`);
-  // The copy names the chat and entry it came from. A source's own fork source is replaced, so a copy of a branch names the branch.
   const piopForkSource = options.entryId ? { sessionId: header.id, sessionPath: source, entryId: options.entryId } : undefined;
-  // A fork of a root chat copies the auxiliary chats made through its fork point; its history then names the copies.
   const copies = planAuxiliaryCopies({ root: rootForDirectory(ctx.sessionManager.getSessionDir()), source: { id: header.id, path: source }, target: { id: sessionId, path: sessionPath }, cutoff: selected.filter(entry => !isCurrent(entry)).at(-1)?.timestamp ?? header.timestamp });
   retained.splice(0, retained.length, ...rewriteForkHistory(retained, copies));
   const retries = retryRecord(copies);

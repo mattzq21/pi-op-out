@@ -7,21 +7,12 @@ const nativeImageSchema = z.object({ data: z.string().optional(), mimeType: z.st
 const pasteShortcut = (event: KeyboardEvent) => (event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "v" && !event.altKey;
 
 interface Options {
-  /** The text field that receives pasted files. */
   field: () => HTMLElement | null | undefined;
-  /** False while the field cannot take files. */
   enabled: () => boolean;
-  /** Called when a paste starts. Returns the function that adds the pasted files, so they go where the paste started. */
   start: () => (files: File[]) => Promise<void>;
   error: (message: string) => void;
 }
 
-/**
- * Pasted files and images for a text field, from every source a platform uses:
- * the files of a paste event, the system clipboard when a paste event has no files and no text,
- * the system clipboard after Ctrl+V when WebKitGTK sends no paste event for an image, and the native image paste of the Android app.
- * Use onPaste on the field or an element around it, and onKeyDown on the field. Call it inside a component.
- */
 export function createFilePaste(options: Options) {
   let revision = 0;
   const failed = (reason: unknown) => options.error(reason instanceof Error ? reason.message : String(reason));

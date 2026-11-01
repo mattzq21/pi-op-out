@@ -46,6 +46,5 @@ test('a double click on the handle sets the default height again', async t => {
   await page.keyboard.press('Home');
   assert.equal(await height(page), 140);
   await handle(page).dblclick();
-  // The default is a third of the window height, between 210 and 380 pixels.
   assert.equal(await height(page), Math.round(800 * 0.34));
 });

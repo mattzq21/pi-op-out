@@ -63,7 +63,6 @@ test('valid images are sent with their bytes and media type', async t => {
 });
 
 test('native file drops convert physical coordinates before attaching files', async t => {
-  // WebKit sets the device scale of a whole browser, so its page starts at scale 2.
   const { page, directory } = await fileComposer(t, testBrowserName === 'webkit' ? { deviceScaleFactor: 2 } : undefined);
   const display = await page.context().newCDPSession(page);
   try {
@@ -316,7 +315,6 @@ test('disabled attachment input ignores pasted files', async t => {
   const editor = page.getByRole('textbox', { name: 'Message piop' });
   await editor.focus();
   await page.keyboard.press('Control+v');
-  // WebKitGTK leaves a pasted image out of the paste event; the app reads it from the clipboard.
   assert.equal(await page.evaluate(() => window.pastedFileCount), testBrowserName === 'webkit' ? 0 : 1);
   assert.equal(await page.locator('.attachments button').count(), 0);
   await page.getByRole('checkbox', { name: 'Disable controls' }).uncheck();
@@ -389,7 +387,6 @@ test('dropping a file attaches its content and focuses the editor', async t => {
   ]);
 });
 
-// WebKitGTK loses the files of a real drop (https://bugs.webkit.org/show_bug.cgi?id=323277), so its file drags are made in the page: they are not trusted and keep dropEffect "none".
 const trustedDrops = testBrowserName !== 'webkit';
 
 test('file dragging offers a copy operation', async t => {

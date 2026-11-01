@@ -24,7 +24,6 @@ test('completed work groups repeated tools and keeps the final answer outside it
   assert.equal(await group.evaluate(node => node.open), false);
   await summary.click();
   await group.getByText('read x2', { exact: true }).waitFor();
-  // Reasoning traces show only in the debug view.
   assert.doesNotMatch(await page.locator('body').textContent(), /Consider the evidence/);
   assert.doesNotMatch(await group.textContent(), /Final answer/);
   const answer = page.getByText('Final answer', { exact: true });

@@ -6,13 +6,10 @@ let agents: Awaited<ReturnType<typeof agentDaemon>>;
 beforeAll(async () => { agents = await agentDaemon(); }, 60000);
 afterAll(async () => { await agents?.close(); });
 
-/** Sends a message the way the composer does: through the queue, with the draft's submission ID. */
 const send = (chat: Awaited<ReturnType<typeof agents.rootChat>>, message: string) => chat.command({ type: 'follow_up', message, goalSubmissionId: crypto.randomUUID() });
 const goalRoles: string[] = [];
 const turnsSoFar = (messages: any[]) => messages.filter(message => message.role === 'assistant' && text(message) === 'Still writing.').length;
-/** The goal that the chat shows last, from the goal bar status. */
 const shownGoal = (runtimeId: string) => { const status = agents.daemon.events.filter(event => event.payload?.runtimeId === runtimeId && event.payload.event?.method === 'setStatus' && event.payload.event.statusKey === 'piop-goal').at(-1)?.payload.event.statusText; return status ? JSON.parse(status) : null; };
-/** Waits until the queue hold is held, and returns the hold. */
 const untilHeld = async (chat: Awaited<ReturnType<typeof agents.rootChat>>, held: boolean) => { let state: any; for (let tries = 0; (state = await chat.command({ type: 'get_state' })).queueHeld !== held && tries < 50; tries++) await Bun.sleep(100); return state.queueHeld; };
 const settled = (runtimeId: string) => agents.daemon.waitEvent('pi://event', payload => payload.runtimeId === runtimeId && payload.event?.type === 'agent_settled', 60000);
 
@@ -30,7 +27,6 @@ test('a goal keeps the agent working turn after turn until the agent marks it co
   expect(messages.filter(message => message.role === 'assistant').map(text).filter(Boolean)).toEqual(['Still writing.', 'Still writing.', 'Report finished.']);
   expect(goalRoles.length).toBeGreaterThan(0);
   expect(new Set(goalRoles)).toEqual(new Set(['user']));
-  // The goal bar in the app reads these fields from the published goal status.
   const published = agents.daemon.events.filter(event => event.payload?.runtimeId === chat.runtimeId && event.payload.event?.method === 'setStatus' && event.payload.event.statusKey === 'piop-goal' && event.payload.event.statusText)
     .map(event => JSON.parse(event.payload.event.statusText));
   expect(published.at(0)).toMatchObject({ objective: 'Write the report', status: 'active' });
@@ -122,7 +118,6 @@ test('a long goal is saved to a file the agent reads, which stays while any chat
   const fork = await chat.command({ type: 'get_state' });
   const remove = (sessionPath: string) => agents.daemon.invoke('delete_session', { sessionPath, hostId: 'local', clientId: 'laptop' });
   await remove(original.sessionFile);
-  // The fork's history still tells its agent to read this file.
   expect(JSON.stringify(await chat.command({ type: 'get_entries' }))).toContain(file);
   expect(readFileSync(file, 'utf8').trim()).toBe(objective.trim());
   await remove(fork.sessionFile);
@@ -137,7 +132,6 @@ test('a goal is a queue entry: follow-ups below it wait, a follow-up moved above
   agents.scripts.set('Keep drafting', async messages => {
     const said = (value: string) => messages.some((message: any) => message.role === 'user' && text(message).includes(value));
     requests.push(said('Question one'));
-    // A reply takes a moment, as a real model's does. Instant replies make the goal run turns so fast that no history read finds the chat unchanged.
     if (blocking) await new Promise<void>(resolve => { gate = resolve; }); else await Bun.sleep(100);
     if (said('Question one') && !messages.some((message: any) => message.role === 'assistant' && text(message) === 'Answered one.')) return { text: 'Answered one.' };
     if (called(messages, 'update_goal_status')) return { text: 'Drafted.' };

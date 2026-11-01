@@ -18,7 +18,6 @@ function replayableThinking(signatureText: string | undefined) {
   } catch { return false; }
 }
 
-/** Gives the model the completed blocks of stopped responses as a normal response with a note that the user stopped it. */
 export function stoppedResponsesContext(messages: ContextEvent["messages"]): ContextEvent["messages"] {
   return messages.map((message): ContextEvent["messages"][number] => {
     if (message.role !== "assistant" || message.stopReason !== "aborted" || !Check(completedBlocksSchema, message) || !message.content.length) return message;
@@ -50,7 +49,6 @@ function wasAborted(message: AssistantMessage) {
   return message.stopReason === "aborted" || (message.stopReason === "error" && message.errorMessage === "This operation was aborted");
 }
 
-/** Stop for the current session run. A stopped response keeps only its completed content blocks. */
 export function registerStopControl(pi: ExtensionAPI): StopController {
   let stopping = false;
   const completedBlocks = new Map<number, AssistantMessage["content"][number]>();
@@ -65,7 +63,6 @@ export function registerStopControl(pi: ExtensionAPI): StopController {
 
     if (update.type !== "text_end" && update.type !== "thinking_end" && update.type !== "toolcall_end") return;
 
-    // Some providers end every open block when the response is stopped. A tool call ended that way is cut off.
     if (update.type === "toolcall_end" && ctx.signal?.aborted) return;
     const block = update.partial.content[update.contentIndex];
 

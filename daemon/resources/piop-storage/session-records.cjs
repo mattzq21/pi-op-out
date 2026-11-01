@@ -6,7 +6,6 @@ const currentTypes = new Set(['pi-define-agents-state', 'piop-fast-mode-state', 
 const nativeKeys = new Map([['model_change', 'piop-selected-model'], ['thinking_level_change', 'piop-thinking-level']]);
 const stateKey = entry => nativeKeys.get(entry.type) ?? entry.customType;
 const isCurrent = entry => nativeKeys.has(entry.type) || entry.type === 'custom' && currentTypes.has(entry.customType);
-/** A Pi chat name record. Chat names belong to the session broker, so Piop never stores these or shows them to Pi. */
 const isName = entry => entry?.type === 'session_info';
 const isSetting = entry => isCurrent(entry) || isName(entry);
 
@@ -130,7 +129,6 @@ function selectedLeaf(file, sessionId, tipId) {
   const db = database.open(database.storageRoot(file));
   try {
     const row = db.prepare('SELECT tip_id, leaf_id FROM session_branch_selection WHERE session_id=?').get(sessionId);
-    // A later entry supersedes the saved branch choice, including after an interrupted append.
     return row && row.tip_id === tipId ? row.leaf_id : tipId;
   } finally { db.close(); }
 }
@@ -151,7 +149,6 @@ function create(type, data, parentId) {
   return { type: 'custom', customType: type, data: structuredClone(data), id: randomUUID(), parentId, timestamp: new Date().toISOString() };
 }
 
-/** The entry that makes a session auxiliary: owned by a root session. Its data has kind (for example "subagent", "review" or a plugin kind), sessionId and parentSessionId. */
 const AUXILIARY_PARENT = 'piop-auxiliary-parent';
 
 const isAuxiliaryParent = entry => entry?.type === 'custom' && entry.customType === AUXILIARY_PARENT && typeof entry.data?.kind === 'string' && typeof entry.data?.parentSessionId === 'string';
@@ -160,14 +157,12 @@ function isAuxiliary(entries) {
   return entries.some(isAuxiliaryParent);
 }
 
-/** The auxiliary parent data that entries saved for sessionId, or undefined for a root session. */
 function auxiliaryParent(entries, sessionId) {
   return entries.findLast(entry => isAuxiliaryParent(entry) && (sessionId === undefined || entry.data.sessionId === sessionId))?.data;
 }
 
 function canFork(entries) { return !isAuxiliary(entries); }
 
-/** An entry a new chat can start from: a compaction, or a finished or stopped final response without tool calls. */
 function forkPoint(entry) {
   if (entry?.type === 'compaction') return true;
   return entry?.type === 'message' && entry.message?.role === 'assistant' && ['stop', 'aborted'].includes(entry.message.stopReason)

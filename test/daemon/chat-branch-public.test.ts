@@ -1,6 +1,5 @@
 import { test, expect } from 'bun:test';
 
-/** The first n hex digits of the chat ID: the worktree folder and branch name Piop tries first. */
 const short = (chatId: string, n = 4) => chatId.replaceAll('-', '').slice(0, n);
 import { execFileSync } from 'node:child_process';
 import { mkdirSync, writeFileSync, readFileSync, existsSync } from 'node:fs';
@@ -49,7 +48,6 @@ test('branch copies selected history and committed files, archive restores last 
     expect(branch.cwd).toBe(join(agents.daemon.home, '.piop/worktrees', short(branch.sessionId)));
     expect(branch.forkSource).toMatchObject({ sessionId: original.sessionId, entryId: first.id });
     expect(git(branch.cwd, 'branch', '--show-current')).toBe('piop/' + short(branch.sessionId));
-    // The branch has only the committed files.
     expect(readFileSync(join(branch.cwd, 'tracked.txt'), 'utf8')).toBe('initial');
     expect(existsSync(join(branch.cwd, 'untracked.txt'))).toBe(false);
     expect(existsSync(join(branch.cwd, 'staged.txt'))).toBe(false);

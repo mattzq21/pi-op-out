@@ -15,24 +15,18 @@ function newDialog(event: any): Dialog {
   return { event, owner: null, generation: randomUUID() };
 }
 
-/** What the dialogs need from their session. */
 export interface DialogSession {
-  /** The session's views with their presence. */
   views(): Array<[string, any]>;
   readonly(runtime: string): boolean;
-  /** False once the session closes or starts to stop. */
   accepting(): boolean;
   publish(event: any, target: string | null): void;
   publishState(): void;
-  /** Called after a dialog is removed. */
   resolved(): void;
 }
 
-/** Dialogs and questions from Pi and from Piop itself. Each dialog is shown in one visible view that can answer it. */
 export class SessionDialogs {
   private items: Array<[string, Dialog]> = [];
   private timers = new Map<string, ReturnType<typeof setTimeout>>();
-  /** The questions that Piop asks, by dialog ID, with the function that gets the answer. Pi answers its own questions. */
   private asked = new Map<string, (answer: any) => void>();
 
   constructor(private session: DialogSession) {}
@@ -57,7 +51,6 @@ export class SessionDialogs {
     this.route();
   }
 
-  /** Gives each dialog to the focused visible view, or else to a visible view. */
   route(): void {
     const views = this.session.views().filter(([runtime]) => !this.session.readonly(runtime));
     const events: Array<[string, any]> = [];
@@ -74,7 +67,6 @@ export class SessionDialogs {
     this.session.publishState();
   }
 
-  /** Asks the user a question of Piop's own, the way a Pi extension does. Resolves with the answer, or { cancelled: true } when the session stops. */
   ask(request: any): Promise<any> {
     if (!this.session.accepting()) return Promise.resolve({ cancelled: true });
     const id = randomUUID();
@@ -84,7 +76,6 @@ export class SessionDialogs {
     });
   }
 
-  /** Gives an answer to Piop's own question. Returns false for a question from Pi. */
   answer(id: string, answer: any): boolean {
     const resolve = this.asked.get(id);
     if (!resolve) return false;
@@ -109,7 +100,6 @@ export class SessionDialogs {
     this.timers.clear();
   }
 
-  /** Drops all dialogs without telling the views. Piop's own questions end as cancelled. */
   clear(): void {
     this.stopTimers();
     this.items = [];

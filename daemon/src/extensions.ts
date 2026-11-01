@@ -20,7 +20,6 @@ export function prepareMcpBridge(): string {
   return path;
 }
 
-/** Enabled skill paths supplied when a Pi agent starts. */
 export function skillLists(settings: AppSettings): { userInvokedSkills: string[]; agentInvokedSkills: string[] } {
   const enabled = settings.skills.filter(skill => skill?.enabled === true && typeof skill.path === 'string');
   return {
@@ -29,7 +28,6 @@ export function skillLists(settings: AppSettings): { userInvokedSkills: string[]
   };
 }
 
-/** Tool names supplied when a Pi agent starts: the tools that Pi last reported on this host. */
 export function toolLists(settings: AppSettings): { enabledTools: string[]; registeredTools: string[] } {
   const names = settings.tools.map(tool => tool.name);
   return { enabledTools: names, registeredTools: [...names] };
@@ -65,7 +63,6 @@ export function prepareRuntimeBridge(): void {
 
 export const SESSION_BROKER_MODULES = R.SESSION_BROKER_MODULES;
 
-/** Installs session-broker and the session extensions that share its modules. Returns the entries in load order. */
 export function prepareSessionExtensions(): { hooks: string; storage: string; controls: string; broker: string } {
   const dir = generatedExtensionRoot();
   ensurePrivateDir(dir);
@@ -82,10 +79,6 @@ export function prepareSessionExtensions(): { hooks: string; storage: string; co
   return { hooks: join(dir, 'hooks-extended/index.ts'), storage: join(dir, 'piop-storage/index.ts'), controls: join(dir, 'piop-controls/index.ts'), broker };
 }
 
-/**
- * Installs the Pi extensions of enabled plugins in plugins/<plugin id>/ and returns their entries with the core extension each follows.
- * Plugin sources import core modules through ../../resources/, which is the generated extension root here.
- */
 export function preparePluginExtensions(): Array<{ after: Contributions.CoreExtension; path: string }> {
   const root = generatedExtensionRoot();
   const entries: Array<{ after: Contributions.CoreExtension; path: string }> = [];

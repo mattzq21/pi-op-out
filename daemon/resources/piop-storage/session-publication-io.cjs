@@ -183,10 +183,8 @@ function claim(file, expected) {
   return null;
 }
 
-/** The session transaction lock that the storage operation running in this thread holds, as { file, descriptor }. */
 let heldLock;
 
-/** Lets nested storage code in this thread use descriptor, which already holds the session transaction lock of root. Returns the release function. */
 function holdTransactionLock(root, descriptor) {
   const file = path.join(root, 'session-transactions.lock');
   const metadata = fs.fstatSync(descriptor, { bigint: true });
@@ -199,7 +197,6 @@ function holdTransactionLock(root, descriptor) {
   return () => { heldLock = undefined; };
 }
 
-/** Returns the held descriptor for the session transaction lock file, or undefined. */
 function heldTransactionLock(file) {
   if (heldLock?.file !== file) return;
   const metadata = fs.fstatSync(heldLock.descriptor, { bigint: true });

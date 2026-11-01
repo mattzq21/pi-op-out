@@ -7,7 +7,6 @@ import * as Publication from './reference_publication';
 
 const UUID = /^[0-9a-f]{8}-?[0-9a-f]{4}-?[0-9a-f]{4}-?[0-9a-f]{4}-?[0-9a-f]{12}$/i;
 
-/** Formats a session ID the way the uuid crate prints a parsed identity (lowercase, hyphenated). */
 export function parseIdentity(id: string): string {
   let value = id.trim() === id ? id : '';
   if (value.startsWith('urn:uuid:')) value = value.slice(9);
@@ -18,7 +17,6 @@ export function parseIdentity(id: string): string {
   return hex.slice(0, 8) + '-' + hex.slice(8, 12) + '-' + hex.slice(12, 16) + '-' + hex.slice(16, 20) + '-' + hex.slice(20);
 }
 
-/** Lock that keeps queued-input storage writes in order across processes. */
 export async function temporaryLock(root: string): Promise<FileLock> {
   ensurePrivateDir(root);
   const path = join(root, 'queued-input.lock');
@@ -86,13 +84,11 @@ export class QueueStorage {
     return saved ? recoverItems(saved) : [];
   }
 
-  /** True when the user holds this session's queue. */
   held(): boolean {
     const db = Registry.open(this.root());
     try { return db.prepare('SELECT 1 FROM session_queue_holds WHERE session_id=?').get(this.id()) !== undefined; } finally { db.close(); }
   }
 
-  /** Saves whether the user holds this session's queue. */
   async saveHeld(held: boolean): Promise<void> {
     const root = this.root();
     return inOrder(resolve(root), async () => {
@@ -160,10 +156,6 @@ export async function clearSaved(root: string, id: string): Promise<void> {
   await new QueueStorage(join(root, 'queued-input'), id).save([]);
 }
 
-/**
- * Readies an item of a queue that starts again. An item that Pi took but whose transcript does not hold it was not used, so it waits again;
- * the transcript check removes the used ones. An item marked for retry stays marked.
- */
 function restartItem(item: any): void {
   delete item.taken;
   delete item.held;

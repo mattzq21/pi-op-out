@@ -3,7 +3,6 @@ import type { AgentConfig, AgentProfile, AppSettings } from "../types";
 
 type SettingsSnapshotValue = AppSettings[keyof AppSettings] | AgentProfile[] | { settings: Omit<AppSettings, "tools">; agentConfig?: AgentConfig };
 
-/** The value with object keys in sorted order. The value comes from JSON.parse, so it holds only JSON values. */
 function sortedJson(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(sortedJson);
 
@@ -13,7 +12,6 @@ function sortedJson(value: unknown): unknown {
   return Object.fromEntries(Object.keys(object).sort().map(key => [key, sortedJson(object[key])]));
 }
 
-/** JSON text of the value with sorted object keys, so equal settings give equal text whatever their key order. */
 export function stableSnapshot(value: SettingsSnapshotValue) {
   const serialized = JSON.stringify(value);
 
@@ -23,7 +21,6 @@ export function stableSnapshot(value: SettingsSnapshotValue) {
 export function settingsSnapshot(settings: AppSettings, agentConfig?: AgentConfig) {
   const { settingsRevision: _settingsRevision, clientSettingsRevision: _clientSettingsRevision, settingsDurabilityError: _settingsDurabilityError, clientSettingsDurabilityError: _clientSettingsDurabilityError, tools: _tools, ...value } = settings;
 
-  // Daemon settings carry no debug feature choices; no list means no feature is off.
   return stableSnapshot({ settings: { ...value, debugFeaturesOff: value.debugFeaturesOff ?? [] }, agentConfig: agentConfig && { ...agentConfig, revision: undefined } });
 }
 

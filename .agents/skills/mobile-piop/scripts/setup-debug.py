@@ -38,8 +38,6 @@ INSTRUCTIONS = ("The app runs in this launcher's private Android VM. The tools a
                 "Call reinstall after code changes.")
 
 
-# Processes and deadlines
-
 class Shutdown(BaseException):
     def __init__(self, signum):
         self.code = 128 + signum
@@ -122,7 +120,6 @@ def ensure_running(children):
 def signal_owned(marker, signum):
     for pid in owned_pids(marker):
         try:
-            # Recheck immediately before signaling to avoid acting on a stale PID.
             if has_marker(pid, marker):
                 os.kill(int(pid), signum)
         except ProcessLookupError:
@@ -130,7 +127,6 @@ def signal_owned(marker, signum):
 
 
 def stop_children(children, marker):
-    # Stop supervisors first, then sweep descendants that started new process groups.
     for _, child in reversed(children):
         if child.poll() is None:
             with contextlib.suppress(ProcessLookupError):
@@ -148,8 +144,6 @@ def stop_children(children, marker):
             child.wait(timeout=2)
 
 
-# MCP client and tool server
-
 class McpError(Exception):
     def __init__(self, error):
         self.error = error
@@ -157,8 +151,6 @@ class McpError(Exception):
 
 
 class McpClient:
-    """JSON-RPC client for an MCP server on a child process's stdio."""
-
     def __init__(self, process, name="MCP server"):
         self.process = process
         self.name = name
@@ -256,13 +248,10 @@ def require_tool_success(result, operation):
 
 
 def forward(client, timeout=360):
-    """Return a tool handler that passes calls to an MCP client."""
     return lambda name, arguments: client.request("tools/call", {"name": name, "arguments": arguments}, timeout=timeout)
 
 
 class ToolServer(socketserver.ThreadingUnixStreamServer):
-    """Serve tools from several handlers as one MCP server on a Unix socket."""
-
     daemon_threads = True
     block_on_close = False
 
@@ -373,7 +362,6 @@ def run_client_command(mode):
     session_file = args.session.expanduser().resolve(strict=True)
     manifest = json.loads(session_file.read_text())
     with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as connection:
-        # The launcher bounds every call with its own deadlines, including reinstall builds.
         connection.connect(manifest["mcpSocket"])
         if mode == "connect":
             relay_stdio(connection)
@@ -404,16 +392,12 @@ def run_client_command(mode):
         sys.exit(1)
 
 
-# Android SDK
-
 def sdk_root(env=os.environ):
     for candidate in (env.get("ANDROID_HOME"), env.get("ANDROID_SDK_ROOT"), str(Path.home() / "Android/Sdk")):
         if candidate and Path(candidate).expanduser().is_dir():
             return Path(candidate).expanduser().resolve()
     raise RuntimeError("Android SDK not found; set ANDROID_HOME")
 
-
-# App state
 
 APP_STATE_TOOL = {
     "name": "app_state",
@@ -423,9 +407,6 @@ APP_STATE_TOOL = {
 
 
 def observe(client, argv, deadline):
-    """Run argv in the VM through the broker's exec tool; return its exit code and stdout.
-
-    The broker marks a non-zero exit as an error, so only output we cannot read is a failure here."""
     result = client.request("tools/call", {"name": "exec", "arguments": {"argv": argv}}, timeout=remaining(deadline, 60))
     try:
         observation = json.loads(result["content"][0]["text"])
@@ -438,7 +419,6 @@ def observe(client, argv, deadline):
 
 
 def last_exit(dump, package):
-    """Return the newest exit record of the app's main process from dumpsys exit-info, or None."""
     for record in dump.split("ApplicationExitInfo #")[1:]:
         fields = dict(re.findall(r"(\w+)=(\S+(?: \([^)]*\))?)", record))
         if fields.get("process") == package:
@@ -449,7 +429,6 @@ def last_exit(dump, package):
 
 
 def app_stater(client, app_id):
-    """Return the app_state tool handler."""
     def app_state(_name, arguments):
         deadline = time.monotonic() + 60
         package = arguments.get("package") or app_id
@@ -458,7 +437,6 @@ def app_stater(client, app_id):
         if code:
             report.update(state="not_installed", pids=[])
         else:
-            # The resumed activity decides foreground, so a slow process lookup cannot hide a visible app.
             _, activities = observe(client, ["/system/bin/sh", "-c", "dumpsys activity activities | grep ResumedActivity"], deadline)
             resumed = set(re.findall(r" ([\w.]+)/", activities))
             _, found = observe(client, ["/system/bin/ps", "-A", "-o", "PID,NAME"], deadline)
@@ -466,15 +444,12 @@ def app_stater(client, app_id):
                     if name.strip() == package or name.strip().startswith(package + ":")]
             report.update(state="foreground" if package in resumed else "background" if pids else "not_running", pids=pids)
             if report["state"] == "not_running":
-                # Say why Android ended the app, so a crash or kill is not silent.
                 _, exits = observe(client, ["/system/bin/dumpsys", "activity", "exit-info", package], deadline)
                 report["lastExit"] = last_exit(exits, package)
         return {"content": [{"type": "text", "text": json.dumps(report)}]}
 
     return app_state
 
-
-# Piop launcher
 
 def parse_args():
     parser = argparse.ArgumentParser(description=__doc__)
@@ -540,7 +515,6 @@ def prepare_apk(args, env, directory, log, children, deadline):
     if args.apk:
         source = args.apk
     else:
-        # Serialize packaging within a checkout; worktrees have their own lock.
         project_key = hashlib.sha256(str(args.project).encode()).hexdigest()[:24]
         with file_lock(runtime_root() / f"build-{project_key}.lock", deadline):
             for command, cwd, label in [
@@ -657,7 +631,6 @@ def launch_arguments(endpoint, app_id):
 
 
 def reinstaller(args, directory, client, app_id, shared_env, build_env, log):
-    """Return the reinstall tool handler: rebuild daemon and APK, then install and start the app in this VM."""
     lock = threading.Lock()
 
     def reinstall(_name, _arguments):
@@ -666,7 +639,6 @@ def reinstaller(args, directory, client, app_id, shared_env, build_env, log):
         try:
             deadline = time.monotonic() + args.timeout
             target = Path(tempfile.mkdtemp(prefix="reinstall-", dir=directory))
-            # Build processes carry the launcher marker, so launcher shutdown also stops them.
             children = []
             key = hashlib.sha256(str(args.project).encode()).hexdigest()[:24]
             with file_lock(runtime_root() / f"setup-{key}.lock", deadline):

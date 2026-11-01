@@ -5,7 +5,6 @@ import { createSidepaneTabs } from '../../clients/ui/lib/sidepaneTabs.ts';
 
 const session = (id, extra = {}) => ({ id, hostId: 'local', name: id, path: `/sessions/${extra.created ?? '2026-01-01T00-00-00-000Z'}_${id}.jsonl`, project: 'p', cwd: '/p', preview: '', messageCount: 0, lastMessageAt: 0, apiCost: 0, ...extra });
 
-/** Saved subagent tabs that outlive one tab state, as local storage does across app restarts. */
 const memoryStore = () => { let saved = []; return { load: () => saved, save: keys => { saved = keys; } }; };
 
 function tabs(initial, mainId = 'main', store = memoryStore()) {

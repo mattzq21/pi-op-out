@@ -1,4 +1,3 @@
-/** A duration as "5s", "2min 3s" or "1h 4min". */
 export function formatDuration(milliseconds: number) {
   const totalSeconds = Math.max(0, Math.floor(milliseconds / 1000));
   const hours = Math.floor(totalSeconds / 3600);
@@ -12,7 +11,6 @@ export function formatDuration(milliseconds: number) {
   return `${seconds}s`;
 }
 
-/** The time from start to end, rounded to whole seconds and at least 1s, as "Worked for" shows it. Empty when a time is missing. */
 export function formatElapsed(startedAt?: number, endedAt?: number) {
   if (startedAt === undefined || endedAt === undefined || endedAt < startedAt) return "";
 

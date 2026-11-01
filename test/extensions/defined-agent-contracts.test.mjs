@@ -31,7 +31,6 @@ test('agent startup reads local definitions even when a broker is configured', a
 });
 
 
-/** The skills that the model sees in the system prompt, by directory. */
 const visibleSkills = async (f, directories) => (await f.prompt({ skills: directories.map(baseDir => ({ filePath: baseDir + '/SKILL.md', baseDir })) })).skills.filter(skill => !skill.disableModelInvocation).map(skill => skill.baseDir);
 
 test('agent switches save state and failed activation restores overrides without history writes', async t => {
@@ -604,7 +603,6 @@ test('fast-mode preflight rejects unsupported models before attempting to load e
     realFastMode: { catalog: [{ slug: 'gpt-5.4', service_tiers: [{ id: 'priority' }] }, { slug: 'unsupported', service_tiers: [] }] },
   });
   await f.load();
-  // A saved agent whose extension went missing after the daemon loaded the definitions.
   await f.file('config.json', JSON.stringify(configured([profile(), profile('fast', { fastMode: true }), profile('unsupported', { fastMode: true, model: 'openai/unsupported', extensions: ['missing.mjs'] })])));
   await f.start();
   await f.select('fast');
@@ -1059,7 +1057,6 @@ test('fast mode cannot be selected without a model', async t => {
 });
 
 test('a failed resource reload still permits final shutdown to clear agent status', async t => {
-  // A saved, unlocked choice keeps the skills of its own time, so choosing another agent loads the current skills.
   const reviewer = profile('reviewer');
   const saved = { tools: { enabledTools: ['read'], registeredTools: ['read'] }, skills: { userInvokedSkills: [], agentInvokedSkills: ['/skills/old'] } };
   const f = await agentFixture(t, {

@@ -23,7 +23,6 @@ import { reserveSessionId } from './pi_runtime';
 import type { SessionSummary } from './types';
 import type { App } from './app';
 
-/** blank: the transcript has no user message and no name yet, as when Pi runs for a draft. The sidebar leaves it out. */
 export interface CachedSession { fingerprint: string; summary: SessionSummary; blank?: boolean }
 type SessionCandidate = [path: string, fingerprint: string, modifiedAt: number, size: number];
 
@@ -56,7 +55,6 @@ const sessionSummarySchema = z.object({
 const indexSessions = hostOperation<{ paths: string[] }, { summaries: z.infer<typeof sessionSummarySchema>[]; warnings: string[] }>('index-sessions', 'general', STORAGE_TIMEOUT,
   value => z.object({ summaries: z.array(sessionSummarySchema), warnings: z.array(z.string()) }).parse(value));
 
-/** Transcript bytes and files read by one index operation, so each operation ends well inside its time limit. */
 const INDEX_BATCH_BYTES = 128 * 1024 * 1024;
 const INDEX_BATCH_FILES = 500;
 
@@ -73,7 +71,6 @@ function indexBatches(candidates: SessionCandidate[]): SessionCandidate[][] {
   return batches;
 }
 
-/** Reads summaries in batches. onBatch receives each batch as it finishes, so a later failure keeps the earlier results. */
 export async function readSessionSummaries(candidates: SessionCandidate[], onBatch?: (paths: string[], summaries: Map<string, CachedSession>) => void): Promise<Map<string, CachedSession>> {
   const result = new Map<string, CachedSession>();
   for (const batch of indexBatches(candidates)) {
@@ -113,7 +110,6 @@ export async function listLocalSessions(index: SessionIndexRuntime, root: string
   return sessions;
 }
 
-/** Marks each chat that works in a Piop worktree, its own or another chat's, with the main folder of the repository. */
 function attachWorktreeRepositories(sessions: SessionSummary[], profile: string): void {
   const records = WorktreeRecords.list(profile).filter(record => record.state !== 'archived');
   for (const session of sessions) {
@@ -129,7 +125,6 @@ async function cachedLocalSessions(index: SessionIndexRuntime, root: string): Pr
     let needsSave = sidebarStorage.prepare(index.sidebar, storageRoot, cache);
     try { needsSave = (await refreshLocalCache(root, cache)) || needsSave; }
     catch (error) {
-      // Keep the batches that finished, so the next listing continues from them.
       sidebarStorage.persist(index.sidebar, cache);
       throw error;
     }
@@ -153,7 +148,6 @@ function localSessionCandidates(root: string, cache: Map<string, CachedSession>)
   const seen = new Set<string>(); const changed: SessionCandidate[] = [];
   const database = Registry.open(dirname(root));
   try {
-    // Pi records paths under the configured root, while archive and restore record resolved paths. Both name the same folder when it contains a symbolic link.
     const prefix = root.replace(/\/+$/, '') + sep;
     let resolved = prefix;
     try { resolved = realpathSync(root) + sep; } catch (error: any) { if (error?.code !== 'ENOENT') throw error; }
@@ -226,7 +220,6 @@ export async function createLocalTemporaryChat(home: string, sessionId: string):
   return directory;
 }
 
-/** True when path has the form of a temporary chat folder: <storage>/tmp/<4 to 32 hex digits of the chat ID>. */
 export function isTemporaryChatPath(path: string): boolean {
   const parent = dirname(path);
 

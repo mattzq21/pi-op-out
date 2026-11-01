@@ -47,7 +47,6 @@ function fastCatalogField(entry, keys) {
   return keys.map(key => entry?.[key]).find(value => value != null);
 }
 
-/** Returns true or false when the entry states its speed tiers, and undefined when it does not. */
 function fastSupport(entry) {
   const tiers = fastCatalogField(entry, ['service_tiers', 'serviceTiers']);
   const speeds = fastCatalogField(entry, ['additional_speed_tiers', 'additionalSpeedTiers']);
@@ -77,14 +76,12 @@ async function fetchFastCatalog(model, auth) {
   return support;
 }
 
-/** The login's account: the ChatGPT account id when the token has one, else a hash of the key. Stays the same when a token refreshes. */
 function fastLoginIdentity(auth) {
   if (!auth.apiKey) return null;
 
   return fastAccountId(auth.apiKey) ?? fastModelHash('sha256').update(auth.apiKey).digest('hex');
 }
 
-/** One provider's models grouped by endpoint, with the login that each endpoint uses. Rejects when a login cannot be read. */
 async function fastProviderState(runtime, provider) {
   const groups = new Map();
 
@@ -127,12 +124,6 @@ async function scanFastProvider(runtime, provider) {
   }
 }
 
-/**
- * Finds the models that accept fast mode, with one host's model runtime and logins.
- * Owns the discovery rules and provider requests; the host owns scheduling and saved results.
- * Each result also has context: a fingerprint of the provider's endpoints and login,
- * so the host can keep results apart per account and configuration.
- */
 export function createFastModelDiscovery(runtime) {
   return {
     async scan(provider) {

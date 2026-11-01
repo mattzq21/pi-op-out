@@ -15,7 +15,6 @@ function text(message) {
   return Check(Type.String(), message.content) ? message.content : Array.isArray(message.content) ? message.content.filter(p => p.type === 'text').map(p => p.text || '').join('\n') : '';
 }
 
-/** A user prompt as the chat list shows it: each leading skill block becomes "$name". */
 function userPrompt(content) {
   return content.replace(/^(?:\s*<skill\b[^>]*>[\s\S]*?<\/skill>\s*)+/, blocks => [...blocks.matchAll(/<skill\b[^>]*\bname="([^"]*)"/g)].map(match => `$${match[1]} `).join('')).trim();
 }
@@ -32,7 +31,6 @@ function timestamp(value) {
 class SessionIndex {
   header;
   name;
-  /** The auxiliary parent entry copied from another session: kept only when the session has no own entry and was not forked. */
   inheritedAuxiliary;
   ownAuxiliary;
   first = '';
@@ -45,7 +43,6 @@ class SessionIndex {
   lineNumber = 0;
   damagedLines = [];
   interruptedBytes = 0;
-  /** Each entry's parent and, for a message, what the chat list shows of it. The chat list follows the branch that ends at the last entry. */
   nodes = new Map();
   leaf = null;
   unnamed = 0;
@@ -71,7 +68,6 @@ class SessionIndex {
     else this.inheritedAuxiliary = auxiliary;
   }
 
-  /** What the chat list needs of a message entry, or undefined for other entries. */
   messageRecord(entry) {
     if (entry.type !== 'message') return undefined;
     const message = entry.message || {};
@@ -96,7 +92,6 @@ class SessionIndex {
     }
   }
 
-  /** Records the messages on the branch that ends at the last entry, oldest first. */
   recordBranch() {
     const branch = [];
     const seen = new Set();
@@ -137,7 +132,6 @@ class SessionIndex {
 
     if (entry.type === 'usage') this.recordCost(entry);
 
-    // Cost counts every response, also on branches the chat later left.
     if (entry.type === 'message' && ['assistant', 'toolResult'].includes(entry.message?.role)) this.recordCost(entry.message);
     const id = typeof entry.id === 'string' ? entry.id : `#${++this.unnamed}`;
     const parentId = typeof entry.id !== 'string' ? this.leaf : typeof entry.parentId === 'string' ? entry.parentId : null;
@@ -213,7 +207,6 @@ async function indexFile(path) {
   return index.summary(path);
 }
 
-/** Returns the summary of each readable transcript in request.paths. Unreadable transcripts are reported in warnings. */
 async function indexSessions(request) {
   if (!Array.isArray(request.paths) || !request.paths.every(path => typeof path === 'string')) throw new Error('Invalid session summary request');
   const summaries = [];

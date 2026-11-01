@@ -3,7 +3,6 @@ import { resolveProviderAuth } from './host/index';
 
 export interface AnthropicUsage { remainingPercent: number; resetAt?: number }
 
-/** The plan window with the least usage left, out of the five hour and seven day windows. */
 export function anthropicUsageValues(response: any): AnthropicUsage | undefined {
   let best: [number, number | undefined] | undefined;
   for (const name of ['five_hour', 'seven_day']) {
@@ -20,7 +19,6 @@ export function anthropicUsageValues(response: any): AnthropicUsage | undefined 
   return usage;
 }
 
-/** undefined: Anthropic is not added to Pi. */
 export async function anthropicUsage(): Promise<AnthropicUsage | undefined> {
   const auth = await resolveProviderAuth(piExecutable(), 'anthropic');
   if (auth === null) return undefined;

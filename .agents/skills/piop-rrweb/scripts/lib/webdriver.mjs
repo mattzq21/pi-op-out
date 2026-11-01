@@ -1,4 +1,3 @@
-// W3C WebDriver client for a session started by piop-wdio's tauri-webdriver.py.
 import fs from 'node:fs';
 
 export const ELEMENT = 'element-6066-11e4-a52e-4f735466cecf';
@@ -35,9 +34,7 @@ export function openSession(sessionFile) {
     manifest,
     base,
     request,
-    // Script body may use `return` and `arguments`.
     execute: (script, args = []) => request('/execute/sync', { script, args }),
-    // Script body receives a callback as its last argument.
     executeAsync: (script, args = []) => request('/execute/async', { script, args }),
     async element(selector) {
       const value = await request('/element', { using: 'css selector', value: selector });
@@ -60,7 +57,6 @@ const KEYS = {
 };
 const MODIFIERS = new Set(['ctrl', 'control', 'shift', 'alt', 'meta', 'cmd']);
 
-// "Ctrl+B ArrowLeft ArrowLeft" -> W3C key action list. Each space-separated chord is pressed and released.
 export function chordActions(spec) {
   const actions = [];
   for (const chord of spec.trim().split(/\s+/)) {

@@ -13,7 +13,6 @@ const within = (promise, label, timeout = 5000) => {
   return Promise.race([promise, new Promise((_, reject) => { timer = setTimeout(() => reject(new Error(`Timed out: ${label}`)), timeout); })]).finally(() => clearTimeout(timer));
 };
 
-// `archives` are chat names on this machine, or { name, hostId, key } for a configured remote. `chats` is keyed by `key`, else by name. `initial` registers gates before mount, so it can hold the first refresh.
 async function archivedPanel(t, archives, { remotes, initial } = {}) {
   const dom = installDom();
   const storage = trackStorage(indexedDB);
@@ -21,7 +20,6 @@ async function archivedPanel(t, archives, { remotes, initial } = {}) {
   const gates = [];
   let view, daemon;
   const settle = async () => { do { await storage.settled(); await act(() => Promise.allSettled([...calls])); } while (calls.size); };
-  // Holds the next IPC call of `command`: before it reaches the daemon (`send`), or after the daemon answered (`reply`).
   const gate = (command, stage = 'reply') => {
     const entry = { command, stage, reached: Promise.withResolvers(), open: Promise.withResolvers(), replied: Promise.withResolvers() };
     gates.push(entry);
@@ -34,7 +32,6 @@ async function archivedPanel(t, archives, { remotes, initial } = {}) {
   t.after(async () => { for (const entry of gates) entry.open.resolve(); await settle(); await view?.unmount(); await settle(); storage.restore(); clearMocks(); dom.restore(); });
   let sessionsChanged = Promise.withResolvers();
   daemon = await daemonClient(t, event => { if (event === 'pi://sessions-changed') { sessionsChanged.resolve(); sessionsChanged = Promise.withResolvers(); } }, { remotes });
-  // Remote session lists are read again in the background, so list again after each change until `match` holds.
   const sessionsWhere = async (match, label) => {
     for (;;) {
       const changed = sessionsChanged.promise;
@@ -76,7 +73,6 @@ async function archivedPanel(t, archives, { remotes, initial } = {}) {
   return { daemon, view, chats, settle, gate, held, button, buttons, refreshButton, sessionsWhere };
 }
 
-// Holds both archive report replies of one refresh after the daemon computed them, so they still list every archived chat.
 function holdComputedReports(gate) {
   const reports = [gate('host_storage_report'), gate('storage_report')];
   return { reached: () => Promise.all(reports.map(report => report.reached())), release: () => reports.forEach(report => report.release()) };

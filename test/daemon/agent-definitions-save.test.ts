@@ -12,12 +12,10 @@ const added = (name: string) => (agents: any[]) => {
 };
 
 test('saving agent definitions starts no Pi session, and new chats see the saved agents at once', async () => {
-  // Opening the settings page reads the definitions first.
   await agentDefinitions(daemon);
   const from = daemon.events.length;
   const saved = await saveAgentDefinitions(daemon, added('helper'));
   expect(saved).toEqual({ revision: expect.any(String), warnings: [] });
-  // A Pi session reports itself with sessions-changed and its own events.
   const during = daemon.events.slice(from).map(event => event.event);
   expect(during.filter(event => event === 'pi://sessions-changed' || event === 'pi://event')).toEqual([]);
   expect(await daemon.waitEvent('pi://agent-definitions-changed', payload => payload.hostId === 'local')).toMatchObject({ hostId: 'local' });

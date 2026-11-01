@@ -46,7 +46,6 @@ type RemovedSession = z.infer<typeof removedSessionSchema>;
 
 const removedSessionHost = (removed: RemovedSession) => removed.hostId ?? "local";
 
-/** prepareTranscript: draws the turns of a chat that is not shown, after its new answer loads. */
 export function createAppConversations(preloadChat: () => void, prepareTranscript: (transport: NativeTransport) => void = () => undefined) {
   const runtimePool = createMemo(() => new SessionRuntimePool());
   const initialTarget = initialWindowTarget();
@@ -93,7 +92,6 @@ export function createAppConversations(preloadChat: () => void, prepareTranscrip
   const [error, setError] = createSignal<string>();
   const [createGroupRequest, setCreateGroupRequest] = createSignal(0);
   const handleCreateGroup = () => setCreateGroupRequest(0);
-  /** Counts new chats started from the navigation; the chat list closes its new-group form on each. */
   const [newChatRequest, setNewChatRequest] = createSignal(0);
   const [activeHostId, setActiveHostId] = createSignal((() => transport().currentHostId())());
   const [activeCwd, setActiveCwd] = createSignal<string | undefined>((() => transport().currentCwd())());
@@ -163,9 +161,7 @@ export function createAppConversations(preloadChat: () => void, prepareTranscrip
     onError: message => addNotice({ title: "Side pane", message }),
   });
   const hasSidePane = sidepane.shown;
-  /** Working chats as the session list shows them: a main chat also counts while one of its side chats answers. */
   const listedRunningSessions = createMemo(() => withWorkingSideChats(sessions(), runningSessions()));
-  // The selected tab shows in the split chat pane, or in the read-only subagent pane.
   createDependencyEffect(() => {
     const tab = sidepane.shown() ? sidepane.selected() : undefined;
 
@@ -178,7 +174,6 @@ export function createAppConversations(preloadChat: () => void, prepareTranscrip
       if (splitPane()?.key !== tab.key) setSplitPane({ key: tab.key, session: tab.session, request: sidepane.opening(tab.key) });
     });
   }, () => [sidepane.shown(), sidepane.selected()?.key]);
-  /** Side pane requests from extensions that wait for their chat to open, by request ID. */
   const pendingSidepaneRequests = createRef(new Map<string, NativeTransport>());
 
   const terminals = createTerminalController({
@@ -277,7 +272,6 @@ export function createAppConversations(preloadChat: () => void, prepareTranscrip
     return sessionIndexRequest.current;
   };
 
-  // The first connection loads the chat list. Later changes arrive as pi://sessions-changed, so opening a chat does not reload it.
   let sessionIndexLoaded = false;
   createDependencyEffect(() => {
     if (!connected() || sessionIndexLoaded) return;
@@ -304,7 +298,6 @@ export function createAppConversations(preloadChat: () => void, prepareTranscrip
         void syncSessionIndex();
       }, z.object({ hostId: z.string(), sessionId: z.string(), sessionPath: z.string() })),
       listen("pi://session-removed", async ({ payload }) => {
-        // A removed chat leaves the side pane tabs, also when its tab is not shown.
         sidepane.forgetRemoved(removedSessionHost(payload), payload.sessionId ?? undefined, payload.sessionPath ?? undefined);
 
         if (!await archives.removed(payload.hostId ?? "local", payload.sessionPath, payload.sessionId)) return;
@@ -358,7 +351,6 @@ export function createAppConversations(preloadChat: () => void, prepareTranscrip
     catch (reason) {
       const session = (await owner.listSessions()).find(item => item.path === target.sessionPath && (item.hostId ?? "local") === (target.hostId ?? "local"));
 
-      // The saved conversation was removed, for example a temporary chat with its folder: open a new chat instead.
       if (!session) {
         if (transport() !== owner) return false;
         if (await startNewSession(true) !== true) throw reason;
@@ -394,7 +386,6 @@ export function createAppConversations(preloadChat: () => void, prepareTranscrip
     const ownerTransport = capturedTransport;
     const imagePayload = images.length ? { images } : {};
 
-    // A command can open a side chat, such as /btw or /review; its first prompt gets the command's attachments.
     if (text.trimStart().startsWith("/")) commandImages.set(capturedTransport, images);
 
     try {
@@ -415,7 +406,6 @@ export function createAppConversations(preloadChat: () => void, prepareTranscrip
     void owner.command({ type: "extension_ui_response", id: requestId, ...response }).catch((reason) => addNotice({ title: "Could not finish the side chat request", message: reason instanceof Error ? reason.message : String(reason) }));
   };
 
-  /** Opens the auxiliary chat that an extension request of the main chat names, with its first prompt. */
   function openAuxiliaryRequest(owner: NativeTransport, request: { id: string; placeholder?: string }) {
     try {
       const opening = parseAuxiliaryOpening(request.placeholder);
@@ -430,10 +420,8 @@ export function createAppConversations(preloadChat: () => void, prepareTranscrip
     }
   }
 
-  /** Hides the side pane. Its tabs stay. */
   const closeSplitPane = () => { sidepane.setOpen(false); setActivePane("main"); };
 
-  /** Removes the tab of the chat in the split pane, for example after that chat was archived. */
   const forgetSplitPane = () => { const pane = splitPane(); if (pane) sidepane.forget(pane.key); };
 
   const openSubagent = (target: SubagentTarget) => { sidepane.openSubagent(target); setActivePane("split"); };
@@ -442,7 +430,6 @@ export function createAppConversations(preloadChat: () => void, prepareTranscrip
   const activateTransport = createTransportActivation({ savedSessions: sessions, transport, transportConversationKeys, transportHasDraft, conversationTerminalIds, runtimePool, chatSession, composerDrafts, activeTransportRef, setTransport, discardDraft: drafts.discard, forgetTerminals: terminals.forgetConversation, prepareTranscript });
   useWorkspaceDisconnect(() => settingsDirty() || drafts.draftSummaries().length > 0 || drafts.submissions().length > 0, runtimePool, terminals.draftTerminalIds, () => activeTransportRef.current);
 
-  /** "rename" moves the draft and terminals to the new key; "branch" leaves them with the original conversation. */
   const rekeyConversationUi = (previousKey: string, nextKey: string, ownerTransport: NativeTransport, mode: "rename" | "branch" = "rename") => {
     if (previousKey === nextKey) return;
     transportConversationKeys.current.set(ownerTransport, nextKey);
@@ -464,7 +451,6 @@ export function createAppConversations(preloadChat: () => void, prepareTranscrip
 
     return source ? forkSourceSession(source)?.name : undefined; });
 
-  /** The entries of each chat that other chats branched after, by host and chat. */
   const branchedEntries = createMemo(() => { const result = new Map<string, Set<string>>();
 
     for (const session of [...liveSessions(), ...sessions()]) {
@@ -477,7 +463,6 @@ export function createAppConversations(preloadChat: () => void, prepareTranscrip
     }
 
     return result; });
-  /** The places where the current chat forks: where other chats branched from it, and where it branched from its source. */
   const forkPoints = createMemo(() => { const state = chatSession().state;
     const entries = new Set(branchedEntries().get(`${activeHostId()}:${state.sessionId}`));
 
@@ -538,7 +523,6 @@ export function createAppConversations(preloadChat: () => void, prepareTranscrip
     return owner; };
 
   const prepareNewSession = (owner: NativeTransport, hostId: string, cwd?: string) => cwd ? owner.validateProjectDirectory(cwd, hostId, true, true) : owner.prepareTemporaryChat(hostId);
-  /** A new chat started in a group, or in the folder of a saved project, is put in that group when its first prompt starts. */
   const assignNewSessionGroup = (owner: NativeTransport, hostId: string, group?: SessionGroup, projectCwd?: string) => {
     const target = group ?? (projectCwd ? sidebar.state?.groups.find(saved => saved.cwd === projectCwd && (saved.hostId ?? "local") === hostId) : undefined);
 
@@ -548,7 +532,6 @@ export function createAppConversations(preloadChat: () => void, prepareTranscrip
       .then(() => undefined, reason => { addNotice({ title: "Could not add chat to group", message: reason instanceof Error ? reason.message : String(reason) }); }));
   };
 
-  /** The unsent new chat that New conversation reopens: the newest one, on the current host first. */
   const existingSessionDraft = () => {
     const onHost = (draft: SessionSummary) => (draft.hostId ?? "local") === activeHostId() ? 0 : 1;
     const candidates = [...draftSessions()].sort((left, right) => onHost(left) - onHost(right) || (right.lastMessageAt ?? 0) - (left.lastMessageAt ?? 0));
@@ -582,7 +565,6 @@ export function createAppConversations(preloadChat: () => void, prepareTranscrip
 
   const newDraftKey = (hostId: string, previous?: string) => `${hostId}:${previous ? previous.slice(previous.indexOf(":") + 1) : `draft-${crypto.randomUUID()}`}`;
 
-/** fresh: forget the draft being reused, its text, attachments and chosen settings, so the new chat starts with the defaults. */
   const createNewSessionDraft = async (clearProject: boolean, group?: SessionGroup, project?: { cwd: string; hostId: string }, host?: string, fresh = false) => {
     closeMobileSidebar();
     setArchivesOpen(false);
@@ -623,7 +605,6 @@ export function createAppConversations(preloadChat: () => void, prepareTranscrip
 
       if (source && fresh) drafts.discard(source.owner, source.key);
       else if (source) drafts.rekeyDraft(source.key, conversationKey);
-      // A chat in a worktree belongs to its repository's project, so the group is found by the repository folder.
       assignNewSessionGroup(nextTransport, hostId, group, cwd ?? projectCwd);
       drafts.bindTransport(nextTransport, conversationKey);
       batch(() => {
@@ -661,8 +642,6 @@ export function createAppConversations(preloadChat: () => void, prepareTranscrip
     finally { newSessionPending.current = false; setMainComposerFocusRequest(request => request + 1); }
   };
 
-  // New conversation while a new draft is already open starts over: the draft is forgotten and the defaults come back.
-  /** Resets only what differs from the defaults in the open draft. A project needs a new chat; text, attachments, agent and prompt settings reset in place. */
   const resetDraftInPlace = async () => {
     const owner = transport(); const key = activeConversationKey(); const agents = definedAgents();
     if (!owner.isTemporaryChat() || !agents) return false;
@@ -672,7 +651,6 @@ export function createAppConversations(preloadChat: () => void, prepareTranscrip
     else if (!owner.promptControls.untouched()) owner.promptControls.reset();
     return true;
   };
-  /** The open new chat has nothing to start over: no text, attachments, project, chosen agent or chosen prompt settings. */
   const openDraftUntouched = () => {
     const owner = transport(); const agents = definedAgents();
 
@@ -680,7 +658,6 @@ export function createAppConversations(preloadChat: () => void, prepareTranscrip
   };
   const newSession = async () => {
     const fresh = currentSessionIsDraft(); setNewChatRequest(value => value + 1);
-    // From an untouched new chat, New conversation reopens the newest unsent chat, which is not listed anywhere else.
     const unsent = existingSessionDraft();
     if (fresh && unsent && !isSelectedSession(unsent) && openDraftUntouched()) { await startNewSession(); return; }
     if (fresh && await resetDraftInPlace()) { closeMobileSidebar(); setArchivesOpen(false); setView("chat"); setMainComposerFocusRequest(request => request + 1); return; }
@@ -688,7 +665,6 @@ export function createAppConversations(preloadChat: () => void, prepareTranscrip
   };
 
   const clearChatProject = () => startNewSession(true);
-  /** Projects belong to one host, so a new host starts a draft without a project. */
   const chooseChatHost = (hostId: string) => hostId === activeHostId() ? undefined : startNewSession(true, undefined, undefined, hostId);
   const isSplitSession = (session: SessionSummary) => splitPane()?.session.id === session.id && (required((splitPane())).session.hostId ?? "local") === (session.hostId ?? "local");
   const isSelectedSession = (session: SessionSummary) => (session.hostId ?? "local") === activeHostId() && (session.id === chatSession().state.sessionId || `${session.hostId ?? "local"}:${session.id}` === activeConversationKey());
@@ -827,7 +803,6 @@ export function createAppConversations(preloadChat: () => void, prepareTranscrip
   const sidebar = createSidebarState(() => {
     const summaries = new Map([...draftSessions(), ...liveSessions(), ...sessions()].map(session => [`${session.hostId ?? "local"}:${session.id}`, session]));
 
-    // A new chat joins the list when its first message is sent. The New chat button reopens an unsent one.
     return [...summaries.values()].filter(session => !archives.isArchived(session) && !session.isDraft && session.messageCount > 0);
   }, query);
 
@@ -837,7 +812,6 @@ export function createAppConversations(preloadChat: () => void, prepareTranscrip
 
   const chatModels = createMemo(() => modelVisibility.visibleModels(activeHostId(), chatSession().models));
 
-  /** While a chat loads, the composer keeps the values it shows, so that only the values that differ change when the chat is ready. */
   const heldWhileLoading = <T,>(ready: () => boolean, live: () => T) => {
     let last: { value: T } | undefined;
 

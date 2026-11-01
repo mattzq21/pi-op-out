@@ -3,7 +3,6 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawn, spawnSync } from 'node:child_process';
 
-/** Builds the release desktop app of this worktree and installs its .deb over the installed Piop. */
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const bundle = join(root, 'target/release/bundle/deb');
 
@@ -19,7 +18,6 @@ let keepAlive;
 try {
   console.log('Installing needs sudo. Enter your password now, before the build starts.');
   run('sudo', ['-v']);
-  // Keeps the sudo login fresh during a long build, so the install does not ask again. It has its own process group, so stopping it also stops its sleep.
   keepAlive = spawn('sh', ['-c', 'while sleep 60; do sudo -n -v || exit; done'], { stdio: 'ignore', detached: true });
   const started = Date.now();
   console.log('Building the Piop release app in ' + root + '…');

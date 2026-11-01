@@ -19,7 +19,6 @@ export function createAppExtensions({ transport, chatSession }: { transport: Acc
     setDialogs((current) => current.filter((dialog) => dialog.transport !== ownerTransport));
   };
 
-  /** Tells Pi that the user will not answer this transport's open dialogs, then removes them. */
   const cancelTransportDialogs = async (ownerTransport: NativeTransport) => {
     const owned = dialogsRef.current.filter((dialog) => dialog.transport === ownerTransport);
     setDialogs((current) => current.filter((dialog) => dialog.transport !== ownerTransport));

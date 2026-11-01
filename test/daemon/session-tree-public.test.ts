@@ -12,7 +12,6 @@ afterAll(async () => { await daemon?.stop(); });
 type Chat = { id: string; path: string };
 const fixture = (input: unknown): { root: Chat; child: Chat; grandchild: Chat; other: Chat } => JSON.parse(execFileSync('node', [fileURLToPath(new URL('../fixtures/publish-session-tree.mjs', import.meta.url))], { encoding: 'utf8', timeout: 60000, input: JSON.stringify(input) }));
 
-/** A chat with a subagent that has its own subagent, plus an unrelated chat in the same project. */
 function sessionTree(project: string) {
   const cwd = join(daemon.home, project); mkdirSync(cwd, { recursive: true });
   return fixture({ home: daemon.home, cwd, folder: project });

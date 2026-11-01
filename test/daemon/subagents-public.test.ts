@@ -23,7 +23,6 @@ test.concurrent('a child agent\'s final answer reaches its parent, which continu
   await root.command({ type: 'prompt', message: 'Read the README for me' });
   const messages = await root.until(history => history.some(message => message.role === 'assistant' && text(message).startsWith('The reader says')));
   expect(text(messages.findLast(message => message.role === 'assistant'))).toBe('The reader says: README is about cats');
-  // The child sees only the text its parent wrote, as a plain user message.
   const childRequest = agents.model.requests.find(request => text(request.messages.find((message: any) => message.role === 'user')) === 'Summarize the README');
   expect(childRequest.messages.filter((message: any) => message.role !== 'system').map((message: any) => [message.role, text(message)])).toEqual([['user', 'Summarize the README']]);
   const sessions = await agents.daemon.invoke('list_sessions');
@@ -37,7 +36,6 @@ test.concurrent('a child agent\'s final answer reaches its parent, which continu
     await expect(childCommand({ type, entryId: 'any-response' })).rejects.toThrow('Only main chats can be forked');
   }
 
-  // The chat view lists delegated work from this message; it needs these fields for each run.
   const delivered = (await root.command({ type: 'get_entries' })).entries.find((entry: any) => entry.customType === 'piop-subagent-result');
   expect(delivered.details.runs).toEqual([expect.objectContaining({ name: 'Reader', task: 'Summarize the README', status: 'completed', sessionId: child.id, sessionPath: child.path, hostId: 'local' })]);
   const db = new Database(join(agents.daemon.home, '.piop', 'sessions.sqlite'), { readonly: true });
@@ -55,7 +53,6 @@ test.concurrent('a child agent\'s final answer reaches its parent, which continu
 
 }, 120000);
 
-/** An agent that delegates task to a child named name, then answers with what the child delivered. */
 const delegating = (name: string, task: string) => (messages: any[]) => {
   const last = messages.at(-1);
   if (!called(messages, 'spawn_subagents')) return { tool: 'spawn_subagents', arguments: { tasks: [{ nickname: name, task: task }] } };
@@ -226,7 +223,6 @@ test.concurrent('a batch of children runs at once, waiting for all ends only aft
   await root.command({ type: 'prompt', message: 'Count the fruit' });
   await root.until(history => text(history.at(-1)) === 'Counts: Relay: 3 apples, Relay: 5 pears');
   expect(answered.get('awaited')).toBeGreaterThan(Math.max(answered.get('Count apples')!, answered.get('Count pears')!));
-  // await_subagents returns both answers itself, and they are not sent again as messages.
   const seen = agents.model.requests.findLast(request => JSON.stringify(request.messages).includes('Count the fruit')).messages;
   const waited = seen.find((message: any) => message.role === 'tool' && /Relay: 3 apples/.test(text(message)));
   expect(text(waited)).toMatch(/<subagent_response>\nSubagent (Apples|Pears):[\s\S]*<subagent_response>\nSubagent (Apples|Pears):/);

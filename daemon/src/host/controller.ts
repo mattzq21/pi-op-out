@@ -34,13 +34,11 @@ export class Host implements SessionHost {
   sessions = new Map<string, Session>();
   subscriptions = new Map<string, Session>();
   attachments = new Map<string, any>();
-  /** The session epoch that each remembered attachment record belongs to. */
   private attachmentEpochs = new WeakMap<object, string>();
   readonlyMap = new Map<string, ReadonlyView>();
   pending = new Map<string, any[]>();
   configurationValue: any | null = null;
   agentDefinitions: any = null;
-  /** Counts the loads of the agent definitions. Sessions report it, so clients know which definitions apply. */
   agentRevision = 0;
   maintenanceSet = new Set<string>();
   releaseGates = new Map<string, Mutex>();
@@ -64,7 +62,6 @@ export class Host implements SessionHost {
   }
 
   static async create(home: string, storage: string, services: HostServices, sink: (packet: any) => void): Promise<Host> {
-    // Plugins start first: the agent definitions give agents the default tools of the enabled plugins.
     await services.initialize();
     const settings = Settings.readSettingsAt(join(home, storage, 'settings.json'));
     const definitions = await Agents.load(home, storage, Extensions.agentResources(settings), true, null);
@@ -83,7 +80,6 @@ export class Host implements SessionHost {
   ownership(): ConversationOwnership { return this.ownershipValue!; }
   output(packet: any): void { this.sink(clientPayload(packet)); }
 
-  // Session callbacks.
   queueRoot(): string | null { return join(this.home, this.storage, 'queued-input'); }
   configuration(): any | null { return this.configurationValue === null ? null : structuredClone(this.configurationValue); }
   readonlyViews(identity: string): string[] { return [...this.readonlyMap].filter(([, view]) => view.id === identity).map(([id]) => id); }
@@ -104,9 +100,6 @@ export class Host implements SessionHost {
       for (const [runtime, current] of this.subscriptions) {
         if (current !== session) continue;
         this.subscriptions.delete(runtime);
-        // Owning views receive "disconnected" and the app forgets them, so no detach will come to remove their attachment.
-        // Read-only views stay registered in the app and keep their attachment for a later take-ownership.
-        // A view that reconnects meanwhile has a new record without this epoch, so it is kept.
         const record = this.attachments.get(runtime);
         if (!this.readonlyMap.has(runtime) && record && this.attachmentEpochs.get(record) === session.epoch) this.attachments.delete(runtime);
       }
@@ -125,10 +118,6 @@ export class Host implements SessionHost {
   maintenance(key: string): void { this.maintain(key); }
   refreshProviders(): Promise<number> { return this.services.refreshProviders(); }
 
-  /**
-   * tools_available saves the tools that a starting Pi offers on this host. commands_available saves its extension commands.
-   * task_success commits a chat's repository on Pi's final response, before Pi takes a follow-up (ADR 0006). Uses the saved repository status.
-   */
   async runtimeEvent(source: RuntimeEventSource, event: RuntimeEvent): Promise<void> {
     if (event.name === 'tools_available') { recordTools(event.data.tools, join(this.home, this.storage, 'settings.json')); return; }
     if (event.name === 'commands_available') { recordCommands(event.data.commands, join(this.home, this.storage, 'settings.json')); return; }
@@ -138,7 +127,6 @@ export class Host implements SessionHost {
     await saveProgress(source.cwd, { repository: repository.root, gitCommonDir: repository.gitDir });
   }
 
-  /** A runtime event from an agent that runs for one message, through the session broker. */
   private async brokerRuntimeEvent(packet: any): Promise<null> {
     const event = parseRuntimeEvent(packet.event);
     const identity = text(event.data, 'sessionId');
@@ -154,7 +142,6 @@ export class Host implements SessionHost {
 
   stateChanged(identity: string): void { this.orchestration.stateChanged(identity); }
 
-  /** A task that a daemon stop ends keeps its mark, so the next daemon starts it again. */
   taskRunning(id: string, running: boolean, stopped: boolean): void {
     if (stopped && this.shuttingDown) return;
     try { Registry.setTaskRunning(this.storageRoot(), id, running); }
@@ -332,12 +319,10 @@ export class Host implements SessionHost {
     return { success: true, sessionId, agentRevision: revision };
   }
 
-  /** Reads the agent definitions again and applies them to every session. `target` must stay the same while they load. */
   private reloadAgentDefinitions(target: () => unknown = () => undefined): Promise<number> {
     return this.useAgentDefinitions(settings => Agents.load(this.home, this.storage, settings, false, this.services.fastModels()), target);
   }
 
-  /** Applies the definitions that `read` gives to every session. `target` must stay the same while they are read. */
   private async useAgentDefinitions(read: (settings: any) => Promise<any>, target: () => unknown = () => undefined): Promise<number> {
     const release = await this.configurationGate.lock();
     let revision: number;
@@ -362,10 +347,6 @@ export class Host implements SessionHost {
     return revision;
   }
 
-  /**
-   * Tells a session that the definitions changed, also during a turn: agents it starts later, such as subagents and reviews, use them.
-   * A failure does not undo the change; it is reported.
-   */
   private async sendAgentDefinitions(session: Session): Promise<void> {
     if (session.transient() || session.closed() || session.stopping()) return;
     try { await session.executeWorker({ type: 'agent_definitions_changed' }); }
@@ -375,7 +356,6 @@ export class Host implements SessionHost {
   private availability: Promise<void> | null = null;
   private availabilityPending = false;
 
-  /** Provider models decide which agents can run, so a provider or fast model change loads the definitions again. Changes during a load cause one more load. */
   refreshAgentAvailability(): void {
     if (this.configurationValue === null) return;
     if (this.availability) { this.availabilityPending = true; return; }
@@ -388,7 +368,6 @@ export class Host implements SessionHost {
     })().finally(() => { this.availability = null; });
   }
 
-  /** Saves agent definitions, applies them to new agents and tells the clients. */
   private async saveAgentDefinitions(configuration: unknown): Promise<{ revision: string; warnings: string[] }> {
     let saved: Agents.Saved | undefined;
     await this.useAgentDefinitions(async settings => {
@@ -419,8 +398,6 @@ export class Host implements SessionHost {
     this.ownership().shutdown();
     this.mutations.dropAll();
   }
-
-  // Requests.
 
   async handle(packet: any): Promise<any> {
     const runtime = text(packet, 'runtimeId');
@@ -483,14 +460,12 @@ export class Host implements SessionHost {
     if (name === 'command' && ['pin_message', 'unpin_message'].includes(packet.command?.type)) return this.pinCommand(runtime, packet.command);
     const readonly = this.readonlyMap.get(runtime);
     if (readonly) {
-      // Any view can fork or branch a chat; the view then owns the new chat.
       if (name === 'command' && ['fork_after', 'copy_after'].includes(packet.command?.type)) return forkFromView(this, runtime, { ...readonly }, structuredClone(packet.command));
       return readonlyCommand(this, packet, { ...readonly });
     }
     const session = this.subscriptions.get(runtime);
     if (!session) {
       if (name === 'detach') return { stopped: false };
-      // An unknown runtime, for example a view from before a daemon restart that has not attached again. Nothing ran, so the client can retry.
       throw new CommandRefusedError('Pi is not running', 'daemon');
     }
     if (name === 'detach') return this.detach(packet, runtime, session);
@@ -502,7 +477,6 @@ export class Host implements SessionHost {
     return sessionCommand(this, session, runtime, structuredClone(packet.command ?? null));
   }
 
-  /** Any view of a chat can pin its messages, also a read-only view. */
   private pinCommand(runtime: string, command: any): null {
     const identity = this.readonlyMap.get(runtime)?.id ?? this.subscriptions.get(runtime)?.identity;
     if (identity === undefined) throw new CommandRefusedError('Pi is not running', 'daemon');

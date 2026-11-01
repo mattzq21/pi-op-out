@@ -41,7 +41,6 @@ function record(session) {
   } catch (error) { db.exec('ROLLBACK'); throw error; }
 }
 
-/** Records the working directory of a registered session in the registry at request.root. */
 function recordDirectory(request) {
   if (typeof request.root !== 'string' || !path.isAbsolute(request.root)) throw new Error('Invalid session registry root');
   const root = request.root;

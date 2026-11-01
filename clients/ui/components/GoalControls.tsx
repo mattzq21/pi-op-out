@@ -14,7 +14,6 @@ function readGoal(value?: string): { goal?: Goal; error?: string } {
   } catch (reason) { return { error: `Could not show the goal: ${reason instanceof Error ? reason.message : String(reason)}` }; }
 }
 
-/** The conversation's goal from its piop-goal status, and the /goal commands that change it. A complete goal is not shown. */
 export function createGoalControls(source: Accessor<{ value?: string; disabled: boolean; onCommand: (action: string) => Promise<unknown> }>) {
   const read = createMemo(() => readGoal(source().value));
   const goal = createMemo(() => { const current = read().goal;
@@ -37,7 +36,6 @@ export function createGoalControls(source: Accessor<{ value?: string; disabled: 
 
 export type GoalControls = ReturnType<typeof createGoalControls>;
 
-/** The edit and clear buttons of the goal's queue entry. */
 export function GoalActions(props: { controls: GoalControls }) {
   return <>
     <button type="button" class="pending-icon-button" data-tooltip="Edit goal" aria-label="Edit goal" disabled={props.controls.disabled()} onClick={() => void props.controls.run("edit")}><Pencil size={12} /></button>

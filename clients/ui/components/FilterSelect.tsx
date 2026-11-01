@@ -3,10 +3,8 @@ import { ChevronDown } from "lucide-solid";
 import { createMemo, createSignal } from "solid-js";
 import { createDependencyEffect } from "../lib/solid";
 
-/** An option of FilterSelect. The filter matches search; the list shows label. A divider separates options of different groups. */
 export type FilterOption = { value: string; label: string; search: string; disabled?: boolean; group?: number };
 
-/** A dropdown whose list starts with a filter box. */
 export function FilterSelect(props: { label: string; filterPlaceholder: string; value: string; options: FilterOption[]; invalid?: boolean; onChange: (value: string) => void }) {
   const [open, setOpen] = createSignal(false);
   const [query, setQuery] = createSignal("");

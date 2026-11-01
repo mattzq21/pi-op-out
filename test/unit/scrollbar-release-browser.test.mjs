@@ -3,7 +3,6 @@ import { test } from 'node:test';
 import { setTimeout as delay } from 'node:timers/promises';
 import { startupPage } from '../startup-browser-fixture.mjs';
 
-// WebKitGTK loses the release of a scrollbar thumb drag when another button is pressed during the drag, so the thumb follows the pointer.
 test('a right click during a scrollbar thumb drag does not leave the thumb following the pointer', async t => {
   const page = await startupPage(t, 'production', { entryPoint: 'test/fixtures/scrollbar-release-browser.tsx', ready: '#scroller' });
   const scroller = page.locator('#scroller');

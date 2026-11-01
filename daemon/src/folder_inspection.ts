@@ -1,7 +1,6 @@
 import { runLimited, type CommandSpec } from './process_io';
 import type { SessionSummary } from './types';
 
-/** Prints one digit per folder: 0 missing, 1 present, 2 a linked Git worktree (its .git is a file). */
 const SCRIPT = `for path do
         if [ -d "$path" ] && [ -f "$path/.git" ]; then printf '2'; elif [ -d "$path" ]; then printf '1'; else printf '0'; fi
     done`;

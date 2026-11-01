@@ -21,7 +21,6 @@ test('the context wheel shows its token count on click and hides it on Escape, a
   assert.equal(await tip.count(), 0, 'a second click hides it');
 
   await wheel.click();
-  // The chat scrolls inside its own container, which does not bubble a scroll event.
   await page.locator('main').evaluate(main => main.dispatchEvent(new Event('scroll')));
   await tip.waitFor({ state: 'detached' });
 });

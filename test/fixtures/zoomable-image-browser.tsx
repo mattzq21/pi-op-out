@@ -2,7 +2,6 @@ import { render } from 'solid-js/web';
 import { ZoomableImage } from '../../clients/ui/components/ZoomableImage';
 import '../../clients/ui/styles.css';
 
-/** A 2000×1200 chart image, larger than the test window, and an image that cannot load. */
 const canvas = document.createElement('canvas');
 canvas.width = 2000; canvas.height = 1200;
 const context = canvas.getContext('2d')!;

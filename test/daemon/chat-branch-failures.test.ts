@@ -6,19 +6,12 @@ import { randomUUID } from 'node:crypto';
 import { Database } from 'bun:sqlite';
 import { agentDaemon, text } from './agent-chats';
 
-/*
- * Failure and race behaviour of "Branch from here" (fork_after) through the daemon's public commands: duplicate requests
- * make one branch, a failed branch removes everything it made, and the source chat and files never change.
- */
-
 const git = (cwd: string, ...args: string[]) => execFileSync('git', ['-C', cwd, ...args], { encoding: 'utf8' }).trimEnd();
 const worktreesRoot = (home: string) => join(home, '.piop/worktrees');
 const piopBranches = (cwd: string) => git(cwd, 'for-each-ref', '--format=%(refname)', 'refs/heads/piop').split('\n').filter(Boolean);
 const worktreeFolders = (home: string) => existsSync(worktreesRoot(home)) ? readdirSync(worktreesRoot(home)) : [];
 
-/** The first n hex digits of the chat ID: the worktree folder and branch name Piop tries first. */
 const short = (chatId: string, n = 4) => chatId.replaceAll('-', '').slice(0, n);
-/** Folders under the Piop worktrees folder that the project repository cache still knows. */
 function cachedWorktrees(home: string): string[] {
   const database = new Database(join(home, '.piop', 'sessions.sqlite'), { readonly: true });
   try { return (database.query('SELECT cwd FROM project_repositories').all() as { cwd: string }[]).map(row => row.cwd).filter(cwd => cwd.startsWith(worktreesRoot(home) + '/')); }
@@ -51,7 +44,6 @@ async function repositoryChat() {
   return { agents, cwd, runtimeId, command, ask };
 }
 
-/** Everything about the source checkout a branch must leave alone, including the index and ignored files. */
 function sourceState(cwd: string) {
   return {
     head: git(cwd, 'rev-parse', 'HEAD'),
@@ -114,7 +106,6 @@ test('a branch that fails after its worktree exists removes the worktree, branch
     const before = sourceState(cwd);
     const transcript = readFileSync(state.sessionFile, 'utf8');
     const sessionsBefore = (await agents.daemon.invoke('list_sessions')).map((session: any) => session.id).sort();
-    // Publication writes the new transcript next to the source one. A read-only folder makes it fail after the worktree exists.
     chmodSync(dirname(state.sessionFile), 0o555);
     await expect(command({ type: 'fork_after', entryId: reply.id })).rejects.toThrow(/Could not create the branch/);
     chmodSync(dirname(state.sessionFile), 0o755);
@@ -130,7 +121,6 @@ test('a branch that fails after its worktree exists removes the worktree, branch
     expect((await agents.daemon.invoke('list_sessions')).map((session: any) => session.id).sort()).toEqual(sessionsBefore);
     expect(readdirSync(dirname(state.sessionFile)).filter(name => !name.includes(state.sessionId))).toEqual([]);
 
-    // The failed attempt left nothing behind, so a retry makes a fresh, working branch.
     await command({ type: 'fork_after', entryId: reply.id });
     const branch = await command({ type: 'get_state' });
     expect(branch.sessionId).not.toBe(state.sessionId);
@@ -164,7 +154,6 @@ test('the first branch on a machine that fails before its worktree exists cleans
     await agents.daemon.waitEvent('pi://event', p => !seen.has(p) && p.runtimeId === runtimeId && p.event?.type === 'agent_settled', 60000);
     const reply = (await command({ type: 'get_entries' })).entries.filter((entry: any) => entry.message?.role === 'assistant').at(-1);
     const state = await command({ type: 'get_state' });
-    // A required Git filter that always fails stops the checkout of this file, so the branch fails before its worktree exists.
     git(cwd, 'config', 'filter.broken.smudge', 'false');
     git(cwd, 'config', 'filter.broken.required', 'true');
     writeFileSync(join(cwd, '.git/info/attributes'), 'tracked.txt filter=broken\n');

@@ -4,7 +4,6 @@ import { agentDaemon, text } from './agent-chats';
 
 test('when a chat\'s Pi process dies mid-answer, the app is told, and reopening the chat keeps its history and answers again', async () => {
   const agents = await agentDaemon();
-  /** The Pi processes of this test's daemon. */
   const workers = () => readdirSync('/proc').filter(name => /^\d+$/.test(name)).flatMap(pid => {
     try {
       const env = readFileSync(`/proc/${pid}/environ`, 'utf8').split('\0');
@@ -29,7 +28,6 @@ test('when a chat\'s Pi process dies mid-answer, the app is told, and reopening 
     await lost;
     expect(await chat.command({ type: 'get_state' }).then(() => 'answered', (error: Error) => error.message)).toBe('Pi is not running');
 
-    // The app reopens the chat, as it does after a disconnect.
     await agents.daemon.invoke('start_pi', { runtimeId: 'reopened', clientId: 'laptop', cwd: chat.cwd, sessionId: chat.sessionId });
     const reopened = (command: any) => agents.daemon.invoke('pi_command', { runtimeId: 'reopened', command });
     const history = async () => (await reopened({ type: 'get_entries' })).entries.filter((entry: any) => entry.type === 'message').map((entry: any) => entry.message);

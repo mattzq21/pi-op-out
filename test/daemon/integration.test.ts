@@ -8,7 +8,6 @@ let daemon: TestDaemon;
 beforeAll(async () => { daemon = await startDaemon(); addProviderLogin(daemon.home, 'openai-codex', 'oauth'); }, 60_000);
 afterAll(() => daemon?.stop());
 
-/** A fake Codex app server: it answers each request with the saved body for its method and the request's id. */
 const FAKE_CODEX = `#!/bin/sh
 while IFS= read -r line; do
   id=$(printf '%s' "$line" | sed -n 's/.*"id":\\([0-9]*\\).*/\\1/p')
@@ -43,7 +42,6 @@ test('Codex usage reports server errors and missing usage data', async () => {
 });
 
 test('Codex usage reports a Codex program that cannot start', async () => {
-  // The user install location comes before PATH; a file there that cannot run must fail the request.
   const installed = join(daemon.home, '.local/bin/codex');
   mkdirSync(join(daemon.home, '.local/bin'), { recursive: true });
   writeFileSync(installed, FAKE_CODEX);
@@ -52,7 +50,6 @@ test('Codex usage reports a Codex program that cannot start', async () => {
   finally { rmSync(installed); }
 });
 
-/** A fake file manager launcher: it records each call in $HOME and fails when $HOME/.xdg-open-fail exists. */
 const FAKE_XDG_OPEN = `#!/bin/sh
 printf '%s\\0' "$@" >> "$HOME/.xdg-open-calls"
 [ ! -f "$HOME/.xdg-open-fail" ] || { cat "$HOME/.xdg-open-fail" >&2; exit 3; }

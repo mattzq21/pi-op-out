@@ -31,7 +31,6 @@ export function MobileApp() {
   const configuredDebugAddress = createRef<string | undefined>(undefined);
   const debugAddressLoaded = createRef<Promise<void>>(Promise.resolve());
   const activeDebugAddress = createRef<string | undefined>(undefined);
-  /** The address of the last socket that the host accepted. A drop before the host address is saved reconnects to it. */
   const acceptedAddress = createRef<string | undefined>(undefined);
   const connectRef = createRef<(address: string, label?: string) => Promise<void>>(async () => {});
   const reconnectAddress = () => activeDebugAddress.current ?? acceptedAddress.current ?? cachedMobileHost();
@@ -93,7 +92,6 @@ export function MobileApp() {
         setSavedHosts(stored.saved); setAnchorReadFailed(false);
       }
 
-      // The socket can close while the address saves. The disconnect handler then shows the error and schedules the reconnect.
       if (!remoteClient.isConnected()) return;
       setUrl(host.url); setName(host.name); setConnected(true); setWorkspaceOpen(true); retryDelay.current = 2000;
     } catch (reason) {
@@ -172,7 +170,6 @@ export function MobileApp() {
     return () => { disposed = true; generation.current++; clearTimeout(retry.current); clearTimeout(restartGraceTimer.current); remoteClient.close(); window.removeEventListener("piop-mobile-disconnect", disconnect); window.removeEventListener("piop-daemon-restarting", restarting); document.removeEventListener("visibilitychange", reconnectOnResume); void restartListener.then(stop => stop()); remoteClient.onDisconnect = undefined; void back.then((handle) => handle.remove()); window.visualViewport?.removeEventListener("resize", viewport); };
   }, () => [disconnect, scheduleReconnect]);
 
-  /** The saved host whose address is in the form. */
   const selectedHost = () => savedHosts().find(host => host.url === url());
 
   const editAddress = (address: string) => { generation.current++; clearTimeout(retry.current); intentionalDisconnect.current = true; acceptedAddress.current = undefined; setUrl(address); };
@@ -182,7 +179,6 @@ export function MobileApp() {
     editAddress(host?.url ?? ""); setName(host?.name ?? ""); setError("");
   };
 
-  /** Saves the host in the form without connecting. */
   const saveHost = async () => {
     if (savingHost()) return;
     setSavingHost(true); setError("");
@@ -195,7 +191,6 @@ export function MobileApp() {
     finally { setSavingHost(false); }
   };
 
-  /** Forgets the selected host, or every host when the saved hosts cannot be read. */
   const forgetHost = async () => {
     if (forgetting()) return;
     const forgotten = selectedHost()?.url;

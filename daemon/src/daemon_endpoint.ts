@@ -11,12 +11,10 @@ import { generatedExtensionRoot } from './extensions';
 
 export const STARTUP_TIMEOUT = 90_000;
 
-/** Exit code of a daemon that stops because another daemon already runs for the same directory. */
 export const ALREADY_RUNNING_EXIT_CODE = 3;
 
 export class DaemonAlreadyRunningError extends Error {}
 
-/** The address and token clients use to reach the daemon. */
 export interface Endpoint { url: string; token: string; protocol: number }
 
 export function directory(): string {
@@ -30,7 +28,6 @@ export function path(): string { return join(directory(), 'daemon.json'); }
 
 let runtime: any;
 
-/** Development details about this daemon process. */
 export function debugRuntime(): any {
   if (runtime) return runtime;
   const executable = Bun.isStandaloneExecutable ? process.execPath : resolve(process.argv[1] ?? process.execPath);
@@ -95,7 +92,6 @@ export function publish(address: string, port: number, token: string): void {
   records.publish(path(), endpointRecord(address, port, token));
 }
 
-/** Removes this daemon's endpoint record so clients stop sending its token to whatever listens on the port next. */
 export function unpublish(address: string, port: number, token: string): void {
   records.removeIfEqual(path(), endpointRecord(address, port, token));
 }

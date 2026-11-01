@@ -7,13 +7,10 @@ const database = require('../session-database.cjs');
 const childIndex = require('../session-broker/session-child-index.cjs');
 const names = require('../session-broker/session-names.cjs');
 
-/** The error that a copied chat shows for the prompt it was working on when its main chat was forked. */
 const FORK_ERROR = 'Fork error: this chat was working when its main chat was forked. Its last prompt is sent again.';
 
-/** The retry of a prompt that has no text, such as one image: the copied history keeps the prompt above the fork error. */
 const PROMPT_ABOVE = 'Retry the prompt above the fork error.';
 
-/** Current-state record of a fork: the copied chats that get their last prompt again when the fork starts. */
 const FORK_RETRIES = 'piop-fork-retries';
 
 function readTranscript(file) {
@@ -36,7 +33,6 @@ function promptText(entry) {
   return typeof content === 'string' ? content : Array.isArray(content) ? content.filter(part => part?.type === 'text').map(part => part.text).join('') : '';
 }
 
-/** The branch that the chat shows, oldest first. */
 function shownBranch(file, header, entries) {
   const tree = entries.filter(entry => entry.type !== 'session' && !stateRecords.isCurrent(entry) && typeof entry.id === 'string');
   const byId = new Map(tree.map(entry => [entry.id, entry]));
@@ -48,7 +44,6 @@ function shownBranch(file, header, entries) {
   return branch.reverse();
 }
 
-/** When the chat was working, the prompt it worked on and the entries that end its copy with a fork error. */
 function interruptedWork(branch) {
   const messages = branch.filter(entry => entry.type === 'message' || isPrompt(entry));
   const last = messages.at(-1);
@@ -67,7 +62,6 @@ function interruptedWork(branch) {
   return { message: promptText(prompt).trim() ? promptText(prompt) : PROMPT_ABOVE, entries: [promptCopy, error] };
 }
 
-/** Replaces every saved form of the mapped IDs and paths in value. Longer values go first, so a path is replaced whole before the ID in its file name. */
 function rewrite(value, replacements) {
   let text = JSON.stringify(value);
 
@@ -82,12 +76,6 @@ function activeChild(root, child) {
   return located && io.inside(path.join(root, 'sessions'), located.path) ? located.path : undefined;
 }
 
-/**
- * Plans copies of the auxiliary chats that source owns, for the fork that becomes target: the chats that are not archived and
- * were made at or before cutoff (an ISO time, or undefined for all), with their own auxiliary chats under the same two rules.
- * cwd moves copies whose folder is cwd.from to cwd.to. replacements maps the source and each copied chat to its copy, by ID and
- * by path; the fork's own history uses it for the entries that name a copied chat.
- */
 function planAuxiliaryCopies({ root, source, target, cutoff, cwd }) {
   root = fs.realpathSync(root);
   const ids = new Map([[source.id, target.id]]);
@@ -106,7 +94,6 @@ function planAuxiliaryCopies({ root, source, target, cutoff, cwd }) {
 
       if (queue[index].cutoff !== undefined && Date.parse(header.timestamp) > Date.parse(queue[index].cutoff)) continue;
       const copyId = database.reserve(root);
-      // A copy keeps the creation time of the chat it copies, so a later fork of the fork selects it by the same rule and the tabs keep their order.
       const timestamp = header.timestamp;
       const copyPath = path.join(path.dirname(target.path), String(timestamp).replace(/[:.]/g, '-') + '_' + copyId + '.jsonl');
       ids.set(child.sessionId, copyId);
@@ -128,7 +115,6 @@ function planAuxiliaryCopies({ root, source, target, cutoff, cwd }) {
   return { copies: planned, replacements, retries: planned.filter(copy => copy.retry !== undefined).map(copy => ({ sessionId: copy.sessionId, message: copy.retry, deliveryId: copy.deliveryId })) };
 }
 
-/** Copies in fork entries that name a copied chat: they then name the copy, and the fork as its owner. */
 function rewriteForkHistory(entries, plan) {
   const copied = plan.replacements.slice(2);
 
@@ -143,12 +129,6 @@ function resultNotificationId(run) {
   return 'subagent-' + createHash('sha256').update(JSON.stringify([run.parentSessionId, run.sessionId, run.toolCallId, run.startedAt])).digest('hex');
 }
 
-/**
- * Saves the subagent runs of each copied parent for its copy, so the copy owns the copied subagents and gets their results.
- * The fork sends a working subagent its task again (see FORK_RETRIES). Its run then waits for the answer to that delivery,
- * which the new parent reads whenever it runs, whether or not the parent itself is working.
- */
-/** The notification IDs of the subagent results in entries: sent as their own message, or returned by await_subagents. */
 function deliveredResults(entries) {
   return new Set(entries.flatMap(entry => {
     if (entry.type === 'custom_message' && entry.customType === 'piop-subagent-result') return typeof entry.details?.notificationId === 'string' ? [entry.details.notificationId] : [];
@@ -184,7 +164,6 @@ function copySubagentRuns(root, plan, parents) {
           Object.assign(run, { submission: 'accepted', deliveryIds: [child.deliveryId], taskNotificationId: child.deliveryId, observation: undefined });
         }
 
-        // A result that came after the fork point is not in the copied history, so the copy gets it again.
         if (run.resultDelivery === 'delivered' && !results.has(run.resultNotificationId)) {
           run.resultDelivery = 'pending';
           delete run.resultNotificationId;
@@ -200,17 +179,12 @@ function copySubagentRuns(root, plan, parents) {
   finally { db.close(); }
 }
 
-/** The fork-retry record for a fork whose copies need their last prompt again, or undefined. */
 function retryRecord(plan) {
   if (!plan.retries.length) return undefined;
 
   return { type: 'custom', customType: FORK_RETRIES, id: randomUUID(), parentId: null, timestamp: new Date().toISOString(), data: { pending: plan.retries } };
 }
 
-/**
- * Publishes the planned copies, parents first, with publishOne(path, entries, options), then moves the subagent runs.
- * target is the fork; it must be published already.
- */
 async function publishAuxiliaryCopies(root, plan, target, publishOne) {
   for (const copy of plan.copies) {
     await publishOne(copy.sessionPath, copy.entries, { ...copy.name ? { name: copy.name } : {}, goalSource: copy.sourcePath, dependencies: { workspace: { path: copy.cwd, kind: 'existing' } } });

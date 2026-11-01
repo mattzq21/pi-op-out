@@ -145,7 +145,6 @@ describe("Conversation lifecycle", () => {
   });
 
   it("starts a replacement session and closes the archived conversation's terminal", async () => {
-    // Settings and model readers start hidden Pi processes in the background; only visible starts are chats.
     const shown = z.object({ presence: z.object({ visible: z.literal(true) }) });
     const chatStarts = (calls: Awaited<ReturnType<typeof backendCalls>>) => calls.filter(({ command, args }) => command === "start_pi" && shown.safeParse(args).success);
     const indexed = { id: "archive-active", path: "/tmp/archive-active.jsonl", name: "Active archive conversation", project: "Archive project", cwd: "/tmp", preview: "Active archive", messageCount: 2, hostId: "local" };

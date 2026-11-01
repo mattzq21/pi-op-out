@@ -8,7 +8,6 @@ import { IconButton } from "./IconButton";
 import type { StorageReport } from "../types";
 import { formatDateTime } from "../lib/dateTime";
 
-/** How many of the last archived chats of this machine show before the rest. */
 const FIRST_ARCHIVES = 5;
 const FIRST_LOCAL = 1, ALL_LOCAL = 2, ALL_HOSTS = 3;
 
@@ -24,7 +23,6 @@ export function ArchivedSessionPanel() {
   const refresh = async () => {
     const generation = ++refreshGeneration.current;
     setLoading(true); setError(undefined);
-    // Each stage holds more of the list than the one before; a slower earlier stage must not replace a later one.
     let shown = 0;
 
     const show = (stage: number, next: StorageReport) => {
@@ -33,7 +31,6 @@ export function ArchivedSessionPanel() {
       setReport(current => stage === ALL_HOSTS ? next : { hosts: [...next.hosts, ...(current?.hosts.filter(host => host.hostId !== "local") ?? [])] });
     };
 
-    // The user looks for the last archived chats most, so show them first, then all of this machine. Other machines can answer slowly.
     const first = report()?.hosts.some(host => host.hostId === "local") ? undefined : loadStorageReport("local", true, FIRST_ARCHIVES).then(next => show(FIRST_LOCAL, next));
     const local = loadStorageReport("local", true).then(next => show(ALL_LOCAL, next));
 
