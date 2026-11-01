@@ -136,3 +136,12 @@ test('a stop holds the queue when the only message is one that Pi took, so it do
   await queue.runtimeEvent('queue_release', { ids: [id] });
   expect(await take('followUp')).toBeNull();
 });
+
+test('a stop does not hold the queue when the only message is one that Pi already used', async () => {
+  const { queue, take } = chat(null);
+  await queue.command({ type: 'follow_up', message: 'Used' });
+  const id = (await take('followUp')).id;
+  queue.observe({ type: 'message_start', message: { role: 'user', piopQueueId: id, timestamp: 1, content: 'Used' } });
+  await queue.command({ type: 'abort' });
+  expect(queue.view().held).toBe(false);
+});

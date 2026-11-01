@@ -4,8 +4,8 @@ import { GOAL_TOOL, QueueGoal } from './goals/state';
 /** Fields that record how Pi took a queued item. Clients do not see them. */
 export const CONSUMPTION_FIELDS = ['consumedContent', 'consumedTimestamp', 'consumedInputId', 'deliveryStarted'];
 
-/** Fields that only the queue uses. preparedGoal: the goal that a /goal item sets when Pi takes it. */
-const PRIVATE_FIELDS = [...CONSUMPTION_FIELDS, 'preparedGoal'];
+/** Fields that only the queue uses. preparedGoal: the goal that a /goal item sets when Pi takes it. used: Pi started a message with the item. */
+const PRIVATE_FIELDS = [...CONSUMPTION_FIELDS, 'preparedGoal', 'used'];
 
 function stamp(value: any): string { return JSON.stringify(value ?? null); }
 
@@ -48,6 +48,17 @@ export class QueueState {
 
   /** Follow-ups below the goal entry, in queue order. */
   waiting(): any[] { return this.pending.filter(item => flag(item, 'afterGoal') && !flag(item, 'retry')); }
+
+  /** Marks the item of a user message that Pi started as used. A taken item without it still waits in Pi and comes back when Pi releases it. */
+  markUsed(event: any): void {
+    const name = kind(event);
+    if ((name !== 'message_start' && name !== 'message_end') || event.message?.role !== 'user' || typeof event.message?.piopQueueId !== 'string') return;
+    const item = this.pending.find(entry => entry.id === event.message.piopQueueId);
+    if (item) item.used = true;
+  }
+
+  /** True when an item waits for Pi: not taken, or taken but not used. */
+  hasUnused(): boolean { return this.pending.some(item => !flag(item, 'used')); }
 
   /** True when Pi may take the item now. */
   available(item: any): boolean {

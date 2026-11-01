@@ -46,6 +46,7 @@ export async function changePending(queue: QueueDelivery, gate: Mutex, id: strin
 
 /** Clears the fields that record a delivery to Pi. */
 function clearDelivery(item: any): void {
+  delete item.used;
   item.deliveryStarted = false;
   item.consumedTimestamp = null;
   item.consumedContent = null;

@@ -61,6 +61,7 @@ export class SessionQueue {
 
   /** Sees an event from Pi as soon as it arrives, before events that came earlier are handled. A goal tool call that comes after it then knows what the model got. */
   observe(event: any): void {
+    this.s.markUsed(event);
     if (kind(event) === 'message_end') this.s.goals.added(event.message);
   }
 
@@ -87,7 +88,7 @@ export class SessionQueue {
 
   private async untake(): Promise<void> {
     let changed = false;
-    for (const item of this.s.pending) if (flag(item, 'taken')) { delete item.taken; item.deliveryStarted = false; changed = true; }
+    for (const item of this.s.pending) if (flag(item, 'taken')) { delete item.taken; delete item.used; item.deliveryStarted = false; changed = true; }
     if (changed) await this.delivery.publish();
   }
 
@@ -132,7 +133,7 @@ export class SessionQueue {
       // A stop holds the queue when the goal or messages wait, so nothing starts after it. The next message the user sends goes first.
       this.s.stopped = true;
       // Messages that Pi took but did not use come back after the stop, so they count as waiting.
-      if (this.s.goals.live() || this.s.pending.length) await this.delivery.reportStorageError(() => this.delivery.hold(true));
+      if (this.s.goals.live() || this.s.hasUnused()) await this.delivery.reportStorageError(() => this.delivery.hold(true));
       const result = await this.abort(command, assertOwner);
       assertOwner();
       return this.stop(result);
