@@ -138,7 +138,9 @@ test('unused temporary chats are removed on disposal while used chats survive', 
   assert.equal(unused.isTemporaryChat(), true);
   assert.equal(commands('create_temporary_chat').length, 0);
   await unused.startDraft();
-  await unused.dispose();
+  await Promise.all([unused.dispose(), unused.dispose()]);
+  assert.equal(commands('stop_pi').length, 1, 'concurrent disposal stops the session once');
+  assert.equal(commands('remove_temporary_chat').length, 1, 'concurrent disposal removes the folder once');
   assert.deepEqual(commands('remove_temporary_chat').at(-1).args, { path: '/tmp/chat', hostId: 'local' });
   const used = transport({});
   await used.connect();
