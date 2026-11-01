@@ -41,8 +41,10 @@ test('history scrolls without taking ownership and a tap claims the terminal', a
     assert.ok(after.history,'history must remain in the transcript');
     assert.ok(after.top<before.top-30,'swiping down must reveal earlier terminal output');
     assert.equal(await page.evaluate(()=>window.claims),0,'scrolling must not take ownership');
-    await page.evaluate(()=>window.feed('\r\nnew output\r\n'));
-    await page.waitForTimeout(100);
+    await page.evaluate(() => {
+      window.feed('\r\nnew output\r\n');
+      return new Promise(requestAnimationFrame);
+    });
     assert.ok(Math.abs((await state()).top-after.top)<3,'incoming output must preserve the history scroll position');
   }
 
