@@ -130,6 +130,8 @@ test.concurrent('a side chat archived alone, and one archived with its main chat
   const archives = (await agents.daemon.invoke('storage_report')).hosts.find((host: any) => host.hostId === 'local').archives;
   const archived = (id: string) => archives.find((item: any) => item.id === id);
   expect([archived(chat.sessionId)?.restorable, archived(closed.sessionId)?.restorable, archived(open.sessionId)?.restorable]).toEqual([true, false, false]);
+  const locate = (sessionId: string) => agents.daemon.invoke('broker_request', { hostId: 'local', path: '/orchestration', body: { action: 'locate', sessionId, hostId: 'local' } });
+  expect([(await locate(chat.sessionId)).auxiliary, (await locate(closed.sessionId)).auxiliary, (await locate(open.sessionId)).auxiliary]).toEqual([false, true, true]);
 
   await agents.daemon.invoke('restore_archived_session', { hostId: 'local', sessionPath: archived(chat.sessionId).path, clientId: 'btw-test' });
   expect(await listed(chat.sessionId)).toBeDefined();

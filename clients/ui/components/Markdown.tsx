@@ -254,7 +254,7 @@ export function Markdown(props: { children: string; streaming?: boolean; imagePr
       const target = sessionReference(sessionLink.dataset.sessionReference ?? "");
       if (event.button === 0 && target) {
         setError(undefined);
-        if (sessionLinks) sessionLinks.open(target.hostId, target.sessionId);
+        if (sessionLinks) sessionLinks.open(target.hostId, target.sessionId, sessionLink);
         else setError("Could not open chat: chat navigation is unavailable.");
       }
       return;

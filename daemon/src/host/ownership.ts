@@ -323,6 +323,16 @@ export class ConversationOwnership {
     return { sessionId: id, sessionPath: saved.path, cwd: saved.header.cwd ?? null, archived, revision: saved.revision };
   }
 
+  /** lookup, and for an archived chat whether it is auxiliary: such a chat is only restored with its root. */
+  location(id: string): any {
+    const location = this.lookup(id);
+    if (!location.archived) return location;
+    const saved = this.lookupSaved(id, false)?.[0];
+    if (!saved) throw new Error('Conversation was not found in active or archived storage');
+    const entries = saved.lines.slice(1).flatMap(line => { try { return [JSON.parse(line)]; } catch { return []; } });
+    return { ...location, auxiliary: SessionRecords.isAuxiliary([...entries, ...SessionRecords.records(saved.path, id).map((record: any) => record.entry)]) };
+  }
+
   lookupSaved(id: string, metadataOnly: boolean): [SavedConversation, boolean] | null {
     ConversationOwnership.key(id);
     const path = registeredPath(this.root, id);
