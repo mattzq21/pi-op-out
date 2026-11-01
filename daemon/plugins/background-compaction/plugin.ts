@@ -5,4 +5,5 @@ export const backgroundCompaction: BundledPlugin = {
   id: 'background-compaction',
   name: 'Background compaction',
   extension: { after: 'context-bar', files: [['index.ts', extension]] },
+  enabledByDefault: false,
 };
