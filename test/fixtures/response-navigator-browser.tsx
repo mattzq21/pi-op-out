@@ -16,13 +16,16 @@ const scrollRoot = createRef<HTMLDivElement | null>(null);
 (window as any).revealed = [];
 (window as any).setAnswers = setCount;
 (window as any).setOlder = setOlder;
+/** A last turn that the agent still works on, so it has no response yet. */
+const [working, setWorking] = createSignal(false);
+(window as any).setWorking = setWorking;
 
 render(() => <main style={{ position: 'relative' }}>
   <div ref={element => { scrollRoot.current = element; }} data-testid="messages" style={{ height: '400px', overflow: 'auto', position: 'relative' }}>
     <div class="conversation">{responses().map(response => <section data-response-turn={response.turnId} style={{ height: '900px' }}>
       <p>Question before {response.preview}</p>
       <article data-response-id={response.messageId}>{response.preview}</article>
-    </section>)}</div>
+    </section>)}{working() && <section data-response-turn="turn-working" style={{ height: '900px' }}><p>Question the agent works on</p></section>}</div>
   </div>
   <ResponseNavigator responses={rail()} forked={new Set(['answer-1'])} scrollRoot={scrollRoot} onNavigate={() => { (window as any).navigated++; }} onReveal={id => (window as any).revealed.push(id)} />
 </main>, document.getElementById('root')!);

@@ -26,6 +26,17 @@ test('the response rail jumps to an answer, marks where the reader is, and follo
   await page.waitForFunction(() => document.querySelector('[aria-current="location"]')?.getAttribute('aria-label')?.startsWith('Go to agent response 1'));
 });
 
+test('the response rail marks nothing and scrolls to its end while the reader is in a turn with no response', async t => {
+  const page = await open(t);
+  await page.getByRole('navigation', { name: 'Agent responses' }).waitFor();
+  await page.evaluate(() => window.setWorking(true));
+  await page.getByTestId('messages').evaluate(root => { root.scrollTop = root.scrollHeight; });
+  await page.waitForFunction(() => !document.querySelector('[aria-current="location"]'));
+  await page.waitForFunction(() => { const rail = document.querySelector('.response-navigator'); return rail.scrollTop + rail.clientHeight >= rail.scrollHeight - 1; });
+  await page.getByTestId('messages').evaluate(root => { root.scrollTop = 0; });
+  await page.waitForFunction(() => document.querySelector('[aria-current="location"]')?.getAttribute('aria-label')?.startsWith('Go to agent response 1'));
+});
+
 test('the response rail shows only for two or more answers in a chat that scrolls', async t => {
   const page = await open(t);
   await page.getByRole('navigation', { name: 'Agent responses' }).waitFor();

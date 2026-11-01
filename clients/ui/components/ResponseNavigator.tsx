@@ -28,7 +28,10 @@ export function ResponseNavigator(props: { responses: ResponseDestination[]; for
       const container = rail.current;
       const marker = container?.querySelector<HTMLElement>("[aria-current]");
 
-      if (!container || !marker) return;
+      if (!container) return;
+
+      // No marker while the user reads a turn that has no response yet, such as the turn the agent works on.
+      if (!marker) { container.scrollTop = container.scrollHeight; return; }
 
       if (marker.offsetTop < container.scrollTop) container.scrollTop = marker.offsetTop;
       else if (marker.offsetTop + marker.offsetHeight > container.scrollTop + container.clientHeight) container.scrollTop = marker.offsetTop + marker.offsetHeight - container.clientHeight;
@@ -48,9 +51,16 @@ export function ResponseNavigator(props: { responses: ResponseDestination[]; for
       targets.length = props.responses.length;
       let current: string | undefined = props.responses.find(loaded)?.messageId;
 
-      if (root.scrollHeight - root.scrollTop - root.clientHeight <= 2) current = props.responses.at(-1)?.messageId;
+      const top = root.getBoundingClientRect().top + 24;
+      const lastResponse = props.responses.at(-1);
+      const lastTurn = Array.from(root.querySelectorAll<HTMLElement>("[data-response-turn]")).at(-1);
+      // The last turn has no response yet, for example while the agent works on it.
+      const tail = lastResponse && lastTurn && lastTurn.dataset.responseTurn !== lastResponse.turnId ? lastTurn : undefined;
+      const atBottom = root.scrollHeight - root.scrollTop - root.clientHeight <= 2;
+
+      if (tail && (atBottom || tail.getBoundingClientRect().top <= top)) current = undefined;
+      else if (atBottom) current = lastResponse?.messageId;
       else {
-        const top = root.getBoundingClientRect().top + 24;
         let low = 0, high = props.responses.length;
 
         while (low < high) {
