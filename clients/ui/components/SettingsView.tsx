@@ -17,7 +17,7 @@ import { createComputed, createEffect, createMemo, createSignal, For, Index, Sho
 import { Dynamic } from "solid-js/web";
 import { createDependencyEffect, createMemoFields, createRef, type JSXElement } from "../lib/solid";
 
-import { Bot, Check, CircleGauge, CirclePlus, Clipboard, Cpu, HardDrive, Keyboard, Pencil, PlugZap, RotateCcw, Save, Search, Server, Settings2, ShieldCheck, Trash2, X, Zap } from "lucide-solid";
+import { Bot, Check, CircleGauge, CirclePlus, Clipboard, Copy, Cpu, HardDrive, Keyboard, Pencil, PlugZap, RotateCcw, Save, Search, Server, Settings2, ShieldCheck, Trash2, X, Zap } from "lucide-solid";
 import { uid } from "../lib/content";
 import { defaultKeybindings, keybindDefinitions, shortcutError, shortcutFromEvent, shortcutsConflict, type KeybindAction } from "../lib/keybindings";
 import { isMobile } from "../lib/platform";
@@ -318,6 +318,20 @@ export function SettingsView(props: SettingsViewProps) {
 
   while ([...agentDrafts(), ...settingsProps().inheritedAgents ?? []].some((item) => item.name.toLowerCase() === `agent-${suffix}`)) suffix += 1; nextAgentSuffixRef.current = suffix + 1; const next: AgentProfile = { name: `agent-${suffix}`, model: "", effort: "", path_systemprompt: "~/.agents/prompts/system/default.md", path_agent_prompt: "", tools: [...(globalAgents().find(isBuiltInAgent)?.tools ?? [])], skills: [], mcpServers: {} }; setAgentDrafts((current) => [...current, next]); setAgentIndex(agentDrafts().length - 1); };
 
+  const cloneAgent = () => {
+    const original = agent();
+
+    if (!original || !agentConfig() || saving()) return;
+    const taken = new Set([...agentDrafts(), ...settingsProps().inheritedAgents ?? []].map(item => item.name.toLowerCase()));
+    const base = `${original.name}-copy`.replace(/[^a-zA-Z0-9_-]/g, "");
+    let name = base;
+
+    for (let suffix = 2; taken.has(name.toLowerCase()); suffix += 1) name = `${base}-${suffix}`;
+    const { isDefault: _isDefault, unavailableReason: _reason, ...copy } = structuredClone(original);
+    setAgentDrafts(current => [...current, { ...copy, name }]);
+    setAgentIndex(agentDrafts().length - 1);
+  };
+
   const removeAgent = () => { if (!agent() || isBuiltInAgent(agent())) return;
 
   const removedDefault = agent().isDefault; const next = renamedAccess(agentDrafts().filter((_, index) => index !== agentIndex()), agent().name).map(item => removedDefault && isBuiltInAgent(item) ? { ...item, isDefault: true } : item); setMcpDrafts(current => Array.from(current).filter((_, index) => index !== agentIndex())); setAgentDrafts(next); setAgentIndex(firstAgentIndex(next)); };
@@ -495,7 +509,7 @@ export function SettingsView(props: SettingsViewProps) {
       const renderAgents = () => {
         const renderAgentEditor = () => {
           const renderAgentFields = () => {
-            const renderAgentNameRow = () => (<div class="agent-name-row"><label class="field"><span>Agent name</span><input aria-label="Agent name" aria-invalid={!isBuiltInAgent(agent()) && (!agent().name.trim() || agent().name.trim().toLowerCase() === "general" || inheritedNames().has(agent().name) || nameValidation().duplicateAgentNames.has(agent().name.trim().toLowerCase()))} disabled={isBuiltInAgent(agent())} value={agent().name} onInput={(event) => { renameAgent(event.currentTarget.value.replace(/[^a-zA-Z0-9_-]/g, "")); event.currentTarget.value = agent().name; }} /></label><IconButton label={`Remove ${agent().name}`} disabled={isBuiltInAgent(agent())} onClick={removeAgent}><Trash2 size={15} /></IconButton></div>);
+            const renderAgentNameRow = () => (<div class="agent-name-row"><label class="field"><span>Agent name</span><input aria-label="Agent name" aria-invalid={!isBuiltInAgent(agent()) && (!agent().name.trim() || agent().name.trim().toLowerCase() === "general" || inheritedNames().has(agent().name) || nameValidation().duplicateAgentNames.has(agent().name.trim().toLowerCase()))} disabled={isBuiltInAgent(agent())} value={agent().name} onInput={(event) => { renameAgent(event.currentTarget.value.replace(/[^a-zA-Z0-9_-]/g, "")); event.currentTarget.value = agent().name; }} /></label><IconButton label={`Clone ${agent().name}`} disabled={saving()} onClick={cloneAgent}><Copy size={15} /></IconButton><IconButton label={`Remove ${agent().name}`} disabled={isBuiltInAgent(agent())} onClick={removeAgent}><Trash2 size={15} /></IconButton></div>);
 
             const renderAgentDefaults = () => {
               const agentModelOptions = () => [

@@ -505,6 +505,15 @@ describe('settings editor', () => {
     assert.deepEqual(saves[0][1].agents.map(agent => agent.name), ['general', firstName, secondName]);
   });
 
+  test('a clone copies the agent under a free name in the same scope, and is not the default', async () => {
+    await render({ agentConfig: { agents: [profile('general', { isDefault: true, tools: ['read'] }), profile('general-copy')] } }); await section('Agents');
+    await click(control('Clone general'));
+    assert.equal(control('Agent name').value, 'general-copy-2');
+    await click(save());
+    const clone = saves[0][1].agents[2];
+    assert.equal(clone.name, 'general-copy-2'); assert.equal(clone.isDefault, undefined); assert.deepEqual(clone.tools, ['read']);
+  });
+
   test('new hosts receive distinct nonempty IDs when saved', async () => {
     await render(); await section('Hosts');
     for (const [name, target] of [['Build one', 'builder@one'], ['Build two', 'builder@two']]) {
