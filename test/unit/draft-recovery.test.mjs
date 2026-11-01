@@ -34,23 +34,24 @@ async function interruptedSend(text, { dispatched = false } = {}) {
 }
 
 /** The next window, with its recovery list shown. */
-async function nextWindow() {
+async function nextWindow(onSelected = () => {}) {
   const [conversationKey, setConversationKey] = createSignal("local:chat-1");
   const drafts = openWindow();
   const opened = [];
-  view = await renderComponent(DraftRecovery, { drafts, get conversationKey() { return conversationKey(); }, onSelect: session => opened.push(session) });
+  view = await renderComponent(DraftRecovery, { drafts, get conversationKey() { return conversationKey(); }, onSelect: session => { opened.push(session); onSelected(session); } });
   await untilDom(() => document.querySelector('[aria-label="Interrupted messages"] summary'));
   const button = text => [...document.querySelectorAll('[aria-label="Interrupted messages"] button')].find(item => item.textContent === text);
   return { drafts, opened, button, setConversationKey, summary: () => document.querySelector('[aria-label="Interrupted messages"] summary').textContent };
 }
 
-test('a message whose send was cut off before it reached the host can be restored to its chat', async () => {
+test('a message whose send was cut off before it reached the host can be restored to its chat', { timeout: 5000 }, async () => {
   await interruptedSend('Fix the parser');
-  const { drafts, opened, button, summary } = await nextWindow();
+  const selected = Promise.withResolvers();
+  const { drafts, opened, button, summary } = await nextWindow(selected.resolve);
   assert.equal(summary(), 'Interrupted submission · Fix the parser');
   await act(async () => button('Restore input').click());
   await untilDom(() => !document.querySelector('[aria-label="Interrupted messages"]'));
-  for (let tries = 0; !opened.length && tries < 100; tries++) await new Promise(resolve => setTimeout(resolve, 20));
+  await selected.promise;
   assert.equal(drafts.composerDrafts()['local:chat-1'], 'Fix the parser');
   assert.deepEqual(opened.map(session => [session.id, session.hostId]), [['chat-1', 'local']]);
   assert.deepEqual(drafts.submissions(), []);
