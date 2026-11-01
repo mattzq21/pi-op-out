@@ -168,11 +168,12 @@ describe('session runtime pool', () => {
     await send(id, { type: 'message_start', message: { role: 'user', content: [{ type: 'text', text: 'Hello' }] } });
     await settled(); await settled();
     assert.equal(pool.liveSessionSummaries().length, 0);
+    await send(id, { type: 'message_start', message: { role: 'user', content: [{ type: 'text', text: 'Again' }] } });
+    await settled(); await settled();
+    assert.equal(pool.liveSessionSummaries().length, 0);
     work.resolve();
     await settled(); await settled();
     assert.equal(pool.liveSessionSummaries()[0].id, 'session');
-    await send(id, { type: 'message_start', message: { role: 'user', content: [{ type: 'text', text: 'Again' }] } });
-    await settled(); await settled();
     assert.deepEqual(keys, ['local:session']);
   });
 
