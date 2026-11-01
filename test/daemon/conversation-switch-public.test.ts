@@ -141,6 +141,24 @@ test.concurrent('an edited message replaces the sent one in the same conversatio
   expect(sent).not.toContain('Forgotten detour');
 }, 60000);
 
+test.concurrent('after an edit, the model gets the same request up to the edited message, more than 10k tokens of it, so its prompt cache still holds', async () => {
+  const context = Array.from({ length: 1000 }, (_, line) => `Line ${line}: the quick brown fox jumps over the lazy dog.`).join('\n');
+  agents.scripts.set('Keep this context', messages => ({ text: 'Reply to ' + text(messages.at(-1)).slice(0, 30) }));
+  const chat = await agents.rootChat();
+  for (const message of ['Keep this context\n' + context, 'Middle question', 'Later question']) {
+    await chat.command({ type: 'prompt', message });
+    await chat.until(history => text(history.at(-1)) === 'Reply to ' + message.slice(0, 30));
+  }
+  const middle = (await chat.command({ type: 'get_entries' })).entries.find((entry: any) => entry.type === 'message' && text(entry.message) === 'Middle question');
+  await chat.command({ type: 'edit_message', entryId: middle.id, message: 'Edited question' });
+  await chat.until(history => text(history.at(-1)) === 'Reply to Edited question');
+  const { messages: before, ...beforeRequest } = agents.model.requests.find(request => text(request.messages.at(-1)) === 'Middle question');
+  const { messages: after, ...afterRequest } = agents.model.requests.find(request => text(request.messages.at(-1)) === 'Edited question');
+  expect(afterRequest).toEqual(beforeRequest);
+  expect(after.slice(0, -1)).toEqual(before.slice(0, -1));
+  expect(JSON.stringify(before.slice(0, -1)).length / 4).toBeGreaterThan(10000);
+}, 60000);
+
 test.concurrent('a sent message cannot be edited while the agent works, into a goal, or into a command', async () => {
   const busy = held<{ text: string }>();
   agents.scripts.set('Write the report', messages => text(messages.at(-1)) === 'Write the report' ? busy.promise : { text: 'Done.' });
