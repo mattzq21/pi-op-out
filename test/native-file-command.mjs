@@ -43,7 +43,7 @@ export async function nativeFileCommand(t, { launcher, desktop = false, desktopU
   }
   const path = join(directory, 'command.sock');
   // The bridge runs on a hidden screen, so windows of its desktop app do not take focus from the desktop.
-  const base = await hiddenDisplayEnv();
+  const base = desktop ? await hiddenDisplayEnv() : process.env;
   const child = spawn(binary, ['tests::attachment_command_bridge', '--exact', '--ignored', '--nocapture'], {
     env: { ...base, ...launcherEnv, ...(desktop ? { HOME: directory, XDG_CONFIG_HOME: directory, XDG_CACHE_HOME: directory, XDG_DATA_HOME: directory, PIOP_TEST_NATIVE_APP: '1', ...(desktopUrl ? { PIOP_TEST_NATIVE_URL: desktopUrl } : {}) } : {}), ...env, PIOP_TEST_NATIVE_SOCKET: path }, stdio: ['ignore', 'pipe', 'pipe'],
   });
