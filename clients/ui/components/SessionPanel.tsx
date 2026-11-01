@@ -15,6 +15,7 @@ import { GroupProjectPicker, type GroupProject } from "./GroupProjectPicker";
 import type { NativeTransport } from "../lib/nativeTransport";
 import type { AppSettings } from "../types";
 import { RemoveGroupDialog } from "./RemoveGroupDialog";
+import { EditProjectDialog } from "./EditProjectDialog";
 
 export type SessionAction = "new-window" | "rename" | "open-directory" | "archive" | "copy-id" | "open-rollout";
 
@@ -68,7 +69,7 @@ export function SessionPanel(props: Props) {
   const panelFields = createMemoFields(() => sessionPanelDefaults(props));
   const panel = () => panelFields;
   const storedGroups = props.sidebar;
-  const { collapsedProjects, customGroupsByKey, parentGroupsByKey, groupDestination, normalizedQuery, visualProjectKey, filtered, groups, sidebarEntries, validateGroupName, saveGroup, removeGroup, toggleProject, expandProject, moveSession, placeSidebarEntry } = storedGroups;
+  const { collapsedProjects, customGroupsByKey, parentGroupsByKey, groupDestination, normalizedQuery, visualProjectKey, filtered, groups, sidebarEntries, validateGroupName, saveGroup, editProject, removeGroup, toggleProject, expandProject, moveSession, placeSidebarEntry } = storedGroups;
   const { projectParent, canMoveProject, moveProject, groupEntries, placeGroupEntry } = storedGroups;
   const siblingEntries = (parent?: string) => sidebarEntries().filter(token => projectParent(token.slice("group:".length)) === parent);
 
@@ -81,6 +82,7 @@ export function SessionPanel(props: Props) {
   const [menu, setMenu] = createSignal<{ session: SessionSummary; x: number; y: number; returnFocus?: HTMLElement }>();
   const [groupMenu, setGroupMenu] = createSignal<{ projectKey: string; label: string; x: number; y: number; returnFocus: HTMLElement }>();
   const [removingGroup, setRemovingGroup] = createSignal<{ id: string; name: string }>();
+  const [editingProject, setEditingProject] = createSignal<CustomGroup>();
   const [groupSaving, setGroupSaving] = createSignal(false);
   const groupSavePending = createRef(false);
   const [groupActionError, setGroupActionError] = createSignal<string>();
@@ -561,7 +563,7 @@ export function SessionPanel(props: Props) {
     const customGroup = groupMenu() ? customGroupsByKey().get(required(groupMenu()).projectKey) : undefined;
 
     const menuItems = groupMenu() ? [
-      ...(customGroup ? [{ label: "Rename group", Icon: Pencil, disabled: false, run: () => { closeMenu(); editGroup(customGroup); } }] : groupDirectory ? [{ label: "Edit project", Icon: Pencil, disabled: false, run: () => { closeMenu(); editGroup(groupDirectory); } }] : []),
+      ...(customGroup ? [{ label: "Rename group", Icon: Pencil, disabled: false, run: () => { closeMenu(); editGroup(customGroup); } }] : groupDirectory?.cwd ? [{ label: "Edit project", Icon: Pencil, disabled: false, run: () => setEditingProject(groupDirectory) }] : []),
       ...(groupDirectory?.cwd ? [{ label: "Open directory", Icon: FolderOpen, disabled: false, run: () => { setGroupActionError(undefined); void openGroupDirectory(required(groupDirectory.cwd), groupDirectory.hostId ?? "local").catch((reason) => setGroupActionError((reason instanceof Error ? reason.message : String(reason)))); } }] : []),
       { label: "Forget group", Icon: Trash2, disabled: false, run: () => setRemovingGroup({ id: required((groupMenu())).projectKey, name: required((groupMenu())).label }) },
     ] : menu() ? actions.flatMap(([action, Icon, label]) => (!isMobile || action !== "new-window") && (!["copy-id", "open-rollout"].includes(action) || panel().debug) ? [{ label, Icon, disabled: props.isArchiving(required(menu()).session) || (required(menu()).session.isDraft === true && action !== "open-directory") || (action === "open-rollout" && !required(menu()).session.path), run: () => panel().onAction(required((menu())).session, action) }] : []) : [];
@@ -570,7 +572,7 @@ export function SessionPanel(props: Props) {
   };
 
   const menuActions = createMemo(() => (contextMenu()));
-  const isEditingGroup = (projectKey: string) => editingGroupId() === projectKey && groupDestination(projectKey) !== undefined;
+  const isEditingGroup = (projectKey: string) => customGroupsByKey().has(projectKey) && editingGroupId() === projectKey;
   const renderDropZone = (beforeToken: string | null, parentKey?: string) => (<div data-sidebar-drop-zone data-sidebar-parent={parentKey} data-sidebar-before={beforeToken ?? undefined} data-sidebar-end={beforeToken === null ? true : undefined} class={`sidebar-drop-zone ${dropTarget()?.layoutBefore === beforeToken && dropTarget()?.parentKey === parentKey ? "active" : ""}`} />);
 
   const renderSessionScroll = () => {
@@ -665,6 +667,7 @@ export function SessionPanel(props: Props) {
       const capturedRemovingGroup = removingGroup();
 
       await removeGroup(required((capturedRemovingGroup)).id); setRemovingGroup(undefined); }} />}
+    <Show when={editingProject()}>{project => <EditProjectDialog project={project()} transport={props.transport} validateName={validateGroupName} onSave={(name, cwd) => editProject(project().id, name, cwd)} onClose={() => setEditingProject(undefined)} />}</Show>
     <label class="search"><Search size={15} /><input ref={element => { searchRef.current = element; }} aria-label="Search conversations" placeholder="Search conversations" value={panel().query} onInput={(event) => panel().onQuery(event.target.value)} /><kbd>Ctrl G</kbd></label>
     {renderSessionScroll()}
     {renderConversationMenu()}

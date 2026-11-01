@@ -331,10 +331,12 @@ export function createSidebarState(source: Accessor<SessionSummary[]>, query: Ac
     return storedGroups.change({ type: "create", name });
   };
 
+  const editProject = (id: string, name: string, cwd: string) => storedGroups.change({ type: "edit", id, name, cwd });
+
   return {
     get state() { return storedGroups.state; }, get error() { return storedGroups.error ?? persistence.error(); },
     sessions, collapsedProjects, customGroupsByKey, parentGroupsByKey, groupDestination,
     normalizedQuery, visualProjectKey, filtered, groups, sidebarEntries, groupedSessions: displayedSessions,
-    validateGroupName, saveGroup, removeGroup, toggleProject, expandProject, moveSession, placeSidebarEntry, projectParent, canMoveProject, moveProject, groupEntries, placeGroupEntry,
+    validateGroupName, saveGroup, editProject, removeGroup, toggleProject, expandProject, moveSession, placeSidebarEntry, projectParent, canMoveProject, moveProject, groupEntries, placeGroupEntry,
   };
 }

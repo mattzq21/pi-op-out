@@ -8,6 +8,7 @@ import { profileRoot } from './host_operations';
 import { Mutex } from './util/sync';
 import { transaction, type Database } from './util/db';
 import type { SessionSummary } from './types';
+import { listDirectories } from './session_index';
 import type { App } from './app';
 
 const STORAGE_LOCK = new Mutex();
@@ -29,6 +30,7 @@ export type GroupChange =
   | { type: 'project'; project: SessionGroup; key?: string | null }
   | { type: 'relocate'; project: SessionGroup; key: string }
   | { type: 'rename'; id: string; name: string }
+  | { type: 'edit'; id: string; name: string; cwd: string }
   | { type: 'remove'; id: string }
   | { type: 'assign'; key: string; group?: string | null }
   | { type: 'move'; id: string; parent?: string | null };
@@ -67,6 +69,7 @@ export function parseChange(value: any): GroupChange {
     case 'project': return { type: 'project', project: parseGroup(value.project), key: optionalText(value.key, 'key') };
     case 'relocate': return { type: 'relocate', project: parseGroup(value.project), key: text('key') };
     case 'rename': return { type: 'rename', id: text('id'), name: text('name') };
+    case 'edit': return { type: 'edit', id: text('id'), name: text('name'), cwd: text('cwd') };
     case 'remove': return { type: 'remove', id: text('id') };
     case 'assign': return { type: 'assign', key: text('key'), group: optionalText(value.group, 'group') };
     case 'move': return { type: 'move', id: text('id'), parent: optionalText(value.parent, 'parent') };
@@ -278,8 +281,17 @@ function loadAt(path: string, allSeeds: SessionSeed[]): { state: SessionGroups; 
   });
 }
 
-export async function changeSessionGroups(app: App, change: GroupChange): Promise<SessionGroups> {
+async function resolveEditFolder(app: App, change: GroupChange): Promise<GroupChange> {
+  if (change.type !== 'edit') return change;
+  if (!change.cwd.trim()) throw new Error('Enter a project directory');
+  const group = (await STORAGE_LOCK.run(() => read(storagePath())))?.groups.find(group => group.id === change.id);
+  if (!group?.cwd) throw new Error('Project no longer exists');
+  return { ...change, cwd: (await listDirectories(app, group.hostId ?? 'local', change.cwd)).path };
+}
+
+export async function changeSessionGroups(app: App, requested: GroupChange): Promise<SessionGroups> {
   const path = storagePath();
+  const change = await resolveEditFolder(app, requested);
   await refreshDeletionsAt(path, app, [], changeKey(change));
   return STORAGE_LOCK.run(async () => {
     const state = await changeAt(storagePath(), change);
@@ -312,6 +324,7 @@ function applyGroupChange(state: SessionGroups, change: GroupChange): void {
     case 'project': projectGroup(state, change.project, change.key ?? undefined); break;
     case 'create': createGroup(state, change.name); break;
     case 'rename': renameGroup(state, change.id, change.name); break;
+    case 'edit': editProject(state, change.id, change.name, change.cwd); break;
     case 'remove': removeGroup(state, change.id); break;
     case 'assign': assignGroup(state, change.key, change.group ?? null); break;
     case 'move': moveGroup(state, change.id, change.parent ?? null); break;
@@ -355,6 +368,15 @@ function renameGroup(state: SessionGroups, id: string, raw: string): void {
   const group = state.groups.find(group => group.id === id);
   if (!group) throw new Error('Group no longer exists');
   group.name = name;
+}
+
+function editProject(state: SessionGroups, id: string, name: string, cwd: string): void {
+  const project = state.groups.find(group => group.id === id);
+  if (!project?.cwd) throw new Error('Project no longer exists');
+  if (state.groups.some(group => group.id !== id && group.cwd === cwd && group.hostId === project.hostId)) throw new Error('Another project already uses that directory');
+  renameGroup(state, id, name);
+  project.cwd = cwd;
+  state.removedProjects.delete(`${project.hostId}:${cwd}`);
 }
 
 function removeGroup(state: SessionGroups, id: string): void {
