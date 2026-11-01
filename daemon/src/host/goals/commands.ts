@@ -6,20 +6,20 @@ import { materializeGoal } from './files';
 import { goalChangedPrompt, goalSetPrompt } from './prompts';
 import { GOAL_TOOL, type ContextInsertion, type Goal } from './state';
 
-const USAGE = '/goal <objective | edit | pause | resume | clear>';
-const ACTIONS = ['edit', 'pause', 'resume', 'clear'];
+const USAGE = '/goal <objective | edit | clear>';
+const ACTIONS = ['edit', 'clear'];
 
 /** The /goal command as the composer lists it. Piop runs it, not Pi. */
 export const GOAL_COMMAND = {
   name: 'goal',
   description: 'Persistent conversation goal. ' + USAGE,
-  options: [{ value: '', label: '<objective | edit | pause | resume | clear>' }, ...ACTIONS.map(value => ({ value, label: value }))],
+  options: [{ value: '', label: '<objective | edit | clear>' }, ...ACTIONS.map(value => ({ value, label: value }))],
 };
 
 /** The tools that the queue answers, as Pi registers them. update_goal_status enters the prompt with a goal. */
 export const QUEUE_TOOLS = [{
   name: GOAL_TOOL, label: 'Update goal', exposure: 'model-only',
-  description: 'Set status to `paused` only when you can\'t progress. Report the returned status and stop goal work. Set status to `complete` only when the objective has actually been achieved and no required work remains.',
+  description: 'Set status to `paused` only when you can\'t progress: it holds the queue until the user resumes it. Report the returned status and stop goal work. Set status to `complete` only when the objective has actually been achieved and no required work remains.',
   parameters: { type: 'object', properties: { status: { type: 'string', enum: ['complete', 'paused'] } }, required: ['status'], additionalProperties: false },
 }];
 
@@ -47,8 +47,6 @@ export async function goalCommand(queue: QueueDelivery, gate: Mutex, command: an
     try { assertOwner(); return await operation(); } finally { release(); }
   };
   switch (value) {
-    case 'pause': await locked(() => change(queue, { ...goals.require(), status: 'paused' })); return handled;
-    case 'resume': await locked(() => change(queue, { ...goals.require(), status: 'active' })); return handled;
     case 'clear': await locked(() => change(queue, null, goalChangedPrompt(null))); return handled;
     case 'edit': await edit(queue, locked); return handled;
   }
@@ -84,8 +82,7 @@ async function edit(queue: QueueDelivery, locked: <T>(operation: () => T | Promi
     await locked(async () => {
       if (goals.goal?.id !== current.id) throw new Error('The goal changed while preparing this operation. Submit /goal again.');
       await draft.bind(current.id);
-      const next: Goal = { ...goals.require(), objective: draft.objective };
-      if (next.status === 'complete') next.status = 'active';
+      const next: Goal = { ...goals.require(), objective: draft.objective, status: 'active' };
       return change(queue, next, goalChangedPrompt(next));
     });
   } catch (error) { await draft.cleanup(); throw error; }
@@ -120,17 +117,13 @@ export function activateGoal(queue: QueueDelivery, prepared: { id: string; objec
   return goals.notice(goalSetPrompt);
 }
 
-/** Pi reports how its run ended. A run that failed or stopped pauses the active goal. */
+/** Pi reports how its run ended. A run that failed or stopped while a goal is set holds the queue. */
 export async function runEnded(queue: QueueDelivery, outcome: unknown): Promise<any> {
-  const goals = queue.state.goals;
-  if ((outcome === 'error' || outcome === 'aborted') && goals.active()) {
-    goals.save(queue.goalPlace(), { ...goals.require(), status: 'paused' });
-    await goalChanged(queue);
-  }
+  if ((outcome === 'error' || outcome === 'aborted') && queue.state.goals.live()) await queue.reportStorageError(() => queue.hold(true));
   return queue.currentOffer();
 }
 
-/** Runs a tool call that the queue answers. */
+/** Runs a tool call that the queue answers. paused holds the queue; complete ends the goal. */
 export async function queueTool(queue: QueueDelivery, tool: unknown, params: any): Promise<{ text: string; details: unknown }> {
   if (tool !== GOAL_TOOL) throw new Error('Unknown queue tool ' + String(tool));
   const status = params?.status;
@@ -140,11 +133,14 @@ export async function queueTool(queue: QueueDelivery, tool: unknown, params: any
   // The model cannot complete or pause an objective it has not seen. The error gives it the edited objective.
   const edit = goals.unseenEdit();
   if (edit) { goals.markSeen(); throw new Error(edit); }
-  const next: Goal = { ...goals.require(), status };
-  goals.save(place, next);
-  queue.goalStatus(goals.status());
-  const data = { goal: { objective: next.objective, status: next.status } };
-  if (status === 'complete') goals.save(place, null);
-  await goalChanged(queue);
+  const goal = goals.require();
+  const data = { goal: { objective: goal.objective, status } };
+  if (status === 'paused') await queue.hold(true);
+  else {
+    goals.save(place, { ...goal, status });
+    queue.goalStatus(goals.status());
+    goals.save(place, null);
+    await goalChanged(queue);
+  }
   return { text: JSON.stringify(data), details: data };
 }

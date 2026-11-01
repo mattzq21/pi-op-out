@@ -507,8 +507,6 @@ textarea::placeholder { color: var(--faint); }
 .pending-message-text { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .pending-goal .pending-message-text small { color: var(--accent); font-weight: 600; }
 .pending-steer .pending-message-text { color: var(--accent); }
-.pending-message.paused .pending-message-text { color: var(--muted); }
-.pending-goal.paused .pending-message-text small.goal-label { color: var(--muted); }
 .pending-goal-error { padding: 4px 6px 7px; color: var(--accent); font-size: 12px; overflow-wrap: anywhere; }
 .pending-images { flex: none; display: flex; gap: 4px; }.pending-image { width: 26px; height: 26px; border-radius: 5px; object-fit: cover; border: 1px solid var(--line); }.pending-image-missing { display: grid; place-items: center; color: var(--muted); }
 .pending-message.expanded { align-items: flex-start; }

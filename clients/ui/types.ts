@@ -49,7 +49,7 @@ export interface PromptContextInfo {
 }
 
 /** sending: the message was sent, but the daemon has not queued it yet. It cannot be changed yet. */
-export interface PendingMessage { id: string; goalSubmissionId?: string; message: string; behavior: "steer" | "followUp"; images?: (Omit<ImageAttachment, "data"> & { data?: string; id?: string })[]; retry?: boolean; recovered?: boolean; sending?: boolean; goal?: boolean; paused?: boolean; }
+export interface PendingMessage { id: string; goalSubmissionId?: string; message: string; behavior: "steer" | "followUp"; images?: (Omit<ImageAttachment, "data"> & { data?: string; id?: string })[]; retry?: boolean; recovered?: boolean; sending?: boolean; goal?: boolean; }
 
 export interface GitRepository { root: string; gitDir: string; }
 
@@ -117,4 +117,4 @@ export interface ChatMessage { submissionId?: string; piopQueueId?: string; piop
 /** The daemon left out the work of this finished turn. loadWork fetches it. */
 export interface ChatMessage { deferredWork?: { reasoningOnly: boolean; usage?: ChatMessage["usage"]; firstUsage?: ChatMessage["usage"] }; loadWork?: () => Promise<void>; }
 
-export type PendingMessageAction = "steer" | "followUp" | "remove" | "pause" | "resume" | "moveUp" | "moveDown" | { type: "move"; targetId: string; edge: "before" | "after" } | { type: "edit"; message: string; images: { keep: number[]; add: ImageAttachment[] } };
+export type PendingMessageAction = "steer" | "followUp" | "remove" | "moveUp" | "moveDown" | { type: "move"; targetId: string; edge: "before" | "after" } | { type: "edit"; message: string; images: { keep: number[]; add: ImageAttachment[] } };

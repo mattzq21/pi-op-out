@@ -9,7 +9,7 @@ function initialize(db) {
       CREATE TABLE IF NOT EXISTS session_branch_selection (session_id TEXT PRIMARY KEY REFERENCES sessions(session_id) ON DELETE CASCADE, tip_id TEXT, leaf_id TEXT);
       CREATE TABLE IF NOT EXISTS session_extension_state (session_id TEXT NOT NULL REFERENCES sessions(session_id) ON DELETE CASCADE, state_key TEXT NOT NULL, entry_json TEXT NOT NULL, PRIMARY KEY(session_id, state_key));
       CREATE TABLE IF NOT EXISTS session_extension_records (sequence INTEGER PRIMARY KEY AUTOINCREMENT, session_id TEXT NOT NULL REFERENCES sessions(session_id) ON DELETE CASCADE, entry_id TEXT NOT NULL, after_id TEXT, entry_json TEXT NOT NULL, UNIQUE(session_id, entry_id)); CREATE INDEX IF NOT EXISTS session_extension_records_order ON session_extension_records(session_id, sequence);
-      CREATE TABLE IF NOT EXISTS session_goals (session_id TEXT PRIMARY KEY REFERENCES sessions(session_id) ON DELETE CASCADE, goal_id TEXT NOT NULL UNIQUE, objective TEXT NOT NULL, status TEXT NOT NULL CHECK(status IN ('active', 'paused', 'complete')));
+      CREATE TABLE IF NOT EXISTS session_goals (session_id TEXT PRIMARY KEY REFERENCES sessions(session_id) ON DELETE CASCADE, goal_id TEXT NOT NULL UNIQUE, objective TEXT NOT NULL, status TEXT NOT NULL CHECK(status IN ('active', 'complete')));
       CREATE TABLE IF NOT EXISTS session_goal_ids (goal_id TEXT PRIMARY KEY, session_id TEXT NOT NULL REFERENCES sessions(session_id) ON DELETE CASCADE);
       CREATE TABLE IF NOT EXISTS session_file_metadata (session_id TEXT PRIMARY KEY REFERENCES sessions(session_id) ON DELETE CASCADE, session_path TEXT NOT NULL, modified_ns TEXT NOT NULL, size INTEGER NOT NULL); CREATE TABLE IF NOT EXISTS session_file_writes (session_id TEXT PRIMARY KEY REFERENCES sessions(session_id) ON DELETE CASCADE); CREATE TRIGGER IF NOT EXISTS session_file_metadata_moved AFTER UPDATE ON sessions WHEN OLD.session_path IS NOT NEW.session_path BEGIN DELETE FROM session_file_metadata WHERE session_id=OLD.session_id; END;`);
 
@@ -95,6 +95,15 @@ function initialize(db) {
           WHERE state_key='piop-session-name' AND trim(coalesce(json_extract(entry_json, '$.name'), '')) <> '' ON CONFLICT(session_id) DO NOTHING;
         DELETE FROM session_extension_state WHERE state_key='piop-session-name';
         PRAGMA user_version=1;`);
+    }
+
+    // Version 2: the queue hold is the only pause. Paused goals and paused queue items become a held queue.
+    if (db.prepare('PRAGMA user_version').get().user_version < 2) {
+      db.exec(`INSERT OR IGNORE INTO session_queue_holds (session_id) SELECT session_id FROM session_goals WHERE status='paused';
+        INSERT OR IGNORE INTO session_queue_holds (session_id) SELECT DISTINCT session_id FROM queue_items WHERE json_extract(details_json, '$.paused') = 1;
+        UPDATE queue_items SET details_json=json_remove(details_json, '$.paused') WHERE json_extract(details_json, '$.paused') IS NOT NULL;
+        UPDATE session_goals SET status='active' WHERE status='paused';
+        PRAGMA user_version=2;`);
     }
 
     db.exec('COMMIT');

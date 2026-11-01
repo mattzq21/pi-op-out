@@ -40,8 +40,26 @@ export class QueueDelivery {
   /** Sends an event to the session without changing the queue. */
   announce(event: any): void { this.executor.publish(event); }
 
-  /** Tells Pi whether the queue is on hold. */
-  tellHeld(held: boolean): Promise<void> { return this.executor.queueHeld(held); }
+  /**
+   * Holds or resumes the queue. The hold is the only pause: it stops the waiting messages and the goal. Pi's offer changes at once, then the hold is saved and Pi is told.
+   * Resuming lets Pi take the waiting messages, steering messages first, then follow-ups, each in queue order.
+   */
+  async hold(held: boolean): Promise<void> {
+    if (this.state.held === held) return;
+    this.state.held = held;
+    this.offer();
+    try {
+      await this.record.saveHeld(held);
+      await this.executor.queueHeld(held);
+    } catch (error) {
+      this.state.held = !held;
+      await this.reportStorageError(() => this.record.saveHeld(!held));
+      await this.reportStorageError(() => this.publish());
+      throw error;
+    }
+    if (!held) this.state.stopped = false;
+    await this.publish();
+  }
 
   ask(dialog: any): Promise<any> {
     if (!this.executor.ask) return Promise.reject(new Error('This conversation cannot ask questions'));

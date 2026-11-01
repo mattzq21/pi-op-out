@@ -31,56 +31,36 @@ async function goalComposer({ value = goal(), pendingMessages = [goalEntry], dis
   return { sent, set, rerender: extra => view.rerender({ ...props, ...extra }) };
 }
 
-test('the goal queue entry pauses, edits and clears the goal, and a paused goal keeps its place in the queue and resumes', async () => {
+test('the goal queue entry edits and clears the goal and keeps its place in the queue', async () => {
   const chat = await goalComposer({ pendingMessages: [{ id: '1', message: 'Check the tests', behavior: 'followUp' }, goalEntry, { id: '2', message: 'Then deploy', behavior: 'followUp' }] });
-  assert.match(document.querySelector('.pending-goal').textContent, /Ship the parser/);
-  await click(control('Pause goal'));
-  await act(() => chat.set({ value: goal({ status: 'paused' }) }));
-  await chat.rerender({ pendingMessages: [{ id: '1', message: 'Check the tests', behavior: 'followUp' }, { ...goalEntry, paused: true }, { id: '2', message: 'Then deploy', behavior: 'followUp' }] });
   const texts = [...document.querySelectorAll('.pending-message-text')].map(element => element.textContent);
-  assert.deepEqual(texts, ['Check the tests', 'Paused · Goal · Ship the parser', 'Then deploy']);
-  assert.ok(document.querySelector('.pending-goal.paused'));
-  await click(control('Resume goal'));
+  assert.deepEqual(texts, ['Check the tests', 'Goal · Ship the parser', 'Then deploy']);
+  assert.equal(control('Pause goal'), null);
   await click(control('Edit goal'));
   await click(control('Clear goal'));
-  assert.deepEqual(chat.sent, ['pause', 'resume', 'edit', 'clear']);
+  assert.deepEqual(chat.sent, ['edit', 'clear']);
 });
 
 test('a finished goal shows no entry, and the goal buttons are blocked while the chat belongs elsewhere', async () => {
   const chat = await goalComposer({ value: goal({ status: 'complete' }), pendingMessages: [] });
   assert.equal(document.querySelector('.pending-goal'), null);
-  await act(() => chat.set({ value: goal({ status: 'paused' }), disabled: true }));
-  await chat.rerender({ pendingMessages: [{ ...goalEntry, paused: true }], queued: 1 });
-  assert.deepEqual(['Clear goal', 'Resume goal', 'Edit goal'].map(label => control(label).disabled), [true, true, true]);
+  await act(() => chat.set({ value: goal(), disabled: true }));
+  await chat.rerender({ pendingMessages: [goalEntry], queued: 1 });
+  assert.deepEqual(['Clear goal', 'Edit goal'].map(label => control(label).disabled), [true, true]);
 });
 
 test('a failed goal command is shown under the queue, and the buttons work again afterwards', async () => {
   let fail = true;
   const chat = await goalComposer({ command: async () => { if (fail) throw new Error('Take ownership of this conversation before changing it'); } });
-  await click(control('Pause goal'));
+  await click(control('Clear goal'));
   assert.equal(document.querySelector('.pending-goal-error').textContent, 'Take ownership of this conversation before changing it');
   fail = false;
-  await click(control('Pause goal'));
+  await click(control('Clear goal'));
   assert.equal(document.querySelector('.pending-goal-error'), null);
-  assert.deepEqual(chat.sent, ['pause', 'pause']);
+  assert.deepEqual(chat.sent, ['clear', 'clear']);
 });
 
 test('a goal status the app cannot read is reported, not hidden', async () => {
   await goalComposer({ value: goal({ status: 'waiting' }), pendingMessages: [] });
   assert.match(document.querySelector('.pending-goal-error')?.textContent ?? '', /^Could not show the goal: /);
-});
-
-test('a queued message has a pause button on its left side, and a paused one shows as paused with a resume button', async () => {
-  const changes = [];
-  const message = { id: '1', message: 'Check the tests', behavior: 'followUp' };
-  const props = { streaming: true, queued: 1, pendingMessages: [message], commands: [], agents: [], models: [], model: null, thinkingLevel: 'off', thinkingLevels: ['off'],
-    onChangePending: async (id, action) => { changes.push([id, action]); }, onSend: async () => {}, onAbort: async () => {}, onAgent: () => {}, onModel: () => {}, onThinking: () => {}, onToggleFastMode: async () => {} };
-  view = await renderComponent(Composer, props);
-  const pause = control('Pause message');
-  assert.ok(pause.compareDocumentPosition(document.querySelector('.pending-message-text')) & Node.DOCUMENT_POSITION_FOLLOWING);
-  await click(pause);
-  await view.rerender({ ...props, pendingMessages: [{ ...message, paused: true }] });
-  assert.equal(document.querySelector('.pending-message-text').textContent, 'Paused · Check the tests');
-  await click(control('Resume message'));
-  assert.deepEqual(changes, [['1', 'pause'], ['1', 'resume']]);
 });

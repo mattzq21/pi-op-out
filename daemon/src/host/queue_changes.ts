@@ -8,7 +8,7 @@ import { queuedCommand, withImageIds } from './queue_submission';
 import { activateGoal, goalArgument, goalSubmission, prepareGoal } from './goals/commands';
 
 /**
- * Changes one queued item: removes it, edits it, pauses or resumes it, switches it between steer and follow-up, moves it, or makes an item marked for retry wait again.
+ * Changes one queued item: removes it, edits it, switches it between steer and follow-up, moves it, or makes an item marked for retry wait again.
  * The daemon owns the queue, so every change is a change of its saved list. An item that Pi took cannot change.
  */
 export async function changePending(queue: QueueDelivery, gate: Mutex, id: string, action: any, assertOwner: () => void): Promise<any> {
@@ -26,11 +26,7 @@ export async function changePending(queue: QueueDelivery, gate: Mutex, id: strin
       await queue.publish();
       return null;
     }
-    if (action === 'pause' || action === 'resume') {
-      if (flag(target, 'retry')) throw new Error('A message marked for retry cannot be paused.');
-      if (flag(target, 'paused') === (action === 'pause')) return null;
-      if (action === 'pause') target.paused = true; else delete target.paused;
-    } else if (action === 'steer' || action === 'followUp') {
+    if (action === 'steer' || action === 'followUp') {
       if (action === 'steer' && queuedCommand(text(target, 'message'))) throw new Error('/' + commandName(text(target, 'message')) + ' can only be queued as a follow-up');
       if (!flag(target, 'retry') && !flag(target, 'afterGoal') && target.behavior === action) return null;
       clearDelivery(target);
@@ -181,23 +177,6 @@ async function moveAroundGoal(queue: QueueDelivery, id: string, action: any): Pr
   state.pending = [...others, ...order.flatMap(entry => byId.has(entry) ? [byId.get(entry)] : [])];
   await queue.publish();
   return null;
-}
-
-/** Puts the queue on hold: Pi takes no message until the user resumes it. */
-export async function holdQueue(queue: QueueDelivery): Promise<void> {
-  await queue.record.saveHeld(true);
-  try { await queue.tellHeld(true); } catch (error) { await queue.record.saveHeld(false); throw error; }
-  queue.state.held = true;
-  await queue.publish();
-}
-
-/** Ends the hold. Pi takes the waiting messages, steering messages first, then follow-ups, each in queue order. */
-export async function resumeQueue(queue: QueueDelivery): Promise<void> {
-  await queue.record.saveHeld(false);
-  queue.state.held = false;
-  queue.state.stopped = false;
-  await queue.publish();
-  await queue.tellHeld(false);
 }
 
 /**

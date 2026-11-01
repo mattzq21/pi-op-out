@@ -30,11 +30,8 @@ test.concurrent('an active goal stops with the daemon and goes on when its chat 
     await resumed.promise;
     expect(turns).toBeGreaterThanOrEqual(atStop + 2);
     const command = (value: any) => second!.invoke('pi_command', { runtimeId: 'reopened', command: value });
-    await command({ type: 'follow_up', message: '/goal pause', goalSubmissionId: crypto.randomUUID() });
-    const event = await second.waitEvent('pi://event', payload => payload.runtimeId === 'reopened'
-      && payload.event?.statusKey === 'piop-goal' && JSON.parse(payload.event.statusText).status === 'paused');
-    const goal = JSON.parse(event.event.statusText);
-    expect(goal).toMatchObject({ status: 'paused', objective: 'Goal across a restart' });
+    await command({ type: 'hold_queue', held: true });
+    expect((await command({ type: 'get_state' })).queueHeld).toBe(true);
   } finally { await second?.stop(); await agents.daemon.stop(); held.resolve({ text: 'Stopped' }); await agents.model.close(); }
 }, 90000);
 

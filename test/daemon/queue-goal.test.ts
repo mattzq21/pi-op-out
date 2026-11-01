@@ -13,7 +13,7 @@ mkdirSync(join(root, 'sessions'));
 let chats = 0;
 
 /** A saved chat with a goal, and its queue. The queue reads the goal when it opens, as when the chat opens. */
-function chat(status: 'active' | 'paused' | null, pending: any[] = [], extra: { held?: boolean; waiting?: boolean } = {}) {
+function chat(status: 'active' | null, pending: any[] = [], extra: { held?: boolean; waiting?: boolean } = {}) {
   const sessionId = 'chat-' + ++chats;
   const file = join(root, 'sessions', sessionId + '.jsonl');
   writeFileSync(file, '');
@@ -34,20 +34,18 @@ function chat(status: 'active' | 'paused' | null, pending: any[] = [], extra: { 
 }
 
 test('an opened chat shows its saved goal before Pi starts', () => {
-  const { queue } = chat('paused');
-  expect(JSON.parse(queue.goalStatus().statusText)).toMatchObject({ objective: 'Build', status: 'paused' });
-  expect(queue.view().pendingMessages).toEqual([{ id: 'goal', message: 'Build', behavior: 'followUp', goal: true, paused: true }]);
+  const { queue } = chat('active');
+  expect(JSON.parse(queue.goalStatus().statusText)).toMatchObject({ objective: 'Build', status: 'active' });
+  expect(queue.view().pendingMessages).toEqual([{ id: 'goal', message: 'Build', behavior: 'followUp', goal: true }]);
 });
 
-test('a paused goal keeps follow-ups below it waiting, lets steering go, and a follow-up moved above it is taken', async () => {
-  const { queue, take } = chat('paused');
+test('the goal keeps follow-ups below it waiting, and a follow-up moved above it is taken first', async () => {
+  const { queue, take } = chat('active');
   await queue.command({ type: 'follow_up', message: 'Next message' });
-  await queue.command({ type: 'steer', message: 'Steer now' });
   expect(await take('followUp')).toBeNull();
-  expect(await take('goal')).toBeNull();
-  expect((await take('steer'))?.message).toBe('Steer now');
   const id = queue.view().pendingMessages.find((item: any) => item.message === 'Next message').id;
   await queue.changePending(id, { type: 'move', targetId: 'goal', edge: 'before' });
+  expect(await take('goal')).toBeNull();
   expect((await take('followUp'))?.message).toBe('Next message');
 });
 
@@ -72,27 +70,43 @@ test('a chat that waits for the user\'s first message keeps its active goal, and
   expect(await take('goal')).not.toBeNull();
 });
 
-test('pause, resume and clear change the saved goal at once, and the follow-ups below a cleared goal go on', async () => {
+test('clear changes the saved goal at once, and the follow-ups below a cleared goal go on', async () => {
   const { queue, take, shown, saved, commands } = chat('active');
   await queue.command({ type: 'follow_up', message: 'Next message' });
   expect(await take('followUp')).toBeNull();
-  expect(await queue.command({ type: 'prompt', message: '/goal pause' })).toEqual({ disposition: 'handled' });
-  expect(saved()?.status).toBe('paused');
-  expect(shown()?.status).toBe('paused');
-  await queue.command({ type: 'follow_up', message: '/goal resume' });
-  expect(saved()?.status).toBe('active');
-  await queue.command({ type: 'follow_up', message: '/goal clear' });
+  expect(await queue.command({ type: 'prompt', message: '/goal clear' })).toEqual({ disposition: 'handled' });
   expect(saved()).toBeNull();
   expect(shown()).toBeNull();
   expect(commands.filter(command => command.type === 'insert_context').map(command => command.message.content)).toEqual(['The goal has been cleared. Follow next instructions, the goal is in the past now.']);
   expect((await take('followUp'))?.message).toBe('Next message');
 });
 
-test('a run that fails or stops pauses the active goal', async () => {
+test('a run that fails while a goal is set holds the queue, and the goal goes on when the user resumes', async () => {
   const { queue, saved } = chat('active');
   expect((await queue.runtimeEvent('queue_outcome', { outcome: 'completed' })).goal).toBe(1);
   expect((await queue.runtimeEvent('queue_outcome', { outcome: 'error' })).goal).toBe(0);
-  expect(saved()?.status).toBe('paused');
+  expect(queue.view().held).toBe(true);
+  expect(saved()?.status).toBe('active');
+  await queue.command({ type: 'hold_queue', held: false });
+  expect((await queue.runtimeEvent('queue_outcome', { outcome: 'completed' })).goal).toBe(1);
+});
+
+test('the goal tool with paused holds the queue and keeps the goal', async () => {
+  const { queue, take, saved } = chat('active');
+  await take('goal');
+  expect(await queue.runtimeEvent('queue_tool', { tool: 'update_goal_status', params: { status: 'paused' } })).toMatchObject({ details: { goal: { objective: 'Build', status: 'paused' } } });
+  expect(queue.view().held).toBe(true);
+  expect(saved()?.status).toBe('active');
+  expect(await take('goal')).toBeNull();
+});
+
+test('a stop holds the queue while a goal is set, and the next message goes first', async () => {
+  const { queue } = chat('active');
+  await queue.command({ type: 'follow_up', message: 'Waiting' });
+  await queue.command({ type: 'abort' });
+  expect(queue.view().held).toBe(true);
+  await queue.command({ type: 'steer', message: 'Correction' });
+  expect(queue.view().pendingMessages.map((item: any) => item.message)).toEqual(['Correction', 'Build', 'Waiting']);
 });
 
 test('the goal tool completes the goal, and fails once for an edited objective the model has not seen', async () => {

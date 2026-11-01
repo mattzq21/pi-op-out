@@ -3,7 +3,7 @@ import { restore as restoreSaved, write as writeSaved } from '../../../resources
 import { goalChangedPrompt, goalPrompt } from './prompts';
 import type { GoalPlace } from './files';
 
-export type GoalStatus = 'active' | 'paused' | 'complete';
+export type GoalStatus = 'active' | 'complete';
 export type Goal = { id: string; sessionId: string; objective: string; status: GoalStatus };
 
 /** The goal prompt: a shown message that the model gets as a user message. Pi adds one each time the goal continues its work. */
@@ -41,9 +41,8 @@ export class QueueGoal {
     return new QueueGoal(file ? restoreSaved(file) : undefined);
   }
 
-  /** The goal while it has a place in the queue: active or paused. */
+  /** The goal while it has a place in the queue: set and not complete. */
   live(): Goal | undefined { return this.goal && this.goal.status !== 'complete' ? this.goal : undefined; }
-  active(): Goal | undefined { return this.goal?.status === 'active' ? this.goal : undefined; }
 
   require(): Goal {
     if (!this.goal) throw new Error('No goal is set for this conversation.');
@@ -89,7 +88,7 @@ export class QueueGoal {
   /** The edit notice when the user changed the objective after the model got it, so the model has not seen the current objective. */
   unseenEdit(): string | undefined {
     if (!this.goal || this.seen === undefined || this.seen === this.goal.objective) return undefined;
-    return goalChangedPrompt({ ...this.goal, status: 'active' }) ?? undefined;
+    return goalChangedPrompt(this.goal) ?? undefined;
   }
 
   markSeen(): void { if (this.goal) this.seen = this.goal.objective; }
