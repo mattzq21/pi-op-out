@@ -28,8 +28,9 @@ async function main() {
       promisify(execFile)('bun', ['test/daemon/build.ts']),
       promisify(execFile)(process.execPath, ['--input-type=module', '-e', source, controlsBundle]),
     ]);
-    const failedBuild = builds.find(result => result.status === 'rejected');
-    if (failedBuild) throw failedBuild.reason;
+    const failures = builds.filter(result => result.status === 'rejected').map(result => result.reason);
+    if (failures.length === 1) throw failures[0];
+    if (failures.length > 1) throw new AggregateError(failures, 'Test builds failed');
     const executable = builds[0].value.stdout.trim();
     if (!executable) throw new Error('Daemon test executable was not built');
     const env = { ...process.env, PIOP_TEST_DAEMON_EXECUTABLE: executable, PIOP_TEST_CONTROLS_BUNDLE: controlsBundle };

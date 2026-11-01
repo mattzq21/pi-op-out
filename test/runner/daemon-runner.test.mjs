@@ -45,6 +45,31 @@ test('different paths to the same daemon test are rejected before builds start',
   });
 });
 
+test('all daemon build failures are reported without starting tests', async t => {
+  const directory = await mkdtemp(join(tmpdir(), 'piop-daemon-build-failures-'));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const selected = join(directory, 'case.test.ts');
+  const compiler = join(directory, 'compiler');
+  await writeFile(selected, '');
+  await writeFile(join(directory, 'bun'), `#!/bin/sh
+if [ "$1" = "test/daemon/build.ts" ]; then
+  echo 'daemon build failed' >&2
+  exit 19
+fi
+echo 'tests must not start'
+`, { mode: 0o755 });
+  await writeFile(compiler, "#!/bin/sh\necho 'controls compiler failed' >&2\nexit 23\n", { mode: 0o755 });
+  await assert.rejects(execute(process.execPath,
+    [fileURLToPath(new URL('../../scripts/test-daemon.mjs', import.meta.url)), selected],
+    { cwd: directory, env: { ...process.env, PATH: directory + ':' + process.env.PATH, ESBUILD_BINARY_PATH: compiler } }), error => {
+    assert.equal(error.code, 1);
+    assert.match(error.stderr, /daemon build failed/);
+    assert.match(error.stderr, /controls compiler failed/);
+    assert.doesNotMatch(error.stdout, /tests must not start/);
+    return true;
+  });
+});
+
 async function fixture(t, failing, discover) {
   const directory = await mkdtemp(join(tmpdir(), 'piop-daemon-runner-'));
   t.after(() => rm(directory, { recursive: true, force: true }));
