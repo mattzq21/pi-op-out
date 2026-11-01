@@ -5,7 +5,7 @@ import { basename, resolve } from 'node:path';
 import { createServer } from 'node:http';
 import { build } from 'esbuild';
 import { createRequire } from 'node:module';
-import { launchTestBrowser } from './test-browser.mjs';
+import { launchTestBrowser, testBrowserName } from './test-browser.mjs';
 import { cachedTransform } from './transform-cache.mjs';
 
 const require = createRequire(import.meta.url);
@@ -28,7 +28,7 @@ after(async () => {
   if (failures.length) throw new AggregateError(failures, 'Could not close test browsers');
 });
 
-function testBrowser(engine, executablePath, args) {
+function testBrowser(engine = testBrowserName, executablePath, args) {
   const key = JSON.stringify([engine, executablePath, args]);
   if (!browsers.has(key)) {
     const pending = launchTestBrowser({ engine, executablePath, args }).catch(error => {
