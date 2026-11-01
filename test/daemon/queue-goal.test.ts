@@ -145,3 +145,10 @@ test('a stop does not hold the queue when the only message is one that Pi alread
   await queue.command({ type: 'abort' });
   expect(queue.view().held).toBe(false);
 });
+
+test('a cancelled delegation that Pi reports as aborted does not hold the queue while a goal is set', async () => {
+  const { queue } = chat('active');
+  await queue.interruptDelegation();
+  expect((await queue.runtimeEvent('queue_outcome', { outcome: 'aborted' })).goal).toBe(1);
+  expect(queue.view().held).toBe(false);
+});

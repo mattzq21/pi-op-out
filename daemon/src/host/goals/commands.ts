@@ -117,9 +117,9 @@ export function activateGoal(queue: QueueDelivery, prepared: { id: string; objec
   return goals.notice(goalSetPrompt);
 }
 
-/** Pi reports how its run ended. A run that failed or stopped while a goal is set holds the queue. */
+/** Pi reports how its run ended. A run that failed while a goal is set holds the queue. A user stop holds it before it aborts; other aborts, such as a cancelled delegation, do not. */
 export async function runEnded(queue: QueueDelivery, outcome: unknown): Promise<any> {
-  if ((outcome === 'error' || outcome === 'aborted') && queue.state.goals.live()) await queue.reportStorageError(() => queue.hold(true));
+  if (outcome === 'error' && queue.state.goals.live()) await queue.reportStorageError(() => queue.hold(true));
   return queue.currentOffer();
 }
 
