@@ -23,7 +23,7 @@ process.exit(73);
   const missing = join(directory, 'missing.test.ts');
   await assert.rejects(execute(process.execPath,
     [fileURLToPath(new URL('../../scripts/test-daemon.mjs', import.meta.url)), missing],
-    { cwd: directory, env: { ...process.env, PATH: directory + ':' + process.env.PATH } }), error => {
+    { cwd: directory, timeout: 10000, env: { ...process.env, PATH: directory + ':' + process.env.PATH } }), error => {
     assert.match(error.stderr, /ENOENT/);
     assert.ok(error.stderr.includes(missing));
     return error.code === 1;
@@ -39,7 +39,7 @@ test('different paths to the same daemon test are rejected before builds start',
   await assert.rejects(execute(process.execPath,
     [fileURLToPath(new URL('../../scripts/test-daemon.mjs', import.meta.url)),
       './case.test.ts', join(directory, 'case.test.ts')],
-    { cwd: directory, env: { ...process.env, PATH: directory + ':' + process.env.PATH } }), error => {
+    { cwd: directory, timeout: 10000, env: { ...process.env, PATH: directory + ':' + process.env.PATH } }), error => {
     assert.match(error.stderr, /Each test file must be listed once/);
     return error.code === 1;
   });
@@ -61,7 +61,7 @@ echo 'tests must not start'
   await writeFile(compiler, "#!/bin/sh\necho 'controls compiler failed' >&2\nexit 23\n", { mode: 0o755 });
   await assert.rejects(execute(process.execPath,
     [fileURLToPath(new URL('../../scripts/test-daemon.mjs', import.meta.url)), selected],
-    { cwd: directory, env: { ...process.env, PATH: directory + ':' + process.env.PATH, ESBUILD_BINARY_PATH: compiler } }), error => {
+    { cwd: directory, timeout: 10000, env: { ...process.env, PATH: directory + ':' + process.env.PATH, ESBUILD_BINARY_PATH: compiler } }), error => {
     assert.equal(error.code, 1);
     assert.match(error.stderr, /daemon build failed/);
     assert.match(error.stderr, /controls compiler failed/);
@@ -125,7 +125,7 @@ test('ignored case', () => { throw new Error('Filter was not applied'); });
 `);
   }
   if (discover) await writeFile(join(directory, 'test/daemon/helper.ts'), '');
-  const bun = (await execute('which', ['bun'])).stdout.trim();
+  const bun = (await execute('which', ['bun'], { timeout: 10000 })).stdout.trim();
   await writeFile(join(directory, 'bun'), `#!${process.execPath}
 import { appendFileSync, writeFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';

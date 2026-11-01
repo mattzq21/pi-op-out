@@ -24,7 +24,7 @@ writeFileSync(${JSON.stringify(builds)}, 'started');
 process.exit(73);
 `, { mode: 0o755 });
   await assert.rejects(execute(process.execPath, [runner, '--build', '--list', '--grep', '^missing$'],
-    { cwd: directory, env: { ...process.env, PATH: directory + ':' + process.env.PATH } }), error => {
+    { cwd: directory, timeout: 10000, env: { ...process.env, PATH: directory + ':' + process.env.PATH } }), error => {
     assert.equal(error.code, 1);
     assert.match(error.stderr, /No E2E tests matched/);
     return true;
@@ -44,7 +44,7 @@ describe('Session tree', () => {
   it('opens a session', () => {});
 });
 `);
-  const result = await execute(process.execPath, [runner, '--list', '--grep', '^Session tree Drafts '], { cwd: directory });
+  const result = await execute(process.execPath, [runner, '--list', '--grep', '^Session tree Drafts '], { cwd: directory, timeout: 10000 });
   assert.equal(result.stdout, 'Session tree Drafts keeps text\n');
 });
 
@@ -64,7 +64,7 @@ const selected = ${JSON.stringify(titles)}.filter(title => pattern.test(title));
 console.log(JSON.stringify(selected));
 process.exitCode = selected.includes('chat case [draft]?') ? 1 : 0;
 `);
-  await assert.rejects(execute(process.execPath, [runner, '--grep', '^chat case'], { cwd: directory }), error => {
+  await assert.rejects(execute(process.execPath, [runner, '--grep', '^chat case'], { cwd: directory, timeout: 10000 }), error => {
     assert.equal(error.code, 1);
     const batches = error.stdout.split('\n').filter(line => line.startsWith('[')).map(line => JSON.parse(line));
     assert.deepEqual(batches.flat(), selected);

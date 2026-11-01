@@ -49,7 +49,7 @@ test('child ${index} uses this run\\'s build', async () => {
   }
   const env = { ...process.env, PATH: directory + ':' + process.env.PATH, PIOP_TEST_NATIVE_EXECUTABLE: '/stale/previous-build', PIOP_TEST_DAEMON_EXECUTABLE: '/stale/daemon', PIOP_TEST_CONTROLS_BUNDLE: '/stale/controls' };
   delete env.NODE_TEST_CONTEXT;
-  const run = () => execute(process.execPath, [runner, ...files], { env });
+  const run = () => execute(process.execPath, [runner, ...files], { env, timeout: 10000 });
   return { run, log, controls };
 }
 
