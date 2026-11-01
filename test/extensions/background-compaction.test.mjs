@@ -23,9 +23,11 @@ const { SettingsManager } = await sdk('settings-manager');
 const { SessionManager } = await sdk('session-manager');
 const { ModelRuntime } = await sdk('model-runtime');
 
-const SUMMARY = '## Objective\n- Keep working';
+const SUMMARY = '## Goal\n- Keep working';
 const usage = input => ({ input, output: 1, cacheRead: 0, cacheWrite: 0, totalTokens: input + 1, cost: { input: 0, output: 0.5, cacheRead: 0, cacheWrite: 0, total: 0.5 } });
 const reply = (model, text, input, stopReason = 'stop') => ({ role: 'assistant', api: model.api, provider: model.provider, model: model.id, timestamp: Date.now(), content: [{ type: 'text', text }], usage: usage(input), stopReason, ...(stopReason === 'error' ? { errorMessage: 'provider down' } : {}) });
+const readCall = (model, path) => ({ ...reply(model, '', 1000, 'toolUse'), content: [{ type: 'toolCall', id: `read-${path}`, name: 'read', arguments: { path } }] });
+const readTool = { name: 'read', label: 'Read', description: 'Test read', parameters: { type: 'object', properties: { path: { type: 'string' } } }, execute: async () => ({ content: [{ type: 'text', text: 'file text' }], details: {} }) };
 const stream = result => ({ async *[Symbol.asyncIterator]() { const message = await result; yield { type: 'done', reason: message.stopReason, message }; }, result: () => result });
 
 async function fixture(t, summaries) {
@@ -41,7 +43,7 @@ async function fixture(t, summaries) {
   const model = modelRuntime.getModels().find(model => model.provider === 'openai' && model.contextWindow >= 200_000);
   const resourceLoader = new DefaultResourceLoader({ cwd: dir, agentDir: dir, settingsManager, noExtensions: true, noSkills: true, noContextFiles: true, noThemes: true, noPromptTemplates: true, extensionFactories: [plugin] });
   await resourceLoader.reload();
-  const { session } = await createAgentSession({ cwd: dir, agentDir: dir, modelRuntime, model, settingsManager, resourceLoader, sessionManager: SessionManager.inMemory(dir), tools: [] });
+  const { session } = await createAgentSession({ cwd: dir, agentDir: dir, modelRuntime, model, settingsManager, resourceLoader, sessionManager: SessionManager.inMemory(dir), tools: ['read'], customTools: [readTool] });
   t.after(() => session.dispose());
   const errors = [], notices = [], requests = [], summaryRequests = [];
   await session.bindExtensions({ onError: error => errors.push(error), uiContext: { setStatus() {}, notify: (...args) => notices.push(args) } });
@@ -49,13 +51,14 @@ async function fixture(t, summaries) {
   const sizes = [];
   session.agent.streamFunction = (model, context) => {
     requests.push(context.messages);
-    return stream(Promise.resolve(reply(model, 'done', sizes.shift())));
+    const next = sizes.shift();
+    return stream(Promise.resolve(typeof next === 'string' ? readCall(model, next) : reply(model, 'done', next)));
   };
   modelRuntime.streamSimple = (model, context, options) => {
     summaryRequests.push({ messages: context.messages, options });
     return stream(Promise.resolve(summaries.shift()(model)));
   };
-  const respond = async (text, input) => { sizes.push(input); await session.prompt(text + ' ' + 'x'.repeat(8000)); };
+  const respond = async (text, ...replies) => { sizes.push(...replies); await session.prompt(text + ' ' + 'x'.repeat(8000)); };
   const compaction = () => session.sessionManager.getBranch().findLast(entry => entry.type === 'compaction');
   const threshold = model.contextWindow - 16384;
   return { session, model, notices, requests, summaryRequests, respond, compaction, early: Math.ceil(threshold * 0.9), due: threshold + 1000 };
@@ -64,11 +67,11 @@ async function fixture(t, summaries) {
 test('a summary written in the background replaces the history it covers once compaction is due, and compaction waits for it', async t => {
   const written = Promise.withResolvers();
   const f = await fixture(t, [model => written.promise.then(() => reply(model, SUMMARY, 1000))]);
-  await f.respond('first', f.early);
+  await f.respond('first', 'src/a.ts', f.early);
   assert.equal(f.summaryRequests.length, 1);
   const [request] = f.summaryRequests;
-  assert.deepEqual(request.messages.slice(0, -1), f.requests[0], 'the summary request repeats the request that the provider just cached');
-  assert.match(request.messages.at(-1).content[0].text, /^You MUST summarize the conversation above/);
+  assert.deepEqual(request.messages.slice(0, -1), f.requests[1], 'the summary request repeats the request that the provider just cached');
+  assert.match(request.messages.at(-1).content[0].text, /The messages above are a conversation to summarize\. Create a structured context checkpoint summary[\s\S]*## Constraints & Preferences/);
   assert.equal(request.options.sessionId, f.session.sessionManager.getSessionId());
   const firstResponse = f.session.sessionManager.getBranch().findLast(entry => entry.type === 'message' && entry.message.role === 'assistant');
   assert.equal(f.compaction(), undefined);
@@ -76,7 +79,7 @@ test('a summary written in the background replaces the history it covers once co
   f.session.subscribe(event => { if (event.type === 'compaction_start') written.resolve(); });
   await f.respond('second', f.due);
   assert.equal(f.summaryRequests.length, 1, 'Pi did not write a summary of its own');
-  assert.deepEqual(f.compaction(), { ...f.compaction(), summary: SUMMARY, firstKeptEntryId: firstResponse.id, fromHook: true });
+  assert.deepEqual(f.compaction(), { ...f.compaction(), summary: `${SUMMARY}\n\n<read-files>\nsrc/a.ts\n</read-files>`, firstKeptEntryId: firstResponse.id, fromHook: true, details: { readFiles: ['src/a.ts'], modifiedFiles: [], source: 'piop-background-compaction' } });
   assert.equal(f.compaction().usage.cost.total, 0.5);
 });
 

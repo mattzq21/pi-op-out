@@ -1,4 +1,4 @@
-// Background compaction ported from OpenCode (packages/core/src/session/compaction.ts).
+// Background compaction ported from OpenCode (packages/core/src/session/compaction.ts), with Pi's summary format.
 // OpenCode: MIT License, Copyright (c) 2025 opencode.
 import { buildSessionProjection, convertToLlm, estimateTokens, SettingsManager } from "@earendil-works/pi-coding-agent";
 import type { CompactionResult, ExtensionAPI, ExtensionContext, SessionEntry, TurnEndEvent } from "@earendil-works/pi-coding-agent";
@@ -17,69 +17,122 @@ const TAIL_SHARE = 0.25;
 const MAX_FAILURES = 2;
 const SOURCE = "piop-background-compaction";
 
-const TEMPLATE = `You MUST use this format for your response (you may omit sections that aren't applicable). Do not include the <template> tags in your response.
-<template>
-## Objective
-- [one or two brief sentences describing what the user is trying to accomplish]
+const SUMMARIZER = `You are now a context summarization assistant. Read the conversation above between a user and an AI assistant, then produce a structured summary following the exact format specified.
 
-## Requirements
-- [constraints, preferences, requirements, and scope boundaries stated by the user, or "(none)"]
+Do NOT continue the conversation. Do NOT respond to any questions in the conversation. Do NOT call tools. ONLY output the structured summary.`;
 
-## Decisions
-- [decisions already made and why, or "(none)"]
+const FORMAT = `Use this EXACT format:
 
-## Work State
-Break the objective into smaller goals and report which are completed, which are being worked on, and which are blocked.
-### Completed
-- [goals that have been completed; otherwise "(none)"]
+## Goal
+[What is the user trying to accomplish? Can be multiple items if the session covers different tasks.]
 
-### Active
-- [goals currently being worked on; otherwise "(none)"]
+## Constraints & Preferences
+- [Any constraints, preferences, or requirements mentioned by user]
+- [Or "(none)" if none were mentioned]
+
+## Progress
+### Done
+- [x] [Completed tasks/changes]
+
+### In Progress
+- [ ] [Current work]
 
 ### Blocked
-- [anything blocking progress, and why; otherwise "(none)"]
+- [Issues preventing progress, if any]
 
-## Next Move
-1. [ordered list of next actions, or "(none)"]
+## Key Decisions
+- **[Decision]**: [Brief rationale]
 
-## Relevant Files
-List the files and directories, other than the current working directory, that another agent would need to open to continue this work. Include at most 15, most important first. Do not list every file that was read or changed. Include paths outside the current working directory when relevant. If none, write "(none)".
-- \`[file or directory path]\`: [brief reason it matters]
+## Next Steps
+1. [Ordered list of what should happen next]
 
-## Important Context
-- [facts the next agent cannot continue without and cannot easily find on its own; or "(none)"]
-</template>`;
+## Critical Context
+- [Any data, examples, or references needed to continue]
+- [Or "(none)" if not applicable]
 
-const RULES = `Rules:
-- Keep each section concise. Use terse, single-line bullets, not prose paragraphs or nested lists.
-- Prefer short references over detailed restatement. It is fine to leave out information the next agent can recover from the code or the files listed above.
-- Preserve exact file paths, symbols, commands, error strings, URLs, and identifiers.
-- Carry forward only user questions or requests that remain unanswered or require further action. Do not repeat ones that newer history has answered or resolved. Preserve exact wording when carrying one forward.
-- Preserve consequential workflow state, including whether changes are uncommitted, committed, pushed, under review, or merged.
-- Do not mention the summary process or that context was compacted.`;
+Keep each section concise. Preserve exact file paths, function names, and error messages.`;
 
-const NUDGE = "The previous response did not fill in the required summary template. Do not call tools. Return the summary as text using the exact section headings from the template.";
+const UPDATE_FORMAT = `Update the existing structured summary with new information. RULES:
+- PRESERVE all existing information from the previous summary
+- ADD new progress, decisions, and context from the new messages
+- UPDATE the Progress section: move items from "In Progress" to "Done" when completed
+- UPDATE "Next Steps" based on what was accomplished
+- PRESERVE exact file paths, function names, and error messages
+- If something is no longer relevant, you may remove it
 
-const HEADINGS = TEMPLATE.split("\n").filter(line => line.startsWith("##"));
+Use this EXACT format:
 
+## Goal
+[Preserve existing goals, add new ones if the task expanded]
+
+## Constraints & Preferences
+- [Preserve existing, add new ones discovered]
+
+## Progress
+### Done
+- [x] [Include previously done items AND newly completed items]
+
+### In Progress
+- [ ] [Current work - update based on progress]
+
+### Blocked
+- [Current blockers - remove if resolved]
+
+## Key Decisions
+- **[Decision]**: [Brief rationale] (preserve all previous, add new)
+
+## Next Steps
+1. [Update based on current state]
+
+## Critical Context
+- [Preserve important context, add new if needed]
+
+Keep each section concise. Preserve exact file paths, function names, and error messages.`;
+
+const NUDGE = "The previous response did not use the required summary format. Do not call tools. Return the summary as text using the exact section headings from the format.";
+
+const HEADINGS = FORMAT.split("\n").filter(line => line.startsWith("##"));
+
+/** Pi's summary prompts, worded for a request that holds the conversation itself rather than a text copy of it. */
 function buildPrompt(update: boolean): string {
-  const shared = [
-    "Summarize only what the user and the assistant said and did. Leave out instructions and setup the assistant was given rather than told by the user: repository conventions, instruction files such as AGENTS.md, and environment details like the session ID. The next agent receives current versions of all of these separately.",
-    TEMPLATE,
-    RULES,
-    "Do not continue the task or call tools.",
-    "Return only the structured summary in the requested format. Do not include a preamble, explanation, or other commentary.",
+  if (!update) return `${SUMMARIZER}\n\nThe messages above are a conversation to summarize. Create a structured context checkpoint summary that another LLM will use to continue the work.\n\n${FORMAT}`;
+
+  return `${SUMMARIZER}\n\nThe messages above are a conversation to summarize. It starts with an existing summary in <summary> tags; incorporate the newer messages into it. Do not reproduce the <summary> tags.\n\n${UPDATE_FORMAT}`;
+}
+
+type FileLists = { readFiles: string[]; modifiedFiles: string[] };
+
+const strings = (value: unknown) => Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
+
+/** Pi's file lists: the latest compaction's lists plus the files that `messages` read, wrote, or edited. */
+function fileLists(messages: AgentMessage[], branch: SessionEntry[]): FileLists {
+  const details = branch.findLast(entry => entry.type === "compaction")?.details as Partial<Record<keyof FileLists, unknown>> | undefined;
+  const read = new Set(strings(details?.readFiles));
+  const modified = new Set(strings(details?.modifiedFiles));
+  const add = (name: string, args: unknown) => {
+    const path = (args as { path?: unknown } | undefined)?.path;
+
+    if (typeof path !== "string" || !path) return;
+
+    if (name === "read") read.add(path);
+    else if (name === "write" || name === "edit") modified.add(path);
+  };
+
+  for (const message of messages) {
+    if (message.role === "assistant") for (const block of message.content) if (block.type === "toolCall") add(block.name, block.arguments);
+    if (message.role === "toolResult") for (const call of message.nestedCalls?.calls ?? []) add(call.name, call.arguments);
+  }
+
+  return { readFiles: [...read].filter(path => !modified.has(path)).sort(), modifiedFiles: [...modified].sort() };
+}
+
+function formatFiles({ readFiles, modifiedFiles }: FileLists): string {
+  const sections = [
+    ...(readFiles.length ? [`<read-files>\n${readFiles.join("\n")}\n</read-files>`] : []),
+    ...(modifiedFiles.length ? [`<modified-files>\n${modifiedFiles.join("\n")}\n</modified-files>`] : []),
   ];
 
-  if (!update) return ["You MUST summarize the conversation above into a structured summary that will be given to another agent to resume the work.", ...shared].join("\n\n");
-
-  return [
-    "Update the existing summary in the conversation above into one consolidated summary.",
-    "Newer history always takes precedence over the existing summary. Preserve previous information unless newer history clearly contradicts, supersedes, resolves, or makes it stale. If something is no longer relevant to continuing the work, you may remove it.",
-    "Incorporate newer requirements, decisions, progress, and context. Reconcile Work State and Next Move: move completed work out of Active, remove resolved blockers and answered questions, and preserve unresolved or pending work.",
-    "Return only the updated Markdown sections. Do not reproduce the `<summary>` wrapper tags from the previous summary.",
-    ...shared,
-  ].join("\n\n");
+  return sections.length ? `\n\n${sections.join("\n\n")}` : "";
 }
 
 /** A summary of everything before `keepId`, written while the session goes on, held until compaction is due. */
@@ -88,6 +141,7 @@ type Held = {
   readonly compactionId: string | null;
   readonly edits: ReadonlySet<string>;
   readonly model: { readonly provider: string; readonly id: string };
+  readonly files: FileLists;
   /** Failed background summaries since the last compaction, this one included once it has failed. */
   failures: number;
   failed: boolean;
@@ -235,6 +289,7 @@ export default function backgroundCompaction(pi: ExtensionAPI) {
       compactionId: latestCompactionId(branch),
       edits: editIds(branch),
       model: { provider: model.provider, id: model.id },
+      files: fileLists(sent, branch),
       failures,
       failed: false,
       abort,
@@ -291,7 +346,7 @@ export default function backgroundCompaction(pi: ExtensionAPI) {
     }
 
     if (summary === undefined || event.signal.aborted) return;
-    const compaction: CompactionResult = { summary, firstKeptEntryId: current.keepId, tokensBefore: event.preparation.tokensBefore, details: { source: SOURCE }, ...(spent ? { usage: spent } : {}) };
+    const compaction: CompactionResult = { summary: summary + formatFiles(current.files), firstKeptEntryId: current.keepId, tokensBefore: event.preparation.tokensBefore, details: { ...current.files, source: SOURCE }, ...(spent ? { usage: spent } : {}) };
 
     return { compaction };
   });
