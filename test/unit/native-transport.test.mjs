@@ -257,7 +257,7 @@ test('diagnostics retain the last five matching stderr lines and augment connect
   await emit('pi://stderr', { runtimeId, line: ' ' });
   assert.equal(client.lastDiagnostic(), 'line 2\nline 3\nline 4\nline 5\nfinal');
   responses.set('pi_command:prompt', new Error('Disconnected'));
-  await assert.rejects(client.command({ type: 'prompt' }), /Disconnected\nline 2/);
+  await assert.rejects(client.command({ type: 'prompt' }), { message: 'Disconnected\nline 2\nline 3\nline 4\nline 5\nfinal' });
   responses.set('pi_command:prompt', new Error('Bad input'));
   await assert.rejects(client.command({ type: 'prompt' }), { message: 'Bad input' });
 });
