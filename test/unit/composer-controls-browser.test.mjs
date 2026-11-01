@@ -443,29 +443,30 @@ test('each arrow and delete key press next to a chat link has an effect', async 
   assert.equal(await editor.inputValue(), '');
 });
 
-test('Ctrl+Z and Ctrl+Y undo and redo typing in the message editor', async t => {
+test('Ctrl+Z and Ctrl+Y undo and redo typing separated by a pause', async t => {
   const page = await controlsPage(t);
+  await page.clock.install();
   const editor = page.getByRole('textbox', { name: 'Message piop' });
   await editor.click();
   await page.keyboard.type('hello');
-  await page.waitForTimeout(1100);
-  await page.keyboard.type(' world');
+  await page.clock.fastForward(1100);
+  await page.keyboard.type('world');
   await page.keyboard.press('Shift+Enter');
   await page.keyboard.type('x');
   await page.keyboard.press('Control+z');
-  assert.equal(await editor.inputValue(), 'hello world\n');
+  assert.equal(await editor.inputValue(), 'helloworld\n');
   await page.keyboard.press('Control+z');
-  assert.equal(await editor.inputValue(), 'hello world');
+  assert.equal(await editor.inputValue(), 'helloworld');
   await page.keyboard.press('Control+z');
   assert.equal(await editor.inputValue(), 'hello');
   await page.keyboard.press('Control+y');
-  assert.equal(await editor.inputValue(), 'hello world');
+  assert.equal(await editor.inputValue(), 'helloworld');
   await page.keyboard.press('Control+Shift+z');
-  assert.equal(await editor.inputValue(), 'hello world');
+  assert.equal(await editor.inputValue(), 'helloworld');
   await page.keyboard.press('Control+y');
-  assert.equal(await editor.inputValue(), 'hello world\n');
+  assert.equal(await editor.inputValue(), 'helloworld\n');
   await page.keyboard.type('!');
-  assert.equal(await editor.inputValue(), 'hello world\n!');
+  assert.equal(await editor.inputValue(), 'helloworld\n!');
   await page.keyboard.press('Control+y');
-  assert.equal(await editor.inputValue(), 'hello world\n!');
+  assert.equal(await editor.inputValue(), 'helloworld\n!');
 });
