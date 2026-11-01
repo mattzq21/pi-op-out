@@ -143,6 +143,7 @@ describe('session runtime pool', () => {
     const id = await connect(client);
     const text = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz12345678 omitted from the title';
     await send(id, { type: 'message_start', message: { role: 'user', content: [{ type: 'text', text }] } });
+    assert.equal(pool.isRunning(client), true, 'the user message marks the conversation running before the agent starts');
     await settled();
     const current = pool.liveSessionSummaries()[0];
     assert.equal(current.name, 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwx');
