@@ -430,7 +430,6 @@ export function SessionPanel(props: Props) {
             moveSession(current, target.projectKey, target.sessionKey || undefined, target.edge);
 
             if (target.layoutBefore !== undefined && target.parentKey) placeGroupEntry(target.parentKey, sourceToken, target.layoutBefore);
-            expandProject(target.projectKey);
           } else placeDroppedProject(current, target, sourceToken);
         }
       }
