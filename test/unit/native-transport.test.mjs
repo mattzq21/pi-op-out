@@ -241,7 +241,7 @@ test('compact prompts go to the queue as messages while state updates retain the
   assert.equal(client.connectionTarget().sessionId, 'other');
   responses.set('pi_command:fork', { cancelled: true });
   await client.command({ type: 'fork' });
-  assert.equal(client.connectionTarget().sessionId, 'other');
+  assert.deepEqual(client.connectionTarget(), { cwd: '/repo', sessionPath: '/other', sessionId: 'other', hostId: 'local' });
   responses.set('pi_command:fork', {});
   await client.command({ type: 'fork' });
   assert.equal(client.connectionTarget().sessionId, undefined);
