@@ -358,7 +358,34 @@ export class Host implements SessionHost {
       session.publish({ type: 'settings_pending', pending: true }, null);
       this.reconcile(session);
     }
+    await Promise.all(sessions.map(session => this.sendAgentDefinitions(session)));
     return revision;
+  }
+
+  /**
+   * Tells a session that the definitions changed, also during a turn: agents it starts later, such as subagents and reviews, use them.
+   * A failure does not undo the change; it is reported.
+   */
+  private async sendAgentDefinitions(session: Session): Promise<void> {
+    if (session.transient() || session.closed() || session.stopping()) return;
+    try { await session.executeWorker({ type: 'agent_definitions_changed' }); }
+    catch (error) { if (!session.closed() && !session.stopping()) this.output({ type: 'diagnostic', line: 'Could not give ' + session.key + ' the changed agent definitions: ' + errorText(error) }); }
+  }
+
+  private availability: Promise<void> | null = null;
+  private availabilityPending = false;
+
+  /** Provider models decide which agents can run, so a provider or fast model change loads the definitions again. Changes during a load cause one more load. */
+  refreshAgentAvailability(): void {
+    if (this.configurationValue === null) return;
+    if (this.availability) { this.availabilityPending = true; return; }
+    this.availability = (async () => {
+      do {
+        this.availabilityPending = false;
+        try { await this.reloadAgentDefinitions(); this.output({ type: 'agent_definitions_changed' }); }
+        catch (error) { this.output({ type: 'diagnostic', line: 'Could not update which agents can run: ' + errorText(error) }); }
+      } while (this.availabilityPending);
+    })().finally(() => { this.availability = null; });
   }
 
   /** Saves agent definitions, applies them to new agents and tells the clients. */

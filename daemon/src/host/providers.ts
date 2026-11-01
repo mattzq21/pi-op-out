@@ -64,7 +64,7 @@ export class ProviderService {
     this.sdk = new Sdk(executable, { event: packet => this.receive(packet) });
     this.fastModels = new FastModelStore(
       { scan: provider => this.sdk.request({ method: 'fast_model_scan', provider: provider ?? null }) as Promise<FastModelScanResult[]> },
-      () => this.host?.output({ type: 'fast_models_changed' }),
+      () => { this.host?.output({ type: 'fast_models_changed' }); this.host?.refreshAgentAvailability(); },
     );
   }
 
@@ -83,6 +83,7 @@ export class ProviderService {
     if (!host) return;
     for (const session of [...host.sessions.values()]) session.publish({ type: 'session_info_changed' }, null);
     host.output({ type: 'provider_auth_changed', flow });
+    host.refreshAgentAvailability();
   }
 
   private async runtime(): Promise<{ builtinIds: Set<string> }> {

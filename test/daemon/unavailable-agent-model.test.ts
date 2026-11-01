@@ -10,6 +10,7 @@ test('an unavailable agent model does not prevent startup and clears after repai
   const update = (repair: boolean) => {
     const db = new DatabaseSync(file);
     try {
+      db.exec('PRAGMA busy_timeout=10000');
       const row: any = db.prepare("SELECT body FROM application_settings WHERE name='agent-definitions.json'").get();
       const config = JSON.parse(Buffer.from(row.body).toString());
       if (!repair) {

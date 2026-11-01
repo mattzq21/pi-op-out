@@ -44,3 +44,18 @@ test('a save that a new agent could not start from is refused and changes nothin
   expect(refused).toContain('System prompt file missing-prompt.md does not exist');
   expect((await agentDefinitions(daemon)).revision).toBe(before.revision);
 }, 60000);
+
+test('an agent whose model a provider adds later becomes available without a reload', async () => {
+  const server = Bun.serve({ port: 0, hostname: '127.0.0.1', fetch: request =>
+    new URL(request.url).pathname === '/v1/models' ? Response.json({ object: 'list', data: [{ id: 'late-model', object: 'model' }] }) : new Response('not found', { status: 404 }) });
+  try {
+    await saveAgentDefinitions(daemon, agents => added('waiting')(agents).map(agent => agent.name === 'waiting' ? { ...agent, model: 'late-llm/late-model' } : agent));
+    const waiting = async () => (await agentDefinitions(daemon)).agents.find((agent: any) => agent.name === 'waiting');
+    expect((await waiting()).unavailableReason).toContain('late-llm/late-model');
+    const before = daemon.events.filter(event => event.event === 'pi://agent-definitions-changed').length;
+    let count = 0;
+    await daemon.invoke('provider_auth', { hostId: 'local', request: { action: 'create', providerId: 'late-llm', name: 'Late LLM', baseUrl: `http://127.0.0.1:${server.port}/v1`, api: 'openai-completions', apiKey: 'late-key', noKey: false, sessionAffinity: false } });
+    await daemon.waitEvent('pi://agent-definitions-changed', () => ++count > before);
+    expect((await waiting()).unavailableReason).toBeUndefined();
+  } finally { server.stop(true); }
+}, 60000);
