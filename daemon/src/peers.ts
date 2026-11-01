@@ -1,7 +1,7 @@
 import { spawn, type ChildProcess } from 'node:child_process';
 import { request as httpRequest } from 'node:http';
 import { randomUUID } from 'node:crypto';
-import { BUILD_ID, MAX_AGENT_OUTPUT_BYTES, MAX_REQUEST_BYTES, PEER_PROTOCOL_VERSION, STARTUP_TIMEOUT } from './config';
+import { BUILD_ID, MAX_AGENT_OUTPUT_BYTES, MAX_REQUEST_BYTES, PEER_PROTOCOL_VERSION } from './config';
 import { homeDir } from './environment';
 import { loadAppSettings } from './settings';
 import { remoteHost, remoteLoginCommand, sshBase } from './pi_launch';
@@ -189,7 +189,7 @@ export async function connect(app: App, hostId: string): Promise<Connection> {
       const lines = lineReader(child);
       let ready: any;
       try {
-        const line = await withTimeout(Promise.race([lines.next(), cancelled]), STARTUP_TIMEOUT + 30_000, 'SSH handshake timed out');
+        const line = await withTimeout(Promise.race([lines.next(), cancelled]), daemonEndpoint.STARTUP_TIMEOUT + 30_000, 'SSH handshake timed out');
         ready = line === undefined ? undefined : JSON.parse(line);
       } catch (error: any) { throw new Error('Could not attach to ' + host.name + ': ' + error.message + detail()); }
       const current = await configuredHost(app, hostId);

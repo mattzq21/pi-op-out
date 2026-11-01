@@ -7,7 +7,6 @@ const stops = (clients: InstanceType<typeof DaemonClients>) => clients.waitForSh
 
 test('a daemon with an unused delay stops once it has had no client for that long', async () => {
   const clients = new DaemonClients(() => {}, () => {}, 200);
-  clients.connect().release();
   const started = Date.now();
   const stopped = await stops(clients);
   expect(stopped - started).toBeGreaterThanOrEqual(190);
@@ -27,12 +26,10 @@ test('a connected client keeps the daemon running, and the delay counts again fr
   expect(stoppedAt - left).toBeGreaterThanOrEqual(190);
 });
 
-test('a new daemon waits for its first client for the startup time, not only the unused delay', async () => {
+test('a daemon with no unused delay never stops on its own', async () => {
   const clients = new DaemonClients(() => {}, () => {}, 0);
   void stops(clients);
+  clients.connect().release();
   await Bun.sleep(300);
   expect(clients.closing()).toBe(false);
-  clients.connect().release();
-  for (let tries = 0; !clients.closing() && tries < 50; tries++) await Bun.sleep(20);
-  expect(clients.closing()).toBe(true);
 });

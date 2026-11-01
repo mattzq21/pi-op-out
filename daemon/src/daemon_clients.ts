@@ -1,7 +1,7 @@
 import { Notify, sleep } from './util/sync';
 import * as daemonRestart from './daemon_restart';
 import type { App } from './app';
-import { STARTUP_TIMEOUT, UNUSED_STOP_MS } from './config';
+import { UNUSED_STOP_MS } from './config';
 
 export class DaemonClients {
   constructor(private readonly onStop: () => void, private readonly onLastDisconnect: () => void, private readonly unusedDelay = UNUSED_STOP_MS) {}
@@ -9,7 +9,6 @@ export class DaemonClients {
   private count = 0;
   private closingFlag = false;
   private unusedSince = Date.now();
-  private everConnected = false;
   private stopped = new Notify();
   private requests = 0;
   private drained = new Set<() => void>();
@@ -53,7 +52,6 @@ export class DaemonClients {
   connect(): { release(): void } {
     if (this.closingFlag) throw new Error('Piop daemon is shutting down');
     this.count += 1;
-    this.everConnected = true;
     let released = false;
     return {
       release: () => {
@@ -63,7 +61,7 @@ export class DaemonClients {
         if (this.count === 0) {
           this.unusedSince = Date.now();
           try { this.onLastDisconnect(); }
-          finally { this.stopped.notifyOne(); }
+          finally { if (this.unusedDelay > 0) this.stopped.notifyOne(); }
         }
       },
     };
@@ -73,8 +71,8 @@ export class DaemonClients {
 
   private untilUnattended(): number | undefined {
     if (this.count > 0) return undefined;
-    const delay = this.everConnected ? this.unusedDelay : Math.max(this.unusedDelay, STARTUP_TIMEOUT);
-    return Math.max(0, this.unusedSince + delay - Date.now());
+    if (this.unusedDelay === 0) return undefined;
+    return Math.max(0, this.unusedSince + this.unusedDelay - Date.now());
   }
 
   private unattended(): boolean { return this.untilUnattended() === 0; }

@@ -1,7 +1,7 @@
 import { createInterface } from 'node:readline';
 import type { ChildProcess } from 'node:child_process';
 import { join } from 'node:path';
-import { PEER_PROTOCOL_VERSION, PROTOCOL_VERSION, STARTUP_TIMEOUT } from './config';
+import { PEER_PROTOCOL_VERSION, PROTOCOL_VERSION } from './config';
 import * as endpoint from './daemon_endpoint';
 import * as daemonLog from './daemon_log';
 import { daemonScript } from './session_worker';
@@ -93,7 +93,7 @@ async function startDaemon(mode: string): Promise<[string, ChildProcess]> {
 }
 
 async function startAndOpen(mode: string, scope: string): Promise<[Socket, any]> {
-  const deadline = Date.now() + STARTUP_TIMEOUT;
+  const deadline = Date.now() + endpoint.STARTUP_TIMEOUT;
   let logPath: string;
   let child: ChildProcess;
   let exit: number | null | undefined;
