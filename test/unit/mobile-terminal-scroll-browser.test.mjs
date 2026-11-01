@@ -48,7 +48,7 @@ test('history scrolls without taking ownership and a tap claims the terminal', a
 
     for(let i=1;i<=8;i++) {
       await cdp.send('Input.dispatchTouchEvent',{type:'touchMove',touchPoints:[{x,y:y+i*12}]});
-      await page.waitForTimeout(20);
+      await page.evaluate(() => new Promise(requestAnimationFrame));
     }
 
     await cdp.send('Input.dispatchTouchEvent',{type:'touchEnd',touchPoints:[]});
