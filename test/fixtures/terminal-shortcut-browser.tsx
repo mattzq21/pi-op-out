@@ -8,15 +8,17 @@ import '../../clients/ui/styles.css';
 
 const [toggles, setToggles] = createSignal(0);
 const [input, setInput] = createSignal('');
+const [focuses, setFocuses] = createSignal(0);
 const ignore = (() => undefined) as never;
 
 function Harness() {
   useAppKeyboard({ settings: () => ({ keybindings: defaultKeybindings }) as AppSettings, activePane: () => 'main', splitPane: () => undefined, canLeaveSettings: () => true,
-    setView: ignore, panelOpen: () => false, setPanelOpen: ignore, newSession: async () => {}, toggleTerminal: () => setToggles(count => count + 1), toggleDebugMode: () => {},
-    setSplitComposerFocusRequest: ignore, setMainComposerFocusRequest: ignore, settingsDirty: () => false, view: () => 'chat', terminalOpen: () => true, setTerminalOpen: ignore });
+    setView: (() => undefined) as never, panelOpen: () => false, setPanelOpen: ignore, newSession: async () => {}, toggleTerminal: () => setToggles(count => count + 1), toggleDebugMode: () => {},
+    setSplitComposerFocusRequest: ignore, setMainComposerFocusRequest: (() => setFocuses(count => count + 1)) as never, settingsDirty: () => false, view: () => 'chat', terminalOpen: () => true, setTerminalOpen: ignore });
 
   return <>
     <output aria-label="Terminal toggles">{toggles()}</output>
+    <output aria-label="Composer focuses">{focuses()}</output>
     <output aria-label="Shell input">{JSON.stringify(input())}</output>
     <div style={{ height: '600px', display: 'flex', 'flex-direction': 'column' }}>
       <TerminalView cwd="/tmp" terminals={[{ id: 'shell', label: 'Shell' }]} activeId="shell" output="$ " outputEnd={2} started={true}

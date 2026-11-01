@@ -47,7 +47,7 @@ export function useAppKeyboard(context: KeyboardContext) {
       const target = event.target instanceof HTMLElement ? event.target : undefined;
 
       if (target?.closest(".keybind-input")) return true;
-      if (target?.closest(".terminal-shell") && isTerminalKey(event) && !matchesShortcut(event, capturedSettings.keybindings.toggleTerminal)) return true;
+      if (target?.closest(".terminal-shell") && isTerminalKey(event) && !matchesShortcut(event, capturedSettings.keybindings.toggleTerminal) && !matchesShortcut(event, capturedSettings.keybindings.focusComposer)) return true;
 
       return target?.closest("input, textarea, select, [contenteditable='true'], [contenteditable='plaintext-only'], .keybind-input") && !event.ctrlKey && !event.metaKey && !event.altKey;
     };
