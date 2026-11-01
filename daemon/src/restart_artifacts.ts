@@ -9,7 +9,7 @@ import * as restartStorage from './restart_storage';
 import { daemonScript } from './session_worker';
 import { lockPath, lockPathSync, type FileLock } from './util/flock';
 
-const SERVE_MODES = ['--serve', '--exit-on-disconnect', '--restart-candidate', '--restart-coordinator'];
+const SERVE_MODES = ['--serve', '--restart-candidate', '--restart-coordinator'];
 const RUNNING_EXECUTABLE = Bun.isStandaloneExecutable ? '/proc/self/exe' : undefined;
 let runningBytes: Buffer | undefined;
 let runningBytesError: string | undefined;

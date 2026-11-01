@@ -8,7 +8,6 @@ const stops = (clients: InstanceType<typeof DaemonClients>) => clients.waitForSh
 test('a daemon with an unused delay stops once it has had no client for that long', async () => {
   const started = Date.now();
   const clients = new DaemonClients(() => {}, () => {}, 200);
-  clients.persist();
   const stopped = await stops(clients);
   expect(stopped - started).toBeGreaterThanOrEqual(190);
   expect(clients.closing()).toBe(true);

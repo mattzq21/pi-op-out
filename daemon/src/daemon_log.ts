@@ -16,7 +16,7 @@ const BACKUP_COUNT = 4;
 const MAX_FAILURE_BYTES = 64 * 1024;
 const STATUS_FD = 'PIOP_DAEMON_LOG_STATUS_FD';
 const CAPTURED = 'PIOP_DAEMON_LOG_CAPTURED';
-const LOGGED_MODES = ['--serve', '--exit-on-disconnect', '--restart-candidate', '--restart-coordinator', '--validate-plugins'];
+const LOGGED_MODES = ['--serve', '--restart-candidate', '--restart-coordinator', '--validate-plugins'];
 
 /** A child process description for daemon processes that write to daemon.log. */
 export interface DaemonCommand { program: string; args: string[]; env: Record<string, string | undefined>; stderr?: any; logStatus?: Socket; logStatusFd?: number }

@@ -387,7 +387,7 @@ async fn wait_local_socket(log_path: &Path, child: &mut tokio::process::Child, b
 }
 fn spawn_local_daemon(_app: &AppHandle, executable: &Path) -> Result<(PathBuf, tokio::process::Child), String> {
     let mut command = Command::new(executable);
-    command.arg("--exit-on-disconnect").stdin(Stdio::null()).stdout(Stdio::null());
+    command.arg("--serve").stdin(Stdio::null()).stdout(Stdio::null());
     let log_path = crate::daemon_log::configure(&mut command, executable)?;
     use std::os::unix::process::CommandExt;
     unsafe { command.pre_exec(|| { if libc::setsid() < 0 { return Err(std::io::Error::last_os_error()); } Ok(()) }); }
