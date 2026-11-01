@@ -4,7 +4,7 @@ import { nativeFileCommand } from '../native-file-command.mjs';
 import { cleanupScope } from '../cleanup-scope.mjs';
 
 const resources = cleanupScope({ after });
-let rejectionNative;
+let sharedNative;
 const invalidURL = { message: 'Enter a valid HTTP or HTTPS URL' };
 const unsupportedScheme = { message: 'Only HTTP and HTTPS links can be opened in the browser' };
 
@@ -19,28 +19,21 @@ for (const [description, url, error] of [
   ['mail scheme', 'mailto:user@example.com', unsupportedScheme],
   ['FTP scheme', 'ftp://example.com/file', unsupportedScheme],
 ]) test(`the browser command rejects ${description} without starting the launcher`, async () => {
-  const native = await (rejectionNative ??= nativeFileCommand(resources, { launcher: {} }));
+  const native = await (sharedNative ??= nativeFileCommand(resources, { launcher: {} }));
   const before = await native.launchedTargets();
   await assert.rejects(native.invoke('open_external_url', { url }), error);
   assert.deepEqual(await native.launchedTargets(), before);
 });
 
-test('the browser command normalizes host case, default port and spaces', async t => {
-  const native = await nativeFileCommand(t, { launcher: {} });
-  await native.invoke('open_external_url', { url: 'HTTPS://Example.COM:443/a b?x=1&y=2#section' });
-  assert.deepEqual(await native.launchedTargets(), ['https://example.com/a%20b?x=1&y=2#section']);
-});
-
-test('the browser command preserves a nondefault local server port', async t => {
-  const native = await nativeFileCommand(t, { launcher: {} });
-  await native.invoke('open_external_url', { url: 'http://localhost:8080/path' });
-  assert.deepEqual(await native.launchedTargets(), ['http://localhost:8080/path']);
-});
-
-test('the browser command preserves encoded query delimiters', async t => {
-  const native = await nativeFileCommand(t, { launcher: {} });
-  await native.invoke('open_external_url', { url: 'https://example.com/?q=%26%3D%23' });
-  assert.deepEqual(await native.launchedTargets(), ['https://example.com/?q=%26%3D%23']);
+for (const [description, url, target] of [
+  ['normalizes host case, default port and spaces', 'HTTPS://Example.COM:443/a b?x=1&y=2#section', 'https://example.com/a%20b?x=1&y=2#section'],
+  ['preserves a nondefault local server port', 'http://localhost:8080/path', 'http://localhost:8080/path'],
+  ['preserves encoded query delimiters', 'https://example.com/?q=%26%3D%23', 'https://example.com/?q=%26%3D%23'],
+]) test(`the browser command ${description}`, async () => {
+  const native = await (sharedNative ??= nativeFileCommand(resources, { launcher: {} }));
+  const before = await native.launchedTargets();
+  await native.invoke('open_external_url', { url });
+  assert.deepEqual((await native.launchedTargets()).slice(before.length), [target]);
 });
 
 test('the browser command reports a system launcher failure', async t => {
