@@ -3,7 +3,7 @@ import { mkdirSync, readFileSync, rmdirSync, rmSync, writeFileSync } from 'node:
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { join } from 'node:path';
-import { daemonExecutable, fakeProgram, refreshedUsage, startDaemon, type TestDaemon } from './harness';
+import { addProviderLogin, daemonExecutable, fakeProgram, refreshedUsage, startDaemon, type TestDaemon } from './harness';
 
 let daemon: TestDaemon;
 let profile: string;
@@ -159,6 +159,7 @@ test('deleting a transcript with invalid chat data fails and keeps the file', as
 
 /** Installs a fake Codex app server. It gives the reply in ~/codex-reply to the usage request, closes on "close" and stays silent on "silent". */
 function installFakeCodex(reply: string): void {
+  addProviderLogin(daemon.home, 'openai-codex', 'oauth');
   writeFileSync(join(daemon.home, 'codex-reply'), reply);
   fakeProgram(daemon.bin, 'codex', `#!/usr/bin/env node
 const reply = require('node:fs').readFileSync(require('node:path').join(process.env.HOME, 'codex-reply'), 'utf8');

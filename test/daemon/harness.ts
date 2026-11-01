@@ -141,6 +141,17 @@ export function synchronizationFinished(client: Client, revision: number): Promi
   return client.waitEvent('pi://settings-changed', payload => !('committedRevision' in payload) && payload.revision === revision, 20_000);
 }
 
+/** Adds a provider login to the Pi of a daemon home: an OAuth login that stays valid for a day, or an API key. */
+export function addProviderLogin(home: string, providerId: string, type: 'oauth' | 'api_key' = 'api_key'): void {
+  const path = join(home, '.piop/auth.json');
+  let saved: Record<string, unknown> = {};
+  try { saved = JSON.parse(readFileSync(path, 'utf8')); } catch (error: any) { if (error.code !== 'ENOENT') throw error; }
+  mkdirSync(join(home, '.piop'), { recursive: true, mode: 0o700 });
+  writeFileSync(path, JSON.stringify({ ...saved, [providerId]: type === 'oauth'
+    ? { type, access: 'test-' + providerId + '-token', refresh: 'test-refresh', expires: Date.now() + 86_400_000 }
+    : { type, key: 'test-' + providerId + '-key' } }), { mode: 0o600 });
+}
+
 /** Refreshes plan usage now and returns what the daemon then holds for one provider. */
 export async function refreshedUsage(client: Client, provider: 'codex' | 'anthropic' | 'opencodeGo'): Promise<{ usage?: any; error?: string }> {
   return (await client.invoke('provider_usage', { refresh: true, provider }))[provider] ?? {};

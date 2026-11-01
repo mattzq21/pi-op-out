@@ -20,8 +20,10 @@ export function anthropicUsageValues(response: any): AnthropicUsage | undefined 
   return usage;
 }
 
-export async function anthropicUsage(): Promise<AnthropicUsage> {
+/** undefined: Anthropic is not added to Pi. */
+export async function anthropicUsage(): Promise<AnthropicUsage | undefined> {
   const auth = await resolveProviderAuth(piExecutable(), 'anthropic');
+  if (auth === null) return undefined;
   const token = auth?.apiKey;
   if (typeof token !== 'string' || !token.trim()) throw new Error('Anthropic login is not configured');
   if (token.startsWith('sk-ant-api')) throw new Error('Anthropic usage needs a Claude subscription login');
