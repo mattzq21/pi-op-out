@@ -122,7 +122,6 @@ html[data-mobile] .app:has(.icon-rail:not(.compact)) ~ .mobile-reconnect-banner 
   .agent-editor, .agent-defaults { grid-template-columns: minmax(0, 1fr); }
   .agent-list { flex-direction: row; overflow-x: auto; }
   .agent-list button { flex: 0 0 auto; }
-  .agent-list .agent-scope { width: auto; flex: 0 0 auto; margin-bottom: 0; }
 }
 
 .app-loading + .mobile-host-button { display: block; }

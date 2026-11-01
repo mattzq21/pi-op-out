@@ -533,9 +533,10 @@ describe('settings editor', () => {
     await render({ agentConfig: { revision: 'missing', agents: [profile('local')] }, inheritedAgents: [profile('general', { isDefault: true })], agentScope: '/repo', agentScopes: [{ name: 'Repo', cwd: '/repo' }, { name: 'Other', cwd: '/other' }], onMoveAgent: async (...args) => { moves.push(args); } }); await section('Agents');
     await click([...document.querySelectorAll('.agent-list button')].find(item => item.textContent === 'local'));
     await click(button('Move'));
-    assert.equal(button('Repo'), undefined); assert.notEqual(button('Global'), undefined);
+    const moveOptions = () => [...document.querySelectorAll('.agent-section-actions [role="option"]')].map(item => item.textContent);
+    assert.deepEqual(moveOptions(), ['Global', 'Other']);
     await enterText(control('Filter Move agent to'), 'oth');
-    assert.equal(button('Global'), undefined);
+    assert.deepEqual(moveOptions(), ['Other']);
     await click(button('Other'));
     await click(button('Move')); await click(button('Global'));
     assert.deepEqual(moves, [['review', '/repo'], ['local', '/other'], ['local', null]]);

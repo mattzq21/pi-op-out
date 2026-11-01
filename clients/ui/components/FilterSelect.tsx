@@ -5,7 +5,7 @@ import { createDependencyEffect } from "../lib/solid";
 
 export type FilterOption = { value: string; label: string; search: string; disabled?: boolean; group?: number; italic?: boolean };
 
-export function FilterSelect(props: { label: string; filterPlaceholder: string; value: string; options: FilterOption[]; invalid?: boolean; onChange: (value: string) => void; trigger?: { content: JSXElement; class: string; disabled?: boolean; tooltip?: string; alignEnd?: boolean } }) {
+export function FilterSelect(props: { label: string; filterPlaceholder: string; value: string; options: FilterOption[]; invalid?: boolean; disabled?: boolean; onChange: (value: string) => void; trigger?: { content: JSXElement; class: string; tooltip?: string; alignEnd?: boolean } }) {
   const [open, setOpen] = createSignal(false);
   const [query, setQuery] = createSignal("");
   const [active, setActive] = createSignal(-1);
@@ -44,8 +44,8 @@ export function FilterSelect(props: { label: string; filterPlaceholder: string; 
 
   return <div ref={root} class={props.trigger?.alignEnd ? "filter-select filter-select-end" : "filter-select"} onFocusOut={event => { if (event.relatedTarget instanceof Node && !root?.contains(event.relatedTarget)) close(false); }}>
     {props.trigger
-      ? <button ref={trigger} type="button" class={props.trigger.class} aria-haspopup="listbox" aria-expanded={open()} disabled={props.trigger.disabled} data-tooltip={props.trigger.tooltip} onClick={() => open() ? close(true) : show()}>{props.trigger.content}</button>
-      : <button ref={trigger} type="button" class="filter-select-trigger" aria-label={props.label} aria-haspopup="listbox" aria-expanded={open()} aria-invalid={props.invalid} data-value={props.value} onClick={() => open() ? close(true) : show()}><span>{selected()?.label ?? props.value}</span><ChevronDown size={14} /></button>}
+      ? <button ref={trigger} type="button" class={props.trigger.class} aria-haspopup="listbox" aria-expanded={open()} disabled={props.disabled} data-tooltip={props.trigger.tooltip} onClick={() => open() ? close(true) : show()}>{props.trigger.content}</button>
+      : <button ref={trigger} type="button" class="filter-select-trigger" aria-label={props.label} aria-haspopup="listbox" aria-expanded={open()} aria-invalid={props.invalid} disabled={props.disabled} data-value={props.value} onClick={() => open() ? close(true) : show()}><span>{selected()?.label ?? props.value}</span><ChevronDown size={14} /></button>}
     {open() && <div class="filter-select-menu">
       <input ref={filter} aria-label={'Filter ' + props.label} placeholder={props.filterPlaceholder} value={query()} onInput={event => { setQuery(event.currentTarget.value); setActive(visible().findIndex(option => !option.disabled)); }} onKeyDown={event => {
         if (event.key === "ArrowDown" || event.key === "ArrowUp") { event.preventDefault(); move(event.key === "ArrowDown" ? 1 : -1); }

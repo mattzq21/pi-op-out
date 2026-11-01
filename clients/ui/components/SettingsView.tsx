@@ -300,6 +300,7 @@ export function SettingsView(props: SettingsViewProps) {
   const agent = createMemo(() => (showingGlobal() ? inheritedGeneral() : agentDrafts()[agentIndex()]) as AgentProfile);
   createDependencyEffect(() => { setMoveError(undefined); }, () => [agent()?.name, settingsProps().agentScope]);
   const inheritedNames = createMemo(() => new Set((settingsProps().inheritedAgents ?? []).map(item => item.name)));
+  const scopeOptions = createMemo(() => [{ value: "", label: "Global", search: "Global", group: 0, italic: true }, ...settingsProps().agentScopes.map(project => ({ value: project.cwd, label: project.name, search: `${project.name} ${project.cwd}`, group: 1 }))]);
   const globalAgents = () => settingsProps().inheritedAgents ?? agentDrafts();
   const agentFastModeEnabled = createMemo(() => (agent()?.fastMode ?? draft().defaultFastMode));
   const updateAgent = (value: Partial<AgentProfile>) => !showingGlobal() && setAgentDrafts((current) => current.map((item, index) => index === agentIndex() ? { ...item, ...value } : item));
@@ -546,7 +547,7 @@ export function SettingsView(props: SettingsViewProps) {
           };
 
           return (<>{moveError() && <p role="alert">Could not move the agent: {moveError()}</p>}{!agentConfig() && <p role={settingsProps().resourceError ? "alert" : "status"}>{settingsProps().resourceError ? "Could not load agent definitions: " + required((settingsProps().resourceError)) : "Loading agent definitions…"}</p>}
-          <div class="agent-editor"><div class="agent-list"><select class="agent-scope" aria-label="Agent definitions" disabled={dirty() || saving()} value={settingsProps().agentScope ?? ""} onChange={event => settingsProps().onAgentScope?.(event.currentTarget.value || undefined)}><option value="">Global</option><For each={settingsProps().agentScopes}>{project => <option value={project.cwd}>Project: {project.name}</option>}</For></select><Show when={inheritedGeneral()}>{general => <button class={showingGlobal() ? "active" : ""} onClick={() => setViewingGlobal(true)}><Bot size={14} /><span>{general().name} <small class="agent-scope-tag">global</small></span></button>}</Show>{<Index each={agentDrafts()}>{(item, index) => <button  class={!showingGlobal() && index === agentIndex() ? "active" : ""} onClick={() => { setAgentIndex(index); setViewingGlobal(false); }}><Bot size={14} /><span>{item().name}</span></button>}</Index>}</div>
+          <div class="agent-editor"><div class="agent-sidebar"><div class="agent-scope"><FilterSelect label="Agent definitions" filterPlaceholder="Filter projects" disabled={dirty() || saving()} value={settingsProps().agentScope ?? ""} options={scopeOptions()} onChange={value => settingsProps().onAgentScope?.(value || undefined)} /></div><div class="agent-list"><Show when={inheritedGeneral()}>{general => <button class={showingGlobal() ? "active" : ""} onClick={() => setViewingGlobal(true)}><Bot size={14} /><span>{general().name} <small class="agent-scope-tag">global</small></span></button>}</Show>{<Index each={agentDrafts()}>{(item, index) => <button  class={!showingGlobal() && index === agentIndex() ? "active" : ""} onClick={() => { setAgentIndex(index); setViewingGlobal(false); }}><Bot size={14} /><span>{item().name}</span></button>}</Index>}</div></div>
             {renderAgentFields()}
           </div></>);
         };
@@ -609,7 +610,7 @@ function MoveAgentButton(componentProps: { destinations: Array<{ name: string; c
     try { await componentProps.onMove(destination.cwd); } catch { /* The section shows the error. */ } finally { setMoving(false); }
   };
 
-  return <FilterSelect label="Move agent to" filterPlaceholder="Filter projects" value="" options={options()} onChange={value => void move(value)} trigger={{ class: "secondary-button", content: <><ArrowRightLeft size={15} />{moving() ? "Moving…" : "Move"}</>, disabled: Boolean(componentProps.blocked) || moving(), tooltip: componentProps.blocked, alignEnd: true }} />;
+  return <FilterSelect label="Move agent to" filterPlaceholder="Filter projects" value="" options={options()} onChange={value => void move(value)} disabled={Boolean(componentProps.blocked) || moving()} trigger={{ class: "secondary-button", content: <><ArrowRightLeft size={15} />{moving() ? "Moving…" : "Move"}</>, tooltip: componentProps.blocked, alignEnd: true }} />;
 }
 
 function SettingsSection(componentProps: { title: string; description?: string; headerAction?: JSXElement; children: JSXElement }) { return <div class="settings-section"><div class="section-title"><div><h2>{componentProps.title}</h2>{componentProps.description && <p>{componentProps.description}</p>}</div>{componentProps.headerAction}</div>{componentProps.children}</div>; }
