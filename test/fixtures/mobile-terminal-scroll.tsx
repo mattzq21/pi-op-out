@@ -4,6 +4,8 @@ import { MobileTerminalView } from '../../clients/ui/components/MobileTerminalVi
 import '../../clients/ui/styles.css';
 import '../../clients/ui/mobile.css';
 
+document.head.insertAdjacentHTML('beforeend', '<meta name="viewport" content="width=device-width, initial-scale=1">');
+
 const [output, setOutput] = createSignal(Array.from({ length: 80 }, (_, i) => `history ${i}\r\n`).join('') + 'demo$ ');
 
 const [unowned, setUnowned] = createSignal(false);
@@ -20,4 +22,4 @@ render(() => <div style={{ height: '700px', display: 'flex', 'flex-direction': '
     ownershipRequired={unowned()} onTakeOwnership={async () => { window.claims++; setUnowned(false); }}
     output={output()} outputEnd={output().length} started={true} onStart={() => {}}
     onData={async value => { window.lastData = value; return true; }} onSnapshot={() => {}} onDraft={value => { window.lastDraft = value; }} onAdd={() => {}} onSelect={() => {}} onDelete={() => {}} onClose={() => {}} />
-</div>, document.getElementById('app'));
+</div>, document.getElementById('root'));

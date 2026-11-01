@@ -1,39 +1,16 @@
-import { test, after } from 'node:test';
-import { build } from 'esbuild';
-import { transformSync } from '@babel/core';
-import solid from 'babel-preset-solid';
-import typescript from '@babel/preset-typescript';
-import { readFile } from 'node:fs/promises';
-import { createServer } from 'node:http';
-import { launchTestBrowser, chromiumOnly } from '../test-browser.mjs';
+import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { startupPage } from '../startup-browser-fixture.mjs';
+import { chromiumOnly, testBrowserName } from '../test-browser.mjs';
 
-const bundle = await build({entryPoints:['test/fixtures/mobile-terminal-scroll.tsx'], bundle:true, write:false,
-  outdir:'/tmp/terminal-cursor-bundle', conditions:['browser'], define:{'import.meta.env.MODE':'"development"'},
-  plugins:[{name:'solid',setup(api){
-    api.onLoad({filter:/\.tsx$/},async args=>({contents:transformSync(await readFile(args.path,'utf8'),{filename:args.path,babelrc:false,configFile:false,presets:[[solid,{generate:'dom'}],[typescript,{onlyRemoveTypeImports:true}]]}).code,loader:'js'}));
-  }}]});
-
-const js=bundle.outputFiles.find(file=>file.path.endsWith('.js')).text;
-
-const css=bundle.outputFiles.find(file=>file.path.endsWith('.css')).text;
-
-const server=createServer((req,res)=>{res.setHeader('Content-Type',req.url==='/app.js'?'text/javascript':req.url==='/app.css'?'text/css':'text/html');res.end(req.url==='/app.js'?js:req.url==='/app.css'?css:'<html><head><meta name="viewport" content="width=device-width, initial-scale=1"><link rel="stylesheet" href="/app.css"></head><body><div id="app"></div><script type="module" src="/app.js"></script></body></html>');});
-
-await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
-
-const browser=await launchTestBrowser();
-let touchBrowser;
-
-after(async () => { await browser.close(); await (await touchBrowser)?.close(); await new Promise(resolve => server.close(resolve)); });
-
-async function openTerminal(t, touch = false) {
-  const target = touch ? await (touchBrowser ??= launchTestBrowser({ engine: chromiumOnly })) : browser;
-  const page=await target.newPage({viewport:{width:390,height:844},isMobile:true,hasTouch:true});
-  await page.goto(`http://127.0.0.1:${server.address().port}`);
-  t.after(() => page.close());
-  await page.getByRole('textbox', { name: 'Terminal command' }).waitFor();
-  return page;
+function openTerminal(t, touch = false) {
+  return startupPage(t, 'development', {
+    entryPoint: 'test/fixtures/mobile-terminal-scroll.tsx',
+    ready: '[role="textbox"][aria-label="Terminal command"]',
+    holdStorage: false,
+    engine: touch ? chromiumOnly : testBrowserName,
+    contextOptions: { viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true },
+  });
 }
 
 test('history scrolls without taking ownership and a tap claims the terminal', async t => {
