@@ -10,6 +10,8 @@ type Submission = { owner: NativeTransport; message: ChatMessage; status: string
 
 const [submissions, setSubmissions] = createSignal<Submission[]>([]);
 
+const tails = new WeakMap<NativeTransport, Promise<unknown>>();
+
 export const chatSubmission = (owner?: NativeTransport) => submissions().find(submission => submission.owner === owner);
 
 export const isChatSubmissionActive = (id: string) => submissions().some(submission => submission.durable.id === id);
@@ -23,10 +25,15 @@ export async function trackChatSubmission<T>(owner: NativeTransport, text: strin
   const message: ChatMessage = { id: durable.id, role: "user", content: [{ type: "text", text }, ...images], deliveryBehavior: behavior };
   setSubmissions(current => [...current, { owner, message, durable, status: initialStatus }]);
   retainSubmittedMessage(owner, message);
-  ownDraftSubmission(durable);
+  const previous = tails.get(owner);
+  let settle!: () => void;
+  const tail = new Promise<void>(resolve => { settle = resolve; });
+  tails.set(owner, tail);
   let retain = false;
 
   try {
+    await previous;
+    ownDraftSubmission(durable);
     const result = await work();
 
     if (result === false) await durable.reject("Message was not submitted");
@@ -56,6 +63,9 @@ export async function trackChatSubmission<T>(owner: NativeTransport, text: strin
     }
 
     setSubmissions(current => current.filter(item => item.message !== message));
+    settle();
+
+    if (tails.get(owner) === tail) tails.delete(owner);
   }
 }
 

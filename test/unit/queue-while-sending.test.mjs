@@ -1,0 +1,30 @@
+import assert from 'node:assert/strict';
+import { test } from 'node:test';
+import { installDom, renderHook, renderComponent, enterText, act } from '../dom.mjs';
+import { useChatSession } from '../../clients/ui/lib/useChatSession.ts';
+import { bindDraftStaging } from '../../clients/ui/lib/draftSubmission.ts';
+import { ChatView } from '../../clients/ui/components/ChatView.tsx';
+
+for (const outcome of ['accepted', 'failed']) test(`a message sent while the first message is sending is queued after it, also when the first one ${outcome}`, async t => {
+  const dom = installDom(); HTMLElement.prototype.scrollIntoView = () => {};
+  const base = { subscribe() { return () => {}; }, async command() { return {}; }, ownsConversation: () => true, hasConfirmedOwnership: () => true, isConnected: () => true, currentHostId: () => 'local' };
+  const transport = new Proxy(base, { get: (target, name) => name in target || name === 'then' || typeof name === 'symbol' ? target[name] : () => undefined });
+  let next = 0;
+  bindDraftStaging(transport, async () => ({ id: `submission-${++next}`, owner: () => transport, move: async () => {}, dispatch: async () => {}, accept: async () => {}, reject: async () => {}, wasDispatched: () => false }));
+  const hook = await renderHook(value => useChatSession(value), transport);
+  const sent = []; let finishFirst;
+  const onSend = (text, behavior) => { sent.push([text, behavior]); return sent.length === 1 ? new Promise((resolve, reject) => { finishFirst = () => outcome === 'accepted' ? resolve(true) : reject(new Error('Network down')); }) : true; };
+  const noop = () => {};
+  const props = () => ({ transport, readOnly: false, onSend, onAbort: noop, onOpenProject: noop, onBranch: noop, onModel: noop, onToggleFastMode: noop, onThinking: noop, onChangePending: async () => {}, state: { ...hook.current.state, sessionId: 'session' }, messages: hook.current.messages, models: [], commands: [], thinkingLevels: [], widgets: [], statuses: {} });
+  const view = await renderComponent(ChatView, props());
+  t.after(async () => { await view.unmount(); await hook.unmount(); dom.restore(); });
+  const settle = async () => { await dom.flushFrames(); await view.rerender(props()); await dom.flushFrames(); };
+  const editor = () => view.container.querySelector('[aria-label="Message piop"]');
+  const submit = async text => { await enterText(editor(), text); await act(async () => view.container.querySelector('[aria-label="Send message"]').click()); await settle(); };
+  await submit('First');
+  await submit('Second');
+  const queued = [...view.container.querySelectorAll('.pending-message')].map(item => item.textContent.includes('Second'));
+  assert.deepEqual(queued, [true], 'second message shows in the queue while the first is sending');
+  await act(async () => finishFirst()); await settle(); await settle();
+  assert.deepEqual(sent, [['First', undefined], ['Second', 'followUp']]);
+});

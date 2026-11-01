@@ -533,6 +533,8 @@ export function Composer(props: Props) {
 
     try {
       const submission = capturedComposer.onStageSubmission ? await stageComposerDraft(capturedComposer.onStageSubmission, { rawText: submittedValue, uploads: submittedUploads, consume: true }, changeDraft, changeUploads) : undefined;
+
+      if (submission) setSending(false);
       const accepted = await capturedComposer.onSend(message, capturedComposer.streaming ? reviewBehavior(message, behavior) : undefined, images, submission);
 
       if (accepted === false) throw new Error("Message was not submitted");
