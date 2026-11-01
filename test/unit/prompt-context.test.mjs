@@ -25,56 +25,22 @@ test('equal context shares display whole percentages that total 100', async () =
   ]);
 });
 
-test("System prompt can show and hide its source details", async () => {
+for (const [label, content] of [
+  ['System', 'System content'],
+  ['Instructions', '/AGENTS.md'],
+  ['Tools', 'Read file'],
+  ['Skills', '/SKILL.md'],
+]) test(`${label} can show and hide its source details`, async () => {
   view = await renderComponent(PromptContextBar, { context: context(), inputTokens: 3 });
-  const control = button("System");
+  const control = button(label);
   assert.equal(control.getAttribute('aria-expanded'), 'false');
-  assert.ok(!document.body.textContent.includes("System content"));
+  assert.ok(!document.body.textContent.includes(content));
   await act(() => control.click());
   assert.equal(control.getAttribute('aria-expanded'), 'true');
-  assert.ok(document.body.textContent.includes("System content"));
+  assert.ok(document.body.textContent.includes(content));
   await act(() => control.click());
   assert.equal(control.getAttribute('aria-expanded'), 'false');
-  assert.ok(!document.body.textContent.includes("System content"));
-});
-
-test("Instructions can show and hide its source details", async () => {
-  view = await renderComponent(PromptContextBar, { context: context(), inputTokens: 3 });
-  const control = button("Instructions");
-  assert.equal(control.getAttribute('aria-expanded'), 'false');
-  assert.ok(!document.body.textContent.includes("/AGENTS.md"));
-  await act(() => control.click());
-  assert.equal(control.getAttribute('aria-expanded'), 'true');
-  assert.ok(document.body.textContent.includes("/AGENTS.md"));
-  await act(() => control.click());
-  assert.equal(control.getAttribute('aria-expanded'), 'false');
-  assert.ok(!document.body.textContent.includes("/AGENTS.md"));
-});
-
-test("Tools can show and hide its source details", async () => {
-  view = await renderComponent(PromptContextBar, { context: context(), inputTokens: 3 });
-  const control = button("Tools");
-  assert.equal(control.getAttribute('aria-expanded'), 'false');
-  assert.ok(!document.body.textContent.includes("Read file"));
-  await act(() => control.click());
-  assert.equal(control.getAttribute('aria-expanded'), 'true');
-  assert.ok(document.body.textContent.includes("Read file"));
-  await act(() => control.click());
-  assert.equal(control.getAttribute('aria-expanded'), 'false');
-  assert.ok(!document.body.textContent.includes("Read file"));
-});
-
-test("Skills can show and hide its source details", async () => {
-  view = await renderComponent(PromptContextBar, { context: context(), inputTokens: 3 });
-  const control = button("Skills");
-  assert.equal(control.getAttribute('aria-expanded'), 'false');
-  assert.ok(!document.body.textContent.includes("/SKILL.md"));
-  await act(() => control.click());
-  assert.equal(control.getAttribute('aria-expanded'), 'true');
-  assert.ok(document.body.textContent.includes("/SKILL.md"));
-  await act(() => control.click());
-  assert.equal(control.getAttribute('aria-expanded'), 'false');
-  assert.ok(!document.body.textContent.includes("/SKILL.md"));
+  assert.ok(!document.body.textContent.includes(content));
 });
 
 const emptyContext = () => ({ tokens: { system: 0, instructions: 0, tools: 0, skills: 0 }, systemPrompt: '', instructions: [], tools: [], skills: [] });
