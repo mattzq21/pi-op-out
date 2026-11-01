@@ -14,13 +14,6 @@ export function reportUnchanged() {
   if (unchangedArtifacts) console.log(`Unchanged: ${unchangedArtifacts}/${totalArtifacts}`);
 }
 
-export async function buildInParallel(builds) {
-  const results = await Promise.allSettled(builds);
-  const failures = results.filter(result => result.status === "rejected").map(result => result.reason);
-
-  if (failures.length) throw new AggregateError(failures, "Extension builds failed");
-}
-
 async function readOptional(path) {
   try { return await readFile(path); } catch (error) {
     if (error.code === "ENOENT") return undefined;

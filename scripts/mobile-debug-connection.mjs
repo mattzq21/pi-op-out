@@ -1,9 +1,9 @@
-import { readDaemonEndpoint } from "./daemon-endpoint.mjs";
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { readFileSync, realpathSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 
@@ -25,6 +25,23 @@ const result = spawnSync(daemon, ["start"], { cwd: project, stdio: ["ignore", "i
 
 if (result.error || result.status !== 0) {
   throw new Error("Could not start the worktree daemon. Build it first with bun run daemon:dev.", { cause: result.error });
+}
+
+function readDaemonEndpoint() {
+  let database;
+
+  try {
+    database = new DatabaseSync(join(endpointDirectory, "sessions.sqlite"), { readOnly: true });
+    database.exec("PRAGMA busy_timeout=2000");
+
+    const row = database.prepare("SELECT body FROM application_settings WHERE name=?").get("debug-mobile.json");
+
+    return row?.body ? JSON.parse(Buffer.from(row.body).toString("utf8")) : undefined;
+  } catch {
+    return undefined;
+  } finally {
+    database?.close();
+  }
 }
 
 async function ready(url, token) {
@@ -56,7 +73,7 @@ const deadline = Date.now() + 10000;
 
 while (Date.now() < deadline) {
   try {
-    const endpoint = readDaemonEndpoint(endpointDirectory, "debug-mobile.json");
+    const endpoint = readDaemonEndpoint();
     const url = new URL(endpoint.url);
 
     if (endpoint.protocol === 1 && typeof endpoint.token === "string" && endpoint.token.length >= 32 && url.protocol === "ws:" && url.hostname === "127.0.0.1" && url.port) {
