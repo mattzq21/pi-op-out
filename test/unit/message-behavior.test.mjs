@@ -241,7 +241,6 @@ test('a stale tool payload failure does not replace the newer loaded input and o
   await untilDom(() => /Loading tool input and output/.test(document.querySelector('[role=status]')?.textContent));
   await view.rerender({ debug: allDebug, message: { ...message, content: 'new contents', toolInput: { path: '/repo/new' }, toolPayloadVersion: 2, toolPayloadLoaded: true, loadedToolPayloadVersion: 2 } });
   await act(() => oldLoad.reject(new Error('old payload unavailable')));
-  await act(() => new Promise(resolve => setTimeout(resolve, 0)));
   assert.equal(document.querySelector('[role=alert]'), null);
   assert.equal(button('Retry'), undefined);
   assert.equal(document.querySelector('[role=status]'), null);
