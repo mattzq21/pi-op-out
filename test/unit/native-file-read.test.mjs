@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { after, before, test } from 'node:test';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { open, writeFile } from 'node:fs/promises';
+import { open, truncate, writeFile } from 'node:fs/promises';
 import { constants } from 'node:fs';
 import { join } from 'node:path';
 import { installDom } from '../dom.mjs';
@@ -43,6 +43,14 @@ test('reading a binary image returns a file with its exact original bytes', asyn
   const file = await readDroppedFile(path);
   assert.equal(file.type, 'image/webp');
   assert.deepEqual([...new Uint8Array(await file.arrayBuffer())], [0x52, 0x49, 0x46, 0x46, 0x00, 0xff, 0x80, 0x0a, 0xc3]);
+});
+
+test('reading a file over the attachment size limit reports the limit', async t => {
+  const directory = await reader(t);
+  const path = join(directory, 'too-large.png');
+  await writeFile(path, '');
+  await truncate(path, 10_485_761);
+  await assert.rejects(readDroppedFile(path), { message: 'Attachment is larger than 10 MB' });
 });
 
 test('reading a named pipe rejects without waiting for a writer, and later files still read', async t => {
