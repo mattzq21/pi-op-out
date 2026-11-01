@@ -8,6 +8,8 @@ import { clientIdentity } from '../../clients/ui/lib/clientIdentity.ts';
 test('desktop daemon requests recover from explicit busy rejections', { timeout: 10000 }, async context => {
   const dom = installDom();
   context.after(() => { clearMocks(); dom.restore(); });
+  await clientIdentity('desktop');
+  context.mock.timers.enable({ apis: ['setTimeout'] });
   const home = '/home/test-user';
   mockWindows('main');
   const busyReplies = ['Host is busy; try again', 'Host is busy; try again'];
@@ -20,7 +22,12 @@ test('desktop daemon requests recover from explicit busy rejections', { timeout:
     return home;
   });
   const client = new NativeTransport({ hostId: 'local' });
-  assert.equal(await client.homeDirectory('local'), home);
+  const result = client.homeDirectory('local').then(value => ({ value }), error => ({ error }));
+  for (let retry = 0; retry < 2; retry++) {
+    await new Promise(setImmediate);
+    context.mock.timers.runAll();
+  }
+  assert.deepEqual(await result, { value: home });
 });
 
 test('desktop requests report persistent saturation instead of retrying forever', { timeout: 10000 }, async context => {
