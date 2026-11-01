@@ -17,7 +17,7 @@ import { createComputed, createEffect, createMemo, createSignal, For, Index, Sho
 import { Dynamic } from "solid-js/web";
 import { createDependencyEffect, createMemoFields, createRef, type JSXElement } from "../lib/solid";
 
-import { ArrowRightLeft, Bot, Check, CircleGauge, CirclePlus, Clipboard, Copy, Cpu, HardDrive, Keyboard, Pencil, PlugZap, RotateCcw, Save, Search, Server, Settings2, ShieldCheck, Trash2, X, Zap } from "lucide-solid";
+import { ArrowRightLeft, Bot, Check, ChevronDown, CircleGauge, CirclePlus, Clipboard, Copy, Cpu, HardDrive, Keyboard, Pencil, PlugZap, RotateCcw, Save, Search, Server, Settings2, ShieldCheck, Trash2, X, Zap } from "lucide-solid";
 import { uid } from "../lib/content";
 import { defaultKeybindings, keybindDefinitions, shortcutError, shortcutFromEvent, shortcutsConflict, type KeybindAction } from "../lib/keybindings";
 import { isMobile } from "../lib/platform";
@@ -547,7 +547,7 @@ export function SettingsView(props: SettingsViewProps) {
           };
 
           return (<>{moveError() && <p role="alert">Could not move the agent: {moveError()}</p>}{!agentConfig() && <p role={settingsProps().resourceError ? "alert" : "status"}>{settingsProps().resourceError ? "Could not load agent definitions: " + required((settingsProps().resourceError)) : "Loading agent definitions…"}</p>}
-          <div class="agent-editor"><div class="agent-sidebar"><div class="agent-scope"><FilterSelect label="Agent definitions" filterPlaceholder="Filter projects" disabled={dirty() || saving()} value={settingsProps().agentScope ?? ""} options={scopeOptions()} onChange={value => settingsProps().onAgentScope?.(value || undefined)} /></div><div class="agent-list"><Show when={inheritedGeneral()}>{general => <button class={showingGlobal() ? "active" : ""} onClick={() => setViewingGlobal(true)}><Bot size={14} /><span>{general().name} <small class="agent-scope-tag">global</small></span></button>}</Show>{<Index each={agentDrafts()}>{(item, index) => <button  class={!showingGlobal() && index === agentIndex() ? "active" : ""} onClick={() => { setAgentIndex(index); setViewingGlobal(false); }}><Bot size={14} /><span>{item().name}</span></button>}</Index>}</div></div>
+          <div class="agent-editor"><div class="agent-sidebar"><div class="agent-scope"><FilterSelect label="Agent definitions" filterPlaceholder="Filter projects" disabled={dirty() || saving()} value={settingsProps().agentScope ?? ""} options={scopeOptions()} onChange={value => settingsProps().onAgentScope?.(value || undefined)} trigger={{ class: "secondary-button agent-scope-trigger", content: <><span classList={{ "agent-scope-global": !settingsProps().agentScope }}>{scopeOptions().find(option => option.value === (settingsProps().agentScope ?? ""))?.label ?? settingsProps().agentScope}</span><ChevronDown size={14} /></> }} /></div><div class="agent-list"><Show when={inheritedGeneral()}>{general => <button class={showingGlobal() ? "active" : ""} onClick={() => setViewingGlobal(true)}><Bot size={14} /><span>{general().name} <small class="agent-scope-tag">global</small></span></button>}</Show>{<Index each={agentDrafts()}>{(item, index) => <button  class={!showingGlobal() && index === agentIndex() ? "active" : ""} onClick={() => { setAgentIndex(index); setViewingGlobal(false); }}><Bot size={14} /><span>{item().name}</span></button>}</Index>}</div></div>
             {renderAgentFields()}
           </div></>);
         };
