@@ -4,7 +4,7 @@ const MAX_NAME_LENGTH = 50;
 
 function capSessionName(name) { return Array.from(name.replace(/\s+/g, ' ').trim()).slice(0, MAX_NAME_LENGTH).join('').trimEnd(); }
 
-function promptName(prompt) { return capSessionName(prompt.replace(/\[(?:\\.|[^\]\\])*\]\([^)\s]*\)/g, ' ')); }
+function promptName(prompt) { return capSessionName(prompt.replace(/\[((?:\\.|[^\]\\])*)\]\([^)\s]*\)/g, (_link, label) => label.replace(/\\(.)/g, '$1'))); }
 
 function validName(name) {
   if (typeof name !== 'string') throw new Error('A conversation name must be text');
