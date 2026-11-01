@@ -119,3 +119,20 @@ test('the goal tool completes the goal, and fails once for an edited objective t
   expect(saved()).toBeNull();
   expect((await queue.runtimeEvent('queue_outcome', { outcome: 'completed' })).tools).toEqual({ update_goal_status: false });
 });
+
+test('cancelling a delegation does not hold the queue, even with a goal and waiting messages', async () => {
+  const { queue } = chat('active');
+  await queue.command({ type: 'follow_up', message: 'Waiting' });
+  await queue.interruptDelegation();
+  expect(queue.view().held).toBe(false);
+});
+
+test('a stop holds the queue when the only message is one that Pi took, so it does not start again when Pi releases it', async () => {
+  const { queue, take } = chat(null);
+  await queue.command({ type: 'follow_up', message: 'Taken' });
+  const id = (await take('followUp')).id;
+  await queue.command({ type: 'abort' });
+  expect(queue.view().held).toBe(true);
+  await queue.runtimeEvent('queue_release', { ids: [id] });
+  expect(await take('followUp')).toBeNull();
+});

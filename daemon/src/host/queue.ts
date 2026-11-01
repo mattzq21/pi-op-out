@@ -131,6 +131,8 @@ export class SessionQueue {
     if (name === 'abort') {
       // A stop holds the queue when the goal or messages wait, so nothing starts after it. The next message the user sends goes first.
       this.s.stopped = true;
+      // Messages that Pi took but did not use come back after the stop, so they count as waiting.
+      if (this.s.goals.live() || this.s.pending.length) await this.delivery.reportStorageError(() => this.delivery.hold(true));
       const result = await this.abort(command, assertOwner);
       assertOwner();
       return this.stop(result);
@@ -144,7 +146,6 @@ export class SessionQueue {
   }
 
   private async abort(command: any, assertOwner: () => void): Promise<{ ok: true; value: any } | { ok: false; error: unknown }> {
-    if (this.s.goals.live() || this.s.pending.some(item => !flag(item, 'taken'))) await this.delivery.reportStorageError(() => this.delivery.hold(true));
     const scope = new CancelScope();
     const operation = (async () => {
       // The first stop cancels preparation and the running response together, so a wait it ends cannot start another model call.
