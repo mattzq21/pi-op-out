@@ -100,10 +100,10 @@ function mergeSettingsDraft(incoming: AppSettings, baseline: AppSettings, local:
   return { merged, collisions };
 }
 
-type SettingsViewProps = { selectedSection?: Section; embedded?: boolean; resourceError?: string; scope?: "client" | "daemon"; daemonLabel?: string; providerHosts?: RemoteHost[]; onSavingChange?: (saving: boolean) => void; providerHostId?: string; settings: AppSettings; pendingSettingsCount?: number; agentConfig?: AgentConfig; sessions?: SessionSummary[]; models?: Model[]; loadingModels?: string[]; onSave: (settings: AppSettings, agentConfig?: AgentConfig, baseline?: AppSettings) => Promise<void>; onDirtyChange?: (dirty: boolean) => void };
+type SettingsViewProps = { selectedSection?: Section; embedded?: boolean; resourceError?: string; scope?: "client" | "daemon"; daemonLabel?: string; providerHosts?: RemoteHost[]; onSavingChange?: (saving: boolean) => void; providerHostId?: string; settings: AppSettings; pendingSettingsCount?: number; agentConfig?: AgentConfig; inheritedAgents?: AgentProfile[]; agentScopes?: Array<{ name: string; cwd: string }>; agentScope?: string; onAgentScope?: (cwd: string | undefined) => void; sessions?: SessionSummary[]; models?: Model[]; loadingModels?: string[]; onSave: (settings: AppSettings, agentConfig?: AgentConfig, baseline?: AppSettings) => Promise<void>; onDirtyChange?: (dirty: boolean) => void };
 
-function settingsViewDefaults({ selectedSection, embedded = false, resourceError, scope = "daemon", daemonLabel = "Daemon", providerHosts, onSavingChange, providerHostId = "local", settings, pendingSettingsCount = 0, agentConfig: incomingConfiguration, sessions = [], models = [], loadingModels = [], onSave, onDirtyChange }: SettingsViewProps) {
-  return { selectedSection, embedded, resourceError, scope, daemonLabel, providerHosts, onSavingChange, providerHostId, settings, pendingSettingsCount, incomingConfiguration, sessions, models, loadingModels, onSave, onDirtyChange };
+function settingsViewDefaults({ selectedSection, embedded = false, resourceError, scope = "daemon", daemonLabel = "Daemon", providerHosts, onSavingChange, providerHostId = "local", settings, pendingSettingsCount = 0, agentConfig: incomingConfiguration, inheritedAgents, agentScopes = [], agentScope, onAgentScope, sessions = [], models = [], loadingModels = [], onSave, onDirtyChange }: SettingsViewProps) {
+  return { selectedSection, embedded, resourceError, scope, daemonLabel, providerHosts, onSavingChange, providerHostId, settings, pendingSettingsCount, incomingConfiguration, inheritedAgents, agentScopes, agentScope, onAgentScope, sessions, models, loadingModels, onSave, onDirtyChange };
 }
 
 export function SettingsView(props: SettingsViewProps) {
@@ -293,6 +293,9 @@ export function SettingsView(props: SettingsViewProps) {
   };
 
   const agent = createMemo(() => (agentDrafts()[agentIndex()]));
+  const projectScope = () => settingsProps().inheritedAgents !== undefined;
+  const inheritedNames = createMemo(() => new Set((settingsProps().inheritedAgents ?? []).map(item => item.name)));
+  const globalAgents = () => settingsProps().inheritedAgents ?? agentDrafts();
   const agentFastModeEnabled = createMemo(() => (agent()?.fastMode ?? draft().defaultFastMode));
   const updateAgent = (value: Partial<AgentProfile>) => setAgentDrafts((current) => current.map((item, index) => index === agentIndex() ? { ...item, ...value } : item));
 
@@ -308,12 +311,12 @@ export function SettingsView(props: SettingsViewProps) {
 
   const previous = agent().name; updateAgent({ name }); setAgentDrafts(current => renamedAccess(current, previous, name)); };
 
-  const defaultAgentName = createMemo(() => agentDrafts().find(item => item.isDefault)?.name);
+  const defaultAgentName = createMemo(() => globalAgents().find(item => item.isDefault)?.name);
   const setDefaultAgent = (name: string) => setAgentDrafts(current => current.map(({ isDefault: _isDefault, ...item }) => item.name === name ? { ...item, isDefault: true } : item));
 
   const addAgent = () => { if (!agentConfig() || saving()) return; let suffix = nextAgentSuffixRef.current;
 
-  while (agentDrafts().some((item) => item.name.toLowerCase() === `agent-${suffix}`)) suffix += 1; nextAgentSuffixRef.current = suffix + 1; const next: AgentProfile = { name: `agent-${suffix}`, model: "", effort: "", path_systemprompt: "~/.agents/prompts/system/default.md", path_agent_prompt: "", tools: [...(agentDrafts().find(isBuiltInAgent)?.tools ?? [])], skills: [], mcpServers: {} }; setAgentDrafts((current) => [...current, next]); setAgentIndex(agentDrafts().length - 1); };
+  while ([...agentDrafts(), ...settingsProps().inheritedAgents ?? []].some((item) => item.name.toLowerCase() === `agent-${suffix}`)) suffix += 1; nextAgentSuffixRef.current = suffix + 1; const next: AgentProfile = { name: `agent-${suffix}`, model: "", effort: "", path_systemprompt: "~/.agents/prompts/system/default.md", path_agent_prompt: "", tools: [...(globalAgents().find(isBuiltInAgent)?.tools ?? [])], skills: [], mcpServers: {} }; setAgentDrafts((current) => [...current, next]); setAgentIndex(agentDrafts().length - 1); };
 
   const removeAgent = () => { if (!agent() || isBuiltInAgent(agent())) return;
 
@@ -359,8 +362,8 @@ export function SettingsView(props: SettingsViewProps) {
     const { availableModelIds, hiddenModels, modelChoices } = modelCatalog();
     const modelDiscoveryUnavailable = settingsProps().models.length === 0;
     const thinkingDiscoveryUnavailable = modelDiscoveryUnavailable;
-    const agentsValid = !agentConfig() || (agentDrafts().some(isBuiltInAgent) && agentDrafts().every((item) => agentProfileSchema.safeParse(item).success && item.name.length > 0 && !!item.path_systemprompt?.trim() && (!item.model || modelDiscoveryUnavailable || availableModelIds.has(item.model)) && (!item.effort || thinkingDiscoveryUnavailable || agentLevels(item).includes(item.effort))) && new Set(agentDrafts().map((item) => item.name)).size === agentDrafts().length);
-    const defaultAgentValid = !agentConfig() || agentDrafts().filter((item) => item.isDefault).length === 1;
+    const agentsValid = !agentConfig() || ((projectScope() || agentDrafts().some(isBuiltInAgent)) && agentDrafts().every((item) => agentProfileSchema.safeParse(item).success && item.name.length > 0 && !!item.path_systemprompt?.trim() && (!item.model || modelDiscoveryUnavailable || availableModelIds.has(item.model)) && (!item.effort || thinkingDiscoveryUnavailable || agentLevels(item).includes(item.effort))) && new Set(agentDrafts().map((item) => item.name)).size === agentDrafts().length);
+    const defaultAgentValid = !agentConfig() || projectScope() || agentDrafts().filter((item) => item.isDefault).length === 1;
     const invalidHost = draft().hosts.find((host) => !host.name.trim() || !host.target.trim() || !host.piPath.trim());
 
     return { availableModelIds, hiddenModels, modelChoices, modelDiscoveryUnavailable, thinkingDiscoveryUnavailable, agentsValid, defaultAgentValid, invalidHost };
@@ -404,9 +407,10 @@ export function SettingsView(props: SettingsViewProps) {
     const invalidAgentModel = agentValidation().modelDiscoveryUnavailable ? undefined : agentDrafts().find((item) => item.model && !agentValidation().availableModelIds.has(item.model));
     const invalidAgentEffort = agentValidation().thinkingDiscoveryUnavailable ? undefined : agentDrafts().find((item) => item.effort && !agentLevels(item).includes(item.effort));
     const emptyAgent = agentDrafts().find((item) => !item.name.trim());
+    const globalNameAgent = agentDrafts().find((item) => inheritedNames().has(item.name));
     const missingAgentPrompt = agentDrafts().find((item) => !item.path_systemprompt?.trim());
 
-    return { contextWindowValid, duplicateNames, duplicateHostNames, reservedLocalHostName, duplicateAgentNames, invalidAgentModel, invalidAgentEffort, emptyAgent, missingAgentPrompt };
+    return { contextWindowValid, duplicateNames, duplicateHostNames, reservedLocalHostName, duplicateAgentNames, invalidAgentModel, invalidAgentEffort, emptyAgent, globalNameAgent, missingAgentPrompt };
   };
 
   const nameValidation = createMemo(() => (validateSettingsNames()));
@@ -422,8 +426,9 @@ export function SettingsView(props: SettingsViewProps) {
     () => agentValidation().invalidHost ? `${required((agentValidation().invalidHost)).name.trim() || "Host"}: name, SSH target, and Pi executable are required` : undefined,
     () => shortcutValidation().error,
     () => shortcutValidation().duplicateShortcuts.size ? `Shortcut “${[...shortcutValidation().duplicateShortcuts][0]}” is assigned more than once` : undefined,
-    () => !agentDrafts().some(isBuiltInAgent) && agentConfig() ? "The built-in general agent is required" : undefined,
+    () => !projectScope() && !agentDrafts().some(isBuiltInAgent) && agentConfig() ? "The built-in general agent is required" : undefined,
     () => nameValidation().emptyAgent ? "Agent name is required" : undefined,
+    () => nameValidation().globalNameAgent ? `Agent name “${required(nameValidation().globalNameAgent).name}” is already used by a global agent` : undefined,
     () => nameValidation().duplicateAgentNames.size ? `Agent name “${[...nameValidation().duplicateAgentNames][0]}” is used more than once` : undefined,
     () => nameValidation().invalidAgentModel ? `${required((nameValidation().invalidAgentModel)).name}: model is unavailable: ${required((nameValidation().invalidAgentModel)).model}` : undefined,
     () => nameValidation().invalidAgentEffort ? `${required((nameValidation().invalidAgentEffort)).name}: effort is unavailable: ${required((nameValidation().invalidAgentEffort)).effort}` : undefined,
@@ -473,7 +478,7 @@ export function SettingsView(props: SettingsViewProps) {
         <SettingRow icon={<CircleGauge />} title="Default context window cap" description="Used when no /cap choice, agent cap, or model cap applies. Off uses each model's full window. Open conversations update when idle."><div class="setting-cap-controls"><input class="setting-number" aria-label="Context window cap" aria-invalid={!nameValidation().contextWindowValid} disabled={!draft().contextWindowCapEnabled} type="number" min={100000} max={50000000} step={1000} value={contextWindowCapText()} onInput={(event) => { setContextWindowCapText(event.target.value); patch({ contextWindowCap: Number(event.target.value) }); }} /><Toggle label="Enable context window cap" checked={draft().contextWindowCapEnabled} onChange={(contextWindowCapEnabled) => patch({ contextWindowCapEnabled })} /></div></SettingRow>
         <SettingRow icon={<ShieldCheck />} title="Automatic retry" description="Retry transient provider and network errors."><Toggle label="Automatic retry" checked={draft().autoRetry} onChange={(autoRetry) => patch({ autoRetry })} /></SettingRow>
         <div class="general-agent-default">
-          <label class="field"><span>Default agent</span><select aria-label="Default agent" disabled={!agentConfig()} value={defaultAgentName() ?? ""} onChange={(event) => setDefaultAgent(event.target.value)}>{<Key each={agentDrafts()} by={(item) => item.name}>{(item, _index) => <option  value={item().name}>{item().name}</option>}</Key>}</select></label>
+          <label class="field"><span>Default agent</span><select aria-label="Default agent" disabled={!agentConfig() || projectScope()} value={defaultAgentName() ?? ""} onChange={(event) => setDefaultAgent(event.target.value)}>{<Key each={globalAgents()} by={(item) => item.name}>{(item, _index) => <option  value={item().name}>{item().name}</option>}</Key>}</select></label>
         </div>
       </SettingsSection>);
 
@@ -490,7 +495,7 @@ export function SettingsView(props: SettingsViewProps) {
       const renderAgents = () => {
         const renderAgentEditor = () => {
           const renderAgentFields = () => {
-            const renderAgentNameRow = () => (<div class="agent-name-row"><label class="field"><span>Agent name</span><input aria-label="Agent name" aria-invalid={!isBuiltInAgent(agent()) && (!agent().name.trim() || agent().name.trim().toLowerCase() === "general" || nameValidation().duplicateAgentNames.has(agent().name.trim().toLowerCase()))} disabled={isBuiltInAgent(agent())} value={agent().name} onInput={(event) => { renameAgent(event.currentTarget.value.replace(/[^a-zA-Z0-9_-]/g, "")); event.currentTarget.value = agent().name; }} /></label><IconButton label={`Remove ${agent().name}`} disabled={isBuiltInAgent(agent())} onClick={removeAgent}><Trash2 size={15} /></IconButton></div>);
+            const renderAgentNameRow = () => (<div class="agent-name-row"><label class="field"><span>Agent name</span><input aria-label="Agent name" aria-invalid={!isBuiltInAgent(agent()) && (!agent().name.trim() || agent().name.trim().toLowerCase() === "general" || inheritedNames().has(agent().name) || nameValidation().duplicateAgentNames.has(agent().name.trim().toLowerCase()))} disabled={isBuiltInAgent(agent())} value={agent().name} onInput={(event) => { renameAgent(event.currentTarget.value.replace(/[^a-zA-Z0-9_-]/g, "")); event.currentTarget.value = agent().name; }} /></label><IconButton label={`Remove ${agent().name}`} disabled={isBuiltInAgent(agent())} onClick={removeAgent}><Trash2 size={15} /></IconButton></div>);
 
             const renderAgentDefaults = () => {
               const agentModelOptions = () => [
@@ -517,17 +522,17 @@ export function SettingsView(props: SettingsViewProps) {
               <div class="agent-usage"><div class="agent-usage-option"><span>Callable as subagent</span><Toggle label="Callable as subagent" checked={agent().allow_as_subagent !== false} onChange={allow_as_subagent => updateAgent({ allow_as_subagent })} /></div><div class="agent-usage-option"><span>Callable as peer</span><Toggle label="Callable as peer" checked={agent().allow_as_peer !== false} onChange={allow_as_peer => updateAgent({ allow_as_peer })} /></div></div>
               {renderAgentPromptFiles()}<label class="field"><span>Agent prompt file</span><input aria-label="Agent prompt file" placeholder="Optional path to an agent prompt file" value={agent().path_agent_prompt ?? ""} onInput={(event) => updateAgent({ path_agent_prompt: event.target.value })} /></label>
               <AgentExtensions paths={agent().extensions ?? []} onChange={extensions => updateAgent({ extensions })} />
-              <AgentAllowlist title="Tools" query={toolQuery()} onQuery={setToolQuery} titleAction={<><RefreshTools hostId={providerHostId()} onChange={tools => patch({ tools })} /><button type="button" class="agent-codemode" data-mode={agent().codemode ?? "on"} aria-label={"Codemode " + (agent().codemode ?? "on").toUpperCase()} data-tooltip={CODEMODE_HINTS[agent().codemode ?? "on"]} onClick={() => updateAgent({ codemode: NEXT_CODEMODE[agent().codemode ?? "on"] })}>Codemode {(agent().codemode ?? "on").toUpperCase()}</button></>}><AgentTools tools={draft().tools} query={toolQuery()} selected={agent().tools} agent={agent()} agentNames={agentDrafts().map(item => item.name)} onChange={tools => updateAgent({ tools })} onLimitsChange={updateAgent} /></AgentAllowlist><AgentAllowlist title="Skills" query={skillQuery()} onQuery={setSkillQuery} titleAction={<RefreshSkills hostId={providerHostId()} skills={draft().skills} onChange={skills => patch({ skills })} />}><AgentSkills skills={draft().skills} query={skillQuery()} selected={agent().skills} onChange={skills => updateAgent({ skills })} /></AgentAllowlist><McpSettings value={agent().mcpServers} draft={mcpDrafts()[agentIndex()]} onDraft={value => setMcpDrafts(current => agentDrafts().map((_, index) => index === agentIndex() ? value : current[index]))} onChange={mcpServers => updateAgent({ mcpServers })} />
+              <AgentAllowlist title="Tools" query={toolQuery()} onQuery={setToolQuery} titleAction={<><RefreshTools hostId={providerHostId()} onChange={tools => patch({ tools })} /><button type="button" class="agent-codemode" data-mode={agent().codemode ?? "on"} aria-label={"Codemode " + (agent().codemode ?? "on").toUpperCase()} data-tooltip={CODEMODE_HINTS[agent().codemode ?? "on"]} onClick={() => updateAgent({ codemode: NEXT_CODEMODE[agent().codemode ?? "on"] })}>Codemode {(agent().codemode ?? "on").toUpperCase()}</button></>}><AgentTools tools={draft().tools} query={toolQuery()} selected={agent().tools} agent={agent()} agentNames={[...settingsProps().inheritedAgents ?? [], ...agentDrafts()].map(item => item.name)} onChange={tools => updateAgent({ tools })} onLimitsChange={updateAgent} /></AgentAllowlist><AgentAllowlist title="Skills" query={skillQuery()} onQuery={setSkillQuery} titleAction={<RefreshSkills hostId={providerHostId()} skills={draft().skills} onChange={skills => patch({ skills })} />}><AgentSkills skills={draft().skills} query={skillQuery()} selected={agent().skills} onChange={skills => updateAgent({ skills })} /></AgentAllowlist><McpSettings value={agent().mcpServers} draft={mcpDrafts()[agentIndex()]} onDraft={value => setMcpDrafts(current => agentDrafts().map((_, index) => index === agentIndex() ? value : current[index]))} onChange={mcpServers => updateAgent({ mcpServers })} />
             </div></Show>);
           };
 
-          return (<>{!agentConfig() && <p role={settingsProps().resourceError ? "alert" : "status"}>{settingsProps().resourceError ? "Could not load agent definitions: " + required((settingsProps().resourceError)) : "Loading agent definitions…"}</p>}
+          return (<>{projectScope() && <p class="agent-scope-note">Chats in this project can also use the global agents. A project agent name must be different from all global agent names. Set the project's default agent in Edit project.</p>}{!agentConfig() && <p role={settingsProps().resourceError ? "alert" : "status"}>{settingsProps().resourceError ? "Could not load agent definitions: " + required((settingsProps().resourceError)) : "Loading agent definitions…"}</p>}
           <div class="agent-editor"><div class="agent-list">{<Index each={agentDrafts()}>{(item, index) => <button  class={index === agentIndex() ? "active" : ""} onClick={() => setAgentIndex(index)}><Bot size={14} /><span>{item().name}</span></button>}</Index>}</div>
             {renderAgentFields()}
           </div></>);
         };
 
-        return (formValidation().visibleSection === "agents" && <SettingsSection title="Agents" description="Choose defaults, instructions, and the resources each agent may see." headerAction={<button class="secondary-button" disabled={!agentConfig() || saving()} onClick={addAgent}><CirclePlus size={15} />Add agent</button>}>
+        return (formValidation().visibleSection === "agents" && <SettingsSection title="Agents" description="Choose defaults, instructions, and the resources each agent may see." headerAction={<div class="agent-scope-actions"><select aria-label="Agent definitions" disabled={dirty() || saving()} value={settingsProps().agentScope ?? ""} onChange={event => settingsProps().onAgentScope?.(event.currentTarget.value || undefined)}><option value="">Global</option><For each={settingsProps().agentScopes}>{project => <option value={project.cwd}>Project: {project.name}</option>}</For></select><button class="secondary-button" disabled={!agentConfig() || saving()} onClick={addAgent}><CirclePlus size={15} />Add agent</button></div>}>
           {renderAgentEditor()}
         </SettingsSection>);
       };
@@ -542,7 +547,7 @@ export function SettingsView(props: SettingsViewProps) {
         {renderModels()}
         {formValidation().visibleSection === "connections" && <SettingsSection title="Anchor host" description="This device connects to one host. You can use the hosts that this host has added."><button class="secondary-button" disabled={dirty() || saving()} onClick={() => window.dispatchEvent(new Event("piop-mobile-disconnect"))}>Change anchor host</button>{dirty() && <p>Save your changes before switching hosts.</p>}</SettingsSection>}
         {renderAgents()}
-        <For each={pluginSettingsSections}>{item => <Show when={formValidation().visibleSection === item.section}><SettingsSection title={item.label} description={item.description}><Dynamic component={item.component} settings={draft()} agents={agentDrafts()} models={settingsProps().models ?? []} onChange={patch} /></SettingsSection></Show>}</For>
+        <For each={pluginSettingsSections}>{item => <Show when={formValidation().visibleSection === item.section}><SettingsSection title={item.label} description={item.description}><Dynamic component={item.component} settings={draft()} agents={globalAgents()} models={settingsProps().models ?? []} onChange={patch} /></SettingsSection></Show>}</For>
         {formValidation().visibleSection === "storage" && <StorageSettings hostId={settingsProps().providerHostId} />}
         {formValidation().visibleSection === "hosts" && <SettingsSection title="Hosts" description="Connect to Piop daemons over SSH. Sessions and configuration stay on each host."><div class="mcp-list"><div class="mcp-card"><div class="mcp-card-head"><span class="config-icon mcp"><Server size={16} /></span><strong>Local</strong><Toggle label="Enable local host" checked={draft().localEnabled !== false} onChange={(localEnabled) => setDraft((current) => ({ ...current, localEnabled }))} /></div></div>{<Key each={draft().hosts} by={(host) => host.id}>{(host, _index) => <div class="mcp-card" ><div class="mcp-card-head"><span class="config-icon mcp"><Server size={16} /></span><input aria-label="Host name" aria-invalid={!host().name.trim() || host().name.trim().toLowerCase() === "local" || nameValidation().duplicateHostNames.has(host().name.trim().toLowerCase())} value={host().name} onInput={(event) => updateHost(host().id, { name: event.target.value })} /><Toggle label={`Enable ${host().name}`} checked={host().enabled !== false} onChange={(enabled) => updateHost(host().id, { enabled })} /><IconButton label={`Remove ${host().name}`} onClick={() => removeHost(host())}><Trash2 size={15} /></IconButton></div><div class="command-fields"><label><span>SSH target</span><input aria-label={`${host().name} SSH target`} aria-invalid={!host().target.trim()} placeholder="user@example.com" value={host().target} onInput={(event) => updateHost(host().id, { target: event.target.value })} /></label><label><span>Piop daemon executable</span><input aria-label={`${host().name} Piop daemon executable`} aria-invalid={!host().piPath.trim()} placeholder="piopd" value={host().piPath === "pi" ? "piopd" : host().piPath.endsWith("/pi") ? `${host().piPath.slice(0, -2)}piopd` : host().piPath} onInput={(event) => updateHost(host().id, { piPath: event.target.value })} /></label></div></div>}</Key>}</div><button class="secondary-button" disabled={draft().hosts.length >= 16} onClick={addHost}><CirclePlus size={15} />Add host</button></SettingsSection>}
         {formValidation().visibleSection === "keybinds" && <SettingsSection title="Keybinds" description="Customize global application shortcuts."><div class="keybind-list">{<Key each={keybindDefinitions} by={(binding) => binding.action}>{(binding, _index) => <label class="keybind-row" ><span><strong>{binding().label}</strong><small>{binding().description}</small></span><KeybindInput action={binding().action} value={draft().keybindings[binding().action]} invalid={shortcutValidation().duplicateShortcuts.has(draft().keybindings[binding().action].trim().toLowerCase())} onChange={(shortcut) => setDraft((current) => ({ ...current, keybindings: { ...current.keybindings, [binding().action]: shortcut } }))} /></label>}</Key>}</div><button class="secondary-button" onClick={() => patch({ keybindings: { ...defaultKeybindings } })}><RotateCcw size={15} />Restore defaults</button></SettingsSection>}

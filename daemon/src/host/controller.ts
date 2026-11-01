@@ -368,10 +368,16 @@ export class Host implements SessionHost {
     })().finally(() => { this.availability = null; });
   }
 
-  private async saveAgentDefinitions(configuration: unknown): Promise<{ revision: string; warnings: string[] }> {
+  private projectAgentDefinitions(cwd: string): Promise<any> {
+    if (this.configurationValue === null) throw new Error('Daemon is not configured');
+    const settings = structuredClone(this.configurationValue.settings ?? null);
+    return Agents.load(this.home, this.storage, settings, false, this.services.fastModels(), { cwd, global: this.agentDefinitions });
+  }
+
+  private async saveAgentDefinitions(configuration: unknown, cwd?: string): Promise<{ revision: string; warnings: string[] }> {
     let saved: Agents.Saved | undefined;
     await this.useAgentDefinitions(async settings => {
-      saved = await Agents.save(this.home, this.storage, settings, configuration, this.services.fastModels());
+      saved = await Agents.save(this.home, this.storage, settings, configuration, this.services.fastModels(), cwd ? { cwd, global: this.agentDefinitions } : undefined);
       return saved.definitions;
     });
     this.output({ type: 'agent_definitions_changed' });
@@ -408,8 +414,12 @@ export class Host implements SessionHost {
     if (name === 'detach') this.attachments.delete(runtime);
     switch (name) {
       case 'check_daemon_idle': case 'prepare_daemon_restart': return this.restartRequest(packet);
-      case 'agent_definitions': if (flag(packet, 'reload')) await this.reloadAgentDefinitions(); return structuredClone(this.agentDefinitions);
-      case 'save_agent_definitions': return this.saveAgentDefinitions(packet.configuration);
+      case 'agent_definitions': {
+        if (flag(packet, 'reload')) await this.reloadAgentDefinitions();
+        const cwd = text(packet, 'cwd');
+        return cwd ? this.projectAgentDefinitions(cwd) : structuredClone(this.agentDefinitions);
+      }
+      case 'save_agent_definitions': return this.saveAgentDefinitions(packet.configuration, text(packet, 'cwd') || undefined);
       case 'conversation_owner': return this.ownership().owns(text(packet, 'sessionId'), text(packet, 'clientId'), flag(packet, 'allowReleased'));
       case 'submission_outcome': return this.submissions.outcome(text(packet, 'submissionId'));
       case 'conversation_mutation': return this.mutations.begin(packet);

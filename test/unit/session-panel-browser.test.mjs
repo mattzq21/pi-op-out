@@ -470,7 +470,7 @@ test('a project directory change is confirmed and reports success or failure', a
   const { page, service } = await panelPage(t, { cwd: join(folders, 'repo') });
   const choose = async path => {
     await dialog.getByRole('button', { name: 'Change directory', exact: true }).click();
-    const input = page.getByRole('combobox');
+    const input = page.getByRole('combobox', { name: /folder path/ });
     await input.fill(path);
     await page.getByText('Loading folder suggestions…', { exact: true }).waitFor({ state: 'detached' });
     await input.press('Enter');

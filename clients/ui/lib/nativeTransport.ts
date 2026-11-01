@@ -173,7 +173,7 @@ export class NativeTransport {
   private daemonId?: string;
   private running = false;
   private connectionAttempted = false;
-  private readonly draftRuntime = new DraftRuntime(() => this.hostId, event => this.emit(event));
+  private readonly draftRuntime = new DraftRuntime(() => this.hostId, () => this.cwd, event => this.emit(event));
   private startingDraft?: Promise<void>;
   private draftTarget = false;
   private baseBranch?: string;

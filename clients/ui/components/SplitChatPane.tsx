@@ -107,7 +107,7 @@ export function SplitChatPane(componentProps: Props) {
 
     reconnectRef.current = () => void connectRuntime(false);
 
-    const agentStatus = agentStatusReader(() => capturedTransport.currentHostId(), capability => { if (!closing) setDefinedAgents(capability); }, reason => { if (!closing) reportControlError(new Error(`Could not read agent list: ${reason instanceof Error ? reason.message : String(reason)}`)); });
+    const agentStatus = agentStatusReader(() => capturedTransport.currentHostId(), () => capturedTransport.currentCwd(), capability => { if (!closing) setDefinedAgents(capability); }, reason => { if (!closing) reportControlError(new Error(`Could not read agent list: ${reason instanceof Error ? reason.message : String(reason)}`)); });
     const unsubscribe = capturedTransport.subscribe((event: RpcEvent) => {
       capturedSession.handleEvent(event);
 

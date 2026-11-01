@@ -1,4 +1,7 @@
-import { createSignal, createUniqueId, lazy, Match, Show, Switch } from "solid-js";
+import { createSignal, createUniqueId, For, lazy, Match, Show, Switch } from "solid-js";
+import { hostCatalog } from "../lib/draftRuntime";
+import { saveProjectAgents } from "../lib/hostAgents";
+import type { AgentProfile } from "../types";
 import { createDependencyEffect, createRef } from "../lib/solid";
 import type { NativeTransport } from "../lib/nativeTransport";
 import type { SessionGroup } from "../lib/sessionGroups";
@@ -24,6 +27,27 @@ export function EditProjectDialog(props: Props) {
   const [error, setError] = createSignal<string>();
   const [browsing, setBrowsing] = createSignal(false);
   const titleId = createUniqueId();
+  type ProjectAgentChoice = { agents: AgentProfile[]; globalDefault?: string; revision: string; defaultAgent: string };
+  const [agents, setAgents] = createSignal<ProjectAgentChoice>();
+  const [agentsError, setAgentsError] = createSignal<string>();
+  const [defaultAgent, setDefaultAgent] = createSignal("");
+  createDependencyEffect(() => {
+    const directory = cwd();
+    let cancelled = false;
+    setAgents(undefined); setAgentsError(undefined);
+    void Promise.all([hostCatalog(hostId, "fresh", directory), hostCatalog(hostId, "fresh")]).then(([project, global]) => {
+      if (cancelled) return;
+      const stored = project.config.project;
+
+      if (!stored) throw new Error("The host did not return the project's agents");
+      setAgents({ agents: project.config.agents, globalDefault: global.config.agents.find(agent => agent.isDefault)?.name, revision: stored.revision, defaultAgent: stored.defaultAgent ?? "" });
+      setDefaultAgent(stored.defaultAgent ?? "");
+    }).catch(reason => { if (!cancelled) setAgentsError(reason instanceof Error ? reason.message : String(reason)); });
+
+    return () => { cancelled = true; };
+  }, () => [cwd()]);
+  const defaultAgentChanged = () => agents() !== undefined && defaultAgent() !== agents()?.defaultAgent;
+  const agentLabel = (name: string) => name || `Global default${agents()?.globalDefault ? ` (${agents()?.globalDefault})` : ""}`;
   createDependencyEffect(() => {
     const returnFocus = document.activeElement instanceof HTMLElement ? document.activeElement : undefined;
     const dialog = dialogRef.current;
@@ -47,7 +71,13 @@ export function EditProjectDialog(props: Props) {
     if (step() !== "confirm") return;
     setStep("saving"); setError(undefined);
 
-    try { await props.onSave(trimmedName(), cwd()); setStep("saved"); }
+    try {
+      if (nameChanged() || cwdChanged()) await props.onSave(trimmedName(), cwd());
+      const choice = agents();
+
+      if (choice && defaultAgentChanged()) await saveProjectAgents(hostId, cwd(), { revision: choice.revision, defaultAgent: defaultAgent() || null });
+      setStep("saved");
+    }
     catch (reason) { setError(reason instanceof Error ? reason.message : String(reason)); setStep("confirm"); }
   };
 
@@ -59,12 +89,15 @@ export function EditProjectDialog(props: Props) {
         <h2 id={titleId}>Edit project “{props.project.name}”</h2>
         <label class="field"><span>Name</span><input autofocus value={name()} onInput={(event) => { setName(event.target.value); setError(undefined); }} onKeyDown={(event) => { if (event.key === "Enter" && !event.isComposing) { event.preventDefault(); review(); } }} /></label>
         <div class="field"><span>Directory</span><code class="missing-directory-path">{cwd()}</code></div>
+        <label class="field"><span>Default agent</span><select aria-label="Project default agent" disabled={!agents()} value={defaultAgent()} onChange={event => { setDefaultAgent(event.currentTarget.value); setError(undefined); }}><option value="">{agentLabel("")}</option><For each={agents()?.agents ?? []}>{agent => <option value={agent.name}>{agent.name}{agent.project ? " (project)" : ""}</option>}</For></select></label>
+        {agentsError() && <p class="dialog-error" role="alert">Could not load the agents: {agentsError()}</p>}
         {error() && <p class="dialog-error" role="alert">{error()}</p>}
-        <div class="dialog-actions"><button class="browse-directory" onClick={() => setBrowsing(true)}>Change directory</button><button onClick={close}>Cancel</button><button class="primary-button" disabled={!nameChanged() && !cwdChanged()} onClick={review}>Save</button></div>
+        <div class="dialog-actions"><button class="browse-directory" onClick={() => setBrowsing(true)}>Change directory</button><button onClick={close}>Cancel</button><button class="primary-button" disabled={!nameChanged() && !cwdChanged() && !defaultAgentChanged()} onClick={review}>Save</button></div>
       </Match>
       <Match when={step() === "confirm" || step() === "saving"}>
         <h2 id={titleId}>Save changes to “{props.project.name}”?</h2>
         {nameChanged() && <p>Name: {props.project.name} → {trimmedName()}</p>}
+        {defaultAgentChanged() && <p>Default agent: {agentLabel(agents()?.defaultAgent ?? "")} → {agentLabel(defaultAgent())}</p>}
         {cwdChanged() && <><p>Directory:</p><code class="missing-directory-path">{props.project.cwd}</code><p>→</p><code class="missing-directory-path">{cwd()}</code><p>Existing chats keep their directories. New chats in this project start in the new directory.</p></>}
         {error() && <p class="dialog-error" role="alert">Could not save the project: {error()}</p>}
         {step() === "saving" && <p role="status">Saving…</p>}

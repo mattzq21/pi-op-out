@@ -8,7 +8,9 @@ import { createDependencyEffect } from "../lib/solid";
 
 import { ArrowLeft, Monitor } from "lucide-solid";
 import { settingsChangeSchema } from "../lib/responseSchemas";
-import { AgentsSavedError, saveAgentDefinitions } from "../lib/hostAgents";
+import { AgentsSavedError, saveAgentDefinitions, saveProjectAgents } from "../lib/hostAgents";
+import { hostCatalog } from "../lib/draftRuntime";
+import { isTemporaryChatCwd, useSessionGroups } from "../lib/sessionGroups";
 import { NativeTransport } from "../lib/nativeTransport";
 import { settingsResources, type SettingsResources } from "../lib/settingsResources";
 import { SettingsPublication } from "../lib/settingsPublication";
@@ -69,6 +71,23 @@ function DaemonSettingsEditor(componentProps: Props & { target: string; label: s
   const [saveWarnings, setSaveWarnings] = createSignal<string[]>();
   const [revision, setRevision] = createSignal(0);
   const needsResources = createMemo(() => componentProps.target !== "client");
+  const groups = useSessionGroups();
+  const projects = createMemo(() => (groups.state?.groups ?? []).flatMap(group => group.cwd && !isTemporaryChatCwd(group.cwd) && (group.hostId ?? "local") === hostId() ? [{ name: group.name, cwd: group.cwd }] : []));
+  const [agentScope, setAgentScope] = createSignal<string>();
+  const [projectConfig, setProjectConfig] = createSignal<AgentConfig>();
+  createDependencyEffect(() => { setProjectConfig(undefined); }, () => [hostId(), agentScope()]);
+  createDependencyEffect(() => { const capturedHostId = hostId(); const cwd = agentScope();
+    if (!cwd) return;
+    let cancelled = false;
+    void hostCatalog(capturedHostId, "fresh", cwd).then(({ config }) => { if (!cancelled) setProjectConfig(config); }, reason => { if (!cancelled) setError(reason instanceof Error ? reason.message : String(reason)); });
+
+    return () => { cancelled = true; };
+  }, () => [hostId(), agentScope(), revision()]);
+  const projectAgents = createMemo((): AgentConfig | undefined => {
+    const config = projectConfig();
+
+    return config?.project && { revision: config.project.revision, agents: config.agents.filter(agent => agent.project).map(({ project: _project, isDefault: _isDefault, ...agent }) => agent) };
+  });
 
   const publications = new SettingsPublication();
 
@@ -149,7 +168,15 @@ function DaemonSettingsEditor(componentProps: Props & { target: string; label: s
     setSaveWarnings(undefined);
     const agentWarnings: string[] = [];
 
-    if (config) {
+    const capturedScope = agentScope();
+
+    if (config && capturedScope) {
+      const saved = await saveProjectAgents(capturedHostId, capturedScope, { revision: config.revision ?? "missing", agents: config.agents });
+      config.revision = saved.revision;
+      agentWarnings.push(...saved.warnings);
+      const agents = config.agents;
+      setProjectConfig(project => project?.project && { ...project, project: { ...project.project, revision: saved.revision }, agents: [...project.agents.filter(agent => !agent.project), ...agents.map(agent => ({ ...agent, project: true }))] });
+    } else if (config) {
       const saved = await saveAgentDefinitions(capturedHostId, config);
       config.revision = saved.revision;
       agentWarnings.push(...saved.warnings);
@@ -171,5 +198,5 @@ function DaemonSettingsEditor(componentProps: Props & { target: string; label: s
     return warnings && warnings.length > 0 && <p role="alert">Saved with warnings: {warnings.join(" ")}</p>;
   };
 
-  return <>{renderSaveWarnings()}{error() && <p role="alert">Could not load {componentProps.label}: {(error())} <button onClick={() => setRevision((value) => value + 1)}>Retry</button></p>}{current() ? <SettingsView embedded selectedSection={componentProps.selectedSection} resourceError={error()} onSavingChange={componentProps.onSavingChange} scope={componentProps.target === "client" ? "client" : "daemon"} daemonLabel={componentProps.label} providerHostId={hostId()} providerHosts={componentProps.settings.hosts} settings={required((current()))} pendingSettingsCount={hostId() === "local" ? componentProps.pendingSettingsCount : 0} sessions={componentProps.sessions.filter((session) => (session.hostId ?? "local") === hostId()).map((session) => ({ ...session, hostId: "local" }))} agentConfig={componentProps.target === "client" ? undefined : resources()?.config} models={resources()?.models} loadingModels={loadingModels()} onDirtyChange={componentProps.onDirtyChange} onSave={save} /> : !error() && <p role="status">Loading {componentProps.label} settings…</p>}</>;
+  return <>{renderSaveWarnings()}{error() && <p role="alert">Could not load {componentProps.label}: {(error())} <button onClick={() => setRevision((value) => value + 1)}>Retry</button></p>}{current() ? <SettingsView embedded selectedSection={componentProps.selectedSection} resourceError={error()} onSavingChange={componentProps.onSavingChange} scope={componentProps.target === "client" ? "client" : "daemon"} daemonLabel={componentProps.label} providerHostId={hostId()} providerHosts={componentProps.settings.hosts} settings={required((current()))} pendingSettingsCount={hostId() === "local" ? componentProps.pendingSettingsCount : 0} sessions={componentProps.sessions.filter((session) => (session.hostId ?? "local") === hostId()).map((session) => ({ ...session, hostId: "local" }))} agentConfig={componentProps.target === "client" ? undefined : agentScope() ? projectAgents() : resources()?.config} inheritedAgents={agentScope() ? resources()?.config.agents ?? [] : undefined} agentScopes={projects()} agentScope={agentScope()} onAgentScope={setAgentScope} models={resources()?.models} loadingModels={loadingModels()} onDirtyChange={componentProps.onDirtyChange} onSave={save} /> : !error() && <p role="status">Loading {componentProps.label} settings…</p>}</>;
 }

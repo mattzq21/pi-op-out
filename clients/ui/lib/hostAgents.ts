@@ -3,7 +3,7 @@ import { decodeAgentValue } from "./agentProtocol";
 import { hostCatalog } from "./draftRuntime";
 import { nativeCall } from "./nativeCall";
 import { listen } from "./platform";
-import type { AgentConfig, DefinedAgentsCapability } from "../types";
+import type { AgentConfig, AgentProfile, DefinedAgentsCapability } from "../types";
 
 const agentStatusSchema = z.object({ version: z.number().default(1), active: z.string(), locked: z.boolean().optional(), saved: z.boolean().optional(), unavailable: z.boolean().optional() });
 
@@ -13,7 +13,13 @@ export function saveAgentDefinitions(hostId: string, configuration: AgentConfig)
   return nativeCall("save_agent_definitions", { hostId, configuration }, savedSchema);
 }
 
-export function agentStatusReader(hostId: () => string, publish: (capability: DefinedAgentsCapability | undefined) => void, fail: (reason: unknown) => void) {
+export type ProjectAgentsChange = { revision: string; agents?: AgentProfile[]; defaultAgent?: string | null };
+
+export function saveProjectAgents(hostId: string, cwd: string, configuration: ProjectAgentsChange) {
+  return nativeCall("save_agent_definitions", { hostId, cwd, configuration }, savedSchema);
+}
+
+export function agentStatusReader(hostId: () => string, cwd: () => string | undefined, publish: (capability: DefinedAgentsCapability | undefined) => void, fail: (reason: unknown) => void) {
   let statusText: string | undefined;
   let sequence = 0;
   let closed = false;
@@ -27,7 +33,7 @@ export function agentStatusReader(hostId: () => string, publish: (capability: De
     try { status = agentStatusSchema.parse(decodeAgentValue(statusText.slice(5))); }
     catch (reason) { publish(undefined); fail(reason); return; }
 
-    void hostCatalog(hostId(), fresh ? "fresh" : "cached").then(
+    void hostCatalog(hostId(), fresh ? "fresh" : "cached", cwd()).then(
       ({ config }) => { if (!closed && current === sequence) publish({ ...status, config }); },
       reason => { if (!closed && current === sequence) { publish({ ...status, config: { agents: [] } }); fail(reason); } },
     );

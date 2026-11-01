@@ -16,7 +16,7 @@ export type AgentAccess = "all" | "none" | string[];
 
 export type AgentStartPurpose = "subagent" | "peer";
 
-export type Agent = { unavailableReason?: string; name: string; description?: string; isDefault?: boolean; model: string; effort: string; fastMode?: boolean; contextWindowCap?: number | null; codemode?: CodemodeChoice; extensions?: string[]; max_subagents?: number; allow_as_subagent?: boolean; allow_as_peer?: boolean; allowed_subagents?: AgentAccess; allowed_peers?: AgentAccess; path_systemprompt: string; path_agent_prompt: string; tools: string[]; skills: string[]; mcpServers: McpServers };
+export type Agent = { unavailableReason?: string; project?: boolean; name: string; description?: string; isDefault?: boolean; model: string; effort: string; fastMode?: boolean; contextWindowCap?: number | null; codemode?: CodemodeChoice; extensions?: string[]; max_subagents?: number; allow_as_subagent?: boolean; allow_as_peer?: boolean; allowed_subagents?: AgentAccess; allowed_peers?: AgentAccess; path_systemprompt: string; path_agent_prompt: string; tools: string[]; skills: string[]; mcpServers: McpServers };
 
 export type AgentSnapshot = ({ version: 2; definition: Agent } | { version: 1; definition: Agent; systemPrompt: string; agentPrompt: string }) & { resources?: AgentResources };
 

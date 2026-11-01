@@ -11,11 +11,13 @@ function readDefinitions(value: unknown): any {
   return result;
 }
 
-const definitions = hostOperation<{ settings: any; initial: boolean }, any>('agent-definitions', 'agents', 30_000, readDefinitions);
+type Project = { cwd: string; global: any };
+
+const definitions = hostOperation<{ settings: any; initial: boolean; project?: Project }, any>('agent-definitions', 'agents', 30_000, readDefinitions);
 
 export interface Saved { revision: string; warnings: string[]; definitions: any }
 
-const saved = hostOperation<{ settings: any; configuration: unknown }, Saved>('save-agent-definitions', 'agents', 30_000, value => {
+const saved = hostOperation<{ settings: any; configuration: unknown; project?: Project }, Saved>('save-agent-definitions', 'agents', 30_000, value => {
   const result = value as any;
   if (typeof result?.revision !== 'string' || !Array.isArray(result.warnings) || result.warnings.some((warning: unknown) => typeof warning !== 'string')) throw new Error('Invalid agent definitions save result');
   return { revision: result.revision, warnings: result.warnings, definitions: readDefinitions(result.definitions) };
@@ -33,10 +35,10 @@ function loaderSettings(settings: any, fastModels: FastModelSnapshot | null): an
   return { ...settings, pluginAgentTools: Contributions.agentTools(), fastModels };
 }
 
-export function load(home: string, storage: string, settings: any, initial: boolean, fastModels: FastModelSnapshot | null): Promise<any> {
-  return runHostOperation(definitions, { settings: loaderSettings(settings, fastModels), initial }, { env: environment(home, storage) });
+export function load(home: string, storage: string, settings: any, initial: boolean, fastModels: FastModelSnapshot | null, project?: Project): Promise<any> {
+  return runHostOperation(definitions, { settings: loaderSettings(settings, fastModels), initial, ...(project ? { project } : {}) }, { env: environment(home, storage) });
 }
 
-export function save(home: string, storage: string, settings: any, configuration: unknown, fastModels: FastModelSnapshot | null): Promise<Saved> {
-  return runHostOperation(saved, { settings: loaderSettings(settings, fastModels), configuration }, { env: environment(home, storage) });
+export function save(home: string, storage: string, settings: any, configuration: unknown, fastModels: FastModelSnapshot | null, project?: Project): Promise<Saved> {
+  return runHostOperation(saved, { settings: loaderSettings(settings, fastModels), configuration, ...(project ? { project } : {}) }, { env: environment(home, storage) });
 }

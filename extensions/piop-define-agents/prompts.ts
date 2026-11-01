@@ -1,9 +1,10 @@
 import { createHash, randomUUID } from "node:crypto";
 import fs from "node:fs";
 import { DatabaseSync } from "node:sqlite";
+import { execFile } from "node:child_process";
 import { link, mkdir, open, readFile, realpath, rm } from "node:fs/promises";
 import { homedir } from "node:os";
-import { basename, dirname, join, resolve } from "node:path";
+import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Type } from "typebox";
 import { Check } from "typebox/value";
@@ -54,13 +55,14 @@ function openDatabase(root: string) {
     fs.chmodSync(path, 0o600);
     db.exec(`PRAGMA busy_timeout=10000; PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL;
       CREATE TABLE IF NOT EXISTS application_settings (name TEXT PRIMARY KEY, body BLOB);
-      CREATE TABLE IF NOT EXISTS agent_prompt_snapshots (digest TEXT PRIMARY KEY, contents TEXT);`);
+      CREATE TABLE IF NOT EXISTS agent_prompt_snapshots (digest TEXT PRIMARY KEY, contents TEXT);
+      CREATE TABLE IF NOT EXISTS project_agent_definitions (directory TEXT PRIMARY KEY, body BLOB NOT NULL);`);
 
     return db;
   } catch (error) { db.close(); throw error; }
 }
 
-function readRow(root: string, table: "application_settings" | "agent_prompt_snapshots", sql: string, key: string): Record<string, unknown> | undefined {
+function readRow(root: string, table: "application_settings" | "agent_prompt_snapshots" | "project_agent_definitions", sql: string, key: string): Record<string, unknown> | undefined {
   const path = join(root, "sessions.sqlite");
   let metadata;
 
@@ -131,6 +133,7 @@ export async function writeConfig(value: Config, createOnly = false): Promise<{ 
     return; }
 
     if (!createOnly && (!value.revision || value.revision !== revision)) throw new Error("Agent definitions changed in another window or client. Reload them before saving.");
+    requireNoProjectConflicts(db, value.agents.map(agent => agent.name));
     const stored = current === undefined ? undefined : JSON.parse(current);
     const unnamed = Array.isArray(stored?.agents) ? stored.agents.filter((agent: unknown) => !isNamedAgent(agent)) : [];
     const { revision: _revision, ...configuration } = value;
@@ -140,6 +143,107 @@ export async function writeConfig(value: Config, createOnly = false): Promise<{ 
 
     return { revision: value.revision, warnings: [] };
   });
+}
+
+function namedAgents(document: { agents?: unknown } | undefined): string[] {
+  return Array.isArray(document?.agents) ? document.agents.filter(isNamedAgent).map(agent => agent.name) : [];
+}
+
+function requireNoProjectConflicts(db: DatabaseSync, globalNames: string[]) {
+  const global = new Set(globalNames);
+
+  for (const row of db.prepare("SELECT directory, body FROM project_agent_definitions").all()) {
+    const directory = String(row.directory);
+    const project: ProjectDocument = JSON.parse(String(bodyText(row)));
+    const names = namedAgents(project);
+    const shared = names.find(name => global.has(name));
+
+    if (shared) throw new Error(`Agent name "${shared}" is used by the project ${directory}. Agent names must be different from project agent names.`);
+
+    if (project.defaultAgent && !global.has(project.defaultAgent) && !names.includes(project.defaultAgent)) throw new Error(`The project ${directory} uses agent "${project.defaultAgent}" as its default agent. Choose another default agent for that project first.`);
+  }
+}
+
+export type ProjectDocument = { agents: unknown[]; defaultAgent?: string };
+
+export type ProjectChange = { revision: string; agents?: unknown[]; defaultAgent?: string | null };
+
+function storedGlobalNames(db: DatabaseSync): string[] {
+  const body = storedBody(db, DEFINITIONS);
+
+  return [...new Set(["general", ...namedAgents(body === undefined ? undefined : JSON.parse(body))])];
+}
+
+export function readProjectDocument(directory: string): ProjectDocument & { revision: string } {
+  const body = bodyText(readRow(storageRoot, "project_agent_definitions", "SELECT body FROM project_agent_definitions WHERE directory=?", directory));
+
+  if (body === undefined) return { agents: [], revision: "missing" };
+  const { agents, defaultAgent } = JSON.parse(body);
+
+  return { agents, ...(defaultAgent ? { defaultAgent } : {}), revision: revisionOf(body) };
+}
+
+export function writeProjectDocument(directory: string, change: ProjectChange): string {
+  return transaction(db => {
+    const current = bodyText(db.prepare("SELECT body FROM project_agent_definitions WHERE directory=?").get(directory));
+
+    if (change.revision !== (current === undefined ? "missing" : revisionOf(current))) throw new Error("Project agent definitions changed in another window or client. Reload them before saving.");
+    const stored: ProjectDocument = current === undefined ? { agents: [] } : JSON.parse(current);
+    const agents = change.agents ?? stored.agents;
+    const defaultAgent = change.defaultAgent === undefined ? stored.defaultAgent : change.defaultAgent ?? undefined;
+    const names = namedAgents({ agents });
+    const global = storedGlobalNames(db);
+    const shared = names.find(name => global.includes(name));
+
+    if (shared) throw new Error(`Agent name "${shared}" is already used by a global agent. Project agent names must be different.`);
+
+    if (defaultAgent && !global.includes(defaultAgent) && !names.includes(defaultAgent)) throw new Error(`Agent "${defaultAgent}" is the project's default agent. Choose another default agent in Edit project first.`);
+
+    if (!names.length && !defaultAgent) {
+      db.prepare("DELETE FROM project_agent_definitions WHERE directory=?").run(directory);
+
+      return "missing";
+    }
+
+    const body = `${JSON.stringify({ agents, ...(defaultAgent ? { defaultAgent } : {}) }, null, 2)}\n`;
+    db.prepare("INSERT INTO project_agent_definitions (directory, body) VALUES (?, ?) ON CONFLICT(directory) DO UPDATE SET body=excluded.body").run(directory, Buffer.from(body));
+
+    return revisionOf(body);
+  });
+}
+
+function git(cwd: string, args: string[]): Promise<{ code: number; stdout: string; stderr: string }> {
+  return new Promise((resolveRun, reject) => execFile("git", ["-C", cwd, ...args], { encoding: "utf8" }, (error, stdout, stderr) => {
+    if (error && typeof error.code !== "number") reject(error);
+    else resolveRun({ code: typeof error?.code === "number" ? error.code : 0, stdout, stderr });
+  }));
+}
+
+export async function projectDirectory(cwd: string): Promise<string> {
+  const expanded = cwd === "~" ? homedir() : cwd.startsWith("~/") ? join(homedir(), cwd.slice(2)) : cwd;
+
+  if (!isAbsolute(expanded)) throw new Error(`Project directory must be an absolute path: ${cwd}`);
+  const directory = await realpath(expanded);
+  let top;
+
+  try { top = await git(directory, ["rev-parse", "--show-toplevel"]); }
+  catch (error) { if (hasErrorCode(error, "ENOENT")) return directory; throw error; }
+
+  if (top.code !== 0) {
+    if (/not a git repository/i.test(top.stderr)) return directory;
+    throw new Error(`Could not check for a Git repository in ${directory}: ${top.stderr.trim()}`);
+  }
+
+  if (await realpath(top.stdout.trim()) !== directory) return directory;
+  const list = await git(directory, ["worktree", "list", "--porcelain"]);
+
+  if (list.code !== 0) throw new Error(`Could not list the worktrees of ${directory}: ${list.stderr.trim()}`);
+  const [first = ""] = list.stdout.split("\n\n");
+  const main = /^worktree (.+)$/m.exec(first)?.[1];
+
+  if (!main) throw new Error(`Could not find the main worktree of ${directory}`);
+
+  return /^bare$/m.test(first) ? directory : realpath(main);
 }
 
 export function moveLegacyDefinitions() {

@@ -52,7 +52,7 @@ export function useAppEvents(options: Accessor<AppEventsContext>) {
   createDependencyEffect(() => { const capturedOptions = options();
     let cancelled = false; let reconnecting = false; let initializing = false;
     const current = () => !cancelled && capturedOptions.activeTransportRef.current === capturedOptions.transport;
-    const agentStatus = agentStatusReader(() => capturedOptions.transport.currentHostId(), capability => {
+    const agentStatus = agentStatusReader(() => capturedOptions.transport.currentHostId(), () => capturedOptions.transport.currentCwd(), capability => {
       if (cancelled) return;
       capturedOptions.setDefinedAgents(capability);
 

@@ -20,7 +20,7 @@ function hostDraft(t) {
     return { config: structuredClone(host.config), models, initialModel: host.initialModel ?? null, initialThinking: host.initialThinking ?? 'medium', commands: [], commandDetails: [], skills: [] };
   });
   const events = [];
-  const draft = new DraftRuntime(() => 'local', event => events.push(event));
+  const draft = new DraftRuntime(() => 'local', () => undefined, event => events.push(event));
   const shown = () => decodeAgentValue(events.filter(event => event.statusKey === 'pi-define-agents').at(-1).statusText.slice(5)).active;
   const changeDefault = async () => { host.config = chosenDefault; clearDraftCatalogs(); await draft.reload(() => true); };
   return { draft, shown, changeDefault, host };

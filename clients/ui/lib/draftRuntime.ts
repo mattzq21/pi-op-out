@@ -13,14 +13,14 @@ const catalogs = new Map<string, Promise<z.infer<typeof catalogSchema>>>();
 
 export function clearDraftCatalogs() { catalogs.clear(); }
 
-export function hostCatalog(hostId: string, mode: "cached" | "fresh" | "reload" = "cached") {
+export function hostCatalog(hostId: string, mode: "cached" | "fresh" | "reload" = "cached", cwd?: string) {
   const connection = captureDaemonTransport();
-  const key = JSON.stringify([connection.identity, hostId]);
+  const key = JSON.stringify([connection.identity, hostId, cwd ?? null]);
   const cached = catalogs.get(key);
 
   if (cached && mode === "cached") return cached;
 
-  const pending = nativeCall("provider_auth", { hostId, request: { action: "draft_catalog", reload: mode === "reload" } }, catalogSchema).catch(reason => {
+  const pending = nativeCall("provider_auth", { hostId, request: { action: "draft_catalog", reload: mode === "reload", ...(cwd ? { cwd } : {}) } }, catalogSchema).catch(reason => {
     if (catalogs.get(key) === pending) catalogs.delete(key);
 
     throw reason;
@@ -42,18 +42,18 @@ export class DraftRuntime {
   private defaults?: { thinking: string; fastMode: boolean };
   private chosen = false;
 
-  constructor(private hostId: () => string, private emit: (event: RpcEvent) => void) {}
+  constructor(private hostId: () => string, private cwd: () => string | undefined, private emit: (event: RpcEvent) => void) {}
 
   get fastMode() { return this.fast; }
 
   setFastMode(enabled: boolean) { this.fast = enabled; this.chosen = true; }
 
   async load() {
-    this.catalog = await hostCatalog(this.hostId());
+    this.catalog = await hostCatalog(this.hostId(), "cached", this.cwd());
   }
 
   async reload(current: () => boolean) {
-    const catalog = await hostCatalog(this.hostId(), "reload");
+    const catalog = await hostCatalog(this.hostId(), "reload", this.cwd());
 
     if (!current()) throw new Error("The conversation started before agent definitions finished reloading. Reload them again.");
     this.catalog = catalog;

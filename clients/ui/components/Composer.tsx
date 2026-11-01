@@ -201,7 +201,7 @@ export function Composer(props: Props) {
   const isEditingPending = createSelector(() => editingPending()?.id);
   const [localValue, setLocalValue] = createSignal("");
   const value = createMemo(() => (editingPending()?.prompt ?? composer().draft ?? localValue()));
-  const agentOptions = createMemo(() => composer().agents.map(agent => ({ value: agent.name, label: agent.name, detail: agent.unavailableReason, disabled: Boolean(agent.unavailableReason) })));
+  const agentOptions = createMemo(() => composer().agents.map(agent => ({ value: agent.name, label: agent.name, detail: agent.unavailableReason ?? (agent.project ? "Project" : undefined), disabled: Boolean(agent.unavailableReason) })));
   const displayModelName = (model: Model) => composer().modelAliases?.[`${model.provider}/${model.id}`] || (model.name || model.id).replace(/^gpt-/i, "");
   const modelOptions = createMemo(() => composer().models.map(item => ({ value: `${item.provider}/${item.id}`, label: displayModelName(item), detail: item.provider })));
   const thinkingOptions = createMemo(() => composer().thinkingLevels.map(level => ({ value: level, label: level.charAt(0).toUpperCase() + level.slice(1) })));

@@ -1,9 +1,9 @@
 import { mkdir } from "node:fs/promises";
 import { Check, Errors, Parse } from "typebox/value";
 import { Type } from "typebox";
-import { loadConfig, normalizeConfig, type Config } from "./index.ts";
+import { loadConfig, mergeProjectAgents, normalizeConfig, projectAgents, type Config } from "./index.ts";
 import { agentSchema, agentThinkingLevels } from "./state.ts";
-import { agentDirectory, moveLegacyDefinitions, readConfigDocument, readPrompt, resolvePromptPath, isNamedAgent, writeConfig } from "./prompts.ts";
+import { agentDirectory, moveLegacyDefinitions, readConfigDocument, readPrompt, resolvePromptPath, isNamedAgent, writeConfig, projectDirectory, readProjectDocument, writeProjectDocument } from "./prompts.ts";
 import { parseAgentResources, parsePluginAgentTools } from "./resources.ts";
 import { extensionPaths } from "./extension-loader.ts";
 import { extensionValidator } from "./validation-runtime.ts";
@@ -23,13 +23,15 @@ const sourceAgentSchema = Type.Object({
   systemPrompt: Type.Optional(Type.String()), agentsMd: Type.Optional(Type.String()), developerPrompt: Type.Optional(Type.String()),
 });
 
-export interface AgentDefinitionsRequest { settings: any; initial: boolean }
+export interface AgentDefinitionsRequest { settings: any; initial: boolean; project?: { cwd: string; global: AgentDefinitions } }
 
 export interface AgentDefinitions { config: any; prompts: Record<string, string> }
 
-export interface SaveAgentDefinitionsRequest { settings: any; configuration: unknown }
+export interface SaveAgentDefinitionsRequest { settings: any; configuration: unknown; project?: { cwd: string; global: AgentDefinitions } }
 
 const savedConfigurationSchema = Type.Object({ revision: Type.String({ minLength: 1 }), agents: Type.Array(agentSchema) });
+
+const savedProjectSchema = Type.Object({ revision: Type.String({ minLength: 1 }), agents: Type.Optional(Type.Array(agentSchema)), defaultAgent: Type.Optional(Type.Union([Type.String({ pattern: "\\S" }), Type.Null()])) }, { additionalProperties: false });
 
 function configRuntime(settings: any) {
   const { tools } = parseAgentResources(settings);
@@ -76,7 +78,20 @@ async function checkAgents(config: Config, settings: any, registeredTools: reado
   }
 }
 
-export async function loadAgentDefinitions({ settings, initial: initialize }: AgentDefinitionsRequest): Promise<AgentDefinitions> {
+async function loadProject(settings: any, cwd: string, global: AgentDefinitions): Promise<AgentDefinitions> {
+  const { tools, api } = configRuntime(settings);
+  const directory = await projectDirectory(cwd);
+  const stored = readProjectDocument(directory);
+  const agents = projectAgents(stored, api);
+  const prompts: Record<string, string> = {};
+  await checkAgents({ agents }, settings, tools.registeredTools, prompts);
+
+  return { config: mergeProjectAgents(global.config, directory, stored, agents), prompts: { ...global.prompts, ...prompts } };
+}
+
+export async function loadAgentDefinitions({ settings, initial: initialize, project }: AgentDefinitionsRequest): Promise<AgentDefinitions> {
+  if (project) return loadProject(settings, project.cwd, project.global);
+
   if (initialize) { await mkdir(agentDirectory, { recursive: true, mode: 0o700 }); moveLegacyDefinitions(); }
 
   let stored;
@@ -121,7 +136,29 @@ function readOnlyStorage(prompts: Record<string, string>) {
   };
 }
 
-export async function saveAgentDefinitions({ settings, configuration }: SaveAgentDefinitionsRequest): Promise<{ revision: string; warnings: string[]; definitions: AgentDefinitions }> {
+async function saveProject(settings: any, configuration: unknown, cwd: string, global: AgentDefinitions) {
+  const errors = [...Errors(savedProjectSchema, configuration)];
+
+  if (errors.length) throw new Error(`Invalid project agent configuration: ${errors.map(error => `${error.instancePath} ${error.message}`).join("; ")}`);
+  const supplied = Parse(savedProjectSchema, configuration);
+  const directory = await projectDirectory(cwd);
+
+  if (supplied.agents) {
+    const { tools, api } = configRuntime(settings);
+    const agents = projectAgents({ agents: supplied.agents }, api);
+    await requireReadablePrompts(agents);
+    await checkAgents({ agents }, settings, tools.registeredTools, {});
+    mergeProjectAgents(global.config, directory, { agents: [], revision: supplied.revision }, agents);
+    supplied.agents = agents.map(({ unavailableReason: _reason, ...agent }) => agent);
+  }
+
+  const revision = writeProjectDocument(directory, supplied);
+
+  return { revision, warnings: [], definitions: global };
+}
+
+export async function saveAgentDefinitions({ settings, configuration, project }: SaveAgentDefinitionsRequest): Promise<{ revision: string; warnings: string[]; definitions: AgentDefinitions }> {
+  if (project) return saveProject(settings, configuration, project.cwd, project.global);
   const errors = [...Errors(savedConfigurationSchema, configuration)];
 
   if (errors.length) throw new Error(`Invalid agent configuration: ${errors.map(error => `${error.instancePath} ${error.message}`).join("; ")}`);

@@ -1,4 +1,6 @@
 import { afterAll, beforeAll, expect, test } from 'bun:test';
+import { mkdir } from 'node:fs/promises';
+import { join } from 'node:path';
 import { agentDefinitions, saveAgentDefinitions } from './agent-chats';
 import { startDaemon, type TestDaemon } from './harness';
 
@@ -56,4 +58,20 @@ test('an agent whose model a provider adds later becomes available without a rel
     await daemon.waitEvent('pi://agent-definitions-changed', () => ++count > before);
     expect((await waiting()).unavailableReason).toBeUndefined();
   } finally { server.stop(true); }
+}, 60000);
+
+test('project agents save for one project folder, and only chats there see them', async () => {
+  const project = join(daemon.home, 'project');
+  await mkdir(project, { recursive: true });
+  const catalog = async (cwd?: string) => (await daemon.invoke('provider_auth', { hostId: 'local', request: { action: 'draft_catalog', ...(cwd ? { cwd } : {}) } })).config;
+  const { isDefault: _isDefault, ...general } = (await catalog()).agents.find((agent: any) => agent.name === 'general');
+  const before = (await catalog(project)).project;
+  const from = daemon.events.filter(event => event.event === 'pi://agent-definitions-changed').length;
+  let count = 0;
+  await daemon.invoke('save_agent_definitions', { hostId: 'local', cwd: project, configuration: { revision: before.revision, agents: [{ ...general, name: 'local-helper' }], defaultAgent: 'local-helper' } });
+  await daemon.waitEvent('pi://agent-definitions-changed', () => ++count > from);
+  const inside = await catalog(project);
+  expect(inside.agents.filter((agent: any) => agent.project).map((agent: any) => agent.name)).toEqual(['local-helper']);
+  expect(inside.agents.find((agent: any) => agent.isDefault).name).toBe('local-helper');
+  expect((await catalog()).agents.map((agent: any) => agent.name)).not.toContain('local-helper');
 }, 60000);

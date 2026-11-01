@@ -215,7 +215,8 @@ const COMMANDS: Record<string, Handler> = {
   save_app_settings: (app, _owner, args) => saveAppSettings(app, parseAppSettings(argument(args, 'settings', 'any'))),
   save_agent_definitions: async (app, _owner, args) => {
     const connection = await daemon.connect(app, app.pi, app.broker, await loadAppSettings(app), 'local');
-    return connection.request({ type: 'save_agent_definitions', configuration: argument(args, 'configuration', 'any') });
+    const cwd = argument(args, 'cwd', 'string?');
+    return connection.request({ type: 'save_agent_definitions', configuration: argument(args, 'configuration', 'any'), ...(cwd ? { cwd } : {}) });
   },
   provider_usage: (app, _owner, args) => {
     const provider = argument(args, 'provider', 'string?');

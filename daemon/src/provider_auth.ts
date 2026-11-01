@@ -15,7 +15,8 @@ export async function forOwner(app: App, owner: string, hostId: string | undefin
   const settings = await loadAppSettings(app);
   const connection = await daemon.connect(app, app.pi, app.broker, settings, hostId ?? 'local');
   if (request.action === 'draft_catalog') {
-    const definitions = await connection.request({ type: 'agent_definitions', reload: request.reload === true });
+    if (request.cwd !== undefined && typeof request.cwd !== 'string') throw new Error('Invalid project directory');
+    const definitions = await connection.request({ type: 'agent_definitions', reload: request.reload === true, ...(request.cwd ? { cwd: request.cwd } : {}) });
     let catalog = await connection.request({ type: 'provider_auth', owner, request: { action: 'draft_catalog' } });
     if (catalog?.commandDetails === null) {
       try {

@@ -2,7 +2,7 @@ import { readAgentResources, readPluginAgentTools, resourcePath, type AgentResou
 import { STATE_ENTRY, DEFAULTS_ENV, DRAFT_STATE_ENV, type RuntimeDefaults, agentThinkingLevels, persistedAgentIdentity, storedRuntimeDefaults, sessionIsLocked, readAgentState, subagentLimit, registerSubagentLimits, agentFlag, agentAccess, agentDescription, startRefusal } from "./state.ts";
 import { Type } from "typebox";
 import { Check, Parse } from "typebox/value";
-import { agentDirectory, DEFAULT_PROMPT_PATH, DEFAULT_SYSTEM_PROMPT, resolvePromptPath, ensurePromptFile, snapshotPrompts, ensureDefaultAgentPrompt, readPrompt, readConfigDocument, writeConfig, isNamedAgent } from "./prompts.ts";
+import { agentDirectory, DEFAULT_PROMPT_PATH, DEFAULT_SYSTEM_PROMPT, resolvePromptPath, ensurePromptFile, snapshotPrompts, ensureDefaultAgentPrompt, readPrompt, readConfigDocument, writeConfig, isNamedAgent, projectDirectory, readProjectDocument, type ProjectDocument } from "./prompts.ts";
 import { BUNDLED_MODEL, fallbackConfig, copySnapshot, selectedProfileState } from "./profiles.ts";
 import { mcpServers, type McpServers, type LegacyMcpServer } from "./mcp-config.ts";
 import type { Agent, AgentSnapshot, RequiredToolsRequest, McpToolsRequest, McpSelection, SessionAgentState } from "./contracts.ts";
@@ -19,11 +19,13 @@ const STATUS_KEY = "pi-define-agents";
 
 const sessionTools = ["spawn_subagents"];
 
-export type Config = { revision?: string; agents: Agent[]; pluginToolsApplied?: string[]; sessionToolsDefaultApplied?: boolean; subagentsDefaultApplied?: boolean; bundledAgentsApplied?: string[]; };
+export type ProjectAgents = { directory: string; revision: string; defaultAgent?: string };
+
+export type Config = { revision?: string; project?: ProjectAgents; agents: Agent[]; pluginToolsApplied?: string[]; sessionToolsDefaultApplied?: boolean; subagentsDefaultApplied?: boolean; bundledAgentsApplied?: string[]; };
 
 const BUNDLED_AGENTS = ["workhorse", "reviewer"];
 
-type ConfigRuntime = { enabledTools?: readonly string[]; pluginTools: readonly string[] };
+export type ConfigRuntime = { enabledTools?: readonly string[]; pluginTools: readonly string[] };
 
 export type ConfigStorage = { ensurePromptFile: typeof ensurePromptFile; writeConfig: typeof writeConfig };
 
@@ -102,8 +104,8 @@ function promptPath(agent: StoredAgent): string {
   return agent.path_systemprompt;
 }
 
-export function normalizeConfig(value: Omit<Partial<Config>, "agents"> & { agents?: StoredAgent[] }, pi: ConfigRuntime): Config {
-  const named = Array.isArray(value.agents) ? value.agents.filter(isNamedAgent) : [];
+export function normalizeAgents(agents: unknown, pi: ConfigRuntime): Agent[] {
+  const named = (Array.isArray(agents) ? agents.filter(isNamedAgent) : []) as StoredAgent[];
 
   for (const agent of named) {
     if (agent.fastMode !== undefined && !Check(Type.Boolean(), agent.fastMode)) throw new Error(`Agent "${agent.name}" fastMode must be a boolean`);
@@ -124,15 +126,22 @@ export function normalizeConfig(value: Omit<Partial<Config>, "agents"> & { agent
     tools: Array.isArray(agent.tools) ? agent.tools.filter((item): item is string => Check(Type.String(), item)) : generalAgent(pi).tools, skills: Array.isArray(agent.skills) ? agent.skills.filter((item): item is string => Check(Type.String(), item)) : [], mcpServers: mcpServers(agent.mcpServers),
   }));
 
+  const duplicate = supplied.find((agent, index) => supplied.findIndex((candidate) => candidate.name === agent.name) !== index);
+
+  if (duplicate) throw new Error(`Duplicate agent name: ${duplicate.name}`);
+
+  return supplied;
+}
+
+export function normalizeConfig(value: Omit<Partial<Config>, "agents"> & { agents?: StoredAgent[] }, pi: ConfigRuntime): Config {
+  const supplied = normalizeAgents(value.agents, pi);
+
   if (!supplied.some((agent) => agent.name === "general")) {
     const legacy = supplied.find((agent) => agent.name === "default");
 
     if (legacy) legacy.name = "general";
   }
 
-  const duplicate = supplied.find((agent, index) => supplied.findIndex((candidate) => candidate.name === agent.name) !== index);
-
-  if (duplicate) throw new Error(`Duplicate agent name: ${duplicate.name}`);
   const agents = supplied.some((agent) => agent.name === "general") ? supplied : [generalAgent(pi), ...supplied];
   const defaults = agents.filter(agent => agent.isDefault);
 
@@ -218,6 +227,33 @@ function addBundledAgents(config: Config, pi: ConfigRuntime) {
   return missing.length > 0;
 }
 
+export function projectAgents(stored: ProjectDocument, pi: ConfigRuntime): Agent[] {
+  return normalizeAgents(stored.agents, pi).map(({ isDefault: _isDefault, ...agent }) => agent);
+}
+
+export function mergeProjectAgents(config: Config, directory: string, stored: ProjectDocument & { revision: string }, agents: Agent[]): Config {
+  const global = new Set(config.agents.map(agent => agent.name));
+  const shared = agents.find(agent => global.has(agent.name));
+
+  if (shared) throw new Error(`Agent name "${shared.name}" is already used by a global agent. Project agent names must be different.`);
+  const merged = [...config.agents, ...agents.map(agent => ({ ...agent, project: true }))];
+  const defaultAgent = stored.defaultAgent;
+
+  if (defaultAgent && !merged.some(agent => agent.name === defaultAgent)) throw new Error(`The project's default agent "${defaultAgent}" does not exist. Choose another default agent in Edit project.`);
+
+  return {
+    ...config, project: { directory, revision: stored.revision, ...(defaultAgent ? { defaultAgent } : {}) },
+    agents: defaultAgent ? merged.map(({ isDefault: _isDefault, ...agent }) => agent.name === defaultAgent ? { ...agent, isDefault: true } : agent) : merged,
+  };
+}
+
+export async function loadProjectConfig(config: Config, cwd: string, pi: ConfigRuntime): Promise<Config> {
+  const directory = await projectDirectory(cwd);
+  const stored = readProjectDocument(directory);
+
+  return mergeProjectAgents(config, directory, stored, projectAgents(stored, pi));
+}
+
 export async function loadConfig(pi: ConfigRuntime, supplied?: StoredConfig, initialize = true, storage: ConfigStorage = { ensurePromptFile, writeConfig }): Promise<Config> { return loadMigratedConfig(pi, supplied, initialize, storage); }
 
 async function loadMigratedConfig(pi: ConfigRuntime, supplied: StoredConfig | undefined, initialize: boolean, storage: ConfigStorage): Promise<Config> {
@@ -275,7 +311,8 @@ export default async function defineAgents(pi: ExtensionAPI) {
   const initialResources = readAgentResources();
   const configRuntime = { enabledTools: initialResources.tools.enabledTools, pluginTools: readPluginAgentTools() };
   const readOnlyStorage: ConfigStorage = { ensurePromptFile: async () => {}, writeConfig: async () => {} };
-  const readConfigNow = () => loadConfig(configRuntime, undefined, false, readOnlyStorage);
+  let cwd = process.cwd();
+  const readConfigNow = async () => loadProjectConfig(await loadConfig(configRuntime, undefined, false, readOnlyStorage), cwd, configRuntime);
   let config = await readConfigNow();
   let active = "general";
   let snapshot: AgentSnapshot | undefined;
@@ -614,6 +651,7 @@ export default async function defineAgents(pi: ExtensionAPI) {
   effortOverride = event.level; saveState(); saveRuntimeDefaults({ model: runtimeDefaults?.model || "", effort: event.level }); });
 
   const restoreSession = async (ctx: ExtensionContext) => {
+    cwd = ctx.cwd;
     config = await readConfigNow();
     restore(ctx);
     const branch = ctx.sessionManager.getBranch();
