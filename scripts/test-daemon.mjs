@@ -1,5 +1,5 @@
 import { execFile, spawn } from 'node:child_process';
-import { mkdtemp, readdir, rm } from 'node:fs/promises';
+import { mkdtemp, readdir, rm, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { parseArgs, promisify } from 'node:util';
@@ -15,6 +15,7 @@ if (!Number.isSafeInteger(jobs) || jobs < 1 || jobs > 16) throw new Error('--job
 const files = positionals.length ? positionals : (await readdir('test/daemon', { recursive: true })).filter(file => file.endsWith('.test.ts')).sort().map(file => 'test/daemon/' + file);
 if (!files.length) throw new Error('No daemon test files found');
 if (new Set(files).size !== files.length) throw new Error('Each test file must be listed once');
+await Promise.all(files.map(file => stat(file)));
 
 async function main() {
   const directory = await mkdtemp(join(tmpdir(), 'piop-daemon-builds-'));

@@ -11,6 +11,26 @@ import { promisify } from 'node:util';
 
 const execute = promisify(execFile);
 
+test('a missing selected daemon test is reported before any build starts', async t => {
+  const directory = await mkdtemp(join(tmpdir(), 'piop-daemon-selection-'));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const builds = join(directory, 'builds');
+  await writeFile(join(directory, 'bun'), `#!${process.execPath}
+import { writeFileSync } from 'node:fs';
+writeFileSync(${JSON.stringify(builds)}, 'started');
+process.exit(73);
+`, { mode: 0o755 });
+  const missing = join(directory, 'missing.test.ts');
+  await assert.rejects(execute(process.execPath,
+    [fileURLToPath(new URL('../../scripts/test-daemon.mjs', import.meta.url)), missing],
+    { cwd: directory, env: { ...process.env, PATH: directory + ':' + process.env.PATH } }), error => {
+    assert.match(error.stderr, /ENOENT/);
+    assert.ok(error.stderr.includes(missing));
+    return error.code === 1;
+  });
+  assert.equal(existsSync(builds), false, 'invalid selections must not start builds');
+});
+
 async function fixture(t, failing, discover) {
   const directory = await mkdtemp(join(tmpdir(), 'piop-daemon-runner-'));
   t.after(() => rm(directory, { recursive: true, force: true }));
