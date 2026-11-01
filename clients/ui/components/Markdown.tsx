@@ -54,8 +54,8 @@ const parser = new Marked({ gfm: true, tokenizer: markdownTokenizer, hooks: mark
 const frontmatterParser = new Marked({ gfm: true, tokenizer: frontmatterTokenizer, hooks: markdownHooks, renderer, extensions: [frontmatterExtension] });
 
 function skillReferenceExtension(name: string): TokenizerAndRendererExtension {
-  const reference = `(?:\\$|/skill:)${name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?![a-zA-Z0-9_-])`;
-  const anywhere = new RegExp(`(^|[^a-zA-Z0-9_$/])${reference}`, "i");
+  const reference = `(?:\\$|/skill:)${name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?=\\s|$)`;
+  const anywhere = new RegExp(`(^|\\s)${reference}`, "i");
   const here = new RegExp(`^${reference}`, "i");
 
   return {

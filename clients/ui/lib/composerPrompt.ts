@@ -31,9 +31,11 @@ function expandInlineCommand(value: string, commands: SlashCommand[]) {
   return value;
 }
 
-const proseOnly = (value: string) => value.replace(/(^|\n)( {0,3})(`{3,}|~{3,})[^\n]*\n[\s\S]*?(?:\n\2\3[^\n]*(?=\n|$)|$)|(`+)[^`]*?\4/g, (code) => code.replace(/[^\n]/g, " "));
+const blank = (text: string) => text.replace(/[^\n]/g, " ");
 
-export const skillReference = (value: string) => value.match(/(?:^|[\s([{])\$([a-zA-Z0-9_-]*)$/)?.[1]?.toLowerCase();
+const proseOnly = (value: string) => value.replace(/(^|\n)( {0,3})(`{3,}|~{3,})[^\n]*\n[\s\S]*?(?:\n\2\3[^\n]*(?=\n|$)|$)|(`+)[^`]*?\4/g, blank).replace(/!?\[(?:\\.|[^\\\]\n])*\]\([^()\n]*\)/g, blank);
+
+export const skillReference = (value: string) => value.match(/(?:^|\s)\$([a-zA-Z0-9_-]*)$/)?.[1]?.toLowerCase();
 
 export const skillNames = (commands: SlashCommand[]) => new Map(commands.flatMap((command): Array<[string, string]> => { const name = skillName(command);
 
@@ -42,7 +44,7 @@ export const skillNames = (commands: SlashCommand[]) => new Map(commands.flatMap
 export function findSkillReference(value: string, skills: ReadonlyMap<string, string>) {
   if (/^\s*\/(?!skill:)/.test(value) || !skills.size) return undefined;
 
-  for (const match of proseOnly(value).matchAll(/(^|[^a-zA-Z0-9_$/])(\$|\/skill:)([a-zA-Z0-9][a-zA-Z0-9_-]*)(?![a-zA-Z0-9_-])/g)) {
+  for (const match of proseOnly(value).matchAll(/(^|\s)(\$|\/skill:)([a-zA-Z0-9][a-zA-Z0-9_-]*)(?=\s|$)/g)) {
     const name = skills.get(match[3].toLowerCase());
 
     if (!name) continue;
