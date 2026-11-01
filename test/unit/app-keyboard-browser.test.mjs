@@ -206,3 +206,16 @@ test('Ctrl U in a focused terminal clears the shell line instead of opening sett
   await page.keyboard.press('Control+u');
   await page.getByRole('textbox', { name: 'Open settings shortcut', exact: true }).waitFor();
 });
+
+test('Ctrl H holds and resumes the message queue', { timeout: 120000 }, async t => {
+  const page = await appBrowser(t, { model: 'echo' });
+  const editor = page.getByRole('textbox', { name: 'Message piop', exact: true });
+  await editor.fill('Start');
+  await editor.press('Enter');
+  const hold = page.getByRole('button', { name: 'Hold queue', exact: true });
+  await hold.waitFor();
+  await editor.press('Control+h');
+  await page.getByRole('button', { name: 'Resume queue', exact: true }).waitFor();
+  await editor.press('Control+h');
+  await hold.waitFor();
+});

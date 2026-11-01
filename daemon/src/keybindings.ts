@@ -8,6 +8,7 @@ export function defaultKeybindings(): Record<string, string> {
     toggleDebugMode: 'Ctrl+D',
     focusComposer: 'Ctrl+E',
     openSettings: 'Ctrl+,',
+    toggleQueueHold: 'Ctrl+H',
   };
 }
 

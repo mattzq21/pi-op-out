@@ -3,7 +3,7 @@ export function appSettings(extra = {}) {
     hiddenModels: [], knownModels: [],
     defaultThinking: 'off', defaultFastMode: false, contextWindowCap: 0,
     contextWindowCapEnabled: false, autoRetry: true, debugMode: false,
-    keybindings: { newConversation: '', toggleConversations: '', toggleTerminal: '', toggleDebugMode: '', focusComposer: '', openSettings: '' },
+    keybindings: { newConversation: '', toggleConversations: '', toggleTerminal: '', toggleDebugMode: '', focusComposer: '', openSettings: '', toggleQueueHold: '' },
     tools: [], skills: [], hosts: [], ...extra,
   };
 }

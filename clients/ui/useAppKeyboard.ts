@@ -18,6 +18,8 @@ type KeyboardContext = {
   toggleDebugMode: () => void;
   setSplitComposerFocusRequest: Setter<number>;
   setMainComposerFocusRequest: Setter<number>;
+  setSplitQueueHoldRequest: Setter<number>;
+  setMainQueueHoldRequest: Setter<number>;
   settingsDirty: Accessor<boolean>;
   view: Accessor<"chat" | "settings">;
   terminalOpen: Accessor<boolean>;
@@ -32,7 +34,7 @@ function isTerminalKey(event: KeyboardEvent) {
 }
 
 export function useAppKeyboard(context: KeyboardContext) {
-  const { settings, activePane, splitPane, canLeaveSettings, setView, panelOpen, setPanelOpen, newSession, toggleTerminal, toggleDebugMode, setSplitComposerFocusRequest, setMainComposerFocusRequest, settingsDirty, view, terminalOpen, setTerminalOpen } = context;
+  const { settings, activePane, splitPane, canLeaveSettings, setView, panelOpen, setPanelOpen, newSession, toggleTerminal, toggleDebugMode, setSplitComposerFocusRequest, setMainComposerFocusRequest, setSplitQueueHoldRequest, setMainQueueHoldRequest, settingsDirty, view, terminalOpen, setTerminalOpen } = context;
   const blockTabFocus = (event: KeyboardEvent) => { if (event.key === "Tab" && !event.ctrlKey && !event.metaKey && !event.altKey) event.preventDefault(); };
   window.addEventListener("keydown", blockTabFocus);
   onCleanup(() => window.removeEventListener("keydown", blockTabFocus));
@@ -72,8 +74,8 @@ export function useAppKeyboard(context: KeyboardContext) {
       event.preventDefault();
       event.stopPropagation();
 
-      if (view() === "settings" && ["toggleTerminal", "focusComposer", "toggleConversations"].includes(binding.action)) return;
-      const actions = new Map(Object.entries({ newConversation: () => { void newSession(); }, toggleConversations: () => { if (!canLeaveSettings()) return; setView("chat"); setPanelOpen((open) => !open); }, toggleTerminal, toggleDebugMode, openSettings: (): void => { setView("settings"); } }));
+      if (view() === "settings" && ["toggleTerminal", "focusComposer", "toggleConversations", "toggleQueueHold"].includes(binding.action)) return;
+      const actions = new Map(Object.entries({ newConversation: () => { void newSession(); }, toggleConversations: () => { if (!canLeaveSettings()) return; setView("chat"); setPanelOpen((open) => !open); }, toggleTerminal, toggleDebugMode, toggleQueueHold: () => { if (capturedActivePane === "split" && capturedSplitPane) setSplitQueueHoldRequest((value) => value + 1); else setMainQueueHoldRequest((value) => value + 1); }, openSettings: (): void => { setView("settings"); } }));
 
       const action = actions.get(binding.action);
 

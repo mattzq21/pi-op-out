@@ -69,6 +69,7 @@ interface Props {
   uploads?: ComposerUpload[];
   onUploadsChange?: (uploads: StateUpdate<ComposerUpload[]>) => void;
   focusRequest?: number;
+  queueHoldRequest?: number;
   pendingMessages?: import("../types").PendingMessage[];
   loadPendingImage?: import("./PendingImages").PendingImageLoader;
   onChangePending?: (id: string, behavior: import("../types").PendingMessageAction) => Promise<void>;
@@ -500,6 +501,15 @@ export function Composer(props: Props) {
   const showPendingBox = () => composer().pendingMessages.length > 0 || Boolean(props.goal?.error()) || Boolean(props.queueHeld);
   const renderQueueHold = (alone = false) => (<Show when={props.onHoldQueue}><div class="pending-queue-hold" classList={{ held: Boolean(props.queueHeld), alone }}><span>{props.queueHeld ? "Queue on hold. Messages wait until you resume." : ""}</span><button type="button" disabled={queueDisabled() || changingPending()} aria-pressed={Boolean(props.queueHeld)} data-tooltip={props.queueHeld ? "Send the held messages" : "Keep messages in the queue until you resume"} onClick={() => holdQueue(!props.queueHeld)}>{props.queueHeld ? <><Play size={13} />Resume queue</> : <><Pause size={13} />Hold queue</>}</button></div></Show>);
   const queueDisabled = () => props.queueControlsDisabled ?? composer().controlsDisabled;
+  let handledQueueHoldRequest = props.queueHoldRequest ?? 0;
+  createDependencyEffect(() => {
+    const request = props.queueHoldRequest ?? 0;
+
+    if (handledQueueHoldRequest === request) return;
+    handledQueueHoldRequest = request;
+
+    if (!queueDisabled() && !changingPending()) holdQueue(!props.queueHeld);
+  }, () => [props.queueHoldRequest]);
   const pendingDrag = usePendingMessageDrag(() => (composer().pendingMessages), () => (pendingControlsDisabled(queueDisabled(), changingPending(), composer().onChangePending)), () => (changePending));
   const controlsBlocked = () => composer().agentUnavailable || (props.submissionDisabled ?? composer().controlsDisabled) || composer().compacting || stopping();
 

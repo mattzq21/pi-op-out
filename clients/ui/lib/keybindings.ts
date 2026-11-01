@@ -5,6 +5,7 @@ export const defaultKeybindings = {
   toggleDebugMode: "Ctrl+D",
   focusComposer: "Ctrl+E",
   openSettings: "Ctrl+,",
+  toggleQueueHold: "Ctrl+H",
 };
 
 export type KeybindAction = keyof typeof defaultKeybindings;
@@ -18,6 +19,7 @@ const definitions: Array<{ action: KeybindAction; label: string; description: st
   { action: "toggleDebugMode", label: "Toggle debug mode", description: "Show or hide response context details" },
   { action: "focusComposer", label: "Focus composer", description: "Move focus to the message composer" },
   { action: "openSettings", label: "Open settings", description: "Open application settings" },
+  { action: "toggleQueueHold", label: "Hold or resume queue", description: "Hold queued messages or resume sending them" },
 ];
 
 export const keybindDefinitions = definitions.map(definition => ({ ...definition, defaultShortcut: defaultKeybindings[definition.action] }));
