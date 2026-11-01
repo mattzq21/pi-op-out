@@ -35,8 +35,6 @@ export class PiRuntime {
   pendingStarts = new Map<string, Set<PendingStart>>();
   /** Serializes session start, switch, archive, and settings changes. */
   lifecycle = new Mutex();
-  agentConfigRevision = 0;
-  agentConfigRevisions = new Map<string, number>();
   activeAgents = new Map<string, AgentAddress>();
   /** Local sessions that have saved settings they did not apply yet. */
   settingsPendingSessions = new Set<string>();

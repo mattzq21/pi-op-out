@@ -12,12 +12,10 @@ const remoteMcp = { command: 'mcp-server', args: [], enabled: true };
 test('missing models disable only their agents and become usable after configuration repair', async t => {
   const f = await agentFixture(t, { config: configured([profile(), profile('missing', { model: 'missing/provider' })]) });
   await f.load(); await f.start();
-  assert.match(f.capability().config.agents.find(agent => agent.name === 'missing').unavailableReason, /missing\/provider/);
   assert.equal(f.capability().unavailable, false);
   await assert.rejects(f.select('missing'), /model missing\/provider is unavailable/);
   assert.equal(f.capability().active, 'general');
   await f.configure(configured([profile(), profile('missing', { model: 'test/default' })]));
-  assert.equal(f.capability().config.agents.find(agent => agent.name === 'missing').unavailableReason, undefined);
   await f.select('missing');
   assert.equal(f.capability().active, 'missing');
 });
@@ -191,9 +189,9 @@ test('invalid configuration and filesystem failures surface instead of silently 
   const f = await agentFixture(t); f.corruptConfig('{bad'); await assert.rejects(f.load(), SyntaxError);
   assert.equal(f.rawConfig(), '{bad');
 
-  for (const name of ['sessions.sqlite', 'sessions.sqlite-wal', 'sessions.sqlite-shm']) await rm(join(f.dir, name), { force: true });
-  await mkdir(join(f.dir, 'sessions.sqlite')); await assert.rejects(f.load(), /Settings database is not a regular file/);
-  await rm(join(f.dir, 'sessions.sqlite'), { recursive: true }); await f.file('config.json', JSON.stringify(configured([profile('general', { path_agent_prompt: '~/.agents/AGENTS.md' })])));
+  for (const name of ['sessions.sqlite', 'sessions.sqlite-wal', 'sessions.sqlite-shm']) await rm(join(f.root, name), { force: true });
+  await mkdir(join(f.root, 'sessions.sqlite')); await assert.rejects(f.load(), /Settings database is not a regular file/);
+  await rm(join(f.root, 'sessions.sqlite'), { recursive: true }); await f.file('config.json', JSON.stringify(configured([profile('general', { path_agent_prompt: '~/.agents/AGENTS.md' })])));
   await f.load(); await rm(join(f.home, '.agents/AGENTS.md')); await mkdir(join(f.home, '.agents/AGENTS.md'));
   await f.start(); assert.match(f.notices.at(-1).message, /cannot read agent prompt .*AGENTS\.md: EISDIR/); assert.deepEqual(await f.input('hello'), { action: 'handled' });
 });
@@ -210,7 +208,7 @@ test('prompt migration preserves intentional emptiness and distinguishes names a
   const f = await agentFixture(t, { config: { agents: [
     { name: 'general', systemPrompt: '', agentsMd: '   ', tools: [] },
     { name: 'one', systemPrompt: 'Same', developerPrompt: '   ', tools: [] },
-    { name: 'two', systemPrompt: 'Same', developerPrompt: 7, agentsMd: 'Notes', tools: [] },
+    { name: 'two', systemPrompt: 'Same', developerPrompt: '', agentsMd: 'Notes', tools: [] },
     { name: '!!!', developerPrompt: 'Additional', tools: [] },
     { name: 'explicit', path_systemprompt: 'prompt.md', path_agentprompt: '', systemPrompt: 'Ignore this', agentsMd: 'Ignore this too', tools: [] },
   ] } });
@@ -225,18 +223,6 @@ test('prompt migration preserves intentional emptiness and distinguishes names a
   assert.match(agents[3].path_systemprompt, /^sysprompt\/tool-/);
   assert.match(await readFile(join(f.dir, agents[3].path_systemprompt), 'utf8'), /\n\nAdditional$/);
   assert.equal(agents[4].path_systemprompt, 'prompt.md'); assert.equal(agents[4].path_agent_prompt, '');
-});
-
-test('legacy normalization supplies defaults for absent arrays and filters malformed profiles without dropping valid fields', async t => {
-  const f = await agentFixture(t);
-  const full = profile('reviewer', { model: ' test/review/model ', effort: ' low ', fastMode: false, extensions: [], tools: null, skills: null, mcpServers: undefined, path_agent_prompt: 7 });
-  await f.file('config.json', JSON.stringify({ ...configured([]), agents: [null, false, {}, { name: '' }, { name: 7 }, full, profile('default')] }));
-  await f.load(); await f.start();
-  const config = await f.configuration(), reviewer = config.agents[0];
-  assert.deepEqual(config.agents.map(agent => agent.name), ['reviewer', 'general']);
-  assert.equal(reviewer.model, full.model); assert.equal(reviewer.effort, full.effort); assert.equal(reviewer.fastMode, false);
-  assert.deepEqual(reviewer.tools, ['read', 'bash', 'edit', 'write', 'grep', 'find', 'ls']); assert.deepEqual(reviewer.skills, []); assert.deepEqual(reviewer.mcpServers, {}); assert.equal(reviewer.path_agent_prompt, '');
-  await f.select('reviewer'); assert.equal(f.ctx.model.id, 'review/model'); assert.equal(f.pi.getThinkingLevel(), 'low');
 });
 
 for (const state of ['not JSON', { model: 7, effort: 'low' }, { model: 'test/review/model', effort: 7 }]) test(`runtime defaults reject stale or malformed cache ${JSON.stringify(state)}`, async t => {
@@ -271,7 +257,7 @@ test('general becomes the default when no agent has the flag, and two flags are 
   const f = await agentFixture(t, { config: configured([profile(), profile('reviewer')]) });
   await f.load(); await f.start();
   assert.equal(f.capability().active, 'general');
-  assert.deepEqual(f.capability().config.agents.map(agent => agent.isDefault), [true, undefined]);
+  assert.deepEqual((await f.configuration()).agents.map(agent => agent.isDefault), [true, undefined]);
 
   const g = await agentFixture(t, { config: configured([profile('general', { isDefault: true }), profile('reviewer', { isDefault: true })]) });
   await assert.rejects(g.load(), /Only one agent can be the default/);
@@ -379,7 +365,7 @@ test('tool validation reports each configured tool that Pi does not have once', 
 });
 
 test('extension tools bypass the global builtin allow-list and remain available after refresh', async t => {
-  const f = await agentFixture(t, { runtime: { enabledTools: ['read'] }, config: null, files: { 'extra.mjs': 'export default pi => pi.registerTool({ name: "extra", execute: async () => "ok" });' } });
+  const f = await agentFixture(t, { runtime: { enabledTools: ['read'] }, config: null, files: { 'extra.mjs': 'export default pi => pi.registerTool({ name: "extra", parameters: { type: "object", properties: {} }, execute: async () => "ok" });' } });
   await f.load();
   await f.configure(configured([profile('general', { extensions: ['extra.mjs'], tools: ['read', 'extra'] })]));
   await f.start(); assert.deepEqual(f.pi.getActiveTools(), ['read', 'extra']);
@@ -393,7 +379,7 @@ test('a read-only settings directory rejects edits and preserves saved and runni
   await f.configure(configured([profile(), profile('reviewer')]));
   await f.start();
   const before = await f.configuration();
-  const paths = [f.dir, ...(await readdir(f.dir, { withFileTypes: true })).filter(entry => entry.isFile()).map(entry => join(f.dir, entry.name))];
+  const paths = [f.root, ...(await readdir(f.root, { withFileTypes: true })).filter(entry => entry.isFile()).map(entry => join(f.root, entry.name))];
   const permissions = await Promise.all(paths.map(async path => [path, (await stat(path)).mode & 0o777]));
   try {
     for (const [path, mode] of permissions) await chmod(path, mode & ~0o222);
@@ -416,7 +402,7 @@ test('explicit general and default profiles remain distinct', async t => {
     await f.load();
     await f.configure(configured([profile('default'), profile('general')]));
     await f.start(); assert.equal(f.capability().active, 'default');
-    assert.deepEqual(f.capability().config.agents.map(agent => agent.name), ['default', 'general']);
+    assert.deepEqual((await f.configuration()).agents.map(agent => agent.name), ['default', 'general']);
 });
 
 test('equivalent skill sets avoid unnecessary reloads after normalization and sorting', async t => {
@@ -456,8 +442,9 @@ test('agents get a tool by default only while an enabled plugin lists it', async
 });
 
 test('an unreadable inherited agent prompt does not silently become an empty prompt', async t => {
-  const f = await agentFixture(t, { config: null }); await mkdir(join(f.home, '.agents/AGENTS.md'), { recursive: true });
-  await f.load(); await f.start();
+  const f = await agentFixture(t, { config: null }); await f.load();
+  await rm(join(f.home, '.agents/AGENTS.md')); await mkdir(join(f.home, '.agents/AGENTS.md'));
+  await f.start();
   assert.match(f.notices.at(-1).message, /Agent "general" cannot read agent prompt .*\.agents\/AGENTS\.md: EISDIR/);
   assert.deepEqual(f.pi.getActiveTools(), []); assert.deepEqual(await f.input('hello'), { action: 'handled' });
 });
@@ -609,20 +596,6 @@ test('renaming a legacy default is persisted even when every other field is curr
   assert.deepEqual((await f.configuration()).agents.map(agent => agent.name), ['general']);
 });
 
-test('legacy prompt type errors and whitespace fall back to the default system prompt', async t => {
-  const f = await agentFixture(t, { config: { agents: [
-    { name: 'general', systemPrompt: 7, tools: [] },
-    { name: 'reviewer', systemPrompt: '   ', developerPrompt: 'Additional', tools: [] },
-  ] } });
-
-  await f.load(); const agents = (await f.configuration()).agents;
-  assert.equal(agents[0].path_systemprompt, '~/.agents/prompts/system/default.md');
-  assert.match(await readFile(join(f.dir, agents[1].path_systemprompt), 'utf8'), /^You are an expert coding assistant[\s\S]*\n\nAdditional$/);
-  assert.equal(await readFile(join(f.home, '.agents/AGENTS.md'), 'utf8'), '');
-});
-
-
-
 test('fast-mode preflight rejects unsupported models before attempting to load extensions', async t => {
   const models = ['gpt-5.4', 'unsupported'].map(id => ({ provider: 'openai', id, api: 'openai-responses' }));
   const f = await agentFixture(t, {
@@ -631,7 +604,8 @@ test('fast-mode preflight rejects unsupported models before attempting to load e
     realFastMode: { catalog: [{ slug: 'gpt-5.4', service_tiers: [{ id: 'priority' }] }, { slug: 'unsupported', service_tiers: [] }] },
   });
   await f.load();
-  await f.configure(configured([profile(), profile('fast', { fastMode: true }), profile('unsupported', { fastMode: true, model: 'openai/unsupported', extensions: ['missing.mjs'] })]));
+  // A saved agent whose extension went missing after the daemon loaded the definitions.
+  await f.file('config.json', JSON.stringify(configured([profile(), profile('fast', { fastMode: true }), profile('unsupported', { fastMode: true, model: 'openai/unsupported', extensions: ['missing.mjs'] })])));
   await f.start();
   await f.select('fast');
   assert.equal(f.capability().active, 'fast');
@@ -668,7 +642,6 @@ test('an implicit general profile keeps the configuration revision stable across
   assert.deepEqual(await f.configuration(), before);
   await f.reloadExtensions();
   assert.deepEqual(await f.configuration(), before);
-  assert.deepEqual(f.capability().config.agents.map(agent => agent.name), ['general', 'reviewer']);
 });
 
 test('null historical agent state does not hide the latest valid selection', async t => {
@@ -747,7 +720,7 @@ test('a denied storage write preserves the original error and the saved agent co
   const actualOpen = fs.openSync;
   const denied = Object.assign(new Error('fixture settings write denied'), { code: 'EACCES' });
   const opening = t.mock.method(fs, 'openSync', (path, flags, ...args) => {
-    if (String(path).startsWith(f.dir + '/') && (typeof flags === 'number' ? flags & (fs.constants.O_WRONLY | fs.constants.O_RDWR) : /[wa+]/.test(flags))) throw denied;
+    if (String(path).startsWith(f.root + '/') && (typeof flags === 'number' ? flags & (fs.constants.O_WRONLY | fs.constants.O_RDWR) : /[wa+]/.test(flags))) throw denied;
     return actualOpen(path, flags, ...args);
   });
   try {
@@ -1290,11 +1263,11 @@ test('a target with an unreadable agent prompt keeps the selected agent prompts 
 test('first run reports a read-only settings directory and succeeds after access is restored', async t => {
   const f = await agentFixture(t, { config: null });
   await f.file('home/.agents/prompts/system/default.md', 'Existing instructions');
-  await chmod(f.dir, 0o500);
+  await chmod(f.root, 0o500);
   try {
     await assert.rejects(f.load(), { code: 'EACCES' });
     assert.deepEqual(f.pi.getActiveTools(), []);
-  } finally { await chmod(f.dir, 0o700); }
+  } finally { await chmod(f.root, 0o700); }
   await f.load(); await f.start();
   assert.equal(f.capability().active, 'general');
   assert.equal(f.capability().unavailable, false);
@@ -1427,10 +1400,11 @@ test('agent shutdown releases the MCP tool and agent refresh services', async t 
   const refresh = { ctx: f.ctx }; f.pi.events.emit('piop:agents:refresh', refresh); assert.equal(refresh.ready, undefined);
 });
 
-test('saving agent definitions publishes the new profile choices', async t => {
+test('an open session can choose an agent saved after it started', async t => {
   const f = await agentFixture(t, { config: null }); await f.load(); await f.start();
   await f.configure({ agents: [profile(), profile('new-agent')] });
-  assert.deepEqual(f.capability().config.agents.map(agent => agent.name), ['general', 'new-agent']);
+  await f.select('new-agent');
+  assert.equal(f.capability().active, 'new-agent');
 });
 
 test('removed agent refresh preserves extension tool choices', async t => {

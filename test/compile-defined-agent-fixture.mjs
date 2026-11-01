@@ -6,7 +6,7 @@ import { build } from 'esbuild';
 import { storageSchemaImports } from '../scripts/storage-schema-plugin.mjs';
 
 const root = new URL('../extensions/piop-define-agents/', import.meta.url);
-const entries = ['index', 'prompts', 'extension-loader'];
+const entries = ['index', 'prompts', 'extension-loader', 'daemon-loader'];
 const outputs = new Map();
 
 async function bundled(filesystemAdapter = false) {

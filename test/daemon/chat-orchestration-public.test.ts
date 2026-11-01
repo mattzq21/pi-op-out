@@ -308,13 +308,11 @@ test.concurrent('messaging or waiting for a chat that does not exist tells the a
 }, 60000);
 
 test('list_agent_profiles follows the tool groups and lists the descriptions of agents that can start', async () => {
-  const setup = await agents.rootChat();
-  const setTools = async (tools: string[]) => {
-    const configuration = await setup.command({ type: 'get_agent_configuration' });
-    const general = configuration.agents.find((agent: any) => agent.name === 'general');
+  const setTools = (tools: string[]) => agents.saveAgents(saved => {
+    const general = saved.find((agent: any) => agent.name === 'general');
     const helper = { ...general, name: 'helper', isDefault: undefined, description: 'Finds files.', allow_as_peer: false, tools: ['read'] };
-    await setup.command({ type: 'configure_agents', configuration: { revision: configuration.revision, agents: [...configuration.agents.filter((agent: any) => !['general', 'helper'].includes(agent.name)), { ...general, tools }, helper] } });
-  };
+    return [...saved.filter((agent: any) => !['general', 'helper'].includes(agent.name)), { ...general, tools }, helper];
+  });
   const profilesTool = (prompt: string) => agents.model.requests.find(request => startedWith(request, prompt)).tools?.find((tool: any) => tool.function.name === 'list_agent_profiles')?.function;
   const listed = async (prompt: string, args: object) => {
     agents.scripts.set(prompt, messages => called(messages, 'list_agent_profiles') ? { text: 'Listed: ' + text(messages.at(-1)) } : { tool: 'list_agent_profiles', arguments: args });

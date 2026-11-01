@@ -69,7 +69,7 @@ test('a new chat reads changed agent definitions only when it asks for a reload'
   const before = await auth({ action: 'draft_catalog' });
   expect(names(before)).toContain('general');
   const { isDefault: _isDefault, ...general } = before.config.agents.find((agent: any) => agent.name === 'general');
-  appSettings.write(join(daemon.home, '.piop', 'piop-define-agents', 'config.json'), JSON.stringify({ agents: [...before.config.agents, { ...general, name: 'added-on-disk' }] }));
+  appSettings.write(join(daemon.home, '.piop', 'agent-definitions.json'), JSON.stringify({ agents: [...before.config.agents, { ...general, name: 'added-on-disk' }] }));
   expect(names(await auth({ action: 'draft_catalog' }))).not.toContain('added-on-disk');
   expect(names(await auth({ action: 'draft_catalog', reload: true }))).toContain('added-on-disk');
 }, 60000);

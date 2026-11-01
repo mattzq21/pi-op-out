@@ -2,7 +2,7 @@ import { afterAll, afterEach, beforeAll, expect, test } from 'bun:test';
 import { Database } from 'bun:sqlite';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
-import { agentDaemon, called, text } from './agent-chats';
+import { agentDaemon, agentDefinitions, called, text } from './agent-chats';
 import { stoppedJob } from './stopped-job';
 
 let agents: Awaited<ReturnType<typeof agentDaemon>>;
@@ -253,12 +253,8 @@ test.concurrent('awaiting any subagent returns when the first one finishes, whil
 }, 120000);
 
 test('an agent limited to one subagent cannot start a second while the first is still working', async () => {
-  const setup = await agents.rootChat();
-  const original = await setup.command({ type: 'get_agent_configuration' });
-  const setLimit = async (limit?: number) => {
-    const current = await setup.command({ type: 'get_agent_configuration' });
-    await setup.command({ type: 'configure_agents', configuration: { revision: current.revision, agents: original.agents.map((agent: any) => limit === undefined ? agent : { ...agent, max_subagents: limit }) } });
-  };
+  const original = await agentDefinitions(agents.daemon);
+  const setLimit = (limit?: number) => agents.saveAgents(() => original.agents.map((agent: any) => limit === undefined ? agent : { ...agent, max_subagents: limit }));
   let releaseFirst!: (reply: { text: string }) => void;
   const firstReply = new Promise<{ text: string }>(resolve => { releaseFirst = resolve; });
   agents.scripts.set('Use one helper', messages => {
@@ -360,3 +356,29 @@ test('deleting a parent while its child runs a command stops the child and delet
   const listed = (await agents.daemon.invoke('list_sessions')).map((session: any) => session.path);
   expect(deleted.some((path: string) => listed.includes(path))).toBe(false);
 }, 60000);
+
+test('an agent saved during a turn can start as a subagent later in that turn', async () => {
+  const original = await agentDefinitions(agents.daemon);
+  let asked!: () => void, release!: () => void;
+  const askedPromise = new Promise<void>(resolve => { asked = resolve; });
+  const released = new Promise<void>(resolve => { release = resolve; });
+  agents.scripts.set('Start the late agent', async messages => {
+    if (called(messages, 'spawn_subagents')) return { text: 'Late result: ' + text(messages.at(-1)) };
+    asked(); await released;
+    return { tool: 'spawn_subagents', arguments: { tasks: [{ nickname: 'Late', task: 'Late agent task', agent: 'late-agent' }] } };
+  });
+  agents.scripts.set('Late agent task', () => ({ text: 'Late done.' }));
+  try {
+    const root = await agents.rootChat();
+    await root.command({ type: 'prompt', message: 'Start the late agent' });
+    await askedPromise;
+    await agents.saveAgents(saved => {
+      const { isDefault: _isDefault, ...general } = saved.find((agent: any) => agent.name === 'general');
+      return [...saved, { ...general, name: 'late-agent' }];
+    });
+    release();
+    const messages = await root.until(history => text(history.at(-1)).startsWith('Late result: '));
+    expect(text(messages.at(-1))).toBe('Late result: Late (late-agent): running');
+    await root.until(history => history.some(message => text(message).includes('Late done.')));
+  } finally { release(); await agents.saveAgents(() => original.agents); }
+}, 120000);

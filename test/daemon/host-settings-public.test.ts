@@ -29,7 +29,7 @@ test('settings saved from another machine change this host, but keep its own sho
   edited.contextWindowCap = 200_000;
   edited.debugMode = !before.debugMode;
   edited.keybindings.newConversation = 'Ctrl+F7';
-  await daemon.invoke('save_host_settings', { hostId: 'local', settings: edited, agentsChanged: false });
+  await daemon.invoke('save_host_settings', { hostId: 'local', settings: edited });
   const after = await daemon.invoke('load_host_settings', { hostId: 'local' });
   expect(after.contextWindowCap).toBe(200_000);
   expect(after.debugMode).toBe(before.debugMode);

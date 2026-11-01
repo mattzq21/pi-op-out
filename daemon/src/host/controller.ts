@@ -40,8 +40,8 @@ export class Host implements SessionHost {
   pending = new Map<string, any[]>();
   configurationValue: any | null = null;
   agentDefinitions: any = null;
+  /** Counts the loads of the agent definitions. Sessions report it, so clients know which definitions apply. */
   agentRevision = 0;
-  requestedAgentRevision = 0;
   maintenanceSet = new Set<string>();
   releaseGates = new Map<string, Mutex>();
   dialogGates = new Map<string, Mutex>();
@@ -309,19 +309,13 @@ export class Host implements SessionHost {
   }
 
   private async configure(configuration: any): Promise<void> {
-    const revision = configuration?.agentRevision;
-    if (typeof revision !== 'number' || !Number.isInteger(revision) || revision < 0 || revision > 9007199254740991
-      || !configuration.settings || typeof configuration.settings !== 'object' || Array.isArray(configuration.settings)
+    if (!configuration?.settings || typeof configuration.settings !== 'object' || Array.isArray(configuration.settings)
       || typeof configuration.autoCompaction !== 'boolean' || typeof configuration.autoRetry !== 'boolean') {
       throw new Error('Invalid daemon configuration');
     }
     const release = await this.configurationGate.lock();
     let sessions: Session[];
     try {
-      const changed = revision !== this.requestedAgentRevision;
-      const definitions = changed ? await Agents.load(this.home, this.storage, configuration.settings, false, this.services.fastModels()) : undefined;
-      if (definitions !== undefined) { this.agentDefinitions = definitions; this.agentRevision += 1; }
-      this.requestedAgentRevision = revision;
       const next = structuredClone(configuration);
       next.agentRevision = this.agentRevision;
       this.configurationValue = next;
@@ -339,7 +333,12 @@ export class Host implements SessionHost {
   }
 
   /** Reads the agent definitions again and applies them to every session. `target` must stay the same while they load. */
-  private async reloadAgentDefinitions(target: () => unknown = () => undefined): Promise<number> {
+  private reloadAgentDefinitions(target: () => unknown = () => undefined): Promise<number> {
+    return this.useAgentDefinitions(settings => Agents.load(this.home, this.storage, settings, false, this.services.fastModels()), target);
+  }
+
+  /** Applies the definitions that `read` gives to every session. `target` must stay the same while they are read. */
+  private async useAgentDefinitions(read: (settings: any) => Promise<any>, target: () => unknown = () => undefined): Promise<number> {
     const release = await this.configurationGate.lock();
     let revision: number;
     let sessions: Session[];
@@ -347,7 +346,7 @@ export class Host implements SessionHost {
       const before = target();
       if (this.configurationValue === null) throw new Error('Daemon is not configured');
       const settings = structuredClone(this.configurationValue.settings ?? null);
-      const definitions = await Agents.load(this.home, this.storage, settings, false, this.services.fastModels());
+      const definitions = await read(settings);
       if (before !== target()) throw new Error('The session changed while loading agent definitions. Reload from its current host.');
       this.agentRevision += 1;
       revision = this.agentRevision;
@@ -359,7 +358,45 @@ export class Host implements SessionHost {
       session.publish({ type: 'settings_pending', pending: true }, null);
       this.reconcile(session);
     }
+    await Promise.all(sessions.map(session => this.sendAgentDefinitions(session)));
     return revision;
+  }
+
+  /**
+   * Tells a session that the definitions changed, also during a turn: agents it starts later, such as subagents and reviews, use them.
+   * A failure does not undo the change; it is reported.
+   */
+  private async sendAgentDefinitions(session: Session): Promise<void> {
+    if (session.transient() || session.closed() || session.stopping()) return;
+    try { await session.executeWorker({ type: 'agent_definitions_changed' }); }
+    catch (error) { if (!session.closed() && !session.stopping()) this.output({ type: 'diagnostic', line: 'Could not give ' + session.key + ' the changed agent definitions: ' + errorText(error) }); }
+  }
+
+  private availability: Promise<void> | null = null;
+  private availabilityPending = false;
+
+  /** Provider models decide which agents can run, so a provider or fast model change loads the definitions again. Changes during a load cause one more load. */
+  refreshAgentAvailability(): void {
+    if (this.configurationValue === null) return;
+    if (this.availability) { this.availabilityPending = true; return; }
+    this.availability = (async () => {
+      do {
+        this.availabilityPending = false;
+        try { await this.reloadAgentDefinitions(); this.output({ type: 'agent_definitions_changed' }); }
+        catch (error) { this.output({ type: 'diagnostic', line: 'Could not update which agents can run: ' + errorText(error) }); }
+      } while (this.availabilityPending);
+    })().finally(() => { this.availability = null; });
+  }
+
+  /** Saves agent definitions, applies them to new agents and tells the clients. */
+  private async saveAgentDefinitions(configuration: unknown): Promise<{ revision: string; warnings: string[] }> {
+    let saved: Agents.Saved | undefined;
+    await this.useAgentDefinitions(async settings => {
+      saved = await Agents.save(this.home, this.storage, settings, configuration, this.services.fastModels());
+      return saved.definitions;
+    });
+    this.output({ type: 'agent_definitions_changed' });
+    return { revision: saved!.revision, warnings: saved!.warnings };
   }
 
   private agentReloadTarget(runtime: string, sessionId: string): Session {
@@ -395,6 +432,7 @@ export class Host implements SessionHost {
     switch (name) {
       case 'check_daemon_idle': case 'prepare_daemon_restart': return this.restartRequest(packet);
       case 'agent_definitions': if (flag(packet, 'reload')) await this.reloadAgentDefinitions(); return structuredClone(this.agentDefinitions);
+      case 'save_agent_definitions': return this.saveAgentDefinitions(packet.configuration);
       case 'conversation_owner': return this.ownership().owns(text(packet, 'sessionId'), text(packet, 'clientId'), flag(packet, 'allowReleased'));
       case 'submission_outcome': return this.submissions.outcome(text(packet, 'submissionId'));
       case 'conversation_mutation': return this.mutations.begin(packet);

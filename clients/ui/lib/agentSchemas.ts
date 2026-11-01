@@ -17,10 +17,3 @@ export const agentProfileSchema = z.object({
 });
 
 export const agentConfigSchema = z.object({ revision: z.string().optional(), agents: z.array(agentProfileSchema) });
-
-export const agentConfigChangeSchema = z.object({ revision: z.string(), warnings: z.array(z.string()).optional() });
-
-export const definedAgentsCapabilitySchema = z.object({
-  version: z.number().default(1), active: z.string(), locked: z.boolean().optional(), saved: z.boolean().optional(),
-  unavailable: z.boolean().optional(), config: agentConfigSchema,
-});

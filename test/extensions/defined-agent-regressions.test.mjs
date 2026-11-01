@@ -123,8 +123,7 @@ test('session-tree changes keep the selected agent, prompt and lock', async t =>
 });
 
 test('input before session startup preserves the selected prompt across reload', async t => {
-  const f = await agentFixture(t, { config: null }); await f.load();
-  await f.configure(configured([profile(), profile('reviewer')]));
+  const f = await agentFixture(t, { config: configured([profile(), profile('reviewer')]) }); await f.load();
   assert.deepEqual(await f.input('early'), { action: 'continue' });
   assert.equal(f.capability().active, 'general');
   assert.equal(f.capability().locked, true);

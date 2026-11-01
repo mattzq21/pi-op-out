@@ -1,16 +1,14 @@
-import { lock } from "../../daemon/resources/file-lock.cjs";
 import { createHash, randomUUID } from "node:crypto";
-import { constants, openSync, closeSync, mkdirSync, chmodSync } from "node:fs";
+import fs from "node:fs";
 import { DatabaseSync } from "node:sqlite";
 import { link, mkdir, open, readFile, realpath, rm } from "node:fs/promises";
 import { homedir } from "node:os";
-import { basename, dirname, extname, join, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Type } from "typebox";
 import { Check } from "typebox/value";
 import type { Config } from "./index.ts";
 import type { Agent, AgentSnapshot } from "./contracts.ts";
-import { readText as readSettings, write as writeSettings } from "../app-settings.cjs";
 
 function hasErrorCode(cause: unknown, code: string) {
   return cause instanceof Error && "code" in cause && cause.code === code;
@@ -40,75 +38,134 @@ async function writeTemporary(path: string, contents: string) {
   finally { await file.close(); }
 }
 
-/** Only entries with a nonblank name are agents. Piop skips other entries but keeps them in the file. */
+/** Piop's storage directory. The extension is installed in its piop-define-agents folder. */
+export const storageRoot = process.env.PIOP_STORAGE_ROOT || dirname(dirname(fileURLToPath(import.meta.url)));
+
+/** Relative prompt paths and agent extension paths start here. */
+export const agentDirectory = join(storageRoot, "piop-define-agents");
+
+/** The agent definitions are one JSON document in Piop's settings database, next to the app settings. */
+const DEFINITIONS = "agent-definitions.json";
+
+/** Opens the settings database to write, creating it and its tables when they are missing. */
+function openDatabase(root: string) {
+  const path = join(root, "sessions.sqlite");
+  fs.mkdirSync(root, { recursive: true, mode: 0o700 });
+  fs.closeSync(fs.openSync(path, fs.constants.O_CREAT | fs.constants.O_RDWR | fs.constants.O_NOFOLLOW, 0o600));
+  fs.chmodSync(path, 0o600);
+  const db = new DatabaseSync(path);
+
+  try {
+    db.exec(`PRAGMA busy_timeout=10000; PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL;
+      CREATE TABLE IF NOT EXISTS application_settings (name TEXT PRIMARY KEY, body BLOB);
+      CREATE TABLE IF NOT EXISTS agent_prompt_snapshots (digest TEXT PRIMARY KEY, contents TEXT);`);
+
+    return db;
+  } catch (error) { db.close(); throw error; }
+}
+
+/** Reads one row of the settings database without writing to it. undefined when the database, its table or the row is missing. */
+function readRow(root: string, table: "application_settings" | "agent_prompt_snapshots", sql: string, key: string): Record<string, unknown> | undefined {
+  const path = join(root, "sessions.sqlite");
+  let metadata;
+
+  try { metadata = fs.lstatSync(path); }
+  catch (error) { if (hasErrorCode(error, "ENOENT")) return undefined; throw error; }
+
+  if (!metadata.isFile()) throw new Error("Settings database is not a regular file");
+  const db = new DatabaseSync(path, { readOnly: true });
+
+  try {
+    db.exec("PRAGMA busy_timeout=10000");
+
+    if (!db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?").get(table)) return undefined;
+
+    return db.prepare(sql).get(key) as Record<string, unknown> | undefined;
+  } finally { db.close(); }
+}
+
+/** Runs change in one write transaction of the settings database. */
+function transaction<T>(change: (db: DatabaseSync) => T, root = storageRoot): T {
+  const db = openDatabase(root);
+
+  try {
+    db.exec("BEGIN IMMEDIATE");
+
+    try { const result = change(db); db.exec("COMMIT"); return result; }
+    catch (error) { db.exec("ROLLBACK"); throw error; }
+  } finally { db.close(); }
+}
+
+function bodyText(row: Record<string, unknown> | undefined): string | undefined {
+  return row?.body == null ? undefined : Buffer.from(row.body as Uint8Array).toString("utf8");
+}
+
+function storedBody(db: DatabaseSync, name: string): string | undefined {
+  return bodyText(db.prepare("SELECT body FROM application_settings WHERE name=?").get(name));
+}
+
+function revisionOf(body: string) { return createHash("sha256").update(body).digest("hex"); }
+
+/** Only entries with a nonblank name are agents. Piop skips other entries but keeps them in the document. */
 export const isNamedAgent = (agent: unknown): agent is { name: string } => Check(Type.Object({ name: Type.String({ pattern: "\\S" }) }), agent);
 
 export async function readConfigDocument() {
-  const body = readSettings(configPath);
+  const body = bodyText(readRow(storageRoot, "application_settings", "SELECT body FROM application_settings WHERE name=?", DEFINITIONS));
 
   if (body === undefined) throw Object.assign(new Error("Agent definitions are unavailable"), { code: "ENOENT" });
 
-  return { ...JSON.parse(body), revision: createHash("sha256").update(body).digest("hex") };
+  return { ...JSON.parse(body), revision: revisionOf(body) };
 }
 
-async function configLock() {
-  await durableDirectory(dirname(configPath));
-  const path = join(dirname(configPath), `${basename(configPath, extname(configPath))}.lock`);
-  const file = await open(path, constants.O_CREAT | constants.O_RDWR | constants.O_NOFOLLOW, 0o600);
-
-  try {
-    if (!(await file.stat()).isFile()) throw new Error("Agent configuration lock is not a regular file");
-    if (!await lock(file.fd, false, false, 10_000)) throw new Error("Agent definitions are busy; try saving again");
-
-    return file;
-  } catch (error) { await file.close(); throw error; }
-}
-
-async function existingConfig(): Promise<{ revision: string; unnamed: unknown[] }> {
-  try {
-    const document = await readConfigDocument();
-
-    return { revision: document.revision, unnamed: Array.isArray(document.agents) ? document.agents.filter((agent: unknown) => !isNamedAgent(agent)) : [] };
-  }
-  catch (error) { if (hasErrorCode(error, "ENOENT")) return { revision: "missing", unnamed: [] }; throw error; }
-}
-
-async function publishConfig(value: Config, unnamed: unknown[]) {
-  const { revision: _revision, ...configuration } = value;
-  const body = `${JSON.stringify({ ...configuration, agents: [...configuration.agents, ...unnamed], _revision: randomUUID() }, null, 2)}\n`;
-  writeSettings(configPath, body);
-  value.revision = createHash("sha256").update(body).digest("hex");
-  const warnings: string[] = [];
-
-  return { revision: value.revision, warnings };
-}
-
+/**
+ * Saves the agent definitions when value.revision is still the saved revision, in one transaction.
+ * createOnly saves them only when none are saved yet.
+ */
 export async function writeConfig(value: Config, createOnly = false): Promise<{ revision?: string; warnings: string[] } | void> {
-  const lock = await configLock();
-  let saved: Awaited<ReturnType<typeof publishConfig>> | undefined;
+  return transaction(db => {
+    const current = storedBody(db, DEFINITIONS);
+    const revision = current === undefined ? "missing" : revisionOf(current);
 
-  try {
-    const { revision: current, unnamed } = await existingConfig();
-
-    if (createOnly && current !== "missing") { value.revision = current;
+    if (createOnly && current !== undefined) { value.revision = revision;
 
     return; }
 
-    if (!createOnly && (!value.revision || value.revision !== current)) throw new Error("Agent definitions changed in another window or client. Reload them before saving.");
+    if (!createOnly && (!value.revision || value.revision !== revision)) throw new Error("Agent definitions changed in another window or client. Reload them before saving.");
+    const stored = current === undefined ? undefined : JSON.parse(current);
+    const unnamed = Array.isArray(stored?.agents) ? stored.agents.filter((agent: unknown) => !isNamedAgent(agent)) : [];
+    const { revision: _revision, ...configuration } = value;
+    const body = `${JSON.stringify({ ...configuration, agents: [...configuration.agents, ...unnamed], _revision: randomUUID() }, null, 2)}\n`;
+    db.prepare("INSERT INTO application_settings (name, body) VALUES (?, ?) ON CONFLICT(name) DO UPDATE SET body=excluded.body").run(DEFINITIONS, Buffer.from(body));
+    value.revision = revisionOf(body);
 
-    saved = await publishConfig(value, unnamed);
-
-    return saved;
-  } finally {
-    try { await lock.close(); }
-    catch (error) {
-      if (!saved) throw error;
-      saved.warnings.push(`Agent definitions were saved, but their lock could not be closed: ${String(error)}`);
-    }
-  }
+    return { revision: value.revision, warnings: [] };
+  });
 }
 
-export const configPath = process.env.PIOP_AGENT_CONFIG_PATH || join(dirname(fileURLToPath(import.meta.url)), "config.json");
+/**
+ * Moves the agent definitions and prompt snapshots from the old database in the agent directory into the settings database, once.
+ * Saved rows win over moved ones. The old database is removed after the move commits, so a crash before that repeats the move.
+ */
+export function moveLegacyDefinitions() {
+  const path = join(agentDirectory, "sessions.sqlite");
+
+  if (!fs.existsSync(path)) return;
+  const legacy = new DatabaseSync(path, { readOnly: true });
+
+  try {
+    const tables = new Set(legacy.prepare("SELECT name FROM sqlite_master WHERE type='table'").all().map(row => String(row.name)));
+    const body = tables.has("application_settings") ? storedBody(legacy, "config.json") : undefined;
+    const snapshots = tables.has("agent_prompt_snapshots") ? legacy.prepare("SELECT digest, contents FROM agent_prompt_snapshots").all() : [];
+    transaction(db => {
+      if (body !== undefined) db.prepare("INSERT INTO application_settings (name, body) VALUES (?, ?) ON CONFLICT(name) DO NOTHING").run(DEFINITIONS, Buffer.from(body));
+      const insert = db.prepare("INSERT INTO agent_prompt_snapshots VALUES (?, ?) ON CONFLICT(digest) DO UPDATE SET contents=COALESCE(agent_prompt_snapshots.contents, excluded.contents)");
+
+      for (const row of snapshots) insert.run(String(row.digest), row.contents === null ? null : String(row.contents));
+    });
+  } finally { legacy.close(); }
+
+  for (const name of ["sessions.sqlite", "sessions.sqlite-wal", "sessions.sqlite-shm", "config.lock"]) fs.rmSync(join(agentDirectory, name), { force: true });
+}
 
 /** Default prompt files live with the user's own agent files in ~/.agents, shared by every Piop profile. */
 export const DEFAULT_PROMPT_PATH = "~/.agents/prompts/system/default.md";
@@ -139,7 +196,7 @@ Guidelines:
 - Show file paths clearly when working with files`;
 
 export function resolvePromptPath(path: string) {
-  return path.startsWith("~/") ? join(homedir(), path.slice(2)) : resolve(dirname(configPath), path);
+  return path.startsWith("~/") ? join(homedir(), path.slice(2)) : resolve(agentDirectory, path);
 }
 
 export async function ensurePromptFile(relativePath: string, contents: string) {
@@ -176,50 +233,29 @@ export async function ensureDefaultAgentPrompt() {
   await ensurePromptFile(DEFAULT_AGENT_PROMPT_PATH, "");
 }
 
-function promptSnapshotDatabase(path: string) {
-  const directory = dirname(dirname(path));
-  mkdirSync(directory, { recursive: true, mode: 0o700 });
-  const database = join(directory, "sessions.sqlite");
-  closeSync(openSync(database, constants.O_CREAT | constants.O_RDWR | constants.O_NOFOLLOW, 0o600));
-  chmodSync(database, 0o600);
-  const db = new DatabaseSync(database);
-
-  try {
-    db.exec("PRAGMA busy_timeout=10000; PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; CREATE TABLE IF NOT EXISTS agent_prompt_snapshots (digest TEXT PRIMARY KEY, contents TEXT); BEGIN IMMEDIATE;");
-
-    return db;
-  } catch (error) { db.close(); throw error; }
-}
-
 function verifiedPrompt(contents: string, digest: string) {
   if (createHash("sha256").update(contents).digest("hex") !== digest) throw new Error("Saved agent prompt contents changed");
 
   return contents;
 }
 
+/** A snapshot path names its storage directory: <storage>/piop-define-agents/prompt-snapshots/<digest>.md. */
+function snapshotRoot(path: string) { return dirname(dirname(dirname(path))); }
+
 function savePromptSnapshot(path: string, digest: string, contents: string) {
   verifiedPrompt(contents, digest);
-  const db = promptSnapshotDatabase(path);
-
-  try {
+  transaction(db => {
     db.prepare("INSERT INTO agent_prompt_snapshots VALUES (?, ?) ON CONFLICT(digest) DO UPDATE SET contents=COALESCE(agent_prompt_snapshots.contents, excluded.contents)").run(digest, contents);
     verifiedPrompt(String(db.prepare("SELECT contents FROM agent_prompt_snapshots WHERE digest=?").get(digest)?.contents), digest);
-    db.exec("COMMIT");
-  } finally { db.close(); }
+  }, snapshotRoot(path));
 }
 
 export async function readPrompt(path: string): Promise<string> {
   const digest = basename(path, ".md");
 
   if (basename(dirname(path)) !== "prompt-snapshots" || !/^[a-f0-9]{64}\.md$/.test(basename(path))) return readFile(path, "utf8");
-  const db = promptSnapshotDatabase(path);
-  let contents: string | null;
-
-  try {
-    const row = db.prepare("SELECT contents FROM agent_prompt_snapshots WHERE digest=?").get(digest);
-    contents = row ? row.contents === null ? null : verifiedPrompt(String(row.contents), digest) : null;
-    db.exec("COMMIT");
-  } finally { db.close(); }
+  const row = readRow(snapshotRoot(path), "agent_prompt_snapshots", "SELECT contents FROM agent_prompt_snapshots WHERE digest=?", digest);
+  const contents = row && row.contents !== null ? verifiedPrompt(String(row.contents), digest) : null;
 
   if (contents === null) throw Object.assign(new Error(`Saved agent prompt is unavailable: ${path}`), { code: "ENOENT" });
 

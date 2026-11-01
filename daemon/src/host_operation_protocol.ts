@@ -3,7 +3,7 @@
 export type HostOperationName =
   | 'session-descendants' | 'index-sessions' | 'storage-inventory' | 'recover-missing-session' | 'relocate-session'
   | 'chat-branch-history' | 'discard-chat-branch'
-  | 'record-session-directory' | 'storage-transaction' | 'temporary-chat' | 'goal-text' | 'agent-definitions';
+  | 'record-session-directory' | 'storage-transaction' | 'temporary-chat' | 'goal-text' | 'agent-definitions' | 'save-agent-definitions';
 
 /** Values of the shared progress cell of a job. Whichever side changes QUEUED first decides if the operation starts. */
 export const QUEUED = 0;

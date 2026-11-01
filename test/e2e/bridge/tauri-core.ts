@@ -39,6 +39,8 @@ function responseKey(command: string, args?: NativeArguments) {
 
   if (command === "broker_request") return command + ":" + String(z.object({ action: z.string() }).catch({ action: "unknown" }).parse(args?.body).action);
 
+  if (command === "provider_auth") return command + ":" + String(z.object({ action: z.string() }).catch({ action: "unknown" }).parse(args?.request).action);
+
   return command === "pi_command" ? command + ":" + String(args?.command?.type) : command;
 }
 
@@ -101,11 +103,12 @@ const bridgedInvoke: Invoke = async (cmd, payload, options) => {
 
   if (!routed) return realInvoke(cmd, payload, options);
   const args = routed.args as NativeArguments | undefined;
-  if (routed.command === "provider_auth" && (args?.request as { action?: string })?.action === "draft_catalog") return draftCatalog;
   const key = responseKey(routed.command, args);
   const responses = z.record(z.string(), z.json()).parse(JSON.parse(responseField.value || "{}"));
+  // The host catalog is mocked unless a spec mocks its own, or asks for the real one with "native".
+  if (key === "provider_auth:draft_catalog" && !(key in responses)) return draftCatalog;
 
-  const mocked = mockedValue(key, args, responses);
+  const mocked = responses[key] === "native" ? undefined : mockedValue(key, args, responses);
 
   if (callField.value) {
     const calls = z.array(z.json()).parse(JSON.parse(callField.value));

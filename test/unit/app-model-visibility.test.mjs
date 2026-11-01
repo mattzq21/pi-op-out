@@ -15,7 +15,7 @@ async function modelApp(t, overrides = {}) {
       models: [{ id: 'known', name: 'Known' }, { id: 'other', name: 'Other' }],
     } } }));
     const original = await daemon.invoke('load_app_settings');
-    await daemon.invoke('save_host_settings', { hostId: 'local', agentsChanged: false, settings: { ...original, hiddenModels: [], ...overrides } });
+    await daemon.invoke('save_host_settings', { hostId: 'local', settings: { ...original, hiddenModels: [], ...overrides } });
   } });
 }
 
@@ -34,7 +34,7 @@ test('model picker reports and applies settings changes', { timeout: 90000 }, as
     const saveAlias = async alias => {
       const settings = await daemon.invoke('load_app_settings');
       await act(async () => {
-        await daemon.invoke('save_host_settings', { hostId: 'local', agentsChanged: false, settings: { ...settings, modelAliases: { 'visibility-test/known': alias } } });
+        await daemon.invoke('save_host_settings', { hostId: 'local', settings: { ...settings, modelAliases: { 'visibility-test/known': alias } } });
         await settle();
       });
     };
@@ -49,7 +49,7 @@ test('model picker reports and applies settings changes', { timeout: 90000 }, as
     const saveHidden = async hiddenModels => {
       const settings = await daemon.invoke('load_app_settings');
       await act(async () => {
-        await daemon.invoke('save_host_settings', { hostId: 'local', agentsChanged: false, settings: { ...settings, hiddenModels } });
+        await daemon.invoke('save_host_settings', { hostId: 'local', settings: { ...settings, hiddenModels } });
         await settle();
       });
     };

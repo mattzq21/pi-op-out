@@ -622,9 +622,9 @@ export class NativeTransport {
   loadSettingsChange() { return this.settings.loadChange(); }
   loadHostSettings() { return this.settings.loadHost(); }
   loadHostSettingsChange() { return this.settings.loadHostChange(); }
-  saveHostSettings(settings: AppSettings, agentsChanged = false) { return this.settings.saveHost(settings, agentsChanged); }
-  saveSettings(settings: AppSettings, reconnect = true, agentHostId?: string, scope: "all" | "client" | "daemon" = "all", baseline?: AppSettings) {
-    return this.settings.save(settings, reconnect, agentHostId, scope, baseline);
+  saveHostSettings(settings: AppSettings) { return this.settings.saveHost(settings); }
+  saveSettings(settings: AppSettings, reconnect = true, scope: "all" | "client" | "daemon" = "all", baseline?: AppSettings) {
+    return this.settings.save(settings, reconnect, scope, baseline);
   }
   homeDirectory(hostId: string) { return call("home_directory", { hostId }, z.string()); }
   newChatBranches(path: string, hostId: string) { return call("new_chat_branches", { path, hostId }, z.object({ repository: z.string(), branches: z.array(z.string()), defaultBranch: z.string().nullable() }).nullable()); }

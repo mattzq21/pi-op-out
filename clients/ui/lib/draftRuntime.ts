@@ -13,14 +13,18 @@ const catalogs = new Map<string, Promise<z.infer<typeof catalogSchema>>>();
 
 export function clearDraftCatalogs() { catalogs.clear(); }
 
-function loadCatalog(hostId: string, reload = false) {
+/**
+ * The host's models, agent definitions, commands and skills, which the daemon reads without starting Pi.
+ * cached: the kept copy when there is one. fresh: read again. reload: the host also reads its agent definitions again.
+ */
+export function hostCatalog(hostId: string, mode: "cached" | "fresh" | "reload" = "cached") {
   const connection = captureDaemonTransport();
   const key = JSON.stringify([connection.identity, hostId]);
   const cached = catalogs.get(key);
 
-  if (cached && !reload) return cached;
+  if (cached && mode === "cached") return cached;
 
-  const pending = nativeCall("provider_auth", { hostId, request: { action: "draft_catalog", reload } }, catalogSchema).catch(reason => {
+  const pending = nativeCall("provider_auth", { hostId, request: { action: "draft_catalog", reload: mode === "reload" } }, catalogSchema).catch(reason => {
     if (catalogs.get(key) === pending) catalogs.delete(key);
 
     throw reason;
@@ -52,12 +56,12 @@ export class DraftRuntime {
   setFastMode(enabled: boolean) { this.fast = enabled; this.chosen = true; }
 
   async load() {
-    this.catalog = await loadCatalog(this.hostId());
+    this.catalog = await hostCatalog(this.hostId());
   }
 
   /** Reads the agent definitions on the host again and publishes the new list while `current` still returns true. A draft the user has not changed shows the new default agent. */
   async reload(current: () => boolean) {
-    const catalog = await loadCatalog(this.hostId(), true);
+    const catalog = await hostCatalog(this.hostId(), "reload");
 
     if (!current()) throw new Error("The conversation started before agent definitions finished reloading. Reload them again.");
     this.catalog = catalog;
@@ -121,8 +125,6 @@ export class DraftRuntime {
   }
 
   private change(command: RpcCommand) {
-    if (command.type === "get_agent_configuration") return this.catalog?.config;
-
     if (command.type === "select_agent") return this.selectAgent(z.string().parse(command.agent));
 
     if (command.type === "set_model") {
@@ -159,8 +161,8 @@ export class DraftRuntime {
   }
 
   private publishAgents() {
-    const config = this.catalog?.config ?? { agents: [] };
-    const capability = { version: 1, active: this.agent, locked: false, saved: false, unavailable: !config.agents.some(agent => agent.name === this.agent && !agent.unavailableReason), config };
+    const agents = this.catalog?.config.agents ?? [];
+    const capability = { version: 1, active: this.agent, locked: false, saved: false, unavailable: !agents.some(agent => agent.name === this.agent && !agent.unavailableReason) };
     this.emit({ type: "extension_ui_request", id: crypto.randomUUID(), method: "setStatus", statusKey: DEFINED_AGENTS_STATUS_KEY, statusText: `json:${encodeAgentValue(capability)}` });
   }
 }

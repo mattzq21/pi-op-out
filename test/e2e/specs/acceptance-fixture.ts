@@ -1,12 +1,10 @@
 import { $, browser } from "@wdio/globals";
 import { randomUUID } from "node:crypto";
-import { mkdirSync, readFileSync, renameSync, rmdirSync } from "node:fs";
-import { join } from "node:path";
+import { mkdirSync, renameSync, rmdirSync } from "node:fs";
 import { encodeAgentValue } from "../../../clients/ui/lib/agentProtocol.js";
 import type { AppSettings, DefinedAgentsCapability } from "../../../clients/ui/types.js";
 import { z } from "zod";
 import { appSettingsSchema, modelSchema } from "../../../clients/ui/lib/responseSchemas.js";
-import { agentConfigSchema } from "../../../clients/ui/lib/agentSchemas.js";
 import { nativeArgumentsSchema, jsonResultSchema } from "../../../clients/ui/lib/transportSchemas.js";
 import { app } from "../pageobjects/app.page.js";
 
@@ -43,9 +41,7 @@ export const isUserPrompt = (value: unknown): value is UserPrompt => {
   return command.success && !/^\/(?:fast|pi-desktop-fast-status|pi-define-agents-use)(?:\s|$)/.test(command.data.message ?? "");
 };
 
-const testHome = process.env.PIOP_TEST_HOME || (() => { throw new Error("E2E requires an isolated home"); })();
-
-export const installedAgentConfigPath = join(testHome, ".piop", "piop-define-agents", "config.json");
+if (!process.env.PIOP_TEST_HOME) throw new Error("E2E requires an isolated home");
 
 export const callBridge = () => $('textarea[aria-label="E2E calls"]');
 
@@ -109,7 +105,6 @@ export const withSessionSnapshot = (responses: BackendResponses) => {
 
     if (agentEvent) start.events = [agentEvent];
     responses.start_pi = start;
-    responses["pi_command:get_agent_configuration"] ??= acceptanceAgents().config;
   }
 
   const state = responses["pi_command:get_state"];
@@ -265,19 +260,6 @@ export const acceptanceAgents = (): DefinedAgentsCapability => ({
     ],
   },
 });
-
-export const installedAgents = (): DefinedAgentsCapability => {
-  const config = agentConfigSchema.partial().parse(JSON.parse(readFileSync(installedAgentConfigPath, "utf8")));
-  const agents = config.agents ?? [];
-
-  return {
-    version: 1,
-    active: agents.some((agent) => agent.name === "general") ? "general" : agents[0]?.name ?? "general",
-    config: {
-      agents,
-    },
-  };
-};
 
 let agentEvent: BackendResponses | undefined;
 

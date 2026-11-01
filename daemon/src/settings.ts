@@ -33,10 +33,10 @@ export function readSettingsAt(path: string): AppSettings {
   return settings;
 }
 
-export async function saveAppSettings(app: App, settings: AppSettings, agentHostId: string | undefined): Promise<any> {
+export async function saveAppSettings(app: App, settings: AppSettings): Promise<any> {
   settings.tools = savedTools(await settingsPath());
   const runtime = app.pi;
-  const change = await saveSettingsWith(runtime, settings, agentHostId,
+  const change = await saveSettingsWith(runtime, settings,
     () => settingsPath(),
     settings => daemon.invalidateChanged(app, runtime, settings),
     settings => daemon.updateSettings(app, runtime, settings));
@@ -86,7 +86,7 @@ export function settingsBody(settings: AppSettings): Buffer {
 }
 
 export async function saveSettingsWith(
-  runtime: PiRuntime, settings: AppSettings, agentHostId: string | undefined,
+  runtime: PiRuntime, settings: AppSettings,
   path: () => Promise<string>,
   invalidate: (settings: AppSettings) => Promise<void>,
   synchronize: (settings: AppSettings) => Promise<void>,
@@ -105,14 +105,13 @@ export async function saveSettingsWith(
       try {
         settings.settingsRevision = undefined;
         body = settingsBody(settings);
-        save = synchronization.Save.prepare(file, body, agentHostId);
+        save = synchronization.Save.prepare(file, body);
         publication = save.publish(body, warnings);
         settings.settingsRevision = settingsRevision(body);
       } finally { revision.release(); }
       const change = save.change(settings);
       change.publication = publication;
       if (publication.error !== undefined) change.settings.settingsDurabilityError = publication.error;
-      save.restoreAgents(runtime, change, warnings);
       await applySavedSettings(settings, invalidate, synchronize, warnings);
       save.finish(change, warnings);
       change.warnings = warnings;
@@ -124,13 +123,6 @@ export async function saveSettingsWith(
 async function applySavedSettings(settings: AppSettings, invalidate: (settings: AppSettings) => Promise<void>, synchronize: (settings: AppSettings) => Promise<void>, warnings: string[]): Promise<void> {
   try { await invalidate(settings); } catch (error: any) { warnings.push(`Settings were saved, but runtime invalidation failed: ${error.message ?? error}`); }
   try { await synchronize(settings); } catch (error: any) { warnings.push(`Settings were saved, but runtime synchronization failed: ${error.message ?? error}`); }
-}
-
-export function publishSavedAgentRevision(runtime: PiRuntime, hostId: string | undefined, revision: number, change: any, _warnings: string[]): void {
-  if (hostId === undefined) return;
-  runtime.agentConfigRevision = Math.max(runtime.agentConfigRevision, revision);
-  runtime.agentConfigRevisions.set(hostId, revision);
-  change.agentConfigChange = { hostId, revision };
 }
 
 function appendSynchronizationWarning(change: any, warning: string): void {

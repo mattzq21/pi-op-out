@@ -158,7 +158,7 @@ function configureLocalExtensions(command: LaunchCommand, settings: AppSettings,
   const root = Ext.generatedExtensionRoot();
   Ext.prepareRuntimeBridge();
   command.env.PIOP_AGENT_RESOURCES = JSON.stringify({ ...Ext.agentResources(settings), pluginAgentTools: Contributions.agentTools() });
-  command.env.PIOP_AGENT_CONFIG_PATH = join(homeDir(), STORAGE_DIRECTORY, 'piop-define-agents/config.json');
+  command.env.PIOP_STORAGE_ROOT = join(homeDir(), STORAGE_DIRECTORY);
   command.env.PIOP_CONTEXT_CAP_SETTINGS_PATH = join(root, 'context-cap-settings.json');
   command.env.PIOP_GENERATED_EXTENSION_ROOT = root;
   const mcpExtension = Ext.prepareMcpBridge();

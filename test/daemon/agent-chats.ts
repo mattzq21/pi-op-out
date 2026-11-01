@@ -1,7 +1,7 @@
 import { execFileSync } from 'node:child_process';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { startDaemon } from './harness';
+import { startDaemon, type Client } from './harness';
 import { scriptedModel, type Reply } from './scripted-model';
 
 /** The text of a model request message, whatever its content form. */
@@ -24,6 +24,17 @@ export function gitRepository(path: string): string {
   git('add', '.');
   git('commit', '--quiet', '-m', 'initial');
   return path;
+}
+
+/** The host's agent definitions, as the settings page reads them. */
+export async function agentDefinitions(daemon: Client): Promise<any> {
+  return (await daemon.invoke('provider_auth', { hostId: 'local', request: { action: 'draft_catalog' } })).config;
+}
+
+/** Saves the agent profiles that change makes from the saved ones, as Settings → Agents does. */
+export async function saveAgentDefinitions(daemon: Client, change: (agents: any[]) => any[]): Promise<any> {
+  const configuration = await agentDefinitions(daemon);
+  return daemon.invoke('save_agent_definitions', { hostId: 'local', configuration: { revision: configuration.revision, agents: change(configuration.agents) } });
 }
 
 /**
@@ -63,12 +74,11 @@ export async function agentDaemon() {
     return { ...chat, cwd, runtimeId, command, history, until };
   };
 
-  /** Adds tools to every agent profile, as Settings → Agents → Tools does. Only chats started afterwards use them. */
-  const enableAgentTools = async (...tools: string[]) => {
-    const chat = await rootChat();
-    const configuration = await chat.command({ type: 'get_agent_configuration' });
-    await chat.command({ type: 'configure_agents', configuration: { revision: configuration.revision, agents: configuration.agents.map((agent: any) => ({ ...agent, tools: [...new Set([...(agent.tools ?? []), ...tools])] })) } });
-  };
+  /** Saves the agent profiles that change makes from the saved ones, as Settings → Agents does. Only chats started afterwards use them. */
+  const saveAgents = (change: (agents: any[]) => any[]) => saveAgentDefinitions(daemon, change);
 
-  return { daemon, model, scripts, rootChat, enableAgentTools, close: async () => { await model.close(); await daemon.dispose(); } };
+  /** Adds tools to every agent profile, as Settings → Agents → Tools does. Only chats started afterwards use them. */
+  const enableAgentTools = (...tools: string[]) => saveAgents(agents => agents.map(agent => ({ ...agent, tools: [...new Set([...(agent.tools ?? []), ...tools])] })));
+
+  return { daemon, model, scripts, rootChat, saveAgents, enableAgentTools, close: async () => { await model.close(); await daemon.dispose(); } };
 }

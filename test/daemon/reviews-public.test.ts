@@ -23,8 +23,7 @@ test.concurrent('a review chat sends its result to the reviewed chat with send_t
   agents.scripts.set('You are the dedicated code review agent', messages => called(messages, 'send_to_main') ? { text: 'Sent.' } : { tool: 'send_to_main', arguments: { message: 'Missing EOF token' } });
   const chat = await agents.rootChat({ visible: true });
   // The review agent answers with the scripted model.
-  const configuration = await chat.command({ type: 'get_agent_configuration' });
-  await chat.command({ type: 'configure_agents', configuration: { revision: configuration.revision, agents: configuration.agents.map((agent: any) => agent.name === 'reviewer' ? { ...agent, model: 'scripted/scripted-model' } : agent) } });
+  await agents.saveAgents(saved => saved.map((agent: any) => agent.name === 'reviewer' ? { ...agent, model: 'scripted/scripted-model' } : agent));
   await chat.command({ type: 'prompt', message: 'Write the lexer' });
   await chat.until(history => text(history.at(-1)) === 'Lexer done.');
   const review = await openReview(chat, '/review src/lexer.ts');

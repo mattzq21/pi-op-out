@@ -12,35 +12,63 @@ export const encoded = value => Buffer.from(JSON.stringify(value)).toString('bas
 
 export const profile = (name = 'general', extra = {}) => ({ name, model: '', effort: '', path_systemprompt: 'prompt.md', path_agent_prompt: '', tools: ['read'], skills: [], mcpServers: {}, extensions: [], ...extra });
 
-export const readStoredConfig = dir => { const body = appSettings.readText(join(dir, 'config.json'));
+/** The agent definitions are a row of the settings database in the storage directory, the parent of the agent directory. */
+const definitionsPath = dir => join(dirname(dir), 'agent-definitions.json');
 
-  if (body === undefined) throw Object.assign(new Error(`Agent configuration is missing: ${join(dir, 'config.json')}`), { code: 'ENOENT' });
+export const readStoredConfig = dir => { const body = appSettings.readText(definitionsPath(dir));
+
+  if (body === undefined) throw Object.assign(new Error(`Agent configuration is missing: ${definitionsPath(dir)}`), { code: 'ENOENT' });
 
   return JSON.parse(body); };
 
-export const writeStoredConfig = (dir, content) => appSettings.write(join(dir, 'config.json'), content);
+export const writeStoredConfig = (dir, content) => appSettings.write(definitionsPath(dir), content);
 
 export function writeCorruptConfig(dir, content) {
-  appSettings.write(join(dir, 'config.json'), '{}');
-  const db = new DatabaseSync(join(dir, 'sessions.sqlite'));
+  appSettings.write(definitionsPath(dir), '{}');
+  const db = new DatabaseSync(join(dirname(dir), 'sessions.sqlite'));
 
-  try { db.prepare('UPDATE application_settings SET body=? WHERE name=?').run(Buffer.from(content), 'config.json'); } finally { db.close(); }
+  try { db.prepare('UPDATE application_settings SET body=? WHERE name=?').run(Buffer.from(content), 'agent-definitions.json'); } finally { db.close(); }
+}
+
+/** The startup resources that the daemon gives the agent definitions: the same ones Pi gets. */
+const startupResources = () => JSON.parse(process.env.PIOP_AGENT_RESOURCES ?? 'null') ?? { tools: { enabledTools: [], registeredTools: [] }, skills: { userInvokedSkills: [], agentInvokedSkills: [] }, pluginAgentTools: [] };
+
+/**
+ * Reads and saves agent definitions as the daemon does, with the loader compiled into dir.
+ * initialize: the load at daemon start, which creates and migrates the definitions.
+ */
+export async function agentDefinitions(dir) {
+  const loader = await import(pathToFileURL(join(dir, 'daemon-loader.mjs')));
+  const configuration = async () => {
+    const { config } = await loader.loadAgentDefinitions({ settings: startupResources(), initial: false });
+    return { ...config, agents: config.agents.map(({ unavailableReason: _reason, ...agent }) => agent) };
+  };
+
+  return {
+    initialize: () => loader.loadAgentDefinitions({ settings: startupResources(), initial: true }),
+    configuration,
+    configure: async value => {
+      const current = await configuration();
+      return loader.saveAgentDefinitions({ settings: startupResources(), configuration: { revision: current.revision, agents: current.agents, ...value } });
+    },
+  };
 }
 
 export const configured = agents => ({ agents: agents, pluginToolsApplied: ['web_search'], sessionToolsDefaultApplied: true, subagentsDefaultApplied: true, bundledAgentsApplied: ['workhorse', 'reviewer'] });
 
 export async function agentFixture(t, options = {}) {
   options = { files: {}, effort: 'high', model: { provider: 'test', id: 'default' }, config: configured([profile(), profile('reviewer')]), ...options };
-  const dir = await mkdtemp(join(tmpdir(), 'piop-agent-contract-'));
+  const root = await mkdtemp(join(tmpdir(), 'piop-agent-contract-'));
+  const dir = join(root, 'piop-define-agents'); await mkdir(dir);
   const home = join(dir, 'home'); await mkdir(home);
   const previous = { ...process.env };
 
   for (const name of ['PI_DEFINE_AGENTS_RUNTIME_DEFAULTS', 'PI_DEFINE_AGENTS_ACTIVE', 'PIOP_AGENT_DRAFT_STATE', 'PI_DESKTOP_MCP_CONFIG', 'PIOP_STORAGE_DIRECTORY']) delete process.env[name];
-  Object.assign(process.env, { HOME: home, PIOP_AGENT_CONFIG_PATH: join(dir, 'config.json') }, options.env);
+  Object.assign(process.env, { HOME: home, PIOP_STORAGE_ROOT: root }, options.env);
   t.after(async () => {
     for (const key of Object.keys(process.env)) if (!(key in previous)) delete process.env[key];
     Object.assign(process.env, previous);
-    await rm(dir, { recursive: true, force: true });
+    await rm(root, { recursive: true, force: true });
   });
 
   const file = async (name, content) => { const path = join(dir, name); await mkdir(dirname(path), { recursive: true });
@@ -56,6 +84,8 @@ export async function agentFixture(t, options = {}) {
   for (const [name, content] of Object.entries(options.files)) await file(name, content);
 
   await compileAgentFixture(dir);
+  const definitions = await agentDefinitions(dir);
+  let initialized = false;
 
   const handlers = new Map(), commands = new Map(), listeners = new Map(), statuses = new Map();
   const entries = structuredClone(options.entries ?? []), notices = [], messages = [], modelSelections = [];
@@ -119,6 +149,8 @@ export async function agentFixture(t, options = {}) {
       skills: input.skills ?? { userInvokedSkills: [], agentInvokedSkills: (options.config?.agents ?? []).flatMap(agent => agent?.skills ?? []) },
       pluginAgentTools: input.pluginAgentTools ?? ['web_search'],
     });
+    // The daemon creates and migrates the agent definitions when it starts, before any agent.
+    if (!initialized) { await definitions.initialize(); initialized = true; }
     if (!options.realFastMode) return defineLocal();
     const loadFast = async () => {
       if (registerFastMode) registerFastMode();
@@ -141,7 +173,7 @@ export async function agentFixture(t, options = {}) {
   };
 
   return {
-    dir, home, file, pi, ctx, entries, notices, messages, statuses, commands, tools, modelSelections, emit,
+    root, dir, home, file, pi, ctx, entries, notices, messages, statuses, commands, tools, modelSelections, emit,
     load, start: () => emit('session_start'), input: text => emit('input', { text }),
     reloadExtensions: async () => {
       await emit('session_shutdown');
@@ -152,10 +184,12 @@ export async function agentFixture(t, options = {}) {
       await load(); await emit('session_start');
     },
     select: name => rpc('select_agent', { agent: name }),
-    configure: async value => rpc('configure_agents', { configuration: { revision: (await rpc('get_agent_configuration')).revision, ...value } }),
-    configuration: () => rpc('get_agent_configuration'),
+    configure: definitions.configure,
+    /** Writes definitions as saved earlier, without the checks of a save: the files they name may have changed since. */
+    store: async value => writeStoredConfig(dir, JSON.stringify(value)),
+    configuration: definitions.configuration,
     config: async () => readStoredConfig(dir),
-    rawConfig: () => appSettings.readText(join(dir, 'config.json')),
+    rawConfig: () => appSettings.readText(definitionsPath(dir)),
     corruptConfig: content => writeCorruptConfig(dir, content),
     readSnapshot: async path => (await import(pathToFileURL(join(dir, 'prompts.mjs')))).readPrompt(path),
     state: () => JSON.parse(process.env.PIOP_AGENT_DRAFT_STATE || 'null')?.state ?? entries.findLast(entry => entry.customType === 'pi-define-agents-state' && entry.data)?.data,

@@ -7,8 +7,8 @@ import { type Accessor } from "solid-js";
 import { createDependencyEffect, type Dispatch, type RefObject, type StateUpdate } from "./lib/solid";
 
 import { MCP_STATUS_KEY, PROMPT_CONTEXT_STATUS_KEY, staleExtensionContext, type OwnedExtensionDialog, type TerminalTarget } from "./appSupport";
-import { decodeAgentValue, DEFINED_AGENTS_STATUS_KEY } from "./lib/agentProtocol";
-import { definedAgentsCapabilitySchema } from "./lib/agentSchemas";
+import { DEFINED_AGENTS_STATUS_KEY } from "./lib/agentProtocol";
+import { agentStatusReader } from "./lib/hostAgents";
 import { NativeTransport } from "./lib/nativeTransport";
 import { OPEN_AUXILIARY_CHAT } from "./lib/auxiliaryChats";
 import type { AgentState, AppSettings, DefinedAgentsCapability, ExtensionUiRequest, RpcEvent } from "./types";
@@ -53,6 +53,12 @@ export function useAppEvents(options: Accessor<AppEventsContext>) {
   createDependencyEffect(() => { const capturedOptions = options();
     let cancelled = false; let reconnecting = false; let initializing = false;
     const current = () => !cancelled && capturedOptions.activeTransportRef.current === capturedOptions.transport;
+    const agentStatus = agentStatusReader(() => capturedOptions.transport.currentHostId(), capability => {
+      if (cancelled) return;
+      capturedOptions.setDefinedAgents(capability);
+
+      if (capability && !initializing) void capturedOptions.refreshSession().catch(() => undefined);
+    }, reason => { if (!cancelled) capturedOptions.addNotice({ title: "Could not read agent list", message: reason instanceof Error ? reason.message : String(reason) }); });
     capturedOptions.setError(undefined);
     document.title = "piop"; capturedOptions.setStatuses({}); capturedOptions.setWidgets({});
 
@@ -107,16 +113,7 @@ export function useAppEvents(options: Accessor<AppEventsContext>) {
 
         const setDefinedAgentStatus = () => {
           capturedOptions.setExtensionOwner(capturedOptions.transport);
-
-          try {
-            const capability = request.statusText?.startsWith("json:") ? definedAgentsCapabilitySchema.parse(decodeAgentValue(request.statusText.slice(5))) : undefined;
-            capturedOptions.setDefinedAgents(capability);
-
-            if (capability && !initializing) void capturedOptions.refreshSession().catch(() => undefined);
-          } catch (reason) {
-            capturedOptions.setDefinedAgents(undefined);
-            capturedOptions.addNotice({ title: "Could not read agent list", message: reason instanceof Error ? reason.message : String(reason) });
-          }
+          agentStatus.receive(request.statusText);
         };
 
         const setExtensionStatus = () => {
@@ -201,7 +198,7 @@ export function useAppEvents(options: Accessor<AppEventsContext>) {
       };
 
       const handleDisconnected = () => {
-        capturedOptions.setDefinedAgents(undefined);
+        agentStatus.receive(undefined);
         capturedOptions.setStatuses({});
         capturedOptions.setWidgets({});
         document.title = "piop";
@@ -236,6 +233,6 @@ export function useAppEvents(options: Accessor<AppEventsContext>) {
 
     loadSelectedSession().catch((cause: unknown) => { if (current() && !isConversationChanged(cause)) capturedOptions.setError(cause instanceof Error ? cause.message : String(cause)); });
 
-    return () => { cancelled = true; unsubscribe(); capturedOptions.flushTerminalOutput(); };
+    return () => { cancelled = true; unsubscribe(); agentStatus.close(); capturedOptions.flushTerminalOutput(); };
   }, () => [options().addNotice, options().configureRuntime, options().handleEvent, options().loadSettings, options().queueExtensionDialog, options().queueTerminalOutput, options().refresh, options().refreshSession, options().transport]);
 }

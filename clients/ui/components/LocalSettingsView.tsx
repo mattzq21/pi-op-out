@@ -7,22 +7,21 @@ import { Dynamic } from "solid-js/web";
 import { createDependencyEffect } from "../lib/solid";
 
 import { ArrowLeft, Monitor } from "lucide-solid";
-import { agentConfigChangeSchema } from "../lib/agentSchemas";
 import { settingsChangeSchema } from "../lib/responseSchemas";
-import { restoreAgentConfiguration, saveAgentConfiguration } from "../lib/agentConfiguration";
+import { AgentsSavedError, saveAgentDefinitions } from "../lib/hostAgents";
 import { NativeTransport } from "../lib/nativeTransport";
-import { reloadSettingsResources, settingsResources } from "../lib/settingsResources";
+import { settingsResources, type SettingsResources } from "../lib/settingsResources";
 import { SettingsPublication } from "../lib/settingsPublication";
 import { SettingsSaveError } from "../lib/clientPreferenceMerge";
 import { isMobile, listen } from "../lib/platform";
-import type { AgentConfig, AppSettings, Model, SessionSummary, SettingsChange, SettingsPublication as Publication } from "../types";
+import type { AgentConfig, AppSettings, SessionSummary, SettingsChange, SettingsPublication as Publication } from "../types";
 import { visibleClientSections, daemonSections, SettingsView, type Section } from "./SettingsView";
 
 interface Props {
   settings: AppSettings;
   pendingSettingsCount: number;
   sessions: SessionSummary[];
-  onSave: (settings: AppSettings, config?: AgentConfig, previousConfig?: AgentConfig, baseline?: AppSettings, scope?: "all" | "client" | "daemon") => Promise<void>;
+  onSave: (settings: AppSettings, baseline?: AppSettings, scope?: "all" | "client" | "daemon") => Promise<void>;
   onDirtyChange: (dirty: boolean) => void;
   onBack: () => void;
   onSavingChange?: (saving: boolean) => void;
@@ -64,7 +63,7 @@ export function LocalSettingsView(props: Props) {
 function DaemonSettingsEditor(componentProps: Props & { target: string; label: string; preserveHostSettings: (hostId: string, settings: AppSettings, publication?: Publication) => AppSettings }) {
   const hostId = createMemo(() => (componentProps.target === "client" ? "local" : componentProps.target));
   const [hostSettings, setHostSettings] = createSignal<AppSettings>();
-  const [resources, setResources] = createSignal<{ config: AgentConfig; models: Model[]; levels: string[] }>();
+  const [resources, setResources] = createSignal<SettingsResources>();
   const [error, setError] = createSignal<string>();
   const [loadingModels, setLoadingModels] = createSignal<string[]>([]);
   const [saveWarnings, setSaveWarnings] = createSignal<string[]>();
@@ -86,6 +85,7 @@ function DaemonSettingsEditor(componentProps: Props & { target: string; label: s
       listen("pi://provider-auth-changed", ({ payload }) => { if (!cancelled && payload.hostId === capturedHostId) setRevision((value) => value + 1); }, z.object({ hostId: z.string() })),
       listen("pi://settings-changed", ({ payload }) => { if (!cancelled && capturedHostId === "local") { receiveChange(payload, capturedHostId); setRevision((value) => value + 1); } }, settingsChangeSchema),
       listen("pi://host-settings-changed", ({ payload }) => { if (!cancelled && payload.hostId === capturedHostId) { receiveChange(payload, capturedHostId); setRevision((value) => value + 1); } }, settingsChangeSchema.extend({ hostId: z.string() })),
+      listen("pi://agent-definitions-changed", ({ payload }) => { if (!cancelled && payload.hostId === capturedHostId) setRevision((value) => value + 1); }, z.object({ hostId: z.string() })),
     ];
 
     return () => { cancelled = true;
@@ -108,7 +108,7 @@ function DaemonSettingsEditor(componentProps: Props & { target: string; label: s
         if (cancelled) return;
         receiveChange(loaded, capturedHostId);
         // The first load uses the resources loaded in the background; a later one follows a change and loads them again.
-        const loadedResources = await (capturedRevision === 0 ? settingsResources(capturedHostId) : reloadSettingsResources(capturedHostId));
+        const loadedResources = await settingsResources(capturedHostId, capturedRevision !== 0);
 
         if (cancelled) return;
         const recorded = await reader.loadHostSettingsChange();
@@ -131,60 +131,47 @@ function DaemonSettingsEditor(componentProps: Props & { target: string; label: s
 
   const publishHostChange = (change: SettingsChange) => receiveChange(change, hostId());
 
-  const saveRemote = async (next: AppSettings, config: AgentConfig | undefined, previousConfig: AgentConfig | undefined, capturedHostId: string) => {
+  const saveRemote = async (next: AppSettings, capturedHostId: string) => {
     const writer = new NativeTransport({ hostId: capturedHostId, cwd: "~" });
-    let restoreAgents: (() => Promise<void>) | undefined;
-    const warnings: string[] = [];
 
-    const writeAgents = async (value: AgentConfig) => {
-      const change = await writer.command({ type: "configure_agents", configuration: value }, agentConfigChangeSchema);
-      warnings.push(...change.warnings ?? []);
-
-      return change.revision;
-    };
-
-    try {
-      if (config) {
-        await writer.connect();
-        restoreAgents = await saveAgentConfiguration(config, previousConfig, writeAgents);
-      }
-
-      const change = await writer.saveHostSettings(next, Boolean(config));
-      change.warnings = [...warnings, ...change.warnings ?? []];
-
-      return change;
-    } catch (reason) {
+    try { return await writer.saveHostSettings(next); }
+    catch (reason) {
       if (reason instanceof SettingsSaveError) {
         publishHostChange(reason.committedChange);
         setSaveWarnings([...(reason.committedChange.warnings ?? []), reason.message]);
-        throw reason;
       }
 
-      await restoreAgentConfiguration(restoreAgents, (reason instanceof Error ? reason.message : String(reason)));
       throw reason;
     } finally { await writer.dispose().catch(() => undefined); }
   };
 
+  /** Saves the agent definitions first, then the settings. Each save is complete on its own, so saved agents stay when the settings fail. */
   const save = async (next: AppSettings, config?: AgentConfig, baseline?: AppSettings) => {
-    const capturedHostId = hostId(); const capturedResources = resources(); const capturedTarget = componentProps.target; const capturedOnSave = componentProps.onSave;
+    const capturedHostId = hostId(); const capturedTarget = componentProps.target; const capturedOnSave = componentProps.onSave;
     setSaveWarnings(undefined);
+    const agentWarnings: string[] = [];
 
-    try {
-      if (capturedTarget === "client" || capturedHostId === "local") await capturedOnSave(next, config, capturedResources?.config, baseline, capturedTarget === "client" ? "client" : "daemon");
-      else publishHostChange(await saveRemote(next, config, capturedResources?.config, capturedHostId));
-    } catch (reason) {
-      if (reason instanceof SettingsSaveError) publishSavedAgents(config);
-      throw reason;
+    if (config) {
+      const saved = await saveAgentDefinitions(capturedHostId, config);
+      config.revision = saved.revision;
+      agentWarnings.push(...saved.warnings);
+      publishSavedAgents(config);
     }
 
-    publishSavedAgents(config);
+    try {
+      if (capturedTarget === "client" || capturedHostId === "local") await capturedOnSave(next, baseline, capturedTarget === "client" ? "client" : "daemon");
+      else publishHostChange(await saveRemote(next, capturedHostId));
+    } catch (reason) {
+      if (!config || reason instanceof SettingsSaveError) throw reason;
+      throw new AgentsSavedError(reason);
+    } finally { if (agentWarnings.length) setSaveWarnings(current => [...current ?? [], ...agentWarnings]); }
   };
 
   const renderSaveWarnings = () => {
     const warnings = saveWarnings();
 
-    return warnings && warnings.length > 0 && <p role="alert">Settings saved with synchronization warnings: {warnings.join(" ")}</p>;
+    return warnings && warnings.length > 0 && <p role="alert">Saved with warnings: {warnings.join(" ")}</p>;
   };
 
-  return <>{renderSaveWarnings()}{error() && <p role="alert">Could not load {componentProps.label}: {(error())} <button onClick={() => setRevision((value) => value + 1)}>Retry</button></p>}{current() ? <SettingsView embedded selectedSection={componentProps.selectedSection} resourceError={error()} onSavingChange={componentProps.onSavingChange} scope={componentProps.target === "client" ? "client" : "daemon"} daemonLabel={componentProps.label} providerHostId={hostId()} providerHosts={componentProps.settings.hosts} settings={required((current()))} pendingSettingsCount={hostId() === "local" ? componentProps.pendingSettingsCount : 0} sessions={componentProps.sessions.filter((session) => (session.hostId ?? "local") === hostId()).map((session) => ({ ...session, hostId: "local" }))} agentConfig={componentProps.target === "client" ? undefined : resources()?.config} models={resources()?.models} loadingModels={loadingModels()} thinkingLevels={resources()?.levels} onDirtyChange={componentProps.onDirtyChange} onSave={save} /> : !error() && <p role="status">Loading {componentProps.label} settings…</p>}</>;
+  return <>{renderSaveWarnings()}{error() && <p role="alert">Could not load {componentProps.label}: {(error())} <button onClick={() => setRevision((value) => value + 1)}>Retry</button></p>}{current() ? <SettingsView embedded selectedSection={componentProps.selectedSection} resourceError={error()} onSavingChange={componentProps.onSavingChange} scope={componentProps.target === "client" ? "client" : "daemon"} daemonLabel={componentProps.label} providerHostId={hostId()} providerHosts={componentProps.settings.hosts} settings={required((current()))} pendingSettingsCount={hostId() === "local" ? componentProps.pendingSettingsCount : 0} sessions={componentProps.sessions.filter((session) => (session.hostId ?? "local") === hostId()).map((session) => ({ ...session, hostId: "local" }))} agentConfig={componentProps.target === "client" ? undefined : resources()?.config} models={resources()?.models} loadingModels={loadingModels()} onDirtyChange={componentProps.onDirtyChange} onSave={save} /> : !error() && <p role="status">Loading {componentProps.label} settings…</p>}</>;
 }

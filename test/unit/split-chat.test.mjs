@@ -23,7 +23,9 @@ describe('split conversation lifecycle', () => {
     const state = { model: MODEL, thinkingLevel: 'off', isStreaming: false, sessionId: 'session', sessionFile: '/session.jsonl', messageCount: 0, pendingMessageCount: 0 };
     responses = new Map([['get_session_revision', { revision: 'changed' }], ['get_snapshot', { revision: 'snapshot', state, history: { entries: [], leafId: null }, sequence: 0, epoch: 'epoch', liveTools: [], queue: { type: 'queue_state', pendingMessages: [] } }], ['get_state', () => responses.get('get_snapshot').state], ['get_available_models', { models: [MODEL] }], ['get_available_thinking_levels', { levels: ['off', 'high'] }], ['get_commands', { commands: [] }]]);
     const groups = { groups: [], parents: {}, assignments: {}, removedProjects: [] };
-    daemonResponses = new Map([['provider_auth', { ready: true, providers: { p: { supportedModelIds: ['base', 'one', 'two'] } } }], ['start_pi', { attached: true }], ['stop_pi', true], ['pi_presence', null], ['load_session_groups', groups], ['change_session_groups', groups],
+    const agents = ['general', 'review'].map(name => ({ name, model: '', effort: '', tools: [], skills: [], mcpServers: {}, path_systemprompt: '', path_agent_prompt: '' }));
+    const catalog = { config: { revision: 'saved', agents }, models: [MODEL], initialModel: null, initialThinking: 'off', commands: [], commandDetails: [], skills: [] };
+    daemonResponses = new Map([['provider_auth', ({ request }) => request.action === 'draft_catalog' ? catalog : { ready: true, providers: { p: { supportedModelIds: ['base', 'one', 'two'] } } }], ['start_pi', { attached: true }], ['stop_pi', true], ['pi_presence', null], ['load_session_groups', groups], ['change_session_groups', groups],
       ['broker_request', ({ body }) => ({ sessionId: body.sessionId, sessionPath: '/session.jsonl', cwd: '/repo', archived: false, revision: '1' })]]);
     mockIPC((command, args) => {
       if (command === 'pi_command') {
@@ -185,9 +187,10 @@ describe('split conversation lifecycle', () => {
     assert.ok(calls.findIndex(command => command.type === 'set_fast_mode' && command.enabled === true) < calls.findIndex(command => command.message === 'Question'));
   });
 
-  test('agent capability updates populate the picker and selection sends encoded agent names', async () => {
+  test('an agent status populates the picker with the host agents and selection sends encoded agent names', async () => {
     await render();
-    await extension('setStatus', { statusKey: 'pi-define-agents', statusText: `json:${encodeAgentValue({ config: { agents: ['general', 'review'].map(name => ({ name, model: '', effort: '', tools: [], skills: [], mcpServers: {}, path_systemprompt: '', path_agent_prompt: '' })) }, active: 'general' })}` });
+    await extension('setStatus', { statusKey: 'pi-define-agents', statusText: `json:${encodeAgentValue({ active: 'general' })}` });
+    await untilDom(() => control('Agent').dataset.options);
     await click(control('Agent')); await click(document.querySelector('[role=option][data-value=review]'));
     await received(command => command.type === 'select_agent' && command.agent === 'review');
     await extension('setStatus', { statusKey: 'pi-define-agents', statusText: 'json:invalid' }); assert.equal(control('Agent').dataset.options, '');

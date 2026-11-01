@@ -19,8 +19,8 @@ type SettingsConnection = {
   emit: (event: RpcEvent) => void;
 };
 
-function needsDaemonSave(settings: AppSettings, previous: AppSettings, agentHostId: string | undefined, scope: string) {
-  return scope !== "client" && (Boolean(settings.settingsDurabilityError) || settingsSnapshot(settings) !== settingsSnapshot(previous) || Boolean(agentHostId));
+function needsDaemonSave(settings: AppSettings, previous: AppSettings, scope: string) {
+  return scope !== "client" && (Boolean(settings.settingsDurabilityError) || settingsSnapshot(settings) !== settingsSnapshot(previous));
 }
 
 function needsClientSave(settings: AppSettings, baseline: AppSettings, previous: AppSettings) {
@@ -86,36 +86,36 @@ export class NativeSettings {
     }
   }
 
-  async saveHost(settings: AppSettings, agentsChanged = false) {
+  async saveHost(settings: AppSettings) {
     const hostId = this.connection.target().hostId;
 
-    try { return await this.call("save_host_settings", { hostId, settings, agentsChanged }, settingsChangeSchema); }
+    try { return await this.call("save_host_settings", { hostId, settings }, settingsChangeSchema); }
     catch (reason) {
       if ((reason instanceof Error ? reason.message : String(reason)).includes("Command is not available on the daemon: save_host_settings")) throw new Error("The connected or selected remote Piop daemon needs updating before it can save remote settings.");
       throw reason;
     }
   }
 
-  save(settings: AppSettings, reconnect = true, agentHostId?: string, scope: "all" | "client" | "daemon" = "all", baseline?: AppSettings) {
+  save(settings: AppSettings, reconnect = true, scope: "all" | "client" | "daemon" = "all", baseline?: AppSettings) {
     if (!baseline && scope !== "daemon") return Promise.reject(new Error("An editing baseline is required to save client preferences"));
     const intended = structuredClone(settings);
     const before = structuredClone(baseline ?? settings);
-    const save = () => this.saveNow(intended, reconnect, agentHostId, scope, before);
+    const save = () => this.saveNow(intended, reconnect, scope, before);
     const result = this.lifecycle.then(save, save);
     this.lifecycle = result.then(() => undefined, () => undefined);
 
     return result;
   }
 
-  private async saveNow(settings: AppSettings, reconnect: boolean, agentHostId: string | undefined, scope: "all" | "client" | "daemon", baseline: AppSettings) {
+  private async saveNow(settings: AppSettings, reconnect: boolean, scope: "all" | "client" | "daemon", baseline: AppSettings) {
     const shortcutError = keybindingsError(settings.keybindings);
 
     if (shortcutError) throw new Error(shortcutError);
     const previousChange = await this.daemonChange();
     const previous = previousChange.settings;
     const daemonSettings = scope === "client" ? previous : preserveDaemonPreferences(settings, previous);
-    const daemonChanged = needsDaemonSave(daemonSettings, previous, agentHostId, scope);
-    const change: SettingsChange = daemonChanged ? await this.call("save_app_settings", { settings: daemonSettings, agentHostId }, settingsChangeSchema) : { ...previousChange };
+    const daemonChanged = needsDaemonSave(daemonSettings, previous, scope);
+    const change: SettingsChange = daemonChanged ? await this.call("save_app_settings", { settings: daemonSettings }, settingsChangeSchema) : { ...previousChange };
     await this.savePreferences(settings, baseline, change, daemonChanged, scope);
 
     if (daemonChanged) await this.reloadCommitted(change);

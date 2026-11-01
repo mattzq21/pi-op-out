@@ -32,7 +32,6 @@ test('selected agent definitions stay visible through reload and pending MCP sta
   assert.ok(published.length > 0);
   assert.ok(published.every(Boolean));
   assert.equal(f.capability().active, 'tester');
-  assert.deepEqual(f.capability().config.agents.map(agent => agent.name), ['general', 'tester']);
   let settled = false;
   const input = f.input('Check the app').finally(() => { settled = true; });
   try {
