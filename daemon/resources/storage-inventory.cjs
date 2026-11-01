@@ -26,13 +26,13 @@ function safeSessionId(sessionId) {
   return sessionId.replace(/[^a-zA-Z0-9._-]/g, "-").replace(/^\.+|\.+$/g, "") || "session";
 }
 
-async function inspectSession(file, includeArchiveDetails, read) {
+async function inspectSession(file, includeArchiveDetails, read, db) {
   const { header, firstPrompt, malformed, result } = await read(file, () => inspectTranscript(file));
   const observed = result;
 
   if (!includeArchiveDetails) return observed;
 
-  return archiveDetails(file, header, validSessionHeader(header) ? names.sessionName(file, header.id) : undefined, firstPrompt, malformed, observed);
+  return archiveDetails(file, header, validSessionHeader(header) ? names.sessionName(file, header.id, db) : undefined, firstPrompt, malformed, observed, db);
 }
 
 async function inspectTranscript(file) {
@@ -77,7 +77,7 @@ function sessionDetails(header, malformed, observation) {
   return { observation, readable: validSessionHeader(header) && !malformed, fork: Boolean(header?.parentSession), cwd: validSessionHeader(header) ? header.cwd : undefined, sessionId: Check(Type.String(), header?.id) ? safeSessionId(header.id) : undefined };
 }
 
-async function archiveDetails(file, header, explicitName, firstPrompt, malformed, result) {
+async function archiveDetails(file, header, explicitName, firstPrompt, malformed, result, db) {
   const metadata = await fs.lstat(file);
   const validHeader = validSessionHeader(header);
   const deletable = validHeader && !malformed;
@@ -93,7 +93,7 @@ async function archiveDetails(file, header, explicitName, firstPrompt, malformed
     byteSize: metadata.size,
     byteSizeCoverage: archiveCoverage + ' Queued messages are stored in the shared database and excluded from this size.',
     deletable,
-    restorable: validHeader && !malformed && !result.auxiliary && !stateRecords.isAuxiliary(stateRecords.records(file, header.id).map(record => record.entry)),
+    restorable: validHeader && !malformed && !result.auxiliary && !stateRecords.isAuxiliary(stateRecords.records(file, header.id, db).map(record => record.entry)),
   };
 
   if (!deletable) archive.deleteError = deleteError;
@@ -126,9 +126,9 @@ async function collectUnreadableArchive(file, archives) {
   });
 }
 
-async function collectSession(piopRoot, candidate, discovery, archives, read) {
+async function collectSession(piopRoot, candidate, discovery, archives, read, db) {
   try {
-    const details = await inspectSession(candidate.file, candidate.archived, read);
+    const details = await inspectSession(candidate.file, candidate.archived, read, db);
     recordSession(discovery, details, candidate, piopRoot);
 
     if (!details.readable) discovery.warnings.push(`${candidate.file}: session provenance is incomplete`);
@@ -173,10 +173,10 @@ async function archivedConversations(piopRoot, profile) {
   const archived = await registeredSessions(path.join(profile, 'archived'), warnings);
   const archives = [];
 
-  await require('./storage-transcript-cache.cjs').withCache(piopRoot, async read => {
+  await require('./storage-transcript-cache.cjs').withCache(piopRoot, async (read, db) => {
     for (const file of archived.files) {
       try {
-        const details = await inspectSession(file, true, read);
+        const details = await inspectSession(file, true, read, db);
 
         if (!details.readable) warnings.push(`${file}: session provenance is incomplete`);
         archives.push(details.archive);
@@ -218,8 +218,8 @@ async function storageInventory(request) {
 
   const archives = [];
 
-  await require('./storage-transcript-cache.cjs').withCache(piopRoot, async read => {
-    for (const candidate of candidates.values()) await collectSession(piopRoot, candidate, discovery, archives, read);
+  await require('./storage-transcript-cache.cjs').withCache(piopRoot, async (read, db) => {
+    for (const candidate of candidates.values()) await collectSession(piopRoot, candidate, discovery, archives, read, db);
   });
   resolveOwners(discovery);
   await discoverGoalDiagnostics(profile, discovery);
