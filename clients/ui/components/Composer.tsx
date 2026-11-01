@@ -9,11 +9,12 @@ import { createComposerEditorKey } from "../lib/composerKeyboard";
 import { Key } from "@solid-primitives/keyed";
 import { isTauri } from "@tauri-apps/api/core";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
-import { createMemo,createSelector,createSignal,Show,splitProps } from "solid-js";
+import { createMemo,createSelector,createSignal,onMount,Show,splitProps } from "solid-js";
 import { createFilePaste } from "../lib/filePaste";
 import { buildComposerPrompt,composerReference,isPromptCommand,skillName,skillNames } from "../lib/composerPrompt";
 import { createDependencyEffect,createMemoFields,createRef,cssPixels,type CSSProperties,type JSXElement,type KeyboardEvent,type StateUpdate } from "../lib/solid";
 import { useComposerAttachments } from "../lib/useComposerAttachments";
+import type { DraftSelection } from "../lib/draftState";
 import { stageComposerDraft, type DraftSubmissionHandle, type StageDraftSubmission } from "../lib/draftSubmission";
 import { ComposerSettingsMenu } from "./ComposerSettingsMenu";
 import { ComposerPlugins } from "../plugins/composer";
@@ -66,6 +67,8 @@ interface Props {
   draft?: string;
   recentPrompts?: () => string[];
   onDraftChange?: (value: StateUpdate<string>) => void;
+  draftSelection?: DraftSelection;
+  onDraftSelectionChange?: (selection: DraftSelection) => void;
   uploads?: ComposerUpload[];
   onUploadsChange?: (uploads: StateUpdate<ComposerUpload[]>) => void;
   focusRequest?: number;
@@ -247,8 +250,11 @@ export function Composer(props: Props) {
 
   const [selectedMatch, setSelectedMatch] = createSignal(0);
   const [paletteDismissed, setPaletteDismissed] = createSignal(false);
-  const [selection, setSelection] = createSignal<{ start: number; end: number }>();
+  const savedSelection = props.draftSelection && { start: Math.min(props.draftSelection.start, value().length), end: Math.min(props.draftSelection.end, value().length) };
+  const [selection, setSelection] = createSignal<DraftSelection | undefined>(savedSelection);
   const ref = createRef<ComposerFieldElement>(null);
+  onMount(() => { if (savedSelection) ref.current?.setSelectionRange(savedSelection.start, savedSelection.end); });
+  createDependencyEffect(() => { const caret = selection(); if (caret && !editingPending()) props.onDraftSelectionChange?.(caret); }, () => [selection()]);
   const focusOwnedEditor = () => { if (!props.ownershipRequired) ref.current?.focus(); };
 
   const composerRef = createRef<HTMLDivElement>(null);
