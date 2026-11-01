@@ -28,13 +28,25 @@ test('signing in with an API key saves it on the host, and removing the login cl
   const key = await untilDom(() => panel()?.querySelector('input[type="password"]'), 10000);
   await enterText(key, 'sk-test-deepseek-key');
   await act(async () => panel().querySelector('button[type="submit"]').click());
-  await untilDom(() => /Credentials saved on this host\./.test(panel()?.textContent ?? ''), 10000);
-  await untilDom(() => /^DeepSeekConfigured/.test(section('DeepSeek').textContent), 10000);
+  await untilDom(() => /^DeepSeekConfigured/.test(section('DeepSeek').textContent) && !panel(), 10000);
+  assert.equal(document.querySelector('.provider-settings > [role="alert"]'), null);
   const stored = (await daemon.invoke('provider_auth', { hostId: 'local', request: { action: 'list', refreshModels: false } })).providers.find(provider => provider.id === 'deepseek');
   assert.equal(stored.storedType, 'api_key');
 
   await act(async () => button('DeepSeek', 'Remove saved login').click());
   await untilDom(() => /Not configured/.test(section('DeepSeek').textContent) && !button('DeepSeek', 'Remove saved login'), 10000);
+});
+
+test('a Claude browser login shows the login link after the method is chosen', async t => {
+  const { button, panel } = await providers(t);
+  await act(async () => button('Anthropic', 'Sign in · Anthropic (Claude Pro/Max)').click());
+  const method = await untilDom(() => panel()?.querySelector('select'), 10000);
+  await act(async () => { method.value = 'browser'; method.dispatchEvent(new Event('change', { bubbles: true })); });
+  await act(async () => panel().querySelector('button[type="submit"]').click());
+  await untilDom(() => panel()?.querySelector('input[aria-label="Login link"]') && !panel().querySelector('select'), 10000);
+  await act(async () => [...panel().querySelectorAll('button')].find(item => item.textContent === 'Cancel login').click());
+  await untilDom(() => /Login cancelled\./.test(panel()?.textContent ?? ''), 10000);
+  assert.equal(document.querySelector('.provider-settings > [role="alert"]'), null);
 });
 
 test('a login can be cancelled, and the filter finds providers by name', async t => {

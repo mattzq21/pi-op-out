@@ -50,7 +50,7 @@ function LoginPrompt(componentProps: { prompt: NonNullable<AuthFlow["prompt"]>; 
 
 function FlowStatus(componentProps: { flow: AuthFlow }) {
 
-  return <>{componentProps.flow.status === "complete" ? (<p role="status">Credentials saved on this host.</p>) : componentProps.flow.status === "cancelled" ? (<p role="status">Login cancelled.</p>) : componentProps.flow.status === "failed" ? (<p class="provider-error" role="alert">{componentProps.flow.error}</p>) : (<p role="status">Waiting for provider login…</p>)}</>;
+  return <>{componentProps.flow.status === "cancelled" ? (<p role="status">Login cancelled.</p>) : componentProps.flow.status === "failed" ? (<p class="provider-error" role="alert">{componentProps.flow.error}</p>) : (<p role="status">Waiting for provider login…</p>)}</>;
 }
 
 export function ProviderSettings(componentProps: { hosts: RemoteHost[]; initialHostId?: string; fixedHost?: boolean }) {
@@ -59,6 +59,7 @@ export function ProviderSettings(componentProps: { hosts: RemoteHost[]; initialH
   const [adding, setAdding] = createSignal(false);
   const auth = useProviderAuth(() => (hostId()));
   const active = createMemo(() => (auth.flow?.status === "pending"));
+  const shownFlow = createMemo<AuthFlow | undefined>(previous => auth.flow ?? previous);
   const disabled = createMemo(() => (auth.working || active()));
   createDependencyEffect(() => {
     const capturedHostId = hostId(); const capturedFixedHost0 = componentProps.fixedHost; const capturedHosts1 = componentProps.hosts;
@@ -80,7 +81,7 @@ export function ProviderSettings(componentProps: { hosts: RemoteHost[]; initialH
     </div>
     {auth.error && <p class="provider-error" role="alert">{auth.error}</p>}
     {adding() && <Rerun on={() => hostId()}>{(_key) => <CustomProviderForm  working={!!disabled()} save={auth.createProvider} close={() => setAdding(false)} />}</Rerun>}
-    <Show when={auth.flow}>{flow => <LoginPanel flow={flow()} auth={auth} />}</Show>
+    <Show when={auth.flow !== undefined}><LoginPanel flow={shownFlow()!} auth={auth} /></Show>
     {loadingProviders() && <div class="empty-small" role="status">Loading providers on {hostName()}…</div>}
     <ProviderList providers={providers()} auth={auth} disabled={disabled()} />
     <p class="provider-login-help">Removing a saved login leaves credentials from environment variables or other host configuration in place.</p>
@@ -89,12 +90,13 @@ export function ProviderSettings(componentProps: { hosts: RemoteHost[]; initialH
 
 function LoginPanel(componentProps: { flow: AuthFlow; auth: AuthControls }) {
   const promptId = createMemo(() => componentProps.flow.prompt?.id);
+  const shownPrompt = createMemo<AuthFlow["prompt"]>(previous => componentProps.flow.prompt ?? previous);
 
   return <div class="provider-login-panel" aria-label="Provider login">
     <strong>{componentProps.flow.name ?? componentProps.auth.providers.find((provider) => provider.id === componentProps.flow.providerId)?.name ?? componentProps.flow.providerId}</strong>
     <FlowStatus flow={componentProps.flow} />
     {<Index each={componentProps.flow.notices}>{(notice, _index) => <LoginNotice  notice={notice()} />}</Index>}
-    {componentProps.flow.prompt && <Rerun on={promptId}>{(_key) => <LoginPrompt  prompt={required(componentProps.flow.prompt)} working={componentProps.auth.working} reply={componentProps.auth.reply} />}</Rerun>}
+    <Show when={promptId()} keyed>{_id => <LoginPrompt prompt={shownPrompt()!} working={componentProps.auth.working} reply={componentProps.auth.reply} />}</Show>
     {componentProps.flow.status === "pending" && <button type="button" disabled={componentProps.auth.working} onClick={() => void componentProps.auth.cancel()}>Cancel login</button>}
   </div>;
 }

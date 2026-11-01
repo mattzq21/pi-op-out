@@ -116,13 +116,15 @@ export function useProviderAuth(hostId: Accessor<string>) {
     return () => { cancelled = true; unlisten?.(); };
   }, () => [hostId()]);
 
-  const receive = (next: AuthFlow) => {
-    const current = flow();
-    if (current?.flowId === next.flowId && current.status !== "pending" && next.status === "pending") return;
-    setFlow(next);
+  const finished = createRef<string | undefined>(undefined);
 
-    if (next.status === "pending") active.current = { hostId: hostId(), flowId: next.flowId };
-    else { active.current = undefined; setRevision((value) => value + 1); }
+  const receive = (next: AuthFlow) => {
+    if (finished.current === next.flowId) return;
+    if (next.status === "pending") { setFlow(next); active.current = { hostId: hostId(), flowId: next.flowId }; return; }
+    finished.current = next.flowId;
+    active.current = undefined;
+    setFlow(next.status === "complete" ? undefined : next);
+    setRevision((value) => value + 1);
   };
 
   createDependencyEffect(() => { const capturedFlow = flow(); const capturedWorking = working(); const capturedHostId = hostId();
@@ -137,11 +139,10 @@ export function useProviderAuth(hostId: Accessor<string>) {
         const next = await call(capturedHostId, { action: "poll", flowId: (capturedFlow).flowId }, authFlowSchema);
 
         if (cancelled) return;
-        setError(undefined); setFlow(next);
+        setError(undefined); receive(next);
         failures = 0;
 
         if (next.status === "pending") timer = setTimeout(() => void poll(), 5000);
-        else { active.current = undefined; setRevision((value) => value + 1); }
       } catch (reason) {
         if (cancelled) return;
         failures += 1;

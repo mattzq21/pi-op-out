@@ -115,7 +115,7 @@ export async function detachOwner(app: App, owner: string, discardBlank: boolean
 
 async function shutdownBackend(app: App): Promise<void> {
   app.clients.stop();
-  app.usage.stop();
+  const usage = app.usage.stop();
   mobile.stopAccepting(app);
   await ignore(() => app.clients.drain(10_000));
   mobile.closeConnections(app);
@@ -125,4 +125,5 @@ async function shutdownBackend(app: App): Promise<void> {
   await ignore(() => terminals.shutdown(app.terminals));
   await ignore(() => piRuntime.shutdown(app.pi));
   await ignore(() => shutdownHostOperations());
+  await usage;
 }

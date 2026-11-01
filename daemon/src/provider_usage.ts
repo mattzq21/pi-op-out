@@ -22,6 +22,7 @@ export class UsageRuntime {
   private running = new Map<Provider, Promise<void>>();
   private readAt = new Map<Provider, number>();
   private timer: ReturnType<typeof setInterval> | undefined;
+  private stopped = false;
 
   start(app: App): void {
     if (!(INTERVAL_MS > 0)) return;
@@ -29,7 +30,12 @@ export class UsageRuntime {
     this.timer = setInterval(() => void this.refresh(app), INTERVAL_MS);
   }
 
-  stop(): void { clearInterval(this.timer); this.timer = undefined; }
+  async stop(): Promise<void> {
+    this.stopped = true;
+    clearInterval(this.timer);
+    this.timer = undefined;
+    await Promise.allSettled([...this.running.values()]);
+  }
 
   snapshot(): UsageSnapshot { return structuredClone(this.state); }
 
@@ -44,6 +50,7 @@ export class UsageRuntime {
   private refreshProvider(app: App, provider: Provider): Promise<void> {
     const current = this.running.get(provider);
     if (current) return current;
+    if (this.stopped) return Promise.resolve();
     this.readAt.set(provider, Date.now());
     const work = SOURCES[provider]().then(
       usage => { this.failures.delete(provider); this.update(app, provider, usage === undefined ? undefined : { usage }); },
