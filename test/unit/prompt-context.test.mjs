@@ -76,7 +76,9 @@ test('empty skills display zero shares for defined, invoked and shared instructi
 test('each tool, instruction and skill has its own copy button, and a tool copies its JSON too', async () => {
   const copied = [];
   Object.defineProperty(navigator, 'clipboard', { value: { writeText: async text => { copied.push(text); } }, configurable: true });
-  view = await renderComponent(PromptContextBar, { context: context(), inputTokens: 3 });
+  const input = context();
+  input.tools.push({ name: 'write', description: 'Write file', parameters: { type: 'object', properties: { path: { type: 'string' } } } });
+  view = await renderComponent(PromptContextBar, { context: input, inputTokens: 3 });
   const copy = async label => {
     const node = document.querySelector('[aria-label="' + label + '"]');
     assert.ok(node, label);
@@ -85,9 +87,15 @@ test('each tool, instruction and skill has its own copy button, and a tool copie
   await act(() => button('Tools').click());
   assert.equal(document.querySelector('[aria-label="Copy tab content"]'), null);
   await copy('Copy read');
+  await copy('Copy write');
   await act(() => button('Instructions').click());
   await copy('Copy /AGENTS.md');
   await act(() => button('Skills').click());
   await copy('Copy skill');
-  assert.deepEqual(copied, ['read\nRead file\n{\n  "type": "object"\n}', '/AGENTS.md\nInstructions content', 'skill\nSkill description\n/SKILL.md']);
+  assert.deepEqual(copied, [
+    'read\nRead file\n{\n  "type": "object"\n}',
+    'write\nWrite file\n{\n  "type": "object",\n  "properties": {\n    "path": {\n      "type": "string"\n    }\n  }\n}',
+    '/AGENTS.md\nInstructions content',
+    'skill\nSkill description\n/SKILL.md',
+  ]);
 });
