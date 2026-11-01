@@ -2,6 +2,10 @@ pub fn configure_image_copy(window: &tauri::WebviewWindow) -> Result<(), String>
     window.with_webview(|webview| {
         use webkit2gtk::{ContextMenuAction, ContextMenuExt, ContextMenuItem, ContextMenuItemExt, HitTestResultExt, WebViewExt};
         webview.inner().connect_context_menu(|_, menu, _, hit| {
+            for item in menu.items() {
+                if matches!(item.stock_action(), ContextMenuAction::GoBack | ContextMenuAction::GoForward | ContextMenuAction::Stop | ContextMenuAction::Reload) { menu.remove(&item); }
+            }
+            if menu.items().iter().all(|item| item.is_separator()) { return true; }
             let Some((position, item)) = menu.items().into_iter().enumerate()
                 .find(|(_, item)| item.stock_action() == ContextMenuAction::CopyImageToClipboard) else { return false; };
             let Some(image) = hit.image_uri().and_then(|uri| embedded_image(&uri)) else { return false; };
