@@ -534,6 +534,8 @@ describe('settings editor', () => {
     await click([...document.querySelectorAll('.agent-list button')].find(item => item.textContent === 'local'));
     await click(button('Move'));
     assert.equal(button('Repo'), undefined); assert.notEqual(button('Global'), undefined);
+    await enterText(control('Filter Move agent to'), 'oth');
+    assert.equal(button('Global'), undefined);
     await click(button('Other'));
     await click(button('Move')); await click(button('Global'));
     assert.deepEqual(moves, [['review', '/repo'], ['local', '/other'], ['local', null]]);

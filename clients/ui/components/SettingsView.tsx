@@ -598,26 +598,18 @@ export function SettingsView(props: SettingsViewProps) {
 }
 
 function MoveAgentButton(componentProps: { destinations: Array<{ name: string; cwd: string | null }>; blocked?: string; onMove: (to: string | null) => Promise<void> }) {
-  const [open, setOpen] = createSignal(false);
   const [moving, setMoving] = createSignal(false);
-  const rootRef = createRef<HTMLDivElement>(null);
-  createDependencyEffect(() => {
-    if (!open()) return;
-    const close = (event: Event) => { if (event instanceof KeyboardEvent ? event.key === "Escape" : !rootRef.current?.contains(event.target as Node)) setOpen(false); };
-    document.addEventListener("pointerdown", close, true); document.addEventListener("keydown", close, true);
+  const options = createMemo(() => componentProps.destinations.map((destination, index) => ({ value: String(index), label: destination.name, search: `${destination.name} ${destination.cwd ?? ""}`, group: destination.cwd === null ? 0 : 1 })));
+  const move = async (value: string) => {
+    const destination = componentProps.destinations[Number(value)];
 
-    return () => { document.removeEventListener("pointerdown", close, true); document.removeEventListener("keydown", close, true); };
-  }, () => [open()]);
-  const move = async (to: string | null) => {
-    setOpen(false); setMoving(true);
+    if (!destination) return;
+    setMoving(true);
 
-    try { await componentProps.onMove(to); } catch { /* The section shows the error. */ } finally { setMoving(false); }
+    try { await componentProps.onMove(destination.cwd); } catch { /* The section shows the error. */ } finally { setMoving(false); }
   };
 
-  return <div class="agent-move-menu" ref={element => { rootRef.current = element; }}>
-    <button class="secondary-button" aria-haspopup="menu" aria-expanded={open()} disabled={Boolean(componentProps.blocked) || moving()} data-tooltip={componentProps.blocked} onClick={() => setOpen(value => !value)}><ArrowRightLeft size={15} />{moving() ? "Moving…" : "Move"}</button>
-    <Show when={open()}><div class="agent-move-options" role="menu"><For each={componentProps.destinations}>{destination => <button role="menuitem" onClick={() => void move(destination.cwd)}>{destination.name}</button>}</For></div></Show>
-  </div>;
+  return <FilterSelect label="Move agent to" filterPlaceholder="Filter projects" value="" options={options()} onChange={value => void move(value)} trigger={{ class: "secondary-button", content: <><ArrowRightLeft size={15} />{moving() ? "Moving…" : "Move"}</>, disabled: Boolean(componentProps.blocked) || moving(), tooltip: componentProps.blocked, alignEnd: true }} />;
 }
 
 function SettingsSection(componentProps: { title: string; description?: string; headerAction?: JSXElement; children: JSXElement }) { return <div class="settings-section"><div class="section-title"><div><h2>{componentProps.title}</h2>{componentProps.description && <p>{componentProps.description}</p>}</div>{componentProps.headerAction}</div>{componentProps.children}</div>; }
