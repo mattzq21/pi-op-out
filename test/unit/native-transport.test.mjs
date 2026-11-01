@@ -251,11 +251,10 @@ test('diagnostics retain the last five matching stderr lines and augment connect
   const client = transport();
   await client.connect();
   const runtimeId = commands('start_pi')[0].args.runtimeId;
-  await emit('pi://stderr', { runtimeId: 'other', line: 'ignore' });
-  await emit('pi://stderr', { runtimeId, line: ' ' });
-
   for (let i = 0; i < 6; i++) await emit('pi://stderr', { runtimeId, line: ` line ${i} ` });
   await emit('pi://stderr', ' final ');
+  await emit('pi://stderr', { runtimeId: 'other', line: 'ignore' });
+  await emit('pi://stderr', { runtimeId, line: ' ' });
   assert.equal(client.lastDiagnostic(), 'line 2\nline 3\nline 4\nline 5\nfinal');
   responses.set('pi_command:prompt', new Error('Disconnected'));
   await assert.rejects(client.command({ type: 'prompt' }), /Disconnected\nline 2/);
