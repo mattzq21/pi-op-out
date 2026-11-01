@@ -2,22 +2,22 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { installDom } from '../dom.mjs';
 import { mockIPC as mockNativeIPC, mockWindows, clearMocks } from '@tauri-apps/api/mocks';
-import { daemonClient } from '../daemon-client.mjs';
 import { NativeTransport } from '../../clients/ui/lib/nativeTransport.ts';
 import { clientIdentity } from '../../clients/ui/lib/clientIdentity.ts';
 
-test('desktop daemon requests recover from explicit busy rejections', async context => {
+test('desktop daemon requests recover from explicit busy rejections', { timeout: 10000 }, async context => {
   const dom = installDom();
   context.after(() => { clearMocks(); dom.restore(); });
-  const daemon = await daemonClient(context);
-  const home = await daemon.invoke('home_directory', { hostId: 'local' });
+  const home = '/home/test-user';
   mockWindows('main');
   const busyReplies = ['Host is busy; try again', 'Host is busy; try again'];
   mockNativeIPC((command, args) => {
     assert.equal(command, 'daemon_invoke');
+    assert.equal(args.command, 'home_directory');
+    assert.equal(args.args.hostId, 'local');
     const busy = busyReplies.shift();
     if (busy) throw busy;
-    return daemon.invoke(args.command, args.args);
+    return home;
   });
   const client = new NativeTransport({ hostId: 'local' });
   assert.equal(await client.homeDirectory('local'), home);
