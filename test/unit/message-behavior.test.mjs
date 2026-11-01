@@ -136,6 +136,16 @@ test('malformed skill wrappers remain readable as literal text', async t => {
   assert.match(document.body.textContent, /<skill>not a recognized invocation<\/skill>/);
 });
 
+test('the skill reference stays highlighted where the user wrote it, and copy gives the prompt without the instructions', async t => {
+  await renderMessage(t, { role: 'user', content: '<skill name="research" location="/skills/research">\nReferences are relative to /skills/research.\n\nPrivate instructions\n</skill>\n\nPlease use $research on this' });
+  assert.equal(document.querySelector('.message-body').textContent.trim(), 'Please use $research on this');
+  assert.equal(document.querySelector('.inline-skill-reference').textContent, '$research');
+  const copied = [];
+  navigator.clipboard = { writeText: async text => copied.push(text) };
+  await click(control('Copy message'));
+  assert.deepEqual(copied, ['Please use $research on this']);
+});
+
 test('a skill invocation without a user request shows only the skill name', async t => {
   await renderMessage(t, { role: 'user', content: '<skill name="research" location="/skills/research">\nReferences are relative to /skills/research.\n\nPrivate instructions\n</skill>' });
   assert.equal(document.querySelector('article').textContent.trim(), '$research');

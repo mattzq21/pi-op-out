@@ -235,7 +235,7 @@ describe("Conversation acceptance", () => {
 
     try {
       await emitPiEvent({ type: "session_switched" });
-      await expect($(".skill-reference")).toHaveText("$ponytail");
+      await expect($(".inline-skill-reference")).toHaveText("$ponytail");
       await expect($(".user-message .message-body")).toHaveText(expect.stringContaining("Review the implementation"));
       await expect($(".user-message .message-body")).not.toHaveText(expect.stringContaining("hidden skill instructions"));
 

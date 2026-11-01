@@ -249,13 +249,11 @@ export function SessionPanel(props: Props) {
     /** The chat view under a dragged chat. */
     let chatZone: HTMLElement | undefined;
 
-    const changeChatZone = (next: HTMLElement | undefined) => {
-      if (next === chatZone) return;
-
-      if (chatZone) sendSessionDrag(chatZone, { phase: "leave" });
+    const changeChatZone = (next: HTMLElement | undefined, x = 0, y = 0) => {
+      if (chatZone && next !== chatZone) sendSessionDrag(chatZone, { phase: "leave" });
       chatZone = next;
 
-      if (next) sendSessionDrag(next, { phase: "enter" });
+      if (next) sendSessionDrag(next, { phase: "over", x, y });
     };
 
     const clear = () => {
@@ -323,7 +321,7 @@ export function SessionPanel(props: Props) {
     const updateDropTarget = (x: number, y: number, current: MouseDrag) => {
       const hit = document.elementFromPoint(x, y);
       const zone = "session" in current && isSavedSession(current.session) ? hit?.closest<HTMLElement>("[" + SESSION_DROP_ZONE + "]") ?? undefined : undefined;
-      changeChatZone(zone);
+      changeChatZone(zone, x, y);
 
       if (zone) { mouseDropTargetRef.current = undefined; setDropTarget(undefined);
 
@@ -424,7 +422,8 @@ export function SessionPanel(props: Props) {
         if (chatZone && "session" in current) {
           const zone = chatZone;
           chatZone = undefined;
-          sendSessionDrag(zone, { phase: "drop", session: current.session });
+          const pointer = required(dragPointerRef.current);
+          sendSessionDrag(zone, { phase: "drop", session: current.session, x: pointer.x, y: pointer.y });
         } else if (target) {
           if ("session" in current) {
             moveSession(current, target.projectKey, target.sessionKey || undefined, target.edge);

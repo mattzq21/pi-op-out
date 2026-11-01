@@ -21,6 +21,7 @@ import { Markdown } from "./Markdown";
 import { ZoomableImage } from "./ZoomableImage";
 import { showsSubagents, SubagentResults, subagentRuns } from "./SubagentResults";
 import { copyText } from "../lib/clipboard";
+import { sentSkillPrompt } from "../lib/composerPrompt";
 import type { DebugView } from "../lib/debugFeatures";
 import { formatDateTime, formatDayTime, formatTime } from "../lib/dateTime";
 
@@ -55,12 +56,10 @@ function createForkActions(props: Props, label: () => string) {
 function userMessageParts(content: string) {
   const goal = content.match(/^\/goal(?:\s+([\s\S]*))?$/);
 
-  if (goal) return { command: "goal", skills: [] satisfies string[], text: (goal[1] ?? "").trim(), literalSkill: false };
-  const invocation = content.match(/^<skill\s+name="([^"]+)"\s+location="[^"]+">\nReferences are relative to [^\n]+\.\n\n[\s\S]*?<\/skill>(?:\n\n([\s\S]*))?$/i);
+  if (goal) return { command: "goal", text: (goal[1] ?? "").trim(), literalSkill: false };
+  const call = sentSkillPrompt(content);
 
-  if (!invocation) return { skills: [] satisfies string[], text: content, literalSkill: /<\/?skill\b/i.test(content) };
-
-  return { skills: [invocation[1]], text: (invocation[2] ?? "").trim(), literalSkill: false };
+  return call ? { skill: call.skill, text: call.text, literalSkill: false } : { text: content, literalSkill: /<\/?skill\b/i.test(content) };
 }
 
 function imageContextParts(content: string, hasImages: boolean) {
@@ -288,17 +287,19 @@ export function Message(componentProps: Props) {
     const images = createMemo(() => Array.isArray(componentProps.message.content) ? componentProps.message.content.flatMap(part => part.type === "image" && part.data && part.mimeType && /^image\/(png|jpeg|gif|webp)$/.test(part.mimeType) ? [part] : []) : []);
     const imageContext = createMemo(() => imageContextParts(textOf(componentProps.message.content), images().length > 0));
     const parts = createMemo(() => userMessageParts(imageContext().text));
-    const pinLabel = createMemo(() => pinText([parts().command ? "/" + parts().command : "", ...parts().skills.map(skill => "$" + skill), parts().text].filter(Boolean).join(" ")));
-    const hasBody = () => Boolean(parts().text || parts().skills.length > 0 || parts().command);
+    const pinLabel = createMemo(() => pinText([parts().command ? "/" + parts().command : "", parts().text].filter(Boolean).join(" ")));
+    const hasBody = () => Boolean(parts().text || parts().command);
 
     return <><article tabIndex={-1} class={`message user-message${componentProps.message.deliveryBehavior === "steer" ? " steering-message" : ""}`} data-pin-id={pinId(componentProps.message)}>
       {images().length > 0 && <div class="user-message-images">{!hasBody() && <PinButton message={componentProps.message} text={pinLabel()} />}<Index each={images()}>{part => <ZoomableImage src={`data:${part().mimeType};base64,${part().data}`} alt="Sent attachment" />}</Index></div>}
       {hasBody() && <div class="message-body"><PinButton message={componentProps.message} text={pinLabel()} />
-      <Show when={parts().command}>{command => <span class="skill-reference command-reference">/{command()}</span>}</Show>{<Key each={parts().skills} by={(skill) => skill}>{(skill, _index) => <span class="skill-reference" >${skill()}</span>}</Key>}<Show when={parts().text}><Show when={parts().literalSkill} fallback={<Markdown frontmatter>{parts().text}</Markdown>}><span class="literal-skill-content">{parts().text}</span></Show></Show>
+      <Show when={parts().command}>{command => <span class="skill-reference command-reference">/{command()}</span>}</Show><Show when={parts().text}><Show when={parts().literalSkill} fallback={<Markdown frontmatter skill={parts().skill}>{parts().text}</Markdown>}><span class="literal-skill-content">{parts().text}</span></Show></Show>
       </div>}
       <div class="message-actions">
         {sentTime() && <span class="message-time">{required(sentTime()).short}</span>}
-        <Show when={hasVisibleText(textOf(componentProps.message.content))}><MessageCopyButton state={copyState()} copy={() => copy()} /></Show>
+        <Show when={hasVisibleText(textOf(componentProps.message.content))}><MessageCopyButton state={copyState()} copy={() => { const content = textOf(componentProps.message.content);
+
+          return copy(sentSkillPrompt(content)?.text ?? content); }} /></Show>
         {copyState() === "error" && <span class="copy-feedback" role="status">Could not copy message</span>}
       </div>
     </article>{componentProps.debug?.contextInjections && imageContext().notes && <ContextInjection title="Image context" content={imageContext().notes} />}</>;

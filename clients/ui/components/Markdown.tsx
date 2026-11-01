@@ -3,7 +3,7 @@ import { sessionReference } from "../lib/sessionDrop";
 import { required } from "../lib/required";
 import DOMPurify from "dompurify";
 import { Copy, FolderOpen } from "lucide-solid";
-import { Marked, Renderer, type MarkedExtension } from "marked";
+import { Marked, Renderer, type MarkedExtension, type TokenizerAndRendererExtension } from "marked";
 import { createEffect, createSignal, onCleanup, Show, useContext } from "solid-js";
 import { Portal } from "solid-js/web";
 import { openExternalUrl } from "../lib/nativeTransport";
@@ -53,6 +53,27 @@ const parser = new Marked({ gfm: true, tokenizer: markdownTokenizer, hooks: mark
 
 const frontmatterParser = new Marked({ gfm: true, tokenizer: frontmatterTokenizer, hooks: markdownHooks, renderer, extensions: [frontmatterExtension] });
 
+/** Highlights each `$name` and `/skill:name` reference to the skill, where the text has it. */
+function skillReferenceExtension(name: string): TokenizerAndRendererExtension {
+  const reference = `(?:\\$|/skill:)${name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?![a-zA-Z0-9_-])`;
+  const anywhere = new RegExp(`(^|[^a-zA-Z0-9_$/])${reference}`, "i");
+  const here = new RegExp(`^${reference}`, "i");
+
+  return {
+    name: "skillReference",
+    level: "inline",
+    start: (source) => { const match = anywhere.exec(source);
+
+      return match ? match.index + match[1].length : undefined; },
+    tokenizer: (source) => { const match = here.exec(source);
+
+      return match ? { type: "skillReference", raw: match[0] } : undefined; },
+    renderer: (token) => `<span class="inline-skill-reference">${escapeHtml(token.raw)}</span>`,
+  };
+}
+
+const skillParser = (frontmatter: boolean, skill: string) => new Marked({ gfm: true, tokenizer: frontmatter ? frontmatterTokenizer : markdownTokenizer, hooks: markdownHooks, renderer, extensions: [...frontmatter ? [frontmatterExtension] : [], skillReferenceExtension(skill)] });
+
 let purifier: ReturnType<typeof DOMPurify> | undefined;
 
 let purifierWindow: Window | undefined;
@@ -77,11 +98,11 @@ function sanitizeMarkdown(html: string, streaming: boolean, detectFiles: boolean
 /** text: the web address or the full file path that the menu copies. */
 type LinkMenu = { kind: "web" | "file"; text: string; href?: string; x: number; y: number; returnFocus?: HTMLElement };
 
-/** fileLinks: plain absolute and ~ paths in the text become file links. frontmatter: "---" blocks of "key: value" lines show as code. */
-export function Markdown(props: { children: string; streaming?: boolean; imageProject?: FileProject; fileLinks?: boolean; frontmatter?: boolean }) {
+/** fileLinks: plain absolute and ~ paths in the text become file links. frontmatter: "---" blocks of "key: value" lines show as code. skill: the skill whose references show highlighted. */
+export function Markdown(props: { children: string; streaming?: boolean; imageProject?: FileProject; fileLinks?: boolean; frontmatter?: boolean; skill?: string }) {
   const pathLinks = () => Boolean(props.fileLinks) && canOpenFileLinks;
   const allowFile = (value: string) => Boolean(props.imageProject && imageFileReference(value)) || (pathLinks() && openablePath(value));
-  const renderMarkdown = streamingMarkdown(props.frontmatter ? frontmatterParser : parser, (html, streaming, detectFiles) => sanitizeMarkdown(html, streaming, detectFiles, allowFile));
+  const renderMarkdown = streamingMarkdown(props.skill ? skillParser(Boolean(props.frontmatter), props.skill) : props.frontmatter ? frontmatterParser : parser, (html, streaming, detectFiles) => sanitizeMarkdown(html, streaming, detectFiles, allowFile));
   const [error, setError] = createSignal<string>();
   const fileScope = useContext(MessageFileContext);
   const sessionLinks = useContext(SessionLinkContext);
