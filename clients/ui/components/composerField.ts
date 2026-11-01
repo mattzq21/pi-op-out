@@ -65,11 +65,28 @@ const isSkillMark = (node: Node) => node instanceof HTMLElement && node.classLis
 
 const linkMarkdown = (node: Node) => node instanceof HTMLElement ? node.dataset.markdown : undefined;
 
+/**
+ * A link with no text node after it leaves the browser no place to show the caret after it: the caret shows on the next line,
+ * and a selection of it marks the whole line. So such a link gets a filler text node after it. Its zero-width space is not text.
+ */
+const FILLER = "\u200B";
+const fillers = new WeakSet<Text>();
+
+function filler() {
+  const node = document.createTextNode(FILLER);
+  fillers.add(node);
+
+  return node;
+}
+
+/** The length in `value` of the first `offset` characters of a text node. */
+const textLength = (node: Text, offset: number) => fillers.has(node) ? node.data.slice(0, offset).replaceAll(FILLER, "").length : offset;
+
 /** A <br> as the last child only keeps an empty last line visible. It is not text. */
 const placeholderBreak = (node: Node) => node.nodeName === "BR" && !node.nextSibling;
 
 function nodeText(node: Node): string {
-  if (node instanceof Text) return node.data;
+  if (node instanceof Text) return fillers.has(node) ? node.data.replaceAll(FILLER, "") : node.data;
   const markdown = linkMarkdown(node);
 
   if (markdown !== undefined) return markdown;
@@ -94,6 +111,11 @@ function editKind(event: Event) {
   if (event.inputType === "insertText") return "insertText";
 
   return event.inputType === "deleteContentBackward" || event.inputType === "deleteContentForward" ? event.inputType : undefined;
+}
+
+/** The segments with a filler after each link that no text follows. */
+function withFillers(segments: FieldSegment[]): (FieldSegment | { filler: true })[] {
+  return segments.flatMap((segment, index) => "markdown" in segment && !(segments[index + 1] && "text" in segments[index + 1]) ? [segment, { filler: true as const }] : [segment]);
 }
 
 export class ComposerFieldElement extends HTMLElement {
@@ -265,16 +287,18 @@ export class ComposerFieldElement extends HTMLElement {
   #focused() { return document.activeElement === this; }
 
   #canonical() {
-    const plan = fieldSegments(this.#value, this.#skills);
+    const plan = withFillers(fieldSegments(this.#value, this.#skills));
     const nodes = Array.from(this.childNodes).filter(node => !(node instanceof Text) || node.data);
-    const filler = this.#value.endsWith("\n") ? 1 : 0;
+    const placeholder = this.#value.endsWith("\n") ? 1 : 0;
 
-    if (nodes.length !== plan.length + filler || (filler && nodes.at(-1)?.nodeName !== "BR")) return false;
+    if (nodes.length !== plan.length + placeholder || (placeholder && nodes.at(-1)?.nodeName !== "BR")) return false;
 
     return plan.every((segment, index) => {
       const node = nodes[index];
 
-      if ("text" in segment) return node instanceof Text && node.data === segment.text;
+      if ("filler" in segment) return node instanceof Text && fillers.has(node) && node.data === FILLER;
+
+      if ("text" in segment) return node instanceof Text && !fillers.has(node) && node.data === segment.text;
 
       if ("skill" in segment) return isSkillMark(node) && node.childNodes.length === 1 && node.firstChild instanceof Text && node.textContent === segment.skill;
 
@@ -283,7 +307,9 @@ export class ComposerFieldElement extends HTMLElement {
   }
 
   #render() {
-    const nodes: Node[] = fieldSegments(this.#value, this.#skills).map(segment => {
+    const nodes: Node[] = withFillers(fieldSegments(this.#value, this.#skills)).map(segment => {
+      if ("filler" in segment) return filler();
+
       if ("text" in segment) return document.createTextNode(segment.text);
 
       if ("skill" in segment) {
@@ -320,7 +346,7 @@ export class ComposerFieldElement extends HTMLElement {
     if (!top) return this.#value.length;
     const start = before(children.indexOf(top as ChildNode));
 
-    if (node === top && top instanceof Text) return start + offset;
+    if (node === top && top instanceof Text) return start + textLength(top, offset);
 
     if (isSkillMark(top) && node !== top) return start + Math.min(offset, nodeText(top).length);
 

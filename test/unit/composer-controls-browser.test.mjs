@@ -398,6 +398,24 @@ test('a dropped chat link goes where the pointer is, and a selected link shows a
   assert.equal(await editor.inputValue(), 'alpha omega');
 });
 
+test('the caret after a chat link at the end stays on its line, and typing goes after the link', async t => {
+  const page = await controlsPage(t);
+  const editor = page.getByRole('textbox', { name: 'Message piop' });
+  await editor.click();
+  const link = '[Other](piop://session/local/other)';
+  await editor.evaluate((node, link) => node.insertAt(0, link), link);
+  const caret = await editor.evaluate(node => { const rect = document.getSelection().getRangeAt(0).getClientRects()[0]; const box = node.querySelector('.composer-session-link').getBoundingClientRect(); return { top: rect?.top, linkTop: box.top, left: rect?.left, linkRight: box.right }; });
+  assert.ok(Math.abs(caret.top - caret.linkTop) < 4 && caret.left >= caret.linkRight - 1, JSON.stringify(caret));
+  await page.keyboard.type('x');
+  assert.equal(await editor.inputValue(), `${link}x`);
+  await editor.evaluate((node, end) => node.setSelectionRange(0, end), link.length);
+  assert.equal(await editor.evaluate(node => node.selectionEnd), link.length);
+  await page.keyboard.press('End');
+  await page.keyboard.press('Backspace');
+  await page.keyboard.press('Backspace');
+  assert.equal(await editor.inputValue(), '');
+});
+
 test('Ctrl+Z and Ctrl+Y undo and redo typing in the message editor', async t => {
   const page = await controlsPage(t);
   const editor = page.getByRole('textbox', { name: 'Message piop' });
