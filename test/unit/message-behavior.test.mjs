@@ -210,6 +210,7 @@ test('empty response content adds no text or copy action', async t => {
 });
 
 test('a failed tool payload load shows its error and retry loads the input and output', async t => {
+  t.mock.timers.enable({ apis: ['Date'], now: Date.now() });
   const firstLoad = Promise.withResolvers(), secondLoad = Promise.withResolvers(), secondCall = Promise.withResolvers();
   const pendingLoads = [firstLoad, secondLoad];
   let calls = 0;
@@ -221,6 +222,7 @@ test('a failed tool payload load shows its error and retry loads the input and o
   await act(() => firstLoad.reject(new Error('payload unavailable')));
   const alert = await untilDom(() => document.querySelector('[role=alert]'));
   assert.match(alert.textContent, /payload unavailable/);
+  t.mock.timers.tick(300);
   await click(button('Retry'));
   let timer;
   await Promise.race([secondCall.promise, new Promise((_, reject) => { timer = setTimeout(() => reject(new Error('Retry did not load the tool payload again')), 2000); })]).finally(() => clearTimeout(timer));
