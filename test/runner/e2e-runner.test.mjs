@@ -48,7 +48,9 @@ describe('Session tree', () => {
   assert.equal(result.stdout, 'Session tree Drafts keeps text\n');
 });
 
-test('a failed E2E batch does not omit or repeat selected tests', async t => {
+for (const failing of [false, true]) test(failing
+  ? 'a failed E2E batch does not omit or repeat selected tests'
+  : 'successful E2E batches run each selected test once', async t => {
   const directory = await mkdtemp(join(tmpdir(), 'piop-e2e-batches-'));
   t.after(() => rm(directory, { recursive: true, force: true }));
   const specs = join(directory, 'test/e2e/specs');
@@ -62,13 +64,18 @@ test('a failed E2E batch does not omit or repeat selected tests', async t => {
 const pattern = new RegExp(process.argv[process.argv.indexOf('--mochaOpts.grep') + 1]);
 const selected = ${JSON.stringify(titles)}.filter(title => pattern.test(title));
 console.log(JSON.stringify(selected));
-process.exitCode = selected.includes('chat case [draft]?') ? 1 : 0;
+process.exitCode = ${failing} && selected.includes('chat case [draft]?') ? 1 : 0;
 `);
-  await assert.rejects(execute(process.execPath, [runner, '--grep', '^chat case'], { cwd: directory, timeout: 10000 }), error => {
-    assert.equal(error.code, 1);
-    const batches = error.stdout.split('\n').filter(line => line.startsWith('[')).map(line => JSON.parse(line));
-    assert.deepEqual(batches.flat(), selected);
-    assert.deepEqual(batches.map(batch => batch.length), [10, 1]);
-    return true;
-  });
+  const run = () => execute(process.execPath, [runner, '--grep', '^chat case'], { cwd: directory, timeout: 10000 });
+  let output;
+  if (failing) {
+    await assert.rejects(run(), error => {
+      assert.equal(error.code, 1);
+      output = error.stdout;
+      return true;
+    });
+  } else output = (await run()).stdout;
+  const batches = output.split('\n').filter(line => line.startsWith('[')).map(line => JSON.parse(line));
+  assert.deepEqual(batches.flat(), selected);
+  assert.deepEqual(batches.map(batch => batch.length), [10, 1]);
 });
