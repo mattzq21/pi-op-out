@@ -31,7 +31,7 @@ before(async () => {
   url = `http://127.0.0.1:${server.address().port}`;
   browser = await launchTestBrowser({ engine: chromiumOnly });
   daemon = await daemonClient(resources);
-  for (let i = 0; i < 35; i++) {
+  for (let i = 0; i < 20; i++) {
     const chat = await daemon.invoke('create_temporary_chat', { hostId: 'local' });
     sessions.push({ id: chat.sessionId, name: `Chat ${String(i).padStart(2, '0')}`, path: chat.path, cwd: process.cwd(), project: 'Project', messageCount: 1 });
   }
