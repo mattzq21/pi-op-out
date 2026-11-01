@@ -30,6 +30,8 @@ test('desktop daemon requests recover from explicit busy rejections', { timeout:
     context.mock.timers.runAll();
   }
   assert.deepEqual(await result, { value: home });
+  context.mock.timers.runAll();
+  await new Promise(setImmediate);
   assert.equal(attempts, 3, 'two busy replies require exactly three requests');
 });
 
