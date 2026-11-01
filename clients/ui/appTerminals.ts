@@ -60,6 +60,10 @@ export function createTerminalController({ transport, sessionTransport, conversa
 
     return next;
   });
+  // Composer pane that last had focus in a conversation whose terminal panel is open. No entry means the terminal had it.
+  const composerFocus = new Map<string, "main" | "split">();
+  const noteFocus = (target: "terminal" | "main" | "split") => { if (target === "terminal") composerFocus.delete(terminalSessionIdRef.current); else composerFocus.set(terminalSessionIdRef.current, target); };
+  const focusedComposer = () => composerFocus.get(terminalSessionIdRef.current);
   const recentSessions = new Map<string, number>();
   let terminalAccess = 0;
   const trimTerminalHistory = (sessions: Record<string, SessionTerminals>) => {
@@ -374,7 +378,7 @@ export function createTerminalController({ transport, sessionTransport, conversa
   const allTerminalIds = () => Object.values(terminalsBySession()).flatMap(session => session.tabs.map(terminal => terminal.id));
   const draftTerminalIds = () => Object.entries(terminalsBySession()).filter(([key]) => key.slice(key.lastIndexOf(":") + 1).startsWith("draft-")).flatMap(([, session]) => session.tabs.map(terminal => terminal.id));
 
-  const forgetConversation = (key: string) => { setTerminalOpen(false, key); setTerminalsBySession(current => {
+  const forgetConversation = (key: string) => { setTerminalOpen(false, key); composerFocus.delete(key); setTerminalsBySession(current => {
     if (!(key in current)) return current;
 
     for (const tab of current[key].tabs) draftRevisions.delete(tab.id);
@@ -400,6 +404,7 @@ export function createTerminalController({ transport, sessionTransport, conversa
       return next;
     });
     if (openSessions().has(previousKey)) { setTerminalOpen(false, previousKey); setTerminalOpen(true, nextKey); }
+    const focus = composerFocus.get(previousKey); composerFocus.delete(previousKey); if (focus) composerFocus.set(nextKey, focus);
     setTerminalTarget(current => current?.sessionKey === previousKey ? { ...current, sessionKey: nextKey } : current);
   };
 
@@ -417,6 +422,7 @@ export function createTerminalController({ transport, sessionTransport, conversa
     const closing = terminalOpen() && terminalSessionId() === target.sessionKey;
     if (terminalOpen()) void close();
     terminalPanelRevision.current += 1;
+    composerFocus.delete(target.sessionKey);
     setTerminalTarget(target); setTerminalOpen(!closing, target.sessionKey);
   };
 
@@ -425,6 +431,7 @@ export function createTerminalController({ transport, sessionTransport, conversa
     const next = target();
     if (!chatStartedFor(next.sessionKey)) return;
     terminalPanelRevision.current += 1;
+    composerFocus.delete(next.sessionKey);
     setTerminalTarget(next);
     setTerminalOpen(true, next.sessionKey);
   };
@@ -505,6 +512,6 @@ export function createTerminalController({ transport, sessionTransport, conversa
     startTerminal, addTerminal, selectTerminal, saveTerminalSnapshot, deleteTerminal,
     queueTerminalOutput, flushOutput, exited, conversationTerminalIds, allTerminalIds, draftTerminalIds,
     forgetConversation, removeConversationTerminals, resetConversation, rekeyConversation,
-    toggleFor, toggle, close, write, updateDraft, resize,
+    toggleFor, toggle, close, write, updateDraft, resize, noteFocus, focusedComposer,
   };
 }

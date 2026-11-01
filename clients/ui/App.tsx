@@ -150,10 +150,17 @@ export default function App(props: { suppressConnectionNotices?: boolean } = {})
       </div>);
     };
 
-    return (<div class="chat-workspace" hidden={view() !== "chat"}>
+    const noteFocus = (event: FocusEvent) => {
+      const target = event.target instanceof Element ? event.target : undefined;
+
+      if (target?.closest(".terminal-panel-container")) terminals.noteFocus("terminal");
+      else if (target?.closest("piop-composer-field")) terminals.noteFocus(target.closest(".split-chat") ? "split" : "main");
+    };
+
+    return (<div class="chat-workspace" hidden={view() !== "chat"} onFocusIn={noteFocus}>
       <DraftRecovery drafts={drafts} conversationKey={activeConversationKey()} onSelect={selectSession} />
       {renderChatPanes()}
-      {terminals.prepareTerminal() && terminals.ready() && <div class="terminal-panel-container" classList={{ "terminal-panel-container-preparing": !terminalOpen() }} inert={!terminalOpen()} aria-hidden={!terminalOpen()}><Rerun on={terminalViewKey}>{(_key) => <TerminalView visible={terminalOpen() && view() === "chat"} ownershipRequired={!terminals.owned()} onTakeOwnership={terminals.takeOwnership} cwd={terminalLocationState().terminalCwd} terminals={terminals.state.sessionTerminals.tabs.map((terminal, index) => ({ id: terminal.id, label: index === 0 ? "Terminal" : `Terminal ${index + 1}` }))} activeId={terminals.state.activeTerminal.id} output={terminals.state.activeTerminal.output} outputEnd={terminals.state.activeTerminal.outputEnd} snapshot={terminals.state.activeTerminal.snapshot} snapshotEnd={terminals.state.activeTerminal.snapshotEnd} started={terminals.state.activeTerminal.started} exited={terminals.state.activeTerminal.exited} onAdd={addTerminal} onSelect={selectTerminal} onStart={startTerminal} inputDraft={terminals.state.activeTerminal.inputDraft} onDraft={terminals.updateDraft} onData={terminals.write} onResize={terminals.resize} onSnapshot={((sessionId: string, terminalId: string, generation?: string) => (value: string, outputEnd: number) => terminals.saveTerminalSnapshot(sessionId, terminalId, value, outputEnd, generation))(terminals.terminalSessionId(), terminals.state.activeTerminal.id, terminals.state.activeTerminal.generation)} onDelete={deleteTerminal} onClose={terminals.close} />}</Rerun></div>}
+      {terminals.prepareTerminal() && terminals.ready() && <div class="terminal-panel-container" classList={{ "terminal-panel-container-preparing": !terminalOpen() }} inert={!terminalOpen()} aria-hidden={!terminalOpen()}><Rerun on={terminalViewKey}>{(_key) => <TerminalView visible={terminalOpen() && view() === "chat"} focusOnShow={() => !terminals.focusedComposer()} ownershipRequired={!terminals.owned()} onTakeOwnership={terminals.takeOwnership} cwd={terminalLocationState().terminalCwd} terminals={terminals.state.sessionTerminals.tabs.map((terminal, index) => ({ id: terminal.id, label: index === 0 ? "Terminal" : `Terminal ${index + 1}` }))} activeId={terminals.state.activeTerminal.id} output={terminals.state.activeTerminal.output} outputEnd={terminals.state.activeTerminal.outputEnd} snapshot={terminals.state.activeTerminal.snapshot} snapshotEnd={terminals.state.activeTerminal.snapshotEnd} started={terminals.state.activeTerminal.started} exited={terminals.state.activeTerminal.exited} onAdd={addTerminal} onSelect={selectTerminal} onStart={startTerminal} inputDraft={terminals.state.activeTerminal.inputDraft} onDraft={terminals.updateDraft} onData={terminals.write} onResize={terminals.resize} onSnapshot={((sessionId: string, terminalId: string, generation?: string) => (value: string, outputEnd: number) => terminals.saveTerminalSnapshot(sessionId, terminalId, value, outputEnd, generation))(terminals.terminalSessionId(), terminals.state.activeTerminal.id, terminals.state.activeTerminal.generation)} onDelete={deleteTerminal} onClose={terminals.close} />}</Rerun></div>}
     </div>);
   };
 

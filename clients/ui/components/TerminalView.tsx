@@ -3,6 +3,8 @@ import { isMobile } from "../lib/platform";
 
 export interface TerminalViewProps {
   visible?: boolean;
+  // False when the terminal must not take focus when it shows.
+  focusOnShow?: () => boolean;
   ownershipRequired?: boolean; onTakeOwnership?: () => Promise<void>;
   inputDraft?: string; onDraft: (value: string) => void;
   onResize?: (cols: number, rows: number) => Promise<void>;

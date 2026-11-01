@@ -237,7 +237,7 @@ export function DesktopTerminalView(componentProps: TerminalViewProps) {
     resizeToHost.current?.();
 
     const frame = requestAnimationFrame(() => {
-      if (terminal.current === instance && componentProps.visible !== false && !componentProps.ownershipRequired) instance.focus();
+      if (terminal.current === instance && componentProps.visible !== false && !componentProps.ownershipRequired && componentProps.focusOnShow?.() !== false) instance.focus();
     });
 
     return () => cancelAnimationFrame(frame);

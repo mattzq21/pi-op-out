@@ -214,6 +214,13 @@ export function createAppConversations(preloadChat: () => void, prepareTranscrip
   const composerFields = createMemoFields(composerValues);
   const composerState = () => composerFields;
   const terminalViewKey = terminals.viewKey;
+  createDependencyEffect(() => {
+    const pane = untrack(() => terminalOpen() && terminals.focusedComposer());
+
+    if (!pane) return;
+    setActivePane(pane);
+    if (pane === "split") setSplitComposerFocusRequest(request => request + 1); else setMainComposerFocusRequest(request => request + 1);
+  }, () => [terminalSessionId()]);
 
   const activateConversationKey = (key: string) => { setArchivesOpen(false);
 
