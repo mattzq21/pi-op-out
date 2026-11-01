@@ -25,56 +25,22 @@ test('equal context shares display whole percentages that total 100', async () =
   ]);
 });
 
-test("System prompt can show and hide its source details", async () => {
+for (const [label, content] of [
+  ['System', 'System content'],
+  ['Instructions', '/AGENTS.md'],
+  ['Tools', 'Read file'],
+  ['Skills', '/SKILL.md'],
+]) test(`${label} can show and hide its source details`, async () => {
   view = await renderComponent(PromptContextBar, { context: context(), inputTokens: 3 });
-  const control = button("System");
+  const control = button(label);
   assert.equal(control.getAttribute('aria-expanded'), 'false');
-  assert.ok(!document.body.textContent.includes("System content"));
+  assert.ok(!document.body.textContent.includes(content));
   await act(() => control.click());
   assert.equal(control.getAttribute('aria-expanded'), 'true');
-  assert.ok(document.body.textContent.includes("System content"));
+  assert.ok(document.body.textContent.includes(content));
   await act(() => control.click());
   assert.equal(control.getAttribute('aria-expanded'), 'false');
-  assert.ok(!document.body.textContent.includes("System content"));
-});
-
-test("Instructions can show and hide its source details", async () => {
-  view = await renderComponent(PromptContextBar, { context: context(), inputTokens: 3 });
-  const control = button("Instructions");
-  assert.equal(control.getAttribute('aria-expanded'), 'false');
-  assert.ok(!document.body.textContent.includes("/AGENTS.md"));
-  await act(() => control.click());
-  assert.equal(control.getAttribute('aria-expanded'), 'true');
-  assert.ok(document.body.textContent.includes("/AGENTS.md"));
-  await act(() => control.click());
-  assert.equal(control.getAttribute('aria-expanded'), 'false');
-  assert.ok(!document.body.textContent.includes("/AGENTS.md"));
-});
-
-test("Tools can show and hide its source details", async () => {
-  view = await renderComponent(PromptContextBar, { context: context(), inputTokens: 3 });
-  const control = button("Tools");
-  assert.equal(control.getAttribute('aria-expanded'), 'false');
-  assert.ok(!document.body.textContent.includes("Read file"));
-  await act(() => control.click());
-  assert.equal(control.getAttribute('aria-expanded'), 'true');
-  assert.ok(document.body.textContent.includes("Read file"));
-  await act(() => control.click());
-  assert.equal(control.getAttribute('aria-expanded'), 'false');
-  assert.ok(!document.body.textContent.includes("Read file"));
-});
-
-test("Skills can show and hide its source details", async () => {
-  view = await renderComponent(PromptContextBar, { context: context(), inputTokens: 3 });
-  const control = button("Skills");
-  assert.equal(control.getAttribute('aria-expanded'), 'false');
-  assert.ok(!document.body.textContent.includes("/SKILL.md"));
-  await act(() => control.click());
-  assert.equal(control.getAttribute('aria-expanded'), 'true');
-  assert.ok(document.body.textContent.includes("/SKILL.md"));
-  await act(() => control.click());
-  assert.equal(control.getAttribute('aria-expanded'), 'false');
-  assert.ok(!document.body.textContent.includes("/SKILL.md"));
+  assert.ok(!document.body.textContent.includes(content));
 });
 
 const emptyContext = () => ({ tokens: { system: 0, instructions: 0, tools: 0, skills: 0 }, systemPrompt: '', instructions: [], tools: [], skills: [] });
@@ -87,32 +53,16 @@ test('context shares clear when context becomes empty', async () => {
   ]);
 });
 
-test("System prompt explains an empty context", async () => {
+for (const [label, explanation] of [
+  ['System', 'No system prompt'],
+  ['Instructions', 'No project instructions'],
+  ['Tools', 'No active tools'],
+  ['Skills', 'No defined skills'],
+]) test(`${label} explains an empty context`, async () => {
   view = await renderComponent(PromptContextBar, { context: context(), inputTokens: 3 });
   await view.rerender({ context: emptyContext(), inputTokens: 0 });
-  await act(() => button("System").click());
-  assert.ok(document.body.textContent.includes("No system prompt"));
-});
-
-test("Instructions explains an empty context", async () => {
-  view = await renderComponent(PromptContextBar, { context: context(), inputTokens: 3 });
-  await view.rerender({ context: emptyContext(), inputTokens: 0 });
-  await act(() => button("Instructions").click());
-  assert.ok(document.body.textContent.includes("No project instructions"));
-});
-
-test("Tools explains an empty context", async () => {
-  view = await renderComponent(PromptContextBar, { context: context(), inputTokens: 3 });
-  await view.rerender({ context: emptyContext(), inputTokens: 0 });
-  await act(() => button("Tools").click());
-  assert.ok(document.body.textContent.includes("No active tools"));
-});
-
-test("Skills explains an empty context", async () => {
-  view = await renderComponent(PromptContextBar, { context: context(), inputTokens: 3 });
-  await view.rerender({ context: emptyContext(), inputTokens: 0 });
-  await act(() => button("Skills").click());
-  assert.ok(document.body.textContent.includes("No defined skills"));
+  await act(() => button(label).click());
+  assert.ok(document.body.textContent.includes(explanation));
 });
 
 test('empty skills display zero shares for defined, invoked and shared instructions', async () => {
@@ -126,14 +76,26 @@ test('empty skills display zero shares for defined, invoked and shared instructi
 test('each tool, instruction and skill has its own copy button, and a tool copies its JSON too', async () => {
   const copied = [];
   Object.defineProperty(navigator, 'clipboard', { value: { writeText: async text => { copied.push(text); } }, configurable: true });
-  view = await renderComponent(PromptContextBar, { context: context(), inputTokens: 3 });
-  const copy = async label => { const node = document.querySelector('[aria-label="' + label + '"]'); assert.ok(node, label); await act(async () => { node.click(); await new Promise(resolve => setTimeout(resolve, 0)); }); };
+  const input = context();
+  input.tools.push({ name: 'write', description: 'Write file', parameters: { type: 'object', properties: { path: { type: 'string' } } } });
+  view = await renderComponent(PromptContextBar, { context: input, inputTokens: 3 });
+  const copy = async label => {
+    const node = document.querySelector('[aria-label="' + label + '"]');
+    assert.ok(node, label);
+    await act(() => node.click());
+  };
   await act(() => button('Tools').click());
   assert.equal(document.querySelector('[aria-label="Copy tab content"]'), null);
   await copy('Copy read');
+  await copy('Copy write');
   await act(() => button('Instructions').click());
   await copy('Copy /AGENTS.md');
   await act(() => button('Skills').click());
   await copy('Copy skill');
-  assert.deepEqual(copied, ['read\nRead file\n{\n  "type": "object"\n}', '/AGENTS.md\nInstructions content', 'skill\nSkill description\n/SKILL.md']);
+  assert.deepEqual(copied, [
+    'read\nRead file\n{\n  "type": "object"\n}',
+    'write\nWrite file\n{\n  "type": "object",\n  "properties": {\n    "path": {\n      "type": "string"\n    }\n  }\n}',
+    '/AGENTS.md\nInstructions content',
+    'skill\nSkill description\n/SKILL.md',
+  ]);
 });

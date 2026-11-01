@@ -20,8 +20,9 @@ async function run() {
       promisify(execFile)('bun', ['test/daemon/build.ts']),
       buildTraceControls(controlsBundle),
     ]);
-    const failed = builds.find(result => result.status === 'rejected');
-    if (failed) throw failed.reason;
+    const failures = builds.filter(result => result.status === 'rejected').map(result => result.reason);
+    if (failures.length === 1) throw failures[0];
+    if (failures.length > 1) throw new AggregateError(failures, 'Test builds failed');
     const executable = builds[0].value;
     const daemonExecutable = builds[1].value.stdout.trim();
     if (!daemonExecutable) throw new Error('Daemon test executable was not built');

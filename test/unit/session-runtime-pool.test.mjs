@@ -29,6 +29,7 @@ describe('session runtime pool', () => {
   afterEach(async () => {
     await pool.disconnectAll();
     clearMocks(); dom.restore();
+    assert.deepEqual(errors, []);
   });
   const commands = name => calls.filter(call => call.command === name);
 
@@ -56,8 +57,8 @@ describe('session runtime pool', () => {
     assert.equal(pool.forSession(session), client);
     assert.notEqual(pool.forSession({ ...session, hostId: 'remote' }), client);
     const id = await connect(client);
-    let notifications = 0;
-    const unsubscribe = pool.subscribe(() => notifications++);
+    let notifiedRunning;
+    const unsubscribe = pool.subscribe(() => { notifiedRunning = [...pool.runningSessions()]; });
     await send(id, { type: 'agent_start' });
     assert.equal(pool.isRunning(client), true);
     assert.equal(pool.isAnyRunning(), true);
@@ -76,10 +77,9 @@ describe('session runtime pool', () => {
     assert.equal(pool.isRunning(client), false);
     await send(id, { type: 'agent_start' });
     pool.bind('local', 'renamed', client);
-    assert.deepEqual([...pool.runningSessions()], ['local:renamed']);
+    assert.deepEqual(notifiedRunning, ['local:renamed']);
     pool.bind('local', '', client);
-    assert.equal(pool.runningSessions().size, 0);
-    assert.ok(notifications > 0);
+    assert.deepEqual(notifiedRunning, []);
     unsubscribe();
   });
 
@@ -139,12 +139,14 @@ describe('session runtime pool', () => {
 
   test('user prompts update retained session summaries while preserving project details, and only the first prompt names the chat', async () => {
     const client = pool.create({ cwd: '/repo' });
-    pool.setLiveSession(client, { ...session, cwdExists: true, apiCost: 2, messageCount: 4, name: 'New session', isDraft: true });
+    pool.setLiveSession(client, { ...session, cwdExists: true, linkedWorktree: true, apiCost: 2, messageCount: 4, name: 'New session', isDraft: true });
     const id = await connect(client);
     const text = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz12345678 omitted from the title';
     await send(id, { type: 'message_start', message: { role: 'user', content: [{ type: 'text', text }] } });
+    assert.equal(pool.isRunning(client), true, 'the user message marks the conversation running before the agent starts');
     await settled();
     const current = pool.liveSessionSummaries()[0];
+    assert.equal(current.linkedWorktree, true);
     assert.equal(current.name, 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwx');
     assert.equal(current.preview, text);
     assert.equal(current.messageCount, 4);
@@ -166,11 +168,12 @@ describe('session runtime pool', () => {
     await send(id, { type: 'message_start', message: { role: 'user', content: [{ type: 'text', text: 'Hello' }] } });
     await settled(); await settled();
     assert.equal(pool.liveSessionSummaries().length, 0);
+    await send(id, { type: 'message_start', message: { role: 'user', content: [{ type: 'text', text: 'Again' }] } });
+    await settled(); await settled();
+    assert.equal(pool.liveSessionSummaries().length, 0);
     work.resolve();
     await settled(); await settled();
     assert.equal(pool.liveSessionSummaries()[0].id, 'session');
-    await send(id, { type: 'message_start', message: { role: 'user', content: [{ type: 'text', text: 'Again' }] } });
-    await settled(); await settled();
     assert.deepEqual(keys, ['local:session']);
   });
 
@@ -221,7 +224,7 @@ describe('session runtime pool', () => {
     assert.equal(pool.isRetained(client), false);
     await send(id, { type: 'message_start', message: { role: 'user', content: 'hello' } });
     await pool.release(client);
-    pending.resolve({ sessionId: 'session', messageCount: 1 });
+    pending.resolve({ model: null, thinkingLevel: 'off', isStreaming: false, sessionId: 'session', sessionFile: '/session', messageCount: 1, pendingMessageCount: 0 });
     await starting;
     await settled();
     assert.deepEqual(pool.liveSessionSummaries(), []);

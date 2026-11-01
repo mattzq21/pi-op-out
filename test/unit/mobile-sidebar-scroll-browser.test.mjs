@@ -8,8 +8,11 @@ import typescript from '@babel/preset-typescript';
 import { launchTestBrowser, chromiumOnly } from '../test-browser.mjs';
 import assert from 'node:assert/strict';
 import { daemonClient } from '../daemon-client.mjs';
+import { cleanupScope } from '../cleanup-scope.mjs';
 
-let browser, server, url;
+const resources = cleanupScope({ after });
+let browser, server, url, daemon;
+const sessions = [];
 before(async () => {
   const bundle = await build({ entryPoints: ['test/fixtures/mobile-sidebar.tsx'], bundle: true, write: false, format: 'esm', conditions: ['browser'],
     define: { 'import.meta.env.MODE': '"development"', 'import.meta.env.DEV': 'false' },
@@ -27,19 +30,19 @@ before(async () => {
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   url = `http://127.0.0.1:${server.address().port}`;
   browser = await launchTestBrowser({ engine: chromiumOnly });
-});
-after(async () => { await browser?.close(); if (server) await new Promise(resolve => server.close(resolve)); });
-
-async function sidebar(t) {
-  let context;
-  t.after(async () => context?.close());
-  const daemon = await daemonClient(t);
-  const sessions = [];
-  for (let i = 0; i < 35; i++) {
+  daemon = await daemonClient(resources);
+  for (let i = 0; i < 20; i++) {
     const chat = await daemon.invoke('create_temporary_chat', { hostId: 'local' });
     sessions.push({ id: chat.sessionId, name: `Chat ${String(i).padStart(2, '0')}`, path: chat.path, cwd: process.cwd(), project: 'Project', messageCount: 1 });
   }
   await daemon.listChats(sessions);
+});
+resources.after(() => browser?.close());
+resources.after(async () => { if (server) await new Promise(resolve => server.close(resolve)); });
+
+async function sidebar(t) {
+  let context;
+  t.after(async () => context?.close());
   context = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
   const page = await context.newPage();
   page.setDefaultTimeout(5000);

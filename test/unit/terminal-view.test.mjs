@@ -37,17 +37,21 @@ describe('terminal view', () => {
     });
   }
 
-  test('closing the view releases the terminal and its event subscriptions', async () => {
+  test('closing the view releases the terminal and its event subscriptions', async t => {
     await render();
     const terminal = terminals[0];
+    assert.equal(typeof terminal.keyInput, 'function');
+    t.mock.timers.enable({ apis: ['setTimeout'] });
     await view.unmount(); view = undefined;
+    assert.notEqual(terminal.disposed, true, 'terminal disposal must wait for the next task');
     assert.equal(terminal.dataDisposed, true);
+    assert.equal(terminal.keyInput, undefined);
     assert.equal(terminal.csiDisposed, true);
     assert.equal(terminal.cursorDisposed, true);
     assert.equal(terminal.renderDisposed, true);
     assert.equal(terminal.scrollDisposed, true);
     // xterm throws when it is disposed before its first viewport sync, so the view disposes it one task later.
-    await new Promise(resolve => setTimeout(resolve));
+    t.mock.timers.runAll();
     assert.equal(terminal.disposed, true);
   });
 

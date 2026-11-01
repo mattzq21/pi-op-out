@@ -2,25 +2,28 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { emit } from '@tauri-apps/api/event';
 import { installDom } from '../dom.mjs';
+import { cleanupScope } from '../cleanup-scope.mjs';
 import { mockIPC, mockWindows, clearMocks } from '@tauri-apps/api/mocks';
 import { daemonClient } from '../daemon-client.mjs';
 import { SessionRuntimePool } from '../../clients/ui/lib/sessionRuntimePool.ts';
 
 async function runtimePool(t, options = {}) {
+  const scope = cleanupScope(t);
   const dom = installDom();
   const pool = new SessionRuntimePool();
   const pending = new Set(), errors = [];
   let forwarding = false;
   pool.setErrorHandler(error => errors.push(error));
-  t.after(async () => {
+  scope.after(async () => {
     try { await pool.disconnectAll(true); }
     finally {
       forwarding = false;
       await Promise.allSettled([...pending]);
       clearMocks(); dom.restore();
     }
+    assert.deepEqual(errors, []);
   });
-  const daemon = await daemonClient(t, (event, payload) => {
+  const daemon = await daemonClient(scope, (event, payload) => {
     if (!forwarding) return;
     const request = emit(event, payload);
     pending.add(request);
@@ -34,11 +37,11 @@ async function runtimePool(t, options = {}) {
   const invoke = window.__TAURI_INTERNALS__.invoke;
   window.__TAURI_INTERNALS__.invoke = (command, args, options) => invoke(command, command === 'plugin:event|unlisten' ? { ...args, id: args.eventId } : args, options);
   forwarding = true;
-  return { pool, daemon, errors };
+  return { pool, daemon };
 }
 
 test('delayed pane cleanup cannot release a transport reused by a visible pane', async t => {
-  const { pool, daemon, errors } = await runtimePool(t);
+  const { pool, daemon } = await runtimePool(t);
   const chat = await daemon.invoke('create_temporary_chat', { hostId: 'local' });
   const session = { id: chat.sessionId, cwd: chat.cwd, hostId: 'local' };
   const client = pool.forSession(session);
@@ -53,12 +56,11 @@ test('delayed pane cleanup cannot release a transport reused by a visible pane',
   pool.setInteractive(client, false);
   await pool.release(client);
   assert.notEqual(pool.forSession(session), client);
-  assert.deepEqual(errors, []);
 });
 
 
 test('settings reconnect only transports whose remote connection changed', async t => {
-  const { pool, daemon, errors } = await runtimePool(t, { remotes: [
+  const { pool, daemon } = await runtimePool(t, { remotes: [
     { id: 'remote', name: 'Remote', target: 'before' },
     { id: 'replacement', name: 'Replacement', target: 'after' },
   ] });
@@ -80,11 +82,10 @@ test('settings reconnect only transports whose remote connection changed', async
   assert.ok(Array.isArray((await remote.command({ type: 'get_commands' })).commands));
   assert.equal(remote.hasPendingSettings(), false);
   assert.ok(Array.isArray((await local.command({ type: 'get_commands' })).commands));
-  assert.deepEqual(errors, []);
 });
 
 test('a conversation released while viewed stays usable until its last viewer closes', async t => {
-  const { pool, daemon, errors } = await runtimePool(t);
+  const { pool, daemon } = await runtimePool(t);
   const chat = await daemon.invoke('create_temporary_chat', { hostId: 'local' });
   const session = { id: chat.sessionId, cwd: chat.cwd, hostId: 'local' };
   const client = pool.forSession(session);
@@ -100,11 +101,10 @@ test('a conversation released while viewed stays usable until its last viewer cl
   closeSecond();
   await disposed;
   assert.notEqual(pool.forSession(session), client);
-  assert.deepEqual(errors, []);
 });
 
 test('a conversation reopened as active before its deferred release runs stays usable', async t => {
-  const { pool, daemon, errors } = await runtimePool(t);
+  const { pool, daemon } = await runtimePool(t);
   const chat = await daemon.invoke('create_temporary_chat', { hostId: 'local' });
   const session = { id: chat.sessionId, cwd: chat.cwd, hostId: 'local' };
   const client = pool.forSession(session);
@@ -121,5 +121,4 @@ test('a conversation reopened as active before its deferred release runs stays u
   await pool.release(client);
   await disposed;
   assert.notEqual(pool.forSession(session), client);
-  assert.deepEqual(errors, []);
 });

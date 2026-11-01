@@ -21,15 +21,16 @@ export function chatPublisher(t, defaults) {
     } catch (error) { request?.reject(error); fail(error); }
   });
   const closed = new Promise(resolve => child.once('close', (code, signal) => {
+    const failedBeforeClose = failure !== undefined;
     fail(new Error(`Chat publisher closed (${code ?? signal}): ${diagnostics}`));
-    resolve({ code, signal });
+    resolve({ code, signal, failedBeforeClose });
   }));
   t.after(async () => {
     child.stdin.end();
     const timer = setTimeout(() => child.kill('SIGKILL'), 5000);
     try {
       const result = await closed;
-      if (result.code !== 0) throw failure;
+      if (result.code !== 0 || result.failedBeforeClose) throw failure;
     } finally { clearTimeout(timer); }
   });
   return (options = {}) => {

@@ -2,25 +2,37 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { installDom } from '../dom.mjs';
 import { mockIPC as mockNativeIPC, mockWindows, clearMocks } from '@tauri-apps/api/mocks';
-import { daemonClient } from '../daemon-client.mjs';
 import { NativeTransport } from '../../clients/ui/lib/nativeTransport.ts';
 import { clientIdentity } from '../../clients/ui/lib/clientIdentity.ts';
 
-test('desktop daemon requests recover from explicit busy rejections', async context => {
+test('desktop daemon requests recover from explicit busy rejections', { timeout: 10000 }, async context => {
   const dom = installDom();
   context.after(() => { clearMocks(); dom.restore(); });
-  const daemon = await daemonClient(context);
-  const home = await daemon.invoke('home_directory', { hostId: 'local' });
+  await clientIdentity('desktop');
+  context.mock.timers.enable({ apis: ['setTimeout'] });
+  const home = '/home/test-user';
   mockWindows('main');
-  const busyReplies = ['Host is busy; try again', 'Host is busy; try again'];
+  const busyReplies = ['Host is busy; try again', new Error('Host is busy; try again')];
+  let attempts = 0;
   mockNativeIPC((command, args) => {
+    attempts++;
     assert.equal(command, 'daemon_invoke');
+    assert.equal(args.command, 'home_directory');
+    assert.equal(args.args.hostId, 'local');
     const busy = busyReplies.shift();
     if (busy) throw busy;
-    return daemon.invoke(args.command, args.args);
+    return home;
   });
   const client = new NativeTransport({ hostId: 'local' });
-  assert.equal(await client.homeDirectory('local'), home);
+  const result = client.homeDirectory('local').then(value => ({ value }), error => ({ error }));
+  for (let retry = 0; retry < 2; retry++) {
+    await new Promise(setImmediate);
+    context.mock.timers.runAll();
+  }
+  assert.deepEqual(await result, { value: home });
+  context.mock.timers.runAll();
+  await new Promise(setImmediate);
+  assert.equal(attempts, 3, 'two busy replies require exactly three requests');
 });
 
 test('desktop requests report persistent saturation instead of retrying forever', { timeout: 10000 }, async context => {

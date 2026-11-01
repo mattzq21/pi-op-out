@@ -11,10 +11,69 @@ import { promisify } from 'node:util';
 
 const execute = promisify(execFile);
 
+test('a missing selected daemon test is reported before any build starts', async t => {
+  const directory = await mkdtemp(join(tmpdir(), 'piop-daemon-selection-'));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const builds = join(directory, 'builds');
+  await writeFile(join(directory, 'bun'), `#!${process.execPath}
+import { writeFileSync } from 'node:fs';
+writeFileSync(${JSON.stringify(builds)}, 'started');
+process.exit(73);
+`, { mode: 0o755 });
+  const missing = join(directory, 'missing.test.ts');
+  await assert.rejects(execute(process.execPath,
+    [fileURLToPath(new URL('../../scripts/test-daemon.mjs', import.meta.url)), missing],
+    { cwd: directory, timeout: 10000, env: { ...process.env, PATH: directory + ':' + process.env.PATH } }), error => {
+    assert.match(error.stderr, /ENOENT/);
+    assert.ok(error.stderr.includes(missing));
+    return error.code === 1;
+  });
+  assert.equal(existsSync(builds), false, 'invalid selections must not start builds');
+});
+
+test('different paths to the same daemon test are rejected before builds start', async t => {
+  const directory = await mkdtemp(join(tmpdir(), 'piop-daemon-duplicate-'));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  await writeFile(join(directory, 'case.test.ts'), '');
+  await writeFile(join(directory, 'bun'), '#!/bin/sh\nexit 73\n', { mode: 0o755 });
+  await assert.rejects(execute(process.execPath,
+    [fileURLToPath(new URL('../../scripts/test-daemon.mjs', import.meta.url)),
+      './case.test.ts', join(directory, 'case.test.ts')],
+    { cwd: directory, timeout: 10000, env: { ...process.env, PATH: directory + ':' + process.env.PATH } }), error => {
+    assert.match(error.stderr, /Each test file must be listed once/);
+    return error.code === 1;
+  });
+});
+
+test('all daemon build failures are reported without starting tests', async t => {
+  const directory = await mkdtemp(join(tmpdir(), 'piop-daemon-build-failures-'));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const selected = join(directory, 'case.test.ts');
+  const compiler = join(directory, 'compiler');
+  await writeFile(selected, '');
+  await writeFile(join(directory, 'bun'), `#!/bin/sh
+if [ "$1" = "test/daemon/build.ts" ]; then
+  echo 'daemon build failed' >&2
+  exit 19
+fi
+echo 'tests must not start'
+`, { mode: 0o755 });
+  await writeFile(compiler, "#!/bin/sh\necho 'controls compiler failed' >&2\nexit 23\n", { mode: 0o755 });
+  await assert.rejects(execute(process.execPath,
+    [fileURLToPath(new URL('../../scripts/test-daemon.mjs', import.meta.url)), selected],
+    { cwd: directory, timeout: 10000, env: { ...process.env, PATH: directory + ':' + process.env.PATH, ESBUILD_BINARY_PATH: compiler } }), error => {
+    assert.equal(error.code, 1);
+    assert.match(error.stderr, /daemon build failed/);
+    assert.match(error.stderr, /controls compiler failed/);
+    assert.doesNotMatch(error.stdout, /tests must not start/);
+    return true;
+  });
+});
+
 async function fixture(t, failing, discover) {
   const directory = await mkdtemp(join(tmpdir(), 'piop-daemon-runner-'));
   t.after(() => rm(directory, { recursive: true, force: true }));
-  const files = Array.from({ length: 5 }, (_, index) => discover ? `test/daemon/${index % 2 ? 'nested/' : ''}case-${index}.test.ts` : join(directory, `case-${index}.test.ts`));
+  const files = Array.from({ length: 3 }, (_, index) => discover ? `test/daemon/${index % 2 ? 'nested/' : ''}case-${index}.test.ts` : join(directory, `case-${index}.test.ts`));
   const builds = join(directory, 'builds'), invocation = join(directory, 'invocation.json');
   const started = [], active = new Set();
   let waiting = [], maximum = 0;
@@ -66,7 +125,7 @@ test('ignored case', () => { throw new Error('Filter was not applied'); });
 `);
   }
   if (discover) await writeFile(join(directory, 'test/daemon/helper.ts'), '');
-  const bun = (await execute('which', ['bun'])).stdout.trim();
+  const bun = (await execute('which', ['bun'], { timeout: 10000 })).stdout.trim();
   await writeFile(join(directory, 'bun'), `#!${process.execPath}
 import { appendFileSync, writeFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';

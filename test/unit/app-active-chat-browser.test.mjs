@@ -31,7 +31,6 @@ for (const withImage of [false, true]) test('the chat list marks a new chat as a
   await composer.press('Enter');
   await page.getByText('Reply to Look here').waitFor({ timeout: 30000 });
   await page.getByRole('button', { name: 'Stop piop', exact: true }).waitFor({ state: 'detached' });
-  await page.getByRole('button', { name: /^Look here,/ }).waitFor();
-  await page.waitForTimeout(500);
+  await page.locator('.session-item.active').getByRole('button', { name: /^Look here,/ }).waitFor();
   assert.deepEqual(await activeChat(page), ['Look here']);
 });

@@ -1,12 +1,13 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
+import { on, once } from 'node:events';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { WebSocketServer } from 'ws';
 import { nativeFileCommand } from '../native-file-command.mjs';
 
 const REPOSITORY = fileURLToPath(new URL('../..', import.meta.url));
-let executable;
+let executable, bundledBuildId;
 const bundledDaemon = () => executable ??= process.env.PIOP_TEST_DAEMON_EXECUTABLE
   ?? execFileSync('bun', ['test/daemon/build.ts'], { cwd: REPOSITORY, encoding: 'utf8' }).trim();
 const TOKEN = 'test-token-0123456789abcdef0123456789';
@@ -16,8 +17,7 @@ const TOKEN = 'test-token-0123456789abcdef0123456789';
  * and connects to the daemon named by PIOP_DAEMON_URL.
  */
 async function bundledBuild() {
-  const daemon = bundledDaemon();
-  return execFileSync(daemon, ['--build-id'], { encoding: 'utf8' }).trim();
+  return bundledBuildId ??= execFileSync(bundledDaemon(), ['--build-id'], { encoding: 'utf8' }).trim();
 }
 
 /** A daemon that speaks the desktop protocol; answer(request, socket) decides each reply. */
@@ -25,7 +25,6 @@ async function fakeDaemon(t, { buildId, answer = () => null }) {
   const server = new WebSocketServer({ host: '127.0.0.1', port: 0 });
   await new Promise(resolve => server.once('listening', resolve));
   const sockets = [];
-  const requests = [];
   server.on('connection', socket => {
     sockets.push(socket);
     socket.on('message', async data => {
@@ -35,13 +34,15 @@ async function fakeDaemon(t, { buildId, answer = () => null }) {
         return;
       }
       if (packet.type === 'ping') return;
-      requests.push(packet);
       const reply = await answer(packet, socket);
       if (reply !== undefined) socket.send(JSON.stringify({ id: packet.id, result: reply }));
     });
   });
   t.after(() => new Promise(resolve => { for (const socket of server.clients) socket.terminate(); server.close(resolve); }));
-  return { url: 'ws://127.0.0.1:' + server.address().port, sockets, requests, connections: () => sockets.length };
+  return {
+    url: 'ws://127.0.0.1:' + server.address().port, sockets, connections: () => sockets.length,
+    nextConnection: () => once(server, 'connection', { signal: AbortSignal.timeout(10000) }),
+  };
 }
 
 async function desktop(t, url, env = {}) {
@@ -88,8 +89,11 @@ test('a lost connection fails waiting commands, closes open terminals and chats,
   await app.invoke('start_terminal', { terminalId: 'term-1' });
   await app.invoke('start_pi', { runtimeId: 'chat-1' });
   hold = true;
+  const messages = on(daemon.sockets[0], 'message', { signal: AbortSignal.timeout(10000) });
   const waiting = app.failure('pi_command', { runtimeId: 'chat-1', command: { type: 'get_state' } });
-  await until(() => daemon.requests.some(request => request.command === 'pi_command'), 'the waiting command reached the daemon');
+  for await (const [data] of messages) {
+    if (JSON.parse(String(data)).command === 'pi_command') break;
+  }
   daemon.sockets[0].terminate();
   assert.match(await waiting, /^Disconnected from the Piop daemon \(.+\); the command may have completed\.$/);
   const events = await until(async () => { const events = await app.events(); return events.length >= 2 && events; }, 'disconnect events');
@@ -108,7 +112,9 @@ test('after a daemon restart notice, the desktop app reconnects by itself when t
   await app.invoke('list_sessions');
   daemon.sockets[0].send(JSON.stringify({ event: 'pi://daemon-restarting', payload: { hostId: 'local' } }));
   await until(async () => (await app.events()).some(event => event.event === 'pi://daemon-restarting'), 'the restart notice reached the window');
+  const reconnected = daemon.nextConnection();
   daemon.sockets[0].close();
-  await until(() => daemon.connections() === 2, 'the app reconnected without a command');
+  await assert.doesNotReject(reconnected, 'the app must reconnect without a command');
+  assert.equal(daemon.connections(), 2);
   await until(async () => (await app.events()).some(event => event.payload?.type === 'connection_restored'), 'the window heard the connection is back');
 });

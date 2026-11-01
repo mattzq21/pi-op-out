@@ -1,36 +1,22 @@
 import { createServer } from 'node:http';
 import assert from 'node:assert/strict';
-import { test } from 'node:test';
+import { after, test } from 'node:test';
 import { nativeFileCommand } from '../native-file-command.mjs';
+import { cleanupScope } from '../cleanup-scope.mjs';
 
-test('opening a conversation window rejects a missing target', async t => {
-  const native = await nativeFileCommand(t, { desktop: true });
-  await assert.rejects(native.invoke('new_window', { target: null }), { message: 'Select a conversation to open in another window' });
-});
+const resources = cleanupScope({ after });
+let rejectionNative;
 
-test("opening a conversation window rejects a missing session ID", async t => {
-  const native = await nativeFileCommand(t, { desktop: true });
-  await assert.rejects(native.invoke('new_window', { target: {} }), { message: 'Select a conversation to open in another window' });
-});
-
-test("opening a conversation window rejects a null session ID", async t => {
-  const native = await nativeFileCommand(t, { desktop: true });
-  await assert.rejects(native.invoke('new_window', { target: {"sessionId": null} }), { message: 'Select a conversation to open in another window' });
-});
-
-test("opening a conversation window rejects a numeric session ID", async t => {
-  const native = await nativeFileCommand(t, { desktop: true });
-  await assert.rejects(native.invoke('new_window', { target: {"sessionId": 7} }), { message: 'Select a conversation to open in another window' });
-});
-
-test("opening a conversation window rejects a empty session ID", async t => {
-  const native = await nativeFileCommand(t, { desktop: true });
-  await assert.rejects(native.invoke('new_window', { target: {"sessionId": ""} }), { message: 'Select a conversation to open in another window' });
-});
-
-test("opening a conversation window rejects a whitespace session ID", async t => {
-  const native = await nativeFileCommand(t, { desktop: true });
-  await assert.rejects(native.invoke('new_window', { target: {"sessionId": " \n\t"} }), { message: 'Select a conversation to open in another window' });
+for (const [description, target] of [
+  ['a missing target', null],
+  ['a missing session ID', {}],
+  ['a null session ID', { sessionId: null }],
+  ['a numeric session ID', { sessionId: 7 }],
+  ['an empty session ID', { sessionId: '' }],
+  ['a whitespace session ID', { sessionId: ' \n\t' }],
+]) test(`opening a conversation window rejects ${description}`, async () => {
+  const native = await (rejectionNative ??= nativeFileCommand(resources, { desktop: true }));
+  await assert.rejects(native.invoke('new_window', { target }), { message: 'Select a conversation to open in another window' });
 });
 
 test('a new window receives special characters as one complete conversation target', async t => {

@@ -21,16 +21,16 @@ async function fixture(t, fail) {
   await writeFile(join(directory, 'cargo'), `#!${process.execPath}
 import { appendFileSync } from 'node:fs';
 appendFileSync(${JSON.stringify(log)}, 'build\\n');
-${fail === 'native' ? "console.error('build failed'); process.exit(17);" : `console.log(JSON.stringify({executable: ${JSON.stringify(binary)}, target: {name: 'piop_desktop'}}));`}
+${fail === 'native' || fail === 'both' ? "console.error('native build failed'); process.exit(17);" : `console.log(JSON.stringify({executable: ${JSON.stringify(binary)}, target: {name: 'piop_desktop'}}));`}
 `, { mode: 0o755 });
   const daemonBinary = join(directory, 'daemon-test');
   await writeFile(join(directory, 'bun'), `#!${process.execPath}
 import { appendFileSync } from 'node:fs';
 appendFileSync(${JSON.stringify(log)}, 'daemon\\n');
-${fail === 'daemon' ? "console.error('daemon build failed'); process.exit(19);" : `console.log(${JSON.stringify(daemonBinary)});`}
+${fail === 'daemon' || fail === 'both' ? "console.error('daemon build failed'); process.exit(19);" : `console.log(${JSON.stringify(daemonBinary)});`}
 `, { mode: 0o755 });
   const files = [];
-  for (let index = 0; index < 3; index++) {
+  for (let index = 0; index < 2; index++) {
     const file = join(directory, `child-${index}.test.mjs`);
     await writeFile(file, `import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -43,24 +43,50 @@ test('child ${index} uses this run\\'s build', async () => {
   assert.ok(bundle && existsSync(bundle));
   assert.notEqual(bundle, '/stale/controls');
   appendFileSync(${JSON.stringify(controls)}, bundle + '\\n');
+  ${fail === 'test' && index === 0 ? "assert.fail('selected test failed');" : ''}
 });`);
     files.push(file);
   }
   const env = { ...process.env, PATH: directory + ':' + process.env.PATH, PIOP_TEST_NATIVE_EXECUTABLE: '/stale/previous-build', PIOP_TEST_DAEMON_EXECUTABLE: '/stale/daemon', PIOP_TEST_CONTROLS_BUNDLE: '/stale/controls' };
   delete env.NODE_TEST_CONTEXT;
-  const run = () => execute(process.execPath, [runner, ...files], { env });
+  const run = () => execute(process.execPath, [runner, ...files], { env, timeout: 10000 });
   return { run, log, controls };
 }
 
 test('fresh native and daemon builds are shared by separate test processes', async t => {
   const { run, log, controls } = await fixture(t);
   const result = await run();
-  assert.match(result.stdout, /pass 3/);
+  assert.match(result.stdout, /pass 2/);
   const bundles = (await readFile(controls, 'utf8')).trim().split('\n');
-  assert.equal(bundles.length, 3);
+  assert.equal(bundles.length, 2);
   assert.equal(new Set(bundles).size, 1);
   assert.equal(existsSync(bundles[0]), false, 'the shared build is removed after the tests');
   assert.deepEqual((await readFile(log, 'utf8')).trim().split('\n').sort(), ['build', 'daemon']);
+});
+
+test('a failed child test fails the run and releases the shared build', async t => {
+  const { run, controls } = await fixture(t, 'test');
+  await assert.rejects(run(), error => {
+    assert.equal(error.code, 1);
+    assert.match(error.stdout, /selected test failed/);
+    assert.match(error.stdout, /pass 1/);
+    assert.match(error.stdout, /fail 1/);
+    return true;
+  });
+  const bundles = (await readFile(controls, 'utf8')).trim().split('\n');
+  assert.equal(bundles.length, 2, 'both child processes finish before cleanup');
+  for (const bundle of bundles) assert.equal(existsSync(bundle), false);
+});
+
+test('all build failures are reported without starting the tests', async t => {
+  const { run } = await fixture(t, 'both');
+  await assert.rejects(run(), error => {
+    assert.equal(error.code, 1);
+    assert.match(error.stderr, /native build failed/);
+    assert.match(error.stderr, /daemon build failed/);
+    assert.doesNotMatch(error.stdout, /child [0-9]/);
+    return true;
+  });
 });
 
 for (const target of ['native', 'daemon']) test(`a ${target} build failure prevents the tests from starting`, async t => {
@@ -70,4 +96,41 @@ for (const target of ['native', 'daemon']) test(`a ${target} build failure preve
     assert.doesNotMatch(error.stdout, /child [0-9]/);
     return true;
   });
+});
+
+test('native file commands do not start a hidden display', async t => {
+  const directory = await mkdtemp(join(tmpdir(), 'piop-native-display-'));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const binary = join(directory, 'native-test');
+  await writeFile(binary, `#!${process.execPath}
+import { createServer } from 'node:net';
+import { createInterface } from 'node:readline';
+const server = createServer(socket => {
+  createInterface({ input: socket }).on('line', line => {
+    const { id } = JSON.parse(line);
+    socket.write(JSON.stringify({ id, result: { name: 'fixture.bin', data: [1, 2, 3] } }) + '\\n');
+  });
+  socket.on('end', () => server.close());
+});
+server.listen(process.env.PIOP_TEST_NATIVE_SOCKET, () => console.log('PIOP_TEST_NATIVE_READY'));
+`, { mode: 0o755 });
+  await writeFile(join(directory, 'Xvfb'), `#!${process.execPath}
+console.error('Unexpected hidden display startup');
+process.exit(41);
+`, { mode: 0o755 });
+  const script = join(directory, 'file.test.mjs');
+  await writeFile(script, `
+import assert from 'node:assert/strict';
+import { test } from 'node:test';
+import { nativeFileCommand } from ${JSON.stringify(helper)};
+test('file commands work without a display', async t => {
+  const native = await nativeFileCommand(t);
+  assert.deepEqual(await native.invoke('read_dropped_file', { path: 'fixture.bin' }), { name: 'fixture.bin', data: [1, 2, 3] });
+});
+`);
+  const env = { ...process.env, PATH: directory + ':' + process.env.PATH, PIOP_TEST_NATIVE_EXECUTABLE: binary };
+  delete env.NODE_TEST_CONTEXT;
+  const result = await execute(process.execPath, ['--test', '--test-reporter=tap', script], { env, timeout: 5000 });
+  assert.match(result.stdout, /^# pass 1$/m);
+  assert.match(result.stdout, /^# fail 0$/m);
 });

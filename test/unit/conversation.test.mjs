@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { describe, test, beforeEach, afterEach } from 'node:test';
-import { installDom, renderComponent } from '../dom.mjs';
+import { installDom, renderComponent, untilDom } from '../dom.mjs';
 import { ChatView } from '../../clients/ui/components/ChatView.tsx';
 
 describe('conversation behavior', () => {
@@ -43,9 +43,8 @@ test('work duration handles seconds, hours and unavailable timestamps', async ()
     assert.equal(document.querySelector('.command-result.compaction'), null);
     document.querySelector('.work-group').open = true;
     document.querySelector('.work-group').dispatchEvent(new Event('toggle'));
-    await new Promise(resolve => setTimeout(resolve, 0));
-    const content = document.querySelector('.work-group-content');
-    assert.equal(content.querySelector('.command-result.compaction')?.textContent, 'Context compacted');
+    const compaction = await untilDom(() => document.querySelector('.work-group-content .command-result.compaction'));
+    assert.equal(compaction.textContent, 'Context compacted');
   });
 
 });

@@ -42,17 +42,18 @@ return value; };
 const commands = name => calls.filter(call => call.command === name);
 const rpc = type => commands('pi_command').filter(call => call.args.command.type === type);
 
-test('a draft agent reload that finishes after the first message does not replace the session agent list', async () => {
+test('a draft agent reload that finishes after the first message does not replace the session agent list', { timeout: 5000 }, async () => {
   const client = transport({});
   await client.connect();
   let finishReload;
-  responses.set('provider_auth', args => args.request.reload ? new Promise(resolve => { finishReload = () => resolve({ config: { agents: [{ name: 'general', model: '', effort: 'high', path_systemprompt: 'p.md', path_agent_prompt: '', tools: [], skills: [], mcpServers: {} }] }, models: [], initialModel: null, initialThinking: 'off', commands: [], commandDetails: [], skills: [] }); }) : { config: { agents: [] }, models: [], initialModel: null, initialThinking: 'off', commands: [], commandDetails: [], skills: [] });
+  const requested = Promise.withResolvers();
+  responses.set('provider_auth', args => args.request.reload ? new Promise(resolve => { requested.resolve(); finishReload = () => resolve({ config: { agents: [{ name: 'general', model: '', effort: 'high', path_systemprompt: 'p.md', path_agent_prompt: '', tools: [], skills: [], mcpServers: {} }] }, models: [], initialModel: null, initialThinking: 'off', commands: [], commandDetails: [], skills: [] }); }) : { config: { agents: [] }, models: [], initialModel: null, initialThinking: 'off', commands: [], commandDetails: [], skills: [] });
   responses.set('pi_command:get_state', { sessionId: 'temporary', sessionFile: '/tmp/chat/session.jsonl' });
   responses.set('pi_command:set_fast_mode', {});
   const statuses = [];
   client.subscribe(event => { if (event.statusKey === 'pi-define-agents') statuses.push(event); });
   const reload = client.reloadAgentDefinitions('');
-  await new Promise(resolve => setTimeout(resolve, 0));
+  await requested.promise;
   assert.ok(finishReload, 'the reload request must be pending');
   await client.startDraft();
   assert.equal(commands('start_pi').length, 1);
@@ -102,11 +103,12 @@ test('a new worktree draft sends its branch choice once and uses the returned fo
   assert.equal(commands('start_pi')[1].args.cwd, '/worktrees/chat');
 });
 
-test('a rejected stop can reconnect and receive conversation events', async () => {
+test('a rejected stop can reconnect and receive conversation events', async t => {
+  const warn = t.mock.method(console, 'warn');
   const client = transport();
   await client.connect();
-  responses.set('stop_pi', new Error('Host is busy; try again'));
-  await assert.rejects(client.disconnect(), /Host is busy/);
+  responses.set('stop_pi', new Error('Disconnected from the Piop daemon (connection closed); the command may have completed.'));
+  await assert.rejects(client.disconnect(), /Disconnected from the Piop daemon/);
   responses.set('stop_pi', true);
   await client.connect();
   assert.equal(commands('start_pi').length, 2);
@@ -114,6 +116,7 @@ test('a rejected stop can reconnect and receive conversation events', async () =
   client.subscribe(event => events.push(event));
   await emit('pi://event', { runtimeId: commands('start_pi').at(-1).args.runtimeId, event: { type: 'agent_start' } });
   assert.ok(events.some(event => event.type === 'agent_start'));
+  assert.equal(warn.mock.callCount(), 0, 'reconnecting must not call removed event handlers');
 });
 
 
@@ -137,7 +140,9 @@ test('unused temporary chats are removed on disposal while used chats survive', 
   assert.equal(unused.isTemporaryChat(), true);
   assert.equal(commands('create_temporary_chat').length, 0);
   await unused.startDraft();
-  await unused.dispose();
+  await Promise.all([unused.dispose(), unused.dispose()]);
+  assert.equal(commands('stop_pi').length, 1, 'concurrent disposal stops the session once');
+  assert.equal(commands('remove_temporary_chat').length, 1, 'concurrent disposal removes the folder once');
   assert.deepEqual(commands('remove_temporary_chat').at(-1).args, { path: '/tmp/chat', hostId: 'local' });
   const used = transport({});
   await used.connect();
@@ -172,9 +177,12 @@ test('subscriptions replay queue, pins, statuses and unresolved dialogs, and fil
   await send(status); await send(dialog); await send(queue); await send(pins);
   const replay = [];
   const stopReplay = client.subscribe(event => replay.push(event));
+  stopReplay();
+  const clearedStatus = { ...status, statusText: '' };
+  await send(clearedStatus);
   assert.deepEqual(replay, [queue, pins, status, dialog]);
-  stopReplay(); unsubscribe();
-  await send({ ...status, statusText: '' });
+  assert.deepEqual(seen.at(-1), clearedStatus);
+  unsubscribe();
   await send({ type: 'extension_ui_resolved', id: 'dialog' });
   const cleared = [];
   client.subscribe(event => cleared.push(event));
@@ -192,9 +200,11 @@ test('returning subscribers recover widgets and removed widgets stay removed', a
   await emit('pi://event', { runtimeId, event: widget });
   const replay = []; const unsubscribe = client.subscribe(event => replay.push(event)); unsubscribe();
   assert.ok(replay.some(event => event.method === 'setWidget' && event.widgetLines[0] === 'Working'));
+  const otherWidget = { ...widget, widgetKey: 'usage', widgetLines: ['Tokens: 1'] };
+  await emit('pi://event', { runtimeId, event: otherWidget });
   await emit('pi://event', { runtimeId, event: { ...widget, widgetLines: undefined } });
-  const cleared = []; client.subscribe(event => cleared.push(event));
-  assert.equal(cleared.some(event => event.method === 'setWidget'), false);
+  const remaining = []; client.subscribe(event => remaining.push(event));
+  assert.deepEqual(remaining.filter(event => event.method === 'setWidget'), [otherWidget]);
 });
 
 test('history refresh uses daemon entries without retaining a second live assistant copy', async () => {
@@ -231,7 +241,7 @@ test('compact prompts go to the queue as messages while state updates retain the
   assert.equal(client.connectionTarget().sessionId, 'other');
   responses.set('pi_command:fork', { cancelled: true });
   await client.command({ type: 'fork' });
-  assert.equal(client.connectionTarget().sessionId, 'other');
+  assert.deepEqual(client.connectionTarget(), { cwd: '/repo', sessionPath: '/other', sessionId: 'other', hostId: 'local' });
   responses.set('pi_command:fork', {});
   await client.command({ type: 'fork' });
   assert.equal(client.connectionTarget().sessionId, undefined);
@@ -243,14 +253,13 @@ test('diagnostics retain the last five matching stderr lines and augment connect
   const client = transport();
   await client.connect();
   const runtimeId = commands('start_pi')[0].args.runtimeId;
-  await emit('pi://stderr', { runtimeId: 'other', line: 'ignore' });
-  await emit('pi://stderr', { runtimeId, line: ' ' });
-
   for (let i = 0; i < 6; i++) await emit('pi://stderr', { runtimeId, line: ` line ${i} ` });
   await emit('pi://stderr', ' final ');
+  await emit('pi://stderr', { runtimeId: 'other', line: 'ignore' });
+  await emit('pi://stderr', { runtimeId, line: ' ' });
   assert.equal(client.lastDiagnostic(), 'line 2\nline 3\nline 4\nline 5\nfinal');
   responses.set('pi_command:prompt', new Error('Disconnected'));
-  await assert.rejects(client.command({ type: 'prompt' }), /Disconnected\nline 2/);
+  await assert.rejects(client.command({ type: 'prompt' }), { message: 'Disconnected\nline 2\nline 3\nline 4\nline 5\nfinal' });
   responses.set('pi_command:prompt', new Error('Bad input'));
   await assert.rejects(client.command({ type: 'prompt' }), { message: 'Bad input' });
 });

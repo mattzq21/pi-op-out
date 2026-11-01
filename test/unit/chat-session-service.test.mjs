@@ -1,10 +1,10 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { execFileSync } from 'node:child_process';
-import { fileURLToPath } from 'node:url';
 import { mockIPC, mockWindows, clearMocks } from '@tauri-apps/api/mocks';
 import { installDom, renderHook, act, whenReactive } from '../dom.mjs';
 import { daemonClient } from '../daemon-client.mjs';
+import { chatPublisher } from '../chat-publisher-fixture.mjs';
+import { cleanupScope } from '../cleanup-scope.mjs';
 import { NativeTransport } from '../../clients/ui/lib/nativeTransport.ts';
 import { useChatSession } from '../../clients/ui/lib/useChatSession.ts';
 import { promptContext } from '../prompt-context-fixture.mjs';
@@ -17,6 +17,9 @@ async function sessionView(t, entries, { afterReply = async () => {} } = {}) {
     try { await hook?.unmount(); for (const value of clients) await value.dispose(); }
     finally { clearMocks(); dom.restore(); }
   });
+  const publisherScope = cleanupScope(t);
+  let publisher;
+  const publish = options => (publisher ??= chatPublisher(publisherScope))(options);
   const daemon = await daemonClient(t);
   mockWindows('main');
   mockIPC(async (command, args) => {
@@ -30,10 +33,7 @@ async function sessionView(t, entries, { afterReply = async () => {} } = {}) {
     command === 'plugin:event|unlisten' ? { ...args, id: args.eventId } : args, options);
   const publishChat = async entries => {
     const home = await daemon.invoke('home_directory', { hostId: 'local' });
-    const chat = JSON.parse(execFileSync('node', [fileURLToPath(new URL('../fixtures/publish-chat.mjs', import.meta.url))], {
-      encoding: 'utf8', timeout: 30_000,
-      input: JSON.stringify({ home, cwd: home, content: entries.map(entry => JSON.stringify(entry) + '\n').join('') }),
-    }));
+    const chat = await publish({ home, cwd: home, content: entries.map(entry => JSON.stringify(entry) + '\n').join('') });
     return { cwd: home, sessionPath: chat.path };
   };
   const target = entries ? { ...await publishChat(entries), readOnly: true } : {};
@@ -42,7 +42,7 @@ async function sessionView(t, entries, { afterReply = async () => {} } = {}) {
   await client.connect();
   hook = await renderHook(value => useChatSession(value, undefined, { poll: !entries }), client);
   const send = async (...events) => act(() => { for (const event of events) hook.current.handleEvent(event); });
-  return { dom, hook, send, client, daemon, publishChat, async createDraft() {
+  return { dom, hook, send, client, daemon, publish, publishChat, async createDraft() {
     const next = new NativeTransport({});
     clients.push(next);
     await next.connect();
@@ -263,7 +263,7 @@ test('a session switch during refresh fetches a fresh snapshot', async t => {
   const received = Promise.withResolvers(), release = Promise.withResolvers();
   t.after(() => release.resolve());
   let snapshots = 0, runtimeId;
-  const { hook, send, client, daemon } = await sessionView(t, [], {
+  const { hook, send, client, daemon, publish } = await sessionView(t, [], {
     async afterReply(command, args) {
       if (command !== 'pi_command' || args.command.type !== 'get_snapshot') return;
       snapshots++;
@@ -274,10 +274,7 @@ test('a session switch during refresh fetches a fresh snapshot', async t => {
     },
   });
   const home = await daemon.invoke('home_directory', { hostId: 'local' });
-  const next = JSON.parse(execFileSync('node', [fileURLToPath(new URL('../fixtures/publish-chat.mjs', import.meta.url))], {
-    encoding: 'utf8', timeout: 30_000,
-    input: JSON.stringify({ home, cwd: home, content: '' }),
-  }));
+  const next = await publish({ home, cwd: home, content: '' });
   let operation;
   await act(() => { operation = hook.current.refresh(); });
   await received.promise;

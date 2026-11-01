@@ -32,10 +32,14 @@ test('two windows that change one shortcut differently cannot overwrite each oth
 
 test('shortcuts that clash or take over search are refused and nothing is stored', async t => {
   const store = await preferences(t);
-  await assert.rejects(store.save(edited({ openSettings: 'Mod+J' })), /shortcut (Mod\+J|Ctrl\+J) is assigned more than once/);
-  await assert.rejects(store.save(edited({ openSettings: 'Ctrl+F' })), /^Error: Shortcut Ctrl\+F is reserved for search$/);
-  await assert.rejects(store.save(edited({ openSettings: 'Shift+K' })), /^Error: Invalid shortcut for openSettings: Shift\+K$/);
-  assert.deepEqual(await store.stored(), start);
+  for (const [shortcut, error] of [
+    ['Mod+J', /shortcut (Mod\+J|Ctrl\+J) is assigned more than once/],
+    ['Ctrl+F', /^Error: Shortcut Ctrl\+F is reserved for search$/],
+    ['Shift+K', /^Error: Invalid shortcut for openSettings: Shift\+K$/],
+  ]) {
+    await assert.rejects(store.save({ ...edited({ openSettings: shortcut }), debugMode: true }), error);
+    assert.deepEqual(await store.stored(), start, `${shortcut} must not save any changes`);
+  }
 });
 
 test('a newly opened window cannot replace stored preferences with its defaults', async t => {
