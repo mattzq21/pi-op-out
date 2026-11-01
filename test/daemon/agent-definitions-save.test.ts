@@ -75,3 +75,14 @@ test('project agents save for one project folder, and only chats there see them'
   expect(inside.agents.find((agent: any) => agent.isDefault).name).toBe('local-helper');
   expect((await catalog()).agents.map((agent: any) => agent.name)).not.toContain('local-helper');
 }, 60000);
+
+test('moving a global agent to a project takes it out of the global agents and puts it in that project', async () => {
+  const project = join(daemon.home, 'moving-project');
+  await mkdir(project, { recursive: true });
+  await saveAgentDefinitions(daemon, added('mover'));
+  const before = await agentDefinitions(daemon);
+  await daemon.invoke('move_agent_to_project', { hostId: 'local', cwd: project, agent: 'mover', revision: before.revision });
+  expect((await agentDefinitions(daemon)).agents.map((agent: any) => agent.name)).not.toContain('mover');
+  const inside = (await daemon.invoke('provider_auth', { hostId: 'local', request: { action: 'draft_catalog', cwd: project } })).config;
+  expect(inside.agents.filter((agent: any) => agent.project).map((agent: any) => agent.name)).toEqual(['mover']);
+}, 60000);

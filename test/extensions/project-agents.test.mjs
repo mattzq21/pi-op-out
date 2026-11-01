@@ -32,10 +32,29 @@ test('project agents join the global agents only in their project, and names sta
   assert.equal(elsewhere.agents.find(agent => agent.isDefault).name, 'general');
 
   const current = await f.configuration();
-  await assert.rejects(f.configure({ agents: [...current.agents, profile('tester')] }), /used by the project/);
-  await assert.rejects(save(project, { revision: saved.revision, agents: [] }), /project's default agent/);
+  await assert.rejects(f.configure({ agents: [...current.agents, profile('tester')] }), /used by a global agent and by the project/);
+  await assert.rejects(save(project, { revision: saved.revision, agents: [] }), /as its default agent, but no such agent exists/);
   await assert.rejects(save(project, { revision: 'missing', defaultAgent: null }), /changed in another window/);
 
   f.ctx.cwd = linked; await f.start();
   assert.equal(f.capability().active, 'tester');
+});
+
+test('moving a global agent to a project removes it from the global agents and adds it to the project in one step', async t => {
+  const f = await agentFixture(t); await f.load();
+  const project = join(f.root, 'project'); await mkdir(project);
+  const loader = await import(pathToFileURL(join(f.dir, 'daemon-loader.mjs')));
+  const settings = JSON.parse(process.env.PIOP_AGENT_RESOURCES);
+  const global = await loader.loadAgentDefinitions({ settings, initial: false });
+  const move = (agent, revision = global.config.revision) => loader.moveAgentToProject({ settings, global, cwd: project, agent, revision });
+
+  await assert.rejects(move('general'), /must stay global/);
+  await assert.rejects(move('reviewer', 'stale'), /changed in another window/);
+  const moved = await move('reviewer');
+
+  assert.deepEqual((await f.configuration()).agents.map(agent => agent.name), ['general']);
+  assert.equal(moved.revision, (await f.configuration()).revision);
+  const inside = (await loader.loadAgentDefinitions({ settings, initial: false, project: { cwd: project, global: moved.definitions } })).config;
+  assert.deepEqual(inside.agents.map(agent => [agent.name, agent.project === true]), [['general', false], ['reviewer', true]]);
+  await assert.rejects(loader.moveAgentToProject({ settings, global: moved.definitions, cwd: project, agent: 'reviewer', revision: moved.revision }), /Unknown global agent/);
 });

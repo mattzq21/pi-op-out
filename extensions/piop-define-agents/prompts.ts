@@ -123,25 +123,31 @@ export async function readConfigDocument() {
   return { ...JSON.parse(body), revision: revisionOf(body) };
 }
 
+function putConfig(db: DatabaseSync, value: Config, createOnly: boolean): { revision?: string; warnings: string[] } | void {
+  const current = storedBody(db, DEFINITIONS);
+  const revision = current === undefined ? "missing" : revisionOf(current);
+
+  if (createOnly && current !== undefined) { value.revision = revision;
+
+  return; }
+
+  if (!createOnly && (!value.revision || value.revision !== revision)) throw new Error("Agent definitions changed in another window or client. Reload them before saving.");
+  const stored = current === undefined ? undefined : JSON.parse(current);
+  const unnamed = Array.isArray(stored?.agents) ? stored.agents.filter((agent: unknown) => !isNamedAgent(agent)) : [];
+  const { revision: _revision, ...configuration } = value;
+  const body = `${JSON.stringify({ ...configuration, agents: [...configuration.agents, ...unnamed], _revision: randomUUID() }, null, 2)}\n`;
+  db.prepare("INSERT INTO application_settings (name, body) VALUES (?, ?) ON CONFLICT(name) DO UPDATE SET body=excluded.body").run(DEFINITIONS, Buffer.from(body));
+  value.revision = revisionOf(body);
+
+  return { revision: value.revision, warnings: [] };
+}
+
 export async function writeConfig(value: Config, createOnly = false): Promise<{ revision?: string; warnings: string[] } | void> {
   return transaction(db => {
-    const current = storedBody(db, DEFINITIONS);
-    const revision = current === undefined ? "missing" : revisionOf(current);
+    const result = putConfig(db, value, createOnly);
+    requireConsistentDefinitions(db);
 
-    if (createOnly && current !== undefined) { value.revision = revision;
-
-    return; }
-
-    if (!createOnly && (!value.revision || value.revision !== revision)) throw new Error("Agent definitions changed in another window or client. Reload them before saving.");
-    requireNoProjectConflicts(db, value.agents.map(agent => agent.name));
-    const stored = current === undefined ? undefined : JSON.parse(current);
-    const unnamed = Array.isArray(stored?.agents) ? stored.agents.filter((agent: unknown) => !isNamedAgent(agent)) : [];
-    const { revision: _revision, ...configuration } = value;
-    const body = `${JSON.stringify({ ...configuration, agents: [...configuration.agents, ...unnamed], _revision: randomUUID() }, null, 2)}\n`;
-    db.prepare("INSERT INTO application_settings (name, body) VALUES (?, ?) ON CONFLICT(name) DO UPDATE SET body=excluded.body").run(DEFINITIONS, Buffer.from(body));
-    value.revision = revisionOf(body);
-
-    return { revision: value.revision, warnings: [] };
+    return result;
   });
 }
 
@@ -149,8 +155,14 @@ function namedAgents(document: { agents?: unknown } | undefined): string[] {
   return Array.isArray(document?.agents) ? document.agents.filter(isNamedAgent).map(agent => agent.name) : [];
 }
 
-function requireNoProjectConflicts(db: DatabaseSync, globalNames: string[]) {
-  const global = new Set(globalNames);
+function storedGlobalNames(db: DatabaseSync): Set<string> {
+  const body = storedBody(db, DEFINITIONS);
+
+  return new Set(["general", ...namedAgents(body === undefined ? undefined : JSON.parse(body))]);
+}
+
+function requireConsistentDefinitions(db: DatabaseSync) {
+  const global = storedGlobalNames(db);
 
   for (const row of db.prepare("SELECT directory, body FROM project_agent_definitions").all()) {
     const directory = String(row.directory);
@@ -158,21 +170,15 @@ function requireNoProjectConflicts(db: DatabaseSync, globalNames: string[]) {
     const names = namedAgents(project);
     const shared = names.find(name => global.has(name));
 
-    if (shared) throw new Error(`Agent name "${shared}" is used by the project ${directory}. Agent names must be different from project agent names.`);
+    if (shared) throw new Error(`Agent name "${shared}" is used by a global agent and by the project ${directory}. Project agent names must be different.`);
 
-    if (project.defaultAgent && !global.has(project.defaultAgent) && !names.includes(project.defaultAgent)) throw new Error(`The project ${directory} uses agent "${project.defaultAgent}" as its default agent. Choose another default agent for that project first.`);
+    if (project.defaultAgent && !global.has(project.defaultAgent) && !names.includes(project.defaultAgent)) throw new Error(`The project ${directory} uses agent "${project.defaultAgent}" as its default agent, but no such agent exists. Choose another default agent in Edit project first.`);
   }
 }
 
 export type ProjectDocument = { agents: unknown[]; defaultAgent?: string };
 
 export type ProjectChange = { revision: string; agents?: unknown[]; defaultAgent?: string | null };
-
-function storedGlobalNames(db: DatabaseSync): string[] {
-  const body = storedBody(db, DEFINITIONS);
-
-  return [...new Set(["general", ...namedAgents(body === undefined ? undefined : JSON.parse(body))])];
-}
 
 export function readProjectDocument(directory: string): ProjectDocument & { revision: string } {
   const body = bodyText(readRow(storageRoot, "project_agent_definitions", "SELECT body FROM project_agent_definitions WHERE directory=?", directory));
@@ -183,32 +189,46 @@ export function readProjectDocument(directory: string): ProjectDocument & { revi
   return { agents, ...(defaultAgent ? { defaultAgent } : {}), revision: revisionOf(body) };
 }
 
+function putProject(db: DatabaseSync, directory: string, change: ProjectChange): string {
+  const current = bodyText(db.prepare("SELECT body FROM project_agent_definitions WHERE directory=?").get(directory));
+
+  if (change.revision !== (current === undefined ? "missing" : revisionOf(current))) throw new Error("Project agent definitions changed in another window or client. Reload them before saving.");
+  const stored: ProjectDocument = current === undefined ? { agents: [] } : JSON.parse(current);
+  const agents = change.agents ?? stored.agents;
+  const defaultAgent = change.defaultAgent === undefined ? stored.defaultAgent : change.defaultAgent ?? undefined;
+
+  if (!namedAgents({ agents }).length && !defaultAgent) {
+    db.prepare("DELETE FROM project_agent_definitions WHERE directory=?").run(directory);
+
+    return "missing";
+  }
+
+  const body = `${JSON.stringify({ agents, ...(defaultAgent ? { defaultAgent } : {}) }, null, 2)}\n`;
+  db.prepare("INSERT INTO project_agent_definitions (directory, body) VALUES (?, ?) ON CONFLICT(directory) DO UPDATE SET body=excluded.body").run(directory, Buffer.from(body));
+
+  return revisionOf(body);
+}
+
 export function writeProjectDocument(directory: string, change: ProjectChange): string {
   return transaction(db => {
+    const revision = putProject(db, directory, change);
+    requireConsistentDefinitions(db);
+
+    return revision;
+  });
+}
+
+export function moveToProject(value: Config, directory: string, agent: unknown): string {
+  return transaction(db => {
+    const saved = putConfig(db, value, false);
     const current = bodyText(db.prepare("SELECT body FROM project_agent_definitions WHERE directory=?").get(directory));
-
-    if (change.revision !== (current === undefined ? "missing" : revisionOf(current))) throw new Error("Project agent definitions changed in another window or client. Reload them before saving.");
     const stored: ProjectDocument = current === undefined ? { agents: [] } : JSON.parse(current);
-    const agents = change.agents ?? stored.agents;
-    const defaultAgent = change.defaultAgent === undefined ? stored.defaultAgent : change.defaultAgent ?? undefined;
-    const names = namedAgents({ agents });
-    const global = storedGlobalNames(db);
-    const shared = names.find(name => global.includes(name));
+    putProject(db, directory, { revision: current === undefined ? "missing" : revisionOf(current), agents: [...stored.agents, agent] });
+    requireConsistentDefinitions(db);
 
-    if (shared) throw new Error(`Agent name "${shared}" is already used by a global agent. Project agent names must be different.`);
+    if (!saved?.revision) throw new Error("Agent definitions were not saved");
 
-    if (defaultAgent && !global.includes(defaultAgent) && !names.includes(defaultAgent)) throw new Error(`Agent "${defaultAgent}" is the project's default agent. Choose another default agent in Edit project first.`);
-
-    if (!names.length && !defaultAgent) {
-      db.prepare("DELETE FROM project_agent_definitions WHERE directory=?").run(directory);
-
-      return "missing";
-    }
-
-    const body = `${JSON.stringify({ agents, ...(defaultAgent ? { defaultAgent } : {}) }, null, 2)}\n`;
-    db.prepare("INSERT INTO project_agent_definitions (directory, body) VALUES (?, ?) ON CONFLICT(directory) DO UPDATE SET body=excluded.body").run(directory, Buffer.from(body));
-
-    return revisionOf(body);
+    return saved.revision;
   });
 }
 

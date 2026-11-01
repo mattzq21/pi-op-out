@@ -17,11 +17,15 @@ const definitions = hostOperation<{ settings: any; initial: boolean; project?: P
 
 export interface Saved { revision: string; warnings: string[]; definitions: any }
 
-const saved = hostOperation<{ settings: any; configuration: unknown; project?: Project }, Saved>('save-agent-definitions', 'agents', 30_000, value => {
+function readSaved(value: unknown): Saved {
   const result = value as any;
   if (typeof result?.revision !== 'string' || !Array.isArray(result.warnings) || result.warnings.some((warning: unknown) => typeof warning !== 'string')) throw new Error('Invalid agent definitions save result');
   return { revision: result.revision, warnings: result.warnings, definitions: readDefinitions(result.definitions) };
-});
+}
+
+const saved = hostOperation<{ settings: any; configuration: unknown; project?: Project }, Saved>('save-agent-definitions', 'agents', 30_000, readSaved);
+
+const moved = hostOperation<{ settings: any; global: any; cwd: string; agent: string; revision: string }, Saved>('move-agent-to-project', 'agents', 30_000, readSaved);
 
 function environment(home: string, storage: string): Record<string, string> {
   const profile = join(home, storage);
@@ -37,6 +41,10 @@ function loaderSettings(settings: any, fastModels: FastModelSnapshot | null): an
 
 export function load(home: string, storage: string, settings: any, initial: boolean, fastModels: FastModelSnapshot | null, project?: Project): Promise<any> {
   return runHostOperation(definitions, { settings: loaderSettings(settings, fastModels), initial, ...(project ? { project } : {}) }, { env: environment(home, storage) });
+}
+
+export function move(home: string, storage: string, settings: any, fastModels: FastModelSnapshot | null, request: { global: any; cwd: string; agent: string; revision: string }): Promise<Saved> {
+  return runHostOperation(moved, { settings: loaderSettings(settings, fastModels), ...request }, { env: environment(home, storage) });
 }
 
 export function save(home: string, storage: string, settings: any, configuration: unknown, fastModels: FastModelSnapshot | null, project?: Project): Promise<Saved> {

@@ -218,6 +218,10 @@ const COMMANDS: Record<string, Handler> = {
     const cwd = argument(args, 'cwd', 'string?');
     return connection.request({ type: 'save_agent_definitions', configuration: argument(args, 'configuration', 'any'), ...(cwd ? { cwd } : {}) });
   },
+  move_agent_to_project: async (app, _owner, args) => {
+    const connection = await daemon.connect(app, app.pi, app.broker, await loadAppSettings(app), 'local');
+    return connection.request({ type: 'move_agent_to_project', cwd: argument(args, 'cwd', 'string'), agent: argument(args, 'agent', 'string'), revision: argument(args, 'revision', 'string') });
+  },
   provider_usage: (app, _owner, args) => {
     const provider = argument(args, 'provider', 'string?');
     if (provider !== undefined && !isUsageProvider(provider)) throw new Error('Invalid provider: unknown usage provider ' + JSON.stringify(provider));

@@ -3,7 +3,7 @@ import { Check, Errors, Parse } from "typebox/value";
 import { Type } from "typebox";
 import { loadConfig, mergeProjectAgents, normalizeConfig, projectAgents, type Config } from "./index.ts";
 import { agentSchema, agentThinkingLevels } from "./state.ts";
-import { agentDirectory, moveLegacyDefinitions, readConfigDocument, readPrompt, resolvePromptPath, isNamedAgent, writeConfig, projectDirectory, readProjectDocument, writeProjectDocument } from "./prompts.ts";
+import { agentDirectory, moveLegacyDefinitions, readConfigDocument, readPrompt, resolvePromptPath, isNamedAgent, writeConfig, projectDirectory, readProjectDocument, writeProjectDocument, moveToProject } from "./prompts.ts";
 import { parseAgentResources, parsePluginAgentTools } from "./resources.ts";
 import { extensionPaths } from "./extension-loader.ts";
 import { extensionValidator } from "./validation-runtime.ts";
@@ -134,6 +134,32 @@ function readOnlyStorage(prompts: Record<string, string>) {
       }
     },
   };
+}
+
+export interface MoveAgentRequest { settings: any; global: AgentDefinitions; cwd: string; agent: string; revision: string }
+
+export async function moveAgentToProject({ settings, global, cwd, agent: name, revision }: MoveAgentRequest): Promise<{ revision: string; warnings: string[]; definitions: AgentDefinitions }> {
+  if (global.config.revision !== revision) throw new Error("Agent definitions changed in another window or client. Reload them before moving an agent.");
+  const agent = global.config.agents.find((item: { name: string }) => item.name === name);
+
+  if (!agent) throw new Error(`Unknown global agent: ${name}`);
+
+  if (name === "general") throw new Error("The general agent must stay global");
+
+  if (agent.isDefault) throw new Error(`Agent "${name}" is the global default agent. Choose another global default agent first.`);
+  const { tools, api } = configRuntime(settings);
+  const directory = await projectDirectory(cwd);
+  const [moved] = projectAgents({ agents: [agent] }, api);
+  await checkAgents({ agents: [moved] }, settings, tools.registeredTools, {});
+  const agents = global.config.agents.filter((item: { name: string }) => item.name !== name);
+  const next = normalizeConfig({ ...await readConfigDocument(), revision, agents }, api);
+  next.sessionToolsDefaultApplied = true;
+  next.subagentsDefaultApplied = true;
+  next.pluginToolsApplied = [...new Set([...next.pluginToolsApplied ?? [], ...api.pluginTools])];
+  const { unavailableReason: _reason, ...stored } = moved;
+  const saved = moveToProject(next, directory, stored);
+
+  return { revision: saved, warnings: [], definitions: { config: { ...global.config, revision: saved, agents }, prompts: global.prompts } };
 }
 
 async function saveProject(settings: any, configuration: unknown, cwd: string, global: AgentDefinitions) {

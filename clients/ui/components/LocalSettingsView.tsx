@@ -8,7 +8,7 @@ import { createDependencyEffect } from "../lib/solid";
 
 import { ArrowLeft, Monitor } from "lucide-solid";
 import { settingsChangeSchema } from "../lib/responseSchemas";
-import { AgentsSavedError, saveAgentDefinitions, saveProjectAgents } from "../lib/hostAgents";
+import { AgentsSavedError, moveAgentToProject, saveAgentDefinitions, saveProjectAgents } from "../lib/hostAgents";
 import { hostCatalog } from "../lib/draftRuntime";
 import { isTemporaryChatCwd, useSessionGroups } from "../lib/sessionGroups";
 import { NativeTransport } from "../lib/nativeTransport";
@@ -147,6 +147,14 @@ function DaemonSettingsEditor(componentProps: Props & { target: string; label: s
     if (config) setResources(value => value ? { ...value, config } : value);
   };
 
+  const moveAgent = async (agent: string, cwd: string) => {
+    const capturedHostId = hostId(); const config = resources()?.config;
+
+    if (!config?.revision) throw new Error("Agent definitions are still loading");
+    const moved = await moveAgentToProject(capturedHostId, cwd, agent, config.revision);
+    publishSavedAgents({ ...config, revision: moved.revision, agents: config.agents.filter(item => item.name !== agent) });
+  };
+
   const publishHostChange = (change: SettingsChange) => receiveChange(change, hostId());
 
   const saveRemote = async (next: AppSettings, capturedHostId: string) => {
@@ -198,5 +206,5 @@ function DaemonSettingsEditor(componentProps: Props & { target: string; label: s
     return warnings && warnings.length > 0 && <p role="alert">Saved with warnings: {warnings.join(" ")}</p>;
   };
 
-  return <>{renderSaveWarnings()}{error() && <p role="alert">Could not load {componentProps.label}: {(error())} <button onClick={() => setRevision((value) => value + 1)}>Retry</button></p>}{current() ? <SettingsView embedded selectedSection={componentProps.selectedSection} resourceError={error()} onSavingChange={componentProps.onSavingChange} scope={componentProps.target === "client" ? "client" : "daemon"} daemonLabel={componentProps.label} providerHostId={hostId()} providerHosts={componentProps.settings.hosts} settings={required((current()))} pendingSettingsCount={hostId() === "local" ? componentProps.pendingSettingsCount : 0} sessions={componentProps.sessions.filter((session) => (session.hostId ?? "local") === hostId()).map((session) => ({ ...session, hostId: "local" }))} agentConfig={componentProps.target === "client" ? undefined : agentScope() ? projectAgents() : resources()?.config} inheritedAgents={agentScope() ? resources()?.config.agents ?? [] : undefined} agentScopes={projects()} agentScope={agentScope()} onAgentScope={setAgentScope} models={resources()?.models} loadingModels={loadingModels()} onDirtyChange={componentProps.onDirtyChange} onSave={save} /> : !error() && <p role="status">Loading {componentProps.label} settings…</p>}</>;
+  return <>{renderSaveWarnings()}{error() && <p role="alert">Could not load {componentProps.label}: {(error())} <button onClick={() => setRevision((value) => value + 1)}>Retry</button></p>}{current() ? <SettingsView embedded selectedSection={componentProps.selectedSection} resourceError={error()} onSavingChange={componentProps.onSavingChange} scope={componentProps.target === "client" ? "client" : "daemon"} daemonLabel={componentProps.label} providerHostId={hostId()} providerHosts={componentProps.settings.hosts} settings={required((current()))} pendingSettingsCount={hostId() === "local" ? componentProps.pendingSettingsCount : 0} sessions={componentProps.sessions.filter((session) => (session.hostId ?? "local") === hostId()).map((session) => ({ ...session, hostId: "local" }))} agentConfig={componentProps.target === "client" ? undefined : agentScope() ? projectAgents() : resources()?.config} inheritedAgents={agentScope() ? resources()?.config.agents ?? [] : undefined} agentScopes={projects()} agentScope={agentScope()} onAgentScope={setAgentScope} onMoveAgent={moveAgent} models={resources()?.models} loadingModels={loadingModels()} onDirtyChange={componentProps.onDirtyChange} onSave={save} /> : !error() && <p role="status">Loading {componentProps.label} settings…</p>}</>;
 }

@@ -19,6 +19,10 @@ export function saveProjectAgents(hostId: string, cwd: string, configuration: Pr
   return nativeCall("save_agent_definitions", { hostId, cwd, configuration }, savedSchema);
 }
 
+export function moveAgentToProject(hostId: string, cwd: string, agent: string, revision: string) {
+  return nativeCall("move_agent_to_project", { hostId, cwd, agent, revision }, savedSchema);
+}
+
 export function agentStatusReader(hostId: () => string, cwd: () => string | undefined, publish: (capability: DefinedAgentsCapability | undefined) => void, fail: (reason: unknown) => void) {
   let statusText: string | undefined;
   let sequence = 0;

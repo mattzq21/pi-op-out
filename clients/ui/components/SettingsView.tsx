@@ -100,10 +100,10 @@ function mergeSettingsDraft(incoming: AppSettings, baseline: AppSettings, local:
   return { merged, collisions };
 }
 
-type SettingsViewProps = { selectedSection?: Section; embedded?: boolean; resourceError?: string; scope?: "client" | "daemon"; daemonLabel?: string; providerHosts?: RemoteHost[]; onSavingChange?: (saving: boolean) => void; providerHostId?: string; settings: AppSettings; pendingSettingsCount?: number; agentConfig?: AgentConfig; inheritedAgents?: AgentProfile[]; agentScopes?: Array<{ name: string; cwd: string }>; agentScope?: string; onAgentScope?: (cwd: string | undefined) => void; sessions?: SessionSummary[]; models?: Model[]; loadingModels?: string[]; onSave: (settings: AppSettings, agentConfig?: AgentConfig, baseline?: AppSettings) => Promise<void>; onDirtyChange?: (dirty: boolean) => void };
+type SettingsViewProps = { selectedSection?: Section; embedded?: boolean; resourceError?: string; scope?: "client" | "daemon"; daemonLabel?: string; providerHosts?: RemoteHost[]; onSavingChange?: (saving: boolean) => void; providerHostId?: string; settings: AppSettings; pendingSettingsCount?: number; agentConfig?: AgentConfig; inheritedAgents?: AgentProfile[]; agentScopes?: Array<{ name: string; cwd: string }>; agentScope?: string; onAgentScope?: (cwd: string | undefined) => void; onMoveAgent?: (agent: string, cwd: string) => Promise<void>; sessions?: SessionSummary[]; models?: Model[]; loadingModels?: string[]; onSave: (settings: AppSettings, agentConfig?: AgentConfig, baseline?: AppSettings) => Promise<void>; onDirtyChange?: (dirty: boolean) => void };
 
-function settingsViewDefaults({ selectedSection, embedded = false, resourceError, scope = "daemon", daemonLabel = "Daemon", providerHosts, onSavingChange, providerHostId = "local", settings, pendingSettingsCount = 0, agentConfig: incomingConfiguration, inheritedAgents, agentScopes = [], agentScope, onAgentScope, sessions = [], models = [], loadingModels = [], onSave, onDirtyChange }: SettingsViewProps) {
-  return { selectedSection, embedded, resourceError, scope, daemonLabel, providerHosts, onSavingChange, providerHostId, settings, pendingSettingsCount, incomingConfiguration, inheritedAgents, agentScopes, agentScope, onAgentScope, sessions, models, loadingModels, onSave, onDirtyChange };
+function settingsViewDefaults({ selectedSection, embedded = false, resourceError, scope = "daemon", daemonLabel = "Daemon", providerHosts, onSavingChange, providerHostId = "local", settings, pendingSettingsCount = 0, agentConfig: incomingConfiguration, inheritedAgents, agentScopes = [], agentScope, onAgentScope, onMoveAgent, sessions = [], models = [], loadingModels = [], onSave, onDirtyChange }: SettingsViewProps) {
+  return { selectedSection, embedded, resourceError, scope, daemonLabel, providerHosts, onSavingChange, providerHostId, settings, pendingSettingsCount, incomingConfiguration, inheritedAgents, agentScopes, agentScope, onAgentScope, onMoveAgent, sessions, models, loadingModels, onSave, onDirtyChange };
 }
 
 export function SettingsView(props: SettingsViewProps) {
@@ -516,7 +516,9 @@ export function SettingsView(props: SettingsViewProps) {
 
             const renderAgentPromptFiles = () => (<label class="field"><span>System prompt file</span><input aria-label="System prompt file" aria-invalid={!agent().path_systemprompt?.trim()} placeholder="Path relative to agent config.json, or absolute path" value={agent().path_systemprompt ?? ""} onInput={(event) => updateAgent({ path_systemprompt: event.target.value })} /></label>);
 
-            return (<Show when={agent()}><div class="agent-fields">{renderAgentNameRow()}
+            const renderMoveAgent = () => (!projectScope() && settingsProps().onMoveAgent && settingsProps().agentScopes.length > 0 && !isBuiltInAgent(agent()) && <MoveAgentToProject agent={agent().name} projects={settingsProps().agentScopes} blocked={dirty() || saving() ? "Save or discard your changes first." : agent().isDefault ? "This is the global default agent. Choose another default agent first." : undefined} onMove={required(settingsProps().onMoveAgent)} />);
+
+            return (<Show when={agent()}><div class="agent-fields">{renderAgentNameRow()}{renderMoveAgent()}
               <label class="field"><span>Description</span><textarea class="agent-description" aria-label="Agent description" maxLength={500} rows={2} placeholder="What this agent is for. Other agents see it when they choose an agent to start." value={agent().description ?? ""} onInput={(event) => updateAgent({ description: event.currentTarget.value || undefined })} /></label>
               {renderAgentDefaults()}
               <div class="agent-usage"><div class="agent-usage-option"><span>Callable as subagent</span><Toggle label="Callable as subagent" checked={agent().allow_as_subagent !== false} onChange={allow_as_subagent => updateAgent({ allow_as_subagent })} /></div><div class="agent-usage-option"><span>Callable as peer</span><Toggle label="Callable as peer" checked={agent().allow_as_peer !== false} onChange={allow_as_peer => updateAgent({ allow_as_peer })} /></div></div>
@@ -566,6 +568,22 @@ export function SettingsView(props: SettingsViewProps) {
     {renderSettingsSaveFab()}
     <Show when={hostToRemove()}>{(host) => <RemoveHostDialog name={host().name} onCancel={() => setHostToRemove(undefined)} onRemove={() => confirmRemoveHost(host())} />}</Show>
   </main>;
+}
+
+function MoveAgentToProject(componentProps: { agent: string; projects: Array<{ name: string; cwd: string }>; blocked?: string; onMove: (agent: string, cwd: string) => Promise<void> }) {
+  const [target, setTarget] = createSignal("");
+  const [moving, setMoving] = createSignal(false);
+  const [error, setError] = createSignal<string>();
+  createDependencyEffect(() => { setTarget(""); setError(undefined); }, () => [componentProps.agent]);
+  const move = async () => {
+    setMoving(true); setError(undefined);
+
+    try { await componentProps.onMove(componentProps.agent, target()); }
+    catch (reason) { setError(reason instanceof Error ? reason.message : String(reason)); }
+    finally { setMoving(false); }
+  };
+
+  return <div class="agent-move"><label class="field"><span>Move to project</span><select aria-label="Move agent to project" disabled={Boolean(componentProps.blocked) || moving()} value={target()} onChange={event => { setTarget(event.currentTarget.value); setError(undefined); }}><option value="">Choose a project</option><For each={componentProps.projects}>{project => <option value={project.cwd}>{project.name}</option>}</For></select></label><button class="secondary-button" disabled={Boolean(componentProps.blocked) || moving() || !target()} onClick={() => void move()}>{moving() ? "Moving…" : "Move"}</button>{(componentProps.blocked || error()) && <small role={error() ? "alert" : undefined}>{error() ?? componentProps.blocked}</small>}</div>;
 }
 
 function SettingsSection(componentProps: { title: string; description?: string; headerAction?: JSXElement; children: JSXElement }) { return <div class="settings-section"><div class="section-title"><div><h2>{componentProps.title}</h2>{componentProps.description && <p>{componentProps.description}</p>}</div>{componentProps.headerAction}</div>{componentProps.children}</div>; }
