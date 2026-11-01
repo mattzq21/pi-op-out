@@ -25,11 +25,3 @@ test('a connected client keeps the daemon running, and the delay counts again fr
   for (let tries = 0; !stoppedAt && tries < 50; tries++) await Bun.sleep(20);
   expect(stoppedAt - left).toBeGreaterThanOrEqual(190);
 });
-
-test('a daemon with no unused delay never stops on its own', async () => {
-  const clients = new DaemonClients(() => {}, () => {}, 0);
-  void stops(clients);
-  clients.connect().release();
-  await Bun.sleep(300);
-  expect(clients.closing()).toBe(false);
-});

@@ -61,7 +61,7 @@ export class DaemonClients {
         if (this.count === 0) {
           this.unusedSince = Date.now();
           try { this.onLastDisconnect(); }
-          finally { if (this.unusedDelay > 0) this.stopped.notifyOne(); }
+          finally { if (this.unusedDelay !== undefined) this.stopped.notifyOne(); }
         }
       },
     };
@@ -71,7 +71,7 @@ export class DaemonClients {
 
   private untilUnattended(): number | undefined {
     if (this.count > 0) return undefined;
-    if (this.unusedDelay === 0) return undefined;
+    if (this.unusedDelay === undefined) return undefined;
     return Math.max(0, this.unusedSince + this.unusedDelay - Date.now());
   }
 
