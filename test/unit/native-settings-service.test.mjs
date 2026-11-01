@@ -17,16 +17,17 @@ async function settingsClient(t, options = {}) {
   let client;
   const settle = async () => { do { await storage.settled(); await act(() => Promise.allSettled([...requests])); } while (requests.size); };
   t.after(async () => { await client?.dispose(); await settle(); storage.restore(); clearMocks(); dom.restore(); });
-  const native = await nativeFileCommand(t, { desktop: true });
+  let native;
+  const nativeClient = () => native ??= nativeFileCommand(t, { desktop: true });
   const daemon = await daemonClient(t, () => {}, options);
   mockIPC(async (command, args) => {
-    const request = ['load_client_settings', 'save_client_settings'].includes(command) ? native.invoke(command, args) : daemon.invoke(command, args);
+    const request = ['load_client_settings', 'save_client_settings'].includes(command) ? nativeClient().then(helper => helper.invoke(command, args)) : daemon.invoke(command, args);
     requests.add(request);
     try { return await request; } finally { requests.delete(request); }
   }, { background: false, shouldMockEvents: true });
   const invoke = window.__TAURI_INTERNALS__.invoke;
   window.__TAURI_INTERNALS__.invoke = (command, args, options) => invoke(command, command === 'plugin:event|unlisten' ? { ...args, id: args.eventId } : args, options);
-  const target = options.target ?? { hostId: options.remotes?.[0]?.id ?? 'local', cwd: join(native.directory, 'missing-project'), sessionId: crypto.randomUUID() };
+  const target = options.target ?? { hostId: options.remotes?.[0]?.id ?? 'local', cwd: join((await nativeClient()).directory, 'missing-project'), sessionId: crypto.randomUUID() };
   client = new NativeTransport(target);
   return { client, daemon, target };
 }
