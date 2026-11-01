@@ -115,7 +115,7 @@ function editKind(event: Event) {
 
 /** The segments with a filler after each link that no text follows. */
 function withFillers(segments: FieldSegment[]): (FieldSegment | { filler: true })[] {
-  return segments.flatMap((segment, index) => "markdown" in segment && !(segments[index + 1] && "text" in segments[index + 1]) ? [segment, { filler: true as const }] : [segment]);
+  return segments.flatMap((segment, index): (FieldSegment | { filler: true })[] => "markdown" in segment && !(segments[index + 1] && "text" in segments[index + 1]) ? [segment, { filler: true as const }] : [segment]);
 }
 
 export class ComposerFieldElement extends HTMLElement {
