@@ -7,6 +7,7 @@ import { MobileApp } from "./components/MobileApp";
 import { isMobile } from "./lib/platform";
 import { installTextEditingShortcuts } from "./lib/textEditingShortcuts";
 import { installTooltips } from "./lib/tooltips";
+import { installScrollbarRelease } from "./lib/scrollbarRelease";
 import "./styles.css";
 import "./index.css";
 import "./mobile.css";
@@ -18,6 +19,8 @@ if (import.meta.env.DEV || import.meta.env.TAURI_ENV_DEBUG === "true" || import.
 const removeTextEditingShortcuts = installTextEditingShortcuts();
 
 const removeTooltips = installTooltips();
+
+const removeScrollbarRelease = installScrollbarRelease();
 
 const root = required(document.getElementById("root"));
 
@@ -48,6 +51,6 @@ if (import.meta.hot) {
   import.meta.hot.on("piop:daemon-restarted", reloadDaemon);
   import.meta.hot.dispose(() => {
     import.meta.hot?.off("piop:daemon-restarted", reloadDaemon);
-    stopped = true; dispose(); removeTextEditingShortcuts(); removeTooltips();
+    stopped = true; dispose(); removeTextEditingShortcuts(); removeTooltips(); removeScrollbarRelease();
   });
 }
