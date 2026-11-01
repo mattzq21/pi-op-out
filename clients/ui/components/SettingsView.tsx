@@ -527,12 +527,12 @@ export function SettingsView(props: SettingsViewProps) {
           };
 
           return (<>{projectScope() && <p class="agent-scope-note">Chats in this project can also use the global agents. A project agent name must be different from all global agent names. Set the project's default agent in Edit project.</p>}{!agentConfig() && <p role={settingsProps().resourceError ? "alert" : "status"}>{settingsProps().resourceError ? "Could not load agent definitions: " + required((settingsProps().resourceError)) : "Loading agent definitions…"}</p>}
-          <div class="agent-editor"><div class="agent-list">{<Index each={agentDrafts()}>{(item, index) => <button  class={index === agentIndex() ? "active" : ""} onClick={() => setAgentIndex(index)}><Bot size={14} /><span>{item().name}</span></button>}</Index>}</div>
+          <div class="agent-editor"><div class="agent-list"><select class="agent-scope" aria-label="Agent definitions" disabled={dirty() || saving()} value={settingsProps().agentScope ?? ""} onChange={event => settingsProps().onAgentScope?.(event.currentTarget.value || undefined)}><option value="">Global</option><For each={settingsProps().agentScopes}>{project => <option value={project.cwd}>Project: {project.name}</option>}</For></select>{<Index each={agentDrafts()}>{(item, index) => <button  class={index === agentIndex() ? "active" : ""} onClick={() => setAgentIndex(index)}><Bot size={14} /><span>{item().name}</span></button>}</Index>}</div>
             {renderAgentFields()}
           </div></>);
         };
 
-        return (formValidation().visibleSection === "agents" && <SettingsSection title="Agents" description="Choose defaults, instructions, and the resources each agent may see." headerAction={<div class="agent-scope-actions"><select aria-label="Agent definitions" disabled={dirty() || saving()} value={settingsProps().agentScope ?? ""} onChange={event => settingsProps().onAgentScope?.(event.currentTarget.value || undefined)}><option value="">Global</option><For each={settingsProps().agentScopes}>{project => <option value={project.cwd}>Project: {project.name}</option>}</For></select><button class="secondary-button" disabled={!agentConfig() || saving()} onClick={addAgent}><CirclePlus size={15} />Add agent</button></div>}>
+        return (formValidation().visibleSection === "agents" && <SettingsSection title="Agents" description="Choose defaults, instructions, and the resources each agent may see." headerAction={<button class="secondary-button" disabled={!agentConfig() || saving()} onClick={addAgent}><CirclePlus size={15} />Add agent</button>}>
           {renderAgentEditor()}
         </SettingsSection>);
       };
