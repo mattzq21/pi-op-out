@@ -606,7 +606,9 @@ textarea::placeholder { color: var(--faint); }
 .filter-select-trigger span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }.filter-select-trigger svg { flex: 0 0 auto; color: var(--muted); }
 .filter-select-trigger[aria-expanded="true"], .filter-select-trigger:focus-visible { border-color: #aaa49a; outline: 0; }
 .filter-select-menu { position: absolute; top: calc(100% + 4px); left: 0; z-index: 30; width: max(100%, 220px); display: grid; gap: 5px; padding: 5px; border: 1px solid var(--line); border-radius: 9px; background: var(--dark-control); box-shadow: 0 15px 40px #0006; }
-.field .filter-select-menu input { min-height: 30px; }
+.filter-select-menu input { width: 100%; min-width: 0; min-height: 30px; border: 1px solid var(--line); border-radius: 6px; padding: 0 9px; background: var(--panel); color: var(--ink); font: inherit; font-size: calc(12px + var(--settings-font-offset, 0px)); outline: 0; }
+.filter-select-menu input:focus { border-color: #aaa49a; }
+.filter-select-menu input::placeholder { color: var(--faint); }
 .filter-select-menu [role="listbox"] { max-height: 260px; overflow-y: auto; display: grid; }
 .filter-select-menu button { min-height: 30px; padding: 0 8px; border: 0; border-radius: 6px; background: transparent; color: var(--ink); font-size: calc(12px + var(--settings-font-offset, 0px)); text-align: left; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .filter-select-menu button[data-active] { background: var(--dark-control-hover); }.filter-select-menu button[aria-selected="true"] { color: var(--accent); }.filter-select-menu button:disabled { color: var(--faint); opacity: .55; cursor: default; }
