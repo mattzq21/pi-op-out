@@ -29,6 +29,21 @@ test('history scrolls without taking ownership and a tap claims the terminal', a
     const before=await state();
     const box=await transcript.boundingBox();
     const x=box.x+box.width/2,y=box.y+30;
+    await transcript.evaluate((element, initialTop) => {
+      window.terminalScrollFinished = new Promise((resolve, reject) => {
+        const finished = () => {
+          if (element.scrollTop === initialTop) return;
+          clearTimeout(timer);
+          element.removeEventListener('scrollend', finished);
+          resolve();
+        };
+        const timer = setTimeout(() => {
+          element.removeEventListener('scrollend', finished);
+          reject(new Error('Terminal swipe never finished scrolling'));
+        }, 3000);
+        element.addEventListener('scrollend', finished);
+      });
+    }, before.top);
     await cdp.send('Input.dispatchTouchEvent',{type:'touchStart',touchPoints:[{x,y}]});
 
     for(let i=1;i<=8;i++) {
@@ -37,7 +52,7 @@ test('history scrolls without taking ownership and a tap claims the terminal', a
     }
 
     await cdp.send('Input.dispatchTouchEvent',{type:'touchEnd',touchPoints:[]});
-    await page.waitForTimeout(200);
+    await page.evaluate(() => window.terminalScrollFinished);
     const after=await state();
     console.log(JSON.stringify({unowned,before,after,claims:await page.evaluate(()=>window.claims)}));
     assert.ok(after.history,'history must remain in the transcript');
