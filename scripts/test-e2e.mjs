@@ -33,8 +33,6 @@ async function buildE2E() {
   renameSync('target/e2e/release/piopd.new', 'target/e2e/release/piopd');
 }
 
-if (values.build) await buildE2E();
-
 const file = 'test/e2e/specs/conversation.acceptance.spec.ts';
 
 const source = ts.createSourceFile(file, readFileSync(file, 'utf8'), ts.ScriptTarget.Latest);
@@ -69,6 +67,8 @@ collect(source);
 const selected = values.grep ? titles.filter(title => new RegExp(values.grep).test(title)) : titles;
 
 if (!selected.length) throw new Error('No E2E tests matched');
+
+if (values.build) await buildE2E();
 
 if (values.list) {
   console.log(selected.join('\n'));
