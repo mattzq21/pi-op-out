@@ -14,14 +14,10 @@ export function mergeModelIds(latest: readonly string[] | undefined, baseline: r
 }
 
 export function recordSeenModels(settings: AppSettings, ids: string[]): AppSettings | undefined {
-  if (settings.knownModels === undefined) return { ...settings, knownModels: [...new Set(ids)] };
   const known = new Set(settings.knownModels);
   const fresh = [...new Set(ids)].filter((id) => !known.has(id));
 
-  if (fresh.length === 0) return undefined;
-  const hidden = new Set(settings.hiddenModels);
+  if (fresh.length === 0 && settings.knownModels !== undefined) return undefined;
 
-  for (const id of fresh) hidden.add(id);
-
-  return { ...settings, knownModels: [...settings.knownModels, ...fresh], hiddenModels: [...hidden] };
+  return { ...settings, knownModels: [...known, ...fresh], hiddenModels: [...new Set([...settings.hiddenModels, ...fresh])] };
 }

@@ -135,7 +135,7 @@ export function createHostModelVisibility(localSettings: Accessor<AppSettings | 
     return hiddenModels ? models.filter(model => {
       const id = `${model.provider}/${model.id}`;
 
-      return !hiddenModels.includes(id) && (knownModels === undefined || knownModels.includes(id));
+      return !hiddenModels.includes(id) && knownModels?.includes(id) === true;
     }) : [];
   };
 

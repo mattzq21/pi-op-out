@@ -21,13 +21,17 @@ async function modelApp(t, overrides = {}) {
 
 test('model picker reports and applies settings changes', { timeout: 90000 }, async t => {
   const { root, daemon, settle } = await modelApp(t);
-  await t.test('the first model report keeps every configured model available in the composer', { timeout: 30000 }, async () => {
+  await t.test('the first model report disables every new model', { timeout: 30000 }, async () => {
     await act(() => root.querySelector('[aria-label="Model"]').click());
-    assert.deepEqual([...root.querySelectorAll('[role="listbox"][aria-label="Model options"] [role="option"]')].map(node => node.textContent), ['Knownvisibility-test', 'Othervisibility-test']);
     await settle();
     const settings = await daemon.invoke('load_app_settings');
     assert.deepEqual(settings.knownModels, ['visibility-test/known', 'visibility-test/other']);
-    assert.deepEqual(settings.hiddenModels, []);
+    assert.deepEqual(settings.hiddenModels, ['visibility-test/known', 'visibility-test/other']);
+    assert.deepEqual([...root.querySelectorAll('[role="listbox"][aria-label="Model options"] [role="option"]')].map(node => node.textContent), []);
+    await act(async () => {
+      await daemon.invoke('save_host_settings', { hostId: 'local', settings: { ...settings, hiddenModels: [] } });
+      await settle();
+    });
   });
   await t.test('saved aliases update an open model picker and can be cleared without changing model IDs', { timeout: 30000 }, async () => {
     const options = () => [...root.querySelectorAll('[role="listbox"][aria-label="Model options"] [role="option"]')];
