@@ -80,14 +80,15 @@ test('panning a preview stops when the button is released, also after a double c
   await move(0, 0);
   for (let click = 0; click < 2; click++) { await button(true); await button(false); }
   await delay(1200);
-  const before = await viewport.evaluate(element => [element.scrollLeft, element.scrollTop]);
+  const position = () => viewport.evaluate(element => new Promise(resolve => {
+    requestAnimationFrame(() => resolve([element.scrollLeft, element.scrollTop]));
+  }));
+  const before = await position();
   await button(true);
   for (let step = 1; step <= 15; step++) await move(-step * 6, -step * 4);
   await button(false);
-  await delay(300);
-  const released = await viewport.evaluate(element => [element.scrollLeft, element.scrollTop]);
+  const released = await position();
   assert.notDeepEqual(released, before, 'dragging must move the preview before release');
   for (let step = 1; step <= 15; step++) await move(step * 6, step * 4);
-  await delay(200);
-  assert.deepEqual(await viewport.evaluate(element => [element.scrollLeft, element.scrollTop]), released, 'the view does not follow the pointer after the release');
+  assert.deepEqual(await position(), released, 'the view does not follow the pointer after the release');
 });
