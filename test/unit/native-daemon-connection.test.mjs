@@ -7,7 +7,7 @@ import { WebSocketServer } from 'ws';
 import { nativeFileCommand } from '../native-file-command.mjs';
 
 const REPOSITORY = fileURLToPath(new URL('../..', import.meta.url));
-let executable;
+let executable, bundledBuildId;
 const bundledDaemon = () => executable ??= process.env.PIOP_TEST_DAEMON_EXECUTABLE
   ?? execFileSync('bun', ['test/daemon/build.ts'], { cwd: REPOSITORY, encoding: 'utf8' }).trim();
 const TOKEN = 'test-token-0123456789abcdef0123456789';
@@ -17,8 +17,7 @@ const TOKEN = 'test-token-0123456789abcdef0123456789';
  * and connects to the daemon named by PIOP_DAEMON_URL.
  */
 async function bundledBuild() {
-  const daemon = bundledDaemon();
-  return execFileSync(daemon, ['--build-id'], { encoding: 'utf8' }).trim();
+  return bundledBuildId ??= execFileSync(bundledDaemon(), ['--build-id'], { encoding: 'utf8' }).trim();
 }
 
 /** A daemon that speaks the desktop protocol; answer(request, socket) decides each reply. */
