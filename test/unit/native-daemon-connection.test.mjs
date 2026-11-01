@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
+import { on } from 'node:events';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { WebSocketServer } from 'ws';
@@ -25,7 +26,6 @@ async function fakeDaemon(t, { buildId, answer = () => null }) {
   const server = new WebSocketServer({ host: '127.0.0.1', port: 0 });
   await new Promise(resolve => server.once('listening', resolve));
   const sockets = [];
-  const requests = [];
   server.on('connection', socket => {
     sockets.push(socket);
     socket.on('message', async data => {
@@ -35,13 +35,12 @@ async function fakeDaemon(t, { buildId, answer = () => null }) {
         return;
       }
       if (packet.type === 'ping') return;
-      requests.push(packet);
       const reply = await answer(packet, socket);
       if (reply !== undefined) socket.send(JSON.stringify({ id: packet.id, result: reply }));
     });
   });
   t.after(() => new Promise(resolve => { for (const socket of server.clients) socket.terminate(); server.close(resolve); }));
-  return { url: 'ws://127.0.0.1:' + server.address().port, sockets, requests, connections: () => sockets.length };
+  return { url: 'ws://127.0.0.1:' + server.address().port, sockets, connections: () => sockets.length };
 }
 
 async function desktop(t, url, env = {}) {
@@ -88,8 +87,11 @@ test('a lost connection fails waiting commands, closes open terminals and chats,
   await app.invoke('start_terminal', { terminalId: 'term-1' });
   await app.invoke('start_pi', { runtimeId: 'chat-1' });
   hold = true;
+  const messages = on(daemon.sockets[0], 'message', { signal: AbortSignal.timeout(10000) });
   const waiting = app.failure('pi_command', { runtimeId: 'chat-1', command: { type: 'get_state' } });
-  await until(() => daemon.requests.some(request => request.command === 'pi_command'), 'the waiting command reached the daemon');
+  for await (const [data] of messages) {
+    if (JSON.parse(String(data)).command === 'pi_command') break;
+  }
   daemon.sockets[0].terminate();
   assert.match(await waiting, /^Disconnected from the Piop daemon \(.+\); the command may have completed\.$/);
   const events = await until(async () => { const events = await app.events(); return events.length >= 2 && events; }, 'disconnect events');
