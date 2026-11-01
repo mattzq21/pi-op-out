@@ -106,8 +106,8 @@ test('a new worktree draft sends its branch choice once and uses the returned fo
 test('a rejected stop can reconnect and receive conversation events', async () => {
   const client = transport();
   await client.connect();
-  responses.set('stop_pi', new Error('Host is busy; try again'));
-  await assert.rejects(client.disconnect(), /Host is busy/);
+  responses.set('stop_pi', new Error('Disconnected from the Piop daemon (connection closed); the command may have completed.'));
+  await assert.rejects(client.disconnect(), /Disconnected from the Piop daemon/);
   responses.set('stop_pi', true);
   await client.connect();
   assert.equal(commands('start_pi').length, 2);
