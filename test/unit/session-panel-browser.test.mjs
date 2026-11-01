@@ -436,6 +436,29 @@ test('renamed groups retain the new name after reopening', async t => {
   assert.equal(await page.getByRole('button', { name: 'Group actions for Research', exact: true }).count(), 0);
 });
 
+test('projects can be renamed to free names, including names of forgotten groups', async t => {
+  const { page, service, reload } = await panelPage(t);
+  await createGroup(page, service, 'Research');
+  await createGroup(page, service, 'Old');
+  await page.getByRole('button', { name: 'Group actions for Old', exact: true }).click();
+  await page.getByRole('menuitem', { name: 'Forget group', exact: true }).click();
+  await page.getByRole('dialog').getByRole('button', { name: 'Forget group', exact: true }).click();
+  await page.getByRole('dialog').waitFor({ state: 'detached' });
+  await page.getByRole('button', { name: 'Group actions for repo', exact: true }).click();
+  await page.getByRole('menuitem', { name: 'Edit project', exact: true }).click();
+  const input = page.getByRole('textbox', { name: 'Rename session group', exact: true });
+  await input.fill('research');
+  await page.keyboard.press('Enter');
+  assert.equal(await page.locator('#rename-group-error').textContent(), 'A project or group already uses that name.');
+  await input.fill('Old');
+  await page.keyboard.press('Enter');
+  await page.getByRole('button', { name: 'Group actions for Old', exact: true }).waitFor();
+  assert.equal(await page.getByRole('button', { name: 'Group actions for repo', exact: true }).count(), 0);
+  await page.evaluate(() => window.settlePanelStorage());
+  await reload();
+  assert.equal(await page.getByRole('button', { name: 'Group actions for Old', exact: true }).count(), 1);
+});
+
 async function rejectGroupName(page, name, message) {
   await page.getByRole('button', { name: 'Request new group', exact: true }).click();
   const input = page.getByRole('textbox', { name: 'Group name', exact: true });

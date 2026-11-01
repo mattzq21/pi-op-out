@@ -561,7 +561,7 @@ export function SessionPanel(props: Props) {
     const customGroup = groupMenu() ? customGroupsByKey().get(required(groupMenu()).projectKey) : undefined;
 
     const menuItems = groupMenu() ? [
-      ...(customGroup ? [{ label: "Rename group", Icon: Pencil, disabled: false, run: () => { closeMenu(); editGroup(customGroup); } }] : []),
+      ...(customGroup ? [{ label: "Rename group", Icon: Pencil, disabled: false, run: () => { closeMenu(); editGroup(customGroup); } }] : groupDirectory ? [{ label: "Edit project", Icon: Pencil, disabled: false, run: () => { closeMenu(); editGroup(groupDirectory); } }] : []),
       ...(groupDirectory?.cwd ? [{ label: "Open directory", Icon: FolderOpen, disabled: false, run: () => { setGroupActionError(undefined); void openGroupDirectory(required(groupDirectory.cwd), groupDirectory.hostId ?? "local").catch((reason) => setGroupActionError((reason instanceof Error ? reason.message : String(reason)))); } }] : []),
       { label: "Forget group", Icon: Trash2, disabled: false, run: () => setRemovingGroup({ id: required((groupMenu())).projectKey, name: required((groupMenu())).label }) },
     ] : menu() ? actions.flatMap(([action, Icon, label]) => (!isMobile || action !== "new-window") && (!["copy-id", "open-rollout"].includes(action) || panel().debug) ? [{ label, Icon, disabled: props.isArchiving(required(menu()).session) || (required(menu()).session.isDraft === true && action !== "open-directory") || (action === "open-rollout" && !required(menu()).session.path), run: () => panel().onAction(required((menu())).session, action) }] : []) : [];
@@ -570,7 +570,7 @@ export function SessionPanel(props: Props) {
   };
 
   const menuActions = createMemo(() => (contextMenu()));
-  const isEditingGroup = (projectKey: string) => customGroupsByKey().has(projectKey) && editingGroupId() === customGroupsByKey().get(projectKey)?.id;
+  const isEditingGroup = (projectKey: string) => editingGroupId() === projectKey && groupDestination(projectKey) !== undefined;
   const renderDropZone = (beforeToken: string | null, parentKey?: string) => (<div data-sidebar-drop-zone data-sidebar-parent={parentKey} data-sidebar-before={beforeToken ?? undefined} data-sidebar-end={beforeToken === null ? true : undefined} class={`sidebar-drop-zone ${dropTarget()?.layoutBefore === beforeToken && dropTarget()?.parentKey === parentKey ? "active" : ""}`} />);
 
   const renderSessionScroll = () => {
