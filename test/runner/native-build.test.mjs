@@ -43,6 +43,7 @@ test('child ${index} uses this run\\'s build', async () => {
   assert.ok(bundle && existsSync(bundle));
   assert.notEqual(bundle, '/stale/controls');
   appendFileSync(${JSON.stringify(controls)}, bundle + '\\n');
+  ${fail === 'test' && index === 0 ? "assert.fail('selected test failed');" : ''}
 });`);
     files.push(file);
   }
@@ -61,6 +62,20 @@ test('fresh native and daemon builds are shared by separate test processes', asy
   assert.equal(new Set(bundles).size, 1);
   assert.equal(existsSync(bundles[0]), false, 'the shared build is removed after the tests');
   assert.deepEqual((await readFile(log, 'utf8')).trim().split('\n').sort(), ['build', 'daemon']);
+});
+
+test('a failed child test fails the run and releases the shared build', async t => {
+  const { run, controls } = await fixture(t, 'test');
+  await assert.rejects(run(), error => {
+    assert.equal(error.code, 1);
+    assert.match(error.stdout, /selected test failed/);
+    assert.match(error.stdout, /pass 1/);
+    assert.match(error.stdout, /fail 1/);
+    return true;
+  });
+  const bundles = (await readFile(controls, 'utf8')).trim().split('\n');
+  assert.equal(bundles.length, 2, 'both child processes finish before cleanup');
+  for (const bundle of bundles) assert.equal(existsSync(bundle), false);
 });
 
 test('all build failures are reported without starting the tests', async t => {
