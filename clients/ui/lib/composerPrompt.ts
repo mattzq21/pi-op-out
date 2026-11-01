@@ -16,7 +16,7 @@ function expandInlineCommand(value: string, commands: SlashCommand[]) {
   const available = new Map<string, SlashCommand>();
 
   for (const command of commands) {
-    if (isPromptCommand(command)) available.set(command.name, command);
+    if (isPromptCommand(command) && command.source !== "skill") available.set(command.name, command);
   }
 
   for (const match of proseOnly(value).matchAll(/\s\/(\S+)(?=\s|$)/g)) {
@@ -40,31 +40,48 @@ export const skillNames = (commands: SlashCommand[]) => new Map(commands.flatMap
 
   return name ? [[name.toLowerCase(), name]] : []; }));
 
-/** The `$skill` reference that the message uses, if any. Only the first known skill in the prose counts. */
+/** The `$skill` or `/skill:name` reference that the message uses, if any. Only the first known skill in the prose counts. */
 export function findSkillReference(value: string, skills: ReadonlyMap<string, string>) {
-  if (value.trimStart().startsWith("/") || !value.includes("$") || !skills.size) return undefined;
+  if (/^\s*\/(?!skill:)/.test(value) || !skills.size) return undefined;
 
-  for (const match of proseOnly(value).matchAll(/(^|[^a-zA-Z0-9_$])\$([a-zA-Z0-9][a-zA-Z0-9_-]*)\b/g)) {
-    const name = skills.get(match[2].toLowerCase());
+  for (const match of proseOnly(value).matchAll(/(^|[^a-zA-Z0-9_$/])(\$|\/skill:)([a-zA-Z0-9][a-zA-Z0-9_-]*)(?![a-zA-Z0-9_-])/g)) {
+    const name = skills.get(match[3].toLowerCase());
 
     if (!name) continue;
     const start = match.index + match[1].length;
 
-    return { name, start, end: start + match[2].length + 1 };
+    return { name, start, end: start + match[2].length + match[3].length };
   }
 
   return undefined;
 }
 
+/** Calls the skill that the message references. The message keeps the reference where the user wrote it. */
 function expandSkillReference(value: string, commands: SlashCommand[]) {
   const found = findSkillReference(value, skillNames(commands));
 
-  if (!found) return value;
-  const before = value.slice(0, found.start);
-  const after = value.slice(found.end);
-  const rest = (before + (/\s$/.test(before) && /^[ \t]/.test(after) ? after.slice(1) : after)).trim();
+  return found ? `/skill:${found.name} ${value}` : value;
+}
 
-  return `/skill:${found.name}${rest ? ` ${rest}` : ""}`;
+const SKILL_BLOCK = /^<skill\s+name="([^"]+)"\s+location="[^"]+">\nReferences are relative to [^\n]+\.\n\n[\s\S]*?<\/skill>(?:\n\n([\s\S]*))?$/i;
+
+const QUEUED_SKILL = /^\/skill:([a-zA-Z0-9][a-zA-Z0-9_-]*)(?:\s+([\s\S]*))?$/;
+
+/** The prompt as the user wrote it. A prompt without its skill reference gets `$name` first. */
+const withSkillReference = (skill: string, text: string) => ({ skill, text: findSkillReference(text, new Map([[skill.toLowerCase(), skill]])) ? text : `$${skill}${text ? ` ${text}` : ""}` });
+
+/** The skill and the user's prompt of a sent skill call: the `<skill>` block, then the prompt. */
+export function sentSkillPrompt(message: string) {
+  const block = message.match(SKILL_BLOCK);
+
+  return block ? withSkillReference(block[1], (block[2] ?? "").trim()) : undefined;
+}
+
+/** The skill and the user's prompt of a queued `/skill:name prompt` message. */
+export function queuedSkillPrompt(message: string) {
+  const call = message.match(QUEUED_SKILL);
+
+  return call ? withSkillReference(call[1], (call[2] ?? "").trim()) : undefined;
 }
 
 const escapeAttribute = (value: string) => value.replace(/[&<>"']/g, (character) => required(({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&apos;" })[character]));

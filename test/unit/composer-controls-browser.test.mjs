@@ -171,7 +171,7 @@ test('skill mentions complete before expanding on send', async t => {
   assert.equal(await editor.inputValue(), 'Please $Research ');
   assert.deepEqual(await sent(page), []);
   await page.keyboard.press('Enter');
-  assert.deepEqual(await sent(page), [['/skill:Research Please', null, []]]);
+  assert.deepEqual(await sent(page), [['/skill:Research Please $Research', null, []]]);
 });
 
 test('Escape dismisses the command palette without sending', async t => {

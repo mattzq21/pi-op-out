@@ -1,4 +1,4 @@
-import { findSkillReference } from "../lib/composerPrompt";
+import { findSkillReference, queuedSkillPrompt } from "../lib/composerPrompt";
 import { sessionReference } from "../lib/sessionDrop";
 
 /**
@@ -35,13 +35,11 @@ export function sessionLinkSegments(value: string): Segment[] {
 /** The segments of `value`, with the used skill reference split out of its text segment. */
 export type FieldSegment = Segment | { skill: string };
 
-/** The segments of a queued message. A queued `/skill:name` message shows as `$name`, the same as in the composer. */
+/** The segments of a queued message. A queued `/skill:name` call shows the prompt that the user wrote, with its skill reference highlighted. */
 export function queuedSegments(value: string): FieldSegment[] {
-  const invocation = value.match(/^\/skill:([a-zA-Z0-9][a-zA-Z0-9_-]*)(?:(\s+)([\s\S]*))?$/);
+  const call = queuedSkillPrompt(value);
 
-  if (!invocation) return sessionLinkSegments(value);
-
-  return [{ skill: `$${invocation[1]}` }, ...invocation[3] ? [{ text: " " }, ...sessionLinkSegments(invocation[3])] : []];
+  return call ? fieldSegments(call.text, new Map([[call.skill.toLowerCase(), call.skill]])) : sessionLinkSegments(value);
 }
 
 function fieldSegments(value: string, skills: ReadonlyMap<string, string>): FieldSegment[] {

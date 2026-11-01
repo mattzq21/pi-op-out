@@ -18,7 +18,9 @@ test('a prompt command typed mid-sentence becomes the command with the rest as i
 });
 
 test('a skill mention calls the skill, but mentions inside code stay plain text', () => {
-  assert.equal(send('Please use $research on this').message, '/skill:Research Please use on this');
+  assert.equal(send('Please use $research on this').message, '/skill:Research Please use $research on this');
+  assert.equal(send('/skill:Research check this').message, '/skill:Research /skill:Research check this');
+  assert.equal(send('then /skill:Research check this').message, '/skill:Research then /skill:Research check this');
   assert.equal(send('Run `echo $research` for me').message, 'Run `echo $research` for me');
   assert.equal(send('```sh\necho $research\n```').message, '```sh\necho $research\n```');
   assert.equal(send('costs $5 and $unknown').message, 'costs $5 and $unknown');
