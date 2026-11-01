@@ -63,6 +63,9 @@ function userMessageParts(content: string) {
   return { skills: [invocation[1]], text: (invocation[2] ?? "").trim(), literalSkill: false };
 }
 
+/** The user message as the user wrote it: a skill invocation goes back to its `$skill` reference. */
+const userCopyText = (content: string) => content.replace(/^<skill\s+name="([^"]+)"\s+location="[^"]+">\nReferences are relative to [^\n]+\.\n\n[\s\S]*?<\/skill>(?:\n\n|$)/i, (block, name: string) => block.endsWith("\n\n") ? `$${name} ` : `$${name}`);
+
 function imageContextParts(content: string, hasImages: boolean) {
   const lines = content.trimEnd().split("\n");
   const notes: string[] = [];
@@ -298,7 +301,7 @@ export function Message(componentProps: Props) {
       </div>}
       <div class="message-actions">
         {sentTime() && <span class="message-time">{required(sentTime()).short}</span>}
-        <Show when={hasVisibleText(textOf(componentProps.message.content))}><MessageCopyButton state={copyState()} copy={() => copy()} /></Show>
+        <Show when={hasVisibleText(textOf(componentProps.message.content))}><MessageCopyButton state={copyState()} copy={() => copy(userCopyText(textOf(componentProps.message.content)))} /></Show>
         {copyState() === "error" && <span class="copy-feedback" role="status">Could not copy message</span>}
       </div>
     </article>{componentProps.debug?.contextInjections && imageContext().notes && <ContextInjection title="Image context" content={imageContext().notes} />}</>;
