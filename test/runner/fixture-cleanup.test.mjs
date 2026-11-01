@@ -34,13 +34,14 @@ import { cleanupScope } from ${JSON.stringify(new URL('../cleanup-scope.mjs', im
 import { chatPublisher } from ${JSON.stringify(new URL('../chat-publisher-fixture.mjs', import.meta.url).href)};
 for (const failures of [0, 1, 2]) test('cleanup with ' + failures + ' failures', async t => {
   const scope = cleanupScope(t);
+  const order = [];
   const server = createServer();
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
-  if (failures > 0) scope.after(async () => { await Promise.resolve(); throw new Error('first cleanup failure'); });
-  if (failures === 2) scope.after(() => { throw new Error('second cleanup failure'); });
+  if (failures > 0) scope.after(async () => { order.push('first'); await Promise.resolve(); throw new Error('first cleanup failure'); });
+  if (failures === 2) scope.after(() => { order.push('second'); throw new Error('second cleanup failure'); });
   scope.after(async () => {
     await new Promise((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
-    await writeFile(${JSON.stringify(closed)} + failures, 'closed');
+    await writeFile(${JSON.stringify(closed)} + failures, [...order, 'closed'].join(','));
   });
 });
 for (const [name, controlsBundle] of ${JSON.stringify([['normal output', controls], ['unexpected output', noisyControls], ['failed process', failedControls]])}) test('publisher cleanup with ' + name, async t => {
@@ -63,5 +64,5 @@ for (const [name, controlsBundle] of ${JSON.stringify([['normal output', control
     assert.doesNotMatch(error.stdout, /unhandledRejection|asynchronous activity/);
     return true;
   });
-  assert.deepEqual(await Promise.all([0, 1, 2].map(count => readFile(closed + count, 'utf8'))), ['closed', 'closed', 'closed']);
+  assert.deepEqual(await Promise.all([0, 1, 2].map(count => readFile(closed + count, 'utf8'))), ['closed', 'first,closed', 'first,second,closed']);
 });
