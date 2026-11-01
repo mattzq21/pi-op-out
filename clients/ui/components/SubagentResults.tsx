@@ -5,22 +5,22 @@ import { ConversationHostContext, SubagentNavigationContext } from "../lib/subag
 import { subagentLook } from "../lib/subagentLooks";
 import "./subagent-timeline.css";
 
-interface Run { name: string; task: string; status: string; sessionId: string; sessionPath: string; hostId: string; toolCallId?: string; look?: number; output?: string; apiCost?: number; }
+interface Run { name: string; status: string; sessionId: string; sessionPath: string; hostId: string; toolCallId?: string; look?: number; }
 
 const runSchema = z.object({
-  name: z.string(), task: z.string(), status: z.string(),
+  name: z.string(), status: z.string(),
   sessionId: z.string(), sessionPath: z.string(), hostId: z.string(),
   toolCallId: z.string().optional(),
   look: z.number().int().min(0).max(47).optional().catch(undefined),
-  output: z.string().optional().catch(undefined),
-  apiCost: z.number().optional().catch(undefined),
 });
+
+const runList = z.array(runSchema.optional().catch(undefined)).catch([]).transform(runs => runs.flatMap(run => run ? [run] : []));
 
 export const showsSubagents = (toolName?: string) => toolName === "spawn_subagents" || toolName === "await_subagents";
 
-export const subagentRuns = z.object({
-  runs: z.array(runSchema.optional().catch(undefined)).catch([]),
-}).transform(details => details.runs.flatMap(run => run ? [run] : [])).catch([]).parse;
+export const subagentRuns = z.object({ runs: runList }).transform(details => details.runs).catch([]).parse;
+
+export const toolSubagentRuns = runList.catch([]).parse;
 
 function SubagentAvatar(props: { seed: string; look?: number; status: string; label: string }) {
   const look = createMemo(() => {

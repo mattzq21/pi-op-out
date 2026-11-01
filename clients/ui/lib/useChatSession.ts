@@ -542,7 +542,7 @@ function createChatSession(transport: Accessor<Pick<NativeTransport, "command" |
 
         for (const index of matches) {
           const item = current[index];
-          current[index] = { ...item, toolPayloadVersion: Number(event.sequence), toolStatus: "running" };
+          current[index] = { ...item, toolPayloadVersion: Number(event.sequence), toolStatus: "running", ...(event.subagents !== undefined ? { subagents: event.subagents } : {}) };
         }
 
         return matches.length > 0;
@@ -552,7 +552,7 @@ function createChatSession(transport: Accessor<Pick<NativeTransport, "command" |
     const handleToolExecutionEnd = () => {
       if (event.parentToolCallId) return;
       flush();
-      session.setMessages((current) => current.map((item) => item.id === event.toolCallId ? { ...item, toolPayloadVersion: Number(event.sequence), toolStatus: event.isError ? "error" : "done", ...(event.toolImage ? { toolImage: true } : {}) } : item));
+      session.setMessages((current) => current.map((item) => item.id === event.toolCallId ? { ...item, toolPayloadVersion: Number(event.sequence), toolStatus: event.isError ? "error" : "done", ...(event.toolImage ? { toolImage: true } : {}), ...(event.subagents !== undefined ? { subagents: event.subagents } : {}) } : item));
     };
 
     const handleQueueUpdate = () => session.memory.batch(() => {
