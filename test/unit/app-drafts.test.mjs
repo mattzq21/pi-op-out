@@ -14,6 +14,7 @@ beforeEach(async () => {
   dom = installDom(); windows = []; storageErrors = [];
   openWindow().setComposerDraft(...SENTINEL);
   leavePage();
+  windows.pop()();
   await restoredDrafts({});
 });
 afterEach(async () => {
