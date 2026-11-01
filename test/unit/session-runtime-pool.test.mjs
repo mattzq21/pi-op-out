@@ -29,6 +29,7 @@ describe('session runtime pool', () => {
   afterEach(async () => {
     await pool.disconnectAll();
     clearMocks(); dom.restore();
+    assert.deepEqual(errors, []);
   });
   const commands = name => calls.filter(call => call.command === name);
 
@@ -222,7 +223,7 @@ describe('session runtime pool', () => {
     assert.equal(pool.isRetained(client), false);
     await send(id, { type: 'message_start', message: { role: 'user', content: 'hello' } });
     await pool.release(client);
-    pending.resolve({ sessionId: 'session', messageCount: 1 });
+    pending.resolve({ model: null, thinkingLevel: 'off', isStreaming: false, sessionId: 'session', sessionFile: '/session', messageCount: 1, pendingMessageCount: 0 });
     await starting;
     await settled();
     assert.deepEqual(pool.liveSessionSummaries(), []);
