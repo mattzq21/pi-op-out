@@ -455,7 +455,7 @@ test('projects can be renamed to free names, including names of forgotten groups
   await page.getByRole('button', { name: 'Group actions for Old', exact: true }).waitFor();
   assert.equal(await page.getByRole('button', { name: 'Group actions for repo', exact: true }).count(), 0);
   await page.evaluate(() => window.settlePanelStorage());
-  await reload();
+  await reload('Old');
   assert.equal(await page.getByRole('button', { name: 'Group actions for Old', exact: true }).count(), 1);
 });
 
