@@ -398,6 +398,51 @@ test('a dropped chat link goes where the pointer is, and a selected link shows a
   assert.equal(await editor.inputValue(), 'alpha omega');
 });
 
+test('the caret after a chat link at the end stays on its line, and typing goes after the link', async t => {
+  const page = await controlsPage(t);
+  const editor = page.getByRole('textbox', { name: 'Message piop' });
+  await editor.click();
+  const link = '[Other](piop://session/local/other)';
+  await editor.evaluate((node, link) => node.insertAt(0, link), link);
+  const caret = await editor.evaluate(node => { const rect = document.getSelection().getRangeAt(0).getClientRects()[0]; const box = node.querySelector('.composer-session-link').getBoundingClientRect(); return { top: rect?.top, linkTop: box.top, left: rect?.left, linkRight: box.right }; });
+  assert.ok(Math.abs(caret.top - caret.linkTop) < 4 && caret.left >= caret.linkRight - 1, JSON.stringify(caret));
+  await page.keyboard.type('x');
+  assert.equal(await editor.inputValue(), `${link}x`);
+  await editor.evaluate((node, end) => node.setSelectionRange(0, end), link.length);
+  assert.equal(await editor.evaluate(node => node.selectionEnd), link.length);
+  await page.keyboard.press('End');
+  await page.keyboard.press('Backspace');
+  await page.keyboard.press('Backspace');
+  assert.equal(await editor.inputValue(), '');
+});
+
+test('each arrow and delete key press next to a chat link has an effect', async t => {
+  const page = await controlsPage(t);
+  const editor = page.getByRole('textbox', { name: 'Message piop' });
+  await editor.click();
+  const a = '[A](piop://session/local/a)';
+  const b = '[B](piop://session/local/b)';
+  await editor.evaluate((node, text) => node.insertAt(0, text), a + b);
+  const caret = () => editor.evaluate(node => [node.selectionStart, node.selectionEnd]);
+  await editor.evaluate((node, at) => node.setSelectionRange(at, at), a.length);
+  await page.keyboard.press('ArrowRight');
+  assert.deepEqual(await caret(), [a.length + b.length, a.length + b.length]);
+  await page.keyboard.press('ArrowLeft');
+  assert.deepEqual(await caret(), [a.length, a.length]);
+  await page.keyboard.press('ArrowLeft');
+  assert.deepEqual(await caret(), [0, 0]);
+  await page.keyboard.press('ArrowRight');
+  await page.keyboard.press('Shift+ArrowRight');
+  assert.deepEqual(await caret(), [a.length, a.length + b.length]);
+  await page.keyboard.press('ArrowLeft');
+  await editor.evaluate((node, at) => node.setSelectionRange(at, at), a.length);
+  await page.keyboard.press('Delete');
+  assert.equal(await editor.inputValue(), a);
+  await page.keyboard.press('ArrowRight');
+  await page.keyboard.press('Backspace');
+  assert.equal(await editor.inputValue(), '');
+});
+
 test('Ctrl+Z and Ctrl+Y undo and redo typing in the message editor', async t => {
   const page = await controlsPage(t);
   const editor = page.getByRole('textbox', { name: 'Message piop' });
