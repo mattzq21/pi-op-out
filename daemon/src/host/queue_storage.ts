@@ -167,6 +167,7 @@ export async function clearSaved(root: string, id: string): Promise<void> {
 function restartItem(item: any): void {
   delete item.taken;
   delete item.held;
+  delete item.used;
 }
 
 function recoverItems(saved: any): any[] {

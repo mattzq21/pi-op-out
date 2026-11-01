@@ -4,8 +4,8 @@ import { GOAL_TOOL, QueueGoal } from './goals/state';
 /** Fields that record how Pi took a queued item. Clients do not see them. */
 export const CONSUMPTION_FIELDS = ['consumedContent', 'consumedTimestamp', 'consumedInputId', 'deliveryStarted'];
 
-/** Fields that only the queue uses. preparedGoal: the goal that a /goal item sets when Pi takes it. */
-const PRIVATE_FIELDS = [...CONSUMPTION_FIELDS, 'preparedGoal'];
+/** Fields that only the queue uses. preparedGoal: the goal that a /goal item sets when Pi takes it. used: Pi started a message with the item. */
+const PRIVATE_FIELDS = [...CONSUMPTION_FIELDS, 'preparedGoal', 'used'];
 
 function stamp(value: any): string { return JSON.stringify(value ?? null); }
 
@@ -23,10 +23,10 @@ export type QueueOffer = { steer: number; followUp: number; goal: number; tools:
  * when it is ready for a message, it takes the next one (the item is then taken), and the item leaves the queue when Pi's transcript holds it.
  * An item that Pi took but did not use goes back to waiting.
  *
- * The queue also owns the conversation's goal. An active or paused goal is an entry of the follow-ups. Follow-ups below it have afterGoal set; they wait until the goal completes or is cleared,
+ * The queue also owns the conversation's goal. The goal is an entry of the follow-ups, and its turns are context insertions that Pi takes like messages. Follow-ups below it have afterGoal set; they wait until the goal completes or is cleared,
  * or until the user moves them above the goal. Steering messages never wait for the goal.
- * A paused item keeps its place, and the items after it can run.
- * Pi may take an item that is not taken, not paused, not below the goal and not marked for retry, while the queue is not held and not stopped.
+ * The hold is the only pause: while the queue is held, Pi takes no item and no goal turn.
+ * Pi may take an item that is not taken, not below the goal and not marked for retry, while the queue is not held.
  */
 export class QueueState {
   pending: any[] = [];
@@ -40,22 +40,33 @@ export class QueueState {
   goals = new QueueGoal();
   /** True while the user holds the queue. */
   held = false;
-  /** True after the user stopped a response: waiting items stay until the user sends a message, which goes first. */
+  /** True after the user stopped a response: the next message the user sends goes first. */
   stopped = false;
 
-  /** The goal while it has a place in the queue: active or paused. */
+  /** The goal while it has a place in the queue. */
   queuedGoal() { return this.goals.live(); }
 
   /** Follow-ups below the goal entry, in queue order. */
   waiting(): any[] { return this.pending.filter(item => flag(item, 'afterGoal') && !flag(item, 'retry')); }
 
+  /** Marks the item of a user message that Pi started as used. A taken item without it still waits in Pi and comes back when Pi releases it. */
+  markUsed(event: any): void {
+    const name = kind(event);
+    if ((name !== 'message_start' && name !== 'message_end') || event.message?.role !== 'user' || typeof event.message?.piopQueueId !== 'string') return;
+    const item = this.pending.find(entry => entry.id === event.message.piopQueueId);
+    if (item) item.used = true;
+  }
+
+  /** True when an item waits for Pi: not taken, or taken but not used. */
+  hasUnused(): boolean { return this.pending.some(item => !flag(item, 'used')); }
+
   /** True when Pi may take the item now. */
   available(item: any): boolean {
-    return !this.held && !this.stopped && !flag(item, 'taken') && !flag(item, 'paused') && !flag(item, 'afterGoal') && !flag(item, 'retry') && !this.sending.has(text(item, 'id'));
+    return !this.held && !flag(item, 'taken') && !flag(item, 'afterGoal') && !flag(item, 'retry') && !this.sending.has(text(item, 'id'));
   }
 
   /** True when Pi may give the goal its next turn. The goal waits while the queue is held and while the chat waits for the user's first message. */
-  goalAvailable(): boolean { return Boolean(this.goals.active()) && !this.held && !this.goals.waitingForInput; }
+  goalAvailable(): boolean { return Boolean(this.goals.live()) && !this.held && !this.goals.waitingForInput; }
 
   offer(): QueueOffer {
     const offer = { steer: 0, followUp: 0, goal: this.goalAvailable() ? 1 : 0, tools: { [GOAL_TOOL]: Boolean(this.goals.live()) } };
@@ -95,9 +106,9 @@ export class QueueState {
     const goal = this.queuedGoal();
     if (goal) {
       const index = visible.findIndex(item => flag(item, 'afterGoal') || flag(item, 'retry'));
-      visible.splice(index < 0 ? visible.length : index, 0, { id: GOAL_ENTRY_ID, message: goal.objective, behavior: 'followUp', goal: true, ...(goal.status === 'paused' ? { paused: true } : {}) });
+      visible.splice(index < 0 ? visible.length : index, 0, { id: GOAL_ENTRY_ID, message: goal.objective, behavior: 'followUp', goal: true });
     }
-    const queued = pending.filter(item => !flag(item, 'retry') && !flag(item, 'paused') && !flag(item, 'afterGoal'));
+    const queued = pending.filter(item => !flag(item, 'retry') && !flag(item, 'afterGoal'));
     return {
       type: 'queue_update',
       steering: queued.filter(item => item.behavior === 'steer').map(item => clone(item.message)),

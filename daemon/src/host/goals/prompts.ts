@@ -15,7 +15,7 @@ export const goalPrompt = (goal: Goal) => goal.objective;
 
 export const goalSetPrompt = "Work toward the current goal. Completion criteria are expected to be met.";
 
-/** The notice for a running agent after the user changed the goal, or null when the change needs none: a paused or complete goal gets no notice. */
+/** The notice for a running agent after the user changed the goal, or null when the change needs none: a complete goal gets no notice. */
 export function goalChangedPrompt(goal: Goal | null) {
   if (!goal) return "The goal has been cleared. Follow next instructions, the goal is in the past now.";
 

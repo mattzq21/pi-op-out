@@ -61,26 +61,6 @@ test.concurrent('messages sent while the agent works wait their turn, and a remo
   expect(messages.filter(message => message.role === 'assistant').map(text)).toEqual(['Build done.', 'Handled: Then deploy']);
 }, 60000);
 
-test.concurrent('a paused message keeps its place while the messages after it run, and runs when resumed', async () => {
-  const busy = held<{ text: string }>();
-  agents.scripts.set('Long check', messages => text(messages.at(-1)) === 'Long check' ? busy.promise : { text: 'Handled: ' + text(messages.at(-1)) });
-  const chat = await agents.rootChat();
-  await chat.command({ type: 'prompt', message: 'Long check' });
-  await chat.until(() => agents.model.requests.some(request => text(request.messages.at(-1)) === 'Long check'));
-  await chat.command({ type: 'follow_up', message: 'Paused task' });
-  await chat.command({ type: 'follow_up', message: 'Next task' });
-  for (let tries = 0; pending(chat.runtimeId).length < 2 && tries < 50; tries++) await Bun.sleep(100);
-  const paused = pending(chat.runtimeId)[0].id;
-  await chat.command({ type: 'change_pending', id: paused, action: 'pause' });
-  for (let tries = 0; !(pending(chat.runtimeId)[0] as any)?.paused && tries < 50; tries++) await Bun.sleep(100);
-  busy.release({ text: 'Check done.' });
-  await chat.until(history => text(history.at(-1)) === 'Handled: Next task');
-  expect(pending(chat.runtimeId).map(item => [item.message, (item as any).paused])).toEqual([['Paused task', true]]);
-  await chat.command({ type: 'change_pending', id: paused, action: 'resume' });
-  const messages = await chat.until(history => text(history.at(-1)) === 'Handled: Paused task');
-  expect(userTexts(messages)).toEqual(['Long check', 'Next task', 'Paused task']);
-}, 60000);
-
 test.concurrent('a steering message reaches the agent within its running turn, before waiting follow-ups', async () => {
   const busy = held<{ tool: string; arguments: Record<string, unknown> }>();
   agents.scripts.set('Install packages', messages => {
@@ -102,7 +82,7 @@ test.concurrent('a steering message reaches the agent within its running turn, b
   expect(userTexts(messages)).toEqual(['Install packages', 'Use pnpm instead', 'Afterwards, update the README']);
 }, 60000);
 
-test.concurrent('stopping a response keeps waiting messages back, and the next message the user sends from the composer goes first, then the waiting ones', async () => {
+test.concurrent('stopping a response holds the queue, the next message the user sends goes first, and all run on resume', async () => {
   const busy = held<{ text: string }>();
   agents.scripts.set('Stopped job', messages => text(messages.at(-1)) === 'Stopped job' ? busy.promise : { text: 'Answer to ' + text(messages.at(-1)) });
   const chat = await agents.rootChat();
@@ -116,7 +96,10 @@ test.concurrent('stopping a response keeps waiting messages back, and the next m
   await settled();
   expect(userTexts(await chat.history())).toEqual(['Stopped job']);
   expect((await chat.command({ type: 'get_state' })).pendingMessages.map((item: any) => item.message)).toEqual(['Waiting task']);
+  expect((await chat.command({ type: 'get_state' })).queueHeld).toBe(true);
   await chat.command({ type: 'follow_up', message: 'New request' });
+  expect((await chat.command({ type: 'get_state' })).pendingMessages.map((item: any) => item.message)).toEqual(['New request', 'Waiting task']);
+  await chat.command({ type: 'hold_queue', held: false });
   const messages = await chat.until(history => text(history.at(-1)) === 'Answer to Waiting task');
   expect(userTexts(messages)).toEqual(['Stopped job', 'New request', 'Waiting task']);
   expect((await chat.command({ type: 'get_state' })).pendingMessages).toEqual([]);

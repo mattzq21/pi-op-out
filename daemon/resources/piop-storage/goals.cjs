@@ -6,7 +6,7 @@ function validate(goal) {
   if (!goal || typeof goal !== 'object' || typeof goal.id !== 'string' || !goal.id
     || typeof goal.sessionId !== 'string' || !goal.sessionId || typeof goal.objective !== 'string'
     || !goal.objective.trim() || [...goal.objective].length > 4000
-    || !['active', 'paused', 'complete'].includes(goal.status)) throw new Error('Invalid saved goal');
+    || !['active', 'complete'].includes(goal.status)) throw new Error('Invalid saved goal');
 }
 
 function access(file, sessionId, operation) {

@@ -1,8 +1,8 @@
-import { createMemo, createSignal, Show, type Accessor } from "solid-js";
-import { CirclePause, CirclePlay, Pencil, Trash2 } from "lucide-solid";
+import { createMemo, createSignal, type Accessor } from "solid-js";
+import { Pencil, Trash2 } from "lucide-solid";
 import { z } from "zod";
 
-const goalSchema = z.object({ objective: z.string(), status: z.enum(["active", "paused", "complete"]) });
+const goalSchema = z.object({ objective: z.string(), status: z.enum(["active", "complete"]) });
 
 export type Goal = z.infer<typeof goalSchema>;
 
@@ -23,7 +23,7 @@ export function createGoalControls(source: Accessor<{ value?: string; disabled: 
   const [busy, setBusy] = createSignal(false);
   const [commandError, setCommandError] = createSignal<string>();
 
-  const run = async (action: "clear" | "pause" | "resume" | "edit") => {
+  const run = async (action: "clear" | "edit") => {
     if (source().disabled || busy()) return;
     setBusy(true); setCommandError(undefined);
 
@@ -36,20 +36,6 @@ export function createGoalControls(source: Accessor<{ value?: string; disabled: 
 }
 
 export type GoalControls = ReturnType<typeof createGoalControls>;
-
-/** The pause or resume button of a queue entry. */
-export function PauseButton(props: { paused: boolean; subject: string; disabled: boolean; onToggle: () => void }) {
-  return <button type="button" class="pending-icon-button" data-tooltip={props.paused ? `Resume ${props.subject}` : `Pause ${props.subject}`} aria-label={props.paused ? `Resume ${props.subject}` : `Pause ${props.subject}`} aria-pressed={props.paused} disabled={props.disabled} onClick={() => props.onToggle()}>
-    <Show when={props.paused} fallback={<CirclePause size={13} />}><CirclePlay size={13} /></Show>
-  </button>;
-}
-
-/** The pause or resume button of the goal's queue entry. */
-export function GoalPauseButton(props: { controls: GoalControls; goal: Goal }) {
-  const active = () => props.goal.status === "active";
-
-  return <PauseButton paused={!active()} subject="goal" disabled={props.controls.disabled()} onToggle={() => void props.controls.run(active() ? "pause" : "resume")} />;
-}
 
 /** The edit and clear buttons of the goal's queue entry. */
 export function GoalActions(props: { controls: GoalControls }) {

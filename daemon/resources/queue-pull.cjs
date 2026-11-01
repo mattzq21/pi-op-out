@@ -10,7 +10,7 @@
  *
  * The queue also owns the conversation's goal. The offer tells whether the goal may continue its work. Pi then takes the goal prompt when a run
  * that completed would end, and when Pi is idle with no message waiting. The goal prompt is a context insertion: a custom message that the daemon
- * builds. A taken message may bring context insertions that go before it. Pi tells the daemon when a run fails or stops, so an active goal pauses.
+ * builds. A taken message may bring context insertions that go before it. Pi tells the daemon when a run fails or stops; a failed run holds the queue while a goal is set.
  * The offer also names the tools that the queue answers and whether each must stay in the prompt.
  */
 
@@ -56,7 +56,7 @@ function queuePull(session, { ask, prompt, insert, tools } = {}) {
     return true;
   };
 
-  /** Tells the daemon that a run failed or stopped, so an active goal pauses before Pi could take its next turn. */
+  /** Tells the daemon that a run failed or stopped, so a failed run with a goal holds the queue before Pi could take its next turn. */
   const report = async outcome => {
     try { update(await ask("queue_outcome", { outcome })); }
     catch (error) { console.error(`Could not report how the run ended: ${error instanceof Error ? error.message : String(error)}`); }
@@ -155,7 +155,7 @@ function queuePull(session, { ask, prompt, insert, tools } = {}) {
     return result;
   };
 
-  // A run that completed and would end goes on with the goal's next turn, after the messages that wait. A run that failed pauses the goal.
+  // A run that completed and would end goes on with the goal's next turn, after the messages that wait. A run that failed holds the queue.
   const beforeSettle = session._runBeforeSettleBoundary;
   session._runBeforeSettleBoundary = async function (...args) {
     const outcome = this._lastActivityOutcome;

@@ -33,13 +33,13 @@ const until = async (chat: Chat, check: (last: string) => boolean) => {
   throw new Error('Chat never reached the expected state; last message: ' + (await lastText(chat)).slice(0, 200));
 };
 
-/** Sends message and waits for its reply. send 'steer' gets past messages that wait behind a paused goal. */
-const ask = async (chat: Chat, message: string, send = 'prompt') => { await chat.command({ type: send, message }); await until(chat, last => last === 'Reply to ' + message); };
+/** Sends message and waits for its reply. */
+const ask = async (chat: Chat, message: string) => { await chat.command({ type: 'prompt', message }); await until(chat, last => last === 'Reply to ' + message); };
 
 /** Compacts the chat. A prompt of filler first gives the compaction enough history to summarize. */
-const compact = async (daemon: Daemon, chat: Chat, send = 'prompt') => {
+const compact = async (daemon: Daemon, chat: Chat) => {
   const compactions = () => daemon.events.filter(event => event.payload?.runtimeId === chat.runtimeId && event.payload.event?.type === 'compaction_end' && !event.payload.event.errorMessage).length;
-  await chat.command({ type: send, message: 'Filler: ' + 'filler words '.repeat(12000) });
+  await chat.command({ type: 'prompt', message: 'Filler: ' + 'filler words '.repeat(12000) });
   await until(chat, last => last.startsWith('Reply to Filler'));
   const before = compactions();
   await chat.command({ type: 'compact' });
@@ -70,18 +70,29 @@ test.concurrent('update_goal_status is in the prompt only from goal creation unt
   } finally { await agents.close(); }
 }, 120000);
 
-test.concurrent('a paused goal keeps update_goal_status in the prompt after a compaction', async () => {
-  const agents = await goalAgents('Paused work', () => undefined);
+test.concurrent('a goal in a held queue keeps update_goal_status in the prompt after a compaction', async () => {
+  const agents = await goalAgents('Held work', () => undefined);
   try {
     const chat = await agents.rootChat();
-    await goal(chat, 'Paused work');
+    await goal(chat, 'Held work');
     await until(chat, last => last.startsWith('Reply to'));
-    await goal(chat, 'pause');
+    // Steering goes before the goal's next turn.
+    await chat.command({ type: 'steer', message: 'Filler: ' + 'filler words '.repeat(12000) });
+    await until(chat, last => last.startsWith('Reply to Filler'));
+    // A stop holds the queue, so no goal turn runs during the compaction.
+    await chat.command({ type: 'abort' });
     for (let tries = 0; (await chat.command({ type: 'get_state' })).isStreaming && tries < 100; tries++) await Bun.sleep(100);
-    // Messages wait behind a paused goal, so these steer to run now.
-    await compact(agents.daemon, chat, 'steer');
-    await ask(chat, 'Next step', 'steer');
-    expect(declared(agents, 'Next step')).toBe(true);
+    expect((await chat.command({ type: 'get_state' })).queueHeld).toBe(true);
+    const compactions = () => agents.daemon.events.filter(event => event.payload?.runtimeId === chat.runtimeId && event.payload.event?.type === 'compaction_end' && !event.payload.event.errorMessage).length;
+    const before = compactions();
+    await chat.command({ type: 'compact' });
+    for (let tries = 0; compactions() === before && tries < 100; tries++) await Bun.sleep(100);
+    expect(compactions()).toBe(before + 1);
+    const sent = agents.model.requests.length;
+    await chat.command({ type: 'hold_queue', held: false });
+    for (let tries = 0; !agents.model.requests.slice(sent).some(request => text(request.messages.at(-1)) === 'Held work') && tries < 100; tries++) await Bun.sleep(100);
+    expect(declared(agents, 'Held work')).toBe(true);
+    await chat.command({ type: 'abort' });
   } finally { await agents.close(); }
 }, 120000);
 

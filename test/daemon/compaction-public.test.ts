@@ -113,7 +113,7 @@ test.concurrent('a goal goes on working after its chat is compacted by itself be
     const atCompaction = turns;
     for (let tries = 0; turns < atCompaction + 2 && tries < 100; tries++) await Bun.sleep(100);
     expect(turns).toBeGreaterThanOrEqual(atCompaction + 2);
-    await chat.command({ type: 'follow_up', message: '/goal pause', goalSubmissionId: crypto.randomUUID() });
+    await chat.command({ type: 'hold_queue', held: true });
   } finally { await agents.close(); }
 }, 120000);
 test.concurrent('a /compact sent while the agent works waits its turn in the queue, compacts there, and the next queued message sees only the summary', async () => {

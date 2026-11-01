@@ -14,7 +14,7 @@ export type AuxiliaryCopy = { kind: string; name: string };
 
 /** One instance per Pi session. Operations act on the conversation of the given context. */
 export interface SessionControls {
-  /** Stops the current run. An active goal pauses. Resolves when Pi is idle. */
+  /** Stops the current run. The queue is held when the goal or messages wait. Resolves when Pi is idle. */
   stop(ctx: ExtensionContext): Promise<void>;
   /** Cancels child sessions that are still being prepared. */
   cancelPreparation(): void;

@@ -28,8 +28,8 @@ function setGoal(f, objective) {
 test('goal changes and clearing are saved without transcript entries, and an opened chat reads them', t => {
   const f = fixture(t);
   const goal = setGoal(f, 'Finish the task');
-  goals.write(f.file, 'chat-1', { ...goal, status: 'paused' });
-  assert.deepEqual(goals.restore(f.file), { goal: { ...goal, status: 'paused' }, waitingForInput: false });
+  goals.write(f.file, 'chat-1', { ...goal, objective: 'Finish the edited task' });
+  assert.deepEqual(goals.restore(f.file), { goal: { ...goal, objective: 'Finish the edited task' }, waitingForInput: false });
   goals.write(f.file, 'chat-1', null);
   assert.deepEqual(goals.restore(f.file), { goal: null, waitingForInput: false });
   assert.deepEqual(goals.restore(join(f.root, 'sessions', 'unregistered.jsonl')), { goal: null, waitingForInput: false });
