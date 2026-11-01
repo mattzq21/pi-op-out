@@ -3,12 +3,28 @@ import { createHash, randomBytes } from 'node:crypto';
 import { execFile } from 'node:child_process';
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { Database } from 'bun:sqlite';
+import { afterAll } from 'bun:test';
 import { tmpdir } from 'node:os';
 import { isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { developmentEndpointKey } from '../../daemon/src/config';
 
 const root = resolve(import.meta.dir, '../..');
 const bundles = new Map<string, Promise<string>>();
+
+/**
+ * Stops of the daemons that this test file started and did not stop yet. Local daemons stop first, because a running local daemon can start a remote daemon again.
+ * Each test file gets its own copy of this module, and its last step runs these stops, so no daemon outlives its test file.
+ * Scripts that use this module outside the test runner (ui-host.ts, build.ts) stop their daemons themselves.
+ */
+const runningLocals = new Set<() => Promise<void>>();
+const runningRemotes = new Set<() => Promise<void>>();
+if (/\.test\.[cm]?[jt]s$/.test(Bun.main)) afterAll(async () => {
+  const failures: string[] = [];
+  for (const running of [runningLocals, runningRemotes]) {
+    for (const stop of [...running]) await stop().catch((error: Error) => { failures.push(error.message); });
+  }
+  if (failures.length) throw new Error('Could not stop the daemons that the tests left running:\n' + failures.join('\n'));
+}, 120_000);
 
 /** A development build runs like "scripts/build-daemon.mjs --debug": it is scoped to a project directory. */
 export interface BuildOptions { development?: boolean; projectRoot?: string; fakeTailscale?: boolean }
@@ -108,10 +124,10 @@ export async function remoteMachine(daemon: TestDaemon, id: string, name = id, t
   mkdirSync(join(home, '.bun/bin'), { recursive: true });
   symlinkSync(executable, join(home, '.bun/bin/piopd'));
   const env = { ...process.env, HOME: home, PIOP_MOBILE_BIND: '127.0.0.1:0' };
-  return {
-    id, name, target, home,
-    stop: () => control(executable, 'stop', env).then(() => {}),
-  };
+  // The local daemon can start this daemon again after a test stops it, so the file's last step stops it once more.
+  const stop = () => control(executable, 'stop', env).then(() => {});
+  runningRemotes.add(stop);
+  return { id, name, target, home, stop };
 }
 
 /** Adds remote machines to the saved settings. */
@@ -265,7 +281,9 @@ export async function startDaemon(options: BuildOptions & { home?: string; env?:
   const stop = () => stopped ??= (async () => {
     for (const client of clients) client.close();
     await control(executable, 'stop', env);
+    runningLocals.delete(stop);
   })();
+  runningLocals.add(stop);
   try {
     await control(executable, 'start', env);
     /** The current endpoint; a restarted daemon publishes a new token. */
