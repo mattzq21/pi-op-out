@@ -12,7 +12,7 @@ test('desktop daemon requests recover from explicit busy rejections', { timeout:
   context.mock.timers.enable({ apis: ['setTimeout'] });
   const home = '/home/test-user';
   mockWindows('main');
-  const busyReplies = ['Host is busy; try again', 'Host is busy; try again'];
+  const busyReplies = ['Host is busy; try again', new Error('Host is busy; try again')];
   let attempts = 0;
   mockNativeIPC((command, args) => {
     attempts++;
