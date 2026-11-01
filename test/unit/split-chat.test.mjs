@@ -25,7 +25,7 @@ describe('split conversation lifecycle', () => {
     const agents = ['general', 'review'].map(name => ({ name, model: '', effort: '', tools: [], skills: [], mcpServers: {}, path_systemprompt: '', path_agent_prompt: '' }));
     const catalog = { config: { revision: 'saved', agents }, models: [MODEL], initialModel: null, initialThinking: 'off', commands: [], commandDetails: [], skills: [] };
     daemonResponses = new Map([['provider_auth', ({ request }) => request.action === 'draft_catalog' ? catalog : { ready: true, providers: { p: { supportedModelIds: ['base', 'one', 'two'] } } }], ['start_pi', { attached: true }], ['stop_pi', true], ['pi_presence', null], ['load_session_groups', groups], ['change_session_groups', groups],
-      ['broker_request', ({ body }) => ({ sessionId: body.sessionId, sessionPath: '/session.jsonl', cwd: '/repo', archived: false, revision: '1' })]]);
+      ['broker_request', ({ body }) => body.action === 'preview' ? responses.get('get_snapshot') : ({ sessionId: body.sessionId, sessionPath: '/session.jsonl', cwd: '/repo', archived: false, revision: '1' })]]);
     mockIPC((command, args) => {
       if (command === 'pi_command') {
         const rpc = args.command; calls.push(rpc);

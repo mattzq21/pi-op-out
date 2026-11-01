@@ -12,7 +12,8 @@ const queued = behavior => ({ id: 'queue-b', goalSubmissionId: 'submission-b', m
 
 async function harness(t, responses = new Map()) {
   const dom = installDom();
-  const transport = { subscribe() { return () => {}; }, async command(command) { const response = responses.get(command.type); return response instanceof Function ? response() : response ?? {}; } };
+  const defaults = new Map([['get_state', () => ({ sessionId: hook.current.state.sessionId ?? '', messageCount: hook.current.state.messageCount ?? 0 })], ['get_available_models', { models: [] }], ['get_available_thinking_levels', { levels: ['off'] }], ['get_commands', { commands: [] }]]);
+  const transport = { subscribe() { return () => {}; }, async command(command, schema) { const response = responses.get(command.type) ?? defaults.get(command.type); const value = response instanceof Function ? response() : response ?? {}; return schema ? schema.parse(value) : value; } };
   const hook = await renderHook(value => useChatSession(value), transport);
   let view;
   t.after(async () => { await view?.unmount(); await hook.unmount(); dom.restore(); });
@@ -113,7 +114,9 @@ test('a message sent after a task that ended without a reply shows at once', asy
   assert.equal(chat.steps.at(-1).transcript, 'user A | user B');
 });
 test('a message sent while the queue is on hold never shows in the conversation, only once in the queue', async t => {
-  const chat = await harness(t);
+  const state = { model: null, thinkingLevel: 'off', isStreaming: false, sessionId: 'session', messageCount: 0, pendingMessageCount: 1, queueHeld: true };
+  const responses = new Map([['get_session_revision', { revision: 'changed' }], ['get_snapshot', { revision: 'snapshot', state, history: { entries: [], leafId: null }, sequence: 10, epoch: 'epoch', liveTools: [], queue: { type: 'queue_update', steering: [], followUp: [], pendingMessages: [{ ...queued('followUp'), held: true }], held: true } }], ['get_session_stats', {}]]);
+  const chat = await harness(t, responses);
   await chat.events('the queue is on hold', { type: 'queue_update', steering: [], followUp: [], pendingMessages: [], held: true });
   await chat.submit('B submitted while idle', 'submission-b', 'Message B');
   await chat.events('the daemon holds B', { type: 'queue_update', steering: [], followUp: [], pendingMessages: [{ ...queued('followUp'), held: true }], held: true });
