@@ -57,8 +57,8 @@ describe('session runtime pool', () => {
     assert.equal(pool.forSession(session), client);
     assert.notEqual(pool.forSession({ ...session, hostId: 'remote' }), client);
     const id = await connect(client);
-    let notifications = 0;
-    const unsubscribe = pool.subscribe(() => notifications++);
+    let notifiedRunning;
+    const unsubscribe = pool.subscribe(() => { notifiedRunning = [...pool.runningSessions()]; });
     await send(id, { type: 'agent_start' });
     assert.equal(pool.isRunning(client), true);
     assert.equal(pool.isAnyRunning(), true);
@@ -77,10 +77,9 @@ describe('session runtime pool', () => {
     assert.equal(pool.isRunning(client), false);
     await send(id, { type: 'agent_start' });
     pool.bind('local', 'renamed', client);
-    assert.deepEqual([...pool.runningSessions()], ['local:renamed']);
+    assert.deepEqual(notifiedRunning, ['local:renamed']);
     pool.bind('local', '', client);
-    assert.equal(pool.runningSessions().size, 0);
-    assert.ok(notifications > 0);
+    assert.deepEqual(notifiedRunning, []);
     unsubscribe();
   });
 
