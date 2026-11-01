@@ -11,6 +11,7 @@ import { durableMailbox } from "../piop-storage/durable-mailbox.ts";
 import { activeConversation } from "./conversation-location.ts";
 import { AUXILIARY_PARENT, auxiliaryParent, isAuxiliary } from "../piop-storage/session-records.cjs";
 import { sessionName } from "./session-names.cjs";
+import { steering } from "./steering.ts";
 
 const messageSchema = Schema.Object({ role: Schema.String(), content: Schema.Optional(Schema.Unknown()), toolName: Schema.Optional(Schema.String()), customType: Schema.Optional(Schema.String()), details: Schema.Optional(Schema.Unknown()), stopReason: Schema.Optional(Schema.String()), errorMessage: Schema.Optional(Schema.String()) });
 
@@ -251,7 +252,7 @@ function peerAnswers(snapshot: Awaited<ReturnType<typeof waitSnapshot>>, interru
   const errors = snapshot.errors.map(item => "Peer " + item.peerId + ": " + item.error);
   const parts = [...answers, ...errors];
 
-  if (interruption === "user") parts.push("The user sent a new message.");
+  if (interruption === "user") parts.push("The user sent a steer message.");
   if (interruption === "mail") parts.push("A message from a peer arrived.");
   if (interruption === "subagent") parts.push("A subagent result arrived.");
 
@@ -399,8 +400,8 @@ export function registerOrchestration(pi: ExtensionAPI) {
   const revisions = { user: 0, mail: 0, subagent: 0 };
   const inputListeners = new Set<() => void>();
   const newInput = (kind: "user" | "mail" | "subagent") => { revisions[kind]++; for (const listener of inputListeners) listener(); };
-  pi.on("input", event => { if (event.source !== "extension") newInput("user"); });
-  pi.events.on("piop:rpc", request => { if (request.command === "queue_offered") newInput("user"); });
+  const steer = steering(pi);
+  steer.onSteer(() => newInput("user"));
   const unsubscribeMail = pi.events.on("piop:agent-mail", event => newInput(event.customType === "piop-subagent-result" ? "subagent" : "mail"));
   pi.on("session_shutdown", unsubscribeMail);
   pi.registerTool({
@@ -509,7 +510,7 @@ export function registerOrchestration(pi: ExtensionAPI) {
 
       const finish = (snapshot: Awaited<ReturnType<typeof waitSnapshot>>) => {
         const mail = revisions.mail !== start.mail; const subagent = revisions.subagent !== start.subagent;
-        const interruption: Interruption = revisions.user !== start.user || (!mail && !subagent && ctx.hasPendingMessages()) ? "user" : mail ? "mail" : subagent ? "subagent" : undefined;
+        const interruption: Interruption = revisions.user !== start.user || (!mail && !subagent && steer.waiting()) ? "user" : mail ? "mail" : subagent ? "subagent" : undefined;
         const interrupted = interruption !== undefined;
         const failed = params.for === "all" ? snapshot.errors.length === params.targets.length : snapshot.errors.length > 0;
         const actionable = Boolean(snapshot.wake || failed || interrupted);

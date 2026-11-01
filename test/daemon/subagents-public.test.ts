@@ -278,27 +278,53 @@ test('an agent limited to one subagent cannot start a second while the first is 
   } finally { releaseFirst({ text: 'First done.' }); await setLimit(); }
 }, 120000);
 
-test('waiting for subagents ends early when the user sends a new message, which is handled next', async () => {
+test('a steer message ends the wait for subagents and arrives in the next model call', async () => {
   let releaseChild!: (reply: { text: string }) => void;
   const childReply = new Promise<{ text: string }>(resolve => { releaseChild = resolve; });
-  agents.scripts.set('Wait for news', messages => {
+  agents.scripts.set('Wait for steer news', messages => {
+    if (!called(messages, 'spawn_subagents')) return { tool: 'spawn_subagents', arguments: { tasks: [{ nickname: 'Sleeper', task: 'Sleep while steered' }] } };
+    if (!called(messages, 'await_subagents')) return { tool: 'await_subagents' };
+    return { text: 'Handled: ' + text(messages.at(-1)) + ' | ' + text(messages.findLast((message: any) => message.role === 'tool')) };
+  });
+  agents.scripts.set('Sleep while steered', () => childReply);
+  const root = await agents.rootChat();
+  try {
+    await root.command({ type: 'prompt', message: 'Wait for steer news' });
+    await agents.daemon.waitEvent('pi://event', payload => payload.runtimeId === root.runtimeId
+      && payload.event?.type === 'tool_execution_start' && payload.event.toolName === 'await_subagents');
+    const sent = Date.now();
+    await root.command({ type: 'steer', message: 'Here is the news' });
+    const messages = await root.until(history => text(history.at(-1)).startsWith('Handled: '));
+    expect(text(messages.at(-1))).toBe('Handled: Here is the news | The user sent a steer message. Subagents are still running.');
+    expect(Date.now() - sent).toBeLessThan(8000);
+  } finally { releaseChild({ text: 'Slept.' }); }
+}, 120000);
+
+test('a follow-up message does not end the wait for subagents and arrives after the task', async () => {
+  let releaseChild!: (reply: { text: string }) => void;
+  const childReply = new Promise<{ text: string }>(resolve => { releaseChild = resolve; });
+  agents.scripts.set('Wait for later news', messages => {
     const last = messages.at(-1);
-    if (!called(messages, 'spawn_subagents')) return { tool: 'spawn_subagents', arguments: { tasks: [{ nickname: 'Sleeper', task: 'Sleep a while' }] } };
+    if (!called(messages, 'spawn_subagents')) return { tool: 'spawn_subagents', arguments: { tasks: [{ nickname: 'Sleeper', task: 'Sleep past a follow-up' }] } };
     if (!called(messages, 'await_subagents')) return { tool: 'await_subagents' };
     if (last.role === 'tool') return { text: 'Wait ended: ' + text(last) };
     return { text: 'Handled: ' + text(last) };
   });
-  agents.scripts.set('Sleep a while', () => childReply);
+  agents.scripts.set('Sleep past a follow-up', () => childReply);
   const root = await agents.rootChat();
   try {
-    await root.command({ type: 'prompt', message: 'Wait for news' });
+    await root.command({ type: 'prompt', message: 'Wait for later news' });
     await agents.daemon.waitEvent('pi://event', payload => payload.runtimeId === root.runtimeId
       && payload.event?.type === 'tool_execution_start' && payload.event.toolName === 'await_subagents');
-    const sent = Date.now();
-    await root.command({ type: 'follow_up', message: 'Here is the news' });
-    const messages = await root.until(history => text(history.at(-1)) === 'Handled: Here is the news');
-    expect(messages.filter(message => message.role === 'assistant').map(text).filter(Boolean)).toEqual(['Wait ended: The user sent a new message. Subagents are still running.', 'Handled: Here is the news']);
-    expect(Date.now() - sent).toBeLessThan(8000);
+    const ended = agents.daemon.waitEvent('pi://event', payload => payload.runtimeId === root.runtimeId
+      && payload.event?.type === 'tool_execution_end' && payload.event.toolName === 'await_subagents');
+    await root.command({ type: 'follow_up', message: 'Here is the later news' });
+    expect(await Promise.race([ended.then(() => 'ended'), new Promise(resolve => setTimeout(resolve, 1500, 'waiting'))])).toBe('waiting');
+    releaseChild({ text: 'Slept.' });
+    const messages = await root.until(history => text(history.at(-1)) === 'Handled: Here is the later news');
+    const answers = messages.filter(message => message.role === 'assistant').map(text).filter(Boolean);
+    expect(answers[0]).toStartWith('Wait ended: <subagent_response>\nSubagent Sleeper:\nSlept.');
+    expect(answers.at(-1)).toBe('Handled: Here is the later news');
   } finally { releaseChild({ text: 'Slept.' }); }
 }, 120000);
 

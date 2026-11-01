@@ -75,6 +75,7 @@ import brokerModule23 from '../resources/session-broker/agent-profiles.ts?raw';
 import storageRuns from '../resources/piop-storage/subagent-results.ts?raw';
 import brokerModule29 from '../resources/session-broker/subagent-identity.ts?raw';
 import brokerModule30 from '../resources/session-broker/subagent-looks.ts?raw';
+import brokerSteering from '../resources/session-broker/steering.ts?raw';
 import sessionStateRecords from '../resources/piop-storage/session-records.cjs?raw';
 import goalsRecords from '../resources/piop-storage/goals.cjs?raw';
 import storageReferencesRaw from '../resources/piop-storage/reference-publication-lock.cjs?raw';
@@ -169,6 +170,7 @@ export const SESSION_BROKER_MODULES: Array<[string, string]> = [
   ['agent-profiles.ts', brokerModule23],
   ['subagent-identity.ts', brokerModule29],
   ['subagent-looks.ts', brokerModule30],
+  ['steering.ts', brokerSteering],
 ];
 
 export const SESSION_EXTENSIONS: Array<[string, Array<[string, string]>]> = [

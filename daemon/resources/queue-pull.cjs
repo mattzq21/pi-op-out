@@ -4,14 +4,21 @@ const pullState = Symbol("piop.queue-pull");
 
 const userText = message => message?.role === "user" && Array.isArray(message.content) ? message.content.filter(part => part.type === "text").map(part => part.text).join("") : "";
 
-function queuePull(session, { ask, prompt, insert, tools } = {}) {
+function queuePull(session, { ask, prompt, insert, tools, steer } = {}) {
   if (session[pullState]) return session[pullState];
-  if (!ask || !prompt || !insert || !tools) throw new Error("The queue pull of this session is not bound");
+  if (!ask || !prompt || !insert || !tools || !steer) throw new Error("The queue pull of this session is not bound");
 
   const offer = { steer: 0, followUp: 0, goal: 0, sequence: 0 };
   const holding = new Set();
   let starting = false;
   let toolState = "";
+  let reportedSteer = 0;
+
+  const reportSteer = () => {
+    if (offer.steer === reportedSteer) return;
+    reportedSteer = offer.steer;
+    try { steer(offer.steer); } catch (error) { console.error(`Could not report the queued steer messages: ${error instanceof Error ? error.message : String(error)}`); }
+  };
 
   const offered = kind => kind ? offer[kind] > 0 : offer.steer + offer.followUp > 0;
 
@@ -21,6 +28,7 @@ function queuePull(session, { ask, prompt, insert, tools } = {}) {
     offer.steer = Number.isInteger(next.steer) && next.steer > 0 ? next.steer : 0;
     offer.followUp = Number.isInteger(next.followUp) && next.followUp > 0 ? next.followUp : 0;
     offer.goal = next.goal === 1 ? 1 : 0;
+    reportSteer();
     const state = next.tools && typeof next.tools === "object" ? JSON.stringify(next.tools) : toolState;
 
     if (state !== toolState) {
@@ -41,7 +49,7 @@ function queuePull(session, { ask, prompt, insert, tools } = {}) {
     let answer;
 
     try { answer = await ask("queue_take", { behavior: kind, holding: [...holding] }); }
-    catch (error) { offer[kind] = 0; console.error(`Could not take a queued message: ${error instanceof Error ? error.message : String(error)}`); return false; }
+    catch (error) { offer[kind] = 0; reportSteer(); console.error(`Could not take a queued message: ${error instanceof Error ? error.message : String(error)}`); return false; }
 
     update(answer?.offer);
     const item = answer?.item;
@@ -104,11 +112,8 @@ function queuePull(session, { ask, prompt, insert, tools } = {}) {
     take,
     start,
     setOffer(next) {
-      const before = offer.steer + offer.followUp;
-
-      if (!update(next)) return false;
+      if (!update(next)) return;
       void start().catch(error => console.error(error));
-      return offer.steer + offer.followUp > before;
     },
   };
 
