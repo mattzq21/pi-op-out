@@ -31,7 +31,9 @@ function expandInlineCommand(value: string, commands: SlashCommand[]) {
   return value;
 }
 
-const proseOnly = (value: string) => value.replace(/(^|\n)( {0,3})(`{3,}|~{3,})[^\n]*\n[\s\S]*?(?:\n\2\3[^\n]*(?=\n|$)|$)|(`+)[^`]*?\4/g, (code) => code.replace(/[^\n]/g, " "));
+const blank = (text: string) => text.replace(/[^\n]/g, " ");
+
+const proseOnly = (value: string) => value.replace(/(^|\n)( {0,3})(`{3,}|~{3,})[^\n]*\n[\s\S]*?(?:\n\2\3[^\n]*(?=\n|$)|$)|(`+)[^`]*?\4/g, blank).replace(/!?\[(?:\\.|[^\\\]\n])*\]\([^()\n]*\)/g, blank);
 
 export const skillReference = (value: string) => value.match(/(?:^|[\s([{])\$([a-zA-Z0-9_-]*)$/)?.[1]?.toLowerCase();
 

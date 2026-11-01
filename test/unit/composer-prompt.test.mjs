@@ -24,6 +24,8 @@ test('a skill mention calls the skill, but mentions inside code stay plain text'
   assert.equal(send('Run `echo $research` for me').message, 'Run `echo $research` for me');
   assert.equal(send('```sh\necho $research\n```').message, '```sh\necho $research\n```');
   assert.equal(send('costs $5 and $unknown').message, 'costs $5 and $unknown');
+  assert.equal(send('say hi to [$research draw](piop://session/h/s)').message, 'say hi to [$research draw](piop://session/h/s)');
+  assert.equal(send('see [docs](https://x.dev/$research)').message, 'see [docs](https://x.dev/$research)');
 });
 
 test('an attached file cannot close its own file block early', () => {
