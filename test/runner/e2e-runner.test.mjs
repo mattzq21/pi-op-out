@@ -32,6 +32,22 @@ process.exit(73);
   assert.equal(existsSync(builds), false, 'unmatched selections must not start builds');
 });
 
+test('E2E listing selects imported cases by their full nested names', async t => {
+  const directory = await mkdtemp(join(tmpdir(), 'piop-e2e-list-'));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const specs = join(directory, 'test/e2e/specs');
+  await mkdir(specs, { recursive: true });
+  await writeFile(join(specs, 'conversation.acceptance.spec.ts'), "import './drafts.cases.js';");
+  await writeFile(join(specs, 'drafts.cases.ts'), `
+describe('Session tree', () => {
+  describe('Drafts', () => { it('keeps text', () => {}); });
+  it('opens a session', () => {});
+});
+`);
+  const result = await execute(process.execPath, [runner, '--list', '--grep', '^Session tree Drafts '], { cwd: directory });
+  assert.equal(result.stdout, 'Session tree Drafts keeps text\n');
+});
+
 test('a failed E2E batch does not omit or repeat selected tests', async t => {
   const directory = await mkdtemp(join(tmpdir(), 'piop-e2e-batches-'));
   t.after(() => rm(directory, { recursive: true, force: true }));
