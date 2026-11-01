@@ -1,5 +1,6 @@
 export const DEVELOPMENT: boolean = typeof __PIOP_DEVELOPMENT__ === 'boolean' ? __PIOP_DEVELOPMENT__ : false;
 export const STORAGE_DIRECTORY = DEVELOPMENT ? '.piop-dev' : '.piop';
+export const UNUSED_STOP_MS: number | undefined = typeof __PIOP_UNUSED_STOP_MS__ === 'number' ? __PIOP_UNUSED_STOP_MS__ : DEVELOPMENT ? 5_000 : undefined;
 export const PROJECT_DIR: string = typeof __PIOP_PROJECT_DIR__ === 'string' ? __PIOP_PROJECT_DIR__ : '';
 
 export const MAX_TERMINALS = 8;

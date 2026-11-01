@@ -1,20 +1,10 @@
 import { Notify, sleep } from './util/sync';
 import * as daemonRestart from './daemon_restart';
 import type { App } from './app';
-import { DEVELOPMENT } from './config';
-
-function unusedStopDelay(): number | undefined {
-  const value = process.env.PIOP_UNUSED_STOP_MS;
-  if (value !== undefined) {
-    const delay = Number(value);
-    if (!Number.isSafeInteger(delay) || delay <= 0) throw new Error('PIOP_UNUSED_STOP_MS must be a positive whole number of milliseconds');
-    return delay;
-  }
-  return DEVELOPMENT ? 5_000 : undefined;
-}
+import { UNUSED_STOP_MS } from './config';
 
 export class DaemonClients {
-  constructor(private readonly onStop: () => void, private readonly onLastDisconnect: () => void, private readonly unusedDelay = unusedStopDelay()) {}
+  constructor(private readonly onStop: () => void, private readonly onLastDisconnect: () => void, private readonly unusedDelay = UNUSED_STOP_MS) {}
 
   private count = 0;
   private closingFlag = false;

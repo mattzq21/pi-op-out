@@ -21,15 +21,16 @@ if (/\.test\.[cm]?[jt]s$/.test(Bun.main)) afterAll(async () => {
   if (failures.length) throw new Error('Could not stop the daemons that the tests left running:\n' + failures.join('\n'));
 }, 120_000);
 
-export interface BuildOptions { development?: boolean; projectRoot?: string; fakeTailscale?: boolean }
+export interface BuildOptions { development?: boolean; projectRoot?: string; fakeTailscale?: boolean; unusedStopMs?: number }
 
 export function daemonExecutable(options: BuildOptions = {}): Promise<string> {
   const development = options.development === true;
-  if (!development && !options.fakeTailscale && process.env.PIOP_TEST_DAEMON_EXECUTABLE) {
+  if (!development && !options.fakeTailscale && options.unusedStopMs === undefined && process.env.PIOP_TEST_DAEMON_EXECUTABLE) {
     return Promise.resolve(process.env.PIOP_TEST_DAEMON_EXECUTABLE);
   }
   const project = development ? (options.projectRoot ?? root).replace(/[\\/]+$/, '') : '';
-  const key = development + '\0' + project + '\0' + Boolean(options.fakeTailscale);
+  const unusedStopMs = options.unusedStopMs ?? 300_000;
+  const key = development + '\0' + project + '\0' + Boolean(options.fakeTailscale) + '\0' + unusedStopMs;
   let bundled = bundles.get(key);
   if (bundled) return bundled;
   bundled = (async () => {
@@ -40,7 +41,7 @@ export function daemonExecutable(options: BuildOptions = {}): Promise<string> {
       entryPoints: [join(root, 'daemon/src/main.ts')],
       outfile, bundle: true, platform: 'node', format: 'esm', target: 'esnext', external: ['bun', 'bun:*', 'x11', 'usocket'],
       banner: { js: "#!/usr/bin/env bun\nimport { createRequire as __piopCreateRequire } from 'node:module';\nconst require = __piopCreateRequire(import.meta.url);\nif (process.argv[2] === '--build-id') { process.stdout.write(" + JSON.stringify(placeholder) + " + '\\n'); process.exit(0); }" },
-      define: { __PIOP_BUILD_ID__: JSON.stringify(placeholder), __PIOP_DEVELOPMENT__: JSON.stringify(development), __PIOP_PROJECT_DIR__: JSON.stringify(project) },
+      define: { __PIOP_BUILD_ID__: JSON.stringify(placeholder), __PIOP_DEVELOPMENT__: JSON.stringify(development), __PIOP_PROJECT_DIR__: JSON.stringify(project), __PIOP_UNUSED_STOP_MS__: JSON.stringify(unusedStopMs) },
       keepNames: true, legalComments: 'none', logLevel: 'error', sourcemap: development ? 'inline' : false,
       plugins: [{
         name: 'raw-text',
@@ -245,7 +246,7 @@ export async function startDaemon(options: BuildOptions & { home?: string; env?:
   const bin = join(home, '.test-bin');
   mkdirSync(bin, { recursive: true });
   fakeProgram(bin, 'ssh', FAKE_SSH);
-  const env = { ...process.env, HOME: home, PATH: bin + ':' + process.env.PATH, PIOP_MOBILE_BIND: '127.0.0.1:0', PIOP_UNUSED_STOP_MS: '300000', PIOP_DAEMON_ORIGIN: 'test', PIOP_USAGE_REFRESH_MS: '0', ...options.env };
+  const env = { ...process.env, HOME: home, PATH: bin + ':' + process.env.PATH, PIOP_MOBILE_BIND: '127.0.0.1:0', PIOP_DAEMON_ORIGIN: 'test', PIOP_USAGE_REFRESH_MS: '0', ...options.env };
   const directory = daemonDirectory(home, options);
   const daemonLog = join(directory, 'daemon.log');
   const clients: Client[] = [];

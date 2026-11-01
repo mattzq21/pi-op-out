@@ -11,3 +11,4 @@ declare module 'piop-agent-loader' {
 declare const __PIOP_DEVELOPMENT__: boolean;
 declare const __PIOP_BUILD_ID__: string;
 declare const __PIOP_PROJECT_DIR__: string;
+declare const __PIOP_UNUSED_STOP_MS__: number;
