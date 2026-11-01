@@ -200,9 +200,11 @@ test('returning subscribers recover widgets and removed widgets stay removed', a
   await emit('pi://event', { runtimeId, event: widget });
   const replay = []; const unsubscribe = client.subscribe(event => replay.push(event)); unsubscribe();
   assert.ok(replay.some(event => event.method === 'setWidget' && event.widgetLines[0] === 'Working'));
+  const otherWidget = { ...widget, widgetKey: 'usage', widgetLines: ['Tokens: 1'] };
+  await emit('pi://event', { runtimeId, event: otherWidget });
   await emit('pi://event', { runtimeId, event: { ...widget, widgetLines: undefined } });
-  const cleared = []; client.subscribe(event => cleared.push(event));
-  assert.equal(cleared.some(event => event.method === 'setWidget'), false);
+  const remaining = []; client.subscribe(event => remaining.push(event));
+  assert.deepEqual(remaining.filter(event => event.method === 'setWidget'), [otherWidget]);
 });
 
 test('history refresh uses daemon entries without retaining a second live assistant copy', async () => {
