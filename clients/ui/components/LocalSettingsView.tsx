@@ -74,15 +74,28 @@ function DaemonSettingsEditor(componentProps: Props & { target: string; label: s
   const groups = useSessionGroups();
   const projects = createMemo(() => (groups.state?.groups ?? []).flatMap(group => group.cwd && !isTemporaryChatCwd(group.cwd) && (group.hostId ?? "local") === hostId() ? [{ name: group.name, cwd: group.cwd }] : []));
   const [agentScope, setAgentScope] = createSignal<string>();
-  const [projectConfig, setProjectConfig] = createSignal<AgentConfig>();
-  createDependencyEffect(() => { setProjectConfig(undefined); }, () => [hostId(), agentScope()]);
-  createDependencyEffect(() => { const capturedHostId = hostId(); const cwd = agentScope();
-    if (!cwd) return;
+  const [projectConfigs, setProjectConfigs] = createSignal<Record<string, AgentConfig>>({});
+  const [projectErrors, setProjectErrors] = createSignal<Record<string, string>>({});
+  const projectDirectories = createMemo(() => [...new Set(projects().map(project => project.cwd))].join("\0"));
+  createDependencyEffect(() => { const capturedHostId = hostId(); const directories = projectDirectories().split("\0").filter(Boolean);
+    if (!needsResources()) return;
     let cancelled = false;
-    void hostCatalog(capturedHostId, "fresh", cwd).then(({ config }) => { if (!cancelled) setProjectConfig(config); }, reason => { if (!cancelled) setError(reason instanceof Error ? reason.message : String(reason)); });
+
+    for (const cwd of directories) void hostCatalog(capturedHostId, "fresh", cwd).then(({ config }) => {
+      if (cancelled) return;
+      setProjectConfigs(current => ({ ...current, [cwd]: config }));
+      setProjectErrors(({ [cwd]: _removed, ...rest }) => rest);
+    }, reason => { if (!cancelled) setProjectErrors(current => ({ ...current, [cwd]: reason instanceof Error ? reason.message : String(reason) })); });
 
     return () => { cancelled = true; };
-  }, () => [hostId(), agentScope(), revision()]);
+  }, () => [hostId(), projectDirectories(), revision(), needsResources()]);
+  const projectConfig = () => { const scope = agentScope(); return scope ? projectConfigs()[scope] : undefined; };
+  const setProjectConfig = (update: (config: AgentConfig | undefined) => AgentConfig | undefined) => {
+    const scope = agentScope();
+
+    if (!scope) return;
+    setProjectConfigs(current => { const next = update(current[scope]); const { [scope]: _removed, ...rest } = current; return next ? { ...rest, [scope]: next } : rest; });
+  };
   const projectAgents = createMemo((): AgentConfig | undefined => {
     const config = projectConfig();
 
@@ -218,5 +231,5 @@ function DaemonSettingsEditor(componentProps: Props & { target: string; label: s
     return warnings && warnings.length > 0 && <p role="alert">Saved with warnings: {warnings.join(" ")}</p>;
   };
 
-  return <>{renderSaveWarnings()}{error() && <p role="alert">Could not load {componentProps.label}: {(error())} <button onClick={() => setRevision((value) => value + 1)}>Retry</button></p>}{current() ? <SettingsView embedded selectedSection={componentProps.selectedSection} resourceError={error()} onSavingChange={componentProps.onSavingChange} scope={componentProps.target === "client" ? "client" : "daemon"} daemonLabel={componentProps.label} providerHostId={hostId()} providerHosts={componentProps.settings.hosts} settings={required((current()))} pendingSettingsCount={hostId() === "local" ? componentProps.pendingSettingsCount : 0} sessions={componentProps.sessions.filter((session) => (session.hostId ?? "local") === hostId()).map((session) => ({ ...session, hostId: "local" }))} agentConfig={componentProps.target === "client" ? undefined : agentScope() ? projectAgents() : resources()?.config} inheritedAgents={agentScope() ? resources()?.config.agents ?? [] : undefined} agentScopes={projects()} agentScope={agentScope()} onAgentScope={setAgentScope} onMoveAgent={moveAgent} models={resources()?.models} loadingModels={loadingModels()} onDirtyChange={componentProps.onDirtyChange} onSave={save} /> : !error() && <p role="status">Loading {componentProps.label} settings…</p>}</>;
+  return <>{renderSaveWarnings()}{error() && <p role="alert">Could not load {componentProps.label}: {(error())} <button onClick={() => setRevision((value) => value + 1)}>Retry</button></p>}{current() ? <SettingsView embedded selectedSection={componentProps.selectedSection} resourceError={error() ?? (agentScope() ? projectErrors()[agentScope()!] : undefined)} onSavingChange={componentProps.onSavingChange} scope={componentProps.target === "client" ? "client" : "daemon"} daemonLabel={componentProps.label} providerHostId={hostId()} providerHosts={componentProps.settings.hosts} settings={required((current()))} pendingSettingsCount={hostId() === "local" ? componentProps.pendingSettingsCount : 0} sessions={componentProps.sessions.filter((session) => (session.hostId ?? "local") === hostId()).map((session) => ({ ...session, hostId: "local" }))} agentConfig={componentProps.target === "client" ? undefined : agentScope() ? projectAgents() : resources()?.config} inheritedAgents={agentScope() ? resources()?.config.agents ?? [] : undefined} agentScopes={projects()} agentScope={agentScope()} onAgentScope={setAgentScope} onMoveAgent={moveAgent} models={resources()?.models} loadingModels={loadingModels()} onDirtyChange={componentProps.onDirtyChange} onSave={save} /> : !error() && <p role="status">Loading {componentProps.label} settings…</p>}</>;
 }
