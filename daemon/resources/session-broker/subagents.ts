@@ -15,7 +15,7 @@ import { interruptSession, requireMessageLength, sendSessionMessage, sessionSnap
 import { SUBAGENT_PARENT, latestRuns, ownedRuns, saveRun, subagentParent, subagentPayload, registerSubagentResults, type SubagentRun } from "./subagent-state.ts";
 import { acceptedSubmission, cancelSubagent, finishRun, observeSubagent, subagentReceiptSchema, SubagentCancellation, type ActiveSubagent } from "./subagent-reconciliation.ts";
 import { releaseLook, reserveLook } from "./subagent-looks.ts";
-import { steering } from "./steering.ts";
+import { steering, type SteerSource } from "./steering.ts";
 import { savedSubagentRuns } from "../piop-storage/subagent-results.ts";
 import { isAuxiliary } from "../piop-storage/session-records.cjs";
 
@@ -457,12 +457,12 @@ export function registerSubagents(pi: ExtensionAPI) {
   const steer = steering(pi);
   pi.registerTool({
     name: "await_subagents", label: "Await subagents", exposure: "model-only",
-    description: "Wait until any of your subagents finishes (for: \"any\", the default) or until all of them finish (for: \"all\"), or until the user sends a steer message. Returns the answers of the subagents that finished.",
+    description: "Wait until any of your subagents finishes (for: \"any\", the default) or until all of them finish (for: \"all\"), or until the user or a peer sends a steer message. Returns the answers of the subagents that finished.",
     parameters: Type.Object({ for: Type.Optional(Type.Union([Type.Literal("any"), Type.Literal("all")])) }),
     async execute(_id, params, signal, _update, ctx) {
       reconcile(ctx);
       const all = params.for === "all";
-      const userMessage = { content: [{ type: "text" as const, text: "The user sent a steer message. Subagents are still running." }], details: { finished: false } };
+      const steered = (source: SteerSource) => ({ content: [{ type: "text" as const, text: `${source === "user" ? "The user" : "A peer"} sent a steer message. Subagents are still running.` }], details: { finished: false } });
 
       const answers = () => {
         const finished = resultsDelivery.claim(ctx);
@@ -473,19 +473,19 @@ export function registerSubagents(pi: ExtensionAPI) {
 
       if (!pending.size || (!all && resultsDelivery.waiting(ctx))) return answers();
       let offSteer = () => {};
-      const input = new Promise<"input">(resolve => { offSteer = steer.onSteer(() => resolve("input")); });
+      const input = new Promise<SteerSource>(resolve => { offSteer = steer.onSteer(resolve); });
       const aborted = new Promise<"aborted">(resolve => { if (signal?.aborted) resolve("aborted"); signal?.addEventListener("abort", () => resolve("aborted"), { once: true }); });
 
       try {
         while (pending.size) {
-          if (steer.waiting()) return userMessage;
+          if (steer.waiting()) return steered("user");
           const running = [...pending];
           const settled = (all ? Promise.allSettled(running) : Promise.race(running.map(item => item.then(() => {}, () => {})))).then(() => "settled" as const);
           const outcome = await Promise.race([settled, input, aborted]);
 
           if (outcome === "aborted") signal?.throwIfAborted();
 
-          if (outcome === "input") return userMessage;
+          if (outcome === "user" || outcome === "peer") return steered(outcome);
           reconcile(ctx);
 
           if (!all && resultsDelivery.waiting(ctx)) return answers();

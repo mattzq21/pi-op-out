@@ -78,14 +78,14 @@ function queueAgentMailbox(pi: ExtensionAPI, ctx: ExtensionContext, message: Mai
 
   if (!defer && deliverAs) {
     pi.sendMessage(message, { triggerTurn: true, deliverAs });
-    pi.events.emit("piop:agent-mail", { notificationId, customType: message.customType });
+
+    if (deliverAs === "steer") steering(pi).peerSteered();
 
     return; }
 
   const queued = mailboxes.get(pi) ?? [];
   queued.push(mail);
   mailboxes.set(pi, queued);
-  if (!defer && message.customType === "piop-agent-message") pi.events.emit("piop:agent-mail", { notificationId, customType: message.customType });
 }
 
 export async function sendAgentMailbox(pi: ExtensionAPI, ctx: ExtensionContext, message: Mail["message"], notificationId: string, deliverAs?: "steer" | "followUp") {
@@ -241,7 +241,7 @@ async function waitSnapshot(targets: Target[], signal: AbortSignal | undefined, 
   return { polls, errors, wake };
 }
 
-type Interruption = "user" | "mail" | "subagent" | undefined;
+type Interruption = "user" | "peer" | "subagent" | undefined;
 
 function peerAnswers(snapshot: Awaited<ReturnType<typeof waitSnapshot>>, interruption: Interruption) {
   const answers = snapshot.polls.filter(item => item.peer.status !== "running" && item.changed).map(item => {
@@ -253,8 +253,8 @@ function peerAnswers(snapshot: Awaited<ReturnType<typeof waitSnapshot>>, interru
   const parts = [...answers, ...errors];
 
   if (interruption === "user") parts.push("The user sent a steer message.");
-  if (interruption === "mail") parts.push("A message from a peer arrived.");
-  if (interruption === "subagent") parts.push("A subagent result arrived.");
+  if (interruption === "peer") parts.push("A peer sent a steer message.");
+  if (interruption === "subagent") parts.push("A subagent result arrived. Call await_subagents to get it.");
 
   return parts.length ? parts.join("\n\n") : "No peer finished before the wait ended.";
 }
@@ -397,12 +397,12 @@ const MAX_WAIT_MS = 6 * 60 * 60_000;
 export function registerOrchestration(pi: ExtensionAPI) {
   registerDelivery(pi);
   const seenAnswers = new Map<string, string>();
-  const revisions = { user: 0, mail: 0, subagent: 0 };
+  const revisions = { user: 0, peer: 0, subagent: 0 };
   const inputListeners = new Set<() => void>();
-  const newInput = (kind: "user" | "mail" | "subagent") => { revisions[kind]++; for (const listener of inputListeners) listener(); };
+  const newInput = (kind: "user" | "peer" | "subagent") => { revisions[kind]++; for (const listener of inputListeners) listener(); };
   const steer = steering(pi);
-  steer.onSteer(() => newInput("user"));
-  const unsubscribeMail = pi.events.on("piop:agent-mail", event => newInput(event.customType === "piop-subagent-result" ? "subagent" : "mail"));
+  steer.onSteer(source => newInput(source));
+  const unsubscribeMail = pi.events.on("piop:agent-mail", event => { if (event.customType === "piop-subagent-result") newInput("subagent"); });
   pi.on("session_shutdown", unsubscribeMail);
   pi.registerTool({
     name: "create_peer", label: "Create peer", exposure: "model-only",
@@ -453,14 +453,14 @@ export function registerOrchestration(pi: ExtensionAPI) {
     },
   });
   pi.registerTool({
-    name: "message_peer", label: "Message peer", exposure: "model-only", description: "Send a message to a peer. An idle peer starts at once; a busy one reads it after its current work. Returns when the message is accepted.",
-    parameters: Type.Object({ ...address, message: Type.String() }),
+    name: "message_peer", label: "Message peer", exposure: "model-only", description: "Send a message to a peer. An idle peer starts at once. A busy one reads it after its current work, or during it with delivery: \"steer\". Returns when the message is accepted.",
+    parameters: Type.Object({ ...address, message: Type.String(), delivery: Type.Optional(Type.Union([Type.Literal("follow_up"), Type.Literal("steer")])) }),
     async execute(_id, params, signal, _update, ctx) {
       requireRootCaller(ctx);
       requireMessageLength(params.message);
       await rootSnapshot(params.peerId, currentHost(), signal);
 
-      return result(await sendSessionMessage(ctx, params.peerId, currentHost(), params.message, true, signal));
+      return result(await sendSessionMessage(ctx, params.peerId, currentHost(), params.message, true, signal, undefined, false, params.delivery === "steer" ? "steer" : undefined));
     },
   });
   pi.registerTool({
@@ -509,8 +509,8 @@ export function registerOrchestration(pi: ExtensionAPI) {
       inputListeners.add(onInput);
 
       const finish = (snapshot: Awaited<ReturnType<typeof waitSnapshot>>) => {
-        const mail = revisions.mail !== start.mail; const subagent = revisions.subagent !== start.subagent;
-        const interruption: Interruption = revisions.user !== start.user || (!mail && !subagent && steer.waiting()) ? "user" : mail ? "mail" : subagent ? "subagent" : undefined;
+        const peer = revisions.peer !== start.peer; const subagent = revisions.subagent !== start.subagent;
+        const interruption: Interruption = revisions.user !== start.user || (!peer && !subagent && steer.waiting()) ? "user" : peer ? "peer" : subagent ? "subagent" : undefined;
         const interrupted = interruption !== undefined;
         const failed = params.for === "all" ? snapshot.errors.length === params.targets.length : snapshot.errors.length > 0;
         const actionable = Boolean(snapshot.wake || failed || interrupted);
