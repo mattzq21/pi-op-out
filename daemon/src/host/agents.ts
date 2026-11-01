@@ -25,7 +25,9 @@ function readSaved(value: unknown): Saved {
 
 const saved = hostOperation<{ settings: any; configuration: unknown; project?: Project }, Saved>('save-agent-definitions', 'agents', 30_000, readSaved);
 
-const moved = hostOperation<{ settings: any; global: any; cwd: string; agent: string; revision: string }, Saved>('move-agent-to-project', 'agents', 30_000, readSaved);
+export interface Move { global: any; cwd: string; agent: string; revision: string; to: string }
+
+const moved = hostOperation<{ settings: any } & Move, Saved>('move-agent', 'agents', 30_000, readSaved);
 
 function environment(home: string, storage: string): Record<string, string> {
   const profile = join(home, storage);
@@ -43,7 +45,7 @@ export function load(home: string, storage: string, settings: any, initial: bool
   return runHostOperation(definitions, { settings: loaderSettings(settings, fastModels), initial, ...(project ? { project } : {}) }, { env: environment(home, storage) });
 }
 
-export function move(home: string, storage: string, settings: any, fastModels: FastModelSnapshot | null, request: { global: any; cwd: string; agent: string; revision: string }): Promise<Saved> {
+export function move(home: string, storage: string, settings: any, fastModels: FastModelSnapshot | null, request: Move): Promise<Saved> {
   return runHostOperation(moved, { settings: loaderSettings(settings, fastModels), ...request }, { env: environment(home, storage) });
 }
 

@@ -218,12 +218,12 @@ export function writeProjectDocument(directory: string, change: ProjectChange): 
   });
 }
 
-export function moveToProject(value: Config, directory: string, agent: unknown): string {
+export function writeGlobalAndProject(value: Config, directory: string, change: (stored: ProjectDocument, revision: string) => ProjectChange): string {
   return transaction(db => {
     const saved = putConfig(db, value, false);
     const current = bodyText(db.prepare("SELECT body FROM project_agent_definitions WHERE directory=?").get(directory));
     const stored: ProjectDocument = current === undefined ? { agents: [] } : JSON.parse(current);
-    putProject(db, directory, { revision: current === undefined ? "missing" : revisionOf(current), agents: [...stored.agents, agent] });
+    putProject(db, directory, change(stored, current === undefined ? "missing" : revisionOf(current)));
     requireConsistentDefinitions(db);
 
     if (!saved?.revision) throw new Error("Agent definitions were not saved");

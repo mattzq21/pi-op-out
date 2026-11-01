@@ -25,7 +25,7 @@ const handlers: Record<HostOperationName, Handler> = {
   'goal-text': started(async input => (await import('../resources/piop-storage/goal-dependencies.cjs')).textContents(input.root, input.directory).map((entry: any) => entry.text)),
   'agent-definitions': started(async input => (await import('piop-agent-loader')).loadAgentDefinitions(input)),
   'save-agent-definitions': started(async input => (await import('piop-agent-loader')).saveAgentDefinitions(input)),
-  'move-agent-to-project': started(async input => (await import('piop-agent-loader')).moveAgentToProject(input)),
+  'move-agent': started(async input => (await import('piop-agent-loader')).moveAgent(input)),
   'storage-transaction': async (input, context) => {
     if (!context.storage) throw new Error('Storage transaction has no storage locks');
     const { runStorageTransaction } = await import('../resources/storage-operation.cjs');

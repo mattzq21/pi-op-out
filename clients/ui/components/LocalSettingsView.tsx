@@ -8,7 +8,7 @@ import { createDependencyEffect } from "../lib/solid";
 
 import { ArrowLeft, Monitor } from "lucide-solid";
 import { settingsChangeSchema } from "../lib/responseSchemas";
-import { AgentsSavedError, moveAgentToProject, saveAgentDefinitions, saveProjectAgents } from "../lib/hostAgents";
+import { AgentsSavedError, moveAgent as moveAgentBetween, saveAgentDefinitions, saveProjectAgents } from "../lib/hostAgents";
 import { hostCatalog } from "../lib/draftRuntime";
 import { isTemporaryChatCwd, useSessionGroups } from "../lib/sessionGroups";
 import { NativeTransport } from "../lib/nativeTransport";
@@ -147,11 +147,23 @@ function DaemonSettingsEditor(componentProps: Props & { target: string; label: s
     if (config) setResources(value => value ? { ...value, config } : value);
   };
 
-  const moveAgent = async (agent: string, cwd: string) => {
-    const capturedHostId = hostId(); const config = resources()?.config;
+  const moveAgent = async (agent: string, cwd?: string) => {
+    const capturedHostId = hostId(); const config = resources()?.config; const scope = agentScope(); const project = projectConfig();
 
-    if (!config?.revision) throw new Error("Agent definitions are still loading");
-    const moved = await moveAgentToProject(capturedHostId, cwd, agent, config.revision);
+    if (!config?.revision || (scope && !project?.project)) throw new Error("Agent definitions are still loading");
+
+    if (scope && project?.project) {
+      const profile = project.agents.find(item => item.name === agent);
+      const moved = await moveAgentBetween(capturedHostId, scope, agent, project.project.revision, "global");
+      setProjectConfig(current => current && { ...current, agents: current.agents.filter(item => item.name !== agent) });
+
+      if (profile) { const { project: _project, isDefault: _isDefault, ...global } = profile; publishSavedAgents({ ...config, revision: moved.revision, agents: [...config.agents, global] }); }
+
+      return;
+    }
+
+    if (!cwd) throw new Error("Choose a project");
+    const moved = await moveAgentBetween(capturedHostId, cwd, agent, config.revision, "project");
     publishSavedAgents({ ...config, revision: moved.revision, agents: config.agents.filter(item => item.name !== agent) });
   };
 

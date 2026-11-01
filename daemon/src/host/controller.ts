@@ -384,11 +384,10 @@ export class Host implements SessionHost {
     return { revision: saved!.revision, warnings: saved!.warnings };
   }
 
-  private async moveAgentToProject(cwd: string, agent: string, revision: string): Promise<{ revision: string; warnings: string[] }> {
-    if (!cwd || !agent || !revision) throw new Error('Moving an agent needs a project directory, an agent name and a revision');
+  private async moveAgent(cwd: string, agent: string, revision: string, to: string): Promise<{ revision: string; warnings: string[] }> {
     let saved: Agents.Saved | undefined;
     await this.useAgentDefinitions(async settings => {
-      saved = await Agents.move(this.home, this.storage, settings, this.services.fastModels(), { global: this.agentDefinitions, cwd, agent, revision });
+      saved = await Agents.move(this.home, this.storage, settings, this.services.fastModels(), { global: this.agentDefinitions, cwd, agent, revision, to });
       return saved.definitions;
     });
     this.output({ type: 'agent_definitions_changed' });
@@ -431,7 +430,7 @@ export class Host implements SessionHost {
         return cwd ? this.projectAgentDefinitions(cwd) : structuredClone(this.agentDefinitions);
       }
       case 'save_agent_definitions': return this.saveAgentDefinitions(packet.configuration, text(packet, 'cwd') || undefined);
-      case 'move_agent_to_project': return this.moveAgentToProject(text(packet, 'cwd'), text(packet, 'agent'), text(packet, 'revision'));
+      case 'move_agent': return this.moveAgent(text(packet, 'cwd'), text(packet, 'agent'), text(packet, 'revision'), text(packet, 'to'));
       case 'conversation_owner': return this.ownership().owns(text(packet, 'sessionId'), text(packet, 'clientId'), flag(packet, 'allowReleased'));
       case 'submission_outcome': return this.submissions.outcome(text(packet, 'submissionId'));
       case 'conversation_mutation': return this.mutations.begin(packet);

@@ -76,13 +76,17 @@ test('project agents save for one project folder, and only chats there see them'
   expect((await catalog()).agents.map((agent: any) => agent.name)).not.toContain('local-helper');
 }, 60000);
 
-test('moving a global agent to a project takes it out of the global agents and puts it in that project', async () => {
+test('an agent moves from the global agents to a project and back', async () => {
   const project = join(daemon.home, 'moving-project');
   await mkdir(project, { recursive: true });
   await saveAgentDefinitions(daemon, added('mover'));
   const before = await agentDefinitions(daemon);
-  await daemon.invoke('move_agent_to_project', { hostId: 'local', cwd: project, agent: 'mover', revision: before.revision });
+  await daemon.invoke('move_agent', { hostId: 'local', cwd: project, agent: 'mover', revision: before.revision, to: 'project' });
   expect((await agentDefinitions(daemon)).agents.map((agent: any) => agent.name)).not.toContain('mover');
   const inside = (await daemon.invoke('provider_auth', { hostId: 'local', request: { action: 'draft_catalog', cwd: project } })).config;
   expect(inside.agents.filter((agent: any) => agent.project).map((agent: any) => agent.name)).toEqual(['mover']);
+  await daemon.invoke('move_agent', { hostId: 'local', cwd: project, agent: 'mover', revision: inside.project.revision, to: 'global' });
+  expect((await agentDefinitions(daemon)).agents.map((agent: any) => agent.name)).toContain('mover');
+  const after = (await daemon.invoke('provider_auth', { hostId: 'local', request: { action: 'draft_catalog', cwd: project } })).config;
+  expect(after.agents.filter((agent: any) => agent.project)).toEqual([]);
 }, 60000);
