@@ -231,8 +231,7 @@ async function controlConnection(app: App, ws: WebSocketConnection): Promise<voi
   const request = await firstText(ws, 'Control timeout', 'control');
   const action = request?.action;
   if (typeof action !== 'string') throw new Error('Missing control action');
-  if (action === 'start') app.clients.persist();
-  else if (action !== 'stop') throw new Error('Unknown control action');
+  if (action !== 'start' && action !== 'stop') throw new Error('Unknown control action');
   const finish = app.clients.beginRequest();
   try {
     if (action === 'stop') app.clients.stop();

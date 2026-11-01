@@ -129,7 +129,7 @@ async function connect(): Promise<[Socket, any]> {
     opened = await tryOpen('peer');
     if (opened) return opened;
   }
-  return startAndOpen('--exit-on-disconnect', 'peer');
+  return startAndOpen('--serve', 'peer');
 }
 
 function claimed(): boolean {

@@ -7,7 +7,7 @@ import { PROCESS_TAG } from './process_cleanup';
 import { errorText } from './util/sync';
 import { isHostOperationWorker, runHostOperationWorker } from './host_operation_worker';
 
-const ACCEPTED = new Set(['start', 'stop', '--serve', '--exit-on-disconnect', '--stdio-client', '--restart-coordinator', '--validate-plugins', '--restart-candidate', '--daemon-log-writer']);
+const ACCEPTED = new Set(['start', 'stop', '--serve', '--stdio-client', '--restart-coordinator', '--validate-plugins', '--restart-candidate', '--daemon-log-writer']);
 
 function fail(prefix: string, error: unknown): never {
   process.stderr.write(prefix + errorText(error) + '\n');

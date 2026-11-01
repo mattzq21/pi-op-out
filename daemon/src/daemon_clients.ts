@@ -4,9 +4,8 @@ import type { App } from './app';
 import { DEVELOPMENT } from './config';
 
 /**
- * How long a daemon without clients keeps running before it stops, when it does not stop at once.
- * Debug builds and test daemons (PIOP_UNUSED_STOP_MS) use it, so a daemon of a closed app, a deleted worktree or a failed test does not run on.
- * Release daemons that "piopd start" made persistent never stop by themselves.
+ * How long a daemon without clients keeps running before it stops. Debug builds stop after 5 seconds; test daemons set PIOP_UNUSED_STOP_MS.
+ * Release daemons never stop by themselves.
  */
 function unusedStopDelay(): number | undefined {
   const value = process.env.PIOP_UNUSED_STOP_MS;
@@ -15,7 +14,7 @@ function unusedStopDelay(): number | undefined {
     if (!Number.isSafeInteger(delay) || delay <= 0) throw new Error('PIOP_UNUSED_STOP_MS must be a positive whole number of milliseconds');
     return delay;
   }
-  return DEVELOPMENT ? 5 * 60_000 : undefined;
+  return DEVELOPMENT ? 5_000 : undefined;
 }
 
 /** Counts connected clients and decides when an unattended daemon may stop. */
@@ -24,7 +23,6 @@ export class DaemonClients {
 
   private count = 0;
   private closingFlag = false;
-  private automaticFlag = process.argv.includes('--exit-on-disconnect') || process.env.PIOP_RESTART_AUTOMATIC !== undefined;
   /** When the last client left, or when the daemon started. */
   private unusedSince = Date.now();
   private stopped = new Notify();
@@ -60,13 +58,6 @@ export class DaemonClients {
     } finally { clearTimeout(timer); this.drained.delete(done); }
   }
 
-  automatic(): boolean { return this.automaticFlag; }
-
-  persist(): void {
-    if (this.closingFlag) throw new Error('Piop daemon is shutting down');
-    this.automaticFlag = false;
-  }
-
   stop(): void {
     if (this.closingFlag) return;
     this.onStop();
@@ -86,7 +77,7 @@ export class DaemonClients {
         if (this.count === 0) {
           this.unusedSince = Date.now();
           try { this.onLastDisconnect(); }
-          finally { if (this.automaticFlag || this.unusedDelay !== undefined) this.stopped.notifyOne(); }
+          finally { if (this.unusedDelay !== undefined) this.stopped.notifyOne(); }
         }
       },
     };
@@ -97,7 +88,6 @@ export class DaemonClients {
   /** Milliseconds until a daemon without clients may stop: 0 when it may stop now, undefined when only a client change or stop() can change it. */
   private untilUnattended(): number | undefined {
     if (this.count > 0) return undefined;
-    if (this.automaticFlag) return 0;
     if (this.unusedDelay === undefined) return undefined;
     return Math.max(0, this.unusedSince + this.unusedDelay - Date.now());
   }
@@ -115,8 +105,6 @@ export class DaemonClients {
    * while an unattended daemon still has work (an agent, a storage operation or a plugin) that keeps it from stopping. Terminals do not keep it running.
    */
   async waitForShutdown(app: App, ensureIdle: () => Promise<void> = () => daemonRestart.ensureUnattendedIdle(app)): Promise<void> {
-    // A daemon that stops at its last disconnect first gives its first client time to connect. The unused delay already counts from the start.
-    if (this.automaticFlag) await this.wait(30_000);
     for (;;) {
       if (this.closingFlag) return;
       if (this.unattended() && await this.stopIfIdle(app, ensureIdle)) return;

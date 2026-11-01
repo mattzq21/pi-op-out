@@ -32,7 +32,6 @@ interface Plan {
   previous: string[];
   bind: string;
   debug_bind: string | null;
-  automatic: boolean;
 }
 
 function path(name: string): string { return join(endpoint.directory(), name); }
@@ -46,7 +45,7 @@ function readPlan(): Plan {
   const plan = restartStorage.read(path('restart-plan.json'));
   if (!plan) throw new Error('Restart plan is missing');
   if (typeof plan.id !== 'string' || typeof plan.owner !== 'number' || typeof plan.executable !== 'string' || typeof plan.fallback !== 'string'
-    || !Array.isArray(plan.enabled) || !Array.isArray(plan.previous) || typeof plan.bind !== 'string' || typeof plan.automatic !== 'boolean') throw new Error('Invalid restart plan');
+    || !Array.isArray(plan.enabled) || !Array.isArray(plan.previous) || typeof plan.bind !== 'string') throw new Error('Invalid restart plan');
   return plan;
 }
 
@@ -131,7 +130,7 @@ async function makePlan(app: App, prepared: any): Promise<[Plan, artifacts.Backu
   const bind = restartBind(current.url);
   await validateRestartBind(bind);
   const backup = await artifacts.Backup.create(id, executable);
-  const plan: Plan = { id, owner: process.pid, executable, fallback: backup.path, enabled, previous, bind, debug_bind: debugBind, automatic: app.clients.automatic() };
+  const plan: Plan = { id, owner: process.pid, executable, fallback: backup.path, enabled, previous, bind, debug_bind: debugBind };
   return [plan, backup];
 }
 
@@ -275,7 +274,6 @@ async function launch(plan: Plan, executable: string, mode: string): Promise<Chi
   const command: daemonLog.DaemonCommand = { program: executable, args: [mode, plan.id], env: {
     PIOP_DAEMON_EXECUTABLE: plan.executable, PIOP_MOBILE_BIND: plan.bind,
     PIOP_DEBUG_MOBILE_BIND: plan.debug_bind ?? process.env.PIOP_DEBUG_MOBILE_BIND,
-    PIOP_RESTART_AUTOMATIC: plan.automatic ? '1' : undefined,
   } };
   const logger = mode === '--restart-candidate' ? executable : plan.fallback;
   await daemonLog.configure(command, logger);
