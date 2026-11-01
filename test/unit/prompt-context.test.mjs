@@ -77,7 +77,11 @@ test('each tool, instruction and skill has its own copy button, and a tool copie
   const copied = [];
   Object.defineProperty(navigator, 'clipboard', { value: { writeText: async text => { copied.push(text); } }, configurable: true });
   view = await renderComponent(PromptContextBar, { context: context(), inputTokens: 3 });
-  const copy = async label => { const node = document.querySelector('[aria-label="' + label + '"]'); assert.ok(node, label); await act(async () => { node.click(); await new Promise(resolve => setTimeout(resolve, 0)); }); };
+  const copy = async label => {
+    const node = document.querySelector('[aria-label="' + label + '"]');
+    assert.ok(node, label);
+    await act(() => node.click());
+  };
   await act(() => button('Tools').click());
   assert.equal(document.querySelector('[aria-label="Copy tab content"]'), null);
   await copy('Copy read');
