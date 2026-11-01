@@ -5,19 +5,22 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { compileAgentFixture } from '../compile-defined-agent-fixture.mjs';
-import { agentFixture, profile, configured } from '../defined-agent-fixture.mjs';
+import { agentDefinitions, agentFixture, profile, configured, readStoredConfig, writeStoredConfig } from '../defined-agent-fixture.mjs';
 
 export async function fixture(t) {
-  const dir = await mkdtemp(join(tmpdir(), 'piop-extensions-'));
+  const root = await mkdtemp(join(tmpdir(), 'piop-extensions-'));
+  const dir = join(root, 'piop-define-agents'); await mkdir(dir);
   const home = process.env.HOME; process.env.HOME = dir;
-  const resources = process.env.PIOP_AGENT_RESOURCES, configPath = process.env.PIOP_AGENT_CONFIG_PATH;
-  process.env.PIOP_AGENT_CONFIG_PATH = join(dir, 'config.json');
-  t.after(() => { if (configPath === undefined) delete process.env.PIOP_AGENT_CONFIG_PATH; else process.env.PIOP_AGENT_CONFIG_PATH = configPath; });
+  const resources = process.env.PIOP_AGENT_RESOURCES, storageRoot = process.env.PIOP_STORAGE_ROOT;
+  process.env.PIOP_STORAGE_ROOT = root;
+  t.after(() => { if (storageRoot === undefined) delete process.env.PIOP_STORAGE_ROOT; else process.env.PIOP_STORAGE_ROOT = storageRoot; });
   process.env.PIOP_AGENT_RESOURCES = JSON.stringify({ tools: { enabledTools: [], registeredTools: [] }, skills: { userInvokedSkills: [], agentInvokedSkills: [] }, pluginAgentTools: [] });
   t.after(() => { if (resources === undefined) delete process.env.PIOP_AGENT_RESOURCES; else process.env.PIOP_AGENT_RESOURCES = resources; });
-  t.after(() => { process.env.HOME = home; return rm(dir, { recursive: true, force: true }); });
+  t.after(() => { process.env.HOME = home; return rm(root, { recursive: true, force: true }); });
 
   await compileAgentFixture(dir);
+  const definitions = await agentDefinitions(dir);
+  await definitions.initialize();
 
   const handlers = new Map(), commands = new Map(), tools = new Map(), listeners = new Map();
   const entries = [], messages = [], statuses = new Map();
@@ -64,9 +67,7 @@ export async function fixture(t) {
     return request.ready;
   };
 
-  const configure = async configuration => rpc('configure_agents', { configuration: { revision: (await rpc('get_agent_configuration')).revision, ...configuration } });
-
-  return { dir, pi, ctx, file, emit, rpc, configure, commands, tools, entries, messages, statuses, activeTools: () => activeTools };
+  return { dir, pi, ctx, file, emit, rpc, configure: definitions.configure, store: async value => writeStoredConfig(dir, JSON.stringify(value)), configuration: async () => readStoredConfig(dir), commands, tools, entries, messages, statuses, activeTools: () => activeTools };
 }
 
 test('nested dependencies load once and share the universal context', async t => {
@@ -76,7 +77,7 @@ test('nested dependencies load once and share the universal context', async t =>
   await f.file('right.mjs', `export const extensions = ['./leaf.mjs']; export default () => {};`);
   await f.file('root.mjs', `export const extensions = ['./left.mjs', './right.mjs']; export default () => {};`);
   await f.load();
-  await f.configure(configured([profile('general', { tools: [] }), profile('nested', { tools: [], extensions: ['root.mjs'] })]));
+  await f.store(configured([profile('general', { tools: [] }), profile('nested', { tools: [], extensions: ['root.mjs'] })]));
   await f.start(); await f.select('nested');
   assert.deepEqual(f.pi.getActiveTools(), ['leaf']);
   assert.deepEqual(f.messages, [f.dir]);
@@ -98,7 +99,7 @@ test('failed dependency or parent publishes no registrations', async t => {
   await f.file('bad.mjs', `export default () => { throw Error('broken dependency'); };`);
   await f.file('root.mjs', `export const extensions = ['./good.mjs', './bad.mjs']; export default pi => pi.registerCommand('partial', {});`);
   await f.load();
-  await f.configure(configured([profile('general', { tools: [] }), profile('dependency', { tools: [], extensions: ['root.mjs'] }), profile('parent', { tools: [], extensions: ['parent.mjs'] })]));
+  await f.store(configured([profile('general', { tools: [] }), profile('dependency', { tools: [], extensions: ['root.mjs'] }), profile('parent', { tools: [], extensions: ['parent.mjs'] })]));
   await f.start();
   await assert.rejects(f.select('dependency'), /root.mjs.*bad.mjs.*broken dependency/);
   assert.equal(f.pi.getAllTools().some(tool => tool.name === 'partial'), false);
@@ -112,7 +113,7 @@ test('failed dependency or parent publishes no registrations', async t => {
 test('missing modules, invalid exports and cyclic dependencies fail with paths', async t => {
   const f = await agentFixture(t, { config: null });
   await f.load();
-  await f.configure(configured([profile('general', { tools: [] }), ...[['missing', 'missing.ts'], ['invalid', 'invalid.mjs'], ['invalid-list', 'invalid-list.mjs'], ['cycle', 'a.mjs']].map(([name, file]) => profile(name, { tools: [], extensions: [file] }))]));
+  await f.store(configured([profile('general', { tools: [] }), ...[['missing', 'missing.ts'], ['invalid', 'invalid.mjs'], ['invalid-list', 'invalid-list.mjs'], ['cycle', 'a.mjs']].map(([name, file]) => profile(name, { tools: [], extensions: [file] }))]));
   await f.start();
   await assert.rejects(f.select('missing'), /missing.ts/);
   await f.file('invalid.mjs', 'export default 1;');
@@ -130,7 +131,7 @@ test('directory and symlink aliases deduplicate', async t => {
   await f.file('package/index.mjs', `export default pi => { pi.registerTool({ name: 'once', execute: async () => 'ready' }); pi.on('session_start', () => pi.sendMessage('package loaded')); };`);
   await symlink(join(f.dir, 'package/index.mjs'), join(f.dir, 'alias.mjs'));
   await f.load();
-  await f.configure(configured([profile('general', { tools: [] }), profile('aliases', { tools: [], extensions: ['package', 'alias.mjs'] })]));
+  await f.store(configured([profile('general', { tools: [] }), profile('aliases', { tools: [], extensions: ['package', 'alias.mjs'] })]));
   await f.start(); await f.select('aliases');
   assert.deepEqual(f.pi.getActiveTools(), ['once']);
   assert.deepEqual(f.messages, ['package loaded']);
@@ -141,7 +142,7 @@ test('startup failure restores previous handlers and bus listeners', async t => 
   const f = await agentFixture(t, { config: null });
   await f.file('good.mjs', `export default pi => { pi.events.on('test', () => pi.sendMessage('good')); pi.on('input', () => pi.sendMessage('input')); };`);
   await f.load();
-  await f.configure(configured([profile('general', { tools: [] }), profile('good', { tools: [], extensions: ['good.mjs'] }), profile('bad', { tools: [], extensions: ['bad.mjs'] })]));
+  await f.store(configured([profile('general', { tools: [] }), profile('good', { tools: [], extensions: ['good.mjs'] }), profile('bad', { tools: [], extensions: ['bad.mjs'] })]));
   await f.start(); await f.select('good');
   await f.file('bad.mjs', `export default pi => { pi.events.on('test', () => pi.sendMessage('bad')); pi.on('session_start', () => { throw Error('startup failed'); }); };`);
   await assert.rejects(f.select('bad'), /startup failed/);
@@ -160,7 +161,7 @@ test('RPC agent selection rejects broken dependencies and keeps previous selecti
   t.after(() => { for (const key of Object.keys(process.env)) if (!(key in previous)) delete process.env[key]; Object.assign(process.env, previous); });
   const define = (await import(pathToFileURL(join(f.dir, 'index.mjs')))).default;
   await define(f.pi);
-  await f.configure(configured([agent('general'), agent('good', ['good.mjs']), agent('bad', ['bad.mjs']), agent('startup', ['startup.mjs'])]));
+  await f.store(configured([agent('general'), agent('good', ['good.mjs']), agent('bad', ['bad.mjs']), agent('startup', ['startup.mjs'])]));
   await f.emit('session_start');
   const select = name => f.rpc('select_agent', { agent: name });
   await select('good');
@@ -179,7 +180,7 @@ test('failed startup restores tool schemas and cleans up the failed group', asyn
   const f = await agentFixture(t, { config: null });
   await f.file('good.mjs', `export default pi => pi.registerTool({ name: 'shared', description: 'good schema', execute: async () => 'good' });`);
   await f.load();
-  await f.configure(configured([profile('general', { tools: [] }), profile('good', { tools: [], extensions: ['good.mjs'] }), profile('bad', { tools: [], extensions: ['bad.mjs'] })]));
+  await f.store(configured([profile('general', { tools: [] }), profile('good', { tools: [], extensions: ['good.mjs'] }), profile('bad', { tools: [], extensions: ['bad.mjs'] })]));
   await f.start(); await f.select('good');
   await f.file('bad.mjs', `export default pi => {
     pi.registerTool({ name: 'shared', description: 'bad schema', execute: async () => 'bad' });
@@ -202,7 +203,7 @@ test('event bus unsubscription and agent shutdown release active listeners', asy
     pi.on('session_shutdown', () => pi.sendMessage('shutdown'));
   };`);
   await f.load();
-  await f.configure(configured([profile('general', { tools: [] }), profile('lifecycle', { tools: [], extensions: ['lifecycle.mjs'] })]));
+  await f.store(configured([profile('general', { tools: [] }), profile('lifecycle', { tools: [], extensions: ['lifecycle.mjs'] })]));
   await f.start(); await f.select('lifecycle');
   f.pi.events.emit('test', {});
   assert.deepEqual(f.messages, []);
@@ -217,13 +218,13 @@ test('a failed restored agent blocks input while global config edits preserve th
   const previous = { ...process.env };
   t.after(() => { for (const key of Object.keys(process.env)) if (!(key in previous)) delete process.env[key]; Object.assign(process.env, previous); });
   await (await import(pathToFileURL(join(f.dir, 'index.mjs')))).default(f.pi);
-  await f.configure(configured([agent]));
+  await f.store(configured([agent]));
   await f.emit('session_start');
   assert.deepEqual(await f.emit('input', { text: 'Never infer' }), { action: 'handled' });
   assert.deepEqual(f.activeTools(), []);
   const config = { agents: [{ ...agent, extensions: ['other-missing.mjs'] }] };
-  await f.configure(config);
-  assert.deepEqual((await f.rpc('get_agent_configuration')).agents[0].extensions, ['other-missing.mjs']);
+  await f.store(config);
+  assert.deepEqual((await f.configuration()).agents[0].extensions, ['other-missing.mjs']);
   assert.deepEqual(await f.emit('input', { text: 'Still unavailable' }), { action: 'handled' });
   const error = JSON.parse(f.statuses.get('piop-input-rejected')).error;
   assert.ok(error.includes(join(f.dir, 'missing.mjs')), error);
@@ -263,7 +264,7 @@ async function invalidAgentFixture(t, position, source) {
   const previous = { ...process.env };
   t.after(() => { for (const key of Object.keys(process.env)) if (!(key in previous)) delete process.env[key]; Object.assign(process.env, previous); });
   await (await import(pathToFileURL(join(f.dir, 'index.mjs')))).default(f.pi);
-  await f.configure(configured([agent('general', ['stable.mjs']), agent('invalid', [rootPath])]));
+  await f.store(configured([agent('general', ['stable.mjs']), agent('invalid', [rootPath])]));
   await f.emit('session_start');
 
   return { ...f, invalidPath, rootPath };
@@ -271,7 +272,7 @@ async function invalidAgentFixture(t, position, source) {
 
 async function assertRejectedExtensionGroup(f, scenario) {
   const entries = structuredClone(f.entries);
-  const configuration = await f.rpc('get_agent_configuration');
+  const configuration = await f.configuration();
   await assert.rejects(f.rpc('select_agent', { agent: 'invalid' }), reason => {
     assert.match(reason.message, scenario.error);
 
@@ -287,7 +288,7 @@ async function assertRejectedExtensionGroup(f, scenario) {
     return true;
   });
   assert.deepEqual(f.entries, entries, 'failed selection must not alter conversation history');
-  assert.deepEqual(await f.rpc('get_agent_configuration'), configuration);
+  assert.deepEqual(await f.configuration(), configuration);
   const capability = JSON.parse(Buffer.from(f.statuses.get('pi-define-agents').slice(5), 'base64url'));
   assert.equal(capability.active, 'general', 'previous agent remains selected');
   assert.deepEqual(f.activeTools(), ['stable_tool']);
@@ -334,7 +335,7 @@ async function sessionAgentFixture(t) {
   return true; };
 
   await (await import(pathToFileURL(join(f.dir, 'index.mjs')))).default(f.pi);
-  await f.configure(configured([agent('general'), agent('reviewer')]));
+  await f.store(configured([agent('general'), agent('reviewer')]));
   f.select = name => f.rpc('select_agent', { agent: name });
   f.capability = () => JSON.parse(Buffer.from(f.statuses.get('pi-define-agents').slice(5), 'base64url'));
 
@@ -378,9 +379,9 @@ test('legacy conversations retain their fixed agent when global definitions chan
   await f.emit('session_start');
   assert.equal(f.capability().active, 'reviewer');
   assert.equal(f.capability().locked, true);
-  const config = await f.rpc('get_agent_configuration');
+  const config = await f.configuration();
   config.agents = config.agents.filter(agent => agent.name !== 'reviewer');
-  await f.configure(config);
+  await f.store(config);
   assert.equal(f.capability().active, 'reviewer');
   assert.equal(f.capability().saved, true);
   await assert.rejects(f.select('general'), /agent is fixed/);

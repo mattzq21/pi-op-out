@@ -1,7 +1,10 @@
 import { $, browser, expect } from "@wdio/globals";
 import { randomUUID } from "node:crypto";
+import { z } from "zod";
 
 import { agentConfigSchema } from "../../../clients/ui/lib/agentSchemas.js";
+import type { AgentConfig } from "../../../clients/ui/types.js";
+import { draftCatalog } from "../bridge/draft-catalog.js";
 import { app } from "../pageobjects/app.page.js";
 import { mockBackend, backendCalls, resetBackend, resetApp, emitPiEvent, defaultSettings, acceptanceAgents, enableAgents, connectedSessionResponses, startTemporaryConversation } from './acceptance-fixture.js';
 
@@ -12,23 +15,21 @@ const agentCapability = () => {
   return capability;
 };
 
-// Use a real temporary native runtime to read or restore configuration through the extension RPC.
+/** The host catalog that the app reads, with these agent definitions. */
+const catalogWith = (config: AgentConfig) => ({ ...draftCatalog, config });
+
+// Read or restore the real agent definitions through the daemon, as the settings page does.
 async function nativeAgentConfiguration(agents?: ReturnType<typeof agentConfigSchema.parse>["agents"]) {
-  const runtimeId = `e2e-agent-config-${randomUUID()}`;
-  const result = await browser.execute(async (id, replacement) => {
+  const result = await browser.execute(async replacement => {
     const invoke = (command: string, args: Record<string, unknown>) => window.__TAURI_INTERNALS__.invoke("daemon_invoke", { command, args: { ...args, clientId: "desktop:e2e-agent-profiles" } });
+    const read = async () => ((await invoke("provider_auth", { hostId: "local", request: { action: "draft_catalog" } })) as { config: { revision: string } }).config;
     try {
-      try {
-      await invoke("start_pi", { runtimeId: id, cwd: "~" });
-      const config = await invoke("pi_command", { runtimeId: id, command: { type: "get_agent_configuration" } });
-      if (replacement) {
-        await invoke("pi_command", { runtimeId: id, command: { type: "configure_agents", configuration: { ...(config as Record<string, unknown>), agents: replacement } } });
-        return { value: await invoke("pi_command", { runtimeId: id, command: { type: "get_agent_configuration" } }) };
-      }
-      return { value: config };
-      } finally { await invoke("stop_pi", { runtimeId: id }); }
+      const config = await read();
+      if (!replacement) return { value: config };
+      await invoke("save_agent_definitions", { hostId: "local", configuration: { revision: config.revision, agents: replacement } });
+      return { value: await read() };
     } catch (error) { return { error: String(error) }; }
-  }, runtimeId, agents ?? null);
+  }, agents ?? null);
   if ("error" in result) throw new Error("Native agent configuration failed: " + result.error);
   return agentConfigSchema.parse(result.value);
 }
@@ -37,7 +38,7 @@ describe("Agent profiles acceptance", () => {
   beforeEach(async () => {
     await resetApp();
     const settings = { ...defaultSettings, tools: ["read", "bash"].map(name => ({ name, description: name, source: "built-in" })) };
-    await mockBackend({ ...connectedSessionResponses("agents"), load_app_settings: settings, "pi_command:get_agent_configuration": agentCapability().config });
+    await mockBackend({ ...connectedSessionResponses("agents"), load_app_settings: settings, "provider_auth:draft_catalog": catalogWith(agentCapability().config) });
     await browser.execute(async settings => {
       await window.__TAURI_INTERNALS__.invoke("plugin:event|emit", { event: "pi://settings-changed", payload: { settings } });
     }, settings);
@@ -50,7 +51,7 @@ describe("Agent profiles acceptance", () => {
   });
 
   it("reveals agent controls when the extension advertises them", async () => {
-    await startTemporaryConversation({ "pi_command:get_agent_configuration": agentCapability().config });
+    await startTemporaryConversation({ "provider_auth:draft_catalog": catalogWith(agentCapability().config) });
     await enableAgents(agentCapability());
     await expect(app.agentPicker).toBeDisplayed();
     await expect(app.agentPicker).toHaveAttribute("data-value", "general");
@@ -65,7 +66,7 @@ describe("Agent profiles acceptance", () => {
   });
 
   it("selects an agent through the agent RPC", async () => {
-    await startTemporaryConversation({ "pi_command:get_agent_configuration": agentCapability().config });
+    await startTemporaryConversation({ "provider_auth:draft_catalog": catalogWith(agentCapability().config) });
     await enableAgents(agentCapability());
     const beforeSelection = (await backendCalls()).length;
     await app.chooseComposerOption("Agent", "reviewer");
@@ -109,12 +110,12 @@ describe("Agent profiles acceptance", () => {
     await $('button[aria-label="Remove release-reviewer"]').click();
   });
 
-  it("sends agent configuration and its revision through the settings writer", async () => {
+  it("saves agent definitions with their revision through the daemon, without a Pi session", async () => {
     const settings = { ...defaultSettings, defaultThinking: "high" };
     await mockBackend({
       ...connectedSessionResponses("agents-save"),
-      "pi_command:get_agent_configuration": agentCapability().config,
-      "pi_command:set_model": {}, "pi_command:configure_agents": { revision: "saved-agent-revision" }, save_app_settings: { settings }, stop_pi: false, start_pi: {}, list_sessions: [], load_app_settings: settings,
+      "provider_auth:draft_catalog": catalogWith(agentCapability().config),
+      "pi_command:set_model": {}, save_agent_definitions: { revision: "saved-agent-revision", warnings: [] }, save_app_settings: { settings }, stop_pi: false, start_pi: {}, list_sessions: [], load_app_settings: settings,
     });
     await emitPiEvent({ type: "session_switched" });
     await enableAgents(agentCapability());
@@ -124,14 +125,16 @@ describe("Agent profiles acceptance", () => {
     await $('//div[contains(@class,"agent-list")]//button[.//span[normalize-space(.)="reviewer"]]').click();
     await $('input[aria-label="Agent prompt file"]').setValue("review-acceptance.md");
 
+    const beforeSave = (await backendCalls()).length;
     await app.saveSettingsButton.click();
     await expect(app.saveSettingsButton).toHaveText("Saved");
-    const command = (await backendCalls()).find(({ args }) => args.command?.type === "configure_agents")?.args.command;
-    const saved = agentConfigSchema.parse(command?.configuration);
+    const calls = (await backendCalls()).slice(beforeSave);
+    const saved = agentConfigSchema.parse(calls.find(({ command }) => command === "save_agent_definitions")?.args.configuration);
     expect(saved.revision).toBe("acceptance-agent-revision");
     expect(saved.agents.find((agent) => agent.name === "reviewer")?.path_agent_prompt).toBe("review-acceptance.md");
-    expect((await backendCalls()).filter(({ command }) => command === "save_app_settings")).toHaveLength(1);
-    expect((await backendCalls()).some(({ command }) => command === "stop_pi")).toBe(true);
+    // Only the agents changed, so the settings are not saved, and no Pi session starts for the save.
+    expect(calls.filter(({ command }) => command === "save_app_settings")).toHaveLength(0);
+    expect(calls.some(({ command }) => command === "start_pi")).toBe(false);
   });
 
   it("persists a GUI-created agent through a real native save", async () => {
@@ -142,14 +145,11 @@ describe("Agent profiles acceptance", () => {
       await app.refreshForReset();
       await app.waitUntilReady();
       await resetBackend();
+      await mockBackend({ "provider_auth:draft_catalog": "native" });
       await app.openSettings();
       await app.openSettingsSection("Agents");
-      // An early capability event enables Agents before the native reader loads the final revision.
-      await browser.waitUntil(async () => {
-        const calls = await backendCalls();
-        const reader = calls.find(call => !call.mocked && call.command === "pi_command" && call.args.command?.type === "get_agent_configuration");
-        return reader !== undefined && calls.some(call => !call.mocked && call.command === "stop_pi" && call.args.runtimeId === reader.args.runtimeId);
-      }, { timeout: 30_000, timeoutMsg: "Settings reader did not finish loading the current agent revision" });
+      await browser.waitUntil(async () => (await backendCalls()).some(call => !call.mocked && call.command === "provider_auth" && z.object({ action: z.string() }).safeParse(call.args.request).data?.action === "draft_catalog"),
+        { timeout: 30_000, timeoutMsg: "Settings did not read the current agent revision" });
       await $('//button[normalize-space(.)="Add agent"]').click();
       await $('input[aria-label="Agent name"]').setValue(agentName);
       await $('input[aria-label="Agent prompt file"]').setValue("~/.agents/prompts/system/default.md");
@@ -163,9 +163,9 @@ describe("Agent profiles acceptance", () => {
         return await app.saveSettingsButton.getText() === "Saved";
       }, { timeout: 30_000, timeoutMsg: "Native agent save did not finish" });
       const calls = await backendCalls();
-      expect(calls.some(({ command, mocked, args }) => command === "pi_command" && args.command?.type === "configure_agents" && !mocked)).toBe(true);
-      expect(calls.some(({ command, mocked }) => command === "start_pi" && !mocked)).toBe(true);
-      // A separate native reader verifies persistence after the GUI writer has closed.
+      expect(calls.some(({ command, mocked }) => command === "save_agent_definitions" && !mocked)).toBe(true);
+      expect(calls.some(({ command }) => command === "start_pi")).toBe(false);
+      // A separate read verifies that the definitions were saved.
       const saved = await nativeAgentConfiguration();
       expect(saved.agents.find(agent => agent.name === agentName)).toMatchObject({
         path_agent_prompt: "~/.agents/prompts/system/default.md", path_systemprompt: "~/.agents/prompts/system/default.md",
@@ -188,9 +188,9 @@ describe("Agent profiles acceptance", () => {
     await mockBackend({
       ...connectedSessionResponses("agents-rollback"),
       load_app_settings: settings, save_app_settings: { settings }, start_pi: {}, stop_pi: false,
-      "pi_command:get_agent_configuration": capability.config,
+      "provider_auth:draft_catalog": catalogWith(capability.config),
       "pi_command:set_model": {},
-      "pi_command:configure_agents": { error: "Agent configuration was rejected" },
+      save_agent_definitions: { error: "Agent configuration was rejected" },
     });
     await emitPiEvent({ type: "session_switched" });
     await enableAgents(capability);
@@ -206,9 +206,7 @@ describe("Agent profiles acceptance", () => {
     const settingsWrites = calls.filter(({ command }) => command === "save_app_settings");
     expect(settingsWrites).toHaveLength(0);
 
-    const configurations = calls.flatMap(({ args }) => {
-      return args.command?.type === "configure_agents" ? [agentConfigSchema.parse(args.command.configuration)] : [];
-    });
+    const configurations = calls.flatMap(({ command, args }) => command === "save_agent_definitions" ? [agentConfigSchema.parse(args.configuration)] : []);
 
     expect(configurations).toHaveLength(1);
     expect(configurations[0].agents.find((agent) => agent.name === "reviewer")?.path_agent_prompt).toBe("rejected-change.md");

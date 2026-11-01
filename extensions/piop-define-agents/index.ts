@@ -1,9 +1,8 @@
 import { readAgentResources, readPluginAgentTools, resourcePath, type AgentResources } from "./resources.ts";
-import { STATE_ENTRY, DEFAULTS_ENV, DRAFT_STATE_ENV, type RuntimeDefaults, agentSchema, agentThinkingLevels, persistedAgentIdentity, storedRuntimeDefaults, sessionIsLocked, readAgentState, subagentLimit, registerSubagentLimits, agentFlag, agentAccess, agentDescription, startRefusal } from "./state.ts";
+import { STATE_ENTRY, DEFAULTS_ENV, DRAFT_STATE_ENV, type RuntimeDefaults, agentThinkingLevels, persistedAgentIdentity, storedRuntimeDefaults, sessionIsLocked, readAgentState, subagentLimit, registerSubagentLimits, agentFlag, agentAccess, agentDescription, startRefusal } from "./state.ts";
 import { Type } from "typebox";
-import { Check, Errors, Parse } from "typebox/value";
-import { configPath, DEFAULT_PROMPT_PATH, DEFAULT_SYSTEM_PROMPT, resolvePromptPath, ensurePromptFile, snapshotPrompts, ensureDefaultAgentPrompt, readPrompt, readConfigDocument, writeConfig, isNamedAgent } from "./prompts.ts";
-import { mcpServersSchema } from "./mcp-schema.ts";
+import { Check, Parse } from "typebox/value";
+import { agentDirectory, DEFAULT_PROMPT_PATH, DEFAULT_SYSTEM_PROMPT, resolvePromptPath, ensurePromptFile, snapshotPrompts, ensureDefaultAgentPrompt, readPrompt, readConfigDocument, writeConfig, isNamedAgent } from "./prompts.ts";
 import { BUNDLED_MODEL, fallbackConfig, copySnapshot, selectedProfileState } from "./profiles.ts";
 import { mcpServers, type McpServers, type LegacyMcpServer } from "./mcp-config.ts";
 import type { Agent, AgentSnapshot, RequiredToolsRequest, McpToolsRequest, McpSelection, SessionAgentState } from "./contracts.ts";
@@ -11,8 +10,6 @@ import { fastModeSession, fastModelProblem, hostFastModels } from "./fast-models
 import { agentExtensions, extensionPaths } from "./extension-loader.ts";
 import { capRangeError } from "../piop-context-window-cap/interface.ts";
 import { createHash } from "node:crypto";
-import { homedir } from "node:os";
-import { dirname, join, resolve } from "node:path";
 import type { BuildSystemPromptOptions } from "@earendil-works/pi-coding-agent";
 import type { ExtensionAPI, ExtensionContext, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 
@@ -97,7 +94,7 @@ async function migratePrompts(stored: StoredConfig, pi: ConfigRuntime, storage: 
     agents.push({ ...profile, path_systemprompt: path, path_agent_prompt: agentPromptPath });
   }
 
-  return normalize({ ...stored, agents }, pi);
+  return normalizeConfig({ ...stored, agents }, pi);
 }
 
 function promptPath(agent: StoredAgent): string {
@@ -108,7 +105,7 @@ function promptPath(agent: StoredAgent): string {
   return agent.path_systemprompt;
 }
 
-function normalize(value: Omit<Partial<Config>, "agents"> & { agents?: StoredAgent[] }, pi: ConfigRuntime): Config {
+export function normalizeConfig(value: Omit<Partial<Config>, "agents"> & { agents?: StoredAgent[] }, pi: ConfigRuntime): Config {
   const named = Array.isArray(value.agents) ? value.agents.filter(isNamedAgent) : [];
 
   for (const agent of named) {
@@ -169,7 +166,7 @@ async function readConfig(pi: ConfigRuntime, supplied: StoredConfig | undefined,
   }
   catch (error) { if (!initialize || !Check(Type.Object({ code: Type.Literal("ENOENT") }), error)) throw error; }
 
-  await storage.writeConfig(normalize({}, pi), true);
+  await storage.writeConfig(normalizeConfig({}, pi), true);
 
   return readConfig(pi, undefined, initialize, storage);
 }
@@ -278,24 +275,13 @@ function configureAgentSystemPrompt(prompt: string, agentPrompt: string, options
 }
 
 export default async function defineAgents(pi: ExtensionAPI) {
-  /** Rejects agent definitions whose prompt files cannot be read, before they are saved. */
-  const requireReadablePrompts = async (agents: Agent[]) => {
-    for (const agent of agents) {
-      for (const [label, path] of [["System prompt", agent.path_systemprompt], ["Agent prompt", agent.path_agent_prompt]] as const) {
-        if (!path?.trim()) continue;
-
-        try { await readPrompt(resolvePromptPath(path)); }
-        catch (error) {
-          const reason = error instanceof Error && "code" in error && error.code === "ENOENT" ? "does not exist" : `cannot be read: ${error instanceof Error ? error.message : String(error)}`;
-          throw new Error(`Agent "${agent.name}": ${label} file ${path} ${reason}`);
-        }
-      }
-    }
-  };
-  const extensions = agentExtensions(pi, dirname(configPath));
+  const extensions = agentExtensions(pi, agentDirectory);
   const initialResources = readAgentResources();
   const configRuntime = { enabledTools: initialResources.tools.enabledTools, pluginTools: readPluginAgentTools() };
-  let config = await loadConfig(configRuntime);
+  /** The daemon owns the agent definitions: it creates, migrates and saves them. A session only reads them. */
+  const readOnlyStorage: ConfigStorage = { ensurePromptFile: async () => {}, writeConfig: async () => {} };
+  const readConfigNow = () => loadConfig(configRuntime, undefined, false, readOnlyStorage);
+  let config = await readConfigNow();
   let active = "general";
   let snapshot: AgentSnapshot | undefined;
   let savedState: string | undefined;
@@ -411,10 +397,10 @@ export default async function defineAgents(pi: ExtensionAPI) {
     const [provider, ...parts] = agent.model.split("/");
     return ctx.modelRegistry.find(provider, parts.join("/")) ? undefined : `Agent "${agent.name}" cannot run because model ${agent.model} is unavailable`;
   };
+  /** The session's own agent. The client takes the list of agents from the host. */
   const publish = (ctx: ExtensionContext) => {
     const agent = currentAgent();
-    const published = { ...config, agents: config.agents.map(value => ({ ...value, unavailableReason: modelUnavailable(value, ctx) })) };
-    ctx.ui.setStatus(STATUS_KEY, `json:${encode({ version: 1, active: agent?.name ?? active, locked, saved: !!snapshot, unavailable: !agent || Boolean(modelUnavailable(agent, ctx)), config: published })}`);
+    ctx.ui.setStatus(STATUS_KEY, `json:${encode({ version: 1, active: agent?.name ?? active, locked, saved: !!snapshot, unavailable: !agent || Boolean(modelUnavailable(agent, ctx)) })}`);
   };
 
   const saveState = (submit = false) => {
@@ -642,6 +628,8 @@ export default async function defineAgents(pi: ExtensionAPI) {
   effortOverride = event.level; saveState(); saveRuntimeDefaults({ model: runtimeDefaults?.model || "", effort: event.level }); });
 
   const restoreSession = async (ctx: ExtensionContext) => {
+    // A session start is an agent start, so it uses the latest saved definitions.
+    config = await readConfigNow();
     restore(ctx);
     const branch = ctx.sessionManager.getBranch();
     const { states, stored, identity } = readAgentState(branch, runtimeSession);
@@ -706,6 +694,11 @@ export default async function defineAgents(pi: ExtensionAPI) {
     configureAgentSystemPrompt(activeSystemPrompt, activeAgentPrompt, event.systemPromptOptions, invocationPolicy);
   });
   pi.events.on("piop:rpc", request => {
+    if (request.command !== "agent_definitions_changed") return;
+    // Agents that start later use the saved definitions. The running agent keeps its own.
+    request.ready = readConfigNow().then(next => { config = next; });
+  });
+  pi.events.on("piop:rpc", request => {
     if (request.command !== "select_agent") return;
     const ctx = request.ctx;
     request.ready = (async () => {
@@ -722,6 +715,8 @@ export default async function defineAgents(pi: ExtensionAPI) {
       throw new Error("This conversation's agent is fixed. Start a new conversation to use another agent.");
     }
 
+    // A chosen agent starts as a new agent, so it uses the latest saved definitions.
+    config = await readConfigNow();
     const agent = findAgent(name);
 
     if (!agent) throw new Error(`Unknown defined agent: ${name}`);
@@ -749,37 +744,4 @@ export default async function defineAgents(pi: ExtensionAPI) {
     if (skillsChanged) return reload(ctx);
     pi.events.emit("piop:agents:selected", { ctx });
   };
-
-  pi.events.on("piop:rpc", request => {
-    if (request.command === "get_agent_configuration") { request.ready = loadConfig(configRuntime);
-
-    return; }
-
-    if (request.command !== "configure_agents") return;
-    const ctx = request.ctx;
-    request.ready = (async () => {
-      const schema = Type.Object({ configuration: Type.Object({ revision: Type.String({ minLength: 1 }), agents: Type.Optional(Type.Array(agentSchema)) }) });
-      const errors = Errors(schema, request.payload);
-
-      if (errors.length) throw new Error(`Invalid agent configuration: ${errors.map(error => `${error.instancePath} ${error.message}`).join('; ')}`);
-      const { configuration: supplied } = Parse(schema, request.payload);
-      const stored = await loadConfig(configRuntime);
-      const next = normalize({ ...stored, ...supplied }, configRuntime);
-      if (supplied.agents) {
-        next.sessionToolsDefaultApplied = true;
-        next.subagentsDefaultApplied = true;
-        next.pluginToolsApplied = [...new Set([...next.pluginToolsApplied ?? [], ...configRuntime.pluginTools])];
-      }
-
-      for (const agent of next.agents) mcpServersSchema.parse(agent.mcpServers);
-      await requireReadablePrompts(next.agents);
-      const saved = await writeConfig(next);
-
-      config = next;
-
-      try { publish(ctx); } catch (error) { saved?.warnings.push(`Agent definitions were saved, but their status could not be updated: ${String(error)}`); }
-
-      return { revision: next.revision, warnings: saved?.warnings };
-    })();
-  });
 }

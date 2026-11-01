@@ -71,11 +71,10 @@ export interface AgentConfig { revision?: string; agents: AgentProfile[]; }
 
 export interface DefinedAgentsCapability { version: number; active: string; locked?: boolean; saved?: boolean; unavailable?: boolean; config: AgentConfig; }
 
-export interface AgentConfigChange { hostId: string; revision: number; }
 
 export interface SettingsPublication { committed: true; durable: boolean; error?: string; }
 
-export interface SettingsChange { settings: AppSettings; publication?: SettingsPublication; agentConfigChange?: AgentConfigChange; committed?: boolean; warnings?: string[]; revision?: number; committedRevision?: number; synchronizationPending?: boolean; source?: string; phaseRevision?: number; }
+export interface SettingsChange { settings: AppSettings; publication?: SettingsPublication; committed?: boolean; warnings?: string[]; revision?: number; committedRevision?: number; synchronizationPending?: boolean; source?: string; phaseRevision?: number; }
 
 export type RpcCommand = z.infer<typeof rpcCommandSchema>;
 

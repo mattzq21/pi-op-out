@@ -35,7 +35,7 @@ test('a settings save remains stored when the selected conversation cannot recon
   const { client, daemon, target } = await settingsClient(t, { remotes: [{ id: 'remote', name: 'Remote', target: 'before' }] });
   const previous = await daemon.invoke('load_app_settings');
   const next = { ...previous, hosts: previous.hosts.map(host => ({ ...host, target: 'unreachable-after' })) };
-  await assert.rejects(client.saveSettings(next, true, undefined, 'daemon', previous), /Settings were saved, but this session could not reconnect:/);
+  await assert.rejects(client.saveSettings(next, true, 'daemon', previous), /Settings were saved, but this session could not reconnect:/);
   assert.equal((await daemon.invoke('load_app_settings')).hosts[0].target, 'unreachable-after');
   assert.equal(client.currentHostId(), 'remote');
   assert.equal(client.currentCwd(), target.cwd);
@@ -45,10 +45,10 @@ test('settings can be saved again without reconnecting an unavailable remote con
   const { client, daemon } = await settingsClient(t, { remotes: [{ id: 'remote', name: 'Remote', target: 'before' }] });
   const previous = await daemon.invoke('load_app_settings');
   const next = { ...previous, hosts: previous.hosts.map(host => ({ ...host, target: 'unreachable-after' })) };
-  await assert.rejects(client.saveSettings(next, true, undefined, 'daemon', previous), /Settings were saved, but this session could not reconnect:/);
+  await assert.rejects(client.saveSettings(next, true, 'daemon', previous), /Settings were saved, but this session could not reconnect:/);
   const saved = await daemon.invoke('load_app_settings');
 
-  const result = await client.saveSettings(saved, false, 'remote', 'daemon', saved);
+  const result = await client.saveSettings(saved, false, 'daemon', saved);
   assert.equal(result.settings.hosts[0].target, 'unreachable-after');
   assert.equal((await daemon.invoke('load_app_settings')).hosts[0].target, 'unreachable-after');
   assert.equal(client.currentHostId(), 'remote');
@@ -57,9 +57,9 @@ test('settings can be saved again without reconnecting an unavailable remote con
 test('saving client preferences preserves newer daemon review settings', async t => {
   const { client, daemon } = await settingsClient(t);
   const initial = await daemon.invoke('load_app_settings');
-  await daemon.invoke('save_host_settings', { hostId: 'local', agentsChanged: false, settings: { ...initial, reviewAgent: 'new/model' } });
+  await daemon.invoke('save_host_settings', { hostId: 'local', settings: { ...initial, reviewAgent: 'new/model' } });
   const current = (await client.loadSettingsChange()).settings;
-  const result = await client.saveSettings({ ...current, reviewAgent: 'old/model', debugMode: true }, false, undefined, 'client', current);
+  const result = await client.saveSettings({ ...current, reviewAgent: 'old/model', debugMode: true }, false, 'client', current);
   assert.equal(result.settings.reviewAgent, 'new/model');
   assert.equal(result.settings.debugMode, true);
   assert.equal((await daemon.invoke('load_app_settings')).reviewAgent, 'new/model');
@@ -125,7 +125,7 @@ test('a queued reconnect failure reports an error and keeps settings pending', a
   const { client, daemon } = await settingsClient(t, { target: { hostId }, remotes: [{ id: hostId, name: 'Remote', target: 'before' }] });
   const previous = await daemon.invoke('load_app_settings');
   const settings = { ...previous, hosts: previous.hosts.map(host => ({ ...host, target: 'unreachable-after' })) };
-  await daemon.invoke('save_host_settings', { hostId: 'local', settings, agentsChanged: false });
+  await daemon.invoke('save_host_settings', { hostId: 'local', settings });
   const failed = Promise.withResolvers();
   const timer = setTimeout(() => failed.reject(new Error('No reconnect failure was reported')), 15000);
   t.after(() => clearTimeout(timer));
@@ -147,7 +147,7 @@ test('a later queued update recovers from a failed remote reconnect', { timeout:
   const { client, daemon } = await settingsClient(t, { target: { hostId }, remotes: [{ id: hostId, name: 'Remote', target: 'before' }] });
   const previous = await daemon.invoke('load_app_settings');
   const unavailable = { ...previous, hosts: previous.hosts.map(host => ({ ...host, target: 'unreachable-after' })) };
-  await daemon.invoke('save_host_settings', { hostId: 'local', settings: unavailable, agentsChanged: false });
+  await daemon.invoke('save_host_settings', { hostId: 'local', settings: unavailable });
   const failed = Promise.withResolvers(), recovered = Promise.withResolvers();
   let failure, applied = false;
   client.subscribe(event => {
@@ -161,7 +161,7 @@ test('a later queued update recovers from a failed remote reconnect', { timeout:
   assert.equal(client.hasPendingSettings(), true);
 
   const local = { ...await daemon.invoke('load_app_settings'), hosts: [] };
-  await daemon.invoke('save_host_settings', { hostId: 'local', settings: local, agentsChanged: false });
+  await daemon.invoke('save_host_settings', { hostId: 'local', settings: local });
   client.queueSettings(local, { reconnect: true });
   await recovered.promise;
   assert.equal(client.currentHostId(), 'local');

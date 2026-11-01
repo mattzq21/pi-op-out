@@ -2,7 +2,7 @@ import { afterAll, afterEach, beforeAll, expect, test } from 'bun:test';
 import { Database } from 'bun:sqlite';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
-import { agentDaemon, called, text } from './agent-chats';
+import { agentDaemon, agentDefinitions, called, text } from './agent-chats';
 import { stoppedJob } from './stopped-job';
 
 let agents: Awaited<ReturnType<typeof agentDaemon>>;
@@ -253,12 +253,8 @@ test.concurrent('awaiting any subagent returns when the first one finishes, whil
 }, 120000);
 
 test('an agent limited to one subagent cannot start a second while the first is still working', async () => {
-  const setup = await agents.rootChat();
-  const original = await setup.command({ type: 'get_agent_configuration' });
-  const setLimit = async (limit?: number) => {
-    const current = await setup.command({ type: 'get_agent_configuration' });
-    await setup.command({ type: 'configure_agents', configuration: { revision: current.revision, agents: original.agents.map((agent: any) => limit === undefined ? agent : { ...agent, max_subagents: limit }) } });
-  };
+  const original = await agentDefinitions(agents.daemon);
+  const setLimit = (limit?: number) => agents.saveAgents(() => original.agents.map((agent: any) => limit === undefined ? agent : { ...agent, max_subagents: limit }));
   let releaseFirst!: (reply: { text: string }) => void;
   const firstReply = new Promise<{ text: string }>(resolve => { releaseFirst = resolve; });
   agents.scripts.set('Use one helper', messages => {

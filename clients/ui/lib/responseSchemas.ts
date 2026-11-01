@@ -18,11 +18,10 @@ export const appSettingsSchema = z.object({ settingsRevision: z.string().optiona
 
 export const clientSettingsSchema = appSettingsSchema.pick({ "keybindings": true, "debugMode": true });
 
-export const agentConfigChangeSchema = z.object({ hostId: z.string(), revision: z.number() });
 
 export const settingsPublicationSchema = z.object({ committed: z.literal(true), durable: z.boolean(), error: z.string().optional() });
 
-export const settingsChangeSchema = z.object({ settings: appSettingsSchema, publication: settingsPublicationSchema.optional(), agentConfigChange: agentConfigChangeSchema.optional(), committed: z.boolean().optional(), warnings: z.array(z.string()).optional(), revision: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER).optional(), committedRevision: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER).optional(), synchronizationPending: z.boolean().optional(), source: z.string().optional(), phaseRevision: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER).optional() });
+export const settingsChangeSchema = z.object({ settings: appSettingsSchema, publication: settingsPublicationSchema.optional(), committed: z.boolean().optional(), warnings: z.array(z.string()).optional(), revision: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER).optional(), committedRevision: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER).optional(), synchronizationPending: z.boolean().optional(), source: z.string().optional(), phaseRevision: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER).optional() });
 
 export const sessionSummarySchema = z.object({ id: z.string(), isDraft: z.boolean().optional(), auxiliaryParentId: z.string().optional(), auxiliaryKind: z.string().optional(), forkSourceId: z.string().optional(), forkEntryId: z.string().optional(), daemonId: z.string().optional(), isRunning: z.boolean().optional(), groupId: z.union([z.string(), z.null()]).optional(), path: z.string(), name: z.string(), project: z.string(), cwd: z.string(), cwdExists: z.boolean().optional(), linkedWorktree: z.boolean().optional(), preview: z.string(), messageCount: z.number(), lastMessageAt: z.number(), apiCost: z.number(), hostId: z.string().optional(), hostName: z.string().optional() });
 

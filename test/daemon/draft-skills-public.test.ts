@@ -34,10 +34,9 @@ test('every chat offers all skills, and the model sees only the skills of its ag
   const settings = await agents.daemon.invoke('load_app_settings', { refreshSkills: true });
   for (const item of settings.skills) item.enabled = item.name !== 'off';
   await agents.daemon.invoke('save_app_settings', { settings });
-  const setup = await agents.rootChat();
-  const configuration = await setup.command({ type: 'get_agent_configuration' });
+
   const skills: Record<string, string[]> = { general: [alpha], workhorse: [beta] };
-  await setup.command({ type: 'configure_agents', configuration: { revision: configuration.revision, agents: configuration.agents.map((agent: any) => ({ ...agent, skills: skills[agent.name] ?? [], ...(agent.name === 'workhorse' ? { model: 'scripted/scripted-model' } : {}) })) } });
+  await agents.saveAgents(saved => saved.map((agent: any) => ({ ...agent, skills: skills[agent.name] ?? [], ...(agent.name === 'workhorse' ? { model: 'scripted/scripted-model' } : {}) })));
 
   const all = [{ name: 'alpha', description: 'The alpha skill' }, { name: 'beta', description: 'The beta skill' }];
   const catalog = await agents.daemon.invoke('provider_auth', { hostId: 'local', request: { action: 'draft_catalog', reload: true } });

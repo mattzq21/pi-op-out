@@ -4,8 +4,6 @@ import { required } from "./lib/required";
 import type { Accessor } from "solid-js";
 import { createSignal, onCleanup } from "solid-js";
 import { saveClientSettings,withClientSettings } from "./lib/clientSettings";
-import { agentConfigChangeSchema } from "./lib/agentSchemas";
-import { restoreAgentConfiguration, saveAgentConfiguration } from "./lib/agentConfiguration";
 import { applyClientPreferences, clientPreferences, ClientPreferenceConflictError, mergeClientPreferences, SettingsSaveError } from "./lib/clientPreferenceMerge";
 import { ConversationChangedError } from "./lib/conversationChanged";
 import { observeModelReports, refreshHostModels } from "./lib/modelReports";
@@ -19,7 +17,7 @@ import { SettingsPublication } from "./lib/settingsPublication";
 import { createDependencyEffect,createRef } from "./lib/solid";
 import { useChatSession } from "./lib/useChatSession";
 import { keybindingsError } from "./lib/keybindings";
-import type { AgentConfig,AppSettings,SettingsChange } from "./types";
+import type { AppSettings,SettingsChange } from "./types";
 
 export function createAppSettings({ transport, runtimePool, chatSession, addNotice, preloadChat }: { transport: Accessor<NativeTransport>; runtimePool: Accessor<SessionRuntimePool>; chatSession: Accessor<ReturnType<typeof useChatSession>>; addNotice: (notice: { title: string; message: string }) => void; preloadChat: () => void }) {
 
@@ -75,7 +73,7 @@ export function createAppSettings({ transport, runtimePool, chatSession, addNoti
   };
 
   const modelVisibility = createHostModelVisibility(settings, addNotice, async (next, baseline) => {
-    const change = await transport().saveSettings(next, false, undefined, "daemon", baseline);
+    const change = await transport().saveSettings(next, false, "daemon", baseline);
     publishSettingsChange(change);
 
     return change;
@@ -104,7 +102,7 @@ export function createAppSettings({ transport, runtimePool, chatSession, addNoti
       update(payload);
     }, settingsChangeSchema);
 
-    const catalogListeners = ["pi://host-settings-changed", "pi://daemon-restarting"].map(event => listen(event, clearDraftCatalogs, z.unknown()));
+    const catalogListeners = ["pi://host-settings-changed", "pi://daemon-restarting", "pi://agent-definitions-changed"].map(event => listen(event, clearDraftCatalogs, z.unknown()));
 
     const authPending = listen("pi://provider-auth-changed", ({ payload }) => {
       clearDraftCatalogs();
@@ -139,35 +137,21 @@ export function createAppSettings({ transport, runtimePool, chatSession, addNoti
 
     return change.settings; };
 
-  const saveSettings = async (value: AppSettings, nextConfig?: AgentConfig, previousConfig?: AgentConfig, baseline?: AppSettings, scope: "all" | "client" | "daemon" = "all") => {
+  const saveSettings = async (value: AppSettings, baseline?: AppSettings, scope: "all" | "client" | "daemon" = "all") => {
     if (settingsSavePending.current || debugModePending.current) throw new Error("Wait for the current settings save to finish");
     settingsSavePending.current = true; setSettingsSaving(true);
 
-    try { await applySettings(value, nextConfig, previousConfig, baseline, scope); } finally { settingsSavePending.current = false; setSettingsSaving(false); }
+    try { await applySettings(value, baseline, scope); } finally { settingsSavePending.current = false; setSettingsSaving(false); }
   };
 
-  const applySettings = async (value: AppSettings, nextConfig?: AgentConfig, previousConfig?: AgentConfig, baseline?: AppSettings, scope: "all" | "client" | "daemon" = "all") => { const capturedTransport = transport();
+  const applySettings = async (value: AppSettings, baseline?: AppSettings, scope: "all" | "client" | "daemon" = "all") => { const capturedTransport = transport();
     required(settings());
     const editingBaseline = required(baseline);
-    const next = value; const agentHostId = nextConfig ? "local" : undefined;
-
-    const writeAgents = async (configuration: AgentConfig) => {
-      const writer = new NativeTransport({ cwd: "~", hostId: "local" });
-
-      try {
-        await writer.connect();
-        const change = await writer.command({ type: "configure_agents", configuration }, agentConfigChangeSchema);
-        change.warnings?.forEach(message => addNotice({ title: "Agent definitions saved with a warning", message }));
-
-        return change.revision;
-      } finally { await writer.dispose().catch(() => undefined); }
-    };
-
-    let restoreAgents: (() => Promise<void>) | undefined;
+    const next = value;
     let savedChange: SettingsChange;
 
     // Client preferences stay on this device, so they save without the host and also while it is unreachable.
-    if (scope === "client" && !nextConfig) {
+    if (scope === "client") {
       const shortcutError = keybindingsError(next.keybindings);
 
       if (shortcutError) throw new Error(shortcutError);
@@ -179,19 +163,14 @@ export function createAppSettings({ transport, runtimePool, chatSession, addNoti
     }
 
     try {
-      if (nextConfig) restoreAgents = await saveAgentConfiguration(nextConfig, previousConfig, writeAgents);
-
-      savedChange = await capturedTransport.saveSettings(next, false, agentHostId, scope, editingBaseline);
+      savedChange = await capturedTransport.saveSettings(next, false, scope, editingBaseline);
     } catch (reason) {
       if (reason instanceof ClientPreferenceConflictError) publishConflict(reason);
 
       if (reason instanceof SettingsSaveError) {
         publishSettingsChange(reason.committedChange);
         addNotice({ title: "Settings partially saved", message: reason.message });
-        throw reason;
       }
-
-      await restoreAgentConfiguration(restoreAgents, (reason instanceof Error ? reason.message : String(reason)));
 
       throw reason;
     }

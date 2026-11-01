@@ -78,22 +78,6 @@ test('a local Pi stays attached while remote machines change, and an unknown mac
   await daemon.invoke('stop_pi', { runtimeId: 'transport-runtime' });
 });
 
-test('a rejected host configuration fails the start that needed it, and the host keeps answering later requests', async () => {
-  const local = await startDaemon();
-  try {
-    installFakePi(local.home);
-    const open = publicSession(local.home, { cwd: local.home, folder: 'configured' });
-    await local.invoke('start_pi', { runtimeId: 'configured-runtime', clientId: 'configuration-client', cwd: local.home, sessionPath: open.path });
-    // A new agent configuration makes the host load agent definitions, which needs a working Pi installation.
-    const settings = await local.invoke('load_app_settings');
-    await local.invoke('save_app_settings', { settings, agentHostId: 'local' });
-    const rejected = publicSession(local.home, { cwd: local.home, folder: 'rejected' });
-    const start = { runtimeId: 'rejected-runtime', clientId: 'configuration-client', cwd: local.home, sessionPath: rejected.path };
-    expect(await local.failure('start_pi', start)).toBe('Extension validation requires a Pi Node installation');
-    expect(await local.invoke('pi_command', { runtimeId: 'configured-runtime', command: { type: 'get_state' } })).toMatchObject({ sessionFile: open.path });
-  } finally { await local.stop(); }
-}, 60_000);
-
 const alive = (pid: number) => { try { process.kill(pid, 0); return true; } catch { return false; } };
 
 test('stopping the daemon shuts the host down and ends its Pi processes', async () => {
@@ -157,7 +141,7 @@ test('bounded process output rejects too much output, keeps only the first 64 Ki
   await expect(runLimited({ program: missing }, 4, 'Start helper')).rejects.toThrow(/^Start helper: /);
 });
 
-const configuration = { settings: {}, autoCompaction: true, autoRetry: false, agentRevision: 0 };
+const configuration = { settings: {}, autoCompaction: true, autoRetry: false };
 
 test('a shutdown packet gets no reply, later packets are ignored, and the host finishes once', async () => {
   const host = await startHost();

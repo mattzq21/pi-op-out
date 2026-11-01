@@ -38,9 +38,8 @@ export class Daemon {
     for (const packet of this.queued.splice(0)) supervisor.input(packet);
   }
 
-  async configure(runtime: PiRuntime, settings: AppSettings, hostId: string): Promise<void> {
-    const agentRevision = runtime.agentConfigRevisions.get(hostId) ?? 0;
-    const configuration = { contextCapSettings: contextCapSettings(settings), settings: agentResources(settings), autoCompaction: true, autoRetry: settings.autoRetry, agentRevision };
+  async configure(settings: AppSettings): Promise<void> {
+    const configuration = { contextCapSettings: contextCapSettings(settings), settings: agentResources(settings), autoCompaction: true, autoRetry: settings.autoRetry };
     // Every request to the host connects first, so an unchanged configuration must not write storage or reconfigure the sessions again.
     const key = JSON.stringify(configuration);
     if (key === this.appliedConfiguration) return;
@@ -115,7 +114,7 @@ export function invalidateChanged(app: App, runtime: PiRuntime, settings: AppSet
 
 export async function updateSettings(app: App, runtime: PiRuntime, settings: AppSettings): Promise<void> {
   for (const [hostId, daemon] of [...runtime.connections.daemons]) {
-    try { await daemon.configure(runtime, settings, hostId); }
+    try { await daemon.configure(settings); }
     catch (error: any) {
       app.emit('pi://daemon-error', { hostId, line: 'Could not synchronize settings: ' + (error?.message ?? error) });
       throw error;
@@ -129,7 +128,7 @@ export function connect(app: App, runtime: PiRuntime, _broker: BrokerRuntime, se
     const config = connectionConfig(settings, hostId);
     const existing = runtime.connections.daemons.get(hostId);
     if (existing && existing.alive && existing.connectionConfig === config) {
-      await existing.configure(runtime, settings, hostId);
+      await existing.configure(settings);
       return existing;
     }
     if (existing) await close(app, runtime, existing);
@@ -142,7 +141,7 @@ export function connect(app: App, runtime: PiRuntime, _broker: BrokerRuntime, se
     daemon.attach(supervisor);
     supervisor.finished.then(() => { if (daemon.alive) daemon.disconnect(app, app.pi); });
     runtime.connections.daemons.set(hostId, daemon);
-    try { await daemon.configure(runtime, settings, hostId); }
+    try { await daemon.configure(settings); }
     catch (error) {
       await close(app, runtime, daemon);
       runtime.connections.daemons.delete(hostId);
@@ -231,6 +230,7 @@ function handlePacket(app: App, connection: Daemon, hostId: string, packet: any)
     case 'provider_auth_changed': app.emit('pi://provider-auth-changed', { hostId, flow: packet.flow ?? null }); return;
     case 'plugins_changed': app.emit('pi://plugins-changed', { hostId }); return;
     case 'fast_models_changed': app.emit('pi://fast-models-changed', { hostId }); return;
+    case 'agent_definitions_changed': app.emit('pi://agent-definitions-changed', { hostId }); return;
     case 'diagnostic': app.emit('pi://daemon-error', { hostId, line: packet.line ?? null }); return;
     case 'sessions_changed': app.emit('pi://sessions-changed', null); return;
   }

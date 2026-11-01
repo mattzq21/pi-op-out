@@ -130,8 +130,7 @@ async function saveHostSettings(app: App, args: any): Promise<any> {
   const previous = await loadAppSettings(app);
   settings.keybindings = previous.keybindings;
   settings.debugMode = previous.debugMode;
-  const agentsChanged = argument(args, 'agentsChanged', 'boolean');
-  return saveAppSettings(app, settings, agentsChanged ? 'local' : undefined);
+  return saveAppSettings(app, settings);
 }
 
 function startPiOptions(args: any): any {
@@ -215,7 +214,11 @@ const COMMANDS: Record<string, Handler> = {
   load_app_settings: (app, _owner, args) => loadSettings(app, args),
   load_settings_change: app => loadSettingsChange(app),
   settings_pending_count: app => app.pi.settingsPendingSessions.size,
-  save_app_settings: (app, _owner, args) => saveAppSettings(app, parseAppSettings(argument(args, 'settings', 'any')), argument(args, 'agentHostId', 'string?')),
+  save_app_settings: (app, _owner, args) => saveAppSettings(app, parseAppSettings(argument(args, 'settings', 'any'))),
+  save_agent_definitions: async (app, _owner, args) => {
+    const connection = await daemon.connect(app, app.pi, app.broker, await loadAppSettings(app), 'local');
+    return connection.request({ type: 'save_agent_definitions', configuration: argument(args, 'configuration', 'any') });
+  },
   provider_usage: (app, _owner, args) => {
     const provider = argument(args, 'provider', 'string?');
     if (provider !== undefined && !isUsageProvider(provider)) throw new Error('Invalid provider: unknown usage provider ' + JSON.stringify(provider));

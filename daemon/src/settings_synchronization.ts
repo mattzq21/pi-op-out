@@ -20,7 +20,7 @@ const MAX_REVISION = 9_007_199_254_740_991;
 let started = false;
 let requestPass: () => void;
 
-interface Publication { revision: number; digest: string; agentHostId: string | null }
+interface Publication { revision: number; digest: string }
 interface Progress { revision: number; synchronized: boolean; notified: boolean; phase_revision: number }
 
 function writeRecord(path: string, value: unknown): void {
@@ -68,22 +68,16 @@ function nextRevision(revision: number): number {
   return next;
 }
 
-function sortedRecord(map: Map<string, number>): Record<string, number> {
-  return Object.fromEntries([...map.entries()].sort(([left], [right]) => left < right ? -1 : left > right ? 1 : 0));
-}
-
 export class Journal {
   revision = 0;
   digest = '';
-  agentRevisions = new Map<string, number>();
   publication: Publication | null = null;
 
-  toJSON() { return { revision: this.revision, digest: this.digest, agentRevisions: sortedRecord(this.agentRevisions), publication: this.publication }; }
+  toJSON() { return { revision: this.revision, digest: this.digest, publication: this.publication }; }
 
   publish(publication: Publication): void {
     this.revision = publication.revision;
     this.digest = publication.digest;
-    if (publication.agentHostId !== null && publication.agentHostId !== undefined) this.agentRevisions.set(publication.agentHostId, this.revision);
     this.publication = null;
   }
 
@@ -103,36 +97,29 @@ export class Journal {
   }
 
   static load(path: string): Journal {
-    const raw: any = readRecord(journalPath(path), () => ({ revision: 0, digest: '', agentRevisions: {}, publication: null }));
+    const raw: any = readRecord(journalPath(path), () => ({ revision: 0, digest: '', publication: null }));
     const journal = new Journal();
     if (typeof raw.revision !== 'number' || typeof raw.digest !== 'string') throw new Error(`Could not read settings synchronization record ${journalPath(path)}`);
     journal.revision = raw.revision;
     journal.digest = raw.digest;
-    for (const [host, revision] of Object.entries(raw.agentRevisions ?? {})) journal.agentRevisions.set(host, Number(revision));
-    journal.publication = raw.publication ?? null;
+    journal.publication = raw.publication ? { revision: raw.publication.revision, digest: raw.publication.digest } : null;
     journal.validate();
     journal.reconcile(path);
     return journal;
   }
 
   validate(): void {
-    if (this.revision > MAX_REVISION || [...this.agentRevisions.values()].some(revision => revision > this.revision)) throw new Error('Invalid stored settings revision');
+    if (this.revision > MAX_REVISION) throw new Error('Invalid stored settings revision');
     if (this.publication && (this.publication.revision !== nextRevision(this.revision) || this.publication.digest.length !== 64)) throw new Error('Invalid prepared settings publication');
-  }
-
-  restoreAgents(runtime: PiRuntime, change: any, warnings: string[]): void {
-    for (const [host, revision] of [...this.agentRevisions.entries()].sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0)) {
-      settings.publishSavedAgentRevision(runtime, host, revision, change, warnings);
-    }
   }
 }
 
 export class Save {
   private constructor(private path: string, private progressPath: string, private journal: Journal, private publication: Publication) {}
 
-  static prepare(path: string, body: Buffer, agentHostId: string | undefined): Save {
+  static prepare(path: string, body: Buffer): Save {
     const journal = Journal.load(path);
-    const publication: Publication = { revision: nextRevision(journal.revision), digest: digest(body), agentHostId: agentHostId ?? null };
+    const publication: Publication = { revision: nextRevision(journal.revision), digest: digest(body) };
     const owner = progressPath(path);
     journal.publication = { ...publication };
     writeRecord(journalPath(path), journal);
@@ -153,12 +140,6 @@ export class Save {
 
   change(current: AppSettings): any {
     return { settings: serializeAppSettings(current), committed: true, revision: this.journal.revision, committedRevision: this.publication.revision, source: digest(this.progressPath) };
-  }
-
-  restoreAgents(runtime: PiRuntime, change: any, warnings: string[]): void {
-    this.journal.restoreAgents(runtime, change, warnings);
-    if (this.publication.agentHostId !== null) change.agentConfigChange = { hostId: this.publication.agentHostId, revision: this.publication.revision };
-    else delete change.agentConfigChange;
   }
 
   finish(change: any, warnings: string[]): void {
@@ -197,9 +178,6 @@ export async function snapshot(app: App): Promise<any> {
 
 function notify(app: App, journal: Journal, change: any): void {
   app.emit('pi://settings-changed', change);
-  for (const [host, revision] of [...journal.agentRevisions.entries()].sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0)) {
-    app.emit('pi://settings-changed', { ...change, agentConfigChange: { hostId: host, revision } });
-  }
 }
 
 export async function publishCurrent(app: App, change: any): Promise<void> {
@@ -217,7 +195,6 @@ function publishLocked(app: App, path: string, journal: Journal, change: any): v
   change.settings = current.settings;
   change.revision = journal.revision;
   change.source = current.source;
-  canonicalAgentChange(journal, change);
   const pending = progress.revision !== journal.revision || !progress.synchronized;
   progress.phase_revision = nextRevision(progress.phase_revision);
   change.synchronizationPending = pending;
@@ -229,11 +206,6 @@ function publishLocked(app: App, path: string, journal: Journal, change: any): v
     progress.notified = true;
     writeRecord(ownerPath, progress);
   }
-}
-
-function canonicalAgentChange(journal: Journal, change: any): void {
-  const host = change.agentConfigChange?.hostId;
-  if (typeof host === 'string' && journal.agentRevisions.has(host)) change.agentConfigChange = { hostId: host, revision: journal.agentRevisions.get(host) };
 }
 
 function addPendingWarning(change: any, pending: boolean, revision: number): void {
@@ -254,7 +226,6 @@ function newApplied(): Applied { return { warnings: [] }; }
 
 async function applyCurrent(app: App, runtime: PiRuntime, journal: Journal, current: AppSettings, change: any): Promise<string[]> {
   const warnings: string[] = [];
-  journal.restoreAgents(runtime, change, warnings);
   try { await daemon.invalidateChanged(app, runtime, current); }
   catch (error: any) { warnings.push(`Saved settings invalidation is pending and will retry automatically: ${error.message ?? error}`); }
   if (warnings.length === 0) {

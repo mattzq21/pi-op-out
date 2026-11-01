@@ -6,17 +6,17 @@ import { startDaemon } from './harness';
 test('an unavailable agent model does not prevent startup and clears after repair', async () => {
   const initial = await startDaemon();
   await initial.stop();
-  const file = join(initial.home, '.piop/piop-define-agents/sessions.sqlite');
+  const file = join(initial.home, '.piop/sessions.sqlite');
   const update = (repair: boolean) => {
     const db = new DatabaseSync(file);
     try {
-      const row: any = db.prepare("SELECT body FROM application_settings WHERE name='config.json'").get();
+      const row: any = db.prepare("SELECT body FROM application_settings WHERE name='agent-definitions.json'").get();
       const config = JSON.parse(Buffer.from(row.body).toString());
       if (!repair) {
         const general = config.agents.find((agent: any) => agent.name === 'general');
         config.agents.push({ ...general, name: 'missing-model', isDefault: false, model: 'missing-provider/missing-model' });
       } else config.agents.find((agent: any) => agent.name === 'missing-model').model = '';
-      db.prepare("UPDATE application_settings SET body=? WHERE name='config.json'").run(Buffer.from(JSON.stringify(config)));
+      db.prepare("UPDATE application_settings SET body=? WHERE name='agent-definitions.json'").run(Buffer.from(JSON.stringify(config)));
     } finally { db.close(); }
   };
   update(false);

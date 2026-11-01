@@ -9,8 +9,8 @@ import { createComputed, createMemo, createSignal } from "solid-js";
 import { createDependencyEffect, createRef, type StateUpdate } from "../lib/solid";
 
 import { OPEN_AUXILIARY_CHAT } from "../lib/auxiliaryChats";
-import { decodeAgentValue, DEFINED_AGENTS_STATUS_KEY } from "../lib/agentProtocol";
-import { definedAgentsCapabilitySchema } from "../lib/agentSchemas";
+import { DEFINED_AGENTS_STATUS_KEY } from "../lib/agentProtocol";
+import { agentStatusReader } from "../lib/hostAgents";
 import { z } from "zod";
 
 import type { NativeTransport } from "../lib/nativeTransport";
@@ -107,6 +107,7 @@ export function SplitChatPane(componentProps: Props) {
 
     reconnectRef.current = () => void connectRuntime(false);
 
+    const agentStatus = agentStatusReader(() => capturedTransport.currentHostId(), capability => { if (!closing) setDefinedAgents(capability); }, reason => { if (!closing) reportControlError(new Error(`Could not read agent list: ${reason instanceof Error ? reason.message : String(reason)}`)); });
     const unsubscribe = capturedTransport.subscribe((event: RpcEvent) => {
       capturedSession.handleEvent(event);
 
@@ -147,8 +148,7 @@ export function SplitChatPane(componentProps: Props) {
         const methods = {
           setStatus: () => {
             if (request.statusKey === DEFINED_AGENTS_STATUS_KEY) {
-              try { setDefinedAgents(request.statusText?.startsWith("json:") ? definedAgentsCapabilitySchema.parse(decodeAgentValue(request.statusText.slice(5))) : undefined); }
-              catch (reason) { setDefinedAgents(undefined); reportControlError(new Error(`Could not read agent list: ${reason instanceof Error ? reason.message : String(reason)}`)); }
+              agentStatus.receive(request.statusText);
 
               if (!reconnecting) void capturedSession.refresh().catch(reportControlError);
             } else if (request.statusKey && !["pi-desktop-prompt-context", "pi-desktop-mcp-status"].includes(request.statusKey)) {
@@ -189,7 +189,7 @@ export function SplitChatPane(componentProps: Props) {
 
       const handleDisconnected = () => {
         updateConnected(false);
-        setDefinedAgents(undefined);
+        agentStatus.receive(undefined);
         setStatuses({});
         setWidgets({});
         document.title = "piop";
@@ -217,7 +217,7 @@ export function SplitChatPane(componentProps: Props) {
 
     void connectRuntime(true);
 
-    return () => { closing = true; capturedRuntimePool0.setInteractive(capturedTransport, false); document.title = "piop"; reconnectRef.current = () => undefined; unsubscribe(); queueMicrotask(() => { if (lifecycleRef.current === lifecycle) void capturedOnReleaseTransport11(capturedTransport); }); };
+    return () => { closing = true; capturedRuntimePool0.setInteractive(capturedTransport, false); document.title = "piop"; reconnectRef.current = () => undefined; unsubscribe(); agentStatus.close(); queueMicrotask(() => { if (lifecycleRef.current === lifecycle) void capturedOnReleaseTransport11(capturedTransport); }); };
   }, () => [transport(), componentProps.initialPrompt, session().handleEvent, session().refresh, componentProps.onDialogRequest, componentProps.onDialogTransportClosed, componentProps.onReleaseTransport]);
   createDependencyEffect(() => {
     const capturedConnected = connected(); const capturedTransport = transport(); const capturedSettings0 = componentProps.settings;

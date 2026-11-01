@@ -4,14 +4,14 @@ import { agentDaemon, called, text } from './agent-chats';
 let agents: Awaited<ReturnType<typeof agentDaemon>>;
 beforeAll(async () => {
   agents = await agentDaemon();
-  const chat = await agents.rootChat();
-  const configuration = await chat.command({ type: 'get_agent_configuration' });
-  configuration.agents = configuration.agents.map((agent: any) => ({ ...agent, tools: [...new Set([...(agent.tools ?? []), 'spawn_subagents'])] }));
-  const general = configuration.agents.find((agent: any) => agent.name === 'general');
-  const others = configuration.agents.filter((agent: any) => agent.name !== 'general').map(({ isDefault: _isDefault, ...agent }: any) => agent);
-  const { isDefault: _isDefault, ...plain } = general;
-  const thinker = { ...plain, name: 'deep-thinker', isDefault: true, model: 'scripted/scripted-thinker', effort: 'low' };
-  await chat.command({ type: 'configure_agents', configuration: { revision: configuration.revision, agents: [{ ...plain, model: 'scripted/scripted-model' }, ...others, thinker] } });
+  await agents.saveAgents(saved => {
+    const withTools = saved.map((agent: any) => ({ ...agent, tools: [...new Set([...(agent.tools ?? []), 'spawn_subagents'])] }));
+    const general = withTools.find((agent: any) => agent.name === 'general');
+    const others = withTools.filter((agent: any) => agent.name !== 'general').map(({ isDefault: _isDefault, ...agent }: any) => agent);
+    const { isDefault: _isDefault, ...plain } = general;
+    const thinker = { ...plain, name: 'deep-thinker', isDefault: true, model: 'scripted/scripted-thinker', effort: 'low' };
+    return [{ ...plain, model: 'scripted/scripted-model' }, ...others, thinker];
+  });
 }, 60000);
 afterAll(async () => { await agents?.close(); });
 

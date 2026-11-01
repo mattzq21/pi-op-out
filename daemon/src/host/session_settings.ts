@@ -72,6 +72,8 @@ export class SessionSettings {
         if (configuration === null || configuration === undefined) return;
         const revision = typeof configuration.agentRevision === 'number' ? configuration.agentRevision : 0;
         await session.executeWorker({ type: 'context_cap_settings', settings: configuration.contextCapSettings });
+        // Agents that the session starts later, such as subagents and reviews, use the saved definitions.
+        if (this.applied?.agentRevision !== revision) await session.executeWorker({ type: 'agent_definitions_changed' });
         await this.applyAutomaticOptions(configuration);
         this.applied = configuration;
         session.publish({ type: 'settings_applied', agentRevision: revision }, null);

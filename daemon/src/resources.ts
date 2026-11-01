@@ -32,7 +32,7 @@ import fastModeBundle from '../resources/fast-mode.bundle.mjs?raw';
 import providersRefreshExtension from '../../extensions/piop-providers-refresh/index.ts?raw';
 import openaiCacheForkExtension from '../../extensions/piop-openai-cache-fork/index.ts?raw';
 import agentState from '../../extensions/piop-define-agents/state.ts?raw';
-import agentPromptsRaw from '../../extensions/piop-define-agents/prompts.ts?raw';
+import agentPrompts from '../../extensions/piop-define-agents/prompts.ts?raw';
 import agentProfiles from '../../extensions/piop-define-agents/profiles.ts?raw';
 import agentMcpConfig from '../../extensions/piop-define-agents/mcp-config.ts?raw';
 import definedAgentsExtension from '../../extensions/piop-define-agents/index.ts?raw';
@@ -104,7 +104,6 @@ function embedFileLock(source: string): string {
     .replace(/require\(['"][^'"]*file-lock\.cjs['"]\)/g, () => '(function () { const module = { exports: {} }; ' + fileLockSource + '; return module.exports; })()');
 }
 const sdkStorage = embedFileLock(sdkStorageRaw);
-const agentPrompts = embedFileLock(agentPromptsRaw);
 const storagePublicationIo = embedFileLock(storagePublicationIoRaw);
 const storageReferences = embedFileLock(storageReferencesRaw);
 const storageGoalAssets = embedFileLock(storageGoalAssetsRaw);

@@ -68,12 +68,12 @@ test('settings reconnect only transports whose remote connection changed', async
   await remote.connect();
   const previous = await daemon.invoke('load_app_settings');
   const renamed = { ...previous, hosts: previous.hosts.map(host => host.id === 'remote' ? { ...host, name: 'Renamed' } : host) };
-  await daemon.invoke('save_host_settings', { hostId: 'local', settings: renamed, agentsChanged: false });
+  await daemon.invoke('save_host_settings', { hostId: 'local', settings: renamed });
   pool.queueSettingsChange(previous, renamed);
   assert.equal(remote.hasPendingSettings(), false);
   const saved = await daemon.invoke('load_app_settings');
   const changed = { ...saved, hosts: saved.hosts.map(host => host.id === 'remote' ? { ...host, target: 'after' } : host) };
-  await daemon.invoke('save_host_settings', { hostId: 'local', settings: changed, agentsChanged: false });
+  await daemon.invoke('save_host_settings', { hostId: 'local', settings: changed });
   pool.queueSettingsChange(saved, changed);
   assert.equal(remote.hasPendingSettings(), true);
   assert.equal(local.hasPendingSettings(), false);
