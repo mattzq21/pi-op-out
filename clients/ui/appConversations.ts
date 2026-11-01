@@ -351,7 +351,16 @@ export function createAppConversations(preloadChat: () => void, prepareTranscrip
     catch (reason) {
       const session = (await owner.listSessions()).find(item => item.path === target.sessionPath && (item.hostId ?? "local") === (target.hostId ?? "local"));
 
-      if (!session || session.cwdExists !== false) throw reason;
+      // The saved conversation was removed, for example a temporary chat with its folder: open a new chat instead.
+      if (!session) {
+        if (transport() !== owner) return false;
+        if (await startNewSession(true) !== true) throw reason;
+        addNotice({ title: "Last conversation is gone", message: "It was removed, so a new chat was opened." });
+
+        return false;
+      }
+
+      if (session.cwdExists !== false) throw reason;
 
       if (transport() === owner) await openDirlessSession(session, "select");
 
