@@ -5,11 +5,11 @@ const { DatabaseSync } = require('node:sqlite');
 function open(root) {
   fs.mkdirSync(root, { recursive: true, mode: 0o700 });
   const file = path.join(root, 'sessions.sqlite');
-  fs.closeSync(fs.openSync(file, fs.constants.O_CREAT | fs.constants.O_RDWR | fs.constants.O_NOFOLLOW, 0o600));
-  fs.chmodSync(file, 0o600);
+  if (fs.lstatSync(file, { throwIfNoEntry: false })?.isSymbolicLink()) throw new Error('Database path must not be a symbolic link');
   const db = new DatabaseSync(file);
 
   try {
+    fs.chmodSync(file, 0o600);
     db.exec(`PRAGMA busy_timeout=10000; PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL;
       CREATE TABLE IF NOT EXISTS application_settings (name TEXT PRIMARY KEY, body BLOB);`);
 

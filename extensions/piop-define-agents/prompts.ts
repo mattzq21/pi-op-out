@@ -47,11 +47,11 @@ const DEFINITIONS = "agent-definitions.json";
 function openDatabase(root: string) {
   const path = join(root, "sessions.sqlite");
   fs.mkdirSync(root, { recursive: true, mode: 0o700 });
-  fs.closeSync(fs.openSync(path, fs.constants.O_CREAT | fs.constants.O_RDWR | fs.constants.O_NOFOLLOW, 0o600));
-  fs.chmodSync(path, 0o600);
+  if (fs.lstatSync(path, { throwIfNoEntry: false })?.isSymbolicLink()) throw new Error("Database path must not be a symbolic link");
   const db = new DatabaseSync(path);
 
   try {
+    fs.chmodSync(path, 0o600);
     db.exec(`PRAGMA busy_timeout=10000; PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL;
       CREATE TABLE IF NOT EXISTS application_settings (name TEXT PRIMARY KEY, body BLOB);
       CREATE TABLE IF NOT EXISTS agent_prompt_snapshots (digest TEXT PRIMARY KEY, contents TEXT);`);
