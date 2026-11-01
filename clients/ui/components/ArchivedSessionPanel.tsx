@@ -8,6 +8,10 @@ import { IconButton } from "./IconButton";
 import type { StorageReport } from "../types";
 import { formatDateTime } from "../lib/dateTime";
 
+/** How many of the last archived chats of this machine show before the rest. */
+const FIRST_ARCHIVES = 5;
+const FIRST_LOCAL = 1, ALL_LOCAL = 2, ALL_HOSTS = 3;
+
 export function ArchivedSessionPanel() {
   const [report, setReport] = createSignal<StorageReport>();
   const [loading, setLoading] = createSignal(false);
@@ -20,15 +24,22 @@ export function ArchivedSessionPanel() {
   const refresh = async () => {
     const generation = ++refreshGeneration.current;
     setLoading(true); setError(undefined);
-    let complete = false;
-    // Other machines can answer slowly, so show the archive of this machine first.
-    const local = loadStorageReport("local").then(next => {
-      if (!complete && generation === refreshGeneration.current) setReport(current => ({ hosts: [...next.hosts, ...(current?.hosts.filter(host => host.hostId !== "local") ?? [])] }));
-    });
+    // Each stage holds more of the list than the one before; a slower earlier stage must not replace a later one.
+    let shown = 0;
 
-    try { const next = await loadStorageReport(); complete = true; if (generation === refreshGeneration.current) setReport(next); }
+    const show = (stage: number, next: StorageReport) => {
+      if (generation !== refreshGeneration.current || stage <= shown) return;
+      shown = stage;
+      setReport(current => stage === ALL_HOSTS ? next : { hosts: [...next.hosts, ...(current?.hosts.filter(host => host.hostId !== "local") ?? [])] });
+    };
+
+    // The user looks for the last archived chats most, so show them first, then all of this machine. Other machines can answer slowly.
+    const first = report()?.hosts.some(host => host.hostId === "local") ? undefined : loadStorageReport("local", true, FIRST_ARCHIVES).then(next => show(FIRST_LOCAL, next));
+    const local = loadStorageReport("local", true).then(next => show(ALL_LOCAL, next));
+
+    try { show(ALL_HOSTS, await loadStorageReport(undefined, true)); }
     catch (reason) { if (generation === refreshGeneration.current) setError((reason instanceof Error ? reason.message : String(reason))); }
-    finally { complete = true; await local.catch(() => undefined); if (generation === refreshGeneration.current) setLoading(false); }
+    finally { shown = ALL_HOSTS; await Promise.allSettled([first, local]); if (generation === refreshGeneration.current) setLoading(false); }
   };
 
   createDependencyEffect(() => { void refresh(); }, () => []);

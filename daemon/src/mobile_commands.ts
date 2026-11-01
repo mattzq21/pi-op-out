@@ -26,7 +26,7 @@ import { isUsageProvider } from './provider_usage';
 
 const RESTARTING = 'The daemon is restarting. Reconnect before retrying.';
 
-type Kind = 'string' | 'string?' | 'number' | 'boolean' | 'boolean?' | 'strings' | 'strings?' | 'any';
+type Kind = 'string' | 'string?' | 'number' | 'number?' | 'boolean' | 'boolean?' | 'strings' | 'strings?' | 'any';
 
 function describe(value: unknown): string {
   if (value === null || value === undefined) return 'null';
@@ -84,7 +84,7 @@ async function dispatchPeerRequest(app: App, owner: string, command: string, arg
   if (typeof args?.hostId === 'string' && args.hostId !== 'local') throw new Error("Peer connections expose only this daemon's local host");
   if (command === 'save_app_settings' || command === 'change_session_groups' || command === 'load_session_groups') throw new Error('Configure this host through its own Piop settings');
   if (command === 'list_sessions') return peers.localSessions(app);
-  if (command === 'storage_report') return { hosts: [await archives.inspectStorage()] };
+  if (command === 'storage_report') return { hosts: [await archives.inspectStorage(argument(args, 'archivesOnly', 'boolean?') === true)] };
   return dispatchLocal(app, owner, command, args);
 }
 
@@ -149,7 +149,7 @@ const COMMANDS: Record<string, Handler> = {
   load_host_settings: (app, _owner, args) => loadSettings(app, args),
   load_host_settings_change: app => loadSettingsChange(app),
   save_host_settings: (app, _owner, args) => saveHostSettings(app, args),
-  host_storage_report: async () => ({ hosts: [await archives.inspectStorage()] }),
+  host_storage_report: async (_app, _owner, args) => ({ hosts: [await archives.inspectStorage(argument(args, 'archivesOnly', 'boolean?') === true, argument(args, 'archivesLimit', 'number?'))] }),
   submission_outcome: async (app, _owner, args) => {
     const connection = await daemon.connect(app, app.pi, app.broker, await loadAppSettings(app), 'local');
     return connection.request({ type: 'submission_outcome', submissionId: argument(args, 'submissionId', 'string') });

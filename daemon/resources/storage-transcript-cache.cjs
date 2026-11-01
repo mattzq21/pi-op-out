@@ -62,11 +62,12 @@ async function read(db, file, inspect) {
   return value;
 }
 
+/** Runs operation with a cached transcript reader and the open database of the profile at root, which operation may also use. */
 async function withCache(root, operation) {
-  let db;
+  const db = open(root);
 
-  try { return await operation((file, inspect) => read(db ??= open(root), file, inspect)); }
-  finally { db?.close(); }
+  try { return await operation((file, inspect) => read(db, file, inspect), db); }
+  finally { db.close(); }
 }
 
 module.exports = { withCache };
