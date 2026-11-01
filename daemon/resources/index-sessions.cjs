@@ -15,8 +15,14 @@ function text(message) {
   return Check(Type.String(), message.content) ? message.content : Array.isArray(message.content) ? message.content.filter(p => p.type === 'text').map(p => p.text || '').join('\n') : '';
 }
 
+const escapeRegExp = value => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
 function userPrompt(content) {
-  return content.replace(/^(?:\s*<skill\b[^>]*>[\s\S]*?<\/skill>\s*)+/, blocks => [...blocks.matchAll(/<skill\b[^>]*\bname="([^"]*)"/g)].map(match => `$${match[1]} `).join('')).trim();
+  const blocks = content.match(/^(?:\s*<skill\b[^>]*>[\s\S]*?<\/skill>\s*)+/)?.[0] ?? '';
+  const rest = content.slice(blocks.length).trim();
+  const missing = [...blocks.matchAll(/<skill\b[^>]*\bname="([^"]*)"/g)].map(match => match[1]).filter(name => !new RegExp(`(^|\\s)(\\$|/skill:)${escapeRegExp(name)}(?=\\s|$)`, 'i').test(rest));
+
+  return [...missing.map(name => `$${name}`), rest].filter(Boolean).join(' ');
 }
 
 function timestamp(value) {

@@ -317,3 +317,13 @@ test('recovered queued-input chats keep their names in SQL when reopened', async
     assert.equal(sessionNames.sessionName(file, id), 'Renamed recovered chat');
   } finally { db.close(); }
 });
+
+test('a skill prompt that names its skill gives the session name one skill reference', async t => {
+  const f = await fixture(t);
+  const bundle = join(f.home, 'index.mjs');
+  await build({ stdin: { contents: 'export { indexSessions } from "./daemon/resources/index-sessions.cjs";', resolveDir: process.cwd() }, outfile: bundle, bundle: true, platform: 'node', format: 'esm', target: 'node22', logLevel: 'silent', plugins: [storageSchemaImports()], banner: { js: "import { createRequire } from 'node:module'; const require = createRequire(import.meta.url);" } });
+  const { indexSessions } = await import(pathToFileURL(bundle));
+  const skill = '<skill name="statechart" location="/skills/statechart/SKILL.md">\nReferences are relative to /skills/statechart.\n\nbody\n</skill>';
+  f.manager.appendMessage({ role: 'user', content: `${skill}\n\n$statechart draw the simplest example.`, timestamp: 1 });
+  assert.equal((await indexSessions({ paths: [f.file] })).summaries[0].name, '$statechart draw the simplest example.');
+});
