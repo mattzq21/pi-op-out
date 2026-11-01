@@ -167,11 +167,37 @@ async function registeredSessions(root, warnings) {
   }
 }
 
-/** Reports storage use and archived conversations of the profile at request.profile. */
+/** Reads only the archived conversations, without the disk scan of the full report. */
+async function archivedConversations(piopRoot, profile) {
+  const warnings = [];
+  const archived = await registeredSessions(path.join(profile, 'archived'), warnings);
+  const archives = [];
+
+  await require('./storage-transcript-cache.cjs').withCache(piopRoot, async read => {
+    for (const file of archived.files) {
+      try {
+        const details = await inspectSession(file, true, read);
+
+        if (!details.readable) warnings.push(`${file}: session provenance is incomplete`);
+        archives.push(details.archive);
+      } catch (error) {
+        warnings.push(`${file}: conversation provenance unavailable: ${error.message}`);
+        await collectUnreadableArchive(file, archives);
+      }
+    }
+  });
+  archives.sort((left, right) => right.modifiedAt - left.modifiedAt);
+
+  return { categories: [], archives, warnings: [...new Set(warnings)] };
+}
+
+/** Reports storage use and archived conversations of the profile at request.profile. With request.archivesOnly, reports only the archived conversations. */
 async function storageInventory(request) {
   if (!Check(Type.String({ minLength: 1 }), request.profile) || !path.isAbsolute(request.profile)) throw new Error('Invalid profile directory');
   const piopRoot = request.profile;
   const profile = await fs.realpath(piopRoot).catch(() => piopRoot);
+
+  if (request.archivesOnly === true) return archivedConversations(piopRoot, profile);
   const discovery = await discoverRoots(profile);
   discovery.sessions = new Map();
   discovery.headers = new Map();

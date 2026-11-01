@@ -363,9 +363,9 @@ function register(state: PeerRuntime, kind: string, id: string, route: Route): v
   state.routes.set(key, route);
 }
 
-async function routeStorageReport(app: App): Promise<any> {
+async function routeStorageReport(app: App, archivesOnly: boolean): Promise<any> {
   let local: any;
-  try { local = await inspectStorage(); } catch (error: any) { local = failedStorage('local', 'Local', error?.message ?? String(error)); }
+  try { local = await inspectStorage(archivesOnly); } catch (error: any) { local = failedStorage('local', 'Local', error?.message ?? String(error)); }
   const hosts: any[] = [local];
   const seen = new Set([daemonEndpoint.identity()]);
   for (const host of (await loadAppSettings(app)).hosts.filter(host => host.enabled)) {
@@ -373,7 +373,7 @@ async function routeStorageReport(app: App): Promise<any> {
       const connection = await connect(app, host.id);
       if (seen.has(connection.daemonId)) continue;
       seen.add(connection.daemonId);
-      const report = await connection.invoke('storage_report', {});
+      const report = await connection.invoke('storage_report', { archivesOnly });
       const entry = Array.isArray(report?.hosts) ? report.hosts[0] : undefined;
       if (!entry) throw new Error('Peer returned no local storage report');
       hosts.push({ ...entry, hostId: host.id, hostName: host.name });
@@ -414,7 +414,7 @@ export async function route(app: App, owner: string, command: string, rawArgs: a
   const args = rawArgs && typeof rawArgs === 'object' && !Array.isArray(rawArgs) ? { ...rawArgs } : {};
   if (command === 'provider_auth' && typeof args.request?.flowId === 'string') args.flowId = args.request.flowId;
   const state = app.peers;
-  if (command === 'storage_report') return routeStorageReport(app);
+  if (command === 'storage_report') return routeStorageReport(app, args.archivesOnly === true);
   if (command === 'list_sessions') return routeListSessions(app);
   const existing = existingRoute(state, owner, args);
   const explicit = typeof args.hostId === 'string' && args.hostId !== 'local' ? args.hostId : undefined;

@@ -22,11 +22,11 @@ export function ArchivedSessionPanel() {
     setLoading(true); setError(undefined);
     let complete = false;
     // Other machines can answer slowly, so show the archive of this machine first.
-    const local = loadStorageReport("local").then(next => {
+    const local = loadStorageReport("local", true).then(next => {
       if (!complete && generation === refreshGeneration.current) setReport(current => ({ hosts: [...next.hosts, ...(current?.hosts.filter(host => host.hostId !== "local") ?? [])] }));
     });
 
-    try { const next = await loadStorageReport(); complete = true; if (generation === refreshGeneration.current) setReport(next); }
+    try { const next = await loadStorageReport(undefined, true); complete = true; if (generation === refreshGeneration.current) setReport(next); }
     catch (reason) { if (generation === refreshGeneration.current) setError((reason instanceof Error ? reason.message : String(reason))); }
     finally { complete = true; await local.catch(() => undefined); if (generation === refreshGeneration.current) setLoading(false); }
   };
