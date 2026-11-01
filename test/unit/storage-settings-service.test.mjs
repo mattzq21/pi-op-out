@@ -1,12 +1,11 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { execFileSync } from 'node:child_process';
-import { fileURLToPath } from 'node:url';
 import { appendFileSync, chmodSync, statSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { installDom, renderComponent, act, untilDom } from '../dom.mjs';
 import { mockIPC, mockWindows, clearMocks } from '@tauri-apps/api/mocks';
 import { daemonClient } from '../daemon-client.mjs';
+import { chatPublisher } from '../chat-publisher-fixture.mjs';
 import { trackStorage } from '../storage-idle.mjs';
 import { StorageSettings } from '../../clients/ui/components/StorageSettings.tsx';
 
@@ -22,14 +21,12 @@ async function storagePanel(t, offline = false, archiveNames = [], options = {})
   const temporary = [];
   const settle = async () => { do { await storage.settled(); await act(() => Promise.allSettled([...requests])); } while (requests.size); };
   t.after(async () => { releaseReply?.(); heldReply.resolve(); await settle(); await view?.unmount(); await settle(); for (const path of temporary) await daemon.invoke('remove_temporary_chat', { path, hostId: 'local' }); storage.restore(); clearMocks(); dom.restore(); });
+  const publish = archiveNames.length ? chatPublisher(t) : undefined;
   daemon = await daemonClient(t, undefined, { remotes: options.remotes });
   for (const archive of archiveNames) {
     const { name, hostId } = typeof archive === 'string' ? { name: archive, hostId: 'local' } : archive;
     const home = await daemon.invoke('home_directory', { hostId });
-    const chat = JSON.parse(execFileSync('node', [fileURLToPath(new URL('../fixtures/publish-chat.mjs', import.meta.url))], {
-      encoding: 'utf8', timeout: 30000,
-      input: JSON.stringify({ home, content: JSON.stringify({ type: 'message', id: 'question', parentId: null, message: { role: 'user', content: name } }) + '\n' }),
-    }));
+    const chat = await publish({ home, content: JSON.stringify({ type: 'message', id: 'question', parentId: null, message: { role: 'user', content: name } }) + '\n' });
     await daemon.invoke('archive_session', { hostId, sessionPath: chat.path, terminalIds: [], clientId: 'storage-ui-test' });
   }
   if (offline) await daemon.disconnect();
