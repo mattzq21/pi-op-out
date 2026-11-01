@@ -31,6 +31,20 @@ process.exit(73);
   assert.equal(existsSync(builds), false, 'invalid selections must not start builds');
 });
 
+test('different paths to the same daemon test are rejected before builds start', async t => {
+  const directory = await mkdtemp(join(tmpdir(), 'piop-daemon-duplicate-'));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  await writeFile(join(directory, 'case.test.ts'), '');
+  await writeFile(join(directory, 'bun'), '#!/bin/sh\nexit 73\n', { mode: 0o755 });
+  await assert.rejects(execute(process.execPath,
+    [fileURLToPath(new URL('../../scripts/test-daemon.mjs', import.meta.url)),
+      './case.test.ts', join(directory, 'case.test.ts')],
+    { cwd: directory, env: { ...process.env, PATH: directory + ':' + process.env.PATH } }), error => {
+    assert.match(error.stderr, /Each test file must be listed once/);
+    return error.code === 1;
+  });
+});
+
 async function fixture(t, failing, discover) {
   const directory = await mkdtemp(join(tmpdir(), 'piop-daemon-runner-'));
   t.after(() => rm(directory, { recursive: true, force: true }));

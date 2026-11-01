@@ -1,7 +1,7 @@
 import { execFile, spawn } from 'node:child_process';
 import { mkdtemp, readdir, rm, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import { parseArgs, promisify } from 'node:util';
 import { daemonTestTimings } from './daemon-test-timings.mjs';
 
@@ -14,7 +14,7 @@ const jobs = Number(values.jobs);
 if (!Number.isSafeInteger(jobs) || jobs < 1 || jobs > 16) throw new Error('--jobs must be a whole number from 1 to 16');
 const files = positionals.length ? positionals : (await readdir('test/daemon', { recursive: true })).filter(file => file.endsWith('.test.ts')).sort().map(file => 'test/daemon/' + file);
 if (!files.length) throw new Error('No daemon test files found');
-if (new Set(files).size !== files.length) throw new Error('Each test file must be listed once');
+if (new Set(files.map(file => resolve(file))).size !== files.length) throw new Error('Each test file must be listed once');
 await Promise.all(files.map(file => stat(file)));
 
 async function main() {
