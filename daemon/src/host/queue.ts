@@ -1,5 +1,6 @@
 import { CancelScope, clone, flag, kind, text } from './json';
-import { Mutex, errorText } from '../util/sync';
+import { errorText } from '../util/sync';
+import { QueueGate } from './queue_gate';
 import type { QueueStorage } from './queue_storage';
 import { QueueState } from './queue_state';
 import { QueueRecord, track } from './queue_record';
@@ -17,7 +18,8 @@ export class SessionQueue {
   private delivery: QueueDelivery;
   private closed = false;
   private operations = new Set<Promise<unknown>>();
-  readonly gate = new Mutex();
+  readonly gate = new QueueGate();
+  private stops = 0;
 
   constructor(executor: Execution, pending: any[] = [], storage: QueueStorage | null = null, held = false, goal = new QueueGoal()) {
     this.s.held = held;
@@ -79,7 +81,7 @@ export class SessionQueue {
   async runtimeEvent(name: string, data: any): Promise<any> {
     if (name === 'queue_outcome') return runEnded(this.delivery, data?.outcome);
     if (name === 'queue_tool') return queueTool(this.delivery, data?.tool, data?.params);
-    const release = await this.gate.lock();
+    const release = await this.gate.runtimeLock();
     try {
       if (name === 'queue_take') return await takeNext(this.delivery, data.behavior, data.holding);
       if (name === 'queue_release') return await releaseTaken(this.delivery, data.ids);
@@ -124,8 +126,10 @@ export class SessionQueue {
 
   private async abort(command: any, assertOwner: () => void): Promise<{ ok: true; value: any } | { ok: false; error: unknown }> {
     const scope = new CancelScope();
+    this.stops += 1;
+    this.s.stopping = true;
     const operation = (async () => {
-      const [cancelled, gate] = await Promise.allSettled([this.delivery.execute({ type: 'abort' }), this.gate.lock()]);
+      const [cancelled, gate] = await Promise.allSettled([this.delivery.execute({ type: 'abort' }), this.gate.lockLending()]);
       const release = gate.status === 'fulfilled' ? gate.value : undefined;
       if (release) scope.add(release);
       try {
@@ -137,7 +141,11 @@ export class SessionQueue {
       } finally {
         if (release) { scope.remove(release); release(); }
       }
-    })();
+    })().finally(() => {
+      if (--this.stops) return;
+      this.s.stopping = false;
+      this.delivery.offer();
+    });
     let timer: NodeJS.Timeout | undefined;
     const timeout = new Promise<never>((_, reject) => { timer = setTimeout(() => { scope.cancel(); reject(new Error(TIMEOUT)); }, 5000); });
     track(this.operations, operation);

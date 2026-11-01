@@ -21,6 +21,7 @@ export class QueueState {
   goals = new QueueGoal();
   held = false;
   stopped = false;
+  stopping = false;
 
   queuedGoal() { return this.goals.live(); }
 
@@ -36,10 +37,10 @@ export class QueueState {
   hasUnused(): boolean { return this.pending.some(item => !flag(item, 'used')); }
 
   available(item: any): boolean {
-    return !this.held && !flag(item, 'taken') && !flag(item, 'afterGoal') && !flag(item, 'retry') && !this.sending.has(text(item, 'id'));
+    return !this.held && !this.stopping && !flag(item, 'taken') && !flag(item, 'afterGoal') && !flag(item, 'retry') && !this.sending.has(text(item, 'id'));
   }
 
-  goalAvailable(): boolean { return Boolean(this.goals.live()) && !this.held && !this.goals.waitingForInput; }
+  goalAvailable(): boolean { return Boolean(this.goals.live()) && !this.held && !this.stopping && !this.goals.waitingForInput; }
 
   offer(): QueueOffer {
     const offer = { steer: 0, followUp: 0, goal: this.goalAvailable() ? 1 : 0, tools: { [GOAL_TOOL]: Boolean(this.goals.live()) } };

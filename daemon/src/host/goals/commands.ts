@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { text } from '../json';
-import type { Mutex } from '../../util/sync';
+import type { QueueGate } from '../queue_gate';
 import type { QueueDelivery } from '../queue_delivery';
 import { materializeGoal } from './files';
 import { goalChangedPrompt, goalSetPrompt } from './prompts';
@@ -30,7 +30,7 @@ export function goalSubmission(command: any): boolean {
   return value !== undefined && value !== '' && !ACTIONS.includes(value);
 }
 
-export async function goalCommand(queue: QueueDelivery, gate: Mutex, command: any, assertOwner: () => void, enqueue: (item: any) => Promise<any>): Promise<any> {
+export async function goalCommand(queue: QueueDelivery, gate: QueueGate, command: any, assertOwner: () => void, enqueue: (item: any) => Promise<any>): Promise<any> {
   const value = goalArgument(text(command, 'message')) ?? '';
   if (!value) throw new Error('Write an objective or an action after /goal. Usage: ' + USAGE);
   const goals = queue.state.goals;

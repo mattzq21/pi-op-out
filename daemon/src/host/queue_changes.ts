@@ -1,13 +1,13 @@
 import { randomUUID } from 'node:crypto';
 import { clone, flag, jsonEqual, text } from './json';
-import type { Mutex } from '../util/sync';
+import type { QueueGate } from './queue_gate';
 import { GOAL_ENTRY_ID, type QueueState } from './queue_state';
 import { piImages, type QueueDelivery } from './queue_delivery';
 import { commandName } from '../plugin_contributions';
 import { queuedCommand, withImageIds } from './queue_submission';
 import { activateGoal, goalArgument, goalSubmission, prepareGoal } from './goals/commands';
 
-export async function changePending(queue: QueueDelivery, gate: Mutex, id: string, action: any, assertOwner: () => void): Promise<any> {
+export async function changePending(queue: QueueDelivery, gate: QueueGate, id: string, action: any, assertOwner: () => void): Promise<any> {
   const release = await gate.lock();
   try {
     assertOwner();
