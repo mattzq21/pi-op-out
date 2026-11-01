@@ -103,7 +103,8 @@ test('a new worktree draft sends its branch choice once and uses the returned fo
   assert.equal(commands('start_pi')[1].args.cwd, '/worktrees/chat');
 });
 
-test('a rejected stop can reconnect and receive conversation events', async () => {
+test('a rejected stop can reconnect and receive conversation events', async t => {
+  const warn = t.mock.method(console, 'warn');
   const client = transport();
   await client.connect();
   responses.set('stop_pi', new Error('Disconnected from the Piop daemon (connection closed); the command may have completed.'));
@@ -115,6 +116,7 @@ test('a rejected stop can reconnect and receive conversation events', async () =
   client.subscribe(event => events.push(event));
   await emit('pi://event', { runtimeId: commands('start_pi').at(-1).args.runtimeId, event: { type: 'agent_start' } });
   assert.ok(events.some(event => event.type === 'agent_start'));
+  assert.equal(warn.mock.callCount(), 0, 'reconnecting must not call removed event handlers');
 });
 
 
