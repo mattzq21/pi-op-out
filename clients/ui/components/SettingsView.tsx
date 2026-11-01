@@ -554,7 +554,7 @@ export function SettingsView(props: SettingsViewProps) {
           </div></>);
         };
 
-        return (formValidation().visibleSection === "agents" && <SettingsSection title="Agents" description="Choose defaults, instructions, and the resources each agent may see." headerAction={<div class="agent-section-actions"><button class="secondary-button" disabled={!agentConfig() || !agent() || saving()} onClick={cloneAgent}><Copy size={15} />Clone</button><button class="secondary-button" disabled={!agentConfig() || saving()} onClick={addAgent}><CirclePlus size={15} />Add agent</button></div>}>
+        return (formValidation().visibleSection === "agents" && <SettingsSection title="Agents" headerAction={<div class="agent-section-actions"><button class="secondary-button" disabled={!agentConfig() || !agent() || saving()} onClick={cloneAgent}><Copy size={15} />Clone</button><button class="secondary-button" disabled={!agentConfig() || saving()} onClick={addAgent}><CirclePlus size={15} />Add agent</button></div>}>
           {renderAgentEditor()}
         </SettingsSection>);
       };
