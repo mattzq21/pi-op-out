@@ -37,7 +37,7 @@ for (const failures of [0, 1, 2]) test('cleanup with ' + failures + ' failures',
   const order = [];
   const server = createServer();
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
-  if (failures > 0) scope.after(async () => { order.push('first'); await Promise.resolve(); throw new Error('first cleanup failure'); });
+  if (failures > 0) scope.after(async () => { await Promise.resolve(); order.push('first'); throw new Error('first cleanup failure'); });
   if (failures === 2) scope.after(() => { order.push('second'); throw new Error('second cleanup failure'); });
   scope.after(async () => {
     await new Promise((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
