@@ -507,7 +507,7 @@ describe('settings editor', () => {
 
   test('a clone copies the agent under a free name in the same scope, and is not the default', async () => {
     await render({ agentConfig: { agents: [profile('general', { isDefault: true, tools: ['read'] }), profile('general-copy')] } }); await section('Agents');
-    await click(control('Clone general'));
+    await click(button('Clone'));
     assert.equal(control('Agent name').value, 'general-copy-2');
     await click(save());
     const clone = saves[0][1].agents[2];
