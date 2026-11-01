@@ -57,6 +57,7 @@ test('reading a binary image returns a file with its exact original bytes', asyn
   const path = join(directory, 'scan.webp');
   await writeFile(path, Buffer.from([0x52, 0x49, 0x46, 0x46, 0x00, 0xff, 0x80, 0x0a, 0xc3]));
   const file = await readDroppedFile(path);
+  assert.equal(file.type, 'image/webp');
   assert.deepEqual([...new Uint8Array(await file.arrayBuffer())], [0x52, 0x49, 0x46, 0x46, 0x00, 0xff, 0x80, 0x0a, 0xc3]);
 });
 
