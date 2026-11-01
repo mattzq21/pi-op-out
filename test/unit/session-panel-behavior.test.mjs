@@ -80,9 +80,6 @@ async function fixture(t, props, group = 'repo', native, beforeMount, options = 
       requests.delete(request);
     }
   }, { shouldMockEvents: true });
-  const sdkInvoke = window.__TAURI_INTERNALS__.invoke;
-  // The installed Tauri mock expects id, but its event API passes eventId.
-  window.__TAURI_INTERNALS__.invoke = (command, args, options) => sdkInvoke(command, command === 'plugin:event|unlisten' ? { ...args, id: args.eventId } : args, options);
   eventsReady = true;
   await beforeMount?.(daemon);
   props = { query: '', isArchiving: () => false, onQuery: () => {}, onSelect: () => {}, onAction: () => {}, onNewChat: () => {}, ...props };
@@ -272,6 +269,7 @@ test('old browser group records do not replace the current project groups', asyn
 });
 
 test('a reopened panel retains loaded groups offline and refreshes them on its next load', async t => {
+  const warn = t.mock.method(console, 'warn');
   const panel = await fixture(t, { sessions: [session('a', 'Chat 2')] });
   await createGroup(panel, 'Research');
   await panel.service.disconnect();
@@ -286,6 +284,7 @@ test('a reopened panel retains loaded groups offline and refreshes them on its n
   assert.ok(control('Group actions for Updated research'));
   assert.equal(control('Group actions for Research'), null);
   assert.doesNotMatch(document.body.textContent, /connection is not open/i);
+  assert.equal(warn.mock.callCount(), 0, 'reopening must not call removed sidebar handlers');
 });
 
 test('group loading recovers when the panel reopens after reconnection', async t => {
