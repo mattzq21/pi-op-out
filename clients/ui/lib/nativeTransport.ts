@@ -44,10 +44,10 @@ export const openRolloutFile = (path: string, hostId: string) => call("open_roll
 
 export const openExternalUrl = (url: string) => call("open_external_url", { url }, voidResultSchema);
 
-/** With archivesOnly, the report has only the archived conversations, which is much faster to read. */
-export const loadStorageReport = async (hostId?: string, archivesOnly = false) => {
+/** With archivesOnly, the report has only the archived conversations, which is much faster to read. archivesLimit keeps only that many of the last changed ones of one host. */
+export const loadStorageReport = async (hostId?: string, archivesOnly = false, archivesLimit?: number) => {
   if (hostId === undefined) return call("storage_report", { archivesOnly }, storageReportSchema);
-  const report = await call("host_storage_report", { hostId, archivesOnly }, storageReportSchema);
+  const report = await call("host_storage_report", { hostId, archivesOnly, archivesLimit }, storageReportSchema);
 
   return { hosts: report.hosts.map((host) => ({ ...host, hostId })) };
 };

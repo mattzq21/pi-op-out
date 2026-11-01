@@ -152,29 +152,36 @@ async function registeredSessions(root, warnings) {
     });
 
     let itemCount = 0;
+    const modified = new Map();
 
     for (const file of files) {
-      try { if ((await fs.lstat(file)).isFile()) itemCount += 1; }
+      try {
+        const metadata = await fs.lstat(file);
+        modified.set(file, metadata.mtimeMs);
+        if (metadata.isFile()) itemCount += 1;
+      }
       catch (error) { warnings.push(`${file}: conversation file unavailable: ${error.message}`); }
     }
 
-    return { itemCount, files };
+    return { itemCount, files, modified };
   }
   catch (error) {
     warnings.push(`${root}: conversation discovery unavailable: ${error.message}`);
 
-    return { itemCount: 0, files: [] };
+    return { itemCount: 0, files: [], modified: new Map() };
   }
 }
 
-/** Reads only the archived conversations, without the disk scan of the full report. */
-async function archivedConversations(piopRoot, profile) {
+/** Reads only the archived conversations, without the disk scan of the full report. With limit, reads only that many of the last changed ones. */
+async function archivedConversations(piopRoot, profile, limit) {
   const warnings = [];
   const archived = await registeredSessions(path.join(profile, 'archived'), warnings);
   const archives = [];
+  const age = file => archived.modified.get(file) ?? -Infinity;
+  const files = limit === undefined ? archived.files : [...archived.files].sort((left, right) => age(right) - age(left)).slice(0, limit);
 
   await require('./storage-transcript-cache.cjs').withCache(piopRoot, async (read, db) => {
-    for (const file of archived.files) {
+    for (const file of files) {
       try {
         const details = await inspectSession(file, true, read, db);
 
@@ -191,13 +198,17 @@ async function archivedConversations(piopRoot, profile) {
   return { categories: [], archives, warnings: [...new Set(warnings)] };
 }
 
-/** Reports storage use and archived conversations of the profile at request.profile. With request.archivesOnly, reports only the archived conversations. */
+/** Reports storage use and archived conversations of the profile at request.profile. With request.archivesOnly, reports only the archived conversations; with request.archivesLimit too, only that many of the last changed ones. */
 async function storageInventory(request) {
   if (!Check(Type.String({ minLength: 1 }), request.profile) || !path.isAbsolute(request.profile)) throw new Error('Invalid profile directory');
   const piopRoot = request.profile;
   const profile = await fs.realpath(piopRoot).catch(() => piopRoot);
 
-  if (request.archivesOnly === true) return archivedConversations(piopRoot, profile);
+  const limit = request.archivesLimit;
+
+  if (limit !== undefined && !Check(Type.Integer({ minimum: 1 }), limit)) throw new Error('Invalid archive limit');
+
+  if (request.archivesOnly === true) return archivedConversations(piopRoot, profile, limit);
   const discovery = await discoverRoots(profile);
   discovery.sessions = new Map();
   discovery.headers = new Map();

@@ -26,7 +26,7 @@ import { isUsageProvider } from './provider_usage';
 
 const RESTARTING = 'The daemon is restarting. Reconnect before retrying.';
 
-type Kind = 'string' | 'string?' | 'number' | 'boolean' | 'boolean?' | 'strings' | 'strings?' | 'any';
+type Kind = 'string' | 'string?' | 'number' | 'number?' | 'boolean' | 'boolean?' | 'strings' | 'strings?' | 'any';
 
 function describe(value: unknown): string {
   if (value === null || value === undefined) return 'null';
@@ -149,7 +149,7 @@ const COMMANDS: Record<string, Handler> = {
   load_host_settings: (app, _owner, args) => loadSettings(app, args),
   load_host_settings_change: app => loadSettingsChange(app),
   save_host_settings: (app, _owner, args) => saveHostSettings(app, args),
-  host_storage_report: async (_app, _owner, args) => ({ hosts: [await archives.inspectStorage(argument(args, 'archivesOnly', 'boolean?') === true)] }),
+  host_storage_report: async (_app, _owner, args) => ({ hosts: [await archives.inspectStorage(argument(args, 'archivesOnly', 'boolean?') === true, argument(args, 'archivesLimit', 'number?'))] }),
   submission_outcome: async (app, _owner, args) => {
     const connection = await daemon.connect(app, app.pi, app.broker, await loadAppSettings(app), 'local');
     return connection.request({ type: 'submission_outcome', submissionId: argument(args, 'submissionId', 'string') });

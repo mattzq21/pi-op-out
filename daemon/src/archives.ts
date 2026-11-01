@@ -25,17 +25,20 @@ export interface HostStorage { hostId: string; hostName: string; categories: any
 
 type Inventory = { categories: any[]; archives: any[]; warnings: string[] };
 
-const storageInventory = hostOperation<{ profile: string; archivesOnly: boolean }, Inventory>('storage-inventory', 'general', STORAGE_TIMEOUT, (value: any) => {
+const storageInventory = hostOperation<{ profile: string; archivesOnly: boolean; archivesLimit?: number }, Inventory>('storage-inventory', 'general', STORAGE_TIMEOUT, (value: any) => {
   if (!Array.isArray(value?.categories)) throw new Error('missing field `categories`');
   if (!Array.isArray(value?.archives)) throw new Error('missing field `archives`');
   return { categories: value.categories.map(normalizeCategory), archives: value.archives.map(normalizeArchive), warnings: Array.isArray(value.warnings) ? value.warnings : [] };
 });
 
-/** Reads the storage report of this machine. With archivesOnly, it reads only the archived conversations, which is fast. Other machines report through their Piop daemon. */
-export async function inspectStorage(archivesOnly = false): Promise<HostStorage> {
+/**
+ * Reads the storage report of this machine. With archivesOnly, it reads only the archived conversations, which is fast;
+ * with archivesLimit too, only that many of the last changed ones. Other machines report through their Piop daemon.
+ */
+export async function inspectStorage(archivesOnly = false, archivesLimit?: number): Promise<HostStorage> {
   await restoreRecovery.recover(profileRoot());
   let inventory: Inventory;
-  try { inventory = await runHostOperation(storageInventory, { profile: profileRoot(), archivesOnly }); }
+  try { inventory = await runHostOperation(storageInventory, { profile: profileRoot(), archivesOnly, archivesLimit }); }
   catch (error: any) { throw new Error(`Could not inspect storage on Local: ${error?.message ?? error}`); }
   return { hostId: 'local', hostName: 'Local', ...inventory, warnings: [...inventory.warnings, ...chatWorktrees.pendingWarnings()] };
 }
