@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, expect, test } from 'bun:test';
-import { mkdirSync, readdirSync, readFileSync, realpathSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readdirSync, readFileSync, realpathSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
-import { daemonExecutable, fakeProgram, refreshedUsage, remoteMachine, startDaemon, temporaryDirectory, useRemotes, type Client, type RemoteMachine, type TestDaemon } from './harness';
+import { addProviderLogin, daemonExecutable, fakeProgram, refreshedUsage, remoteMachine, startDaemon, temporaryDirectory, useRemotes, type Client, type RemoteMachine, type TestDaemon } from './harness';
 
 let daemon: TestDaemon;
 
@@ -225,7 +225,18 @@ function codexAnswers(rateLimits: string, initialize = '"result":{}'): void {
   writeFileSync(join(directory, 'rate-limits'), rateLimits);
 }
 
+test('Codex usage is absent while OpenAI Codex is not added to Pi, and goes when its login goes', async () => {
+  fakeProgram(daemon.bin, 'codex', FAKE_CODEX);
+  codexAnswers('"result":' + JSON.stringify({ rateLimits: { primary: { usedPercent: 10 } } }));
+  expect(await daemon.invoke('provider_usage', { refresh: true, provider: 'codex' })).not.toHaveProperty('codex');
+  addProviderLogin(daemon.home, 'openai-codex', 'oauth');
+  expect((await refreshedUsage(daemon, 'codex')).usage).toEqual({ remainingPercent: 90 });
+  rmSync(join(daemon.home, '.piop/auth.json'));
+  expect(await daemon.invoke('provider_usage', { refresh: true, provider: 'codex' })).not.toHaveProperty('codex');
+});
+
 test('Codex usage reports the most used window of the codex limit and clamps the remaining percent', async () => {
+  addProviderLogin(daemon.home, 'openai-codex', 'oauth');
   fakeProgram(daemon.bin, 'codex', FAKE_CODEX);
   codexAnswers('"result":' + JSON.stringify({ rateLimitsByLimitId: { codex: { primary: { usedPercent: 12, resetsAt: 100 }, secondary: { usedPercent: 80.4, resetsAt: 200 } } }, rateLimits: { primary: { usedPercent: 99 } } }));
   expect((await refreshedUsage(daemon, 'codex')).usage).toEqual({ remainingPercent: 20, resetAt: 200 });

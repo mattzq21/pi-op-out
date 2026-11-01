@@ -3,9 +3,12 @@ import { anthropicUsage } from './provider_anthropic';
 import { codexUsage } from './provider_codex';
 import { opencodeGoUsage } from './provider_opencode';
 
-const SOURCES = { codex: codexUsage, anthropic: anthropicUsage, opencodeGo: opencodeGoUsage };
+const SOURCES: Record<'codex' | 'anthropic' | 'opencodeGo', UsageSource> = { codex: codexUsage, anthropic: anthropicUsage, opencodeGo: opencodeGoUsage };
 export type Provider = keyof typeof SOURCES;
 export const isUsageProvider = (value: string): value is Provider => Object.hasOwn(SOURCES, value);
+
+/** A source gives undefined when its provider is not added to Pi; such a provider has no entry. */
+export type UsageSource = () => Promise<unknown>;
 
 /** The last usage a provider reported, if any. error: why the latest refresh failed, so the usage is stale. */
 export interface ProviderUsage { usage?: unknown; error?: string }
@@ -38,9 +41,10 @@ export class UsageRuntime {
 
   snapshot(): UsageSnapshot { return structuredClone(this.state); }
 
-  async refresh(app: App, only?: Provider): Promise<UsageSnapshot> {
+  /** all: read every provider, also one read recently, such as after a provider login changes. */
+  async refresh(app: App, only?: Provider, all = false): Promise<UsageSnapshot> {
     const now = Date.now();
-    const recent = (provider: Provider) => !this.running.has(provider) && now - (this.readAt.get(provider) ?? -Infinity) < MIN_GAP_MS;
+    const recent = (provider: Provider) => !all && !this.running.has(provider) && now - (this.readAt.get(provider) ?? -Infinity) < MIN_GAP_MS;
     const providers = only ? [only] : (Object.keys(SOURCES) as Provider[]).filter(provider => !recent(provider));
     await Promise.all(providers.map(provider => this.refreshProvider(app, provider)));
     return this.snapshot();
@@ -51,7 +55,7 @@ export class UsageRuntime {
     if (current) return current;
     this.readAt.set(provider, Date.now());
     const work = SOURCES[provider]().then(
-      usage => { this.failures.delete(provider); this.update(app, provider, { usage }); },
+      usage => { this.failures.delete(provider); this.update(app, provider, usage === undefined ? undefined : { usage }); },
       error => {
         const message = error instanceof Error ? error.message : String(error);
         if (this.failures.get(provider) !== message) console.error('Usage of ' + provider + ' could not refresh: ' + message);
@@ -64,9 +68,9 @@ export class UsageRuntime {
     return work;
   }
 
-  private update(app: App, provider: Provider, next: ProviderUsage): void {
+  private update(app: App, provider: Provider, next: ProviderUsage | undefined): void {
     if (JSON.stringify(this.state[provider]) === JSON.stringify(next)) return;
-    this.state[provider] = next;
+    if (next === undefined) delete this.state[provider]; else this.state[provider] = next;
     app.emit(USAGE_CHANGED, this.snapshot());
   }
 }

@@ -29,8 +29,10 @@ export function opencodeGoUsageValues(response: any): OpencodeGoUsage | undefine
   return { rolling, weekly, monthly };
 }
 
-export async function opencodeGoUsage(): Promise<OpencodeGoUsage> {
+/** undefined: OpenCode Go is not added to Pi. */
+export async function opencodeGoUsage(): Promise<OpencodeGoUsage | undefined> {
   const auth = await resolveProviderAuth(piExecutable(), 'opencode-go');
+  if (auth === null) return undefined;
   const apiKey = auth?.apiKey;
   if (typeof apiKey !== 'string' || !apiKey.trim()) throw new Error('OpenCode Go API key is not configured');
   const headers: Record<string, string> = { Authorization: 'Bearer ' + apiKey };

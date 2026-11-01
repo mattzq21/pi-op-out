@@ -1,11 +1,11 @@
 import { afterAll, beforeAll, expect, test } from 'bun:test';
 import { chmodSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { fakeProgram, refreshedUsage, remoteMachine, startDaemon, temporaryDirectory, useRemotes, type TestDaemon } from './harness';
+import { addProviderLogin, fakeProgram, refreshedUsage, remoteMachine, startDaemon, temporaryDirectory, useRemotes, type TestDaemon } from './harness';
 
 let daemon: TestDaemon;
 
-beforeAll(async () => { daemon = await startDaemon(); }, 60_000);
+beforeAll(async () => { daemon = await startDaemon(); addProviderLogin(daemon.home, 'openai-codex', 'oauth'); }, 60_000);
 afterAll(() => daemon?.stop());
 
 /** A fake Codex app server: it answers each request with the saved body for its method and the request's id. */

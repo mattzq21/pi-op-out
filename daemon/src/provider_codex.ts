@@ -1,5 +1,6 @@
 import { spawn } from 'node:child_process';
-import { codexExecutable, homeDir } from './environment';
+import { codexExecutable, homeDir, piExecutable } from './environment';
+import { resolveProviderAuth } from './host/index';
 
 const VERSION = '0.1.0';
 
@@ -22,7 +23,13 @@ export function codexUsageValues(response: any): CodexUsage | undefined {
   return usage;
 }
 
-export function codexUsage(): Promise<CodexUsage> {
+/** undefined: OpenAI Codex is not added to Pi. The usage comes from the Codex app, which has its own login. */
+export async function codexUsage(): Promise<CodexUsage | undefined> {
+  if (await resolveProviderAuth(piExecutable(), 'openai-codex') === null) return undefined;
+  return codexAppUsage();
+}
+
+function codexAppUsage(): Promise<CodexUsage> {
   return new Promise((resolve, reject) => {
     let child;
     try { child = spawn(codexExecutable(), ['app-server'], { cwd: homeDir(), stdio: ['pipe', 'pipe', 'ignore'] }); }
