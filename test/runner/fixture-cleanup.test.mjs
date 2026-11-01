@@ -20,7 +20,7 @@ test('cleanup failure', async t => {
   const scope = cleanupScope(t);
   const server = createServer();
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
-  scope.after(() => { throw new Error('first cleanup failure'); });
+  scope.after(async () => { await Promise.resolve(); throw new Error('first cleanup failure'); });
   ${failures === 2 ? "scope.after(() => { throw new Error('second cleanup failure'); });" : ''}
   scope.after(async () => {
     await new Promise((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
@@ -34,6 +34,7 @@ test('cleanup failure', async t => {
     assert.equal(error.killed, false, 'cleanup must finish without killing the test process');
     assert.equal(error.code, 1, 'cleanup errors must fail the test');
     assert.match(error.stdout, /first cleanup failure/);
+    assert.doesNotMatch(error.stdout, /unhandledRejection|asynchronous activity/);
     if (failures === 2) assert.match(error.stdout, /second cleanup failure/);
     return true;
   });
