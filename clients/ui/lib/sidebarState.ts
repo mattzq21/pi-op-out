@@ -211,6 +211,7 @@ export function createSidebarState(source: Accessor<SessionSummary[]>, query: Ac
   };
 
   const groupDestination = (id: string) => savedGroupsById().get(id);
+  const groupProject = (id: string) => [id, ...groupAncestors(id)].map(key => savedGroupsById().get(key)).find(group => group?.cwd);
 
   const normalizedQuery = createMemo(() => (query().trim().toLowerCase()));
   const customGroupsByKey = createMemo(() => (new Map(customGroups().map((group) => [group.id, group]))));
@@ -335,7 +336,7 @@ export function createSidebarState(source: Accessor<SessionSummary[]>, query: Ac
 
   return {
     get state() { return storedGroups.state; }, get error() { return storedGroups.error ?? persistence.error(); },
-    sessions, collapsedProjects, customGroupsByKey, parentGroupsByKey, groupDestination,
+    sessions, collapsedProjects, customGroupsByKey, parentGroupsByKey, groupDestination, groupProject,
     normalizedQuery, visualProjectKey, filtered, groups, sidebarEntries, groupedSessions: displayedSessions,
     validateGroupName, saveGroup, editProject, removeGroup, toggleProject, expandProject, moveSession, placeSidebarEntry, projectParent, canMoveProject, moveProject, groupEntries, placeGroupEntry,
   };

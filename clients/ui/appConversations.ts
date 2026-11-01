@@ -518,7 +518,12 @@ export function createAppConversations(preloadChat: () => void, prepareTranscrip
   };
 
   const canStartNewSession = () => !newSessionPending.current && canLeaveSettings();
-  const newSessionTarget = (clearProject: boolean, group?: SessionGroup) => ({ hostId: group ? group.hostId ?? "local" : activeHostIdRef.current, projectCwd: group ? group.cwd ?? undefined : clearProject ? undefined : selectedProjectCwd(activeCwd(), transport().isTemporaryChat()) });
+  const newSessionTarget = (clearProject: boolean, group?: SessionGroup) => {
+    if (!group) return { hostId: activeHostIdRef.current, projectCwd: clearProject ? undefined : selectedProjectCwd(activeCwd(), transport().isTemporaryChat()) };
+    const project = sidebar.groupProject(group.id) ?? group;
+
+    return { hostId: project.hostId ?? "local", projectCwd: project.cwd ?? undefined };
+  };
 
   const createSessionTransport = (cwd: string | undefined, hostId: string) => { const owner = runtimePool().create(cwd ? { cwd, hostId } : { hostId });
 
