@@ -68,6 +68,8 @@ const linkMarkdown = (node: Node) => node instanceof HTMLElement ? node.dataset.
 /**
  * A link with no text node after it leaves the browser no place to show the caret after it: the caret shows on the next line,
  * and a selection of it marks the whole line. So such a link gets a filler text node after it. Its zero-width space is not text.
+ * A selection that starts at the end of the text before a link marks all of the line before the link in WebKit.
+ * So each link also gets a filler before it.
  */
 const FILLER = "\u200B";
 const fillers = new WeakSet<Text>();
@@ -113,9 +115,15 @@ function editKind(event: Event) {
   return event.inputType === "deleteContentBackward" || event.inputType === "deleteContentForward" ? event.inputType : undefined;
 }
 
-/** The segments with a filler after each link that no text follows. */
+/** The segments with a filler before each link and after each link that no text follows. */
 function withFillers(segments: FieldSegment[]): (FieldSegment | { filler: true })[] {
-  return segments.flatMap((segment, index) => "markdown" in segment && !(segments[index + 1] && "text" in segments[index + 1]) ? [segment, { filler: true as const }] : [segment]);
+  return segments.flatMap((segment, index) => {
+    if (!("markdown" in segment)) return [segment];
+    const previous = segments[index - 1];
+    const next = segments[index + 1];
+
+    return [...previous && "markdown" in previous ? [] : [{ filler: true as const }], segment, ...next && "text" in next ? [] : [{ filler: true as const }]];
+  });
 }
 
 export class ComposerFieldElement extends HTMLElement {
@@ -439,7 +447,10 @@ export class ComposerFieldElement extends HTMLElement {
 
     if (!forward && event.key !== "ArrowLeft" && event.key !== "Backspace") return;
     const selection = document.getSelection();
-    const node = selection?.focusNode;
+    const focus = selection?.focusNode;
+    // The caret at the end of a text next to a filler is also on the filler.
+    const next = focus instanceof Text && !fillers.has(focus) && selection?.focusOffset === (forward ? focus.length : 0) ? forward ? focus.nextSibling : focus.previousSibling : focus;
+    const node = next instanceof Text && fillers.has(next) ? next : focus;
 
     if (!selection || !(node instanceof Text) || !fillers.has(node) || node.data !== FILLER || node.parentNode !== this) return;
     const arrow = event.key.startsWith("Arrow");
@@ -532,10 +543,24 @@ export class ComposerFieldElement extends HTMLElement {
   #selectionChange = () => {
     const before = this.#selection;
     const inside = this.#readSelection();
+
+    if (inside) this.#leaveFillerEnd();
     this.#markSelectedLinks(inside);
 
     if (inside && (before.start !== this.#selection.start || before.end !== this.#selection.end)) this.dispatchEvent(new Event("select"));
   };
+
+  /** Moves an end of a selection from the end of the filler before a link to its start. From there, WebKit marks all of the line before the link. */
+  #leaveFillerEnd() {
+    const selection = document.getSelection();
+
+    if (!selection?.anchorNode || !selection.focusNode || selection.isCollapsed) return;
+    const start = (node: Node, offset: number): [Node, number] => node instanceof Text && fillers.has(node) && offset > 0 && node.nextSibling && linkMarkdown(node.nextSibling) !== undefined ? [node, 0] : [node, offset];
+    const anchor = start(selection.anchorNode, selection.anchorOffset);
+    const focus = start(selection.focusNode, selection.focusOffset);
+
+    if (anchor[1] !== selection.anchorOffset || focus[1] !== selection.focusOffset) selection.setBaseAndExtent(anchor[0], anchor[1], focus[0], focus[1]);
+  }
 
   /** Marks each chat link that the selection holds. The browser does not show the selection on them clearly. */
   #markSelectedLinks(inside: boolean) {
