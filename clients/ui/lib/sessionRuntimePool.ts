@@ -1,4 +1,4 @@
-import { capSessionName, promptTitle } from "./sessionName";
+import { capSessionName, promptName, promptTitle } from "./sessionName";
 import { agentStateSchema } from "./responseSchemas";
 import { extensionUiSchema } from "./extensionUiSchema";
 import { wireMessageSchema } from "./messageSchemas";
@@ -21,7 +21,7 @@ function retainedName(state: AgentState, prompt: string | undefined, previous: S
   if (!state.sessionName && retainedDraft(state, previous, prompt)) return "";
   const named = previous && !previous.isDraft ? previous.name : undefined;
 
-  return capSessionName(state.sessionName || named || prompt || previous?.name || "New session");
+  return capSessionName(state.sessionName || named || (prompt === undefined ? "" : promptName(prompt)) || previous?.name || "New session");
 }
 
 function retainedActivity(state: AgentState, previous: SessionSummary | undefined, prompt?: string, lastMessageAt?: number) {

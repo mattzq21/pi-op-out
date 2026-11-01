@@ -6,6 +6,9 @@ const MAX_NAME_LENGTH = 50;
 
 function capSessionName(name) { return Array.from(name.replace(/\s+/g, ' ').trim()).slice(0, MAX_NAME_LENGTH).join('').trimEnd(); }
 
+/** The name a chat gets from its first prompt: the prompt without its Markdown links. */
+function promptName(prompt) { return capSessionName(prompt.replace(/\[(?:\\.|[^\]\\])*\]\([^)\s]*\)/g, ' ')); }
+
 function validName(name) {
   if (typeof name !== 'string') throw new Error('A conversation name must be text');
   const capped = capSessionName(name);
@@ -60,4 +63,4 @@ function renameSession(root, sessionId, name) {
   });
 }
 
-module.exports = { capSessionName, validName, sessionName, nameSession, renameSession, nameOf };
+module.exports = { capSessionName, promptName, validName, sessionName, nameSession, renameSession, nameOf };

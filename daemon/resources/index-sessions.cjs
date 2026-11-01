@@ -165,7 +165,7 @@ class SessionIndex {
     const forkSourceId = forked ? source.sessionId : undefined;
     const forkEntryId = forked ? source.entryId : undefined;
 
-    return { path, id: this.header.id || '', cwd: this.header.cwd || 'Unknown project', name: names.capSessionName(this.name || this.first || 'Untitled session'), preview: this.preview, messageCount: this.count, lastMessageAt: this.lastMessageAt, apiCost: this.cost, explicitlyNamed: !!this.name, hasUserMessage: this.hasUserMessage, bytes: this.bytes, auxiliaryParentId: (this.ownAuxiliary ?? this.inheritedAuxiliary)?.parentId, auxiliaryKind: (this.ownAuxiliary ?? this.inheritedAuxiliary)?.kind, forkSourceId, forkEntryId };
+    return { path, id: this.header.id || '', cwd: this.header.cwd || 'Unknown project', name: this.name ? names.capSessionName(this.name) : names.promptName(this.first) || 'Untitled session', preview: this.preview, messageCount: this.count, lastMessageAt: this.lastMessageAt, apiCost: this.cost, explicitlyNamed: !!this.name, hasUserMessage: this.hasUserMessage, bytes: this.bytes, auxiliaryParentId: (this.ownAuxiliary ?? this.inheritedAuxiliary)?.parentId, auxiliaryKind: (this.ownAuxiliary ?? this.inheritedAuxiliary)?.kind, forkSourceId, forkEntryId };
   }
 }
 
