@@ -22,8 +22,10 @@ test('history scrolls without taking ownership and a tap claims the terminal', a
 
   for (const unowned of [false,true]) {
     await page.evaluate(unowned=>window.setUnowned(unowned),unowned);
-    await transcript.evaluate(el=>el.scrollTop=el.scrollHeight);
-    await page.waitForTimeout(100);
+    await transcript.evaluate(element => new Promise(resolve => {
+      element.scrollTop = element.scrollHeight;
+      requestAnimationFrame(resolve);
+    }));
     const before=await state();
     const box=await transcript.boundingBox();
     const x=box.x+box.width/2,y=box.y+30;
