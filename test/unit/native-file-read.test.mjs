@@ -28,6 +28,7 @@ for (const [description, name, type, content = 'AB', size = 2] of [
   ['reading a JPG file supplies the JPEG type and original contents', 'photo.jpg', 'image/jpeg'],
   ['reading a GIF file supplies its image type and original contents', 'animation.gif', 'image/gif'],
   ['reading a text file does not label it as an image', 'a.txt', ''],
+  ['reading a filename without an extension does not label it as an image', 'png', ''],
   ['reading an empty text file preserves its name and zero length', 'empty.txt', '', '', 0],
 ]) test(description, async t => {
   const directory = await reader(t);

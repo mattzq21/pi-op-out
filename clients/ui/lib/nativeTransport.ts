@@ -649,7 +649,7 @@ export class NativeTransport {
 
 export async function readDroppedFile(path: string): Promise<File> {
   const result = await call("read_dropped_file", { path }, z.object({ name: z.string(), data: z.array(z.number()) }));
-  const extension = result.name.split(".").pop()?.toLowerCase() ?? "";
+  const extension = result.name.match(/\.([^.]+)$/)?.[1]?.toLowerCase() ?? "";
   const imageTypes = new Map(Object.entries({ png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg", gif: "image/gif", webp: "image/webp" }));
 
   return new File([new Uint8Array(result.data)], result.name, { type: imageTypes.get(extension) ?? "" });
