@@ -599,7 +599,7 @@ export function SettingsView(props: SettingsViewProps) {
 
 function MoveAgentButton(componentProps: { destinations: Array<{ name: string; cwd: string | null }>; blocked?: string; onMove: (to: string | null) => Promise<void> }) {
   const [moving, setMoving] = createSignal(false);
-  const options = createMemo(() => componentProps.destinations.map((destination, index) => ({ value: String(index), label: destination.name, search: `${destination.name} ${destination.cwd ?? ""}`, group: destination.cwd === null ? 0 : 1 })));
+  const options = createMemo(() => componentProps.destinations.map((destination, index) => ({ value: String(index), label: destination.name, search: `${destination.name} ${destination.cwd ?? ""}`, group: destination.cwd === null ? 0 : 1, italic: destination.cwd === null })));
   const move = async (value: string) => {
     const destination = componentProps.destinations[Number(value)];
 

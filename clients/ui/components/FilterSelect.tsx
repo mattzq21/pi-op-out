@@ -3,7 +3,7 @@ import { ChevronDown } from "lucide-solid";
 import { createMemo, createSignal, type JSXElement } from "solid-js";
 import { createDependencyEffect } from "../lib/solid";
 
-export type FilterOption = { value: string; label: string; search: string; disabled?: boolean; group?: number };
+export type FilterOption = { value: string; label: string; search: string; disabled?: boolean; group?: number; italic?: boolean };
 
 export function FilterSelect(props: { label: string; filterPlaceholder: string; value: string; options: FilterOption[]; invalid?: boolean; onChange: (value: string) => void; trigger?: { content: JSXElement; class: string; disabled?: boolean; tooltip?: string; alignEnd?: boolean } }) {
   const [open, setOpen] = createSignal(false);
@@ -52,7 +52,7 @@ export function FilterSelect(props: { label: string; filterPlaceholder: string; 
         else if (event.key === "Enter") { event.preventDefault(); choose(visible()[active()]); }
         else if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); close(true); }
       }} />
-      <div ref={list} role="listbox" aria-label={props.label + ' options'}>{visible().length === 0 && <div class="empty-small">No matches</div>}<Key each={visible()} by={option => option.value}>{(option, index) => <>{index() > 0 && (visible()[index() - 1].group ?? 0) !== (option().group ?? 0) && <hr class="filter-select-divider" />}<button type="button" role="option" tabIndex={-1} aria-selected={option().value === props.value} data-active={index() === active() || undefined} data-value={option().value} disabled={option().disabled} onPointerMove={() => setActive(index())} onClick={() => choose(option())}>{option().label}</button></>}</Key></div>
+      <div ref={list} role="listbox" aria-label={props.label + ' options'}>{visible().length === 0 && <div class="empty-small">No matches</div>}<Key each={visible()} by={option => option.value}>{(option, index) => <>{index() > 0 && (visible()[index() - 1].group ?? 0) !== (option().group ?? 0) && <hr class="filter-select-divider" />}<button type="button" role="option" tabIndex={-1} aria-selected={option().value === props.value} data-active={index() === active() || undefined} data-value={option().value} data-italic={option().italic || undefined} disabled={option().disabled} onPointerMove={() => setActive(index())} onClick={() => choose(option())}>{option().label}</button></>}</Key></div>
     </div>}
   </div>;
 }
