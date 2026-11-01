@@ -41,8 +41,6 @@ Append one custom entry for each effective cap or source change in the session J
 
 ## Interface
 
-Use the proposed `ContextCapSession` interface in `extensions/piop-context-window-cap/interface.proposed.ts`: `getState`, `setManualCap`, `resetManualCap`, `updateDefaults`, and `subscribe`. State separates the chosen `cap` and its source from `appliedWindow`. `modelMax` is a log source for clamping, not the source of the chosen cap.
+Use the `ContextCapSession` interface in `extensions/piop-context-window-cap/interface.ts`: `getState`, `setManualCap`, `resetManualCap`, `updateSettings`, and `subscribe`. State separates the chosen `cap` and its source from `appliedWindow`. `modelMax` is a log source for clamping, not the source of the chosen cap.
 
-Client requests pass through transport, daemon, and session broker to the extension instance inside Pi. The broker supplies complete agent, provider/model, and general defaults through `updateDefaults`. Change promises finish after saving and applying; subscribers receive initial state and effective changes. The extension reports failures explicitly.
-
-This is a design decision; runtime implementation remains.
+Client requests pass through transport, daemon, and session broker to the extension instance inside Pi. The extension gets the general and per-model caps through `updateSettings`: at agent start from the settings file, and later through the `context_cap_settings` RPC. It asks `piop-define-agents` for the agent definition cap. Change promises finish after saving and applying; subscribers receive initial state and effective changes. The extension reports failures explicitly.
