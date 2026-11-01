@@ -25,7 +25,7 @@ function readSaved(value: unknown): Saved {
 
 const saved = hostOperation<{ settings: any; configuration: unknown; project?: Project }, Saved>('save-agent-definitions', 'agents', 30_000, readSaved);
 
-export interface Move { global: any; cwd: string; agent: string; revision: string; to: string }
+export interface Move { global: any; agent: string; revision: string; from: string | null; to: string | null }
 
 const moved = hostOperation<{ settings: any } & Move, Saved>('move-agent', 'agents', 30_000, readSaved);
 

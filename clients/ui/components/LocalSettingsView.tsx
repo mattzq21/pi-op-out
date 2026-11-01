@@ -160,24 +160,18 @@ function DaemonSettingsEditor(componentProps: Props & { target: string; label: s
     if (config) setResources(value => value ? { ...value, config } : value);
   };
 
-  const moveAgent = async (agent: string, cwd?: string) => {
-    const capturedHostId = hostId(); const config = resources()?.config; const scope = agentScope(); const project = projectConfig();
+  const moveAgent = async (agent: string, to: string | null) => {
+    const capturedHostId = hostId(); const config = resources()?.config; const from = agentScope() ?? null; const project = projectConfig();
+    const revision = from === null ? config?.revision : project?.project?.revision;
 
-    if (!config?.revision || (scope && !project?.project)) throw new Error("Agent definitions are still loading");
+    if (!config?.revision || !revision) throw new Error("Agent definitions are still loading");
+    const profile = (from === null ? config.agents : project?.agents ?? []).find(item => item.name === agent);
+    const moved = await moveAgentBetween(capturedHostId, agent, revision, from, to);
 
-    if (scope && project?.project) {
-      const profile = project.agents.find(item => item.name === agent);
-      const moved = await moveAgentBetween(capturedHostId, scope, agent, project.project.revision, "global");
-      setProjectConfig(current => current && { ...current, agents: current.agents.filter(item => item.name !== agent) });
+    if (from !== null) setProjectConfig(current => current && { ...current, agents: current.agents.filter(item => item.name !== agent) });
 
-      if (profile) { const { project: _project, isDefault: _isDefault, ...global } = profile; publishSavedAgents({ ...config, revision: moved.revision, agents: [...config.agents, global] }); }
-
-      return;
-    }
-
-    if (!cwd) throw new Error("Choose a project");
-    const moved = await moveAgentBetween(capturedHostId, cwd, agent, config.revision, "project");
-    publishSavedAgents({ ...config, revision: moved.revision, agents: config.agents.filter(item => item.name !== agent) });
+    if (from === null) publishSavedAgents({ ...config, revision: moved.revision, agents: config.agents.filter(item => item.name !== agent) });
+    else if (to === null && profile) { const { project: _project, isDefault: _isDefault, ...global } = profile; publishSavedAgents({ ...config, revision: moved.revision, agents: [...config.agents, global] }); }
   };
 
   const publishHostChange = (change: SettingsChange) => receiveChange(change, hostId());

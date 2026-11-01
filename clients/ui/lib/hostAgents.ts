@@ -19,8 +19,8 @@ export function saveProjectAgents(hostId: string, cwd: string, configuration: Pr
   return nativeCall("save_agent_definitions", { hostId, cwd, configuration }, savedSchema);
 }
 
-export function moveAgent(hostId: string, cwd: string, agent: string, revision: string, to: "project" | "global") {
-  return nativeCall("move_agent", { hostId, cwd, agent, revision, to }, savedSchema);
+export function moveAgent(hostId: string, agent: string, revision: string, from: string | null, to: string | null) {
+  return nativeCall("move_agent", { hostId, agent, revision, ...(from ? { from } : {}), ...(to ? { to } : {}) }, savedSchema);
 }
 
 export function agentStatusReader(hostId: () => string, cwd: () => string | undefined, publish: (capability: DefinedAgentsCapability | undefined) => void, fail: (reason: unknown) => void) {

@@ -100,7 +100,7 @@ function mergeSettingsDraft(incoming: AppSettings, baseline: AppSettings, local:
   return { merged, collisions };
 }
 
-type SettingsViewProps = { selectedSection?: Section; embedded?: boolean; resourceError?: string; scope?: "client" | "daemon"; daemonLabel?: string; providerHosts?: RemoteHost[]; onSavingChange?: (saving: boolean) => void; providerHostId?: string; settings: AppSettings; pendingSettingsCount?: number; agentConfig?: AgentConfig; inheritedAgents?: AgentProfile[]; agentScopes?: Array<{ name: string; cwd: string }>; agentScope?: string; onAgentScope?: (cwd: string | undefined) => void; onMoveAgent?: (agent: string, cwd?: string) => Promise<void>; sessions?: SessionSummary[]; models?: Model[]; loadingModels?: string[]; onSave: (settings: AppSettings, agentConfig?: AgentConfig, baseline?: AppSettings) => Promise<void>; onDirtyChange?: (dirty: boolean) => void };
+type SettingsViewProps = { selectedSection?: Section; embedded?: boolean; resourceError?: string; scope?: "client" | "daemon"; daemonLabel?: string; providerHosts?: RemoteHost[]; onSavingChange?: (saving: boolean) => void; providerHostId?: string; settings: AppSettings; pendingSettingsCount?: number; agentConfig?: AgentConfig; inheritedAgents?: AgentProfile[]; agentScopes?: Array<{ name: string; cwd: string }>; agentScope?: string; onAgentScope?: (cwd: string | undefined) => void; onMoveAgent?: (agent: string, to: string | null) => Promise<void>; sessions?: SessionSummary[]; models?: Model[]; loadingModels?: string[]; onSave: (settings: AppSettings, agentConfig?: AgentConfig, baseline?: AppSettings) => Promise<void>; onDirtyChange?: (dirty: boolean) => void };
 
 function settingsViewDefaults({ selectedSection, embedded = false, resourceError, scope = "daemon", daemonLabel = "Daemon", providerHosts, onSavingChange, providerHostId = "local", settings, pendingSettingsCount = 0, agentConfig: incomingConfiguration, inheritedAgents, agentScopes = [], agentScope, onAgentScope, onMoveAgent, sessions = [], models = [], loadingModels = [], onSave, onDirtyChange }: SettingsViewProps) {
   return { selectedSection, embedded, resourceError, scope, daemonLabel, providerHosts, onSavingChange, providerHostId, settings, pendingSettingsCount, incomingConfiguration, inheritedAgents, agentScopes, agentScope, onAgentScope, onMoveAgent, sessions, models, loadingModels, onSave, onDirtyChange };
@@ -552,13 +552,14 @@ export function SettingsView(props: SettingsViewProps) {
         };
 
         const moveBlocked = () => dirty() || saving() ? "Save or discard your changes first." : !projectScope() && agent()?.isDefault ? "This is the global default agent. Choose another default agent first." : undefined;
-        const moveAgent = async (cwd?: string) => {
+        const moveAgent = async (to: string | null) => {
           setMoveError(undefined);
 
-          try { await required(settingsProps().onMoveAgent)(agent().name, cwd); }
+          try { await required(settingsProps().onMoveAgent)(agent().name, to); }
           catch (reason) { setMoveError(reason instanceof Error ? reason.message : String(reason)); throw reason; }
         };
-        const renderMoveButton = () => settingsProps().onMoveAgent && agent() && !showingGlobal() && (projectScope() || (settingsProps().agentScopes.length > 0 && !isBuiltInAgent(agent()))) && <MoveAgentButton projects={projectScope() ? undefined : settingsProps().agentScopes} blocked={moveBlocked()} onMove={moveAgent} />;
+        const moveDestinations = () => [...(projectScope() ? [{ name: "Global", cwd: null }] : []), ...settingsProps().agentScopes.filter(project => project.cwd !== settingsProps().agentScope)];
+        const renderMoveButton = () => settingsProps().onMoveAgent && agent() && !showingGlobal() && !isBuiltInAgent(agent()) && moveDestinations().length > 0 && <MoveAgentButton destinations={moveDestinations()} blocked={moveBlocked()} onMove={moveAgent} />;
 
         return (formValidation().visibleSection === "agents" && <SettingsSection title="Agents" headerAction={<div class="agent-section-actions">{renderMoveButton()}<button class="secondary-button" disabled={!agentConfig() || !agent() || saving()} onClick={cloneAgent}><Copy size={15} />Clone</button><button class="secondary-button" disabled={!agentConfig() || saving()} onClick={addAgent}><CirclePlus size={15} />Add agent</button></div>}>
           {renderAgentEditor()}
@@ -596,7 +597,7 @@ export function SettingsView(props: SettingsViewProps) {
   </main>;
 }
 
-function MoveAgentButton(componentProps: { projects?: Array<{ name: string; cwd: string }>; blocked?: string; onMove: (cwd?: string) => Promise<void> }) {
+function MoveAgentButton(componentProps: { destinations: Array<{ name: string; cwd: string | null }>; blocked?: string; onMove: (to: string | null) => Promise<void> }) {
   const [open, setOpen] = createSignal(false);
   const [moving, setMoving] = createSignal(false);
   const rootRef = createRef<HTMLDivElement>(null);
@@ -607,15 +608,15 @@ function MoveAgentButton(componentProps: { projects?: Array<{ name: string; cwd:
 
     return () => { document.removeEventListener("pointerdown", close, true); document.removeEventListener("keydown", close, true); };
   }, () => [open()]);
-  const move = async (cwd?: string) => {
+  const move = async (to: string | null) => {
     setOpen(false); setMoving(true);
 
-    try { await componentProps.onMove(cwd); } finally { setMoving(false); }
+    try { await componentProps.onMove(to); } catch { /* The section shows the error. */ } finally { setMoving(false); }
   };
 
   return <div class="agent-move-menu" ref={element => { rootRef.current = element; }}>
-    <button class="secondary-button" aria-haspopup={componentProps.projects ? "menu" : undefined} aria-expanded={componentProps.projects ? open() : undefined} disabled={Boolean(componentProps.blocked) || moving()} data-tooltip={componentProps.blocked ?? (componentProps.projects ? "Move to a project" : "Move to global")} onClick={() => componentProps.projects ? setOpen(value => !value) : void move().catch(() => undefined)}><ArrowRightLeft size={15} />{moving() ? "Moving…" : "Move"}</button>
-    <Show when={open() && componentProps.projects}>{projects => <div class="agent-move-options" role="menu"><For each={projects()}>{project => <button role="menuitem" onClick={() => void move(project.cwd).catch(() => undefined)}>{project.name}</button>}</For></div>}</Show>
+    <button class="secondary-button" aria-haspopup="menu" aria-expanded={open()} disabled={Boolean(componentProps.blocked) || moving()} data-tooltip={componentProps.blocked} onClick={() => setOpen(value => !value)}><ArrowRightLeft size={15} />{moving() ? "Moving…" : "Move"}</button>
+    <Show when={open()}><div class="agent-move-options" role="menu"><For each={componentProps.destinations}>{destination => <button role="menuitem" onClick={() => void move(destination.cwd)}>{destination.name}</button>}</For></div></Show>
   </div>;
 }
 

@@ -46,7 +46,7 @@ test('moving a global agent to a project removes it from the global agents and a
   const loader = await import(pathToFileURL(join(f.dir, 'daemon-loader.mjs')));
   const settings = JSON.parse(process.env.PIOP_AGENT_RESOURCES);
   const global = await loader.loadAgentDefinitions({ settings, initial: false });
-  const move = (agent, revision = global.config.revision) => loader.moveAgent({ settings, global, cwd: project, agent, revision, to: 'project' });
+  const move = (agent, revision = global.config.revision) => loader.moveAgent({ settings, global, agent, revision, from: null, to: project });
 
   await assert.rejects(move('general'), /must stay global/);
   await assert.rejects(move('reviewer', 'stale'), /changed in another window/);
@@ -56,13 +56,19 @@ test('moving a global agent to a project removes it from the global agents and a
   assert.equal(moved.revision, (await f.configuration()).revision);
   const inside = (await loader.loadAgentDefinitions({ settings, initial: false, project: { cwd: project, global: moved.definitions } })).config;
   assert.deepEqual(inside.agents.map(agent => [agent.name, agent.project === true]), [['general', false], ['reviewer', true]]);
-  await assert.rejects(loader.moveAgent({ settings, global: moved.definitions, cwd: project, agent: 'reviewer', revision: moved.revision, to: 'project' }), /Unknown global agent/);
+  await assert.rejects(loader.moveAgent({ settings, global: moved.definitions, agent: 'reviewer', revision: moved.revision, from: null, to: project }), /Unknown global agent/);
 
-  const projectRevision = inside.project.revision;
-  await assert.rejects(loader.moveAgent({ settings, global: moved.definitions, cwd: project, agent: 'reviewer', revision: 'stale', to: 'global' }), /changed in another window/);
-  const back = await loader.moveAgent({ settings, global: moved.definitions, cwd: project, agent: 'reviewer', revision: projectRevision, to: 'global' });
+  const other = join(f.root, 'other'); await mkdir(other);
+  await assert.rejects(loader.moveAgent({ settings, global: moved.definitions, agent: 'reviewer', revision: inside.project.revision, from: project, to: project }), /already in that project/);
+  await loader.moveAgent({ settings, global: moved.definitions, agent: 'reviewer', revision: inside.project.revision, from: project, to: other });
+  const projectAgentNames = async cwd => (await loader.loadAgentDefinitions({ settings, initial: false, project: { cwd, global: moved.definitions } })).config.agents.filter(agent => agent.project).map(agent => agent.name);
+  assert.deepEqual(await projectAgentNames(project), []);
+  assert.deepEqual(await projectAgentNames(other), ['reviewer']);
+  const projectRevision = (await loader.loadAgentDefinitions({ settings, initial: false, project: { cwd: other, global: moved.definitions } })).config.project.revision;
+  await assert.rejects(loader.moveAgent({ settings, global: moved.definitions, agent: 'reviewer', revision: 'stale', from: project, to: null }), /changed in another window/);
+  const back = await loader.moveAgent({ settings, global: moved.definitions, agent: 'reviewer', revision: projectRevision, from: other, to: null });
   assert.deepEqual((await f.configuration()).agents.map(agent => agent.name), ['general', 'reviewer']);
-  const after = (await loader.loadAgentDefinitions({ settings, initial: false, project: { cwd: project, global: back.definitions } })).config;
+  const after = (await loader.loadAgentDefinitions({ settings, initial: false, project: { cwd: other, global: back.definitions } })).config;
   assert.deepEqual(after.agents.filter(agent => agent.project), []);
   assert.equal(after.project.revision, 'missing');
 });

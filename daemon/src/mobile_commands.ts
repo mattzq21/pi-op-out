@@ -220,7 +220,7 @@ const COMMANDS: Record<string, Handler> = {
   },
   move_agent: async (app, _owner, args) => {
     const connection = await daemon.connect(app, app.pi, app.broker, await loadAppSettings(app), 'local');
-    return connection.request({ type: 'move_agent', cwd: argument(args, 'cwd', 'string'), agent: argument(args, 'agent', 'string'), revision: argument(args, 'revision', 'string'), to: argument(args, 'to', 'string') });
+    return connection.request({ type: 'move_agent', agent: argument(args, 'agent', 'string'), revision: argument(args, 'revision', 'string'), from: argument(args, 'from', 'string?') ?? null, to: argument(args, 'to', 'string?') ?? null });
   },
   provider_usage: (app, _owner, args) => {
     const provider = argument(args, 'provider', 'string?');

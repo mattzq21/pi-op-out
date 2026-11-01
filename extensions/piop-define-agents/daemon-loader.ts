@@ -3,7 +3,7 @@ import { Check, Errors, Parse } from "typebox/value";
 import { Type } from "typebox";
 import { loadConfig, mergeProjectAgents, normalizeConfig, projectAgents, type Config } from "./index.ts";
 import { agentSchema, agentThinkingLevels } from "./state.ts";
-import { agentDirectory, moveLegacyDefinitions, readConfigDocument, readPrompt, resolvePromptPath, isNamedAgent, writeConfig, projectDirectory, readProjectDocument, writeProjectDocument, writeGlobalAndProject } from "./prompts.ts";
+import { agentDirectory, moveLegacyDefinitions, readConfigDocument, readPrompt, resolvePromptPath, isNamedAgent, writeConfig, projectDirectory, readProjectDocument, writeProjectDocument, writeAgentMove } from "./prompts.ts";
 import { parseAgentResources, parsePluginAgentTools } from "./resources.ts";
 import { extensionPaths } from "./extension-loader.ts";
 import { extensionValidator } from "./validation-runtime.ts";
@@ -136,9 +136,9 @@ function readOnlyStorage(prompts: Record<string, string>) {
   };
 }
 
-export interface MoveAgentRequest { settings: any; global: AgentDefinitions; cwd: string; agent: string; revision: string; to: "project" | "global" }
+export interface MoveAgentRequest { settings: any; global: AgentDefinitions; agent: string; revision: string; from: string | null; to: string | null }
 
-const moveRequestSchema = Type.Object({ cwd: Type.String({ minLength: 1 }), agent: Type.String({ pattern: "\\S" }), revision: Type.String({ minLength: 1 }), to: Type.Union([Type.Literal("project"), Type.Literal("global")]) });
+const moveRequestSchema = Type.Object({ agent: Type.String({ pattern: "\\S" }), revision: Type.String({ minLength: 1 }), from: Type.Union([Type.String({ minLength: 1 }), Type.Null()]), to: Type.Union([Type.String({ minLength: 1 }), Type.Null()]) });
 
 function globalConfig(api: ReturnType<typeof configRuntime>["api"], stored: any, revision: string | undefined, agents: Config["agents"]) {
   const next = normalizeConfig({ ...stored, revision, agents }, api);
@@ -149,41 +149,48 @@ function globalConfig(api: ReturnType<typeof configRuntime>["api"], stored: any,
   return next;
 }
 
+const without = (name: string) => (agents: unknown[]) => agents.filter(item => !(isNamedAgent(item) && item.name === name));
+
 export async function moveAgent(request: MoveAgentRequest): Promise<{ revision: string; warnings: string[]; definitions: AgentDefinitions }> {
-  const errors = [...Errors(moveRequestSchema, { cwd: request.cwd, agent: request.agent, revision: request.revision, to: request.to })];
+  const errors = [...Errors(moveRequestSchema, { agent: request.agent, revision: request.revision, from: request.from, to: request.to })];
 
   if (errors.length) throw new Error(`Invalid agent move: ${errors.map(error => `${error.instancePath} ${error.message}`).join("; ")}`);
-  const { settings, global, cwd, agent: name, revision, to } = request;
+  const { settings, global, agent: name, revision } = request;
   const { tools, api } = configRuntime(settings);
-  const directory = await projectDirectory(cwd);
-  let agents: Config["agents"];
-  let saved: string;
+  const from = request.from === null ? null : await projectDirectory(request.from);
+  const to = request.to === null ? null : await projectDirectory(request.to);
 
-  if (to === "project") {
+  if (from === to) throw new Error(from === null ? "Choose a project to move the agent to" : `Agent "${name}" is already in that project`);
+  let agent: Config["agents"][number] | undefined;
+
+  if (from === null) {
     if (global.config.revision !== revision) throw new Error("Agent definitions changed in another window or client. Reload them before moving an agent.");
-    const agent = global.config.agents.find((item: { name: string }) => item.name === name);
+    agent = global.config.agents.find((item: { name: string }) => item.name === name);
 
     if (!agent) throw new Error(`Unknown global agent: ${name}`);
 
     if (name === "general") throw new Error("The general agent must stay global");
 
     if (agent.isDefault) throw new Error(`Agent "${name}" is the global default agent. Choose another global default agent first.`);
-    const [moved] = projectAgents({ agents: [agent] }, api);
-    await checkAgents({ agents: [moved] }, settings, tools.registeredTools, {});
-    agents = global.config.agents.filter((item: { name: string }) => item.name !== name);
-    const { unavailableReason: _reason, ...stored } = moved;
-    saved = writeGlobalAndProject(globalConfig(api, await readConfigDocument(), revision, agents), directory, (project, current) => ({ revision: current, agents: [...project.agents, stored] }));
+    agent = projectAgents({ agents: [agent] }, api)[0];
   } else {
-    const project = readProjectDocument(directory);
+    const project = readProjectDocument(from);
 
     if (project.revision !== revision) throw new Error("Project agent definitions changed in another window or client. Reload them before moving an agent.");
-    const moved = projectAgents(project, api).find(item => item.name === name);
+    agent = projectAgents(project, api).find(item => item.name === name);
 
-    if (!moved) throw new Error(`Unknown project agent: ${name}`);
-    await checkAgents({ agents: [moved] }, settings, tools.registeredTools, {});
-    agents = [...global.config.agents, moved];
-    saved = writeGlobalAndProject(globalConfig(api, await readConfigDocument(), global.config.revision, agents), directory, stored => ({ revision, agents: stored.agents.filter(item => !(isNamedAgent(item) && item.name === name)) }));
+    if (!agent) throw new Error(`Unknown project agent: ${name}`);
   }
+
+  await checkAgents({ agents: [agent] }, settings, tools.registeredTools, {});
+  const { unavailableReason: _reason, ...stored } = agent;
+  const agents = from === null ? global.config.agents.filter((item: { name: string }) => item.name !== name) : to === null ? [...global.config.agents, agent] : global.config.agents;
+  const projects = [
+    ...(from === null ? [] : [{ directory: from, change: (project: { agents: unknown[] }) => ({ revision, agents: without(name)(project.agents) }) }]),
+    ...(to === null ? [] : [{ directory: to, change: (project: { agents: unknown[] }, current: string) => ({ revision: current, agents: [...project.agents, stored] }) }]),
+  ];
+  const changesGlobal = from === null || to === null;
+  const saved = writeAgentMove(changesGlobal ? globalConfig(api, await readConfigDocument(), global.config.revision, agents) : undefined, projects) ?? global.config.revision;
 
   return { revision: saved, warnings: [], definitions: { config: { ...global.config, revision: saved, agents }, prompts: global.prompts } };
 }

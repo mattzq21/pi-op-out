@@ -5,7 +5,7 @@ declare module '*?raw' {
 
 declare module 'piop-agent-loader' {
   export function loadAgentDefinitions(request: { settings: any; initial: boolean; project?: { cwd: string; global: any } }): Promise<{ config: any; prompts: Record<string, string> }>;
-  export function moveAgent(request: { settings: any; global: any; cwd: string; agent: string; revision: string; to: string }): Promise<{ revision: string; warnings: string[]; definitions: { config: any; prompts: Record<string, string> } }>;
+  export function moveAgent(request: { settings: any; global: any; agent: string; revision: string; from: string | null; to: string | null }): Promise<{ revision: string; warnings: string[]; definitions: { config: any; prompts: Record<string, string> } }>;
   export function saveAgentDefinitions(request: { settings: any; configuration: unknown; project?: { cwd: string; global: any } }): Promise<{ revision: string; warnings: string[]; definitions: { config: any; prompts: Record<string, string> } }>;
 }
 

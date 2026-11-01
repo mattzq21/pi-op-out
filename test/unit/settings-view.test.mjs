@@ -524,16 +524,19 @@ describe('settings editor', () => {
     assert.deepEqual(saves[0][1].agents.map(agent => agent.name), ['general-copy-2']);
   });
 
-  test('the header Move button sends a global agent to the chosen project, and a project agent to the global agents', async () => {
+  test('the header Move button sends an agent to the place the user chooses', async () => {
     const moves = [];
     await render({ agentConfig: { agents: [profile('general', { isDefault: true }), profile('review')] }, agentScopes: [{ name: 'Repo', cwd: '/repo' }], onMoveAgent: async (...args) => { moves.push(args); } }); await section('Agents');
     assert.equal(button('Move'), undefined);
     await click([...document.querySelectorAll('.agent-list button')].find(item => item.textContent === 'review'));
     await click(button('Move')); await click(button('Repo'));
-    await render({ agentConfig: { revision: 'missing', agents: [profile('local')] }, inheritedAgents: [profile('general', { isDefault: true })], agentScope: '/repo', agentScopes: [{ name: 'Repo', cwd: '/repo' }], onMoveAgent: async (...args) => { moves.push(args); } }); await section('Agents');
+    await render({ agentConfig: { revision: 'missing', agents: [profile('local')] }, inheritedAgents: [profile('general', { isDefault: true })], agentScope: '/repo', agentScopes: [{ name: 'Repo', cwd: '/repo' }, { name: 'Other', cwd: '/other' }], onMoveAgent: async (...args) => { moves.push(args); } }); await section('Agents');
     await click([...document.querySelectorAll('.agent-list button')].find(item => item.textContent === 'local'));
     await click(button('Move'));
-    assert.deepEqual(moves, [['review', '/repo'], ['local', undefined]]);
+    assert.equal(button('Repo'), undefined); assert.notEqual(button('Global'), undefined);
+    await click(button('Other'));
+    await click(button('Move')); await click(button('Global'));
+    assert.deepEqual(moves, [['review', '/repo'], ['local', '/other'], ['local', null]]);
   });
 
   test('new hosts receive distinct nonempty IDs when saved', async () => {

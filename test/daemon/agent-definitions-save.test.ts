@@ -81,11 +81,11 @@ test('an agent moves from the global agents to a project and back', async () => 
   await mkdir(project, { recursive: true });
   await saveAgentDefinitions(daemon, added('mover'));
   const before = await agentDefinitions(daemon);
-  await daemon.invoke('move_agent', { hostId: 'local', cwd: project, agent: 'mover', revision: before.revision, to: 'project' });
+  await daemon.invoke('move_agent', { hostId: 'local', agent: 'mover', revision: before.revision, to: project });
   expect((await agentDefinitions(daemon)).agents.map((agent: any) => agent.name)).not.toContain('mover');
   const inside = (await daemon.invoke('provider_auth', { hostId: 'local', request: { action: 'draft_catalog', cwd: project } })).config;
   expect(inside.agents.filter((agent: any) => agent.project).map((agent: any) => agent.name)).toEqual(['mover']);
-  await daemon.invoke('move_agent', { hostId: 'local', cwd: project, agent: 'mover', revision: inside.project.revision, to: 'global' });
+  await daemon.invoke('move_agent', { hostId: 'local', agent: 'mover', revision: inside.project.revision, from: project });
   expect((await agentDefinitions(daemon)).agents.map((agent: any) => agent.name)).toContain('mover');
   const after = (await daemon.invoke('provider_auth', { hostId: 'local', request: { action: 'draft_catalog', cwd: project } })).config;
   expect(after.agents.filter((agent: any) => agent.project)).toEqual([]);
