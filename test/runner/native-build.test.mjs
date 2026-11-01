@@ -21,13 +21,13 @@ async function fixture(t, fail) {
   await writeFile(join(directory, 'cargo'), `#!${process.execPath}
 import { appendFileSync } from 'node:fs';
 appendFileSync(${JSON.stringify(log)}, 'build\\n');
-${fail === 'native' ? "console.error('build failed'); process.exit(17);" : `console.log(JSON.stringify({executable: ${JSON.stringify(binary)}, target: {name: 'piop_desktop'}}));`}
+${fail === 'native' || fail === 'both' ? "console.error('native build failed'); process.exit(17);" : `console.log(JSON.stringify({executable: ${JSON.stringify(binary)}, target: {name: 'piop_desktop'}}));`}
 `, { mode: 0o755 });
   const daemonBinary = join(directory, 'daemon-test');
   await writeFile(join(directory, 'bun'), `#!${process.execPath}
 import { appendFileSync } from 'node:fs';
 appendFileSync(${JSON.stringify(log)}, 'daemon\\n');
-${fail === 'daemon' ? "console.error('daemon build failed'); process.exit(19);" : `console.log(${JSON.stringify(daemonBinary)});`}
+${fail === 'daemon' || fail === 'both' ? "console.error('daemon build failed'); process.exit(19);" : `console.log(${JSON.stringify(daemonBinary)});`}
 `, { mode: 0o755 });
   const files = [];
   for (let index = 0; index < 3; index++) {
@@ -61,6 +61,17 @@ test('fresh native and daemon builds are shared by separate test processes', asy
   assert.equal(new Set(bundles).size, 1);
   assert.equal(existsSync(bundles[0]), false, 'the shared build is removed after the tests');
   assert.deepEqual((await readFile(log, 'utf8')).trim().split('\n').sort(), ['build', 'daemon']);
+});
+
+test('all build failures are reported without starting the tests', async t => {
+  const { run } = await fixture(t, 'both');
+  await assert.rejects(run(), error => {
+    assert.equal(error.code, 1);
+    assert.match(error.stderr, /native build failed/);
+    assert.match(error.stderr, /daemon build failed/);
+    assert.doesNotMatch(error.stdout, /child [0-9]/);
+    return true;
+  });
 });
 
 for (const target of ['native', 'daemon']) test(`a ${target} build failure prevents the tests from starting`, async t => {
