@@ -38,7 +38,7 @@ function record(session) {
   try {
     if (registeredSession(session)) insertRecord(session, checked, exists);
     db.exec('COMMIT');
-  } catch (error) { db.exec('ROLLBACK'); throw error; }
+  } catch (error) { throw sessionTables.rollback(db, error); }
 }
 
 function recordDirectory(request) {

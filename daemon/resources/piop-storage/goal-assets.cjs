@@ -365,7 +365,7 @@ function updateReclamation(root, directory, expected, removing) {
     }
     else if (!row) database.prepare('INSERT INTO goal_asset_reclamations VALUES (?, ?)').run(key, JSON.stringify({ path: directory, identity: expected }));
     database.exec('COMMIT');
-  } catch (error) { database.exec('ROLLBACK'); throw error; }
+  } catch (error) { throw require('../session-database.cjs').rollback(database, error); }
   finally { database.close(); }
 }
 

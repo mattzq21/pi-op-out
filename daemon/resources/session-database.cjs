@@ -1,6 +1,19 @@
 const fs = require('node:fs');
 const path = require('node:path');
 
+function rollback(db, error) {
+  if (!db.isTransaction) return error;
+
+  try { db.exec('ROLLBACK'); }
+  catch (failure) {
+    if (!(error instanceof Error)) return new AggregateError([error, failure], `Transaction failed; rollback also failed: ${failure.message}`);
+    error.message += `; rollback also failed: ${failure.message}`;
+    error.rollbackError = failure;
+  }
+
+  return error;
+}
+
 function initialize(db) {
   db.exec(`PRAGMA busy_timeout=10000; PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; PRAGMA foreign_keys=ON; BEGIN IMMEDIATE;`);
 
@@ -105,7 +118,7 @@ function initialize(db) {
     }
 
     db.exec('COMMIT');
-  } catch (error) { db.exec('ROLLBACK'); throw error; }
+  } catch (error) { throw rollback(db, error); }
 }
 
 function directoryQuery(_db, columns, suffix = '') {
@@ -333,5 +346,5 @@ function storageRoot(file) {
   throw new Error('Conversation is outside session storage');
 }
 
-module.exports = { initialize, reserve, reserveId, pending, bind, directoryQuery, movePaths, register, registerPath, open, lookup, paths, storageRoot, publication, savePublication, removePublication, publications, markCleanup, cleanupRequest, finishCleanup,
+module.exports = { rollback, initialize, reserve, reserveId, pending, bind, directoryQuery, movePaths, register, registerPath, open, lookup, paths, storageRoot, publication, savePublication, removePublication, publications, markCleanup, cleanupRequest, finishCleanup,
   recoveryRecords, saveRecoveryRecord, queuedInputs, queuedInput };

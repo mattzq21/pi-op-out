@@ -69,7 +69,7 @@ function retire(journal) {
       require('./transcript-references.cjs').removeDirectory(db, journal.staging);
       db.prepare('DELETE FROM storage_transactions WHERE id=?').run(journal.id);
       db.exec('COMMIT');
-    } catch (error) { db.exec('ROLLBACK'); throw error; }
+    } catch (error) { throw database.rollback(db, error); }
   });
   point();
 }

@@ -54,7 +54,7 @@ function write(file, sessionId, goal) {
         if (db.prepare('SELECT session_id FROM session_goal_ids WHERE goal_id=?').get(goal.id).session_id !== id) throw new Error('Goal identity belongs to another conversation');
         db.prepare(`INSERT INTO session_goals VALUES (?, ?, ?, ?) ON CONFLICT(session_id) DO UPDATE SET goal_id=excluded.goal_id, objective=excluded.objective, status=excluded.status`).run(id, goal.id, goal.objective, goal.status);
         db.exec('COMMIT');
-      } catch (error) { db.exec('ROLLBACK'); throw error; }
+      } catch (error) { throw database.rollback(db, error); }
     }
   });
 }

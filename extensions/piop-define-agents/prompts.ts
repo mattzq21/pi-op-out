@@ -86,7 +86,18 @@ function transaction<T>(change: (db: DatabaseSync) => T, root = storageRoot): T 
     db.exec("BEGIN IMMEDIATE");
 
     try { const result = change(db); db.exec("COMMIT"); return result; }
-    catch (error) { db.exec("ROLLBACK"); throw error; }
+    catch (error) {
+      if (!db.isTransaction) throw error;
+
+      try { db.exec("ROLLBACK"); }
+      catch (failure) {
+        if (!(error instanceof Error)) throw new AggregateError([error, failure], "Agent definitions change failed; rollback also failed");
+        error.message += `; rollback also failed: ${failure instanceof Error ? failure.message : String(failure)}`;
+        Object.assign(error, { rollbackError: failure });
+      }
+
+      throw error;
+    }
   } finally { db.close(); }
 }
 

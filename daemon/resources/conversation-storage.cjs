@@ -35,7 +35,7 @@ function readRecord(root, recordKey) {
       db.exec('COMMIT');
 
       return body;
-    } catch (error) { db.exec('ROLLBACK'); throw error; }
+    } catch (error) { throw database.rollback(db, error); }
   });
 }
 

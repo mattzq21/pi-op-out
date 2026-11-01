@@ -30,7 +30,7 @@ function transaction(root, work) {
     db.exec('COMMIT');
 
     return result;
-  } catch (error) { if (db.isTransaction) db.exec('ROLLBACK'); throw error; }
+  } catch (error) { throw database.rollback(db, error); }
   finally { db.close(); }
 }
 

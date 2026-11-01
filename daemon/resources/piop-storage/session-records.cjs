@@ -41,7 +41,7 @@ function transaction(file, sessionId, operation) {
     const result = operation(db);
     db.exec('COMMIT');
     return result;
-  } catch (error) { if (db.isTransaction) db.exec('ROLLBACK'); throw error; }
+  } catch (error) { throw database.rollback(db, error); }
   finally { db.close(); }
 }
 
