@@ -14,6 +14,7 @@ export const plugins: PluginDefinition[] = [
   { id: "web-search", scope: "host", name: "Web search", description: "The web_search tool for agents, through the host's OpenAI ChatGPT sign-in.",
     settings: { section: "web-search", label: "Web search", description: "Choose the OpenAI model that runs web searches.", icon: Globe, load: () => import("./web-search/WebSearchSettings").then(module => ({ default: module.WebSearchSettings })) } },
   { id: "btw", scope: "host", name: "Side chats", description: "Side chats started with /btw." },
+  { id: "background-compaction", scope: "host", name: "Background compaction", description: "Writes the compaction summary in the background before the context is full." },
 ];
 
 const coreQueuedCommands = ["compact"];

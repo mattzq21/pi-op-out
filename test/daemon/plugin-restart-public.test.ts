@@ -17,7 +17,7 @@ async function restartResult(restartId: string, target: TestDaemon = daemon) {
 
 test.concurrent('a plugin change waits for an open terminal and the current setup, then restarts the daemon with only the chosen plugins', async () => {
   const before = await daemon.invoke('plugin_status', { hostId: 'local' });
-  expect(before).toMatchObject({ enabled: ['cost', 'review', 'web-search', 'btw'], error: null });
+  expect(before).toMatchObject({ enabled: ['cost', 'review', 'web-search', 'btw', 'background-compaction'], error: null });
 
   expect(await daemon.failure('restart_daemon', { hostId: 'local', enabled: ['review'], revision: 'stale', closeTerminals: false })).toContain('Plugin setup changed in another client');
   expect(await daemon.failure('restart_daemon', { hostId: 'local', enabled: ['review', 'unknown'], revision: before.revision, closeTerminals: true })).toBe('Unknown bundled plugin: unknown');

@@ -2,6 +2,7 @@ import { cost } from './cost/plugin';
 import { review } from './review/plugin';
 import { webSearch } from './web-search/plugin';
 import { btw } from './btw/plugin';
+import { backgroundCompaction } from './background-compaction/plugin';
 import type { ReviewSettings } from './review/settings';
 import type { WebSearchSettings } from './web-search/settings';
 import type { BundledPlugin } from './types';
@@ -11,6 +12,7 @@ export const CATALOG: readonly BundledPlugin[] = [
   review,
   webSearch,
   btw,
+  backgroundCompaction,
 ];
 
 export type PluginSettings = ReviewSettings & WebSearchSettings;
