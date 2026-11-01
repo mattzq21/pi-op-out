@@ -554,7 +554,7 @@ textarea::placeholder { color: var(--faint); }
 .new-chat-project .composer-picker-menu button { height: auto; }
 
 .sidebar-resizer { position: absolute; z-index: 5; top: 0; bottom: 0; right: -4px; width: 8px; cursor: col-resize; touch-action: none; user-select: none; -webkit-user-select: none; }
-.sidebar-resizer::after { content: ""; position: absolute; top: 0; bottom: 0; left: 3px; width: 2px; background: transparent; }
+.sidebar-resizer::after { content: ""; position: absolute; top: 0; bottom: 0; left: 3px; width: 2px; background: var(--line); }
 .sidebar-resizer:hover::after, .sidebar-resizer.dragging::after, .sidebar-resizer:focus-visible::after { background: color-mix(in srgb, var(--accent) 55%, black); }
 .sidebar-resizer:focus-visible { outline: none; }
 
