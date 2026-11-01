@@ -17,7 +17,7 @@ import { createComputed, createEffect, createMemo, createSignal, For, Index, Sho
 import { Dynamic } from "solid-js/web";
 import { createDependencyEffect, createMemoFields, createRef, type JSXElement } from "../lib/solid";
 
-import { Bot, Check, CircleGauge, CirclePlus, Clipboard, Copy, Cpu, HardDrive, Keyboard, Pencil, PlugZap, RotateCcw, Save, Search, Server, Settings2, ShieldCheck, Trash2, X, Zap } from "lucide-solid";
+import { ArrowRightLeft, Bot, Check, CircleGauge, CirclePlus, Clipboard, Copy, Cpu, HardDrive, Keyboard, Pencil, PlugZap, RotateCcw, Save, Search, Server, Settings2, ShieldCheck, Trash2, X, Zap } from "lucide-solid";
 import { uid } from "../lib/content";
 import { defaultKeybindings, keybindDefinitions, shortcutError, shortcutFromEvent, shortcutsConflict, type KeybindAction } from "../lib/keybindings";
 import { isMobile } from "../lib/platform";
@@ -294,9 +294,11 @@ export function SettingsView(props: SettingsViewProps) {
 
   const projectScope = () => settingsProps().inheritedAgents !== undefined;
   const [viewingGlobal, setViewingGlobal] = createSignal(false);
+  const [moveError, setMoveError] = createSignal<string>();
   const inheritedGeneral = createMemo(() => settingsProps().inheritedAgents?.find(isBuiltInAgent));
   const showingGlobal = createMemo(() => Boolean(inheritedGeneral()) && (viewingGlobal() || !agentDrafts()[agentIndex()]));
   const agent = createMemo(() => (showingGlobal() ? inheritedGeneral() : agentDrafts()[agentIndex()]) as AgentProfile);
+  createDependencyEffect(() => { setMoveError(undefined); }, () => [agent()?.name, settingsProps().agentScope]);
   const inheritedNames = createMemo(() => new Set((settingsProps().inheritedAgents ?? []).map(item => item.name)));
   const globalAgents = () => settingsProps().inheritedAgents ?? agentDrafts();
   const agentFastModeEnabled = createMemo(() => (agent()?.fastMode ?? draft().defaultFastMode));
@@ -533,12 +535,7 @@ export function SettingsView(props: SettingsViewProps) {
 
             const renderAgentPromptFiles = () => (<label class="field"><span>System prompt file</span><input aria-label="System prompt file" aria-invalid={!agent().path_systemprompt?.trim()} placeholder="Path relative to agent config.json, or absolute path" value={agent().path_systemprompt ?? ""} onInput={(event) => updateAgent({ path_systemprompt: event.target.value })} /></label>);
 
-            const moveBlocked = () => dirty() || saving() ? "Save or discard your changes first." : undefined;
-            const renderMoveAgent = () => settingsProps().onMoveAgent && !showingGlobal() && (projectScope()
-              ? <MoveAgentToGlobal agent={agent().name} blocked={moveBlocked()} onMove={required(settingsProps().onMoveAgent)} />
-              : settingsProps().agentScopes.length > 0 && !isBuiltInAgent(agent()) && <MoveAgentToProject agent={agent().name} projects={settingsProps().agentScopes} blocked={moveBlocked() ?? (agent().isDefault ? "This is the global default agent. Choose another default agent first." : undefined)} onMove={required(settingsProps().onMoveAgent)} />);
-
-            return (<Show when={agent()}><fieldset class="agent-fields" disabled={showingGlobal()}>{showingGlobal() && <p class="agent-scope-note">This is the global general agent. Change it in the Global view. Clone it to make a project copy that you can change.</p>}{renderAgentNameRow()}{renderMoveAgent()}
+            return (<Show when={agent()}><fieldset class="agent-fields" disabled={showingGlobal()}>{showingGlobal() && <p class="agent-scope-note">This is the global general agent. Change it in the Global view. Clone it to make a project copy that you can change.</p>}{renderAgentNameRow()}
               <label class="field"><span>Description</span><textarea class="agent-description" aria-label="Agent description" maxLength={500} rows={2} placeholder="What this agent is for. Other agents see it when they choose an agent to start." value={agent().description ?? ""} onInput={(event) => updateAgent({ description: event.currentTarget.value || undefined })} /></label>
               {renderAgentDefaults()}
               <div class="agent-usage"><div class="agent-usage-option"><span>Callable as subagent</span><Toggle label="Callable as subagent" checked={agent().allow_as_subagent !== false} onChange={allow_as_subagent => updateAgent({ allow_as_subagent })} /></div><div class="agent-usage-option"><span>Callable as peer</span><Toggle label="Callable as peer" checked={agent().allow_as_peer !== false} onChange={allow_as_peer => updateAgent({ allow_as_peer })} /></div></div>
@@ -548,13 +545,22 @@ export function SettingsView(props: SettingsViewProps) {
             </fieldset></Show>);
           };
 
-          return (<>{projectScope() && <p class="agent-scope-note">Chats in this project can also use the global agents. A project agent name must be different from all global agent names. Set the project's default agent in Edit project.</p>}{!agentConfig() && <p role={settingsProps().resourceError ? "alert" : "status"}>{settingsProps().resourceError ? "Could not load agent definitions: " + required((settingsProps().resourceError)) : "Loading agent definitions…"}</p>}
+          return (<>{moveError() && <p role="alert">Could not move the agent: {moveError()}</p>}{projectScope() && <p class="agent-scope-note">Chats in this project can also use the global agents. A project agent name must be different from all global agent names. Set the project's default agent in Edit project.</p>}{!agentConfig() && <p role={settingsProps().resourceError ? "alert" : "status"}>{settingsProps().resourceError ? "Could not load agent definitions: " + required((settingsProps().resourceError)) : "Loading agent definitions…"}</p>}
           <div class="agent-editor"><div class="agent-list"><select class="agent-scope" aria-label="Agent definitions" disabled={dirty() || saving()} value={settingsProps().agentScope ?? ""} onChange={event => settingsProps().onAgentScope?.(event.currentTarget.value || undefined)}><option value="">Global</option><For each={settingsProps().agentScopes}>{project => <option value={project.cwd}>Project: {project.name}</option>}</For></select><Show when={inheritedGeneral()}>{general => <button class={showingGlobal() ? "active" : ""} onClick={() => setViewingGlobal(true)}><Bot size={14} /><span>{general().name} <small class="agent-scope-tag">global</small></span></button>}</Show>{<Index each={agentDrafts()}>{(item, index) => <button  class={!showingGlobal() && index === agentIndex() ? "active" : ""} onClick={() => { setAgentIndex(index); setViewingGlobal(false); }}><Bot size={14} /><span>{item().name}</span></button>}</Index>}</div>
             {renderAgentFields()}
           </div></>);
         };
 
-        return (formValidation().visibleSection === "agents" && <SettingsSection title="Agents" headerAction={<div class="agent-section-actions"><button class="secondary-button" disabled={!agentConfig() || !agent() || saving()} onClick={cloneAgent}><Copy size={15} />Clone</button><button class="secondary-button" disabled={!agentConfig() || saving()} onClick={addAgent}><CirclePlus size={15} />Add agent</button></div>}>
+        const moveBlocked = () => dirty() || saving() ? "Save or discard your changes first." : !projectScope() && agent()?.isDefault ? "This is the global default agent. Choose another default agent first." : undefined;
+        const moveAgent = async (cwd?: string) => {
+          setMoveError(undefined);
+
+          try { await required(settingsProps().onMoveAgent)(agent().name, cwd); }
+          catch (reason) { setMoveError(reason instanceof Error ? reason.message : String(reason)); throw reason; }
+        };
+        const renderMoveButton = () => settingsProps().onMoveAgent && agent() && !showingGlobal() && (projectScope() || (settingsProps().agentScopes.length > 0 && !isBuiltInAgent(agent()))) && <MoveAgentButton projects={projectScope() ? undefined : settingsProps().agentScopes} blocked={moveBlocked()} onMove={moveAgent} />;
+
+        return (formValidation().visibleSection === "agents" && <SettingsSection title="Agents" headerAction={<div class="agent-section-actions">{renderMoveButton()}<button class="secondary-button" disabled={!agentConfig() || !agent() || saving()} onClick={cloneAgent}><Copy size={15} />Clone</button><button class="secondary-button" disabled={!agentConfig() || saving()} onClick={addAgent}><CirclePlus size={15} />Add agent</button></div>}>
           {renderAgentEditor()}
         </SettingsSection>);
       };
@@ -590,35 +596,27 @@ export function SettingsView(props: SettingsViewProps) {
   </main>;
 }
 
-function MoveAgentToGlobal(componentProps: { agent: string; blocked?: string; onMove: (agent: string) => Promise<void> }) {
+function MoveAgentButton(componentProps: { projects?: Array<{ name: string; cwd: string }>; blocked?: string; onMove: (cwd?: string) => Promise<void> }) {
+  const [open, setOpen] = createSignal(false);
   const [moving, setMoving] = createSignal(false);
-  const [error, setError] = createSignal<string>();
-  createDependencyEffect(() => { setError(undefined); }, () => [componentProps.agent]);
-  const move = async () => {
-    setMoving(true); setError(undefined);
+  const rootRef = createRef<HTMLDivElement>(null);
+  createDependencyEffect(() => {
+    if (!open()) return;
+    const close = (event: Event) => { if (event instanceof KeyboardEvent ? event.key === "Escape" : !rootRef.current?.contains(event.target as Node)) setOpen(false); };
+    document.addEventListener("pointerdown", close, true); document.addEventListener("keydown", close, true);
 
-    try { await componentProps.onMove(componentProps.agent); }
-    catch (reason) { setError(reason instanceof Error ? reason.message : String(reason)); }
-    finally { setMoving(false); }
+    return () => { document.removeEventListener("pointerdown", close, true); document.removeEventListener("keydown", close, true); };
+  }, () => [open()]);
+  const move = async (cwd?: string) => {
+    setOpen(false); setMoving(true);
+
+    try { await componentProps.onMove(cwd); } finally { setMoving(false); }
   };
 
-  return <div class="agent-move"><button class="secondary-button" disabled={Boolean(componentProps.blocked) || moving()} onClick={() => void move()}>{moving() ? "Moving…" : "Move to global"}</button>{(componentProps.blocked || error()) && <small role={error() ? "alert" : undefined}>{error() ?? componentProps.blocked}</small>}</div>;
-}
-
-function MoveAgentToProject(componentProps: { agent: string; projects: Array<{ name: string; cwd: string }>; blocked?: string; onMove: (agent: string, cwd: string) => Promise<void> }) {
-  const [target, setTarget] = createSignal("");
-  const [moving, setMoving] = createSignal(false);
-  const [error, setError] = createSignal<string>();
-  createDependencyEffect(() => { setTarget(""); setError(undefined); }, () => [componentProps.agent]);
-  const move = async () => {
-    setMoving(true); setError(undefined);
-
-    try { await componentProps.onMove(componentProps.agent, target()); }
-    catch (reason) { setError(reason instanceof Error ? reason.message : String(reason)); }
-    finally { setMoving(false); }
-  };
-
-  return <div class="agent-move"><label class="field"><span>Move to project</span><select aria-label="Move agent to project" disabled={Boolean(componentProps.blocked) || moving()} value={target()} onChange={event => { setTarget(event.currentTarget.value); setError(undefined); }}><option value="">Choose a project</option><For each={componentProps.projects}>{project => <option value={project.cwd}>{project.name}</option>}</For></select></label><button class="secondary-button" disabled={Boolean(componentProps.blocked) || moving() || !target()} onClick={() => void move()}>{moving() ? "Moving…" : "Move"}</button>{(componentProps.blocked || error()) && <small role={error() ? "alert" : undefined}>{error() ?? componentProps.blocked}</small>}</div>;
+  return <div class="agent-move-menu" ref={element => { rootRef.current = element; }}>
+    <button class="secondary-button" aria-haspopup={componentProps.projects ? "menu" : undefined} aria-expanded={componentProps.projects ? open() : undefined} disabled={Boolean(componentProps.blocked) || moving()} data-tooltip={componentProps.blocked ?? (componentProps.projects ? "Move to a project" : "Move to global")} onClick={() => componentProps.projects ? setOpen(value => !value) : void move().catch(() => undefined)}><ArrowRightLeft size={15} />{moving() ? "Moving…" : "Move"}</button>
+    <Show when={open() && componentProps.projects}>{projects => <div class="agent-move-options" role="menu"><For each={projects()}>{project => <button role="menuitem" onClick={() => void move(project.cwd).catch(() => undefined)}>{project.name}</button>}</For></div>}</Show>
+  </div>;
 }
 
 function SettingsSection(componentProps: { title: string; description?: string; headerAction?: JSXElement; children: JSXElement }) { return <div class="settings-section"><div class="section-title"><div><h2>{componentProps.title}</h2>{componentProps.description && <p>{componentProps.description}</p>}</div>{componentProps.headerAction}</div>{componentProps.children}</div>; }
