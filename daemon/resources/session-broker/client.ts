@@ -15,62 +15,40 @@ export function registerConversationClient(pi: ExtensionAPI) {
 }
 
 interface BrokerRequest {
-  action?: string; sourceSessionId?: string; sourceHostId?: string; sourceName?: string; wake?: boolean;
+  action?: string; sourceName?: string; wake?: boolean;
   hostId?: string; sessionId?: string; id?: string; cwd?: string; name?: string;
   message?: string; deliveryId?: string; sessionPath?: string; stateKey?: string | null; waitMs?: number; discardOnFailure?: boolean; deliverAs?: "steer" | "followUp";
   recoveryDepth?: number; data?: Record<string, unknown>;
 }
 
-const responseSchema = Type.Object({ error: Type.Optional(Type.String()), data: Type.Optional(Type.Unknown()) });
+const answerSchema = Type.Union([Type.Object({ data: Type.Unknown() }), Type.Object({ error: Type.String(), transient: Type.Boolean() })]);
 
-const url = process.env.PIOP_BROKER_URL;
-
-const token = process.env.PIOP_BROKER_TOKEN;
+type RuntimeEventSender = (name: string, data: unknown) => Promise<unknown>;
 
 export class BrokerRequestError extends Error {
   constructor(message: string, readonly transient: boolean) { super(message); }
 }
 
-function requestOptions(body: BrokerRequest | undefined, signal: AbortSignal) {
-  return { method: body ? "POST" : "GET", headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" }, body: body ? JSON.stringify({ ...body, clientId: process.env.PIOP_CONVERSATION_CLIENT }) : undefined, signal };
-}
-
-async function brokerResponse(response: Response) {
-  const result = Parse(responseSchema, await response.json());
-
-  if (!response.ok || result.error) throw new BrokerRequestError(result.error || `Session broker returned HTTP ${response.status}`, [408, 429].includes(response.status) || response.status >= 500);
-
-  return result.data;
-}
-
-function requestError(message: string, transient: boolean, signal?: AbortSignal) {
-  signal?.throwIfAborted();
-
-  if (transient) throw new BrokerRequestError(message, true);
+function bounded<T>(work: Promise<T>, signal: AbortSignal | undefined, timeoutMs: number): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const finish = (settle: () => void) => { clearTimeout(timer); signal?.removeEventListener("abort", abort); settle(); };
+    const timer = setTimeout(() => finish(() => reject(new BrokerRequestError("Session broker request timed out", true))), timeoutMs);
+    const abort = () => finish(() => reject(signal?.reason));
+    signal?.addEventListener("abort", abort, { once: true });
+    work.then(value => finish(() => resolve(value)), error => finish(() => reject(new BrokerRequestError(error instanceof Error ? error.message : String(error), true))));
+  });
 }
 
 export async function request(path: string, body?: BrokerRequest, signal?: AbortSignal, timeoutMs = 10_000) {
   signal?.throwIfAborted();
-  assertBrokerAvailable();
-  const controller = new AbortController();
+  const send = Object.getOwnPropertyDescriptor(globalThis, Symbol.for("piop.runtime-events"))?.value as RuntimeEventSender | undefined;
 
-  const timeout = setTimeout(() => controller.abort(new Error("Session broker request timed out")), timeoutMs);
+  if (!send) throw new Error("piop session broker is unavailable");
+  const answer = Parse(answerSchema, await bounded(send("broker", { path, body: { ...body, clientId: process.env.PIOP_CONVERSATION_CLIENT } }), signal, timeoutMs));
 
-  const abort = () => controller.abort(signal?.reason); signal?.addEventListener("abort", abort, { once: true });
+  if ("error" in answer) throw new BrokerRequestError(answer.error, answer.transient);
 
-  try {
-    const response = await fetch(`${url}${path}`, requestOptions(body, controller.signal));
-
-    return await brokerResponse(response);
-  } catch (error) {
-    requestError((error instanceof Error ? error.message : String(error)), controller.signal.aborted || error instanceof TypeError, signal);
-    throw error;
-  }
-  finally { clearTimeout(timeout); signal?.removeEventListener("abort", abort); }
-}
-
-function assertBrokerAvailable() {
-  if (!url || !token) throw new Error("piop session broker is unavailable");
+  return answer.data;
 }
 
 export const currentHost = () => process.env.PI_DESKTOP_HOST_ID || "local";

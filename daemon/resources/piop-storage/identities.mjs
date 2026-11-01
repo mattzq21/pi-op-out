@@ -4,16 +4,11 @@ const identities = new AsyncLocalStorage();
 const uuid = /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/;
 
 async function request(body) {
-  const url = process.env.PIOP_BROKER_URL;
-  const token = process.env.PIOP_BROKER_TOKEN;
-  if (!url || !token) throw new Error("Session identity requires the Piop daemon");
-  const response = await fetch(`${url}/session-identity`, {
-    method: "POST", headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-    body: JSON.stringify(body), signal: AbortSignal.timeout(10_000),
-  });
-  const result = await response.json();
-  if (!response.ok || result.error) throw new Error(result.error ?? `Session identity request failed: ${response.status}`);
-  return result.data;
+  const send = Object.getOwnPropertyDescriptor(globalThis, Symbol.for("piop.runtime-events"))?.value;
+  if (!send) throw new Error("Session identity requires the Piop daemon");
+  const answer = await send("broker", { path: "/session-identity", body });
+  if (typeof answer?.error === "string") throw new Error(answer.error);
+  return answer?.data;
 }
 
 export async function reserveSessionIds(count) {

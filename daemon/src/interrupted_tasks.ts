@@ -18,7 +18,7 @@ export async function resumeInterruptedTasks(app: App): Promise<void> {
       const location = await connection.request({ type: 'orchestration', action: 'locate', sessionKey: id }).catch(() => null);
       const packet: any = { type: 'orchestration', action: 'resume', sessionKey: id };
       if (typeof location?.sessionPath === 'string' && typeof location?.cwd === 'string' && location.archived !== true) {
-        packet.spec = launchSpec(buildPiCommand(app.broker, settings, 'local', { kind: 'rpc', cwd: location.cwd, sessionPath: location.sessionPath }, connection.remotePort));
+        packet.spec = launchSpec(buildPiCommand(settings, 'local', { kind: 'rpc', cwd: location.cwd, sessionPath: location.sessionPath }, connection.remotePort));
         packet.cwd = location.cwd;
       }
       await connection.request(packet);

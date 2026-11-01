@@ -1,31 +1,15 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { createServer } from 'node:http';
 import { randomUUID } from 'node:crypto';
 import { reserveSessionId, takeSessionId, withSessionIds } from '../../daemon/resources/piop-storage/identities.mjs';
+import { installBroker } from '../runtime-events-fixture.mjs';
 
-async function daemon(t, reply) {
-  const previous = [process.env.PIOP_BROKER_URL, process.env.PIOP_BROKER_TOKEN];
+function daemon(t, reply) {
   const requests = [];
-  const server = createServer(async (request, response) => {
-    assert.equal(request.headers.authorization, 'Bearer storage-test');
-    assert.equal(request.url, '/session-identity');
-    const parts = [];
-    for await (const part of request) parts.push(part);
-    const body = JSON.parse(Buffer.concat(parts).toString());
+  installBroker(t, (path, body) => {
+    assert.equal(path, '/session-identity');
     requests.push(body);
-    response.setHeader('Content-Type', 'application/json');
-    response.end(JSON.stringify({ data: reply(body) }));
-  });
-  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
-  process.env.PIOP_BROKER_URL = `http://127.0.0.1:${server.address().port}`;
-  process.env.PIOP_BROKER_TOKEN = 'storage-test';
-  t.after(async () => {
-    server.closeAllConnections();
-    await new Promise(resolve => server.close(resolve));
-    for (const [i, name] of ['PIOP_BROKER_URL', 'PIOP_BROKER_TOKEN'].entries()) {
-      if (previous[i] === undefined) delete process.env[name]; else process.env[name] = previous[i];
-    }
+    return reply(body);
   });
   return requests;
 }

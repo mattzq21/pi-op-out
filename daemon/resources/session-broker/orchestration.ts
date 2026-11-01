@@ -112,7 +112,7 @@ export async function sendSessionMessage(ctx: ExtensionContext, sessionId: strin
   if (sessionId === ctx.sessionManager.getSessionId() && hostId === currentHost()) throw new Error("Choose another conversation as the recipient");
   await activeConversation(sessionId, hostId, signal);
 
-  return request("/orchestration", { action: "send", sessionId, hostId, message, wake, deliveryId, discardOnFailure, deliverAs, sourceSessionId: ctx.sessionManager.getSessionId(), sourceHostId: currentHost(), sourceName: ownName(ctx) }, signal, 60_000);
+  return request("/orchestration", { action: "send", sessionId, hostId, message, wake, deliveryId, discardOnFailure, deliverAs, sourceName: ownName(ctx) }, signal, 60_000);
 }
 
 function executionStopped(snapshot: Awaited<ReturnType<typeof sessionSnapshot>>) {
@@ -412,7 +412,7 @@ export function registerOrchestration(pi: ExtensionAPI) {
       requireMessageLength(params.message);
       signal?.throwIfAborted();
       const cwd = params.project === undefined ? ctx.cwd
-        : Parse(Schema.Object({ cwd: Schema.String() }), await request("/peer-project", { name: params.project, sessionId: ctx.sessionManager.getSessionId(), cwd: ctx.cwd }, signal)).cwd;
+        : Parse(Schema.Object({ cwd: Schema.String() }), await request("/peer-project", { name: params.project, cwd: ctx.cwd }, signal)).cwd;
       const created = await createProfileSession(pi, ctx, params.title, params.agent, cwd);
 
       const deliveryId = randomUUID();
@@ -446,7 +446,7 @@ export function registerOrchestration(pi: ExtensionAPI) {
       requireRootCaller(ctx);
       requireMessageLength(params.message);
       const created = Parse(Schema.Object({ peerId: Schema.String() }), await request("/orchestration", { action: "branch_off", sessionId: ctx.sessionManager.getSessionId(), hostId: currentHost(),
-        message: params.message, wake: true, deliveryId: randomUUID(), sourceSessionId: ctx.sessionManager.getSessionId(), sourceHostId: currentHost(), sourceName: ownName(ctx) }, signal, 180_000));
+        message: params.message, wake: true, deliveryId: randomUUID(), sourceName: ownName(ctx) }, signal, 180_000));
 
       return result({ peerId: created.peerId });
     },

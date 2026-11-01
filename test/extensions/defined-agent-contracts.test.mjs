@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { agentFixture, profile, configured, encoded } from '../defined-agent-fixture.mjs';
 import { installAgentMcp } from '../mcp-agent-fixture.mjs';
+import { installBroker } from '../runtime-events-fixture.mjs';
 
 const remoteMcp = { command: 'mcp-server', args: [], enabled: true };
 
@@ -23,8 +24,8 @@ test('missing models disable only their agents and become usable after configura
 test('agent startup reads local definitions even when a broker is configured', async t => {
   const f = await agentFixture(t, {
     config: configured([profile()]),
-    env: { PIOP_BROKER_URL: 'http://127.0.0.1:1', PIOP_BROKER_TOKEN: '' },
   });
+  installBroker(t, () => { throw new Error('Broker is down'); });
   await f.load(); await f.start();
   assert.deepEqual(f.pi.getActiveTools(), ['read']);
   assert.deepEqual(await f.input('Start'), { action: 'continue' });

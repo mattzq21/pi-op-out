@@ -1,7 +1,6 @@
 import { spawn, type ChildProcess } from 'node:child_process';
-import { request as httpRequest } from 'node:http';
 import { randomUUID } from 'node:crypto';
-import { BUILD_ID, MAX_AGENT_OUTPUT_BYTES, MAX_REQUEST_BYTES, PEER_PROTOCOL_VERSION } from './config';
+import { BUILD_ID, MAX_REQUEST_BYTES, PEER_PROTOCOL_VERSION } from './config';
 import { homeDir } from './environment';
 import { loadAppSettings } from './settings';
 import { remoteHost, remoteLoginCommand, sshBase } from './pi_launch';
@@ -9,7 +8,6 @@ import { ensureDesktopSessionsDir, shellQuote, spawnOptions } from './process_io
 import { listLocalSessions, type SessionIndexRuntime } from './session_index';
 import * as sessionGroups from './session_groups';
 import * as daemonEndpoint from './daemon_endpoint';
-import { brokerEnvironment } from './broker';
 import { failedStorage, inspectStorage } from './archives';
 import { parseSession, serializeSession, type SessionSummary } from './types';
 import { Mutex, withTimeout } from './util/sync';
@@ -534,33 +532,4 @@ export async function forwardBroker(app: App, hostId: string, path: string, body
   const connection = await connect(app, hostId);
   body = { ...(body ?? {}), hostId: 'local' };
   return connection.invoke('broker_request', { path, body });
-}
-
-export function localBrokerRequest(app: App, path: string, body: any): Promise<any> {
-  if (path !== '/orchestration' || (typeof body?.hostId === 'string' && body.hostId !== 'local')) {
-    return Promise.reject(new Error('Peer broker requests must target this host'));
-  }
-  const [port, token] = brokerEnvironment(app.broker);
-  const payload = Buffer.from(JSON.stringify(body ?? null));
-  return new Promise((resolve, reject) => {
-    const request = httpRequest({ host: '127.0.0.1', port, method: 'POST', path, timeout: 610_000,
-      headers: { Host: 'localhost', Authorization: 'Bearer ' + token, 'Content-Length': payload.length, Connection: 'close' } }, response => {
-      const chunks: Buffer[] = []; let length = 0;
-      response.on('data', (chunk: Buffer) => {
-        length += chunk.length;
-        if (length > MAX_AGENT_OUTPUT_BYTES + 65536) { response.destroy(); reject(new Error('Broker response is too large')); return; }
-        chunks.push(chunk);
-      });
-      response.on('end', () => {
-        try {
-          const value = JSON.parse(Buffer.concat(chunks).toString('utf8'));
-          if (typeof value?.error === 'string') reject(new Error(value.error)); else resolve(value?.data ?? null);
-        } catch (error: any) { reject(new Error(error?.message ?? 'Invalid broker response')); }
-      });
-      response.on('error', reject);
-    });
-    request.on('timeout', () => request.destroy(new Error('Broker request timed out')));
-    request.on('error', reject);
-    request.end(payload);
-  });
 }

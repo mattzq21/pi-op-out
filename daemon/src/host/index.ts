@@ -1,6 +1,7 @@
 import { errorText } from '../util/sync';
 import { Host } from './controller';
 import { HostServices } from './services';
+import type { BrokerCall } from '../broker';
 
 export { restartConfiguration, validateConfiguration } from './plugins';
 export { resolveProviderAuth } from './provider_sdk';
@@ -10,8 +11,8 @@ export interface Supervisor {
   finished: Promise<void>;
 }
 
-export async function start(home: string, storage: string, executable: string, output: (packet: any) => void): Promise<Supervisor> {
-  const host = await Host.create(home, storage, new HostServices(executable), output);
+export async function start(home: string, storage: string, executable: string, output: (packet: any) => void, broker: BrokerCall): Promise<Supervisor> {
+  const host = await Host.create(home, storage, new HostServices(executable), output, broker);
   let stopping = false;
   let finish!: () => void;
   const finished = new Promise<void>(resolve => { finish = resolve; });

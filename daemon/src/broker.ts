@@ -1,8 +1,6 @@
 import { join } from "node:path";
 import { reserve, releaseReservation } from "./session_registry";
-import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
-import { randomUUID } from 'node:crypto';
-import { STORAGE_DIRECTORY, BROKER_BODY_BYTES, BROKER_HEADER_BYTES, BROKER_QUEUE_DEPTH, BROKER_WORKERS } from './config';
+import { STORAGE_DIRECTORY, BROKER_QUEUE_DEPTH, BROKER_WORKERS } from './config';
 import { buildPiCommand, launchSpec } from './pi_launch';
 import { homeDir } from './environment';
 import { loadAppSettings } from './settings';
@@ -32,8 +30,6 @@ export class BrokerRuntime {
   closing = false;
   messageCount = 0;
   deliveries = new Map<string, number>();
-  port = 0;
-  token = randomUUID();
   busy = new Set<string>();
   active = 0;
 
@@ -44,11 +40,6 @@ export class BrokerRuntime {
   shutdown(): void { this.closing = true; }
 }
 
-export function brokerEnvironment(broker: BrokerRuntime): [number, string] {
-  if (broker.port === 0) throw new Error('Session broker is not ready');
-  return [broker.port, broker.token];
-}
-
 export function claimAgent(broker: BrokerRuntime, hostId: string, sessionId: string): BusyAgent {
   const key = `${hostId}\0${sessionId}`;
   if (broker.busy.has(key)) throw new Error(`Agent ${hostId}/${sessionId} is already responding`);
@@ -56,16 +47,11 @@ export function claimAgent(broker: BrokerRuntime, hostId: string, sessionId: str
   return new BusyAgent(key, broker.busy);
 }
 
-function respond(response: ServerResponse, status: number, body: unknown): void {
-  const payload = JSON.stringify(body);
-  response.writeHead(status, { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(payload), Connection: 'close' });
-  response.end(payload);
-}
+export class BrokerBusyError extends Error {}
 
-async function finish(response: ServerResponse, operation: () => Promise<any>): Promise<void> {
-  try { respond(response, 200, { data: await operation() }); }
-  catch (error: any) { respond(response, 400, { error: error?.message ?? String(error) }); }
-}
+export type BrokerAnswer = { data: unknown } | { error: string; transient: boolean };
+
+export type BrokerCall = (source: string, request: Record<string, unknown>) => Promise<BrokerAnswer>;
 
 async function withBrokerAccess<T>(app: App, work: () => Promise<T>): Promise<T> {
   const release = app.restart.gate.tryRead();
@@ -76,47 +62,36 @@ async function withBrokerAccess<T>(app: App, work: () => Promise<T>): Promise<T>
   } finally { release(); }
 }
 
-function readBody(request: IncomingMessage, limit: number): Promise<Buffer> {
-  return new Promise((resolve, reject) => {
-    const chunks: Buffer[] = []; let length = 0;
-    request.on('data', (chunk: Buffer) => {
-      length += chunk.length;
-      if (length > limit) { reject(new Error('Message is too large')); request.destroy(); return; }
-      chunks.push(chunk);
-    });
-    request.on('end', () => resolve(Buffer.concat(chunks)));
-    request.on('error', reject);
-  });
+export async function piBrokerRequest(app: App, broker: BrokerRuntime, source: string, request: Record<string, unknown>): Promise<BrokerAnswer> {
+  try {
+    const { path, body } = request;
+    if (typeof path !== 'string') throw new Error('Broker request has no path');
+    if (body !== undefined && (body === null || typeof body !== 'object' || Array.isArray(body))) throw new Error('Broker request body must be an object');
+    return { data: await brokerRequest(app, broker, path, { ...body, ...senderFields(path, source) }) ?? null };
+  } catch (error: any) {
+    return { error: error?.message ?? String(error), transient: error instanceof BrokerBusyError };
+  }
 }
 
-function parseJson(body: Buffer, message: string): any {
-  try { return JSON.parse(body.toString('utf8')); } catch { throw new Error(message); }
+function senderFields(path: string, source: string): Record<string, string> {
+  if (path === '/orchestration') return { sourceSessionId: source, sourceHostId: 'local' };
+  if (path === '/peer-project') return { sessionId: source };
+  return {};
 }
 
-export async function startSessionBroker(app: App, broker: BrokerRuntime): Promise<void> {
-  const server = createServer({ maxHeaderSize: BROKER_HEADER_BYTES, requestTimeout: 5000, headersTimeout: 5000, keepAlive: false }, (request, response) => {
-    void handleRequest(app, broker, request, response).catch(() => { try { response.destroy(); } catch {} });
-  });
-  await new Promise<void>((resolve, reject) => {
-    server.once('error', error => reject(new Error(`Could not start session broker: ${error.message}`)));
-    server.listen(0, '127.0.0.1', () => resolve());
-  });
-  const address = server.address();
-  broker.port = typeof address === 'object' && address ? address.port : 0;
+export function clientBrokerRequest(app: App, path: string, body: any): Promise<any> {
+  if (path !== '/orchestration' || (typeof body?.hostId === 'string' && body.hostId !== 'local')) {
+    return Promise.reject(new Error('Peer broker requests must target this host'));
+  }
+  return brokerRequest(app, app.broker, path, body);
 }
 
-async function handleRequest(app: App, broker: BrokerRuntime, request: IncomingMessage, response: ServerResponse): Promise<void> {
-  const method = request.method ?? '';
-  const path = request.url ?? '';
-  if (request.headers.authorization?.trim() !== `Bearer ${broker.token}`) { respond(response, 401, { error: 'Unauthorized' }); return; }
-  const contentLength = Number.parseInt(String(request.headers['content-length'] ?? '0'), 10) || 0;
-  if (contentLength > BROKER_BODY_BYTES) { respond(response, 413, { error: 'Message is too large' }); return; }
-  if (broker.active >= BROKER_WORKERS + BROKER_QUEUE_DEPTH) { respond(response, 503, { error: 'Session broker is busy' }); return; }
+async function brokerRequest(app: App, broker: BrokerRuntime, path: string, body: any): Promise<any> {
+  if (broker.closing || broker.active >= BROKER_WORKERS + BROKER_QUEUE_DEPTH) throw new BrokerBusyError('Session broker is busy');
   broker.active += 1;
   try {
-    const body = await readBody(request, BROKER_BODY_BYTES);
-    if (method === 'POST' && path === '/orchestration') { await enqueueOrchestration(app, broker, response, body); return; }
-    await finish(response, () => withBrokerAccess(app, () => respondBrokerRequest(app, broker, method, path, body)));
+    if (path === '/orchestration') return await enqueueOrchestration(app, broker, body);
+    return await withBrokerAccess(app, () => respondBrokerRequest(app, broker, path, body));
   } finally { broker.active -= 1; }
 }
 
@@ -135,28 +110,21 @@ function registerDelivery(broker: BrokerRuntime, value: any): (() => void) | und
   };
 }
 
-async function enqueueOrchestration(app: App, broker: BrokerRuntime, response: ServerResponse, body: Buffer): Promise<void> {
-  let delivery: (() => void) | undefined;
-  let value: any;
-  try {
-    value = parseJson(body, 'Invalid orchestration request');
-    delivery = registerDelivery(broker, value);
-  }
-  catch (error: any) { respond(response, 400, { error: error.message }); return; }
+async function enqueueOrchestration(app: App, broker: BrokerRuntime, value: any): Promise<any> {
   const worker = value?.action === 'send' || value?.action === 'branch_off';
-  if ((worker && broker.messageCount >= BROKER_WORKERS) || broker.closing) { delivery?.(); respond(response, 503, { error: 'Session broker is busy' }); return; }
+  if (worker && broker.messageCount >= BROKER_WORKERS) throw new BrokerBusyError('Session broker is busy');
+  const delivery = registerDelivery(broker, value);
   if (worker) broker.messageCount += 1;
   try {
-    await finish(response, () => withBrokerAccess(app, () => brokerOrchestration(app, broker, value)));
+    return await withBrokerAccess(app, () => brokerOrchestration(app, broker, value));
   } finally {
     if (worker) broker.messageCount = Math.max(0, broker.messageCount - 1);
     delivery?.();
   }
 }
 
-async function respondBrokerRequest(app: App, broker: BrokerRuntime, method: string, path: string, body: Buffer): Promise<any> {
-  if (method === 'POST' && path === '/session-identity') {
-    const value = parseJson(body, 'Invalid session identity request');
+async function respondBrokerRequest(app: App, broker: BrokerRuntime, path: string, value: any): Promise<any> {
+  if (path === '/session-identity') {
     const root = join(homeDir(), STORAGE_DIRECTORY);
     if (value?.action === 'reserve' && Number.isInteger(value.count) && value.count >= 1 && value.count <= 2) {
       return { sessionIds: Array.from({ length: value.count }, () => reserve(root)) };
@@ -167,17 +135,15 @@ async function respondBrokerRequest(app: App, broker: BrokerRuntime, method: str
     }
     throw new Error('Invalid session identity request');
   }
-  if (method === 'POST' && path === '/peer-project') {
-    const value = parseJson(body, 'Invalid peer project request');
+  if (path === '/peer-project') {
     if (typeof value?.name !== 'string' || !isUuid(value.sessionId) || typeof value.cwd !== 'string') throw new Error('Invalid peer project request');
     return { cwd: await sessionGroups.peerProjectFolder(value.name, 'local:' + value.sessionId, value.cwd) };
   }
-  if (method === 'POST' && path === '/fast-models') {
-    const value = parseJson(body, 'Invalid fast model request');
+  if (path === '/fast-models') {
     if (typeof value?.hostId !== 'string') throw new Error('hostId is required');
     return providerAuth.forOwner(app, 'fast-models', value.hostId, { action: 'fast_models' });
   }
-  if (method === 'GET' && path === '/agents') return brokerAgents(app, broker);
+  if (path === '/agents') return brokerAgents(app, broker);
   throw new Error('Unknown session broker endpoint');
 }
 
@@ -234,7 +200,7 @@ async function brokerSettleFirstMessage(app: App, broker: BrokerRuntime, value: 
   const location = await connection.request({ type: 'orchestration', action: 'locate', sessionKey: id }).catch(() => null);
   const packet: any = { type: 'orchestration', action: 'settle_first_message', sessionKey: id, sessionPath: value.sessionPath, deliveryId: value.deliveryId ?? null, clientId: value.clientId ?? null };
   if (typeof location?.cwd === 'string' && typeof location?.sessionPath === 'string') {
-    packet.spec = launchSpec(buildPiCommand(broker, settings, host, { kind: 'rpc', cwd: location.cwd, sessionPath: location.sessionPath }, connection.remotePort));
+    packet.spec = launchSpec(buildPiCommand(settings, host, { kind: 'rpc', cwd: location.cwd, sessionPath: location.sessionPath }, connection.remotePort));
     packet.cwd = location.cwd;
   }
   return { arrived: (await connection.request(packet))?.arrived === true };
@@ -254,7 +220,7 @@ async function brokerConversationOperation(app: App, broker: BrokerRuntime, valu
     sourceSessionId: field('sourceSessionId'), sourceHostId: field('sourceHostId'), sourceName: field('sourceName'), message: field('message'), wake: field('wake'), clientId: field('clientId'),
     deliveryId: field('deliveryId'), discardOnFailure: field('discardOnFailure'), deliverAs: field('deliverAs') };
   if (action === 'send') {
-    const command = buildPiCommand(broker, settings, host, { kind: 'rpc', cwd, sessionPath: path }, connection.remotePort);
+    const command = buildPiCommand(settings, host, { kind: 'rpc', cwd, sessionPath: path }, connection.remotePort);
     packet.spec = launchSpec(command);
     packet.cwd = cwd;
   }

@@ -6,8 +6,6 @@ export const PROJECT_DIR: string = typeof __PIOP_PROJECT_DIR__ === 'string' ? __
 export const MAX_TERMINALS = 8;
 export const BROKER_WORKERS = 8;
 export const BROKER_QUEUE_DEPTH = 32;
-export const BROKER_HEADER_BYTES = 16 * 1024;
-export const BROKER_BODY_BYTES = 1024 * 1024;
 export const MAX_AGENT_OUTPUT_BYTES = 16 * 1024 * 1024;
 
 export const PROTOCOL_VERSION = 1;

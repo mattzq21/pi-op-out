@@ -22,13 +22,14 @@ import { clientPayload } from './payload';
 import { argument, sessionSpec, serializeSpec, type SessionLaunch } from './protocol';
 import { drainSaves } from './queue_storage';
 import { readonlyCommand, type ReadonlyView } from './readonly_views';
-import { parseRuntimeEvent, type RuntimeEvent, type RuntimeEventSource } from './runtime_events';
+import type { RuntimeEvent, RuntimeEventSource } from './runtime_events';
 import { Session, type SessionHost } from './session';
 import { sessionCommand } from './session_commands';
 import { recoverQueuedInput, watchRetention } from './storage_upkeep';
 import { SubmissionLedger } from './submissions';
 import { ToolPayloadCache } from './tool_payload';
 import type { HostServices } from './services';
+import type { BrokerCall } from '../broker';
 
 export class Host implements SessionHost {
   sessions = new Map<string, Session>();
@@ -57,15 +58,15 @@ export class Host implements SessionHost {
   private timers: NodeJS.Timeout[] = [];
   readonly submissions: SubmissionLedger;
 
-  private constructor(readonly home: string, readonly storage: string, readonly services: HostServices, private sink: (packet: any) => void) {
+  private constructor(readonly home: string, readonly storage: string, readonly services: HostServices, private sink: (packet: any) => void, readonly broker: BrokerCall) {
     this.submissions = new SubmissionLedger(join(home, storage), line => this.output({ type: 'diagnostic', line }));
   }
 
-  static async create(home: string, storage: string, services: HostServices, sink: (packet: any) => void): Promise<Host> {
+  static async create(home: string, storage: string, services: HostServices, sink: (packet: any) => void, broker: BrokerCall): Promise<Host> {
     await services.initialize();
     const settings = Settings.readSettingsAt(join(home, storage, 'settings.json'));
     const definitions = await Agents.load(home, storage, Extensions.agentResources(settings), true, null);
-    const host = new Host(home, storage, services, sink);
+    const host = new Host(home, storage, services, sink, broker);
     host.agentDefinitions = definitions;
     host.ownershipValue = await ConversationOwnership.create(home, storage, { revoke: (id, intent) => host.releaseConversation(id, intent) });
     const output = (packet: any) => host.output(packet);
@@ -125,19 +126,6 @@ export class Host implements SessionHost {
     const repository = getProjectRepository(this.storageRoot(), source.cwd);
     if (!repository) return;
     await saveProgress(source.cwd, { repository: repository.root, gitCommonDir: repository.gitDir });
-  }
-
-  private async brokerRuntimeEvent(packet: any): Promise<null> {
-    const event = parseRuntimeEvent(packet.event);
-    const identity = text(event.data, 'sessionId');
-    const cwd = text(event.data, 'cwd');
-    if (!identity || !cwd) throw new Error('Runtime event ' + event.name + ' has no chat');
-    try { await this.runtimeEvent({ sessionKey: identity, identity, cwd }, event); }
-    catch (error) {
-      this.output({ type: 'diagnostic', line: identity + ': ' + event.name + ' failed: ' + errorText(error) });
-      throw error;
-    }
-    return null;
   }
 
   stateChanged(identity: string): void { this.orchestration.stateChanged(identity); }
@@ -440,7 +428,6 @@ export class Host implements SessionHost {
       case 'attach': return attach(this, packet);
       case 'shutdown': await this.shutdown(); return null;
       case 'retire': return this.retire(packet);
-      case 'runtime_event': return this.brokerRuntimeEvent(packet);
       case 'session_command': return this.directSessionCommand(packet);
       case 'orchestration': return this.orchestration.handle(packet);
     }

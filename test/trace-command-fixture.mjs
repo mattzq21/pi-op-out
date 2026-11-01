@@ -1,4 +1,3 @@
-import { createServer } from "node:http";
 import stateRecords from '../daemon/resources/piop-storage/session-records.cjs';
 import sessionNames from '../daemon/resources/session-broker/session-names.cjs';
 import { reserve, bind, open } from "../daemon/resources/session-database.cjs";
@@ -12,6 +11,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { randomUUID } from 'node:crypto';
 import { build } from 'esbuild';
 import { storageSchemaImports } from '../scripts/storage-schema-plugin.mjs';
+import { installBroker } from './runtime-events-fixture.mjs';
 
 export async function buildTraceControls(outfile) {
   await build({ entryPoints: [fileURLToPath(new URL('../daemon/resources/piop-controls/index.ts', import.meta.url))], outfile, bundle: true, platform: 'node', format: 'esm', target: 'node22', logLevel: 'silent', external: ['@earendil-works/*'], plugins: [storageSchemaImports()],
@@ -43,26 +43,9 @@ export async function publishedTrace(t, traceReader, content, { folder = '', hom
   try { bind(sourceDb, id, source); } finally { sourceDb.close(); }
   const outfile = controlsBundle ?? join(buildDirectory, 'operations.mjs');
   if (!controlsBundle) await buildTraceControls(outfile);
-  const previousBroker = [process.env.PIOP_BROKER_URL, process.env.PIOP_BROKER_TOKEN];
-  const server = createServer(async (request, response) => {
-    if (request.method !== 'POST' || request.url !== '/session-identity' || request.headers.authorization !== 'Bearer fixture') {
-      response.writeHead(400); response.end(JSON.stringify({ error: 'Unexpected storage request' })); return;
-    }
-    response.setHeader('Content-Type', 'application/json');
-    const chunks = [];
-    for await (const chunk of request) chunks.push(chunk);
-    const { count } = JSON.parse(Buffer.concat(chunks).toString());
-    response.end(JSON.stringify({ data: { sessionIds: Array.from({ length: count }, () => reserve(join(home, '.piop'))) } }));
-  });
-  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
-  server.unref();
-  process.env.PIOP_BROKER_URL = `http://127.0.0.1:${server.address().port}`;
-  process.env.PIOP_BROKER_TOKEN = 'fixture';
-  t.after(() => {
-    server.closeAllConnections(); server.close();
-    for (const [index, key] of ['PIOP_BROKER_URL', 'PIOP_BROKER_TOKEN'].entries()) {
-      if (previousBroker[index] === undefined) delete process.env[key]; else process.env[key] = previousBroker[index];
-    }
+  installBroker(t, (path, { count }) => {
+    if (path !== '/session-identity') throw new Error('Unexpected storage request');
+    return { sessionIds: Array.from({ length: count }, () => reserve(join(home, '.piop'))) };
   });
   const { default: controls } = await import(pathToFileURL(outfile));
   const listeners = [];

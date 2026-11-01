@@ -6,7 +6,7 @@ import { remoteHost } from './pi_launch';
 import * as host from './host/index';
 import { Mutex } from './util/sync';
 import type { AppSettings } from './settings_types';
-import type { BrokerRuntime } from './broker';
+import { piBrokerRequest, type BrokerRuntime } from './broker';
 import type { PiRuntime } from './pi_runtime';
 import type { App } from './app';
 
@@ -119,7 +119,7 @@ export async function updateSettings(app: App, runtime: PiRuntime, settings: App
   }
 }
 
-export function connect(app: App, runtime: PiRuntime, _broker: BrokerRuntime, settings: AppSettings, hostId: string): Promise<Daemon> {
+export function connect(app: App, runtime: PiRuntime, broker: BrokerRuntime, settings: AppSettings, hostId: string): Promise<Daemon> {
   if (hostId !== 'local') return Promise.reject(new Error('Remote workers must be managed through their Piop daemon'));
   return runtime.connections.lock.run(async () => {
     const config = connectionConfig(settings, hostId);
@@ -134,7 +134,7 @@ export function connect(app: App, runtime: PiRuntime, _broker: BrokerRuntime, se
     const supervisor = await host.start(homeDir(), STORAGE_DIRECTORY, piExecutable(), packet => {
       if (!daemon.alive) return;
       try { handlePacket(app, daemon, hostId, packet); } catch (error) { console.error('Host packet failed:', error); }
-    });
+    }, (source, request) => piBrokerRequest(app, broker, source, request));
     daemon.attach(supervisor);
     supervisor.finished.then(() => { if (daemon.alive) daemon.disconnect(app, app.pi); });
     runtime.connections.daemons.set(hostId, daemon);

@@ -11,7 +11,6 @@ import * as providerAuth from './provider_auth';
 import * as piRuntime from './pi_runtime';
 import * as terminals from './terminals';
 import * as daemon from './daemon';
-import { startSessionBroker } from './broker';
 import { resumeInterruptedTasks } from './interrupted_tasks';
 import { stopOrphanedProcesses } from './process_cleanup';
 import { loadAppSettings } from './settings';
@@ -58,7 +57,6 @@ async function runBackend(): Promise<void> {
     let settings: Awaited<ReturnType<typeof loadAppSettings>> | undefined;
     await step(() => stopOrphanedProcesses());
     await step(() => recoverChatWorktrees(app));
-    await step(() => startSessionBroker(app, app.broker));
     await step(async () => { settings = await loadAppSettings(app); });
     await step(() => prepareDefinedAgentsExtension());
     await step(() => daemon.connect(app, app.pi, app.broker, settings!, 'local'));

@@ -1,8 +1,7 @@
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { afterAll, beforeAll, expect, test } from 'bun:test';
-import { readFileSync } from 'node:fs';
-import { connect } from 'node:net';
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { fakeProgram, startDaemon, type TestDaemon } from './harness';
@@ -15,101 +14,73 @@ function publicSession(): { id: string; path: string } {
 }
 
 let daemon: TestDaemon;
-let broker: { url: string; token: string; port: number };
+let open: { id: string; path: string };
+let closed: { id: string; path: string };
+let pi: { answers: Record<string, any> };
 
-function installFakePi(home: string): void {
+function installFakePi(home: string, unknownHost: string): void {
   const bin = join(home, '.local/bin');
   fakeProgram(bin, 'pi', '#!/bin/sh\nexit 1\n');
   fakeProgram(bin, 'node', `#!${process.execPath}
 const fs = require('node:fs');
+const path = require('node:path');
 const args = process.argv.slice(2);
-fs.writeFileSync(require('node:path').join(process.env.HOME, 'pi-env.json'), JSON.stringify({ url: process.env.PIOP_BROKER_URL, token: process.env.PIOP_BROKER_TOKEN }));
 const sessionFile = args[args.lastIndexOf('--session') + 1];
 const sessionId = JSON.parse(fs.readFileSync(sessionFile, 'utf8').split('\\n')[0]).id;
 const state = { sessionFile, sessionId, isStreaming: false, messageCount: 0, pendingMessageCount: 0, model: null, thinkingLevel: 'medium' };
+const requests = {
+  agents: { path: '/agents' },
+  unknown: { path: '/unknown', body: {} },
+  host: { path: '/orchestration', body: { action: 'read', hostId: ${JSON.stringify(unknownHost)}, sessionId: ${JSON.stringify(randomUUID())} } },
+};
+const answers = {};
+const send = value => process.stdout.write(JSON.stringify(value) + '\\n');
+const trigger = setInterval(() => {
+  if (!fs.existsSync(path.join(process.env.HOME, 'pi-trigger'))) return;
+  clearInterval(trigger);
+  for (const [id, data] of Object.entries(requests)) send({ type: 'piop_runtime_event', id, name: 'broker', data });
+}, 20);
 require('node:readline').createInterface({ input: process.stdin }).on('line', line => {
   const request = JSON.parse(line);
-  process.stdout.write(JSON.stringify({ type: 'response', id: request.id, command: request.type, success: true, data: request.type === 'get_state' ? state : request.type === 'get_entries' ? { entries: [], leafId: null } : null }) + '\\n');
+  if (request.type === 'piop_runtime_event_result') {
+    answers[request.id] = request.data;
+    if (Object.keys(answers).length === Object.keys(requests).length) {
+      fs.writeFileSync(path.join(process.env.HOME, 'pi-broker.json'), JSON.stringify({ answers }));
+    }
+    return;
+  }
+  send({ type: 'response', id: request.id, command: request.type, success: true, data: request.type === 'get_state' ? state : request.type === 'get_entries' ? { entries: [], leafId: null } : null });
 });
 `);
 }
 
-let open: { id: string; path: string };
-
 beforeAll(async () => {
   daemon = await startDaemon();
-  installFakePi(daemon.home);
+  installFakePi(daemon.home, 'café 🦆');
   open = publicSession();
+  closed = publicSession();
   expect(await daemon.invoke('start_pi', { runtimeId: 'open-runtime', clientId: 'test-client', cwd: daemon.home, sessionPath: open.path })).toMatchObject({ owned: true });
-  const environment = JSON.parse(readFileSync(join(daemon.home, 'pi-env.json'), 'utf8'));
-  broker = { ...environment, port: Number(new URL(environment.url).port) };
+  writeFileSync(join(daemon.home, 'pi-trigger'), '');
+  const file = join(daemon.home, 'pi-broker.json');
+  for (const deadline = Date.now() + 30_000; !existsSync(file);) {
+    if (Date.now() > deadline) throw new Error('Pi got no broker answers');
+    await Bun.sleep(50);
+  }
+  pi = JSON.parse(readFileSync(file, 'utf8'));
 }, 60_000);
 afterAll(async () => { await daemon?.stop(); });
 
-type Answer = { status: number; headers: string; body: string; bytes: number };
-
-function raw(request: Buffer | string): Promise<Answer> {
-  return new Promise((resolve, reject) => {
-    const socket = connect(broker.port, '127.0.0.1');
-    const chunks: Buffer[] = [];
-    socket.on('data', chunk => chunks.push(chunk));
-    socket.on('error', reject);
-    socket.on('close', () => {
-      const all = Buffer.concat(chunks);
-      const end = all.indexOf('\r\n\r\n');
-      const headers = all.subarray(0, end).toString('latin1');
-      const body = all.subarray(end + 4);
-      resolve({ status: Number(headers.split(' ')[1]), headers, body: body.toString('utf8'), bytes: body.length });
-    });
-    socket.write(request);
-  });
-}
-
-function request(method: string, path: string, body?: unknown, token = broker.token): Promise<Answer> {
-  const payload = body === undefined ? Buffer.alloc(0) : Buffer.from(JSON.stringify(body));
-  return raw(Buffer.concat([Buffer.from(method + ' ' + path + ' HTTP/1.1\r\nHost: 127.0.0.1\r\nAuthorization: Bearer ' + token + '\r\nContent-Type: application/json\r\nContent-Length: ' + payload.length + '\r\n\r\n'), payload]));
-}
-
-const agents = async () => JSON.parse((await request('GET', '/agents')).body).data;
-
-test('a started Pi gets the broker address and a UUID token, and the broker refuses other tokens', async () => {
-  expect(broker.url).toBe('http://127.0.0.1:' + broker.port);
-  expect(broker.token).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/);
-  for (const token of ['', 'wrong', randomUUID()]) expect((await request('GET', '/agents', undefined, token)).status).toBe(401);
-  expect((await request('GET', '/agents')).status).toBe(200);
+test('a started Pi reaches the broker through its own channel', () => {
+  expect(Array.isArray(pi.answers.agents.data)).toBe(true);
 });
 
-test('broker answers are JSON with a content length in UTF-8 bytes and close the connection', async () => {
-  const answer = await request('POST', '/orchestration', { action: 'read', hostId: 'café 🦆', sessionId: randomUUID() });
-  expect(answer.status).toBe(400);
-  expect(JSON.parse(answer.body)).toEqual({ error: 'Unknown host: café 🦆' });
-  expect(answer.headers).toMatch(/^HTTP\/1\.1 400 /);
-  expect(answer.headers).toMatch(/\r\ncontent-type: application\/json\r\n/i);
-  expect(answer.headers).toMatch(/\r\nconnection: close\r\n/i);
-  expect(answer.headers).toMatch(new RegExp('\\r\\ncontent-length: ' + answer.bytes + '(\\r\\n|$)', 'i'));
-  expect(answer.bytes).toBeGreaterThan(answer.body.length);
+test('broker failures reach Pi as errors that say if a retry can work', () => {
+  expect(pi.answers.unknown).toEqual({ error: 'Unknown session broker endpoint', transient: false });
+  expect(pi.answers.host).toEqual({ error: 'Unknown host: café 🦆', transient: false });
 });
 
-test('request headers past the 16 KiB budget are refused and the broker keeps serving', async () => {
-  const lines = Array.from({ length: 40 }, (_, index) => 'X-Filler-' + index + ': ' + 'x'.repeat(500)).join('\r\n');
-  const answer = await raw('GET /agents HTTP/1.1\r\nHost: 127.0.0.1\r\nAuthorization: Bearer ' + broker.token + '\r\n' + lines + '\r\n\r\n');
-  expect(answer.status).toBe(431);
-  expect((await request('GET', '/agents')).status).toBe(200);
-});
-
-test('header lines with bytes that are not UTF-8 are refused or read safely, and the broker keeps serving', async () => {
-  const head = (lines: Buffer[]) => Buffer.concat([...lines.flatMap(line => [line, Buffer.from('\r\n')]), Buffer.from('\r\n')]);
-  expect((await raw(head([Buffer.from([0xff])]))).status).toBe(400);
-  expect((await raw(head([Buffer.from('GET /agents HTTP/1.1'), Buffer.from('Host: 127.0.0.1'), Buffer.concat([Buffer.from('Authorization: Bearer '), Buffer.from([0xff, 0xfe]), Buffer.from(broker.token.slice(2))])]))).status).toBe(401);
-  const answer = await raw(head([Buffer.from('GET /agents HTTP/1.1'), Buffer.from('Host: 127.0.0.1'), Buffer.from('Authorization: Bearer ' + broker.token), Buffer.concat([Buffer.from('X-Other: '), Buffer.from([0xff, 0xc3])])]));
-  expect(answer.status).toBe(200);
-  expect(JSON.parse(answer.body).data).toEqual(await agents());
-  expect((await request('GET', '/agents')).status).toBe(200);
-});
-
-test('the agent list marks open conversations as active', async () => {
-  const closed = publicSession();
-  const listed = new Map((await agents()).map((agent: any) => [agent.sessionId, agent.active]));
+test('the agent list marks open conversations as active', () => {
+  const listed = new Map(pi.answers.agents.data.map((agent: any) => [agent.sessionId, agent.active]));
   expect(listed.get(open.id)).toBe(true);
   expect(listed.get(closed.id)).toBe(false);
 });

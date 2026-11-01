@@ -17,7 +17,7 @@ import { isHostOperationWorker, runHostOperationWorker } from './daemon/src/host
 import { createInterface } from 'node:readline';
 if (isHostOperationWorker()) { runHostOperationWorker(); } else {
 const output = packet => process.stdout.write(JSON.stringify(packet) + '\\n');
-const host = await start(process.env.HOME, '.piop', process.argv[2], output);
+const host = await start(process.env.HOME, '.piop', process.argv[2], output, async () => ({ error: 'This host has no broker', transient: false }));
 const input = createInterface({ input: process.stdin });
 input.on('line', line => host.input(JSON.parse(line)));
 input.on('close', () => host.input({ type: 'shutdown' }));

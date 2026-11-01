@@ -1,6 +1,5 @@
 import assert from 'node:assert/strict';
 import { test, after } from 'node:test';
-import { createServer } from 'node:http';
 import database from '../../daemon/resources/session-database.cjs';
 import { mkdtemp, mkdir, readFile, writeFile, rm, stat, readdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -8,6 +7,7 @@ import { basename, join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { build } from 'esbuild';
 import { storageSchemaImports } from '../../scripts/storage-schema-plugin.mjs';
+import { installBroker } from '../runtime-events-fixture.mjs';
 
 const home = await mkdtemp(join(tmpdir(), 'piop-session-operations-home-'));
 process.env.HOME = home;
@@ -29,33 +29,10 @@ async function fixture(t) {
   process.env.PIOP_STORAGE_DIRECTORY = basename(dir);
   t.after(() => rm(dir, { recursive: true, force: true }));
 
-  const previousBroker = [process.env.PIOP_BROKER_URL, process.env.PIOP_BROKER_TOKEN];
-  const server = createServer(async (request, response) => {
-    response.setHeader('Content-Type', 'application/json');
-    try {
-      if (request.method !== 'POST' || request.url !== '/session-identity' || request.headers.authorization !== 'Bearer fixture') {
-        response.writeHead(400).end(JSON.stringify({ error: 'Unexpected identity request' }));
-        return;
-      }
-      const chunks = [];
-      for await (const chunk of request) chunks.push(chunk);
-      const { action, count } = JSON.parse(Buffer.concat(chunks).toString());
-      if (action !== 'reserve' || !Number.isInteger(count) || count < 1 || count > 2) {
-        response.writeHead(400).end(JSON.stringify({ error: 'Invalid identity reservation' }));
-        return;
-      }
-      response.end(JSON.stringify({ data: { sessionIds: Array.from({ length: count }, () => database.reserve(dir)) } }));
-    } catch (error) { response.writeHead(500).end(JSON.stringify({ error: error.message })); }
-  });
-  await new Promise((resolve, reject) => { server.once('error', reject); server.listen(0, '127.0.0.1', resolve); });
-  process.env.PIOP_BROKER_URL = `http://127.0.0.1:${server.address().port}`;
-  process.env.PIOP_BROKER_TOKEN = 'fixture';
-  t.after(async () => {
-    server.closeAllConnections();
-    await new Promise((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
-    for (const [index, key] of ['PIOP_BROKER_URL', 'PIOP_BROKER_TOKEN'].entries()) {
-      if (previousBroker[index] === undefined) delete process.env[key]; else process.env[key] = previousBroker[index];
-    }
+  installBroker(t, (path, { action, count }) => {
+    if (path !== '/session-identity') throw new Error('Unexpected identity request');
+    if (action !== 'reserve' || !Number.isInteger(count) || count < 1 || count > 2) throw new Error('Invalid identity reservation');
+    return { sessionIds: Array.from({ length: count }, () => database.reserve(dir)) };
   });
 
   const bundle = await compiledControls();

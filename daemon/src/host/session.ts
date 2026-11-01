@@ -25,6 +25,7 @@ import { RuntimeWorker, type Request, type WorkerObserver } from './worker';
 import { QueueGoal } from './goals/state';
 import { GOAL_COMMAND } from './goals/commands';
 import { goalPreparationView, restoreGoalAttachments, type GoalPlace } from './goals/files';
+import type { BrokerAnswer, BrokerCall } from '../broker';
 
 export interface SessionHost {
   queueRoot(): string | null;
@@ -40,6 +41,7 @@ export interface SessionHost {
   refreshProviders(): Promise<number>;
   stateChanged(identity: string): void;
   runtimeEvent(source: RuntimeEventSource, event: RuntimeEvent): Promise<void>;
+  readonly broker: BrokerCall;
   taskRunning(id: string, running: boolean, stopped: boolean): void;
 }
 
@@ -168,7 +170,7 @@ export class Session {
   private observer(): WorkerObserver {
     return {
       event: event => { this.queue.observe(event); return this.inOrder(() => this.receive(event)).then(() => {}, () => {}); },
-      runtimeEvent: event => event.name.startsWith('queue_') ? this.receiveRuntimeEvent(event) : this.inOrder(() => this.receiveRuntimeEvent(event)),
+      runtimeEvent: event => event.name === 'broker' ? this.brokerRequest(event.data) : event.name.startsWith('queue_') ? this.receiveRuntimeEvent(event) : this.inOrder(() => this.receiveRuntimeEvent(event)),
       response: (event, request) => this.inOrder(() => this.response(event, request), false),
       stderr: line => {
         if (this.stderrTail.push(line) > 20) this.stderrTail.shift();
@@ -439,6 +441,12 @@ export class Session {
   private async receive(event: any): Promise<void> {
     this.idleStop.cancel();
     try { await this.receiveEvent(event); }
+    finally { this.idleStop.schedule(); }
+  }
+
+  private async brokerRequest(request: Record<string, unknown>): Promise<BrokerAnswer> {
+    this.idleStop.cancel();
+    try { return await this.host.broker(this.sessionId(), request); }
     finally { this.idleStop.schedule(); }
   }
 

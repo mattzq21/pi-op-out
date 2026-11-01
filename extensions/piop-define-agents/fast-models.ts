@@ -29,19 +29,14 @@ export function fastModelProblem(snapshot: FastModelSnapshot | null, agent: stri
 }
 
 export async function hostFastModels(): Promise<FastModelSnapshot | null> {
-  const broker = process.env.PIOP_BROKER_URL;
-  const token = process.env.PIOP_BROKER_TOKEN;
+  const send = Object.getOwnPropertyDescriptor(globalThis, Symbol.for("piop.runtime-events"))?.value as ((name: string, data: unknown) => Promise<unknown>) | undefined;
 
-  if (!broker || !token) return null;
-  const response = await fetch(broker + "/fast-models", {
-    method: "POST", headers: { Authorization: "Bearer " + token, "Content-Type": "application/json" },
-    body: JSON.stringify({ hostId: process.env.PI_DESKTOP_HOST_ID || "local" }), signal: AbortSignal.timeout(30_000),
-  });
-  const body = Parse(Type.Object({ data: Type.Optional(Type.Unknown()), error: Type.Optional(Type.String()) }), await response.json());
+  if (!send) return null;
+  const answer = Parse(Type.Union([Type.Object({ data: Type.Unknown() }), Type.Object({ error: Type.String() })]), await send("broker", { path: "/fast-models", body: { hostId: process.env.PI_DESKTOP_HOST_ID || "local" } }));
 
-  if (!response.ok || body.error) throw new Error("Could not read fast models from the host: " + (body.error ?? "HTTP " + response.status));
+  if ("error" in answer) throw new Error("Could not read fast models from the host: " + answer.error);
 
-  return parseFastModelSnapshot(body.data);
+  return parseFastModelSnapshot(answer.data);
 }
 
 export function fastModeSession(pi: ExtensionAPI): FastModeSession | undefined {

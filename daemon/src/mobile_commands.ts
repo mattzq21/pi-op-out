@@ -4,6 +4,7 @@ import * as endpoint from './daemon_endpoint';
 import * as daemon from './daemon';
 import * as daemonRestart from './daemon_restart';
 import * as peers from './peers';
+import { clientBrokerRequest } from './broker';
 import * as plugins from './plugins';
 import * as providerAuth from './provider_auth';
 import * as terminalSessions from './terminal_sessions';
@@ -143,7 +144,7 @@ const COMMANDS: Record<string, Handler> = {
   check_daemon_idle: async app => { await daemonRestart.ensureLocalIdle(app); return null; },
   plugin_status: (app, _owner, args) => plugins.dispatch(app, 'plugin_status', args),
   shared_terminal: (app, owner, args) => terminalSessions.shared(app, owner, args),
-  broker_request: (app, _owner, args) => peers.localBrokerRequest(app, argument(args, 'path', 'string'), argument(args, 'body', 'any')),
+  broker_request: (app, _owner, args) => clientBrokerRequest(app, argument(args, 'path', 'string'), argument(args, 'body', 'any')),
   load_host_settings: (app, _owner, args) => loadSettings(app, args),
   load_host_settings_change: app => loadSettingsChange(app),
   save_host_settings: (app, _owner, args) => saveHostSettings(app, args),

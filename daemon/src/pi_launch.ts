@@ -11,7 +11,6 @@ import { validateRemoteHost, type AppSettings } from './settings_types';
 import { transaction } from './util/db';
 import { sessionWorkerCommand } from './session_worker';
 import type { BrokerRuntime } from './broker';
-import { brokerEnvironment } from './broker';
 import { requireLocal } from './host_connection';
 import { QUEUE_TOOLS } from './host/goals/commands';
 
@@ -111,10 +110,9 @@ function importExternalIdentity(path: string): string {
 
 export type PiLaunch = { kind: 'rpc'; cwd?: string | null; sessionPath?: string | null; sessionId?: string | null; forkPath?: string | null };
 
-export function buildPiCommand(broker: BrokerRuntime, settings: AppSettings, hostId: string, launch: PiLaunch, _daemonPort?: number): LaunchCommand {
+export function buildPiCommand(settings: AppSettings, hostId: string, launch: PiLaunch, _daemonPort?: number): LaunchCommand {
   if (hostId !== 'local') throw new Error('Remote Pi must be launched by its owning daemon');
-  const [brokerPort, brokerToken] = brokerEnvironment(broker);
-  return localPiCommand(settings, hostId, launch, brokerPort, brokerToken, homeDir());
+  return localPiCommand(settings, hostId, launch, homeDir());
 }
 
 function localWorkerCommand(piPath: string): LaunchCommand {
@@ -125,11 +123,11 @@ function localWorkerCommand(piPath: string): LaunchCommand {
   return command;
 }
 
-function localPiCommand(settings: AppSettings, hostId: string, launch: PiLaunch, brokerPort: number, brokerToken: string, desktopHome: string): LaunchCommand {
+function localPiCommand(settings: AppSettings, hostId: string, launch: PiLaunch, desktopHome: string): LaunchCommand {
   const piPath = piExecutable();
   const sessionDir = ensureDesktopSessionsDir(desktopHome);
   const command = localWorkerCommand(piPath);
-  configureLocalExtensions(command, settings, hostId, brokerPort, brokerToken, sessionDir);
+  configureLocalExtensions(command, settings, hostId, sessionDir);
   command.env.PIOP_RPC_ENTRY = join(Ext.generatedExtensionRoot(), 'runtime-bridge.cjs');
   command.env.JITI_NATIVE_MODULES = '["typebox"]';
   command.env.NODE_COMPILE_CACHE = join(homeDir(), STORAGE_DIRECTORY, 'node-compile-cache');
@@ -153,7 +151,7 @@ function configureLocalLaunch(command: LaunchCommand, launch: PiLaunch, piPath: 
   else if (launch.sessionId) command.args.push('--session-id', launch.sessionId);
 }
 
-function configureLocalExtensions(command: LaunchCommand, settings: AppSettings, hostId: string, brokerPort: number, brokerToken: string, sessionDir: string): void {
+function configureLocalExtensions(command: LaunchCommand, settings: AppSettings, hostId: string, sessionDir: string): void {
   const root = Ext.generatedExtensionRoot();
   Ext.prepareRuntimeBridge();
   command.env.PIOP_AGENT_RESOURCES = JSON.stringify({ ...Ext.agentResources(settings), pluginAgentTools: Contributions.agentTools() });
@@ -180,8 +178,6 @@ function configureLocalExtensions(command: LaunchCommand, settings: AppSettings,
     PI_DESKTOP_CONTEXT_WINDOW_CAP_EXTENSION: contextWindowCapExtension,
     PIOP_COMMAND_POLICY: JSON.stringify(Contributions.commandPolicy()),
     PIOP_QUEUE_TOOLS: JSON.stringify(QUEUE_TOOLS),
-    PIOP_BROKER_URL: `http://127.0.0.1:${brokerPort}`,
-    PIOP_BROKER_TOKEN: brokerToken,
     PI_DESKTOP_HOST_ID: hostId,
   });
 }

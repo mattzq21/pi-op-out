@@ -125,7 +125,7 @@ async function preparePiStart(app: App, owner: string, runtime: PiRuntime, broke
     } else if (claimId !== undefined) claim = claimAgent(broker, hostId, claimId);
     const connection = await daemon.connect(app, runtime, broker, settings, hostId);
     assertNotCancelled();
-    const command = buildPiCommand(broker, settings, hostId, { kind: 'rpc', cwd: options.cwd, sessionPath, sessionId, forkPath }, connection.remotePort);
+    const command = buildPiCommand(settings, hostId, { kind: 'rpc', cwd: options.cwd, sessionPath, sessionId, forkPath }, connection.remotePort);
     blankCleanup.path = sessionPath;
     let settle!: PreparedStart['settle'];
     const attached = new Promise<void>((resolve, reject) => { settle = { resolve, reject }; });
