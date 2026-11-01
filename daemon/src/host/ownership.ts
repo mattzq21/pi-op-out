@@ -1,5 +1,5 @@
 import * as SessionRecords from "../../resources/piop-storage/session-records.cjs";
-import { promptName, sessionName } from "../../resources/session-broker/session-names.cjs";
+import { sessionName } from "../../resources/session-broker/session-names.cjs";
 import { createServer, type Server } from 'node:http';
 import { randomUUID } from 'node:crypto';
 import { closeSync, constants, openSync, readFileSync, realpathSync, statSync } from 'node:fs';
@@ -323,35 +323,14 @@ export class ConversationOwnership {
     return { sessionId: id, sessionPath: saved.path, cwd: saved.header.cwd ?? null, archived, revision: saved.revision };
   }
 
-  /** lookup, and for an archived auxiliary chat its root. root.sessionPath: the archive whose restore brings this chat back; none when this chat stays archived. */
+  /** lookup, and for an archived chat whether it is auxiliary: such a chat is only restored with its root. */
   location(id: string): any {
     const location = this.lookup(id);
     if (!location.archived) return location;
-    const root = this.auxiliaryRoot(id);
-    return root ? { ...location, root } : location;
-  }
-
-  /** The root of an auxiliary chat, or undefined for a root chat. */
-  private auxiliaryRoot(id: string): { name: string; sessionPath?: string } | undefined {
-    const seen = new Set<string>();
-    let current = id;
-    let restoredWithRoot = true;
-    let found: [SavedConversation, boolean] | null;
-    for (;;) {
-      if (seen.has(current)) throw new Error('Auxiliary chats form a cycle');
-      seen.add(current);
-      found = this.lookupSaved(current, false);
-      if (!found) throw new Error(current === id ? 'Conversation was not found in active or archived storage' : 'The root chat of this auxiliary chat was not found');
-      const entries = found[0].lines.slice(1).flatMap(line => { try { return [JSON.parse(line)]; } catch { return []; } });
-      const parent = SessionRecords.auxiliaryParent([...entries, ...SessionRecords.records(found[0].path, current).map((record: any) => record.entry)], current);
-      if (!parent) break;
-      if (!found[1] || !SessionRecords.RESTORED_KINDS.includes(parent.kind)) restoredWithRoot = false;
-      current = parent.parentSessionId;
-    }
-    if (current === id) return undefined;
-    const [saved, archived] = found;
-    const name = sessionName(saved.path, current) || promptName(firstPrompt(saved.lines)) || 'Untitled conversation';
-    return restoredWithRoot && archived ? { name, sessionPath: saved.path } : { name };
+    const saved = this.lookupSaved(id, false)?.[0];
+    if (!saved) throw new Error('Conversation was not found in active or archived storage');
+    const entries = saved.lines.slice(1).flatMap(line => { try { return [JSON.parse(line)]; } catch { return []; } });
+    return { ...location, auxiliary: SessionRecords.isAuxiliary([...entries, ...SessionRecords.records(saved.path, id).map((record: any) => record.entry)]) };
   }
 
   lookupSaved(id: string, metadataOnly: boolean): [SavedConversation, boolean] | null {
@@ -429,17 +408,6 @@ export function savedConversationIn(rootPath: string, id: string): boolean {
   const path = registeredPath(profile, id);
   if (path === null || !within(path, root)) return false;
   return readCandidate(id, path, root, true) !== null;
-}
-
-function firstPrompt(lines: string[]): string {
-  for (const line of lines.slice(1)) {
-    let entry: any;
-    try { entry = JSON.parse(line); } catch { continue; }
-    if (entry?.type !== 'message' || entry.message?.role !== 'user') continue;
-    const content = entry.message.content;
-    return typeof content === 'string' ? content : Array.isArray(content) ? content.filter((part: any) => part?.type === 'text').map((part: any) => part.text).join(' ') : '';
-  }
-  return '';
 }
 
 export function readCandidate(id: string, original: string, root: string, metadataOnly: boolean): SavedConversation | null {

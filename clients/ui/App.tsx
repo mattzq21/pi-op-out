@@ -223,9 +223,8 @@ export default function App(props: { suppressConnectionNotices?: boolean } = {})
         const name = anchor.textContent?.trim() || "This chat";
 
         if (!location.archived) addNotice({ title: "Could not open the chat", message: "It is not in the chat list." });
-        else if (!location.root) setArchivedLink({ hostId, sessionId, restorePath: location.sessionPath, name, anchor });
-        else if (location.root.sessionPath) setArchivedLink({ hostId, sessionId, restorePath: location.root.sessionPath, name, root: location.root.name, anchor });
-        else addNotice({ title: "Could not open the chat", message: `“${name}” belongs to “${location.root.name}” and can not be restored.` });
+        else if (location.auxiliary) addNotice({ title: "Could not open the chat", message: `“${name}” is archived and can not be restored.` });
+        else setArchivedLink({ hostId, sessionId, sessionPath: location.sessionPath, name, anchor });
       }, reason => { if (click === linkClick) addNotice({ title: "Could not open the chat", message: reason instanceof Error ? reason.message : String(reason) }); });
     },
   };

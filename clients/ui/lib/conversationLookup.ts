@@ -2,8 +2,8 @@ import { z } from "zod";
 import { nativeCall } from "./nativeCall";
 import { sessionSnapshotSchema } from "./responseSchemas";
 
-/** root: for an auxiliary chat in the archive, its root chat. root.sessionPath: the archive whose restore brings the chat back; none when the chat stays archived. */
-const locationSchema = z.object({ sessionId: z.string(), sessionPath: z.string(), cwd: z.string(), archived: z.boolean(), revision: z.string(), root: z.object({ name: z.string(), sessionPath: z.string().optional() }).optional() });
+/** auxiliary: for an archived chat, whether it belongs to a root chat. Such a chat is only restored with its root. */
+const locationSchema = z.object({ sessionId: z.string(), sessionPath: z.string(), cwd: z.string(), archived: z.boolean(), revision: z.string(), auxiliary: z.boolean().optional() });
 
 export async function locateConversation(sessionId: string, hostId: string) {
   const location = await nativeCall("broker_request", { hostId, path: "/orchestration", body: { action: "locate", sessionId, hostId: "local" } }, locationSchema);
