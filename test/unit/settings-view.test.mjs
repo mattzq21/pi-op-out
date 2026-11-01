@@ -514,6 +514,16 @@ describe('settings editor', () => {
     assert.equal(clone.name, 'general-copy-2'); assert.equal(clone.isDefault, undefined); assert.deepEqual(clone.tools, ['read']);
   });
 
+  test('a project shows the global general agent read-only, and a clone of it becomes a project agent', async () => {
+    await render({ agentConfig: { revision: 'missing', agents: [] }, inheritedAgents: [profile('general', { isDefault: true, tools: ['read'] }), profile('general-copy')] }); await section('Agents');
+    assert.equal(document.querySelector('fieldset.agent-fields').disabled, true);
+    await click(button('Clone'));
+    assert.equal(control('Agent name').value, 'general-copy-2');
+    assert.equal(document.querySelector('fieldset.agent-fields').disabled, false);
+    await click(save());
+    assert.deepEqual(saves[0][1].agents.map(agent => agent.name), ['general-copy-2']);
+  });
+
   test('new hosts receive distinct nonempty IDs when saved', async () => {
     await render(); await section('Hosts');
     for (const [name, target] of [['Build one', 'builder@one'], ['Build two', 'builder@two']]) {

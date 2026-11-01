@@ -292,12 +292,15 @@ export function SettingsView(props: SettingsViewProps) {
     setHostToRemove(undefined);
   };
 
-  const agent = createMemo(() => (agentDrafts()[agentIndex()]));
   const projectScope = () => settingsProps().inheritedAgents !== undefined;
+  const [viewingGlobal, setViewingGlobal] = createSignal(false);
+  const inheritedGeneral = createMemo(() => settingsProps().inheritedAgents?.find(isBuiltInAgent));
+  const showingGlobal = createMemo(() => Boolean(inheritedGeneral()) && (viewingGlobal() || !agentDrafts()[agentIndex()]));
+  const agent = createMemo(() => (showingGlobal() ? inheritedGeneral() : agentDrafts()[agentIndex()]) as AgentProfile);
   const inheritedNames = createMemo(() => new Set((settingsProps().inheritedAgents ?? []).map(item => item.name)));
   const globalAgents = () => settingsProps().inheritedAgents ?? agentDrafts();
   const agentFastModeEnabled = createMemo(() => (agent()?.fastMode ?? draft().defaultFastMode));
-  const updateAgent = (value: Partial<AgentProfile>) => setAgentDrafts((current) => current.map((item, index) => index === agentIndex() ? { ...item, ...value } : item));
+  const updateAgent = (value: Partial<AgentProfile>) => !showingGlobal() && setAgentDrafts((current) => current.map((item, index) => index === agentIndex() ? { ...item, ...value } : item));
 
   const renamedAccess = (items: AgentProfile[], from: string, to?: string) => items.map(item => {
     const rename = (access: AgentAccess | undefined) => Array.isArray(access) && access.includes(from) ? access.flatMap(name => name !== from ? [name] : to ? [to] : []) : access;
@@ -316,7 +319,7 @@ export function SettingsView(props: SettingsViewProps) {
 
   const addAgent = () => { if (!agentConfig() || saving()) return; let suffix = nextAgentSuffixRef.current;
 
-  while ([...agentDrafts(), ...settingsProps().inheritedAgents ?? []].some((item) => item.name.toLowerCase() === `agent-${suffix}`)) suffix += 1; nextAgentSuffixRef.current = suffix + 1; const next: AgentProfile = { name: `agent-${suffix}`, model: "", effort: "", path_systemprompt: "~/.agents/prompts/system/default.md", path_agent_prompt: "", tools: [...(globalAgents().find(isBuiltInAgent)?.tools ?? [])], skills: [], mcpServers: {} }; setAgentDrafts((current) => [...current, next]); setAgentIndex(agentDrafts().length - 1); };
+  while ([...agentDrafts(), ...settingsProps().inheritedAgents ?? []].some((item) => item.name.toLowerCase() === `agent-${suffix}`)) suffix += 1; nextAgentSuffixRef.current = suffix + 1; const next: AgentProfile = { name: `agent-${suffix}`, model: "", effort: "", path_systemprompt: "~/.agents/prompts/system/default.md", path_agent_prompt: "", tools: [...(globalAgents().find(isBuiltInAgent)?.tools ?? [])], skills: [], mcpServers: {} }; setAgentDrafts((current) => [...current, next]); setAgentIndex(agentDrafts().length - 1); setViewingGlobal(false); };
 
   const cloneAgent = () => {
     const original = agent();
@@ -329,7 +332,7 @@ export function SettingsView(props: SettingsViewProps) {
     for (let suffix = 2; taken.has(name.toLowerCase()); suffix += 1) name = `${base}-${suffix}`;
     const { isDefault: _isDefault, unavailableReason: _reason, ...copy } = structuredClone(original);
     setAgentDrafts(current => [...current, { ...copy, name }]);
-    setAgentIndex(agentDrafts().length - 1);
+    setAgentIndex(agentDrafts().length - 1); setViewingGlobal(false);
   };
 
   const removeAgent = () => { if (!agent() || isBuiltInAgent(agent())) return;
@@ -531,22 +534,22 @@ export function SettingsView(props: SettingsViewProps) {
             const renderAgentPromptFiles = () => (<label class="field"><span>System prompt file</span><input aria-label="System prompt file" aria-invalid={!agent().path_systemprompt?.trim()} placeholder="Path relative to agent config.json, or absolute path" value={agent().path_systemprompt ?? ""} onInput={(event) => updateAgent({ path_systemprompt: event.target.value })} /></label>);
 
             const moveBlocked = () => dirty() || saving() ? "Save or discard your changes first." : undefined;
-            const renderMoveAgent = () => settingsProps().onMoveAgent && (projectScope()
+            const renderMoveAgent = () => settingsProps().onMoveAgent && !showingGlobal() && (projectScope()
               ? <MoveAgentToGlobal agent={agent().name} blocked={moveBlocked()} onMove={required(settingsProps().onMoveAgent)} />
               : settingsProps().agentScopes.length > 0 && !isBuiltInAgent(agent()) && <MoveAgentToProject agent={agent().name} projects={settingsProps().agentScopes} blocked={moveBlocked() ?? (agent().isDefault ? "This is the global default agent. Choose another default agent first." : undefined)} onMove={required(settingsProps().onMoveAgent)} />);
 
-            return (<Show when={agent()}><div class="agent-fields">{renderAgentNameRow()}{renderMoveAgent()}
+            return (<Show when={agent()}><fieldset class="agent-fields" disabled={showingGlobal()}>{showingGlobal() && <p class="agent-scope-note">This is the global general agent. Change it in the Global view. Clone it to make a project copy that you can change.</p>}{renderAgentNameRow()}{renderMoveAgent()}
               <label class="field"><span>Description</span><textarea class="agent-description" aria-label="Agent description" maxLength={500} rows={2} placeholder="What this agent is for. Other agents see it when they choose an agent to start." value={agent().description ?? ""} onInput={(event) => updateAgent({ description: event.currentTarget.value || undefined })} /></label>
               {renderAgentDefaults()}
               <div class="agent-usage"><div class="agent-usage-option"><span>Callable as subagent</span><Toggle label="Callable as subagent" checked={agent().allow_as_subagent !== false} onChange={allow_as_subagent => updateAgent({ allow_as_subagent })} /></div><div class="agent-usage-option"><span>Callable as peer</span><Toggle label="Callable as peer" checked={agent().allow_as_peer !== false} onChange={allow_as_peer => updateAgent({ allow_as_peer })} /></div></div>
               {renderAgentPromptFiles()}<label class="field"><span>Agent prompt file</span><input aria-label="Agent prompt file" placeholder="Optional path to an agent prompt file" value={agent().path_agent_prompt ?? ""} onInput={(event) => updateAgent({ path_agent_prompt: event.target.value })} /></label>
               <AgentExtensions paths={agent().extensions ?? []} onChange={extensions => updateAgent({ extensions })} />
-              <AgentAllowlist title="Tools" query={toolQuery()} onQuery={setToolQuery} titleAction={<><RefreshTools hostId={providerHostId()} onChange={tools => patch({ tools })} /><button type="button" class="agent-codemode" data-mode={agent().codemode ?? "on"} aria-label={"Codemode " + (agent().codemode ?? "on").toUpperCase()} data-tooltip={CODEMODE_HINTS[agent().codemode ?? "on"]} onClick={() => updateAgent({ codemode: NEXT_CODEMODE[agent().codemode ?? "on"] })}>Codemode {(agent().codemode ?? "on").toUpperCase()}</button></>}><AgentTools tools={draft().tools} query={toolQuery()} selected={agent().tools} agent={agent()} agentNames={[...settingsProps().inheritedAgents ?? [], ...agentDrafts()].map(item => item.name)} onChange={tools => updateAgent({ tools })} onLimitsChange={updateAgent} /></AgentAllowlist><AgentAllowlist title="Skills" query={skillQuery()} onQuery={setSkillQuery} titleAction={<RefreshSkills hostId={providerHostId()} skills={draft().skills} onChange={skills => patch({ skills })} />}><AgentSkills skills={draft().skills} query={skillQuery()} selected={agent().skills} onChange={skills => updateAgent({ skills })} /></AgentAllowlist><McpSettings value={agent().mcpServers} draft={mcpDrafts()[agentIndex()]} onDraft={value => setMcpDrafts(current => agentDrafts().map((_, index) => index === agentIndex() ? value : current[index]))} onChange={mcpServers => updateAgent({ mcpServers })} />
-            </div></Show>);
+              <AgentAllowlist title="Tools" query={toolQuery()} onQuery={setToolQuery} titleAction={<><RefreshTools hostId={providerHostId()} onChange={tools => patch({ tools })} /><button type="button" class="agent-codemode" data-mode={agent().codemode ?? "on"} aria-label={"Codemode " + (agent().codemode ?? "on").toUpperCase()} data-tooltip={CODEMODE_HINTS[agent().codemode ?? "on"]} onClick={() => updateAgent({ codemode: NEXT_CODEMODE[agent().codemode ?? "on"] })}>Codemode {(agent().codemode ?? "on").toUpperCase()}</button></>}><AgentTools tools={draft().tools} query={toolQuery()} selected={agent().tools} agent={agent()} agentNames={[...settingsProps().inheritedAgents ?? [], ...agentDrafts()].map(item => item.name)} onChange={tools => updateAgent({ tools })} onLimitsChange={updateAgent} /></AgentAllowlist><AgentAllowlist title="Skills" query={skillQuery()} onQuery={setSkillQuery} titleAction={<RefreshSkills hostId={providerHostId()} skills={draft().skills} onChange={skills => patch({ skills })} />}><AgentSkills skills={draft().skills} query={skillQuery()} selected={agent().skills} onChange={skills => updateAgent({ skills })} /></AgentAllowlist><McpSettings value={agent().mcpServers} draft={mcpDrafts()[agentIndex()]} onDraft={value => !showingGlobal() && setMcpDrafts(current => agentDrafts().map((_, index) => index === agentIndex() ? value : current[index]))} onChange={mcpServers => updateAgent({ mcpServers })} />
+            </fieldset></Show>);
           };
 
           return (<>{projectScope() && <p class="agent-scope-note">Chats in this project can also use the global agents. A project agent name must be different from all global agent names. Set the project's default agent in Edit project.</p>}{!agentConfig() && <p role={settingsProps().resourceError ? "alert" : "status"}>{settingsProps().resourceError ? "Could not load agent definitions: " + required((settingsProps().resourceError)) : "Loading agent definitions…"}</p>}
-          <div class="agent-editor"><div class="agent-list"><select class="agent-scope" aria-label="Agent definitions" disabled={dirty() || saving()} value={settingsProps().agentScope ?? ""} onChange={event => settingsProps().onAgentScope?.(event.currentTarget.value || undefined)}><option value="">Global</option><For each={settingsProps().agentScopes}>{project => <option value={project.cwd}>Project: {project.name}</option>}</For></select>{<Index each={agentDrafts()}>{(item, index) => <button  class={index === agentIndex() ? "active" : ""} onClick={() => setAgentIndex(index)}><Bot size={14} /><span>{item().name}</span></button>}</Index>}</div>
+          <div class="agent-editor"><div class="agent-list"><select class="agent-scope" aria-label="Agent definitions" disabled={dirty() || saving()} value={settingsProps().agentScope ?? ""} onChange={event => settingsProps().onAgentScope?.(event.currentTarget.value || undefined)}><option value="">Global</option><For each={settingsProps().agentScopes}>{project => <option value={project.cwd}>Project: {project.name}</option>}</For></select><Show when={inheritedGeneral()}>{general => <button class={showingGlobal() ? "active" : ""} onClick={() => setViewingGlobal(true)}><Bot size={14} /><span>{general().name} <small class="agent-scope-tag">global</small></span></button>}</Show>{<Index each={agentDrafts()}>{(item, index) => <button  class={!showingGlobal() && index === agentIndex() ? "active" : ""} onClick={() => { setAgentIndex(index); setViewingGlobal(false); }}><Bot size={14} /><span>{item().name}</span></button>}</Index>}</div>
             {renderAgentFields()}
           </div></>);
         };
