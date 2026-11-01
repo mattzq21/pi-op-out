@@ -379,7 +379,7 @@ button.agent-delivery-source:hover { color: var(--accent-soft); text-decoration:
 fieldset.agent-fields { border: 0; margin: 0; padding: 0; }
 .agent-scope-tag { color: var(--faint); font-size: 10px; }
 .agent-sidebar { min-width: 0; display: flex; flex-direction: column; gap: 8px; }
-.agent-scope .agent-scope-trigger { width: 100%; margin-top: 0; justify-content: space-between; color: var(--ink); }
+.agent-scope .agent-scope-trigger { width: 100%; height: 38px; margin-top: 0; justify-content: space-between; color: var(--ink); font-size: calc(14px + var(--settings-font-offset, 0px)); }
 .agent-scope .agent-scope-trigger span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .agent-scope .agent-scope-trigger svg { flex: 0 0 auto; color: var(--muted); }
 .agent-scope .agent-scope-trigger:disabled { opacity: .55; cursor: default; }
