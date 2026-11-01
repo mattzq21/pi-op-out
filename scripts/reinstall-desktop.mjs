@@ -13,6 +13,24 @@ function run(command, args) {
   if (result.status !== 0) throw new Error(command + ' ' + args.join(' ') + ' failed');
 }
 
+function stopInstalledPiop() {
+  const pattern = '^/usr/bin/piopd?( |$)';
+  const result = spawnSync('pkill', ['-TERM', '-f', pattern], { stdio: 'inherit' });
+
+  if (result.error) throw new Error('Could not run pkill: ' + result.error.message);
+  if (result.status === 1) return;
+  if (result.status !== 0) throw new Error('pkill failed with status ' + result.status);
+  console.log('Stopping the running Piop…');
+
+  for (let waited = 0; spawnSync('pgrep', ['-f', pattern]).status === 0; waited += 100) {
+    if (waited >= 5000) {
+      spawnSync('pkill', ['-KILL', '-f', pattern]);
+      break;
+    }
+    spawnSync('sleep', ['0.1']);
+  }
+}
+
 let keepAlive;
 
 try {
@@ -26,9 +44,10 @@ try {
   const newest = packages.sort((a, b) => statSync(b).mtimeMs - statSync(a).mtimeMs)[0];
 
   if (!newest || statSync(newest).mtimeMs < started) throw new Error('The build made no new .deb in ' + bundle);
+  stopInstalledPiop();
   console.log('Installing ' + newest + '…');
   run('sudo', ['dpkg', '-i', newest]);
-  console.log('Piop release installed. Restart Piop to use it. App data in ~/.piop is kept.');
+  console.log('Piop release installed. Start Piop to use it. App data in ~/.piop is kept.');
 } catch (error) {
   console.error(error.message);
   process.exitCode = 1;
