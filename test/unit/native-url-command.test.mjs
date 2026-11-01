@@ -1,59 +1,28 @@
 import assert from 'node:assert/strict';
-import { test } from 'node:test';
+import { after, test } from 'node:test';
 import { nativeFileCommand } from '../native-file-command.mjs';
+import { cleanupScope } from '../cleanup-scope.mjs';
 
-test('the browser command rejects an empty URL without starting the launcher', async t => {
-  const native = await nativeFileCommand(t, { launcher: {} });
-  await assert.rejects(native.invoke('open_external_url', { url: '' }), /Enter a valid HTTP or HTTPS URL/);
-  assert.deepEqual(await native.launchedTargets(), []);
-});
+const resources = cleanupScope({ after });
+let rejectionNative;
+const invalidURL = { message: 'Enter a valid HTTP or HTTPS URL' };
+const unsupportedScheme = { message: 'Only HTTP and HTTPS links can be opened in the browser' };
 
-test("the browser command rejects relative path without starting the launcher", async t => {
-  const native = await nativeFileCommand(t, { launcher: {} });
-  await assert.rejects(native.invoke('open_external_url', { url: "relative/path" }), { message: "Enter a valid HTTP or HTTPS URL" });
-  assert.deepEqual(await native.launchedTargets(), []);
-});
-
-test("the browser command rejects missing host without starting the launcher", async t => {
-  const native = await nativeFileCommand(t, { launcher: {} });
-  await assert.rejects(native.invoke('open_external_url', { url: "https://" }), { message: "Enter a valid HTTP or HTTPS URL" });
-  assert.deepEqual(await native.launchedTargets(), []);
-});
-
-test("the browser command rejects invalid host without starting the launcher", async t => {
-  const native = await nativeFileCommand(t, { launcher: {} });
-  await assert.rejects(native.invoke('open_external_url', { url: "http://[invalid" }), { message: "Enter a valid HTTP or HTTPS URL" });
-  assert.deepEqual(await native.launchedTargets(), []);
-});
-
-test("the browser command rejects file scheme without starting the launcher", async t => {
-  const native = await nativeFileCommand(t, { launcher: {} });
-  await assert.rejects(native.invoke('open_external_url', { url: "file:///tmp/file" }), { message: "Only HTTP and HTTPS links can be opened in the browser" });
-  assert.deepEqual(await native.launchedTargets(), []);
-});
-
-test("the browser command rejects script scheme without starting the launcher", async t => {
-  const native = await nativeFileCommand(t, { launcher: {} });
-  await assert.rejects(native.invoke('open_external_url', { url: "javascript:alert(1)" }), { message: "Only HTTP and HTTPS links can be opened in the browser" });
-  assert.deepEqual(await native.launchedTargets(), []);
-});
-
-test("the browser command rejects data scheme without starting the launcher", async t => {
-  const native = await nativeFileCommand(t, { launcher: {} });
-  await assert.rejects(native.invoke('open_external_url', { url: "data:text/html,hello" }), { message: "Only HTTP and HTTPS links can be opened in the browser" });
-  assert.deepEqual(await native.launchedTargets(), []);
-});
-
-test("the browser command rejects mail scheme without starting the launcher", async t => {
-  const native = await nativeFileCommand(t, { launcher: {} });
-  await assert.rejects(native.invoke('open_external_url', { url: "mailto:user@example.com" }), { message: "Only HTTP and HTTPS links can be opened in the browser" });
-  assert.deepEqual(await native.launchedTargets(), []);
-});
-
-test("the browser command rejects FTP scheme without starting the launcher", async t => {
-  const native = await nativeFileCommand(t, { launcher: {} });
-  await assert.rejects(native.invoke('open_external_url', { url: "ftp://example.com/file" }), { message: "Only HTTP and HTTPS links can be opened in the browser" });
-  assert.deepEqual(await native.launchedTargets(), []);
+for (const [description, url, error] of [
+  ['an empty URL', '', /Enter a valid HTTP or HTTPS URL/],
+  ['relative path', 'relative/path', invalidURL],
+  ['missing host', 'https://', invalidURL],
+  ['invalid host', 'http://[invalid', invalidURL],
+  ['file scheme', 'file:///tmp/file', unsupportedScheme],
+  ['script scheme', 'javascript:alert(1)', unsupportedScheme],
+  ['data scheme', 'data:text/html,hello', unsupportedScheme],
+  ['mail scheme', 'mailto:user@example.com', unsupportedScheme],
+  ['FTP scheme', 'ftp://example.com/file', unsupportedScheme],
+]) test(`the browser command rejects ${description} without starting the launcher`, async () => {
+  const native = await (rejectionNative ??= nativeFileCommand(resources, { launcher: {} }));
+  const before = await native.launchedTargets();
+  await assert.rejects(native.invoke('open_external_url', { url }), error);
+  assert.deepEqual(await native.launchedTargets(), before);
 });
 
 test('the browser command normalizes host case, default port and spaces', async t => {
