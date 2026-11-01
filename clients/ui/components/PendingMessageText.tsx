@@ -12,7 +12,7 @@ export function PendingMessageText(props: { segments: FieldSegment[] }) {
     if ("skill" in value) return <span class="composer-skill">{value.skill}</span>;
 
     return sessionLinks
-      ? <button type="button" class="message-link" onClick={(event) => { event.stopPropagation(); sessionLinks.open(value.hostId, value.sessionId); }}>{value.label}</button>
+      ? <button type="button" class="message-link" onClick={(event) => { event.stopPropagation(); sessionLinks.open(value.hostId, value.sessionId, event.currentTarget); }}>{value.label}</button>
       : <span class="message-link">{value.label}</span>;
   }}</For>;
 }

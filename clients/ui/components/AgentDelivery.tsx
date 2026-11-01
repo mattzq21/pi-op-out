@@ -20,7 +20,7 @@ export function AgentDelivery(props: { message: ChatMessage; actions?: (text: st
   const name = createMemo(() => links?.name(delivery().sourceHostId || "local", delivery().sourceSessionId));
 
   return <article tabIndex={-1} class="message user-message agent-delivery" aria-label="Message from another agent">
-    <Show when={name()} fallback={<span class="agent-delivery-source">Unknown session</span>}>{sessionName => <button type="button" class="agent-delivery-source" onClick={() => links?.open(delivery().sourceHostId || "local", delivery().sourceSessionId)}>{sessionName()}</button>}</Show>
+    <Show when={name()} fallback={<span class="agent-delivery-source">Unknown session</span>}>{sessionName => <button type="button" class="agent-delivery-source" onClick={event => links?.open(delivery().sourceHostId || "local", delivery().sourceSessionId, event.currentTarget)}>{sessionName()}</button>}</Show>
     <div class="message-body"><Markdown>{delivery().message}</Markdown></div>
     {props.actions?.(delivery().message)}
   </article>;

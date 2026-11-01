@@ -1,5 +1,7 @@
 import { preloadSettingsResources, retainSettingsResources } from "./lib/settingsResources";
-import { renameConversation } from "./lib/conversationLookup";
+import { locateConversation, renameConversation } from "./lib/conversationLookup";
+import { ArchivedLinkPopup, type ArchivedLink } from "./components/ArchivedLinkPopup";
+import { createDependencyEffect } from "./lib/solid";
 import { ComposerPluginsContext } from "./plugins/composer";
 import { localHostLabel } from "./lib/mobileHosts";
 import { hostChoices } from "./lib/hostChoices";
@@ -13,7 +15,7 @@ import { required } from "./lib/required";
 import { trackToastMessage, trackToastNotices } from "./lib/toastHistory";
 import { Key,Rerun } from "@solid-primitives/keyed";
 import { Archive,Bug,FolderPlus,MessageSquare,PanelRight,Server,Settings } from "lucide-solid";
-import { createComponent,lazy,onCleanup,Show } from "solid-js";
+import { createComponent,createSignal,lazy,onCleanup,Show } from "solid-js";
 import { createAppConversations } from "./appConversations";
 import { AppLoading,LimitBadge,selectedProjectCwd,splitConversationKey,UsageError } from "./appSupport";
 import { createTranscriptCache } from "./components/transcriptCache";
@@ -196,10 +198,34 @@ export default function App(props: { suppressConnectionNotices?: boolean } = {})
       if (session) { sidepane.openAuxiliary(session); setActivePane("split"); }
     },
   };
+  const [archivedLink, setArchivedLink] = createSignal<ArchivedLink>();
+  // A restored chat opens when the chat list has it.
+  const [openWhenListed, setOpenWhenListed] = createSignal<{ hostId: string; sessionId: string }>();
+  createDependencyEffect(() => {
+    const target = openWhenListed();
+    const session = target && listedSession(target.hostId, target.sessionId);
+
+    if (session) { setOpenWhenListed(undefined); selectSession(session); }
+  }, () => [openWhenListed(), sessions()]);
+  let linkClick = 0;
   const sessionLinks: SessionLinks = {
     name: (hostId, sessionId) => listedSession(hostId, sessionId)?.name,
-    open: (hostId, sessionId) => { const session = listedSession(hostId, sessionId); if (session) selectSession(session); else addNotice({ title: "Could not open the session", message: "It is archived or deleted." }); },
+    open: (hostId, sessionId, anchor) => {
+      const click = ++linkClick;
+      const session = listedSession(hostId, sessionId);
+
+      setArchivedLink(undefined);
+
+      if (session) { selectSession(session); return; }
+      void locateConversation(sessionId, hostId).then(location => {
+        if (click !== linkClick) return;
+
+        if (location.archived) setArchivedLink({ hostId, sessionId, sessionPath: location.sessionPath, name: anchor.textContent?.trim() || "This chat", anchor });
+        else addNotice({ title: "Could not open the chat", message: "It is not in the chat list." });
+      }, reason => { if (click === linkClick) addNotice({ title: "Could not open the chat", message: reason instanceof Error ? reason.message : String(reason) }); });
+    },
   };
+  const renderArchivedLinkPopup = () => <Show when={archivedLink()} keyed>{link => <ArchivedLinkPopup link={link} onClose={() => setArchivedLink(undefined)} onRestored={() => { setArchivedLink(undefined); setOpenWhenListed({ hostId: link.hostId, sessionId: link.sessionId }); void syncSessionIndex(); }} />}</Show>;
 
   return <SessionLinkContext.Provider value={sessionLinks}><AuxiliaryChatsContext.Provider value={auxiliaryChats}><SubagentNavigationContext.Provider value={openSubagent}>{!settings() ? (<AppLoading error={error()} />) : (<div role="region" aria-label={workspaceLabel()} class={`app ${panelOpen() && view() === "chat" ? "mobile-panel-open" : ""}`}>
     {!mobileSidebarOpen() && renderMobileSidebarToggle()}
@@ -212,6 +238,7 @@ export default function App(props: { suppressConnectionNotices?: boolean } = {})
     {renderSplitFind()}
     {view() === "settings" && <FindInPage selector=".settings-shell" scopeKey="settings" />}
     {renderToastStack()}
+    {renderArchivedLinkPopup()}
     <BranchActivity />
     {renderExtensionDialog()}
     {renderProjectDialog()}
