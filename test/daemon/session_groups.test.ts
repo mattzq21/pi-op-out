@@ -97,6 +97,24 @@ test('a chat in its own Piop worktree joins the group of the repository folder, 
   expect(after.groups.filter((group: any) => group.cwd === worktree)).toEqual([]);
 });
 
+test('a chat in a Piop worktree whose owner chat is archived still joins the repository group', async () => {
+  await reset();
+  const repo = join(daemon.home, 'archived-worktree-repo'); mkdirSync(repo, { recursive: true });
+  const worktree = join(daemon.home, '.piop/worktrees/ef01'); mkdirSync(worktree, { recursive: true });
+  const root = join(daemon.home, '.piop');
+  const owner = SessionDatabase.reserve(root);
+  const db = new Database(join(root, 'sessions.sqlite'));
+  try {
+    db.prepare('INSERT INTO chat_worktrees VALUES (?, ?)').run(owner, JSON.stringify({ version: 1, chatId: owner, repository: repo, gitCommonDir: join(repo, '.git'),
+      worktree, branch: 'piop/ef01', state: 'archived', archive: { ref: 'refs/piop/archives/' + owner, commit: '0'.repeat(40) } }));
+  } finally { db.close(); }
+  const other = publicSession(worktree);
+  await waitForSessions(daemon, rows => rows.some(row => row.id === other.id));
+  const state = await load();
+  expect(state.assignments['local:' + other.id]).toBe('local:' + repo);
+  expect(state.groups.filter((group: any) => group.cwd === worktree)).toEqual([]);
+});
+
 test('a folder named like a temporary chat folder but without a random UUID is a project', async () => {
   await reset();
   const folder = join(daemon.home, '.piop/tmp/12345678-1234-1123-8123-123456789abc'); mkdirSync(folder, { recursive: true });

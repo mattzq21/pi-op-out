@@ -111,7 +111,7 @@ export async function listLocalSessions(index: SessionIndexRuntime, root: string
 }
 
 function attachWorktreeRepositories(sessions: SessionSummary[], profile: string): void {
-  const records = WorktreeRecords.list(profile).filter(record => record.state !== 'archived');
+  const records = WorktreeRecords.list(profile).sort((a, b) => Number(a.state === 'archived') - Number(b.state === 'archived'));
   for (const session of sessions) {
     const record = records.find(item => session.cwd === item.worktree || session.cwd.startsWith(item.worktree + '/'));
     if (record) session.worktreeRepository = record.repository;
