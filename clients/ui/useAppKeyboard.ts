@@ -1,4 +1,4 @@
-import type { Accessor, Setter } from "solid-js";
+import { onCleanup, type Accessor, type Setter } from "solid-js";
 import type { SplitPaneState } from "./appSupport";
 import { keybindDefinitions, matchesShortcut } from "./lib/keybindings";
 import { isMobile } from "./lib/platform";
@@ -34,6 +34,10 @@ function isTerminalKey(event: KeyboardEvent) {
 
 export function useAppKeyboard(context: KeyboardContext) {
   const { settings, activePane, splitPane, canLeaveSettings, setView, panelOpen, setPanelOpen, newSession, toggleTerminal, toggleDebugMode, setSplitComposerFocusRequest, setMainComposerFocusRequest, settingsDirty, view, terminalOpen, setTerminalOpen } = context;
+  // Tab never moves focus; elements that use Tab handle it before this bubble-phase listener.
+  const blockTabFocus = (event: KeyboardEvent) => { if (event.key === "Tab" && !event.ctrlKey && !event.metaKey && !event.altKey) event.preventDefault(); };
+  window.addEventListener("keydown", blockTabFocus);
+  onCleanup(() => window.removeEventListener("keydown", blockTabFocus));
   createDependencyEffect(() => { const capturedSettings = settings(); const capturedActivePane = activePane(); const capturedSplitPane = splitPane();
 
     if (!capturedSettings) return;
