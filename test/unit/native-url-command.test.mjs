@@ -1,5 +1,8 @@
 import assert from 'node:assert/strict';
 import { after, test } from 'node:test';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { nativeFileCommand } from '../native-file-command.mjs';
 import { cleanupScope } from '../cleanup-scope.mjs';
 
@@ -34,6 +37,13 @@ for (const [description, url, target] of [
   const before = await native.launchedTargets();
   await native.invoke('open_external_url', { url });
   assert.deepEqual((await native.launchedTargets()).slice(before.length), [target]);
+});
+
+test('the browser command reports when the system launcher is unavailable', async t => {
+  const directory = await mkdtemp(join(tmpdir(), 'piop-no-launcher-'));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const native = await nativeFileCommand(t, { env: { PATH: directory } });
+  await assert.rejects(native.invoke('open_external_url', { url: 'https://example.com' }), /Could not open https:\/\/example\.com\/:/);
 });
 
 test('the browser command reports a system launcher failure', async t => {
