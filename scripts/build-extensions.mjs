@@ -1,17 +1,13 @@
-import { readFile } from "node:fs/promises";
+import { readdir, readFile } from "node:fs/promises";
+import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { gzipSync } from "node:zlib";
-import { parseArgs } from "node:util";
-import { buildArtifact, buildBundle, buildInParallel, reportUnchanged } from "./incremental-build.mjs";
-import { agentCommandInputs, agentCommandInventory } from "./agent-command-inventory.mjs";
+import ts from "typescript";
+import { parallelBuilds } from "./build-cache.mjs";
+import { buildArtifact, buildBundle, reportUnchanged } from "./incremental-build.mjs";
 import { storageSchemaImports } from "./storage-schema-plugin.mjs";
 
 async function fastMode() {
-  const license = await readFile("extensions/piop-openai-fast-mode/LICENSE", "utf8").catch(error => {
-    if (error.code === "ENOENT") return "";
-    throw error;
-  });
-
   await buildBundle({
     plugins: [storageSchemaImports()],
     entryPoints: ["extensions/piop-openai-fast-mode/src/index.ts"],
@@ -21,13 +17,13 @@ async function fastMode() {
     format: "esm",
     target: "node22",
     minify: true,
-    banner: { js: `/*! piop-openai-fast-mode 0.3.0-piop.1.${license ? `\n${license}` : ""}*/` },
+    banner: { js: "/*! piop-openai-fast-mode 0.3.0-piop.1.*/" },
     external: ["@earendil-works/pi-ai", "@earendil-works/pi-coding-agent", "@earendil-works/pi-tui"],
   }, "daemon/resources/fast-mode.bundle.mjs", { script: import.meta.url, inputs: ["scripts/storage-schema-plugin.mjs"] });
 }
 
 async function mcpBridge() {
-  await buildInParallel([
+  await parallelBuilds([
     buildBundle({
       entryPoints: ["daemon/resources/mcp-bridge.ts"],
       outfile: "daemon/resources/mcp-bridge.bundle.mjs",
@@ -60,12 +56,38 @@ async function mcpBridge() {
   ]);
 }
 
+async function agentCommandInventory(files) {
+  const names = new Set();
+
+  function visit(node) {
+    if (ts.isCallExpression(node) && ts.isPropertyAccessExpression(node.expression) && node.expression.name.text === "registerCommand") {
+      const name = node.arguments[0];
+
+      if (name && ts.isStringLiteral(name)) names.add(name.text);
+    }
+
+    ts.forEachChild(node, visit);
+  }
+
+  for (const path of files) visit(ts.createSourceFile(path, await readFile(path, "utf8"), ts.ScriptTarget.Latest));
+
+  return [...names].sort();
+}
+
 async function backendScripts() {
-  const commandInputs = await agentCommandInputs();
+  const commandInputs = [];
+
+  for (const root of ["extensions", "daemon/resources"]) {
+    for (const path of await readdir(root, { recursive: true })) {
+      if (path.endsWith(".ts") && !path.includes("node_modules")) commandInputs.push(join(root, path));
+    }
+  }
+
+  commandInputs.sort();
 
   await buildArtifact({
     output: "daemon/resources/agent-commands.json",
-    inputs: [fileURLToPath(import.meta.url), fileURLToPath(new URL("./agent-command-inventory.mjs", import.meta.url)), ...commandInputs],
+    inputs: [fileURLToPath(import.meta.url), ...commandInputs],
     key: "agent-command-inventory",
   }, async () => ({ content: `${JSON.stringify(await agentCommandInventory(commandInputs), null, 2)}\n` }));
 
@@ -76,12 +98,6 @@ async function backendScripts() {
   }, "daemon/resources/sdk-storage.bundle.mjs", { script: import.meta.url, inputs: [fileURLToPath(new URL("./storage-schema-plugin.mjs", import.meta.url))] });
 }
 
-const { values } = parseArgs({ options: { only: { type: "string" } } });
-
-const builders = { "fast-mode": fastMode, "mcp-bridge": mcpBridge, "backend-scripts": backendScripts };
-
-if (values.only && !Object.hasOwn(builders, values.only)) throw new Error(`Unknown extension build: ${values.only}`);
-
-await buildInParallel((values.only ? [builders[values.only]] : Object.values(builders)).map(build => build()));
+await parallelBuilds([fastMode(), mcpBridge(), backendScripts()]);
 
 reportUnchanged();

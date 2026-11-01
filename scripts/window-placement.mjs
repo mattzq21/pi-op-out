@@ -13,7 +13,7 @@ export function selectWindowBounds() {
     const windows = execFileSync("xwininfo", ["-root", "-tree"], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] });
 
     const siblingWindows = windows.split("\n")
-      .filter((line) => /"(?:piop|codop)(?: dev)?": \(/i.test(line))
+      .filter((line) => /"piop(?: dev)?": \(/i.test(line))
       .map((line) => line.match(/(\d+)x(\d+)[+-]-?\d+[+-]-?\d+\s+([+-]-?\d+)([+-]-?\d+)\s*$/))
       .filter(Boolean)
       .map((match) => ({ width: Number(match[1]), height: Number(match[2]), x: Number(match[3].replace(/^\+/, "")), y: Number(match[4].replace(/^\+/, "")) }));
