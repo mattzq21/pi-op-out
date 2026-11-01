@@ -27,3 +27,5 @@ export interface DraftSubmission {
   createdAt: number;
   error?: string;
 }
+
+export interface DraftSelection { start: number; end: number; }

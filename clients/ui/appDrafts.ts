@@ -3,7 +3,7 @@ import { batch, createComputed, createMemo, createSignal, onCleanup } from "soli
 import { NativeTransport, type NativeConnectionTarget } from "./lib/nativeTransport";
 import type { StateUpdate } from "./lib/solid";
 import type { AppSettings, ComposerUpload, SessionSummary } from "./types";
-import type { DraftDestination, DraftRecord, DraftSubmission } from "./lib/draftState";
+import type { DraftDestination, DraftRecord, DraftSelection, DraftSubmission } from "./lib/draftState";
 import { bindDraftStaging, goalPreparationSchema, submissionFingerprint, type DraftSubmissionHandle, type DraftSubmissionPayload } from "./lib/draftSubmission";
 import { createDraftPersistence, mergeDraftSnapshots, type DraftSnapshot } from "./lib/draftPersistence";
 import { confirmSubmission } from "./lib/submissionOutcome";
@@ -330,6 +330,17 @@ export function createConversationDrafts(reportStorageError: (message: string) =
     return keyFor(key);
   };
 
+  const selections = new Map<string, DraftSelection>();
+  const boundKey = (transport: NativeTransport) => { const key = owners.get(ownerFor(transport));
+
+    return key && keyFor(key); };
+  const selectionFor = (transport: NativeTransport) => { const key = boundKey(transport);
+
+    return key ? selections.get(key) : undefined; };
+  const setSelection = (transport: NativeTransport, selection: DraftSelection) => { const key = boundKey(transport);
+
+    if (key) selections.set(key, selection); };
+
   const transportHasDraft = (transport: NativeTransport, key?: string) => {
     const owner = ownerFor(transport); const resolved = key ? keyFor(key) : owners.get(owner);
 
@@ -343,7 +354,12 @@ export function createConversationDrafts(reportStorageError: (message: string) =
     aliases.delete(nextKey);
     publish(next);
 
+    const selection = selections.get(previousKey);
+
+    if (selection && !selections.has(nextKey)) selections.set(nextKey, selection);
+
     if (!copy) {
+      selections.delete(previousKey);
       destinations.delete(previousKey);
       for (const [key, target] of aliases) if (target === previousKey) aliases.set(key, nextKey);
       aliases.set(previousKey, nextKey);
@@ -381,6 +397,7 @@ export function createConversationDrafts(reportStorageError: (message: string) =
 
   const removeMatchingDrafts = (matches: (key: string, destination?: DraftDestination) => boolean) => {
     if (!loaded) removedBeforeLoad.push(matches);
+    for (const key of selections.keys()) if (matches(key, destinations.get(key) ?? records().get(key)?.destination)) selections.delete(key);
     for (const [key, destination] of destinations) if (matches(key, destination)) destinations.delete(key);
     setRecords(current => new Map([...current].filter(([key, record]) => !matches(key, record.destination))));
     setSubmissions(current => current.filter(item => !matches(item.destination.key, item.destination)));
@@ -419,5 +436,5 @@ export function createConversationDrafts(reportStorageError: (message: string) =
     return ownerFor(owner).command({ type: "get_goal_preparation", goalSubmissionId: submission.id }, goalPreparationSchema.nullable());
   };
 
-  return { configureHosts, records: draftRecords, hasDraft: transportHasDraftForKey, uploadsFor: (key: string) => recordFor(key).uploads, setDraftTarget, keyForTransport, removeSessionDrafts, composerDrafts, uploadsByTransport, setComposerDraft, setComposerUploads, setTransportDraft, transportHasDraft, inspectGoalPreparation, rekeyDraft, removeDraft, discard, bindTransport, draftSummaries, submissions: visibleSubmissions, recoveries, restoreSubmission, retireSubmission, confirmationError: (id: string) => confirmationErrors().get(id) };
+  return { configureHosts, records: draftRecords, hasDraft: transportHasDraftForKey, uploadsFor: (key: string) => recordFor(key).uploads, setDraftTarget, keyForTransport, removeSessionDrafts, composerDrafts, uploadsByTransport, setComposerDraft, setComposerUploads, setTransportDraft, selectionFor, setSelection, transportHasDraft, inspectGoalPreparation, rekeyDraft, removeDraft, discard, bindTransport, draftSummaries, submissions: visibleSubmissions, recoveries, restoreSubmission, retireSubmission, confirmationError: (id: string) => confirmationErrors().get(id) };
 }
