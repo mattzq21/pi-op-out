@@ -99,7 +99,7 @@ export class Orchestration {
     const host = this.host;
     const id = text(packet, 'sessionKey');
     const action = text(packet, 'action');
-    if (action === 'locate') return host.ownership().lookup(id);
+    if (action === 'locate') return host.ownership().location(id);
     if (action === 'preview') return this.preview(id);
     if (action === 'rename') return this.rename(id, packet.name);
     if (action === 'watch') return this.watch(id, typeof packet.stateKey === 'string' ? packet.stateKey : null, typeof packet.waitMs === 'number' ? packet.waitMs : 0);

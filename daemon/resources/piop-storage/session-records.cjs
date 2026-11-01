@@ -154,6 +154,9 @@ function create(type, data, parentId) {
 /** The entry that makes a session auxiliary: owned by a root session. Its data has kind (for example "subagent", "review" or a plugin kind), sessionId and parentSessionId. */
 const AUXILIARY_PARENT = 'piop-auxiliary-parent';
 
+/** Kinds of auxiliary sessions that a restore of their root brings back. Other kinds, such as reviews and btw chats, stay archived. */
+const RESTORED_KINDS = ['subagent'];
+
 const isAuxiliaryParent = entry => entry?.type === 'custom' && entry.customType === AUXILIARY_PARENT && typeof entry.data?.kind === 'string' && typeof entry.data?.parentSessionId === 'string';
 
 function isAuxiliary(entries) {
@@ -174,4 +177,4 @@ function forkPoint(entry) {
     && Array.isArray(entry.message.content) && !entry.message.content.some(part => part?.type === 'toolCall');
 }
 
-module.exports = { AUXILIARY_PARENT, isAuxiliaryParent, auxiliaryParent, isAuxiliary, canFork, forkPoint, selectBranch, selectedLeaf, stateKey, isCurrent, isName, history, stored, save, seed, capture, append, records, merge, revision, create };
+module.exports = { AUXILIARY_PARENT, RESTORED_KINDS, isAuxiliaryParent, auxiliaryParent, isAuxiliary, canFork, forkPoint, selectBranch, selectedLeaf, stateKey, isCurrent, isName, history, stored, save, seed, capture, append, records, merge, revision, create };

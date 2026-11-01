@@ -13,6 +13,7 @@ import * as chatWorktrees from './chat_worktree_lifecycle';
 import { requireLocal } from './host_connection';
 import { assertRootRestore, restoreSessionTree } from './restore';
 import { MutationGuard } from './conversation_ownership';
+import * as SessionRecords from '../resources/piop-storage/session-records.cjs';
 import * as sessionGroups from './session_groups';
 import * as terminalSessions from './terminal_sessions';
 import { stopTerminals } from './terminals';
@@ -175,8 +176,7 @@ const descendantsOperation = hostOperation<DescendantsRequest, unknown[]>('sessi
   return value;
 });
 
-/** Kinds of auxiliary sessions that a restore of their root brings back. Other kinds, such as reviews and btw chats, stay archived. */
-export const RESTORED_KINDS = ['subagent'];
+export const RESTORED_KINDS: string[] = SessionRecords.RESTORED_KINDS;
 
 /** Returns the auxiliary sessions of the session at sessionPath. With includeOtherArea, each item also tells if it is archived. With kinds, only sessions of those kinds. */
 export async function sessionDescendants(sessionPath: string, archived: boolean, includeOtherArea: boolean, kinds?: string[]): Promise<Array<[string, boolean]>> {

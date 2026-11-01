@@ -360,3 +360,20 @@ test('deleting a parent while its child runs a command stops the child and delet
   const listed = (await agents.daemon.invoke('list_sessions')).map((session: any) => session.path);
   expect(deleted.some((path: string) => listed.includes(path))).toBe(false);
 }, 60000);
+
+test.concurrent('a link to an archived child names its archived parent, whose restore brings the child back', async () => {
+  agents.scripts.set('Delegate the notes', delegating('Notes', 'Write the notes'));
+  agents.scripts.set('Write the notes', () => ({ text: 'Relay: notes written' }));
+  const root = await agents.rootChat();
+  await root.command({ type: 'prompt', message: 'Delegate the notes' });
+  await root.until(history => text(history.at(-1)) === 'Relay: notes written');
+  const sessions = await agents.daemon.invoke('list_sessions');
+  const child = sessions.find((session: any) => session.auxiliaryParentId === root.sessionId);
+  const parent = sessions.find((session: any) => session.id === root.sessionId);
+  await agents.daemon.invoke('archive_session', { hostId: 'local', sessionPath: parent.path, terminalIds: [], clientId: 'laptop' });
+  const location = await agents.daemon.invoke('broker_request', { hostId: 'local', path: '/orchestration', body: { action: 'locate', sessionId: child.id, hostId: 'local' } });
+  const archive = (await agents.daemon.invoke('storage_report')).hosts.find((host: any) => host.hostId === 'local').archives.find((item: any) => item.id === root.sessionId);
+  expect([location.archived, location.root]).toEqual([true, { name: 'Delegate the notes', sessionPath: archive.path }]);
+  await agents.daemon.invoke('restore_archived_session', { hostId: 'local', sessionPath: location.root.sessionPath, clientId: 'laptop' });
+  expect((await agents.daemon.invoke('list_sessions')).some((session: any) => session.id === child.id)).toBe(true);
+}, 120000);

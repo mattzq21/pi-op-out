@@ -3,8 +3,8 @@ import { Portal } from "solid-js/web";
 import { restoreArchivedConversation } from "../lib/nativeTransport";
 import { storageFailureText } from "../lib/storageFailure";
 
-/** An archived chat that a chat link points to. anchor: the clicked link. */
-export type ArchivedLink = { hostId: string; sessionId: string; sessionPath: string; name: string; anchor: HTMLElement };
+/** An archived chat that a chat link points to. anchor: the clicked link. restorePath: the archive to restore, the chat itself or, for an auxiliary chat, its root. root: the name of that root. */
+export type ArchivedLink = { hostId: string; sessionId: string; restorePath: string; name: string; root?: string; anchor: HTMLElement };
 
 const margin = 8;
 
@@ -21,7 +21,7 @@ export function ArchivedLinkPopup(props: { link: ArchivedLink; onClose: () => vo
   const restore = async () => {
     setRestoring(true); setError(undefined);
 
-    try { await restoreArchivedConversation(props.link.sessionPath, props.link.hostId); props.onRestored(); }
+    try { await restoreArchivedConversation(props.link.restorePath, props.link.hostId); props.onRestored(); }
     catch (reason) { setError(storageFailureText("restore", reason)); }
     finally { setRestoring(false); }
   };
@@ -45,7 +45,7 @@ export function ArchivedLinkPopup(props: { link: ArchivedLink; onClose: () => vo
   return <Portal mount={props.link.anchor.closest(".app") ?? document.body}>
     <div ref={element} class="archived-link-popup" role="dialog" aria-label={`${props.link.name} is archived`} style={{ left: `${position().left}px`, top: `${position().top}px` }}>
       <strong>“{props.link.name}” is archived</strong>
-      <span>Restore it to open it.</span>
+      <span>{props.link.root === undefined ? "Restore it to open it." : `It belongs to “${props.link.root}”. Restore that chat to open it.`}</span>
       <Show when={error()}><p role="alert">{error()}</p></Show>
       <div class="archived-link-popup-actions">
         <button type="button" disabled={restoring()} onClick={close}>Cancel</button>
