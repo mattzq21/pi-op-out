@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { test } from 'node:test';
+import { after, before, test } from 'node:test';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { open, writeFile } from 'node:fs/promises';
@@ -8,12 +8,16 @@ import { join } from 'node:path';
 import { installDom } from '../dom.mjs';
 import { mockIPC, clearMocks } from '../mock-ipc.mjs';
 import { nativeFileCommand } from '../native-file-command.mjs';
+import { cleanupScope } from '../cleanup-scope.mjs';
 import { readDroppedFile } from '../../clients/ui/lib/nativeTransport.ts';
+
+const resources = cleanupScope({ after });
+let native;
+before(async () => { native = await nativeFileCommand(resources); });
 
 async function reader(t) {
   const dom = installDom();
   t.after(() => { clearMocks(); dom.restore(); });
-  const native = await nativeFileCommand(t);
   mockIPC((command, args) => native.invoke(command, args), { background: false });
   return native.directory;
 }
