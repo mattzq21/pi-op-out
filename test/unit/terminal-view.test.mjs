@@ -43,6 +43,7 @@ describe('terminal view', () => {
     assert.equal(typeof terminal.keyInput, 'function');
     t.mock.timers.enable({ apis: ['setTimeout'] });
     await view.unmount(); view = undefined;
+    assert.notEqual(terminal.disposed, true, 'terminal disposal must wait for the next task');
     assert.equal(terminal.dataDisposed, true);
     assert.equal(terminal.keyInput, undefined);
     assert.equal(terminal.csiDisposed, true);
