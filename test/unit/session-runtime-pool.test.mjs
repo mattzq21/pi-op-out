@@ -140,13 +140,14 @@ describe('session runtime pool', () => {
 
   test('user prompts update retained session summaries while preserving project details, and only the first prompt names the chat', async () => {
     const client = pool.create({ cwd: '/repo' });
-    pool.setLiveSession(client, { ...session, cwdExists: true, apiCost: 2, messageCount: 4, name: 'New session', isDraft: true });
+    pool.setLiveSession(client, { ...session, cwdExists: true, linkedWorktree: true, apiCost: 2, messageCount: 4, name: 'New session', isDraft: true });
     const id = await connect(client);
     const text = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz12345678 omitted from the title';
     await send(id, { type: 'message_start', message: { role: 'user', content: [{ type: 'text', text }] } });
     assert.equal(pool.isRunning(client), true, 'the user message marks the conversation running before the agent starts');
     await settled();
     const current = pool.liveSessionSummaries()[0];
+    assert.equal(current.linkedWorktree, true);
     assert.equal(current.name, 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwx');
     assert.equal(current.preview, text);
     assert.equal(current.messageCount, 4);
