@@ -433,7 +433,27 @@ export class ComposerFieldElement extends HTMLElement {
     else this.#restore(this.#redo, this.#undo, "historyRedo");
   }
 
+  /** Moves the caret over the zero-width space of a filler before the browser does a move or delete, so that no key press is lost on it. */
+  #skipFiller(event: KeyboardEvent) {
+    const forward = event.key === "ArrowRight" || event.key === "Delete";
+
+    if (!forward && event.key !== "ArrowLeft" && event.key !== "Backspace") return;
+    const selection = document.getSelection();
+    const node = selection?.focusNode;
+
+    if (!selection || !(node instanceof Text) || !fillers.has(node) || node.data !== FILLER || node.parentNode !== this) return;
+    const arrow = event.key.startsWith("Arrow");
+
+    if (!selection.isCollapsed && !(arrow && event.shiftKey)) return;
+    const at = forward ? FILLER.length : 0;
+
+    if (arrow && event.shiftKey) selection.extend(node, at);
+    else selection.collapse(node, at);
+  }
+
   #keyDown = (event: KeyboardEvent) => {
+    if (!event.isComposing) this.#skipFiller(event);
+
     if (event.isComposing || event.altKey || !(event.ctrlKey || event.metaKey)) return;
     const key = event.key.toLowerCase();
 

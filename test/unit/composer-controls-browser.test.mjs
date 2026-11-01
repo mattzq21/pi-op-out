@@ -416,6 +416,33 @@ test('the caret after a chat link at the end stays on its line, and typing goes 
   assert.equal(await editor.inputValue(), '');
 });
 
+test('each arrow and delete key press next to a chat link has an effect', async t => {
+  const page = await controlsPage(t);
+  const editor = page.getByRole('textbox', { name: 'Message piop' });
+  await editor.click();
+  const a = '[A](piop://session/local/a)';
+  const b = '[B](piop://session/local/b)';
+  await editor.evaluate((node, text) => node.insertAt(0, text), a + b);
+  const caret = () => editor.evaluate(node => [node.selectionStart, node.selectionEnd]);
+  await editor.evaluate((node, at) => node.setSelectionRange(at, at), a.length);
+  await page.keyboard.press('ArrowRight');
+  assert.deepEqual(await caret(), [a.length + b.length, a.length + b.length]);
+  await page.keyboard.press('ArrowLeft');
+  assert.deepEqual(await caret(), [a.length, a.length]);
+  await page.keyboard.press('ArrowLeft');
+  assert.deepEqual(await caret(), [0, 0]);
+  await page.keyboard.press('ArrowRight');
+  await page.keyboard.press('Shift+ArrowRight');
+  assert.deepEqual(await caret(), [a.length, a.length + b.length]);
+  await page.keyboard.press('ArrowLeft');
+  await editor.evaluate((node, at) => node.setSelectionRange(at, at), a.length);
+  await page.keyboard.press('Delete');
+  assert.equal(await editor.inputValue(), a);
+  await page.keyboard.press('ArrowRight');
+  await page.keyboard.press('Backspace');
+  assert.equal(await editor.inputValue(), '');
+});
+
 test('Ctrl+Z and Ctrl+Y undo and redo typing in the message editor', async t => {
   const page = await controlsPage(t);
   const editor = page.getByRole('textbox', { name: 'Message piop' });
