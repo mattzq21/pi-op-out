@@ -9,6 +9,19 @@ import { installAgentMcp } from '../mcp-agent-fixture.mjs';
 
 const remoteMcp = { command: 'mcp-server', args: [], enabled: true };
 
+test('missing models disable only their agents and become usable after configuration repair', async t => {
+  const f = await agentFixture(t, { config: configured([profile(), profile('missing', { model: 'missing/provider' })]) });
+  await f.load(); await f.start();
+  assert.match(f.capability().config.agents.find(agent => agent.name === 'missing').unavailableReason, /missing\/provider/);
+  assert.equal(f.capability().unavailable, false);
+  await assert.rejects(f.select('missing'), /model missing\/provider is unavailable/);
+  assert.equal(f.capability().active, 'general');
+  await f.configure(configured([profile(), profile('missing', { model: 'test/default' })]));
+  assert.equal(f.capability().config.agents.find(agent => agent.name === 'missing').unavailableReason, undefined);
+  await f.select('missing');
+  assert.equal(f.capability().active, 'missing');
+});
+
 test('agent startup reads local definitions even when a broker is configured', async t => {
   const f = await agentFixture(t, {
     config: configured([profile()]),

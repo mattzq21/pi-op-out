@@ -8,6 +8,7 @@ export { mcpServerSchema, mcpServersSchema } from "../../../extensions/piop-defi
 const agentAccessSchema = z.union([z.literal("all"), z.literal("none"), z.array(z.string())]);
 
 export const agentProfileSchema = z.object({
+  unavailableReason: z.string().optional(),
   max_subagents: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER).optional(),
   allow_as_subagent: z.boolean().optional(), allow_as_peer: z.boolean().optional(), allowed_subagents: agentAccessSchema.optional(), allowed_peers: agentAccessSchema.optional(),
   name: z.string(), description: z.string().optional(), isDefault: z.boolean().optional(), model: z.string(), effort: z.string(), fastMode: z.boolean().optional(), contextWindowCap: z.number().int().min(MIN_CAP).max(MAX_CAP).nullable().optional(), codemode: z.enum(["on", "off"]).optional(), extensions: z.array(z.string()).optional(),

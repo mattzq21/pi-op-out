@@ -28,6 +28,19 @@ function hostDraft(t) {
   return { draft, shown, changeDefault, host };
 }
 
+test('a draft refuses an unavailable agent without changing its current selection', async t => {
+  const { draft, shown, host } = hostDraft(t);
+  host.config = { agents: [...generalDefault.agents, agent('missing', { model: 'missing/model', unavailableReason: 'Model missing/model is unavailable' })] };
+  await draft.applyDefaults('medium', false);
+  await assert.rejects(draft.command({ type: 'select_agent', agent: 'missing' }), /Model missing\/model is unavailable/);
+  assert.equal(shown(), 'general');
+  host.config.agents.at(-1).model = 'p/plain';
+  delete host.config.agents.at(-1).unavailableReason;
+  await draft.reload(() => true);
+  await draft.command({ type: 'select_agent', agent: 'missing' });
+  assert.equal(shown(), 'missing');
+});
+
 test('a draft records the default agent it shows, so sending starts that agent even after the host default changes', async t => {
   const { draft, shown } = hostDraft(t);
   await draft.applyDefaults('medium', false);

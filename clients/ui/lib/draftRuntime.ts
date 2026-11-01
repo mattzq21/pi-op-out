@@ -143,6 +143,7 @@ export class DraftRuntime {
     const agent = this.catalog?.config.agents.find(agent => agent.name === name);
 
     if (!agent) throw new Error("The selected agent is unavailable");
+    if (agent.unavailableReason) throw new Error(agent.unavailableReason);
     this.agent = name; this.chosen = true;
     const model = this.catalog?.models.find(model => `${model.provider}/${model.id}` === agent.model);
     this.state = { ...this.state, model: model ?? this.state.model, thinkingLevel: agent.effort || this.state.thinkingLevel };
@@ -159,7 +160,7 @@ export class DraftRuntime {
 
   private publishAgents() {
     const config = this.catalog?.config ?? { agents: [] };
-    const capability = { version: 1, active: this.agent, locked: false, saved: false, unavailable: !config.agents.some(agent => agent.name === this.agent), config };
+    const capability = { version: 1, active: this.agent, locked: false, saved: false, unavailable: !config.agents.some(agent => agent.name === this.agent && !agent.unavailableReason), config };
     this.emit({ type: "extension_ui_request", id: crypto.randomUUID(), method: "setStatus", statusKey: DEFINED_AGENTS_STATUS_KEY, statusText: `json:${encodeAgentValue(capability)}` });
   }
 }

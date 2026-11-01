@@ -6,11 +6,9 @@ import { installRuntimeStorage } from "../../daemon/resources/sdk-storage.mjs";
 import type { Agent } from "./contracts.ts";
 import { fastModelProblem, type FastModelSnapshot } from "./fast-models.ts";
 
-function configuredModel(registry: ModelRegistry, agent: Agent, name: string) {
+function configuredModel(registry: ModelRegistry, name: string) {
   const [provider, ...parts] = name.split("/");
   const model = registry.find(provider, parts.join("/"));
-
-  if (!model) throw new Error(`Agent "${agent.name}" cannot run because model ${name || "(unset)"} is unavailable`);
 
   return model;
 }
@@ -26,16 +24,22 @@ export async function modelValidator(fastModels: FastModelSnapshot | null) {
   return async (agent: Agent, activate: (registry: ModelRegistry, validate: () => Promise<void>) => Promise<void>) => {
     const runtime = await createRuntime();
     const registry: ModelRegistry = new Registry(runtime);
+    let unavailableReason: string | undefined;
     await activate(registry, async () => {
       const name = agent.model.trim();
 
       if (!name && !agent.fastMode) return;
-      const model = configuredModel(registry, agent, name);
+      const model = configuredModel(registry, name);
+      if (!model) {
+        unavailableReason = `Agent "${agent.name}" cannot run because model ${name || "(unset)"} is unavailable`;
+        return;
+      }
 
       if (!agent.fastMode) return;
       const problem = fastModelProblem(fastModels, agent.name, `${model.provider}/${model.id}`);
 
       if (problem) throw new Error(problem);
     });
+    return unavailableReason;
   };
 }

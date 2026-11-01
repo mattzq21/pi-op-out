@@ -83,7 +83,7 @@ export async function loadAgentDefinitions({ settings, initial: initialize }: Ag
   for (const agent of config.agents) {
     validateEffort(agent.name, agent.effort);
 
-    await validateModel(agent, async (registry, validate) => {
+    agent.unavailableReason = await validateModel(agent, async (registry, validate) => {
       if (!validateExtensions) return validate();
 
       try { await validateExtensions(extensionPaths(agent.extensions), dirname(configPath), registry, agent, validate); }

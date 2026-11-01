@@ -65,7 +65,7 @@ export interface Model { provider: string; id: string; name?: string; reasoning?
 
 /** Which agents an agent may start: all of them, none, or the named ones. Missing means all. */
 export type AgentAccess = "all" | "none" | string[];
-export interface AgentProfile { name: string; description?: string; isDefault?: boolean; model: string; effort: string; fastMode?: boolean; contextWindowCap?: number | null; codemode?: "on" | "off"; extensions?: string[]; max_subagents?: number; allow_as_subagent?: boolean; allow_as_peer?: boolean; allowed_subagents?: AgentAccess; allowed_peers?: AgentAccess; path_systemprompt: string; path_agent_prompt: string; tools: string[]; skills: string[]; mcpServers: McpServers; }
+export interface AgentProfile { unavailableReason?: string; name: string; description?: string; isDefault?: boolean; model: string; effort: string; fastMode?: boolean; contextWindowCap?: number | null; codemode?: "on" | "off"; extensions?: string[]; max_subagents?: number; allow_as_subagent?: boolean; allow_as_peer?: boolean; allowed_subagents?: AgentAccess; allowed_peers?: AgentAccess; path_systemprompt: string; path_agent_prompt: string; tools: string[]; skills: string[]; mcpServers: McpServers; }
 
 export interface AgentConfig { revision?: string; agents: AgentProfile[]; }
 

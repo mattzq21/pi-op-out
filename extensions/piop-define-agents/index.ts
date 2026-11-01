@@ -406,7 +406,16 @@ export default async function defineAgents(pi: ExtensionAPI) {
   /** Checks an agent's own fast mode default against the host's fast model results. */
   const fastModeError = async (agent: Agent, model: string | undefined) => agent.fastMode === true ? fastModelProblem(await hostFastModels(), agent.name, model) : undefined;
 
-  const publish = (ctx: ExtensionContext) => ctx.ui.setStatus(STATUS_KEY, `json:${encode({ version: 1, active: currentAgent()?.name ?? active, locked, saved: !!snapshot, unavailable: !currentAgent(), config })}`);
+  const modelUnavailable = (agent: Agent, ctx: ExtensionContext) => {
+    if (!agent.model || (agent.extensions?.length && agent.name !== active)) return undefined;
+    const [provider, ...parts] = agent.model.split("/");
+    return ctx.modelRegistry.find(provider, parts.join("/")) ? undefined : `Agent "${agent.name}" cannot run because model ${agent.model} is unavailable`;
+  };
+  const publish = (ctx: ExtensionContext) => {
+    const agent = currentAgent();
+    const published = { ...config, agents: config.agents.map(value => ({ ...value, unavailableReason: modelUnavailable(value, ctx) })) };
+    ctx.ui.setStatus(STATUS_KEY, `json:${encode({ version: 1, active: agent?.name ?? active, locked, saved: !!snapshot, unavailable: !agent || Boolean(modelUnavailable(agent, ctx)), config: published })}`);
+  };
 
   const saveState = (submit = false) => {
     const state = { active, modelOverride, effortOverride, snapshot, locked };

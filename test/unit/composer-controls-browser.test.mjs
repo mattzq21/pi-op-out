@@ -12,6 +12,21 @@ async function controlsPage(t) {
   });
 }
 
+test('an agent with an unavailable model is disabled until repaired', async t => {
+  const page = await controlsPage(t);
+  await page.getByRole('checkbox', { name: 'Review model unavailable', exact: true }).check();
+  await page.getByRole('button', { name: 'Agent', exact: true }).click();
+  const review = page.getByRole('option', { name: /review/ });
+  assert.equal(await review.isDisabled(), true);
+  assert.match(await review.textContent(), /Model missing\/model is unavailable/);
+  await page.keyboard.press('Escape');
+  await page.getByRole('checkbox', { name: 'Review model unavailable', exact: true }).uncheck();
+  await page.getByRole('button', { name: 'Agent', exact: true }).click();
+  assert.equal(await review.isDisabled(), false);
+  await review.click();
+  assert.deepEqual(await choices(page), ['review']);
+});
+
 test('an explicit focus request focuses the message editor', async t => {
   const page = await controlsPage(t);
   const button = page.getByRole('button', { name: 'Focus message editor', exact: true });
