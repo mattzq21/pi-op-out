@@ -175,9 +175,12 @@ test('subscriptions replay queue, pins, statuses and unresolved dialogs, and fil
   await send(status); await send(dialog); await send(queue); await send(pins);
   const replay = [];
   const stopReplay = client.subscribe(event => replay.push(event));
+  stopReplay();
+  const clearedStatus = { ...status, statusText: '' };
+  await send(clearedStatus);
   assert.deepEqual(replay, [queue, pins, status, dialog]);
-  stopReplay(); unsubscribe();
-  await send({ ...status, statusText: '' });
+  assert.deepEqual(seen.at(-1), clearedStatus);
+  unsubscribe();
   await send({ type: 'extension_ui_resolved', id: 'dialog' });
   const cleared = [];
   client.subscribe(event => cleared.push(event));
