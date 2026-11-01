@@ -3,6 +3,7 @@ import { lockGate } from './lock_gate';
 import * as Branching from './branching';
 import * as Contributions from '../plugin_contributions';
 import { goalSubmission } from './goals/commands';
+import { messageEdit } from './message_edit';
 import type { Host } from './controller';
 import type { Session } from './session';
 
@@ -38,6 +39,7 @@ export async function queueCommand(session: Session, original: any, assertOwner?
   assertOwner?.();
   const command = original;
   if (kind(command) === 'change_pending') return session.queue.changePending(text(command, 'id'), command.action ?? null, assertOwner);
+  if (kind(command) === 'edit_message') return session.queue.editMessage(messageEdit(command), assertOwner);
   const message = text(command, 'message');
   const first = message.split(/\s+/).find(part => part) ?? '';
   if (first === '/goal' && Array.isArray(command.images) && command.images.length) throw new Error('Goals do not accept attachments. Remove the files and images before sending.');

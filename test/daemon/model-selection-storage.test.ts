@@ -19,9 +19,11 @@ for (const withHistory of [false, true]) test.concurrent(`current model and thin
     await chat.command({ type: 'set_thinking_level', level: 'high' });
     expect(readFileSync(state.sessionFile, 'utf8')).toBe(body);
     if (withHistory) {
-      const answer = (await chat.command({ type: 'get_entries' })).entries.find((entry: any) => entry.type === 'message' && entry.message.role === 'assistant');
-      await chat.command({ type: 'fork_and_forget', entryId: answer.id });
+      const question = (await chat.command({ type: 'get_entries' })).entries.find((entry: any) => entry.type === 'message' && entry.message.role === 'user');
+      await chat.command({ type: 'edit_message', entryId: question.id, message: 'First question again' });
+      await chat.until(messages => messages.some(message => text(message) === 'First question again') && text(messages.at(-1)) === 'First answer');
       expect(await chat.command({ type: 'get_state' })).toMatchObject({ model: { id: 'scripted-thinker' }, thinkingLevel: 'high' });
+      const answer = (await chat.command({ type: 'get_entries' })).entries.findLast((entry: any) => entry.type === 'message' && entry.message.role === 'assistant');
       await chat.command({ type: 'fork_after', entryId: answer.id });
       expect(await chat.command({ type: 'get_state' })).toMatchObject({ model: { id: 'scripted-thinker' }, thinkingLevel: 'high' });
       await chat.command({ type: 'switch_session', sessionPath: state.sessionFile });

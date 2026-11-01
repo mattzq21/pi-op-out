@@ -32,7 +32,7 @@ for (const mode of ['copy_after', 'fork_after']) test.concurrent(mode + ' does n
   const attached=await agents.daemon.invoke('start_pi',{runtimeId:'phone',clientId:'phone',cwd:source.cwd,sessionPath:original.sessionFile});
   expect(attached.owned).toBe(false);
   const phone=(command:any)=>agents.daemon.invoke('pi_command',{runtimeId:'phone',command});
-  await expect(phone({type:'fork_and_forget',entryId:entry.id})).rejects.toThrow(/ownership/);
+  await expect(phone({type:'edit_message',entryId:entry.id,message:'Changed'})).rejects.toThrow(/ownership/);
   const forked=await phone({type:mode,entryId:entry.id});
   expect(forked.state.sessionId).not.toBe(original.sessionId);
   expect((await phone({type:'get_state'})).sessionId).toBe(forked.state.sessionId);

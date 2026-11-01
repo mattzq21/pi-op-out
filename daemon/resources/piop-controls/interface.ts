@@ -11,7 +11,7 @@ export interface SessionControls {
   cancelPreparation(): void;
   fork(ctx: ExtensionContext, mode: ForkMode, entryId?: string): Promise<ForkResult>;
   copyAuxiliary(ctx: ExtensionContext, copy: AuxiliaryCopy): Promise<ForkResult & { parentSessionId: string }>;
-  forkAndForget(ctx: ExtensionCommandContext, entryId: string): Promise<{ cancelled: boolean }>;
+  rewindMessage(ctx: ExtensionCommandContext, entryId: string, keep: number[]): Promise<{ cancelled: boolean; images?: Array<{ type: "image"; data: string; mimeType: string }> }>;
 }
 
 export interface SessionControlsRequest { session?: SessionControls }

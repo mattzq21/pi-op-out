@@ -452,6 +452,14 @@ export function registerSubagents(pi: ExtensionAPI) {
     if (event.outcome === "aborted" || ctx.signal?.aborted) await stop();
   });
   pi.on("session_before_switch", () => stop());
+  pi.on("session_before_tree", (event, ctx) => {
+    const abandoned = new Set(event.preparation.entriesToSummarize.flatMap(entry => entry.type === "message" && entry.message.role === "assistant" ? entry.message.content.flatMap(part => part.type === "toolCall" ? [part.id] : []) : []));
+
+    if (!abandoned.size) return;
+    resultsDelivery.discard(ctx, abandoned);
+
+    for (const lifecycle of active.values()) if (lifecycle.run && abandoned.has(lifecycle.run.toolCallId)) cancelSubagent(pi, ctx, lifecycle, "Subagent stopped because its chat went back to an earlier message");
+  });
   pi.on("session_shutdown", async (event) => { detachAbort(); unsubscribeCancellation(); await stop(event.reason !== "reload"); });
   const inputListeners = new Set<() => void>();
   pi.on("input", event => { if (event.source !== "extension") for (const listener of [...inputListeners]) listener(); });

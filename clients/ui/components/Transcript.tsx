@@ -2,7 +2,7 @@ import { Key } from "@solid-primitives/keyed";
 import { createEffect, createMemo, createRoot, createSignal, getOwner, Index, onCleanup, Show, untrack, type Accessor, type Owner } from "solid-js";
 import { ChevronRight, LoaderCircle } from "lucide-solid";
 import type { NativeTransport } from "../lib/nativeTransport";
-import type { AgentState, ChatMessage, ForkSource, PromptContextInfo } from "../types";
+import type { AgentState, ChatMessage, ForkSource, PromptContextInfo, SlashCommand } from "../types";
 import { createRef } from "../lib/solid";
 import { required } from "../lib/required";
 import { hasVisibleText, textOf, thinkingOf } from "../lib/content";
@@ -21,12 +21,14 @@ import { showsSubagents, SubagentResults, subagentRuns } from "./SubagentResults
 import { PromptContextBar } from "./PromptContextBar";
 import { DeferredTurn } from "./DeferredTurn";
 import { Message } from "./Message";
+import type { EditSentMessage } from "./SentMessageEditor";
+import { attachFiles, expandComposerPrompt } from "../lib/composerPrompt";
 
 type TranscriptTransport = NativeTransport;
 
-export type TranscriptActions = { onBranch?: (message: ChatMessage) => void; onFork?: (message: ChatMessage) => void | Promise<void>; onForkAndForget?: (message: ChatMessage) => void | Promise<void>; onOpenForkSource?: (source: ForkSource) => void };
+export type TranscriptActions = { onBranch?: (message: ChatMessage) => void; onFork?: (message: ChatMessage) => void | Promise<void>; onOpenForkSource?: (source: ForkSource) => void };
 
-export type TranscriptInput = { messages: ChatMessage[]; state: AgentState; debug?: DebugView; readOnly?: boolean; scrollRoot?: HTMLElement | null; cwd?: string; notify?: (title: string, message: string) => void; forkSourceName?: string; actions: TranscriptActions };
+export type TranscriptInput = { messages: ChatMessage[]; state: AgentState; debug?: DebugView; readOnly?: boolean; scrollRoot?: HTMLElement | null; cwd?: string; notify?: (title: string, message: string) => void; forkSourceName?: string; commands?: SlashCommand[]; actions: TranscriptActions };
 
 export type Transcript = {
   element: HTMLElement;
@@ -50,7 +52,7 @@ export function createTranscript(transport: TranscriptTransport | undefined, inp
     const canFork = createMemo(() => state().canFork !== false); const forkSource = createMemo(() => state().forkSource);
     const branching = createMemo(() => branchingAvailable(state())); const sessionId = createMemo(() => state().sessionId);
     const has = (key: keyof TranscriptActions) => createMemo(() => Boolean(current().actions[key]));
-    const hasFork = has("onFork"); const hasForkAndForget = has("onForkAndForget"); const hasOpenForkSource = has("onOpenForkSource");
+    const hasFork = has("onFork"); const hasOpenForkSource = has("onOpenForkSource");
 
     const [ownsConversation, setOwnsConversation] = createSignal(transport?.ownsConversation?.() !== false);
     const [pins, setPins] = createSignal<MessagePin[]>([]);
@@ -65,6 +67,7 @@ export function createTranscript(transport: TranscriptTransport | undefined, inp
     const split = createMemo(() => splitTranscript(messages(), isStreaming(), queueHeld()));
     const turns = createMemo<ConversationGroup[]>(previous => groupTurns(split().transcript, previous), []);
     const retryable = createMemo(() => ownsConversation() && !readOnly() && !isStreaming());
+    const editable = createMemo(() => Boolean(transport) && retryable() && canFork() && !state().pendingMessageCount);
     const hostId = () => transport?.currentHostId() ?? "local";
     const notice = (title: string, reason: unknown) => current().notify?.(title, reason instanceof Error ? reason.message : String(reason));
 
@@ -96,7 +99,12 @@ export function createTranscript(transport: TranscriptTransport | undefined, inp
 
     const onBranch = (message: ChatMessage) => current().actions.onBranch?.(message);
     const onFork = (message: ChatMessage) => current().actions.onFork?.(message);
-    const onForkAndForget = (message: ChatMessage) => current().actions.onForkAndForget?.(message);
+    const onEdit: EditSentMessage = async (message, edit) => {
+      if (!transport) throw new Error("Conversation is unavailable");
+      if (!transport.isConnected()) await transport.connect();
+      const text = attachFiles(expandComposerPrompt(edit.prompt, untrack(() => current().commands) ?? []), edit.files);
+      await transport.command({ type: "edit_message", entryId: await resolveMessageEntry(transport, message), message: text, keepImages: edit.keep });
+    };
     const onOpenForkSource = (forkSource: ForkSource) => current().actions.onOpenForkSource?.(forkSource);
     const imageProject = createMemo(() => { const path = cwd(); return path ? { cwd: path, hostId: hostId() } : undefined; }, undefined, { equals: (left, right) => left?.cwd === right?.cwd && left?.hostId === right?.hostId });
     const pluginMessages = { sessionId: () => sessionId(), command: async (command: Parameters<TranscriptTransport["command"]>[0]) => { if (!transport) throw new Error("Conversation is unavailable"); return transport.command(command); } };
@@ -104,7 +112,7 @@ export function createTranscript(transport: TranscriptTransport | undefined, inp
     let element: HTMLElement | undefined;
     const view: unknown = <ConversationHostContext.Provider value={hostId}><MessageFileContext.Provider value={{ hostId, cwd, get notify() { return current().notify; } }}><PluginMessageContext.Provider value={pluginMessages}><MessagePinContext.Provider value={messagePins}><ConversationImageProject.Provider value={imageProject}>
       <div ref={node => { element = node; }} class="conversation-turns">
-        <Key each={turns()} by={turn => turn.messages[0]?.id ?? "empty"}>{(turn, index) => <DeferredTurn navigationId={turn().messages[0]?.id} scrollRoot={scrollRoot} eager={index() >= turns().length - 3}><ConversationTurn latest={index() === turns().length - 1} messages={turn().messages} promptContexts={turn().promptContexts} debug={debug()} active={isStreaming() && index() === turns().length - 1} steered={turns()[index() + 1]?.messages[0]?.deliveryBehavior === "steer"} retryable={retryable() && index() === turns().length - 1} onRetry={onRetry} onBranch={branching() ? onBranch : undefined} onFork={canFork() && hasFork() ? onFork : undefined} onForkAndForget={canFork() && hasForkAndForget() && ownsConversation() ? onForkAndForget : undefined} forkSource={forkSource()} forkSourceName={forkSourceName()} onOpenForkSource={hasOpenForkSource() ? onOpenForkSource : undefined} /></DeferredTurn>}</Key>
+        <Key each={turns()} by={turn => turn.messages[0]?.id ?? "empty"}>{(turn, index) => <DeferredTurn navigationId={turn().messages[0]?.id} scrollRoot={scrollRoot} eager={index() >= turns().length - 3}><ConversationTurn latest={index() === turns().length - 1} messages={turn().messages} promptContexts={turn().promptContexts} debug={debug()} active={isStreaming() && index() === turns().length - 1} steered={turns()[index() + 1]?.messages[0]?.deliveryBehavior === "steer"} retryable={retryable() && index() === turns().length - 1} onRetry={onRetry} onBranch={branching() ? onBranch : undefined} onFork={canFork() && hasFork() ? onFork : undefined} onEdit={editable() ? onEdit : undefined} forkSource={forkSource()} forkSourceName={forkSourceName()} onOpenForkSource={hasOpenForkSource() ? onOpenForkSource : undefined} /></DeferredTurn>}</Key>
       </div>
     </ConversationImageProject.Provider></MessagePinContext.Provider></PluginMessageContext.Provider></MessageFileContext.Provider></ConversationHostContext.Provider>;
     if (typeof view === "function") (view as () => unknown)();
@@ -331,7 +339,7 @@ function MessageList(props: { messages: ChatMessage[]; expanded: boolean; compac
   return <Key each={entries()} by={entry => entry.message.id}>{entry => <Message message={entry().message} toolCount={entry().count} showActions={props.showActions ?? true} expanded={props.expanded} debug={props.debug} />}</Key>;
 }
 
-type ConversationTurnProps = { latest?: boolean; messages: ChatMessage[]; promptContexts: PromptContextInfo[]; debug: DebugView; active: boolean; steered?: boolean; retryable: boolean; onRetry: (message: ChatMessage) => Promise<void>; onBranch?: TranscriptActions["onBranch"]; onFork?: TranscriptActions["onFork"]; onForkAndForget?: TranscriptActions["onForkAndForget"]; forkSource?: ForkSource; forkSourceName?: string; onOpenForkSource?: TranscriptActions["onOpenForkSource"]; };
+type ConversationTurnProps = { latest?: boolean; messages: ChatMessage[]; promptContexts: PromptContextInfo[]; debug: DebugView; active: boolean; steered?: boolean; retryable: boolean; onRetry: (message: ChatMessage) => Promise<void>; onBranch?: TranscriptActions["onBranch"]; onFork?: TranscriptActions["onFork"]; onEdit?: EditSentMessage; forkSource?: ForkSource; forkSourceName?: string; onOpenForkSource?: TranscriptActions["onOpenForkSource"]; };
 
 function ConversationTurn(componentProps: ConversationTurnProps) {
   const turnMessages = createMemo(() => componentProps.debug.reasoning ? componentProps.messages : componentProps.messages.map(withoutReasoning));
@@ -350,8 +358,7 @@ function ConversationTurn(componentProps: ConversationTurnProps) {
 
   const finalIndex = createMemo(() => (finalResponseIndex(turnMessages())));
   const lastPointId = createMemo(() => componentProps.latest ? turnMessages().filter((message, index) => index === finalIndex() || message.customType === "compaction").at(-1)?.id : undefined);
-  const forgetFrom = (message: ChatMessage | undefined) => (message?.id === lastPointId() ? undefined : componentProps.onForkAndForget);
-  const renderSystemMessages = (after: boolean) => <Key each={systemMessages(after)} by={message => message.id}>{message => <Message message={message()} expanded={false} onFork={canBranchFrom(message()) ? componentProps.onFork : undefined} onBranch={canBranchFrom(message()) ? componentProps.onBranch : undefined} onForkAndForget={canBranchFrom(message()) ? forgetFrom(message()) : undefined} lastPoint={message().id === lastPointId()} />}</Key>;
+  const renderSystemMessages = (after: boolean) => <Key each={systemMessages(after)} by={message => message.id}>{message => <Message message={message()} expanded={false} onFork={canBranchFrom(message()) ? componentProps.onFork : undefined} onBranch={canBranchFrom(message()) ? componentProps.onBranch : undefined} lastPoint={message().id === lastPointId()} />}</Key>;
   const finalThinking = createMemo(() => (finalIndex() >= 0 ? thinkingOf(turnMessages()[finalIndex()].content) : ""));
 
   const intermediate = createMemo(() => (turnMessages().flatMap((message, index): ChatMessage[] => {
@@ -445,7 +452,7 @@ function ConversationTurn(componentProps: ConversationTurnProps) {
     </>}>
       <div class="active-work-content"><MessageList messages={activeWork()} expanded compact={false} debug={componentProps.debug} showActions={false} /></div>
     </Show>
-    <Show when={finalShown()}><Message message={required(finalMessage())} turnCacheUsage={turnCacheUsage()} debug={componentProps.debug} showActions={!componentProps.active} onBranch={!componentProps.active && canBranchFrom(finalSource()) ? componentProps.onBranch : undefined} onFork={!componentProps.active && canBranchFrom(finalSource()) ? componentProps.onFork : undefined} onForkAndForget={!componentProps.active && canBranchFrom(finalSource()) ? forgetFrom(finalSource()) : undefined} lastPoint={finalSource()?.id === lastPointId()} retrying={retrying()} onRetry={retryTarget() ? retry : undefined} /></Show>
+    <Show when={finalShown()}><Message message={required(finalMessage())} turnCacheUsage={turnCacheUsage()} debug={componentProps.debug} showActions={!componentProps.active} onBranch={!componentProps.active && canBranchFrom(finalSource()) ? componentProps.onBranch : undefined} onFork={!componentProps.active && canBranchFrom(finalSource()) ? componentProps.onFork : undefined} lastPoint={finalSource()?.id === lastPointId()} retrying={retrying()} onRetry={retryTarget() ? retry : undefined} /></Show>
     <Show when={!componentProps.active} fallback={renderForkLink()}>
       <Show when={retryError()}>{error => <div class="message-failure retry-error" role="alert">Retry failed: {error()}</div>}</Show>
       {renderSystemMessages(false)}
@@ -455,7 +462,7 @@ function ConversationTurn(componentProps: ConversationTurnProps) {
   </>);
 
   return <section class="conversation-turn" classList={{ "latest-turn": componentProps.latest === true }}>
-    {<Key each={userMessages()} by={(message) => message.id}>{(message, _index) => <Message  message={message()} debug={componentProps.debug} />}</Key>}
+    {<Key each={userMessages()} by={(message) => message.id}>{(message, _index) => <Message  message={message()} debug={componentProps.debug} onEdit={message().role === "user" ? componentProps.onEdit : undefined} />}</Key>}
     {(componentProps.active || !hasWork()) && finishedSubagents().length > 0 && <div class="subagent-finished-line">{renderFinishedSubagents()}</div>}
     {renderPromptContextBar()}
     {componentProps.debug.contextInjections && <MessageList messages={turnMessages().filter(isContextInjection)} expanded={false} debug={componentProps.debug} />}

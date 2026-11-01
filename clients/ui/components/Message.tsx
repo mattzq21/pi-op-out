@@ -10,7 +10,7 @@ import { formatDuration, formatElapsed } from "../lib/duration";
 import { ConversationImageProject } from "./markdownImages";
 import { createDependencyEffect, createRef } from "../lib/solid";
 
-import { Check, ChevronRight, CircleAlert, Copy, GitBranch, Pin, Split, Undo2, Wrench } from "lucide-solid";
+import { Check, ChevronRight, CircleAlert, Copy, GitBranch, Pencil, Pin, Split, Wrench } from "lucide-solid";
 import { MessagePinContext, pinId, pinText } from "../lib/messagePins";
 import { hasVisibleText, textOf, thinkingOf } from "../lib/content";
 import { cacheHitStats, GOAL_PROMPT, isContextInjection, toolTitle } from "../lib/messages";
@@ -24,8 +24,9 @@ import { copyText } from "../lib/clipboard";
 import { sentSkillPrompt } from "../lib/composerPrompt";
 import type { DebugView } from "../lib/debugFeatures";
 import { formatDateTime, formatDayTime, formatTime } from "../lib/dateTime";
+import { SentMessageEditor, type EditSentMessage } from "./SentMessageEditor";
 
-interface Props { message: ChatMessage; turnCacheUsage?: { input: number; cacheRead: number }; expanded?: boolean; showActions?: boolean; toolCount?: number; debug?: DebugView; onBranch?: (message: ChatMessage) => void | Promise<void>; onFork?: (message: ChatMessage) => void | Promise<void>; onForkAndForget?: (message: ChatMessage) => void | Promise<void>; onRetry?: () => void; retrying?: boolean; lastPoint?: boolean; }
+interface Props { message: ChatMessage; turnCacheUsage?: { input: number; cacheRead: number }; expanded?: boolean; showActions?: boolean; toolCount?: number; debug?: DebugView; onBranch?: (message: ChatMessage) => void | Promise<void>; onFork?: (message: ChatMessage) => void | Promise<void>; onEdit?: EditSentMessage; onRetry?: () => void; retrying?: boolean; lastPoint?: boolean; }
 
 function cacheTokenDigits(tokens: number) {
   const groups = String(tokens).match(/\d{1,3}(?=(?:\d{3})*$)/g) ?? [];
@@ -33,7 +34,7 @@ function cacheTokenDigits(tokens: number) {
   return groups.map((group, index) => <span style={{ color: "var(--accent)", opacity: [0.33, 0.66, 1][Math.min(2, groups.length - index - 1)] }}>{group}</span>);
 }
 
-function createForkActions(props: Props, label: () => string) {
+function createForkActions(props: Props) {
   const [running, setRunning] = createSignal(false);
   const runningRef = createRef(false);
   const run = async (action: Props["onFork"]) => { const message = props.message;
@@ -45,10 +46,9 @@ function createForkActions(props: Props, label: () => string) {
   };
 
   return {
-    available: () => Boolean(props.onFork || props.onBranch || props.onForkAndForget),
+    available: () => Boolean(props.onFork || props.onBranch),
     fork: () => <Show when={props.onFork}><button class="branch-button" aria-label="Fork" data-tooltip="Fork" disabled={running()} onClick={() => void run(props.onFork)}><Split size={14} /></button></Show>,
     branch: () => <Show when={props.onBranch}><button class="branch-button" aria-label="Branch off" data-tooltip="Branch off" disabled={running()} onClick={() => void run(props.onBranch)}><GitBranch size={14} /></button></Show>,
-    forget: () => <Show when={props.onForkAndForget}><button class="branch-button fork-and-forget-button" aria-label={`Fork and forget from ${label()}`} data-tooltip="Fork and forget" disabled={running()} onClick={() => void run(props.onForkAndForget)}><Undo2 size={14} /></button></Show>,
   };
 }
 
@@ -283,8 +283,11 @@ export function Message(componentProps: Props) {
     const parts = createMemo(() => userMessageParts(imageContext().text));
     const pinLabel = createMemo(() => pinText([parts().command ? "/" + parts().command : "", parts().text].filter(Boolean).join(" ")));
     const hasBody = () => Boolean(parts().text || parts().command);
+    const [editing, setEditing] = createSignal(false);
+    const editable = () => Boolean(componentProps.onEdit) && parts().command !== "goal";
 
-    return <><article tabIndex={-1} class={`message user-message${componentProps.message.deliveryBehavior === "steer" ? " steering-message" : ""}`} data-pin-id={pinId(componentProps.message)}>
+    return <><article tabIndex={-1} class={`message user-message${componentProps.message.deliveryBehavior === "steer" ? " steering-message" : ""}`} classList={{ editing: editing() }} data-pin-id={pinId(componentProps.message)}>
+      <Show when={!editing()} fallback={<SentMessageEditor message={componentProps.message} text={imageContext().text} onSave={componentProps.onEdit} onClose={() => setEditing(false)} />}>
       {images().length > 0 && <div class="user-message-images">{!hasBody() && <PinButton message={componentProps.message} text={pinLabel()} />}<Index each={images()}>{part => <ZoomableImage src={`data:${part().mimeType};base64,${part().data}`} alt="Sent attachment" />}</Index></div>}
       {hasBody() && <div class="message-body"><PinButton message={componentProps.message} text={pinLabel()} />
       <Show when={parts().command}>{command => <span class="skill-reference command-reference">/{command()}</span>}</Show><Show when={parts().text}><Show when={parts().literalSkill} fallback={<Markdown frontmatter skill={parts().skill}>{parts().text}</Markdown>}><span class="literal-skill-content">{parts().text}</span></Show></Show>
@@ -295,7 +298,9 @@ export function Message(componentProps: Props) {
 
           return copy(sentSkillPrompt(content)?.text ?? content); }} /></Show>
         {copyState() === "error" && <span class="copy-feedback" role="status">Could not copy message</span>}
+        <Show when={editable()}><IconButton title="Edit" label="Edit message" onClick={() => setEditing(true)}><Pencil size={14} /></IconButton></Show>
       </div>
+      </Show>
     </article>{componentProps.debug?.contextInjections && imageContext().notes && <ContextInjection title="Image context" content={imageContext().notes} />}</>;
   };
 
@@ -305,7 +310,7 @@ export function Message(componentProps: Props) {
     const streaming = createMemo(() => componentProps.message.streaming);
     const metadata = responseMetadata(() => componentProps.message, () => componentProps.turnCacheUsage);
     const failureState = createMemo(() => (responseFailure(componentProps.message)));
-    const forkActions = createForkActions(componentProps, () => metadata().responseLabel.toLowerCase());
+    const forkActions = createForkActions(componentProps);
 
     const renderMessageBody = () => {
       const renderResponse = () => <Markdown imageProject={imageProject()} fileLinks streaming={streaming()}>{output()}</Markdown>;
@@ -325,7 +330,6 @@ export function Message(componentProps: Props) {
 
           {renderCacheHitRate()}
           <Show when={metadata().responseTime}>{time => <span class="message-time">{time().short}</span>}</Show>
-          {forkActions.forget()}
         </div></Show>);
       };
 
@@ -346,14 +350,14 @@ export function Message(componentProps: Props) {
   const renderToolMessage = () => (<ToolResult message={componentProps.message} toolCount={(componentProps.toolCount === undefined ? 1 : componentProps.toolCount)} debug={componentProps.debug?.toolDetails ?? false} />);
 
   const renderCompaction = () => {
-    const forkActions = createForkActions(componentProps, () => "compaction");
+    const forkActions = createForkActions(componentProps);
     const finishedTime = createMemo(() => formatMessageTime(componentProps.message.timestamp));
     const compactedFor = createMemo(() => formatElapsed(componentProps.message.startedAt, componentProps.message.timestamp));
 
     return <article tabIndex={-1} class="message compaction-message" classList={{ "last-point": componentProps.lastPoint === true }} aria-label="Compaction">
       <Show when={compactedFor()}><div class="compaction-duration">Compacted for {compactedFor()}</div></Show>
       <div class="command-result compaction" role="status">{textOf(componentProps.message.content)}</div>
-      <Show when={forkActions.available() || finishedTime()}><div class="message-actions"><Show when={forkActions.available()}>{forkActions.fork()}{forkActions.branch()}{forkActions.forget()}</Show>{finishedTime() && <span class="message-time">{required(finishedTime()).short}</span>}</div></Show>
+      <Show when={forkActions.available() || finishedTime()}><div class="message-actions"><Show when={forkActions.available()}>{forkActions.fork()}{forkActions.branch()}</Show>{finishedTime() && <span class="message-time">{required(finishedTime()).short}</span>}</div></Show>
     </article>;
   };
 

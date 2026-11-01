@@ -32,9 +32,10 @@ test.concurrent('a child agent\'s final answer reaches its parent, which continu
   const childCommand = (command: any) => agents.daemon.invoke('pi_command', { runtimeId: 'subagent-fork-check', command });
   expect((await childCommand({ type: 'get_state' })).canFork).toBe(false);
   expect((await childCommand({ type: 'get_snapshot' })).state.canFork).toBe(false);
-  for (const type of ['copy_after', 'fork_after', 'fork', 'clone', 'fork_and_forget']) {
+  for (const type of ['copy_after', 'fork_after', 'fork', 'clone']) {
     await expect(childCommand({ type, entryId: 'any-response' })).rejects.toThrow('Only main chats can be forked');
   }
+  await expect(childCommand({ type: 'edit_message', entryId: 'any-message', message: 'Changed' })).rejects.toThrow('Only main chats can be edited');
 
   const delivered = (await root.command({ type: 'get_entries' })).entries.find((entry: any) => entry.customType === 'piop-subagent-result');
   expect(delivered.details.runs).toEqual([expect.objectContaining({ name: 'Reader', task: 'Summarize the README', status: 'completed', sessionId: child.id, sessionPath: child.path, hostId: 'local' })]);
@@ -163,6 +164,37 @@ test.concurrent('interrupting a busy child cancels its work, tells the parent, a
   const rootRequests = agents.model.requests.filter(request => JSON.stringify(request.messages).includes('Start a slow helper'));
   expect(rootRequests.some(request => /<subagent_response>\n[\s\S]*Subagent stopped by stop_subagent/.test(text(request.messages.at(-1))))).toBe(true);
   expect((await agents.daemon.invoke('list_sessions')).filter((session: any) => session.auxiliaryParentId === root.sessionId).length).toBe(1);
+}, 120000);
+
+test.concurrent('editing a message stops the subagents started after it, and their answers never reach the edited chat', async () => {
+  let releaseHotel!: (reply: { text: string }) => void;
+  const hotel = new Promise<{ text: string }>(resolve => { releaseHotel = resolve; });
+  agents.scripts.set('Plan the trip', messages => {
+    const last = messages.at(-1);
+    if (last.role === 'user' && text(last) === 'Book a hotel') return { tool: 'spawn_subagents', arguments: { tasks: [{ nickname: 'Booker', task: 'Find a hotel' }] } };
+    if (last.role === 'tool') return { text: 'Booking.' };
+    return { text: 'Reply to ' + text(last) };
+  });
+  agents.scripts.set('Find a hotel', () => hotel);
+  const root = await agents.rootChat();
+  const runs = () => {
+    const db = new Database(join(agents.daemon.home, '.piop', 'sessions.sqlite'), { readonly: true });
+    try { return (db.query('SELECT run_json FROM session_subagent_runs WHERE session_id=?').all(root.sessionId) as { run_json: string }[]).map(row => JSON.parse(row.run_json)); }
+    finally { db.close(); }
+  };
+  try {
+    await root.command({ type: 'prompt', message: 'Plan the trip' });
+    await root.until(history => text(history.at(-1)) === 'Reply to Plan the trip');
+    await root.command({ type: 'prompt', message: 'Book a hotel' });
+    await root.until(history => text(history.at(-1)) === 'Booking.' && agents.model.requests.some(request => text(request.messages.at(-1)) === 'Find a hotel'));
+    const booking = (await root.command({ type: 'get_entries' })).entries.find((entry: any) => entry.type === 'message' && text(entry.message) === 'Book a hotel');
+    await root.command({ type: 'edit_message', entryId: booking.id, message: 'Book a train' });
+    await root.until(history => text(history.at(-1)) === 'Reply to Book a train');
+    for (let tries = 0; runs()[0]?.status === 'running' && tries < 100; tries++) await Bun.sleep(100);
+  } finally { releaseHotel({ text: 'Hotel found.' }); }
+  expect(runs()).toEqual([expect.objectContaining({ name: 'Booker', status: 'cancelled', resultDelivery: 'delivered' })]);
+  expect((await root.command({ type: 'get_entries' })).entries.some((entry: any) => entry.customType === 'piop-subagent-result')).toBe(false);
+  expect(agents.model.requests.some(request => JSON.stringify(request.messages).includes('Plan the trip') && JSON.stringify(request.messages).includes('Hotel found'))).toBe(false);
 }, 120000);
 
 test.concurrent('a parent sees its busy child in its agent list and can send the child an update it acts on', async () => {

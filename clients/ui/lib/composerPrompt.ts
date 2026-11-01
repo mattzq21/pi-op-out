@@ -118,8 +118,12 @@ export function splitAttachedFiles(message: string): { prompt: string; files: At
   return { prompt: message, files: [] };
 }
 
+export function expandComposerPrompt(value: string, commands: SlashCommand[]) {
+  return expandSkillReference(expandInlineCommand(value.trim(), commands), commands);
+}
+
 export function buildComposerPrompt(value: string, uploads: ComposerUpload[], commands: SlashCommand[]) {
-  const prompt = expandSkillReference(expandInlineCommand(value.trim(), commands), commands);
+  const prompt = expandComposerPrompt(value, commands);
 
   if (prompt === "/goal") throw new Error("Write an objective or an action after /goal. Usage: /goal <objective | edit | pause | resume | clear>");
   if (/^\/goal(?:\s|$)/.test(prompt) && uploads.length) throw new Error("Goals do not accept attachments. Remove the files and images before sending.");

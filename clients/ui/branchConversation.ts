@@ -41,7 +41,7 @@ async function loadState(transport: NativeTransport): Promise<AgentState> {
 }
 
 export function createBranchConversation({ transport, activeConversationKeyRef, branchPending, state, sessions, runtimePool, rekeyConversationUi, activeTransportRef, setActiveCwd, setState, setMessages, updateConnected, configureRuntime, transportConversationKeys, activateConversationKey, syncSessionIndex, requestComposerFocus }: Context) {
-  return async (message: ChatMessage, mode: "branch" | "fork" | "copy" = "branch") => {
+  return async (message: ChatMessage, mode: "branch" | "fork" = "branch") => {
     const ownerTransport = transport; const previousKey = activeConversationKeyRef.current;
     const entryId = await resolveMessageEntry(ownerTransport, message);
     const pendingKey = `${previousKey}:${entryId}`;
@@ -71,7 +71,7 @@ export function createBranchConversation({ transport, activeConversationKeyRef, 
         runtimePool.setLiveSession(ownerTransport, { ...parentSession, id: nextState.sessionId, forkSourceId: parentSession.id, forkEntryId: entryId, path: nextState.sessionFile ?? "", cwd: cwd ?? parentSession.cwd, name: nextState.sessionName || parentSession.name, messageCount: nextState.messageCount });
       }
 
-      rekeyConversationUi(previousKey, nextKey, ownerTransport, mode === "copy" ? "rename" : "branch");
+      rekeyConversationUi(previousKey, nextKey, ownerTransport, "branch");
 
       if (activeTransportRef.current === ownerTransport && activeConversationKeyRef.current === nextKey) {
         if (cwd !== undefined) setActiveCwd(cwd);

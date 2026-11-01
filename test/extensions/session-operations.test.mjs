@@ -143,20 +143,25 @@ test('fork RPC switches to a completed response without changing the parent', as
 
 
 
-test('forget RPC navigates without recording state and preserves cancelled or invalid requests', async t => {
+test('rewind RPC goes back before a user message on the current branch and returns the images it keeps', async t => {
   const f = await fixture(t);
   const targets = [];
+  f.ctx.isIdle = () => true;
+  f.ctx.hasPendingMessages = () => false;
   f.ctx.navigateTree = async id => { targets.push(id);
 
     return { cancelled: targets.length === 1 }; };
+  f.entries[2].message.content = [{ type: 'text', text: 'fork now' }, { type: 'image', data: 'AAAA', mimeType: 'image/png' }, { type: 'image', data: 'BBBB', mimeType: 'image/png' }];
 
-  assert.deepEqual(await f.rpc('fork_and_forget', { entryId: 'a1' }), { cancelled: true });
-  assert.deepEqual(f.operations, []);
-  assert.deepEqual(await f.rpc('fork_and_forget', { entryId: 'a1' }), { cancelled: false });
+  assert.deepEqual(await f.rpc('rewind_message', { entryId: 'u2', keep: [1] }), { cancelled: true });
+  assert.deepEqual(await f.rpc('rewind_message', { entryId: 'u2', keep: [1] }), { cancelled: false, images: [{ type: 'image', data: 'BBBB', mimeType: 'image/png' }] });
   assert.deepEqual(f.operations, []);
 
-  for (const entryId of ['missing', 'u1']) await assert.rejects(f.rpc('fork_and_forget', { entryId }), /Assistant response not found/);
-  assert.deepEqual(targets, ['a1', 'a1']);
+  for (const entryId of ['missing', 'a1']) await assert.rejects(f.rpc('rewind_message', { entryId, keep: [] }), /no longer in the conversation/);
+  await assert.rejects(f.rpc('rewind_message', { entryId: 'u2', keep: [2] }), /keeps an image that the message does not have/);
+  f.ctx.isIdle = () => false;
+  await assert.rejects(f.rpc('rewind_message', { entryId: 'u2', keep: [] }), /Wait for the current response/);
+  assert.deepEqual(targets, ['u2', 'u2']);
   assert.equal(await readFile(f.sourcePath, 'utf8'), f.sourceText);
 });
 
@@ -203,7 +208,7 @@ for (const kind of ['subagent', 'review', 'btw']) test(`a ${kind} chat cannot fo
   for (const mode of ['fork', 'fork_after', 'clone']) {
     await assert.rejects(f.rpc('prepare_fork', { mode, entryId: mode === 'fork' ? 'u2' : 'a1' }), /Only main chats can be forked/);
   }
-  await assert.rejects(f.rpc('fork_and_forget', { entryId: 'a1' }), /Only main chats can be forked/);
+  await assert.rejects(f.rpc('rewind_message', { entryId: 'u1', keep: [] }), /Only main chats can be edited/);
   assert.deepEqual(await readdir(f.sessions), before);
   assert.equal(await readFile(f.sourcePath, 'utf8'), f.sourceText);
 });

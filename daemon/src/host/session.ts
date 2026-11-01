@@ -583,8 +583,8 @@ export class Session {
     if ((kind(command) === 'prompt' || kind(command) === 'queue_prompt') && !text(command, 'message').startsWith('/')) this.isSubmitted = true;
     const result = await this.raw(clone(command));
     this.settings.remember(command);
-    if (['set_model', 'set_thinking_level', 'fork_and_forget'].includes(kind(command))) this.publish({ type: 'session_info_changed' }, null);
-    if (kind(command) === 'fork_and_forget') this.host.output({ type: 'sessions_changed' });
+    if (['set_model', 'set_thinking_level', 'rewind_message'].includes(kind(command))) this.publish({ type: 'session_info_changed' }, null);
+    if (kind(command) === 'rewind_message') this.host.output({ type: 'sessions_changed' });
     return result;
   }
 

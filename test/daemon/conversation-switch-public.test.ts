@@ -118,27 +118,46 @@ test.concurrent('copying after an answer outside a Git repository opens a new co
   expect(sessions.find((session: any) => session.id === copy.sessionId).forkSourceId).toBe(original.sessionId);
 }, 60000);
 
-test.concurrent('fork and forget goes back to an earlier answer in the same conversation, and the model no longer sees what came after', async () => {
+test.concurrent('an edited message replaces the sent one in the same conversation, keeps the chosen images, and the model no longer sees what came after', async () => {
+  const png = (data: string) => ({ type: 'image', data, mimeType: 'image/png' });
+  const red = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFBQIAX8jx0gAAAABJRU5ErkJggg==';
+  const black = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==';
   agents.scripts.set('Pick a color', messages => ({ text: 'Reply to ' + text(messages.at(-1)) }));
   const chat = await agents.rootChat();
   await chat.command({ type: 'prompt', message: 'Pick a color' });
   await chat.until(history => text(history.at(-1)) === 'Reply to Pick a color');
-  await chat.command({ type: 'prompt', message: 'Forgotten detour' });
+  await chat.command({ type: 'prompt', message: 'Forgotten detour', images: [png(red), png(black)] });
   await chat.until(history => text(history.at(-1)) === 'Reply to Forgotten detour');
   const before = (await chat.command({ type: 'get_state' })).sessionId;
-  const firstAnswer = (await chat.command({ type: 'get_entries' })).entries.find((entry: any) => entry.type === 'message' && text(entry.message) === 'Reply to Pick a color');
-  expect(await chat.command({ type: 'fork_and_forget', entryId: firstAnswer.id })).toMatchObject({ cancelled: false });
-  expect((await chat.command({ type: 'get_state' })).sessionId).toBe(before);
-  expect((await chat.history()).filter(message => message.role !== 'system').map(text)).toEqual(['Pick a color', 'Reply to Pick a color']);
-  await chat.command({ type: 'prompt', message: 'Pick a shade' });
+  const detour = (await chat.command({ type: 'get_entries' })).entries.find((entry: any) => entry.type === 'message' && entry.message.role === 'user' && text(entry.message).startsWith('Forgotten detour'));
+  await chat.command({ type: 'edit_message', entryId: detour.id, message: 'Pick a shade', keepImages: [1] });
   await chat.until(history => text(history.at(-1)) === 'Reply to Pick a shade');
-  const request = agents.model.requests.findLast(request => request.messages.some((message: any) => message.role === 'user' && text(message) === 'Pick a shade'));
+  expect((await chat.command({ type: 'get_state' })).sessionId).toBe(before);
+  expect((await chat.history()).filter(message => message.role !== 'system').map(text)).toEqual(['Pick a color', 'Reply to Pick a color', 'Pick a shade', 'Reply to Pick a shade']);
+  const request = agents.model.requests.findLast(request => text(request.messages.at(-1)) === 'Pick a shade');
+  expect(request.messages.at(-1).content.filter((part: any) => part.type === 'image_url').map((part: any) => part.image_url.url)).toEqual(['data:image/png;base64,' + black]);
   const sent = JSON.stringify(request.messages);
   expect(sent).toContain('Reply to Pick a color');
   expect(sent).not.toContain('Forgotten detour');
 }, 60000);
 
-test.concurrent('after fork and forget, the chat list shows the chat as it is now, without what came after the earlier answer', async () => {
+test.concurrent('a sent message cannot be edited while the agent works, into a goal, or into a command', async () => {
+  const busy = held<{ text: string }>();
+  agents.scripts.set('Write the report', messages => text(messages.at(-1)) === 'Write the report' ? busy.promise : { text: 'Done.' });
+  const chat = await agents.rootChat();
+  await chat.command({ type: 'prompt', message: 'Write the report' });
+  await chat.until(() => agents.model.requests.some(request => text(request.messages.at(-1)) === 'Write the report'));
+  const prompt = (await chat.command({ type: 'get_entries' })).entries.find((entry: any) => entry.type === 'message' && entry.message.role === 'user');
+  const edit = (message: string) => chat.command({ type: 'edit_message', entryId: prompt.id, message }).then(() => 'edited', (error: Error) => error.message);
+  try { expect(await edit('Write the summary')).toBe('Wait for the current response and queued messages to finish first'); }
+  finally { busy.release({ text: 'Report written.' }); }
+  await chat.until(history => text(history.at(-1)) === 'Report written.');
+  expect(await edit('/goal Write the summary')).toBe('A goal cannot replace a sent message. Send /goal as a new message.');
+  expect(await edit('/compact')).toBe('A command cannot replace a sent message. Send it as a new message.');
+  expect((await chat.history()).filter(message => message.role !== 'system').map(text)).toEqual(['Write the report', 'Report written.']);
+}, 60000);
+
+test.concurrent('after an edit, the chat list and a reopened chat show the edited message', async () => {
   agents.scripts.set('Choose a fruit', messages => ({ text: 'Reply to ' + text(messages.at(-1)) }));
   const chat = await agents.rootChat();
   await chat.command({ type: 'prompt', message: 'Choose a fruit' });
@@ -147,17 +166,17 @@ test.concurrent('after fork and forget, the chat list shows the chat as it is no
   await chat.until(history => text(history.at(-1)) === 'Reply to Discarded detour');
   const listed = async () => (await agents.daemon.invoke('list_sessions')).find((session: any) => session.id === chat.sessionId);
   for (let tries = 0; (await listed())?.preview !== 'Reply to Discarded detour' && tries < 50; tries++) await Bun.sleep(100);
-  const firstAnswer = (await chat.command({ type: 'get_entries' })).entries.find((entry: any) => entry.type === 'message' && text(entry.message) === 'Reply to Choose a fruit');
-  await chat.command({ type: 'fork_and_forget', entryId: firstAnswer.id });
-  for (let tries = 0; (await listed())?.preview !== 'Reply to Choose a fruit' && tries < 50; tries++) await Bun.sleep(100);
-  expect(await listed()).toMatchObject({ preview: 'Reply to Choose a fruit', messageCount: 3, name: 'Choose a fruit' });
+  const detour = (await chat.command({ type: 'get_entries' })).entries.find((entry: any) => entry.type === 'message' && text(entry.message) === 'Discarded detour');
+  await chat.command({ type: 'edit_message', entryId: detour.id, message: 'Choose a berry' });
+  await chat.until(history => text(history.at(-1)) === 'Reply to Choose a berry');
+  for (let tries = 0; (await listed())?.preview !== 'Reply to Choose a berry' && tries < 50; tries++) await Bun.sleep(100);
+  expect(await listed()).toMatchObject({ preview: 'Reply to Choose a berry', name: 'Choose a fruit' });
+  const edited = ['Choose a fruit', 'Reply to Choose a fruit', 'Choose a berry', 'Reply to Choose a berry'];
   const original = await chat.command({ type: 'get_state' });
   await agents.daemon.invoke('stop_pi', { runtimeId: chat.runtimeId });
   await agents.daemon.invoke('start_pi', { runtimeId: chat.runtimeId, clientId: 'laptop', cwd: chat.cwd, sessionPath: original.sessionFile, presence: { readOnly: true } });
-  expect((await chat.command({ type: 'get_snapshot' })).history.leafId).toBe(firstAnswer.id);
+  expect((await chat.history()).filter(message => message.role !== 'system').map(text)).toEqual(edited);
   await agents.daemon.invoke('stop_pi', { runtimeId: chat.runtimeId });
   await agents.daemon.invoke('start_pi', { runtimeId: chat.runtimeId, clientId: 'laptop', cwd: chat.cwd, sessionPath: original.sessionFile });
-  expect((await chat.command({ type: 'get_snapshot' })).history.leafId).toBe(firstAnswer.id);
-  expect(await listed()).toMatchObject({ preview: 'Reply to Choose a fruit', messageCount: 3 });
-
+  expect((await chat.history()).filter(message => message.role !== 'system').map(text)).toEqual(edited);
 }, 60000);

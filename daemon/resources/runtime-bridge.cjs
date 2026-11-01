@@ -21,7 +21,7 @@ const { installReloadLifecycle, afterReload, serializeConfiguration, runtimeRequ
 
 const { queuePull } = require("./queue-pull.cjs");
 
-const configurationCommands = new Set(["context_cap_settings", "agent_definitions_changed", "provider_auth_refresh", "select_agent", "fork_after", "fork_and_forget", "prepare_fork"]);
+const configurationCommands = new Set(["context_cap_settings", "agent_definitions_changed", "provider_auth_refresh", "select_agent", "fork_after", "rewind_message", "prepare_fork"]);
 
 let queueValidation;
 

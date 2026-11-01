@@ -490,33 +490,6 @@ export function createAppConversations(preloadChat: () => void, prepareTranscrip
 
     try { await capturedBranchConversation(message, mode); } catch (reason) { addNotice({ title: "Could not fork conversation", message: reason instanceof Error ? reason.message : String(reason) }); } };
 
-  const conversationBusy = () => chatSession().state.isStreaming || chatSession().state.pendingMessageCount;
-
-  const forkAndForget = async (message: ChatMessage) => {
-    const owner = transport();
-    const sourcePath = owner.currentSessionPath();
-    const hostId = owner.currentHostId();
-    const source = sessions().find(item => item.path === sourcePath && (item.hostId ?? "local") === hostId);
-    const pendingKey = `${activeConversationKeyRef.current}:forget`;
-
-    if (branchPending.current.has(pendingKey)) return;
-    branchPending.current.add(pendingKey);
-
-    try {
-      if (!source) throw new Error("Could not find the original saved conversation");
-
-      if (!owner.ownsConversation()) throw new Error("Take ownership of this conversation first");
-
-      if (conversationBusy()) throw new Error("Wait for the current response and queued messages to finish first");
-
-      if (!await branchConversation()(message, "copy")) return;
-      await archives.archiveSession(source);
-      await syncSessionIndex();
-    } catch (reason) {
-      addNotice({ title: "Could not copy and archive conversation", message: reason instanceof Error ? reason.message : String(reason) });
-    } finally { branchPending.current.delete(pendingKey); }
-  };
-
   const canStartNewSession = () => !newSessionPending.current && canLeaveSettings();
   const newSessionTarget = (clearProject: boolean, group?: SessionGroup) => {
     if (!group) return { hostId: activeHostIdRef.current, projectCwd: clearProject ? undefined : selectedProjectCwd(activeCwd(), transport().isTemporaryChat()) };
@@ -867,6 +840,6 @@ export function createAppConversations(preloadChat: () => void, prepareTranscrip
       } });
   };
 
- return { forkSourceNameOf, modelVisibility, drafts, isArchiving: archives.isPending, missingDirectoryDialog, archivesOpen, setArchivesOpen, runtimePool, transport, view, setView, activeConversationKey, chatViewKey, runningSessions, unseenSessions, pendingSettingsCount, chatSession, sessions, settings, settingsSaving, debugModeSaving, setSettingsDirty, panelOpen, setPanelOpen, query, setQuery, connected, error, setError, createGroupRequest, setCreateGroupRequest, handleCreateGroup, newChatRequest, activeHostId, codexUsage, anthropicUsage, usageClock, opencodeGoBadge, usageError, refreshUsage, refreshingUsage, setDialogs, notices, setNotices, addNotice, queueExtensionDialog, resolveExtensionDialog, closeTransportDialogs, releaseSplitTransport, statuses, widgets, renameSession, setRenameSession, projectOpen, setProjectOpen, projectOpenRef, uploadsByTransport, setComposerDraft, setComposerUploads, splitPane, setSplitPane, subagentPane, hasSidePane, sidepane, listedRunningSessions, archiveSession: (session: SessionSummary) => archives.archiveSession(session), mainComposerFocusRequest, splitComposerFocusRequest, mainQueueHoldRequest, splitQueueHoldRequest, activePane, setActivePane, terminals, terminalOpen, terminalSessionId, terminalLocationState, startTerminal, addTerminal, selectTerminal, saveTerminalSnapshot, deleteTerminal, reconnectPending, splitSessionId, composerState, terminalViewKey, syncSessionIndex, composerControls, resolveHomeDirectory, send, respondToSplitRequest, closeSplitPane, openSubagent, canLeaveSettings, rekeyConversationUi, branch, forkAndForget, forkSourceName, forkPoints, openForkSource, revealEntryId, entryRevealed, startNewSession, newSession, clearChatProject, chooseChatHost, selectSession, setModel, setThinking, abortInteraction, saveSettings, setAgent, openProject, chooseChatProject, sessionAction, draftChangeFor, uploadsChangeFor, toggleComposerTerminal, toggleDebugMode, toggleDebugFeature, reconnectMain, extensionStateIsCurrent, activeDialog, projectCwd, mobileSidebarOpen, sidebar, chatAgentProps, chatModels, chatCommands, chatWidgets, composerView };
+ return { forkSourceNameOf, modelVisibility, drafts, isArchiving: archives.isPending, missingDirectoryDialog, archivesOpen, setArchivesOpen, runtimePool, transport, view, setView, activeConversationKey, chatViewKey, runningSessions, unseenSessions, pendingSettingsCount, chatSession, sessions, settings, settingsSaving, debugModeSaving, setSettingsDirty, panelOpen, setPanelOpen, query, setQuery, connected, error, setError, createGroupRequest, setCreateGroupRequest, handleCreateGroup, newChatRequest, activeHostId, codexUsage, anthropicUsage, usageClock, opencodeGoBadge, usageError, refreshUsage, refreshingUsage, setDialogs, notices, setNotices, addNotice, queueExtensionDialog, resolveExtensionDialog, closeTransportDialogs, releaseSplitTransport, statuses, widgets, renameSession, setRenameSession, projectOpen, setProjectOpen, projectOpenRef, uploadsByTransport, setComposerDraft, setComposerUploads, splitPane, setSplitPane, subagentPane, hasSidePane, sidepane, listedRunningSessions, archiveSession: (session: SessionSummary) => archives.archiveSession(session), mainComposerFocusRequest, splitComposerFocusRequest, mainQueueHoldRequest, splitQueueHoldRequest, activePane, setActivePane, terminals, terminalOpen, terminalSessionId, terminalLocationState, startTerminal, addTerminal, selectTerminal, saveTerminalSnapshot, deleteTerminal, reconnectPending, splitSessionId, composerState, terminalViewKey, syncSessionIndex, composerControls, resolveHomeDirectory, send, respondToSplitRequest, closeSplitPane, openSubagent, canLeaveSettings, rekeyConversationUi, branch, forkSourceName, forkPoints, openForkSource, revealEntryId, entryRevealed, startNewSession, newSession, clearChatProject, chooseChatHost, selectSession, setModel, setThinking, abortInteraction, saveSettings, setAgent, openProject, chooseChatProject, sessionAction, draftChangeFor, uploadsChangeFor, toggleComposerTerminal, toggleDebugMode, toggleDebugFeature, reconnectMain, extensionStateIsCurrent, activeDialog, projectCwd, mobileSidebarOpen, sidebar, chatAgentProps, chatModels, chatCommands, chatWidgets, composerView };
 
 }

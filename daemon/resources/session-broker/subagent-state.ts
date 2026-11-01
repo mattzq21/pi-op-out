@@ -157,6 +157,13 @@ export function registerSubagentResults(pi: ExtensionAPI) {
 
       return claimed;
     },
+    discard(ctx: ExtensionContext, toolCallIds: ReadonlySet<string>) {
+      for (const run of ownedRuns(ctx)) {
+        if (!toolCallIds.has(run.toolCallId) || run.resultDelivery === "delivered") continue;
+        run.resultDelivery = "delivered";
+        saveRun(pi, ctx, run);
+      }
+    },
     publish,
     flush,
   };

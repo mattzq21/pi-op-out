@@ -73,39 +73,75 @@ test('retrying prevents another retry request', async t => {
   assert.deepEqual(retries, []);
 });
 
-const forgetControl = () => document.querySelector('button[aria-label^="Fork and forget from"]');
 const copyResponse = () => document.querySelector('button[aria-label^="Copy assistant response"]');
 
 test('a pending fork prevents another action until it finishes', async t => {
-  const pending = Promise.withResolvers(), branches = [], forgotten = [];
+  const pending = Promise.withResolvers(), branches = [], branchedOff = [];
   const message = { id: 'assistant-id', role: 'assistant', content: 'answer' };
-  await renderMessage(t, message, { onFork: value => { branches.push(value); return pending.promise; }, onForkAndForget: value => forgotten.push(value) });
+  await renderMessage(t, message, { onFork: value => { branches.push(value); return pending.promise; }, onBranch: value => branchedOff.push(value) });
   await click(control('Fork'));
   assert.equal(control('Fork').disabled, true);
-  assert.equal(forgetControl().disabled, true);
-  await click(control('Fork')); await click(forgetControl());
+  assert.equal(control('Branch off').disabled, true);
+  await click(control('Fork')); await click(control('Branch off'));
   assert.deepEqual(branches, [message]);
-  assert.deepEqual(forgotten, []);
+  assert.deepEqual(branchedOff, []);
   await act(() => pending.resolve());
   assert.equal(control('Fork').disabled, false);
-  assert.equal(forgetControl().disabled, false);
-  await click(forgetControl());
-  assert.deepEqual(forgotten, [message]);
+  await click(control('Branch off'));
+  assert.deepEqual(branchedOff, [message]);
 });
 
 test('streaming responses show work in progress and hide completed response actions', async t => {
-  await renderMessage(t, { role: 'assistant', content: 'partial answer', streaming: true }, { onFork: () => {}, onBranch: () => {}, onForkAndForget: () => {} });
+  await renderMessage(t, { role: 'assistant', content: 'partial answer', streaming: true }, { onFork: () => {}, onBranch: () => {} });
   assert.equal(control('Fork'), null);
-  assert.equal(forgetControl(), null);
+  assert.equal(control('Branch off'), null);
   assert.equal(copyResponse(), null);
 });
 
 test('the caller can hide completed response actions', async t => {
-  await renderMessage(t, { role: 'assistant', content: 'answer' }, { showActions: false, onFork: () => {}, onBranch: () => {}, onForkAndForget: () => {} });
+  await renderMessage(t, { role: 'assistant', content: 'answer' }, { showActions: false, onFork: () => {}, onBranch: () => {} });
   assert.match(document.body.textContent, /answer/);
   assert.equal(control('Fork'), null);
-  assert.equal(forgetControl(), null);
+  assert.equal(control('Branch off'), null);
   assert.equal(copyResponse(), null);
+});
+
+const typeInto = (element, value) => act(() => { element.value = value; element.dispatchEvent(new Event('input', { bubbles: true })); });
+const press = (element, key, extra = {}) => act(() => element.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true, ...extra })));
+
+test('a sent message opens in place with its text, files and images, and sends only what is kept', async t => {
+  const edits = [];
+  const content = [{ type: 'text', text: 'Fix the bug\n\n<file name="notes.txt">\nline one\n</file>' }, { type: 'image', data: 'AAAA', mimeType: 'image/png' }, { type: 'image', data: 'BBBB', mimeType: 'image/png' }];
+  await renderMessage(t, { role: 'user', content }, { onEdit: async (message, edit) => { edits.push([message.id, edit]); } });
+  await click(control('Edit message'));
+  const field = control('Edited message');
+  assert.equal(control('Edit message'), null);
+  assert.equal(field.value, 'Fix the bug');
+  assert.match(control('Attachments of the edited message').textContent, /notes\.txt/);
+  await click(document.querySelectorAll('button[aria-label="Remove image"]')[0]);
+  await typeInto(field, 'Fix the crash');
+  await press(field, 'Enter');
+  assert.deepEqual(edits, [['message-id', { prompt: 'Fix the crash', files: [{ name: 'notes.txt', text: 'line one' }], keep: [1] }]]);
+  await untilDom(() => control('Edit message'));
+  assert.match(document.body.textContent, /Fix the bug/);
+});
+
+test('a refused edit keeps the editor open with the reason, and Escape leaves the message as it was', async t => {
+  await renderMessage(t, { role: 'user', content: 'Original text' }, { onEdit: async () => { throw new Error('Wait for the current response and queued messages to finish first'); } });
+  await click(control('Edit message'));
+  const field = control('Edited message');
+  await typeInto(field, 'Changed text');
+  await click(button('Send'));
+  assert.match(document.querySelector('[role=alert]').textContent, /Wait for the current response/);
+  assert.equal(control('Edited message'), field);
+  await press(field, 'Escape');
+  assert.equal(control('Edited message'), null);
+  assert.match(document.body.textContent, /Original text/);
+});
+
+test('goal messages and messages without an edit action have no edit control', async t => {
+  await renderMessage(t, { role: 'user', content: '/goal Ship it' }, { onEdit: async () => {} });
+  assert.equal(control('Edit message'), null);
 });
 
 test('completed responses show reasoning before the answer', async t => {

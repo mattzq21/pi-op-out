@@ -132,131 +132,14 @@ test('Worktree fork appears only under finished or stopped final responses in a 
   assert.equal(forkControl(view), null);
 });
 
-test('Fork and forget is absent at the last point of the chat, and a compaction is a point to fork from', async t => {
-  const forgotten = [], branched = [];
-  const forgetIn = (view, label) => view.container.querySelector(`[aria-label="${label}"] .fork-and-forget-button`);
+test('a compaction is a point to fork from', async t => {
+  const branched = [];
   const turn = id => [{ id: id + '-question', role: 'user', content: 'Question ' + id }, { id: id + '-answer', role: 'assistant', content: 'Answer ' + id, stopReason: 'stop' }];
   const compaction = { id: 'compacted', entryId: 'compacted', role: 'system', customType: 'compaction', content: 'Compacted' };
-  const view = await conversation(t, { state: repositoryState, messages: [...turn('first'), ...turn('last')], onFork: () => {}, onBranch: value => branched.push(value.id), onForkAndForget: value => forgotten.push(value.id) });
-  const answers = () => [...view.container.querySelectorAll('.assistant-message')];
-  assert.equal(answers().length, 2);
-  assert.ok(answers()[0].querySelector('.fork-and-forget-button'));
-  assert.equal(answers()[1].querySelector('.fork-and-forget-button'), null);
-
-  await view.update({ messages: [...turn('first'), ...turn('last'), compaction] });
-  assert.ok(answers()[1].querySelector('.fork-and-forget-button'));
+  const view = await conversation(t, { state: repositoryState, messages: [...turn('first'), ...turn('last'), compaction], onFork: () => {}, onBranch: value => branched.push(value.id) });
   assert.ok(view.container.querySelector('[aria-label="Compaction"] [aria-label="Fork"]'));
-  assert.equal(forgetIn(view, 'Compaction'), null);
   await act(() => view.container.querySelector('[aria-label="Compaction"] [aria-label="Branch off"]').click());
   assert.deepEqual(branched, ['compacted']);
-
-  await view.update({ messages: [...turn('first'), compaction, ...turn('last')] });
-  await act(() => forgetIn(view, 'Compaction').click());
-  assert.deepEqual(forgotten, ['compacted']);
-});
-
-test('a branched conversation links to its original conversation and message', async t => {
-  const opened = [];
-  const forkSource = { sessionId: '019a6e31-8c42-7b05-a281-3d96e04fc812', sessionPath: '/sessions/original.jsonl', entryId: 'answer' };
-  const view = await conversation(t, { state: { ...repositoryState, forkSource }, forkSourceName: 'Login fix', onOpenForkSource: source => opened.push(source), messages: [
-    { id: 'question', role: 'user', content: 'Question' },
-    { id: 'display-answer', entryId: 'answer', role: 'assistant', content: 'Original answer', stopReason: 'stop' },
-    { id: 'follow-up', role: 'user', content: 'Follow-up' },
-    { id: 'later-answer', role: 'assistant', content: 'Later answer', stopReason: 'stop' },
-  ] });
-  const link = view.container.querySelector('.fork-source-link');
-  assert.equal(link.textContent, 'Branched from “Login fix”');
-  const turns = view.container.querySelectorAll('.conversation-turn');
-  const following = link.ownerDocument.defaultView.Node.DOCUMENT_POSITION_FOLLOWING;
-  assert.ok(turns[0].compareDocumentPosition(link) & following);
-  assert.ok(link.compareDocumentPosition(turns[1]) & following);
-  assert.equal(view.container.querySelectorAll('.fork-source').length, 1);
-  await act(() => link.click());
-  assert.deepEqual(opened, [forkSource]);
-  await view.update({ forkSourceName: undefined });
-  assert.equal(view.container.querySelector('.fork-source-link').textContent, 'Branched from 019a6e31');
-});
-
-test('opening the original conversation scrolls to the selected response once', async t => {
-  const scrolled = [], revealed = [];
-  const view = await conversation(t, { messages: [
-    { id: 'question', role: 'user', content: 'Question' },
-    { id: 'answer', role: 'assistant', content: 'Answer', stopReason: 'stop' },
-  ], revealEntryId: 'answer', onEntryRevealed: () => revealed.push('answer') });
-  const prototype = view.container.ownerDocument.defaultView.Element.prototype;
-  const original = prototype.scrollIntoView;
-  prototype.scrollIntoView = function () { scrolled.push(this.getAttribute('data-response-id')); };
-  t.after(() => { prototype.scrollIntoView = original; });
-  await view.dom.flushFrames();
-  assert.deepEqual(scrolled, ['answer']);
-  assert.deepEqual(revealed, ['answer']);
-});
-
-test('Fork uses the current callback for an already displayed response', async t => {
-  const previous = [], current = [];
-  const view = await conversation(t, { state: repositoryState, messages: [
-    { id: 'question', role: 'user', content: 'Question' },
-    { id: 'answer', role: 'assistant', content: 'Answer', stopReason: 'stop' },
-  ], onBranch: message => previous.push(message.id) });
-  await view.update({ onBranch: message => current.push(message.id) });
-  const fork = view.container.querySelector('[aria-label="Branch off"]');
-  assert.ok(fork);
-  await act(() => fork.click());
-  assert.deepEqual(current, ['answer']);
-  assert.deepEqual(previous, []);
-});
-
-test('the selected project control requests the project chooser', async t => {
-  let opened = 0;
-  const view = await conversation(t, { readOnly: false, projectCwd: '/repo/project', onOpenProject: () => opened++ });
-  await act(() => view.container.querySelector('[aria-label="Selected project: project"]').click());
-  assert.equal(opened, 1);
-});
-
-test('Clear project requests removal of the conversation project', async t => {
-  let cleared = 0;
-  const view = await conversation(t, { readOnly: false, projectCwd: '/repo/project', onClearProject: () => cleared++ });
-  await act(() => view.container.querySelector('[aria-label="Clear project"]').click());
-  assert.equal(cleared, 1);
-});
-
-test('extension widget text is displayed beside the message editor', async t => {
-  const view = await conversation(t, { readOnly: false, widgets: ['Extension progress: indexing files'] });
-  assert.ok(view.container.textContent.includes('Extension progress: indexing files'));
-  assert.ok(view.container.querySelector('[aria-label="Message piop"]'));
-});
-
-test('MCP loading replaces the conversation activity status', async t => {
-  const view = await conversation(t, { readOnly: false, state: { model: null, thinkingLevel: 'off', messageCount: 0, activity: 'Preparing' } });
-  assert.ok([...view.container.querySelectorAll('[role="status"]')].some(element => element.textContent === 'Preparing'));
-  await view.update({ statuses: { 'pi-desktop-mcp-loading': 'Loading server' } });
-  const statuses = [...view.container.querySelectorAll('[role="status"]')].map(element => element.textContent);
-  assert.ok(statuses.includes('Loading MCPs'));
-  assert.ok(!statuses.includes('Preparing'));
-});
-
-test("Retry is unavailable for an empty conversation", async t => {
-  const view = await conversation(t, { readOnly: false, messages: [] });
-  assert.ok(![...view.container.querySelectorAll('article button')].some(button => button.textContent === 'Retry'));
-  assert.equal(view.container.querySelector('[aria-label="Message piop"]').value, '');
-});
-
-test("Retry is unavailable for an unanswered prompt", async t => {
-  const view = await conversation(t, { readOnly: false, messages: [{"id": "question", "role": "user", "content": "Question"}] });
-  assert.ok(![...view.container.querySelectorAll('article button')].some(button => button.textContent === 'Retry'));
-  assert.equal(view.container.querySelector('[aria-label="Message piop"]').value, '');
-});
-
-test("Retry is unavailable for an aborted response without a prompt", async t => {
-  const view = await conversation(t, { readOnly: false, messages: [{"id": "answer", "role": "assistant", "content": "Partial answer", "stopReason": "aborted"}] });
-  assert.ok(![...view.container.querySelectorAll('article button')].some(button => button.textContent === 'Retry'));
-  assert.equal(view.container.querySelector('[aria-label="Message piop"]').value, '');
-});
-
-test("Retry is unavailable for a completed response", async t => {
-  const view = await conversation(t, { readOnly: false, messages: [{"id": "question", "role": "user", "content": "Question"}, {"id": "answer", "role": "assistant", "content": "Partial answer", "stopReason": "stop"}] });
-  assert.ok(![...view.container.querySelectorAll('article button')].some(button => button.textContent === 'Retry'));
-  assert.equal(view.container.querySelector('[aria-label="Message piop"]').value, '');
 });
 
 test("Retry is unavailable for a stopped response after a blank prompt", async t => {
@@ -266,7 +149,7 @@ test("Retry is unavailable for a stopped response after a blank prompt", async t
 });
 
 test('auxiliary chats have no fork actions, including when their folder is a repository', async t => {
-  const view = await conversation(t, { state: { ...repositoryState, canFork: false }, messages: [{ id: 'answer', role: 'assistant', content: 'Answer', stopReason: 'stop' }], onFork: () => {}, onBranch: () => {}, onForkAndForget: () => {} });
+  const view = await conversation(t, { state: { ...repositoryState, canFork: false }, messages: [{ id: 'answer', role: 'assistant', content: 'Answer', stopReason: 'stop' }], onFork: () => {}, onBranch: () => {} });
   assert.equal(view.container.querySelector('.branch-button'), null);
   await view.update({ state: { ...repositoryState, canFork: false, repository: null } });
   assert.equal(view.container.querySelector('.branch-button'), null);

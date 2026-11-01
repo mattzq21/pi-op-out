@@ -42,12 +42,20 @@ export async function forkSession(ctx: ExtensionContext, mode: ForkMode, entryId
   return { ...fork, text };
 }
 
-export async function forkAndForget(ctx: ExtensionCommandContext, entryId: string) {
-  assertForkable(ctx);
-  const entry = ctx.sessionManager.getEntry(entryId);
+export async function rewindMessage(ctx: ExtensionCommandContext, entryId: string, keep: number[]) {
+  if (!canFork(ctx.sessionManager.getEntries())) throw new Error("Only main chats can be edited");
 
-  if (!entry || entry.type !== "message" || entry.message.role !== "assistant") throw new Error("Assistant response not found in this conversation");
-  return ctx.navigateTree(entryId);
+  if (!ctx.isIdle() || ctx.hasPendingMessages()) throw new Error("Wait for the current response and queued messages to finish first");
+  const entry = ctx.sessionManager.getBranch().find(item => item.id === entryId);
+
+  if (entry?.type !== "message" || entry.message.role !== "user") throw new Error("This message is no longer in the conversation. Reload the conversation and try again.");
+  const content = entry.message.content;
+  const images = Array.isArray(content) ? content.filter(part => part.type === "image") : [];
+
+  if (keep.some(index => images[index] === undefined) || new Set(keep).size !== keep.length) throw new Error("The edited message keeps an image that the message does not have");
+  const { cancelled } = await ctx.navigateTree(entryId);
+
+  return cancelled ? { cancelled } : { cancelled, images: keep.map(index => structuredClone(images[index])) };
 }
 
 export async function forkConversation(ctx: ExtensionContext, options: ForkOptions) {

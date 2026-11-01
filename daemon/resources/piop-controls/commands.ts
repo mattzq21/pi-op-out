@@ -7,6 +7,8 @@ const controlSchema = Schema.Object({ action: Schema.String() });
 
 const branchRequestSchema = Schema.Object({ entryId: Schema.String() });
 
+const rewindRequestSchema = Schema.Object({ entryId: Schema.String(), keep: Schema.Array(Schema.Integer({ minimum: 0 })) });
+
 const preparationSchema = Schema.Object({ mode: Schema.Union([Schema.Literal("fork"), Schema.Literal("fork_after"), Schema.Literal("clone")]), entryId: Schema.Optional(Schema.String()) });
 
 export function registerControlCommands(pi: ExtensionAPI, controls: SessionControls) {
@@ -48,12 +50,12 @@ export function registerControlCommands(pi: ExtensionAPI, controls: SessionContr
   });
 
   pi.events.on("piop:rpc", request => {
-    if (request.command !== "fork_and_forget") return;
+    if (request.command !== "rewind_message") return;
     const ctx = request.ctx;
     request.ready = (async () => {
-      const branch = Parse(branchRequestSchema, request.payload);
+      const rewind = Parse(rewindRequestSchema, request.payload);
 
-      return controls.forkAndForget(ctx, branch.entryId);
+      return controls.rewindMessage(ctx, rewind.entryId, rewind.keep);
     })();
   });
 }

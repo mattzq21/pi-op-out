@@ -1,6 +1,6 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { registerStopControl } from "./stop.ts";
-import { forkAndForget, forkSession } from "./fork.ts";
+import { forkSession, rewindMessage } from "./fork.ts";
 import { copyAuxiliary } from "./auxiliary-copy.ts";
 import { registerControlCommands } from "./commands.ts";
 import { registerFastModeControl } from "./fast-mode.ts";
@@ -13,7 +13,7 @@ export default function controls(pi: ExtensionAPI) {
     cancelPreparation: () => stop.cancelPreparation(),
     fork: forkSession,
     copyAuxiliary,
-    forkAndForget,
+    rewindMessage,
   };
   const unsubscribe = pi.events.on("piop:controls:session", request => { request.session = session; });
   pi.on("session_shutdown", () => { unsubscribe(); });

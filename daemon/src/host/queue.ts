@@ -9,6 +9,7 @@ import { changePending, releaseTaken, takeFailed, takeNext } from './queue_chang
 import { enqueue, queuedCommand } from './queue_submission';
 import { QueueGoal } from './goals/state';
 import { goalArgument, goalCommand, queueTool, runEnded } from './goals/commands';
+import { editMessage, type MessageEdit } from './message_edit';
 
 const TIMEOUT = 'Pi command timed out';
 
@@ -185,6 +186,11 @@ export class SessionQueue {
     await this.untake();
     this.delivery.announce({ type: 'disconnected' });
     return null;
+  }
+
+  editMessage(edit: MessageEdit, assertOwner: () => void = () => {}): Promise<any> {
+    if (this.closed) return Promise.reject(new Error('Pi is not running'));
+    return track(this.operations, editMessage(this.delivery, this.gate, edit, assertOwner));
   }
 
   changePending(id: string, action: any, assertOwner: () => void = () => {}): Promise<any> {
