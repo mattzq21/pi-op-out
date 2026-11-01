@@ -7,7 +7,7 @@ test('new chat commands use the selected host plugin setup', async () => {
   const daemon = await startDaemon();
   const remote = await remoteMachine(daemon, 'plugin-host', 'Plugin host');
   try {
-    write(join(remote.home, '.piop', 'plugins.json'), { enabled: ['cost'], previous: [], known: ['cost', 'review', 'web-search', 'btw'] });
+    write(join(remote.home, '.piop', 'plugins.json'), { enabled: ['cost'], previous: [], known: ['cost', 'review', 'web-search', 'btw', 'background-compaction'] });
     await useRemotes(daemon, [remote]);
     expect(await daemon.invoke('plugin_status', { hostId: remote.id })).toMatchObject({ enabled: ['cost'], error: null });
     const commands = async (hostId: string) => (await daemon.invoke('provider_auth', { hostId, request: { action: 'draft_catalog', reload: true } })).commands.filter((name: string) => ['cost', 'review'].includes(name));
@@ -16,7 +16,7 @@ test('new chat commands use the selected host plugin setup', async () => {
   } finally { await remote.stop(); await daemon.stop(); }
 }, 180000);
 
-test('a bundled plugin that a host has not offered yet turns on once, and the other choices stay', async () => {
+test('a bundled plugin that a host has not offered yet turns on once unless it is off by default, and the other choices stay', async () => {
   const daemon = await startDaemon();
   const remote = await remoteMachine(daemon, 'plugin-upgrade', 'Upgraded host');
   try {
@@ -24,6 +24,6 @@ test('a bundled plugin that a host has not offered yet turns on once, and the ot
     write(file, { enabled: ['cost'], previous: [] });
     await useRemotes(daemon, [remote]);
     expect(await daemon.invoke('plugin_status', { hostId: remote.id })).toMatchObject({ enabled: ['cost', 'web-search', 'btw'], error: null });
-    expect(read(file)).toEqual({ enabled: ['cost', 'web-search', 'btw'], previous: [], known: ['cost', 'review', 'web-search', 'btw'] });
+    expect(read(file)).toEqual({ enabled: ['cost', 'web-search', 'btw'], previous: [], known: ['cost', 'review', 'web-search', 'btw', 'background-compaction'] });
   } finally { await remote.stop(); await daemon.stop(); }
 }, 180000);

@@ -7,6 +7,8 @@ import { RwLock, errorText } from '../util/sync';
 
 const BUNDLED = Contributions.CATALOG.map(plugin => plugin.id);
 
+const ENABLED_BY_DEFAULT = Contributions.CATALOG.filter(plugin => plugin.enabledByDefault !== false).map(plugin => plugin.id);
+
 const KNOWN_WITHOUT_LIST = ['cost', 'review'];
 
 interface Configuration { enabled: string[]; previous: string[]; known: string[] }
@@ -44,7 +46,7 @@ function configuration(): Configuration | null {
 function withNewPlugins(config: Configuration): Configuration {
   const added = BUNDLED.filter(id => !config.known.includes(id));
   if (!added.length) return config;
-  const next = { enabled: [...config.enabled, ...added.filter(id => !config.enabled.includes(id))], previous: config.previous, known: [...new Set([...config.known, ...added])] };
+  const next = { enabled: [...config.enabled, ...added.filter(id => ENABLED_BY_DEFAULT.includes(id) && !config.enabled.includes(id))], previous: config.previous, known: [...new Set([...config.known, ...added])] };
   RestartStorage.write(configurationPath(), next);
   return next;
 }
@@ -66,7 +68,7 @@ export class PluginService {
       let enabled: string[] = [];
       try {
         const saved = configuration();
-        const config = saved === null ? restartConfiguration([...BUNDLED], []) : withNewPlugins(saved);
+        const config = saved === null ? restartConfiguration([...ENABLED_BY_DEFAULT], []) : withNewPlugins(saved);
         try { validate(config.enabled); enabled = config.enabled; } catch (reason) {
           errors.push('Could not load the plugin setup: ' + errorText(reason) + '. Restored the previous setup.');
           try { validate(config.previous); enabled = config.previous; } catch (failure) { errors.push('The previous plugin setup is also invalid: ' + errorText(failure) + '. Plugins are disabled; your conversations remain available.'); }

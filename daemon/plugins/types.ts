@@ -17,4 +17,5 @@ export interface BundledPlugin {
   requests?: Record<string, string>;
   settings?: SettingsContribution<any>;
   agentTools?: string[];
+  enabledByDefault?: boolean;
 }
