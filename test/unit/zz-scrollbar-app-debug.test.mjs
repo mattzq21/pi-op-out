@@ -33,23 +33,34 @@ test('[DEBUG-sb1] app scrollbar does not follow the pointer after release', { ti
   });
   const scrollers = await page.evaluate(() => [...document.querySelectorAll('*')].filter(e => e.offsetWidth - e.clientWidth - e.clientLeft * 2 > 4 && e.scrollHeight > e.clientHeight + 20).map((e, i) => { e.dataset.sbProbe = String(i); const r = e.getBoundingClientRect(); return { id: String(i), cls: e.className, top: r.top, left: r.left, ch: e.clientHeight, cw: e.clientWidth, ow: e.offsetWidth, cl: e.clientLeft }; }));
   console.log('[DEBUG-sb1] scrollers', JSON.stringify(scrollers));
+  const sc = scrollers[0]; const sel = '[data-sb-probe="0"]';
+  const x = sc.left + sc.cl + sc.cw + (sc.ow - sc.cw - 2 * sc.cl) / 2;
+  const thumb = async () => { const [st, sh] = await page.evaluate(sel => { const e = document.querySelector(sel); return [e.scrollTop, e.scrollHeight]; }, sel); return sc.top + sc.ch * (st + sc.ch / 2) / sh; };
+  const drags = {
+    toTop: async y => { for (let i = 1; i <= 20; i++) await mv(x, y - (y - 2) * i / 20); },
+    pastTop: async y => { for (let i = 1; i <= 20; i++) await mv(x, y - (y + 60) * i / 20); },
+    toBottom: async y => { for (let i = 1; i <= 20; i++) await mv(x, y + (sc.ch - y) * i / 20); },
+    pastBottom: async y => { for (let i = 1; i <= 20; i++) await mv(x, y + (sc.ch + 60 - y) * i / 20); },
+    pastRight: async y => { for (let i = 1; i <= 10; i++) await mv(x + i * 10, y - i * 20); },
+    fast: async y => { await mv(x, y - 300); await mv(x, y + 200); },
+    upDown: async y => { for (let i = 1; i <= 10; i++) await mv(x, y - i * 30); for (let i = 1; i <= 10; i++) await mv(x, y - 300 + i * 30); },
+  };
   const failures = [];
-  for (const sc of scrollers) {
-    const sel = '[data-sb-probe="' + sc.id + '"]';
-    const st0 = await page.evaluate(sel => { const e = document.querySelector(sel); e.scrollTop = (e.scrollHeight - e.clientHeight) / 2; return [e.scrollTop, e.scrollHeight]; }, sel);
-    await delay(100);
-    const x = sc.left + sc.cl + sc.cw + (sc.ow - sc.cw - 2 * sc.cl) / 2;
-    const thumbY = sc.top + sc.ch * (st0[0] + sc.ch / 2) / st0[1];
+  for (const [name, drag] of Object.entries(drags)) {
+    await page.evaluate(sel => { const e = document.querySelector(sel); e.scrollTop = (e.scrollHeight - e.clientHeight) / 2; }, sel);
+    await delay(150);
     await page.evaluate(() => { window.__mut = []; });
-    await mv(x, thumbY); await down(); await up();
+    const y = await thumb();
+    await mv(x, y); await down(); await drag(y); await delay(50); await up();
+    await mv(sc.left + 100, 300); await delay(100);
     const before = await page.evaluate(sel => document.querySelector(sel).scrollTop, sel);
-    await mv(x - 100, thumbY);
     for (let dx = -20; dx <= 20; dx += 4) await mv(x + dx, sc.top + 15);
+    for (let dx = -20; dx <= 20; dx += 4) await mv(x + dx, sc.top + sc.ch - 15);
     await delay(150);
     const after = await page.evaluate(sel => document.querySelector(sel).scrollTop, sel);
-    console.log('[DEBUG-sb1]', sc.cls, 'before', before, 'after', after, 'mutations', JSON.stringify(await page.evaluate(() => window.__mut)));
-    if (Math.abs(after - before) > 2) failures.push(sc.cls);
-    await mv(sc.left + 20, sc.top + 100);
+    console.log('[DEBUG-sb1]', name, 'before', before, 'after', after, 'mutations', (await page.evaluate(() => window.__mut)).length);
+    if (Math.abs(after - before) > 2) failures.push(name);
+    await mv(sc.left + 100, 300);
   }
   assert.deepEqual(failures, []);
 });
