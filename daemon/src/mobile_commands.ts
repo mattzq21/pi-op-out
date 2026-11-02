@@ -17,6 +17,7 @@ import { profileRoot } from './host_operations';
 import { refreshSkills } from './skill_discovery';
 import { discoverPi } from './pi_discovery';
 import { loadAppSettings, loadSettingsChange, saveAppSettings } from './settings';
+import { buildPiCommand, launchSpec } from './pi_launch';
 import { parseAppSettings, serializeAppSettings } from './settings_types';
 import { serializeSession } from './types';
 import { detachPiWith, ensureRuntimeOwner, openProjectDirectory, piCommand, piPresence, startPiForOwner, stopPi } from './pi_runtime';
@@ -218,6 +219,12 @@ const COMMANDS: Record<string, Handler> = {
     const connection = await daemon.connect(app, app.pi, app.broker, await loadAppSettings(app), 'local');
     const cwd = argument(args, 'cwd', 'string?');
     return connection.request({ type: 'save_agent_definitions', configuration: argument(args, 'configuration', 'any'), ...(cwd ? { cwd } : {}) });
+  },
+  agent_prompt_preview: async (app, _owner, args) => {
+    const settings = await loadAppSettings(app);
+    const connection = await daemon.connect(app, app.pi, app.broker, settings, 'local');
+    const spec = launchSpec(buildPiCommand(settings, 'local', { kind: 'prompt-preview', cwd: argument(args, 'cwd', 'string?') ?? '~' }));
+    return connection.request({ type: 'agent_prompt_preview', agent: argument(args, 'agent', 'string'), spec });
   },
   move_agent: async (app, _owner, args) => {
     const connection = await daemon.connect(app, app.pi, app.broker, await loadAppSettings(app), 'local');

@@ -438,6 +438,12 @@ async function dispatchReady(command, session, output) {
       return;
     }
 
+    if (command.command === "prompt_preview") {
+      output({ type: "response", id: command.id, command: command.command, success: true, data: await previewPrompt(session) });
+
+      return;
+    }
+
     if (command.command === "get_commands") {
       output({ type: "response", id: command.id, command: command.command, success: true, data: { commands: await listCommands(session) } });
 
@@ -449,6 +455,85 @@ async function dispatchReady(command, session, output) {
   } catch (error) {
     promptError(command, error, output);
   }
+}
+
+function previewText(content) {
+  if (typeof content === "string") return content;
+
+  return content.map(part => part.type === "text" ? part.text : `[${part.type}]`).join("\n");
+}
+
+function previewSystemText(message, leading) {
+  const sections = Object.entries(message.sections ?? {});
+  const parts = [previewText(message.content)];
+
+  for (const [name, value] of sections) {
+    if (leading) { if (value !== null) parts.push(value); }
+    else parts.push(value === null ? `Removed system prompt section "${name}".` : `Updated system prompt section "${name}":\n\n${value}`);
+  }
+
+  return parts.filter(part => part.length > 0).join("\n\n");
+}
+
+function previewMessage(message, index) {
+  return { role: message.role, text: message.role === "system" ? previewSystemText(message, index === 0) : previewText(message.content) };
+}
+
+// Every place where the request declares tools: a "tools" list in a request field, or a request item that
+// adds tools, such as an "additional_tools" item in the input or an Anthropic "tool_addition" block.
+function requestTools(payload, declared) {
+  const found = [];
+  const visit = (value, place, item) => {
+    if (Array.isArray(value)) { value.forEach((entry, index) => visit(entry, `${place}[${index}]`, true)); return; }
+
+    if (value === null || typeof value !== "object") return;
+
+    if (item && (Array.isArray(value.tools) || value.type === "tool_addition")) { found.push({ place, json: JSON.stringify(value, null, 2) }); return; }
+
+    if (Array.isArray(value.tools)) found.push({ place: place ? `${place}.tools` : "tools", json: JSON.stringify(value.tools, null, 2) });
+
+    for (const [key, entry] of Object.entries(value)) if (key !== "tools") visit(entry, place ? `${place}.${key}` : key, false);
+  };
+  visit(payload, "", false);
+
+  if (declared && !found.length) throw new Error("The prompt preview could not find the tools in the model request");
+
+  return found;
+}
+
+// Runs the first prompt until the provider has built its request, and returns everything before the user's
+// message. Providers hand the request to onPayload before they send it; the preview stops it there.
+async function previewPrompt(session) {
+  if (process.env.PIOP_PROMPT_PREVIEW !== "1") throw new Error("Only a prompt preview runtime can build a prompt preview");
+  const marker = `Prompt preview ${randomUUID()}`;
+  const agent = session.agent;
+  const stream = agent.streamFunction;
+  const transform = agent.onPayload;
+  let transcript;
+  let built;
+  const request = new Promise(resolve => { built = resolve; });
+  agent.streamFunction = (model, context, options) => {
+    transcript ??= { model: `${model.provider}/${model.id}`, messages: context.messages };
+
+    return stream(model, context, options);
+  };
+  agent.onPayload = async (payload, model) => {
+    const sent = transform ? (await transform(payload, model)) ?? payload : payload;
+    built({ ...transcript, payload: sent });
+    throw new Error("The prompt preview stops before the model request");
+  };
+  const run = session.prompt(marker).then(() => {
+    const failure = agent.state.messages.findLast(message => message.role === "assistant")?.errorMessage;
+    throw new Error(failure ? `The agent could not start: ${failure}` : "The agent did not start a model request");
+  });
+  run.catch(() => {});
+  const captured = await Promise.race([request, run]);
+  const end = captured.messages.findLastIndex(message => message.role === "user" && previewText(message.content).includes(marker));
+
+  if (end < 0) throw new Error("The prompt preview could not find its message in the model request");
+  const messages = captured.messages.slice(0, end);
+
+  return { model: captured.model, messages: messages.map(previewMessage), tools: requestTools(captured.payload, messages.some(message => message.toolsAdded?.length)) };
 }
 
 async function listCommands(session) {

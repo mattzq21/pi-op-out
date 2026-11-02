@@ -317,6 +317,7 @@ function registerDelivery(pi: ExtensionAPI) {
   };
 
   const recover = async (ctx: ExtensionContext, defer = false) => {
+    if (!ctx.sessionManager.getSessionFile()) return;
     const version = generation;
 
     try {

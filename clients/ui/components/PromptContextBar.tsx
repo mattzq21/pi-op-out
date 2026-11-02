@@ -13,7 +13,7 @@ import { copyText } from "../lib/clipboard";
 
 type Section = "system" | "instructions" | "tools" | "skills";
 
-function ContextCopyButton(props: { content: () => string; label?: string; class?: string }) {
+export function ContextCopyButton(props: { content: () => string; label?: string; class?: string }) {
   const [state, setState] = createSignal<"idle" | "copied" | "error">("idle");
   let timer: ReturnType<typeof setTimeout> | undefined;
   let disposed = false;
