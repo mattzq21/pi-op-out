@@ -282,7 +282,7 @@ button.agent-delivery-source:hover { color: var(--accent-soft); text-decoration:
 .nested-tool-calls { margin-inline-start: 16px; }
 .tool-payload-label { margin-bottom: 4px; color: var(--muted); font-size: 11px; }
 .tool-input, .tool-output { padding: 10px 12px; border: 1px solid var(--line); border-radius: 6px; background: color-mix(in srgb, var(--paper) 85%, black); }
-.tool-event .tool-input pre { margin: 0; max-height: none; overflow-wrap: anywhere; }
+.tool-event .tool-input pre { margin: 0; max-height: 7.75em; overflow-y: auto; overflow-wrap: anywhere; }
 .tool-event.running > .tool-summary { color: #d5b79d; }
 .tool-event.error > .tool-summary { color: #d99e91; }
 .tool-chevron { flex: 0 0 auto; transition: transform .15s; }
