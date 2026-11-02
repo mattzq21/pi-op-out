@@ -1,11 +1,8 @@
 I found these machine-specific or hard-coded items. I did not change anything.
 
-Paths and tools from your own machine
-
 Your personal setup forced on others
 
 reinstall-mobile.mjs:
-The bun run reinstall command needs Tailscale (a private network tool).
 It runs sudo tailscale serve --https=443, which takes over port 443 for Tailscale Serve on that machine.
 It signs release builds with the debug key.
 CustomProviderForm.tsx:7: a "Go broker preset" for 127.0.0.1:8787 (your own local service) shows to all users.
