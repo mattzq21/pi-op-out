@@ -1,7 +1,6 @@
 import { extendedHooks } from "../hooks-extended/interface.ts";
 import type { AgentToolResult, ContextEvent, ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { Type } from "@earendil-works/pi-ai";
-import { Type as Schema, type Static } from "typebox";
+import { Type, type Static } from "typebox";
 import { Check, Parse } from "typebox/value";
 import { createHash, randomUUID } from "node:crypto";
 import { setTimeout as delay } from "node:timers/promises";
@@ -13,15 +12,15 @@ import { AUXILIARY_PARENT, auxiliaryParent, isAuxiliary } from "../piop-storage/
 import { sessionName } from "./session-names.cjs";
 import { steering } from "./steering.ts";
 
-const messageSchema = Schema.Object({ role: Schema.String(), content: Schema.Optional(Schema.Unknown()), toolName: Schema.Optional(Schema.String()), customType: Schema.Optional(Schema.String()), details: Schema.Optional(Schema.Unknown()), stopReason: Schema.Optional(Schema.String()), errorMessage: Schema.Optional(Schema.String()) });
+const messageSchema = Type.Object({ role: Type.String(), content: Type.Optional(Type.Unknown()), toolName: Type.Optional(Type.String()), customType: Type.Optional(Type.String()), details: Type.Optional(Type.Unknown()), stopReason: Type.Optional(Type.String()), errorMessage: Type.Optional(Type.String()) });
 
-const entrySchema = Schema.Object({ id: Schema.String(), parentId: Schema.Optional(Schema.Union([Schema.String(), Schema.Null()])), type: Schema.String(), message: Schema.Optional(messageSchema), customType: Schema.Optional(Schema.String()), content: Schema.Optional(Schema.Unknown()), details: Schema.Optional(Schema.Unknown()), timestamp: Schema.Optional(Schema.Union([Schema.String(), Schema.Number()])) });
+const entrySchema = Type.Object({ id: Type.String(), parentId: Type.Optional(Type.Union([Type.String(), Type.Null()])), type: Type.String(), message: Type.Optional(messageSchema), customType: Type.Optional(Type.String()), content: Type.Optional(Type.Unknown()), details: Type.Optional(Type.Unknown()), timestamp: Type.Optional(Type.Union([Type.String(), Type.Number()])) });
 
-const stateSchema = Schema.Object({ sessionFile: Schema.Optional(Schema.String()), sessionName: Schema.Optional(Schema.String()), isStreaming: Schema.Optional(Schema.Boolean()), isCompacting: Schema.Optional(Schema.Boolean()), pendingMessageCount: Schema.Optional(Schema.Number()) });
+const stateSchema = Type.Object({ sessionFile: Type.Optional(Type.String()), sessionName: Type.Optional(Type.String()), isStreaming: Type.Optional(Type.Boolean()), isCompacting: Type.Optional(Type.Boolean()), pendingMessageCount: Type.Optional(Type.Number()) });
 
-const snapshotSchema = Schema.Object({ revision: Schema.String(), stateKey: Schema.Optional(Schema.String()), state: stateSchema, history: Schema.Object({ entries: Schema.Array(entrySchema), leafId: Schema.Optional(Schema.Union([Schema.String(), Schema.Null()])) }) });
+const snapshotSchema = Type.Object({ revision: Type.String(), stateKey: Type.Optional(Type.String()), state: stateSchema, history: Type.Object({ entries: Type.Array(entrySchema), leafId: Type.Optional(Type.Union([Type.String(), Type.Null()])) }) });
 
-const deliverySchema = Schema.Object({ id: Schema.String(), deliveryId: Schema.String({ minLength: 1 }), sourceSessionId: Schema.String(), sourceHostId: Schema.String(), sourceName: Schema.Optional(Schema.String()), message: Schema.String({ minLength: 1 }), wake: Schema.Optional(Schema.Boolean()), deliverAs: Schema.Optional(Schema.Union([Schema.Literal("steer"), Schema.Literal("followUp")])) });
+const deliverySchema = Type.Object({ id: Type.String(), deliveryId: Type.String({ minLength: 1 }), sourceSessionId: Type.String(), sourceHostId: Type.String(), sourceName: Type.Optional(Type.String()), message: Type.String({ minLength: 1 }), wake: Type.Optional(Type.Boolean()), deliverAs: Type.Optional(Type.Union([Type.Literal("steer"), Type.Literal("followUp")])) });
 
 const address = { peerId: Type.String({ minLength: 1 }) };
 
@@ -50,9 +49,9 @@ async function rootSnapshot(sessionId: string, hostId: string, signal?: AbortSig
 
 const result = <T>(data: T): AgentToolResult<T> => ({ content: [{ type: "text", text: JSON.stringify(data) }], details: data });
 
-const textSchema = Schema.Object({ type: Schema.Literal("text"), text: Schema.String() });
+const textSchema = Type.Object({ type: Type.Literal("text"), text: Type.String() });
 
-const deliveredSchema = Schema.Object({ customType: Schema.Literal("piop-agent-message"), details: Schema.Object({ notificationId: Schema.String() }) });
+const deliveredSchema = Type.Object({ customType: Type.Literal("piop-agent-message"), details: Type.Object({ notificationId: Type.String() }) });
 
 type Mail = { message: Parameters<ExtensionAPI["sendMessage"]>[0]; notificationId: string };
 
@@ -60,7 +59,7 @@ const mailboxes = new WeakMap<ExtensionAPI, Mail[]>();
 
 const mailboxGenerations = new WeakMap<ExtensionAPI, number>();
 
-const mailboxMessageSchema = Schema.Object({ details: Schema.Object({ notificationId: Schema.String() }) });
+const mailboxMessageSchema = Type.Object({ details: Type.Object({ notificationId: Type.String() }) });
 
 function deliverMailbox(pi: ExtensionAPI, mail: Mail[]) {
   for (const [index, item] of mail.entries()) {
@@ -159,9 +158,9 @@ export async function interruptSession(sessionId: string, hostId: string, signal
 
     try {
       const receipt = await request("/orchestration", { action: "interrupt", sessionId, hostId, deliveryId }, signal, 30_000);
-      const completed = Check(Schema.Object({ completed: Schema.Literal(true) }), receipt);
+      const completed = Check(Type.Object({ completed: Type.Literal(true) }), receipt);
 
-      const retired = Check(Schema.Object({ retired: Schema.Literal(true) }), receipt);
+      const retired = Check(Type.Object({ retired: Type.Literal(true) }), receipt);
 
       if (completed && await interruptionComplete(sessionId, hostId, retired, signal)) return receipt;
       failures = 0;
@@ -195,7 +194,7 @@ export function branchEntries(snapshot: Awaited<ReturnType<typeof sessionSnapsho
 }
 
 function messageText(message: { content?: unknown }) {
-  if (Check(Schema.String(), message.content)) return message.content;
+  if (Check(Type.String(), message.content)) return message.content;
 
   return Array.isArray(message.content) ? message.content.flatMap(part => Check(textSchema, part) ? [part.text] : []).join("\n") : "";
 }
@@ -286,9 +285,9 @@ function validateTargets(targets: Target[], ctx: ExtensionContext) {
   if (new Set(ids).size !== ids.length || ids.includes(ctx.sessionManager.getSessionId())) throw new Error("Wait targets must be distinct conversations other than this one");
 }
 
-const parentMessageSchema = Schema.Object({ message: Schema.String(), sourceSessionId: Schema.Optional(Schema.String()), sourceName: Schema.Optional(Schema.String()) });
+const parentMessageSchema = Type.Object({ message: Type.String(), sourceSessionId: Type.Optional(Type.String()), sourceName: Type.Optional(Type.String()) });
 
-const resultDetailsSchema = Schema.Object({ runs: Schema.Array(Schema.Object({ name: Schema.String(), status: Schema.String(), agent: Schema.Optional(Schema.String()), output: Schema.Optional(Schema.String()) })) });
+const resultDetailsSchema = Type.Object({ runs: Type.Array(Type.Object({ name: Type.String(), status: Type.String(), agent: Type.Optional(Type.String()), output: Type.Optional(Type.String()) })) });
 
 export function subagentResponses(runs: Array<{ name: string; output?: string }>) {
   return runs.map(run => "<subagent_response>\nSubagent " + run.name + ":\n" + (run.output ?? "") + "\n</subagent_response>").join("\n\n");
@@ -434,7 +433,7 @@ export function registerOrchestration(pi: ExtensionAPI) {
       requireMessageLength(params.message);
       signal?.throwIfAborted();
       const cwd = params.project === undefined ? ctx.cwd
-        : Parse(Schema.Object({ cwd: Schema.String() }), await request("/peer-project", { name: params.project, cwd: ctx.cwd }, signal)).cwd;
+        : Parse(Type.Object({ cwd: Type.String() }), await request("/peer-project", { name: params.project, cwd: ctx.cwd }, signal)).cwd;
       const created = await createProfileSession(pi, ctx, params.title, params.agent, cwd);
 
       const deliveryId = randomUUID();
@@ -443,7 +442,7 @@ export function registerOrchestration(pi: ExtensionAPI) {
         const reason = error instanceof Error ? error.message : String(error);
         const settled = await request("/orchestration", { action: "settle_first_message", sessionId: created.peerId, hostId: created.hostId, sessionPath: created.sessionPath, deliveryId }, undefined, 180_000)
           .catch(settle => { throw new Error(`The first message of peer ${created.peerId} failed, and Piop could not settle it: ${reason}; ${settle instanceof Error ? settle.message : String(settle)}`); });
-        if (Parse(Schema.Object({ arrived: Schema.Boolean() }), settled).arrived !== true) throw new Error(`The peer was not created: ${reason}`);
+        if (Parse(Type.Object({ arrived: Type.Boolean() }), settled).arrived !== true) throw new Error(`The peer was not created: ${reason}`);
       }
 
       return result({ peerId: created.peerId, agent: created.agent });
@@ -467,7 +466,7 @@ export function registerOrchestration(pi: ExtensionAPI) {
     async execute(_id, params, signal, _update, ctx) {
       requireRootCaller(ctx);
       requireMessageLength(params.message);
-      const created = Parse(Schema.Object({ peerId: Schema.String() }), await request("/orchestration", { action: "branch_off", sessionId: ctx.sessionManager.getSessionId(), hostId: currentHost(),
+      const created = Parse(Type.Object({ peerId: Type.String() }), await request("/orchestration", { action: "branch_off", sessionId: ctx.sessionManager.getSessionId(), hostId: currentHost(),
         message: params.message, wake: true, deliveryId: randomUUID(), sourceName: ownName(ctx) }, signal, 180_000));
 
       return result({ peerId: created.peerId });

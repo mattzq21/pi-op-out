@@ -1,5 +1,4 @@
-import { Type } from "@earendil-works/pi-ai";
-import { Type as Schema, type Static } from "typebox";
+import { Type, type Static } from "typebox";
 import { Check } from "typebox/value";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { homedir } from "node:os";
@@ -8,15 +7,15 @@ import { read as readAppSettings } from "../../resources/session-broker/app-sett
 
 const LOGIN_HINT = "Use Pi /login → OpenAI (Sign in with ChatGPT) on this host.";
 const DEFAULT_MODEL = "gpt-6.1-sol";
-const settingsSchema = Schema.Object({ webSearchModel: Schema.Optional(Schema.String()) });
+const settingsSchema = Type.Object({ webSearchModel: Type.Optional(Type.String()) });
 
 const TIMEOUT_MS = 60_000;
 
-const responseValueSchema = Schema.Object({
-  type: Schema.Optional(Schema.Unknown()), status: Schema.Optional(Schema.Unknown()), error: Schema.Optional(Schema.Unknown()), message: Schema.Optional(Schema.Unknown()),
-  response: Schema.Optional(Schema.Unknown()), item: Schema.Optional(Schema.Unknown()), output: Schema.Optional(Schema.Unknown()), content: Schema.Optional(Schema.Unknown()),
-  annotations: Schema.Optional(Schema.Unknown()), text: Schema.Optional(Schema.Unknown()), title: Schema.Optional(Schema.Unknown()), caption: Schema.Optional(Schema.Unknown()),
-  url: Schema.Optional(Schema.Unknown()), source_website_url: Schema.Optional(Schema.Unknown()), action: Schema.Optional(Schema.Unknown()), sources: Schema.Optional(Schema.Unknown()), results: Schema.Optional(Schema.Unknown()),
+const responseValueSchema = Type.Object({
+  type: Type.Optional(Type.Unknown()), status: Type.Optional(Type.Unknown()), error: Type.Optional(Type.Unknown()), message: Type.Optional(Type.Unknown()),
+  response: Type.Optional(Type.Unknown()), item: Type.Optional(Type.Unknown()), output: Type.Optional(Type.Unknown()), content: Type.Optional(Type.Unknown()),
+  annotations: Type.Optional(Type.Unknown()), text: Type.Optional(Type.Unknown()), title: Type.Optional(Type.Unknown()), caption: Type.Optional(Type.Unknown()),
+  url: Type.Optional(Type.Unknown()), source_website_url: Type.Optional(Type.Unknown()), action: Type.Optional(Type.Unknown()), sources: Type.Optional(Type.Unknown()), results: Type.Optional(Type.Unknown()),
 });
 
 type RecordValue = Static<typeof responseValueSchema>;
@@ -61,7 +60,7 @@ function normalizeDomains(domains: string[] = []): string[] {
 
 function responseError(payload: RecordValue): string | undefined {
   if (payload.error) {
-    return record(payload.error) && Check(Schema.String(), payload.error.message) ? payload.error.message : "Web search failed";
+    return record(payload.error) && Check(Type.String(), payload.error.message) ? payload.error.message : "Web search failed";
   }
 
   if (payload.status && payload.status !== "completed") return `Web search response was ${payload.status}`;
@@ -77,7 +76,7 @@ function streamEvent(frame: string) {
 
   if (["error", "response.failed", "response.incomplete"].includes(String(event.type))) {
     const failure = record(event.response) ? event.response : event;
-    throw new Error(responseError(failure) ?? (Check(Schema.String(), event.message) ? event.message : "Web search failed"));
+    throw new Error(responseError(failure) ?? (Check(Type.String(), event.message) ? event.message : "Web search failed"));
   }
 
   return event;
@@ -130,7 +129,7 @@ function answerParts(output: RecordValue[], addSource: (source: RecordValue) => 
     if (item.type !== "message" || !Array.isArray(item.content)) continue;
 
     for (const part of item.content.filter(record)) {
-      if (part.type === "output_text" && Check(Schema.String(), part.text)) parts.push(part.text);
+      if (part.type === "output_text" && Check(Type.String(), part.text)) parts.push(part.text);
 
       if (Array.isArray(part.annotations)) {
         for (const annotation of part.annotations.filter(record)) if (annotation.type === "url_citation") addSource(annotation);
@@ -144,7 +143,7 @@ function answerParts(output: RecordValue[], addSource: (source: RecordValue) => 
 function sourceTitle(source: RecordValue, clean: string) {
   const title = source.title ?? source.caption;
 
-  return Check(Schema.String(), title) && title.trim() ? title : clean;
+  return Check(Type.String(), title) && title.trim() ? title : clean;
 }
 
 function extractResult(output: RecordValue[]) {
@@ -154,7 +153,7 @@ function extractResult(output: RecordValue[]) {
   const addSource = (source: RecordValue) => {
     const raw = source.url ?? source.source_website_url;
 
-    if (!Check(Schema.String(), raw)) return;
+    if (!Check(Type.String(), raw)) return;
     let url: URL;
 
     try { url = new URL(raw); } catch { return; }

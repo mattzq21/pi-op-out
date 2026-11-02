@@ -1,7 +1,7 @@
 import { reserveSessionId } from "../piop-storage/session-file.ts";
 import type { AgentToolResult, ExtensionAPI, ExtensionContext, CustomEntryDraft } from "@earendil-works/pi-coding-agent";
 import type { SubagentLimitsRequest } from "../../../extensions/piop-define-agents/contracts.ts";
-import { Type } from "@earendil-works/pi-ai";
+import { Type } from "typebox";
 import { Parse } from "typebox/value";
 import { agentProfilesTool, resolveAgentProfile, soleProfile, startableProfiles, SUBAGENT_TOOLS, PEER_TOOLS } from "./agent-profiles.ts";
 import { childFastModeEntry } from "./fast-mode.ts";

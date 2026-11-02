@@ -25,14 +25,14 @@ const { DefaultResourceLoader } = await sdk('resource-loader');
 const { SettingsManager } = await sdk('settings-manager');
 const { SessionManager } = await sdk('session-manager');
 const { ModelRuntime } = await sdk('model-runtime');
-const usage = total => ({ input: 1, output: 1, cacheRead: 0, cacheWrite: 0, totalTokens: 2, cost: { input: 0, output: total, cacheRead: 0, cacheWrite: 0, total } });
+const usage = (total, billed = false) => ({ input: 1, output: 1, cacheRead: 0, cacheWrite: 0, totalTokens: 2, cost: { input: 0, output: total, cacheRead: 0, cacheWrite: 0, total, ...(billed ? { totalFromProvider: true } : {}) } });
 
 let bundle;
 function compiledCost() {
   return bundle ??= build({ stdin: { contents: 'export { default } from "./daemon/plugins/cost/index.ts"; export { default as hooksExtended } from "./daemon/resources/hooks-extended/index.ts";', resolveDir: process.cwd() }, write: false, bundle: true, format: 'esm', platform: 'node', logLevel: 'silent' }).then(result => result.outputFiles[0].contents);
 }
 
-async function fixture(t, { toolCost = 0, responseCost = 1, toolCalls = false, dir, sessionManager, extraExtensions = [], keepRecentTokens = 20000 } = {}) {
+async function fixture(t, { toolCost = 0, responseCost = 1, toolBilled = false, responseBilled = false, toolCalls = false, dir, sessionManager, extraExtensions = [], keepRecentTokens = 20000 } = {}) {
   if (!dir) {
     dir = await mkdtemp(join(tmpdir(), 'piop-cost-test-'));
     t.after(() => rm(dir, { recursive: true, force: true }));
@@ -53,7 +53,7 @@ async function fixture(t, { toolCost = 0, responseCost = 1, toolCalls = false, d
     cwd: dir, agentDir: dir, modelRuntime, model, settingsManager, resourceLoader, sessionManager: sessionManager?.(dir) ?? SessionManager.inMemory(dir), tools: ['cost_test'],
     customTools: [{ name: 'cost_test', label: 'Cost test', description: 'Test tool', parameters: { type: 'object', properties: {} }, execute: async () => {
       executions++;
-      return { content: [{ type: 'text', text: 'done' }], details: {}, usage: usage(toolCost) };
+      return { content: [{ type: 'text', text: 'done' }], details: {}, usage: usage(toolCost, toolBilled) };
     } }],
   });
   t.after(() => session.dispose());
@@ -66,7 +66,7 @@ async function fixture(t, { toolCost = 0, responseCost = 1, toolCalls = false, d
     const message = {
       role: 'assistant', api: model.api, provider: model.provider, model: model.id, timestamp: Date.now(),
       content: toolCalls ? [{ type: 'toolCall', id: `call-${requests}`, name: 'cost_test', arguments: {} }] : [{ type: 'text', text: 'done' }],
-      usage: usage(options.signal?.aborted ? 0 : responseCost), stopReason: options.signal?.aborted ? 'aborted' : toolCalls ? 'toolUse' : 'stop',
+      usage: usage(options.signal?.aborted ? 0 : responseCost, responseBilled), stopReason: options.signal?.aborted ? 'aborted' : toolCalls ? 'toolUse' : 'stop',
     };
     assert.ok(requests < 4, 'cost limit must stop the agent loop');
     return { async *[Symbol.asyncIterator]() { yield { type: 'done', reason: message.stopReason, message }; }, result: async () => message };
@@ -138,6 +138,18 @@ test('real session blocks prompts at the limit and accepts raise and clear comma
   await f.session.prompt('third');
   assert.equal(f.requests, 3);
   assert.equal(f.statuses.get('piop-session-cost'), undefined);
+});
+
+test('the limit notice names billed cost only when the provider billed every charge', async t => {
+  const billed = await fixture(t, { responseBilled: true });
+  await billed.session.prompt('/cost 1');
+  await billed.session.prompt('spend the limit');
+  await billed.session.prompt('blocked');
+  assert.equal(JSON.parse(billed.statuses.get('piop-input-rejected')).error, 'Session cost limit of $1.00 reached (billed cost). Raise it with /cost <amount> or remove it with /cost clear.');
+  const mixed = await fixture(t, { toolCalls: true, responseCost: 0.75, responseBilled: true, toolCost: 0.25 });
+  await mixed.session.prompt('/cost 1');
+  await mixed.session.prompt('run tool');
+  assert.deepEqual(mixed.notices.at(-1), ['Session cost limit of $1.00 reached (API prices). Raise it with /cost <amount> or remove it with /cost clear.', 'warning']);
 });
 
 test('navigating the session tree back before a lowered limit restores the earlier limit', async t => {

@@ -10,6 +10,7 @@ const oauth = object({
   clientId: string().optional(), clientSecret: string().optional(), scope: string().optional(),
   clientName: string().refine(value => Boolean(value.trim()), "Client name must not be empty").optional(),
   callbackPort: number().int().min(1).max(65535).optional(),
+  clientRegistration: enumeration(["auto", "dcr", "cimd"]).optional(),
   callbackUrl: string().refine(value => {
     if (!URL.canParse(value)) return false;
     const url = new URL(value);

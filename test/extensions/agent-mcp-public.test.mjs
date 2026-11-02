@@ -18,10 +18,10 @@ test('agent configuration preserves HTTP MCP authentication options', async t =>
   const f = await agentFixture(t, { config: null });
   await f.load();
   await f.configure({ agents: [profile('reviewer', { mcpServers: {
-    web: { type: 'streamable-http', url: 'https://example.com/mcp', headers: { Authorization: 'fixture' }, oauth: { clientId: 'fixture', callbackPort: 12345, callbackUrl: 'http://127.0.0.1:12345/callback' } },
+    web: { type: 'streamable-http', url: 'https://example.com/mcp', headers: { Authorization: 'fixture' }, oauth: { clientId: 'fixture', callbackPort: 12345, callbackUrl: 'http://127.0.0.1:12345/callback', clientRegistration: 'cimd' } },
   } })] });
   assert.deepEqual((await f.configuration()).agents.find(agent => agent.name === 'reviewer').mcpServers, {
-    web: { type: 'streamable-http', url: 'https://example.com/mcp', headers: { Authorization: 'fixture' }, oauth: { clientId: 'fixture', callbackPort: 12345, callbackUrl: 'http://127.0.0.1:12345/callback' } },
+    web: { type: 'streamable-http', url: 'https://example.com/mcp', headers: { Authorization: 'fixture' }, oauth: { clientId: 'fixture', callbackPort: 12345, callbackUrl: 'http://127.0.0.1:12345/callback', clientRegistration: 'cimd' } },
   });
 });
 
@@ -261,6 +261,14 @@ test("MCP configuration rejects null headers without changing saved agents", asy
   await f.load();
   const before = await f.configuration();
   await assert.rejects(f.configure({ agents: [profile('reviewer', { mcpServers: { web: {"url": "https://example.com", "headers": null} } })] }), /"headers"[\s\S]*expected record, received null/);
+  assert.deepEqual(await f.configuration(), before);
+});
+
+test("MCP configuration rejects an unknown client registration mode without changing saved agents", async t => {
+  const f = await agentFixture(t, { config: null });
+  await f.load();
+  const before = await f.configuration();
+  await assert.rejects(f.configure({ agents: [profile('reviewer', { mcpServers: { web: {"url": "https://example.com", "oauth": {"clientRegistration": "static"}} } })] }), /clientRegistration/);
   assert.deepEqual(await f.configuration(), before);
 });
 

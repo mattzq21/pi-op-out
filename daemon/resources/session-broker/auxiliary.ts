@@ -1,7 +1,6 @@
 import type { AgentToolResult, ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { Type } from "@earendil-works/pi-ai";
 import { auxiliaryParent } from "../piop-storage/session-records.cjs";
-import { Type as Schema } from "typebox";
+import { Type } from "typebox";
 import { Check } from "typebox/value";
 import { currentHost } from "./client.ts";
 import { requireMessageLength, sendSessionMessage } from "./orchestration.ts";
@@ -40,7 +39,7 @@ export function openAuxiliaryChat(ctx: ExtensionContext, opening: AuxiliaryChatO
 
 const FORK_RETRIES = "piop-fork-retries";
 
-const retriesSchema = Schema.Object({ pending: Schema.Array(Schema.Object({ sessionId: Schema.String(), message: Schema.String(), deliveryId: Schema.String() })) });
+const retriesSchema = Type.Object({ pending: Type.Array(Type.Object({ sessionId: Type.String(), message: Type.String(), deliveryId: Type.String() })) });
 
 async function sendForkRetries(pi: ExtensionAPI, ctx: ExtensionContext) {
   const entry = ctx.sessionManager.getEntries().findLast(item => item.type === "custom" && item.customType === FORK_RETRIES);
