@@ -8,7 +8,7 @@ Branching creates an independent chat and Git worktree. Chat history stops at th
 
 ## Branch creation
 
-- Show the button only under finished final assistant responses. Include the selected response and all history before it; exclude later history.
+- Show the button only under finished or stopped final assistant responses and under compactions. Include the selected entry and all history before it; exclude later history.
 - Keep the original chat intact. Open the new chat with an empty input, focus the input, and leave the agent idle until the user sends a message.
 - Use current settings. Give the new chat a clear name and a link to the original chat and selected message.
 - Create the worktree from the last commit of the source folder. Do not copy uncommitted changes or untracked files. Do not restore files to the time of the selected response.
@@ -19,7 +19,7 @@ Branching creates an independent chat and Git worktree. Chat history stops at th
 
 ## Repository detection
 
-Check whether the project is in a Git repository when the project is added to Piop and whenever a new chat is created from that project. Save the result for the project. Do not check periodically or provide a manual recheck action. Branching into worktrees is unavailable for projects outside Git repositories; normal chats remain available. Report errors if a later Git operation fails.
+Check whether the project folder is the top folder of a Git repository or of one of its worktrees when the project is added to Piop and whenever a new chat is created from that project. A subfolder of a repository counts as outside Git. Save the result for the project. Do not check periodically or provide a manual recheck action. Branching into worktrees is unavailable for projects outside Git; normal chats remain available. Report errors if a later Git operation fails.
 
 Piop does not commit automatically. Only the user or the agent makes commits.
 
