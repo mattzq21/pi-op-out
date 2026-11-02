@@ -118,6 +118,15 @@ export function prepareProvidersRefreshExtension(): string {
   return path;
 }
 
+export function prepareOcxProviderExtension(): string {
+  const dir = join(generatedExtensionRoot(), 'piop-ocx-provider');
+  ensurePrivateDir(dir);
+  atomicWritePrivate(join(dir, 'ocx-provider.mjs'), R.ocxProviderModule);
+  const path = join(dir, 'index.ts');
+  atomicWritePrivate(path, R.ocxProviderExtension);
+  return path;
+}
+
 export function prepareOpenaiCacheForkExtension(): string {
   const dir = generatedExtensionRoot();
   ensurePrivateDir(dir);

@@ -168,7 +168,7 @@ function configureLocalExtensions(command: LaunchCommand, settings: AppSettings,
   const after = (core: Contributions.CoreExtension) => plugins.filter(plugin => plugin.after === core).flatMap(plugin => ['--extension', plugin.path]);
   command.args.push('--extension', 'builtin:codemode', '--extension', 'builtin:tool-search');
   command.args.push('--session-dir', sessionDir, '--approve', '--no-skills',
-    '--extension', Ext.prepareProvidersRefreshExtension(), '--extension', mcpExtension, '--extension', session.storage, '--extension', session.hooks, '--extension', session.controls, '--extension', session.broker, '--extension', Ext.prepareCompactionTimingExtension(), ...after('session'),
+    '--extension', Ext.prepareOcxProviderExtension(), '--extension', Ext.prepareProvidersRefreshExtension(), '--extension', mcpExtension, '--extension', session.storage, '--extension', session.hooks, '--extension', session.controls, '--extension', session.broker, '--extension', Ext.prepareCompactionTimingExtension(), ...after('session'),
     '--extension', contextWindowCapExtension, '--extension', contextBarExtension, ...after('context-bar'),
     '--extension', Ext.prepareFastModeExtension(), '--extension', openaiCacheForkExtension,
     '--extension', definedAgentsExtension);

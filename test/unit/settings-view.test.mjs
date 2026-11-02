@@ -12,10 +12,11 @@ describe('settings editor', () => {
     dom = installDom(); saves = []; dirty = []; supportedModels = ['model'];
     mockIPC((command, args) => {
       if (command === 'plugin_status') return { enabled: ['cost', 'review', 'web-search'], configured: ['cost', 'review', 'web-search'], revision: 'settings-1', error: null };
+      if (command === 'provider_auth' && args.request.action === 'list') return { providers: [{ id: 'anthropic', name: 'Anthropic', configured: true, methods: [{ type: 'oauth', name: 'Claude', interactive: true }] }, { id: 'opencodex', name: 'OCX', configured: true, source: 'built in', methods: [] }, { id: 'openai', name: 'OpenAI', configured: false, methods: [{ type: 'api_key', name: 'API key', interactive: true }] }] };
       if (command === 'provider_auth' && args.request.action === 'fast_models') return { ready: true, providers: { p: { supportedModelIds: supportedModels } } };
       throw new Error('Unexpected command: ' + command);
     }, { shouldMockEvents: true });
-    props = { providerHostId: 'local', settings: { hiddenModels: [], defaultThinking: 'off', defaultFastMode: false, contextWindowCap: 100_000, modelContextWindowCaps: {}, contextWindowCapEnabled: true, autoCompaction: true, autoRetry: true, debugMode: false, keybindings: { ...defaultKeybindings }, tools: [], skills: [], hosts: [] }, onSave: async (...args) => saves.push(args), onDirtyChange: value => dirty.push(value) };
+    props = { providerHostId: 'local', settings: { hiddenModels: [], defaultThinking: 'off', defaultFastMode: false, contextWindowCap: 100_000, modelContextWindowCaps: {}, contextWindowCapEnabled: true, autoCompaction: true, autoRetry: true, hiddenUsageIndicators: [], debugMode: false, keybindings: { ...defaultKeybindings }, tools: [], skills: [], hosts: [] }, onSave: async (...args) => saves.push(args), onDirtyChange: value => dirty.push(value) };
   });
   afterEach(async () => { if (view) await view.unmount(); view = undefined; dom.restore(); });
 
@@ -567,6 +568,20 @@ describe('settings editor', () => {
     assert.deepEqual(hosts.map(({ name, target }) => ({ name, target })), [{ name: 'Build one', target: 'builder@one' }, { name: 'Build two', target: 'builder@two' }]);
     assert.ok(hosts.every(host => typeof host.id === 'string' && host.id.length > 0));
     assert.equal(new Set(hosts.map(host => host.id)).size, 2);
+  });
+
+  test('a provider with a usage indicator can hide it from its row, and the choice is saved with the settings', async () => {
+    await render();
+    await section('Inference');
+    await click(button('Providers'));
+    await untilDom(() => control('Show OCX usage'));
+    assert.ok(control('Show Anthropic usage'));
+    assert.equal(control('Show OpenAI usage'), null);
+    await click(control('Show OCX usage'));
+    await click(control('Show Anthropic usage'));
+    assert.equal(control('Show OCX usage').getAttribute('aria-checked'), 'false');
+    await click(save());
+    assert.deepEqual(saves[0][0].hiddenUsageIndicators, ['opencodex', 'anthropic']);
   });
 
 });

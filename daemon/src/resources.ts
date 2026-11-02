@@ -30,6 +30,8 @@ import mcpSchemaBundle from '../resources/mcp-schema.bundle.mjs?raw';
 import mcpBridgeBundle from '../resources/mcp-bridge.bundle.mjs?raw';
 import fastModeBundle from '../resources/fast-mode.bundle.mjs?raw';
 import providersRefreshExtension from '../../extensions/piop-providers-refresh/index.ts?raw';
+import ocxProviderExtension from '../../extensions/piop-ocx-provider/index.ts?raw';
+import ocxProviderModule from '../../extensions/piop-ocx-provider/ocx-provider.mjs?raw';
 import openaiCacheForkExtension from '../../extensions/piop-openai-cache-fork/index.ts?raw';
 import agentState from '../../extensions/piop-define-agents/state.ts?raw';
 import agentPrompts from '../../extensions/piop-define-agents/prompts.ts?raw';
@@ -131,6 +133,8 @@ export {
   mcpBridgeBundle,
   fastModeBundle,
   providersRefreshExtension,
+  ocxProviderExtension,
+  ocxProviderModule,
   openaiCacheForkExtension,
   agentState,
   agentResources,

@@ -17,7 +17,7 @@ try {
  browser = await launchTestBrowser({ executablePath: process.env.CHROME_PATH, args: ['--no-sandbox'] });
  page = await browser.newPage({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
  const errors=[]; page.on('pageerror', error=>errors.push(error.stack));
-  const settings={hiddenModels:[],defaultThinking:'high',defaultFastMode:false,contextWindowCap:200000,contextWindowCapEnabled:true,modelContextWindowCaps:{},autoRetry:true,debugMode:false,keybindings:{newConversation:'Ctrl+N',toggleConversations:'Ctrl+B',toggleTerminal:'Ctrl+J',toggleDebugMode:'Ctrl+D',focusComposer:'Ctrl+E',openSettings:'Ctrl+,',toggleQueueHold:'Ctrl+H'},tools:[],skills:[],hosts:[]};
+  const settings={hiddenModels:[],defaultThinking:'high',defaultFastMode:false,contextWindowCap:200000,contextWindowCapEnabled:true,modelContextWindowCaps:{},autoRetry:true,hiddenUsageIndicators:[],debugMode:false,keybindings:{newConversation:'Ctrl+N',toggleConversations:'Ctrl+B',toggleTerminal:'Ctrl+J',toggleDebugMode:'Ctrl+D',focusComposer:'Ctrl+E',openSettings:'Ctrl+,',toggleQueueHold:'Ctrl+H'},tools:[],skills:[],hosts:[]};
  const state={model:{id:'model',provider:'test',name:'Test model'},thinkingLevel:'high',isStreaming:false,sessionId:'mobile-test',sessionFile:'/tmp/mobile-test.jsonl',messageCount:0,pendingMessageCount:0};
  await page.addInitScript(initialSettings => {
   window.__testClientPreferences = initialSettings;
@@ -53,7 +53,7 @@ try {
    return; }
 
    if(m.type==='ping') return;
-   const data={stop_pi:true,load_app_settings:settings,load_settings_change:{settings},plugin_status:{enabled:[],configured:[],revision:'plugins',error:null},create_temporary_chat:{cwd:'/tmp/project',sessionId:'mobile-test'},list_sessions:[],load_session_groups:{version:1,groups:[],assignments:{}},provider_usage:{codex:{usage:{remainingPercent:80}},anthropic:{usage:{remainingPercent:60},error:'Rate limited'},opencodeGo:{usage:{rolling:{status:'ok',remainingPercent:70},weekly:{status:'ok',remainingPercent:45},monthly:{status:'ok',remainingPercent:30}}}},start_pi:{attached:true},home_directory:'/home/test',is_git_repository:false};
+   const data={stop_pi:true,load_app_settings:settings,load_settings_change:{settings},plugin_status:{enabled:[],configured:[],revision:'plugins',error:null},create_temporary_chat:{cwd:'/tmp/project',sessionId:'mobile-test'},list_sessions:[],load_session_groups:{version:1,groups:[],assignments:{}},provider_usage:{opencodex:{usage:{accounts:[{id:'a',remainingPercent:96,resetAt:4102444800},{id:'b',remainingPercent:0}]}},codex:{usage:{remainingPercent:80}},anthropic:{usage:{remainingPercent:60},error:'Rate limited'},opencodeGo:{usage:{rolling:{status:'ok',remainingPercent:70},weekly:{status:'ok',remainingPercent:45},monthly:{status:'ok',remainingPercent:30}}}},start_pi:{attached:true},home_directory:'/home/test',is_git_repository:false};
    let result=Object.hasOwn(data,m.command)?data[m.command]:undefined;
 
    if(m.command==='provider_auth'&&m.args.request.action==='draft_catalog') result={config:{agents:[{name:'default',isDefault:true,model:'test/model',effort:'high',path_systemprompt:'',path_agent_prompt:'',tools:[],skills:[],mcpServers:{}}]},models:[state.model],initialModel:null,initialThinking:'medium',commands:[],commandDetails:[],skills:[]};
@@ -81,11 +81,15 @@ try {
  await page.getByRole('textbox',{name:'Message piop'}).waitFor();
  await page.waitForFunction(()=>Boolean(document.querySelector('[aria-label="Message piop"]')));
  const usageBadges=await page.locator('.rail-bottom .codex-usage').evaluateAll(elements=>elements.map(element=>({label:element.getAttribute('aria-label'),logo:!!element.querySelector('svg.provider-logo'),text:element.textContent,stale:element.classList.contains('stale')})));
- assert.equal(usageBadges.length,3);
+ assert.equal(usageBadges.length,5);
+ const pool=await page.locator('.rail-bottom .usage-pool').evaluate(element=>({badges:[...element.querySelectorAll('.codex-usage')].map(badge=>badge.getAttribute('aria-label')),last:element===element.parentElement.lastElementChild,clamp:getComputedStyle(element,'::before').borderLeftStyle}));
+ assert.deepEqual([pool.badges.length,pool.last,pool.clamp],[2,true,'solid']);
+ assert.match(pool.badges[0],/OCX account usage remaining: 96%, resets /);
+ assert.match(pool.badges[1],/OCX account usage remaining: 0%/);
  assert.ok(usageBadges.every(badge=>badge.logo));
  assert.match(usageBadges[0].label,/OpenCode Go usage remaining: 70%/);
  assert.match(usageBadges[1].label,/Anthropic usage remaining: 60%, stale: Rate limited/);
- assert.deepEqual(usageBadges.map(badge=>[badge.stale,badge.text.endsWith(' (stale)')]),[[false,false],[true,true],[false,false]]);
+ assert.deepEqual(usageBadges.map(badge=>[badge.stale,badge.text.endsWith(' (stale)')]),[[false,false],[true,true],[false,false],[false,false],[false,false]]);
  assert.match(usageBadges[2].label,/Codex usage remaining: 80%/);
  await page.locator('.rail-bottom button.codex-usage').nth(1).dispatchEvent('click');
  for (let attempt = 0; !usageRequests.some(args => args.provider === 'anthropic'); attempt++) {

@@ -17,7 +17,7 @@ import { restoredSessionTarget, targetedWindowSession } from "./sessionResume";
 import { recoverSessionDirectory } from "./sessionRecovery";
 import { ConversationChangedError } from "./conversationChanged";
 import type { GroupChange } from "./sessionGroups";
-import type { AppSettings, RpcCommand, RpcEvent } from "../types";
+import type { AppSettings, RpcCommand, RpcEvent, UsageIndicator } from "../types";
 
 export const openSessionWindow = (target: NativeConnectionTarget & { sessionId: string }) => call("new_window", { target }, z.string());
 
@@ -33,7 +33,7 @@ export interface NativeConnectionTarget { cwd?: string; sessionPath?: string; se
 export const loadSessionGroups = () => call("load_session_groups", { seeds: [] }, sessionGroupsSchema);
 
 export const loadProviderUsage = (refresh: boolean, provider?: UsageProviderKey) => call("provider_usage", { refresh, provider }, providerUsageSchema);
-export type UsageProviderKey = "codex" | "anthropic" | "opencodeGo";
+export type UsageProviderKey = UsageIndicator;
 
 export const changeSessionGroups = (change: GroupChange) => call("change_session_groups", { change }, sessionGroupsSchema);
 

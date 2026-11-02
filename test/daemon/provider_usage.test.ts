@@ -1,11 +1,12 @@
 import { afterAll, beforeAll, expect, test } from 'bun:test';
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { connect, createServer, type Server } from 'node:net';
 import { join } from 'node:path';
 import { refreshedUsage, startDaemon, temporaryDirectory, type TestDaemon } from './harness';
 
 let daemon: TestDaemon;
+let home: string;
 let gateway: ReturnType<typeof Bun.serve>;
 let proxy: Server;
 let reply: { status: number; body: string } = { status: 200, body: '{}' };
@@ -32,7 +33,10 @@ beforeAll(async () => {
   });
   await new Promise<void>(resolve => proxy.listen(0, '127.0.0.1', resolve));
   const proxyUrl = 'http://127.0.0.1:' + (proxy.address() as any).port;
-  const home = temporaryDirectory('piop-home-');
+  home = temporaryDirectory('piop-home-');
+  mkdirSync(join(home, '.opencodex'), { recursive: true });
+  mkdirSync(join(home, '.test-bin'), { recursive: true });
+  writeFileSync(join(home, '.test-bin/ocx'), '#!/bin/sh\necho "$*" >> "$HOME/ocx-calls"\ncat "$HOME/ocx-reply.json"\n', { mode: 0o755 });
   mkdirSync(join(home, '.piop'), { recursive: true, mode: 0o700 });
   writeFileSync(join(home, '.piop/auth.json'), JSON.stringify({ 'opencode-go': { type: 'api_key', key: 'test-opencode-key' } }), { mode: 0o600 });
   daemon = await startDaemon({ home, env: { HTTPS_PROXY: proxyUrl, https_proxy: proxyUrl, NODE_EXTRA_CA_CERTS: cert } });
@@ -127,3 +131,58 @@ test('settings saved before the newer options load with automatic retry kept on'
   const loaded = await daemon.invoke('load_app_settings');
   expect(loaded).toMatchObject({ autoRetry: true, contextWindowCap: 200000 });
 });
+
+const ocxAccount = (key: string, quota: Record<string, number> | undefined, extra: Record<string, unknown> = {}) => ({ provider: 'openai', type: 'codex', upstreamAccountKey: key, needsReauth: false, ...(quota ? { quota } : {}), ...extra });
+
+test('OCX usage lists each Codex account once with its most used window', async () => {
+  writeFileSync(join(home, 'ocx-reply.json'), JSON.stringify({ accounts: [
+    ocxAccount('a', { shortPercent: 10, shortResetAt: 100, weeklyPercent: 40, weeklyResetAt: 200 }, { slotKind: 'native-main' }),
+    ocxAccount('a', { shortPercent: 10, shortResetAt: 100, weeklyPercent: 40, weeklyResetAt: 200, monthlyPercent: 0, monthlyResetAt: 300 }, { slotKind: 'pool' }),
+    ocxAccount('b', { shortPercent: 100, shortResetAt: 150, weeklyPercent: 60, weeklyResetAt: 250 }),
+    ocxAccount('c', undefined, { needsReauth: true }),
+    ocxAccount('d', undefined, { quotaRefresh: { status: 'error', error: 'Quota probe failed' } }),
+    { provider: 'openai', type: 'api_key', upstreamAccountKey: 'e' },
+  ], notes: [] }));
+  expect((await refreshedUsage(daemon, 'opencodex')).usage).toEqual({ accounts: [
+    { id: 'a', remainingPercent: 60, resetAt: 200 },
+    { id: 'b', remainingPercent: 0, resetAt: 150 },
+    { id: 'c', error: 'This account needs a new login in OCX' },
+    { id: 'd', error: 'Quota probe failed' },
+  ] });
+  expect(readFileSync(join(home, 'ocx-calls'), 'utf8').trim().split('\n').at(-1)).toBe('account list openai --quota --refresh --json');
+}, 60_000);
+
+test('a hidden usage indicator is removed and not read until it is shown again', async () => {
+  writeFileSync(join(home, 'ocx-reply.json'), JSON.stringify({ accounts: [ocxAccount('a', { weeklyPercent: 25, weeklyResetAt: 200 })] }));
+  await refreshedUsage(daemon, 'opencodex');
+  const save = async (hiddenUsageIndicators: string[]) => {
+    const current = await daemon.invoke('load_app_settings');
+    await daemon.invoke('save_app_settings', { settings: { ...current, hiddenUsageIndicators } });
+  };
+  const nextUsage = (match: (payload: any) => boolean) => {
+    let skip = daemon.events.filter(event => event.event === 'pi://usage-changed').length;
+    return daemon.waitEvent('pi://usage-changed', payload => skip-- <= 0 && match(payload));
+  };
+  const hidden = nextUsage(payload => payload.opencodex === undefined);
+  await save(['opencodex']);
+  await hidden;
+  rmSync(join(home, 'ocx-calls'));
+  expect((await daemon.invoke('provider_usage', { refresh: true, provider: 'opencodex' })).opencodex).toBeUndefined();
+  expect(existsSync(join(home, 'ocx-calls'))).toBe(false);
+  const shownEvent = nextUsage(payload => payload.opencodex !== undefined);
+  await save([]);
+  const shown = await shownEvent;
+  expect(shown.opencodex.usage).toEqual({ accounts: [{ id: 'a', remainingPercent: 75, resetAt: 200 }] });
+  await expect(save(['unknown'])).rejects.toThrow('hiddenUsageIndicators');
+}, 60_000);
+
+test('OCX usage says ocx is unavailable when its PATH has no ocx', async () => {
+  const lonely = temporaryDirectory('piop-home-');
+  mkdirSync(join(lonely, '.opencodex'), { recursive: true });
+  const path = join(lonely, '.path');
+  mkdirSync(path);
+  for (const program of ['bun', 'node', 'pi']) symlinkSync(Bun.which(program)!, join(path, program));
+  const other = await startDaemon({ home: lonely, env: { PATH: path + ':/usr/bin:/bin' } });
+  try { expect((await refreshedUsage(other, 'opencodex')).usage).toEqual({ accounts: [], unavailable: true }); }
+  finally { await other.stop(); }
+}, 60_000);

@@ -22,6 +22,7 @@ export interface AppSettings extends PluginSettings {
   contextWindowCapEnabled: boolean;
   modelContextWindowCaps: Record<string, number | null>;
   autoRetry: boolean;
+  hiddenUsageIndicators: UsageIndicator[];
   debugMode: boolean;
   keybindings: Record<string, string>;
   tools: ToolConfig[];
@@ -33,6 +34,16 @@ export interface ToolConfig { name: string; description: string; source: string 
 export interface SkillConfig { name: string; path: string; description: string; enabled: boolean; userInvokedOnly?: boolean }
 
 export const MAX_REMOTE_HOSTS = 16;
+
+export const USAGE_INDICATORS = ['codex', 'anthropic', 'opencodeGo', 'opencodex'] as const;
+export type UsageIndicator = typeof USAGE_INDICATORS[number];
+export const isUsageIndicator = (value: unknown): value is UsageIndicator => (USAGE_INDICATORS as readonly unknown[]).includes(value);
+
+function usageIndicators(value: any): UsageIndicator[] {
+  if (value === undefined) return [];
+  if (!Array.isArray(value) || !value.every(isUsageIndicator)) fail('hiddenUsageIndicators', 'a sequence of ' + USAGE_INDICATORS.join(', '));
+  return [...new Set(value)];
+}
 
 function fail(field: string, expected: string): never { throw new Error(`invalid type for ${field}: expected ${expected}`); }
 
@@ -144,6 +155,7 @@ export function parseAppSettings(value: any): AppSettings {
     contextWindowCapEnabled: boolField(value.contextWindowCapEnabled, 'contextWindowCapEnabled', true),
     modelContextWindowCaps: modelCaps(value.modelContextWindowCaps),
     autoRetry: boolField(value.autoRetry, 'autoRetry', true),
+    hiddenUsageIndicators: usageIndicators(value.hiddenUsageIndicators),
     debugMode: boolField(value.debugMode, 'debugMode', false),
     keybindings,
     tools: [],
@@ -167,6 +179,7 @@ export function serializeAppSettings(settings: AppSettings): Record<string, unkn
   result.contextWindowCapEnabled = settings.contextWindowCapEnabled;
   result.modelContextWindowCaps = settings.modelContextWindowCaps;
   result.autoRetry = settings.autoRetry;
+  result.hiddenUsageIndicators = settings.hiddenUsageIndicators;
   result.debugMode = settings.debugMode;
   result.keybindings = settings.keybindings;
   result.tools = settings.tools;
@@ -193,6 +206,7 @@ export function defaultSettings(): AppSettings {
     contextWindowCapEnabled: true,
     modelContextWindowCaps: {},
     autoRetry: true,
+    hiddenUsageIndicators: [],
     debugMode: false,
     keybindings: defaultKeybindings(),
     tools: [],

@@ -55,6 +55,7 @@ async function loadRuntime() {
       const settings = SettingsManager.create(process.cwd(), config.getAgentDir());
       const builtin = await sdk.ModelRuntime.create({ modelsPath: null, allowModelNetwork: false, refreshOnCreate: false });
       const runtime = await sdk.ModelRuntime.create({ allowModelNetwork: false }).catch(() => { throw new Error('Could not load provider configuration on this host. Check Pi configuration and file permissions.'); });
+      await refreshOcx(runtime);
 
       return { runtime, settings, resolver, loadSkills, agentDir: config.getAgentDir(), authPath: config.getAuthPath(), modelsPath: join(config.getAgentDir(), 'models.json'), parseModels: body => JSON.parse(stripJsonComments(body.replace(/^\uFEFF/, ''))), builtinIds: builtin.getProviders().map((provider) => provider.id) };
     }
@@ -71,7 +72,19 @@ function runtime() {
   return initializing;
 }
 
+async function refreshOcx(runtime) {
+  let config;
+
+  try { config = await ocxProviderConfig(homedir()); } catch (error) { return { providerId: OCX_PROVIDER_ID, message: error instanceof Error ? error.message : String(error) }; }
+
+  if (config) runtime.registerProvider(OCX_PROVIDER_ID, config);
+  else if (runtime.getRegisteredProviderIds().includes(OCX_PROVIDER_ID)) runtime.unregisterProvider(OCX_PROVIDER_ID);
+
+  return undefined;
+}
+
 function providerMetadata(runtime, provider) {
+  if (provider.id === OCX_PROVIDER_ID) return { id: provider.id, name: provider.name, configured: runtime.getProviderAuthStatus(provider.id).configured, source: 'built in', methods: [], builtin: true };
   const methods = [];
 
   if (provider.auth.oauth) methods.push({ type: 'oauth', name: provider.auth.oauth.loginLabel || provider.auth.oauth.name, interactive: true, login: Boolean(provider.auth.oauth.login) });
@@ -355,6 +368,7 @@ async function handleProviderRequest(loaded, packet) {
   }
 
   if (packet.method === 'draft_catalog') {
+    await refreshOcx(loaded.runtime);
     await loaded.runtime.refresh({ allowNetwork: false }).catch(() => { throw new Error('Could not refresh providers on this host. Check Pi configuration.'); });
 
     const initial = await initialSelection(loaded);
@@ -414,6 +428,7 @@ async function initialSelection(loaded) {
 }
 
 async function refreshProviders(runtime) {
+  const ocx = await refreshOcx(runtime);
   const result = await runtime.refresh({ allowNetwork: false }).catch(() => { throw new Error('Could not refresh providers on this host. Check Pi configuration.'); });
   const diagnostics = [];
   const seen = new Set();
@@ -424,6 +439,8 @@ async function refreshProviders(runtime) {
     seen.add(message);
     diagnostics.push(providerId === undefined ? { message } : { providerId, message });
   };
+
+  if (ocx) add(ocx.providerId, ocx.message);
 
   for (const [providerId, error] of result?.errors ?? []) add(providerId, error);
 

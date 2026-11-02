@@ -50,11 +50,12 @@ export function useAppUsage() {
   const codexUsage = createMemo(() => loaded(snapshot().codex), undefined, { equals: sameValue });
   const anthropicUsage = createMemo(() => loaded(snapshot().anthropic), undefined, { equals: sameValue });
   const opencodeGoUsage = createMemo(() => loaded(snapshot().opencodeGo), undefined, { equals: sameValue });
+  const opencodexUsage = createMemo(() => loaded(snapshot().opencodex), undefined, { equals: sameValue });
   const opencodeGoBadge = createMemo(() => { const entry = opencodeGoUsage();
 
     return entry && { window: entry.usage.rolling, detail: usageWindowsDescription(entry.usage), error: entry.error }; });
 
-  useUsageClock(() => [codexUsage()?.usage.resetAt, anthropicUsage()?.usage.resetAt, opencodeGoUsage()?.usage.rolling.resetAt], () => (setUsageClock));
+  useUsageClock(() => [codexUsage()?.usage.resetAt, anthropicUsage()?.usage.resetAt, opencodeGoUsage()?.usage.rolling.resetAt, ...(opencodexUsage()?.usage.accounts.map(account => account.resetAt) ?? [])], () => (setUsageClock));
 
-  return { codexUsage, anthropicUsage, opencodeGoBadge, usageClock, usageError, refreshUsage, refreshingUsage };
+  return { codexUsage, anthropicUsage, opencodeGoBadge, opencodexUsage, usageClock, usageError, refreshUsage, refreshingUsage };
 }

@@ -3,7 +3,7 @@ import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { startupPage } from '../startup-browser-fixture.mjs';
 
-const settings = { hiddenModels: [], defaultThinking: 'high', defaultFastMode: false, contextWindowCap: 200000, contextWindowCapEnabled: true, modelContextWindowCaps: {}, autoRetry: true, debugMode: false, keybindings: { newConversation: 'Ctrl+N', toggleConversations: 'Ctrl+B', toggleTerminal: 'Ctrl+J', toggleDebugMode: 'Ctrl+D', focusComposer: 'Ctrl+E', openSettings: 'Ctrl+,' }, tools: [], skills: [], hosts: [] };
+const settings = { hiddenModels: [], defaultThinking: 'high', defaultFastMode: false, contextWindowCap: 200000, contextWindowCapEnabled: true, modelContextWindowCaps: {}, autoRetry: true, hiddenUsageIndicators: [], debugMode: false, keybindings: { newConversation: 'Ctrl+N', toggleConversations: 'Ctrl+B', toggleTerminal: 'Ctrl+J', toggleDebugMode: 'Ctrl+D', focusComposer: 'Ctrl+E', openSettings: 'Ctrl+,' }, tools: [], skills: [], hosts: [] };
 const state = { model: { id: 'model', provider: 'test', name: 'Test model' }, thinkingLevel: 'high', isStreaming: false, sessionId: 'mobile-test', sessionFile: '/tmp/mobile-test.jsonl', messageCount: 0, pendingMessageCount: 0 };
 
 function answerHost(ws, host) {

@@ -2,10 +2,12 @@ import type { App } from './app';
 import { anthropicUsage } from './provider_anthropic';
 import { codexUsage } from './provider_codex';
 import { opencodeGoUsage } from './provider_opencode';
+import { opencodexUsage } from './provider_opencodex';
+import { isUsageIndicator, USAGE_INDICATORS, type UsageIndicator } from './settings_types';
 
-const SOURCES: Record<'codex' | 'anthropic' | 'opencodeGo', UsageSource> = { codex: codexUsage, anthropic: anthropicUsage, opencodeGo: opencodeGoUsage };
-export type Provider = keyof typeof SOURCES;
-export const isUsageProvider = (value: string): value is Provider => Object.hasOwn(SOURCES, value);
+const SOURCES: Record<UsageIndicator, UsageSource> = { codex: codexUsage, anthropic: anthropicUsage, opencodeGo: opencodeGoUsage, opencodex: opencodexUsage };
+export type Provider = UsageIndicator;
+export const isUsageProvider = isUsageIndicator;
 
 export type UsageSource = () => Promise<unknown>;
 
@@ -23,8 +25,14 @@ export class UsageRuntime {
   private readAt = new Map<Provider, number>();
   private timer: ReturnType<typeof setInterval> | undefined;
   private stopped = false;
+  private hidden = new Set<Provider>();
 
-  start(app: App): void {
+  start(app: App, hidden: readonly Provider[]): void {
+    this.hidden = new Set(hidden);
+    app.listenAny('pi://settings-changed', change => {
+      const list = change?.settings?.hiddenUsageIndicators;
+      if (Array.isArray(list)) this.setHidden(app, list.filter(isUsageIndicator));
+    });
     if (!(INTERVAL_MS > 0)) return;
     void this.refresh(app);
     this.timer = setInterval(() => void this.refresh(app), INTERVAL_MS);
@@ -37,12 +45,25 @@ export class UsageRuntime {
     await Promise.allSettled([...this.running.values()]);
   }
 
+  private setHidden(app: App, list: Provider[]): void {
+    if (this.stopped) return;
+    const next = new Set(list);
+    const shown = USAGE_INDICATORS.filter(provider => this.hidden.has(provider) && !next.has(provider));
+    const hidden = USAGE_INDICATORS.filter(provider => !this.hidden.has(provider) && next.has(provider));
+    this.hidden = next;
+    for (const provider of hidden) {
+      this.failures.delete(provider);
+      if (provider in this.state) { delete this.state[provider]; app.emit(USAGE_CHANGED, this.snapshot()); }
+    }
+    for (const provider of shown) void this.refreshProvider(app, provider);
+  }
+
   snapshot(): UsageSnapshot { return structuredClone(this.state); }
 
   async refresh(app: App, only?: Provider, all = false): Promise<UsageSnapshot> {
     const now = Date.now();
     const recent = (provider: Provider) => !all && !this.running.has(provider) && now - (this.readAt.get(provider) ?? -Infinity) < MIN_GAP_MS;
-    const providers = only ? [only] : (Object.keys(SOURCES) as Provider[]).filter(provider => !recent(provider));
+    const providers = (only ? [only] : USAGE_INDICATORS.filter(provider => !recent(provider))).filter(provider => !this.hidden.has(provider));
     await Promise.all(providers.map(provider => this.refreshProvider(app, provider)));
     return this.snapshot();
   }
@@ -67,6 +88,7 @@ export class UsageRuntime {
   }
 
   private update(app: App, provider: Provider, next: ProviderUsage | undefined): void {
+    if (this.hidden.has(provider)) return;
     if (JSON.stringify(this.state[provider]) === JSON.stringify(next)) return;
     if (next === undefined) delete this.state[provider]; else this.state[provider] = next;
     app.emit(USAGE_CHANGED, this.snapshot());

@@ -42,6 +42,10 @@ button { cursor: pointer; }
 .icon-rail.compact .rail-bottom { gap: 12px; }
 .icon-rail.compact .codex-usage-separator { display: none; }
 .codex-usage.stale { color: #66635d; }
+.usage-pool { position: relative; padding: 0 7px; display: flex; flex-direction: column; gap: 2px; align-items: center; }
+.usage-pool::before { content: ""; position: absolute; left: 0; top: 2px; bottom: 2px; width: 3px; border: 1px solid #66635d; border-right: 0; border-radius: 2px 0 0 2px; }
+.icon-rail.compact .usage-pool { gap: 12px; }
+.icon-rail.compact .ocx-unavailable { white-space: normal; text-align: center; }
 button.codex-usage { background: none; border: 0; padding: 0; cursor: pointer; }
 button.codex-usage:hover:not(:disabled) { color: #d6d2c8; }
 button.codex-usage.refreshing { cursor: progress; opacity: .6; }

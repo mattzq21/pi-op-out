@@ -140,7 +140,7 @@ export function addProviderLogin(home: string, providerId: string, type: 'oauth'
     : { type, key: 'test-' + providerId + '-key' } }), { mode: 0o600 });
 }
 
-export async function refreshedUsage(client: Client, provider: 'codex' | 'anthropic' | 'opencodeGo'): Promise<{ usage?: any; error?: string }> {
+export async function refreshedUsage(client: Client, provider: 'codex' | 'anthropic' | 'opencodeGo' | 'opencodex'): Promise<{ usage?: any; error?: string }> {
   return (await client.invoke('provider_usage', { refresh: true, provider }))[provider] ?? {};
 }
 

@@ -1,5 +1,6 @@
 import { pluginSettingsSchema } from "../plugins/settingsSchema";
 import { z } from "zod";
+import { USAGE_INDICATORS } from "../types";
 import { rpcEventSchema, rpcCommandSchema } from "./rpcSchemas";
 import { entrySchema, pendingMessageSchema } from "./chatSessionEventSchema";
 import { usageSchema } from "./messageSchemas";
@@ -14,7 +15,7 @@ export const skillConfigSchema = z.object({ name: z.string(), path: z.string(), 
 
 export const remoteHostSchema = z.object({ enabled: z.boolean().optional(), id: z.string(), name: z.string(), target: z.string(), piPath: z.string() });
 
-export const appSettingsSchema = z.object({ settingsRevision: z.string().optional(), clientSettingsRevision: z.string().optional(), settingsDurabilityError: z.string().optional(), clientSettingsDurabilityError: z.string().optional(), localEnabled: z.boolean().optional(), ...pluginSettingsSchema.shape, modelAliases: z.record(z.string(), z.string()).optional(), hiddenModels: z.array(z.string()), knownModels: z.array(z.string()).optional(), defaultThinking: z.string(), defaultFastMode: z.boolean(), contextWindowCap: z.number(), contextWindowCapEnabled: z.boolean(), modelContextWindowCaps: z.record(z.string(), z.number().nullable()), autoRetry: z.boolean(), debugMode: z.boolean(), keybindings: z.object({ newConversation: z.string(), toggleConversations: z.string(), toggleTerminal: z.string(), toggleDebugMode: z.string(), focusComposer: z.string(), openSettings: z.string(), toggleQueueHold: z.string() }), tools: z.array(toolConfigSchema), skills: z.array(skillConfigSchema), hosts: z.array(remoteHostSchema) });
+export const appSettingsSchema = z.object({ settingsRevision: z.string().optional(), clientSettingsRevision: z.string().optional(), settingsDurabilityError: z.string().optional(), clientSettingsDurabilityError: z.string().optional(), localEnabled: z.boolean().optional(), ...pluginSettingsSchema.shape, modelAliases: z.record(z.string(), z.string()).optional(), hiddenModels: z.array(z.string()), knownModels: z.array(z.string()).optional(), defaultThinking: z.string(), defaultFastMode: z.boolean(), contextWindowCap: z.number(), contextWindowCapEnabled: z.boolean(), modelContextWindowCaps: z.record(z.string(), z.number().nullable()), autoRetry: z.boolean(), hiddenUsageIndicators: z.array(z.enum(USAGE_INDICATORS)), debugMode: z.boolean(), keybindings: z.object({ newConversation: z.string(), toggleConversations: z.string(), toggleTerminal: z.string(), toggleDebugMode: z.string(), focusComposer: z.string(), openSettings: z.string(), toggleQueueHold: z.string() }), tools: z.array(toolConfigSchema), skills: z.array(skillConfigSchema), hosts: z.array(remoteHostSchema) });
 
 export const clientSettingsSchema = appSettingsSchema.pick({ "keybindings": true, "debugMode": true });
 
@@ -51,7 +52,9 @@ export const opencodeGoUsageSchema = z.object({ rolling: usageWindowSchema, week
 
 const providerUsage = <T extends z.ZodType>(usage: T) => z.object({ usage: usage.optional(), error: z.string().optional() }).optional();
 
-export const providerUsageSchema = z.object({ codex: providerUsage(codexUsageSchema), anthropic: providerUsage(codexUsageSchema), opencodeGo: providerUsage(opencodeGoUsageSchema) });
+export const opencodexUsageSchema = z.object({ accounts: z.array(z.object({ id: z.string(), remainingPercent: z.number().optional(), resetAt: z.number().optional(), error: z.string().optional() })), unavailable: z.literal(true).optional() });
+
+export const providerUsageSchema = z.object({ codex: providerUsage(codexUsageSchema), anthropic: providerUsage(codexUsageSchema), opencodeGo: providerUsage(opencodeGoUsageSchema), opencodex: providerUsage(opencodexUsageSchema) });
 
 export const directoryListingSchema = z.object({ path: z.string(), parent: z.string().optional(), directories: z.array(z.string()) });
 
