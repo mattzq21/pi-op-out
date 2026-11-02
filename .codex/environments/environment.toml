@@ -10,7 +10,7 @@ script = '''
 set -eu
 
 if ! git symbolic-ref -q HEAD >/dev/null; then
-  git switch --detach refs/heads/dev
+  if git show-ref --verify -q refs/heads/dev; then git switch --detach refs/heads/dev; fi
   worktree_id=$(basename "$(dirname "$PWD")")
   git switch -c "codex/tmp-$worktree_id"
 fi

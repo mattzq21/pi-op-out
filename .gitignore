@@ -23,3 +23,6 @@ clients/android/app/src/main/assets/public/
 clients/android/app/src/main/assets/capacitor*.json
 clients/android/*.jks
 clients/android/*.keystore
+__pycache__/
+*.pyc
+*.bak
