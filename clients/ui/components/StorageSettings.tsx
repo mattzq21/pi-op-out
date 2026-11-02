@@ -9,7 +9,7 @@ import { Archive, Database, FolderClock, GitBranch, HardDrive, MessageSquare, Re
 import { deleteArchivedConversations, loadStorageReport, openGroupDirectory } from "../lib/nativeTransport";
 import { storageFailureText } from "../lib/storageFailure";
 import { formatDateTime } from "../lib/dateTime";
-import type { ArchivedConversation, HostStorage, StorageCategory, StorageReport, StorageRoot } from "../types";
+import type { ArchivedConversation, HostStorage, StorageCategory, StorageReport } from "../types";
 
 function includesTemporaryFolder(host: HostStorage, archives: ArchivedConversation[]) {
   const roots = host.categories.find(category => category.id === "temporary-chats")?.roots ?? [];
@@ -69,16 +69,6 @@ function categoryAccounting(category: StorageCategory) {
 }
 
 function countedBytes(category: StorageCategory) { return category.includedInTotal === false ? 0 : category.byteSize; }
-
-function rootDetails(root: StorageRoot) {
-  const owners = root.owners.map(owner => `${owner.sessionId} (${owner.kind})${owner.sessionPath ? ` — ${owner.sessionPath}` : ""}`).join("; ");
-
-  return <div><strong>{root.path}</strong><small>{root.ownership} · {root.available ? "Available" : "Unavailable; size incomplete"}{root.state ? ` · ${root.state}` : ""}</small><small>{root.provenance.join(" · ")}</small><small>{owners || "No verified conversation owners reported"}</small></div>;
-}
-
-function coverageDetails(category: StorageCategory) {
-  return <details><summary>Coverage and ownership</summary><p>{category.coverage ?? "Coverage was not reported by this host. Category bytes do not establish reclaimable space."}</p>{category.roots?.map(rootDetails)}</details>;
-}
 
 function categorySize(category: StorageCategory) {
   const prefix = category.estimated && category.byteSize > 0 ? "~" : "";
@@ -211,9 +201,7 @@ export function StorageSettings(componentProps: { hostId?: string }) {
 
           return <div class="storage-category" >
             <button type="button" class="storage-category-icon storage-directory-button" aria-label={`Open ${details().name} ${directories().length > 1 ? "directories" : "directory"}`} aria-expanded={directories().length > 1 ? showDirectories() : undefined} data-tooltip={directoryTitle(host().hostId, directories())} disabled={host().hostId !== "local" || !directories().length} onClick={openCategory}><Dynamic component={CategoryIcon()} size={15} /></button>
-            <span><strong>{details().name}</strong><small>{details().description} · {itemCount(category())}</small><small>{categoryAccounting(category())}</small><i><b style={{ width: `${Math.max(category().byteSize ? 2 : 0, category().byteSize / maximum() * 100)}%` }} /></i>
-              {coverageDetails(category())}
-            </span>
+            <span><strong>{details().name}</strong><small>{details().description} · {itemCount(category())}</small><small>{categoryAccounting(category())}</small><i><b style={{ width: `${Math.max(category().byteSize ? 2 : 0, category().byteSize / maximum() * 100)}%` }} /></i></span>
             <code>{categorySize(category())}</code>
             {showDirectories() && <div class="storage-directory-list" aria-label={`${details().name} directories`}>{directories().map((directory) => <button type="button" data-tooltip={directory} onClick={() => void openDirectory(directory, host())}>{directory}</button>)}</div>}
           </div>;
