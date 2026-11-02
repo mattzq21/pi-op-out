@@ -9,7 +9,8 @@ import { openExternalUrl } from "../lib/nativeTransport";
 import { isMobile } from "../lib/platform";
 import { useProviderAuth, type AuthFlow, type AuthNotice, type ProviderAccount } from "../lib/providerAuth";
 import "../provider-settings.css";
-import type { RemoteHost } from "../types";
+import type { RemoteHost, UsageIndicator } from "../types";
+import { Toggle } from "./Toggle";
 import { CustomProviderForm } from "./CustomProviderForm";
 
 type AuthControls = ReturnType<typeof useProviderAuth>;
@@ -53,7 +54,17 @@ function FlowStatus(componentProps: { flow: AuthFlow }) {
   return <>{componentProps.flow.status === "cancelled" ? (<p role="status">Login cancelled.</p>) : componentProps.flow.status === "failed" ? (<p class="provider-error" role="alert">{componentProps.flow.error}</p>) : (<p role="status">Waiting for provider login…</p>)}</>;
 }
 
-export function ProviderSettings(componentProps: { hosts: RemoteHost[]; initialHostId?: string; fixedHost?: boolean }) {
+const USAGE_INDICATOR: Partial<Record<string, UsageIndicator>> = { "openai-codex": "codex", anthropic: "anthropic", "opencode-go": "opencodeGo", opencodex: "opencodex" };
+
+type UsageControls = { hidden: UsageIndicator[]; onChange: (hidden: UsageIndicator[]) => void };
+
+function UsageToggle(componentProps: { name: string; indicator: UsageIndicator; usage: UsageControls }) {
+  const hidden = () => componentProps.usage.hidden.includes(componentProps.indicator);
+
+  return <span class="provider-usage-toggle"><small>Usage indicator</small><Toggle label={`Show ${componentProps.name} usage`} checked={!hidden()} onChange={shown => componentProps.usage.onChange(shown ? componentProps.usage.hidden.filter(item => item !== componentProps.indicator) : [...componentProps.usage.hidden, componentProps.indicator])} /></span>;
+}
+
+export function ProviderSettings(componentProps: { hosts: RemoteHost[]; initialHostId?: string; fixedHost?: boolean; usage?: UsageControls }) {
   const [hostId, setHostId] = createSignal((componentProps.initialHostId === undefined ? "local" : componentProps.initialHostId));
   const [filter, setFilter] = createSignal("");
   const [adding, setAdding] = createSignal(false);
@@ -83,7 +94,7 @@ export function ProviderSettings(componentProps: { hosts: RemoteHost[]; initialH
     {adding() && <Rerun on={() => hostId()}>{(_key) => <CustomProviderForm  working={!!disabled()} save={auth.createProvider} close={() => setAdding(false)} />}</Rerun>}
     <Show when={auth.flow !== undefined}><LoginPanel flow={shownFlow()!} auth={auth} /></Show>
     {loadingProviders() && <div class="empty-small" role="status">Loading providers on {hostName()}…</div>}
-    <ProviderList providers={providers()} auth={auth} disabled={disabled()} />
+    <ProviderList providers={providers()} auth={auth} disabled={disabled()} usage={componentProps.usage} />
     <p class="provider-login-help">Removing a saved login leaves credentials from environment variables or other host configuration in place.</p>
   </div>;
 }
@@ -101,11 +112,11 @@ function LoginPanel(componentProps: { flow: AuthFlow; auth: AuthControls }) {
   </div>;
 }
 
-function ProviderList(componentProps: { providers: ProviderAccount[]; auth: AuthControls; disabled: boolean }) {
+function ProviderList(componentProps: { providers: ProviderAccount[]; auth: AuthControls; disabled: boolean; usage?: UsageControls }) {
   return <><div class="config-list"><Key each={componentProps.providers} by={provider => provider.id}>{provider => <section class="provider-group" aria-label={provider().name}>
     <div class="provider-account provider-heading">
       <div><strong>{provider().name}</strong><small>{provider().configured ? "Configured" : "Not configured"}{provider().source && <> · <span class={provider().source === "stored" ? "provider-stored" : undefined}>{provider().source}</span></>}</small></div>
-      <div class="provider-account-actions"><Index each={provider().methods}>{method => method().interactive
+      <div class="provider-account-actions"><Show when={componentProps.usage && USAGE_INDICATOR[provider().id]}>{indicator => <UsageToggle name={provider().name} indicator={indicator()} usage={componentProps.usage!} />}</Show><Index each={provider().methods}>{method => method().interactive
         ? <button disabled={componentProps.disabled || componentProps.auth.loading} onClick={() => void componentProps.auth.begin(provider().id, method().type)}>{provider().configured ? "Replace login" : "Sign in"} · {method().name}</button>
         : <small>Configured through the host environment</small>}</Index>
         {provider().storedType && <button disabled={componentProps.disabled || componentProps.auth.loading} onClick={() => void componentProps.auth.logout(provider().id)}>Remove saved login</button>}

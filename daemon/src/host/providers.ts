@@ -146,7 +146,7 @@ export class ProviderService {
     const snapshot = await this.sdk.request({ method: 'inspect' });
     const credentials = array(snapshot, 'credentials');
     const custom = await this.customProviderIds(info);
-    const providers = array(snapshot, 'providers').map(provider => listedProvider(provider, credentials, custom)).filter(provider => provider.custom || array(provider, 'methods').length > 0);
+    const providers = array(snapshot, 'providers').map(provider => listedProvider(provider, credentials, custom)).filter(provider => provider.custom || provider.builtin === true || array(provider, 'methods').length > 0);
     providers.sort((left, right) => { const a = text(left, 'id'); const b = text(right, 'id'); return a < b ? -1 : a > b ? 1 : 0; });
     const result: any = { providers };
     const warnings = [this.catalogWarning, providerModelWarning(snapshot), fastModelWarning(this.fastModels.snapshot())].filter((item): item is string => item !== null);

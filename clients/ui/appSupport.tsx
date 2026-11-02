@@ -1,11 +1,12 @@
-import { type Accessor } from "solid-js";
+import { Key } from "@solid-primitives/keyed";
+import { type Accessor, Show } from "solid-js";
 import { createDependencyEffect, type Dispatch, type StateUpdate } from "./lib/solid";
 
 import { NativeTransport } from "./lib/nativeTransport";
 import { appendTerminalOutput as retainTerminalOutput } from "./lib/terminalOutput";
 import { isTemporaryChatCwd } from "./lib/sessionGroups";
 import { ProviderLogo, type UsageProvider } from "./components/ProviderLogo";
-import type { AgentConfig, DefinedAgentsCapability, ExtensionUiRequest, OpencodeGoUsage, SessionSummary } from "./types";
+import type { AgentConfig, DefinedAgentsCapability, ExtensionUiRequest, OpencodeGoUsage, OpencodexUsage, SessionSummary } from "./types";
 
 const staleExtensionContext = "This extension ctx is stale after session replacement or reload.";
 
@@ -84,6 +85,10 @@ function LimitBadge(componentProps: { label: string; provider: UsageProvider; de
   return <button type="button" class="codex-usage" classList={{ stale: componentProps.stale !== undefined, refreshing: componentProps.refreshing }} disabled={componentProps.refreshing} onClick={() => componentProps.onRefresh()} title={componentProps.stale === undefined ? "Click to refresh" : `${componentProps.stale}. Click to refresh.`} aria-label={`${componentProps.label} usage remaining: ${componentProps.remainingPercent}%${componentProps.resetAt ? `, resets ${resetLabel()}` : ""}${componentProps.detail ? ` (${(componentProps.detail)})` : ""}${componentProps.stale !== undefined ? `, stale: ${componentProps.stale}` : ""}`}><ProviderLogo provider={componentProps.provider} /><span>{componentProps.remainingPercent}%</span>{componentProps.resetAt && <span class="codex-usage-reset"><span class="codex-usage-separator"> · </span>{resetLabel()}</span>}{componentProps.stale !== undefined && <span class="codex-usage-stale"> (stale)</span>}</button>;
 }
 
+function OpencodexBadges(componentProps: { usage: OpencodexUsage; stale?: string; clock: number; refreshing: boolean; onRefresh: () => void }) {
+  return <div class="usage-pool" role="group" aria-label="OCX accounts"><Show when={componentProps.usage.unavailable}><button type="button" class="codex-usage stale ocx-unavailable" classList={{ refreshing: componentProps.refreshing }} disabled={componentProps.refreshing} onClick={() => componentProps.onRefresh()} title="ocx was not found on the PATH of piop. Click to check again.">ocx unavailable</button></Show><Key each={componentProps.usage.accounts} by={account => account.id}>{account => <Show when={account().remainingPercent !== undefined} fallback={<UsageError message={account().error ?? "OCX has no usage for this account"} />}><LimitBadge label="OCX account" provider="openai" remainingPercent={account().remainingPercent!} resetAt={account().resetAt} clock={componentProps.clock} stale={componentProps.stale} refreshing={componentProps.refreshing} onRefresh={componentProps.onRefresh} /></Show>}</Key></div>;
+}
+
 function UsageError(componentProps: { message: string }) {
   return <span class="codex-usage" role="alert" title={componentProps.message} aria-label={componentProps.message}>Usage unavailable</span>;
 }
@@ -114,6 +119,6 @@ function useUsageClock(resetTimes: Accessor<Array<number | undefined>>, setUsage
 
 function definedAgentSettings(capability?: DefinedAgentsCapability): AgentConfig | undefined { return capability ? { agents: capability.config.agents } : undefined; }
 
-export { appendTerminalOutputs,AppLoading,definedAgentSettings,dialogOwnerName,formatCodexReset,initialTerminals,LimitBadge,UsageError,MAX_TERMINALS,MCP_STATUS_KEY,PROMPT_CONTEXT_STATUS_KEY,selectedProjectCwd,splitConversationKey,staleExtensionContext,terminalConversationKey,usageWindowsDescription,useUsageClock,windowInstanceId };
+export { appendTerminalOutputs,AppLoading,definedAgentSettings,dialogOwnerName,formatCodexReset,initialTerminals,LimitBadge,OpencodexBadges,UsageError,MAX_TERMINALS,MCP_STATUS_KEY,PROMPT_CONTEXT_STATUS_KEY,selectedProjectCwd,splitConversationKey,staleExtensionContext,terminalConversationKey,usageWindowsDescription,useUsageClock,windowInstanceId };
 
 export type { OwnedExtensionDialog,QueuedTerminalOutput,RenameTarget,SessionTerminals,SplitPaneState,TerminalTabState,TerminalTarget };

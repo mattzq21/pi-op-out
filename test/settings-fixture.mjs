@@ -2,7 +2,7 @@ export function appSettings(extra = {}) {
   return {
     hiddenModels: [], knownModels: [],
     defaultThinking: 'off', defaultFastMode: false, contextWindowCap: 0,
-    contextWindowCapEnabled: false, autoRetry: true, debugMode: false,
+    contextWindowCapEnabled: false, autoRetry: true, hiddenUsageIndicators: [], debugMode: false,
     keybindings: { newConversation: '', toggleConversations: '', toggleTerminal: '', toggleDebugMode: '', focusComposer: '', openSettings: '', toggleQueueHold: '' },
     tools: [], skills: [], hosts: [], ...extra,
   };

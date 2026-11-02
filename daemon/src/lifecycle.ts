@@ -62,7 +62,7 @@ async function runBackend(): Promise<void> {
     await step(() => daemon.connect(app, app.pi, app.broker, settings!, 'local'));
     await step(() => daemonRestart.initializeCandidate(app));
     await step(() => mobile.start(app));
-    await step(() => app.usage.start(app));
+    await step(() => app.usage.start(app, settings!.hiddenUsageIndicators));
     await step(() => daemonRestart.ready());
     void resumeInterruptedTasks(app).catch(error => {
       const line = 'Could not start again the interrupted tasks: ' + errorText(error);
