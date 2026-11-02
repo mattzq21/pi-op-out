@@ -23,7 +23,11 @@ const SUBAGENT_FIELDS = ['name', 'sessionId', 'sessionPath', 'hostId', 'toolCall
 
 function keepSubagents(value: any, details: any): void {
   if (!SUBAGENT_TOOLS.has(value.toolName) || !Array.isArray(details?.runs)) return;
-  value.subagents = details.runs.filter(isObject).map((run: any) => Object.fromEntries(SUBAGENT_FIELDS.filter(field => run[field] !== undefined).map(field => [field, run[field]])));
+  value.subagents = details.runs.filter(isObject).map((run: any) => {
+    const icon: any = Object.fromEntries(SUBAGENT_FIELDS.filter(field => run[field] !== undefined).map(field => [field, run[field]]));
+    if (typeof run.task === 'string') icon.task = run.task.length > 200 ? run.task.slice(0, 199) + '…' : run.task;
+    return icon;
+  });
 }
 
 function remove(value: any, keys: string[]): void { if (isObject(value)) for (const key of keys) delete value[key]; }

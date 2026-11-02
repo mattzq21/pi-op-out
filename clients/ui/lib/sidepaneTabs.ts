@@ -83,9 +83,9 @@ export function createSidepaneTabs(options: Options) {
     setPinned(change(next => { for (const key of started) next.add(key); }));
   }));
 
-  const tabs = createMemo<SidepaneTab[]>(() => auxiliaryTree()
-    .filter(session => session.auxiliaryKind !== "subagent" || pinned().has(sessionKey(session)))
+  const agents = createMemo<SidepaneTab[]>(() => auxiliaryTree()
     .map(session => ({ key: sessionKey(session), kind: session.auxiliaryKind ?? "btw", session, label: tabLabel(session), running: options.running(session) })));
+  const tabs = createMemo<SidepaneTab[]>(() => agents().filter(tab => tab.kind !== "subagent" || pinned().has(tab.key)));
 
   const selected = createMemo(() => tabs().find(tab => tab.key === selectedKey()) ?? tabs()[0]);
   const shown = () => open() && tabs().length > 0;
@@ -108,7 +108,7 @@ export function createSidepaneTabs(options: Options) {
   };
 
   return {
-    tabs, selected, open, setOpen, shown, openAuxiliary,
+    agents, tabs, selected, open, setOpen, shown, openAuxiliary,
     workingTree: (session: SessionSummary) => {
       const host = session.hostId ?? "local";
       const tree = [session.id];
