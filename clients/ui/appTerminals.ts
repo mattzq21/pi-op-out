@@ -301,7 +301,25 @@ export function createTerminalController({ transport, sessionTransport, conversa
     return owned() && owner.hasConfirmedOwnership() && ready() && terminalSessionId() === sessionKey && Boolean(tab?.placeholder);
   };
 
-  const startTerminal = async (terminalId: string, cols: number, rows: number) => { const capturedTerminalSessionId = terminalSessionId(); const capturedTerminalLocationState = { ...terminalLocationState() }; const capturedTransport = sessionTransport(capturedTerminalSessionId) ?? transport(); const preparation = !terminalOpen();
+  const startRuns = new Map<string, Promise<void>>();
+
+  const afterStart = (key: string, id: string) => startRuns.get(id)?.then(() => {
+    const tab = terminalsBySession()[key]?.tabs.find(value => value.id === id);
+
+    return Boolean(tab?.generation && !tab.exited);
+  });
+
+  const startTerminal = (terminalId: string, cols: number, rows: number) => {
+    const running = startRuns.get(terminalId);
+
+    if (running) return running;
+    const run = launchTerminal(terminalId, cols, rows).finally(() => { if (startRuns.get(terminalId) === run) startRuns.delete(terminalId); });
+    startRuns.set(terminalId, run);
+
+    return run;
+  };
+
+  const launchTerminal = async (terminalId: string, cols: number, rows: number) => { const capturedTerminalSessionId = terminalSessionId(); const capturedTerminalLocationState = { ...terminalLocationState() }; const capturedTransport = sessionTransport(capturedTerminalSessionId) ?? transport(); const preparation = !terminalOpen();
 
     if (!owned() || !capturedTransport.hasConfirmedOwnership() || startingTerminals.current.has(terminalId)) return; startingTerminals.current.add(terminalId);
     const sessionKey = capturedTerminalSessionId;
@@ -445,10 +463,13 @@ export function createTerminalController({ transport, sessionTransport, conversa
     await refreshShared();
   };
 
-  const syncDraft = (id: string, data: string) => {
+  const syncDraft = (key: string, id: string, data: string) => {
     const revision = { data };
     draftRevisions.set(id, revision);
-    void nativeTerminals.write(id, data, "draft").catch(reason => {
+    const waiting = afterStart(key, id);
+    const send = () => nativeTerminals.write(id, data, "draft");
+
+    void (waiting ? waiting.then(started => started ? send() : undefined) : send()).catch(reason => {
       if (draftRevisions.get(id) === revision) draftRevisions.delete(id);
       addNotice({ title: "Could not sync terminal input", message: reason instanceof Error ? reason.message : String(reason) });
     });
@@ -464,14 +485,19 @@ export function createTerminalController({ transport, sessionTransport, conversa
 
   const write = async (data: string, clearDraft = false, userInput = true) => {
     if (!ready() || !owned()) return false;
-    const { id, generation } = state.activeTerminal;
+    const id = state.activeTerminal.id;
     const key = terminalSessionId();
     const revision = draftRevisions.get(id);
+    const expectedDraft = revision?.data ?? state.activeTerminal.inputDraft ?? "";
+    const waiting = afterStart(key, id);
+
+    if (waiting && (!userInput || !await waiting)) return false;
+    const generation = terminalsBySession()[key]?.tabs.find(tab => tab.id === id)?.generation;
 
     try {
       if (!userInput) await nativeTerminals.write(id, data, "reply");
       else if (clearDraft && data === "\u0003") await nativeTerminals.interrupt(id);
-      else if (clearDraft) await nativeTerminals.writeAndClearDraft(id, data, revision?.data ?? state.activeTerminal.inputDraft ?? "");
+      else if (clearDraft) await nativeTerminals.writeAndClearDraft(id, data, expectedDraft);
       else await transport().writeTerminal(id, data);
     }
     catch (reason) { addNotice({ title: "Terminal input failed", message: reason instanceof Error ? reason.message : String(reason) }); void refreshShared();
@@ -485,7 +511,7 @@ export function createTerminalController({ transport, sessionTransport, conversa
 
   const updateDraft = (data: string) => {
     if (!ready() || !owned()) return;
-    syncDraft(state.activeTerminal.id, data);
+    syncDraft(terminalSessionId(), state.activeTerminal.id, data);
   };
 
   const resize = async (cols: number, rows: number) => {

@@ -78,3 +78,64 @@ test('opening an empty terminal then taking ownership starts the shell before in
     assert.deepEqual(notices, []);
   } finally { await view?.unmount(); await transport.dispose(); dom.restore(); }
 });
+
+test('input typed before the shell starts is sent after the start', async () => {
+  const dom = installDom();
+  HTMLElement.prototype.scrollIntoView = () => {};
+
+  terminals.length = 0;
+  const history = new Map(), notices = [], writes = [], started = Promise.withResolvers(), release = Promise.withResolvers();
+  let lists = 0;
+  mockIPC(async (command, args) => {
+    if (command === 'start_pi') return { attached: true, owned: true };
+
+    if (command === 'stop_pi') return true;
+
+    if (command !== 'shared_terminal') return;
+    const id = args.sharedTerminalId;
+
+    if (args.action === 'list') {
+      if (++lists === 2) { started.resolve(); await release.promise; }
+      return [...history.values()];
+    }
+
+    if (args.action === 'start') history.set(id, { id, output: '$ ', outputEnd: 2, generation: '1', owned: true, started: true, exited: false });
+
+    if (args.action === 'write_with_draft') {
+      if (!history.has(id)) throw 'Terminal is unavailable';
+      writes.push(args.data);
+    }
+  }, { shouldMockEvents: true });
+  let controller, view;
+  const transport = new NativeTransport({ sessionId: 'start-gap', cwd: '/repo' });
+
+  try {
+    await transport.connect();
+    view = await renderComponent(() => {
+      controller = createTerminalController({ transport: () => transport, sessionTransport: () => transport, conversationKey: () => 'local:start-gap', location: () => ({ cwd: '/repo', hostId: 'local' }), addNotice: notice => notices.push(notice) });
+      controller.setTerminalOpen(true);
+
+      return createComponent(Show, {
+        get when() { return controller.ready(); },
+        get children() { return createComponent(TerminalView, {
+          cwd: '/repo', ownershipRequired: false,
+          get terminals() { return controller.state.sessionTerminals.tabs.map(tab => ({ id: tab.id, label: 'Terminal' })); },
+          get activeId() { return controller.state.activeTerminal.id; },
+          get output() { return controller.state.activeTerminal.output; },
+          get outputEnd() { return controller.state.activeTerminal.outputEnd; },
+          get started() { return controller.state.activeTerminal.started; },
+          onStart: controller.startTerminal, onData: controller.write, onResize: controller.resize,
+          onTakeOwnership: controller.takeOwnership, onSnapshot: () => {}, onAdd: controller.addTerminal,
+          onSelect: controller.selectTerminal, onDelete: controller.deleteTerminal, onClose: controller.close,
+        }); },
+      });
+    });
+    await started.promise;
+    await act(() => terminals.at(-1).data('p'));
+    await act(() => terminals.at(-1).data('wd\r'));
+    release.resolve();
+    await act(() => new Promise(resolve => setTimeout(resolve, 50)));
+    assert.deepEqual(writes, ['p', 'wd\r']);
+    assert.deepEqual(notices, []);
+  } finally { release.resolve(); await view?.unmount(); await transport.dispose(); dom.restore(); }
+});
