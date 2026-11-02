@@ -82,6 +82,7 @@ html[data-mobile] .app:has(.icon-rail:not(.compact)) ~ .mobile-reconnect-banner 
   .directory-palette-result { min-height: 44px; }
   input, textarea, select { font-size: calc(16px + var(--settings-font-offset, 0px)); }
   .icon-button { min-width: 40px; min-height: 40px; }
+  .code-copy.icon-button, .table-copy.icon-button { min-width: 0; min-height: 0; }
   .project-actions, .session-actions, .message-actions { opacity: 1; }
   .message { padding-inline: 12px; }
   .message-content { min-width: 0; overflow-wrap: anywhere; }
