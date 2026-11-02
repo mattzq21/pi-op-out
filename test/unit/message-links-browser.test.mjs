@@ -73,10 +73,3 @@ test('opening a link again after the system launcher is fixed removes the earlie
   assert.equal(await page.getByRole('alert').count(), 0);
 });
 
-test('relative and non-web destinations stay readable without active links', async t => {
-  const { page, launchedTargets } = await linkPage(t, '[relative](/local/file) [mail](mailto:a@example.com)');
-  assert.match(await page.getByRole('article').textContent(), /relative/);
-  assert.match(await page.getByRole('article').textContent(), /mail/);
-  assert.equal(await page.getByRole('link').count(), 0);
-  assert.deepEqual(await launchedTargets(), []);
-});

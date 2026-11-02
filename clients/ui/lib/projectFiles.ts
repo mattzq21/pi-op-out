@@ -42,12 +42,3 @@ export function fileReference(value: string): FileReference | undefined {
   return { path, ...sourceLocation(location) };
 }
 
-export function looksLikeFile(value: string) {
-  const reference = fileReference(value);
-
-  if (!reference || /\s/.test(reference.path)) return false;
-  const path = reference.path;
-
-  return /(?:^|\/)(?:[\w@+.-]+\.[a-z\d_-]+|\.[\w.-]+|Dockerfile|Makefile|Justfile|LICENSE|README|AGENTS\.md)$/i.test(path)
-    || /^(?:\.{0,2}\/|~\/|[\w@.-]+\/)[\w@./+~-]+$/.test(path);
-}

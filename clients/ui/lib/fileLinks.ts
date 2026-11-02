@@ -1,5 +1,5 @@
 import { required } from "./required";
-import { fileReference, looksLikeFile } from "./projectFiles";
+import { fileReference } from "./projectFiles";
 import { webUrl } from "./webLinks";
 
 function fileButton(path: string, label: string) {
@@ -13,10 +13,10 @@ function fileButton(path: string, label: string) {
   return button;
 }
 
-function referenceLink(value: string, allowFile: (value: string) => boolean) {
+function webLink(value: string) {
   const url = webUrl(value);
 
-  if (!url) return looksLikeFile(value) && allowFile(value) ? fileButton(value, value) : undefined;
+  if (!url) return undefined;
   const link = document.createElement("a");
   link.className = "message-link";
   link.href = url;
@@ -33,14 +33,14 @@ function referenceText(value: string) {
   return value.slice(0, end);
 }
 
-function linkText(node: Text, allowFile: (value: string) => boolean) {
+function linkText(node: Text) {
   const text = node.data;
   let fragment: DocumentFragment | undefined;
   let end = 0;
 
   for (const match of text.matchAll(/[^\s<>"'`()[\]{},;]+/g)) {
     const candidate = referenceText(match[0]);
-    const link = referenceLink(candidate, allowFile);
+    const link = webLink(candidate);
 
     if (!link) continue;
     fragment ??= document.createDocumentFragment();
@@ -85,7 +85,7 @@ function linkAllowedFileReferences(root: DocumentFragment, allowFile: (value: st
   for (const code of root.querySelectorAll("code")) {
     if (code.closest("pre, a, button, .file-link")) continue;
     const path = code.textContent ?? "";
-    const link = referenceLink(path, allowFile);
+    const link = webLink(path);
 
     if (link) code.replaceChildren(link);
   }
@@ -97,7 +97,7 @@ function linkAllowedFileReferences(root: DocumentFragment, allowFile: (value: st
     if (node instanceof Text && !node.parentElement?.closest("pre, code, a, button, .file-link")) nodes.push(node);
   }
 
-  for (const node of nodes) linkText(node, allowFile);
+  for (const node of nodes) linkText(node);
 
   return root;
 }
