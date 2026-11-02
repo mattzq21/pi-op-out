@@ -143,7 +143,7 @@ test('first run creates private defaults and preserves existing prompts (product
   const allTools = ['read', 'bash', 'edit', 'write', 'grep', 'find', 'ls', 'web_search', 'spawn_subagents'];
   const f = await agentFixture(t, { config: null, env, runtime: { enabledTools: allTools }, tools: allTools, files: { 'home/.agents/AGENTS.md': 'Personal instructions' } });
   await f.load(); const config = await f.configuration();
-  const expected = { name: 'general', model: '', effort: development ? 'medium' : 'high', extensions: [], max_subagents: 8, path_systemprompt: '~/.agents/prompts/system/default.md', path_agent_prompt: '~/.agents/AGENTS.md', tools: allTools, skills: [], mcpServers: {} };
+  const expected = { name: 'general', model: '', effort: 'high', extensions: [], max_subagents: 8, path_systemprompt: '~/.agents/prompts/system/default.md', path_agent_prompt: '~/.agents/AGENTS.md', tools: allTools, skills: [], mcpServers: {} };
 
   if (development) expected.fastMode = false;
   assert.partialDeepStrictEqual(config.agents[0], expected);
@@ -160,7 +160,7 @@ test('first run creates private defaults and preserves existing prompts (develop
   const allTools = ['read', 'bash', 'edit', 'write', 'grep', 'find', 'ls', 'web_search', 'spawn_subagents'];
   const f = await agentFixture(t, { config: null, env, runtime: { enabledTools: allTools }, tools: allTools, files: { 'home/.agents/AGENTS.md': 'Personal instructions' } });
   await f.load(); const config = await f.configuration();
-  const expected = { name: 'general', model: '', effort: development ? 'medium' : 'high', extensions: [], max_subagents: 8, path_systemprompt: '~/.agents/prompts/system/default.md', path_agent_prompt: '~/.agents/AGENTS.md', tools: allTools, skills: [], mcpServers: {} };
+  const expected = { name: 'general', model: '', effort: 'high', extensions: [], max_subagents: 8, path_systemprompt: '~/.agents/prompts/system/default.md', path_agent_prompt: '~/.agents/AGENTS.md', tools: allTools, skills: [], mcpServers: {} };
 
   if (development) expected.fastMode = false;
   assert.partialDeepStrictEqual(config.agents[0], expected);

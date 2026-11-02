@@ -218,6 +218,7 @@ function addBundledAgents(config: Config, pi: ConfigRuntime) {
     const agent = structuredClone(config.agents.find(agent => agent.name === "general") ?? generalAgent(pi));
     agent.name = name;
     agent.model = "";
+    agent.effort = "high";
     delete agent.isDefault;
     config.agents.push(agent);
   }
