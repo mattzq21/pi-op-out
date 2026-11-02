@@ -4,7 +4,6 @@ Your personal setup forced on others
 
 reinstall-mobile.mjs:
 It signs release builds with the debug key.
-CustomProviderForm.tsx:7: a "Go broker preset" for 127.0.0.1:8787 (your own local service) shows to all users.
 profiles.ts:8: the bundled agents workhorse and reviewer are set to openai/gpt-6-luna. Users without OpenAI get agents that do not work.
 Web search defaults to gpt-6.1-sol (OpenAI) in daemon/plugins/web-search.
 prompts.ts:296: default prompt files go in ~/.agents/.... The app creates them in the user's home folder.
