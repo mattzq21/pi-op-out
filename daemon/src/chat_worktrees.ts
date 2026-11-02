@@ -155,19 +155,10 @@ async function commitOf(cwd: string, ref: string): Promise<string | null> {
   return run.code === 0 ? run.stdout.trim() : null;
 }
 
-const OPERATIONS = ['MERGE_HEAD', 'CHERRY_PICK_HEAD', 'REVERT_HEAD', 'rebase-merge', 'rebase-apply'];
-
-async function operationInProgress(root: string): Promise<boolean> {
-  const markers = (await git(root, ['rev-parse', '--path-format=absolute', ...OPERATIONS.flatMap(name => ['--git-path', name])])).stdout.trim().split('\n');
-  for (const marker of markers) if (await exists(marker)) return true;
-  return (await git(root, ['ls-files', '--unmerged'])).stdout.trim() !== '';
-}
-
 export async function saveProgress(cwd: string, repository?: Repository): Promise<{ commit: string } | null> {
   const { gitCommonDir } = await required(cwd, repository, 'save progress');
   return serialized(gitCommonDir, async () => {
     const root = await topLevel(cwd);
-    if (await operationInProgress(root)) return null;
     await git(root, ['add', '.']);
     if ((await git(root, ['diff', '--cached', '--quiet'], { allow: [1] })).code === 0) return null;
     await git(root, ['commit', '--quiet', '-m', SAVE_MESSAGE]);
