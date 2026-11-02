@@ -1,4 +1,5 @@
 import { render } from 'solid-js/web';
+import { Message } from '../../clients/ui/components/Message';
 import { ImageGallery, ZoomableImage } from '../../clients/ui/components/ZoomableImage';
 import '../../clients/ui/styles.css';
 
@@ -13,6 +14,7 @@ render(() => <main>
   <ZoomableImage src={canvas.toDataURL('image/png')} alt="Chart" />
   <ZoomableImage src="data:image/png;base64,broken" alt="Missing chart" onError={() => { (window as any).imageErrors++; }} />
   <ImageGallery>
+    <Message message={{ id: 'user', role: 'user', content: [{ type: 'text', text: 'Look' }, ...['#cccc33', '#33cccc'].map(color => ({ type: 'image' as const, mimeType: 'image/png', data: tile(color).split(',')[1] }))] }} />
     <ZoomableImage src={tile('#cc3333')} alt="First" />
     <ZoomableImage src="data:image/png;base64,broken" alt="Broken" />
     <ZoomableImage src={tile('#33cc33')} alt="Second" />

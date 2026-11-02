@@ -43,7 +43,7 @@ test('an image that cannot load says so and cannot be opened', async t => {
   assert.equal(await page.evaluate(() => window.imageErrors), 1);
 });
 
-test('images in one gallery are browsed with arrow keys and buttons, skipping images that cannot load', async t => {
+test('images in one gallery are browsed with arrow keys and buttons, skipping images that cannot load and attachments of sent messages', async t => {
   const page = await open(t);
   await page.getByRole('button', { name: 'Image unavailable: Broken' }).waitFor();
   await page.getByRole('button', { name: 'Enlarge image: Second' }).click();
@@ -61,6 +61,13 @@ test('images in one gallery are browsed with arrow keys and buttons, skipping im
   await page.keyboard.press('Escape');
   await viewer.waitFor({ state: 'detached' });
   assert.equal(await page.evaluate(() => document.activeElement?.getAttribute('aria-label')), 'Enlarge image: Second');
+
+  await page.getByRole('button', { name: 'Enlarge image: Sent attachment' }).last().click();
+  assert.deepEqual(await shown(), ['Sent attachment', '2 / 2']);
+  await page.keyboard.press('ArrowRight');
+  assert.deepEqual(await shown(), ['Sent attachment', '1 / 2']);
+  await page.keyboard.press('Escape');
+  await viewer.waitFor({ state: 'detached' });
 
   await page.getByRole('button', { name: 'Enlarge image: Chart' }).click();
   await page.getByRole('dialog', { name: 'Chart' }).waitFor();
