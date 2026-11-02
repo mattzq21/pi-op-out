@@ -2,13 +2,8 @@ I found these machine-specific or hard-coded items. I did not change anything.
 
 Paths and tools from your own machine
 
-Skill docs run scripts from ~/.agents/skills/mine/..., not from the copy in this repo:
-mobile-piop/SKILL.md
-piop-wdio/SKILL.md
-piop-cross-platform/SKILL.md, which uses ~/.agents/skills/....
-setup-debug.py:458: the Android VM broker defaults to ~/Projects/android-vm-broker, a separate project of yours.
 extensions/piop-define-agents/README.md:39: /home/matt/Projects/cua-vm-broker/cua-vm-broker.
-The Android Studio Java folder is guessed as ~/Applications/android-studio/jbr in reinstall-mobile.mjs:32 and in setup-debug.py.
+The Android Studio Java folder is guessed as ~/Applications/android-studio/jbr in reinstall-mobile.mjs:32.
 Your personal setup forced on others
 
 reinstall-mobile.mjs:
