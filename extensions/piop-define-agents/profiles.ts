@@ -5,8 +5,6 @@ import type { Config } from "./index.ts";
 
 const development = process.env.PIOP_STORAGE_DIRECTORY === ".piop-dev";
 
-export const BUNDLED_MODEL = "openai/gpt-6-luna";
-
 export const fallbackConfig: Config = { agents: [{ name: "general", model: "", effort: development ? "medium" : "high", fastMode: development ? false : undefined, path_systemprompt: DEFAULT_PROMPT_PATH, path_agent_prompt: DEFAULT_AGENT_PROMPT_PATH, tools: ["read", "bash", "edit", "write", "grep", "find", "ls"], skills: [], mcpServers: {} }] };
 
 export function copySnapshot(stored: AgentSnapshot | undefined) {

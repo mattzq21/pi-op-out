@@ -3,7 +3,7 @@ import { STATE_ENTRY, DEFAULTS_ENV, DRAFT_STATE_ENV, type RuntimeDefaults, agent
 import { Type } from "typebox";
 import { Check, Parse } from "typebox/value";
 import { agentDirectory, DEFAULT_PROMPT_PATH, DEFAULT_SYSTEM_PROMPT, resolvePromptPath, ensurePromptFile, snapshotPrompts, ensureDefaultAgentPrompt, readPrompt, readConfigDocument, writeConfig, isNamedAgent, projectDirectory, readProjectDocument, type ProjectDocument } from "./prompts.ts";
-import { BUNDLED_MODEL, fallbackConfig, copySnapshot, selectedProfileState } from "./profiles.ts";
+import { fallbackConfig, copySnapshot, selectedProfileState } from "./profiles.ts";
 import { mcpServers, type McpServers, type LegacyMcpServer } from "./mcp-config.ts";
 import type { Agent, AgentSnapshot, RequiredToolsRequest, McpToolsRequest, McpSelection, SessionAgentState } from "./contracts.ts";
 import { fastModeSession, fastModelProblem, hostFastModels } from "./fast-models.ts";
@@ -217,7 +217,7 @@ function addBundledAgents(config: Config, pi: ConfigRuntime) {
     if (config.agents.some(agent => agent.name === name)) continue;
     const agent = structuredClone(config.agents.find(agent => agent.name === "general") ?? generalAgent(pi));
     agent.name = name;
-    agent.model = BUNDLED_MODEL;
+    agent.model = "";
     delete agent.isDefault;
     config.agents.push(agent);
   }
