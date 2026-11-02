@@ -33,6 +33,11 @@ test('an image opens in a viewer that fits it to the window, shows it at full si
   await preview.click();
   await page.getByRole('button', { name: 'Close image' }).click();
   await viewer.waitFor({ state: 'detached' });
+  assert.equal(await page.evaluate(() => document.querySelector('.image-preview:focus-visible')), null, 'a mouse close leaves no focus outline');
+  await preview.click();
+  await page.mouse.click(5, 5);
+  await viewer.waitFor({ state: 'detached' });
+  assert.equal(await page.evaluate(() => document.querySelector('.image-preview:focus-visible')), null, 'a backdrop click leaves no focus outline');
 });
 
 test('an image that cannot load says so and cannot be opened', async t => {
