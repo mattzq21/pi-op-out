@@ -1,3 +1,4 @@
+import { switchChat } from "./lib/chatSwitch";
 import { z } from "zod";
 import { createMutable } from "solid-js/store";
 import { required } from "./lib/required";
@@ -682,7 +683,8 @@ export function createAppConversations(preloadChat: () => void, prepareTranscrip
       return transport(); }
 
     const nextTransport = runtimePool().forSession(session);
-    const conversationKey = `${hostId}:${session.id}`; transportConversationKeys.current.set(nextTransport, conversationKey); drafts.bindTransport(nextTransport, conversationKey); activateConversationKey(conversationKey); chatSession().discardPendingUpdates(); setView("chat"); updateConnected(false); setDefinedAgents(undefined); setActiveHostId(hostId); setActiveCwd(session.cwd || undefined); activateTransport(nextTransport);
+    const conversationKey = `${hostId}:${session.id}`;
+    switchChat(nextTransport, transport, () => { transportConversationKeys.current.set(nextTransport, conversationKey); drafts.bindTransport(nextTransport, conversationKey); activateConversationKey(conversationKey); chatSession().discardPendingUpdates(); setView("chat"); updateConnected(false); setDefinedAgents(undefined); setActiveHostId(hostId); setActiveCwd(session.cwd || undefined); activateTransport(nextTransport); });
 
     return nextTransport;
   };

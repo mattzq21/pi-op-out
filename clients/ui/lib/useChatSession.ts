@@ -14,7 +14,7 @@ import { contextUsageAfterCompaction } from "./contextUsage";
 import { CONTEXT_CAP_STATUS_KEY } from "../../../extensions/piop-context-window-cap/interface";
 import { appendQueuedProjectContext, applyAssistantMessageEvent, branchMessages, isContextInjection, normalizeMessage, promptContextAnchors, type PiEntry } from "./messages";
 import type { NativeTransport } from "./nativeTransport";
-import { useSessionMemory, type HistoryOutline } from "./sessionMemory";
+import { sessionMemoryFor, useSessionMemory, type HistoryOutline } from "./sessionMemory";
 import { keepLoadedHistory, olderHistoryMarker } from "./historyWindow";
 import { matchesSubmittedMessage, reconcileMessages, reconcilePendingMessages, sameUserContent, upsertLiveMessage } from "./reconcileMessages";
 
@@ -49,13 +49,69 @@ export function useChatSession(transport: Accessor<Pick<NativeTransport, "comman
   });
 
   return {
-    get error() { return runtime().error; }, get state() { return runtime().state; }, get setState() { return runtime().setState; },
+    get loaded() { return runtime().loaded; }, get error() { return runtime().error; }, get state() { return runtime().state; }, get setState() { return runtime().setState; },
     get messages() { return runtime().messages; }, get setMessages() { return runtime().setMessages; },
     get models() { return runtime().models; }, get commands() { return runtime().commands; },
     get thinkingLevels() { return runtime().thinkingLevels; }, get refresh() { return runtime().refresh; },
     get capabilityErrors() { return runtime().capabilityErrors; }, get capabilitiesLoading() { return runtime().capabilitiesLoading; }, get retryCapabilities() { return runtime().retryCapabilities; },
     get handleEvent() { return runtime().handleEvent; }, get discardPendingUpdates() { return runtime().discardPendingUpdates; },
   };
+}
+
+type SnapshotMemory = ReturnType<typeof useSessionMemory>["memory"];
+
+function applySnapshotHistory(memory: SnapshotMemory, snapshot: SessionSnapshot) {
+  memory.set("loaded", true);
+  const cachedSession = memory.getSnapshot();
+  const cachedMessages = !cachedSession.state.sessionId || cachedSession.state.sessionId === snapshot.state.sessionId ? cachedSession.messages : [];
+  const previous = new Map(cachedMessages.filter((message) => message.toolPayloadLoaded && message.toolStatus !== "running").map((message) => [message.deferredToolPayload, message]));
+
+  const windowMessages = branchMessages(snapshot.history.entries, snapshot.history.leafId).map((message) => {
+    const cached = previous.get(message.deferredToolPayload);
+
+    return cached && cached.loadedToolPayloadVersion === message.toolPayloadVersion ? { ...message, content: cached.content, details: cached.details, toolInput: cached.toolInput, nestedCalls: cached.nestedCalls, toolPayloadLoaded: true, loadedToolPayloadVersion: cached.loadedToolPayloadVersion, loadToolPayload: cached.loadToolPayload } : message;
+  });
+
+  if (snapshot.history.omittedEntries) windowMessages.unshift({ id: "client-memory-limit", role: "system", content: "Older history was omitted to fit this client's memory limit. The full conversation remains on the host." });
+  const nextMessages = keepLoadedHistory(cachedMessages, [...olderHistoryMarker(snapshot.history.before, snapshot.history.olderUsage), ...windowMessages]);
+  if (snapshot.history.incomplete) nextMessages.push({ id: `client-transcript-damage:${snapshot.state.sessionId}`, role: "system", content: `Chat history is incomplete. Damaged record lines: ${snapshot.history.damagedLines?.join(", ") ?? "unknown"}. Some messages may be missing.` });
+  memory.set("messages", reconcileMessages(cachedMessages, nextMessages, pendingMessagesSchema.parse(snapshot.queue.pendingMessages)));
+
+  if (snapshot.history.before && snapshot.history.outline) memory.set("outline", { before: snapshot.history.before, items: snapshot.history.outline });
+
+  return nextMessages;
+}
+
+const previews = new WeakMap<SnapshotMemory, Promise<void>>();
+
+function loadPreview(transport: Partial<Pick<NativeTransport, "preview">>, memory: SnapshotMemory) {
+  const unloaded = () => memory.revision === undefined && !memory.getSnapshot().messages.length;
+  const pending = previews.get(memory);
+
+  if (pending || !unloaded()) return pending;
+  const request = transport.preview?.();
+
+  if (!request) return undefined;
+  const applied = request.then(snapshot => {
+    if (!unloaded()) return;
+    const { sessionId, sessionFile, cwd, repository, forkSource, canFork, messageCount } = snapshot.state;
+    memory.batch(() => {
+      applySnapshotHistory(memory, snapshot);
+      memory.set("state", current => current.sessionId && current.sessionId !== sessionId ? current : { ...current, sessionId, sessionFile, cwd, repository, forkSource, canFork, messageCount, pendingMessages: pendingMessagesSchema.parse(snapshot.queue.pendingMessages), pendingMessageCount: snapshot.state.pendingMessageCount, queueHeld: snapshot.state.queueHeld });
+    });
+  }, reason => console.warn("Saved conversation preview failed; waiting for the full load", reason)).finally(() => previews.delete(memory));
+  previews.set(memory, applied);
+
+  return applied;
+}
+
+export function preloadChat(transport: NativeTransport, limit: number): Promise<void> {
+  const request = loadPreview(transport, sessionMemoryFor(transport));
+
+  if (!request) return Promise.resolve();
+  let timer: ReturnType<typeof setTimeout> | undefined;
+
+  return Promise.race([request, new Promise<void>(resolve => { timer = setTimeout(resolve, limit); })]).finally(() => clearTimeout(timer));
 }
 
 function createChatSession(transport: Accessor<Pick<NativeTransport, "command" | "subscribe"> & Partial<Pick<NativeTransport, "ownsConversation" | "isConnected" | "canLoadModels" | "promptControls" | "currentHostId" | "preview">>>, initialState: Accessor<AgentState>, options: { poll?: boolean }) {
@@ -235,42 +291,14 @@ function createChatSession(transport: Accessor<Pick<NativeTransport, "command" |
   createDependencyEffect(() => discardPendingUpdates, () => [discardPendingUpdates]);
 
   const restoreHistory = (snapshot: SessionSnapshot) => {
-    const cachedSession = session.memory.getSnapshot();
-    const cachedMessages = !cachedSession.state.sessionId || cachedSession.state.sessionId === snapshot.state.sessionId ? cachedSession.messages : [];
-    const previous = new Map(cachedMessages.filter((message) => message.toolPayloadLoaded && message.toolStatus !== "running").map((message) => [message.deferredToolPayload, message]));
-
-    const windowMessages = branchMessages(snapshot.history.entries, snapshot.history.leafId).map((message) => {
-      const cached = previous.get(message.deferredToolPayload);
-
-      return cached && cached.loadedToolPayloadVersion === message.toolPayloadVersion ? { ...message, content: cached.content, details: cached.details, toolInput: cached.toolInput, nestedCalls: cached.nestedCalls, toolPayloadLoaded: true, loadedToolPayloadVersion: cached.loadedToolPayloadVersion, loadToolPayload: cached.loadToolPayload } : message;
-    });
-
-    if (snapshot.history.omittedEntries) windowMessages.unshift({ id: "client-memory-limit", role: "system", content: "Older history was omitted to fit this client's memory limit. The full conversation remains on the host." });
-    const nextMessages = keepLoadedHistory(cachedMessages, [...olderHistoryMarker(snapshot.history.before, snapshot.history.olderUsage), ...windowMessages]);
-    if (snapshot.history.incomplete) nextMessages.push({ id: `client-transcript-damage:${snapshot.state.sessionId}`, role: "system", content: `Chat history is incomplete. Damaged record lines: ${snapshot.history.damagedLines?.join(", ") ?? "unknown"}. Some messages may be missing.` });
+    const nextMessages = applySnapshotHistory(session.memory, snapshot);
     activeAssistantId.current = [...nextMessages].reverse().find((message) => message.role === "assistant" && message.streaming)?.id;
     activeMessageIds.current.clear();
 
     for (const message of nextMessages.filter((message) => message.streaming)) trackLiveId(message.role, message.id);
-    session.setMessages(reconcileMessages(cachedMessages, nextMessages, pendingMessagesSchema.parse(snapshot.queue.pendingMessages)));
-
-    if (snapshot.history.before && snapshot.history.outline) session.memory.set("outline", { before: snapshot.history.before, items: snapshot.history.outline });
   };
 
-  const showPreview = () => {
-    const capturedTransport = transport();
-    const request = session.memory.revision === undefined && !session.messages.length ? capturedTransport.preview?.() : undefined;
-
-    void request?.then(snapshot => {
-      if (owner.current !== capturedTransport || session.memory.revision !== undefined || session.messages.length) return;
-      const { sessionId, sessionFile, cwd, repository, forkSource, canFork, messageCount } = snapshot.state;
-      session.memory.batch(() => {
-        restoreHistory(snapshot);
-        session.setState(current => current.sessionId && current.sessionId !== sessionId ? current : { ...current, sessionId, sessionFile, cwd, repository, forkSource, canFork, messageCount, pendingMessages: pendingMessagesSchema.parse(snapshot.queue.pendingMessages), pendingMessageCount: snapshot.state.pendingMessageCount, queueHeld: snapshot.state.queueHeld });
-      });
-    }, reason => console.warn("Saved conversation preview failed; waiting for the full load", reason));
-  };
-  showPreview();
+  void loadPreview(transport(), session.memory);
 
   const refresh = (): Promise<AgentState> => {
     if (owner.current !== transport()) return Promise.reject(new ConversationChangedError());
@@ -616,5 +644,5 @@ function createChatSession(transport: Accessor<Pick<NativeTransport, "command" |
 
   createComputed(() => { eventHandler.current = handleEvent; });
 
-  return { get error() { return refreshError(); }, get capabilityErrors() { return capabilityErrors(); }, get capabilitiesLoading() { return capabilitiesLoading(); }, get retryCapabilities() { return () => { refreshCapabilities(); void refreshView(); }; }, get state() { return session.state; }, get setState() { return session.setState; }, get messages() { return session.messages; }, get setMessages() { return session.setMessages; }, get models() { return session.models; }, get commands() { return session.commands; }, get thinkingLevels() { return session.thinkingLevels; }, get refresh() { return refresh; }, get handleEvent() { return handleEvent; }, get discardPendingUpdates() { return discardPendingUpdates; } };
+  return { get loaded() { return session.loaded; }, get error() { return refreshError(); }, get capabilityErrors() { return capabilityErrors(); }, get capabilitiesLoading() { return capabilitiesLoading(); }, get retryCapabilities() { return () => { refreshCapabilities(); void refreshView(); }; }, get state() { return session.state; }, get setState() { return session.setState; }, get messages() { return session.messages; }, get setMessages() { return session.setMessages; }, get models() { return session.models; }, get commands() { return session.commands; }, get thinkingLevels() { return session.thinkingLevels; }, get refresh() { return refresh; }, get handleEvent() { return handleEvent; }, get discardPendingUpdates() { return discardPendingUpdates; } };
 }
