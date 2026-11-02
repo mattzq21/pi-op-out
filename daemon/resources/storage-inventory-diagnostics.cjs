@@ -2,7 +2,7 @@ const fs = require('node:fs/promises');
 const { constants } = require('node:fs');
 const path = require('node:path');
 const { createHash } = require('node:crypto');
-const { createInterface } = require('node:readline');
+const { lines: lfLines } = require('./lf-lines.cjs');
 const { Type } = require('typebox');
 const { Check } = require('typebox/value');
 const { createObservation, observeEntry, recordGoals } = require('./storage-inventory-owners.cjs');
@@ -24,16 +24,15 @@ async function readTranscript(handle, observation, source) {
   let header;
   const stream = handle.createReadStream({ autoClose: false });
   stream.on('data', chunk => { digest.update(chunk); bytes += chunk.length; });
-  const lines = createInterface({ input: stream, crlfDelay: Infinity });
 
   try {
-    for await (const line of lines) {
+    for await (const line of lfLines(stream)) {
       if (!line.trim()) continue;
       const entry = JSON.parse(line);
       header ??= entry;
       observeEntry(observation, entry);
     }
-  } finally { lines.close(); stream.destroy(); }
+  } finally { stream.destroy(); }
 
   if (source.digest && (digest.digest('hex') !== source.digest || bytes !== source.bytes)) throw new Error('Diagnostic transcript bytes differ from its exact-digest publication proof');
 
