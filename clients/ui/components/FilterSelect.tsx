@@ -47,7 +47,7 @@ export function FilterSelect(props: { label: string; filterPlaceholder: string; 
       ? <button ref={trigger} type="button" class={props.trigger.class} aria-haspopup="listbox" aria-expanded={open()} disabled={props.disabled} data-tooltip={props.trigger.tooltip} onClick={() => open() ? close(true) : show()}>{props.trigger.content}</button>
       : <button ref={trigger} type="button" class="filter-select-trigger" aria-label={props.label} aria-haspopup="listbox" aria-expanded={open()} aria-invalid={props.invalid} disabled={props.disabled} data-value={props.value} onClick={() => open() ? close(true) : show()}><span>{selected()?.label ?? props.value}</span><ChevronDown size={14} /></button>}
     {open() && <div class="filter-select-menu">
-      <input ref={filter} aria-label={'Filter ' + props.label} placeholder={props.filterPlaceholder} value={query()} onInput={event => { setQuery(event.currentTarget.value); setActive(visible().findIndex(option => !option.disabled)); }} onKeyDown={event => {
+      <input ref={filter} aria-label={'Filter ' + props.label} placeholder={props.filterPlaceholder} value={query()} onInput={event => { setQuery(event.currentTarget.value); setActive(visible().findIndex(option => !option.disabled)); if (list) list.scrollTop = 0; }} onKeyDown={event => {
         if (event.key === "ArrowDown" || event.key === "ArrowUp") { event.preventDefault(); move(event.key === "ArrowDown" ? 1 : -1); }
         else if (event.key === "Enter") { event.preventDefault(); choose(visible()[active()]); }
         else if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); close(true); }
