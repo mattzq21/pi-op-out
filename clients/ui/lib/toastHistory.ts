@@ -63,11 +63,12 @@ function recordToast(source: string, notice: { title: string; message: string })
 }
 
 export function trackToastNotices(source: string, notices: Accessor<Notice[]>) {
-  let previous = new Set<string>();
+  let previous = new Map<string, string>();
+  const text = (notice: Notice) => JSON.stringify([notice.title, notice.message]);
   createEffect(() => {
     const current = notices();
-    const added = current.filter(notice => !previous.has(notice.id));
-    previous = new Set(current.map(notice => notice.id));
+    const added = current.filter(notice => previous.get(notice.id) !== text(notice));
+    previous = new Map(current.map(notice => [notice.id, text(notice)]));
 
     for (const notice of added) recordToast(source, { title: notice.title, message: notice.message });
   });

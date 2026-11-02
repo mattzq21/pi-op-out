@@ -3,6 +3,7 @@ import { onCleanup } from "solid-js";
 import { createStore, reconcile } from "solid-js/store";
 import { z } from "zod";
 import type { AppSettings, Model, SettingsChange } from "../types";
+import { backgroundAttempt, clearBackgroundError, reportBackgroundError } from "./backgroundErrors";
 import { observeModelConnections } from "./modelReports";
 import { recordSeenModels } from "./modelVisibility";
 import { NativeTransport } from "./nativeTransport";
@@ -31,7 +32,7 @@ export function createHostModelVisibility(localSettings: Accessor<AppSettings | 
     if (disposed) return;
     versions.set(hostId, version(hostId) + 1);
     snapshots.set(hostId, settings);
-    failed.delete(hostId);
+    failed.delete(hostId); clearBackgroundError(`model-list-load:${hostId}`);
     setRemote(hostId, reconcile({ modelAliases: settings.modelAliases ?? {}, hiddenModels: settings.hiddenModels, knownModels: settings.knownModels }));
   };
 
@@ -40,10 +41,11 @@ export function createHostModelVisibility(localSettings: Accessor<AppSettings | 
     loading.add(hostId);
     const reader = new NativeTransport({ hostId, cwd: "~" });
     const started = version(hostId);
+    const attempt = backgroundAttempt(`model-list-load:${hostId}`, "Could not load model list");
     void reader.loadHostSettings().then(settings => { if (started === version(hostId)) store(hostId, settings); }, reason => {
       if (disposed || retrying.has(hostId) || started !== version(hostId)) return;
       failed.add(hostId);
-      addNotice({ title: "Could not load model list", message: `Visible models of ${hostId}: ${message(reason)}` });
+      attempt.failed(`Visible models of ${hostId}: ${message(reason)}`);
     }).finally(() => {
       loading.delete(hostId); void dispose(reader, hostId);
 
@@ -51,7 +53,8 @@ export function createHostModelVisibility(localSettings: Accessor<AppSettings | 
     });
   };
 
-  const dispose = (transport: NativeTransport, hostId: string) => transport.dispose().catch(reason => addNotice({ title: "Could not close model settings connection", message: `${hostId}: ${message(reason)}` }));
+  const closeFailed = new Set<string>();
+  const dispose = (transport: NativeTransport, hostId: string) => transport.dispose().catch(reason => { closeFailed.add(hostId); reportBackgroundError("Could not close model settings connection", `${hostId}: ${message(reason)}`, `model-connection-close:${hostId}`); });
   const reportWarnings = (hostId: string, change: SettingsChange) => {
     if (change.warnings?.length) addNotice({ title: "Settings synchronization pending", message: `${hostId}: ${change.warnings.join("\n")}` });
 
@@ -65,14 +68,20 @@ export function createHostModelVisibility(localSettings: Accessor<AppSettings | 
   const receive = (hostId: string, change: SettingsChange) => { store(hostId, change.settings); retryReport(hostId); };
   const unlisten = listen("pi://host-settings-changed", ({ payload }) => receive(payload.hostId, payload), settingsChangeSchema.extend({ hostId: z.string() }));
   const unlistenLocal = listen("pi://settings-changed", ({ payload }) => receive("local", payload), settingsChangeSchema);
-  const stopConnections = observeModelConnections(hostId => {
+  const connected = (hostId: string) => {
+    if (closeFailed.delete(hostId)) clearBackgroundError(`model-connection-close:${hostId}`);
     retryReport(hostId);
     if (loading.has(hostId)) { retrying.add(hostId); return; }
 
     if (!failed.delete(hostId)) return;
     load(hostId);
-  });
-  onCleanup(() => { disposed = true; stopConnections(); void unlisten.then(stop => stop()); void unlistenLocal.then(stop => stop()); });
+  };
+  const stopConnections = observeModelConnections(connected);
+  const unlistenRestored = listen("pi://event", ({ payload }) => {
+    if (payload.type !== "connection_restored") return;
+    for (const hostId of payload.hostId ? [payload.hostId] : new Set([...pending.keys(), ...failed, ...closeFailed])) connected(hostId);
+  }, z.object({ type: z.string().optional(), hostId: z.string().optional() }).catch({}));
+  onCleanup(() => { disposed = true; stopConnections(); void unlisten.then(stop => stop()); void unlistenLocal.then(stop => stop()); void unlistenRestored.then(stop => stop()); });
 
   const hidden = (hostId: string): readonly string[] | undefined => {
     if (hostId === "local") return localSettings()?.hiddenModels;
@@ -91,6 +100,7 @@ export function createHostModelVisibility(localSettings: Accessor<AppSettings | 
     if (active) return active;
     if (!pending.has(hostId)) return Promise.resolve();
     const writer = new NativeTransport({ hostId, cwd: "~" });
+    const attempt = backgroundAttempt(`model-list-save:${hostId}`, "Could not save model list");
     const operation = (async () => {
       while (!disposed && pending.has(hostId)) {
         const report = pending.get(hostId)!;
@@ -123,7 +133,7 @@ export function createHostModelVisibility(localSettings: Accessor<AppSettings | 
       if (retry && requested && pending.has(hostId)) recordSeen(hostId, [], false);
     });
     recording.set(hostId, operation);
-    void operation.catch(reason => addNotice({ title: "Could not save model list", message: `${hostId}: ${message(reason)}` }));
+    void operation.then(() => attempt.succeeded(), reason => attempt.failed(`${hostId}: ${message(reason)}`));
 
     return operation;
   };

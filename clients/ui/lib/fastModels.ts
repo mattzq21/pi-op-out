@@ -1,4 +1,4 @@
-import { reportBackgroundError } from "./backgroundErrors";
+import { backgroundAttempt } from "./backgroundErrors";
 import { createSignal, type Accessor, type Setter } from "solid-js";
 import { z } from "zod";
 import { invoke, listen } from "./platform";
@@ -13,21 +13,24 @@ export type FastModelSnapshot = z.infer<typeof snapshotSchema>;
 
 const hosts = new Map<string, { snapshot: Accessor<FastModelSnapshot | undefined>; set: Setter<FastModelSnapshot | undefined> }>();
 
+const failed = new Set<string>();
+
 let watching = false;
 
 function load(hostId: string) {
   const entry = hosts.get(hostId);
 
   if (!entry) return;
+  const attempt = backgroundAttempt(`fast-models:${hostId}`, "Could not load fast models for host " + hostId);
   void invoke("provider_auth", { hostId, request: { action: "fast_models" } }, snapshotSchema)
-    .then(snapshot => entry.set(snapshot))
-    .catch(reason => reportBackgroundError("Could not load fast models for host " + hostId, reason));
+    .then(snapshot => { if (attempt.succeeded()) failed.delete(hostId); entry.set(snapshot); }, reason => { if (attempt.failed(reason)) failed.add(hostId); });
 }
 
 export function hostFastModels(hostId: string): Accessor<FastModelSnapshot | undefined> {
   if (!watching) {
     watching = true;
     void listen("pi://fast-models-changed", ({ payload }) => load(payload.hostId), z.object({ hostId: z.string() }));
+    void listen("pi://event", ({ payload }) => { if (payload.type === "connection_restored") for (const hostId of [...failed]) load(hostId); }, z.object({ type: z.string().optional() }).catch({}));
   }
 
   let entry = hosts.get(hostId);

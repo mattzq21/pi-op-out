@@ -1,4 +1,4 @@
-import { reportBackgroundError } from "./backgroundErrors";
+import { backgroundAttempt } from "./backgroundErrors";
 import { registerModelSession, reportModels } from "./modelReports";
 import { z } from "zod";
 import { sessionSnapshotSchema, modelSchema, slashCommandSchema, agentStateSchema } from "./responseSchemas";
@@ -61,6 +61,8 @@ export function useChatSession(transport: Accessor<Pick<NativeTransport, "comman
 function createChatSession(transport: Accessor<Pick<NativeTransport, "command" | "subscribe"> & Partial<Pick<NativeTransport, "ownsConversation" | "isConnected" | "canLoadModels" | "promptControls" | "currentHostId" | "preview">>>, initialState: Accessor<AgentState>, options: { poll?: boolean }) {
   const session = useSessionMemory(() => (transport()), () => (initialState()));
   const owner = createRef<ReturnType<typeof transport> | undefined>(transport());
+  const stateKey = `conversation-state:${crypto.randomUUID()}`;
+  const stateAttempt = () => backgroundAttempt(stateKey, "Could not update the conversation state");
   const loading = new AbortController();
   onCleanup(() => { owner.current = undefined; loading.abort(); });
 
@@ -89,11 +91,12 @@ function createChatSession(transport: Accessor<Pick<NativeTransport, "command" |
   const pendingRevision = createRef<{ base: string | undefined; next: string } | undefined>(undefined);
 
   const syncMessageCount = () => {
-    const capturedTransport = transport(); const sessionId = session.state.sessionId;
+    const capturedTransport = transport(); const sessionId = session.state.sessionId; const attempt = stateAttempt();
 
     void load({ type: "get_state" }, agentStateSchema.pick({ sessionId: true, messageCount: true })).then(state => {
+      attempt.succeeded();
       if (owner.current === capturedTransport && session.state.sessionId === sessionId && state.sessionId === sessionId && session.state.messageCount !== state.messageCount) session.setState(current => ({ ...current, messageCount: state.messageCount }));
-    }, reason => { if (owner.current === capturedTransport) reportBackgroundError("Could not update the conversation state", reason); });
+    }, reason => { if (owner.current === capturedTransport) attempt.failed(reason); });
   };
 
   const refreshStats = () => {
@@ -133,7 +136,7 @@ function createChatSession(transport: Accessor<Pick<NativeTransport, "command" |
     ]).then(([modelResult, thinkingResult, commandResult]) => {
       if (owner.current !== transport() || capabilityRequest.current !== request) return;
       session.memory.batch(() => {
-        if (modelResult) { session.setModels(modelResult.models); void reportModels(transport().currentHostId?.() ?? "local", modelResult.models).catch(reason => reportBackgroundError("Could not record available models", reason)); }
+        if (modelResult) { session.setModels(modelResult.models); void reportModels(transport().currentHostId?.() ?? "local", modelResult.models).catch(() => undefined); }
 
         if (thinkingResult) session.setThinkingLevels(thinkingResult.levels);
 
@@ -349,6 +352,8 @@ function createChatSession(transport: Accessor<Pick<NativeTransport, "command" |
     })();
 
     refreshOperation.current = { transport: transport(), promise, buffer };
+    const attempt = stateAttempt();
+    void promise.then(() => attempt.succeeded(), () => undefined);
 
     return promise;
   };
