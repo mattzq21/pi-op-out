@@ -1,6 +1,5 @@
 import type { AppRequest } from "../../extensions/piop-define-agents/contracts.ts";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { extendedHooks } from "./hooks-extended/interface.ts";
 import { registerSubagents } from "./session-broker/subagents.ts";
 import { registerConversationClient } from "./session-broker/client.ts";
 import { registerOrchestration } from "./session-broker/orchestration.ts";
@@ -30,15 +29,6 @@ export default function sessionBroker(pi: ExtensionAPI) {
 
     if (file) await initialize(file, ctx.sessionManager.getSessionId(), !existsSync(file));
   });
-  const unsubscribeTaskSuccess = extendedHooks(pi).on("task_success", async (event, ctx) => {
-    const { type: _type, context: _context, entries: _entries, continue: _continue, toolResults: _toolResults, ...rest } = event as typeof event & Record<string, unknown>;
-    const data = { ...rest, sessionId: ctx.sessionManager.getSessionId(), cwd: ctx.cwd };
-    const send = Object.getOwnPropertyDescriptor(globalThis, Symbol.for("piop.runtime-events"))?.value as ((name: string, data: unknown) => Promise<void>) | undefined;
-
-    if (!send) throw new Error("Piop runtime events are unavailable");
-    await send("task_success", data);
-  });
-  pi.on("session_shutdown", unsubscribeTaskSuccess);
   registerInputHold(pi);
   registerQueueHold(pi);
   const promptTools = registerPromptTools(pi);

@@ -9,7 +9,7 @@ import { agentDaemon, text } from './agent-chats';
 
 const git = (cwd: string, ...args: string[]) => execFileSync('git', ['-C', cwd, ...args], { encoding: 'utf8' }).trim();
 
-test('branch copies selected history and committed files, archive restores last commit without opening the chat', async () => {
+test('branch copies selected history and committed files, archive keeps a snapshot of the current files and restores it without opening the chat', async () => {
   const agents = await agentDaemon();
   try {
     const cwd = join(agents.daemon.home, 'project');
@@ -58,16 +58,16 @@ test('branch copies selected history and committed files, archive restores last 
     const history = (await command({ type: 'get_entries' })).entries.filter((e: any) => e.type === 'message' && ['user', 'assistant'].includes(e.message.role)).map((e: any) => text(e.message));
     expect(history).toEqual(['First branch question', 'Answer: First branch question']);
     after = agents.daemon.events.length;
+    const base = git(branch.cwd, 'rev-parse', 'HEAD');
     writeFileSync(join(branch.cwd, 'tracked.txt'), 'branch work');
-    await command({ type: 'prompt', message: 'Save branch files' });
+    await command({ type: 'prompt', message: 'Edit branch files' });
     await settled(after);
-    expect(git(branch.cwd, 'log', '-1', '--format=%s')).toBe('Piop saving progress');
-    const saved = git(branch.cwd, 'rev-parse', 'HEAD');
-    writeFileSync(join(branch.cwd, 'tracked.txt'), 'discard after commit');
+    expect(git(branch.cwd, 'rev-parse', 'HEAD')).toBe(base);
+    expect(git(branch.cwd, 'status', '--porcelain')).toBe('M tracked.txt');
     await agents.daemon.invoke('archive_session', { sessionPath: branch.sessionFile, hostId: 'local', clientId: 'laptop', terminalIds: [] });
     expect(existsSync(branch.cwd)).toBe(false);
     expect(existsSync(cwd)).toBe(true);
-    expect(git(cwd, 'rev-parse', 'refs/piop/archives/' + branch.sessionId)).toBe(saved);
+    expect(git(cwd, 'rev-parse', 'refs/piop/archives/' + branch.sessionId + '^@')).toBe(base);
     expect(git(cwd, 'branch', '--list', 'piop/' + short(branch.sessionId))).toBe('');
     const report = await agents.daemon.invoke('storage_report');
     const archived = report.hosts.flatMap((h: any) => h.archives).find((a: any) => a.sessionId === branch.sessionId || a.id === branch.sessionId);
@@ -76,6 +76,7 @@ test('branch copies selected history and committed files, archive restores last 
     const restored = (await agents.daemon.invoke('list_sessions')).find((s: any) => s.id === branch.sessionId);
     expect(restored).toBeTruthy();
     expect(readFileSync(join(restored.cwd, 'tracked.txt'), 'utf8')).toBe('branch work');
+    expect(git(restored.cwd, 'rev-parse', 'HEAD')).toBe(base);
     expect(git(restored.cwd, 'branch', '--show-current')).toBe('piop/' + short(branch.sessionId));
   } finally { await agents.close(); }
 }, 120000);

@@ -21,7 +21,7 @@ function worktreeOf(record: ChatWorktreeRecord): ChatWorktree {
 
 function archiveOf(record: ChatWorktreeRecord): ChatArchive {
   if (!record.archive) throw new Error('Chat has no saved commit: ' + record.chatId);
-  return { ...worktreeOf(record), ...record.archive };
+  return { ...worktreeOf(record), ref: record.archive.ref, commit: record.archive.commit, base: record.archive.base ?? record.archive.commit };
 }
 
 function without<T extends object, K extends keyof T>(value: T, ...keys: K[]): Omit<T, K> {
@@ -94,7 +94,7 @@ export async function beginArchive(chatIds: string[], root = profileRoot()): Pro
       }
       const intent = await recordProtection(record, root);
       const archive = await protectArchive({ worktree: worktreeOf(intent), home: homeDir() });
-      try { done.push(Worktrees.replace(intent, { ...without(settled(intent), 'protecting'), state: 'archiving', archive: { ref: archive.ref, commit: archive.commit } } as ChatWorktreeRecord, root)!); }
+      try { done.push(Worktrees.replace(intent, { ...without(settled(intent), 'protecting'), state: 'archiving', archive: { ref: archive.ref, commit: archive.commit, ...archive.base !== archive.commit ? { base: archive.base } : {} } } as ChatWorktreeRecord, root)!); }
       catch (error) {
         try { await releaseArchive(archive); }
         catch (cleanup) { throw new Error(`${errorText(error)}\nCould not release ${archive.ref}: ${errorText(cleanup)}`); }
@@ -125,7 +125,7 @@ async function releaseUnrecordedArchive(record: ChatWorktreeRecord, root: string
   const ref = archiveRef(record.chatId);
   const commit = await archivedCommit(record);
   if (commit) {
-    try { await releaseArchive({ ...worktreeOf(record), ref, commit }); }
+    try { await releaseArchive({ ...worktreeOf(record), commit }); }
     catch (error) { throw new Error(Worktrees.fail(record, `Could not release the unrecorded ${ref}: ${errorText(error)}`, root)); }
   }
   return Worktrees.replace(Worktrees.read(record.chatId, root), without(settled(record), 'protecting') as ChatWorktreeRecord, root)!;
@@ -171,9 +171,9 @@ export async function beginRestore(chatIds: string[], root = profileRoot()): Pro
       if (record.state !== 'archived') throw new Error(`Cannot restore chat ${record.chatId}: its worktree is ${record.state}`);
       running.add(record.chatId);
       const archive = archiveOf(record);
-      const plan = await planRestore({ archive, home: homeDir(), retainShared: sharedFolder(record, root, record.worktree, true) });
-      const restoring = Worktrees.replace(record, { ...settled(record), state: 'restoring', restore: plan }, root)!;
-      done.push(restoring);
+      const plan = await planRestore({ archive, home: homeDir(), retainShared: sharedFolder(record, root, record.worktree, true), taken: () => Worktrees.takenNames(root), save: plan => {
+        done.push(Worktrees.replace(record, { ...settled(record), state: 'restoring', restore: plan }, root)!);
+      } });
       await restoreWorktree({ archive, home: homeDir(), plan });
     }
     return done;

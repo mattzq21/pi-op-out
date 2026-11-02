@@ -1,5 +1,5 @@
 import { test, expect } from 'bun:test';
-import { existsSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { agentDaemon, called, text } from './agent-chats';
 test('archiving a worktree chat and its child releases its worktree', async () => {
@@ -33,7 +33,7 @@ test('archiving a worktree chat and its child releases its worktree', async () =
   expect(existsSync(branch.cwd)).toBe(false);
   const archived=archives.find((a:any)=>a.id===branch.sessionId);
   await agents.daemon.invoke('restore_archived_session',{sessionPath:archived.path,hostId:'local',clientId:'laptop'});
-  expect(existsSync(join(branch.cwd,'dirty.txt'))).toBe(false);
+  expect(readFileSync(join(branch.cwd,'dirty.txt'),'utf8')).toBe('after last commit');
   expect((await agents.daemon.invoke('list_sessions')).some((s:any)=>s.id===child.id)).toBe(true);
  } finally {await agents.close();}
 },90000);

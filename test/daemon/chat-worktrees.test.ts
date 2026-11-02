@@ -37,6 +37,12 @@ function repository(): { repo: string; home: string; base: string } {
   return { repo, home, base };
 }
 
+function commitAll(root: string): string {
+  git(root, 'add', '.');
+  git(root, 'commit', '--quiet', '-m', 'Work');
+  return git(root, 'rev-parse', 'HEAD');
+}
+
 function files(root: string): Record<string, string> {
   const listed = git(root, 'ls-files', '--cached', '--others', '--exclude-standard', '-z').split('\0').filter(Boolean);
   return Object.fromEntries([...new Set(listed)].filter(name => existsSync(join(root, name))).sort().map(name => [name, readFileSync(join(root, name), 'utf8')]));
@@ -55,7 +61,7 @@ function short(chatId: string, n = 4): string { return chatId.replaceAll('-', ''
 async function create(input: { sourceCwd: string; chatId: string; home: string; baseBranch?: string }) {
   const repository = await Worktrees.detectRepository(input.sourceCwd);
   if (!repository) return Worktrees.createWorktree({ ...input, worktree: join(Worktrees.worktreesRoot(input.home), short(input.chatId)), branch: 'piop/' + short(input.chatId) });
-  const claimed = await Worktrees.claimWorktree({ chatId: input.chatId, home: input.home, gitCommonDir: repository.gitCommonDir, save: () => {} });
+  const claimed = await Worktrees.claimWorktree({ chatId: input.chatId, home: input.home, gitCommonDir: repository.gitCommonDir, taken: () => new Set(), save: () => {} });
   return Worktrees.createWorktree({ ...input, ...claimed });
 }
 
@@ -80,26 +86,6 @@ test('detects repository roots and linked worktree roots, but not subfolders or 
   mkdirSync(outside);
   expect(await Worktrees.detectRepository(outside)).toBeNull();
   await expect(Worktrees.detectRepository(join(base, 'missing'))).rejects.toThrow();
-});
-
-test('saves progress with git add . from the root, skips empty commits, and reports hook failures', async () => {
-  const { repo } = repository();
-  makeDirty(repo);
-  mkdirSync(join(repo, 'sub'));
-  await expect(Worktrees.saveProgress(join(repo, 'sub'))).rejects.toThrow('Cannot save progress');
-  const saved = await Worktrees.saveProgress(repo);
-  expect(saved?.commit).toBe(git(repo, 'rev-parse', 'HEAD'));
-  expect(git(repo, 'log', '-1', '--format=%s')).toBe(Worktrees.SAVE_MESSAGE);
-  expect(git(repo, 'ls-tree', '-r', '--name-only', 'HEAD').split('\n').sort()).toEqual(['.gitignore', 'dir/new.txt', 'staged.txt', 'tracked.txt']);
-  expect(status(repo)).toBe('');
-  expect(await Worktrees.saveProgress(repo)).toBeNull();
-  expect(git(repo, 'rev-list', '--count', 'HEAD')).toBe('2');
-
-  write(join(repo, 'tracked.txt'), 'three\n');
-  write(join(repo, '.git/hooks/pre-commit'), '#!/bin/sh\necho blocked by hook >&2\nexit 1\n');
-  chmodSync(join(repo, '.git/hooks/pre-commit'), 0o755);
-  await expect(Worktrees.saveProgress(repo)).rejects.toThrow(/blocked by hook/);
-  expect(git(repo, 'rev-list', '--count', 'HEAD')).toBe('2');
 });
 
 test('creates a chat worktree at the source commit with only the committed files, leaving the source unchanged', async () => {
@@ -143,7 +129,7 @@ test('a name another process claims first is skipped, and the claim is saved bef
   const { repo, home } = repository();
   const chatId = randomUUID();
   const saved: string[] = [];
-  const claimed = await Worktrees.claimWorktree({ chatId, home, gitCommonDir: join(repo, '.git'), save: worktree => {
+  const claimed = await Worktrees.claimWorktree({ chatId, home, gitCommonDir: join(repo, '.git'), taken: () => new Set(), save: worktree => {
     saved.push(worktree);
     expect(existsSync(worktree)).toBe(false);
     if (saved.length === 1) mkdirSync(worktree);
@@ -151,7 +137,7 @@ test('a name another process claims first is skipped, and the claim is saved bef
   expect(saved).toEqual([join(Worktrees.worktreesRoot(home), short(chatId)), join(Worktrees.worktreesRoot(home), short(chatId, 5))]);
   expect(claimed).toEqual({ worktree: saved[1], branch: 'piop/' + short(chatId, 5) });
   expect(readdirSync(claimed.worktree)).toEqual([]);
-  await expect(Worktrees.claimWorktree({ chatId: 'not-a-uuid', home, gitCommonDir: join(repo, '.git'), save: () => {} })).rejects.toThrow();
+  await expect(Worktrees.claimWorktree({ chatId: 'not-a-uuid', home, gitCommonDir: join(repo, '.git'), taken: () => new Set(), save: () => {} })).rejects.toThrow();
 });
 
 test('a failed creation removes the folder and branch it made', async () => {
@@ -208,33 +194,40 @@ test('undo and delete succeed when nothing was ever created on this machine', as
   await Worktrees.deleteChatWorktree({ record: { repository: repo, gitCommonDir, chatId, ...names, archive: null }, home });
 });
 
-test('archive removes the folder and branch, and restore recreates both from the saved commit', async () => {
+test('archive saves a snapshot of the current files, removes the folder and branch, and restore puts the files back on the last commit', async () => {
   const { repo, home } = repository();
   const chatId = randomUUID();
   const created = await create({ sourceCwd: repo, chatId, home });
   write(join(created.worktree, 'work.txt'), 'saved\n');
   write(join(created.worktree, 'cache.log'), 'ignored\n');
-  const saved = await Worktrees.saveProgress(created.worktree);
-  write(join(created.worktree, 'work.txt'), 'unsaved\n');
+  const saved = commitAll(created.worktree);
+  write(join(created.worktree, 'work.txt'), 'after the commit\n');
+  write(join(created.worktree, 'new.txt'), 'untracked\n');
+  const index = git(created.worktree, 'ls-files', '--stage');
 
   const archive = await Worktrees.protectArchive({ worktree: created, home });
-  expect(archive).toEqual({ ...created, commit: saved!.commit, ref: 'refs/piop/archives/' + chatId } as typeof archive);
+  const { commit: _branchCommit, ...fields } = created;
+  expect(archive).toMatchObject({ ...fields, base: saved, ref: 'refs/piop/archives/' + chatId });
+  expect(git(repo, 'rev-parse', archive.commit + '^@')).toBe(saved);
+  expect(git(repo, 'log', '-1', '--format=%s', created.branch)).toBe('Work');
+  expect(git(created.worktree, 'ls-files', '--stage')).toBe(index);
   expect(await Worktrees.protectArchive({ worktree: created, home })).toEqual(archive);
   await Worktrees.removeArchivedWorktree({ archive, home });
   await Worktrees.removeArchivedWorktree({ archive, home });
   expect(existsSync(created.worktree)).toBe(false);
   expect(hasRef(repo, 'refs/heads/' + created.branch)).toBe(false);
   git(repo, 'gc', '--quiet', '--prune=now');
-  const plan = await Worktrees.planRestore({ archive, home });
+  const plan = await Worktrees.planRestore({ archive, home, taken: () => new Set(), save: () => {} });
   expect(plan.reuse).toBe(false);
   expect(plan.branch).toBe(created.branch);
   expect(plan.worktree).toBe(created.worktree);
   const restored = await Worktrees.restoreWorktree({ archive, home, plan });
   expect(restored).toEqual({ repository: repo, gitCommonDir: created.gitCommonDir, chatId, worktree: created.worktree, branch: plan.branch });
-  expect(git(restored.worktree, 'rev-parse', 'HEAD')).toBe(saved!.commit);
-  expect(readFileSync(join(restored.worktree, 'work.txt'), 'utf8')).toBe('saved\n');
+  expect(git(restored.worktree, 'rev-parse', 'HEAD')).toBe(saved);
+  expect(readFileSync(join(restored.worktree, 'work.txt'), 'utf8')).toBe('after the commit\n');
+  expect(readFileSync(join(restored.worktree, 'new.txt'), 'utf8')).toBe('untracked\n');
   expect(existsSync(join(restored.worktree, 'cache.log'))).toBe(false);
-  expect(status(restored.worktree)).toBe('');
+  expect(status(restored.worktree)).toBe(' M work.txt\n?? new.txt');
   expect(hasRef(repo, archive.ref)).toBe(true);
   await Worktrees.releaseArchive(archive);
   await Worktrees.releaseArchive(archive);
@@ -255,7 +248,7 @@ test('archive reports a failed branch removal and can finish after the folder is
   } finally { unlinkSync(lock); }
   await Worktrees.removeArchivedWorktree({ archive, home });
   expect(hasRef(repo, 'refs/heads/' + created.branch)).toBe(false);
-  const plan = await Worktrees.planRestore({ archive, home });
+  const plan = await Worktrees.planRestore({ archive, home, taken: () => new Set(), save: () => {} });
   const restored = await Worktrees.restoreWorktree({ archive, home, plan });
   expect(restored.branch).toBe(created.branch);
   expect(git(restored.worktree, 'rev-parse', 'HEAD')).toBe(archive.commit);
@@ -269,7 +262,7 @@ test('restore reuses an unchanged branch, and avoids a moved branch and an occup
   await Worktrees.removeArchivedWorktree({ archive, home });
 
   git(repo, 'branch', created.branch, archive.commit);
-  const same = await Worktrees.planRestore({ archive, home });
+  const same = await Worktrees.planRestore({ archive, home, taken: () => new Set(), save: () => {} });
   expect(same).toMatchObject({ reuse: true, branch: created.branch, worktree: created.worktree });
   const reused = await Worktrees.restoreWorktree({ archive, home, plan: same });
   expect(git(reused.worktree, 'branch', '--show-current')).toBe(created.branch);
@@ -282,7 +275,7 @@ test('restore reuses an unchanged branch, and avoids a moved branch and an occup
   git(repo, 'commit', '--quiet', '-m', 'later');
   git(repo, 'branch', '-f', created.branch, 'HEAD');
   write(join(created.worktree, 'keep.txt'), 'not ours\n');
-  const moved = await Worktrees.planRestore({ archive, home });
+  const moved = await Worktrees.planRestore({ archive, home, taken: () => new Set(), save: () => {} });
   expect(moved.reuse).toBe(false);
   expect(moved).toMatchObject({ worktree: join(home, '.piop/worktrees', short(chatId, 5)), branch: 'piop/' + short(chatId, 5) });
   const restored = await Worktrees.restoreWorktree({ archive, home, plan: moved });
@@ -305,7 +298,7 @@ test('a failed archive keeps the worktree, and a moved archive reference is kept
   const created = await create({ sourceCwd: repo, chatId, home });
   git(repo, 'update-ref', 'refs/piop/archives/' + chatId, git(repo, 'rev-parse', 'HEAD'));
   write(join(created.worktree, 'x.txt'), 'x');
-  await Worktrees.saveProgress(created.worktree);
+  commitAll(created.worktree);
   await expect(Worktrees.protectArchive({ worktree: created, home })).rejects.toThrow(/already points/);
   expect(existsSync(join(created.worktree, 'x.txt'))).toBe(true);
   const fake = { ...created, ref: 'refs/piop/archives/' + chatId, commit: git(created.worktree, 'rev-parse', 'HEAD') };
@@ -352,8 +345,7 @@ test('runs concurrent operations on one repository one at a time', async () => {
   const created = await Promise.all(ids.map(chatId => create({ sourceCwd: repo, chatId, home })));
   created.forEach((worktree, index) => write(join(worktree.worktree, `f${index}.txt`), String(index)));
   write(join(repo, 'main.txt'), 'main');
-  const saves = await Promise.all([repo, ...created.map(worktree => worktree.worktree)].map(cwd => Worktrees.saveProgress(cwd)));
-  expect(saves.every(save => save !== null)).toBe(true);
+  for (const cwd of [repo, ...created.map(worktree => worktree.worktree)]) commitAll(cwd);
   const archives = await Promise.all(created.map(worktree => Worktrees.protectArchive({ worktree, home })));
   await Promise.all(archives.map(archive => Worktrees.removeArchivedWorktree({ archive, home })));
   expect(git(repo, 'for-each-ref', '--format=%(refname)', 'refs/piop/archives').split('\n').length).toBe(6);

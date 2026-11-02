@@ -1,7 +1,6 @@
 import { join } from 'node:path';
 import { CommandRefusedError } from '../pi_rejection';
-import { getProjectRepository, refreshProjectRepository } from '../project_repositories';
-import { saveProgress } from '../chat_worktrees';
+import { refreshProjectRepository } from '../project_repositories';
 import * as Registry from '../session_registry';
 import * as Settings from '../settings';
 import * as Extensions from '../extensions';
@@ -119,13 +118,9 @@ export class Host implements SessionHost {
   maintenance(key: string): void { this.maintain(key); }
   refreshProviders(): Promise<number> { return this.services.refreshProviders(); }
 
-  async runtimeEvent(source: RuntimeEventSource, event: RuntimeEvent): Promise<void> {
+  async runtimeEvent(_source: RuntimeEventSource, event: RuntimeEvent): Promise<void> {
     if (event.name === 'tools_available') { recordTools(event.data.tools, join(this.home, this.storage, 'settings.json')); return; }
     if (event.name === 'commands_available') { recordCommands(event.data.commands, join(this.home, this.storage, 'settings.json')); return; }
-    if (event.name !== 'task_success' || source.cwd === null) return;
-    const repository = getProjectRepository(this.storageRoot(), source.cwd);
-    if (!repository) return;
-    await saveProgress(source.cwd, { repository: repository.root, gitCommonDir: repository.gitDir });
   }
 
   stateChanged(identity: string): void { this.orchestration.stateChanged(identity); }
