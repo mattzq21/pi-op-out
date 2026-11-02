@@ -1,6 +1,6 @@
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { basename, dirname, join, resolve } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
 import { setTimeout as delay } from 'node:timers/promises';
@@ -15,25 +15,21 @@ const release = args.includes('--release');
 
 const env = { ...process.env, VITE_PIOP_DEBUG: String(!release) };
 
-const localPropertiesPath = join(root, 'clients/android/local.properties');
+const localProperties = join(root, 'clients/android/local.properties');
 
-const localProperties = new Map(existsSync(localPropertiesPath)
-  ? readFileSync(localPropertiesPath, 'utf8').split(/\r?\n/).flatMap(line => {
-    const match = line.match(/^\s*([^#!\s][^=:]*?)\s*[=:]\s*(.*)$/);
+const configuredSdk = existsSync(localProperties)
+  ? readFileSync(localProperties, 'utf8').match(/^sdk\.dir=(.+)$/m)?.[1].trim().replace(/\\([\\: ])/g, '$1')
+  : undefined;
 
-    return match ? [[match[1], match[2].trim().replace(/\\(.)/g, '$1')]] : [];
-  })
-  : []);
-
-const sdk = [env.ANDROID_HOME, env.ANDROID_SDK_ROOT, localProperties.get('sdk.dir'), join(home, 'Android/Sdk')]
+const sdk = [env.ANDROID_HOME, env.ANDROID_SDK_ROOT, configuredSdk, join(home, 'Android/Sdk')]
   .find((path) => path && existsSync(join(path, 'platform-tools/adb')));
 
 const adb = sdk ? join(sdk, 'platform-tools/adb') : 'adb';
 
 if (sdk) env.ANDROID_HOME = sdk;
 
-function run(command, commandArgs, capture = false, cwd = root, extraEnv = {}) {
-  const result = spawnSync(command, commandArgs, { cwd, env: { ...env, ...extraEnv }, encoding: 'utf8', stdio: capture ? 'pipe' : 'inherit' });
+function run(command, commandArgs, capture = false, cwd = root) {
+  const result = spawnSync(command, commandArgs, { cwd, env, encoding: 'utf8', stdio: capture ? 'pipe' : 'inherit' });
 
   if (result.error) throw new Error(`Could not run ${command}: ${result.error.message}`);
 
@@ -53,31 +49,15 @@ function apksigner() {
   return join(tools, version, 'apksigner');
 }
 
-function releaseKey() {
-  const names = ['piop.release.storeFile', 'piop.release.storePassword', 'piop.release.keyAlias'];
-  const missing = names.filter(name => !localProperties.get(name));
-
-  if (missing.length) {
-    throw new Error(`Set the release signing key in ${localPropertiesPath}:\n`
-      + 'piop.release.storeFile=/path/to/piop-release.jks\npiop.release.storePassword=...\npiop.release.keyAlias=piop\npiop.release.keyPassword=... (optional, defaults to storePassword)\n'
-      + `Missing: ${missing.join(', ')}\n`
-      + 'Create a key with: keytool -genkeypair -keystore piop-release.jks -alias piop -keyalg RSA -keysize 4096 -validity 10000');
-  }
-
-  const store = resolve(dirname(localPropertiesPath), localProperties.get('piop.release.storeFile'));
-
-  if (!existsSync(store)) throw new Error(`The release signing key file does not exist: ${store}`);
-
-  return { store, alias: localProperties.get('piop.release.keyAlias'), storePassword: localProperties.get('piop.release.storePassword'), keyPassword: localProperties.get('piop.release.keyPassword') || localProperties.get('piop.release.storePassword') };
-}
-
 function buildRelease() {
-  const key = releaseKey();
+  const keystore = join(home, '.android/debug.keystore');
+
+  if (!existsSync(keystore)) throw new Error(`Could not find the debug signing key at ${keystore}. Build a debug app once to create it.`);
   run(process.execPath, ['run', 'android:sync']);
   run('./gradlew', ['assembleRelease'], false, join(root, 'clients/android'));
   const outputs = join(root, 'clients/android/app/build/outputs/apk/release');
   const signed = join(outputs, 'app-release-signed.apk');
-  run(apksigner(), ['sign', '--ks', key.store, '--ks-key-alias', key.alias, '--ks-pass', 'env:PIOP_RELEASE_STORE_PASSWORD', '--key-pass', 'env:PIOP_RELEASE_KEY_PASSWORD', '--out', signed, join(outputs, 'app-release-unsigned.apk')], false, root, { PIOP_RELEASE_STORE_PASSWORD: key.storePassword, PIOP_RELEASE_KEY_PASSWORD: key.keyPassword });
+  run(apksigner(), ['sign', '--ks', keystore, '--ks-key-alias', 'androiddebugkey', '--ks-pass', 'pass:android', '--key-pass', 'pass:android', '--out', signed, join(outputs, 'app-release-unsigned.apk')]);
 
   return signed;
 }

@@ -1,5 +1,9 @@
 I found these machine-specific or hard-coded items. I did not change anything.
 
+Your personal setup forced on others
+
+reinstall-mobile.mjs: it signs release builds with the debug key.
+
 Version and setup assumptions (Debian/Ubuntu and Android are accepted)
 
 tauri.conf.json: its dependencies are libasound2t64 and gstreamer >= 1.28, which only very new Ubuntu or Debian releases have.
