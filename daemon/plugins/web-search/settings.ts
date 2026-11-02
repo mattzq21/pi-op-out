@@ -4,7 +4,7 @@ export interface WebSearchSettings {
   webSearchModel: string;
 }
 
-const defaultModel = () => 'gpt-6.1-sol';
+const defaultModel = () => 'openai/gpt-6.1-sol';
 
 export const webSearchSettings: SettingsContribution<WebSearchSettings> = {
   fields: ['webSearchModel'],

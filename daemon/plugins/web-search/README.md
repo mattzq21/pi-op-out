@@ -1,6 +1,6 @@
-# Pi OpenAI web search
+# Pi web search
 
-A single-file Pi extension exposing `web_search({ query, domains? })`. It returns a web-grounded answer and source URLs using the host's Pi OpenAI "Sign in with ChatGPT" login. No extra npm dependencies, search API keys, browser, or MCP server are needed.
+A Pi extension exposing `web_search({ query, domains? })`. It returns a web-grounded answer and source URLs using the host's Pi OpenAI "Sign in with ChatGPT" login or Anthropic "Claude Pro/Max" login. No extra npm dependencies, search API keys, browser, or MCP server are needed.
 
 In Piop this is the daemon-only `web-search` plugin. It is on by default, also on hosts that saved their plugin setup before it existed, and you can turn it off in Settings → Plugins. It gives `web_search` to the general agent and once to each existing agent; you can remove it per agent under Settings → Agents. Each SSH host needs its own Pi OpenAI sign-in.
 
@@ -16,7 +16,9 @@ Example tool arguments:
 {"query":"What changed in the latest stable Rust release?","domains":["blog.rust-lang.org"]}
 ```
 
-The OpenAI model chosen in Settings → Plugins → Web search performs the search; the default is `gpt-6.1-sol`. The choice is read before each search. If that model is not registered or not signed in with ChatGPT on the host, the search fails with an error; there is no fallback model. Search requests consume that host's ChatGPT usage. An `sk-` API key does not count as a sign-in.
+The model chosen in Settings → Plugins → Web search performs the search. It is saved as `provider/id` (`openai/…` or `anthropic/…`); the default is `openai/gpt-6.1-sol`. The choice is read before each search. If that model is not registered or its provider is not signed in on the host, the search fails with an error; there is no fallback model. Search requests consume that host's ChatGPT or Claude subscription usage. API keys do not count as a sign-in.
+
+`openai.ts` uses OpenAI's hosted `web_search` tool. `anthropic.ts` uses Anthropic's `web_search_20250305` server tool and sends the same Claude Code identity headers and system text as Pi's Anthropic provider, because a Claude Pro/Max sign-in only accepts such requests. It continues `pause_turn` replies and fails when Claude answers without searching. Anthropic's terms do not permit subscription logins in apps other than Claude Code.
 
 ## How the extraction works
 
