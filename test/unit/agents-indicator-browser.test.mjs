@@ -6,7 +6,7 @@ import { appBrowser } from '../app-browser-fixture.mjs';
 const screens = process.env.PIOP_SCREENSHOTS;
 const shoot = async (page, name) => { if (screens) await page.screenshot({ path: join(screens, name + '.png') }); };
 
-test('running side agents show in the header pill and in the dock, grouped by kind, and open their chat', { timeout: 150000 }, async t => {
+test('running side agents show in the header pill, grouped by kind, and a row opens their chat', { timeout: 150000 }, async t => {
   const page = await appBrowser(t, { model: 'agents' });
   await page.setViewportSize({ width: 1280, height: 800 });
   await page.getByRole('button', { name: 'Model', exact: true }).click();
@@ -34,22 +34,14 @@ test('running side agents show in the header pill and in the dock, grouped by ki
   assert.equal(names.length, 7);
   await popover.getByRole('button', { name: /^Rocket Draw a rocket/ }).hover();
   await shoot(page, 'pill-open');
-  await popover.getByRole('button', { name: /^Rocket Draw a rocket/ }).click();
-  await page.getByRole('tab', { name: 'Rocket', selected: true }).waitFor();
-  await page.getByRole('button', { name: /^Open side pane/ }).click();
+  await page.keyboard.press('Escape');
+  await popover.waitFor({ state: 'detached' });
+  await page.getByRole('button', { name: '5 working' }).click();
+  await page.mouse.click(700, 300);
+  await popover.waitFor({ state: 'detached' });
 
-  await page.evaluate(() => localStorage.setItem('piop-agents-indicator', 'dock'));
-  await page.reload();
-  const dock = page.getByRole('navigation', { name: 'Side agents' });
-  await dock.waitFor({ timeout: 30000 });
-  assert.deepEqual(await dock.locator('.agents-dock-kind').allTextContents(), ['Sub', 'Btw']);
-  await page.mouse.move(700, 500);
-  await shoot(page, 'dock');
-  await dock.getByRole('button', { name: 'Rocket, working' }).hover();
-  const card = page.getByRole('tooltip');
-  await card.waitFor();
-  assert.match(await card.textContent(), /^Rocket.*Subagents.*Working.*rocket lift-off/);
-  await shoot(page, 'dock-hover');
-  await dock.getByRole('button', { name: 'Kitty, idle' }).click();
-  await page.getByRole('tab', { name: 'Kitty', selected: true }).waitFor();
+  await page.getByRole('button', { name: '5 working' }).click();
+  await popover.getByRole('button', { name: /^Rocket Draw a rocket/ }).click();
+  await popover.waitFor({ state: 'detached' });
+  await page.getByRole('tab', { name: 'Rocket', selected: true }).waitFor();
 });

@@ -5,7 +5,7 @@
 @keyframes agent-spin { to { transform: rotate(360deg); } }
 @media (prefers-reduced-motion: reduce) { .agent-icon.agent-running::after { animation: none; border-color: var(--running); } }
 
-.agents-pill-root { position: absolute; right: 52px; top: 10px; z-index: 6; }
+.agents-pill-root { position: relative; }
 .agents-pill { height: 32px; padding: 0 9px 0 8px; border: 1px solid var(--line); border-radius: 999px; display: inline-flex; align-items: center; gap: 8px; background: #1e1e1b; color: var(--ink); font-size: 12px; }
 .agents-pill:hover { background: var(--dark-control-hover); }
 .agents-pill[aria-expanded="true"] { border-color: #68645c; box-shadow: 0 0 0 2px var(--accent-14); }
@@ -24,16 +24,3 @@
 .agents-row-state { color: var(--faint); font-size: 12px; white-space: nowrap; }
 .agents-row-idle .agent-icon { opacity: .55; }
 .agents-row-idle .agents-row-name, .agents-row-idle .agents-row-detail { color: var(--faint); }
-
-.agents-dock { position: absolute; right: 10px; top: 54px; z-index: 6; width: 46px; max-height: calc(100% - 200px); overflow-y: auto; padding: 8px 0; border: 1px solid var(--line); border-radius: 12px; display: flex; flex-direction: column; align-items: center; gap: 8px; background: #1b1b19; scrollbar-width: none; }
-.agents-dock-kind { color: var(--faint); font-size: 9px; letter-spacing: .08em; text-transform: uppercase; }
-.agents-dock-divider { width: 24px; height: 1px; flex: none; background: var(--line); }
-.agents-dock-slot { width: 32px; height: 32px; flex: none; display: grid; place-items: center; padding: 0; border: 0; border-radius: 8px; background: transparent; }
-.agents-dock-slot:hover, .agents-dock-slot:focus-visible { background: #ffffff10; }
-.agents-dock-card { position: absolute; right: 64px; z-index: 7; width: 280px; padding: 10px 12px; border: 1px solid #393732; border-radius: 10px; background: #1e1e1b; box-shadow: 0 14px 40px #0009; font-size: 12px; pointer-events: none; }
-.agents-dock-card-title { display: flex; align-items: center; gap: 8px; color: var(--ink); font-size: 13px; }
-.agents-dock-card-title strong { font-weight: 600; }
-.agents-dock-card-title span { color: var(--faint); font-size: 12px; }
-.agents-dock-card-title .agents-row-state { margin-left: auto; }
-.agents-dock-card p { margin: 6px 0 0; color: var(--muted); line-height: 1.45; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
-.agents-dock-card-hint { display: block; margin-top: 7px; color: var(--faint); font-size: 11px; }

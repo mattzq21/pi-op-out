@@ -17,13 +17,15 @@
 .sidepane-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--accent); flex: 0 0 auto; }
 .open-plugins-button .sidepane-dot { position: absolute; top: 4px; right: 4px; }
 .plugin-error { padding: 8px 12px; font-size: 12px; color: var(--ink); overflow-wrap: anywhere; }
-.open-plugins-button { position: absolute; right: 12px; top: 10px; z-index: 5; }
+.transcript-actions { position: absolute; right: 12px; top: 10px; z-index: 6; display: flex; align-items: center; gap: 8px; }
+.open-plugins-button { position: relative; }
 .plugin-resizer { position: absolute; z-index: 5; top: 0; bottom: 0; left: -4px; width: 8px; cursor: col-resize; touch-action: none; user-select: none; -webkit-user-select: none; }
 .plugin-resizer::after { content: ""; position: absolute; inset: 0 3px; background: transparent; }
 .plugin-resizer:hover::after, .plugin-resizer.dragging::after, .plugin-resizer:focus-visible::after { background: var(--accent); }
 @media (max-width: 700px) {
   .chat-panes.split > .plugin-sidepane { width: 100%; flex: 0 0 100%; min-height: 0; border-left: 0; border-top: 1px solid var(--line); }
   .plugin-pane-header { padding-left: 60px; }
-  .chat-shell > .open-plugins-button { top: 6px; right: max(12px, env(safe-area-inset-right)); min-height: 0; }
+  .chat-shell > .transcript-actions { top: 6px; right: max(12px, env(safe-area-inset-right)); }
+  .transcript-actions .open-plugins-button { min-height: 0; }
   .plugin-resizer { display: none; }
 }
