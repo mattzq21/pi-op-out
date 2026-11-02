@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { installDom, renderComponent, act } from '../dom.mjs';
-import { SkillMcpStatus } from '../../clients/ui/components/SkillMcpStatus.tsx';
+import { SkillMcpStatus, skillMcpConnecting } from '../../clients/ui/components/SkillMcpStatus.tsx';
 
 test('failed skill MCP servers show their error and send Retry and Remove actions', async t => {
   const dom = installDom(), actions = [];
@@ -17,7 +17,7 @@ test('failed skill MCP servers show their error and send Retry and Remove action
   assert.equal(view.container.querySelector('section'), null);
 });
 
-test('retry errors remain visible and a connecting server can be removed', async t => {
+test('retry errors remain visible and a connecting server leaves the bar', async t => {
   const dom = installDom();
   const onAction = async () => { throw new Error('Connection refused'); };
   const server = { name: 'skill_app', label: 'desktop: app', state: 'failed', error: 'offline' };
@@ -26,9 +26,9 @@ test('retry errors remain visible and a connecting server can be removed', async
   await act(() => view.container.querySelector('button').click());
   assert.match(view.container.textContent, /Connection refused/);
   await view.rerender({ value: JSON.stringify([{ ...server, state: 'connecting' }]), onAction });
-  assert.match(view.container.textContent, /Connecting/);
-  assert.equal(view.container.querySelector('button').textContent, 'Remove');
-  assert.equal(view.container.querySelector('button').disabled, false);
+  assert.equal(view.container.querySelector('section'), null);
+  assert.equal(skillMcpConnecting(JSON.stringify([{ ...server, state: 'connecting' }])), true);
+  assert.equal(skillMcpConnecting(JSON.stringify([server])), false);
 });
 
 test('read-only skill MCP status has disabled actions', async t => {
