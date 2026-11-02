@@ -18,7 +18,7 @@ import { CacheIcon } from "./CacheIcon";
 import type { ChatMessage } from "../types";
 import { IconButton } from "./IconButton";
 import { Markdown } from "./Markdown";
-import { ZoomableImage } from "./ZoomableImage";
+import { ImageGallery, ZoomableImage } from "./ZoomableImage";
 import { showsSubagents, SubagentResults, subagentRuns, toolSubagentRuns } from "./SubagentResults";
 import { copyText } from "../lib/clipboard";
 import { sentSkillPrompt } from "../lib/composerPrompt";
@@ -284,7 +284,7 @@ export function Message(componentProps: Props) {
     const [editing, setEditing] = createSignal(false);
     const editable = () => Boolean(componentProps.onEdit) && parts().command !== "goal";
 
-    return <><article tabIndex={-1} class={`message user-message${componentProps.message.deliveryBehavior === "steer" ? " steering-message" : ""}`} classList={{ editing: editing() }} data-pin-id={pinId(componentProps.message)}>
+    return <><ImageGallery><article tabIndex={-1} class={`message user-message${componentProps.message.deliveryBehavior === "steer" ? " steering-message" : ""}`} classList={{ editing: editing() }} data-pin-id={pinId(componentProps.message)}>
       <Show when={!editing()} fallback={<SentMessageEditor message={componentProps.message} text={imageContext().text} onSave={componentProps.onEdit} onClose={() => setEditing(false)} />}>
       {images().length > 0 && <div class="user-message-images">{!hasBody() && <PinButton message={componentProps.message} text={pinLabel()} />}<Index each={images()}>{part => <ZoomableImage src={`data:${part().mimeType};base64,${part().data}`} alt="Sent attachment" />}</Index></div>}
       {hasBody() && <div class="message-body"><PinButton message={componentProps.message} text={pinLabel()} />
@@ -299,7 +299,7 @@ export function Message(componentProps: Props) {
         <Show when={editable()}><IconButton title="Edit" label="Edit message" onClick={() => setEditing(true)}><Pencil size={14} /></IconButton></Show>
       </div>
       </Show>
-    </article>{componentProps.debug?.contextInjections && imageContext().notes && <ContextInjection title="Image context" content={imageContext().notes} />}</>;
+    </article></ImageGallery>{componentProps.debug?.contextInjections && imageContext().notes && <ContextInjection title="Image context" content={imageContext().notes} />}</>;
   };
 
   const renderAssistantMessage = () => {

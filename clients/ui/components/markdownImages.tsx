@@ -1,9 +1,9 @@
-import { createContext, createResource, createSignal, Show, type Accessor } from "solid-js";
+import { createContext, createResource, createSignal, Show, useContext, type Accessor } from "solid-js";
 import { render } from "solid-js/web";
 import { z } from "zod";
 import { nativeCall } from "../lib/nativeCall";
 import { fileReference, type FileProject } from "../lib/projectFiles";
-import { ImageLoading, ZoomableImage } from "./ZoomableImage";
+import { ImageGalleryContext, ImageLoading, ZoomableImage } from "./ZoomableImage";
 
 export const ConversationImageProject = createContext<Accessor<FileProject | undefined>>(() => undefined);
 
@@ -32,7 +32,7 @@ function LinkedImage(props: { project: FileProject; path: string; label: string 
   </Show>;
 }
 
-export function markdownImages() {
+export function markdownImages(gallery = useContext(ImageGalleryContext)) {
   let mounts: Array<{ path: string; label: string; project: string; host: HTMLSpanElement; dispose: () => void }> = [];
 
   return {
@@ -54,7 +54,7 @@ export function markdownImages() {
 
         const host = document.createElement("span");
         host.className = "linked-message-image";
-        const dispose = render(() => <LinkedImage project={project} path={reference.path} label={label} />, host);
+        const dispose = render(() => <ImageGalleryContext.Provider value={gallery}><LinkedImage project={project} path={reference.path} label={label} /></ImageGalleryContext.Provider>, host);
         next.push({ path: reference.path, label, project: key, host, dispose });
       }
 
