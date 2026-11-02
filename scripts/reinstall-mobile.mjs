@@ -1,6 +1,6 @@
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
 import { setTimeout as delay } from 'node:timers/promises';
@@ -62,16 +62,77 @@ function buildRelease() {
   return signed;
 }
 
+function endpointKey(project) {
+  let key = 0xcbf29ce484222325n;
+
+  for (const byte of Buffer.from(project.replace(/\/+$/, '') + '/src-tauri')) key = BigInt.asUintN(64, (key ^ BigInt(byte)) * 0x100000001b3n);
+
+  return key.toString(16).padStart(16, '0');
+}
+
+function servePort(key) {
+  return 20000 + Number(BigInt('0x' + key) % 40000n);
+}
+
+function tailscale(commandArgs) {
+  const result = spawnSync('tailscale', commandArgs, { cwd: root, env, encoding: 'utf8' });
+
+  if (result.error) throw new Error(`Could not run tailscale: ${result.error.message}`);
+
+  if (result.status !== 0) {
+    const output = (result.stderr || result.stdout).trim();
+    const access = /access denied|permission|operator/i.test(output) ? '\nAllow your user to change Tailscale Serve once with: sudo tailscale set --operator=$USER' : '';
+    throw new Error(`tailscale ${commandArgs.join(' ')} failed: ${output}${access}`);
+  }
+
+  return result.stdout;
+}
+
+function serveStatus() {
+  return JSON.parse(tailscale(['serve', 'status', '--json']) || '{}');
+}
+
+function worktreePorts() {
+  const worktrees = run('git', ['worktree', 'list', '--porcelain'], true).split('\n').filter(line => line.startsWith('worktree ')).map(line => line.slice('worktree '.length));
+
+  return new Map(worktrees.map(path => { const key = endpointKey(path); return [key, servePort(key)]; }));
+}
+
+// Removes Serve ports that point to development daemons of deleted worktrees, or to an old port of a live worktree.
+function removeStaleRoutes(configuration, key, port) {
+  const live = worktreePorts();
+  live.set(key, port);
+  const developmentSocket = new RegExp(`^unix:${join(home, '.piop-dev', 'daemons').replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}/([0-9a-f]{16})/tailscale\\.sock$`);
+
+  for (const [address, site] of Object.entries(configuration.Web ?? {})) {
+    const handlers = Object.entries(site.Handlers ?? {});
+    const key = handlers.length === 1 && handlers[0][0] === '/' ? handlers[0][1].Proxy?.match(developmentSocket)?.[1] : undefined;
+    const port = Number(address.slice(address.lastIndexOf(':') + 1));
+
+    if (key && live.get(key) !== port) tailscale(['serve', `--https=${port}`, 'off']);
+  }
+}
+
 function wirelessAddress(connection) {
   const target = `unix:${join(connection.runtime.daemonDirectory, 'tailscale.sock')}`;
-  console.log('Configuring wireless Tailscale access (sudo may request your password)…');
-  run('sudo', ['tailscale', 'serve', '--bg', '--https=443', '--yes', target]);
-  const configuration = JSON.parse(run('tailscale', ['serve', 'status', '--json'], true));
-  const route = Object.entries(configuration.Web ?? {}).find(([address, site]) => address.endsWith(':443') && site.Handlers?.['/']?.Proxy === target);
+  const key = basename(connection.runtime.daemonDirectory);
+
+  if (!/^[0-9a-f]{16}$/.test(key)) throw new Error(`Unexpected development daemon directory: ${connection.runtime.daemonDirectory}`);
+  const port = servePort(key);
+  console.log(`Configuring wireless Tailscale access on port ${port}…`);
+  removeStaleRoutes(serveStatus(), key, port);
+  const current = serveStatus();
+  const used = Object.entries(current.Web ?? {}).find(([address]) => address.endsWith(`:${port}`));
+
+  if (used && used[1].Handlers?.['/']?.Proxy !== target) throw new Error(`Tailscale Serve port ${port} is already used by ${JSON.stringify(used[1].Handlers)}. Free it with: tailscale serve --https=${port} off`);
+
+  if (!used && current.TCP?.[port]) throw new Error(`Tailscale Serve port ${port} is already used. Free it with: tailscale serve --tcp=${port} off`);
+  tailscale(['serve', '--bg', `--https=${port}`, '--yes', target]);
+  const route = Object.entries(serveStatus().Web ?? {}).find(([address, site]) => address.endsWith(`:${port}`) && site.Handlers?.['/']?.Proxy === target);
 
   if (!route) throw new Error('Could not find the rebuilt daemon’s Tailscale address.');
 
-  return `wss://${route[0].replace(/:443$/, '')}/`;
+  return `wss://${route[0]}/`;
 }
 
 function readDevices() {

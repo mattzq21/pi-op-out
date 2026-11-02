@@ -3,7 +3,6 @@ I found these machine-specific or hard-coded items. I did not change anything.
 Your personal setup forced on others
 
 reinstall-mobile.mjs:
-It runs sudo tailscale serve --https=443, which takes over port 443 for Tailscale Serve on that machine.
 It signs release builds with the debug key.
 CustomProviderForm.tsx:7: a "Go broker preset" for 127.0.0.1:8787 (your own local service) shows to all users.
 profiles.ts:8: the bundled agents workhorse and reviewer are set to openai/gpt-6-luna. Users without OpenAI get agents that do not work.
