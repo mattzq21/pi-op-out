@@ -109,6 +109,27 @@ export function requireMessageLength(message: string) {
   if (message.length > MAX_MESSAGE_LENGTH) throw new Error(`The message is ${message.length} characters; the limit is ${MAX_MESSAGE_LENGTH}`);
 }
 
+export async function sendAgentMailboxes(pi: ExtensionAPI, ctx: ExtensionContext, mail: Mail[]) {
+  const generation = mailboxGenerations.get(pi);
+  const accepted: Mail[] = [];
+
+  try {
+    for (const { message, notificationId } of mail) {
+      await durableMailbox(pi).send(ctx, message, notificationId, item => {
+        if (generation !== mailboxGenerations.get(pi)) return false;
+        accepted.push({ message: item, notificationId });
+
+        return true;
+      });
+    }
+  } finally {
+    if (accepted.length && generation === mailboxGenerations.get(pi)) {
+      if (ctx.isIdle()) deliverMailbox(pi, accepted);
+      else mailboxes.set(pi, [...mailboxes.get(pi) ?? [], ...accepted]);
+    }
+  }
+}
+
 export async function sendSessionMessage(ctx: ExtensionContext, sessionId: string, hostId: string, message: string, wake: boolean, signal?: AbortSignal, deliveryId: string = randomUUID(), discardOnFailure = false, deliverAs?: "steer" | "followUp") {
   if (sessionId === ctx.sessionManager.getSessionId() && hostId === currentHost()) throw new Error("Choose another conversation as the recipient");
   await activeConversation(sessionId, hostId, signal);

@@ -278,6 +278,27 @@ test('an agent limited to one subagent cannot start a second while the first is 
   } finally { releaseFirst({ text: 'First done.' }); await setLimit(); }
 }, 120000);
 
+test('results of children that finish while the parent works reach it together in one turn after its work', async () => {
+  const names = ['Ant', 'Bee', 'Cow'];
+  let drawn = 0;
+  let allDrawn!: () => void;
+  const done = new Promise<void>(resolve => { allDrawn = resolve; });
+  agents.scripts.set('Delegate three drawings', async messages => {
+    if (!called(messages, 'spawn_subagents')) return { tool: 'spawn_subagents', arguments: { tasks: names.map(name => ({ nickname: name, task: 'Draw one picture: ' + name })) } };
+    const fresh = messages.slice(messages.findLastIndex((message: any) => message.role === 'assistant') + 1).map(text).join('\n');
+    if (fresh.includes('<subagent_response>')) return { text: 'Results: ' + names.filter(name => fresh.includes('Subagent ' + name + ':')).join(',') };
+    await done; await Bun.sleep(3000);
+    return { text: 'Done.' };
+  });
+  agents.scripts.set('Draw one picture: ', messages => { if (++drawn === names.length) allDrawn(); return { text: 'Drew ' + text(messages.at(-1)).slice(-3) }; });
+  const root = await agents.rootChat();
+  await root.command({ type: 'prompt', message: 'Delegate three drawings' });
+  const answers = (messages: any[]) => messages.filter(message => message.role === 'assistant').map(text).filter(Boolean);
+  await root.until(history => answers(history).some(answer => answer.startsWith('Results: ')));
+  await Bun.sleep(3000);
+  expect(answers(await root.history())).toEqual(['Done.', 'Results: Ant,Bee,Cow']);
+}, 120000);
+
 test('a steer message ends the wait for subagents and arrives in the next model call', async () => {
   let releaseChild!: (reply: { text: string }) => void;
   const childReply = new Promise<{ text: string }>(resolve => { releaseChild = resolve; });
@@ -322,9 +343,10 @@ test('a follow-up message does not end the wait for subagents and arrives after 
     expect(await Promise.race([ended.then(() => 'ended'), new Promise(resolve => setTimeout(resolve, 1500, 'waiting'))])).toBe('waiting');
     releaseChild({ text: 'Slept.' });
     const messages = await root.until(history => text(history.at(-1)) === 'Handled: Here is the later news');
-    const answers = messages.filter(message => message.role === 'assistant').map(text).filter(Boolean);
-    expect(answers[0]).toStartWith('Wait ended: <subagent_response>\nSubagent Sleeper:\nSlept.');
-    expect(answers.at(-1)).toBe('Handled: Here is the later news');
+    await Bun.sleep(2000);
+    const answers = (await root.history()).filter(message => message.role === 'assistant').map(text).filter(Boolean);
+    expect(answers).toEqual(['Wait ended: <subagent_response>\nSubagent Sleeper:\nSlept.\n</subagent_response>', 'Handled: Here is the later news']);
+    expect((await root.command({ type: 'get_entries' })).entries.filter((entry: any) => entry.customType === 'piop-subagent-result')).toEqual([]);
   } finally { releaseChild({ text: 'Slept.' }); }
 }, 120000);
 
