@@ -682,7 +682,8 @@ export function createAppConversations(preloadChat: () => void, prepareTranscrip
       return transport(); }
 
     const nextTransport = runtimePool().forSession(session);
-    const conversationKey = `${hostId}:${session.id}`; transportConversationKeys.current.set(nextTransport, conversationKey); drafts.bindTransport(nextTransport, conversationKey); activateConversationKey(conversationKey); chatSession().discardPendingUpdates(); setView("chat"); updateConnected(false); setDefinedAgents(undefined); setActiveHostId(hostId); setActiveCwd(session.cwd || undefined); activateTransport(nextTransport);
+    const conversationKey = `${hostId}:${session.id}`; transportConversationKeys.current.set(nextTransport, conversationKey); drafts.bindTransport(nextTransport, conversationKey);
+    batch(() => { activateConversationKey(conversationKey); chatSession().discardPendingUpdates(); setView("chat"); updateConnected(false); setDefinedAgents(undefined); setActiveHostId(hostId); setActiveCwd(session.cwd || undefined); activateTransport(nextTransport); });
 
     return nextTransport;
   };
