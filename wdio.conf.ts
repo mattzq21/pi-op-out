@@ -40,8 +40,9 @@ const fixtureEnvironment: Record<string, string> = {
   PIOP_MOBILE_BIND: "127.0.0.1:0",
   XDG_CONFIG_HOME: path.join(fixtureHome, "config"), XDG_DATA_HOME: path.join(fixtureHome, "data"), XDG_CACHE_HOME: path.join(fixtureHome, "cache"),
   GDK_BACKEND: "x11",
-  PI_WINDOW_BOUNDS: JSON.stringify(selectWindowBounds()),
 };
+const windowBounds = selectWindowBounds();
+if (windowBounds) fixtureEnvironment.PI_WINDOW_BOUNDS = JSON.stringify(windowBounds);
 
 const freePort = () => new Promise<number>((resolve, reject) => {
   const server = createServer();
