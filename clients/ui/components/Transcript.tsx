@@ -213,11 +213,16 @@ function splitTranscript(messages: ChatMessage[], working: boolean, held: boolea
   const sending: ChatMessage[] = [];
   const delivered = new Set(messages.flatMap(message => !message.submissionId && message.piopQueueId ? [message.piopQueueId] : []));
   const transcript = messages.filter(message => {
-    if (message.submissionId && message.piopQueueId) return false;
+    const queued = waiting || held || Boolean(message.deliveryBehavior);
+
+    if (message.submissionId && message.piopQueueId) {
+      if (message.role !== "user" || queued) return false;
+      delivered.add(message.piopQueueId);
+    }
 
     if (message.role === "assistant") waiting = false;
     else if (message.role === "user") {
-      if (message.submissionId && (waiting || held || message.deliveryBehavior)) { sending.push(message); return false; }
+      if (message.submissionId && queued) { sending.push(message); return false; }
       waiting = working || Boolean(message.submissionId);
     }
 

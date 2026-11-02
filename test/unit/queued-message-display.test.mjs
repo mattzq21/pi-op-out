@@ -29,7 +29,7 @@ for (const remaining of [[], [{ id: 'queue-last', goalSubmissionId: 'last', mess
   );
   const original = view.container.querySelector('.conversation-turn');
   await act(() => {
-    for (const item of [queued, ...remaining]) retainSubmittedMessage(transport, { id: item.goalSubmissionId, role: 'user', content: item.message });
+    for (const item of [queued, ...remaining]) retainSubmittedMessage(transport, { id: item.goalSubmissionId, role: 'user', content: item.message, deliveryBehavior: 'followUp' });
   });
   await send({ type: 'queue_update', held: true, pendingMessages: [queued, ...remaining] });
   const checkRunning = () => {

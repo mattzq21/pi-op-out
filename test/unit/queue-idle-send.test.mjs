@@ -1,0 +1,36 @@
+import assert from 'node:assert/strict';
+import { test } from 'node:test';
+import { installDom, renderHook, renderComponent, act } from '../dom.mjs';
+import { useChatSession } from '../../clients/ui/lib/useChatSession.ts';
+import { trackChatSubmission } from '../../clients/ui/lib/chatSubmission.ts';
+import { ChatView } from '../../clients/ui/components/ChatView.tsx';
+
+const text = value => [{ type: 'text', text: value }];
+test('a message sent while the agent is ready stays in the conversation and never shows in the queue', async t => {
+  const dom = installDom(); HTMLElement.prototype.scrollIntoView = () => {};
+  const base = { subscribe() { return () => {}; }, async command() { return {}; }, ownsConversation: () => true, hasConfirmedOwnership: () => true, isConnected: () => true, currentHostId: () => 'local' };
+  const transport = new Proxy(base, { get: (target, name) => name in target || name === 'then' || typeof name === 'symbol' ? target[name] : () => undefined });
+  const hook = await renderHook(value => useChatSession(value), transport);
+  const noop = () => {};
+  const props = () => ({ transport, readOnly: false, onSend: noop, onAbort: noop, onOpenProject: noop, onBranch: noop, onModel: noop, onToggleFastMode: noop, onThinking: noop, onChangePending: async () => {}, state: { ...hook.current.state, sessionId: 'session' }, messages: hook.current.messages, models: [], commands: [], thinkingLevels: [], widgets: [], statuses: {} });
+  const view = await renderComponent(ChatView, props());
+  t.after(async () => { await view.unmount(); await hook.unmount(); dom.restore(); });
+  const settle = async () => { await dom.flushFrames(); await view.rerender(props()); await dom.flushFrames(); };
+  const events = async (...items) => { await act(() => items.forEach(event => hook.current.handleEvent(event))); await settle(); };
+  const shown = () => ({ queued: view.container.querySelectorAll('.pending-message').length, inConversation: view.container.querySelector('.conversation')?.textContent.includes('Check the tests') ?? false });
+  await events({ type: 'agent_start' }, { type: 'message_end', message: { role: 'user', content: text('Question'), timestamp: 10 } }, { type: 'message_end', message: { role: 'assistant', content: text('Answer'), timestamp: 11 } }, { type: 'agent_end' });
+  let finish;
+  const durable = { id: 'submission-1', owner: () => transport, accept: async () => {}, reject: async () => {}, wasDispatched: () => true };
+  const sending = trackChatSubmission(transport, 'Check the tests', [], durable, () => new Promise(resolve => { finish = resolve; }));
+  await settle();
+  const frames = [shown()];
+  await events({ type: 'queue_update', steering: [], followUp: ['Check the tests'], pendingMessages: [{ id: 'queue-1', goalSubmissionId: 'submission-1', message: 'Check the tests', behavior: 'followUp' }], held: false });
+  frames.push(shown());
+  await act(() => finish({ disposition: 'queued' })); await sending; await settle();
+  frames.push(shown());
+  await events({ type: 'queue_update', steering: [], followUp: [], pendingMessages: [{ id: 'queue-1', goalSubmissionId: 'submission-1', message: 'Check the tests', behavior: 'followUp', sending: true }], held: false }, { type: 'agent_start' });
+  frames.push(shown());
+  await events({ type: 'message_start', message: { role: 'user', content: text('Check the tests'), timestamp: 12, piopQueueId: 'queue-1' } }, { type: 'queue_update', steering: [], followUp: [], pendingMessages: [], held: false });
+  frames.push(shown());
+  assert.deepEqual(frames, Array(5).fill({ queued: 0, inConversation: true }));
+});
