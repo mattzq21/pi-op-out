@@ -305,7 +305,7 @@ test('an agent limited to one subagent cannot start a second while the first is 
     const spawn = last.tools.find((tool: any) => tool.function.name === 'spawn_subagents');
     expect(spawn.function.parameters.properties.tasks.maxItems).toBe(1);
     const seen = last.messages.filter((message: any) => message.role === 'tool').map(text);
-    expect(seen[0]).toStartWith('Validation failed for tool "spawn_subagents":\n  - tasks: must not have more than 1 items');
+    expect(seen[0]).toStartWith('Validation failed for tool "spawn_subagents":\n  - tasks: expected at most 1 items');
     expect(seen[2]).toBe('This agent allows at most 1 concurrent subagents; 1 slots are occupied');
   } finally { releaseFirst({ text: 'First done.' }); await setLimit(); }
 }, 120000);

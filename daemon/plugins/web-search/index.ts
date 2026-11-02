@@ -1,5 +1,4 @@
-import { Type } from "@earendil-works/pi-ai";
-import { Type as Schema } from "typebox";
+import { Type, Type as Schema } from "typebox";
 import { Check } from "typebox/value";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { homedir } from "node:os";
