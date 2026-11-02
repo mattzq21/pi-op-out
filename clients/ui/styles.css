@@ -98,6 +98,7 @@ kbd { font: 11px "DM Sans"; border: 1px solid var(--line); padding: 2px 4px; bor
 .session-copy { flex: 1; min-width: 0; display: grid; gap: 4px; }
 .project-disclosure { display: grid; place-items: center; flex: 0 0 20px; height: 27px; padding: 0; border: 0; background: transparent; color: var(--muted); }
 .project-disclosure svg.collapsed { transform: rotate(-90deg); }
+.project-disclosure:focus-visible, .project-label:focus-visible { outline: none; }
 .new-chat-project { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
 .session-title-row { min-width: 0; display: flex; align-items: baseline; gap: 7px; }
 .session-leading-icon { flex-shrink: 0; align-self: center; }
