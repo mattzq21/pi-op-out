@@ -160,6 +160,24 @@ describe('split conversation lifecycle', () => {
     assert.ok(calls.some(command => command.type === 'abort'));
   });
 
+  test('changing models updates the effort menu and sends the selected extended effort', async () => {
+    const extended = { provider: 'p', id: 'one', name: 'Astra 6', reasoning: true, thinkingLevelMap: { off: null, minimal: null, xhigh: 'xhigh', max: 'max' } };
+    responses.set('get_available_models', { models: [MODEL, extended] });
+    await render();
+    await click(control('Model')); await click(document.querySelector('[role=option][data-value="p/one"]'));
+    await click(control('Thinking level'));
+    assert.deepEqual([...document.querySelectorAll('[role=listbox][aria-label="Thinking level options"] [role=option]')].map(option => option.dataset.value), ['low', 'medium', 'high', 'xhigh', 'max']);
+    await click(document.querySelector('[role=option][data-value=max]'));
+    await click(control('Model')); await click(document.querySelector('[role=option][data-value="p/base"]'));
+    assert.equal(control('Thinking level').dataset.options, 'off minimal low medium high');
+    assert.equal(control('Thinking level').dataset.value, 'high');
+    await click(control('Model')); await click(document.querySelector('[role=option][data-value="p/one"]'));
+    await click(control('Thinking level')); await click(document.querySelector('[role=option][data-value=max]'));
+    await type('Question'); await click(control('Send message'));
+    await received(command => command.type === 'prompt' && command.message === 'Question');
+    assert.ok(calls.some(command => command.type === 'set_thinking_level' && command.level === 'max'));
+  });
+
   test('model controls serialize changes and recover after a rejected command', async () => {
     responses.set('get_available_models', { models: [MODEL, { provider: 'p', id: 'one', reasoning: true }, { provider: 'p', id: 'two', reasoning: true }] });
     responses.set('get_commands', { commands: [{ name: 'fast', source: 'extension', sourceInfo: { path: '/extensions/piop-openai-fast-mode/index.ts' } }] });

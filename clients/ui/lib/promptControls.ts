@@ -42,9 +42,10 @@ export class PromptControls {
   thinking(thinkingLevel: string) { this.selection[1](current => ({ ...current, thinkingLevel: clampEffort(thinkingLevel, current.model ?? undefined) })); }
   fast(fastMode: boolean) { this.selection[1](current => ({ ...current, fastMode })); }
   copyTo(target: PromptControls) { target.selection[1](current => ({ ...current, ...this.selection[0]() })); }
-  levels(fallback: string[]) { const model = this.selection[0]().model;
+  levels(fallback: string[]) { const selected = this.selection[0]().model;
+    const model = selected === undefined ? this.effectiveModel[0]() : selected;
 
-  return model ? modelLevels(model) : fallback; }
+  return model ? modelLevels(model) : model === null ? ["off"] : fallback; }
   state(state: AgentState): AgentState {
     const selected = this.selection[0]();
     const model = selected.model === undefined ? this.effectiveModel[0]() : selected.model;

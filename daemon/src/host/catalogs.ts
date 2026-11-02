@@ -81,7 +81,7 @@ export function discoveredModel(entry: any, known: any[]): any {
   const name = authText(typeof entry.name === 'string' && entry.name ? entry.name : entry.display_name);
   const model: any = { id, name: name || id };
   const baseline = known.find(item => item?.id === id);
-  if (baseline) for (const field of ['reasoning', 'input', 'contextWindow', 'maxTokens']) if (Object.hasOwn(baseline, field)) model[field] = baseline[field];
+  if (baseline) for (const field of ['reasoning', 'thinkingLevelMap', 'input', 'contextWindow', 'maxTokens']) if (Object.hasOwn(baseline, field)) model[field] = baseline[field];
   if (typeof entry.reasoning === 'boolean') model.reasoning = entry.reasoning;
   if (Array.isArray(entry.input) && entry.input.every((item: any) => item === 'text' || item === 'image')) model.input = entry.input;
   for (const [field, aliases] of [['contextWindow', ['contextWindow', 'context_length', 'context_window']], ['maxTokens', ['maxTokens', 'max_output_tokens', 'max_tokens']]] as const) {
