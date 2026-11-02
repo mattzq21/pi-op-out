@@ -9,7 +9,8 @@ import { AgentSkills, AgentTools } from "./AgentTools";
 import { AgentExtensions } from "./AgentExtensions";
 import { agentProfileSchema } from "../lib/agentSchemas";
 import { McpSettings, type McpEditorDraft } from "./McpSettings";
-import { AgentTransferDialog, mergeImportedAgents } from "./AgentTransfer";
+import { AgentTransferDialog } from "./AgentTransfer";
+import { mergeImportedAgents } from "../lib/agentTransfer";
 import { CapInput } from "./CapInput";
 import { FilterSelect } from "./FilterSelect";
 import { capRangeError } from "../../../extensions/piop-context-window-cap/interface";
@@ -528,9 +529,10 @@ export function SettingsView(props: SettingsViewProps) {
             const renderAgentNameRow = () => (<div class="agent-name-row"><label class="field"><span>Agent name</span><input aria-label="Agent name" aria-invalid={!isBuiltInAgent(agent()) && (!agent().name.trim() || agent().name.trim().toLowerCase() === "general" || inheritedNames().has(agent().name) || nameValidation().duplicateAgentNames.has(agent().name.trim().toLowerCase()))} disabled={isBuiltInAgent(agent())} value={agent().name} onInput={(event) => { renameAgent(event.currentTarget.value.replace(/[^a-zA-Z0-9_-]/g, "")); event.currentTarget.value = agent().name; }} /></label><IconButton label={`Remove ${agent().name}`} disabled={isBuiltInAgent(agent())} onClick={removeAgent}><Trash2 size={15} /></IconButton></div>);
 
             const renderAgentDefaults = () => {
+              const unavailableAlias = () => { const aliases = draft().modelAliases ?? {}; return Object.hasOwn(aliases, agent().model) ? aliases[agent().model] : undefined; };
               const agentModelOptions = () => [
                 { value: "", label: "Use session model", search: "" },
-                ...(agent().model && !agentValidation().availableModelIds.has(agent().model) ? [{ value: agent().model, label: `Unavailable: ${draft().modelAliases?.[agent().model] || agent().model}`, search: `${draft().modelAliases?.[agent().model] ?? ""} ${agent().model}`, disabled: true }] : []),
+                ...(agent().model && !agentValidation().availableModelIds.has(agent().model) ? [{ value: agent().model, label: `Unavailable: ${unavailableAlias() || agent().model}`, search: `${unavailableAlias() ?? ""} ${agent().model}`, disabled: true }] : []),
                 ...settingsProps().models
                   .map(model => { const id = `${model.provider}/${model.id}`; return { value: id, label: draft().modelAliases?.[id] || model.name || model.id, search: `${draft().modelAliases?.[id] ?? ""} ${model.name ?? ""} ${id}`, group: agentValidation().hiddenModels.has(id) ? 1 : 0 }; })
                   .sort((left, right) => left.group - right.group),

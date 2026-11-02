@@ -1,56 +1,14 @@
 import { createSignal, createUniqueId, Show } from "solid-js";
-import { z } from "zod";
-import { agentProfileSchema } from "../lib/agentSchemas";
+import { exportAgents, parseAgentsImport } from "../lib/agentTransfer";
 import { copyText } from "../lib/clipboard";
 import { createDependencyEffect, createRef } from "../lib/solid";
 import type { AgentProfile } from "../types";
-
-const transferSchema = z.object({ agents: z.array(agentProfileSchema.omit({ unavailableReason: true, project: true, isDefault: true })).min(1) });
-
-function exportText(agents: AgentProfile[]) {
-  return JSON.stringify({ agents: agents.map(({ unavailableReason: _reason, project: _project, isDefault: _default, ...agent }) => agent) }, null, 2);
-}
-
-function parseImport(text: string): AgentProfile[] {
-  let value: unknown;
-
-  try { value = JSON.parse(text); } catch (reason) { throw new Error(`Not valid JSON: ${reason instanceof Error ? reason.message : String(reason)}`); }
-  const parsed = transferSchema.safeParse(value);
-
-  if (!parsed.success) {
-    const issue = parsed.error.issues[0];
-    throw new Error(`${issue.path.length ? `${issue.path.join(".")}: ` : ""}${issue.message}`);
-  }
-
-  const names = parsed.data.agents.map(agent => agent.name.toLowerCase());
-  const repeated = names.find((name, index) => names.indexOf(name) !== index);
-
-  if (repeated) throw new Error(`Agent name “${repeated}” is used more than once`);
-
-  return parsed.data.agents;
-}
-
-/** Replaces drafts with the same name (case-insensitive) and keeps their default flag; adds the others. */
-export function mergeImportedAgents(current: AgentProfile[], imported: AgentProfile[]) {
-  const next = [...current];
-  const changed: number[] = [];
-
-  for (const agent of imported) {
-    const index = next.findIndex(item => item.name.toLowerCase() === agent.name.toLowerCase());
-
-    if (index < 0) { changed.push(next.length); next.push(agent); continue; }
-    next[index] = next[index].isDefault ? { ...agent, isDefault: true } : agent;
-    changed.push(index);
-  }
-
-  return { agents: next, changed };
-}
 
 export function AgentTransferDialog(props: { mode: "export" | "import"; agents: AgentProfile[]; onImport: (agents: AgentProfile[]) => void; onClose: () => void }) {
   const dialogRef = createRef<HTMLDialogElement>(null);
   const fileRef = createRef<HTMLInputElement>(null);
   const titleId = createUniqueId();
-  const [text, setText] = createSignal(props.mode === "export" ? exportText(props.agents) : "");
+  const [text, setText] = createSignal(props.mode === "export" ? exportAgents(props.agents) : "");
   const [error, setError] = createSignal<string>();
   const [copied, setCopied] = createSignal(false);
 
@@ -76,7 +34,7 @@ export function AgentTransferDialog(props: { mode: "export" | "import"; agents: 
   };
 
   const confirmImport = () => {
-    try { props.onImport(parseImport(text())); } catch (reason) { setError(reason instanceof Error ? reason.message : String(reason)); }
+    try { props.onImport(parseAgentsImport(text())); } catch (reason) { setError(reason instanceof Error ? reason.message : String(reason)); }
   };
 
   return <dialog ref={element => { dialogRef.current = element; }} class="extension-dialog" aria-labelledby={titleId} onCancel={event => { event.preventDefault(); props.onClose(); }}>
