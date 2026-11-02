@@ -2,12 +2,14 @@ import { cachedMobileHost } from "./mobileHosts";
 import type { SessionGroups } from "./sessionGroups";
 import { isMobile } from "./platform";
 import { z } from "zod";
+import { sessionGroupOrdersSchema } from "./responseSchemas";
 
 const sessionGroupsSchema = z.object({
   groups: z.array(z.looseObject({ id: z.string(), name: z.string() })),
   parents: z.record(z.string(), z.string()),
   removedProjects: z.array(z.string()),
   assignments: z.record(z.string(), z.string().nullable()),
+  orders: sessionGroupOrdersSchema,
 });
 
 const snapshots = new Map<string, SessionGroups>();
@@ -17,7 +19,7 @@ function cacheKey() {
 
   const host = cachedMobileHost();
 
-  return host ? `piop-session-groups:v1:${host}` : undefined;
+  return host ? `piop-session-groups:v2:${host}` : undefined;
 }
 
 export function restoreSessionGroups() {

@@ -3,13 +3,8 @@ import { z } from "zod";
 import { captureDaemonTransport } from "./platform";
 import type { StateUpdate } from "./solid";
 
-const layoutSchema = z.object({
-  collapsed: z.array(z.string()),
-  sessions: z.record(z.string(), z.array(z.string()).optional().catch(undefined)),
-  sidebar: z.array(z.string()),
-  children: z.record(z.string(), z.array(z.string())),
-  removed: z.array(z.string()).default([]),
-});
+/** Per-client sidebar view state. The daemon keeps the shared order. */
+const layoutSchema = z.object({ collapsed: z.array(z.string()) });
 
 const recordSchema = z.object({ revision: z.number().int().nonnegative(), layout: layoutSchema });
 
@@ -51,7 +46,7 @@ function transactLayout(database: IDBDatabase, key: string, fallback: Layout, ch
 
 export function createSidebarPersistence() {
   const endpoint = captureDaemonTransport().identity;
-  const initial: Layout = { collapsed: [], sessions: {}, sidebar: [], children: {}, removed: [] };
+  const initial: Layout = { collapsed: [] };
   const [layout, setLayout] = createSignal(initial);
   const [error, setError] = createSignal<string>();
   const notificationKey = `piop-sidebar-revision:${endpoint}`;
@@ -90,7 +85,7 @@ export function createSidebarPersistence() {
     queue = queue.catch(() => undefined).then(async () => {
       if (!endpoint) throw new Error("Connect to a host before saving sidebar preferences");
 
-      const record = await transactLayout(await database, endpoint, initial, current => pruneRemovedGroups(update(current)));
+      const record = await transactLayout(await database, endpoint, initial, update);
       publish(record);
 
       try { localStorage.setItem(notificationKey, String(record.revision)); } catch { }
@@ -109,36 +104,7 @@ export function createSidebarPersistence() {
     return { ...current, [key]: value };
   });
 
-  const removeGroup = (id: string, released: string[]) => mutate(current => {
-    const token = `group:${id}`;
-    const sidebar = current.sidebar.filter(entry => !released.includes(entry));
-    const index = sidebar.indexOf(token);
-    sidebar.splice(index < 0 ? sidebar.length : index, index < 0 ? 0 : 1, ...released);
-
-    const pruned = pruneRemovedGroups({
-      ...current, sidebar,
-      removed: [...new Set([...current.removed, id])],
-    });
-
-    return { ...pruned, removed: pruned.removed.filter(key => key.startsWith("__pi-desktop-custom-group__:")) };
-  });
+  const removeGroup = (id: string) => mutate(current => ({ ...current, collapsed: current.collapsed.filter(key => key !== id) }));
 
   return { layout, change, removeGroup, error };
-}
-
-function pruneRemovedGroups(current: Layout): Layout {
-  const removed = new Set(current.removed);
-  const tokens = new Set(current.removed.map(id => `group:${id}`));
-  const sessions = Object.fromEntries(Object.entries(current.sessions).filter(([id]) => !removed.has(id)));
-  const children = Object.fromEntries(Object.entries(current.children).flatMap(([id, entries]) => removed.has(id) ? [] : [[id, entries.filter(token => !tokens.has(token))]]));
-
-  return { ...current, sessions, children, collapsed: current.collapsed.filter(id => !removed.has(id)), sidebar: current.sidebar.filter(token => !tokens.has(token)) };
-}
-
-export function moveSidebarToken(current: string[], token: string, before: string | null, available: string[] = []) {
-  const entries = [...current, ...available.filter(item => !current.includes(item))].filter(item => item !== token);
-  const index = before === null ? -1 : entries.indexOf(before);
-  entries.splice(index < 0 ? entries.length : index, 0, token);
-
-  return entries;
 }

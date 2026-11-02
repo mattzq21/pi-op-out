@@ -1,10 +1,10 @@
 import { createMemo,type Accessor } from "solid-js";
 import type { SessionSummary } from "../types";
 import { hasVisibleText } from "./content";
-import { DIRLESS_KEY,isTemporaryChatCwd,useSessionGroups, type SessionGroup } from "./sessionGroups";
+import { DIRLESS_KEY,isTemporaryChatCwd,useSessionGroups, type OrderChange, type SessionGroup } from "./sessionGroups";
 import { useSessionProjects } from "./sessionProjects";
 import { createDependencyEffect } from "./solid";
-import { createSidebarPersistence, moveSidebarToken } from "./sidebarPersistence";
+import { createSidebarPersistence } from "./sidebarPersistence";
 
 export interface DraggedSession { projectKey: string; sessionKey: string; session: SessionSummary; }
 
@@ -28,10 +28,6 @@ function recentSessionOrder(left: SessionSummary, right: SessionSummary) {
 
 function addedSessionOrder(left: SessionSummary, right: SessionSummary) {
   return left.lastMessageAt - right.lastMessageAt || stableSessionOrder(left, right);
-}
-
-function validSessionOrders(orders: Record<string, string[] | undefined>) {
-  return Object.fromEntries(Object.entries(orders).flatMap(([key, sessions]): [string, string[]][] => sessions ? [[key, sessions]] : []));
 }
 
 export function sessionKey(session: SessionSummary) { return `${session.hostId ?? "local"}:${session.id}`; }
@@ -77,14 +73,12 @@ export function createSidebarState(source: Accessor<SessionSummary[]>, query: Ac
   const parentGroupsByKey = createMemo(() => new Map(savedGroups().filter(group => group.id !== DIRLESS_KEY && !(group.cwd && isTemporaryChatCwd(group.cwd))).map((group): [string, SessionGroup] => [group.id, group])));
   const persistence = createSidebarPersistence();
   const collapsedProjects = createMemo(() => new Set(persistence.layout().collapsed));
-  const sessionOrders = createMemo(() => validSessionOrders(persistence.layout().sessions));
-  const sidebarOrder = () => persistence.layout().sidebar;
+  const sessionOrders = createMemo(() => storedGroups.state?.orders.sessions ?? {});
+  const sidebarOrder = () => storedGroups.state?.orders.sidebar ?? [];
   const projectGroups = () => storedGroups.state?.parents ?? {};
-  const groupChildOrders = () => persistence.layout().children;
+  const groupChildOrders = () => storedGroups.state?.orders.children ?? {};
   const setCollapsedProjects = (update: (current: Set<string>) => Set<string>) => persistence.change("collapsed", current => [...update(new Set(current))]);
-  const setSessionOrders = (update: (current: Record<string, string[]>) => Record<string, string[]>) => persistence.change("sessions", current => update(validSessionOrders(current)));
-  const setSidebarOrder = (update: (current: string[]) => string[]) => persistence.change("sidebar", update);
-  const setGroupChildOrders = (update: (current: Record<string, string[]>) => Record<string, string[]>) => persistence.change("children", update);
+  const placeOrderToken = (scope: OrderChange["scope"], owner: string, visible: string[], token: string | null, before: string | null) => storedGroups.change({ type: "order", scope, owner, visible, token, before });
 
   const projectParent = (id: string) => {
     const parent = projectGroups()[id];
@@ -141,11 +135,9 @@ export function createSidebarState(source: Accessor<SessionSummary[]>, query: Ac
     if (groupNameTaken(name, excludedId)) return "A project or group already uses that name.";
   };
 
-  const removeGroup = async (projectKey: string) => { const capturedSessions = sessions(); const capturedSessionOrders = sessionOrders();
-    const releasedSessions = orderedSessions(projectKey, capturedSessions.filter((session) => visualProjectKey(session) === projectKey), capturedSessionOrders);
-    const releasedTokens = releasedSessions.map((session) => sessionLayoutToken(sessionKey(session)));
+  const removeGroup = async (projectKey: string) => {
     await storedGroups.change({ type: "remove", id: projectKey });
-    persistence.removeGroup(projectKey, releasedTokens);
+    persistence.removeGroup(projectKey);
   };
 
   const toggleProject = (projectKey: string) => setCollapsedProjects((current) => {
@@ -173,7 +165,8 @@ export function createSidebarState(source: Accessor<SessionSummary[]>, query: Ac
     const entries = groupEntries(destinationKey).filter(token => token !== sessionLayoutToken(key));
     const index = target ? entries.indexOf(target) : -1;
     const before = index < 0 ? null : edge === "before" ? target ?? null : entries[index + 1] ?? null;
-    placeGroupEntry(destinationKey, sessionLayoutToken(key), before);
+
+    return placeGroupEntry(destinationKey, sessionLayoutToken(key), before);
   };
 
   const moveSession = (drag: DraggedSession, destinationKey: string, targetKey?: string, edge: "before" | "after" = "after") => {
@@ -183,31 +176,23 @@ export function createSidebarState(source: Accessor<SessionSummary[]>, query: Ac
     if (!destinationSessions) return;
 
     if (drag.projectKey === destinationKey && drag.sessionKey === targetKey) return;
-    const available = destinationSessions.map(sessionKey);
-    setSessionOrders((current) => {
-      const order = [...(current[destinationKey] ?? []), ...available.filter(key => !current[destinationKey]?.includes(key))].filter(key => key !== drag.sessionKey);
-      const targetIndex = targetKey ? order.indexOf(targetKey) : -1;
-      const before = targetIndex < 0 ? null : edge === "before" ? targetKey ?? null : order[targetIndex + 1] ?? null;
-      const next = { ...current, [destinationKey]: moveSidebarToken(order, drag.sessionKey, before) };
+    const visible = destinationSessions.map(sessionKey).filter(key => key !== drag.sessionKey);
+    const targetIndex = targetKey ? visible.indexOf(targetKey) : -1;
+    const before = targetIndex < 0 ? null : edge === "before" ? targetKey ?? null : visible[targetIndex + 1] ?? null;
+    const changes = [placeOrderToken("sessions", destinationKey, visible, drag.sessionKey, before)];
 
-      return next;
-    });
+    if (parentGroupsByKey().has(destinationKey)) changes.push(placeSessionEntry(destinationKey, drag.sessionKey, targetKey, edge));
 
-    if (parentGroupsByKey().has(destinationKey)) {
-      placeSessionEntry(destinationKey, drag.sessionKey, targetKey, edge);
-    }
+    if (destinationKey !== DIRLESS_KEY) changes.push(storedGroups.change({ type: "assign", key: drag.sessionKey, group: destinationKey === RECENT_KEY ? null : destinationKey }));
 
-    if (destinationKey === DIRLESS_KEY) return Promise.resolve();
-
-    return storedGroups.change({ type: "assign", key: drag.sessionKey, group: destinationKey === RECENT_KEY ? null : destinationKey }).catch(() => undefined);
+    return Promise.all(changes).then(() => undefined, () => undefined);
   };
 
   const placeSidebarEntry = (token: string, beforeToken: string | null) => {
     if ([RECENT_KEY, DIRLESS_KEY].some(key => token === groupLayoutToken(key))) return;
-    const currentEntries = sidebarEntries();
 
     if (beforeToken === token) return;
-    setSidebarOrder(current => moveSidebarToken(current, token, beforeToken ?? groupLayoutToken(RECENT_KEY), currentEntries));
+    void placeOrderToken("sidebar", "", sidebarEntries(), token, beforeToken ?? groupLayoutToken(RECENT_KEY)).catch(() => undefined);
   };
 
   const groupDestination = (id: string) => savedGroupsById().get(id);
@@ -248,36 +233,18 @@ export function createSidebarState(source: Accessor<SessionSummary[]>, query: Ac
 
   const recentSessions = createMemo(() => (orderedSessions(RECENT_KEY, groupedSessions()[RECENT_KEY] ?? [], sessionOrders())));
   const recentKeys = createMemo(() => (recentSessions().map(sessionKey).join("\n")));
-  createDependencyEffect(() => { const capturedNormalizedQuery = normalizedQuery(); const capturedRecentKeys = recentKeys();
+  createDependencyEffect(() => {
+    const saved = sessionOrders()[RECENT_KEY];
 
-    if (capturedNormalizedQuery) return;
-    setSessionOrders((current) => {
-      const saved = current[RECENT_KEY];
+    if (normalizedQuery() || !saved) return;
+    const known = new Set(saved);
+    const visible = recentKeys().split("\n").filter(Boolean);
 
-      if (!saved) return current;
-      const known = new Set(saved);
-      const added = capturedRecentKeys.split("\n").filter((key) => key && !known.has(key));
-
-      if (!added.length) return current;
-      const next = { ...current, [RECENT_KEY]: [...added, ...saved] };
-
-      return next;
-    });
+    if (visible.every(key => known.has(key))) return;
+    void placeOrderToken("sessions", RECENT_KEY, visible, null, null).catch(() => undefined);
   }, () => [recentKeys(), normalizedQuery()]);
   const physicalGroups = createMemo(() => (savedGroups().filter((group) => group.cwd && !isTemporaryChatCwd(group.cwd)).map((group): SidebarGroup => [group.id, group.name, group.hostId ?? "local", group.hostName ?? undefined, orderedSessions(group.id, groupedSessions()[group.id] ?? [], sessionOrders())])));
   const customVisualGroups = createMemo(() => (customGroups().map((group): SidebarGroup => [group.id, group.name, "", undefined, orderedSessions(group.id, groupedSessions()[group.id] ?? [], sessionOrders())])));
-  const projectOrderKey = createMemo(() => (JSON.stringify(savedGroups().map((group) => groupLayoutToken(group.id)))));
-  createDependencyEffect(() => { const capturedProjectOrderKey = projectOrderKey();
-    const projectTokens: string[] = JSON.parse(capturedProjectOrderKey);
-    setSidebarOrder((current) => {
-      const added = projectTokens.filter((token) => !current.includes(token));
-
-      if (!added.length) return current;
-      const next = [...added, ...current];
-
-      return next;
-    });
-  }, () => [projectOrderKey()]);
 
   const groups = createMemo<SidebarGroup[]>(() => ([
     ...customVisualGroups().filter(([key, , , , projectSessions]) => !normalizedQuery() || projectSessions.length > 0 || [...customVisualGroups(), ...physicalGroups()].some(([id, , , , children]) => children.length > 0 && groupAncestors(id).includes(key))),
@@ -315,13 +282,9 @@ export function createSidebarState(source: Accessor<SessionSummary[]>, query: Ac
   };
 
   const placeGroupEntry = (id: string, token: string, before: string | null) => {
-    if (token === before) return;
-    const entries = groupEntries(id);
-    setGroupChildOrders(current => {
-      const next = { ...current, [id]: moveSidebarToken(current[id] ?? [], token, before, entries) };
+    if (token === before) return Promise.resolve();
 
-      return next;
-    });
+    return placeOrderToken("children", id, groupEntries(id), token, before).catch(() => undefined);
   };
 
   const saveGroup = (name: string, id?: string, project?: Pick<SessionGroup, "cwd" | "hostId" | "hostName">) => {
