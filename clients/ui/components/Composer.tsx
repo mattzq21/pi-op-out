@@ -418,6 +418,7 @@ export function Composer(props: Props) {
     return () => { cancelAnimationFrame(frame); window.removeEventListener("resize", resize); window.visualViewport?.removeEventListener("resize", resize); };
   }, () => []);
   let handledFocusRequest: number | undefined;
+  const [focusPending, setFocusPending] = createSignal(false);
   createDependencyEffect(() => {
     const request = composer().focusRequest ?? 0;
 
@@ -426,9 +427,11 @@ export function Composer(props: Props) {
     return; }
 
     if (handledFocusRequest === request) return;
+    setFocusPending(!document.querySelector("dialog[open]"));
 
     const frame = requestAnimationFrame(() => {
       const editor = ref.current;
+      setFocusPending(false);
 
       if (!editor?.isConnected || props.ownershipRequired || document.querySelector("dialog[open]")) return;
       editor.focus({ preventScroll: true });
@@ -436,7 +439,7 @@ export function Composer(props: Props) {
       if (document.activeElement === editor) handledFocusRequest = request;
     });
 
-    return () => cancelAnimationFrame(frame);
+    return () => { cancelAnimationFrame(frame); setFocusPending(false); };
   }, () => [composer().focusRequest, props.ownershipRequired]);
   createDependencyEffect(() => {
     if (props.ownershipRequired) ref.current?.blur();
@@ -701,7 +704,7 @@ export function Composer(props: Props) {
       </div>);
     };
 
-    return (<div ref={element => { composerRef.current = element; }} classList={{ "editing-pending": Boolean(editingPending()) }} class={`composer${draggingFiles() && !controls().inputDisabled ? " dragging-files" : ""}`}
+    return (<div ref={element => { composerRef.current = element; }} classList={{ "editing-pending": Boolean(editingPending()), "focus-pending": focusPending() }} class={`composer${draggingFiles() && !controls().inputDisabled ? " dragging-files" : ""}`}
       onPaste={event => filePaste.onPaste(event)}>
       {renderComposerDropHint()}
       {renderCommandPalette()}
