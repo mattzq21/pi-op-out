@@ -41,44 +41,49 @@ export const skillNames = (commands: SlashCommand[]) => new Map(commands.flatMap
 
   return name ? [[name.toLowerCase(), name]] : []; }));
 
-export function findSkillReference(value: string, skills: ReadonlyMap<string, string>) {
-  if (/^\s*\/(?!skill:)/.test(value) || !skills.size) return undefined;
+export function findSkillReferences(value: string, skills: ReadonlyMap<string, string>) {
+  if (/^\s*\/(?!skill:)/.test(value) || !skills.size) return [];
 
-  for (const match of proseOnly(value).matchAll(/(^|\s)(\$|\/skill:)([a-zA-Z0-9][a-zA-Z0-9_-]*)(?=\s|$)/g)) {
+  return [...proseOnly(value).matchAll(/(^|\s)(\$|\/skill:)([a-zA-Z0-9][a-zA-Z0-9_-]*)(?=\s|$)/g)].flatMap(match => {
     const name = skills.get(match[3].toLowerCase());
-
-    if (!name) continue;
     const start = match.index + match[1].length;
 
-    return { name, start, end: start + match[2].length + match[3].length };
+    return name ? [{ name, start, end: start + match[2].length + match[3].length }] : [];
+  });
+}
+
+function expandSkillReferences(value: string, commands: SlashCommand[]) {
+  const names = new Set(findSkillReferences(value, skillNames(commands)).map(found => found.name));
+
+  return names.size ? `${[...names].map(name => `/skill:${name}`).join(" ")} ${value}` : value;
+}
+
+const SKILL_BLOCK = /<skill\s+name="([^"]+)"\s+location="[^"]+">\nReferences are relative to [^\n]+\.\n\n[\s\S]*?\n<\/skill>(?:\n\n|$)/iy;
+
+const QUEUED_SKILL = /\/skill:([a-zA-Z0-9][a-zA-Z0-9_-]*)(?:\s+|$)/y;
+
+function leadingSkills(message: string, pattern: RegExp) {
+  const skills: string[] = [];
+  let at = 0;
+
+  for (let match; at < message.length; at = pattern.lastIndex) {
+    pattern.lastIndex = at;
+    match = pattern.exec(message);
+
+    if (!match) break;
+    skills.push(match[1]);
   }
 
-  return undefined;
+  if (!skills.length) return undefined;
+  const text = message.slice(at).trim();
+  const missing = skills.filter(skill => !findSkillReferences(text, new Map([[skill.toLowerCase(), skill]])).length);
+
+  return { skills, text: [...missing.map(skill => `$${skill}`), text].filter(Boolean).join(" ") };
 }
 
-function expandSkillReference(value: string, commands: SlashCommand[]) {
-  const found = findSkillReference(value, skillNames(commands));
+export const sentSkillPrompt = (message: string) => leadingSkills(message, SKILL_BLOCK);
 
-  return found ? `/skill:${found.name} ${value}` : value;
-}
-
-const SKILL_BLOCK = /^<skill\s+name="([^"]+)"\s+location="[^"]+">\nReferences are relative to [^\n]+\.\n\n[\s\S]*?<\/skill>(?:\n\n([\s\S]*))?$/i;
-
-const QUEUED_SKILL = /^\/skill:([a-zA-Z0-9][a-zA-Z0-9_-]*)(?:\s+([\s\S]*))?$/;
-
-const withSkillReference = (skill: string, text: string) => ({ skill, text: findSkillReference(text, new Map([[skill.toLowerCase(), skill]])) ? text : `$${skill}${text ? ` ${text}` : ""}` });
-
-export function sentSkillPrompt(message: string) {
-  const block = message.match(SKILL_BLOCK);
-
-  return block ? withSkillReference(block[1], (block[2] ?? "").trim()) : undefined;
-}
-
-export function queuedSkillPrompt(message: string) {
-  const call = message.match(QUEUED_SKILL);
-
-  return call ? withSkillReference(call[1], (call[2] ?? "").trim()) : undefined;
-}
+export const queuedSkillPrompt = (message: string) => leadingSkills(message, QUEUED_SKILL);
 
 const escapeAttribute = (value: string) => value.replace(/[&<>"']/g, (character) => required(({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&apos;" })[character]));
 
@@ -119,7 +124,7 @@ export function splitAttachedFiles(message: string): { prompt: string; files: At
 }
 
 export function expandComposerPrompt(value: string, commands: SlashCommand[]) {
-  return expandSkillReference(expandInlineCommand(value.trim(), commands), commands);
+  return expandSkillReferences(expandInlineCommand(value.trim(), commands), commands);
 }
 
 export function buildComposerPrompt(value: string, uploads: ComposerUpload[], commands: SlashCommand[]) {

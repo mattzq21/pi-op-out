@@ -14,6 +14,18 @@ const manifestSchema = z.object({ mcpServers: mcpServersSchema }).strict();
 const savedSchema = z.array(z.object({ file: z.string(), servers: z.array(z.object({ alias: z.string(), name: z.string().regex(/^skill_[a-zA-Z0-9_]+$/), config: mcpServerSchema })) }));
 type Server = { alias: string; name: string; config: McpServerConfig; state: "connecting" | "connected" | "failed"; error?: string; connection?: object };
 type Connection = { name: string; state: string; error?: string };
+const SKILL_BLOCK = /<skill name="[^"]+" location="([^"]+)">\n[\s\S]*?\n<\/skill>(?:\n\n|$)/y;
+
+function invokedSkillPaths(prompt: string) {
+  const paths: string[] = [];
+  for (let at = 0, match; at < prompt.length; at = SKILL_BLOCK.lastIndex) {
+    SKILL_BLOCK.lastIndex = at;
+    match = SKILL_BLOCK.exec(prompt);
+    if (!match) break;
+    paths.push(match[1]);
+  }
+  return paths;
+}
 
 export function skillMcp(pi: ExtensionAPI, ready: (ctx: ExtensionContext) => Promise<void>, wait: () => Promise<void>) {
   const loaded = new Map<string, Map<string, Server>>();
@@ -155,10 +167,12 @@ export function skillMcp(pi: ExtensionAPI, ready: (ctx: ExtensionContext) => Pro
     try {
       await settle(ctx);
       if (!("prompt" in event)) return;
-      const path = /^<skill name="[^"]+" location="([^"]+)">\n/.exec(event.prompt)?.[1];
-      if (!path) return;
-      const content = await load(path, ctx);
-      if (content) return { message: { customType: "skill-mcp", content, display: false } };
+      const contents: string[] = [];
+      for (const path of invokedSkillPaths(event.prompt)) {
+        const content = await load(path, ctx);
+        if (content) contents.push(content);
+      }
+      if (contents.length) return { message: { customType: "skill-mcp", content: contents.join("\n"), display: false } };
     } catch (error) {
       ctx.abort();
       ctx.ui.notify(error instanceof Error ? error.message : String(error), "error");

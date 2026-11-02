@@ -53,8 +53,8 @@ const parser = new Marked({ gfm: true, tokenizer: markdownTokenizer, hooks: mark
 
 const frontmatterParser = new Marked({ gfm: true, tokenizer: frontmatterTokenizer, hooks: markdownHooks, renderer, extensions: [frontmatterExtension] });
 
-function skillReferenceExtension(name: string): TokenizerAndRendererExtension {
-  const reference = `(?:\\$|/skill:)${name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?=\\s|$)`;
+function skillReferenceExtension(names: string[]): TokenizerAndRendererExtension {
+  const reference = `(?:\\$|/skill:)(?:${names.map(name => name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|")})(?=\\s|$)`;
   const anywhere = new RegExp(`(^|\\s)${reference}`, "i");
   const here = new RegExp(`^${reference}`, "i");
 
@@ -71,7 +71,7 @@ function skillReferenceExtension(name: string): TokenizerAndRendererExtension {
   };
 }
 
-const skillParser = (frontmatter: boolean, skill: string) => new Marked({ gfm: true, tokenizer: frontmatter ? frontmatterTokenizer : markdownTokenizer, hooks: markdownHooks, renderer, extensions: [...frontmatter ? [frontmatterExtension] : [], skillReferenceExtension(skill)] });
+const skillParser = (frontmatter: boolean, skills: string[]) => new Marked({ gfm: true, tokenizer: frontmatter ? frontmatterTokenizer : markdownTokenizer, hooks: markdownHooks, renderer, extensions: [...frontmatter ? [frontmatterExtension] : [], skillReferenceExtension(skills)] });
 
 let purifier: ReturnType<typeof DOMPurify> | undefined;
 
@@ -96,10 +96,10 @@ function sanitizeMarkdown(html: string, streaming: boolean, detectFiles: boolean
 
 type LinkMenu = { kind: "web" | "file"; text: string; href?: string; x: number; y: number; returnFocus?: HTMLElement };
 
-export function Markdown(props: { children: string; streaming?: boolean; imageProject?: FileProject; fileLinks?: boolean; frontmatter?: boolean; skill?: string }) {
+export function Markdown(props: { children: string; streaming?: boolean; imageProject?: FileProject; fileLinks?: boolean; frontmatter?: boolean; skills?: string[] }) {
   const pathLinks = () => Boolean(props.fileLinks) && canOpenFileLinks;
   const allowFile = (value: string) => Boolean(props.imageProject && imageFileReference(value)) || (pathLinks() && openablePath(value));
-  const renderMarkdown = streamingMarkdown(props.skill ? skillParser(Boolean(props.frontmatter), props.skill) : props.frontmatter ? frontmatterParser : parser, (html, streaming, detectFiles) => sanitizeMarkdown(html, streaming, detectFiles, allowFile));
+  const renderMarkdown = streamingMarkdown(props.skills?.length ? skillParser(Boolean(props.frontmatter), props.skills) : props.frontmatter ? frontmatterParser : parser, (html, streaming, detectFiles) => sanitizeMarkdown(html, streaming, detectFiles, allowFile));
   const [error, setError] = createSignal<string>();
   const fileScope = useContext(MessageFileContext);
   const sessionLinks = useContext(SessionLinkContext);

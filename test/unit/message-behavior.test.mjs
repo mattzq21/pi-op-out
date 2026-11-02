@@ -182,6 +182,13 @@ test('the skill reference stays highlighted where the user wrote it, and copy gi
   assert.deepEqual(copied, ['Please use $research on this']);
 });
 
+test('every skill of a message with several skills stays highlighted without its instructions', async t => {
+  const block = name => `<skill name="${name}" location="/skills/${name}">\nReferences are relative to /skills/${name}.\n\nPrivate instructions\n</skill>`;
+  await renderMessage(t, { role: 'user', content: `${block('bugfix')}\n\n${block('grill-me')}\n\n$bugfix the toast, then $grill-me` });
+  assert.equal(document.querySelector('.message-body').textContent.trim(), '$bugfix the toast, then $grill-me');
+  assert.deepEqual([...document.querySelectorAll('.inline-skill-reference')].map(node => node.textContent), ['$bugfix', '$grill-me']);
+});
+
 test('a skill invocation without a user request shows only the skill name', async t => {
   await renderMessage(t, { role: 'user', content: '<skill name="research" location="/skills/research">\nReferences are relative to /skills/research.\n\nPrivate instructions\n</skill>' });
   assert.equal(document.querySelector('article').textContent.trim(), '$research');

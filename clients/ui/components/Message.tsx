@@ -58,7 +58,7 @@ function userMessageParts(content: string) {
   if (goal) return { command: "goal", text: (goal[1] ?? "").trim(), literalSkill: false };
   const call = sentSkillPrompt(content);
 
-  return call ? { skill: call.skill, text: call.text, literalSkill: false } : { text: content, literalSkill: /<\/?skill\b/i.test(content) };
+  return call ? { skills: call.skills, text: call.text, literalSkill: false } : { text: content, literalSkill: /<\/?skill\b/i.test(content) };
 }
 
 function imageContextParts(content: string, hasImages: boolean) {
@@ -288,7 +288,7 @@ export function Message(componentProps: Props) {
       <Show when={!editing()} fallback={<SentMessageEditor message={componentProps.message} text={imageContext().text} onSave={componentProps.onEdit} onClose={() => setEditing(false)} />}>
       {images().length > 0 && <div class="user-message-images">{!hasBody() && <PinButton message={componentProps.message} text={pinLabel()} />}<Index each={images()}>{part => <ZoomableImage src={`data:${part().mimeType};base64,${part().data}`} alt="Sent attachment" />}</Index></div>}
       {hasBody() && <div class="message-body"><PinButton message={componentProps.message} text={pinLabel()} />
-      <Show when={parts().command}>{command => <span class="skill-reference command-reference">/{command()}</span>}</Show><Show when={parts().text}><Show when={parts().literalSkill} fallback={<Markdown frontmatter skill={parts().skill}>{parts().text}</Markdown>}><span class="literal-skill-content">{parts().text}</span></Show></Show>
+      <Show when={parts().command}>{command => <span class="skill-reference command-reference">/{command()}</span>}</Show><Show when={parts().text}><Show when={parts().literalSkill} fallback={<Markdown frontmatter skills={parts().skills}>{parts().text}</Markdown>}><span class="literal-skill-content">{parts().text}</span></Show></Show>
       </div>}
       <div class="message-actions">
         {sentTime() && <span class="message-time">{required(sentTime()).short}</span>}

@@ -127,6 +127,7 @@ test('a Pi start installs the bundled extensions as private files and refreshes 
     ['piop-providers-refresh.ts', 'extensions/piop-providers-refresh/index.ts'],
     ['piop-context-window-cap/defaults.ts', 'extensions/piop-context-window-cap/defaults.ts'],
     ['piop-controls/index.ts', 'daemon/resources/piop-controls/index.ts'],
+    ['piop-controls/skills.ts', 'daemon/resources/piop-controls/skills.ts'],
     ['session-broker/queue-tools.ts', 'daemon/resources/session-broker/queue-tools.ts'],
     ['session-broker/context-insertions.ts', 'daemon/resources/session-broker/context-insertions.ts'],
     ['plugins/review/index.ts', 'daemon/plugins/review/index.ts'],
@@ -137,6 +138,7 @@ test('a Pi start installs the bundled extensions as private files and refreshes 
   for (const name of ['hooks-extended/index.ts', 'piop-controls/index.ts', 'session-broker.ts', 'plugins/review/index.ts', 'piop-openai-cache-fork.ts', 'plugins/web-search/index.ts']) expect(extensions).toContain(join(generated, name));
   for (const removed of ['piop-goals/index.ts', 'runtime-settings.ts', 'piop-skills-store/index.ts', 'piop-tool-store/index.ts', 'piop-codemode-tools-description.ts']) expect(extensions).not.toContain(join(generated, removed));
   expect(extensions).toContain(join(generated, 'piop-providers-refresh.ts'));
+  expect(extensions.at(-1)).toBe(join(generated, 'piop-controls/skills.ts'));
   for (const [name, relative] of bundles) {
     expect(readFileSync(join(generated, name), 'utf8')).toBe(installed(name, relative));
     expect(mode(join(generated, name))).toBe(0o600);

@@ -1,4 +1,4 @@
-import { findSkillReference, queuedSkillPrompt } from "../lib/composerPrompt";
+import { findSkillReferences, queuedSkillPrompt } from "../lib/composerPrompt";
 import { sessionReference } from "../lib/sessionDrop";
 
 export const COMPOSER_FIELD_TAG = "piop-composer-field";
@@ -30,25 +30,34 @@ export type FieldSegment = Segment | { skill: string };
 export function queuedSegments(value: string): FieldSegment[] {
   const call = queuedSkillPrompt(value);
 
-  return call ? fieldSegments(call.text, new Map([[call.skill.toLowerCase(), call.skill]])) : sessionLinkSegments(value);
+  return call ? fieldSegments(call.text, new Map(call.skills.map(skill => [skill.toLowerCase(), skill]))) : sessionLinkSegments(value);
 }
 
 function fieldSegments(value: string, skills: ReadonlyMap<string, string>): FieldSegment[] {
   const segments: FieldSegment[] = sessionLinkSegments(value);
-  const skill = findSkillReference(value, skills);
+  const found = findSkillReferences(value, skills);
 
-  if (!skill) return segments;
+  if (!found.length) return segments;
   let at = 0;
 
   return segments.flatMap((segment): FieldSegment[] => {
     const start = at;
     at += "markdown" in segment ? segment.markdown.length : "text" in segment ? segment.text.length : segment.skill.length;
 
-    if (!("text" in segment) || skill.start < start || skill.end > at) return [segment];
-    const before = segment.text.slice(0, skill.start - start);
-    const after = segment.text.slice(skill.end - start);
+    if (!("text" in segment)) return [segment];
+    const result: FieldSegment[] = [];
+    let cut = 0;
 
-    return [...before ? [{ text: before }] : [], { skill: segment.text.slice(skill.start - start, skill.end - start) }, ...after ? [{ text: after }] : []];
+    for (const skill of found) {
+      if (skill.start < start || skill.end > at) continue;
+      if (skill.start - start > cut) result.push({ text: segment.text.slice(cut, skill.start - start) });
+      result.push({ skill: segment.text.slice(skill.start - start, skill.end - start) });
+      cut = skill.end - start;
+    }
+
+    if (cut < segment.text.length) result.push({ text: segment.text.slice(cut) });
+
+    return result;
   });
 }
 

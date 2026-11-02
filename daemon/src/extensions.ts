@@ -63,7 +63,7 @@ export function prepareRuntimeBridge(): void {
 
 export const SESSION_BROKER_MODULES = R.SESSION_BROKER_MODULES;
 
-export function prepareSessionExtensions(): { hooks: string; storage: string; controls: string; broker: string } {
+export function prepareSessionExtensions(): { hooks: string; storage: string; controls: string; skills: string; broker: string } {
   const dir = generatedExtensionRoot();
   ensurePrivateDir(dir);
   prepareBrokerStorage(dir);
@@ -76,7 +76,7 @@ export function prepareSessionExtensions(): { hooks: string; storage: string; co
   }
   const broker = join(dir, 'session-broker.ts');
   atomicWritePrivate(broker, R.sessionBroker);
-  return { hooks: join(dir, 'hooks-extended/index.ts'), storage: join(dir, 'piop-storage/index.ts'), controls: join(dir, 'piop-controls/index.ts'), broker };
+  return { hooks: join(dir, 'hooks-extended/index.ts'), storage: join(dir, 'piop-storage/index.ts'), controls: join(dir, 'piop-controls/index.ts'), skills: join(dir, 'piop-controls/skills.ts'), broker };
 }
 
 export function preparePluginExtensions(): Array<{ after: Contributions.CoreExtension; path: string }> {

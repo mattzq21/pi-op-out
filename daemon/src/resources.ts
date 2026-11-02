@@ -93,6 +93,7 @@ import controlsFork from '../resources/piop-controls/fork.ts?raw';
 import controlsAuxiliaryCopy from '../resources/piop-controls/auxiliary-copy.ts?raw';
 import controlsCommands from '../resources/piop-controls/commands.ts?raw';
 import controlsFastMode from '../resources/piop-controls/fast-mode.ts?raw';
+import controlsSkills from '../resources/piop-controls/skills.ts?raw';
 
 
 const bunEnvironment = 'process.env.PIOP_BUN = ' + JSON.stringify(process.execPath) + ';\n';
@@ -207,6 +208,6 @@ export const SESSION_EXTENSIONS: Array<[string, Array<[string, string]>]> = [
   ]],
   ['piop-controls', [
     ['interface.ts', controlsInterface], ['stop.ts', controlsStop], ['fork.ts', controlsFork], ['auxiliary-copy.ts', controlsAuxiliaryCopy],
-    ['commands.ts', controlsCommands], ['fast-mode.ts', controlsFastMode], ['index.ts', controlsIndex],
+    ['commands.ts', controlsCommands], ['fast-mode.ts', controlsFastMode], ['skills.ts', controlsSkills], ['index.ts', controlsIndex],
   ]],
 ];

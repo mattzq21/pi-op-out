@@ -171,7 +171,7 @@ function configureLocalExtensions(command: LaunchCommand, settings: AppSettings,
     '--extension', Ext.prepareOcxProviderExtension(), '--extension', Ext.prepareProvidersRefreshExtension(), '--extension', mcpExtension, '--extension', session.storage, '--extension', session.hooks, '--extension', session.controls, '--extension', session.broker, '--extension', Ext.prepareCompactionTimingExtension(), ...after('session'),
     '--extension', contextWindowCapExtension, '--extension', contextBarExtension, ...after('context-bar'),
     '--extension', Ext.prepareFastModeExtension(), '--extension', openaiCacheForkExtension,
-    '--extension', definedAgentsExtension);
+    '--extension', definedAgentsExtension, '--extension', session.skills);
   Object.assign(command.env, {
     PI_DESKTOP_DEFINED_AGENTS_EXTENSION: definedAgentsExtension,
     PIOP_MCP_EXTENSION: mcpExtension,

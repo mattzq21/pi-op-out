@@ -166,6 +166,13 @@ test('expanded skill commands load the same servers as reading the skill', () =>
   await f.read(path); assert.equal(f.calls.length, 1);
 }));
 
+test('a prompt with several expanded skills loads the servers of each skill', () => fixture(async f => {
+  const one = f.skill('one'), two = f.skill('two');
+  const result = await f.dispatch('before_agent_start', { prompt: `<skill name="one" location="${one}">\nbody\n</skill>\n\n<skill name="two" location="${two}">\nbody\n</skill>\n\nrequest` });
+  assert.equal(result.message.content.match(/Skill MCP tools/g).length, 2);
+  assert.equal(f.calls.length, 2);
+}));
+
 test('a session change during startup does not register servers in the new session', () => fixture(async f => {
   let release; const gate = new Promise(resolve => { release = resolve; }); f.ready(() => gate);
   const pending = f.read(f.skill('slow'));
