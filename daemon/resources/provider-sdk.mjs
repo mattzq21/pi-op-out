@@ -2,7 +2,6 @@ import { realpath, readFile } from 'node:fs/promises';
 import { delimiter, dirname, join, resolve } from 'node:path';
 import { homedir } from 'node:os';
 import { pathToFileURL } from 'node:url';
-import { createInterface } from 'node:readline';
 import { randomUUID } from 'node:crypto';
 import { createServer } from 'node:http';
 
@@ -451,9 +450,8 @@ async function refreshProviders(runtime) {
   return diagnostics;
 }
 
-const input = createInterface({ input: process.stdin });
-
-input.on('line', (line) => {
+// Requests end only at LF; node:readline would also split at U+2028 and U+2029 inside JSON strings.
+const receiveRequest = (line) => {
   let packet;
 
   try { packet = JSON.parse(line); } catch { console.error('Pi provider SDK received an invalid request line'); return; }
@@ -464,10 +462,19 @@ input.on('line', (line) => {
     (data) => { try { emit({ id: packet.id, data: data ?? null }); } catch (error) { fail(new Error('Could not send the reply: ' + (error instanceof Error ? error.message : String(error)))); } },
     fail,
   ).catch((error) => console.error('Pi provider SDK could not reply:', error));
+};
+
+let pendingRequest = '';
+process.stdin.setEncoding('utf8');
+process.stdin.on('data', (chunk) => {
+  const lines = (pendingRequest + chunk).split('\n');
+  pendingRequest = lines.pop();
+  for (const line of lines) receiveRequest(line.endsWith('\r') ? line.slice(0, -1) : line);
 });
+process.stdin.on('end', () => { if (pendingRequest) receiveRequest(pendingRequest); pendingRequest = ''; });
 
 process.on('unhandledRejection', (error) => { console.error('Unhandled error in Pi provider SDK:', error); });
 
-input.on('close', () => { for (const login of logins.values()) login.controller.abort(); process.exit(0); });
+process.stdin.on('close', () => { for (const login of logins.values()) login.controller.abort(); process.exit(0); });
 
 process.on('SIGTERM', () => { for (const login of logins.values()) login.controller.abort(); process.exit(0); });

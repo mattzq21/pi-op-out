@@ -6,7 +6,7 @@ const { validSessionHeader } = require("./session-header.cjs");
 const fs = require("node:fs/promises");
 const { createReadStream } = require("node:fs");
 const path = require("node:path");
-const readline = require("node:readline");
+const { lines: lfLines } = require("./lf-lines.cjs");
 const { discoverRoots } = require('./storage-inventory-roots.cjs');
 const { createObservation, observeEntry, recordSession, resolveOwners, sessionKind } = require('./storage-inventory-owners.cjs');
 const { diskStorage } = require('./storage-inventory-disk.cjs');
@@ -46,10 +46,10 @@ async function inspectTranscript(file) {
     if (!firstPrompt && entry.type === "message" && entry.message?.role === "user") firstPrompt = messageText(entry.message).trim().slice(0, 2000);
   };
 
-  const lines = readline.createInterface({ input: createReadStream(file), crlfDelay: Infinity });
+  const input = createReadStream(file);
 
   try {
-    for await (const line of lines) {
+    for await (const line of lfLines(input)) {
       if (!line.trim()) continue;
       let entry;
 
@@ -66,7 +66,7 @@ async function inspectTranscript(file) {
 
       recordDescription(entry);
     }
-  } finally { lines.close(); }
+  } finally { input.destroy(); }
 
   const result = { ...sessionDetails(header, malformed, observation), auxiliary };
 

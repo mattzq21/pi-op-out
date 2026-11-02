@@ -1,4 +1,5 @@
 import { shellLock } from '../../resources/file-lock.cjs';
+import { readLines } from '../../resources/lf-lines.cjs';
 import { spawn, type ChildProcess } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
 import { createInterface } from 'node:readline';
@@ -55,7 +56,6 @@ export class RuntimeWorker {
   private deadline: NodeJS.Timeout | undefined;
   private descendants: ReturnType<typeof descendantProcesses> = [];
   private exitStatus: string | null = null;
-  private lines: ReturnType<typeof createInterface> | undefined;
   private backlog = 0;
   private backlogBytes = 0;
   private paused = false;
@@ -81,14 +81,11 @@ export class RuntimeWorker {
     child.stdin!.on('error', error => observer.diagnostic(error.message));
     let open = 3;
     const done = () => { if (--open === 0) worker.close(); };
-    const lines = createInterface({ input: child.stdout!, crlfDelay: Infinity });
-    worker.lines = lines;
-    lines.on('line', line => {
+    readLines(child.stdout!, line => {
       let event: any;
       try { event = JSON.parse(line); } catch (error: any) { observer.diagnostic(error.message); return; }
       worker.receive(event, line.length);
-    });
-    lines.on('close', done);
+    }, done);
     const errors = createInterface({ input: child.stderr!, crlfDelay: Infinity });
     errors.on('line', line => observer.stderr(line));
     errors.on('close', done);
@@ -142,14 +139,14 @@ export class RuntimeWorker {
     this.backlogBytes += size;
     if (!this.paused && (this.backlog > BACKLOG_EVENTS || this.backlogBytes > BACKLOG_BYTES)) {
       this.paused = true;
-      this.lines?.pause();
+      this.child.stdout?.pause();
     }
     handled.catch(() => {}).finally(() => {
       this.backlog -= 1;
       this.backlogBytes -= size;
       if (this.paused && this.backlog <= BACKLOG_EVENTS / 2 && this.backlogBytes <= BACKLOG_BYTES / 2) {
         this.paused = false;
-        this.lines?.resume();
+        this.child.stdout?.resume();
       }
     });
   }

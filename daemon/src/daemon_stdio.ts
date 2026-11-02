@@ -1,4 +1,4 @@
-import { createInterface } from 'node:readline';
+import { readLines } from '../resources/lf-lines.cjs';
 import type { ChildProcess } from 'node:child_process';
 import { join } from 'node:path';
 import { PEER_PROTOCOL_VERSION, PROTOCOL_VERSION } from './config';
@@ -201,7 +201,8 @@ export async function run(): Promise<void> {
     let inputStallTimer: NodeJS.Timeout | undefined;
     let stallTimer: NodeJS.Timeout | undefined;
     const heartbeat = setInterval(() => { try { socket.send(JSON.stringify({ type: 'ping' })); } catch {} }, 20_000);
-    const input = createInterface({ input: process.stdin, crlfDelay: Infinity });
+    let inputClosed = false;
+    let stopInput = () => {};
     const fail = (error: unknown) => {
       if (failed) return;
       failed = true;
@@ -211,19 +212,19 @@ export async function run(): Promise<void> {
       clearTimeout(inputStallTimer);
       clearInterval(heartbeat);
       socket.close();
-      input.close();
+      stopInput();
     };
     const resumeInputWhenDrained = () => {
-      if (failed) return;
+      if (failed || inputClosed) return;
       if (socket.bufferedAmount() > INPUT_LOW_WATER_BYTES) { inputDrainTimer = setTimeout(resumeInputWhenDrained, 50); return; }
       clearTimeout(inputStallTimer);
       inputPaused = false;
-      input.resume();
+      process.stdin.resume();
     };
     const pauseInputUntilDrained = () => {
       if (inputPaused) return;
       inputPaused = true;
-      input.pause();
+      process.stdin.pause();
       inputStallTimer = setTimeout(() => fail(new Error('Daemon stopped reading input: the send buffer did not drain for 60 seconds')), INPUT_STALL_MS);
       inputDrainTimer = setTimeout(resumeInputWhenDrained, 50);
     };
@@ -245,14 +246,13 @@ export async function run(): Promise<void> {
         if (paused && queuedBytes < 8 * 1024 * 1024) { socket.socket.resume(); paused = false; }
       }).catch(fail);
     };
-    input.on('line', line => {
+    stopInput = readLines(process.stdin, line => {
       if (failed) return;
       if (Buffer.byteLength(line) > 32 * 1024 * 1024) { fail(new Error('Daemon request is too large')); return; }
       try { socket.send(line); } catch (error) { fail(error); }
       if (socket.bufferedAmount() > INPUT_HIGH_WATER_BYTES) pauseInputUntilDrained();
-    });
-    input.on('close', () => { clearInterval(heartbeat); clearTimeout(inputDrainTimer); clearTimeout(inputStallTimer); socket.close(); output.then(() => resolve()); });
-    socket.onClose = () => { clearInterval(heartbeat); clearTimeout(inputDrainTimer); clearTimeout(inputStallTimer); input.close(); output.then(() => resolve()); };
+    }, () => { inputClosed = true; clearInterval(heartbeat); clearTimeout(inputDrainTimer); clearTimeout(inputStallTimer); socket.close(); output.then(() => resolve()); });
+    socket.onClose = () => { clearInterval(heartbeat); clearTimeout(inputDrainTimer); clearTimeout(inputStallTimer); stopInput(); output.then(() => resolve()); };
     enqueue(JSON.stringify(ready));
     socket.listen(enqueue);
   });

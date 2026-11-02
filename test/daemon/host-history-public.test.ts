@@ -4,6 +4,23 @@ import { appendFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { startDaemon } from './harness';
 
+test('history with Unicode line separators inside JSON strings loads intact', async () => {
+  const daemon = await startDaemon();
+  try {
+    const session = JSON.parse(execFileSync('node', [fileURLToPath(new URL('../fixtures/publish-chat.mjs', import.meta.url))], {
+      encoding: 'utf8', timeout: 30000,
+      input: JSON.stringify({ home: daemon.home, content: '' }),
+    }));
+    const content = "{ '\u2028': '' }\n\\\u2029\"";
+    appendFileSync(session.path, JSON.stringify({ id: '0', parentId: null, type: 'message', message: { role: 'assistant', content } }) + '\n');
+    const runtimeId = crypto.randomUUID();
+    await daemon.invoke('start_pi', { runtimeId, clientId: 'history-writer', sessionPath: session.path, cwd: daemon.home });
+    const history = await daemon.invoke('pi_command', { runtimeId, command: { type: 'get_entries' } });
+    expect(history.entries.at(-1)).toMatchObject({ id: '0', message: { content } });
+    await daemon.invoke('stop_pi', { runtimeId });
+  } finally { await daemon.stop(); }
+}, 60000);
+
 test('large non-ASCII history fits the client wire limit and reports omitted entries', async () => {
   const daemon = await startDaemon();
   try {

@@ -1,10 +1,10 @@
 import { spawn, type ChildProcess } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { join } from 'node:path';
-import { createInterface } from 'node:readline';
 import { STORAGE_DIRECTORY } from '../config';
 import { homeDir, nodeExecutable, pathWithNode } from '../environment';
 import { fastModelDiscovery, ocxProviderModule, providerSdk, sdkStorageBundle } from '../resources';
+import { readLines } from '../../resources/lf-lines.cjs';
 import { Mutex } from '../util/sync';
 
 const SOURCE_ARGUMENT_BYTES = 64 * 1024;
@@ -100,8 +100,14 @@ export class Sdk {
       }
       child.on('error', error => console.error('Pi provider SDK process error:', error));
       child.stdin!.on('error', () => {});
-      const lines = createInterface({ input: child.stdout!, crlfDelay: Infinity });
-      lines.on('line', line => {
+      let lineClosed = false;
+      let exited = false;
+      let exit = '';
+      const finish = () => {
+        if (!lineClosed || !exited) return;
+        connection.close(new Error('Pi provider SDK disconnected' + exit));
+      };
+      readLines(child.stdout!, line => {
         let packet: any;
         try { packet = JSON.parse(line); } catch { console.error('Pi provider SDK wrote an invalid line: ' + line.slice(0, 200)); return; }
         if (typeof packet?.event === 'string') { try { this.events.event(packet); } catch (error) { console.error('Pi provider SDK event handler failed:', error); } return; }
@@ -111,15 +117,7 @@ export class Sdk {
         connection.pending.delete(packet.id);
         if (typeof packet.error === 'string') reply.reject(new Error(packet.error));
         else reply.resolve(packet.data === undefined ? null : packet.data);
-      });
-      let lineClosed = false;
-      let exited = false;
-      let exit = '';
-      const finish = () => {
-        if (!lineClosed || !exited) return;
-        connection.close(new Error('Pi provider SDK disconnected' + exit));
-      };
-      lines.on('close', () => { lineClosed = true; finish(); });
+      }, () => { lineClosed = true; finish(); });
       child.on('exit', (code, signal) => { exited = true; exit = signal ? ' (signal ' + signal + ')' : ' (exit code ' + code + ')'; finish(); });
       this.connection = connection;
       return connection;

@@ -1,5 +1,5 @@
 import { connect, type Socket } from 'node:net';
-import { createInterface } from 'node:readline';
+import { readLines } from '../resources/lf-lines.cjs';
 import type { Readable } from 'node:stream';
 import { dlopen, ptr } from 'bun:ffi';
 import { spawn, type ChildProcess } from 'node:child_process';
@@ -398,19 +398,15 @@ export function listenStatus(listener: (failure: string | null) => void): () => 
 }
 
 function readStatus(input: Readable): void {
-  const lines = createInterface({ input });
   let broken = false;
-  const onError = (error: Error) => { broken = true; setStatus('Daemon log status failed: ' + errorMessage(error)); };
-  lines.on('error', onError);
-  input.on('error', onError);
-  lines.on('line', line => {
+  input.on('error', error => { broken = true; setStatus('Daemon log status failed: ' + errorMessage(error)); });
+  readLines(input, line => {
     try {
       const packet = JSON.parse(line);
       if (packet.error !== null && typeof packet.error !== 'string') throw new Error('Invalid status');
       setStatus(packet.error === null ? null : 'Daemon logging failed: ' + packet.error);
     } catch (error) { setStatus('Invalid daemon log status: ' + errorMessage(error)); }
-  });
-  lines.on('close', () => { if (!broken) setStatus('Daemon log status closed; logging is unavailable.'); });
+  }, () => { if (!broken) setStatus('Daemon log status closed; logging is unavailable.'); });
 }
 
 export async function configure(command: DaemonCommand, executable: string): Promise<string> {
