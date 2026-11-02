@@ -134,7 +134,7 @@ test('settings saved before the newer options load with automatic retry kept on'
 
 const ocxAccount = (key: string, quota: Record<string, number> | undefined, extra: Record<string, unknown> = {}) => ({ provider: 'openai', type: 'codex', upstreamAccountKey: key, needsReauth: false, ...(quota ? { quota } : {}), ...extra });
 
-test('OCX usage lists each Codex account once with its most used window', async () => {
+test('OCX usage lists each Codex account once with its weekly window', async () => {
   writeFileSync(join(home, 'ocx-reply.json'), JSON.stringify({ accounts: [
     ocxAccount('a', { shortPercent: 10, shortResetAt: 100, weeklyPercent: 40, weeklyResetAt: 200 }, { slotKind: 'native-main' }),
     ocxAccount('a', { shortPercent: 10, shortResetAt: 100, weeklyPercent: 40, weeklyResetAt: 200, monthlyPercent: 0, monthlyResetAt: 300 }, { slotKind: 'pool' }),
@@ -145,7 +145,7 @@ test('OCX usage lists each Codex account once with its most used window', async 
   ], notes: [] }));
   expect((await refreshedUsage(daemon, 'opencodex')).usage).toEqual({ accounts: [
     { id: 'a', remainingPercent: 60, resetAt: 200 },
-    { id: 'b', remainingPercent: 0, resetAt: 150 },
+    { id: 'b', remainingPercent: 40, resetAt: 250 },
     { id: 'c', error: 'This account needs a new login in OCX' },
     { id: 'd', error: 'Quota probe failed' },
   ] });

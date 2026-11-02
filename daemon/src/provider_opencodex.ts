@@ -5,22 +5,15 @@ import { homeDir, isDirectory } from './environment';
 export interface OpencodexAccount { id: string; remainingPercent?: number; resetAt?: number; error?: string }
 export interface OpencodexUsage { accounts: OpencodexAccount[]; unavailable?: true }
 
-const WINDOWS = [['shortPercent', 'shortResetAt'], ['weeklyPercent', 'weeklyResetAt'], ['monthlyPercent', 'monthlyResetAt']] as const;
-
 function accountUsage(account: any): OpencodexAccount | undefined {
   const id = account?.upstreamAccountKey;
   if (typeof id !== 'string' || !id) return undefined;
   if (account.needsReauth === true) return { id, error: 'This account needs a new login in OCX' };
-  let best: [number, number | undefined] | undefined;
-  for (const [percent, resetAt] of WINDOWS) {
-    const used = account.quota?.[percent];
-    if (typeof used !== 'number' || !Number.isFinite(used)) continue;
-    const reset = account.quota[resetAt];
-    if (!best || used >= best[0]) best = [used, Number.isInteger(reset) && reset >= 0 ? reset : undefined];
-  }
-  if (!best) return { id, error: typeof account.quotaRefresh?.error === 'string' ? account.quotaRefresh.error : 'OCX has no usage for this account' };
-  const usage: OpencodexAccount = { id, remainingPercent: Math.round(100 - Math.min(100, Math.max(0, best[0]))) };
-  if (best[1] !== undefined) usage.resetAt = best[1];
+  const used = account.quota?.weeklyPercent;
+  if (typeof used !== 'number' || !Number.isFinite(used)) return { id, error: typeof account.quotaRefresh?.error === 'string' ? account.quotaRefresh.error : 'OCX has no weekly usage for this account' };
+  const usage: OpencodexAccount = { id, remainingPercent: Math.round(100 - Math.min(100, Math.max(0, used))) };
+  const reset = account.quota.weeklyResetAt;
+  if (Number.isInteger(reset) && reset >= 0) usage.resetAt = reset;
   return usage;
 }
 
