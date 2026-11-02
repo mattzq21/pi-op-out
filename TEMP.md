@@ -4,7 +4,6 @@ Your personal setup forced on others
 
 reinstall-mobile.mjs:
 It signs release builds with the debug key.
-prompts.ts:296: default prompt files go in ~/.agents/.... The app creates them in the user's home folder.
 Version and setup assumptions (Debian/Ubuntu and Android are accepted)
 
 tauri.conf.json: its dependencies are libasound2t64 and gstreamer >= 1.28, which only very new Ubuntu or Debian releases have.
