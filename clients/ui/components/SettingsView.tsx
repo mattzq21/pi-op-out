@@ -367,7 +367,7 @@ export function SettingsView(props: SettingsViewProps) {
   const filteredModelChoices = createMemo(() => {
     const words = modelFilter().toLocaleLowerCase().split(/\s+/).filter(Boolean);
     const { modelChoices, hiddenModels } = modelCatalog();
-    const aliases = draft().modelAliases ?? {};
+    const aliases = baselineValue().modelAliases ?? {};
     const rank = (id: string) => Number(hiddenModels.has(id)) * 2 + Number(!aliases[id]);
 
     return modelChoices

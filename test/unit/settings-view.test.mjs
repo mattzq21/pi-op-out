@@ -48,6 +48,18 @@ describe('settings editor', () => {
     assert.equal(control('Agent default model').textContent, 'My model');
   });
 
+  test('the alias input keeps focus while typing', async () => {
+    await render({ models: [{ provider: 'p', id: 'a', name: 'A' }, { provider: 'p', id: 'b', name: 'B' }], agentConfig: { agents: [profile('general')] } });
+    await section('Inference');
+    await click(control('Edit alias for p/b'));
+    const input = control('Alias for p/b');
+    assert.equal(document.activeElement, input);
+    await enterText(input, 'M');
+    assert.equal(document.activeElement, input);
+    await enterText(input, 'My');
+    assert.equal(document.activeElement, input);
+  });
+
   test('the agent model list filters by model ID and shows display names', async () => {
     await render({ models: [{ provider: 'p', id: 'model', name: 'Original' }, { provider: 'q', id: 'other', name: 'Other' }], agentConfig: { agents: [profile('general')] } });
     await section('Agents');
