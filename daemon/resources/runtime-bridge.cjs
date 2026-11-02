@@ -86,7 +86,7 @@ function installQueueProtocol(session, output) {
           const message = Array.isArray(input) ? input.find(message => message?.role === "user") : input;
 
           if (message?.role === "user") {
-            message.piopQueueId = scope.queueId;
+            if (scope.queueId) message.piopQueueId = scope.queueId;
             if (scope.submissionId) message.piopSubmissionId = scope.submissionId;
             scope.tagged = true;
           }
@@ -280,6 +280,7 @@ function dispatchPrompt(command, session, output) {
   let preflightSucceeded = false;
   void session.prompt(command.message, {
     images: command.images, streamingBehavior: command.streamingBehavior, source: "rpc",
+    ...(typeof command.goalSubmissionId === "string" && command.goalSubmissionId ? { [queuePromptScope]: { session, submissionId: command.goalSubmissionId, tagged: false } } : {}),
     preflightResult: (disposition, submittedText) => {
       preflightSucceeded = true;
       output({ type: "response", id: command.id, command: command.command, success: true, data: { disposition, submittedText } });
@@ -798,4 +799,4 @@ async function main() {
 
 if (require.main === module) main().catch(error => { console.error(error instanceof Error ? error.message : String(error)); process.exitCode = 1; });
 
-module.exports = { continueRun };
+module.exports = { continueRun, dispatchPrompt, installQueueProtocol };
