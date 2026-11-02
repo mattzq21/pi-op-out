@@ -372,7 +372,6 @@ export function createAppConversations(preloadChat: () => void, prepareTranscrip
       if (!session) {
         if (transport() !== owner) return false;
         if (await startNewSession(true) !== true) throw reason;
-        addNotice({ title: "Last conversation is gone", message: "It was removed, so a new chat was opened." });
 
         return false;
       }
