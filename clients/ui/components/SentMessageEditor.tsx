@@ -48,21 +48,22 @@ export function SentMessageEditor(props: { message: ChatMessage; text: string; o
     if (event.key === "Enter" && !event.shiftKey && (!isMobile || event.ctrlKey)) { event.preventDefault(); event.stopPropagation(); void save(); }
   };
 
-  return <div class="sent-message-editor">
-    <Show when={keep().length + files().length > 0}><div class="attachments" aria-label="Attachments of the edited message">
-      <For each={images.filter(image => keep().includes(image.index))}>{image => <span classList={{ "attachment-image": shownImage(image.part) }}>
-        <Show when={shownImage(image.part)} fallback={<b>{image.part.name ?? "Image"}</b>}><ZoomableImage src={`data:${image.part.mimeType};base64,${image.part.data}`} alt="Sent attachment" /></Show>
-        <button type="button" disabled={saving()} aria-label={`Remove ${image.part.name ?? "image"}`} onClick={() => setKeep(current => current.filter(index => index !== image.index))}><X size={11} /></button>
-      </span>}</For>
-      <For each={files()}>{file => <span>
-        <FileText size={12} /><b>{file.name}</b>
-        <button type="button" disabled={saving()} aria-label={`Remove ${file.name}`} onClick={() => setFiles(current => current.filter(item => item !== file))}><X size={11} /></button>
-      </span>}</For>
-    </div></Show>
-    <textarea ref={element => { field = element; }} aria-label="Edited message" rows={1} value={prompt()} readOnly={saving()} onInput={event => { setPrompt(event.currentTarget.value); fit(); }} onKeyDown={onKeyDown} />
-    <Show when={error()}>{reason => <div class="message-failure" role="alert">{reason()}</div>}</Show>
+  return <div class="sent-message-edit">
+    <div class="sent-message-editor">
+      <Show when={keep().length + files().length > 0}><div class="attachments" aria-label="Attachments of the edited message">
+        <For each={images.filter(image => keep().includes(image.index))}>{image => <span classList={{ "attachment-image": shownImage(image.part) }}>
+          <Show when={shownImage(image.part)} fallback={<b>{image.part.name ?? "Image"}</b>}><ZoomableImage src={`data:${image.part.mimeType};base64,${image.part.data}`} alt="Sent attachment" /></Show>
+          <button type="button" disabled={saving()} aria-label={`Remove ${image.part.name ?? "image"}`} onClick={() => setKeep(current => current.filter(index => index !== image.index))}><X size={11} /></button>
+        </span>}</For>
+        <For each={files()}>{file => <span>
+          <FileText size={12} /><b>{file.name}</b>
+          <button type="button" disabled={saving()} aria-label={`Remove ${file.name}`} onClick={() => setFiles(current => current.filter(item => item !== file))}><X size={11} /></button>
+        </span>}</For>
+      </div></Show>
+      <textarea ref={element => { field = element; }} aria-label="Edited message" rows={1} value={prompt()} readOnly={saving()} onInput={event => { setPrompt(event.currentTarget.value); fit(); }} onKeyDown={onKeyDown} />
+      <Show when={error()}>{reason => <div class="message-failure" role="alert">{reason()}</div>}</Show>
+    </div>
     <div class="sent-message-editor-actions">
-      <span>Sending replaces this message and removes everything after it.</span>
       <button type="button" disabled={saving()} onClick={cancel}>Cancel</button>
       <button type="button" class="primary" disabled={saving() || empty()} onClick={() => void save()}>{saving() ? "Sending…" : "Send"}</button>
     </div>
