@@ -2,8 +2,6 @@ I found these machine-specific or hard-coded items. I did not change anything.
 
 Paths and tools from your own machine
 
-.codex/config.toml: cwd = "/home/matt/Projects/piop".
-.agents/skills/piop-wdio/references/evidence.md: refers to /home/matt/.codex/....
 Skill docs run scripts from ~/.agents/skills/mine/..., not from the copy in this repo:
 mobile-piop/SKILL.md
 piop-wdio/SKILL.md
