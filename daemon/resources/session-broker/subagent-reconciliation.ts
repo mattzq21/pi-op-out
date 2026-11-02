@@ -223,6 +223,7 @@ class SubagentObserver {
       }
       catch (error) { this.interrupted((error instanceof Error ? error.message : String(error))); this.failures++; }
 
+      if (this.run.status !== "running") break;
       await delay(500 * 2 ** Math.min(this.failures, 4), undefined, { signal }).catch(error => { if (!signal.aborted) throw error; });
     }
   }
