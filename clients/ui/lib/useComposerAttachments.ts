@@ -21,10 +21,6 @@ const UPLOAD_COUNT_LIMIT = 12;
 
 const SUPPORTED_IMAGE_TYPES = new Set(["image/png", "image/jpeg", "image/gif", "image/webp"]);
 
-const TEXT_MIME_TYPES = new Set(["application/json", "application/xml", "application/javascript", "application/typescript", "application/x-sh", "application/x-yaml", "application/toml"]);
-
-const TEXT_EXTENSIONS = /\.(?:txt|md|mdx|json|jsonl|ya?ml|toml|xml|csv|tsv|js|jsx|ts|tsx|css|scss|html?|py|rs|go|java|kt|kts|c|cc|cpp|cxx|h|hpp|sh|bash|zsh|fish|sql|graphql|gql|ini|conf|env|log)$/i;
-
 const readFile = (file: File, mode: "text" | "dataUrl") => new Promise<string>((resolve, reject) => {
   const reader = new FileReader(); reader.onload = () => resolve(String(reader.result)); reader.onerror = () => reject(reader.error);
 
@@ -60,10 +56,6 @@ async function imageUpload(file: File, errors: string[]): Promise<ComposerUpload
 }
 
 async function textUpload(file: File, errors: string[]): Promise<ComposerUpload | undefined> {
-  if (!(file.type.startsWith("text/") || TEXT_MIME_TYPES.has(file.type.toLowerCase()) || TEXT_EXTENSIONS.test(file.name) || /^(?:Dockerfile|Containerfile|Makefile|README|LICENSE|NOTICE|\.gitignore|\.gitattributes|\.editorconfig)$/i.test(file.name))) { errors.push(`${file.name} is not a supported text file`);
-
-  return undefined; }
-
   if (file.size > TEXT_LIMIT) { errors.push(`${file.name} is larger than 200 KB`);
 
   return undefined; }
@@ -71,11 +63,11 @@ async function textUpload(file: File, errors: string[]): Promise<ComposerUpload 
   let text: string;
 
   try { text = new TextDecoder("utf-8", { fatal: true }).decode(await file.arrayBuffer()); }
-  catch { errors.push(`${file.name} does not contain valid UTF-8 text`);
+  catch { errors.push(`${file.name} is not a text file`);
 
   return undefined; }
 
-  if (text.includes("\0")) { errors.push(`${file.name} does not contain valid text`);
+  if (text.includes("\0")) { errors.push(`${file.name} is not a text file`);
 
   return undefined; }
 

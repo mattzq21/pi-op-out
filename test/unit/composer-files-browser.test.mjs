@@ -538,8 +538,8 @@ test('text attachments retain their contents and escape filenames when sent', as
 test('unsupported, oversized and corrupt text attachments are rejected without discarding valid files', async t => {
   const { page, directory } = await fileComposer(t);
   const files = [
-    ['program.exe', 'x'], ['huge.txt', Buffer.alloc(200001, 'a')],
-    ['encoding.txt', Buffer.from([255])], ['binary.txt', 'a\0b'], ['good.json', 'ok'],
+    ['program.exe', Buffer.from([0x4d, 0x5a, 0x90, 0])], ['huge.txt', Buffer.alloc(200001, 'a')],
+    ['encoding.txt', Buffer.from([255])], ['binary.txt', 'a\0b'], ['good.json', 'ok'], ['.last-cleanup', 'stamp'],
   ];
   const paths = [];
   for (const [name, data] of files) {
@@ -548,16 +548,16 @@ test('unsupported, oversized and corrupt text attachments are rejected without d
     paths.push(path);
   }
   await browserFileDrop(page, paths);
-  await page.getByRole('button', { name: 'Remove good.json', exact: true }).waitFor();
+  await page.getByRole('button', { name: 'Remove .last-cleanup', exact: true }).waitFor();
   const error = await page.getByRole('alert').textContent();
-  assert.match(error, /program.exe is not a supported text file/);
+  assert.match(error, /program.exe is not a text file/);
   assert.match(error, /huge.txt is larger than 200 KB/);
-  assert.match(error, /encoding.txt does not contain valid UTF-8/);
-  assert.match(error, /binary.txt does not contain valid text/);
-  assert.equal(await page.locator('.attachments button').count(), 1);
+  assert.match(error, /encoding.txt is not a text file/);
+  assert.match(error, /binary.txt is not a text file/);
+  assert.equal(await page.locator('.attachments button').count(), 2);
   await page.keyboard.press('Enter');
   assert.deepEqual(JSON.parse(await page.getByLabel('Sent messages').textContent()), [
-    ['<file name="good.json">\nok\n</file>', null, []],
+    ['<file name="good.json">\nok\n</file>\n\n<file name=".last-cleanup">\nstamp\n</file>', null, []],
   ]);
 });
 
@@ -652,10 +652,10 @@ test('removing an attachment excludes it from the sent message', async t => {
 test('removing an attachment clears the previous attachment error', async t => {
   const { page, directory } = await fileComposer(t);
   const bad = join(directory, 'program.exe'), good = join(directory, 'good.json');
-  await writeFile(bad, 'invalid');
+  await writeFile(bad, Buffer.from([0x4d, 0x5a, 0x90, 0]));
   await writeFile(good, 'valid');
   await browserFileDrop(page, [bad, good]);
-  await page.getByRole('alert').filter({ hasText: 'program.exe is not a supported text file' }).waitFor();
+  await page.getByRole('alert').filter({ hasText: 'program.exe is not a text file' }).waitFor();
   const remove = page.getByRole('button', { name: 'Remove good.json', exact: true });
   await remove.click();
   assert.equal(await page.getByRole('alert').count(), 0);
