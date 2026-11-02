@@ -542,7 +542,7 @@ export function SessionPanel(props: Props) {
 
         return; }
 
-      panel().onSelect(session()); }}><span class="session-copy"><span class="session-title-row"><Show when={pickedProject(session())}><Folder class="session-leading-icon" size={14} aria-hidden="true" /></Show><strong>{session().name}</strong><span class="session-api-cost" data-tooltip="Would-be API cost">{formatApiCost(session().apiCost)}</span></span></span></button>);
+      panel().onSelect(session()); }}><span class="session-copy"><span class="session-title-row"><Show when={pickedProject(session())}><Folder class="session-leading-icon" size={14} aria-hidden="true" /></Show><strong>{session().name}</strong><span class="session-api-cost">{formatApiCost(session().apiCost)}</span></span></span></button>);
 
     const renderArchiveButton = () => (<button class="session-archive" aria-busy={archiving()} aria-label={`${archiving() ? "Archiving" : "Archive"} ${session().name}`} data-tooltip={!isSavedSession(session()) ? "Send a message before archiving this draft" : archiving() ? "Archiving" : "Archive"} disabled={archiving() || !isSavedSession(session())} onClick={clickArchive}><Show when={archiving()} fallback={<Archive size={14} />}><LoaderCircle size={14} class="spinning" /></Show></button>);
 
