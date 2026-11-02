@@ -4,16 +4,17 @@ import { homedir } from "node:os";
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import type { ExtensionAPI, ExtensionContext, McpServerConfig } from "@earendil-works/pi-coding-agent";
-import { mcpServerSchema, mcpServersSchema } from "../../extensions/piop-define-agents/mcp-schema.ts";
+import { skillMcpServerSchema, skillMcpServersSchema } from "../../extensions/piop-define-agents/mcp-schema.ts";
 import { subscribeConnections } from "./mcp-connections.cjs";
 import type { AppRequest } from "../../extensions/piop-define-agents/contracts.ts";
 
 const ENTRY = "piop-skill-mcp";
 const STATUS = "piop-skill-mcp";
-const manifestSchema = z.object({ mcpServers: mcpServersSchema }).strict();
-const savedSchema = z.array(z.object({ file: z.string(), servers: z.array(z.object({ alias: z.string(), name: z.string().regex(/^skill_[a-zA-Z0-9_]+$/), config: mcpServerSchema })) }));
-type Server = { alias: string; name: string; config: McpServerConfig; state: "connecting" | "connected" | "failed"; error?: string; connection?: object };
+const manifestSchema = z.object({ mcpServers: skillMcpServersSchema }).strict();
+const savedSchema = z.array(z.object({ file: z.string(), servers: z.array(z.object({ alias: z.string(), name: z.string().regex(/^skill_[a-zA-Z0-9_]+$/), config: skillMcpServerSchema })) }));
+type Server = { alias: string; name: string; config: McpServerConfig & { exposure: keyof typeof REACH }; state: "connecting" | "connected" | "failed"; error?: string; connection?: object };
 type Connection = { name: string; state: string; error?: string };
+const REACH = { direct: "", codemode: " (call from codemode scripts)", deferred: " (find with tool_search)" };
 const SKILL_BLOCK = /<skill name="[^"]+" location="([^"]+)">\n[\s\S]*?\n<\/skill>(?:\n\n|$)/y;
 
 function invokedSkillPaths(prompt: string) {
@@ -46,8 +47,9 @@ export function skillMcp(pi: ExtensionAPI, ready: (ctx: ExtensionContext) => Pro
     if (registered.has(server.name)) return;
     server.state = "connecting"; delete server.error; delete server.connection;
     publish();
+    if (server.config.exposure === "codemode" && !codemode) return failed(server, new Error("This server needs Codemode. Turn on Codemode for the agent"));
     try {
-      pi.registerMcpServer(server.name, { ...server.config, exposure: codemode ? "codemode" : "direct" });
+      pi.registerMcpServer(server.name, server.config);
       registered.add(server.name);
     } catch (error) { failed(server, error); }
   };
@@ -108,7 +110,7 @@ export function skillMcp(pi: ExtensionAPI, ready: (ctx: ExtensionContext) => Pro
       servers = new Map(Object.entries(definitions).filter(([, config]) => config.enabled !== false).map(([alias, supplied]) => {
         const { piopInjectAgentId, ...rest } = supplied;
         if (piopInjectAgentId) throw new Error("Skill MCP servers do not support piopInjectAgentId");
-        const config = JSON.parse(JSON.stringify(rest, (_key, value) => typeof value === "string" ? replace(value) : value)) as McpServerConfig;
+        const config = JSON.parse(JSON.stringify(rest, (_key, value) => typeof value === "string" ? replace(value) : value)) as Server["config"];
         if ("command" in config) {
           config.cwd = resolve(dirname(file), config.cwd ?? ".");
           if (config.command.startsWith("./") || config.command.startsWith("../")) config.command = resolve(dirname(file), config.command);
@@ -122,7 +124,7 @@ export function skillMcp(pi: ExtensionAPI, ready: (ctx: ExtensionContext) => Pro
     }
     if (!servers.size) return;
     await settle(ctx, current);
-    return `Skill MCP tools: ${[...servers.values()].map(({ alias, name }) => `${alias}: mcp__${name}__*`).join(", ")}.`;
+    return `Skill MCP tools: ${[...servers.values()].map(({ alias, name, config }) => `${alias}: mcp__${name}__*${REACH[config.exposure]}`).join(", ")}.`;
   };
 
   const action = async (name: string, action: "retry" | "remove", ctx: ExtensionContext) => {
@@ -183,7 +185,7 @@ export function skillMcp(pi: ExtensionAPI, ready: (ctx: ExtensionContext) => Pro
     const entry = [...ctx.sessionManager.getBranch()].reverse().find(entry => entry.type === "custom" && entry.customType === ENTRY);
     if (entry?.type === "custom") {
       const saved = savedSchema.parse(entry.data);
-      for (const group of saved) loaded.set(group.file, new Map(group.servers.map(server => [server.alias, { ...server, config: server.config as McpServerConfig, state: "connecting" }])));
+      for (const group of saved) loaded.set(group.file, new Map(group.servers.map(server => [server.alias, { ...server, config: server.config as Server["config"], state: "connecting" }])));
       for (const server of all()) register(server);
     }
     publish();
@@ -194,7 +196,7 @@ export function skillMcp(pi: ExtensionAPI, ready: (ctx: ExtensionContext) => Pro
     select(enabled: boolean) {
       if (codemode === enabled) return;
       codemode = enabled;
-      for (const server of all()) { stop(server); register(server); }
+      for (const server of all().filter(server => server.config.exposure === "codemode")) { stop(server); register(server); }
     },
   };
 }

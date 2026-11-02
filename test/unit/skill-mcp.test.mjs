@@ -36,7 +36,7 @@ async function fixture(run) {
     unregisterMcpServer(name) { removed.push(name); servers.delete(name); },
   };
   const loader = skillMcp(pi, ctx => ready(ctx), () => wait());
-  const skill = (name, config = { desktop: { command: 'python3', args: ['scripts/server.py'] } }) => {
+  const skill = (name, config = { desktop: { command: 'python3', args: ['scripts/server.py'], exposure: 'codemode' } }) => {
     const dir = join(root, name); mkdirSync(dir, { recursive: true });
     const path = join(dir, 'SKILL.md'); writeFileSync(path, '---\nname: example\n---\nUse the tools.');
     if (config) writeFileSync(join(dir, 'mcp.json'), JSON.stringify({ mcpServers: config }));
@@ -90,7 +90,7 @@ test('a restored server that cannot start remains visible and required until rem
 }));
 
 test('skill reads load adjacent MCP settings with skill and project paths', () => fixture(async f => {
-  const path = f.skill('desktop', { desktop: { command: './serve', args: ['${SKILL_DIR}/app.py', '${PROJECT_DIR}'], env: { PROJECT: '${PROJECT_DIR}' } } });
+  const path = f.skill('desktop', { desktop: { command: './serve', args: ['${SKILL_DIR}/app.py', '${PROJECT_DIR}'], env: { PROJECT: '${PROJECT_DIR}' }, exposure: 'deferred' } });
   assert.equal(f.calls.length, 0);
   const result = await f.read(path);
   assert.equal(result.content[0].text, 'skill body');
@@ -98,8 +98,8 @@ test('skill reads load adjacent MCP settings with skill and project paths', () =
   assert.equal(config.command, join(f.root, 'desktop/serve'));
   assert.equal(config.cwd, join(f.root, 'desktop'));
   assert.deepEqual(config.args, [join(f.root, 'desktop/app.py'), f.root]);
-  assert.equal(config.env.PROJECT, f.root); assert.equal(config.exposure, 'codemode');
-  assert.ok(result.content[1].text.includes(`desktop: mcp__${name}__*`));
+  assert.equal(config.env.PROJECT, f.root); assert.equal(config.exposure, 'deferred');
+  assert.ok(result.content[1].text.includes(`desktop: mcp__${name}__* (find with tool_search)`));
 }));
 
 test('repeat, concurrent and symlink reads share one server per skill', () => fixture(async f => {
@@ -113,7 +113,7 @@ test('repeat, concurrent and symlink reads share one server per skill', () => fi
 test('skills with equal server names stay separate and do not start disabled servers', () => fixture(async f => {
   await f.read(f.skill('one')); await f.read(f.skill('two'));
   assert.equal(f.servers.size, 2); assert.notEqual(f.calls[0].name, f.calls[1].name);
-  await f.read(f.skill('disabled', { desktop: { command: 'server', enabled: false } }));
+  await f.read(f.skill('disabled', { desktop: { command: 'server', enabled: false, exposure: 'direct' } }));
   assert.equal(f.calls.length, 2);
 }));
 
@@ -126,14 +126,14 @@ test('ordinary reads, failed reads and skills without MCP settings have no effec
 }));
 
 test('invalid settings report an error before starting any servers and can be corrected', () => fixture(async f => {
-  const path = f.skill('bad', { good: { command: 'server' }, bad: { args: [] } });
+  const path = f.skill('bad', { good: { command: 'server', exposure: 'direct' }, bad: { args: [], exposure: 'direct' } });
   const result = await f.read(path); assert.equal(result.isError, true); assert.match(result.content.at(-1).text, /Skill MCP loading failed/);
   assert.equal(f.calls.length, 0);
   f.skill('bad'); await f.read(path); assert.equal(f.calls.length, 1);
 }));
 
 test('registration failures remain saved and can be retried from the UI', () => fixture(async f => {
-  const path = f.skill('two', { first: { command: 'one' }, second: { command: 'two' } });
+  const path = f.skill('two', { first: { command: 'one', exposure: 'direct' }, second: { command: 'two', exposure: 'direct' } });
   f.fail(name => name.endsWith('_second'));
   assert.equal((await f.read(path)).isError, true); assert.equal(f.servers.size, 1);
   const failed = JSON.parse(f.statuses.get('piop-skill-mcp')).find(server => server.state === 'failed');
@@ -149,11 +149,22 @@ test('skill read waits for MCP connection work before returning tool names', () 
   release(); assert.match((await pending).content.at(-1).text, /Skill MCP tools/);
 }));
 
-test('skill servers follow codemode and are removed on session change and shutdown', () => fixture(async f => {
-  f.loader.select(false); const path = f.skill('one'); await f.read(path);
+test('skill settings choose the exposure and codemode servers wait for the Codemode switch', () => fixture(async f => {
+  const missing = await f.read(f.skill('missing', { desktop: { command: 'server' } }));
+  assert.equal(missing.isError, true); assert.match(missing.content.at(-1).text, /exposure/);
+  await f.read(f.skill('direct', { desktop: { command: 'server', exposure: 'direct' } }));
   assert.equal(f.calls[0].config.exposure, 'direct');
-  f.loader.select(true); assert.equal(f.calls.at(-1).config.exposure, 'codemode');
-  const name = f.calls[0].name; assert.equal(f.calls.at(-1).name, name);
+  f.loader.select(false);
+  const blocked = await f.read(f.skill('one'));
+  assert.equal(blocked.isError, true); assert.match(blocked.content.at(-1).text, /needs Codemode/);
+  assert.equal(f.calls.length, 1, 'direct servers stay connected and codemode servers do not start');
+  f.loader.select(true); assert.equal(f.calls.at(-1).config.exposure, 'codemode'); assert.equal(f.servers.size, 2);
+  f.loader.select(false); assert.equal(f.servers.size, 1); assert.deepEqual(f.removed, [f.calls.at(-1).name]);
+}));
+
+test('skill servers are removed on session change and shutdown', () => fixture(async f => {
+  const path = f.skill('one'); await f.read(path);
+  const name = f.calls[0].name;
   await f.dispatch('session_start'); assert.equal(f.servers.size, 1);
   await f.read(path); assert.equal(f.calls.at(-1).name, name);
   await f.dispatch('session_shutdown'); assert.equal(f.servers.size, 0);
@@ -181,7 +192,7 @@ test('a session change during startup does not register servers in the new sessi
 }));
 
 test('HTTP servers keep their settings and malformed JSON is reported', () => fixture(async f => {
-  await f.read(f.skill('http', { remote: { url: 'https://example.invalid/mcp', headers: { 'X-Project': '${PROJECT_DIR}' } } }));
+  await f.read(f.skill('http', { remote: { url: 'https://example.invalid/mcp', headers: { 'X-Project': '${PROJECT_DIR}' }, exposure: 'direct' } }));
   assert.equal(f.calls[0].config.url, 'https://example.invalid/mcp');
   assert.equal(f.calls[0].config.headers['X-Project'], f.root);
   const path = f.skill('invalid'); writeFileSync(join(f.root, 'invalid/mcp.json'), '{');
