@@ -213,7 +213,7 @@ test('Ctrl H holds and resumes the message queue', { timeout: 120000 }, async t 
   await editor.fill('Start');
   await editor.press('Enter');
   const hold = page.getByRole('button', { name: 'Hold queue', exact: true });
-  await hold.waitFor();
+  await page.waitForFunction(() => document.querySelector('.pending-queue-hold button')?.disabled === false);
   await editor.press('Control+h');
   await page.getByRole('button', { name: 'Resume queue', exact: true }).waitFor();
   await editor.press('Control+h');
