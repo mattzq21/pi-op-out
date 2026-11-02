@@ -254,7 +254,7 @@ export function Composer(props: Props) {
   const [selection, setSelection] = createSignal<DraftSelection | undefined>(savedSelection);
   const ref = createRef<ComposerFieldElement>(null);
   onMount(() => { if (savedSelection) ref.current?.setSelectionRange(savedSelection.start, savedSelection.end); });
-  createDependencyEffect(() => { const caret = selection(); if (caret && !editingPending()) props.onDraftSelectionChange?.(caret); }, () => [selection()]);
+  createDependencyEffect(() => { const caret = selection(); if (caret && caret !== savedSelection && !editingPending()) props.onDraftSelectionChange?.(caret); }, () => [selection()]);
   const focusOwnedEditor = () => { if (!props.ownershipRequired) ref.current?.focus(); };
 
   const composerRef = createRef<HTMLDivElement>(null);
