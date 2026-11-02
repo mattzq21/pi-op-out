@@ -110,6 +110,8 @@ async function createSubagent(pi: ExtensionAPI, ctx: ExtensionContext, task: Sub
   return run;
 }
 
+const iconRuns = (runs: SubagentRun[]) => runs.map(run => ({ name: run.name, sessionId: run.sessionId, sessionPath: run.sessionPath, hostId: run.hostId, toolCallId: run.toolCallId, look: run.look }));
+
 async function deliverFollowup(pi: ExtensionAPI, ctx: ExtensionContext, run: SubagentRun, lifecycle: ActiveSubagent, message: string, deliverAs: "steer" | "followUp", signal?: AbortSignal): Promise<AgentToolResult<unknown>> {
   lifecycle.controller.signal.throwIfAborted();
   signal?.throwIfAborted();
@@ -133,7 +135,7 @@ async function deliverFollowup(pi: ExtensionAPI, ctx: ExtensionContext, run: Sub
     acceptedSubmission(observed, Parse(subagentReceiptSchema, data));
     saveRun(pi, ctx, observed);
 
-    return { content: [{ type: "text", text: JSON.stringify(data) }], details: data };
+    return { content: [{ type: "text", text: JSON.stringify(data) }], details: { ...data, runs: iconRuns([observed]) } };
   } finally { lifecycle.revision++; lifecycle.pendingDeliveries--; }
 }
 
@@ -302,7 +304,7 @@ export function registerSubagents(pi: ExtensionAPI) {
         catch (error) { return { nickname, agent: run.agent, status: "unavailable", error: error instanceof Error ? error.message : String(error) }; }
       }));
 
-      return { content: [{ type: "text", text: JSON.stringify(subagents) }], details: { subagents } };
+      return { content: [{ type: "text", text: JSON.stringify(subagents) }], details: { subagents, runs: iconRuns(latestRuns(ctx)) } };
     },
   });
   pi.registerTool({
@@ -334,7 +336,7 @@ export function registerSubagents(pi: ExtensionAPI) {
       reconcile(ctx);
       const run = targetRun(ctx, params.nickname);
       const running = active.get(run.sessionId);
-      const stopped = { content: [{ type: "text" as const, text: `Subagent ${run.name} stopped.` }], details: { name: run.name } };
+      const stopped = { content: [{ type: "text" as const, text: `Subagent ${run.name} stopped.` }], details: { name: run.name, runs: iconRuns([run]) } };
 
       if (running) {
         cancelSubagent(pi, ctx, running, "Subagent stopped by stop_subagent");

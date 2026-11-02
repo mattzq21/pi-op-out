@@ -132,7 +132,8 @@ export default function App(props: { suppressConnectionNotices?: boolean } = {})
             if (current) toggleComposerTerminal("split", { sessionKey: splitConversationKey(current), cwd: current.session.cwd, hostId: current.session.hostId ?? "local" }); }}
           onDialogRequest={queueExtensionDialog} onDialogResolved={resolveExtensionDialog} onDialogTransportClosed={closeTransportDialogs}
           onReleaseTransport={releaseSplitTransport} initialPrompt={pane.request?.initialPrompt} initialImages={pane.request?.initialImages}
-          onReady={() => finishOpening({ value: "opened" })} onFailed={() => finishOpening({ cancelled: true })}
+          onInitialClaim={() => sidepane.finishOpening(pane.key)} onReady={() => finishOpening({ value: "opened" })}
+          onFailed={(cause, unseen) => { finishOpening({ cancelled: true }); if (unseen) addNotice({ title: `Could not start “${pane.session.name}”`, message: cause instanceof Error ? cause.message : String(cause) }); }}
           onClose={() => { if (currentPane()) sidepane.forget(pane.key); }} />;
       }}</Rerun></Show>);
 

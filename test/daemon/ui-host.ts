@@ -11,13 +11,33 @@ const HELPERS: Record<string, { task: string; quick?: true }> = {
   Toast: { task: 'Draw toast popping out of a toaster in toast.svg' },
 };
 const waits = new Set<() => void>();
-const later = (reply: Reply) => new Promise<Reply>(resolve => { const timer = setTimeout(() => resolve(reply), 600000); waits.add(() => { clearTimeout(timer); resolve(reply); }); });
+let closing = false;
+const later = (reply: Reply) => new Promise<Reply>(resolve => {
+  if (closing) { resolve(reply); return; }
+  const timer = setTimeout(() => resolve(reply), 600000);
+  waits.add(() => { clearTimeout(timer); resolve(reply); });
+});
 
 function agentsReply(request: any): Reply | Promise<Reply> {
   const users = request.messages.filter((message: any) => message.role === 'user').map(text);
   const helper = Object.values(HELPERS).find(item => item.task === users[0]);
   if (helper) return helper.quick ? { text: 'Done: ' + helper.task } : later({ text: 'Done: ' + helper.task });
   if (users.at(-1)?.startsWith('Which colours')) return later({ text: 'Warm ones.' });
+  if (users[0]?.startsWith('Solo task: ')) return users.at(-1)?.includes('slowly') ? later({ text: 'Moon drawn.' }) : { text: 'Drew: ' + users.at(-1) };
+  if (users[0]?.startsWith('Use every subagent tool')) {
+    const steps: Array<[string, Record<string, unknown>]> = [
+      ['spawn_subagents', { tasks: [{ nickname: 'Solo', task: 'Solo task: draw a star' }] }],
+      ['await_subagents', {}],
+      ['message_subagent', { nickname: 'Solo', message: 'Solo task: draw a sun too' }],
+      ['await_subagents', {}],
+      ['message_subagent', { nickname: 'Solo', message: 'Solo task: draw a moon slowly' }],
+      ['message_subagent', { nickname: 'Solo', message: 'Make the moon smile', delivery: 'steer' }],
+      ['list_subagents', {}],
+      ['stop_subagent', { nickname: 'Solo' }],
+    ];
+    const step = steps[request.messages.filter((message: any) => message.role === 'tool').length];
+    return step ? { tool: step[0], arguments: step[1] } : later({ text: 'All tools used.' });
+  }
   if (!users[0]?.startsWith('Draw with helpers')) return { text: 'Reply to ' + users.at(-1) };
   if (!called(request.messages, 'spawn_subagents')) return { tool: 'spawn_subagents', arguments: { tasks: Object.entries(HELPERS).map(([nickname, item]) => ({ nickname, task: item.task })) } };
   if (!called(request.messages, 'await_subagents')) return { tool: 'await_subagents', arguments: { for: 'all' } };
@@ -58,6 +78,7 @@ try {
     } else process.stdout.write(JSON.stringify({ error: 'Unknown command ' + line }) + '\n');
   }
 } finally {
+  closing = true;
   for (const release of waits) release();
   await daemon.stop();
   await model?.close();

@@ -20,6 +20,7 @@ test('running side agents show in the header pill, grouped by kind, and a row op
   await composer.fill('/btw Which colours fit best?');
   await composer.press('Enter');
   await page.getByRole('button', { name: '5 working' }).waitFor({ timeout: 30000 });
+  await page.locator('#sidepane-panel').waitFor();
   await page.getByRole('button', { name: /^Open side pane/ }).click();
   await page.locator('#sidepane-panel').waitFor({ state: 'hidden' });
   await page.mouse.move(700, 500);

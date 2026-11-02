@@ -1,8 +1,9 @@
 import type { ChatMessage } from "../types";
+import { showsSubagents } from "./subagentTools";
 
 export interface SubagentFacts { look?: number; task?: string }
 
-const runsOf = (message: ChatMessage): unknown => message.role === "tool" && (message.toolName === "spawn_subagents" || message.toolName === "await_subagents") ? message.subagents
+const runsOf = (message: ChatMessage): unknown => message.role === "tool" && showsSubagents(message.toolName) ? message.subagents
   : message.customType === "piop-subagent-result" ? (message.details as { runs?: unknown } | undefined)?.runs : undefined;
 
 export function subagentFacts(messages: readonly ChatMessage[], hostId: string): ReadonlyMap<string, SubagentFacts> {

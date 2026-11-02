@@ -11,5 +11,6 @@ test('subagent tool results keep a small subagent list after the payload is defe
   assert.deepEqual(message.subagents, [icon]);
   const end = clientPayload({ type: 'tool_execution_end', toolName: 'await_subagents', toolCallId: 'call', result: { content: [], details: { runs: [run] } } });
   assert.deepEqual(end.subagents, [icon]);
+  for (const toolName of ['message_subagent', 'list_subagents', 'stop_subagent']) assert.deepEqual(clientPayload({ role: 'toolResult', toolName, details: { runs: [run] } }).subagents, [icon]);
   assert.equal(clientPayload({ role: 'toolResult', toolName: 'read', details: { runs: [run] } }).subagents, undefined);
 });

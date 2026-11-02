@@ -16,7 +16,7 @@ const runSchema = z.object({
 
 const runList = z.array(runSchema.optional().catch(undefined)).catch([]).transform(runs => runs.flatMap(run => run ? [run] : []));
 
-export const showsSubagents = (toolName?: string) => toolName === "spawn_subagents" || toolName === "await_subagents";
+export { showsSubagents } from "../lib/subagentTools";
 
 export const subagentRuns = z.object({ runs: runList }).transform(details => details.runs).catch([]).parse;
 
