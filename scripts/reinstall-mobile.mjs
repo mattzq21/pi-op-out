@@ -28,13 +28,6 @@ const adb = sdk ? join(sdk, 'platform-tools/adb') : 'adb';
 
 if (sdk) env.ANDROID_HOME = sdk;
 
-if (!env.JAVA_HOME) {
-  const java = [join(home, 'Applications/android-studio/jbr'), '/opt/android-studio/jbr']
-    .find((path) => existsSync(join(path, 'bin/java')));
-
-  if (java) env.JAVA_HOME = java;
-}
-
 function run(command, commandArgs, capture = false, cwd = root) {
   const result = spawnSync(command, commandArgs, { cwd, env, encoding: 'utf8', stdio: capture ? 'pipe' : 'inherit' });
 
