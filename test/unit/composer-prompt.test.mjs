@@ -5,6 +5,7 @@ import { buildComposerPrompt } from '../../clients/ui/lib/composerPrompt.ts';
 const commands = [
   { name: 'review', source: 'prompt' },
   { name: 'skill:Research', source: 'skill' },
+  { name: 'skill:grill-me', source: 'skill' },
   { name: 'compact', source: 'builtin' },
   { name: 'goal', source: 'builtin' },
 ];
@@ -26,6 +27,7 @@ test('a skill mention calls the skill, but mentions inside code stay plain text'
   assert.equal(send('costs $5 and $unknown').message, 'costs $5 and $unknown');
   for (const text of ['use ($research)', 'use $research.', 'a,$research b', 'x$research']) assert.equal(send(text).message, text);
   assert.equal(send('$research').message, '/skill:Research $research');
+  assert.equal(send('$research then $grill-me on $research').message, '/skill:Research /skill:grill-me $research then $grill-me on $research');
   assert.equal(send('say hi to [$research draw](piop://session/h/s)').message, 'say hi to [$research draw](piop://session/h/s)');
   assert.equal(send('see [docs](https://x.dev/$research)').message, 'see [docs](https://x.dev/$research)');
 });
@@ -51,4 +53,14 @@ test('text files split out of a message and back give the same message, even wit
     assert.equal(attachFiles(splitAttachedFiles(message).prompt, splitAttachedFiles(message).files), message);
   }
   assert.deepEqual(splitAttachedFiles('Only text'), { prompt: 'Only text', files: [] });
+});
+
+test('a sent or queued prompt with several skills shows each skill once and keeps the text', async () => {
+  const { sentSkillPrompt, queuedSkillPrompt } = await import('../../clients/ui/lib/composerPrompt.ts');
+  const block = name => `<skill name="${name}" location="/s/${name}/SKILL.md">\nReferences are relative to /s/${name}.\n\nBody\n</skill>`;
+  const both = { skills: ['Research', 'grill-me'], text: '$research then $grill-me' };
+  assert.deepEqual(sentSkillPrompt(`${block('Research')}\n\n${block('grill-me')}\n\n$research then $grill-me`), both);
+  assert.deepEqual(queuedSkillPrompt('/skill:Research /skill:grill-me $research then $grill-me'), both);
+  assert.deepEqual(sentSkillPrompt(`${block('Research')}\n\n${block('grill-me')}`), { skills: ['Research', 'grill-me'], text: '$Research $grill-me' });
+  assert.equal(sentSkillPrompt('Plain text'), undefined);
 });

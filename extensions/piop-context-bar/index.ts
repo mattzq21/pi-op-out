@@ -125,6 +125,8 @@ function changeInstructionFromMessages(messages: ContextMessages) {
   return match ? { path: "File changes", content: match[1], block: match[0] } : undefined;
 }
 
+const SKILL_BLOCK = /<skill name="([^"]+)" location="([^"]+)">\n([\s\S]*?)\n<\/skill>(?:\n\n|$)/y;
+
 function userInvokedSkills(messages: ContextMessages, options: BuildSystemPromptOptions | undefined, sinceCompaction?: Set<number>) {
   const available = new Map((options?.skills ?? []).map(skill => [`${skill.name}\0${skill.filePath}`, skill]));
   const invoked: Array<{ id: string; name: string; description: string; filePath: string; content: string }> = [];
@@ -133,12 +135,17 @@ function userInvokedSkills(messages: ContextMessages, options: BuildSystemPrompt
     if (!Check(userMessageSchema, message)) continue;
 
     if (sinceCompaction && (message.timestamp === undefined || !sinceCompaction.has(message.timestamp))) continue;
-    const match = textContent(message.content).match(/^<skill name="([^"]+)" location="([^"]+)">\n([\s\S]*?)\n<\/skill>(?:\n\n[\s\S]*)?$/);
+    const text = textContent(message.content);
 
-    if (!match) continue;
-    const skill = available.get(`${match[1]}\0${match[2]}`);
+    for (let at = 0, block = 0, match; at < text.length; at = SKILL_BLOCK.lastIndex, block++) {
+      SKILL_BLOCK.lastIndex = at;
+      match = SKILL_BLOCK.exec(text);
 
-    if (skill) invoked.push({ id: `${message.timestamp}:${index}`, name: skill.name, description: skill.description, filePath: skill.filePath, content: match[3] });
+      if (!match) break;
+      const skill = available.get(`${match[1]}\0${match[2]}`);
+
+      if (skill) invoked.push({ id: `${message.timestamp}:${index}:${block}`, name: skill.name, description: skill.description, filePath: skill.filePath, content: match[3] });
+    }
   }
 
   return invoked;
