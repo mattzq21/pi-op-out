@@ -21,7 +21,7 @@ function worktreeOf(record: ChatWorktreeRecord): ChatWorktree {
 
 function archiveOf(record: ChatWorktreeRecord): ChatArchive {
   if (!record.archive) throw new Error('Chat has no saved commit: ' + record.chatId);
-  return { ...worktreeOf(record), ...record.archive };
+  return { ...worktreeOf(record), ref: record.archive.ref, commit: record.archive.commit, base: record.archive.base ?? record.archive.commit };
 }
 
 function without<T extends object, K extends keyof T>(value: T, ...keys: K[]): Omit<T, K> {
@@ -94,7 +94,7 @@ export async function beginArchive(chatIds: string[], root = profileRoot()): Pro
       }
       const intent = await recordProtection(record, root);
       const archive = await protectArchive({ worktree: worktreeOf(intent), home: homeDir() });
-      try { done.push(Worktrees.replace(intent, { ...without(settled(intent), 'protecting'), state: 'archiving', archive: { ref: archive.ref, commit: archive.commit } } as ChatWorktreeRecord, root)!); }
+      try { done.push(Worktrees.replace(intent, { ...without(settled(intent), 'protecting'), state: 'archiving', archive: { ref: archive.ref, commit: archive.commit, ...archive.base !== archive.commit ? { base: archive.base } : {} } } as ChatWorktreeRecord, root)!); }
       catch (error) {
         try { await releaseArchive(archive); }
         catch (cleanup) { throw new Error(`${errorText(error)}\nCould not release ${archive.ref}: ${errorText(cleanup)}`); }

@@ -15,7 +15,7 @@ export interface ChatWorktreeRecord {
   worktree: string;
   branch: string;
   state: 'preparing' | 'active' | 'archiving' | 'archived' | 'restoring';
-  archive: null | { ref: string; commit: string };
+  archive: null | { ref: string; commit: string; base?: string };
   restore?: { restoreId: string; worktree: string; branch: string; reuse: boolean; retained?: boolean };
   owner?: string;
   protecting?: true;

@@ -31,6 +31,7 @@ function branchOf(chatId, value) {
 
 function checkArchive(chatId, archive) {
   if (archive?.ref !== archiveRef(chatId) || !COMMIT.test(archive?.commit ?? '')) throw new Error('Invalid chat archive');
+  if (archive.base !== undefined && (!COMMIT.test(archive.base) || archive.base === archive.commit)) throw new Error('Invalid chat archive base');
 }
 
 function check(record) {

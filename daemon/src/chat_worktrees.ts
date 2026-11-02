@@ -1,10 +1,9 @@
 import { execFile } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { chmod, lstat, mkdir, readdir, realpath, rename, rm, rmdir, stat } from 'node:fs/promises';
+import { chmod, copyFile, lstat, mkdir, readdir, realpath, rename, rm, rmdir, stat } from 'node:fs/promises';
 import { basename, dirname, join } from 'node:path';
 import { STORAGE_DIRECTORY } from './config';
 
-export const SAVE_MESSAGE = 'Piop saving progress';
 const UUID = '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}';
 const CHAT_ID = new RegExp(`^${UUID}$`);
 const NAME = new RegExp(`^([0-9a-f]{4,32}|${UUID}(-${UUID})?)$`);
@@ -13,7 +12,7 @@ const COMMIT = /^[0-9a-f]{40}([0-9a-f]{24})?$/;
 export type Repository = { repository: string; gitCommonDir: string };
 export type ChatWorktree = Repository & { chatId: string; worktree: string; branch: string };
 export type CreatedWorktree = ChatWorktree & { commit: string };
-export type ChatArchive = ChatWorktree & { ref: string; commit: string };
+export type ChatArchive = ChatWorktree & { ref: string; commit: string; base: string };
 export type RestorePlan = { restoreId: string; worktree: string; branch: string; reuse: boolean; retained?: boolean };
 
 export class GitError extends Error {
@@ -155,19 +154,6 @@ async function commitOf(cwd: string, ref: string): Promise<string | null> {
   return run.code === 0 ? run.stdout.trim() : null;
 }
 
-export async function saveProgress(cwd: string, repository?: Repository): Promise<{ commit: string } | null> {
-  const { gitCommonDir } = await required(cwd, repository, 'save progress');
-  return serialized(gitCommonDir, async () => {
-    const root = await topLevel(cwd);
-    await git(root, ['add', '.']);
-    if ((await git(root, ['diff', '--cached', '--quiet'], { allow: [1] })).code === 0) return null;
-    await git(root, ['commit', '--quiet', '-m', SAVE_MESSAGE]);
-    const commit = await commitOf(root, 'HEAD');
-    if (!commit) throw new Error(`Committed progress in ${root} but HEAD is missing`);
-    return { commit };
-  });
-}
-
 async function checkOut(gitCommonDir: string, worktree: string, args: string[]): Promise<string> {
   if ((await readdir(worktree)).length) throw new Error(`Worktree folder is not empty: ${worktree}`);
   await git(gitCommonDir, ['worktree', 'add', '--quiet', ...args]);
@@ -282,22 +268,41 @@ export async function removeCreatedWorktree(input: { chatId: string; gitCommonDi
   ));
 }
 
+const SNAPSHOT_IDENTITY = { GIT_AUTHOR_NAME: 'Piop', GIT_AUTHOR_EMAIL: 'piop@localhost', GIT_COMMITTER_NAME: 'Piop', GIT_COMMITTER_EMAIL: 'piop@localhost' };
+
+async function snapshotTree(root: string): Promise<string> {
+  const index = (await git(root, ['rev-parse', '--path-format=absolute', '--git-path', 'index'])).stdout.trim();
+  const temporary = `${index}.piop-${randomUUID()}`;
+  try {
+    try { await copyFile(index, temporary); }
+    catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
+    const env = { GIT_INDEX_FILE: temporary };
+    await git(root, ['add', '--all', '--', '.'], { env });
+    return (await git(root, ['write-tree'], { env })).stdout.trim();
+  } finally { await rm(temporary, { force: true }); }
+}
+
+async function snapshot(root: string, base: string, existing: string | null): Promise<string> {
+  const tree = await snapshotTree(root);
+  if (tree === (await git(root, ['rev-parse', `${base}^{tree}`])).stdout.trim()) return base;
+  if (existing && (await git(root, ['rev-parse', `${existing}^{tree}`, `${existing}^@`])).stdout.trim() === `${tree}\n${base}`) return existing;
+  return (await git(root, ['commit-tree', '--no-gpg-sign', '-p', base, '-m', 'Piop archive snapshot', tree], { env: SNAPSHOT_IDENTITY })).stdout.trim();
+}
+
 export async function protectArchive(input: { worktree: ChatWorktree; home: string }): Promise<ChatArchive> {
   const record = input.worktree;
   requireOwnedFolder(input.home, record.chatId, record.worktree);
   const ref = archiveRef(record.chatId);
   return serialized(record.gitCommonDir, async () => {
+    if (!await exists(record.worktree)) throw new Error(`Worktree folder is missing and nothing was archived: ${record.worktree}`);
+    const base = await commitOf(record.worktree, 'HEAD');
+    if (!base) throw new Error(`Worktree has no commit to archive: ${record.worktree}`);
     const existing = await commitOf(record.gitCommonDir, ref);
-    if (!await exists(record.worktree)) {
-      if (existing) return { ...record, ref, commit: existing };
-      throw new Error(`Worktree folder is missing and nothing was archived: ${record.worktree}`);
-    }
-    const commit = await commitOf(record.worktree, 'HEAD');
-    if (!commit) throw new Error(`Worktree has no commit to archive: ${record.worktree}`);
+    const commit = await snapshot(record.worktree, base, existing);
     if (existing && existing !== commit) throw new Error(`${ref} already points to ${existing}`);
     if (!existing) await git(record.gitCommonDir, ['update-ref', '--no-deref', '-m', 'piop: archive chat', ref, commit, '']);
     if (await commitOf(record.gitCommonDir, ref) !== commit) throw new Error(`${ref} was not saved`);
-    return { ...record, ref, commit };
+    return { ...record, ref, commit, base };
   });
 }
 
@@ -330,7 +335,7 @@ async function choosePlan(archive: ChatArchive, home: string, input: { retainSha
   }
   const inUse = (await worktrees(archive.gitCommonDir)).some(item => item.branch === archive.branch);
   const branchCommit = await commitOf(archive.gitCommonDir, `refs/heads/${archive.branch}`);
-  const reuse = !inUse && branchCommit === archive.commit;
+  const reuse = !inUse && branchCommit === archive.base;
   const keepBranch = !inUse && (!branchCommit || reuse);
   const keepFolder = !await exists(archive.worktree);
   if (keepFolder && keepBranch) return { restoreId, worktree: archive.worktree, branch: archive.branch, reuse };
@@ -340,10 +345,11 @@ async function choosePlan(archive: ChatArchive, home: string, input: { retainSha
 }
 
 async function requireArchive(archive: ChatArchive): Promise<void> {
-  if (!COMMIT.test(archive.commit)) throw new Error(`Archived commit is not a full hash: ${archive.commit}`);
+  if (!COMMIT.test(archive.commit) || !COMMIT.test(archive.base)) throw new Error(`Archived commit is not a full hash: ${archive.commit} ${archive.base}`);
   if (archive.ref !== archiveRef(archive.chatId)) throw new Error(`Not the archive reference of chat ${archive.chatId}: ${archive.ref}`);
   const current = await commitOf(archive.gitCommonDir, archive.ref);
   if (current !== archive.commit) throw new Error(`${archive.ref} does not point to ${archive.commit}`);
+  if (archive.commit !== archive.base && (await git(archive.gitCommonDir, ['rev-parse', `${archive.commit}^@`])).stdout.trim() !== archive.base) throw new Error(`Archived snapshot ${archive.commit} is not based on ${archive.base}`);
 }
 
 export async function restoreWorktree(input: { archive: ChatArchive; home: string; plan: RestorePlan }): Promise<ChatWorktree> {
@@ -359,12 +365,13 @@ export async function restoreWorktree(input: { archive: ChatArchive; home: strin
       return { ...archive };
     }
     if (plan.reuse) {
-      if (plan.branch !== archive.branch || await commitOf(archive.gitCommonDir, `refs/heads/${plan.branch}`) !== archive.commit) throw new Error(`Branch ${plan.branch} no longer points to ${archive.commit}`);
+      if (plan.branch !== archive.branch || await commitOf(archive.gitCommonDir, `refs/heads/${plan.branch}`) !== archive.base) throw new Error(`Branch ${plan.branch} no longer points to ${archive.base}`);
     } else if (await commitOf(archive.gitCommonDir, `refs/heads/${plan.branch}`)) throw new Error(`Branch already exists: ${plan.branch}`);
     await mkdir(worktreesRoot(home), { recursive: true, mode: 0o700 });
     try { await mkdir(plan.worktree, { mode: 0o700 }); }
     catch (error) { if ((error as NodeJS.ErrnoException).code === 'EEXIST') throw new Error(`Worktree folder was taken by another chat; restore again: ${plan.worktree}`); throw error; }
-    const made = await checkOut(archive.gitCommonDir, plan.worktree, plan.reuse ? [plan.worktree, plan.branch] : ['-b', plan.branch, plan.worktree, archive.commit]);
+    const made = await checkOut(archive.gitCommonDir, plan.worktree, plan.reuse ? [plan.worktree, plan.branch] : ['-b', plan.branch, plan.worktree, archive.base]);
+    if (archive.commit !== archive.base) await git(made, ['restore', '--source', archive.commit, '--worktree', '--', '.']);
     return { repository: archive.repository, gitCommonDir: archive.gitCommonDir, chatId: archive.chatId, worktree: made, branch: plan.branch };
   });
 }

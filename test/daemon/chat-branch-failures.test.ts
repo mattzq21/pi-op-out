@@ -177,7 +177,8 @@ test('a branch of a branch survives archiving its parent and restores from share
     const parent = await command({ type: 'get_state' });
     writeFileSync(join(parent.cwd, 'parent.txt'), 'from parent');
     const parentReply = await ask('Question two');
-    expect(git(parent.cwd, 'log', '-1', '--format=%s')).toBe('Piop saving progress');
+    expect(git(parent.cwd, 'status', '--porcelain')).toBe('?? parent.txt');
+    git(parent.cwd, 'add', '.'); git(parent.cwd, 'commit', '--quiet', '-m', 'Parent work');
 
     await command({ type: 'fork_after', entryId: parentReply.id });
     const child = await command({ type: 'get_state' });
@@ -185,6 +186,7 @@ test('a branch of a branch survives archiving its parent and restores from share
     expect(readFileSync(join(child.cwd, 'parent.txt'), 'utf8')).toBe('from parent');
     writeFileSync(join(child.cwd, 'child.txt'), 'from child');
     await ask('Question three');
+    git(child.cwd, 'add', '.'); git(child.cwd, 'commit', '--quiet', '-m', 'Child work');
     const saved = git(child.cwd, 'rev-parse', 'HEAD');
 
     await agents.daemon.invoke('archive_session', { sessionPath: parent.sessionFile, hostId: 'local', clientId: 'laptop', terminalIds: [] });

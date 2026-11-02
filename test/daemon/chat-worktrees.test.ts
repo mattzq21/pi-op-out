@@ -37,6 +37,12 @@ function repository(): { repo: string; home: string; base: string } {
   return { repo, home, base };
 }
 
+function commitAll(root: string): string {
+  git(root, 'add', '.');
+  git(root, 'commit', '--quiet', '-m', 'Work');
+  return git(root, 'rev-parse', 'HEAD');
+}
+
 function files(root: string): Record<string, string> {
   const listed = git(root, 'ls-files', '--cached', '--others', '--exclude-standard', '-z').split('\0').filter(Boolean);
   return Object.fromEntries([...new Set(listed)].filter(name => existsSync(join(root, name))).sort().map(name => [name, readFileSync(join(root, name), 'utf8')]));
@@ -80,26 +86,6 @@ test('detects repository roots and linked worktree roots, but not subfolders or 
   mkdirSync(outside);
   expect(await Worktrees.detectRepository(outside)).toBeNull();
   await expect(Worktrees.detectRepository(join(base, 'missing'))).rejects.toThrow();
-});
-
-test('saves progress with git add . from the root, skips empty commits, and reports hook failures', async () => {
-  const { repo } = repository();
-  makeDirty(repo);
-  mkdirSync(join(repo, 'sub'));
-  await expect(Worktrees.saveProgress(join(repo, 'sub'))).rejects.toThrow('Cannot save progress');
-  const saved = await Worktrees.saveProgress(repo);
-  expect(saved?.commit).toBe(git(repo, 'rev-parse', 'HEAD'));
-  expect(git(repo, 'log', '-1', '--format=%s')).toBe(Worktrees.SAVE_MESSAGE);
-  expect(git(repo, 'ls-tree', '-r', '--name-only', 'HEAD').split('\n').sort()).toEqual(['.gitignore', 'dir/new.txt', 'staged.txt', 'tracked.txt']);
-  expect(status(repo)).toBe('');
-  expect(await Worktrees.saveProgress(repo)).toBeNull();
-  expect(git(repo, 'rev-list', '--count', 'HEAD')).toBe('2');
-
-  write(join(repo, 'tracked.txt'), 'three\n');
-  write(join(repo, '.git/hooks/pre-commit'), '#!/bin/sh\necho blocked by hook >&2\nexit 1\n');
-  chmodSync(join(repo, '.git/hooks/pre-commit'), 0o755);
-  await expect(Worktrees.saveProgress(repo)).rejects.toThrow(/blocked by hook/);
-  expect(git(repo, 'rev-list', '--count', 'HEAD')).toBe('2');
 });
 
 test('creates a chat worktree at the source commit with only the committed files, leaving the source unchanged', async () => {
@@ -214,11 +200,11 @@ test('archive removes the folder and branch, and restore recreates both from the
   const created = await create({ sourceCwd: repo, chatId, home });
   write(join(created.worktree, 'work.txt'), 'saved\n');
   write(join(created.worktree, 'cache.log'), 'ignored\n');
-  const saved = await Worktrees.saveProgress(created.worktree);
+  const saved = commitAll(created.worktree);
   write(join(created.worktree, 'work.txt'), 'unsaved\n');
 
   const archive = await Worktrees.protectArchive({ worktree: created, home });
-  expect(archive).toEqual({ ...created, commit: saved!.commit, ref: 'refs/piop/archives/' + chatId } as typeof archive);
+  expect(archive).toEqual({ ...created, commit: saved, ref: 'refs/piop/archives/' + chatId } as typeof archive);
   expect(await Worktrees.protectArchive({ worktree: created, home })).toEqual(archive);
   await Worktrees.removeArchivedWorktree({ archive, home });
   await Worktrees.removeArchivedWorktree({ archive, home });
@@ -231,7 +217,7 @@ test('archive removes the folder and branch, and restore recreates both from the
   expect(plan.worktree).toBe(created.worktree);
   const restored = await Worktrees.restoreWorktree({ archive, home, plan });
   expect(restored).toEqual({ repository: repo, gitCommonDir: created.gitCommonDir, chatId, worktree: created.worktree, branch: plan.branch });
-  expect(git(restored.worktree, 'rev-parse', 'HEAD')).toBe(saved!.commit);
+  expect(git(restored.worktree, 'rev-parse', 'HEAD')).toBe(saved);
   expect(readFileSync(join(restored.worktree, 'work.txt'), 'utf8')).toBe('saved\n');
   expect(existsSync(join(restored.worktree, 'cache.log'))).toBe(false);
   expect(status(restored.worktree)).toBe('');
@@ -305,7 +291,7 @@ test('a failed archive keeps the worktree, and a moved archive reference is kept
   const created = await create({ sourceCwd: repo, chatId, home });
   git(repo, 'update-ref', 'refs/piop/archives/' + chatId, git(repo, 'rev-parse', 'HEAD'));
   write(join(created.worktree, 'x.txt'), 'x');
-  await Worktrees.saveProgress(created.worktree);
+  commitAll(created.worktree);
   await expect(Worktrees.protectArchive({ worktree: created, home })).rejects.toThrow(/already points/);
   expect(existsSync(join(created.worktree, 'x.txt'))).toBe(true);
   const fake = { ...created, ref: 'refs/piop/archives/' + chatId, commit: git(created.worktree, 'rev-parse', 'HEAD') };
@@ -352,8 +338,7 @@ test('runs concurrent operations on one repository one at a time', async () => {
   const created = await Promise.all(ids.map(chatId => create({ sourceCwd: repo, chatId, home })));
   created.forEach((worktree, index) => write(join(worktree.worktree, `f${index}.txt`), String(index)));
   write(join(repo, 'main.txt'), 'main');
-  const saves = await Promise.all([repo, ...created.map(worktree => worktree.worktree)].map(cwd => Worktrees.saveProgress(cwd)));
-  expect(saves.every(save => save !== null)).toBe(true);
+  for (const cwd of [repo, ...created.map(worktree => worktree.worktree)]) commitAll(cwd);
   const archives = await Promise.all(created.map(worktree => Worktrees.protectArchive({ worktree, home })));
   await Promise.all(archives.map(archive => Worktrees.removeArchivedWorktree({ archive, home })));
   expect(git(repo, 'for-each-ref', '--format=%(refname)', 'refs/piop/archives').split('\n').length).toBe(6);
