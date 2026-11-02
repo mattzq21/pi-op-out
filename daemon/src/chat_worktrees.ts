@@ -65,19 +65,19 @@ function names(id: string): string[] {
   return Array.from({ length: hex.length - 3 }, (_, index) => hex.slice(0, index + 4));
 }
 
-async function freeName(id: string, home: string, gitCommonDir: string, skip = new Set<string>()): Promise<string | null> {
+async function freeName(id: string, home: string, gitCommonDir: string, taken: Set<string>): Promise<string | null> {
   for (const name of names(id)) {
-    if (skip.has(name) || await exists(join(worktreesRoot(home), name)) || await commitOf(gitCommonDir, `refs/heads/piop/${name}`)) continue;
+    if (taken.has(name) || await exists(join(worktreesRoot(home), name)) || await commitOf(gitCommonDir, `refs/heads/piop/${name}`)) continue;
     return name;
   }
   return null;
 }
 
-export async function claimWorktree(input: { chatId: string; home: string; gitCommonDir: string; save: (worktree: string, branch: string) => void }): Promise<{ worktree: string; branch: string }> {
+export async function claimWorktree(input: { chatId: string; home: string; gitCommonDir: string; taken: () => Set<string>; save: (worktree: string, branch: string) => void }): Promise<{ worktree: string; branch: string }> {
   return serialized(input.gitCommonDir, async () => {
     await mkdir(worktreesRoot(input.home), { recursive: true, mode: 0o700 });
-    const taken = new Set<string>();
-    for (let name = await freeName(input.chatId, input.home, input.gitCommonDir); name !== null; name = await freeName(input.chatId, input.home, input.gitCommonDir, taken)) {
+    const taken = input.taken();
+    for (let name = await freeName(input.chatId, input.home, input.gitCommonDir, taken); name !== null; name = await freeName(input.chatId, input.home, input.gitCommonDir, taken)) {
       const worktree = join(worktreesRoot(input.home), name);
       const branch = `piop/${name}`;
       input.save(worktree, branch);
@@ -310,27 +310,33 @@ export async function removeArchivedWorktree(input: { archive: ChatArchive; home
   });
 }
 
-export async function planRestore(input: { archive: ChatArchive; home: string; retainShared?: boolean }): Promise<RestorePlan> {
+export async function planRestore(input: { archive: ChatArchive; home: string; retainShared?: boolean; taken: () => Set<string>; save: (plan: RestorePlan) => void }): Promise<RestorePlan> {
   const { archive, home } = input;
   return serialized(archive.gitCommonDir, async () => {
-    await requireArchive(archive);
-    const restoreId = randomUUID();
-    if (input.retainShared && await exists(archive.worktree)) {
-      requireOwnedFolder(home, archive.chatId, archive.worktree);
-      const real = await realpath(archive.worktree);
-      if (!(await worktrees(archive.gitCommonDir)).some(item => item.path === real)) throw new Error(`Shared folder is not a worktree of ${archive.gitCommonDir}: ${archive.worktree}`);
-      return { restoreId, worktree: archive.worktree, branch: archive.branch, reuse: true, retained: true };
-    }
-    const inUse = (await worktrees(archive.gitCommonDir)).some(item => item.branch === archive.branch);
-    const branchCommit = await commitOf(archive.gitCommonDir, `refs/heads/${archive.branch}`);
-    const reuse = !inUse && branchCommit === archive.commit;
-    const keepBranch = !inUse && (!branchCommit || reuse);
-    const keepFolder = !await exists(archive.worktree);
-    if (keepFolder && keepBranch) return { restoreId, worktree: archive.worktree, branch: archive.branch, reuse };
-    const name = await freeName(archive.chatId, home, archive.gitCommonDir);
-    if (name === null) throw new Error(`No free worktree name for chat ${archive.chatId}`);
-    return { restoreId, worktree: keepFolder ? archive.worktree : join(worktreesRoot(home), name), branch: keepBranch ? archive.branch : `piop/${name}`, reuse: keepBranch && reuse };
+    const plan = await choosePlan(archive, home, input);
+    input.save(plan);
+    return plan;
   });
+}
+
+async function choosePlan(archive: ChatArchive, home: string, input: { retainShared?: boolean; taken: () => Set<string> }): Promise<RestorePlan> {
+  await requireArchive(archive);
+  const restoreId = randomUUID();
+  if (input.retainShared && await exists(archive.worktree)) {
+    requireOwnedFolder(home, archive.chatId, archive.worktree);
+    const real = await realpath(archive.worktree);
+    if (!(await worktrees(archive.gitCommonDir)).some(item => item.path === real)) throw new Error(`Shared folder is not a worktree of ${archive.gitCommonDir}: ${archive.worktree}`);
+    return { restoreId, worktree: archive.worktree, branch: archive.branch, reuse: true, retained: true };
+  }
+  const inUse = (await worktrees(archive.gitCommonDir)).some(item => item.branch === archive.branch);
+  const branchCommit = await commitOf(archive.gitCommonDir, `refs/heads/${archive.branch}`);
+  const reuse = !inUse && branchCommit === archive.commit;
+  const keepBranch = !inUse && (!branchCommit || reuse);
+  const keepFolder = !await exists(archive.worktree);
+  if (keepFolder && keepBranch) return { restoreId, worktree: archive.worktree, branch: archive.branch, reuse };
+  const name = await freeName(archive.chatId, home, archive.gitCommonDir, input.taken());
+  if (name === null) throw new Error(`No free worktree name for chat ${archive.chatId}`);
+  return { restoreId, worktree: keepFolder ? archive.worktree : join(worktreesRoot(home), name), branch: keepBranch ? archive.branch : `piop/${name}`, reuse: keepBranch && reuse };
 }
 
 async function requireArchive(archive: ChatArchive): Promise<void> {

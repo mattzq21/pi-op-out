@@ -55,7 +55,7 @@ function short(chatId: string, n = 4): string { return chatId.replaceAll('-', ''
 async function create(input: { sourceCwd: string; chatId: string; home: string; baseBranch?: string }) {
   const repository = await Worktrees.detectRepository(input.sourceCwd);
   if (!repository) return Worktrees.createWorktree({ ...input, worktree: join(Worktrees.worktreesRoot(input.home), short(input.chatId)), branch: 'piop/' + short(input.chatId) });
-  const claimed = await Worktrees.claimWorktree({ chatId: input.chatId, home: input.home, gitCommonDir: repository.gitCommonDir, save: () => {} });
+  const claimed = await Worktrees.claimWorktree({ chatId: input.chatId, home: input.home, gitCommonDir: repository.gitCommonDir, taken: () => new Set(), save: () => {} });
   return Worktrees.createWorktree({ ...input, ...claimed });
 }
 
@@ -143,7 +143,7 @@ test('a name another process claims first is skipped, and the claim is saved bef
   const { repo, home } = repository();
   const chatId = randomUUID();
   const saved: string[] = [];
-  const claimed = await Worktrees.claimWorktree({ chatId, home, gitCommonDir: join(repo, '.git'), save: worktree => {
+  const claimed = await Worktrees.claimWorktree({ chatId, home, gitCommonDir: join(repo, '.git'), taken: () => new Set(), save: worktree => {
     saved.push(worktree);
     expect(existsSync(worktree)).toBe(false);
     if (saved.length === 1) mkdirSync(worktree);
@@ -151,7 +151,7 @@ test('a name another process claims first is skipped, and the claim is saved bef
   expect(saved).toEqual([join(Worktrees.worktreesRoot(home), short(chatId)), join(Worktrees.worktreesRoot(home), short(chatId, 5))]);
   expect(claimed).toEqual({ worktree: saved[1], branch: 'piop/' + short(chatId, 5) });
   expect(readdirSync(claimed.worktree)).toEqual([]);
-  await expect(Worktrees.claimWorktree({ chatId: 'not-a-uuid', home, gitCommonDir: join(repo, '.git'), save: () => {} })).rejects.toThrow();
+  await expect(Worktrees.claimWorktree({ chatId: 'not-a-uuid', home, gitCommonDir: join(repo, '.git'), taken: () => new Set(), save: () => {} })).rejects.toThrow();
 });
 
 test('a failed creation removes the folder and branch it made', async () => {
@@ -225,7 +225,7 @@ test('archive removes the folder and branch, and restore recreates both from the
   expect(existsSync(created.worktree)).toBe(false);
   expect(hasRef(repo, 'refs/heads/' + created.branch)).toBe(false);
   git(repo, 'gc', '--quiet', '--prune=now');
-  const plan = await Worktrees.planRestore({ archive, home });
+  const plan = await Worktrees.planRestore({ archive, home, taken: () => new Set(), save: () => {} });
   expect(plan.reuse).toBe(false);
   expect(plan.branch).toBe(created.branch);
   expect(plan.worktree).toBe(created.worktree);
@@ -255,7 +255,7 @@ test('archive reports a failed branch removal and can finish after the folder is
   } finally { unlinkSync(lock); }
   await Worktrees.removeArchivedWorktree({ archive, home });
   expect(hasRef(repo, 'refs/heads/' + created.branch)).toBe(false);
-  const plan = await Worktrees.planRestore({ archive, home });
+  const plan = await Worktrees.planRestore({ archive, home, taken: () => new Set(), save: () => {} });
   const restored = await Worktrees.restoreWorktree({ archive, home, plan });
   expect(restored.branch).toBe(created.branch);
   expect(git(restored.worktree, 'rev-parse', 'HEAD')).toBe(archive.commit);
@@ -269,7 +269,7 @@ test('restore reuses an unchanged branch, and avoids a moved branch and an occup
   await Worktrees.removeArchivedWorktree({ archive, home });
 
   git(repo, 'branch', created.branch, archive.commit);
-  const same = await Worktrees.planRestore({ archive, home });
+  const same = await Worktrees.planRestore({ archive, home, taken: () => new Set(), save: () => {} });
   expect(same).toMatchObject({ reuse: true, branch: created.branch, worktree: created.worktree });
   const reused = await Worktrees.restoreWorktree({ archive, home, plan: same });
   expect(git(reused.worktree, 'branch', '--show-current')).toBe(created.branch);
@@ -282,7 +282,7 @@ test('restore reuses an unchanged branch, and avoids a moved branch and an occup
   git(repo, 'commit', '--quiet', '-m', 'later');
   git(repo, 'branch', '-f', created.branch, 'HEAD');
   write(join(created.worktree, 'keep.txt'), 'not ours\n');
-  const moved = await Worktrees.planRestore({ archive, home });
+  const moved = await Worktrees.planRestore({ archive, home, taken: () => new Set(), save: () => {} });
   expect(moved.reuse).toBe(false);
   expect(moved).toMatchObject({ worktree: join(home, '.piop/worktrees', short(chatId, 5)), branch: 'piop/' + short(chatId, 5) });
   const restored = await Worktrees.restoreWorktree({ archive, home, plan: moved });

@@ -1,3 +1,4 @@
+import { basename } from 'node:path';
 import * as Records from '../resources/chat-worktree-records.cjs';
 import { claimWorktree, createWorktree, removeCreatedWorktree, type CreatedWorktree, type Repository } from './chat_worktrees';
 import { forgetProjectRepository } from './project_repositories';
@@ -30,6 +31,15 @@ export function read(chatId: string, root = profileRoot()): ChatWorktreeRecord |
 
 export function list(root = profileRoot()): ChatWorktreeRecord[] { return Records.list(root); }
 
+export function takenNames(root = profileRoot()): Set<string> {
+  const names = new Set<string>();
+  for (const record of list(root)) {
+    for (const folder of [record.worktree, record.restore?.worktree]) if (folder) names.add(basename(folder));
+    for (const branch of [record.branch, record.restore?.branch]) if (branch) names.add(branch.slice('piop/'.length));
+  }
+  return names;
+}
+
 export function replace(before: ChatWorktreeRecord | null, after: ChatWorktreeRecord | null, root = profileRoot()): ChatWorktreeRecord | null {
   return Records.replace(root, (before ?? after)!.chatId, before, after);
 }
@@ -42,7 +52,7 @@ export function activate(chatId: string, root = profileRoot()): ChatWorktreeReco
 
 export async function create(input: { sourceCwd: string; chatId: string; home: string; repository: Repository; baseBranch?: string }, root = profileRoot()): Promise<CreatedWorktree> {
   let record: ChatWorktreeRecord | null = null;
-  const claimed = await claimWorktree({ chatId: input.chatId, home: input.home, gitCommonDir: input.repository.gitCommonDir, save: (worktree, branch) => {
+  const claimed = await claimWorktree({ chatId: input.chatId, home: input.home, gitCommonDir: input.repository.gitCommonDir, taken: () => takenNames(root), save: (worktree, branch) => {
     record = record === null ? prepare({ chatId: input.chatId, ...input.repository, worktree, branch }, root) : replace(record, { ...record, worktree, branch }, root);
   } });
   return createWorktree({ ...input, ...claimed });

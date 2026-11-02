@@ -127,6 +127,24 @@ test('restore into an occupied folder and a moved branch uses fresh names and po
   expect(getProjectRepository(profile, worktree)).toBeNull();
 }, 120000);
 
+test('a new chat does not take the name of an archived chat', async () => {
+  const { daemon, home, profile, repo, chat, worktree } = await scene();
+  await archive(daemon, chat.path);
+  const sibling = chat.id.slice(0, 4) + crypto.randomUUID().slice(4);
+  const repository = (await Git.detectRepository(repo))!;
+  const created = await Records.create({ sourceCwd: repo, chatId: sibling, home, repository }, profile);
+  Records.activate(sibling, profile);
+  expect(created.worktree).toBe(join(Git.worktreesRoot(home), short(sibling, 5)));
+  expect(created.branch).toBe('piop/' + short(sibling, 5));
+  publish(home, created.worktree);
+  writeFileSync(join(created.worktree, 'sibling.txt'), 'sibling work');
+  await restore(daemon, await archivedPath(daemon, chat.id));
+  expect(Records.read(chat.id, profile)).toMatchObject({ state: 'active', worktree, branch: 'piop/' + short(chat.id) });
+  expect(readFileSync(join(worktree, 'work.txt'), 'utf8')).toBe('saved work');
+  expect(existsSync(join(worktree, 'sibling.txt'))).toBe(false);
+  expect(readFileSync(join(created.worktree, 'sibling.txt'), 'utf8')).toBe('sibling work');
+}, 120000);
+
 test('a failed restore removes what it created and leaves the chat archived', async () => {
   const { daemon, profile, repo, chat, worktree } = await scene();
   await archive(daemon, chat.path);

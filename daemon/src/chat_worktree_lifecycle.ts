@@ -171,9 +171,9 @@ export async function beginRestore(chatIds: string[], root = profileRoot()): Pro
       if (record.state !== 'archived') throw new Error(`Cannot restore chat ${record.chatId}: its worktree is ${record.state}`);
       running.add(record.chatId);
       const archive = archiveOf(record);
-      const plan = await planRestore({ archive, home: homeDir(), retainShared: sharedFolder(record, root, record.worktree, true) });
-      const restoring = Worktrees.replace(record, { ...settled(record), state: 'restoring', restore: plan }, root)!;
-      done.push(restoring);
+      const plan = await planRestore({ archive, home: homeDir(), retainShared: sharedFolder(record, root, record.worktree, true), taken: () => Worktrees.takenNames(root), save: plan => {
+        done.push(Worktrees.replace(record, { ...settled(record), state: 'restoring', restore: plan }, root)!);
+      } });
       await restoreWorktree({ archive, home: homeDir(), plan });
     }
     return done;
