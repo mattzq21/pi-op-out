@@ -9,7 +9,7 @@ const root = fileURLToPath(new URL("../", import.meta.url));
 
 const localModules = join(root, "node_modules");
 
-const stamp = join(root, ".trace/dependencies.json");
+const stamp = join(root, ".trace-dependencies.json");
 
 const installations = join(process.env.XDG_CACHE_HOME || join(homedir(), ".cache"), "piop/bun-installations");
 

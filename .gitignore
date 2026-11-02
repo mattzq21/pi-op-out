@@ -26,3 +26,4 @@ clients/android/*.keystore
 __pycache__/
 *.pyc
 *.bak
+.trace-dependencies.json
