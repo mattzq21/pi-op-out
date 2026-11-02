@@ -2,7 +2,6 @@ I found these machine-specific or hard-coded items. I did not change anything.
 
 Paths and tools from your own machine
 
-extensions/piop-define-agents/README.md:39: /home/matt/Projects/cua-vm-broker/cua-vm-broker.
 The Android Studio Java folder is guessed as ~/Applications/android-studio/jbr in reinstall-mobile.mjs:32.
 Your personal setup forced on others
 
