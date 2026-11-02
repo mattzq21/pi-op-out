@@ -194,17 +194,23 @@ test('undo and delete succeed when nothing was ever created on this machine', as
   await Worktrees.deleteChatWorktree({ record: { repository: repo, gitCommonDir, chatId, ...names, archive: null }, home });
 });
 
-test('archive removes the folder and branch, and restore recreates both from the saved commit', async () => {
+test('archive saves a snapshot of the current files, removes the folder and branch, and restore puts the files back on the last commit', async () => {
   const { repo, home } = repository();
   const chatId = randomUUID();
   const created = await create({ sourceCwd: repo, chatId, home });
   write(join(created.worktree, 'work.txt'), 'saved\n');
   write(join(created.worktree, 'cache.log'), 'ignored\n');
   const saved = commitAll(created.worktree);
-  write(join(created.worktree, 'work.txt'), 'unsaved\n');
+  write(join(created.worktree, 'work.txt'), 'after the commit\n');
+  write(join(created.worktree, 'new.txt'), 'untracked\n');
+  const index = git(created.worktree, 'ls-files', '--stage');
 
   const archive = await Worktrees.protectArchive({ worktree: created, home });
-  expect(archive).toEqual({ ...created, commit: saved, ref: 'refs/piop/archives/' + chatId } as typeof archive);
+  const { commit: _branchCommit, ...fields } = created;
+  expect(archive).toMatchObject({ ...fields, base: saved, ref: 'refs/piop/archives/' + chatId });
+  expect(git(repo, 'rev-parse', archive.commit + '^@')).toBe(saved);
+  expect(git(repo, 'log', '-1', '--format=%s', created.branch)).toBe('Work');
+  expect(git(created.worktree, 'ls-files', '--stage')).toBe(index);
   expect(await Worktrees.protectArchive({ worktree: created, home })).toEqual(archive);
   await Worktrees.removeArchivedWorktree({ archive, home });
   await Worktrees.removeArchivedWorktree({ archive, home });
@@ -218,9 +224,10 @@ test('archive removes the folder and branch, and restore recreates both from the
   const restored = await Worktrees.restoreWorktree({ archive, home, plan });
   expect(restored).toEqual({ repository: repo, gitCommonDir: created.gitCommonDir, chatId, worktree: created.worktree, branch: plan.branch });
   expect(git(restored.worktree, 'rev-parse', 'HEAD')).toBe(saved);
-  expect(readFileSync(join(restored.worktree, 'work.txt'), 'utf8')).toBe('saved\n');
+  expect(readFileSync(join(restored.worktree, 'work.txt'), 'utf8')).toBe('after the commit\n');
+  expect(readFileSync(join(restored.worktree, 'new.txt'), 'utf8')).toBe('untracked\n');
   expect(existsSync(join(restored.worktree, 'cache.log'))).toBe(false);
-  expect(status(restored.worktree)).toBe('');
+  expect(status(restored.worktree)).toBe(' M work.txt\n?? new.txt');
   expect(hasRef(repo, archive.ref)).toBe(true);
   await Worktrees.releaseArchive(archive);
   await Worktrees.releaseArchive(archive);

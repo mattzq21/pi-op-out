@@ -87,21 +87,23 @@ test('archiving a chat in the original project folder keeps the folder and its u
   expect(readFileSync(join(repo, 'dirty.txt'), 'utf8')).toBe('uncommitted');
 }, 120000);
 
-test('archive saves the last commit, removes the worktree and branch, and restore recreates them', async () => {
+test('archive saves a snapshot of the current files, removes the worktree and branch, and restore recreates them', async () => {
   const { daemon, profile, repo, chat, worktree } = await scene();
   const saved = git(worktree, 'rev-parse', 'HEAD');
   writeFileSync(join(worktree, 'work.txt'), 'after the last commit');
   await archive(daemon, chat.path);
   expect(existsSync(worktree)).toBe(false);
   expect(tryGit(repo, 'rev-parse', '--verify', '--quiet', 'refs/heads/piop/' + short(chat.id))).toBeNull();
-  expect(git(repo, 'rev-parse', Records.archiveRef(chat.id))).toBe(saved);
-  expect(Records.read(chat.id, profile)).toMatchObject({ state: 'archived', archive: { commit: saved } });
+  const snapshot = git(repo, 'rev-parse', Records.archiveRef(chat.id));
+  expect(git(repo, 'rev-parse', snapshot + '^@')).toBe(saved);
+  expect(Records.read(chat.id, profile)).toMatchObject({ state: 'archived', archive: { commit: snapshot, base: saved } });
   const path = await archivedPath(daemon, chat.id);
   await Promise.all([restore(daemon, path), restore(daemon, path)]);
   await restore(daemon, path);
   expect((await activeChat(daemon, chat.id))?.cwd).toBe(worktree);
-  expect(readFileSync(join(worktree, 'work.txt'), 'utf8')).toBe('saved work');
-  expect(git(worktree, 'status', '--porcelain')).toBe('');
+  expect(readFileSync(join(worktree, 'work.txt'), 'utf8')).toBe('after the last commit');
+  expect(git(worktree, 'status', '--porcelain')).toBe('M work.txt');
+  expect(git(worktree, 'rev-parse', 'HEAD')).toBe(saved);
   expect(git(worktree, 'branch', '--show-current')).toBe('piop/' + short(chat.id));
   expect(tryGit(repo, 'rev-parse', '--verify', '--quiet', Records.archiveRef(chat.id))).toBeNull();
   expect(git(repo, 'worktree', 'list', '--porcelain').split('\n').filter(line => line.startsWith('worktree ') && line.includes(worktree))).toEqual(['worktree ' + worktree]);
@@ -288,16 +290,18 @@ test('archive and deletion retain a shared worktree and its saved state until th
   const saved = git(worktree, 'rev-parse', 'HEAD');
   writeFileSync(join(worktree, 'work.txt'), 'unsaved shared work');
   await archive(daemon, chat.path);
+  const snapshot = git(repo, 'rev-parse', Records.archiveRef(chat.id));
+  expect(git(repo, 'rev-parse', snapshot + '^@')).toBe(saved);
   expect((await activeChat(daemon, copy.id)).cwd).toBe(worktree);
   expect(readFileSync(join(worktree, 'work.txt'), 'utf8')).toBe('unsaved shared work');
   await daemon.invoke('delete_archived_session', { hostId: 'local', sessionPath: await archivedPath(daemon, chat.id), clientId: 'lifecycle-test' });
-  expect(Records.read(chat.id, profile)?.archive?.commit).toBe(saved);
-  expect(git(repo, 'rev-parse', Records.archiveRef(chat.id))).toBe(saved);
+  expect(Records.read(chat.id, profile)?.archive?.commit).toBe(snapshot);
+  expect(git(repo, 'rev-parse', Records.archiveRef(chat.id))).toBe(snapshot);
   await archive(daemon, copy.path);
   await daemon.stop();
   const restarted = await start(home);
   expect(readFileSync(join(worktree, 'work.txt'), 'utf8')).toBe('unsaved shared work');
-  expect(git(repo, 'rev-parse', Records.archiveRef(chat.id))).toBe(saved);
+  expect(git(repo, 'rev-parse', Records.archiveRef(chat.id))).toBe(snapshot);
   await restore(restarted, await archivedPath(restarted, copy.id));
   const restored = await activeChat(restarted, copy.id);
   expect(restored.cwd).toBe(worktree);

@@ -125,7 +125,7 @@ async function releaseUnrecordedArchive(record: ChatWorktreeRecord, root: string
   const ref = archiveRef(record.chatId);
   const commit = await archivedCommit(record);
   if (commit) {
-    try { await releaseArchive({ ...worktreeOf(record), ref, commit }); }
+    try { await releaseArchive({ ...worktreeOf(record), commit }); }
     catch (error) { throw new Error(Worktrees.fail(record, `Could not release the unrecorded ${ref}: ${errorText(error)}`, root)); }
   }
   return Worktrees.replace(Worktrees.read(record.chatId, root), without(settled(record), 'protecting') as ChatWorktreeRecord, root)!;

@@ -385,7 +385,7 @@ export async function removeRestoredWorktree(input: { archive: ChatArchive; home
   ));
 }
 
-export async function releaseArchive(archive: ChatArchive): Promise<void> {
+export async function releaseArchive(archive: Pick<ChatArchive, 'gitCommonDir' | 'chatId' | 'commit'>): Promise<void> {
   await serialized(archive.gitCommonDir, () => removeRef(archive.gitCommonDir, archiveRef(archive.chatId), archive.commit));
 }
 
