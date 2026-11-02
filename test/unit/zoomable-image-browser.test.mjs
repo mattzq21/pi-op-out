@@ -42,3 +42,27 @@ test('an image that cannot load says so and cannot be opened', async t => {
   assert.equal(await preview.isDisabled(), true);
   assert.equal(await page.evaluate(() => window.imageErrors), 1);
 });
+
+test('images in one gallery are browsed with arrow keys and buttons, skipping images that cannot load', async t => {
+  const page = await open(t);
+  await page.getByRole('button', { name: 'Image unavailable: Broken' }).waitFor();
+  await page.getByRole('button', { name: 'Enlarge image: Second' }).click();
+  const viewer = page.locator('dialog.image-viewer');
+  const shown = async () => [await viewer.getAttribute('aria-label'), await viewer.locator('.image-viewer-nav span').textContent()];
+  assert.deepEqual(await shown(), ['Second', '2 / 3']);
+  await page.keyboard.press('ArrowRight');
+  assert.deepEqual(await shown(), ['Third', '3 / 3']);
+  await page.keyboard.press('ArrowRight');
+  assert.deepEqual(await shown(), ['First', '1 / 3']);
+  await page.keyboard.press('ArrowLeft');
+  assert.deepEqual(await shown(), ['Third', '3 / 3']);
+  await viewer.getByRole('button', { name: 'Previous image' }).click();
+  assert.deepEqual(await shown(), ['Second', '2 / 3']);
+  await page.keyboard.press('Escape');
+  await viewer.waitFor({ state: 'detached' });
+  assert.equal(await page.evaluate(() => document.activeElement?.getAttribute('aria-label')), 'Enlarge image: Second');
+
+  await page.getByRole('button', { name: 'Enlarge image: Chart' }).click();
+  await page.getByRole('dialog', { name: 'Chart' }).waitFor();
+  assert.equal(await page.getByRole('button', { name: 'Next image' }).count(), 0, 'a lone image has no gallery controls');
+});

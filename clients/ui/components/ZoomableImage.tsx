@@ -1,12 +1,58 @@
 import { required } from "../lib/required";
-import { createSignal, Show } from "solid-js";
+import { createContext, createSignal, onCleanup, Show, useContext, type JSX } from "solid-js";
 import { Portal } from "solid-js/web";
-import { LoaderCircle, X } from "lucide-solid";
+import { ChevronLeft, ChevronRight, LoaderCircle, X } from "lucide-solid";
 import { createDependencyEffect, createRef } from "../lib/solid";
 import { imageTouchGestures } from "./imageTouchGestures";
 import "./zoomable-image.css";
 
-function ImageViewer(props: { src: string; alt: string; onClose: () => void }) {
+type GalleryImage = { src: () => string; alt: () => string; ready: () => boolean; element: () => HTMLElement | undefined };
+
+type Gallery = { add: (image: GalleryImage) => () => void; open: (image: GalleryImage) => void; close: (image: GalleryImage) => void };
+
+export const ImageGalleryContext = createContext<Gallery>();
+
+const documentOrder = (left: GalleryImage, right: GalleryImage) => {
+  const a = left.element(); const b = right.element();
+
+  return a && b && a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_PRECEDING ? 1 : -1;
+};
+
+export function ImageGallery(props: { children: JSX.Element }) {
+  const [images, setImages] = createSignal<GalleryImage[]>([]);
+  const [current, setCurrent] = createSignal<GalleryImage>();
+  const shown = () => images().filter(image => image === current() || image.ready()).sort(documentOrder);
+  const index = (list: GalleryImage[]) => { const image = current(); return image ? list.indexOf(image) : -1; };
+  const position = () => { const list = shown(); return { index: index(list), count: list.length }; };
+
+  const step = (delta: number) => {
+    const list = shown();
+    const at = index(list);
+
+    if (at >= 0 && list.length > 1) setCurrent(list[(at + delta + list.length) % list.length]);
+  };
+
+  const closeViewer = () => {
+    const image = current();
+    setCurrent(undefined);
+    image?.element()?.focus({ preventScroll: true });
+  };
+
+  const gallery: Gallery = {
+    add: image => { setImages(list => [...list, image]);
+
+      return () => { if (current() === image) setCurrent(undefined); setImages(list => list.filter(item => item !== image)); }; },
+    open: image => setCurrent(() => image),
+    close: image => { if (current() === image) setCurrent(undefined); },
+  };
+
+  return <ImageGalleryContext.Provider value={gallery}>
+    {props.children}
+    <Show when={current()}>{image => <Portal><ImageViewer src={image().src()} alt={image().alt()} position={position()} onStep={step} onClose={closeViewer} /></Portal>}</Show>
+  </ImageGalleryContext.Provider>;
+}
+
+function ImageViewer(props: { src: string; alt: string; position: { index: number; count: number }; onStep: (delta: number) => void; onClose: () => void }) {
   const dialogRef = createRef<HTMLDialogElement>(null);
   const contentRef = createRef<HTMLDivElement>(null);
   const imageRef = createRef<HTMLImageElement>(null);
@@ -72,6 +118,17 @@ function ImageViewer(props: { src: string; alt: string; onClose: () => void }) {
   };
 
   createDependencyEffect(() => {
+    setZoom(undefined); setFullSize(false); endPan();
+    contentRef.current?.scrollTo(0, 0);
+  }, () => [props.src]);
+
+  const navigate = (event: KeyboardEvent) => {
+    if (props.position.count < 2 || event.altKey || event.ctrlKey || event.metaKey || event.shiftKey || (event.key !== "ArrowLeft" && event.key !== "ArrowRight")) return;
+    event.preventDefault();
+    props.onStep(event.key === "ArrowLeft" ? -1 : 1);
+  };
+
+  createDependencyEffect(() => {
     const returnFocus = document.activeElement instanceof HTMLElement ? document.activeElement : undefined;
     const dialog = dialogRef.current;
     dialog?.showModal();
@@ -87,8 +144,13 @@ function ImageViewer(props: { src: string; alt: string; onClose: () => void }) {
     return () => { removeTouchGestures?.(); dialog?.removeEventListener("wheel", zoomImage); dialog?.close(); returnFocus?.focus({ preventScroll: true }); };
   }, () => []);
 
-  return <dialog ref={element => { dialogRef.current = element; }} class="image-viewer" aria-label={props.alt} onClick={props.onClose} onCancel={event => { event.preventDefault(); props.onClose(); }} onClose={props.onClose}>
+  return <dialog ref={element => { dialogRef.current = element; }} class="image-viewer" aria-label={props.alt} onClick={props.onClose} onCancel={event => { event.preventDefault(); props.onClose(); }} onClose={props.onClose} onKeyDown={navigate}>
     <div class="image-viewer-toolbar">
+      <Show when={props.position.count > 1}><div class="image-viewer-nav">
+        <button type="button" aria-label="Previous image" data-tooltip="Previous image" onClick={event => { event.stopPropagation(); props.onStep(-1); }}><ChevronLeft size={22} /></button>
+        <span aria-live="polite">{props.position.index + 1} / {props.position.count}</span>
+        <button type="button" aria-label="Next image" data-tooltip="Next image" onClick={event => { event.stopPropagation(); props.onStep(1); }}><ChevronRight size={22} /></button>
+      </div></Show>
       <button type="button" autofocus aria-label="Close image" data-tooltip="Close image"><X size={22} /></button>
     </div>
     <div ref={element => { contentRef.current = element; }} class="image-viewer-content">
@@ -104,19 +166,21 @@ export function ImageLoading() {
 }
 
 export function ZoomableImage(props: { src: string; alt: string; onError?: () => void }) {
-  const [open, setOpen] = createSignal(false);
-  const [state, setState] = createSignal<"loading" | "ready" | "error">("loading");
+  const gallery = useContext(ImageGalleryContext);
 
-  createDependencyEffect(() => { setState("loading"); setOpen(false); }, () => [props.src]);
+  if (!gallery) return <ImageGallery><ZoomableImage {...props} /></ImageGallery>;
+  const [state, setState] = createSignal<"loading" | "ready" | "error">("loading");
+  let preview: HTMLButtonElement | undefined;
+  const image: GalleryImage = { src: () => props.src, alt: () => props.alt, ready: () => state() === "ready", element: () => preview };
+  onCleanup(gallery.add(image));
+
+  createDependencyEffect(() => { setState("loading"); gallery.close(image); }, () => [props.src]);
 
   const failed = () => { setState("error"); props.onError?.(); };
 
-  return <>
-    <button type="button" class="image-preview" classList={{ loading: state() === "loading" }} disabled={state() !== "ready"} aria-busy={state() === "loading"} aria-label={`${state() === "loading" ? "Loading image" : state() === "error" ? "Image unavailable" : "Enlarge image"}: ${props.alt}`} onClick={() => setOpen(true)}>
-      <img src={props.src} alt={props.alt} hidden={state() !== "ready"} onLoad={() => setState("ready")} onError={failed} />
-      <Show when={state() === "loading"}><ImageLoading /></Show>
-      <Show when={state() === "error"}><span class="image-loading" role="status">Image unavailable</span></Show>
-    </button>
-    <Show when={open()}><Portal><ImageViewer src={props.src} alt={props.alt} onClose={() => setOpen(false)} /></Portal></Show>
-  </>;
+  return <button ref={element => { preview = element; }} type="button" class="image-preview" classList={{ loading: state() === "loading" }} disabled={state() !== "ready"} aria-busy={state() === "loading"} aria-label={`${state() === "loading" ? "Loading image" : state() === "error" ? "Image unavailable" : "Enlarge image"}: ${props.alt}`} onClick={() => gallery.open(image)}>
+    <img src={props.src} alt={props.alt} hidden={state() !== "ready"} onLoad={() => setState("ready")} onError={failed} />
+    <Show when={state() === "loading"}><ImageLoading /></Show>
+    <Show when={state() === "error"}><span class="image-loading" role="status">Image unavailable</span></Show>
+  </button>;
 }

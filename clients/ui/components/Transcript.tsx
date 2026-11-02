@@ -17,6 +17,7 @@ import { MessageFileContext } from "../lib/messageFiles";
 import { ConversationHostContext } from "../lib/subagentNavigation";
 import { PluginMessageContext } from "../plugins/messages";
 import { ConversationImageProject } from "./markdownImages";
+import { ImageGallery } from "./ZoomableImage";
 import { showsSubagents, SubagentResults, subagentRuns } from "./SubagentResults";
 import { PromptContextBar } from "./PromptContextBar";
 import { DeferredTurn } from "./DeferredTurn";
@@ -461,11 +462,11 @@ function ConversationTurn(componentProps: ConversationTurnProps) {
     </Show>
   </>);
 
-  return <section class="conversation-turn" classList={{ "latest-turn": componentProps.latest === true }}>
+  return <section class="conversation-turn" classList={{ "latest-turn": componentProps.latest === true }}><ImageGallery>
     {<Key each={userMessages()} by={(message) => message.id}>{(message, _index) => <Message  message={message()} debug={componentProps.debug} onEdit={message().role === "user" ? componentProps.onEdit : undefined} />}</Key>}
     {(componentProps.active || !hasWork()) && finishedSubagents().length > 0 && <div class="subagent-finished-line">{renderFinishedSubagents()}</div>}
     {renderPromptContextBar()}
     {componentProps.debug.contextInjections && <MessageList messages={turnMessages().filter(isContextInjection)} expanded={false} debug={componentProps.debug} />}
     {renderTurnEnd()}
-  </section>;
+  </ImageGallery></section>;
 }

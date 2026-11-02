@@ -19,6 +19,7 @@
 .image-viewer::backdrop { background: transparent; }
 .image-viewer-toolbar { display: flex; justify-content: flex-end; gap: 8px; padding: 8px; flex-shrink: 0; }
 .image-viewer-toolbar button { display: grid; place-items: center; min-width: 44px; min-height: 44px; padding: 8px 12px; border: 1px solid #555; border-radius: 8px; background: #292929; color: #fff; font: inherit; cursor: pointer; }
+.image-viewer-nav { display: flex; align-items: center; gap: 8px; margin-right: auto; font-variant-numeric: tabular-nums; }
 .image-viewer button { touch-action: manipulation; user-select: none; -webkit-user-select: none; }
 .image-viewer button:focus-visible { outline: 2px solid #fff; outline-offset: -3px; }
 .image-viewer-toolbar button:active { background: #444; }
