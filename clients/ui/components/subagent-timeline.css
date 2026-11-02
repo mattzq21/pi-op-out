@@ -6,11 +6,6 @@
 .subagent-branch { display: flex; align-items: center; }
 .subagent-name { color: var(--ink); overflow-wrap: anywhere; }
 .subagent-state { display: inline-flex; flex-shrink: 0; }
-.subagent-status-dot { fill: currentColor; stroke: var(--paper); stroke-width: 1.2; }
-.subagent-cancelled { color: var(--muted); }
-.subagent-completed { color: var(--green); }
-.subagent-running { color: var(--running); }
-.subagent-failed { color: #d77865; }
 .subagent-finished { display: inline-flex; align-items: center; min-width: 0; }
 .subagent-finished .subagent-timeline { flex-direction: row; flex-wrap: wrap; gap: 2px 10px; font-size: inherit; }
 .subagent-finished .subagent-name { color: var(--muted); }

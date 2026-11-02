@@ -2,7 +2,7 @@ import type { AgentToolResult, ExtensionAPI, ExtensionContext } from "@earendil-
 import { Type as Schema } from "typebox";
 import { Check } from "typebox/value";
 import { currentHost } from "./client.ts";
-import { sendAgentMailbox } from "./orchestration.ts";
+import { sendAgentMailboxes } from "./orchestration.ts";
 import { persistSubagentRun, savedSubagentRuns } from "../piop-storage/subagent-results.ts";
 import { runSchema, resultNotificationId, type SubagentRun } from "./subagent-identity.ts";
 import { AUXILIARY_PARENT } from "../piop-storage/session-records.cjs";
@@ -97,9 +97,7 @@ export function registerSubagentResults(pi: ExtensionAPI) {
     if (message.role === "custom" && message.customType === "piop-subagent-result" && Check(notificationSchema, message.details)) acknowledge(ctx, message.details.notificationId);
   });
 
-  const flush = (ctx: ExtensionContext) => {
-    for (const run of ownedRuns(ctx)) if (run.resultDelivery === "pending") publish(ctx, structuredClone(run));
-  };
+  const flush = (ctx: ExtensionContext) => deliver(ctx, ownedRuns(ctx).filter(run => run.resultDelivery === "pending").map(run => structuredClone(run)));
 
   pi.on("agent_settled", (_event, ctx) => flush(ctx));
 
@@ -113,28 +111,35 @@ export function registerSubagentResults(pi: ExtensionAPI) {
     return run.resultNotificationId;
   };
 
-  const publish = (ctx: ExtensionContext, run: SubagentRun) => {
-    if (run.status === "running" || run.resultDelivery === "delivered") return;
-    const id = notification(ctx, run);
+  function deliver(ctx: ExtensionContext, runs: SubagentRun[]) {
+    const ready = runs.flatMap(run => {
+      if (run.status === "running" || run.resultDelivery === "delivered") return [];
+      const id = notification(ctx, run);
 
-    if (delivered(ctx, id)) { acknowledge(ctx, id);
+      if (delivered(ctx, id)) { acknowledge(ctx, id); return []; }
+
+      return outstanding.has(id) ? [] : [{ run, id }];
+    });
+
+    if (!ready.length) return;
+
+    if (!ctx.isIdle()) { for (const { id } of ready) pi.events.emit("piop:agent-mail", { notificationId: id, customType: "piop-subagent-result" });
 
     return; }
 
-    if (outstanding.has(id)) return;
+    for (const { id } of ready) outstanding.add(id);
+    const mail = ready.map(({ run, id }) => {
+      const payload = subagentPayload([run]);
 
-    if (!ctx.isIdle()) { pi.events.emit("piop:agent-mail", { notificationId: id, customType: "piop-subagent-result" });
+      return { message: { customType: "piop-subagent-result", ...payload, details: { ...payload.details, notificationId: id }, display: true }, notificationId: id };
+    });
 
-    return; }
+    void sendAgentMailboxes(pi, ctx, mail)
+      .then(() => { for (const { id } of ready) if (delivered(ctx, id)) acknowledge(ctx, id); })
+      .catch(error => { for (const { id } of ready) outstanding.delete(id); ctx.ui.notify(`Subagent result delivery remains pending: ${(error instanceof Error ? error.message : String(error))}`, "error"); });
+  }
 
-    outstanding.add(id);
-
-    const payload = subagentPayload([run]);
-
-    void sendAgentMailbox(pi, ctx, { customType: "piop-subagent-result", ...payload, details: { ...payload.details, notificationId: id }, display: true }, id)
-      .then(() => { if (delivered(ctx, id)) acknowledge(ctx, id); })
-      .catch(error => { outstanding.delete(id); ctx.ui.notify(`Subagent result delivery remains pending: ${(error instanceof Error ? error.message : String(error))}`, "error"); });
-  };
+  const publish = (ctx: ExtensionContext, run: SubagentRun) => deliver(ctx, [run]);
 
   const claimable = (ctx: ExtensionContext, run: SubagentRun) => {
     const id = run.resultNotificationId;

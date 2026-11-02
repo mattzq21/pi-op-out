@@ -67,7 +67,7 @@ export const wireMessageSchema = z.looseObject({
   isError: z.boolean().optional(), model: z.string().optional(), streaming: z.boolean().optional(),
   stopReason: z.enum(["pending", "stop", "length", "toolUse", "error", "aborted", "deferred"]).optional(),
   errorMessage: z.string().optional(), toolName: z.string().optional(), toolCallId: z.string().optional(),
-  toolInput: z.unknown().optional(), details: z.unknown().optional(),
+  toolInput: z.unknown().optional(), details: z.unknown().optional(), subagents: z.unknown().optional(),
   promptContext: promptContextSchema.optional(),
   nestedCalls: nestedCallsSchema.optional(),
   usage: usageSchema.optional(),

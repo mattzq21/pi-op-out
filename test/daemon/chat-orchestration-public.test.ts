@@ -70,32 +70,82 @@ test.concurrent('await_peers with for: "all" waits until every listed peer has f
   expect(waited).toContain('Slow done');
 }, 120000);
 
-test.concurrent('a message from another chat ends an await_peers wait, and the result says a peer message arrived', async () => {
+const toolStarted = (runtimeId: string, tool: string) => agents.daemon.waitEvent('pi://event', payload => payload.runtimeId === runtimeId && payload.event?.type === 'tool_execution_start' && payload.event.toolName === tool);
+const toolEnded = (runtimeId: string, tool: string) => agents.daemon.waitEvent('pi://event', payload => payload.runtimeId === runtimeId && payload.event?.type === 'tool_execution_end' && payload.event.toolName === tool);
+const stillWaiting = (ended: Promise<unknown>) => Promise.race([ended.then(() => 'ended'), new Promise(resolve => setTimeout(resolve, 1500, 'waiting'))]);
+
+async function tell(peerId: string, prompt: string, message: string, delivery?: 'steer') {
+  const sender = await agents.rootChat();
+  agents.scripts.set(prompt, messages => called(messages, 'message_peer') ? { text: 'Sent.' } : { tool: 'message_peer', arguments: { peerId, message, ...delivery ? { delivery } : {} } });
+  await sender.command({ type: 'prompt', message: prompt });
+}
+
+test.concurrent('a steer message from another chat ends an await_peers wait and arrives in the next model call', async () => {
   let release!: () => void;
   const gate = new Promise<void>(resolve => { release = resolve; });
   const busy = await agents.rootChat();
-  agents.scripts.set('Stay busy', async () => { await gate; return { text: 'Busy done' }; });
-  await busy.command({ type: 'prompt', message: 'Stay busy' });
-
-  let waiting!: () => void;
-  const started = new Promise<void>(resolve => { waiting = resolve; });
+  agents.scripts.set('Stay busy for a steer', async () => { await gate; return { text: 'Busy done' }; });
+  await busy.command({ type: 'prompt', message: 'Stay busy for a steer' });
   const coordinator = await agents.rootChat();
-  agents.scripts.set('Wait on the busy chat', messages => {
-    if (called(messages, 'await_peers')) return { text: 'Waited.' };
-    waiting();
-    return { tool: 'await_peers', arguments: { targets: [{ peerId: busy.sessionId }], timeoutMs: 60000 } };
+  agents.scripts.set('Wait on the busy chat for a steer', messages => called(messages, 'await_peers')
+    ? { text: 'Waited: ' + toolText(messages, 'await_peers') + ' | ' + text(messages.at(-1)) }
+    : { tool: 'await_peers', arguments: { targets: [{ peerId: busy.sessionId }], timeoutMs: 60000 } });
+  try {
+    const started = toolStarted(coordinator.runtimeId, 'await_peers');
+    await coordinator.command({ type: 'prompt', message: 'Wait on the busy chat for a steer' });
+    await started;
+    await tell(coordinator.sessionId, 'Steer the coordinator', 'Status now?', 'steer');
+    const messages = await coordinator.until(history => text(history.at(-1)).startsWith('Waited: '));
+    expect(text(messages.at(-1))).toStartWith('Waited: A peer sent a steer message. | <peer_message>');
+    expect(text(messages.at(-1))).toContain('Status now?');
+  } finally { release(); }
+}, 120000);
+
+test.concurrent('a follow-up message from another chat does not end an await_peers wait and arrives after the task', async () => {
+  let release!: () => void;
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  const busy = await agents.rootChat();
+  agents.scripts.set('Stay busy for a follow-up', async () => { await gate; return { text: 'Busy done' }; });
+  await busy.command({ type: 'prompt', message: 'Stay busy for a follow-up' });
+  const coordinator = await agents.rootChat();
+  agents.scripts.set('Wait on the busy chat for a follow-up', messages => {
+    if (!called(messages, 'await_peers')) return { tool: 'await_peers', arguments: { targets: [{ peerId: busy.sessionId }], timeoutMs: 60000 } };
+    if (messages.at(-1).role === 'tool') return { text: 'Waited: ' + text(messages.at(-1)) };
+    return { text: 'Got: ' + text(messages.at(-1)) };
   });
   try {
-    await coordinator.command({ type: 'prompt', message: 'Wait on the busy chat' });
+    const started = toolStarted(coordinator.runtimeId, 'await_peers');
+    await coordinator.command({ type: 'prompt', message: 'Wait on the busy chat for a follow-up' });
     await started;
-    await Bun.sleep(1000);
-    const sender = await agents.rootChat();
-    agents.scripts.set('Tell the coordinator', messages => called(messages, 'message_peer') ? { text: 'Sent.' } : { tool: 'message_peer', arguments: { peerId: coordinator.sessionId, message: 'Status?' } });
-    await sender.command({ type: 'prompt', message: 'Tell the coordinator' });
-    await coordinator.until(history => history.some(message => text(message) === 'Waited.'));
-    const seen = agents.model.requests.find(request => startedWith(request, 'Wait on the busy chat') && called(request.messages, 'await_peers')).messages;
-    expect(toolText(seen, 'await_peers')).toBe('A message from a peer arrived.');
+    const ended = toolEnded(coordinator.runtimeId, 'await_peers');
+    await tell(coordinator.sessionId, 'Follow up with the coordinator', 'Status later?');
+    expect(await stillWaiting(ended)).toBe('waiting');
+    release();
+    const messages = await coordinator.until(history => text(history.at(-1)).startsWith('Got: '));
+    const answers = messages.filter(message => message.role === 'assistant').map(text).filter(Boolean);
+    expect(answers[0]).toBe('Waited: <peer_message>\nPeer ' + busy.sessionId + ':\nBusy done\n</peer_message>');
+    expect(answers.at(-1)).toContain('Status later?');
   } finally { release(); }
+}, 120000);
+
+test.concurrent('a steer message from another chat ends an await_subagents wait', async () => {
+  let releaseChild!: (reply: { text: string }) => void;
+  const childReply = new Promise<{ text: string }>(resolve => { releaseChild = resolve; });
+  agents.scripts.set('Sleep until a peer steers', () => childReply);
+  const coordinator = await agents.rootChat();
+  agents.scripts.set('Wait on a subagent for a steer', messages => {
+    if (!called(messages, 'spawn_subagents')) return { tool: 'spawn_subagents', arguments: { tasks: [{ nickname: 'Sleeper', task: 'Sleep until a peer steers' }] } };
+    if (!called(messages, 'await_subagents')) return { tool: 'await_subagents' };
+    return { text: 'Waited: ' + toolText(messages, 'await_subagents') };
+  });
+  try {
+    const started = toolStarted(coordinator.runtimeId, 'await_subagents');
+    await coordinator.command({ type: 'prompt', message: 'Wait on a subagent for a steer' });
+    await started;
+    await tell(coordinator.sessionId, 'Steer the subagent waiter', 'Stop waiting', 'steer');
+    const messages = await coordinator.until(history => text(history.at(-1)).startsWith('Waited: '));
+    expect(text(messages.at(-1))).toBe('Waited: A peer sent a steer message. Subagents are still running.');
+  } finally { releaseChild({ text: 'Slept.' }); }
 }, 120000);
 
 test.concurrent('chat tools list and read only root chats, never subagent chats', async () => {

@@ -8,6 +8,7 @@ export function clientPayload(value: any): any {
     if (hasImage(value.content)) value.toolImage = true;
     value.content = '';
     value.deferredToolPayload = value.toolCallId ?? null;
+    keepSubagents(value, value.details);
     remove(value, ['details', 'toolInput', 'structuredContent', 'nestedCalls']);
   } else {
     value = clientToolPayload(value);
@@ -15,6 +16,18 @@ export function clientPayload(value: any): any {
   if (Array.isArray(value)) return value.map(clientPayload);
   if (isObject(value)) { for (const key of Object.keys(value)) value[key] = clientPayload(value[key]); }
   return value;
+}
+
+const SUBAGENT_TOOLS = new Set(['spawn_subagents', 'await_subagents', 'message_subagent', 'list_subagents', 'stop_subagent']);
+const SUBAGENT_FIELDS = ['name', 'sessionId', 'sessionPath', 'hostId', 'toolCallId', 'look'];
+
+function keepSubagents(value: any, details: any): void {
+  if (!SUBAGENT_TOOLS.has(value.toolName) || !Array.isArray(details?.runs)) return;
+  value.subagents = details.runs.filter(isObject).map((run: any) => {
+    const icon: any = Object.fromEntries(SUBAGENT_FIELDS.filter(field => run[field] !== undefined).map(field => [field, run[field]]));
+    if (typeof run.task === 'string') icon.task = run.task.length > 200 ? run.task.slice(0, 199) + '…' : run.task;
+    return icon;
+  });
 }
 
 function remove(value: any, keys: string[]): void { if (isObject(value)) for (const key of keys) delete value[key]; }
@@ -33,6 +46,7 @@ function clientToolPayload(value: any): any {
 
 function deferToolResult(value: any): void {
   remove(value, ['args']);
+  keepSubagents(value, value.result?.details ?? value.partialResult?.details);
   if (kind(value) === 'tool_execution_end' && hasImage(value.result?.content)) value.toolImage = true;
   for (const field of ['result', 'partialResult']) {
     if (value[field] !== undefined && value[field] !== null) value[field] = { content: '', deferredToolPayload: value.toolCallId ?? null };

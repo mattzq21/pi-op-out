@@ -104,7 +104,7 @@ export interface UsageWindow { status: string; remainingPercent: number; resetAt
 
 export interface OpencodeGoUsage { rolling: UsageWindow; weekly: UsageWindow; monthly: UsageWindow; }
 
-export interface ChatMessage { toolCallId?: string; details?: unknown; }
+export interface ChatMessage { toolCallId?: string; details?: unknown; subagents?: unknown; }
 
 export interface ChatMessage { deferredToolPayload?: string; toolPayloadLoaded?: boolean; toolImage?: boolean; toolPayloadEvicted?: boolean; toolPayloadVersion?: number; loadedToolPayloadVersion?: number; loadToolPayload?: () => Promise<void>; }
 

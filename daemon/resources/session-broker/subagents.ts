@@ -15,6 +15,7 @@ import { interruptSession, requireMessageLength, sendSessionMessage, sessionSnap
 import { SUBAGENT_PARENT, latestRuns, ownedRuns, saveRun, subagentParent, subagentPayload, registerSubagentResults, type SubagentRun } from "./subagent-state.ts";
 import { acceptedSubmission, cancelSubagent, finishRun, observeSubagent, subagentReceiptSchema, SubagentCancellation, type ActiveSubagent } from "./subagent-reconciliation.ts";
 import { releaseLook, reserveLook } from "./subagent-looks.ts";
+import { steering, type SteerSource } from "./steering.ts";
 import { savedSubagentRuns } from "../piop-storage/subagent-results.ts";
 import { isAuxiliary } from "../piop-storage/session-records.cjs";
 
@@ -109,6 +110,8 @@ async function createSubagent(pi: ExtensionAPI, ctx: ExtensionContext, task: Sub
   return run;
 }
 
+const iconRuns = (runs: SubagentRun[]) => runs.map(run => ({ name: run.name, sessionId: run.sessionId, sessionPath: run.sessionPath, hostId: run.hostId, toolCallId: run.toolCallId, look: run.look }));
+
 async function deliverFollowup(pi: ExtensionAPI, ctx: ExtensionContext, run: SubagentRun, lifecycle: ActiveSubagent, message: string, deliverAs: "steer" | "followUp", signal?: AbortSignal): Promise<AgentToolResult<unknown>> {
   lifecycle.controller.signal.throwIfAborted();
   signal?.throwIfAborted();
@@ -132,7 +135,7 @@ async function deliverFollowup(pi: ExtensionAPI, ctx: ExtensionContext, run: Sub
     acceptedSubmission(observed, Parse(subagentReceiptSchema, data));
     saveRun(pi, ctx, observed);
 
-    return { content: [{ type: "text", text: JSON.stringify(data) }], details: data };
+    return { content: [{ type: "text", text: JSON.stringify(data) }], details: { ...data, runs: iconRuns([observed]) } };
   } finally { lifecycle.revision++; lifecycle.pendingDeliveries--; }
 }
 
@@ -301,7 +304,7 @@ export function registerSubagents(pi: ExtensionAPI) {
         catch (error) { return { nickname, agent: run.agent, status: "unavailable", error: error instanceof Error ? error.message : String(error) }; }
       }));
 
-      return { content: [{ type: "text", text: JSON.stringify(subagents) }], details: { subagents } };
+      return { content: [{ type: "text", text: JSON.stringify(subagents) }], details: { subagents, runs: iconRuns(latestRuns(ctx)) } };
     },
   });
   pi.registerTool({
@@ -333,7 +336,7 @@ export function registerSubagents(pi: ExtensionAPI) {
       reconcile(ctx);
       const run = targetRun(ctx, params.nickname);
       const running = active.get(run.sessionId);
-      const stopped = { content: [{ type: "text" as const, text: `Subagent ${run.name} stopped.` }], details: { name: run.name } };
+      const stopped = { content: [{ type: "text" as const, text: `Subagent ${run.name} stopped.` }], details: { name: run.name, runs: iconRuns([run]) } };
 
       if (running) {
         cancelSubagent(pi, ctx, running, "Subagent stopped by stop_subagent");
@@ -461,17 +464,15 @@ export function registerSubagents(pi: ExtensionAPI) {
     for (const lifecycle of active.values()) if (lifecycle.run && abandoned.has(lifecycle.run.toolCallId)) cancelSubagent(pi, ctx, lifecycle, "Subagent stopped because its chat went back to an earlier message");
   });
   pi.on("session_shutdown", async (event) => { detachAbort(); unsubscribeCancellation(); await stop(event.reason !== "reload"); });
-  const inputListeners = new Set<() => void>();
-  pi.on("input", event => { if (event.source !== "extension") for (const listener of [...inputListeners]) listener(); });
-  pi.events.on("piop:rpc", request => { if (request.command === "queue_offered") for (const listener of [...inputListeners]) listener(); });
+  const steer = steering(pi);
   pi.registerTool({
     name: "await_subagents", label: "Await subagents", exposure: "model-only",
-    description: "Wait until any of your subagents finishes (for: \"any\", the default) or until all of them finish (for: \"all\"), or until the user sends a new message. Returns the answers of the subagents that finished.",
+    description: "Wait until any of your subagents finishes (for: \"any\", the default) or until all of them finish (for: \"all\"), or until the user or a peer sends a steer message. Returns the answers of the subagents that finished.",
     parameters: Type.Object({ for: Type.Optional(Type.Union([Type.Literal("any"), Type.Literal("all")])) }),
     async execute(_id, params, signal, _update, ctx) {
       reconcile(ctx);
       const all = params.for === "all";
-      const userMessage = { content: [{ type: "text" as const, text: "The user sent a new message. Subagents are still running." }], details: { finished: false } };
+      const steered = (source: SteerSource) => ({ content: [{ type: "text" as const, text: `${source === "user" ? "The user" : "A peer"} sent a steer message. Subagents are still running.` }], details: { finished: false } });
 
       const answers = () => {
         const finished = resultsDelivery.claim(ctx);
@@ -481,25 +482,25 @@ export function registerSubagents(pi: ExtensionAPI) {
       };
 
       if (!pending.size || (!all && resultsDelivery.waiting(ctx))) return answers();
-      let onInput = () => {};
-      const input = new Promise<"input">(resolve => { onInput = () => resolve("input"); inputListeners.add(onInput); });
+      let offSteer = () => {};
+      const input = new Promise<SteerSource>(resolve => { offSteer = steer.onSteer(resolve); });
       const aborted = new Promise<"aborted">(resolve => { if (signal?.aborted) resolve("aborted"); signal?.addEventListener("abort", () => resolve("aborted"), { once: true }); });
 
       try {
         while (pending.size) {
-          if (ctx.hasPendingMessages()) return userMessage;
+          if (steer.waiting()) return steered("user");
           const running = [...pending];
           const settled = (all ? Promise.allSettled(running) : Promise.race(running.map(item => item.then(() => {}, () => {})))).then(() => "settled" as const);
           const outcome = await Promise.race([settled, input, aborted]);
 
           if (outcome === "aborted") signal?.throwIfAborted();
 
-          if (outcome === "input") return userMessage;
+          if (outcome === "user" || outcome === "peer") return steered(outcome);
           reconcile(ctx);
 
           if (!all && resultsDelivery.waiting(ctx)) return answers();
         }
-      } finally { inputListeners.delete(onInput); }
+      } finally { offSteer(); }
 
       if (latestRuns(ctx).some(run => run.status === "running")) throw new Error("Subagent work remains unresolved; completion has not been confirmed");
 

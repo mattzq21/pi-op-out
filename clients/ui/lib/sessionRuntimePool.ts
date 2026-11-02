@@ -44,6 +44,7 @@ export class SessionRuntimePool {
   private readonly runningTransports = new Set<NativeTransport>();
   private readonly unseenTransports = new Set<NativeTransport>();
   private readonly interactiveTransports = new Set<NativeTransport>();
+  private readonly holds = new Map<NativeTransport, number>();
   private readonly observers = new Map<NativeTransport, number>();
   private readonly deferredReleases = new Set<NativeTransport>();
   private readonly retainedTransports = new Set<NativeTransport>();
@@ -244,7 +245,7 @@ export class SessionRuntimePool {
   reportError(message: string) { if (this.errorHandler) this.errorHandler(message); else console.error(message); }
 
   private busy(transport: NativeTransport) {
-    return !this.transports.has(transport) || this.releasing.has(transport) || this.isActive(transport) || this.isInteractive(transport) || this.isRunning(transport) || this.queuedTransports.has(transport) || transport.hasTerminalActivity() || transport.hasPendingSettings() || transport.promptControls.hasPending();
+    return !this.transports.has(transport) || this.releasing.has(transport) || this.isActive(transport) || this.isInteractive(transport) || this.holds.has(transport) || this.isRunning(transport) || this.queuedTransports.has(transport) || transport.hasTerminalActivity() || transport.hasPendingSettings() || transport.promptControls.hasPending();
   }
 
   detachIdle(transport: NativeTransport, canDetach: () => boolean) {
@@ -306,6 +307,19 @@ export class SessionRuntimePool {
   }
 
   isInteractive(transport: NativeTransport) { return this.interactiveTransports.has(transport); }
+
+  hold(transport: NativeTransport) {
+    this.holds.set(transport, (this.holds.get(transport) ?? 0) + 1);
+    let held = true;
+
+    return () => {
+      if (!held) return;
+      held = false;
+      const count = (this.holds.get(transport) ?? 1) - 1;
+
+      if (count > 0) this.holds.set(transport, count); else this.holds.delete(transport);
+    };
+  }
   isActive(transport: NativeTransport) { return transport === this.activeTransport; }
 
   observe(transport: NativeTransport) {
