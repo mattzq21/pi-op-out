@@ -189,7 +189,7 @@ export function ChatView(props: Props & { transcriptActions?: JSXElement; follow
     if (element && element.scrollHeight <= element.clientHeight) loadOlder(); };
   const split = () => transcript().split();
   const turns = () => transcript().turns();
-  const pendingMessages = createMemo<import("../types").PendingMessage[]>(() => [...(props.state.pendingMessages ?? []).filter(item => !split().started.has(item.id) && !split().delivered.has(item.id)), ...split().sending.map(message => ({ id: message.id, goalSubmissionId: message.id, message: textOf(message.content), behavior: message.deliveryBehavior ?? "followUp", sending: true, images: Array.isArray(message.content) ? message.content.flatMap(part => part.type === "image" && part.data && part.mimeType ? [{ type: "image" as const, data: part.data, mimeType: part.mimeType }] : []) : [] }))]);
+  const pendingMessages = createMemo<import("../types").PendingMessage[]>(() => [...(props.state.pendingMessages ?? []).filter(item => !split().delivered.has(item.id)), ...split().sending.map(message => ({ id: message.id, goalSubmissionId: message.id, message: textOf(message.content), behavior: message.deliveryBehavior ?? "followUp", sending: true, images: Array.isArray(message.content) ? message.content.flatMap(part => part.type === "image" && part.data && part.mimeType ? [{ type: "image" as const, data: part.data, mimeType: part.mimeType }] : []) : [] }))]);
 
   const destinations = new WeakMap<ChatMessage, ResponseDestination>();
   const loadedResponses = createMemo(() => turns().flatMap(turn => {
