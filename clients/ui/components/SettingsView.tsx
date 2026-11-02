@@ -9,6 +9,7 @@ import { AgentSkills, AgentTools } from "./AgentTools";
 import { AgentExtensions } from "./AgentExtensions";
 import { agentProfileSchema } from "../lib/agentSchemas";
 import { McpSettings, type McpEditorDraft } from "./McpSettings";
+import { AgentTransferDialog, mergeImportedAgents } from "./AgentTransfer";
 import { CapInput } from "./CapInput";
 import { FilterSelect } from "./FilterSelect";
 import { capRangeError } from "../../../extensions/piop-context-window-cap/interface";
@@ -17,7 +18,7 @@ import { createComputed, createEffect, createMemo, createSignal, For, Index, Sho
 import { Dynamic } from "solid-js/web";
 import { createDependencyEffect, createMemoFields, createRef, type JSXElement } from "../lib/solid";
 
-import { ArrowRightLeft, Bot, Check, ChevronDown, CircleGauge, CirclePlus, Clipboard, Copy, Cpu, HardDrive, Keyboard, Pencil, PlugZap, RotateCcw, Save, Search, Server, Settings2, ShieldCheck, Trash2, X, Zap } from "lucide-solid";
+import { ArrowRightLeft, Bot, Check, ChevronDown, CircleGauge, CirclePlus, Clipboard, Copy, Cpu, Download, HardDrive, Keyboard, Pencil, PlugZap, RotateCcw, Save, Search, Server, Settings2, ShieldCheck, Trash2, Upload, X, Zap } from "lucide-solid";
 import { uid } from "../lib/content";
 import { defaultKeybindings, keybindDefinitions, shortcutError, shortcutFromEvent, shortcutsConflict, type KeybindAction } from "../lib/keybindings";
 import { isMobile } from "../lib/platform";
@@ -338,6 +339,15 @@ export function SettingsView(props: SettingsViewProps) {
     setAgentIndex(agentDrafts().length - 1); setViewingGlobal(false);
   };
 
+  const [agentTransfer, setAgentTransfer] = createSignal<"export" | "import">();
+
+  const importAgents = (imported: AgentProfile[]) => {
+    if (!agentConfig() || saving()) return;
+    const { agents, changed } = mergeImportedAgents(agentDrafts(), imported);
+    setMcpDrafts(current => agents.map((_, index) => changed.includes(index) ? undefined : current[index]));
+    setAgentDrafts(agents); setAgentIndex(changed[0]); setViewingGlobal(false); setAgentTransfer(undefined);
+  };
+
   const removeAgent = () => { if (!agent() || isBuiltInAgent(agent())) return;
 
   const removedDefault = agent().isDefault; const next = renamedAccess(agentDrafts().filter((_, index) => index !== agentIndex()), agent().name).map(item => removedDefault && isBuiltInAgent(item) ? { ...item, isDefault: true } : item); setMcpDrafts(current => Array.from(current).filter((_, index) => index !== agentIndex())); setAgentDrafts(next); setAgentIndex(firstAgentIndex(next)); };
@@ -562,7 +572,7 @@ export function SettingsView(props: SettingsViewProps) {
         const moveDestinations = () => [...(projectScope() ? [{ name: "Global", cwd: null }] : []), ...settingsProps().agentScopes.filter(project => project.cwd !== settingsProps().agentScope)];
         const renderMoveButton = () => settingsProps().onMoveAgent && agent() && !showingGlobal() && !isBuiltInAgent(agent()) && moveDestinations().length > 0 && <MoveAgentButton destinations={moveDestinations()} blocked={moveBlocked()} onMove={moveAgent} />;
 
-        return (formValidation().visibleSection === "agents" && <SettingsSection title="Agents" headerAction={<div class="agent-section-actions">{renderMoveButton()}<button class="secondary-button" disabled={!agentConfig() || !agent() || saving()} onClick={cloneAgent}><Copy size={15} />Clone</button><button class="secondary-button" disabled={!agentConfig() || saving()} onClick={addAgent}><CirclePlus size={15} />Add agent</button></div>}>
+        return (formValidation().visibleSection === "agents" && <SettingsSection title="Agents" headerAction={<div class="agent-section-actions">{renderMoveButton()}<button class="secondary-button" disabled={!agentConfig() || !agentDrafts().length} onClick={() => setAgentTransfer("export")}><Upload size={15} />Export</button><button class="secondary-button" disabled={!agentConfig() || saving()} onClick={() => setAgentTransfer("import")}><Download size={15} />Import</button><button class="secondary-button" disabled={!agentConfig() || !agent() || saving()} onClick={cloneAgent}><Copy size={15} />Clone</button><button class="secondary-button" disabled={!agentConfig() || saving()} onClick={addAgent}><CirclePlus size={15} />Add agent</button></div>}>
           {renderAgentEditor()}
         </SettingsSection>);
       };
@@ -595,6 +605,7 @@ export function SettingsView(props: SettingsViewProps) {
     {renderSettingsLayout()}
     {renderSettingsSaveFab()}
     <Show when={hostToRemove()}>{(host) => <RemoveHostDialog name={host().name} onCancel={() => setHostToRemove(undefined)} onRemove={() => confirmRemoveHost(host())} />}</Show>
+    <Show when={agentTransfer()} keyed>{mode => <AgentTransferDialog mode={mode} agents={untrack(agentDrafts)} onImport={importAgents} onClose={() => setAgentTransfer(undefined)} />}</Show>
   </main>;
 }
 
