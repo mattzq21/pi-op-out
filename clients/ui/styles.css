@@ -222,7 +222,7 @@ button.agent-delivery-source:hover { color: var(--accent-soft); text-decoration:
 .user-message:focus-within .message-actions { opacity: 1; pointer-events: auto; }
 .user-message.editing { align-items: stretch; }
 .sent-message-editor { align-self: flex-end; width: min(100%, 600px); padding: 8px; border: 1px solid var(--accent); border-radius: 12px 4px 12px 12px; background: #24231f; }
-.sent-message-editor textarea { display: block; width: 100%; max-height: 50vh; padding: 2px 5px; border: 0; outline: 0; resize: none; overflow-y: auto; font: inherit; font-weight: 500; line-height: 1.5; color: #f4f2ed; background: transparent; }
+.sent-message-editor textarea { display: block; width: 100%; max-height: 50vh; padding: 2px 5px; border: 0; outline: 0; resize: none; overflow-y: auto; font: inherit; font-size: 15px; font-weight: 500; line-height: 1.5; color: #f4f2ed; background: transparent; }
 .sent-message-editor .message-failure { margin: 6px 5px 0; }
 .sent-message-editor-actions { display: flex; align-items: center; gap: 6px; margin-top: 8px; }
 .sent-message-editor-actions > span { flex: 1; min-width: 0; padding-left: 5px; color: var(--muted); font-size: 11px; }
