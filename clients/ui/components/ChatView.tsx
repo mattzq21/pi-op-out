@@ -309,7 +309,7 @@ export function ChatView(props: Props & { transcriptActions?: JSXElement; follow
 
     const durable = staged ?? await stageSubmission({ rawText: text, uploads: draftUploadsFromImages(images), consume: props.draft === text && !props.uploads?.length });
     const queued = behavior ?? (chatSubmission(durable.owner()) ? "followUp" : undefined);
-    const shown = queued ?? (split().waiting || (props.state.pendingMessages?.length ?? 0) > 0 ? "followUp" : undefined);
+    const shown = queued ?? (split().waiting || props.state.queueHeld || (props.state.pendingMessages?.length ?? 0) > 0 ? "followUp" : undefined);
 
     return trackChatSubmission(durable.owner(), text, images, durable, () => Promise.resolve(capturedOnSend(text, queued, images, durable)), props.controlsDisabled ? "Getting ready..." : "Sending message…", shown);
   };
