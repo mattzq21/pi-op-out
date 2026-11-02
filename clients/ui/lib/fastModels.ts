@@ -52,7 +52,7 @@ export function fastModelNames(snapshot: FastModelSnapshot | undefined): string[
 export function rejectsFastMode(snapshot: FastModelSnapshot | undefined, model: string): boolean {
   if (!snapshot?.ready) return false;
   const [provider, ...parts] = model.split("/");
-  const saved = snapshot.providers[provider];
+  const saved = Object.hasOwn(snapshot.providers, provider) ? snapshot.providers[provider] : undefined;
 
   return !saved || (!saved.error && !saved.supportedModelIds.includes(parts.join("/")));
 }

@@ -537,6 +537,27 @@ describe('settings editor', () => {
     assert.deepEqual(saves[0][1].agents.map(agent => agent.name), ['general-copy-2']);
   });
 
+  test('exported agents import into another scope: same names are replaced, the default stays, bad JSON is shown', async () => {
+    await render({ agentConfig: { agents: [profile('general', { isDefault: true, tools: ['read'] }), profile('review', { description: 'Reviews' })] } }); await section('Agents');
+    await click(button('Export'));
+    const exported = control('Agent definitions JSON').value;
+    assert.equal(JSON.parse(exported).agents.some(agent => 'isDefault' in agent), false);
+    await click(button('Close'));
+    await view.unmount(); view = undefined;
+    await render({ agentConfig: { agents: [profile('general', { isDefault: true }), profile('review')] } }); await section('Agents');
+    await click(button('Import'));
+    await enterText(control('Agent definitions JSON'), '{ "agents": [{ "name": 1 }] }');
+    await click(document.querySelector('dialog .primary-button'));
+    assert.match(document.querySelector('dialog [role="alert"]').textContent, /^agents\.0\.name: /);
+    await enterText(control('Agent definitions JSON'), exported);
+    await click(document.querySelector('dialog .primary-button'));
+    assert.equal(document.querySelector('dialog'), null);
+    await click(save());
+    const agents = saves[0][1].agents;
+    assert.deepEqual(agents.map(agent => [agent.name, agent.isDefault]), [['general', true], ['review', undefined]]);
+    assert.deepEqual(agents[0].tools, ['read']); assert.equal(agents[1].description, 'Reviews');
+  });
+
   test('the header Move button sends an agent to the place the user chooses', async () => {
     const moves = [];
     await render({ agentConfig: { agents: [profile('general', { isDefault: true }), profile('review')] }, agentScopes: [{ name: 'Repo', cwd: '/repo' }], onMoveAgent: async (...args) => { moves.push(args); } }); await section('Agents');
