@@ -2,7 +2,8 @@ import { mergeModelIds } from "../lib/modelVisibility";
 import { RefreshSkills, RefreshTools } from "./RefreshResources";
 import { stableSnapshot, settingsSnapshot, agentEditsSnapshot, settingKeys } from "../lib/settingsSnapshots";
 import { applyClientPreferences, clientPreferenceKeys, clientPreferences, ClientPreferenceConflictError, mergeClientPreferences, SettingsSaveError } from "../lib/clientPreferenceMerge";
-import { AgentsSavedError } from "../lib/hostAgents";
+import { AgentsSavedError, previewAgentPrompt } from "../lib/hostAgents";
+import { PromptPreviewDialog } from "./PromptPreviewDialog";
 import { required } from "../lib/required";
 import { hostFastModels, rejectsFastMode } from "../lib/fastModels";
 import { AgentSkills, AgentTools } from "./AgentTools";
@@ -17,7 +18,7 @@ import { createComputed, createEffect, createMemo, createSignal, For, Index, Sho
 import { Dynamic } from "solid-js/web";
 import { createDependencyEffect, createMemoFields, createRef, type JSXElement } from "../lib/solid";
 
-import { ArrowRightLeft, Bot, Check, ChevronDown, CircleGauge, CirclePlus, Clipboard, Copy, Cpu, HardDrive, Keyboard, Pencil, PlugZap, RotateCcw, Save, Search, Server, Settings2, ShieldCheck, Trash2, X, Zap } from "lucide-solid";
+import { ArrowRightLeft, Bot, Check, ChevronDown, CircleGauge, CirclePlus, Clipboard, Copy, Cpu, HardDrive, Keyboard, Pencil, PlugZap, RotateCcw, Save, ScrollText, Search, Server, Settings2, ShieldCheck, Trash2, X, Zap } from "lucide-solid";
 import { uid } from "../lib/content";
 import { defaultKeybindings, keybindDefinitions, shortcutError, shortcutFromEvent, shortcutsConflict, type KeybindAction } from "../lib/keybindings";
 import { isMobile } from "../lib/platform";
@@ -285,6 +286,7 @@ export function SettingsView(props: SettingsViewProps) {
   const addHost = () => setDraft((current) => ({ ...current, hosts: [...current.hosts, { id: uid("host"), enabled: true, name: "New host", target: "", piPath: "piopd" }] }));
   const updateHost = (id: string, value: Partial<RemoteHost>) => setDraft((current) => ({ ...current, hosts: current.hosts.map((host) => host.id === id ? { ...host, ...value } : host) }));
   const [hostToRemove, setHostToRemove] = createSignal<RemoteHost>();
+  const [promptPreview, setPromptPreview] = createSignal<{ agent: string; cwd?: string }>();
   const removeHost = (host: RemoteHost) => setHostToRemove(host);
 
   const confirmRemoveHost = (host: RemoteHost) => {
@@ -560,9 +562,10 @@ export function SettingsView(props: SettingsViewProps) {
           catch (reason) { setMoveError(reason instanceof Error ? reason.message : String(reason)); throw reason; }
         };
         const moveDestinations = () => [...(projectScope() ? [{ name: "Global", cwd: null }] : []), ...settingsProps().agentScopes.filter(project => project.cwd !== settingsProps().agentScope)];
+        const renderPromptButton = () => <button class="secondary-button" disabled={!agentConfig() || !agent() || dirty() || saving()} data-tooltip={dirty() || saving() ? "Save or discard your changes first." : "Show all that this agent sends before the first user message"} onClick={() => setPromptPreview({ agent: agent().name, cwd: settingsProps().agentScope })}><ScrollText size={15} />Build prompt</button>;
         const renderMoveButton = () => settingsProps().onMoveAgent && agent() && !showingGlobal() && !isBuiltInAgent(agent()) && moveDestinations().length > 0 && <MoveAgentButton destinations={moveDestinations()} blocked={moveBlocked()} onMove={moveAgent} />;
 
-        return (formValidation().visibleSection === "agents" && <SettingsSection title="Agents" headerAction={<div class="agent-section-actions">{renderMoveButton()}<button class="secondary-button" disabled={!agentConfig() || !agent() || saving()} onClick={cloneAgent}><Copy size={15} />Clone</button><button class="secondary-button" disabled={!agentConfig() || saving()} onClick={addAgent}><CirclePlus size={15} />Add agent</button></div>}>
+        return (formValidation().visibleSection === "agents" && <SettingsSection title="Agents" headerAction={<div class="agent-section-actions">{renderPromptButton()}{renderMoveButton()}<button class="secondary-button" disabled={!agentConfig() || !agent() || saving()} onClick={cloneAgent}><Copy size={15} />Clone</button><button class="secondary-button" disabled={!agentConfig() || saving()} onClick={addAgent}><CirclePlus size={15} />Add agent</button></div>}>
           {renderAgentEditor()}
         </SettingsSection>);
       };
@@ -594,6 +597,7 @@ export function SettingsView(props: SettingsViewProps) {
   return <main class={dirty() ? "settings-shell has-unsaved" : "settings-shell"}>{renderSettingsHeader()}
     {renderSettingsLayout()}
     {renderSettingsSaveFab()}
+    <Show when={promptPreview()}>{preview => <PromptPreviewDialog agent={preview().agent} build={() => previewAgentPrompt(providerHostId(), preview().agent, preview().cwd)} onClose={() => setPromptPreview(undefined)} />}</Show>
     <Show when={hostToRemove()}>{(host) => <RemoveHostDialog name={host().name} onCancel={() => setHostToRemove(undefined)} onRemove={() => confirmRemoveHost(host())} />}</Show>
   </main>;
 }

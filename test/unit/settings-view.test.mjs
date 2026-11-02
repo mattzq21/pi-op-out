@@ -7,12 +7,13 @@ import { refreshPlugins } from '../../clients/ui/plugins/index.ts';
 import { defaultKeybindings } from '../../clients/ui/lib/keybindings.ts';
 
 describe('settings editor', () => {
-  let dom, view, props, saves, dirty, supportedModels;
+  let dom, view, props, saves, dirty, supportedModels, previews;
   beforeEach(() => {
-    dom = installDom(); saves = []; dirty = []; supportedModels = ['model'];
+    dom = installDom(); saves = []; dirty = []; supportedModels = ['model']; previews = [];
     mockIPC((command, args) => {
       if (command === 'plugin_status') return { enabled: ['cost', 'review', 'web-search'], configured: ['cost', 'review', 'web-search'], revision: 'settings-1', error: null };
       if (command === 'provider_auth' && args.request.action === 'list') return { providers: [{ id: 'anthropic', name: 'Anthropic', configured: true, methods: [{ type: 'oauth', name: 'Claude', interactive: true }] }, { id: 'opencodex', name: 'OCX', configured: true, source: 'built in', methods: [] }, { id: 'openai', name: 'OpenAI', configured: false, methods: [{ type: 'api_key', name: 'API key', interactive: true }] }] };
+      if (command === 'agent_prompt_preview') { previews.push(args); return { model: 'p/model', messages: [{ role: 'system', text: 'You are the local agent.' }], tools: [{ place: 'tools', json: '[{"name":"read"}]' }] }; }
       if (command === 'provider_auth' && args.request.action === 'fast_models') return { ready: true, providers: { p: { supportedModelIds: supportedModels } } };
       throw new Error('Unexpected command: ' + command);
     }, { shouldMockEvents: true });
@@ -553,6 +554,20 @@ describe('settings editor', () => {
     await click(button('Other'));
     await click(button('Move')); await click(button('Global'));
     assert.deepEqual(moves, [['review', '/repo'], ['local', '/other'], ['local', null]]);
+  });
+
+  test('Build prompt shows the saved agent\'s first prompt for the project, and waits for unsaved changes', async () => {
+    await render({ agentConfig: { revision: 'missing', agents: [profile('local')] }, inheritedAgents: [profile('general', { isDefault: true })], agentScope: '/repo', agentScopes: [{ name: 'Repo', cwd: '/repo' }] }); await section('Agents');
+    await selectAgent('local');
+    await click(button('Build prompt'));
+    await untilDom(() => document.querySelector('.prompt-preview-message'));
+    assert.deepEqual(previews, [{ hostId: 'local', agent: 'local', cwd: '/repo' }]);
+    assert.equal(document.querySelector('.prompt-preview-message pre').textContent, 'You are the local agent.');
+    assert.equal([...document.querySelectorAll('.prompt-preview-message pre')].at(-1).textContent, '[{"name":"read"}]');
+    await click(button('Close'));
+    assert.equal(document.querySelector('.prompt-preview-dialog'), null);
+    await enterText(control('Agent description'), 'Changed');
+    assert.equal(button('Build prompt').disabled, true);
   });
 
   test('new hosts receive distinct nonempty IDs when saved', async () => {

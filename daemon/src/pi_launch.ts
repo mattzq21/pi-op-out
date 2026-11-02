@@ -108,15 +108,17 @@ function importExternalIdentity(path: string): string {
   return header.id;
 }
 
-export type PiLaunch = { kind: 'rpc'; cwd?: string | null; sessionPath?: string | null; sessionId?: string | null; forkPath?: string | null };
+export type PiLaunch = { kind: 'rpc'; cwd?: string | null; sessionPath?: string | null; sessionId?: string | null; forkPath?: string | null } | { kind: 'prompt-preview'; cwd: string };
 
 export function buildPiCommand(settings: AppSettings, hostId: string, launch: PiLaunch, _daemonPort?: number): LaunchCommand {
   if (hostId !== 'local') throw new Error('Remote Pi must be launched by its owning daemon');
   return localPiCommand(settings, hostId, launch, homeDir());
 }
 
-function localWorkerCommand(piPath: string): LaunchCommand {
-  const command = sessionWorkerCommand(piPath);
+function localWorkerCommand(piPath: string, launch: PiLaunch): LaunchCommand {
+  const command: LaunchCommand = launch.kind === 'prompt-preview'
+    ? { program: nodeExecutable(), args: [join(Ext.generatedExtensionRoot(), 'runtime-bridge.cjs'), piPath], env: { PIOP_PROMPT_PREVIEW: '1' } }
+    : sessionWorkerCommand(piPath);
   command.env.PIOP_STORAGE_DIRECTORY = STORAGE_DIRECTORY;
   command.env.PI_CODING_AGENT_DIR = join(homeDir(), STORAGE_DIRECTORY);
   command.args.push('--mode', 'rpc');
@@ -126,7 +128,7 @@ function localWorkerCommand(piPath: string): LaunchCommand {
 function localPiCommand(settings: AppSettings, hostId: string, launch: PiLaunch, desktopHome: string): LaunchCommand {
   const piPath = piExecutable();
   const sessionDir = ensureDesktopSessionsDir(desktopHome);
-  const command = localWorkerCommand(piPath);
+  const command = localWorkerCommand(piPath, launch);
   configureLocalExtensions(command, settings, hostId, sessionDir);
   command.env.PIOP_RPC_ENTRY = join(Ext.generatedExtensionRoot(), 'runtime-bridge.cjs');
   command.env.JITI_NATIVE_MODULES = '["typebox"]';
@@ -143,7 +145,8 @@ function localPiCommand(settings: AppSettings, hostId: string, launch: PiLaunch,
 function configureLocalLaunch(command: LaunchCommand, launch: PiLaunch, piPath: string): void {
   command.cwd = localLaunchDirectory(launch.cwd ?? undefined);
   command.env.PI_DESKTOP_PI_EXECUTABLE = piPath;
-  if (launch.forkPath) {
+  if (launch.kind === 'prompt-preview') command.args.push('--no-session');
+  else if (launch.forkPath) {
     if (!launch.sessionId) throw new Error('Fork requires a reserved session identity');
     command.args.push('--fork', launch.forkPath, '--session-id', launch.sessionId);
   }

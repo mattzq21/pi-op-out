@@ -19,6 +19,19 @@ export function saveProjectAgents(hostId: string, cwd: string, configuration: Pr
   return nativeCall("save_agent_definitions", { hostId, cwd, configuration }, savedSchema);
 }
 
+const promptPreviewSchema = z.object({
+  model: z.string(),
+  messages: z.array(z.object({ role: z.string(), text: z.string() })),
+  tools: z.array(z.object({ place: z.string(), json: z.string() })),
+  notices: z.array(z.string()).optional(),
+});
+
+export type PromptPreview = z.output<typeof promptPreviewSchema>;
+
+export function previewAgentPrompt(hostId: string, agent: string, cwd?: string) {
+  return nativeCall("agent_prompt_preview", { hostId, agent, ...(cwd ? { cwd } : {}) }, promptPreviewSchema);
+}
+
 export function moveAgent(hostId: string, agent: string, revision: string, from: string | null, to: string | null) {
   return nativeCall("move_agent", { hostId, agent, revision, ...(from ? { from } : {}), ...(to ? { to } : {}) }, savedSchema);
 }

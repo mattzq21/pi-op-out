@@ -11,6 +11,7 @@ import { Mutex, errorText } from '../util/sync';
 import { flag, kind, text, jsonEqual } from './json';
 import * as Agents from './agents';
 import { attach } from './attachment';
+import { previewPrompt, stopPromptPreviews } from './prompt_preview';
 import { forkFromView } from './branching';
 import { lockGate } from './lock_gate';
 import { MutationGuards } from './mutation_guards';
@@ -388,6 +389,7 @@ export class Host implements SessionHost {
     this.shuttingDown = true;
     for (const timer of this.timers) clearInterval(timer);
     await this.services.shutdown();
+    await stopPromptPreviews();
     await Promise.allSettled([...this.starts]);
     const sessions = [...this.sessions.values()];
     await Promise.all(sessions.map(session => session.stop()));
@@ -413,6 +415,7 @@ export class Host implements SessionHost {
         return cwd ? this.projectAgentDefinitions(cwd) : structuredClone(this.agentDefinitions);
       }
       case 'save_agent_definitions': return this.saveAgentDefinitions(packet.configuration, text(packet, 'cwd') || undefined);
+      case 'agent_prompt_preview': return previewPrompt(packet.spec, text(packet, 'agent'), this.home);
       case 'move_agent': return this.moveAgent(text(packet, 'agent'), text(packet, 'revision'), text(packet, 'from') || null, text(packet, 'to') || null);
       case 'conversation_owner': return this.ownership().owns(text(packet, 'sessionId'), text(packet, 'clientId'), flag(packet, 'allowReleased'));
       case 'submission_outcome': return this.submissions.outcome(text(packet, 'submissionId'));
