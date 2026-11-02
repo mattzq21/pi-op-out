@@ -11,9 +11,15 @@ export interface SessionGroup { id: string; name: string; cwd?: string | null; h
 
 export const DIRLESS_KEY = "__pi-desktop-dirless__";
 
-export interface SessionGroups { groups: SessionGroup[]; parents: Record<string, string>; assignments: Record<string, string | null>; removedProjects: string[]; }
+/** Saved sidebar orders: `sidebar` is the top-level order, `sessions` and `children` have one list per group key. */
+export interface SessionGroupOrders { sidebar: string[]; sessions: Record<string, string[]>; children: Record<string, string[]>; }
 
-export type GroupChange = { type: "move"; id: string; parent: string | null } | { type: "relocate"; project: SessionGroup; key: string } | { type: "create"; name: string } | { type: "project"; project: SessionGroup; key?: string } | { type: "rename"; id: string; name: string } | { type: "edit"; id: string; name: string; cwd: string } | { type: "remove"; id: string } | { type: "assign"; key: string; group: string | null };
+export interface SessionGroups { groups: SessionGroup[]; parents: Record<string, string>; assignments: Record<string, string | null>; removedProjects: string[]; orders: SessionGroupOrders; }
+
+/** Moves `token` in front of `before` (to the end for null), after it adds the `visible` entries that the saved order does not have yet. A null token only adds them. */
+export type OrderChange = { type: "order"; scope: keyof SessionGroupOrders; owner: string; visible: string[]; token: string | null; before: string | null };
+
+export type GroupChange = OrderChange | { type: "move"; id: string; parent: string | null } | { type: "relocate"; project: SessionGroup; key: string } | { type: "create"; name: string } | { type: "project"; project: SessionGroup; key?: string } | { type: "rename"; id: string; name: string } | { type: "edit"; id: string; name: string; cwd: string } | { type: "remove"; id: string } | { type: "assign"; key: string; group: string | null };
 
 export function isTemporaryChatCwd(cwd: string) {
   return /(?:^|[\\/])\.piop(?:-dev)?[\\/]tmp[\\/][0-9a-f]{4,32}[\\/]?$/i.test(cwd);
@@ -27,13 +33,28 @@ function publish(state: SessionGroups) { cacheSessionGroups(state); listeners.fo
 
 return state; }
 
-export function updateSessionGroups(update: GroupChange) {
-  return enqueue(async () => {
-    await loadSessionGroups();
-    const revision = eventRevision;
-    const state = await changeSessionGroups(update);
+let pendingChanges: GroupChange[] | undefined;
 
-    return revision === eventRevision ? publish(state) : state;
+let pendingResult: Promise<SessionGroups> | undefined;
+
+/** Changes made in the same synchronous step go to the daemon as one atomic batch. */
+export function updateSessionGroups(update: GroupChange) {
+  if (pendingChanges && pendingResult) { pendingChanges.push(update);
+
+  return pendingResult; }
+
+  const changes = pendingChanges = [update];
+
+  return pendingResult = Promise.resolve().then(() => {
+    pendingChanges = undefined; pendingResult = undefined;
+
+    return enqueue(async () => {
+      await loadSessionGroups();
+      const revision = eventRevision;
+      const state = await changeSessionGroups(changes.length === 1 ? changes[0] : { type: "batch", changes });
+
+      return revision === eventRevision ? publish(state) : state;
+    });
   });
 }
 

@@ -13,6 +13,14 @@ import type { App } from './app';
 
 const STORAGE_LOCK = new Mutex();
 const DIRLESS_KEY = '__pi-desktop-dirless__';
+const RECENT_KEY = '__pi-desktop-ungrouped__';
+const FIXED_KEYS = new Set([RECENT_KEY, DIRLESS_KEY]);
+const ORDER_SCOPES = ['sidebar', 'sessions', 'children'] as const;
+
+export type OrderScope = typeof ORDER_SCOPES[number];
+
+/** Sidebar orders. `sidebar` has one list (owner ''), `sessions` and `children` have one list per group. */
+export type SessionGroupOrders = Record<OrderScope, Map<string, string[]>>;
 
 export interface SessionGroup { id: string; name: string; cwd: string | null; hostId: string | null; hostName: string | null }
 
@@ -21,6 +29,7 @@ export interface SessionGroups {
   parents: Map<string, string>;
   assignments: Map<string, string | null>;
   removedProjects: Set<string>;
+  orders: SessionGroupOrders;
 }
 
 export interface SessionSeed { sessionKey: string; project: SessionGroup; parentKey?: string }
@@ -33,13 +42,18 @@ export type GroupChange =
   | { type: 'edit'; id: string; name: string; cwd: string }
   | { type: 'remove'; id: string }
   | { type: 'assign'; key: string; group?: string | null }
-  | { type: 'move'; id: string; parent?: string | null };
+  | { type: 'move'; id: string; parent?: string | null }
+  | { type: 'order'; scope: OrderScope; owner: string; visible: string[]; token: string | null; before: string | null }
+  | { type: 'batch'; changes: GroupChange[] };
 
-function emptyGroups(): SessionGroups { return { groups: [], parents: new Map(), assignments: new Map(), removedProjects: new Set() }; }
+function emptyOrders(): SessionGroupOrders { return { sidebar: new Map(), sessions: new Map(), children: new Map() }; }
+
+function emptyGroups(): SessionGroups { return { groups: [], parents: new Map(), assignments: new Map(), removedProjects: new Set(), orders: emptyOrders() }; }
 
 export function serializeGroups(state: SessionGroups): any {
   return { groups: state.groups.map(group => ({ id: group.id, name: group.name, cwd: group.cwd, hostId: group.hostId, hostName: group.hostName })),
-    parents: Object.fromEntries(state.parents), assignments: Object.fromEntries(state.assignments), removedProjects: [...state.removedProjects] };
+    parents: Object.fromEntries(state.parents), assignments: Object.fromEntries(state.assignments), removedProjects: [...state.removedProjects],
+    orders: { sidebar: state.orders.sidebar.get('') ?? [], sessions: Object.fromEntries(state.orders.sessions), children: Object.fromEntries(state.orders.children) } };
 }
 
 function optionalText(value: any, field: string): string | null {
@@ -62,7 +76,12 @@ export function parseSeed(value: any): SessionSeed {
   return { sessionKey: value.sessionKey, project: parseGroup(value.project), ...(parentKey ? { parentKey } : {}) };
 }
 
-export function parseChange(value: any): GroupChange {
+function textList(value: any, field: string): string[] {
+  if (!Array.isArray(value) || !value.every(item => typeof item === 'string')) throw new Error(`invalid type for ${field}: expected a list of strings`);
+  return value;
+}
+
+export function parseChange(value: any, nested = false): GroupChange {
   const text = (key: string) => { if (typeof value?.[key] !== 'string') throw new Error(`missing field \`${key}\``); return value[key] as string; };
   switch (value?.type) {
     case 'create': return { type: 'create', name: text('name') };
@@ -73,6 +92,15 @@ export function parseChange(value: any): GroupChange {
     case 'remove': return { type: 'remove', id: text('id') };
     case 'assign': return { type: 'assign', key: text('key'), group: optionalText(value.group, 'group') };
     case 'move': return { type: 'move', id: text('id'), parent: optionalText(value.parent, 'parent') };
+    case 'order': {
+      const scope = text('scope') as OrderScope;
+      if (!ORDER_SCOPES.includes(scope)) throw new Error(`unknown order scope \`${scope}\``);
+      return { type: 'order', scope, owner: text('owner'), visible: textList(value.visible, 'visible'), token: optionalText(value.token, 'token'), before: optionalText(value.before, 'before') };
+    }
+    case 'batch':
+      if (nested) throw new Error('A batch cannot contain another batch');
+      if (!Array.isArray(value.changes)) throw new Error('invalid type for changes: expected a list');
+      return { type: 'batch', changes: value.changes.map((change: any) => parseChange(change, true)) };
     default: throw new Error(`unknown variant \`${value?.type}\``);
   }
 }
@@ -115,11 +143,20 @@ function readWith(connection: Database): SessionGroups | undefined {
       const assignments = new Map((connection.prepare('SELECT session_key, group_id FROM session_group_assignments').all() as any[]).map(row => [row.session_key as string, (row.group_id ?? null) as string | null]));
       const removedProjects = new Set((connection.prepare('SELECT project_id FROM session_group_removed_projects').all() as any[]).map(row => row.project_id as string));
       const parents = new Map((connection.prepare('SELECT group_id, parent_id FROM session_group_parents').all() as any[]).map(row => [row.group_id as string, row.parent_id as string]));
-      return { groups, parents, assignments, removedProjects };
+      const orders = emptyOrders();
+      for (const row of connection.prepare('SELECT scope, owner, token FROM session_group_orders ORDER BY scope, owner, position').all() as any[]) {
+        const lists = orders[row.scope as OrderScope];
+        if (!lists) throw new Error(`Unknown sidebar order scope ${row.scope}`);
+        const list = lists.get(row.owner) ?? [];
+        list.push(row.token);
+        lists.set(row.owner, list);
+      }
+      return { groups, parents, assignments, removedProjects, orders };
 }
 
 function writeWith(connection: Database, groups: SessionGroups): void {
-      connection.exec('DELETE FROM session_groups; DELETE FROM session_group_parents; DELETE FROM session_group_assignments; DELETE FROM session_group_removed_projects;');
+      normalizeOrders(groups);
+      connection.exec('DELETE FROM session_groups; DELETE FROM session_group_parents; DELETE FROM session_group_assignments; DELETE FROM session_group_removed_projects; DELETE FROM session_group_orders;');
       const insertGroup = connection.prepare('INSERT INTO session_groups (group_id, position, name, cwd, host_id, host_name) VALUES (?, ?, ?, ?, ?, ?)');
       groups.groups.forEach((group, position) => insertGroup.run(group.id, position, group.name, group.cwd, group.hostId, group.hostName));
       const assign = connection.prepare('INSERT INTO session_group_assignments VALUES (?, ?)');
@@ -128,6 +165,8 @@ function writeWith(connection: Database, groups: SessionGroups): void {
       for (const [id, value] of groups.parents) parent.run(id, value);
       const removed = connection.prepare('INSERT INTO session_group_removed_projects VALUES (?)');
       for (const project of groups.removedProjects) removed.run(project);
+      const order = connection.prepare('INSERT INTO session_group_orders VALUES (?, ?, ?, ?)');
+      for (const scope of ORDER_SCOPES) for (const [owner, tokens] of groups.orders[scope]) tokens.forEach((token, position) => order.run(scope, owner, position, token));
       connection.exec('UPDATE session_group_state SET initialized=1 WHERE id=1');
 }
 
@@ -143,35 +182,44 @@ async function discover(app: App, hostId: string): Promise<string[]> {
 
 function hostOf(key: string): string | undefined { const index = key.lastIndexOf(':'); return index >= 0 ? key.slice(0, index) : undefined; }
 
-async function refreshDeletionsAt(path: string, app: App, seeds: SessionSeed[], key: string | undefined): Promise<void> {
+function orderedSessionKeys(state: SessionGroups): Set<string> {
+  const keys = new Set([...state.orders.sessions.values()].flat());
+  for (const tokens of state.orders.children.values()) for (const token of tokens) if (token.startsWith('session:')) keys.add(token.slice('session:'.length));
+  return keys;
+}
+
+async function refreshDeletionsAt(path: string, app: App, seeds: SessionSeed[], keys: string[]): Promise<void> {
   const snapshot = read(path) ?? emptyGroups();
+  const known = new Set([...snapshot.assignments.keys(), ...orderedSessionKeys(snapshot)]);
   const hosts = new Set<string>(['local']);
-  for (const item of [...snapshot.assignments.keys(), ...seeds.map(seed => seed.sessionKey)]) { const host = hostOf(item); if (host !== undefined) hosts.add(host); }
-  if (key !== undefined) { const host = hostOf(key); if (host !== undefined) hosts.add(host); }
+  for (const item of [...known, ...seeds.map(seed => seed.sessionKey), ...keys]) { const host = hostOf(item); if (host !== undefined) hosts.add(host); }
   const live = new Map<string, Set<string>>();
   await Promise.all([...hosts].map(async host => {
     try { live.set(host, new Set(await discover(app, host))); }
     catch (error: any) { console.error(`Session group cleanup for ${host} will retry: ${error.message ?? error}`); }
   }));
-  const stale: string[] = [];
-  for (const assignment of snapshot.assignments.keys()) {
-    const host = hostOf(assignment);
+  const stale = new Set<string>();
+  for (const key of known) {
+    const host = hostOf(key);
     const ids = host === undefined ? undefined : live.get(host);
-    if (ids && !ids.has(assignment.slice(host!.length + 1))) stale.push(assignment);
+    if (ids && !ids.has(key.slice(host!.length + 1))) stale.add(key);
   }
-  if (stale.length === 0) return;
+  if (stale.size === 0) return;
   update(path, state => {
     if (!state) return { value: undefined };
-    let removed = false;
-    for (const assignment of stale) removed = state.assignments.delete(assignment) || removed;
-    return { save: removed ? state : undefined, value: undefined };
+    const before = JSON.stringify(serializeGroups(state));
+    for (const key of stale) state.assignments.delete(key);
+    for (const [owner, tokens] of state.orders.sessions) state.orders.sessions.set(owner, tokens.filter(key => !stale.has(key)));
+    for (const [owner, tokens] of state.orders.children) state.orders.children.set(owner, tokens.filter(token => !token.startsWith('session:') || !stale.has(token.slice('session:'.length))));
+    return { save: JSON.stringify(serializeGroups(state)) !== before ? state : undefined, value: undefined };
   });
 }
 
-function changeKey(change: GroupChange): string | undefined {
-  if (change.type === 'project') return change.key ?? undefined;
-  if (change.type === 'relocate' || change.type === 'assign') return change.key;
-  return undefined;
+function changeKeys(change: GroupChange): string[] {
+  if (change.type === 'batch') return change.changes.flatMap(changeKeys);
+  if (change.type === 'project') return change.key ? [change.key] : [];
+  if (change.type === 'relocate' || change.type === 'assign') return [change.key];
+  return [];
 }
 
 export async function peerProjectFolder(name: string, sessionKey: string, cwd: string): Promise<string> {
@@ -197,7 +245,7 @@ export async function attachAssignments(sessions: SessionSummary[]): Promise<voi
 
 export async function loadSessionGroups(app: App, seeds: SessionSeed[]): Promise<SessionGroups> {
   const path = storagePath();
-  await refreshDeletionsAt(path, app, seeds, undefined);
+  await refreshDeletionsAt(path, app, seeds, []);
   return STORAGE_LOCK.run(async () => (await loadAt(path, seeds)).state);
 }
 
@@ -282,6 +330,7 @@ function loadAt(path: string, allSeeds: SessionSeed[]): { state: SessionGroups; 
 }
 
 async function resolveEditFolder(app: App, change: GroupChange): Promise<GroupChange> {
+  if (change.type === 'batch') return { type: 'batch', changes: await Promise.all(change.changes.map(item => resolveEditFolder(app, item))) };
   if (change.type !== 'edit') return change;
   if (!change.cwd.trim()) throw new Error('Enter a project directory');
   const group = (await STORAGE_LOCK.run(() => read(storagePath())))?.groups.find(group => group.id === change.id);
@@ -292,34 +341,39 @@ async function resolveEditFolder(app: App, change: GroupChange): Promise<GroupCh
 export async function changeSessionGroups(app: App, requested: GroupChange): Promise<SessionGroups> {
   const path = storagePath();
   const change = await resolveEditFolder(app, requested);
-  await refreshDeletionsAt(path, app, [], changeKey(change));
+  await refreshDeletionsAt(path, app, [], changeKeys(change));
   return STORAGE_LOCK.run(async () => {
-    const state = await changeAt(storagePath(), change);
-    app.emit('pi://groups-changed', serializeGroups(state));
+    const { state, changed } = changeAt(storagePath(), change);
+    if (changed) app.emit('pi://groups-changed', serializeGroups(state));
     return state;
   });
 }
 
 export async function refreshDeletions(app: App, hostId: string): Promise<void> {
   const path = storagePath();
-  await refreshDeletionsAt(path, app, [], `${hostId}:`);
+  await refreshDeletionsAt(path, app, [], [`${hostId}:`]);
   await STORAGE_LOCK.run(async () => {
     const state = read(path);
     if (state) app.emit('pi://groups-changed', serializeGroups(state));
   });
 }
 
-function changeAt(path: string, change: GroupChange): SessionGroups {
+function changeAt(path: string, change: GroupChange): { state: SessionGroups; changed: boolean } {
   return update(path, state => {
     if (!state) throw new Error('Session groups have not loaded yet');
+    const before = JSON.stringify(serializeGroups(state));
     applyGroupChange(state, change);
     validateNesting(state);
-    return { save: state, value: state };
+    normalizeOrders(state);
+    const changed = JSON.stringify(serializeGroups(state)) !== before;
+    return { save: changed ? state : undefined, value: { state, changed } };
   });
 }
 
 function applyGroupChange(state: SessionGroups, change: GroupChange): void {
   switch (change.type) {
+    case 'batch': for (const item of change.changes) applyGroupChange(state, item); break;
+    case 'order': placeOrderToken(state, change); break;
     case 'relocate': relocateGroup(state, change.project, change.key); break;
     case 'project': projectGroup(state, change.project, change.key ?? undefined); break;
     case 'create': createGroup(state, change.name); break;
@@ -416,5 +470,44 @@ function validateNesting(state: SessionGroups): void {
       if (projects > 1) throw new Error('Project groups cannot nest inside project groups');
       cursor = state.parents.get(cursor);
     }
+  }
+}
+
+function placeOrderToken(state: SessionGroups, change: Extract<GroupChange, { type: 'order' }>): void {
+  const exists = state.groups.some(group => group.id === change.owner);
+  if (change.scope === 'sidebar' ? change.owner !== '' : !exists && !(change.scope === 'sessions' && FIXED_KEYS.has(change.owner))) throw new Error('Group no longer exists');
+  const lists = state.orders[change.scope];
+  const order = mergeOrder(lists.get(change.owner) ?? [], change.visible);
+  if (change.token !== null) {
+    const entries = order.filter(token => token !== change.token);
+    const index = change.before === null ? -1 : entries.indexOf(change.before);
+    entries.splice(index < 0 ? entries.length : index, 0, change.token);
+    lists.set(change.owner, entries);
+  } else lists.set(change.owner, order);
+}
+
+/** Adds the `visible` tokens that `saved` does not have, each in front of the next visible token that `saved` has. */
+function mergeOrder(saved: string[], visible: string[]): string[] {
+  const result = [...new Set(saved)];
+  const known = new Set(result);
+  let pending: string[] = [];
+  for (const token of new Set(visible)) {
+    if (!known.has(token)) { pending.push(token); continue; }
+    if (pending.length) { result.splice(result.indexOf(token), 0, ...pending); pending = []; }
+  }
+  return [...result, ...pending];
+}
+
+/** Drops orders of removed groups and puts groups that have no sidebar position at the top. */
+function normalizeOrders(state: SessionGroups): void {
+  const ids = new Set(state.groups.map(group => group.id));
+  const live = (token: string) => !token.startsWith('group:') || ids.has(token.slice('group:'.length)) || FIXED_KEYS.has(token.slice('group:'.length));
+  const sidebar = (state.orders.sidebar.get('') ?? []).filter(live);
+  const placed = new Set(sidebar);
+  state.orders.sidebar = new Map([['', [...state.groups.map(group => `group:${group.id}`).filter(token => !placed.has(token)), ...sidebar]]]);
+  for (const owner of [...state.orders.sessions.keys()]) if (!ids.has(owner) && !FIXED_KEYS.has(owner)) state.orders.sessions.delete(owner);
+  for (const [owner, tokens] of [...state.orders.children]) {
+    if (ids.has(owner)) state.orders.children.set(owner, tokens.filter(live));
+    else state.orders.children.delete(owner);
   }
 }

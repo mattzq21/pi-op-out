@@ -35,7 +35,7 @@ export const loadSessionGroups = () => call("load_session_groups", { seeds: [] }
 export const loadProviderUsage = (refresh: boolean, provider?: UsageProviderKey) => call("provider_usage", { refresh, provider }, providerUsageSchema);
 export type UsageProviderKey = UsageIndicator;
 
-export const changeSessionGroups = (change: GroupChange) => call("change_session_groups", { change }, sessionGroupsSchema);
+export const changeSessionGroups = (change: GroupChange | { type: "batch"; changes: GroupChange[] }) => call("change_session_groups", { change }, sessionGroupsSchema);
 
 export const openGroupDirectory = (cwd: string, hostId: string) => call("open_project_directory", { cwd, hostId }, voidResultSchema);
 

@@ -21,7 +21,7 @@ describe('split conversation lifecycle', () => {
     calls = []; daemon = []; waiters = new Set(); released = []; dialogs = []; notices = []; storageErrors = [];
     const state = { model: MODEL, thinkingLevel: 'off', isStreaming: false, sessionId: 'session', sessionFile: '/session.jsonl', messageCount: 0, pendingMessageCount: 0 };
     responses = new Map([['get_session_revision', { revision: 'changed' }], ['get_snapshot', { revision: 'snapshot', state, history: { entries: [], leafId: null }, sequence: 0, epoch: 'epoch', liveTools: [], queue: { type: 'queue_state', pendingMessages: [] } }], ['get_state', () => responses.get('get_snapshot').state], ['get_available_models', { models: [MODEL] }], ['get_available_thinking_levels', { levels: ['off', 'high'] }], ['get_commands', { commands: [] }]]);
-    const groups = { groups: [], parents: {}, assignments: {}, removedProjects: [] };
+    const groups = { groups: [], parents: {}, assignments: {}, removedProjects: [], orders: { sidebar: [], sessions: {}, children: {} } };
     const agents = ['general', 'review'].map(name => ({ name, model: '', effort: '', tools: [], skills: [], mcpServers: {}, path_systemprompt: '', path_agent_prompt: '' }));
     const catalog = { config: { revision: 'saved', agents }, models: [MODEL], initialModel: null, initialThinking: 'off', commands: [], commandDetails: [], skills: [] };
     daemonResponses = new Map([['provider_auth', ({ request }) => request.action === 'draft_catalog' ? catalog : { ready: true, providers: { p: { supportedModelIds: ['base', 'one', 'two'] } } }], ['start_pi', { attached: true }], ['stop_pi', true], ['pi_presence', null], ['load_session_groups', groups], ['change_session_groups', groups],

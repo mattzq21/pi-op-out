@@ -137,7 +137,7 @@ describe("Conversation acceptance", () => {
     await browser.execute(async (session) => {
       const group = { id: `local:${session.cwd}`, name: session.project, cwd: session.cwd, hostId: "local" };
       const tauri = window.__TAURI_INTERNALS__;
-      await tauri.invoke("plugin:event|emit", { event: "pi://groups-changed", payload: { groups: [group], parents: {}, assignments: { [`local:${session.id}`]: group.id }, removedProjects: [] } });
+      await tauri.invoke("plugin:event|emit", { event: "pi://groups-changed", payload: { groups: [group], parents: {}, assignments: { [`local:${session.id}`]: group.id }, removedProjects: [], orders: { sidebar: [], sessions: {}, children: {} } } });
     }, indexed);
 
     try {
@@ -212,7 +212,7 @@ describe("Conversation acceptance", () => {
 
   it("relocates a conversation whose original project directory moved", async () => {
     const indexed = { id: "acceptance-relocate", path: "/tmp/acceptance-relocate.jsonl", name: "Acceptance relocation target", project: "Moved project", cwd: "/missing/original-project", cwdExists: false, preview: "Relocation preview", messageCount: 3, hostId: "local" };
-    const groups = { groups: [], parents: {}, assignments: { [`local:${indexed.id}`]: "__pi-desktop-dirless__" }, removedProjects: [] };
+    const groups = { groups: [], parents: {}, assignments: { [`local:${indexed.id}`]: "__pi-desktop-dirless__" }, removedProjects: [], orders: { sidebar: [], sessions: {}, children: {} } };
     await mockBackend({ list_sessions: [indexed], load_session_groups: groups, change_session_groups: groups, validate_project_directory: "/tmp/relocated-acceptance-project", create_temporary_chat: { cwd: "/tmp/relocated-acceptance-project", sessionId: "dirless" }, "recover_missing_session:inspect": { canRecoverRemote: false }, "recover_missing_session:empty": { cwd: "/tmp/relocated-acceptance-project", warnings: [] }, ...connectedSessionResponses(indexed.id) });
 
     try {
@@ -241,7 +241,7 @@ describe("Conversation acceptance", () => {
 
   it("reports when relocating a moved conversation fails", async () => {
     const indexed = { id: "acceptance-relocate-failure", path: "/tmp/acceptance-relocate-failure.jsonl", name: "Acceptance failed relocation", project: "Moved project", cwd: "/missing/failed-project", cwdExists: false, preview: "Failed relocation preview", messageCount: 2, hostId: "local" };
-    const groups = { groups: [], parents: {}, assignments: { [`local:${indexed.id}`]: "__pi-desktop-dirless__" }, removedProjects: [] };
+    const groups = { groups: [], parents: {}, assignments: { [`local:${indexed.id}`]: "__pi-desktop-dirless__" }, removedProjects: [], orders: { sidebar: [], sessions: {}, children: {} } };
     await mockBackend({ list_sessions: [indexed], load_session_groups: groups, change_session_groups: groups, create_temporary_chat: { cwd: "/tmp/dirless-failure", sessionId: "dirless" }, "recover_missing_session:inspect": { canRecoverRemote: false }, "recover_missing_session:empty": { error: "Dirless directory is unavailable" } });
 
     try {
