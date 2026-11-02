@@ -2,6 +2,7 @@ import { CacheIcon } from "./CacheIcon";
 import "./composerField";
 import { queuedSegments, type ComposerFieldElement } from "./composerField";
 import { PendingMessageText } from "./PendingMessageText";
+import { createDelayedPresence, SendingStatus } from "./SendingStatus";
 import { required } from "../lib/required";
 import { trackToastMessage } from "../lib/toastHistory";
 import { createComposerPromptHistory } from "../lib/promptHistory";
@@ -43,6 +44,7 @@ interface Props {
   ownershipRequired?: boolean;
   onTakeOwnership?: () => Promise<void>;
   toolbar?: JSXElement;
+  sendingStatus?: string;
   goal?: GoalControls;
   streaming: boolean;
   compacting?: boolean;
@@ -142,6 +144,7 @@ function insideBounds(bounds: DOMRect | undefined, x: number, y: number) {
   return Boolean(bounds && x >= bounds.left && x <= bounds.right && y >= bounds.top && y <= bounds.bottom);
 }
 
+const STOP_AFTER_SEND_DELAY = 400;
 const queuedCompaction = (text: string) => /^\/compact(?:\s|$)/.test(text.trimStart());
 
 const pendingKey = (message: import("../types").PendingMessage) => message.goalSubmissionId ?? message.id;
@@ -505,7 +508,9 @@ export function Composer(props: Props) {
   };
 
   const showPendingBox = () => composer().pendingMessages.length > 0 || Boolean(props.goal?.error()) || Boolean(props.queueHeld);
-  const renderQueueHold = (alone = false) => (<Show when={props.onHoldQueue}><div class="pending-queue-hold" classList={{ held: Boolean(props.queueHeld), alone }}><span>{props.queueHeld ? "Queue on hold. Messages wait until you resume." : ""}</span><button type="button" disabled={queueDisabled() || changingPending()} aria-pressed={Boolean(props.queueHeld)} data-tooltip={props.queueHeld ? "Send the held messages" : "Keep messages in the queue until you resume"} onClick={() => holdQueue(!props.queueHeld)}>{props.queueHeld ? <><Play size={13} />Resume queue</> : <><Pause size={13} />Hold queue</>}</button></div></Show>);
+  const sendingPresence = createDelayedPresence(() => props.sendingStatus !== undefined);
+  const holdBeforeSession = () => !props.onHoldQueue && sendingPresence.shown();
+  const renderQueueHold = (alone = false) => (<Show when={props.onHoldQueue || sendingPresence.shown()}><div class="pending-queue-hold" classList={{ held: Boolean(props.queueHeld), alone, "presence-in": holdBeforeSession(), leaving: holdBeforeSession() && sendingPresence.leaving() }}><span>{props.queueHeld ? "Queue on hold. Messages wait until you resume." : ""}</span><button type="button" disabled={!props.onHoldQueue || queueDisabled() || changingPending()} aria-pressed={Boolean(props.queueHeld)} data-tooltip={props.queueHeld ? "Send the held messages" : "Keep messages in the queue until you resume"} onClick={() => holdQueue(!props.queueHeld)}>{props.queueHeld ? <><Play size={13} />Resume queue</> : <><Pause size={13} />Hold queue</>}</button></div></Show>);
   const queueDisabled = () => props.queueControlsDisabled ?? composer().controlsDisabled;
   let handledQueueHoldRequest = props.queueHoldRequest ?? 0;
   createDependencyEffect(() => {
@@ -559,6 +564,13 @@ export function Composer(props: Props) {
     } catch (reason) {
       if (!isDaemonRefusal(reason)) setUploadError(reason instanceof Error ? reason.message : String(reason));
     } finally { setSending(false); }
+  };
+
+  const stopShown = createMemo(() => (composer().streaming || composer().compacting) && !hasVisibleText(value()) && uploads().length === 0);
+  let lastSendClick = -Infinity;
+  const clickSendOrStop = (event: MouseEvent) => {
+    if (!stopShown()) { lastSendClick = event.timeStamp; void submit(); }
+    else if (event.timeStamp - lastSendClick >= STOP_AFTER_SEND_DELAY) void abort();
   };
 
   const abort = async () => { const capturedComposer = { ...composer() };
@@ -663,10 +675,9 @@ export function Composer(props: Props) {
 
         if (next) composer().onModel(next); }} />);
 
-        const renderStopButton = () => (<Show when={composer().streaming || composer().compacting}><IconButton title="" label="Stop piop" class="stop-compact" disabled={controls().stopDisabled} onClick={() => void abort()}><CircleStop size={17} /></IconButton></Show>);
         const renderEffortPicker = () => (<ContainedPicker label="Thinking level" selectedLabel={composer().thinkingLevel.charAt(0).toUpperCase() + composer().thinkingLevel.slice(1)} value={composer().thinkingLevel} disabled={controls().inputDisabled} menuWidth={120} centered compact options={thinkingOptions()} onChange={composer().onThinking} />);
 
-        const renderSend = () => <Show when={editingPending()} fallback={<IconButton title="" label="Send message" class="send" disabled={controlsBlocked() || sending() || readingUploads() > 0 || (!hasVisibleText(value()) && uploads().length === 0)} onClick={() => void submit()}><ArrowUp size={18} /></IconButton>}>
+        const renderSend = () => <Show when={editingPending()} fallback={<IconButton title="" label={stopShown() ? "Stop piop" : "Send message"} class={`send send-stop${stopShown() ? " stop-compact" : ""}`} disabled={stopShown() ? controls().stopDisabled : controlsBlocked() || sending() || readingUploads() > 0 || (!hasVisibleText(value()) && uploads().length === 0)} onClick={clickSendOrStop}><ArrowUp class="send-icon send-arrow" size={18} /><CircleStop class="send-icon send-square" size={17} /></IconButton>}>
           <IconButton title="" label="Cancel editing" disabled={savingEdit()} onClick={cancelEdit}><X size={18} /></IconButton>
           <IconButton title="" label="Save edited message" class="send" disabled={queueDisabled() || savingEdit() || readingUploads() > 0} onClick={() => void saveEdit()}><Check size={18} /></IconButton>
         </Show>;
@@ -681,7 +692,6 @@ export function Composer(props: Props) {
           <Show when={mobileLayout()}>{renderModelPicker()}</Show>
           <Show when={mobileLayout()}>{renderEffortPicker()}</Show>
           <span class="composer-divider" />
-          {renderStopButton()}
           {renderSend()}
         </div>);
       };
@@ -723,6 +733,7 @@ export function Composer(props: Props) {
     </Show>
     {imageInputError() && <div class="image-input-toast" role="alert"><CircleX size={14} aria-hidden="true" /><span>This model does not support image inputs. Try a different model</span><button type="button" aria-label="Dismiss image input error" onClick={() => setImageInputError(false)}><X size={14} /></button></div>}
     <div class="composer-above">
+    <SendingStatus status={props.sendingStatus} presence={sendingPresence} />
     {renderStreamBanner()}
     {showPendingBox() ? <div class="pending-messages" aria-label="Pending messages">{renderQueueHold()}{<Key each={composer().pendingMessages.filter((message) => pendingMessageIdentitySchema.safeParse(message).success)} by={pendingKey}>{(message, _index) => {
       const text = createMemo(() => String(message().message ?? ""));
