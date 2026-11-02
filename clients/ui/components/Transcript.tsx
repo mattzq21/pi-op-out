@@ -211,13 +211,9 @@ export type TranscriptSplit = ReturnType<typeof splitTranscript>;
 function splitTranscript(messages: ChatMessage[], working: boolean, held: boolean) {
   let waiting = false;
   const sending: ChatMessage[] = [];
-  const started = new Set<string>();
   const delivered = new Set(messages.flatMap(message => !message.submissionId && message.piopQueueId ? [message.piopQueueId] : []));
   const transcript = messages.filter(message => {
-    if (message.submissionId && message.piopQueueId) {
-      if (delivered.has(message.piopQueueId) || waiting || held || message.deliveryBehavior) return false;
-      started.add(message.piopQueueId);
-    }
+    if (message.submissionId && message.piopQueueId) return false;
 
     if (message.role === "assistant") waiting = false;
     else if (message.role === "user") {
@@ -228,7 +224,7 @@ function splitTranscript(messages: ChatMessage[], working: boolean, held: boolea
     return true;
   });
 
-  return { transcript, sending, started, waiting, delivered };
+  return { transcript, sending, waiting, delivered };
 }
 
 function groupTurns(messages: ChatMessage[], previous: ConversationGroup[] = []) {
