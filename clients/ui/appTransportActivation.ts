@@ -1,6 +1,6 @@
 import { required } from "./lib/required";
 import { createMemo, createRoot, onCleanup, type Accessor, type Setter } from "solid-js";
-import { reportBackgroundError } from "./lib/backgroundErrors";
+import { backgroundAttempt } from "./lib/backgroundErrors";
 import { ConversationChangedError } from "./lib/conversationChanged";
 import type { NativeTransport } from "./lib/nativeTransport";
 import type { SessionRuntimePool } from "./lib/sessionRuntimePool";
@@ -13,6 +13,15 @@ declare global {
   interface WindowEventMap {
     "piop-mobile-before-disconnect": CustomEvent<{ waitUntil: (task: Promise<void>) => void }>;
   }
+}
+
+const finishedAnswerKeys = new WeakMap<NativeTransport, string>();
+
+function finishedAnswerKey(owner: NativeTransport) {
+  const key = finishedAnswerKeys.get(owner) ?? `finished-answer:${crypto.randomUUID()}`;
+  finishedAnswerKeys.set(owner, key);
+
+  return key;
 }
 
 export function createConversationViewKey<T>(transport: Accessor<T>, conversationKey: Accessor<string>, submission: Accessor<object | undefined> = () => undefined) {
@@ -117,16 +126,18 @@ export function createTransportActivation(context: ActivationContext) {
     let stopped = false;
     let scheduled = false;
     let stopSync: (() => void) | undefined;
+    let syncFailed = false;
     const sync = () => {
       stopSync?.();
+      const attempt = backgroundAttempt(finishedAnswerKey(owner), "Could not load the finished answer");
       const release = runtimePool().observe(owner);
       createRoot(dispose => {
         let done = false;
         const finish = () => { if (done) return; done = true; if (stopSync === finish) stopSync = undefined; dispose(); release(); };
         stopSync = finish;
         void useChatSession(() => owner, undefined, { poll: false }).refresh()
-          .then(() => { if (!done) context.prepareTranscript(owner); })
-          .catch(reason => { if (!done && !(reason instanceof ConversationChangedError)) reportBackgroundError("Could not load the finished answer", reason); })
+          .then(() => { if (attempt.succeeded()) syncFailed = false; if (!done) context.prepareTranscript(owner); })
+          .catch(reason => { if (!done && !(reason instanceof ConversationChangedError) && attempt.failed(reason)) syncFailed = true; })
           .finally(finish);
       });
     };
@@ -143,6 +154,7 @@ export function createTransportActivation(context: ActivationContext) {
       if (event.type === "agent_start") streaming = true;
       if (event.type === "runtime_presence") streaming = event.isStreaming === true;
       if (event.type === "agent_settled") { streaming = false; sync(); }
+      if (event.type === "connection_restored" && syncFailed) sync();
       if (event.type === "compaction_start" || event.type === "auto_compaction_start") compacting = true;
       if (event.type === "compaction_end" || event.type === "auto_compaction_end") compacting = false;
       if (["agent_settled", "runtime_presence", "compaction_end", "auto_compaction_end", "queue_update", "settings_applied"].includes(event.type)) check();

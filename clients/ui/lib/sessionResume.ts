@@ -1,4 +1,4 @@
-import { reportBackgroundError } from "./backgroundErrors";
+import { backgroundAttempt, reportBackgroundError } from "./backgroundErrors";
 import { cachedMobileHost } from "./mobileHosts";
 import type { Accessor } from "solid-js";
 import type { NativeConnectionTarget } from "./nativeTransport";
@@ -96,7 +96,8 @@ function refreshTargetCache() {
 
   if (!cacheReady || refreshing) return;
   refreshing = true; refreshAgain = false;
-  void readTargetCache().catch(error => { reportBackgroundError("Could not refresh saved conversations", error); }).finally(() => {
+  const attempt = backgroundAttempt("saved-conversations", "Could not refresh saved conversations");
+  void readTargetCache().then(() => attempt.succeeded(), attempt.failed).finally(() => {
     refreshing = false;
 
     if (refreshAgain) refreshTargetCache();

@@ -3,7 +3,7 @@ import { createMutable } from "solid-js/store";
 import { required } from "./lib/required";
 import { fastModelNames, hostFastModels } from "./lib/fastModels";
 import { batch,createComputed,createMemo,createSignal,onCleanup,untrack } from "solid-js";
-import { showBackgroundErrors } from "./lib/backgroundErrors";
+import { backgroundAttempt,showBackgroundErrors } from "./lib/backgroundErrors";
 import { createConversationArchive } from "./appArchive";
 import { createConversationDrafts } from "./appDrafts";
 import { createAppExtensions } from "./appExtensions";
@@ -85,7 +85,7 @@ export function createAppConversations(preloadChat: () => void, prepareTranscrip
   const [panelOpen, setPanelOpen] = createSignal(!sidebarFloats());
   const [query, setQuery] = createSignal("");
   const [connected, setConnected] = createSignal(false);
-  const pendingSettingsCount = createSettingsPendingCount(connected, message => addNotice({ title: "Could not read which sessions still apply saved settings", message }));
+  const pendingSettingsCount = createSettingsPendingCount(connected);
   const connectionReadyRef = createRef(connected()); createComputed(() => { connectionReadyRef.current = connected(); });
   const updateConnected = (value: boolean) => { const owned = value && activeTransportRef.current.ownsConversation(); connectionReadyRef.current = owned; setConnected(owned); };
 
@@ -99,19 +99,33 @@ export function createAppConversations(preloadChat: () => void, prepareTranscrip
   const { codexUsage, anthropicUsage, opencodeGoBadge, opencodexUsage, usageClock, usageError, refreshUsage, refreshingUsage } = useAppUsage();
   const [notices, setNotices] = createSignal<Array<{ id: string; title: string; message: string }>>([]);
 
-  const addNotice = (notice: { title: string; message: string }) => {
+  const withNotice = (current: Array<{ id: string; title: string; message: string }>, notice: { id: string; title: string; message: string }) => [...current.filter((item, index) => item.id.startsWith("daemon-log:") || index >= current.length - 9), notice];
+  const removeNotice = (id: string) => setNotices(current => current.some(item => item.id === id) ? current.filter(item => item.id !== id) : current);
+  const addNotice = (notice: { title: string; message: string; key?: string }) => {
+    if (notice.key !== undefined) {
+      const slot = { id: `slot:${notice.key}`, title: notice.title, message: notice.message };
+      setNotices(current => {
+        const index = current.findIndex(item => item.id === slot.id);
+
+        if (index < 0) return withNotice(current, slot);
+        if (current[index].title === slot.title && current[index].message === slot.message) return current;
+        return current.map(item => item.id === slot.id ? slot : item);
+      });
+
+      return () => removeNotice(slot.id);
+    }
     let id: string = crypto.randomUUID();
     setNotices(current => {
       const shown = current.find(item => item.title === notice.title && item.message === notice.message);
 
       if (shown) { id = shown.id; return current; }
       while (current.some(item => item.id === id)) id = crypto.randomUUID();
-      return [...current.filter((item, index) => item.id.startsWith("daemon-log:") || index >= current.length - 9), { ...notice, id }];
+      return withNotice(current, { title: notice.title, message: notice.message, id });
     });
 
-    return () => setNotices(current => current.filter(item => item.id !== id));
+    return () => removeNotice(id);
   };
-  onCleanup(showBackgroundErrors(addNotice));
+  onCleanup(showBackgroundErrors({ show: addNotice, clear: key => removeNotice(`slot:${key}`) }));
 
   const hasRetainedDraft = (ownerTransport: NativeTransport) => {
     const key = transportConversationKeys.current.get(ownerTransport);
@@ -250,9 +264,11 @@ export function createAppConversations(preloadChat: () => void, prepareTranscrip
     sessionIndexDirty.current = false;
     const listedAfter = archiveCount.current;
     const connectionGeneration = daemonConnectionGeneration;
+    const attempt = backgroundAttempt("chat-list", "Could not load chats");
 
     if (!sessionIndexRequest.current) sessionIndexRequest.current = transport().listSessions().then((nextSessions) => {
       if (daemonRestarting || connectionGeneration !== daemonConnectionGeneration) { sessionIndexDirty.current = true; return; }
+      attempt.succeeded();
       for (const session of nextSessions) {
         if (archives.isPending(session)) continue;
         const hostId = session.hostId ?? "local";
@@ -267,7 +283,7 @@ export function createAppConversations(preloadChat: () => void, prepareTranscrip
 
         return activeSession && activeSession.name !== current.sessionName ? { ...current, sessionName: activeSession.name } : current;
       });
-    }).catch((reason) => { if (daemonRestarting || connectionGeneration !== daemonConnectionGeneration) { sessionIndexDirty.current = true; return; } addNotice({ title: "Could not load chats", message: reason instanceof Error ? reason.message : String(reason) }); }).finally(() => { sessionIndexRequest.current = undefined;
+    }).catch((reason) => { if (daemonRestarting || connectionGeneration !== daemonConnectionGeneration) { sessionIndexDirty.current = true; return; } attempt.failed(reason); }).finally(() => { sessionIndexRequest.current = undefined;
 
       if (sessionIndexDirty.current && !daemonRestarting) void syncSessionIndex(); });
 
