@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, expect, test } from 'bun:test';
 import { mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
-import { fakeProgram, startDaemon, type TestDaemon } from './harness';
+import { fakePi, fakeProgram, startDaemon, type TestDaemon } from './harness';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { recordTools } from '../../daemon/src/tool_inventory';
@@ -52,7 +52,7 @@ test('skill discovery reads metadata, skips hidden and package folders and stops
 
 test('a started Pi receives the reported tools and only the enabled skills', async () => {
   const bin = join(daemon.home, '.local/bin');
-  fakeProgram(bin, 'pi', '#!/bin/sh\nexit 1\n');
+  fakePi(bin);
   fakeProgram(bin, 'node', `#!${process.execPath}
 const fs = require('node:fs'); const path = require('node:path');
 fs.writeFileSync(path.join(process.env.HOME, 'runtime.json'), process.env.PIOP_AGENT_RESOURCES);

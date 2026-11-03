@@ -7,6 +7,7 @@ import { afterAll } from 'bun:test';
 import { tmpdir } from 'node:os';
 import { isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { developmentEndpointKey } from '../../daemon/src/config';
+import { SUPPORTED_PI_VERSION } from '../../daemon/resources/pi-runtime.cjs';
 
 const root = resolve(import.meta.dir, '../..');
 const bundles = new Map<string, Promise<string>>();
@@ -85,6 +86,18 @@ export function fakeProgram(bin: string, name: string, source: string): string {
   const path = join(bin, name);
   writeFileSync(path, source);
   chmodSync(path, 0o755);
+  return path;
+}
+
+export function fakePi(bin: string, version = SUPPORTED_PI_VERSION): string {
+  const root = join(bin, '../lib/node_modules/@earendil-works/pi-coding-agent');
+  mkdirSync(root, { recursive: true });
+  writeFileSync(join(root, 'package.json'), JSON.stringify({ name: '@earendil-works/pi-coding-agent', version }));
+  const cli = fakeProgram(join(root, 'dist'), 'cli.js', '#!/bin/sh\nexit 1\n');
+  const path = join(bin, 'pi');
+  mkdirSync(bin, { recursive: true });
+  rmSync(path, { force: true });
+  symlinkSync(cli, path);
   return path;
 }
 

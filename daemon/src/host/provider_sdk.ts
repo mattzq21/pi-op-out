@@ -5,6 +5,7 @@ import { STORAGE_DIRECTORY } from '../config';
 import { homeDir, nodeExecutable, pathWithNode } from '../environment';
 import { fastModelDiscovery, ocxProviderModule, providerSdk, sdkStorageBundle } from '../resources';
 import { readLines } from '../../resources/lf-lines.cjs';
+import { supportedPi } from '../../resources/pi-runtime.cjs';
 import { Mutex } from '../util/sync';
 
 const SOURCE_ARGUMENT_BYTES = 64 * 1024;
@@ -73,8 +74,9 @@ export class Sdk {
   constructor(private executable: string, private events: Events) {}
 
   private spawnProcess(node: string, encoded: string): ChildProcess {
+    const { root } = supportedPi(this.executable);
     const env = { ...process.env, PATH: pathWithNode(node), PIOP_STORAGE_DIRECTORY: STORAGE_DIRECTORY, PI_CODING_AGENT_DIR: join(homeDir(), STORAGE_DIRECTORY) };
-    const child = spawn(node, ['--input-type=module', '-e', SOURCE_LOADER, '--', this.executable, ...sourceArguments(encoded)], { env, stdio: ['pipe', 'pipe', 'inherit'] });
+    const child = spawn(node, ['--input-type=module', '-e', SOURCE_LOADER, '--', root, ...sourceArguments(encoded)], { env, stdio: ['pipe', 'pipe', 'inherit'] });
     return child;
   }
 

@@ -14,7 +14,7 @@ function configuredModel(registry: ModelRegistry, name: string) {
 }
 
 export async function modelValidator(fastModels: FastModelSnapshot | null) {
-  const directory = await piDirectory();
+  const directory = piDirectory();
   await installRuntimeStorage(directory);
   const { ModelRuntime: Runtime } = await import(pathToFileURL(join(directory, "dist/core/model-runtime.js")).href);
   const { ModelRegistry: Registry } = await import(pathToFileURL(join(directory, "dist/core/model-registry.js")).href);

@@ -1,3 +1,4 @@
+import { supportedPi } from '../resources/pi-runtime.cjs';
 import { createHash } from 'node:crypto';
 import { closeSync, constants, fstatSync, openSync, readSync, realpathSync } from 'node:fs';
 import { join, sep } from 'node:path';
@@ -127,6 +128,7 @@ function localWorkerCommand(piPath: string, launch: PiLaunch): LaunchCommand {
 
 function localPiCommand(settings: AppSettings, hostId: string, launch: PiLaunch, desktopHome: string): LaunchCommand {
   const piPath = piExecutable();
+  supportedPi(piPath);
   const sessionDir = ensureDesktopSessionsDir(desktopHome);
   const command = localWorkerCommand(piPath, launch);
   configureLocalExtensions(command, settings, hostId, sessionDir);

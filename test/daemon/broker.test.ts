@@ -4,7 +4,7 @@ import { afterAll, beforeAll, expect, test } from 'bun:test';
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
-import { fakeProgram, startDaemon, type TestDaemon } from './harness';
+import { fakePi, fakeProgram, startDaemon, type TestDaemon } from './harness';
 
 function publicSession(): { id: string; path: string } {
   return JSON.parse(execFileSync('node', [fileURLToPath(new URL('../fixtures/publish-chat.mjs', import.meta.url))], {
@@ -20,7 +20,7 @@ let pi: { answers: Record<string, any> };
 
 function installFakePi(home: string, unknownHost: string): void {
   const bin = join(home, '.local/bin');
-  fakeProgram(bin, 'pi', '#!/bin/sh\nexit 1\n');
+  fakePi(bin);
   fakeProgram(bin, 'node', `#!${process.execPath}
 const fs = require('node:fs');
 const path = require('node:path');

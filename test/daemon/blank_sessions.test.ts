@@ -1,14 +1,14 @@
 import { afterAll, beforeAll, expect, test } from 'bun:test';
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { fakeProgram, startDaemon, type TestDaemon } from './harness';
+import { fakePi, fakeProgram, startDaemon, type TestDaemon } from './harness';
 
 let daemon: TestDaemon;
 
 beforeAll(async () => {
   daemon = await startDaemon();
   const bin = join(daemon.home, '.local/bin');
-  fakeProgram(bin, 'pi', '#!/bin/sh\nexit 1\n');
+  fakePi(bin);
   fakeProgram(bin, 'node', '#!' + process.execPath + '\n' + [
     "const fs = require('node:fs'); const path = require('node:path'); const os = require('node:os'); const crypto = require('node:crypto');",
     "const args = process.argv.slice(2); const flag = name => args[args.lastIndexOf(name) + 1];",

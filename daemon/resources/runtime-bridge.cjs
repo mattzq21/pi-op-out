@@ -1,7 +1,6 @@
-const { realpathSync, readFileSync, existsSync, openSync, closeSync, fsyncSync } = require("node:fs");
-const { dirname, join, isAbsolute } = require("node:path");
+const { existsSync, openSync, closeSync, fsyncSync } = require("node:fs");
+const { dirname, join } = require("node:path");
 const { pathToFileURL } = require("node:url");
-const { execFileSync } = require("node:child_process");
 const { PassThrough } = require("node:stream");
 const { AsyncLocalStorage } = require("node:async_hooks");
 const { createRequire } = require("node:module");
@@ -20,6 +19,8 @@ const wrappedManagers = new WeakSet();
 const { installReloadLifecycle, afterReload, serializeConfiguration, runtimeRequest } = require("./runtime-configuration.cjs");
 
 const { queuePull } = require("./queue-pull.cjs");
+
+const { supportedPi } = require("./pi-runtime.cjs");
 
 const configurationCommands = new Set(["context_cap_settings", "agent_definitions_changed", "provider_auth_refresh", "select_agent", "fork_after", "rewind_message", "prepare_fork"]);
 
@@ -132,22 +133,6 @@ function installQueueProtocol(session, output) {
     };
 
     wrappedManagers.add(manager);
-  }
-}
-
-function runtimeRoot(executable) {
-  const path = realpathSync(isAbsolute(executable) ? executable : execFileSync("which", [executable], { encoding: "utf8" }).trim());
-  let root = dirname(path);
-
-  while (true) {
-    try {
-      if (JSON.parse(readFileSync(join(root, "package.json"), "utf8")).name === "@earendil-works/pi-coding-agent") return root;
-    } catch {}
-
-    const parent = dirname(root);
-
-    if (parent === root) throw new Error("Could not locate Pi's JavaScript runtime");
-    root = parent;
   }
 }
 
@@ -740,7 +725,7 @@ function bindQueuedCommands(session, output) {
 
 async function main() {
   const [executable, ...args] = process.argv.slice(2);
-  const root = runtimeRoot(executable);
+  const { root } = supportedPi(executable);
   const { installRuntimeStorage } = await import("./sdk-storage.mjs");
   const { installStorage } = await import("./piop-storage/bootstrap.mjs");
   await installRuntimeStorage(root);

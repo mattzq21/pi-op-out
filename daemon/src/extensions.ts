@@ -53,6 +53,7 @@ export function prepareRuntimeBridge(): void {
   const dir = generatedExtensionRoot();
   ensurePrivateDir(dir);
   atomicWritePrivate(join(dir, 'runtime-bridge.cjs'), R.runtimeBridge);
+  atomicWritePrivate(join(dir, 'pi-runtime.cjs'), R.piRuntime);
   atomicWritePrivate(join(dir, 'queue-pull.cjs'), R.queuePull);
   atomicWritePrivate(join(dir, 'runtime-availability.cjs'), R.runtimeAvailability);
   atomicWritePrivate(join(dir, 'mcp-connections.cjs'), R.mcpConnections);

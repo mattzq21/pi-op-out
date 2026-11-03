@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { join } from 'node:path';
-import { fakeProgram, startDaemon, type TestDaemon } from './harness';
+import { fakePi, fakeProgram, startDaemon, type TestDaemon } from './harness';
 import { startHost, type TestHost } from './host-fixture';
 
 function publicSession(home: string, folder = 'host'): { id: string; path: string } {
@@ -17,7 +17,7 @@ let daemon: TestDaemon;
 beforeAll(async () => {
   daemon = await startDaemon();
   const bin = join(daemon.home, '.local/bin');
-  fakeProgram(bin, 'pi', '#!/bin/sh\nexit 1\n');
+  fakePi(bin);
   fakeProgram(bin, 'node', `#!${process.execPath}
 const fs = require('node:fs');
 const args = process.argv.slice(2);

@@ -22,6 +22,7 @@ import hooksExtendedInterface from '../resources/hooks-extended/interface.ts?raw
 import sdkSessionList from '../resources/sdk-session-list.mjs?raw';
 import runtimeConfiguration from '../resources/runtime-configuration.cjs?raw';
 import runtimeBridge from '../resources/runtime-bridge.cjs?raw';
+import piRuntime from '../resources/pi-runtime.cjs?raw';
 import queuePull from '../resources/queue-pull.cjs?raw';
 import runtimeAvailability from '../resources/runtime-availability.cjs?raw';
 import mcpConnections from '../resources/mcp-connections.cjs?raw';
@@ -127,6 +128,7 @@ export {
   sdkSessionList,
   runtimeConfiguration,
   runtimeBridge,
+  piRuntime,
   queuePull,
   runtimeAvailability,
   mcpConnections,

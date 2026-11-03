@@ -1,5 +1,4 @@
-import { realpath, readFile } from 'node:fs/promises';
-import { delimiter, dirname, join, resolve } from 'node:path';
+import { join } from 'node:path';
 import { homedir } from 'node:os';
 import { pathToFileURL } from 'node:url';
 import { randomUUID } from 'node:crypto';
@@ -17,52 +16,23 @@ let initializing;
 
 let fastModelDiscovery;
 
-async function resolveExecutable() {
-  const executable = process.argv[1] || 'pi';
-  const expanded = executable.startsWith('~/') ? join(homedir(), executable.slice(2)) : executable;
-  const candidates = /[/\\]/.test(expanded) ? [resolve(expanded)] : (process.env.PATH || '').split(delimiter).map((directory) => join(directory, expanded));
-  let entry;
-
-  for (const candidate of candidates) {
-    try { entry = await realpath(candidate); break; } catch {}
-  }
-
-  if (!entry) throw new Error('Pi is unavailable on this host. Check its Pi executable setting.');
-
-  return entry;
-}
-
 async function loadRuntime() {
-  const entry = await resolveExecutable();
-  let directory = dirname(entry);
+  const directory = process.argv[1];
 
-  while (directory !== dirname(directory)) {
-    let metadata;
+  if (!directory) throw new Error('The daemon did not give the Pi installation folder');
+  const sdk = await import(pathToFileURL(join(directory, 'dist/core/model-runtime.js')).href);
+  await installRuntimeStorage(directory);
+  const config = await import(pathToFileURL(join(directory, 'dist/config.js')).href);
+  const { stripJsonComments } = await import(pathToFileURL(join(directory, 'dist/utils/json.js')).href);
+  const { SettingsManager } = await import(pathToFileURL(join(directory, 'dist/core/settings-manager.js')).href);
+  const resolver = await import(pathToFileURL(join(directory, 'dist/core/model-resolver.js')).href);
+  const { loadSkills } = await import(pathToFileURL(join(directory, 'dist/core/skills.js')).href);
+  const settings = SettingsManager.create(process.cwd(), config.getAgentDir());
+  const builtin = await sdk.ModelRuntime.create({ modelsPath: null, allowModelNetwork: false, refreshOnCreate: false });
+  const runtime = await sdk.ModelRuntime.create({ allowModelNetwork: false }).catch(() => { throw new Error('Could not load provider configuration on this host. Check Pi configuration and file permissions.'); });
+  await refreshOcx(runtime);
 
-    try { metadata = JSON.parse(await readFile(join(directory, 'package.json'), 'utf8')); } catch {}
-
-    if (['@earendil-works/pi-coding-agent', '@mariozechner/pi-coding-agent'].includes(metadata?.name)) {
-      const sdk = await import(pathToFileURL(join(directory, 'dist/core/model-runtime.js')).href).catch(() => undefined);
-
-      if (!sdk?.ModelRuntime?.create) break;
-      await installRuntimeStorage(directory);
-      const config = await import(pathToFileURL(join(directory, 'dist/config.js')).href);
-      const { stripJsonComments } = await import(pathToFileURL(join(directory, 'dist/utils/json.js')).href);
-      const { SettingsManager } = await import(pathToFileURL(join(directory, 'dist/core/settings-manager.js')).href);
-      const resolver = await import(pathToFileURL(join(directory, 'dist/core/model-resolver.js')).href);
-      const { loadSkills } = await import(pathToFileURL(join(directory, 'dist/core/skills.js')).href);
-      const settings = SettingsManager.create(process.cwd(), config.getAgentDir());
-      const builtin = await sdk.ModelRuntime.create({ modelsPath: null, allowModelNetwork: false, refreshOnCreate: false });
-      const runtime = await sdk.ModelRuntime.create({ allowModelNetwork: false }).catch(() => { throw new Error('Could not load provider configuration on this host. Check Pi configuration and file permissions.'); });
-      await refreshOcx(runtime);
-
-      return { runtime, settings, resolver, loadSkills, agentDir: config.getAgentDir(), authPath: config.getAuthPath(), modelsPath: join(config.getAgentDir(), 'models.json'), parseModels: body => JSON.parse(stripJsonComments(body.replace(/^\uFEFF/, ''))), builtinIds: builtin.getProviders().map((provider) => provider.id) };
-    }
-
-    directory = dirname(directory);
-  }
-
-  throw new Error('Provider login requires a Pi Node installation with ModelRuntime support on this host. Update Pi and try again.');
+  return { runtime, settings, resolver, loadSkills, agentDir: config.getAgentDir(), authPath: config.getAuthPath(), modelsPath: join(config.getAgentDir(), 'models.json'), parseModels: body => JSON.parse(stripJsonComments(body.replace(/^\uFEFF/, ''))), builtinIds: builtin.getProviders().map((provider) => provider.id) };
 }
 
 function runtime() {

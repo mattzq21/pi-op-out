@@ -1,8 +1,7 @@
-import { readFile, realpath } from "node:fs/promises";
-import { delimiter, dirname, join, resolve } from "node:path";
-import { homedir } from "node:os";
+import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { installRuntimeStorage } from "../../daemon/resources/sdk-storage.mjs";
+import { supportedPi } from "../../daemon/resources/pi-runtime.cjs";
 import { agentExtensions } from "./extension-loader.ts";
 import type { ExtensionAPI, ExtensionRuntime, ModelRegistry, ToolInfo } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
@@ -10,35 +9,12 @@ import commandNames from "../../daemon/resources/agent-commands.json";
 import { bindValidationSession } from "./validation-session.ts";
 import type { Agent } from "./contracts.ts";
 
-async function piEntry() {
-  const executable = process.env.PIOP_PI_EXECUTABLE || "pi";
-  const expanded = executable.startsWith("~/") ? join(homedir(), executable.slice(2)) : executable;
-  const candidates = /[/\\]/.test(expanded) ? [resolve(expanded)] : (process.env.PATH || "").split(delimiter).map(directory => join(directory, expanded));
-
-  for (const path of candidates) {
-    try { return await realpath(path); } catch { }
-  }
-
-  throw new Error("Pi is unavailable for extension validation");
-}
-
-export async function piDirectory() {
-  let directory = dirname(await piEntry());
-
-  while (directory !== dirname(directory)) {
-    let metadata;
-
-    try { metadata = JSON.parse(await readFile(join(directory, "package.json"), "utf8")); } catch { }
-
-    if (["@earendil-works/pi-coding-agent", "@mariozechner/pi-coding-agent"].includes(metadata?.name)) return directory;
-    directory = dirname(directory);
-  }
-
-  throw new Error("Extension validation requires a Pi Node installation");
+export function piDirectory() {
+  return supportedPi(process.env.PIOP_PI_EXECUTABLE || "pi").root;
 }
 
 export async function extensionValidator(registeredToolNames: string[]) {
-  const directory = await piDirectory();
+  const directory = piDirectory();
   await installRuntimeStorage(directory);
   const loaderUrl = pathToFileURL(join(directory, "dist/core/extensions/jiti-static-loader.js")).href;
   const { createJiti } = await import(loaderUrl);
