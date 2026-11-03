@@ -80,14 +80,14 @@ export function taggedProcesses(tag: string): Array<{ pid: number; started: stri
   return tagged().filter(item => item.tag === tag).map(({ pid, started }) => ({ pid, started }));
 }
 
-export async function stopOrphanedProcesses(): Promise<void> {
+export async function stopOrphanedProcesses(): Promise<boolean> {
   const orphans = tagged().filter(({ tag }) => {
     const [pid, started] = tag.split('.');
     const owner = Number(pid);
     if (!Number.isInteger(owner) || owner <= 0 || !started) { console.error('Ignoring a process with an invalid ' + PROCESS_TAG + ': ' + tag); return false; }
     return owner !== process.pid && startTime(owner) !== started;
   });
-  if (!orphans.length) return;
+  if (!orphans.length) return true;
   console.error('Stopping processes left by a stopped Piop daemon: ' + orphans.map(({ pid }) => pid).join(', '));
   killVerified(orphans);
   const deadline = Date.now() + 2000;
@@ -95,6 +95,7 @@ export async function stopOrphanedProcesses(): Promise<void> {
   while (Date.now() < deadline && alive().length) await sleep(50);
   const remaining = alive();
   if (remaining.length) console.error('Processes left by a stopped Piop daemon did not exit after SIGKILL: ' + remaining.map(({ pid }) => pid).join(', '));
+  return remaining.length === 0;
 }
 
 export function killVerified(processes: Array<{ pid: number; started: string }>, signal: NodeJS.Signals = 'SIGKILL'): void {

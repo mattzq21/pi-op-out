@@ -1,8 +1,8 @@
 import { afterAll, beforeAll, expect, test } from 'bun:test';
-import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
-import { spawn, execFileSync } from 'node:child_process';
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 import { fakePi, fakeProgram, refreshedUsage, startDaemon, temporaryDirectory, type Client, type TestDaemon } from './harness';
 import { recordTools } from '../../daemon/src/tool_inventory';
 
@@ -20,13 +20,12 @@ function installFakePi(home: string): void {
 const fs = require('node:fs');
 const args = process.argv.slice(2);
 const path = require('node:path');
-const launch = { args };
+const launch = { args, root: path.dirname(process.env.PIOP_RPC_ENTRY) };
 try {
   const resources = JSON.parse(process.env.PIOP_AGENT_RESOURCES);
   launch.skills = resources.skills;
   launch.tools = resources.tools;
-  const read = record => require(path.join(path.dirname(record), 'app-settings.cjs')).readFile(record);
-  launch.contextSettings = read(process.env.PIOP_CONTEXT_CAP_SETTINGS_PATH);
+  launch.contextSettings = require(path.join(launch.root, 'app-settings.cjs')).readFile(process.env.PIOP_CONTEXT_CAP_SETTINGS_PATH);
 } catch (error) { launch.readError = String(error?.message ?? error); }
 fs.appendFileSync(path.join(process.env.HOME, 'launches.jsonl'), JSON.stringify(launch) + '\\n');
 const sessionFile = args.includes('--session') ? args[args.lastIndexOf('--session') + 1] : undefined;
@@ -42,9 +41,15 @@ require('node:readline').createInterface({ input: process.stdin }).on('line', li
 `);
 }
 
-type Launch = { args: string[]; contextSettings?: any; skills?: any; tools?: any; readError?: string };
+type Launch = { args: string[]; root: string; contextSettings?: any; skills?: any; tools?: any; readError?: string };
 const lastLaunch = (home: string): Launch => JSON.parse(readFileSync(join(home, 'launches.jsonl'), 'utf8').trim().split('\n').at(-1)!);
 const extensionPaths = ({ args }: Launch) => args.flatMap((arg, index) => args[index - 1] === '--extension' ? [arg] : []);
+const identity = (path: string) => { const stats = statSync(path); return [stats.ino, stats.mtimeMs]; };
+function published(base: string): string {
+  const names = readdirSync(join(base, 'generated')).filter(name => !name.startsWith('.'));
+  expect(names).toHaveLength(1);
+  return join(base, 'generated', names[0]!);
+}
 
 let launches = 0;
 async function launchPublicPi(daemon: TestDaemon, client: Client = daemon): Promise<Launch> {
@@ -91,7 +96,7 @@ require('node:readline').createInterface({ input: process.stdin }).on('line', li
 
 const mode = (path: string) => statSync(path).mode & 0o777;
 
-test('daemon startup installs the defined agents extension, refreshes it on restart and leaves the old Pi agent folder alone', async () => {
+test('daemon startup publishes the Pi extensions once in a folder named by their content, removes old folders and leaves the old Pi agent folder alone', async () => {
   const home = temporaryDirectory('piop-home-');
   const legacy = join(home, '.pi/agent/extensions/pi-define-agents');
   mkdirSync(legacy, { recursive: true });
@@ -99,27 +104,31 @@ test('daemon startup installs the defined agents extension, refreshes it on rest
   writeFileSync(join(legacy, 'config.json'), original);
   writeFileSync(join(legacy, 'index.ts'), 'old extension');
   writeFileSync(join(legacy, 'notes.txt'), 'keep');
-  const expected = readFileSync(join(root, 'extensions/piop-define-agents/index.ts'), 'utf8');
-  const entry = join(home, '.piop/piop-define-agents/index.ts');
+  const folders = join(home, '.piop/generated');
+  mkdirSync(join(folders, 'old-build'), { recursive: true });
+  writeFileSync(join(folders, 'old-build/index.ts'), 'old build');
+  mkdirSync(join(folders, '.tmp-interrupted'));
   let local = await startDaemon({ home });
   try {
-    expect(readFileSync(entry, 'utf8')).toBe(expected);
+    const generated = published(join(home, '.piop'));
+    const entry = join(generated, 'piop-define-agents/index.ts');
+    expect(readdirSync(folders)).toEqual([basename(generated)]);
+    expect(readFileSync(entry, 'utf8')).toBe(source('extensions/piop-define-agents/index.ts'));
     expect(mode(entry)).toBe(0o600);
-    expect(mode(join(home, '.piop/piop-define-agents'))).toBe(0o700);
-    expect(existsSync(join(home, '.piop/piop-define-agents/config.json'))).toBe(false);
-    writeFileSync(entry, 'outdated extension');
+    expect(mode(dirname(entry))).toBe(0o700);
+    expect(mode(generated)).toBe(0o700);
+    const before = identity(entry);
     await local.stop();
     local = await startDaemon({ home });
-    expect(readFileSync(entry, 'utf8')).toBe(expected);
-    expect(existsSync(join(home, '.piop/piop-define-agents/config.json'))).toBe(false);
+    expect(published(join(home, '.piop'))).toBe(generated);
+    expect(identity(entry)).toEqual(before);
     expect(readFileSync(join(legacy, 'config.json'), 'utf8')).toBe(original);
     expect(readFileSync(join(legacy, 'index.ts'), 'utf8')).toBe('old extension');
     expect(readFileSync(join(legacy, 'notes.txt'), 'utf8')).toBe('keep');
   } finally { await local.stop(); }
 }, 60_000);
 
-test('a Pi start installs the bundled extensions as private files and refreshes stale copies without touching other files', async () => {
-  const generated = join(daemon.home, '.piop');
+test('a Pi start loads the published extensions and writes none of them again', async () => {
   const bundles: [string, string][] = [
     ['session-broker.ts', 'daemon/resources/session-broker.ts'],
     ['hooks-extended/index.ts', 'daemon/resources/hooks-extended/index.ts'],
@@ -134,31 +143,32 @@ test('a Pi start installs the bundled extensions as private files and refreshes 
     ['piop-openai-cache-fork.ts', 'extensions/piop-openai-cache-fork/index.ts'],
     ['plugins/web-search/index.ts', 'daemon/plugins/web-search/index.ts'],
   ];
-  const extensions = extensionPaths(await launchPublicPi(daemon));
+  const first = await launchPublicPi(daemon);
+  const generated = first.root;
+  expect(generated).toBe(published(join(daemon.home, '.piop')));
+  const extensions = extensionPaths(first);
   for (const name of ['hooks-extended/index.ts', 'piop-controls/index.ts', 'session-broker.ts', 'plugins/review/index.ts', 'piop-openai-cache-fork.ts', 'plugins/web-search/index.ts']) expect(extensions).toContain(join(generated, name));
   for (const removed of ['piop-goals/index.ts', 'runtime-settings.ts', 'piop-skills-store/index.ts', 'piop-tool-store/index.ts', 'piop-codemode-tools-description.ts']) expect(extensions).not.toContain(join(generated, removed));
   expect(extensions).toContain(join(generated, 'piop-providers-refresh.ts'));
   expect(extensions.at(-1)).toBe(join(generated, 'piop-controls/skills.ts'));
+  const before = new Map<string, number[]>();
   for (const [name, relative] of bundles) {
     expect(readFileSync(join(generated, name), 'utf8')).toBe(installed(name, relative));
     expect(mode(join(generated, name))).toBe(0o600);
-    writeFileSync(join(generated, name), 'stale bundle');
+    before.set(name, identity(join(generated, name)));
   }
-  expect(mode(generated)).toBe(0o700);
-  writeFileSync(join(generated, 'user-file'), 'keep');
-  await launchPublicPi(daemon);
-  for (const [name, relative] of bundles) expect(readFileSync(join(generated, name), 'utf8')).toBe(installed(name, relative));
-  expect(readFileSync(join(generated, 'user-file'), 'utf8')).toBe('keep');
+  expect((await launchPublicPi(daemon)).root).toBe(generated);
+  for (const [name] of bundles) expect(identity(join(generated, name))).toEqual(before.get(name)!);
 }, 60_000);
 
 
 test('a started Pi receives the reported tools, skill lists and separate context settings', async () => {
-  const generated = join(daemon.home, '.piop');
+  const storage = join(daemon.home, '.piop');
   const skill = join(daemon.home, '.agents/skills/spaced skill');
   mkdirSync(skill, { recursive: true });
   writeFileSync(join(skill, 'SKILL.md'), '---\nname: spaced\n---\n');
   await daemon.invoke('load_app_settings', { refreshSkills: true });
-  recordTools([{ name: 'web_search', description: 'Search', source: '/ext/web-search.ts' }, { name: 'read', description: 'Read', source: 'builtin:read' }], join(generated, 'settings.json'));
+  recordTools([{ name: 'web_search', description: 'Search', source: '/ext/web-search.ts' }, { name: 'read', description: 'Read', source: 'builtin:read' }], join(storage, 'settings.json'));
   for (const enabled of [true, false]) {
     const settings = await daemon.invoke('load_app_settings');
     for (const entry of settings.skills) entry.enabled = enabled;
@@ -167,9 +177,11 @@ test('a started Pi receives the reported tools, skill lists and separate context
     await daemon.invoke('save_app_settings', { settings });
     const launch = await launchPublicPi(daemon);
     expect(launch.readError).toBeUndefined();
+    const generated = launch.root;
     expect(extensionPaths(launch)).toEqual(expect.arrayContaining([join(generated, 'piop-mcp-bridge.ts'), join(generated, 'piop-context-window-cap/index.ts')]));
     expect(readFileSync(join(generated, 'piop-mcp-bridge.ts'), 'utf8')).toBe(source('daemon/resources/mcp-bridge.bundle.mjs'));
     expect(existsSync(join(generated, 'mcp-servers.json'))).toBe(false);
+    expect(existsSync(join(storage, 'mcp-servers.json'))).toBe(false);
     expect(readFileSync(join(generated, 'piop-context-window-cap/index.ts'), 'utf8')).toBe(source('extensions/piop-context-window-cap/index.ts').replace('../../daemon/resources/hooks-extended/interface.ts', '../hooks-extended/interface.ts'));
     for (const file of ['piop-mcp-bridge.ts', 'piop-context-window-cap/index.ts']) expect(mode(join(generated, file))).toBe(0o600);
     expect(launch.contextSettings).toEqual({ contextWindowCap: enabled ? 123456 : 200000, contextWindowCapEnabled: enabled, modelContextWindowCaps: {} });
@@ -195,23 +207,6 @@ test('saved context settings reach a running Pi through their own request', asyn
   await daemon.invoke('stop_pi', { runtimeId });
 }, 60_000);
 
-test('a Pi start repairs the permissions of unchanged extension files and restores changed files', async () => {
-  const generated = join(daemon.home, '.piop');
-  const entry = join(generated, 'plugins/web-search/index.ts');
-  await launchPublicPi(daemon);
-  chmodSync(entry, 0o644);
-  chmodSync(generated, 0o755);
-  await launchPublicPi(daemon);
-  expect(readFileSync(entry, 'utf8')).toBe(pluginSource('daemon/plugins/web-search/index.ts'));
-  expect(mode(entry)).toBe(0o600);
-  expect(mode(generated)).toBe(0o700);
-  writeFileSync(entry, 'replacement');
-  await launchPublicPi(daemon);
-  expect(readFileSync(entry, 'utf8')).toBe(pluginSource('daemon/plugins/web-search/index.ts'));
-  expect(mode(entry)).toBe(0o600);
-  expect(readdirSync(generated).filter(name => name.endsWith('.tmp'))).toEqual([]);
-}, 60_000);
-
 test('daemon startup ignores an obstructed old Pi agent configuration and leaves it unchanged', async () => {
   const home = temporaryDirectory('piop-home-');
   const legacy = join(home, '.pi/agent/extensions/pi-define-agents');
@@ -219,69 +214,24 @@ test('daemon startup ignores an obstructed old Pi agent configuration and leaves
   writeFileSync(join(legacy, 'index.ts'), 'original');
   const local = await startDaemon({ home });
   try {
-    expect(readFileSync(join(home, '.piop/piop-define-agents/index.ts'), 'utf8')).toBe(source('extensions/piop-define-agents/index.ts'));
+    expect(readFileSync(join(published(join(home, '.piop')), 'piop-define-agents/index.ts'), 'utf8')).toBe(source('extensions/piop-define-agents/index.ts'));
     expect(readFileSync(join(legacy, 'index.ts'), 'utf8')).toBe('original');
     expect(readdirSync(join(legacy, 'config.json'))).toEqual([]);
   } finally { await local.stop(); }
 }, 60_000);
 
 
-async function watchFile(path: string, allowed: Record<string, string>): Promise<{ stop(): Promise<any> }> {
-  const stopFile = path + '.watch-stop';
-  const allowedFile = join(temporaryDirectory('piop-watch-'), 'allowed.json');
-  writeFileSync(allowedFile, JSON.stringify(allowed));
-  const reader = spawn(process.execPath, ['-e', `
-const fs = require('node:fs');
-const [path, stopFile, allowedFile] = process.argv.slice(1);
-const allowed = Object.entries(JSON.parse(fs.readFileSync(allowedFile, 'utf8')));
-const seen = Object.fromEntries(allowed.map(([name]) => [name, 0]));
-const other = []; const errors = [];
-console.log('ready');
-while (!fs.existsSync(stopFile)) {
-  let body;
-  try { body = fs.readFileSync(path, 'utf8'); } catch (error) { if (errors.length < 10) errors.push(error.message); continue; }
-  const match = allowed.find(([, content]) => content === body);
-  if (match) seen[match[0]]++; else if (other.length < 10) other.push(body.length);
-}
-console.log(JSON.stringify({ seen, other, errors }));
-`, path, stopFile, allowedFile], { stdio: ['ignore', 'pipe', 'inherit'] });
-  let output = '';
-  const closed = new Promise<void>(done => reader.on('close', () => done()));
-  await new Promise<void>((done, fail) => {
-    reader.stdout!.on('data', chunk => { output += chunk; if (output.startsWith('ready\n')) done(); });
-    reader.on('close', () => fail(new Error('File reader ended early: ' + output)));
-  });
-  return {
-    async stop() {
-      writeFileSync(stopFile, '');
-      await closed;
-      rmSync(stopFile);
-      return JSON.parse(output.slice('ready\n'.length));
-    },
-  };
-}
-
-test('another process never reads a partial extension file while two clients start Pi at the same time', async () => {
-  const generated = join(daemon.home, '.piop');
-  const entry = join(generated, 'piop-mcp-bridge.ts');
-  const expected = source('daemon/resources/mcp-bridge.bundle.mjs');
+test('Pi starts from two clients at the same time use the same unchanged files', async () => {
   const second = await daemon.connect();
-  await launchPublicPi(daemon);
-  const watcher = await watchFile(entry, { stale: 'stale bundle', expected });
-  try {
-    for (let round = 0; round < 10; round++) {
-      writeFileSync(join(daemon.home, 'stale-bundle'), 'stale bundle');
-      renameSync(join(daemon.home, 'stale-bundle'), entry);
-      await Promise.all([launchPublicPi(daemon), launchPublicPi(daemon, second)]);
-      expect(readFileSync(entry, 'utf8')).toBe(expected);
-    }
-  } finally {
-    const result = await watcher.stop();
-    expect(result.other).toEqual([]);
-    expect(result.errors).toEqual([]);
-    expect(result.seen.stale).toBeGreaterThan(0);
-    expect(result.seen.expected).toBeGreaterThan(0);
+  const { root } = await launchPublicPi(daemon);
+  const entry = join(root, 'piop-mcp-bridge.ts');
+  const before = identity(entry);
+  for (let round = 0; round < 5; round++) {
+    const launched = await Promise.all([launchPublicPi(daemon), launchPublicPi(daemon, second)]);
+    expect(launched.map(launch => launch.root)).toEqual([root, root]);
   }
+  expect(identity(entry)).toEqual(before);
+  expect(readFileSync(entry, 'utf8')).toBe(source('daemon/resources/mcp-bridge.bundle.mjs'));
 }, 60_000);
 
 
@@ -304,15 +254,14 @@ test('development Pi extensions stay inside their daemon directory across two pr
       await local.invoke('start_pi', { runtimeId: 'development-runtime', clientId: 'test-client', cwd: home });
       const launch = lastLaunch(home);
       expect(launch.readError).toBeUndefined();
-      expect(extensionPaths(launch)).toContain(join(debug.extensionRoot, 'piop-mcp-bridge.ts'));
-      expect(readFileSync(join(debug.extensionRoot, 'piop-mcp-bridge.ts'), 'utf8')).toBe(source('daemon/resources/mcp-bridge.bundle.mjs'));
-      expect(extensionPaths(launch)).toContain(join(debug.extensionRoot, 'piop-providers-refresh.ts'));
-      expect(readFileSync(join(debug.extensionRoot, 'piop-providers-refresh.ts'), 'utf8')).toBe(source('extensions/piop-providers-refresh/index.ts'));
-      roots.push(debug.extensionRoot);
+      expect(launch.root).toBe(published(debug.extensionRoot));
+      expect(extensionPaths(launch)).toContain(join(launch.root, 'piop-mcp-bridge.ts'));
+      expect(readFileSync(join(launch.root, 'piop-mcp-bridge.ts'), 'utf8')).toBe(source('daemon/resources/mcp-bridge.bundle.mjs'));
+      expect(extensionPaths(launch)).toContain(join(launch.root, 'piop-providers-refresh.ts'));
+      expect(readFileSync(join(launch.root, 'piop-providers-refresh.ts'), 'utf8')).toBe(source('extensions/piop-providers-refresh/index.ts'));
+      roots.push(launch.root);
     }
     expect(roots[0]).not.toBe(roots[1]);
-    writeFileSync(join(home, '.piop-dev/piop-mcp-bridge.ts'), 'other development build');
-    writeFileSync(join(roots[1]!, 'piop-mcp-bridge.ts'), 'second project changed');
-    expect(readFileSync(join(roots[0]!, 'piop-mcp-bridge.ts'), 'utf8')).toBe(source('daemon/resources/mcp-bridge.bundle.mjs'));
+    expect(existsSync(join(home, '.piop-dev/generated'))).toBe(false);
   } finally { for (const local of running.reverse()) await local.stop(); }
 }, 60_000);

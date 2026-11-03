@@ -14,7 +14,7 @@ import * as daemon from './daemon';
 import { resumeInterruptedTasks } from './interrupted_tasks';
 import { stopOrphanedProcesses } from './process_cleanup';
 import { loadAppSettings } from './settings';
-import { prepareDefinedAgentsExtension } from './extensions';
+import { generatedExtensions, removeUnusedGeneratedExtensions } from './extensions';
 import { errorText } from './util/sync';
 import { shutdownHostOperations } from './host_operations';
 import { startTray } from './tray';
@@ -55,11 +55,12 @@ async function runBackend(): Promise<void> {
   let removeTray = () => {};
   try {
     let settings: Awaited<ReturnType<typeof loadAppSettings>> | undefined;
-    await step(() => stopOrphanedProcesses());
+    let orphansStopped = false;
+    await step(async () => { orphansStopped = await stopOrphanedProcesses(); });
     await step(() => recoverChatWorktrees(app));
     await step(async () => { settings = await loadAppSettings(app); });
-    await step(() => prepareDefinedAgentsExtension());
     await step(() => daemon.connect(app, app.pi, app.broker, settings!, 'local'));
+    await step(() => prepareExtensions(orphansStopped));
     await step(() => daemonRestart.initializeCandidate(app));
     await step(() => mobile.start(app));
     await step(() => app.usage.start(app, settings!.hiddenUsageIndicators));
@@ -80,6 +81,13 @@ async function runBackend(): Promise<void> {
       failureListener = undefined;
     }
   }
+}
+
+function prepareExtensions(orphansStopped: boolean): void {
+  try {
+    generatedExtensions();
+    if (orphansStopped) removeUnusedGeneratedExtensions();
+  } catch (error) { console.error('Could not prepare the Pi extensions: ' + errorText(error)); }
 }
 
 const STOP_SIGNALS: NodeJS.Signals[] = ['SIGINT', 'SIGTERM', 'SIGHUP'];

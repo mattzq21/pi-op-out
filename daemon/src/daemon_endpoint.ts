@@ -7,7 +7,7 @@ import { ensurePrivateDir, setPrivateFilePermissions } from './private_fs';
 import * as records from './settings_records';
 import * as restartStorage from './restart_storage';
 import { tryLockFileSync, type FileLock } from './util/flock';
-import { generatedExtensionRoot } from './extensions';
+import { extensionBase } from './extensions';
 
 export const STARTUP_TIMEOUT = 90_000;
 
@@ -31,7 +31,7 @@ let runtime: any;
 export function debugRuntime(): any {
   if (runtime) return runtime;
   const executable = Bun.isStandaloneExecutable ? process.execPath : resolve(process.argv[1] ?? process.execPath);
-  const extensionRoot = generatedExtensionRoot();
+  const extensionRoot = extensionBase();
   runtime = {
     processId: process.pid,
     project: PROJECT_DIR || null,

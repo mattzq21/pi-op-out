@@ -116,9 +116,9 @@ export function buildPiCommand(settings: AppSettings, hostId: string, launch: Pi
   return localPiCommand(settings, hostId, launch, homeDir());
 }
 
-function localWorkerCommand(piPath: string, launch: PiLaunch): LaunchCommand {
+function localWorkerCommand(piPath: string, launch: PiLaunch, bridge: string): LaunchCommand {
   const command: LaunchCommand = launch.kind === 'prompt-preview'
-    ? { program: nodeExecutable(), args: [join(Ext.generatedExtensionRoot(), 'runtime-bridge.cjs'), piPath], env: { PIOP_PROMPT_PREVIEW: '1' } }
+    ? { program: nodeExecutable(), args: [bridge, piPath], env: { PIOP_PROMPT_PREVIEW: '1' } }
     : sessionWorkerCommand(piPath);
   command.env.PIOP_STORAGE_DIRECTORY = STORAGE_DIRECTORY;
   command.env.PI_CODING_AGENT_DIR = join(homeDir(), STORAGE_DIRECTORY);
@@ -129,10 +129,11 @@ function localWorkerCommand(piPath: string, launch: PiLaunch): LaunchCommand {
 function localPiCommand(settings: AppSettings, hostId: string, launch: PiLaunch, desktopHome: string): LaunchCommand {
   const piPath = piExecutable();
   supportedPi(piPath);
+  const generated = Ext.generatedExtensions();
   const sessionDir = ensureDesktopSessionsDir(desktopHome);
-  const command = localWorkerCommand(piPath, launch);
-  configureLocalExtensions(command, settings, hostId, sessionDir);
-  command.env.PIOP_RPC_ENTRY = join(Ext.generatedExtensionRoot(), 'runtime-bridge.cjs');
+  const command = localWorkerCommand(piPath, launch, generated.bridge);
+  configureLocalExtensions(command, settings, hostId, sessionDir, generated);
+  command.env.PIOP_RPC_ENTRY = generated.bridge;
   command.env.JITI_NATIVE_MODULES = '["typebox"]';
   command.env.NODE_COMPILE_CACHE = join(homeDir(), STORAGE_DIRECTORY, 'node-compile-cache');
   const node = nodeExecutable();
@@ -156,31 +157,22 @@ function configureLocalLaunch(command: LaunchCommand, launch: PiLaunch, piPath: 
   else if (launch.sessionId) command.args.push('--session-id', launch.sessionId);
 }
 
-function configureLocalExtensions(command: LaunchCommand, settings: AppSettings, hostId: string, sessionDir: string): void {
-  const root = Ext.generatedExtensionRoot();
-  Ext.prepareRuntimeBridge();
+function configureLocalExtensions(command: LaunchCommand, settings: AppSettings, hostId: string, sessionDir: string, generated: Ext.GeneratedExtensions): void {
+  const core = generated.core;
   command.env.PIOP_AGENT_RESOURCES = JSON.stringify({ ...Ext.agentResources(settings), pluginAgentTools: Contributions.agentTools() });
   command.env.PIOP_STORAGE_ROOT = join(homeDir(), STORAGE_DIRECTORY);
-  command.env.PIOP_CONTEXT_CAP_SETTINGS_PATH = join(root, 'context-cap-settings.json');
-  command.env.PIOP_GENERATED_EXTENSION_ROOT = root;
-  const mcpExtension = Ext.prepareMcpBridge();
-  const contextWindowCapExtension = Ext.prepareContextWindowCapExtension(settings);
-  const contextBarExtension = Ext.prepareContextBarExtension();
-  const openaiCacheForkExtension = Ext.prepareOpenaiCacheForkExtension();
-  const definedAgentsExtension = Ext.prepareDefinedAgentsExtension();
-  const session = Ext.prepareSessionExtensions();
-  const plugins = Ext.preparePluginExtensions();
-  const after = (core: Contributions.CoreExtension) => plugins.filter(plugin => plugin.after === core).flatMap(plugin => ['--extension', plugin.path]);
+  command.env.PIOP_CONTEXT_CAP_SETTINGS_PATH = Ext.contextCapSettingsPath();
+  const after = (position: Contributions.CoreExtension) => generated.plugins.filter(plugin => plugin.after === position).flatMap(plugin => ['--extension', plugin.path]);
   command.args.push('--extension', 'builtin:codemode', '--extension', 'builtin:tool-search');
   command.args.push('--session-dir', sessionDir, '--approve', '--no-skills',
-    '--extension', Ext.prepareOcxProviderExtension(), '--extension', Ext.prepareProvidersRefreshExtension(), '--extension', mcpExtension, '--extension', session.storage, '--extension', session.hooks, '--extension', session.controls, '--extension', session.broker, '--extension', Ext.prepareCompactionTimingExtension(), ...after('session'),
-    '--extension', contextWindowCapExtension, '--extension', contextBarExtension, ...after('context-bar'),
-    '--extension', Ext.prepareFastModeExtension(), '--extension', openaiCacheForkExtension,
-    '--extension', definedAgentsExtension, '--extension', session.skills);
+    '--extension', core.ocx, '--extension', core.providersRefresh, '--extension', core.mcp, '--extension', core.storage, '--extension', core.hooks, '--extension', core.controls, '--extension', core.broker, '--extension', core.compactionTiming, ...after('session'),
+    '--extension', core.contextWindowCap, '--extension', core.contextBar, ...after('context-bar'),
+    '--extension', core.fastMode, '--extension', core.openaiCacheFork,
+    '--extension', core.definedAgents, '--extension', core.skills);
   Object.assign(command.env, {
-    PI_DESKTOP_DEFINED_AGENTS_EXTENSION: definedAgentsExtension,
-    PIOP_MCP_EXTENSION: mcpExtension,
-    PI_DESKTOP_CONTEXT_WINDOW_CAP_EXTENSION: contextWindowCapExtension,
+    PI_DESKTOP_DEFINED_AGENTS_EXTENSION: core.definedAgents,
+    PIOP_MCP_EXTENSION: core.mcp,
+    PI_DESKTOP_CONTEXT_WINDOW_CAP_EXTENSION: core.contextWindowCap,
     PIOP_COMMAND_POLICY: JSON.stringify(Contributions.commandPolicy()),
     PIOP_QUEUE_TOOLS: JSON.stringify(QUEUE_TOOLS),
     PI_DESKTOP_HOST_ID: hostId,
