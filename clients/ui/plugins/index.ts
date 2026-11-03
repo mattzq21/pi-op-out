@@ -14,7 +14,7 @@ export const plugins: PluginDefinition[] = [
     messages: { "piop-review-link": () => import("./review/ReviewLink").then(module => ({ default: module.ReviewLink })) } },
   { id: "web-search", scope: "host", name: "Web search", description: "The web_search tool for agents, through the host's OpenAI ChatGPT or Claude Pro/Max sign-in.",
     settings: { section: "web-search", label: "Web search", description: "Choose the OpenAI or Anthropic model that runs web searches.", icon: Globe, load: () => import("./web-search/WebSearchSettings").then(module => ({ default: module.WebSearchSettings })) } },
-  { id: "btw", scope: "host", name: "Side chats", description: "Side chats started with /btw.", queuedWithPrompt: ["btw"],
+  { id: "btw", scope: "host", name: "Side chats", description: "Side chats started with /btw.",
     keybinds: [{ id: "open", label: "Open side chat", description: "Start a /btw side chat for the current conversation", defaultShortcut: "Ctrl+Alt+S", command: "btw", needsMessages: true }] },
   { id: "background-compaction", scope: "host", name: "Background compaction", description: "Writes the compaction summary in the background before the context is full." },
 ];

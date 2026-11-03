@@ -61,17 +61,19 @@ export function pluginRequest(type: string): boolean {
   return true;
 }
 
-export function commandPolicy(): { queued: string[]; queuedWithPrompt: string[]; disabled: Record<string, string> } {
+export function commandPolicy(): { queued: string[]; queuedWithPrompt: string[]; withImages: string[]; disabled: Record<string, string> } {
   const ids = loaded();
   const queued: string[] = [...CORE_QUEUED];
   const queuedWithPrompt: string[] = [];
+  const withImages: string[] = [];
   const disabled: Record<string, string> = {};
   for (const plugin of CATALOG) for (const [name, delivery] of Object.entries(plugin.commands ?? {})) {
     if (!ids.has(plugin.id)) disabled[name] = disabledCommand(plugin, name);
     else if (delivery === 'queued') queued.push(name);
     else if (delivery === 'queuedWithPrompt') queuedWithPrompt.push(name);
+    else if (delivery === 'immediateWithImages') withImages.push(name);
   }
-  return { queued, queuedWithPrompt, disabled };
+  return { queued, queuedWithPrompt, withImages, disabled };
 }
 
 export function agentCommands(core: string[], enabledIds: readonly string[]): string[] {

@@ -578,6 +578,8 @@ const queuedCommands = new Set(commandPolicy.queued);
 
 const queuedWithPrompt = new Set(commandPolicy.queuedWithPrompt);
 
+const imageCommands = new Set(commandPolicy.withImages);
+
 const disabledCommands = new Map(Object.entries(commandPolicy.disabled));
 
 const commandName = text => /^\/(\S+)/.exec(text)?.[1];
@@ -603,15 +605,15 @@ function bindFollowUpDrain(session) {
   };
 }
 
-function executeQueuedCommand(session, text, images) {
-  return afterReload(session, () => executeQueuedCommandReady(session, text, images));
+function executePluginCommand(session, text, images) {
+  return afterReload(session, () => executePluginCommandReady(session, text, images));
 }
 
-async function executeQueuedCommandReady(session, text, images) {
+async function executePluginCommandReady(session, text, images) {
   const ctx = session.extensionRunner.createCommandContext();
   const signal = ctx.signal;
   const command = text.split(/\s/, 1)[0].slice(1);
-  const request = { command: "run_queued_command", payload: { command, args: text.slice(command.length + 1).trim(), images }, ctx };
+  const request = { command: "run_command", payload: { command, args: text.slice(command.length + 1).trim(), images }, ctx };
 
   try {
     Object.getOwnPropertyDescriptor(globalThis, Symbol.for("piop.runtime-bridge")).value(request);
@@ -645,7 +647,7 @@ async function consumeQueuedCommands(session, messages, output) {
       break;
     }
 
-    const consumed = await executeQueuedCommand(session, text, message.content.filter(part => part.type === "image"));
+    const consumed = await executePluginCommand(session, text, message.content.filter(part => part.type === "image"));
 
     if (consumed && isQueuedUserMessage(message)) output({ type: "queue_consumed", queueId: message.piopQueueId, sessionId: session.sessionManager.getSessionId(), entryId: null });
   }
@@ -766,6 +768,13 @@ async function main() {
     if (disabled !== undefined) throw new Error(disabled);
 
     if (this[runningCompaction]) await this[runningCompaction];
+
+    if (imageCommands.has(commandName(text))) {
+      await executePluginCommand(this, text, options?.images ?? []);
+      options?.preflightResult?.("handled");
+
+      return;
+    }
 
     if (queuedCommand(text) && this.isStreaming) {
       return this._queueFollowUp(text, options?.images).then(() => options?.preflightResult?.("queued"));

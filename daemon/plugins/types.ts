@@ -2,7 +2,7 @@ import type { SettingsContribution } from './settings';
 
 export type CoreExtension = 'session' | 'context-bar';
 
-export type CommandDelivery = 'immediate' | 'queued' | 'queuedWithPrompt';
+export type CommandDelivery = 'immediate' | 'immediateWithImages' | 'queued' | 'queuedWithPrompt';
 
 export interface PluginExtension {
   after: CoreExtension;
