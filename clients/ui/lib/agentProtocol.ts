@@ -4,6 +4,8 @@ import { decodeBase64, encodeBase64 } from "./base64";
 
 export const DEFINED_AGENTS_STATUS_KEY = "pi-define-agents";
 
+export const OPEN_CHAT_AGENT = "__piop_chat_agent__";
+
 export function encodeAgentValue(value: JSONType | AgentConfig | DefinedAgentsCapability) {
   const bytes = new TextEncoder().encode(JSON.stringify(value));
 

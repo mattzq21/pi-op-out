@@ -5,7 +5,7 @@ import { nativeCall } from "./nativeCall";
 import { listen } from "./platform";
 import type { AgentConfig, AgentProfile, DefinedAgentsCapability } from "../types";
 
-const agentStatusSchema = z.object({ version: z.number().default(1), active: z.string(), locked: z.boolean().optional(), saved: z.boolean().optional(), unavailable: z.boolean().optional() });
+const agentStatusSchema = z.object({ version: z.number().default(1), active: z.string(), saved: z.boolean().optional(), unavailable: z.boolean().optional() });
 
 const savedSchema = z.object({ revision: z.string(), warnings: z.array(z.string()) });
 

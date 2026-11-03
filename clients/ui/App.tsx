@@ -57,12 +57,13 @@ const ExtensionDialog = lazy(() => import("./components/ExtensionDialog").then(m
 
 const ProjectDialog = lazy(() => import("./components/ProjectDialog").then(module => ({ default: module.ProjectDialog })));
 
+const ChatAgentPane = lazy(() => import("./components/ChatAgentPane").then(module => ({ default: module.ChatAgentPane })));
 const SplitChatPane = lazy(() => import("./components/SplitChatPane").then(module => ({ default: module.SplitChatPane })));
 
 const SubagentPane = lazy(() => import("./components/SubagentPane").then(module => ({ default: module.SubagentPane })));
 
 export default function App(props: { suppressConnectionNotices?: boolean } = {}) {
- const { registerCommandRunner, forkSourceNameOf, modelVisibility, drafts, isArchiving, missingDirectoryDialog, archivesOpen, setArchivesOpen, runtimePool, transport, view, setView, activeConversationKey, chatViewKey, runningSessions, unseenSessions, pendingSettingsCount, chatSession, sessions, settings, settingsSaving, debugModeSaving, setSettingsDirty, panelOpen, setPanelOpen, query, setQuery, connected, error, setError, createGroupRequest, setCreateGroupRequest, handleCreateGroup, newChatRequest, activeHostId, codexUsage, anthropicUsage, usageClock, opencodeGoBadge, opencodexUsage, usageError, refreshUsage, refreshingUsage, setDialogs, notices, setNotices, addNotice, queueExtensionDialog, resolveExtensionDialog, closeTransportDialogs, releaseSplitTransport, statuses, renameSession, setRenameSession, projectOpen, setProjectOpen, projectOpenRef, uploadsByTransport, setComposerUploads, splitPane, subagentPane, hasSidePane, sidepane, listedRunningSessions, archiveSession, mainComposerFocusRequest, splitComposerFocusRequest, mainQueueHoldRequest, splitQueueHoldRequest, activePane, setActivePane, terminals, terminalOpen, terminalLocationState, startTerminal, addTerminal, selectTerminal, deleteTerminal, reconnectPending, splitSessionId, composerState, terminalViewKey, syncSessionIndex, composerControls, resolveHomeDirectory, send, respondToSplitRequest, closeSplitPane, openSubagent, canLeaveSettings, branch, forkSourceName, forkPoints, openForkSource, revealEntryId, entryRevealed, startNewSession, newSession, clearChatProject, chooseChatHost, selectSession, setModel, setThinking, abortInteraction, saveSettings, setAgent, openProject, chooseChatProject, sessionAction, draftChangeFor, uploadsChangeFor, toggleComposerTerminal, toggleDebugMode, toggleDebugFeature, reconnectMain, extensionStateIsCurrent, activeDialog, projectCwd, mobileSidebarOpen, sidebar, chatAgentProps, chatModels, chatCommands, chatWidgets, composerView } = createAppConversations(() => { void ChatView.preload().catch(() => undefined); }, owner => transcriptCache.prepare(owner));
+ const { registerCommandRunner, forkSourceNameOf, modelVisibility, drafts, isArchiving, missingDirectoryDialog, archivesOpen, setArchivesOpen, runtimePool, transport, view, setView, activeConversationKey, chatViewKey, runningSessions, unseenSessions, pendingSettingsCount, chatSession, sessions, settings, settingsSaving, debugModeSaving, setSettingsDirty, panelOpen, setPanelOpen, query, setQuery, connected, error, setError, createGroupRequest, setCreateGroupRequest, handleCreateGroup, newChatRequest, activeHostId, codexUsage, anthropicUsage, usageClock, opencodeGoBadge, opencodexUsage, usageError, refreshUsage, refreshingUsage, setDialogs, notices, setNotices, addNotice, queueExtensionDialog, resolveExtensionDialog, closeTransportDialogs, releaseSplitTransport, statuses, renameSession, setRenameSession, projectOpen, setProjectOpen, projectOpenRef, uploadsByTransport, setComposerUploads, splitPane, subagentPane, agentPane, openChatAgentRequest, hasSidePane, sidepane, listedRunningSessions, archiveSession, mainComposerFocusRequest, splitComposerFocusRequest, mainQueueHoldRequest, splitQueueHoldRequest, activePane, setActivePane, terminals, terminalOpen, terminalLocationState, startTerminal, addTerminal, selectTerminal, deleteTerminal, reconnectPending, splitSessionId, composerState, terminalViewKey, syncSessionIndex, composerControls, resolveHomeDirectory, send, respondToSplitRequest, closeSplitPane, openSubagent, canLeaveSettings, branch, forkSourceName, forkPoints, openForkSource, revealEntryId, entryRevealed, startNewSession, newSession, clearChatProject, chooseChatHost, selectSession, setModel, setThinking, abortInteraction, saveSettings, setAgent, openProject, chooseChatProject, sessionAction, draftChangeFor, uploadsChangeFor, toggleComposerTerminal, toggleDebugMode, toggleDebugFeature, reconnectMain, extensionStateIsCurrent, activeDialog, projectCwd, mobileSidebarOpen, sidebar, chatAgentProps, chatModels, chatCommands, chatWidgets, composerView } = createAppConversations(() => { void ChatView.preload().catch(() => undefined); }, owner => transcriptCache.prepare(owner));
   const transcriptCache = createTranscriptCache(owner => {
     const session = useSessionMemory(() => owner, () => ({ model: null, thinkingLevel: "off", isStreaming: false, sessionId: "", messageCount: 0, pendingMessageCount: 0 }));
     const hostId = owner.currentHostId();
@@ -74,7 +75,7 @@ export default function App(props: { suppressConnectionNotices?: boolean } = {})
   const pluginPane = createPluginWorkspace(conversationSource(activeHostId, chatSession));
 
   const closeTab = async (tab: SidepaneTab) => {
-    if (tab.kind === "subagent") { sidepane.forget(tab.key); return; }
+    if (tab.kind === "subagent" || tab.kind === "agent") { sidepane.forget(tab.key); return; }
 
     if (sidepane.workingTree(tab.session) && !window.confirm(`“${tab.label}” or one of its subagents is working. Stop them and archive it?`)) return;
     await archiveSession(tab.session);
@@ -130,7 +131,7 @@ export default function App(props: { suppressConnectionNotices?: boolean } = {})
           onOpenTerminal={() => { const current = currentPane();
 
             if (current) toggleComposerTerminal("split", { sessionKey: splitConversationKey(current), cwd: current.session.cwd, hostId: current.session.hostId ?? "local" }); }}
-          onDialogRequest={queueExtensionDialog} onDialogResolved={resolveExtensionDialog} onDialogTransportClosed={closeTransportDialogs}
+          onDialogRequest={queueExtensionDialog} onChatAgentRequest={openChatAgentRequest} onDialogResolved={resolveExtensionDialog} onDialogTransportClosed={closeTransportDialogs}
           onReleaseTransport={releaseSplitTransport} initialPrompt={pane.request?.initialPrompt} initialImages={pane.request?.initialImages} background={pane.request?.background}
           onInitialClaim={() => sidepane.finishOpening(pane.key)} onReady={() => finishOpening({ value: "opened" })}
           onFailed={(cause, unseen) => { finishOpening({ cancelled: true }); if (unseen) addNotice({ title: `Could not start “${pane.session.name}”`, message: cause instanceof Error ? cause.message : String(cause) }); }}
@@ -144,6 +145,7 @@ export default function App(props: { suppressConnectionNotices?: boolean } = {})
         <Sidepane open={sideVisible() && view() === "chat"}>
           <SidepaneTabs tabs={sidepane.tabs()} selected={sidepane.selected()?.key} error={pluginPane.error() || undefined} onSelect={key => { sidepane.select(key); setActivePane("split"); }} onClose={tab => void closeTab(tab)}>
             {renderSplitChatPane()}
+            <Show when={agentPane()} keyed>{tab => <ChatAgentPane session={tab.session} runtimePool={runtimePool()} settings={required(settings())} agentNames={chatAgentProps().agents.map(agent => agent.name)} onActivate={() => setActivePane("split")} />}</Show>
             <Show when={subagentPane()} keyed>{(target) => <SubagentPane target={target} debug={debugView(required(settings()))} onActivate={() => setActivePane("split")} onShowArchive={() => { setArchivesOpen(true); setPanelOpen(true); }} />}</Show>
           </SidepaneTabs>
         </Sidepane>

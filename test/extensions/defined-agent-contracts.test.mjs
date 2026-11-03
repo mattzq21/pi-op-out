@@ -281,6 +281,25 @@ for (const agentFirst of [false, true]) {
   });
 }
 
+test('/agent shows the fast mode the conversation uses, follows composer changes and applies an explicit fast mode choice', async t => {
+  const f = await agentFixture(t, { config: chosenConfig(), model: fastModel, models: [fastModel], realFastMode: { agentFirst: false, catalog: fastCatalog } });
+  await f.load(); await f.start();
+  assert.equal(await f.fastEnabled(), true);
+  const session = () => { const request = {}; f.pi.events.emit('piop:fast-mode:session', request); return request.session; };
+  f.statuses.delete('pi-define-agents');
+  await session().setEnabled(false);
+  assert.ok(f.statuses.get('pi-define-agents'), 'a composer fast mode change tells open agent panes');
+  const chat = await f.rpc('chat_agent');
+  assert.equal(chat.agent.fastMode, false);
+
+  await f.rpc('set_chat_agent', { ...chat, agent: { ...chat.agent, description: 'Edited' } });
+  assert.equal(await f.fastEnabled(), false);
+  const edited = await f.rpc('chat_agent');
+  await f.rpc('set_chat_agent', { ...edited, agent: { ...edited.agent, fastMode: true } });
+  assert.equal(await f.fastEnabled(), true);
+  assert.equal((await f.rpc('chat_agent')).agent.fastMode, true);
+});
+
 test('a resumed session keeps its saved agent, skills and fast mode choice instead of the default agent', async t => {
   const f = await agentFixture(t, {
     config: chosenConfig(), model: fastModel, models: [fastModel], realFastMode: { agentFirst: false, catalog: fastCatalog },
@@ -344,7 +363,6 @@ test('session restore uses the latest state, ignores unrelated custom records, a
 
   await f.load(); await f.start(); assert.equal(f.capability().active, 'missing'); assert.equal(f.capability().locked, true);
   assert.deepEqual(await f.input('hello'), { action: 'handled' });
-  await assert.rejects(f.select('general'), /agent is fixed/);
   assert.equal(f.capability().unavailable, true);
   assert.deepEqual(f.pi.getActiveTools(), []);
   assert.deepEqual(JSON.parse(f.statuses.get('piop-input-rejected')), { text: 'hello', error: 'Agent "missing" is unavailable. This conversation cannot start.' });

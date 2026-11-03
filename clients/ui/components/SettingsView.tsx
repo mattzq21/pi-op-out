@@ -1,15 +1,13 @@
 import { mergeModelIds } from "../lib/modelVisibility";
-import { RefreshSkills, RefreshTools } from "./RefreshResources";
 import { stableSnapshot, settingsSnapshot, agentEditsSnapshot, settingKeys } from "../lib/settingsSnapshots";
 import { applyClientPreferences, clientPreferenceKeys, clientPreferences, ClientPreferenceConflictError, mergeClientPreferences, SettingsSaveError } from "../lib/clientPreferenceMerge";
 import { AgentsSavedError, previewAgentPrompt } from "../lib/hostAgents";
 import { PromptPreviewDialog } from "./PromptPreviewDialog";
 import { required } from "../lib/required";
 import { hostFastModels, rejectsFastMode } from "../lib/fastModels";
-import { AgentSkills, AgentTools } from "./AgentTools";
-import { AgentExtensions } from "./AgentExtensions";
+import { AgentFields, agentEffortLevels } from "./AgentFields";
 import { agentProfileSchema } from "../lib/agentSchemas";
-import { McpSettings, type McpEditorDraft } from "./McpSettings";
+import type { McpEditorDraft } from "./McpSettings";
 import { AgentTransferDialog } from "./AgentTransfer";
 import { mergeImportedAgents } from "../lib/agentTransfer";
 import { CapInput } from "./CapInput";
@@ -20,7 +18,7 @@ import { createComputed, createEffect, createMemo, createSignal, For, Index, Sho
 import { Dynamic } from "solid-js/web";
 import { createDependencyEffect, createMemoFields, createRef, type JSXElement } from "../lib/solid";
 
-import { ArrowRightLeft, Bot, Check, ChevronDown, CircleGauge, CirclePlus, Clipboard, Copy, Cpu, Download, HardDrive, Keyboard, Pencil, PlugZap, RotateCcw, Save, ScrollText, Search, Server, Settings2, ShieldCheck, Trash2, Upload, X, Zap } from "lucide-solid";
+import { ArrowRightLeft, Bot, Check, ChevronDown, CircleGauge, CirclePlus, Clipboard, Copy, Cpu, Download, HardDrive, Keyboard, Pencil, PlugZap, RotateCcw, Save, ScrollText, Search, Server, Settings2, ShieldCheck, Trash2, Upload, X } from "lucide-solid";
 import { uid } from "../lib/content";
 import { keybindDefinitions, shortcutError, shortcutFromEvent, shortcutsConflict } from "../lib/keybindings";
 import { allDefaultKeybindings, pluginKeybindSections } from "../plugins/keybinds";
@@ -64,13 +62,6 @@ export const visibleClientSections = () => sections.filter(item => clientSection
 export const daemonSections = (hostId: string) => sections.filter((item) => !clientSections.has(item.id) && (item.id !== "hosts" || (hostId === "local" && !isMobile)) && (!item.plugin || pluginSettingsEnabled(hostId, item.id)));
 
 const isBuiltInAgent = (agent: AgentProfile) => agent.name === "general";
-
-type CodemodeChoice = NonNullable<AgentProfile["codemode"]>;
-const NEXT_CODEMODE: Record<CodemodeChoice, CodemodeChoice> = { on: "off", off: "on" };
-const CODEMODE_HINTS: Record<CodemodeChoice, string> = {
-  on: "ON: the agent calls tools directly or from codemode scripts.",
-  off: "OFF: the agent calls every tool directly, without codemode.",
-};
 
 const firstAgentIndex = (agents: AgentProfile[]) => agents.length ? 0 : -1;
 
@@ -116,8 +107,6 @@ export function SettingsView(props: SettingsViewProps) {
   const providerHostId = createMemo(() => settingsProps().providerHostId);
   const [saving, setSaving] = createSignal(false);
   const [saveRevision, setSaveRevision] = createSignal(0);
-  const [toolQuery, setToolQuery] = createSignal("");
-  const [skillQuery, setSkillQuery] = createSignal("");
   const [mcpDrafts, setMcpDrafts] = createSignal<Array<McpEditorDraft | undefined>>([]);
   const mcpError = createMemo(() => mcpDrafts().find(item => item?.error)?.error);
   createDependencyEffect(() => {
@@ -191,8 +180,9 @@ export function SettingsView(props: SettingsViewProps) {
     if (collisions) setSettingsConflict(true);
   }, () => [settingsProps().settings, saving()]);
 
+  const [resetRevision, setResetRevision] = createSignal(0);
   const reloadLatest = () => {
-    retainedSaveError.current = false; setSaveError(undefined);
+    retainedSaveError.current = false; setSaveError(undefined); setResetRevision(value => value + 1);
     setDraft(structuredClone(settingsProps().settings));
     setBaselineValue(structuredClone(settingsProps().settings));
     setMcpDrafts([]);
@@ -307,7 +297,6 @@ export function SettingsView(props: SettingsViewProps) {
   const inheritedNames = createMemo(() => new Set((settingsProps().inheritedAgents ?? []).map(item => item.name)));
   const scopeOptions = createMemo(() => [{ value: "", label: "Global", search: "Global", group: 0, italic: true }, ...settingsProps().agentScopes.map(project => ({ value: project.cwd, label: project.name, search: `${project.name} ${project.cwd}`, group: 1 }))]);
   const globalAgents = () => settingsProps().inheritedAgents ?? agentDrafts();
-  const agentFastModeEnabled = createMemo(() => (agent()?.fastMode ?? draft().defaultFastMode));
   const updateAgent = (value: Partial<AgentProfile>) => !showingGlobal() && setAgentDrafts((current) => current.map((item, index) => index === agentIndex() ? { ...item, ...value } : item));
 
   const renamedAccess = (items: AgentProfile[], from: string, to?: string) => items.map(item => {
@@ -356,16 +345,7 @@ export function SettingsView(props: SettingsViewProps) {
 
   const removedDefault = agent().isDefault; const next = renamedAccess(agentDrafts().filter((_, index) => index !== agentIndex()), agent().name).map(item => removedDefault && isBuiltInAgent(item) ? { ...item, isDefault: true } : item); setMcpDrafts(current => Array.from(current).filter((_, index) => index !== agentIndex())); setAgentDrafts(next); setAgentIndex(firstAgentIndex(next)); };
 
-  const agentLevels = (item: AgentProfile) => {
-    const model = settingsProps().models.find((model) => `${model.provider}/${model.id}` === (item.model));
-    const levels = ["off", "minimal", "low", "medium", "high", "xhigh", "max"];
-
-    if (!model) return levels;
-
-    if (!model.reasoning) return ["off"];
-
-    return levels.filter((level) => model.thinkingLevelMap?.[level] !== null && (!(level === "xhigh" || level === "max") || model.thinkingLevelMap?.[level] !== undefined));
-  };
+  const agentLevels = (item: AgentProfile) => agentEffortLevels(settingsProps().models, item);
 
   const hostFastModelSnapshot = createMemo(() => hostFastModels(settingsProps().providerHostId)());
   const supportsFastMode = (model: string) => !rejectsFastMode(hostFastModelSnapshot(), model);
@@ -487,7 +467,7 @@ export function SettingsView(props: SettingsViewProps) {
 
   const renderSettingsHeader = () => {
     const renderSaveControls = () => {
-      const renderDiscardChanges = () => (dirty() && !saving() && <button class="discard-button" onClick={reloadLatest}><X size={15} />Discard changes</button>);
+      const renderDiscardChanges = () => ((dirty() || Object.keys(capErrors()).length > 0) && !saving() && <button class="discard-button" onClick={reloadLatest}><X size={15} />Discard changes</button>);
       const renderPendingSettingsCount = () => (settingsProps().pendingSettingsCount > 0 && !dirty() && <small role="status">Saved · waiting for {settingsProps().pendingSettingsCount} session{settingsProps().pendingSettingsCount === 1 ? "" : "s"} to apply changes</small>);
       const renderSaveButton = () => (conflict() ? <small role="alert">{saveError() || "Settings changed in another window."} <button disabled={saving()} onClick={reloadLatest}>Reload latest settings and discard local edits</button></small> : (saveError() || validationError() || formValidation().fastModeValidationError || durabilityError()) && <small role="alert">{saveError() || validationError() || formValidation().fastModeValidationError || durabilityError()}</small>);
 
@@ -531,34 +511,9 @@ export function SettingsView(props: SettingsViewProps) {
           const renderAgentFields = () => {
             const renderAgentNameRow = () => (<div class="agent-name-row"><label class="field"><span>Agent name</span><input aria-label="Agent name" aria-invalid={!isBuiltInAgent(agent()) && (!agent().name.trim() || agent().name.trim().toLowerCase() === "general" || inheritedNames().has(agent().name) || nameValidation().duplicateAgentNames.has(agent().name.trim().toLowerCase()))} disabled={isBuiltInAgent(agent())} value={agent().name} onInput={(event) => { renameAgent(event.currentTarget.value.replace(/[^a-zA-Z0-9_-]/g, "")); event.currentTarget.value = agent().name; }} /></label><IconButton label={`Remove ${agent().name}`} disabled={isBuiltInAgent(agent())} onClick={removeAgent}><Trash2 size={15} /></IconButton></div>);
 
-            const renderAgentDefaults = () => {
-              const unavailableAlias = () => { const aliases = draft().modelAliases ?? {}; return Object.hasOwn(aliases, agent().model) ? aliases[agent().model] : undefined; };
-              const agentModelOptions = () => [
-                { value: "", label: "Use session model", search: "" },
-                ...(agent().model && !agentValidation().availableModelIds.has(agent().model) ? [{ value: agent().model, label: `Unavailable: ${unavailableAlias() || agent().model}`, search: `${unavailableAlias() ?? ""} ${agent().model}`, disabled: true }] : []),
-                ...settingsProps().models
-                  .map(model => { const id = `${model.provider}/${model.id}`; return { value: id, label: draft().modelAliases?.[id] || model.name || model.id, search: `${draft().modelAliases?.[id] ?? ""} ${model.name ?? ""} ${id}`, group: agentValidation().hiddenModels.has(id) ? 1 : 0 }; })
-                  .sort((left, right) => left.group - right.group),
-              ];
-              const renderAgentModel = () => (<div class="field"><span>Default model</span><FilterSelect label="Agent default model" filterPlaceholder="Filter by alias, name or ID" value={agent().model} options={agentModelOptions()} onChange={model => updateAgent({ model })} /></div>);
-              const renderAgentFastMode = () => (<div class="field general-fast-mode" data-tooltip={agent().fastMode === undefined ? "Using the fallback fast mode setting" : "Fast mode default for this agent"}><span>Fast mode</span><div><button type="button" class={`fast-mode-indicator${agentFastModeEnabled() ? " active" : ""}`} aria-label="Agent fast mode" aria-description={agent().fastMode === undefined ? "Using fallback setting" : agentFastModeEnabled() ? "Fast mode on" : "Fast mode off"} aria-pressed={agentFastModeEnabled()} aria-invalid={agent().fastMode === true && !supportsFastMode(agent().model)} onClick={() => updateAgent({ fastMode: !agentFastModeEnabled() })}><Zap size={22} strokeWidth={1.5} fill={agentFastModeEnabled() ? "currentColor" : "none"} aria-hidden="true" /></button></div></div>);
-              const renderAgentEffort = () => (<label class="field"><span>Default effort</span><select aria-label="Agent default effort" aria-invalid={Boolean(!agentValidation().thinkingDiscoveryUnavailable && agent().effort && !agentLevels(agent()).includes(agent().effort))} value={agent().effort} onChange={(event) => updateAgent({ effort: event.target.value })}><option value="">Use fallback ({draft().defaultThinking})</option>{agent().effort && !agentLevels(agent()).includes(agent().effort) && <option value={agent().effort} disabled>Unavailable: {agent().effort}</option>}{<Key each={agentLevels(agent())} by={(level) => level}>{(level, _index) => <option  value={level()}>{level().charAt(0).toUpperCase() + level().slice(1)}</option>}</Key>}</select></label>);
+            const renderAgentPromptFiles = () => (<><label class="field"><span>System prompt file</span><input aria-label="System prompt file" aria-invalid={!agent().path_systemprompt?.trim()} placeholder="Path relative to agent config.json, or absolute path" value={agent().path_systemprompt ?? ""} onInput={(event) => updateAgent({ path_systemprompt: event.target.value })} /></label><label class="field"><span>Agent prompt file</span><input aria-label="Agent prompt file" placeholder="Optional path to an agent prompt file" value={agent().path_agent_prompt ?? ""} onInput={(event) => updateAgent({ path_agent_prompt: event.target.value })} /></label></>);
 
-              const renderAgentContextCap = () => (<label class="field"><span>Context cap</span><CapInput label="Agent context cap" placeholder="Inherit" value={agent().contextWindowCap} onChange={contextWindowCap => updateAgent({ contextWindowCap })} onError={capError("Agent context cap")} /></label>);
-
-              return (<div class="agent-defaults">{renderAgentModel()}{renderAgentFastMode()}{renderAgentEffort()}{renderAgentContextCap()}</div>);
-            };
-
-            const renderAgentPromptFiles = () => (<label class="field"><span>System prompt file</span><input aria-label="System prompt file" aria-invalid={!agent().path_systemprompt?.trim()} placeholder="Path relative to agent config.json, or absolute path" value={agent().path_systemprompt ?? ""} onInput={(event) => updateAgent({ path_systemprompt: event.target.value })} /></label>);
-
-            return (<Show when={agent()}><fieldset class="agent-fields" disabled={showingGlobal()}><div class="agent-fields-body"><div class="agent-fields-main">{renderAgentNameRow()}
-              <label class="field"><span>Description</span><textarea class="agent-description" aria-label="Agent description" maxLength={500} rows={2} placeholder="What this agent is for. Other agents see it when they choose an agent to start." value={agent().description ?? ""} onInput={(event) => updateAgent({ description: event.currentTarget.value || undefined })} /></label>
-              {renderAgentDefaults()}
-              <div class="agent-usage"><div class="agent-usage-option"><span>Spawnable as subagent</span><Toggle label="Spawnable as subagent" checked={agent().allow_as_subagent !== false} onChange={allow_as_subagent => updateAgent({ allow_as_subagent })} /></div><div class="agent-usage-option"><span>Spawnable as peer</span><Toggle label="Spawnable as peer" checked={agent().allow_as_peer !== false} onChange={allow_as_peer => updateAgent({ allow_as_peer })} /></div></div>
-              {renderAgentPromptFiles()}<label class="field"><span>Agent prompt file</span><input aria-label="Agent prompt file" placeholder="Optional path to an agent prompt file" value={agent().path_agent_prompt ?? ""} onInput={(event) => updateAgent({ path_agent_prompt: event.target.value })} /></label>
-              <AgentExtensions paths={agent().extensions ?? []} onChange={extensions => updateAgent({ extensions })} /><McpSettings value={agent().mcpServers} draft={mcpDrafts()[agentIndex()]} onDraft={value => !showingGlobal() && setMcpDrafts(current => agentDrafts().map((_, index) => index === agentIndex() ? value : current[index]))} onChange={mcpServers => updateAgent({ mcpServers })} /></div>
-              <div class="agent-fields-tools"><AgentAllowlist title="Tools" query={toolQuery()} onQuery={setToolQuery} titleAction={<><RefreshTools hostId={providerHostId()} onChange={tools => patch({ tools })} /><button type="button" class="agent-codemode" data-mode={agent().codemode ?? "on"} aria-label={"Codemode " + (agent().codemode ?? "on").toUpperCase()} data-tooltip={CODEMODE_HINTS[agent().codemode ?? "on"]} onClick={() => updateAgent({ codemode: NEXT_CODEMODE[agent().codemode ?? "on"] })}>Codemode {(agent().codemode ?? "on").toUpperCase()}</button></>}><AgentTools tools={draft().tools} query={toolQuery()} selected={agent().tools} agent={agent()} agentNames={[...settingsProps().inheritedAgents ?? [], ...agentDrafts()].map(item => item.name)} onChange={tools => updateAgent({ tools })} onLimitsChange={updateAgent} /></AgentAllowlist></div><div class="agent-fields-more"><AgentAllowlist title="Skills" query={skillQuery()} onQuery={setSkillQuery} titleAction={<RefreshSkills hostId={providerHostId()} skills={draft().skills} onChange={skills => patch({ skills })} />}><AgentSkills skills={draft().skills} query={skillQuery()} selected={agent().skills} onChange={skills => updateAgent({ skills })} /></AgentAllowlist></div></div>
-            </fieldset></Show>);
+            return (<Show when={agent()}><AgentFields agent={agent()} update={updateAgent} disabled={showingGlobal()} header={renderAgentNameRow()} prompts={renderAgentPromptFiles()} hostId={providerHostId()} models={settingsProps().models} modelAliases={draft().modelAliases ?? {}} hiddenModels={agentValidation().hiddenModels} defaultThinking={draft().defaultThinking} defaultFastMode={draft().defaultFastMode} supportsFastMode={supportsFastMode} tools={draft().tools} skills={draft().skills} onCatalog={patch} agentNames={[...settingsProps().inheritedAgents ?? [], ...agentDrafts()].map(item => item.name)} mcpDraft={mcpDrafts()[agentIndex()]} onMcpDraft={value => !showingGlobal() && setMcpDrafts(current => agentDrafts().map((_, index) => index === agentIndex() ? value : current[index]))} onCapError={capError("Agent context cap")} /></Show>);
           };
 
           return (<>{moveError() && <p role="alert">Could not move the agent: {moveError()}</p>}{!agentConfig() && <p role={settingsProps().resourceError ? "alert" : "status"}>{settingsProps().resourceError ? "Could not load agent definitions: " + required((settingsProps().resourceError)) : "Loading agent definitions…"}</p>}
@@ -602,7 +557,7 @@ export function SettingsView(props: SettingsViewProps) {
     };
 
     return (<div class={settingsProps().embedded ? "settings-layout settings-layout-embedded" : "settings-layout"}>{!settingsProps().embedded && <nav class="settings-nav"><label class="search settings-search"><Search size={15} /><input autofocus type="search" aria-label="Search settings" placeholder="Search settings" value={settingsQuery()} onInput={(event) => setSettingsQuery(event.target.value)} onKeyDown={(event) => { if (event.key === "Escape") { event.stopPropagation(); setSettingsQuery(""); } }} /></label>{<Key each={formValidation().matchingSections} by={(item) => item.id}>{(item, _index) => <button  class={formValidation().visibleSection === item().id ? "active" : ""} aria-current={formValidation().visibleSection === item().id ? "page" : undefined} onClick={() => setSection(item().id)}><Dynamic component={item().icon} size={16} /><span>{item().label}</span></button>}</Key>}</nav>}
-      {renderSettingsContent()}</div>);
+      <Rerun on={resetRevision}>{(_reset) => renderSettingsContent()}</Rerun></div>);
   };
 
   const renderSettingsSaveFab = () => (dirty() && pastHeader() && <div class="settings-save-fab"><button class={dirty() && !saving() && formValidation().formValid ? "primary-button needs-save" : "primary-button"} disabled={saving() || conflict() || !dirty() || !formValidation().formValid} onClick={() => void save()}><Save size={15} />{saveLabel()}</button></div>);
@@ -632,10 +587,6 @@ function MoveAgentButton(componentProps: { destinations: Array<{ name: string; c
 }
 
 function SettingsSection(componentProps: { title: string; description?: string; headerAction?: JSXElement; children: JSXElement }) { return <div class="settings-section"><div class="section-title"><div><h2>{componentProps.title}</h2>{componentProps.description && <p>{componentProps.description}</p>}</div>{componentProps.headerAction}</div>{componentProps.children}</div>; }
-
-function AgentAllowlist(componentProps: { title: string; titleAction?: JSXElement; query: string; onQuery: (query: string) => void; children: JSXElement }) {
-  return <fieldset class="agent-allowlist"><legend><span>{componentProps.title}</span>{componentProps.titleAction}<span class="agent-allowlist-line" /><label class="agent-allowlist-search"><Search size={14} aria-hidden="true" /><input type="search" placeholder="Search" aria-label={`Search ${componentProps.title.toLowerCase()}`} value={componentProps.query} onInput={event => componentProps.onQuery(event.currentTarget.value)} /></label></legend><div>{componentProps.children}</div></fieldset>;
-}
 
 function SettingRow(componentProps: { icon: JSXElement; title: string; description: string; children: JSXElement }) { return <div class="setting-row"><span class="setting-icon">{componentProps.icon}</span><span><strong>{componentProps.title}</strong><small>{componentProps.description}</small></span><div>{componentProps.children}</div></div>; }
 
