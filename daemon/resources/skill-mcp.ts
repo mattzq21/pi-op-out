@@ -1,7 +1,7 @@
 import { readFileSync, realpathSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
 import { homedir } from "node:os";
-import { randomUUID } from "node:crypto";
+import { isDeepStrictEqual } from "node:util";
 import { z } from "zod";
 import type { ExtensionAPI, ExtensionContext, McpServerConfig } from "@earendil-works/pi-coding-agent";
 import { skillMcpServerSchema, skillMcpServersSchema } from "../../extensions/piop-define-agents/mcp-schema.ts";
@@ -11,10 +11,25 @@ import type { AppRequest } from "../../extensions/piop-define-agents/contracts.t
 const ENTRY = "piop-skill-mcp";
 const STATUS = "piop-skill-mcp";
 const manifestSchema = z.object({ mcpServers: skillMcpServersSchema }).strict();
-const savedSchema = z.array(z.object({ file: z.string(), servers: z.array(z.object({ alias: z.string(), name: z.string().regex(/^skill_[a-zA-Z0-9_]+$/), config: skillMcpServerSchema })) }));
+const savedSchema = z.array(z.object({ file: z.string(), servers: z.array(z.object({ alias: z.string(), name: z.string().regex(/^[a-zA-Z0-9_]+$/), config: skillMcpServerSchema })) }));
 type Server = { alias: string; name: string; config: McpServerConfig & { exposure: keyof typeof REACH }; state: "connecting" | "connected" | "failed"; error?: string; connection?: object };
 type Connection = { name: string; state: string; error?: string };
 const REACH = { direct: "", codemode: " (call from codemode scripts)", deferred: " (find with tool_search)" };
+const configSchema = z.object({ mcpServers: z.record(z.string(), z.unknown()).optional() });
+const namespace = (name: string) => name.replaceAll("-", "_");
+
+// Pi prefers servers from its own mcp.json files over registered ones with the same name. Pi skips invalid files.
+function configuredNames(paths: string[]) {
+  return paths.flatMap(path => {
+    let content: string;
+    try { content = readFileSync(path, "utf8"); }
+    catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") return []; throw error; }
+    let parsed;
+    try { parsed = configSchema.safeParse(JSON.parse(content.replace(/^\uFEFF/, ""))); } catch { return []; }
+    return parsed.success ? Object.keys(parsed.data.mcpServers ?? {}) : [];
+  });
+}
+
 const SKILL_BLOCK = /<skill name="[^"]+" location="([^"]+)">\n[\s\S]*?\n<\/skill>(?:\n\n|$)/y;
 
 function invokedSkillPaths(prompt: string) {
@@ -28,27 +43,39 @@ function invokedSkillPaths(prompt: string) {
   return paths;
 }
 
-export function skillMcp(pi: ExtensionAPI, ready: (ctx: ExtensionContext) => Promise<void>, wait: () => Promise<void>) {
+export function skillMcp(pi: ExtensionAPI, ready: (ctx: ExtensionContext) => Promise<void>, wait: () => Promise<void>, mcpConfigs: (ctx: ExtensionContext) => string[]) {
   const loaded = new Map<string, Map<string, Server>>();
   const registered = new Set<string>();
   const changed = new Set<() => void>();
   let codemode = true, generation = 0;
   let context: ExtensionContext | undefined;
   let statusText: string | undefined;
-  const all = () => [...loaded.values()].flatMap(servers => [...servers.values()]);
+  // Skills that start the same server with the same settings share one Server object.
+  const all = () => [...new Set([...loaded.values()].flatMap(servers => [...servers.values()]))];
   const publish = () => {
-    const value = JSON.stringify([...loaded].flatMap(([file, servers]) => [...servers.values()].map(server => ({ name: server.name, label: `${basename(dirname(file))}: ${server.alias}`, state: server.state, ...(server.error ? { error: server.error } : {}) }))));
+    const users = new Map<Server, string[]>();
+    for (const [file, servers] of loaded) for (const server of servers.values()) users.set(server, [...users.get(server) ?? [], basename(dirname(file))]);
+    const value = JSON.stringify([...users].map(([server, skills]) => ({ name: server.name, label: `${skills.join(", ")}: ${server.alias}`, state: server.state, ...(server.error ? { error: server.error } : {}) })));
     if (context && value !== statusText) { context.ui.setStatus(STATUS, value === "[]" ? undefined : value); statusText = value; }
     for (const notify of changed) notify();
   };
   const save = () => pi.appendEntry(ENTRY, [...loaded].map(([file, servers]) => ({ file, servers: [...servers.values()].map(({ alias, name, config }) => ({ alias, name, config })) })));
   const failed = (server: Server, error: unknown) => { server.state = "failed"; server.error = error instanceof Error ? error.message : String(error); publish(); };
-  const register = (server: Server) => {
+  const conflict = (server: Pick<Server, "name">, ctx: ExtensionContext) => {
+    const key = namespace(server.name);
+    const taken = all().some(other => other !== server && namespace(other.name) === key)
+      || pi.getMcpServers().some(other => !registered.has(other.name) && namespace(other.name) === key)
+      || configuredNames(mcpConfigs(ctx)).some(name => namespace(name) === key);
+    return taken ? new Error(`The MCP server name "${server.name}" is already in use in this chat`) : undefined;
+  };
+  const register = (server: Server, ctx: ExtensionContext) => {
     if (registered.has(server.name)) return;
     server.state = "connecting"; delete server.error; delete server.connection;
     publish();
     if (server.config.exposure === "codemode" && !codemode) return failed(server, new Error("This server needs Codemode. Turn on Codemode for the agent"));
     try {
+      const error = conflict(server, ctx);
+      if (error) throw error;
       pi.registerMcpServer(server.name, server.config);
       registered.add(server.name);
     } catch (error) { failed(server, error); }
@@ -107,20 +134,22 @@ export function skillMcp(pi: ExtensionAPI, ready: (ctx: ExtensionContext) => Pro
       catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") return; throw error; }
       const definitions = manifestSchema.parse(JSON.parse(content)).mcpServers;
       const replace = (value: string) => value.replaceAll("${SKILL_DIR}", dirname(file)).replaceAll("${PROJECT_DIR}", ctx.cwd);
-      servers = new Map(Object.entries(definitions).filter(([, config]) => config.enabled !== false).map(([alias, supplied]) => {
+      servers = new Map(Object.entries(definitions).filter(([, config]) => config.enabled !== false).map(([alias, supplied]): [string, Server] => {
         const { piopInjectAgentId, ...rest } = supplied;
         if (piopInjectAgentId) throw new Error("Skill MCP servers do not support piopInjectAgentId");
         const config = JSON.parse(JSON.stringify(rest, (_key, value) => typeof value === "string" ? replace(value) : value)) as Server["config"];
-        if ("command" in config) {
-          config.cwd = resolve(dirname(file), config.cwd ?? ".");
-          if (config.command.startsWith("./") || config.command.startsWith("../")) config.command = resolve(dirname(file), config.command);
-        }
-        return [alias, { alias, name: `skill_${randomUUID().replaceAll("-", "")}_${alias.replaceAll("-", "_")}`, config, state: "connecting" }];
+        if ("command" in config && (config.command.startsWith("./") || config.command.startsWith("../"))) config.command = resolve(dirname(file), config.command);
+        const server: Server = { alias, name: namespace(alias), config, state: "connecting" };
+        const shared = all().find(other => other.name === server.name);
+        if (!shared) { const error = conflict(server, ctx); if (error) throw error; return [alias, server]; }
+        if (!isDeepStrictEqual(shared.config, server.config)) throw new Error(`The MCP server name "${server.name}" is already in use in this chat with other settings`);
+        return [alias, shared];
       }));
       if (!servers.size) return;
       loaded.set(file, servers);
       try { save(); } catch (error) { loaded.delete(file); throw error; }
-      for (const server of servers.values()) register(server);
+      for (const server of servers.values()) register(server, ctx);
+      publish();
     }
     if (!servers.size) return;
     await settle(ctx, current);
@@ -128,16 +157,16 @@ export function skillMcp(pi: ExtensionAPI, ready: (ctx: ExtensionContext) => Pro
   };
 
   const action = async (name: string, action: "retry" | "remove", ctx: ExtensionContext) => {
-    const group = [...loaded.values()].find(servers => [...servers.values()].some(server => server.name === name));
-    const server = group && [...group.values()].find(server => server.name === name);
-    if (!group || !server) throw new Error("This skill MCP server is no longer required");
+    const server = all().find(server => server.name === name);
+    if (!server) throw new Error("This skill MCP server is no longer required");
     context = ctx;
     if (action === "remove") {
-      group.delete(server.alias);
-      try { save(); } catch (error) { group.set(server.alias, server); throw error; }
+      const uses = [...loaded.values()].flatMap(group => [...group].filter(([, other]) => other === server).map(([alias]) => [group, alias] as const));
+      for (const [group, alias] of uses) group.delete(alias);
+      try { save(); } catch (error) { for (const [group, alias] of uses) group.set(alias, server); throw error; }
       stop(server); publish(); return null;
     }
-    stop(server); register(server); await settle(ctx); return null;
+    stop(server); register(server, ctx); await settle(ctx); return null;
   };
   const stopRequests = pi.events.on("piop:rpc", (request: AppRequest) => {
     if (request.command !== "skill_mcp") return;
@@ -185,8 +214,13 @@ export function skillMcp(pi: ExtensionAPI, ready: (ctx: ExtensionContext) => Pro
     const entry = [...ctx.sessionManager.getBranch()].reverse().find(entry => entry.type === "custom" && entry.customType === ENTRY);
     if (entry?.type === "custom") {
       const saved = savedSchema.parse(entry.data);
-      for (const group of saved) loaded.set(group.file, new Map(group.servers.map(server => [server.alias, { ...server, config: server.config as Server["config"], state: "connecting" }])));
-      for (const server of all()) register(server);
+      const shared = new Map<string, Server>();
+      for (const group of saved) loaded.set(group.file, new Map(group.servers.map(saved => {
+        const server = shared.get(saved.name) ?? { ...saved, config: saved.config as Server["config"], state: "connecting" };
+        shared.set(server.name, server);
+        return [saved.alias, server];
+      })));
+      for (const server of all()) register(server, ctx);
     }
     publish();
   });
@@ -196,7 +230,7 @@ export function skillMcp(pi: ExtensionAPI, ready: (ctx: ExtensionContext) => Pro
     select(enabled: boolean) {
       if (codemode === enabled) return;
       codemode = enabled;
-      for (const server of all().filter(server => server.config.exposure === "codemode")) { stop(server); register(server); }
+      for (const server of all().filter(server => server.config.exposure === "codemode")) { stop(server); register(server, context!); }
     },
   };
 }

@@ -24,11 +24,11 @@ export async function skillMcpSession(t) {
 if(existsSync(${JSON.stringify(blocked)})) { console.error('fixture cannot start'); process.exit(1); }
 writeFileSync(${JSON.stringify(pid)},String(process.pid));
 createInterface({input:process.stdin}).on('line',line=>{const m=JSON.parse(line); if(m.id===undefined||existsSync(${JSON.stringify(hanging)}))return;const result=m.method==='initialize'?{protocolVersion:'2025-03-26',capabilities:{tools:{}},serverInfo:{name:'test',version:'1'}}:m.method==='tools/list'?{tools:[{name:'ping',description:'Ping',inputSchema:{type:'object',properties:{}}}]}:{content:[{type:'text',text:'PROVEN_PONG'}]};console.log(JSON.stringify({jsonrpc:'2.0',id:m.id,result}));});`);
-  writeFileSync(join(skill, 'mcp.json'), JSON.stringify({ mcpServers: { fixture: { command: process.execPath, args: [server], timeout: 1 } } }));
+  writeFileSync(join(skill, 'mcp.json'), JSON.stringify({ mcpServers: { fixture: { command: process.execPath, args: [server], timeout: 1, exposure: 'codemode' } } }));
   const storage = join(dir, 'storage.mjs'), bridge = join(dir, 'bridge.mjs');
   await build({ entryPoints: ['daemon/resources/piop-storage/session-storage.mjs'], outfile: storage, bundle: true, platform: 'node', format: 'esm', plugins: [storageSchemaImports()], banner: { js: "import {createRequire} from 'node:module';const require=createRequire(import.meta.url);" } });
   const shim = join(dir, 'sdk.mjs');
-  writeFileSync(shim, `import {createMcpExtension as native} from ${JSON.stringify(pathToFileURL(join(root,'dist/index.js')).href)}; export const createMcpExtension=()=>native({loadConfig:()=>({servers:[],errors:[]}), logPath:${JSON.stringify(join(dir,'mcp.log'))}});`);
+  writeFileSync(shim, `import {createMcpExtension as native} from ${JSON.stringify(pathToFileURL(join(root,'dist/index.js')).href)}; export const CONFIG_DIR_NAME='.pi'; export const getAgentDir=()=>${JSON.stringify(join(dir,'agent'))}; export const createMcpExtension=()=>native({loadConfig:()=>({servers:[],errors:[]}), logPath:${JSON.stringify(join(dir,'mcp.log'))}});`);
   await build({ entryPoints: ['daemon/resources/mcp-bridge.ts'], outfile: bridge, bundle: true, platform: 'node', format: 'esm', plugins: [{ name: 'sdk', setup(b) { b.onResolve({ filter: /^@earendil-works\/pi-coding-agent$/ }, () => ({ path: shim, external: true })); } }] });
   const area = join(dir, '.piop'); mkdirSync(join(area, 'sessions'), { recursive: true });
   const id = database.reserve(area), file = join(area, 'sessions', `test_${id}.jsonl`);

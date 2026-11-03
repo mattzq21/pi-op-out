@@ -36,7 +36,7 @@ session.agent.streamFunction = (model, _context, options) => {
   if (!options.signal?.aborted) requests++;
   let content = [{ type: 'text', text: 'done' }], stopReason = 'stop';
   if (!options.signal?.aborted && stage++ === 0 && mode !== 'text') {
-    const name = mode === 'read' ? 'read' : session.getAllTools().find(tool => tool.name.startsWith('mcp__skill_') && tool.name.endsWith('__ping') && tool.exposure !== 'hidden')?.name;
+    const name = mode === 'read' ? 'read' : session.getAllTools().find(tool => tool.name.endsWith('__ping') && tool.exposure !== 'hidden')?.name;
     if (!name) throw new Error('MCP ping tool is unavailable');
     const direct = mode === 'read' || session.getAllTools().find(tool => tool.name === name)?.exposure === 'direct';
     content = [{ type: 'toolCall', id: `call-${requests}`, name: direct ? name : 'codemode', arguments: mode === 'read' ? { path: join(directory, 'skill/SKILL.md') } : direct ? {} : { code: `text(await tools.${name}({}));` } }]; stopReason = 'toolUse';

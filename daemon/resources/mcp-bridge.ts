@@ -1,6 +1,7 @@
 import { z } from "zod";
 import type { TSchema } from "typebox";
-import { createMcpExtension, type ExtensionAPI, type ExtensionContext, type ExtensionEvent, type ExtensionHandler, type McpServerConfig, type SessionStartEvent } from "@earendil-works/pi-coding-agent";
+import { join } from "node:path";
+import { CONFIG_DIR_NAME, createMcpExtension, getAgentDir, type ExtensionAPI, type ExtensionContext, type ExtensionEvent, type ExtensionHandler, type McpServerConfig, type SessionStartEvent } from "@earendil-works/pi-coding-agent";
 import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { skillMcp } from "./skill-mcp.ts";
 
@@ -85,7 +86,7 @@ export default function agentMcp(pi: ExtensionAPI) {
   });
   const skills = skillMcp(pi, ensureStarted, async () => {
     while (changes.size) await Promise.all([...changes]);
-  });
+  }, ctx => [join(getAgentDir(), "mcp.json"), ...(ctx.isProjectTrusted() ? [join(ctx.cwd, CONFIG_DIR_NAME, "mcp.json")] : [])]);
 
   const nativeTools = () => pi.getAllTools().filter(tool =>
     tool.exposure !== "hidden" && (nativeToolNames.has(tool.name) || ["builtin:mcp", "builtin:codemode", "builtin:tool-search"].includes(tool.sourceInfo?.path ?? "")));
@@ -132,6 +133,8 @@ export default function agentMcp(pi: ExtensionAPI) {
 
         if (registrations.get(name) === serialized) continue;
 
+        const clash = pi.getMcpServers().find(server => !registrations.has(server.name) && server.name.replaceAll("-", "_") === name.replaceAll("-", "_"));
+        if (clash) throw new Error(`MCP server "${name}" conflicts with the registered MCP server "${clash.name}"`);
         if (registrations.has(name)) pi.unregisterMcpServer(name);
         pi.registerMcpServer(name, config);
         registrations.set(name, serialized);

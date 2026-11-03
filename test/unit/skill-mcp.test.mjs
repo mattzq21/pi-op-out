@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { mkdtempSync, mkdirSync, writeFileSync, symlinkSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 import { skillMcp } from '../../daemon/resources/skill-mcp.ts';
 import { EventEmitter } from 'node:events';
 import { installConnectionEvents } from '../../daemon/resources/mcp-connections.cjs';
@@ -34,9 +34,10 @@ async function fixture(run) {
       connections.delete(name); connection(name, 'connected');
     },
     unregisterMcpServer(name) { removed.push(name); servers.delete(name); },
+    getMcpServers: () => [...servers].map(([name, config]) => ({ name, config, extensionPath: 'extension' })),
   };
-  const loader = skillMcp(pi, ctx => ready(ctx), () => wait());
-  const skill = (name, config = { desktop: { command: 'python3', args: ['scripts/server.py'], exposure: 'codemode' } }) => {
+  const loader = skillMcp(pi, ctx => ready(ctx), () => wait(), () => [join(root, 'mcp.json')]);
+  const skill = (name, config = { [basename(name)]: { command: 'python3', args: ['scripts/server.py'], exposure: 'codemode' } }) => {
     const dir = join(root, name); mkdirSync(dir, { recursive: true });
     const path = join(dir, 'SKILL.md'); writeFileSync(path, '---\nname: example\n---\nUse the tools.');
     if (config) writeFileSync(join(dir, 'mcp.json'), JSON.stringify({ mcpServers: config }));
@@ -47,7 +48,7 @@ async function fixture(run) {
   const request = (name, action) => { const request = { command: 'skill_mcp', payload: { name, action }, ctx }; bus.emit('piop:rpc', request); return request.ready; };
   try { await run({ root, ctx, loader, servers, calls, removed, entries, skill, dispatch, read,
     connection, statuses, request,
-    async restart() { await dispatch('session_shutdown'); handlers.clear(); skillMcp(pi, ctx => ready(ctx), () => wait()); await dispatch('session_start'); },
+    async restart() { await dispatch('session_shutdown'); handlers.clear(); skillMcp(pi, ctx => ready(ctx), () => wait(), () => [join(root, 'mcp.json')]); await dispatch('session_start'); },
     fail(value) { failure = value; }, wait(value) { wait = value; }, ready(value) { ready = value; } }); }
   finally { await dispatch('session_shutdown'); rmSync(root, { recursive: true, force: true }); }
 }
@@ -65,7 +66,7 @@ test('saved skill MCP configuration restores after a fresh agent starts without 
 test('a lost connection is shown immediately and blocks the next prompt until retried', () => fixture(async f => {
   await f.read(f.skill('app')); const name = f.calls[0].name;
   f.connection(name, 'disconnected', 'Process exited with code 1');
-  assert.deepEqual(JSON.parse(f.statuses.get('piop-skill-mcp'))[0], { name, label: 'app: desktop', state: 'failed', error: 'Process exited with code 1' });
+  assert.deepEqual(JSON.parse(f.statuses.get('piop-skill-mcp'))[0], { name, label: 'app: app', state: 'failed', error: 'Process exited with code 1' });
   assert.deepEqual(await f.dispatch('input', { text: 'continue' }), { action: 'handled' });
   assert.match(f.statuses.get('piop-input-rejected'), /continue/);
   await f.request(name, 'retry');
@@ -96,9 +97,10 @@ test('skill reads load adjacent MCP settings with skill and project paths', () =
   assert.equal(result.content[0].text, 'skill body');
   const { name, config } = f.calls[0];
   assert.equal(config.command, join(f.root, 'desktop/serve'));
-  assert.equal(config.cwd, join(f.root, 'desktop'));
+  assert.equal(config.cwd, undefined);
   assert.deepEqual(config.args, [join(f.root, 'desktop/app.py'), f.root]);
   assert.equal(config.env.PROJECT, f.root); assert.equal(config.exposure, 'deferred');
+  assert.equal(name, 'desktop');
   assert.ok(result.content[1].text.includes(`desktop: mcp__${name}__* (find with tool_search)`));
 }));
 
@@ -115,6 +117,32 @@ test('skills with equal server names stay separate and do not start disabled ser
   assert.equal(f.servers.size, 2); assert.notEqual(f.calls[0].name, f.calls[1].name);
   await f.read(f.skill('disabled', { desktop: { command: 'server', enabled: false, exposure: 'direct' } }));
   assert.equal(f.calls.length, 2);
+}));
+
+test('a skill server name already used in the chat fails loading without starting servers', () => fixture(async f => {
+  f.servers.set('agent', { command: 'agent' });
+  const agent = await f.read(f.skill('agent'));
+  assert.equal(agent.isError, true); assert.match(agent.content.at(-1).text, /"agent" is already in use/);
+  writeFileSync(join(f.root, 'mcp.json'), JSON.stringify({ mcpServers: { 'my-config': { command: 'configured' } } }));
+  assert.equal((await f.read(f.skill('my_config'))).isError, true);
+  await f.read(f.skill('first/same'));
+  assert.equal((await f.read(f.skill('second/same', { same: { command: 'python3', args: ['other.py'], exposure: 'codemode' } }))).isError, true);
+  assert.deepEqual(f.calls.map(call => call.name), ['same']);
+}));
+
+test('skills that start the same server share it until it is removed', () => fixture(async f => {
+  const shared = { app: { command: 'python3', args: ['/opt/app/server.py'], cwd: '/opt/app', exposure: 'direct' } };
+  const one = f.skill('one', shared), two = f.skill('two', shared);
+  await f.read(one); await f.read(two);
+  assert.deepEqual(f.calls.map(call => call.name), ['app']);
+  assert.deepEqual(JSON.parse(f.statuses.get('piop-skill-mcp')).map(server => server.label), ['one, two: app']);
+  await f.restart(); await f.dispatch('input');
+  assert.equal(f.calls.length, 2); assert.equal(JSON.parse(f.statuses.get('piop-skill-mcp')).length, 1);
+  const other = await f.read(f.skill('three', { app: { ...shared.app, args: ['/opt/other/server.py'] } }));
+  assert.equal(other.isError, true); assert.match(other.content.at(-1).text, /other settings/); assert.equal(f.calls.length, 2);
+  f.connection('app', 'failed', 'crashed'); await f.request('app', 'remove');
+  assert.equal(f.servers.size, 0); assert.equal(f.statuses.get('piop-skill-mcp'), undefined);
+  await f.read(one); await f.read(two); assert.equal(f.servers.size, 0);
 }));
 
 test('ordinary reads, failed reads and skills without MCP settings have no effect', () => fixture(async f => {
@@ -134,7 +162,7 @@ test('invalid settings report an error before starting any servers and can be co
 
 test('registration failures remain saved and can be retried from the UI', () => fixture(async f => {
   const path = f.skill('two', { first: { command: 'one', exposure: 'direct' }, second: { command: 'two', exposure: 'direct' } });
-  f.fail(name => name.endsWith('_second'));
+  f.fail(name => name === 'second');
   assert.equal((await f.read(path)).isError, true); assert.equal(f.servers.size, 1);
   const failed = JSON.parse(f.statuses.get('piop-skill-mcp')).find(server => server.state === 'failed');
   assert.match(failed.error, /registration failed/);

@@ -58,7 +58,9 @@ test('startup timeout is visible and Remove interrupts an in-progress retry', { 
 });
 
 test('direct tools remain usable after reload and repeated skill reads keep one server', { timeout: 20000 }, async t => {
-  const f = await fixture(t), worker = await f.start();
+  const f = await fixture(t), path = join(f.skill, 'mcp.json'), config = JSON.parse(readFileSync(path, 'utf8'));
+  config.mcpServers.fixture.exposure = 'direct'; writeFileSync(path, JSON.stringify(config));
+  const worker = await f.start();
   await worker.command({ op: 'codemode', value: 'off' });
   let state = await worker.command({ op: 'prompt', mode: 'read' }); const name = state.servers[0];
   await worker.command({ op: 'prompt', mode: 'read' });
@@ -118,7 +120,7 @@ test('HTTP MCP restores, blocks on failed connection, and reconnects through Ret
   });
   server.listen(0, '127.0.0.1'); await once(server, 'listening'); t.after(() => { server.closeAllConnections(); server.close(); });
   const f = await fixture(t);
-  writeFileSync(join(f.skill, 'mcp.json'), JSON.stringify({ mcpServers: { http: { url: `http://127.0.0.1:${server.address().port}/mcp`, timeout: 1 } } }));
+  writeFileSync(join(f.skill, 'mcp.json'), JSON.stringify({ mcpServers: { http: { url: `http://127.0.0.1:${server.address().port}/mcp`, timeout: 1, exposure: 'codemode' } } }));
   let worker = await f.start(); await worker.command({ op: 'prompt', mode: 'read' });
   let state = await worker.command({ op: 'prompt', mode: 'ping' }); assert.match(JSON.stringify(state.toolResults), /HTTP_PROVEN_PONG/);
   const name = state.servers[0]; await worker.kill(); unavailable = true; worker = await f.start();
