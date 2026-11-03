@@ -126,6 +126,8 @@ export class DraftRuntime {
     if (command.type === "set_model" || command.type === "set_thinking_level") this.chosen = true;
     this.changes.set(command.type, command); this.revision++;
 
+    if (command.type === "set_model") { this.changes.delete("set_thinking_level"); this.changes.set("set_thinking_level", { type: "set_thinking_level", level: this.state.thinkingLevel }); }
+
     return {};
   }
 
