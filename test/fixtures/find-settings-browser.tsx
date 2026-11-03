@@ -13,5 +13,5 @@ render(() => <SettingsView scope="client" settings={{
   hiddenModels: [], defaultThinking: 'off', defaultFastMode: false,
   contextWindowCap: 100_000, modelContextWindowCaps: {}, contextWindowCapEnabled: false, autoCompaction: true, autoRetry: true, hiddenUsageIndicators: [],
   debugMode: false, tools: [], skills: [], hosts: [],
-  keybindings: { newConversation: 'Ctrl+N', toggleConversations: 'Ctrl+B', toggleTerminal: 'Ctrl+J', toggleDebugMode: 'Ctrl+D', focusComposer: 'Ctrl+E', openSettings: 'Ctrl+,' },
+  keybindings: { newConversation: 'Ctrl+N', toggleConversations: 'Ctrl+B', toggleTerminal: 'Ctrl+J', toggleDebugMode: 'Ctrl+D', focusComposer: 'Ctrl+E', openSettings: 'Ctrl+,', toggleQueueHold: 'Ctrl+H' },
 }} onSave={async () => {}} />, document.getElementById('sample')!);
