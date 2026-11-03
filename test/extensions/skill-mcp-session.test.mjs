@@ -57,6 +57,21 @@ test('startup timeout is visible and Remove interrupts an in-progress retry', { 
   state = await worker.command({ op: 'prompt' }); assert.equal(state.statuses['piop-skill-mcp'], undefined); assert.deepEqual(state.servers, []);
 });
 
+test('a message enters the queue while a skill MCP server is still connecting', { timeout: 20000 }, async t => {
+  const f = await fixture(t), path = join(f.skill, 'mcp.json'), config = JSON.parse(readFileSync(path, 'utf8'));
+  config.mcpServers.fixture.timeout = 10; writeFileSync(path, JSON.stringify(config));
+  const worker = await f.start(); writeFileSync(f.slow, 'slow');
+  const turn = worker.command({ op: 'prompt', mode: 'read' });
+  await worker.event(event => event.key === 'piop-skill-mcp' && event.value?.includes('connecting'));
+  const queued = await worker.command({ op: 'queue', text: 'queued while connecting' });
+  assert.equal(queued.streaming, true); assert.deepEqual(queued.followUps, ['queued while connecting']);
+  assert.match(queued.statuses['piop-skill-mcp'], /connecting/);
+  rmSync(f.slow);
+  const state = await turn;
+  assert.deepEqual(state.errors, []); assert.equal(state.toolResults[0]?.isError, false, JSON.stringify(state));
+  assert.match(state.statuses['piop-skill-mcp'], /connected/); assert.deepEqual(state.followUps, []); assert.equal(state.requests, 3);
+});
+
 test('direct tools remain usable after reload and repeated skill reads keep one server', { timeout: 20000 }, async t => {
   const f = await fixture(t), path = join(f.skill, 'mcp.json'), config = JSON.parse(readFileSync(path, 'utf8'));
   config.mcpServers.fixture.exposure = 'direct'; writeFileSync(path, JSON.stringify(config));

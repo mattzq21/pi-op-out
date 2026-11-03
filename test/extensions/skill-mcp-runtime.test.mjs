@@ -66,6 +66,7 @@ console.log(JSON.stringify({jsonrpc:'2.0',id:m.id,result})); });`);
     process.kill(Number(readFileSync(pid, 'utf8')), 'SIGKILL'); await crashed;
     assert.equal(JSON.parse(session.statuses.get('piop-skill-mcp'))[0].state, 'failed');
     assert.deepEqual(await session.dispatch('input', { text: 'continue' }), { action: 'handled' });
+    assert.equal(await session.dispatch('input', { text: 'queued', streamingBehavior: 'followUp' }), undefined);
     writeFileSync(blocked, 'blocked'); await assert.rejects(session.action(name, 'retry'), /test server blocked/);
     rmSync(blocked); await session.action(name, 'retry');
     assert.equal(JSON.parse(session.statuses.get('piop-skill-mcp'))[0].state, 'connected');
