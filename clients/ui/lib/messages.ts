@@ -150,8 +150,21 @@ export function appendQueuedProjectContext(messages: ChatMessage[], entry: PiEnt
   return result;
 }
 
+const skillMcpFailureSchema = z.object({ skill: z.string() });
+
+export function appendSkillMcpFailure(messages: ChatMessage[], entry: PiEntry, inPlace = false): ChatMessage[] {
+  if (entry.type !== "custom" || entry.customType !== "piop-skill-mcp-failed" || messages.some(message => message.id === entry.id)) return messages;
+  const { skill } = skillMcpFailureSchema.parse(entry.data);
+  const result = inPlace ? messages : messages.slice();
+  result.push({ id: entry.id, entryId: entry.id, role: "system", customType: "piop-skill-mcp-failed", content: `The embedded MCP of skill "${skill}" failed to load.`, timestamp: entry.timestamp ? Date.parse(entry.timestamp) : Date.now() });
+
+  return result;
+}
+
 function applyCustomEntry(messages: ChatMessage[], entry: PiEntry, promptParts: SavedPromptParts) {
   if (entry.customType === "piop-queued-project-context") return appendQueuedProjectContext(messages, entry, true);
+
+  if (entry.customType === "piop-skill-mcp-failed") return appendSkillMcpFailure(messages, entry, true);
 
   if (entry.customType === "piop-compaction-timing") return applyCompactionTiming(messages, entry);
 

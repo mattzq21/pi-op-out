@@ -6,7 +6,9 @@ import { createServer } from 'node:http';
 import { once } from 'node:events';
 import { skillMcpSession as fixture } from '../skill-mcp-session-fixture.mjs';
 
-test('actual agent read, tool use, SIGKILL, persisted restore, failure and UI actions', { timeout: 30000 }, async t => {
+const FAILED = "This skill's embedded MCP failed to load";
+
+test('actual agent read, tool use, restore, and a crashed server that the next call starts again', { timeout: 30000 }, async t => {
   const f = await fixture(t); let worker = await f.start();
   let state = await worker.command({ op: 'prompt', mode: 'read' });
   assert.deepEqual(state.errors, []);
@@ -17,46 +19,32 @@ test('actual agent read, tool use, SIGKILL, persisted restore, failure and UI ac
   await worker.kill();
   worker = await f.start(); state = await worker.command({ op: 'prompt', mode: 'ping', text: 'resume' });
   assert.deepEqual(state.errors, []); assert.deepEqual(state.servers, [name]); assert.match(JSON.stringify(state.toolResults), /PROVEN_PONG/);
-  const requests = state.requests;
-  process.kill(Number(readFileSync(f.pid,'utf8')), 'SIGKILL');
-  await worker.event(event => event.key === 'piop-skill-mcp' && event.value?.includes('"failed"'));
-  state = await worker.command({ op: 'prompt', text: 'must not reach model' }); assert.equal(state.requests, requests);
-  writeFileSync(f.blocked, 'blocked'); await assert.rejects(worker.command({ op: 'action', name, action: 'retry' }), /fixture cannot start/);
-  rmSync(f.blocked); await worker.command({ op: 'action', name, action: 'retry' });
-  state = await worker.command({ op: 'prompt', mode: 'ping' }); assert.match(JSON.stringify(state.toolResults), /PROVEN_PONG/);
-  await worker.command({ op: 'action', name, action: 'remove' }); await worker.kill();
-  worker = await f.start(); state = await worker.command({ op: 'prompt' }); assert.deepEqual(state.servers, []); assert.deepEqual(state.errors, []);
+  const crashed = Number(readFileSync(f.pid, 'utf8'));
+  await worker.command({ op: 'watch', state: 'disconnected' }); process.kill(crashed, 'SIGKILL'); await worker.command({ op: 'watched' });
+  state = await worker.command({ op: 'prompt', mode: 'ping', text: 'after crash' });
+  assert.match(JSON.stringify(state.toolResults), /PROVEN_PONG/); assert.notEqual(Number(readFileSync(f.pid, 'utf8')), crashed);
+  assert.deepEqual(state.servers, [name]); assert.deepEqual(state.failures, []);
 });
-
 test('user-invoked skill starts MCP in the actual agent', { timeout: 20000 }, async t => {
   const f = await fixture(t), worker = await f.start();
   const state = await worker.command({ op: 'prompt', text: '/skill:fixture' });
   assert.deepEqual(state.errors, []); assert.equal(state.servers.length, 1); assert.match(state.statuses['piop-skill-mcp'], /connected/);
 });
 
-test('restored startup failure blocks model requests and removing it permits the next prompt', { timeout: 20000 }, async t => {
+test('a restored server that cannot start leaves the chat with a notice and the next prompt reaches the model', { timeout: 20000 }, async t => {
   const f = await fixture(t); let worker = await f.start();
-  const initial = await worker.command({ op: 'prompt', mode: 'read' }); const name = initial.servers[0];
+  await worker.command({ op: 'prompt', mode: 'read' });
   await worker.kill(); writeFileSync(f.blocked, 'blocked'); worker = await f.start();
-  const state = await worker.command({ op: 'prompt', mode: 'ping' });
-  assert.equal(state.requests, 0); assert.match(state.statuses['piop-skill-mcp'], /fixture cannot start/);
-  assert.deepEqual(state.errors, []);
-  await worker.command({ op: 'action', name, action: 'remove' });
-  assert.equal((await worker.command({ op: 'prompt' })).requests, 1);
+  const state = await worker.command({ op: 'prompt' });
+  assert.equal(state.requests, 1); assert.deepEqual(state.servers, []); assert.deepEqual(state.failures, ['skill']); assert.deepEqual(state.errors, []);
 });
-
-test('startup timeout is visible and Remove interrupts an in-progress retry', { timeout: 20000 }, async t => {
+test('a startup timeout fails the read with the notice and keeps no server', { timeout: 20000 }, async t => {
   const f = await fixture(t), worker = await f.start();
   writeFileSync(f.hanging, 'hang');
-  let state = await worker.command({ op: 'prompt', mode: 'read' }); const name = state.servers[0];
-  assert.match(state.statuses['piop-skill-mcp'], /failed/); assert.match(state.statuses['piop-skill-mcp'], /timed out|timeout/i);
-  const before = worker.eventCount;
-  const retry = worker.command({ op: 'action', name, action: 'retry' });
-  await worker.event(event => event.key === 'piop-skill-mcp' && event.value?.includes('connecting'), before);
-  await worker.command({ op: 'action', name, action: 'remove' }); await retry;
-  state = await worker.command({ op: 'prompt' }); assert.equal(state.statuses['piop-skill-mcp'], undefined); assert.deepEqual(state.servers, []);
+  const state = await worker.command({ op: 'prompt', mode: 'read' });
+  assert.equal(state.toolResults[0].isError, true); assert.deepEqual(state.toolResults[0].result.content, [{ type: 'text', text: FAILED }]);
+  assert.deepEqual(state.servers, []); assert.deepEqual(state.failures, ['skill']); assert.equal(state.statuses['piop-skill-mcp'], undefined);
 });
-
 test('direct tools remain usable after reload and repeated skill reads keep one server', { timeout: 20000 }, async t => {
   const f = await fixture(t), worker = await f.start();
   await worker.command({ op: 'codemode', value: 'off' });
@@ -69,21 +57,20 @@ test('direct tools remain usable after reload and repeated skill reads keep one 
   assert.deepEqual(state.servers, [name]); assert.match(JSON.stringify(state.toolResults), /PROVEN_PONG/); assert.deepEqual(state.errors, []);
 });
 
-test('removing one server preserves another and remains removed after navigating history', { timeout: 20000 }, async t => {
+test('when one of two servers cannot start, both leave the chat and stay gone after navigating history', { timeout: 20000 }, async t => {
   const f = await fixture(t);
   const path = join(f.skill, 'mcp.json'), config = JSON.parse(readFileSync(path, 'utf8'));
   config.mcpServers.second = structuredClone(config.mcpServers.fixture); writeFileSync(path, JSON.stringify(config));
-  const worker = await f.start();
+  let worker = await f.start();
   const initial = await worker.command({ op: 'prompt', mode: 'read' }); assert.equal(initial.servers.length, 2);
-  const name = initial.servers[0];
-  await worker.command({ op: 'prompt', text: 'later' });
-  await worker.command({ op: 'action', name, action: 'remove' });
+  await worker.kill(); writeFileSync(f.blocked, 'blocked'); worker = await f.start();
+  let state = await worker.command({ op: 'prompt', text: 'later' });
+  assert.deepEqual(state.servers, []); assert.deepEqual(state.failures, ['skill']);
+  rmSync(f.blocked);
   await worker.command({ op: 'branch', leaf: initial.leaf });
-  await worker.command({ op: 'reload' });
-  const state = await worker.command({ op: 'prompt', mode: 'ping' });
-  assert.deepEqual(state.servers, initial.servers.slice(1)); assert.match(JSON.stringify(state.toolResults), /PROVEN_PONG/); assert.deepEqual(state.errors, []);
+  state = await worker.command({ op: 'reload' });
+  assert.deepEqual(state.servers, []); assert.deepEqual(state.errors, []);
 });
-
 test('requirements are durable even when the agent is killed before MCP startup finishes', { timeout: 20000 }, async t => {
   const f = await fixture(t); let worker = await f.start();
   writeFileSync(f.hanging, 'hang');
@@ -97,13 +84,14 @@ test('requirements are durable even when the agent is killed before MCP startup 
   assert.deepEqual(state.servers, [name]); assert.match(JSON.stringify(state.toolResults), /PROVEN_PONG/); assert.deepEqual(state.errors, []);
 });
 
-test('failed user-only skill invocation does not make a model request', { timeout: 20000 }, async t => {
+test('a failed user-invoked skill keeps the message unsent and shows the notice', { timeout: 20000 }, async t => {
   const f = await fixture(t), worker = await f.start(); writeFileSync(f.blocked, 'blocked');
   const state = await worker.command({ op: 'prompt', text: '/skill:fixture' });
-  assert.equal(state.requests, 0); assert.match(state.statuses['piop-skill-mcp'], /fixture cannot start/); assert.deepEqual(state.errors, []);
+  assert.equal(state.requests, 0); assert.deepEqual(state.errors, []); assert.deepEqual(state.failures, ['skill']);
+  assert.deepEqual(JSON.parse(state.statuses['piop-input-rejected']), { text: '/skill:fixture', error: FAILED });
+  assert.equal(state.entries.some(entry => entry.type === 'message'), false);
 });
-
-test('HTTP MCP restores, blocks on failed connection, and reconnects through Retry', { timeout: 20000 }, async t => {
+test('HTTP MCP restores, and a failed connection leaves the chat with a notice until the skill is read again', { timeout: 20000 }, async t => {
   let unavailable = false;
   const server = createServer(async (req, res) => {
     if (unavailable) { res.writeHead(503); res.end('fixture unavailable'); return; }
@@ -118,15 +106,14 @@ test('HTTP MCP restores, blocks on failed connection, and reconnects through Ret
   });
   server.listen(0, '127.0.0.1'); await once(server, 'listening'); t.after(() => { server.closeAllConnections(); server.close(); });
   const f = await fixture(t);
-  writeFileSync(join(f.skill, 'mcp.json'), JSON.stringify({ mcpServers: { http: { url: `http://127.0.0.1:${server.address().port}/mcp`, timeout: 1 } } }));
+  writeFileSync(join(f.skill, 'mcp.json'), JSON.stringify({ mcpServers: { http: { url: `http://127.0.0.1:${server.address().port}/mcp`, timeout: 1, exposure: 'direct' } } }));
   let worker = await f.start(); await worker.command({ op: 'prompt', mode: 'read' });
   let state = await worker.command({ op: 'prompt', mode: 'ping' }); assert.match(JSON.stringify(state.toolResults), /HTTP_PROVEN_PONG/);
-  const name = state.servers[0]; await worker.kill(); unavailable = true; worker = await f.start();
-  state = await worker.command({ op: 'prompt', mode: 'ping' }); assert.equal(state.requests, 0); assert.match(state.statuses['piop-skill-mcp'], /failed/);
-  unavailable = false; await worker.command({ op: 'action', name, action: 'retry' });
+  await worker.kill(); unavailable = true; worker = await f.start();
+  state = await worker.command({ op: 'prompt', text: 'continue' }); assert.equal(state.requests, 1); assert.deepEqual(state.servers, []); assert.deepEqual(state.failures, ['skill']);
+  unavailable = false; await worker.command({ op: 'prompt', mode: 'read' });
   state = await worker.command({ op: 'prompt', mode: 'ping' }); assert.match(JSON.stringify(state.toolResults), /HTTP_PROVEN_PONG/); assert.deepEqual(state.errors, []);
 });
-
 test('ten consecutive agent kills restore the same server and working tools', { timeout: 30000 }, async t => {
   const f = await fixture(t); let worker = await f.start();
   const initial = await worker.command({ op: 'prompt', mode: 'read' }); const name = initial.servers[0];

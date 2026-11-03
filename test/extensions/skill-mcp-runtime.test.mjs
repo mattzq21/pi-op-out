@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { execFileSync } from 'node:child_process';
 import { existsSync, realpathSync, readFileSync, writeFileSync, mkdtempSync, rmSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { pathToFileURL } from 'node:url';
 import { EventEmitter } from 'node:events';
@@ -16,7 +16,7 @@ while (!existsSync(join(root, 'package.json')) || JSON.parse(readFileSync(join(r
 const { McpServerConnection } = await import(pathToFileURL(join(root, 'dist/extensions/mcp/runtime.js')));
 installConnectionEvents(McpServerConnection);
 
-test('real MCP process restores, reports a crash, retries and stays removed after restart', { timeout: 20000 }, async () => {
+test('real MCP process restores, keeps a crashed server for the next call, and leaves the chat when it cannot start', { timeout: 20000 }, async () => {
   const dir = mkdtempSync(join(tmpdir(), 'piop-skill-runtime-'));
   let session;
   try {
@@ -35,7 +35,7 @@ createInterface({input:process.stdin}).on('line', line => { const m=JSON.parse(l
 const result=m.method==='initialize'?{protocolVersion:'2025-03-26',capabilities:{tools:{}},serverInfo:{name:'fixture',version:'1'}}:m.method==='tools/list'?{tools:[{name:'ping',description:'Ping',inputSchema:{type:'object',properties:{}}}]}:{content:[{type:'text',text:'pong'}]};
 console.log(JSON.stringify({jsonrpc:'2.0',id:m.id,result})); });`);
     const skill = join(dir, 'SKILL.md'); writeFileSync(skill, 'Use the server.');
-    writeFileSync(join(dir, 'mcp.json'), JSON.stringify({ mcpServers: { app: { command: process.execPath, args: [script, pid, blocked], timeout: 2 } } }));
+    writeFileSync(join(dir, 'mcp.json'), JSON.stringify({ mcpServers: { app: { command: process.execPath, args: [script, pid, blocked], timeout: 2, exposure: 'direct' } } }));
     const history = join(dir, 'history.json'); writeFileSync(history, '[]');
     const start = async () => {
       const bus = new EventEmitter(), handlers = new Map(), servers = new Map(), tools = new Map(), statuses = new Map();
@@ -51,11 +51,12 @@ console.log(JSON.stringify({jsonrpc:'2.0',id:m.id,result})); });`);
         getMcpServers: () => [...servers].map(([name, config]) => ({ name, config, extensionPath: bundle })),
         registerMcpServer(name, config) { servers.set(name, config); void dispatch('mcp_servers_change'); },
         unregisterMcpServer(name) { servers.delete(name); void dispatch('mcp_servers_change'); },
-        registerTool(tool) { tools.set(tool.name, tool); }, registerToolRenderer() {}, registerCommand() {},
+        registerTool(tool) { tools.set(tool.name, tool); }, registerToolRenderer() {}, registerCommand() {}, getCommands: () => [],
         getAllTools: () => [...tools.values()], getActiveTools: () => active, setActiveTools: value => { active = value; },
       };
       bridge(pi); await dispatch('session_start', { type: 'session_start', reason: 'startup' });
-      return { dispatch, statuses, servers, tools, async action(name, action) { const request = { command: 'skill_mcp', payload: { name, action }, ctx }; bus.emit('piop:rpc', request); return request.ready; } };
+      const failures = () => entries.filter(entry => entry.customType === 'piop-skill-mcp-failed').map(entry => entry.data.skill);
+      return { dispatch, statuses, servers, tools, failures };
     };
     session = await start(); await session.dispatch('input', { text: 'start' });
     const result = await session.dispatch('tool_result', { toolName: 'read', input: { path: skill }, content: [], isError: false });
@@ -64,16 +65,15 @@ console.log(JSON.stringify({jsonrpc:'2.0',id:m.id,result})); });`);
     assert.ok(session.tools.has(`mcp__${name}__ping`));
     const crashed = new Promise(resolve => { const stop = subscribeConnections(connection => { if (connection.name === name && connection.state === 'disconnected') { stop(); resolve(); } }); });
     process.kill(Number(readFileSync(pid, 'utf8')), 'SIGKILL'); await crashed;
-    assert.equal(JSON.parse(session.statuses.get('piop-skill-mcp'))[0].state, 'failed');
-    assert.deepEqual(await session.dispatch('input', { text: 'continue' }), { action: 'handled' });
-    writeFileSync(blocked, 'blocked'); await assert.rejects(session.action(name, 'retry'), /test server blocked/);
-    rmSync(blocked); await session.action(name, 'retry');
-    assert.equal(JSON.parse(session.statuses.get('piop-skill-mcp'))[0].state, 'connected');
+    assert.ok(session.servers.has(name)); assert.deepEqual(session.failures(), []);
+    assert.equal(await session.dispatch('input', { text: 'continue' }), undefined, session.statuses.get('piop-input-rejected'));
     await session.dispatch('session_shutdown'); session = await start(); await session.dispatch('input', { text: 'resume' });
     assert.equal(JSON.parse(session.statuses.get('piop-skill-mcp'))[0].name, name);
     assert.equal(JSON.parse(session.statuses.get('piop-skill-mcp'))[0].state, 'connected');
-    await session.action(name, 'remove'); await session.dispatch('session_shutdown');
-    session = await start(); await session.dispatch('input', { text: 'resume' });
+    await session.dispatch('session_shutdown'); writeFileSync(blocked, 'blocked');
+    session = await start(); const rejected = await session.dispatch('input', { text: 'resume' });
+    assert.equal(rejected, undefined, session.statuses.get('piop-input-rejected'));
     assert.equal(session.servers.size, 0); assert.equal(session.statuses.get('piop-skill-mcp'), undefined);
+    assert.deepEqual(session.failures(), [basename(dir)]);
   } finally { await session?.dispatch('session_shutdown'); rmSync(dir, { recursive: true, force: true }); }
 });

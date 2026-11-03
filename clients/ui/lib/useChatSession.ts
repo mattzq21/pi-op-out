@@ -12,7 +12,7 @@ import { chatSessionEventSchema, pendingMessagesSchema, type ChatSessionEvent } 
 import { promptContextSchema, wireMessageSchema, type WireMessage } from "./messageSchemas";
 import { contextUsageAfterCompaction } from "./contextUsage";
 import { CONTEXT_CAP_STATUS_KEY } from "../../../extensions/piop-context-window-cap/interface";
-import { appendQueuedProjectContext, applyAssistantMessageEvent, branchMessages, isContextInjection, normalizeMessage, promptContextAnchors, type PiEntry } from "./messages";
+import { appendQueuedProjectContext, appendSkillMcpFailure, applyAssistantMessageEvent, branchMessages, isContextInjection, normalizeMessage, promptContextAnchors, type PiEntry } from "./messages";
 import type { NativeTransport } from "./nativeTransport";
 import { sessionMemoryFor, useSessionMemory, type HistoryOutline } from "./sessionMemory";
 import { keepLoadedHistory, olderHistoryMarker } from "./historyWindow";
@@ -478,6 +478,8 @@ function createChatSession(transport: Accessor<Pick<NativeTransport, "command" |
       if (event.type === "entry_appended" && event.entry) { const entry = event.entry;
 
       if (entry.customType === "piop-queued-project-context") { liveRevision.current += 1; session.setMessages((current) => appendQueuedProjectContext(current, entry)); }
+
+      if (entry.customType === "piop-skill-mcp-failed") { liveRevision.current += 1; session.setMessages((current) => appendSkillMcpFailure(current, entry)); }
 
     }
     };
