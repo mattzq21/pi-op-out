@@ -21,7 +21,7 @@ import { ComposerSettingsMenu } from "./ComposerSettingsMenu";
 import { ComposerPlugins } from "../plugins/composer";
 import { GoalActions, type GoalControls } from "./GoalControls";
 
-import { ArrowUp,Check,ChevronDown,ChevronUp,CircleStop,CircleX,CornerDownRight,FileText,MoveVertical,Pause,Pencil,Play,RefreshCw,TerminalSquare,Trash2,X,Zap } from "lucide-solid";
+import { ArrowUp,Check,ChevronDown,ChevronUp,CircleX,CornerDownRight,FileText,MoveVertical,Pause,Pencil,Play,RefreshCw,Square,TerminalSquare,Trash2,X,Zap } from "lucide-solid";
 import { hasVisibleText } from "../lib/content";
 import { usePendingMessageDrag } from "../lib/usePendingMessageDrag";
 import type { AgentProfile,ComposerUpload,ContextUsage,ImageAttachment,Model,PendingMessage,SlashCommand } from "../types";
@@ -45,6 +45,7 @@ interface Props {
   onTakeOwnership?: () => Promise<void>;
   toolbar?: JSXElement;
   sendingStatus?: string;
+  starting?: boolean;
   goal?: GoalControls;
   streaming: boolean;
   compacting?: boolean;
@@ -249,7 +250,7 @@ export function Composer(props: Props) {
 
   const controls = createMemo(() => { const state = composerControlState(composer().controlsDisabled, stopping());
 
-  return { ...state, inputDisabled: state.inputDisabled || composer().compacting }; });
+  return { ...state, inputDisabled: state.inputDisabled || composer().compacting, stopDisabled: (composer().controlsDisabled && !props.starting) || stopping() }; });
 
   const [selectedMatch, setSelectedMatch] = createSignal(0);
   const [paletteDismissed, setPaletteDismissed] = createSignal(false);
@@ -569,7 +570,8 @@ export function Composer(props: Props) {
     } finally { setSending(false); }
   };
 
-  const stopShown = createMemo(() => (composer().streaming || composer().compacting) && !hasVisibleText(value()) && uploads().length === 0);
+  const stopShown = createMemo(() => (composer().streaming || composer().compacting || Boolean(props.starting)) && !hasVisibleText(value()) && uploads().length === 0);
+  const sendDisabled = () => controlsBlocked() || readingUploads() > 0 || (!sending() && !hasVisibleText(value()) && uploads().length === 0);
   let lastSendClick = -Infinity;
   const clickSendOrStop = (event: MouseEvent) => {
     if (!stopShown()) { lastSendClick = event.timeStamp; void submit(); }
@@ -578,7 +580,7 @@ export function Composer(props: Props) {
 
   const abort = async () => { const capturedComposer = { ...composer() };
 
-    if (capturedComposer.controlsDisabled || stoppingRef.current) return;
+    if (controls().stopDisabled || stoppingRef.current) return;
     stoppingRef.current = true; setStopping(true); setControlError(undefined);
 
     try { await capturedComposer.onAbort(); }
@@ -680,7 +682,7 @@ export function Composer(props: Props) {
 
         const renderEffortPicker = () => (<ContainedPicker label="Thinking level" selectedLabel={composer().thinkingLevel.charAt(0).toUpperCase() + composer().thinkingLevel.slice(1)} value={composer().thinkingLevel} disabled={controls().inputDisabled} menuWidth={120} centered compact options={thinkingOptions()} onChange={composer().onThinking} />);
 
-        const renderSend = () => <Show when={editingPending()} fallback={<IconButton title="" label={stopShown() ? "Stop piop" : "Send message"} class={`send send-stop${stopShown() ? " stop-compact" : ""}`} disabled={stopShown() ? controls().stopDisabled : controlsBlocked() || sending() || readingUploads() > 0 || (!hasVisibleText(value()) && uploads().length === 0)} onClick={clickSendOrStop}><ArrowUp class="send-icon send-arrow" size={18} /><CircleStop class="send-icon send-square" size={17} /></IconButton>}>
+        const renderSend = () => <Show when={editingPending()} fallback={<IconButton title="" label={stopShown() ? "Stop piop" : "Send message"} class={`send send-stop${stopShown() ? " stop-compact" : ""}`} disabled={stopShown() ? controls().stopDisabled : sendDisabled()} onClick={clickSendOrStop}><ArrowUp class="send-icon send-arrow" size={18} /><Square class="send-icon send-square" size={12} fill="currentColor" /></IconButton>}>
           <IconButton title="" label="Cancel editing" disabled={savingEdit()} onClick={cancelEdit}><X size={18} /></IconButton>
           <IconButton title="" label="Save edited message" class="send" disabled={queueDisabled() || savingEdit() || readingUploads() > 0} onClick={() => void saveEdit()}><Check size={18} /></IconButton>
         </Show>;

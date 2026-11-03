@@ -260,7 +260,6 @@ test('in-flight submission is deduplicated and failed sends preserve newer typin
   await mode.selectOption('hold');
   await editor.fill('Original');
   await page.keyboard.press('Enter');
-  assert.equal(await page.getByRole('button', { name: 'Send message', exact: true }).isDisabled(), true);
   assert.equal(await editor.inputValue(), 'Original');
   await page.keyboard.press('Enter');
   assert.deepEqual(await sent(page), [['Original', null, []]]);

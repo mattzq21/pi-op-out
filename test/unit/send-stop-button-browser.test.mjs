@@ -21,3 +21,17 @@ test('a quick second click on Send does not stop the reply', { timeout: 120000 }
   await page.getByRole('button', { name: 'Stop piop', exact: true }).waitFor({ state: 'detached', timeout: 30000 });
   assert.deepEqual({ sameNode, replied: await page.getByText('Reply to Slow 2').count() }, { sameNode: true, replied: 0 });
 });
+
+test('Send turns straight into a working Stop', { timeout: 120000 }, async t => {
+  const page = await appBrowser(t, { model: 'echo' });
+  const composer = page.getByRole('textbox', { name: 'Message piop' });
+  await composer.fill('Slow 1');
+  await page.evaluate(() => { const button = document.querySelector('.send-stop'); window.states = []; new MutationObserver(() => window.states.push(`${button.classList.contains('stop-compact') ? 'stop' : 'send'}${button.disabled ? ' disabled' : ''}`)).observe(button, { attributes: true }); });
+  await composer.press('Enter');
+  await page.getByRole('button', { name: 'Stop piop', exact: true }).click();
+  await page.getByRole('button', { name: 'Stop piop', exact: true }).waitFor({ state: 'detached', timeout: 30000 });
+  const states = await page.evaluate(() => window.states);
+  await composer.fill('Message 2'); await composer.press('Enter');
+  await page.getByText('Reply to Message 2').waitFor({ timeout: 30000 });
+  assert.deepEqual({ first: states[0], replied: await page.getByText('Reply to Slow 1').count() }, { first: 'stop', replied: 0 });
+});

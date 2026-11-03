@@ -20,7 +20,7 @@ const [failSends, setFailSends] = createSignal(false);
 const [holdSends, setHoldSends] = createSignal(false);
 const [controlled, setControlled] = createSignal(false);
 const [uploads, setUploads] = createSignal<ComposerUpload[]>([]);
-const heldSends: (() => void)[] = [];
+const [heldSends, setHeldSends] = createSignal<(() => void)[]>([]);
 
 render(() => <>
   <label><input type="checkbox" checked={disabled()} onChange={event => setDisabled(event.currentTarget.checked)} />Disable controls</label>
@@ -28,7 +28,8 @@ render(() => <>
   <label><input type="checkbox" checked={failSends()} onChange={event => setFailSends(event.currentTarget.checked)} />Fail sends</label>
   <label><input type="checkbox" checked={holdSends()} onChange={event => setHoldSends(event.currentTarget.checked)} />Hold sends</label>
   <label><input type="checkbox" checked={controlled()} onChange={event => setControlled(event.currentTarget.checked)} />Controlled uploads</label>
-  <button onClick={() => heldSends.shift()?.()}>Complete send</button>
+  <button onClick={() => { const [next, ...rest] = heldSends(); setHeldSends(rest); next?.(); }}>Complete send</button>
+  <output aria-label="Held sends">{heldSends().length}</output>
   <button onClick={() => setMounted(false)}>Remove composer</button>
   <output aria-label="Sent messages">{JSON.stringify(sent())}</output>
   <output aria-label="Uploaded files">{JSON.stringify(uploads().map(upload => upload.name))}</output>
@@ -39,7 +40,7 @@ render(() => <>
         uploads={controlled() ? uploads() : undefined} onUploadsChange={controlled() ? setUploads : undefined}
         thinkingLevel="off" thinkingLevels={['off']}
         onSend={async (message, behavior, images) => {
-          if (holdSends()) await new Promise<void>(resolve => heldSends.push(resolve));
+          if (holdSends()) await new Promise<void>(resolve => setHeldSends(values => [...values, resolve]));
           if (failSends()) throw new Error("offline");
           setSent(values => [...values, [message, behavior, images]]);
         }}
