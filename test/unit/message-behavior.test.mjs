@@ -189,6 +189,12 @@ test('every skill of a message with several skills stays highlighted without its
   assert.deepEqual([...document.querySelectorAll('.inline-skill-reference')].map(node => node.textContent), ['$bugfix', '$grill-me']);
 });
 
+test('the skill reference becomes highlighted when the sending copy is replaced by the sent message', async t => {
+  const view = await renderMessage(t, { role: 'user', content: [{ type: 'text', text: '/skill:bugfix Fix it with $bugfix' }] });
+  await view.rerender({ message: { id: 'message-id', role: 'user', content: '<skill name="bugfix" location="/skills/bugfix">\nReferences are relative to /skills/bugfix.\n\nPrivate instructions\n</skill>\n\nFix it with $bugfix' } });
+  assert.equal(document.querySelector('.inline-skill-reference')?.textContent, '$bugfix');
+});
+
 test('a skill invocation without a user request shows only the skill name', async t => {
   await renderMessage(t, { role: 'user', content: '<skill name="research" location="/skills/research">\nReferences are relative to /skills/research.\n\nPrivate instructions\n</skill>' });
   assert.equal(document.querySelector('article').textContent.trim(), '$research');
