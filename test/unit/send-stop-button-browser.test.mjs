@@ -29,6 +29,7 @@ test('Send turns straight into a working Stop', { timeout: 120000 }, async t => 
   await page.evaluate(() => { const button = document.querySelector('.send-stop'); window.states = []; new MutationObserver(() => window.states.push(`${button.classList.contains('stop-compact') ? 'stop' : 'send'}${button.disabled ? ' disabled' : ''}`)).observe(button, { attributes: true }); });
   await composer.press('Enter');
   await page.getByRole('button', { name: 'Stop piop', exact: true }).click();
+  await page.locator('.composer-above > .sending-status[aria-label="Stopping piop"]').getByText('Stopping…').waitFor();
   await page.getByRole('button', { name: 'Stop piop', exact: true }).waitFor({ state: 'detached', timeout: 30000 });
   const states = await page.evaluate(() => window.states);
   await composer.fill('Message 2'); await composer.press('Enter');
