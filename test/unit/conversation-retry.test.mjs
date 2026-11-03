@@ -125,7 +125,7 @@ test('a submitted message waits for MCP loading and then shows its send status',
   assert.equal(fixture.editor().value, '');
   assert.ok(fixture.view.container.querySelector('[aria-label="Message waiting for MCP"]'));
   assert.equal(fixture.view.container.querySelector('[aria-label="Preparing message"]'), null);
-  assert.equal(send().disabled, true);
+  assert.ok(fixture.view.container.querySelector('[aria-label="Stop piop"]'));
   await fixture.update({ statuses: {} });
   await untilDom(() => fixture.view.container.querySelector('[aria-label="Preparing message"] [role="status"]')?.textContent === 'Sending message…');
   await act(() => pending.resolve(true));
