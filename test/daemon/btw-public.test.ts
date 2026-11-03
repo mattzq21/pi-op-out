@@ -162,7 +162,7 @@ test.concurrent('control of the main chat is control of its side chats, and taki
   await agents.daemon.invoke('pi_command', { runtimeId: chat.runtimeId, command: { type: 'hold_queue', held: false } });
 }, 60000);
 
-test.concurrent('a bare /btw opens at once during a turn, and /btw with a question waits for the turn to end', async () => {
+test.concurrent('/btw opens at once during a turn, with or without a question', async () => {
   let finish!: () => void;
   const finished = new Promise<void>(resolve => { finish = resolve; });
   agents.scripts.set('Plan the queue', async messages => {
@@ -178,17 +178,12 @@ test.concurrent('a bare /btw opens at once during a turn, and /btw with a questi
 
   const bare = await sideChat(chat, '/btw');
   expect(bare.task).toBeUndefined();
-  const opened = () => agents.daemon.events.filter(event => event.payload?.runtimeId === chat.runtimeId && event.payload.event?.title === OPEN).length;
-  const before = opened();
-  await chat.command({ type: 'follow_up', message: '/btw Side question' });
-  await Bun.sleep(1500);
-  expect(opened()).toBe(before);
-  finish();
-  const asked = await agents.daemon.waitEvent('pi://event', payload => payload.runtimeId === chat.runtimeId && payload.event?.title === OPEN && JSON.parse(payload.event.placeholder).task === 'Side question', 30000);
-  expect(JSON.parse(asked.event.placeholder).kind).toBe('btw');
-  expect(text((await chat.history()).findLast(message => message.role === 'assistant'))).toBe('Done working.');
-  expect((await chat.history()).map(text)).not.toContain('/btw Side question');
+  const asked = await sideChat(chat, '/btw Side question');
+  expect(asked).toMatchObject({ kind: 'btw', task: 'Side question' });
   expect((await chat.command({ type: 'get_state' })).pendingMessageCount).toBe(0);
+  finish();
+  await chat.until(history => text(history.at(-1)) === 'Done working.');
+  expect((await chat.history()).map(text)).not.toContain('/btw Side question');
 }, 60000);
 
 test.concurrent('a pane that once took control by click does not take it back when another client takes control during a linked update', async () => {
@@ -220,17 +215,11 @@ test.concurrent('a pane that once took control by click does not take it back wh
   expect(await controls('race-phone-unopened')).toBe(false);
 }, 60000);
 
-test.concurrent('a held queue holds /btw with a question until resume, but a bare /btw opens at once', async () => {
+test.concurrent('a held queue does not hold /btw', async () => {
   const chat = await answeredChat('Plan the hold');
   await chat.command({ type: 'hold_queue', held: true });
-  const opened = () => agents.daemon.events.filter(event => event.payload?.runtimeId === chat.runtimeId && event.payload.event?.title === OPEN).map(event => JSON.parse(event.payload.event.placeholder));
-  await chat.command({ type: 'follow_up', message: '/btw Held question' });
-  const bare = await sideChat(chat, '/btw');
-  expect(bare.task).toBeUndefined();
-  await Bun.sleep(1000);
-  expect(opened().some(side => side.task === 'Held question')).toBe(false);
-  await chat.command({ type: 'hold_queue', held: false });
-  for (let tries = 0; !opened().some(side => side.task === 'Held question') && tries < 100; tries++) await Bun.sleep(100);
-  expect(opened().some(side => side.task === 'Held question')).toBe(true);
+  const asked = await sideChat(chat, '/btw Held question');
+  expect(asked.task).toBe('Held question');
+  expect((await chat.command({ type: 'get_state' })).pendingMessageCount).toBe(0);
   expect((await chat.history()).map(text)).not.toContain('/btw Held question');
 }, 60000);
