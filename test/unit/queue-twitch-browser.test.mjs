@@ -14,7 +14,7 @@ test('queueing a message moves the chat history once, in the frame its queue row
     await page.getByRole('button', { name: 'Stop piop', exact: true }).waitFor({ state: 'detached' });
   }
   await page.getByRole('button', { name: 'Hold queue', exact: true }).click();
-  await page.getByText('Queue on hold').waitFor();
+  await page.getByRole('button', { name: 'Resume', exact: true }).waitFor();
   await page.evaluate(() => {
     window.frames = [];
     const channel = new MessageChannel();

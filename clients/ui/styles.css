@@ -544,7 +544,7 @@ textarea::placeholder { color: var(--faint); }
 .pending-message button:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 .pending-message button:disabled { opacity: .4; cursor: default; }
 .pending-message button.message-link { display: inline; min-height: 0; padding: 0; border-radius: 0; color: var(--accent); font-size: inherit; }.pending-message button.message-link:hover { background: transparent; }
-.pending-queue-hold { display: flex; align-items: center; justify-content: space-between; gap: 9px; color: var(--muted); font-size: 12px; }
+.pending-queue-hold { display: flex; align-items: center; justify-content: flex-end; gap: 9px; color: var(--muted); font-size: 12px; }
 .pending-queue-hold.held { color: var(--ink); }
 .pending-queue-hold button { display: inline-flex; align-items: center; gap: 5px; box-sizing: border-box; height: 26px; padding: 0 6px; border: 1px solid #393732; border-radius: 5px; background: #1e1e1b; box-shadow: 0 4px 14px #0006; color: var(--muted); font-size: 12px; cursor: pointer; }
 .pending-queue-hold.held button { color: var(--accent); }

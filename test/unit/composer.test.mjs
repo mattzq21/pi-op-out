@@ -243,8 +243,7 @@ describe('composer interactions', () => {
     assert.deepEqual(holds, [true]);
     await render({ queueHeld: true });
     assert.ok(control('Pending messages'));
-    assert.match(document.body.textContent, /Queue on hold/);
-    await click(button('Resume queue'));
+    await click(button('Resume'));
     assert.deepEqual(holds, [true, false]);
     await render({ queueHeld: false, onHoldQueue: undefined });
     assert.equal(button('Hold queue'), undefined);
