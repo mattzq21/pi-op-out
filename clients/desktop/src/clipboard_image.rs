@@ -2,6 +2,12 @@ pub fn configure_image_copy(window: &tauri::WebviewWindow) -> Result<(), String>
     window.with_webview(|webview| {
         use webkit2gtk::{ContextMenuAction, ContextMenuExt, ContextMenuItem, ContextMenuItemExt, HitTestResultExt, WebViewExt};
         webview.inner().connect_context_menu(|_, menu, _, hit| {
+            if hit.context_is_editable() {
+                for item in menu.items() {
+                    if !matches!(item.stock_action(), ContextMenuAction::Cut | ContextMenuAction::Copy | ContextMenuAction::Paste | ContextMenuAction::SelectAll) { menu.remove(&item); }
+                }
+                return menu.items().is_empty();
+            }
             for item in menu.items() {
                 if matches!(item.stock_action(), ContextMenuAction::GoBack | ContextMenuAction::GoForward | ContextMenuAction::Stop | ContextMenuAction::Reload) { menu.remove(&item); }
             }
