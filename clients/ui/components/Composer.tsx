@@ -10,7 +10,7 @@ import { createComposerEditorKey } from "../lib/composerKeyboard";
 import { Key } from "@solid-primitives/keyed";
 import { isTauri } from "@tauri-apps/api/core";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
-import { createMemo,createSelector,createSignal,onMount,Show,splitProps } from "solid-js";
+import { createMemo,createSelector,createSignal,onCleanup,onMount,Show,splitProps } from "solid-js";
 import { createFilePaste } from "../lib/filePaste";
 import { buildComposerPrompt,composerReference,isPromptCommand,skillName,skillNames } from "../lib/composerPrompt";
 import { createDependencyEffect,createMemoFields,createRef,cssPixels,type CSSProperties,type JSXElement,type KeyboardEvent,type StateUpdate } from "../lib/solid";
@@ -511,12 +511,29 @@ export function Composer(props: Props) {
     void props.onHoldQueue(held).catch((reason) => setControlError(reason instanceof Error ? reason.message : String(reason))).finally(() => setChangingPending(false));
   };
 
-  const showPendingBox = () => composer().pendingMessages.length > 0 || Boolean(props.goal?.error()) || Boolean(props.queueHeld);
+  const editingFirstPending = createMemo(() => { const id = editingPending()?.id; return id !== undefined && composer().pendingMessages[0]?.id === id; });
+  let editHoldRelease: ((held: boolean) => Promise<void>) | undefined;
+  const releaseEditHold = (report: boolean) => {
+    const release = editHoldRelease;
+    editHoldRelease = undefined;
+    if (!release) return;
+    void release(false).catch((reason) => { const text = reason instanceof Error ? reason.message : String(reason); if (report) setControlError(text); else console.error(text); });
+  };
+  createDependencyEffect(() => {
+    if (!editingFirstPending()) { releaseEditHold(true); return; }
+    if (props.queueHeld || !props.onHoldQueue || editHoldRelease) return;
+    editHoldRelease = props.onHoldQueue;
+    holdQueue(true);
+  }, () => [editingFirstPending()]);
+  onCleanup(() => releaseEditHold(false));
+  const toggleHold = () => { editHoldRelease = undefined; holdQueue(!props.queueHeld); };
+
+  const showPendingBox = () => composer().pendingMessages.length > 0 || Boolean(props.goal?.error());
   const sendingPresence = createDelayedPresence(() => props.sendingStatus !== undefined);
   const pendingStatus = createMemo<PendingStatus | undefined>(() => stopping() ? { text: "Stopping…", label: "Stopping piop" } : props.sendingStatus !== undefined ? { text: props.sendingStatus, label: "Preparing message" } : undefined);
   const pendingPresence = createDelayedPresence(() => pendingStatus() !== undefined);
   const holdBeforeSession = () => !props.onHoldQueue && sendingPresence.shown();
-  const renderQueueHold = () => (<Show when={props.onHoldQueue || sendingPresence.shown()}><div class="pending-queue-hold" classList={{ held: Boolean(props.queueHeld), "presence-in": holdBeforeSession(), leaving: holdBeforeSession() && sendingPresence.leaving() }}><button type="button" disabled={!props.onHoldQueue || queueDisabled() || changingPending()} aria-pressed={Boolean(props.queueHeld)} data-tooltip={props.queueHeld ? "Send the held messages" : "Keep messages in the queue until you resume"} onClick={() => holdQueue(!props.queueHeld)}>{props.queueHeld ? <><Play size={13} />Resume</> : <><Pause size={13} />Hold queue</>}</button></div></Show>);
+  const renderQueueHold = () => (<Show when={props.onHoldQueue || sendingPresence.shown()}><div class="pending-queue-hold" classList={{ held: Boolean(props.queueHeld), "presence-in": holdBeforeSession(), leaving: holdBeforeSession() && sendingPresence.leaving() }}><button type="button" disabled={!props.onHoldQueue || queueDisabled() || changingPending()} aria-pressed={Boolean(props.queueHeld)} onClick={toggleHold}>{props.queueHeld ? <><Play size={13} />Resume</> : <><Pause size={13} />Hold</>}</button></div></Show>);
   const queueDisabled = () => props.queueControlsDisabled ?? composer().controlsDisabled;
   let handledQueueHoldRequest = props.queueHoldRequest ?? 0;
   createDependencyEffect(() => {
@@ -525,7 +542,7 @@ export function Composer(props: Props) {
     if (handledQueueHoldRequest === request) return;
     handledQueueHoldRequest = request;
 
-    if (!queueDisabled() && !changingPending()) holdQueue(!props.queueHeld);
+    if (!queueDisabled() && !changingPending()) toggleHold();
   }, () => [props.queueHoldRequest]);
   const pendingDrag = usePendingMessageDrag(() => (composer().pendingMessages), () => (pendingControlsDisabled(queueDisabled(), changingPending(), composer().onChangePending)), () => (changePending));
   const controlsBlocked = () => composer().agentUnavailable || (props.submissionDisabled ?? composer().controlsDisabled) || composer().compacting || stopping();
@@ -649,7 +666,7 @@ export function Composer(props: Props) {
     </div>}</Show>);
 
     const renderComposerEditor = () => (<div class="composer-editor">
-        <piop-composer-field ref={element => { ref.current = element; }} skills={knownSkills()} classList={{ "pending-edit": Boolean(editingPending()) }} aria-label="Message piop" readOnly={props.ownershipRequired || savingEdit()} onFocus={() => { setPaletteDismissed(false); if (props.ownershipRequired) void props.onTakeOwnership?.(); }} placeholder={props.ownershipRequired ? "" : composer().streaming || props.queueHeld ? "Queue a follow-up…" : "Ask piop to build, explain, or change anything…"} value={value()} onSelect={(event) => setSelection({ start: event.currentTarget.selectionStart, end: event.currentTarget.selectionEnd })} onInput={(event) => { setSelection({ start: event.currentTarget.selectionStart, end: event.currentTarget.selectionEnd }); setPaletteDismissed(false); setValue(event.currentTarget.value); }} onKeyDown={event => {
+        <piop-composer-field ref={element => { ref.current = element; }} skills={knownSkills()} classList={{ "pending-edit": Boolean(editingPending()) }} aria-label="Message piop" readOnly={props.ownershipRequired || savingEdit()} onFocus={() => { setPaletteDismissed(false); if (props.ownershipRequired) void props.onTakeOwnership?.(); }} placeholder="Ask piop to build, explain, or change anything…" value={value()} onSelect={(event) => setSelection({ start: event.currentTarget.selectionStart, end: event.currentTarget.selectionEnd })} onInput={(event) => { setSelection({ start: event.currentTarget.selectionStart, end: event.currentTarget.selectionEnd }); setPaletteDismissed(false); setValue(event.currentTarget.value); }} onKeyDown={event => {
           if (editingPending() && event.key === "Escape") { event.preventDefault(); event.stopPropagation(); cancelEdit(); return; }
           handleEditorKey(event);
         }} />

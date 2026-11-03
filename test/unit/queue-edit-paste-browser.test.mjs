@@ -14,7 +14,7 @@ for (const way of ['a paste event', 'Ctrl+V without a paste event']) test('an im
   await composer.press('Enter');
   await page.getByText('Reply to First').waitFor({ timeout: 30000 });
   await page.getByRole('button', { name: 'Stop piop', exact: true }).waitFor({ state: 'detached' });
-  await page.getByRole('button', { name: 'Hold queue', exact: true }).click();
+  await page.getByRole('button', { name: 'Hold', exact: true }).click();
   await composer.fill('Look at this');
   await composer.press('Enter');
   await page.getByRole('button', { name: 'Edit queued message: Look at this', exact: true }).click();
