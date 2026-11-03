@@ -16,7 +16,7 @@ function compiledBridge() {
 
 export async function installAgentMcp({ dir, pi, tools, servers: catalog = {}, start, registrationError, deferToolsUntilStart = false }) {
   const sdkPath = join(dir, 'external-mcp-sdk.mjs');
-  await writeFile(sdkPath, 'let setup; export const setSetup = value => { setup = value; }; export const createMcpExtension = () => pi => setup(pi);');
+  await writeFile(sdkPath, 'let setup; export const CONFIG_DIR_NAME = ".pi"; export const getAgentDir = () => "/nonexistent"; export const setSetup = value => { setup = value; }; export const createMcpExtension = () => pi => setup(pi);');
   const sdk = await import(pathToFileURL(sdkPath));
   let adapter;
   let started = false;
