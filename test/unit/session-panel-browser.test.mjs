@@ -405,6 +405,15 @@ test('a second new group request closes the open name field', async t => {
   await name.waitFor();
 });
 
+test('moving a listed project conversation into Recents shows it there at once', async t => {
+  const cwd = process.cwd();
+  const { page } = await panelPage(t, { sessionSpecs: [{ name: 'Chat 2', groupId: `local:${cwd}` }, { name: 'Chat 10', groupId: `local:${cwd}` }] });
+  await conversation(page, 'Chat 10').focus();
+  await page.keyboard.press('Alt+Shift+ArrowDown');
+  await (await groupContents(page, 'Recents')).getByRole('button', { name: 'Chat 10, Project directory, $0.00', exact: true }).waitFor({ timeout: 2000 });
+  assert.deepEqual(await (await groupContents(page, 'repo')).locator('.session-main strong').allTextContents(), ['Chat 2']);
+});
+
 test('new group names are trimmed and survive reopening', async t => {
   const { page, reload } = await panelPage(t);
   await page.getByRole('button', { name: 'Request new group', exact: true }).click();
