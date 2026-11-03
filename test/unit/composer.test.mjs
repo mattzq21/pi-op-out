@@ -112,6 +112,34 @@ describe('composer interactions', () => {
     assert.deepEqual(changes, [['1', edit], ['1', edit]]);
   });
 
+  test('editing the first queued message holds the queue and resumes it when the edit ends, unless the user takes over', async () => {
+    const holds = [];
+    const first = { id: '1', message: 'First', behavior: 'followUp' };
+    const second = { id: '2', message: 'Second', behavior: 'followUp' };
+    await render({ streaming: true, pendingMessages: [first, second], onChangePending: async () => {}, onHoldQueue: async held => { holds.push(held); await render({ queueHeld: held }); } });
+    await click(control('Edit queued message: Second'));
+    await key('Escape', {}, document.querySelector('.pending-edit'));
+    assert.deepEqual(holds, [], 'a later message is edited without a hold');
+    await click(control('Edit queued message: First'));
+    assert.deepEqual(holds, [true]);
+    await key('Escape', {}, document.querySelector('.pending-edit'));
+    assert.deepEqual(holds, [true, false]);
+    await click(control('Edit queued message: First'));
+    await enterText(document.querySelector('.pending-edit'), 'First, edited');
+    await key('Enter', {}, document.querySelector('.pending-edit'));
+    await untilDom(() => !document.querySelector('.pending-edit'));
+    assert.deepEqual(holds, [true, false, true, false], 'saving resumes the queue');
+    await click(control('Edit queued message: First'));
+    const button = label => [...document.querySelectorAll('button')].find(element => element.textContent === label);
+    await click(button('Resume'));
+    await key('Escape', {}, document.querySelector('.pending-edit'));
+    assert.deepEqual(holds, [true, false, true, false, true, false], 'a manual resume is not repeated when the edit ends');
+    await render({ queueHeld: true });
+    await click(control('Edit queued message: First'));
+    await key('Escape', {}, document.querySelector('.pending-edit'));
+    assert.deepEqual(holds, [true, false, true, false, true, false], 'a queue the user held stays held');
+  });
+
   test('a queued message is edited with its images and text files, a pasted file is attached, and a queued /compact has no edit button', async () => {
     const changes = [];
     const message = 'Review these\n\n<file name="notes.md">\nFirst note\n</file>\n\n<file name="old.txt">\nOld text\n</file>';
@@ -239,15 +267,14 @@ describe('composer interactions', () => {
     const button = label => [...document.querySelectorAll('button')].find(element => element.textContent === label);
     await render({ onHoldQueue: async held => { holds.push(held); } });
     assert.equal(control('Pending messages'), null);
-    await click(button('Hold queue'));
+    await click(button('Hold'));
     assert.deepEqual(holds, [true]);
     await render({ queueHeld: true });
-    assert.ok(control('Pending messages'));
-    assert.match(document.body.textContent, /Queue on hold/);
-    await click(button('Resume queue'));
+    assert.equal(control('Pending messages'), null);
+    await click(button('Resume'));
     assert.deepEqual(holds, [true, false]);
     await render({ queueHeld: false, onHoldQueue: undefined });
-    assert.equal(button('Hold queue'), undefined);
+    assert.equal(button('Hold'), undefined);
   });
 
 });
