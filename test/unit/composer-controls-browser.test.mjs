@@ -119,23 +119,14 @@ test('clicking the agent picker trigger again closes it without selection', asyn
 
 const sent = async page => JSON.parse(await page.getByLabel('Sent messages').textContent());
 
-test('the agent list cannot open once the agent is locked, even when agents can be reloaded', async t => {
-  const page = await controlsPage(t);
-  const agent = page.getByRole('button', { name: 'Agent', exact: true });
-  await page.getByRole('checkbox', { name: 'Agents reloadable', exact: true }).check();
-  assert.equal(await agent.isDisabled(), false);
-  await page.getByRole('checkbox', { name: 'Agent locked', exact: true }).check();
-  assert.equal(await agent.isDisabled(), true);
-});
-
-test('an unavailable locked agent shows an error and blocks selection and sending', async t => {
+test('an unavailable agent shows an error and blocks sending, but another agent can be chosen', async t => {
   const page = await controlsPage(t);
   const editor = page.getByRole('textbox', { name: 'Message piop' });
   await editor.fill('Keep this draft');
   await page.getByRole('checkbox', { name: 'Agent unavailable', exact: true }).check();
   assert.equal(await page.getByRole('alert').textContent(), 'Agent "default" is unavailable. This conversation cannot start.');
   assert.equal(await page.getByRole('button', { name: 'Send message', exact: true }).isDisabled(), true);
-  assert.equal(await page.getByRole('button', { name: 'Agent', exact: true }).isDisabled(), true);
+  assert.equal(await page.getByRole('button', { name: 'Agent', exact: true }).isDisabled(), false);
   await editor.press('Enter');
   assert.deepEqual(await sent(page), []);
   assert.equal(await editor.inputValue(), 'Keep this draft');

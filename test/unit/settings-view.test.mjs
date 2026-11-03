@@ -50,6 +50,24 @@ describe('settings editor', () => {
     assert.equal(control('Agent default model').textContent, 'My model');
   });
 
+  test('discarding changes clears an invalid context cap that was never saved', async () => {
+    await render({ models: [{ provider: 'p', id: 'model', name: 'Model' }], agentConfig: { agents: [profile('general')] } });
+    await section('Agents');
+    await enterText(control('Agent context cap'), 'abc');
+    assert.equal(control('Agent context cap').getAttribute('aria-invalid'), 'true');
+    assert.equal(save().disabled, true);
+    await click(button('Discard changes'));
+    assert.equal(control('Agent context cap').value, '');
+    assert.equal(control('Agent context cap').getAttribute('aria-invalid'), 'false');
+    assert.equal(button('Discard changes'), undefined);
+    await section('Inference');
+    await click(control('Edit context cap for p/model'));
+    await enterText(control('Context cap for p/model'), 'abc');
+    await click(button('Discard changes'));
+    assert.equal(control('Context cap for p/model').value, '');
+    assert.equal(document.querySelector('[role="alert"]'), null);
+  });
+
   test('the alias input keeps focus while typing', async () => {
     await render({ models: [{ provider: 'p', id: 'a', name: 'A' }, { provider: 'p', id: 'b', name: 'B' }], agentConfig: { agents: [profile('general')] } });
     await section('Inference');

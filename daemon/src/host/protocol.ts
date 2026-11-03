@@ -102,7 +102,7 @@ function controlAction(command: string): string | undefined {
 }
 
 const APP_REQUESTS = new Set(['queue_prompt', 'insert_context', 'orchestration_message', 'provider_auth_refresh', 'context_cap_settings', 'agent_definitions_changed',
-  'rewind_message', 'fork_after', 'copy_after', 'prepare_fork', 'select_agent',
+  'rewind_message', 'fork_after', 'copy_after', 'prepare_fork', 'select_agent', 'chat_agent', 'set_chat_agent',
   'set_fast_mode', 'conversation_client', 'retry_response', 'resume_interrupted', 'queue_hold', 'queue_offer', 'skill_mcp', 'prompt_preview']);
 
 export function wireCommand(command: any, id: string): any {

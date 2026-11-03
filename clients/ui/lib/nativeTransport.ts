@@ -566,7 +566,7 @@ export class NativeTransport {
   async command(command: RpcCommand, schema: z.ZodType = jsonResultSchema) {
     const result = await this.executeCommand(command, schema);
 
-    if (command.type === "select_agent" || command.type === "set_model") {
+    if (command.type === "select_agent" || command.type === "set_chat_agent" || command.type === "set_model") {
       const state = await this.executeCommand({ type: "get_state" }, agentStateSchema);
       this.promptControls.useEffectiveModel(state.model);
     }
