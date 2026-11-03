@@ -513,7 +513,7 @@ export function Composer(props: Props) {
   const showPendingBox = () => composer().pendingMessages.length > 0 || Boolean(props.goal?.error()) || Boolean(props.queueHeld);
   const sendingPresence = createDelayedPresence(() => props.sendingStatus !== undefined);
   const holdBeforeSession = () => !props.onHoldQueue && sendingPresence.shown();
-  const renderQueueHold = (alone = false) => (<Show when={props.onHoldQueue || sendingPresence.shown()}><div class="pending-queue-hold" classList={{ held: Boolean(props.queueHeld), alone, "presence-in": holdBeforeSession(), leaving: holdBeforeSession() && sendingPresence.leaving() }}><span>{props.queueHeld ? "Queue on hold. Messages wait until you resume." : ""}</span><button type="button" disabled={!props.onHoldQueue || queueDisabled() || changingPending()} aria-pressed={Boolean(props.queueHeld)} data-tooltip={props.queueHeld ? "Send the held messages" : "Keep messages in the queue until you resume"} onClick={() => holdQueue(!props.queueHeld)}>{props.queueHeld ? <><Play size={13} />Resume queue</> : <><Pause size={13} />Hold queue</>}</button></div></Show>);
+  const renderQueueHold = () => (<Show when={props.onHoldQueue || sendingPresence.shown()}><div class="pending-queue-hold" classList={{ held: Boolean(props.queueHeld), "presence-in": holdBeforeSession(), leaving: holdBeforeSession() && sendingPresence.leaving() }}><span>{props.queueHeld ? "Queue on hold. Messages wait until you resume." : ""}</span><button type="button" disabled={!props.onHoldQueue || queueDisabled() || changingPending()} aria-pressed={Boolean(props.queueHeld)} data-tooltip={props.queueHeld ? "Send the held messages" : "Keep messages in the queue until you resume"} onClick={() => holdQueue(!props.queueHeld)}>{props.queueHeld ? <><Play size={13} />Resume queue</> : <><Pause size={13} />Hold queue</>}</button></div></Show>);
   const queueDisabled = () => props.queueControlsDisabled ?? composer().controlsDisabled;
   let handledQueueHoldRequest = props.queueHoldRequest ?? 0;
   createDependencyEffect(() => {
@@ -738,7 +738,8 @@ export function Composer(props: Props) {
     <div class="composer-above">
     <SendingStatus status={props.sendingStatus} presence={sendingPresence} />
     {renderStreamBanner()}
-    {showPendingBox() ? <div class="pending-messages" aria-label="Pending messages">{renderQueueHold()}{<Key each={composer().pendingMessages.filter((message) => pendingMessageIdentitySchema.safeParse(message).success)} by={pendingKey}>{(message, _index) => {
+    {renderQueueHold()}
+    {showPendingBox() ? <div class="pending-messages" aria-label="Pending messages">{<Key each={composer().pendingMessages.filter((message) => pendingMessageIdentitySchema.safeParse(message).success)} by={pendingKey}>{(message, _index) => {
       const text = createMemo(() => String(message().message ?? ""));
       const segments = createMemo(() => queuedSegments(text()));
       const label = createMemo(() => segments().map((segment) => "text" in segment ? segment.text : "skill" in segment ? segment.skill : segment.label).join(""));
@@ -769,7 +770,7 @@ export function Composer(props: Props) {
         <span class="pending-message-text" data-tooltip={message().recovered ? "This saved answer may not have reached the model. Check the conversation before retrying." : message().retry ? "piop could not confirm whether this message reached the model, for example after a restart, so it is not sent by itself. Retry sends it again. Remove it if the conversation already has it." : label()} onDblClick={() => setExpandedPending((current) => current === message().id ? undefined : message().id)}>{message().goal && <small class="goal-label">Goal · </small>}{message().retry && <small>{message().recovered ? "Saved answer · " : "Retry needed · "}</small>}<PendingMessageText segments={segments()} /></span>
         {renderPendingMessageActions()}
       </div>;
-    }}</Key>}<Show when={props.goal?.error()}>{message => <div class="pending-goal-error" role="alert">{message()}</div>}</Show></div> : renderQueueHold(true)}
+    }}</Key>}<Show when={props.goal?.error()}>{message => <div class="pending-goal-error" role="alert">{message()}</div>}</Show></div> : null}
     {visualProps.toolbar}
     </div>
     <ComposerBody />
