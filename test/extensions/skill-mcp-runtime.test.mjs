@@ -21,7 +21,7 @@ test('real MCP process restores, keeps a crashed server for the next call, and l
   let session;
   try {
     const shim = join(dir, 'sdk.mjs');
-    writeFileSync(shim, `import { createMcpExtension as native } from ${JSON.stringify(pathToFileURL(join(root, 'dist/index.js')).href)}; export const createMcpExtension = () => native({loadConfig: () => ({servers: [], errors: []}), logPath: ${JSON.stringify(join(dir, 'mcp.log'))}});`);
+    writeFileSync(shim, `import { createMcpExtension as native } from ${JSON.stringify(pathToFileURL(join(root, 'dist/index.js')).href)}; export const CONFIG_DIR_NAME = '.pi'; export const getAgentDir = () => ${JSON.stringify(join(dir, 'agent'))}; export const createMcpExtension = () => native({loadConfig: () => ({servers: [], errors: []}), logPath: ${JSON.stringify(join(dir, 'mcp.log'))}});`);
     const bundle = join(dir, 'bridge.mjs');
     await build({ entryPoints: ['daemon/resources/mcp-bridge.ts'], outfile: bundle, bundle: true, platform: 'node', format: 'esm', plugins: [{ name: 'sdk', setup(builder) {
       builder.onResolve({ filter: /^@earendil-works\/pi-coding-agent$/ }, () => ({ path: shim, external: true }));
@@ -35,7 +35,7 @@ createInterface({input:process.stdin}).on('line', line => { const m=JSON.parse(l
 const result=m.method==='initialize'?{protocolVersion:'2025-03-26',capabilities:{tools:{}},serverInfo:{name:'fixture',version:'1'}}:m.method==='tools/list'?{tools:[{name:'ping',description:'Ping',inputSchema:{type:'object',properties:{}}}]}:{content:[{type:'text',text:'pong'}]};
 console.log(JSON.stringify({jsonrpc:'2.0',id:m.id,result})); });`);
     const skill = join(dir, 'SKILL.md'); writeFileSync(skill, 'Use the server.');
-    writeFileSync(join(dir, 'mcp.json'), JSON.stringify({ mcpServers: { app: { command: process.execPath, args: [script, pid, blocked], timeout: 2, exposure: 'direct' } } }));
+    writeFileSync(join(dir, 'mcp.json'), JSON.stringify({ mcpServers: { app: { command: process.execPath, args: [script, pid, blocked], timeout: 2, exposure: 'codemode' } } }));
     const history = join(dir, 'history.json'); writeFileSync(history, '[]');
     const start = async () => {
       const bus = new EventEmitter(), handlers = new Map(), servers = new Map(), tools = new Map(), statuses = new Map();
@@ -67,6 +67,7 @@ console.log(JSON.stringify({jsonrpc:'2.0',id:m.id,result})); });`);
     process.kill(Number(readFileSync(pid, 'utf8')), 'SIGKILL'); await crashed;
     assert.ok(session.servers.has(name)); assert.deepEqual(session.failures(), []);
     assert.equal(await session.dispatch('input', { text: 'continue' }), undefined, session.statuses.get('piop-input-rejected'));
+    assert.equal(await session.dispatch('input', { text: 'queued', streamingBehavior: 'followUp' }), undefined);
     await session.dispatch('session_shutdown'); session = await start(); await session.dispatch('input', { text: 'resume' });
     assert.equal(JSON.parse(session.statuses.get('piop-skill-mcp'))[0].name, name);
     assert.equal(JSON.parse(session.statuses.get('piop-skill-mcp'))[0].state, 'connected');

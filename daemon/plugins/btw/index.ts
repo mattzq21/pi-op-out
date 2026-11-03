@@ -1,8 +1,14 @@
 import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
+import { Type as Schema } from "typebox";
+import { Parse } from "typebox/value";
 import { isAuxiliary } from "../../resources/piop-storage/session-records.cjs";
 import { sessionName } from "../../resources/session-broker/session-names.cjs";
 import { sessionControls } from "../../resources/piop-controls/interface.ts";
 import { openAuxiliaryChat } from "../../resources/session-broker/auxiliary.ts";
+
+const queuedRequestSchema = Schema.Object({ command: Schema.Literal("btw"), args: Schema.String(), images: Schema.Array(Schema.Object({ type: Schema.Literal("image"), data: Schema.String(), mimeType: Schema.String(), name: Schema.Optional(Schema.String()) })) });
+
+type Images = Array<{ type: "image"; data: string; mimeType: string; name?: string }>;
 
 function mainChatName(ctx: ExtensionCommandContext) {
   const file = ctx.sessionManager.getSessionFile();
@@ -16,7 +22,7 @@ function mainChatName(ctx: ExtensionCommandContext) {
   return text.trim().split("\n")[0]?.trim() || "chat";
 }
 
-async function startBtw(pi: ExtensionAPI, args: string, ctx: ExtensionCommandContext) {
+async function startBtw(pi: ExtensionAPI, args: string, ctx: ExtensionCommandContext, images?: Images) {
   if (isAuxiliary(ctx.sessionManager.getEntries())) throw new Error("/btw is not available in a side chat");
   const controls = sessionControls(pi);
 
@@ -25,12 +31,19 @@ async function startBtw(pi: ExtensionAPI, args: string, ctx: ExtensionCommandCon
   const copy = await controls.copyAuxiliary(ctx, { kind: "btw", name });
   const task = args.trim();
 
-  openAuxiliaryChat(ctx, { kind: "btw", name, sessionId: copy.sessionId, sessionPath: copy.sessionPath, cwd: copy.cwd, hostId: copy.hostId, parentSessionId: copy.parentSessionId, ...task ? { task } : {} });
+  openAuxiliaryChat(ctx, { kind: "btw", name, sessionId: copy.sessionId, sessionPath: copy.sessionPath, cwd: copy.cwd, hostId: copy.hostId, parentSessionId: copy.parentSessionId, ...task ? { task, background: true } : {}, ...task && images?.length ? { images } : {} });
 }
 
 export default function btw(pi: ExtensionAPI) {
   const unsubscribe = pi.events.on("piop:auxiliary:kind", request => { if (request.kind === "btw") request.sendToMain = "Send results to the main chat. Use only when user explicitly asks to communicate with the other chat"; });
-  pi.on("session_shutdown", () => { unsubscribe(); });
+  const unsubscribeQueued = pi.events.on("piop:rpc", request => {
+    if (request.command !== "run_queued_command" || request.payload?.command !== "btw") return;
+    request.ready = (async () => {
+      const payload = Parse(queuedRequestSchema, request.payload);
+      await startBtw(pi, payload.args, request.ctx, payload.images);
+    })();
+  });
+  pi.on("session_shutdown", () => { unsubscribe(); unsubscribeQueued(); });
   pi.registerCommand("btw", {
     description: "Ask a side question in a side chat that knows this chat",
     getArgumentCompletions: prefix => prefix.trim() ? null : [{ value: "", label: "[question]", description: "Optional. The first message of the side chat" }],

@@ -2,6 +2,7 @@ import type { AppSettings } from "../types";
 import { invoke } from "./platform";
 import { z } from "zod";
 import { settingsPublicationSchema } from "./responseSchemas";
+import { withPluginKeybinds } from "../plugins/keybinds";
 import { applyClientPreferences, clientPreferences, clientPreferencesSchema, ClientPreferenceConflictError } from "./clientPreferenceMerge";
 
 const storageKey = "piop-client-settings";
@@ -37,7 +38,7 @@ export async function withClientSettings(source: AppSettings | Promise<AppSettin
 
 function mergeClientSettings(settings: AppSettings, stored: StoredPreferences): AppSettings {
   return { ...settings,
-    keybindings: stored.keybindings ? { ...settings.keybindings, ...stored.keybindings } : settings.keybindings,
+    keybindings: withPluginKeybinds({ ...settings.keybindings, ...stored.keybindings }) as AppSettings["keybindings"],
     debugMode: stored.debugMode ?? settings.debugMode,
     debugFeaturesOff: stored.debugFeaturesOff ?? settings.debugFeaturesOff ?? [],
   };

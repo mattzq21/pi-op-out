@@ -9,11 +9,13 @@ export const plugins: PluginDefinition[] = [
   { id: "cost", scope: "host", name: "Cost limit", description: "Per-conversation API cost limit, set with /cost.", load: () => import("./cost/plugin") },
   { id: "review", scope: "host", name: "Review", description: "Code reviews in a split pane, started with /review.", load: () => import("./review/plugin"),
     settings: { section: "review", label: "Review", description: "Choose the agent that runs /review.", icon: ClipboardCheck, load: () => import("./review/ReviewSettings").then(module => ({ default: module.ReviewSettings })) },
-    queuedCommands: ["review"],
+    queuedWithPrompt: ["review"],
+    keybinds: [{ id: "open", label: "Start review", description: "Review the project files in a side pane", defaultShortcut: "Ctrl+Alt+R", command: "review" }],
     messages: { "piop-review-link": () => import("./review/ReviewLink").then(module => ({ default: module.ReviewLink })) } },
   { id: "web-search", scope: "host", name: "Web search", description: "The web_search tool for agents, through the host's OpenAI ChatGPT or Claude Pro/Max sign-in.",
     settings: { section: "web-search", label: "Web search", description: "Choose the OpenAI or Anthropic model that runs web searches.", icon: Globe, load: () => import("./web-search/WebSearchSettings").then(module => ({ default: module.WebSearchSettings })) } },
-  { id: "btw", scope: "host", name: "Side chats", description: "Side chats started with /btw." },
+  { id: "btw", scope: "host", name: "Side chats", description: "Side chats started with /btw.", queuedWithPrompt: ["btw"],
+    keybinds: [{ id: "open", label: "Open side chat", description: "Start a /btw side chat for the current conversation", defaultShortcut: "Ctrl+Alt+S", command: "btw", needsMessages: true }] },
   { id: "background-compaction", scope: "host", name: "Background compaction", description: "Writes the compaction summary in the background before the context is full." },
 ];
 
@@ -22,7 +24,7 @@ const coreQueuedCommands = ["compact"];
 export function queuedCommand(text: string) {
   const [word] = text.trim().split(/\s/, 1);
 
-  return word.startsWith("/") && (coreQueuedCommands.includes(word.slice(1)) || plugins.some(plugin => plugin.queuedCommands?.includes(word.slice(1))));
+  return word.startsWith("/") && (coreQueuedCommands.includes(word.slice(1)) || (/^\/\S+\s+\S/.test(text.trimStart()) && plugins.some(plugin => plugin.queuedWithPrompt?.includes(word.slice(1)))));
 }
 
 export const pluginStatusSchema = z.object({ enabled: z.array(z.string()), configured: z.array(z.string()), revision: z.string(), error: z.string().nullable() });

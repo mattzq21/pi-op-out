@@ -106,6 +106,15 @@ for (const selection of ['default', 'selected', 'fallback']) {
   });
 }
 
+test('a model chosen in a draft that started without one is set before the shown effort, so Pi keeps that effort', async t => {
+  const { draft, host } = hostDraft(t);
+  host.config = { agents: [agent('general', { isDefault: true })] };
+  await draft.applyDefaults('high', false);
+  await draft.command({ type: 'set_model', provider: 'p', modelId: 'thinker' });
+  await draft.command({ type: 'set_thinking_level', level: 'off' });
+  assert.deepEqual([...draft.changes.values()], [{ type: 'select_agent', agent: 'general' }, { type: 'set_model', provider: 'p', modelId: 'thinker' }, { type: 'set_thinking_level', level: 'off' }]);
+});
+
 for (const [choice, change] of [
   ['agent', draft => draft.command({ type: 'select_agent', agent: 'general' })],
   ['model', draft => draft.command({ type: 'set_model', provider: 'p', modelId: 'plain' })],

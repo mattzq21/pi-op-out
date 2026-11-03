@@ -96,7 +96,7 @@ export function createSidepaneTabs(options: Options) {
     setOpened(current => current.some(session => listed.has(sessionKey(session))) ? current.filter(session => !listed.has(sessionKey(session))) : current);
   }));
 
-  const openAuxiliary = (session: SessionSummary, opening?: SidepaneOpening) => {
+  const openAuxiliary = (session: SessionSummary, opening?: SidepaneOpening, select = true) => {
     const key = sessionKey(session);
 
     if (opening) openings.set(key, opening);
@@ -104,7 +104,8 @@ export function createSidepaneTabs(options: Options) {
     if (!options.sessions().some(item => sessionKey(item) === key)) setOpened(current => [...current.filter(item => sessionKey(item) !== key), session]);
 
     if (session.auxiliaryKind === "subagent") setPinned(change(next => next.add(key)));
-    show(key);
+
+    if (select) show(key);
   };
 
   return {

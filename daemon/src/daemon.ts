@@ -163,6 +163,7 @@ function updateAgentEvent(app: App, packet: any): void {
     case 'agent_start': agent.working = true; break;
     case 'agent_settled': agent.working = false; break;
     case 'ownership_lost': agent.working = false; agent.messageable = true; break;
+    case 'ownership_acquired': agent.messageable = false; break;
   }
 }
 

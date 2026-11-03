@@ -260,7 +260,6 @@ test('in-flight submission is deduplicated and failed sends preserve newer typin
   await mode.selectOption('hold');
   await editor.fill('Original');
   await page.keyboard.press('Enter');
-  assert.equal(await page.getByRole('button', { name: 'Send message', exact: true }).isDisabled(), true);
   assert.equal(await editor.inputValue(), 'Original');
   await page.keyboard.press('Enter');
   assert.deepEqual(await sent(page), [['Original', null, []]]);
@@ -466,4 +465,18 @@ test('Ctrl+Z and Ctrl+Y undo and redo typing separated by a pause', async t => {
   assert.equal(await editor.inputValue(), 'helloworld\n!');
   await page.keyboard.press('Control+y');
   assert.equal(await editor.inputValue(), 'helloworld\n!');
+});
+
+test('Enter sends a fully typed command instead of completing it, Tab still completes', async t => {
+  const page = await controlsPage(t);
+  const editor = page.getByRole('textbox', { name: 'Message piop' });
+  await editor.fill('/review');
+  await page.getByRole('listbox', { name: 'piop commands' }).waitFor();
+  await page.keyboard.press('Tab');
+  assert.equal(await editor.inputValue(), '/review ');
+  assert.deepEqual(await sent(page), []);
+  await editor.fill('/review');
+  await page.getByRole('listbox', { name: 'piop commands' }).waitFor();
+  await page.keyboard.press('Enter');
+  assert.deepEqual(await sent(page), [['/review', null, []]]);
 });

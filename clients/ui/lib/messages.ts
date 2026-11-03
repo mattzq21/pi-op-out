@@ -161,12 +161,16 @@ export function appendSkillMcpFailure(messages: ChatMessage[], entry: PiEntry, i
   return result;
 }
 
+export const COPIED_HISTORY = "piop-copied-history";
+
 function applyCustomEntry(messages: ChatMessage[], entry: PiEntry, promptParts: SavedPromptParts) {
   if (entry.customType === "piop-queued-project-context") return appendQueuedProjectContext(messages, entry, true);
 
   if (entry.customType === "piop-skill-mcp-failed") return appendSkillMcpFailure(messages, entry, true);
 
   if (entry.customType === "piop-compaction-timing") return applyCompactionTiming(messages, entry);
+
+  if (entry.customType === COPIED_HISTORY) return [...messages, { id: entry.id, entryId: entry.id, role: "system" as const, customType: COPIED_HISTORY, content: "Side chat" }];
 
   if (["piop-context", "pi-desktop-prompt-context"].includes(entry.customType ?? "")) appendPromptContext(messages, entry, promptParts);
 

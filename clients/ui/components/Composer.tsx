@@ -2,7 +2,7 @@ import { CacheIcon } from "./CacheIcon";
 import "./composerField";
 import { queuedSegments, type ComposerFieldElement } from "./composerField";
 import { PendingMessageText } from "./PendingMessageText";
-import { createDelayedPresence, SendingStatus } from "./SendingStatus";
+import { createDelayedPresence, SendingStatus, type PendingStatus } from "./SendingStatus";
 import { required } from "../lib/required";
 import { trackToastMessage } from "../lib/toastHistory";
 import { createComposerPromptHistory } from "../lib/promptHistory";
@@ -10,7 +10,7 @@ import { createComposerEditorKey } from "../lib/composerKeyboard";
 import { Key } from "@solid-primitives/keyed";
 import { isTauri } from "@tauri-apps/api/core";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
-import { createMemo,createSelector,createSignal,onMount,Show,splitProps } from "solid-js";
+import { createMemo,createSelector,createSignal,onCleanup,onMount,Show,splitProps } from "solid-js";
 import { createFilePaste } from "../lib/filePaste";
 import { buildComposerPrompt,composerReference,isPromptCommand,skillName,skillNames } from "../lib/composerPrompt";
 import { createDependencyEffect,createMemoFields,createRef,cssPixels,type CSSProperties,type JSXElement,type KeyboardEvent,type StateUpdate } from "../lib/solid";
@@ -21,7 +21,7 @@ import { ComposerSettingsMenu } from "./ComposerSettingsMenu";
 import { ComposerPlugins } from "../plugins/composer";
 import { GoalActions, type GoalControls } from "./GoalControls";
 
-import { ArrowUp,Check,ChevronDown,ChevronUp,CircleStop,CircleX,CornerDownRight,FileText,MoveVertical,Pause,Pencil,Play,RefreshCw,TerminalSquare,Trash2,X,Zap } from "lucide-solid";
+import { ArrowUp,Check,ChevronDown,ChevronUp,CircleX,CornerDownRight,FileText,MoveVertical,Pause,Pencil,Play,RefreshCw,Square,TerminalSquare,Trash2,X,Zap } from "lucide-solid";
 import { hasVisibleText } from "../lib/content";
 import { usePendingMessageDrag } from "../lib/usePendingMessageDrag";
 import type { AgentProfile,ComposerUpload,ContextUsage,ImageAttachment,Model,PendingMessage,SlashCommand } from "../types";
@@ -45,6 +45,7 @@ interface Props {
   onTakeOwnership?: () => Promise<void>;
   toolbar?: JSXElement;
   sendingStatus?: string;
+  starting?: boolean;
   goal?: GoalControls;
   streaming: boolean;
   compacting?: boolean;
@@ -74,6 +75,7 @@ interface Props {
   uploads?: ComposerUpload[];
   onUploadsChange?: (uploads: StateUpdate<ComposerUpload[]>) => void;
   focusRequest?: number;
+  initialFocus?: boolean;
   queueHoldRequest?: number;
   pendingMessages?: import("../types").PendingMessage[];
   loadPendingImage?: import("./PendingImages").PendingImageLoader;
@@ -249,7 +251,7 @@ export function Composer(props: Props) {
 
   const controls = createMemo(() => { const state = composerControlState(composer().controlsDisabled, stopping());
 
-  return { ...state, inputDisabled: state.inputDisabled || composer().compacting }; });
+  return { ...state, inputDisabled: state.inputDisabled || composer().compacting, stopDisabled: (composer().controlsDisabled && !props.starting) || stopping() }; });
 
   const [selectedMatch, setSelectedMatch] = createSignal(0);
   const [paletteDismissed, setPaletteDismissed] = createSignal(false);
@@ -417,7 +419,7 @@ export function Composer(props: Props) {
 
     return () => { cancelAnimationFrame(frame); window.removeEventListener("resize", resize); window.visualViewport?.removeEventListener("resize", resize); };
   }, () => []);
-  let handledFocusRequest: number | undefined;
+  let handledFocusRequest: number | undefined = props.initialFocus === false ? composer().focusRequest ?? 0 : undefined;
   const [focusPending, setFocusPending] = createSignal(false);
   createDependencyEffect(() => {
     const request = composer().focusRequest ?? 0;
@@ -510,10 +512,29 @@ export function Composer(props: Props) {
     void props.onHoldQueue(held).catch((reason) => setControlError(reason instanceof Error ? reason.message : String(reason))).finally(() => setChangingPending(false));
   };
 
-  const showPendingBox = () => composer().pendingMessages.length > 0 || Boolean(props.goal?.error()) || Boolean(props.queueHeld);
+  const editingFirstPending = createMemo(() => { const id = editingPending()?.id; return id !== undefined && composer().pendingMessages[0]?.id === id; });
+  let editHoldRelease: ((held: boolean) => Promise<void>) | undefined;
+  const releaseEditHold = (report: boolean) => {
+    const release = editHoldRelease;
+    editHoldRelease = undefined;
+    if (!release) return;
+    void release(false).catch((reason) => { const text = reason instanceof Error ? reason.message : String(reason); if (report) setControlError(text); else console.error(text); });
+  };
+  createDependencyEffect(() => {
+    if (!editingFirstPending()) { releaseEditHold(true); return; }
+    if (props.queueHeld || !props.onHoldQueue || editHoldRelease) return;
+    editHoldRelease = props.onHoldQueue;
+    holdQueue(true);
+  }, () => [editingFirstPending()]);
+  onCleanup(() => releaseEditHold(false));
+  const toggleHold = () => { editHoldRelease = undefined; holdQueue(!props.queueHeld); };
+
+  const showPendingBox = () => composer().pendingMessages.length > 0 || Boolean(props.goal?.error());
   const sendingPresence = createDelayedPresence(() => props.sendingStatus !== undefined);
+  const pendingStatus = createMemo<PendingStatus | undefined>(() => stopping() ? { text: "Stopping…", label: "Stopping piop" } : props.sendingStatus !== undefined ? { text: props.sendingStatus, label: "Preparing message" } : undefined);
+  const pendingPresence = createDelayedPresence(() => pendingStatus() !== undefined);
   const holdBeforeSession = () => !props.onHoldQueue && sendingPresence.shown();
-  const renderQueueHold = () => (<Show when={props.onHoldQueue || sendingPresence.shown()}><div class="pending-queue-hold" classList={{ held: Boolean(props.queueHeld), "presence-in": holdBeforeSession(), leaving: holdBeforeSession() && sendingPresence.leaving() }}><span>{props.queueHeld ? "Queue on hold. Messages wait until you resume." : ""}</span><button type="button" disabled={!props.onHoldQueue || queueDisabled() || changingPending()} aria-pressed={Boolean(props.queueHeld)} data-tooltip={props.queueHeld ? "Send the held messages" : "Keep messages in the queue until you resume"} onClick={() => holdQueue(!props.queueHeld)}>{props.queueHeld ? <><Play size={13} />Resume queue</> : <><Pause size={13} />Hold queue</>}</button></div></Show>);
+  const renderQueueHold = () => (<Show when={props.onHoldQueue || sendingPresence.shown()}><div class="pending-queue-hold" classList={{ held: Boolean(props.queueHeld), "presence-in": holdBeforeSession(), leaving: holdBeforeSession() && sendingPresence.leaving() }}><button type="button" disabled={!props.onHoldQueue || queueDisabled() || changingPending()} aria-pressed={Boolean(props.queueHeld)} onClick={toggleHold}>{props.queueHeld ? <><Play size={13} />Resume</> : <><Pause size={13} />Hold</>}</button></div></Show>);
   const queueDisabled = () => props.queueControlsDisabled ?? composer().controlsDisabled;
   let handledQueueHoldRequest = props.queueHoldRequest ?? 0;
   createDependencyEffect(() => {
@@ -522,7 +543,7 @@ export function Composer(props: Props) {
     if (handledQueueHoldRequest === request) return;
     handledQueueHoldRequest = request;
 
-    if (!queueDisabled() && !changingPending()) holdQueue(!props.queueHeld);
+    if (!queueDisabled() && !changingPending()) toggleHold();
   }, () => [props.queueHoldRequest]);
   const pendingDrag = usePendingMessageDrag(() => (composer().pendingMessages), () => (pendingControlsDisabled(queueDisabled(), changingPending(), composer().onChangePending)), () => (changePending));
   const controlsBlocked = () => composer().agentUnavailable || (props.submissionDisabled ?? composer().controlsDisabled) || composer().compacting || stopping();
@@ -569,7 +590,8 @@ export function Composer(props: Props) {
     } finally { setSending(false); }
   };
 
-  const stopShown = createMemo(() => (composer().streaming || composer().compacting) && !hasVisibleText(value()) && uploads().length === 0);
+  const stopShown = createMemo(() => (composer().streaming || composer().compacting || Boolean(props.starting)) && !hasVisibleText(value()) && uploads().length === 0);
+  const sendDisabled = () => controlsBlocked() || readingUploads() > 0 || (!sending() && !hasVisibleText(value()) && uploads().length === 0);
   let lastSendClick = -Infinity;
   const clickSendOrStop = (event: MouseEvent) => {
     if (!stopShown()) { lastSendClick = event.timeStamp; void submit(); }
@@ -578,7 +600,7 @@ export function Composer(props: Props) {
 
   const abort = async () => { const capturedComposer = { ...composer() };
 
-    if (capturedComposer.controlsDisabled || stoppingRef.current) return;
+    if (controls().stopDisabled || stoppingRef.current) return;
     stoppingRef.current = true; setStopping(true); setControlError(undefined);
 
     try { await capturedComposer.onAbort(); }
@@ -599,6 +621,8 @@ export function Composer(props: Props) {
     ref.current?.setSelectionRange(caret, caret);
   };
 
+  const commandTyped = (command: SlashCommand | undefined) => Boolean(command) && reference()?.start === 0 && value().trim().toLowerCase() === `/${required(command).name.toLowerCase()}`;
+
   const handlePaletteKey = (event: KeyboardEvent<ComposerFieldElement>) => {
     if (event.currentTarget.selectionStart !== event.currentTarget.selectionEnd) return false;
 
@@ -609,6 +633,8 @@ export function Composer(props: Props) {
     if (matches().length && (event.key === "ArrowDown" || event.key === "ArrowUp")) { event.preventDefault(); setSelectedMatch((current) => (current + (event.key === "ArrowDown" ? 1 : -1) + matches().length) % matches().length);
 
     return true; }
+
+    if (event.key === "Enter" && commandTyped(matches()[selectedMatch()])) return false;
 
     if (canPickCommand(event) && matches()[selectedMatch()]) { event.preventDefault(); chooseCommand(matches()[selectedMatch()]);
 
@@ -629,7 +655,7 @@ export function Composer(props: Props) {
   const handleEditorKey = createComposerEditorKey({ paste: filePaste.onKeyDown, ownershipRequired: () => props.ownershipRequired, palette: handlePaletteKey, history: event => editingPending() ? false : promptHistory.handleKey(event), submit });
 
   const renderStreamBanner = () => {
-    const statusText = () => stopping() ? "Stopping…" : composer().compacting ? "Compacting context…" : undefined;
+    const statusText = () => composer().compacting ? "Compacting context…" : undefined;
     const renderStreamStatus = () => (<span class="stream-status" role="status"><span class="pulse" />{statusText()}</span>);
 
     return (<Show when={statusText()} fallback={composer().streaming && <button type="button" class="working-dots" role="status" aria-label="piop is working" onClick={() => props.onJumpToLatest?.()}><span /><span /><span /></button>}><div class="stream-banner">
@@ -645,7 +671,7 @@ export function Composer(props: Props) {
     </div>}</Show>);
 
     const renderComposerEditor = () => (<div class="composer-editor">
-        <piop-composer-field ref={element => { ref.current = element; }} skills={knownSkills()} classList={{ "pending-edit": Boolean(editingPending()) }} aria-label="Message piop" readOnly={props.ownershipRequired || savingEdit()} onFocus={() => { setPaletteDismissed(false); if (props.ownershipRequired) void props.onTakeOwnership?.(); }} placeholder={props.ownershipRequired ? "" : composer().streaming || props.queueHeld ? "Queue a follow-up…" : "Ask piop to build, explain, or change anything…"} value={value()} onSelect={(event) => setSelection({ start: event.currentTarget.selectionStart, end: event.currentTarget.selectionEnd })} onInput={(event) => { setSelection({ start: event.currentTarget.selectionStart, end: event.currentTarget.selectionEnd }); setPaletteDismissed(false); setValue(event.currentTarget.value); }} onKeyDown={event => {
+        <piop-composer-field ref={element => { ref.current = element; }} skills={knownSkills()} classList={{ "pending-edit": Boolean(editingPending()) }} aria-label="Message piop" readOnly={props.ownershipRequired || savingEdit()} onFocus={() => { setPaletteDismissed(false); if (props.ownershipRequired) void props.onTakeOwnership?.(); }} placeholder="Ask piop to build, explain, or change anything…" value={value()} onSelect={(event) => setSelection({ start: event.currentTarget.selectionStart, end: event.currentTarget.selectionEnd })} onInput={(event) => { setSelection({ start: event.currentTarget.selectionStart, end: event.currentTarget.selectionEnd }); setPaletteDismissed(false); setValue(event.currentTarget.value); }} onKeyDown={event => {
           if (editingPending() && event.key === "Escape") { event.preventDefault(); event.stopPropagation(); cancelEdit(); return; }
           handleEditorKey(event);
         }} />
@@ -680,7 +706,7 @@ export function Composer(props: Props) {
 
         const renderEffortPicker = () => (<ContainedPicker label="Thinking level" selectedLabel={composer().thinkingLevel.charAt(0).toUpperCase() + composer().thinkingLevel.slice(1)} value={composer().thinkingLevel} disabled={controls().inputDisabled} menuWidth={120} centered compact options={thinkingOptions()} onChange={composer().onThinking} />);
 
-        const renderSend = () => <Show when={editingPending()} fallback={<IconButton title="" label={stopShown() ? "Stop piop" : "Send message"} class={`send send-stop${stopShown() ? " stop-compact" : ""}`} disabled={stopShown() ? controls().stopDisabled : controlsBlocked() || sending() || readingUploads() > 0 || (!hasVisibleText(value()) && uploads().length === 0)} onClick={clickSendOrStop}><ArrowUp class="send-icon send-arrow" size={18} /><CircleStop class="send-icon send-square" size={17} /></IconButton>}>
+        const renderSend = () => <Show when={editingPending()} fallback={<IconButton title="" label={stopShown() ? "Stop piop" : "Send message"} class={`send send-stop${stopShown() ? " stop-compact" : ""}`} disabled={stopShown() ? controls().stopDisabled : sendDisabled()} onClick={clickSendOrStop}><ArrowUp class="send-icon send-arrow" size={18} /><Square class="send-icon send-square" size={12} fill="currentColor" /></IconButton>}>
           <IconButton title="" label="Cancel editing" disabled={savingEdit()} onClick={cancelEdit}><X size={18} /></IconButton>
           <IconButton title="" label="Save edited message" class="send" disabled={queueDisabled() || savingEdit() || readingUploads() > 0} onClick={() => void saveEdit()}><Check size={18} /></IconButton>
         </Show>;
@@ -736,7 +762,7 @@ export function Composer(props: Props) {
     </Show>
     {imageInputError() && <div class="image-input-toast" role="alert"><CircleX size={14} aria-hidden="true" /><span>This model does not support image inputs. Try a different model</span><button type="button" aria-label="Dismiss image input error" onClick={() => setImageInputError(false)}><X size={14} /></button></div>}
     <div class="composer-above">
-    <SendingStatus status={props.sendingStatus} presence={sendingPresence} />
+    <SendingStatus status={pendingStatus()} presence={pendingPresence} />
     {renderStreamBanner()}
     {renderQueueHold()}
     {showPendingBox() ? <div class="pending-messages" aria-label="Pending messages">{<Key each={composer().pendingMessages.filter((message) => pendingMessageIdentitySchema.safeParse(message).success)} by={pendingKey}>{(message, _index) => {

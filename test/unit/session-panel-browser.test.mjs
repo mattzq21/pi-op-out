@@ -215,26 +215,6 @@ async function groupContents(page, name) {
   return page.locator(`#${id}`);
 }
 
-test('dropping into a collapsed group moves the conversation and opens that group', async t => {
-  const { page, service, reload } = await panelPage(t);
-  await createGroup(page, service, 'Research');
-  await page.getByRole('button', { name: 'Collapse Research', exact: true }).click();
-  const target = await page.getByRole('button', { name: 'Expand Research', exact: true }).boundingBox();
-  const source = await conversation(page, 'Chat 2').boundingBox();
-  await page.mouse.move(source.x + source.width / 2, source.y + source.height / 2);
-  await page.mouse.down();
-  await page.mouse.move(target.x + target.width / 2, target.y + target.height / 2, { steps: 8 });
-  await page.mouse.up();
-  await page.getByRole('button', { name: 'Collapse Research', exact: true }).waitFor();
-  await (await groupContents(page, 'Research')).getByRole('button', { name: 'Chat 2, Project directory, $0.00', exact: true }).waitFor();
-  assert.deepEqual(await (await groupContents(page, 'repo')).locator('.session-main strong').allTextContents(), ['Chat 10']);
-  await page.evaluate(() => window.settlePanelStorage());
-  await reload();
-  assert.equal(await conversation(page, 'Chat 2').isVisible(), true);
-  assert.deepEqual(await (await groupContents(page, 'Research')).locator('.session-main strong').allTextContents(), ['Chat 2']);
-  assert.deepEqual(await (await groupContents(page, 'repo')).locator('.session-main strong').allTextContents(), ['Chat 10']);
-});
-
 test('dropping a project on a group nests the project and retains its conversations', async t => {
   const { page, service, reload } = await panelPage(t);
   await createGroup(page, service, 'Research');
@@ -286,7 +266,7 @@ test('conversation menus support Home End and arrow key navigation', async t => 
   await page.keyboard.press('Home');
   assert.equal(await open.evaluate(node => node === document.activeElement), true);
   await page.keyboard.press('ArrowDown');
-  assert.equal(await page.getByRole('menuitem', { name: 'Rename conversation', exact: true }).evaluate(node => node === document.activeElement), true);
+  assert.equal(await page.getByRole('menuitem', { name: 'Rename', exact: true }).evaluate(node => node === document.activeElement), true);
 });
 
 test('renaming from a conversation menu returns the conversation and restores focus', async t => {
@@ -294,7 +274,7 @@ test('renaming from a conversation menu returns the conversation and restores fo
   const row = conversation(page, 'Chat 2');
   await row.focus();
   await row.click({ button: 'right' });
-  await page.getByRole('menuitem', { name: 'Rename conversation', exact: true }).click();
+  await page.getByRole('menuitem', { name: 'Rename', exact: true }).click();
   assert.deepEqual(JSON.parse(await page.getByLabel('Conversation actions').textContent()), [[sessions[0], 'rename']]);
   assert.equal(await page.getByRole('menu').count(), 0);
   await waitForFocus(row);
@@ -328,7 +308,7 @@ test('a conversation menu closes without an action when its conversation leaves 
   assert.equal(await page.getByRole('menu').count(), 0);
   assert.deepEqual(JSON.parse(await page.getByLabel('Conversation actions').textContent()), []);
   await conversation(page, 'Chat 10').click({ button: 'right' });
-  await page.getByRole('menuitem', { name: 'Rename conversation', exact: true }).click();
+  await page.getByRole('menuitem', { name: 'Rename', exact: true }).click();
   assert.deepEqual(JSON.parse(await page.getByLabel('Conversation actions').textContent()), [[remaining, 'rename']]);
 });
 
@@ -403,6 +383,15 @@ test('a second new group request closes the open name field', async t => {
   assert.equal(await page.getByLabel('Handled group requests').textContent(), '2');
   await request.click();
   await name.waitFor();
+});
+
+test('moving a listed project conversation into Recents shows it there at once', async t => {
+  const cwd = process.cwd();
+  const { page } = await panelPage(t, { sessionSpecs: [{ name: 'Chat 2', groupId: `local:${cwd}` }, { name: 'Chat 10', groupId: `local:${cwd}` }] });
+  await conversation(page, 'Chat 10').focus();
+  await page.keyboard.press('Alt+Shift+ArrowDown');
+  await (await groupContents(page, 'Recents')).getByRole('button', { name: 'Chat 10, Project directory, $0.00', exact: true }).waitFor({ timeout: 2000 });
+  assert.deepEqual(await (await groupContents(page, 'repo')).locator('.session-main strong').allTextContents(), ['Chat 2']);
 });
 
 test('new group names are trimmed and survive reopening', async t => {

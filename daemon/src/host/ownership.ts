@@ -182,17 +182,24 @@ export class ConversationOwnership {
 
   async begin(id: string, client: string, options: any): Promise<Guard> {
     if (!client) throw new Error('Conversation client is missing');
-    const lock = await this.lock(id, false);
+    const members = exclusiveMutation(options) ? [] : this.chatTree(id).filter(member => member !== id);
+    const locks = new Map<string, FileLock>();
     let workerLock: FileLock | null = null;
+    const releaseMembers = () => { for (const [member, lock] of locks) if (member !== id) lock.release(); };
     try {
+      for (const member of [id, ...members].sort()) locks.set(member, await this.lock(member, false));
       await RestoreRecovery.recover(this.root);
       const record = this.read(id);
       const previous = record ?? null;
       const saved = this.savedForClaim(id, previous, options);
-      if (claimBlocked(previous, client, options)) { lock.release(); return Guard.unowned(); }
+      const others = members.map(member => [member, this.read(member)] as const).filter(([, member]) => ownedByOther(member, client) && !flag(member, 'deleted'));
+      if (claimBlocked(previous, client, options) || (others.length && !flag(options, 'take'))) { for (const lock of locks.values()) lock.release(); return Guard.unowned(); }
       workerLock = await this.claimWorkerLock(id, record, client, options);
+      for (const [member, previousMember] of others) await this.transferMember(member, previousMember);
+      for (const [member, previousMember] of others) this.write(member, { client, endpoint: this.endpoint, token: this.token, deleted: false, ...(typeof previousMember.path === 'string' ? { path: previousMember.path } : {}) });
       const next = this.writeClaim(id, client, saved);
       if (!exclusiveMutation(options)) { workerLock?.release(); workerLock = null; }
+      releaseMembers();
       const guard = new Guard();
       guard.owned = true;
       guard.saved = saved;
@@ -200,13 +207,30 @@ export class ConversationOwnership {
       guard.record = next;
       guard.id = id;
       guard.workerLock = workerLock;
-      guard.lock = lock;
+      guard.lock = locks.get(id)!;
       return guard;
     } catch (error) {
       workerLock?.release();
-      lock.release();
+      for (const lock of locks.values()) lock.release();
       throw error;
     }
+  }
+
+  chatTree(id: string): string[] {
+    const db = Registry.open(this.root);
+    try {
+      let root = id;
+      const seen = new Set([id]);
+      for (let parent: any; (parent = db.prepare('SELECT parent_id FROM auxiliary_children WHERE child_id=?').get(root)) && !seen.has(parent.parent_id);) { root = parent.parent_id; seen.add(root); }
+      const rows = db.prepare(`WITH RECURSIVE tree(id) AS (SELECT ? UNION SELECT c.child_id FROM auxiliary_children c JOIN tree t ON c.parent_id=t.id) SELECT id FROM tree`).all(root) as Array<{ id: string }>;
+      return [...new Set([id, ...rows.map(row => row.id).filter(member => UUID.test(member))])];
+    } finally { db.close(); }
+  }
+
+  private async transferMember(id: string, previous: any): Promise<void> {
+    if (previous.endpoint === this.endpoint && previous.token === this.token) return this.revocation.revoke(id, 'transfer-local');
+    await this.releasePrevious(id, previous, 'transfer');
+    (await this.lock(id, true)).release();
   }
 
   private async claimWorkerLock(id: string, previous: any | null, client: string, options: any): Promise<FileLock | null> {

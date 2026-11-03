@@ -45,8 +45,26 @@ test('a startup timeout fails the read with the notice and keeps no server', { t
   assert.equal(state.toolResults[0].isError, true); assert.deepEqual(state.toolResults[0].result.content, [{ type: 'text', text: FAILED }]);
   assert.deepEqual(state.servers, []); assert.deepEqual(state.failures, ['skill']); assert.equal(state.statuses['piop-skill-mcp'], undefined);
 });
+
+test('a message enters the queue while a skill MCP server is still connecting', { timeout: 20000 }, async t => {
+  const f = await fixture(t), path = join(f.skill, 'mcp.json'), config = JSON.parse(readFileSync(path, 'utf8'));
+  config.mcpServers.fixture.timeout = 10; writeFileSync(path, JSON.stringify(config));
+  const worker = await f.start(); writeFileSync(f.slow, 'slow');
+  const turn = worker.command({ op: 'prompt', mode: 'read' });
+  await worker.event(event => event.key === 'piop-skill-mcp' && event.value?.includes('connecting'));
+  const queued = await worker.command({ op: 'queue', text: 'queued while connecting' });
+  assert.equal(queued.streaming, true); assert.deepEqual(queued.followUps, ['queued while connecting']);
+  assert.match(queued.statuses['piop-skill-mcp'], /connecting/);
+  rmSync(f.slow);
+  const state = await turn;
+  assert.deepEqual(state.errors, []); assert.equal(state.toolResults[0]?.isError, false, JSON.stringify(state));
+  assert.match(state.statuses['piop-skill-mcp'], /connected/); assert.deepEqual(state.followUps, []); assert.equal(state.requests, 3);
+});
+
 test('direct tools remain usable after reload and repeated skill reads keep one server', { timeout: 20000 }, async t => {
-  const f = await fixture(t), worker = await f.start();
+  const f = await fixture(t), path = join(f.skill, 'mcp.json'), config = JSON.parse(readFileSync(path, 'utf8'));
+  config.mcpServers.fixture.exposure = 'direct'; writeFileSync(path, JSON.stringify(config));
+  const worker = await f.start();
   await worker.command({ op: 'codemode', value: 'off' });
   let state = await worker.command({ op: 'prompt', mode: 'read' }); const name = state.servers[0];
   await worker.command({ op: 'prompt', mode: 'read' });
@@ -106,7 +124,7 @@ test('HTTP MCP restores, and a failed connection leaves the chat with a notice u
   });
   server.listen(0, '127.0.0.1'); await once(server, 'listening'); t.after(() => { server.closeAllConnections(); server.close(); });
   const f = await fixture(t);
-  writeFileSync(join(f.skill, 'mcp.json'), JSON.stringify({ mcpServers: { http: { url: `http://127.0.0.1:${server.address().port}/mcp`, timeout: 1, exposure: 'direct' } } }));
+  writeFileSync(join(f.skill, 'mcp.json'), JSON.stringify({ mcpServers: { http: { url: `http://127.0.0.1:${server.address().port}/mcp`, timeout: 1, exposure: 'codemode' } } }));
   let worker = await f.start(); await worker.command({ op: 'prompt', mode: 'read' });
   let state = await worker.command({ op: 'prompt', mode: 'ping' }); assert.match(JSON.stringify(state.toolResults), /HTTP_PROVEN_PONG/);
   await worker.kill(); unavailable = true; worker = await f.start();

@@ -220,6 +220,7 @@ function addBundledAgents(config: Config, pi: ConfigRuntime) {
     agent.model = "";
     agent.effort = "high";
     delete agent.isDefault;
+    delete agent.description;
     config.agents.push(agent);
   }
 

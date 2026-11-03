@@ -4,7 +4,7 @@ import { required } from "../lib/required";
 import DOMPurify from "dompurify";
 import { Copy, FolderOpen } from "lucide-solid";
 import { Marked, Renderer, type MarkedExtension, type TokenizerAndRendererExtension } from "marked";
-import { createEffect, createSignal, onCleanup, Show, useContext } from "solid-js";
+import { createEffect, createMemo, createSignal, onCleanup, Show, useContext } from "solid-js";
 import { Portal } from "solid-js/web";
 import { openExternalUrl } from "../lib/nativeTransport";
 import { fileReference, type FileProject } from "../lib/projectFiles";
@@ -99,7 +99,8 @@ type LinkMenu = { kind: "web" | "file"; text: string; href?: string; x: number; 
 export function Markdown(props: { children: string; streaming?: boolean; imageProject?: FileProject; fileLinks?: boolean; frontmatter?: boolean; skills?: string[] }) {
   const pathLinks = () => Boolean(props.fileLinks) && canOpenFileLinks;
   const allowFile = (value: string) => Boolean(props.imageProject && imageFileReference(value)) || (pathLinks() && openablePath(value));
-  const renderMarkdown = streamingMarkdown(props.skills?.length ? skillParser(Boolean(props.frontmatter), props.skills) : props.frontmatter ? frontmatterParser : parser, (html, streaming, detectFiles) => sanitizeMarkdown(html, streaming, detectFiles, allowFile));
+  const skills = createMemo(() => props.skills?.join("\n") ?? "");
+  const renderMarkdown = createMemo(() => streamingMarkdown(skills() ? skillParser(Boolean(props.frontmatter), skills().split("\n")) : props.frontmatter ? frontmatterParser : parser, (html, streaming, detectFiles) => sanitizeMarkdown(html, streaming, detectFiles, allowFile)));
   const [error, setError] = createSignal<string>();
   const fileScope = useContext(MessageFileContext);
   const sessionLinks = useContext(SessionLinkContext);
@@ -115,7 +116,7 @@ export function Markdown(props: { children: string; streaming?: boolean; imagePr
   createEffect(() => {
     let html: string[];
 
-    try { html = renderMarkdown(props.children, Boolean(props.streaming), Boolean(props.imageProject) || pathLinks()); }
+    try { html = renderMarkdown()(props.children, Boolean(props.streaming), Boolean(props.imageProject) || pathLinks()); }
     catch (error) {
       if (!(error instanceof RangeError)) throw error;
       html = [`<pre>${escapeHtml(props.children)}</pre>`];
