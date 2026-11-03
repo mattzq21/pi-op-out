@@ -1,17 +1,15 @@
 import { spawnSync } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import { lstat, mkdir, readFile, readlink, rename, rm, symlink, writeFile } from "node:fs/promises";
-import { homedir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { sharedInstallations as installations } from "./shared-installations.mjs";
 
 const root = fileURLToPath(new URL("../", import.meta.url));
 
 const localModules = join(root, "node_modules");
 
 const stamp = join(root, ".trace-dependencies.json");
-
-const installations = join(process.env.XDG_CACHE_HOME || join(homedir(), ".cache"), "piop/bun-installations");
 
 const bun = process.versions.bun ? process.execPath : "bun";
 
