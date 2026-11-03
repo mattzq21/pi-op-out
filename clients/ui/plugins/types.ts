@@ -25,7 +25,9 @@ export interface PluginSettingsSection { section: string; label: string; descrip
 
 export type PluginScope = "client" | "host" | "conversation";
 
-export interface SidepaneOpening { requestId: string; initialPrompt?: string; initialImages?: ImageAttachment[] }
+export interface SidepaneOpening { requestId: string; initialPrompt?: string; initialImages?: ImageAttachment[]; background: boolean }
+
+export interface PluginKeybind { id: string; label: string; description: string; defaultShortcut: string; command: string; needsMessages?: boolean }
 
 export interface PluginDefinition {
   id: string;
@@ -35,6 +37,7 @@ export interface PluginDefinition {
   description: string;
   load?: () => Promise<PluginModule>;
   settings?: PluginSettingsSection;
-  queuedCommands?: string[];
+  queuedWithPrompt?: string[];
+  keybinds?: PluginKeybind[];
   messages?: Record<string, () => Promise<{ default: Component<{ details: unknown }> }>>;
 }

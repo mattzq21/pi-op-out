@@ -271,8 +271,11 @@ export class Host implements SessionHost {
       throw new Error('The agent is running on another daemon. Wait for it to finish before transferring ownership.');
     }
     const saved = session.savedState();
-    for (const [runtime] of session.views()) this.readonlyMap.set(runtime, { id, path: typeof saved?.sessionFile === 'string' ? saved.sessionFile : null });
-    session.publish({ type: 'ownership_lost' }, null);
+    for (const [runtime] of session.views()) {
+      if (this.readonlyMap.has(runtime)) continue;
+      this.readonlyMap.set(runtime, { id, path: typeof saved?.sessionFile === 'string' ? saved.sessionFile : null });
+      this.output({ type: 'event', runtimeId: runtime, event: { type: 'ownership_lost' } });
+    }
     if (intent === 'transfer-local') return;
     if (!['archive', 'delete', 'relocate'].includes(intent) && (session.working() || session.compacting())) { try { await session.raw({ type: 'abort' }); } catch {} }
     await session.stop();
@@ -495,7 +498,24 @@ export class Host implements SessionHost {
     const target = structuredClone(current);
     if (flag(target.presence, 'readOnly')) throw new Error('This view is read-only');
     target.takeOwnership = true;
-    return attach(this, target);
+    const result = await attach(this, target);
+    const session = this.subscriptions.get(runtime);
+    if (flag(result, 'owned') && session) await this.attachLinkedViews(runtime, session.identity, text(target, 'clientId'));
+    return result;
+  }
+
+  private async attachLinkedViews(taker: string, identity: string, client: string): Promise<void> {
+    const tree = new Set(this.ownership().chatTree(identity));
+    for (const [runtime, view] of [...this.readonlyMap]) {
+      const packet = this.attachments.get(runtime);
+      if (runtime === taker || !tree.has(view.id) || packet?.clientId !== client || flag(packet.presence, 'readOnly')) continue;
+      try {
+        const attached = await attach(this, { ...structuredClone(packet), takeOwnership: false });
+        if (flag(attached, 'owned')) this.output({ type: 'event', runtimeId: runtime, event: { type: 'ownership_acquired' } });
+      } catch {
+        this.output({ type: 'event', runtimeId: runtime, event: { type: 'disconnected' } });
+      }
+    }
   }
 
   async detach(packet: any, runtime: string, session: Session): Promise<any> {

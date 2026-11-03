@@ -1,3 +1,4 @@
+import { isAuxiliaryParent } from '../../resources/piop-storage/session-records.cjs';
 import { branchEntries } from './payload';
 
 const RECENT_TURNS = 5;
@@ -7,6 +8,12 @@ const PROMPT_CONTEXTS = new Set(['piop-context', 'pi-desktop-prompt-context']);
 const PROMPT_CUSTOM_MESSAGES = new Set(['piop-agent-message', 'piop-subagent-result', 'piop-goal-context']);
 
 type History = { entries: any[]; leafId: string | null; before?: string | null; olderUsage?: any };
+
+const COPIED_HISTORY = 'piop-copied-history';
+
+function copiedHistoryEnd(branch: any[]): number {
+  return Math.max(0, branch.findLastIndex(isAuxiliaryParent));
+}
 
 function role(entry: any): string | undefined { return entry?.type === 'message' ? entry.message?.role : undefined; }
 
@@ -95,7 +102,7 @@ function linked(entries: any[], before: string | null): History {
   return { entries: result, leafId: parentId, before };
 }
 
-function view(branch: any[], start: number, end: number, keepLastTurn: boolean): History {
+function view(branch: any[], start: number, end: number, keepLastTurn: boolean, floor: number): History {
   const entries: any[] = [];
   let turn: any[] = [];
   const close = (last: boolean) => { entries.push(...(last && keepLastTurn ? turn : deferWork(turn))); turn = []; };
@@ -104,19 +111,21 @@ function view(branch: any[], start: number, end: number, keepLastTurn: boolean):
     turn.push(branch[index]);
   }
   close(true);
+  if (floor > 0 && start === floor) entries[0] = { ...entries[0], customType: COPIED_HISTORY };
   resolvePromptContext(branch, start, entries);
-  const result = linked(entries, start > 0 ? branch[start].id : null);
+  const result = linked(entries, start > floor ? branch[start].id : null);
   let usage: any;
-  for (let index = 0; index < start; index++) if (role(branch[index]) === 'assistant') usage = addUsage(usage, branch[index].message.usage);
+  for (let index = floor; index < start; index++) if (role(branch[index]) === 'assistant') usage = addUsage(usage, branch[index].message.usage);
   if (usage) result.olderUsage = usage;
   return result;
 }
 
 export function recentHistory(history: any, working: boolean, listedBefore?: unknown): any {
   const branch = branchEntries(history);
-  const start = windowStart(branch, branch.length);
-  const result = view(branch, start, branch.length, working);
-  return Object.assign(history, result, start > 0 && branch[start].id !== listedBefore ? { outline: outline(branch, start) } : {});
+  const floor = copiedHistoryEnd(branch);
+  const start = Math.max(floor, windowStart(branch, branch.length));
+  const result = view(branch, start, branch.length, working, floor);
+  return Object.assign(history, result, start > floor && branch[start].id !== listedBefore ? { outline: outline(branch, floor, start) } : {});
 }
 
 function position(branch: any[], id: unknown): number {
@@ -132,21 +141,22 @@ function turnStart(branch: any[], index: number): number {
 
 export function olderHistory(history: any, before: unknown, through?: unknown): History {
   const branch = branchEntries(history);
+  const floor = copiedHistoryEnd(branch);
   const end = position(branch, before);
-  let start = windowStart(branch, end);
+  let start = Math.max(floor, windowStart(branch, end));
   if (through !== undefined) {
     const target = position(branch, through);
-    if (target >= end) throw new Error('The entry is not in the older history');
-    start = Math.min(start, turnStart(branch, target));
+    if (target >= end || target < floor) throw new Error('The entry is not in the older history');
+    start = Math.max(floor, Math.min(start, turnStart(branch, target)));
   }
-  return view(branch, start, end, false);
+  return view(branch, start, end, false, floor);
 }
 
 const PREVIEW_LENGTH = 160;
 
 type OutlineResponse = { id: string; start: string; preview: string; compactions?: string[] };
 
-function outline(branch: any[], end: number): OutlineResponse[] {
+function outline(branch: any[], start: number, end: number): OutlineResponse[] {
   const responses: OutlineResponse[] = [];
   let turn: any[] = [];
   const close = () => {
@@ -159,7 +169,7 @@ function outline(branch: any[], end: number): OutlineResponse[] {
     }
     turn = [];
   };
-  for (let index = 0; index < end; index++) {
+  for (let index = start; index < end; index++) {
     if (startsTurn(branch[index]) && turn.length) close();
     turn.push(branch[index]);
   }
@@ -169,7 +179,7 @@ function outline(branch: any[], end: number): OutlineResponse[] {
 
 export function historyOutline(history: any, before: unknown): { responses: OutlineResponse[] } {
   const branch = branchEntries(history);
-  return { responses: outline(branch, position(branch, before)) };
+  return { responses: outline(branch, copiedHistoryEnd(branch), position(branch, before)) };
 }
 
 export function turnWork(history: any, id: unknown): History {

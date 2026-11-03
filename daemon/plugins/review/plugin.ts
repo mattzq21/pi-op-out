@@ -13,6 +13,6 @@ export const review: BundledPlugin = {
     after: 'session',
     files: [['interface.ts', face], ['review-prompt.txt', prompt], ['reviews.ts', reviews], ['commands.ts', commands], ['index.ts', index]],
   },
-  commands: { review: 'queued' },
+  commands: { review: 'queuedWithPrompt' },
   settings: reviewSettings,
 };

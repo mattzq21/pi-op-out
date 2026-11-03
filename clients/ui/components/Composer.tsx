@@ -75,6 +75,7 @@ interface Props {
   uploads?: ComposerUpload[];
   onUploadsChange?: (uploads: StateUpdate<ComposerUpload[]>) => void;
   focusRequest?: number;
+  initialFocus?: boolean;
   queueHoldRequest?: number;
   pendingMessages?: import("../types").PendingMessage[];
   loadPendingImage?: import("./PendingImages").PendingImageLoader;
@@ -418,7 +419,7 @@ export function Composer(props: Props) {
 
     return () => { cancelAnimationFrame(frame); window.removeEventListener("resize", resize); window.visualViewport?.removeEventListener("resize", resize); };
   }, () => []);
-  let handledFocusRequest: number | undefined;
+  let handledFocusRequest: number | undefined = props.initialFocus === false ? composer().focusRequest ?? 0 : undefined;
   const [focusPending, setFocusPending] = createSignal(false);
   createDependencyEffect(() => {
     const request = composer().focusRequest ?? 0;
@@ -603,6 +604,8 @@ export function Composer(props: Props) {
     ref.current?.setSelectionRange(caret, caret);
   };
 
+  const commandTyped = (command: SlashCommand | undefined) => Boolean(command) && reference()?.start === 0 && value().trim().toLowerCase() === `/${required(command).name.toLowerCase()}`;
+
   const handlePaletteKey = (event: KeyboardEvent<ComposerFieldElement>) => {
     if (event.currentTarget.selectionStart !== event.currentTarget.selectionEnd) return false;
 
@@ -613,6 +616,8 @@ export function Composer(props: Props) {
     if (matches().length && (event.key === "ArrowDown" || event.key === "ArrowUp")) { event.preventDefault(); setSelectedMatch((current) => (current + (event.key === "ArrowDown" ? 1 : -1) + matches().length) % matches().length);
 
     return true; }
+
+    if (event.key === "Enter" && commandTyped(matches()[selectedMatch()])) return false;
 
     if (canPickCommand(event) && matches()[selectedMatch()]) { event.preventDefault(); chooseCommand(matches()[selectedMatch()]);
 

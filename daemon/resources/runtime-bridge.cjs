@@ -576,11 +576,13 @@ const commandPolicy = JSON.parse(process.env.PIOP_COMMAND_POLICY);
 
 const queuedCommands = new Set(commandPolicy.queued);
 
+const queuedWithPrompt = new Set(commandPolicy.queuedWithPrompt);
+
 const disabledCommands = new Map(Object.entries(commandPolicy.disabled));
 
 const commandName = text => /^\/(\S+)/.exec(text)?.[1];
 
-const queuedCommand = text => queuedCommands.has(commandName(text));
+const queuedCommand = text => queuedCommands.has(commandName(text)) || (queuedWithPrompt.has(commandName(text)) && /^\/\S+\s+\S/.test(text.trimStart()));
 
 const userText = message => message.role === "user" ? message.content.filter(part => part.type === "text").map(part => part.text).join("") : "";
 
@@ -624,7 +626,7 @@ async function executeQueuedCommandReady(session, text, images) {
   return !signal?.aborted;
 }
 
-async function consumeQueuedCommands(session, messages) {
+async function consumeQueuedCommands(session, messages, output) {
   const prompts = [];
 
   for (const message of messages) {
@@ -645,19 +647,19 @@ async function consumeQueuedCommands(session, messages) {
 
     const consumed = await executeQueuedCommand(session, text, message.content.filter(part => part.type === "image"));
 
-    if (consumed && isQueuedUserMessage(message)) session.sessionManager.appendMessage(message);
+    if (consumed && isQueuedUserMessage(message)) output({ type: "queue_consumed", queueId: message.piopQueueId, sessionId: session.sessionManager.getSessionId(), entryId: null });
   }
 
   return prompts;
 }
 
-async function drainQueuedCommands(session, drain) {
+async function drainQueuedCommands(session, drain, output) {
   while (true) {
     if (session.agent.signal?.aborted || session[reachedCompaction]) return [];
     const messages = await drain();
 
     if (!messages.length) return messages;
-    const prompts = await consumeQueuedCommands(session, messages);
+    const prompts = await consumeQueuedCommands(session, messages, output);
 
     if (prompts.length || session[reachedCompaction]) return prompts;
   }
@@ -719,7 +721,7 @@ function bindQueuedCommands(session, output) {
   agent.createLoopConfig = function (...args) {
     const config = createLoopConfig.apply(this, args);
     const followUp = config.getFollowUpMessages;
-    config.getFollowUpMessages = () => drainQueuedCommands(session, followUp);
+    config.getFollowUpMessages = () => drainQueuedCommands(session, followUp, output);
 
     return config;
   };
@@ -731,7 +733,7 @@ function bindQueuedCommands(session, output) {
 
     let cancelled = false;
     await this.runWithLifecycle(async signal => {
-      await consumeQueuedCommands(session, messages);
+      await consumeQueuedCommands(session, messages, output);
       cancelled = signal.aborted;
     });
 
