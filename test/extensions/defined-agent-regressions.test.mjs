@@ -219,6 +219,19 @@ test("an unknown subagent profile reports the available profiles without returni
   assert.equal(request.state, undefined);
 });
 
+test("a running chat starts and lists an agent added after it started", async t => {
+  const f = await agentFixture(t, { config: null }); await f.load();
+  await f.configure(configured([profile()]));
+  await f.start();
+  await f.configure(configured([profile(), profile('helper', { description: 'Finds files.' })]));
+  const known = { purpose: 'subagent', lastRead: true }; f.pi.events.emit('piop:agents:profiles', known);
+  assert.deepEqual(known.profiles.map(profile => profile.name), ['general']);
+  const catalog = { purpose: 'subagent' }; f.pi.events.emit('piop:agents:profiles', catalog); await catalog.ready;
+  assert.deepEqual(catalog.profiles.map(profile => profile.name), ['general', 'helper']);
+  const request = { agent: 'helper', purpose: 'subagent' }; f.pi.events.emit('piop:agents:subagent', request); await request.ready;
+  assert.equal(request.error, undefined); assert.equal(request.state.active, 'helper');
+});
+
 test("agent access rules decide which subagents and peers can start", async t => {
   const f = await agentFixture(t, { config: null }); await f.load();
   await f.configure(configured([profile('general', { allowed_subagents: ['helper'], allowed_peers: 'none' }), profile('helper'), profile('private', { allow_as_subagent: false })]));

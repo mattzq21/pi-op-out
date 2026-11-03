@@ -28,7 +28,7 @@ export interface AgentProfileSummary { name: string; description?: string }
 
 export interface SubagentLimitsRequest { max_subagents?: number }
 
-export interface AgentProfilesRequest { purpose: AgentStartPurpose; active?: string; profiles?: AgentProfileSummary[] }
+export interface AgentProfilesRequest { purpose: AgentStartPurpose; lastRead?: boolean; active?: string; profiles?: AgentProfileSummary[]; ready?: Promise<void> }
 
 export interface AgentContextCapRequest { cap?: number | null }
 

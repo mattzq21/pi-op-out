@@ -327,14 +327,7 @@ export class Host implements SessionHost {
       session.publish({ type: 'settings_pending', pending: true }, null);
       this.reconcile(session);
     }
-    await Promise.all(sessions.map(session => this.sendAgentDefinitions(session)));
     return revision;
-  }
-
-  private async sendAgentDefinitions(session: Session): Promise<void> {
-    if (session.transient() || session.closed() || session.stopping()) return;
-    try { await session.executeWorker({ type: 'agent_definitions_changed' }); }
-    catch (error) { if (!session.closed() && !session.stopping()) this.output({ type: 'diagnostic', line: 'Could not give ' + session.key + ' the changed agent definitions: ' + errorText(error) }); }
   }
 
   private availability: Promise<void> | null = null;

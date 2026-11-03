@@ -315,6 +315,7 @@ export default async function defineAgents(pi: ExtensionAPI) {
   let cwd = process.cwd();
   const readConfigNow = async () => loadProjectConfig(await loadConfig(configRuntime, undefined, false, readOnlyStorage), cwd, configRuntime);
   let config = await readConfigNow();
+  const refreshConfig = async () => { config = await readConfigNow(); };
   let active = "general";
   let snapshot: AgentSnapshot | undefined;
   let savedState: string | undefined;
@@ -374,32 +375,49 @@ export default async function defineAgents(pi: ExtensionAPI) {
     }
   });
 
+  const unknownProfile = (name: string) => `Unknown agent profile ${name}. Available profiles: ${config.agents.map(agent => agent.name).join(", ")}`;
+
   const stopSubagentProfiles = pi.events.on("piop:agents:subagent", (request) => {
-    const agent = request.agent ? findAgent(request.agent) : currentAgent();
+    const name = request.agent;
 
-    if (!agent) { request.error = `Unknown agent profile ${request.agent ?? "(current)"}. Available profiles: ${config.agents.map(agent => agent.name).join(", ")}`;
+    if (!name) {
+      const agent = currentAgent();
 
-    return; }
+      if (!agent) { request.error = unknownProfile("(current)"); return; }
 
-    const refusal = request.purpose && startRefusal(currentAgent(), agent, request.purpose);
+      const refusal = request.purpose && startRefusal(agent, agent, request.purpose);
 
-    if (refusal) { request.error = refusal; return; }
+      if (refusal) { request.error = refusal; return; }
 
-    if (!request.agent) {
       request.state = { active: agent.name, locked: false, snapshot: snapshot && structuredClone(snapshot), modelOverride: modelOverride || agent.model || runtimeDefaults?.model, effortOverride: pi.getThinkingLevel() };
 
       return;
     }
 
-    request.ready = selectedProfileState(agent, initialResources, readPrompt)
-      .then(state => { request.state = state; })
-      .catch(error => { request.error = `Cannot load agent profile ${agent.name}: ${String(error)}`; });
+    request.ready = (async () => {
+      try { await refreshConfig(); }
+      catch (error) { request.error = `Cannot read agent definitions: ${error instanceof Error ? error.message : String(error)}`; return; }
+      const agent = findAgent(name);
+
+      if (!agent) { request.error = unknownProfile(name); return; }
+
+      const refusal = request.purpose && startRefusal(currentAgent(), agent, request.purpose);
+
+      if (refusal) { request.error = refusal; return; }
+
+      try { request.state = await selectedProfileState(agent, initialResources, readPrompt); }
+      catch (error) { request.error = `Cannot load agent profile ${agent.name}: ${String(error)}`; }
+    })();
   });
 
   const stopProfileCatalog = pi.events.on("piop:agents:profiles", request => {
-    const caller = currentAgent();
-    request.active = caller?.name;
-    request.profiles = config.agents.filter(agent => !startRefusal(caller, agent, request.purpose)).map(agent => ({ name: agent.name, ...(agent.description ? { description: agent.description } : {})}));
+    const list = () => {
+      const caller = currentAgent();
+      request.active = caller?.name;
+      request.profiles = config.agents.filter(agent => !startRefusal(caller, agent, request.purpose)).map(agent => ({ name: agent.name, ...(agent.description ? { description: agent.description } : {})}));
+    };
+
+    if (request.lastRead) list(); else request.ready = refreshConfig().then(list);
   });
 
   const stopContextCap = pi.events.on("piop:agents:context-cap", request => {
@@ -653,7 +671,7 @@ export default async function defineAgents(pi: ExtensionAPI) {
 
   const restoreSession = async (ctx: ExtensionContext) => {
     cwd = ctx.cwd;
-    config = await readConfigNow();
+    await refreshConfig();
     restore(ctx);
     const branch = ctx.sessionManager.getBranch();
     const { states, stored, identity } = readAgentState(branch, runtimeSession);
@@ -716,10 +734,6 @@ export default async function defineAgents(pi: ExtensionAPI) {
     configureAgentSystemPrompt(activeSystemPrompt, activeAgentPrompt, event.systemPromptOptions, invocationPolicy);
   });
   pi.events.on("piop:rpc", request => {
-    if (request.command !== "agent_definitions_changed") return;
-    request.ready = readConfigNow().then(next => { config = next; });
-  });
-  pi.events.on("piop:rpc", request => {
     if (request.command !== "select_agent") return;
     const ctx = request.ctx;
     request.ready = (async () => {
@@ -736,7 +750,7 @@ export default async function defineAgents(pi: ExtensionAPI) {
       throw new Error("This conversation's agent is fixed. Start a new conversation to use another agent.");
     }
 
-    config = await readConfigNow();
+    await refreshConfig();
     const agent = findAgent(name);
 
     if (!agent) throw new Error(`Unknown defined agent: ${name}`);

@@ -3,7 +3,7 @@ import type { AgentToolResult, ExtensionAPI, ExtensionContext, CustomEntryDraft 
 import type { SubagentLimitsRequest } from "../../../extensions/piop-define-agents/contracts.ts";
 import { Type } from "typebox";
 import { Parse } from "typebox/value";
-import { agentProfilesTool, resolveAgentProfile, soleProfile, startableProfiles, SUBAGENT_TOOLS, PEER_TOOLS } from "./agent-profiles.ts";
+import { agentProfilesTool, resolveAgentProfile, soleProfile, lastReadProfiles, SUBAGENT_TOOLS, PEER_TOOLS } from "./agent-profiles.ts";
 import { childFastModeEntry } from "./fast-mode.ts";
 import { randomUUID } from "node:crypto";
 import { execFileSync } from "node:child_process";
@@ -274,12 +274,16 @@ export function registerSubagents(pi: ExtensionAPI) {
   };
   pi.on("session_start", (_event, ctx) => { sessionInRepository(ctx); });
   const unsubscribeTools = pi.events.on("piop:required-tools", ({ ctx, tools, withheldTools, availableTools }) => {
+    const auxiliary = isAuxiliary(ctx.sessionManager.getEntries());
+
+    if (auxiliary) withheldTools.push(...PEER_TOOLS);
+
     if (subagentParent(ctx)) { withheldTools.push(...SUBAGENT_TOOLS, "list_agent_profiles");
 
     return; }
     const allowed = availableTools ?? pi.getActiveTools();
     const subagents = allowed.some(tool => SUBAGENT_TOOLS.includes(tool));
-    const peers = !isAuxiliary(ctx.sessionManager.getEntries()) && allowed.some(tool => PEER_TOOLS.includes(tool));
+    const peers = !auxiliary && allowed.some(tool => PEER_TOOLS.includes(tool));
 
     if (subagents || latestRuns(ctx).length) tools.push(...SUBAGENT_TOOLS);
 
@@ -292,16 +296,16 @@ export function registerSubagents(pi: ExtensionAPI) {
 
   pi.on("session_shutdown", unsubscribeTools);
   pi.registerTool({
-    name: "list_subagents", label: "List subagents", exposure: "model-only", description: "List your subagents with their nicknames, agents and status.",
+    name: "list_subagents", label: "List subagents", exposure: "model-only", description: "List your subagents with their nicknames and status.",
     parameters: Type.Object({}),
     async execute(_id, _params, signal, _update, ctx) {
       const subagents = await Promise.all(latestRuns(ctx).map(async run => {
         const nickname = run.name;
 
-        if (run.status !== "running") return { nickname, agent: run.agent, status: run.status };
+        if (run.status !== "running") return { nickname, status: run.status };
 
-        try { return { nickname, agent: run.agent, status: snapshotStatus(await sessionSnapshot(run.sessionId, run.hostId, signal)) === "idle" ? "finishing" : "running" }; }
-        catch (error) { return { nickname, agent: run.agent, status: "unavailable", error: error instanceof Error ? error.message : String(error) }; }
+        try { return { nickname, status: snapshotStatus(await sessionSnapshot(run.sessionId, run.hostId, signal)) === "idle" ? "finishing" : "running" }; }
+        catch (error) { return { nickname, status: "unavailable", error: error instanceof Error ? error.message : String(error) }; }
       }));
 
       return { content: [{ type: "text", text: JSON.stringify(subagents) }], details: { subagents, runs: iconRuns(latestRuns(ctx)) } };
@@ -542,7 +546,8 @@ export function registerSubagents(pi: ExtensionAPI) {
         resultsDelivery.publish(ctx, run);
       };
 
-      await Promise.all(params.tasks.map((task) => launchSubagent({ name: task.nickname, task: task.task, agent: task.agent ?? soleProfile(pi, "subagent") }, { pi, ctx, toolCallId, active, results, signal: backgroundSignal, publish }, pending)));
+      const sole = params.tasks.some(task => !task.agent) ? await soleProfile(pi, "subagent") : undefined;
+      await Promise.all(params.tasks.map((task) => launchSubagent({ name: task.nickname, task: task.task, agent: task.agent ?? sole }, { pi, ctx, toolCallId, active, results, signal: backgroundSignal, publish }, pending)));
 
       return { ...subagentPayload(results), isError: results.some((run) => run.status === "failed" || run.status === "cancelled") };
     },
@@ -551,7 +556,7 @@ export function registerSubagents(pi: ExtensionAPI) {
   let spawnLimit = subagentLimit(pi);
   pi.registerTool(spawnTool(spawnSingle, spawnLimit));
   useSpawnTool = () => {
-    const single = startableProfiles(pi, "subagent").profiles.length === 1;
+    const single = lastReadProfiles(pi, "subagent").profiles.length === 1;
     const limit = subagentLimit(pi);
 
     if (single !== spawnSingle || limit !== spawnLimit) { pi.registerTool(spawnTool(single, limit)); spawnSingle = single; spawnLimit = limit; }
