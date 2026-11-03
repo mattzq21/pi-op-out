@@ -19,11 +19,14 @@ export async function skillMcpSession(t) {
   });
   const skill = join(dir, 'skill'); mkdirSync(skill);
   writeFileSync(join(skill, 'SKILL.md'), '---\nname: fixture\ndescription: Test MCP\ndisable-model-invocation: true\n---\nUse ping.');
-  const pid = join(dir, 'server.pid'), blocked = join(dir, 'blocked'), hanging = join(dir, 'hanging'), server = join(skill, 'server.mjs');
-  writeFileSync(server, `import {createInterface} from 'node:readline'; import {existsSync,writeFileSync} from 'node:fs';
+  const pid = join(dir, 'server.pid'), blocked = join(dir, 'blocked'), hanging = join(dir, 'hanging'), slow = join(dir, 'slow'), server = join(skill, 'server.mjs');
+  writeFileSync(server, `import {createInterface} from 'node:readline'; import {existsSync,writeFileSync,watch} from 'node:fs';
 if(existsSync(${JSON.stringify(blocked)})) { console.error('fixture cannot start'); process.exit(1); }
 writeFileSync(${JSON.stringify(pid)},String(process.pid));
-createInterface({input:process.stdin}).on('line',line=>{const m=JSON.parse(line); if(m.id===undefined||existsSync(${JSON.stringify(hanging)}))return;const result=m.method==='initialize'?{protocolVersion:'2025-03-26',capabilities:{tools:{}},serverInfo:{name:'test',version:'1'}}:m.method==='tools/list'?{tools:[{name:'ping',description:'Ping',inputSchema:{type:'object',properties:{}}}]}:{content:[{type:'text',text:'PROVEN_PONG'}]};console.log(JSON.stringify({jsonrpc:'2.0',id:m.id,result}));});`);
+const held=[];
+const reply=m=>{const result=m.method==='initialize'?{protocolVersion:'2025-03-26',capabilities:{tools:{}},serverInfo:{name:'test',version:'1'}}:m.method==='tools/list'?{tools:[{name:'ping',description:'Ping',inputSchema:{type:'object',properties:{}}}]}:{content:[{type:'text',text:'PROVEN_PONG'}]};console.log(JSON.stringify({jsonrpc:'2.0',id:m.id,result}));};
+watch(${JSON.stringify(dir)},()=>{if(!existsSync(${JSON.stringify(slow)}))held.splice(0).forEach(reply);}).unref();
+createInterface({input:process.stdin}).on('line',line=>{const m=JSON.parse(line); if(m.id===undefined||existsSync(${JSON.stringify(hanging)}))return;if(existsSync(${JSON.stringify(slow)}))held.push(m);else reply(m);});`);
   writeFileSync(join(skill, 'mcp.json'), JSON.stringify({ mcpServers: { fixture: { command: process.execPath, args: [server], timeout: 1, exposure: 'codemode' } } }));
   const storage = join(dir, 'storage.mjs'), bridge = join(dir, 'bridge.mjs');
   await build({ entryPoints: ['daemon/resources/piop-storage/session-storage.mjs'], outfile: storage, bundle: true, platform: 'node', format: 'esm', plugins: [storageSchemaImports()], banner: { js: "import {createRequire} from 'node:module';const require=createRequire(import.meta.url);" } });
@@ -51,5 +54,5 @@ createInterface({input:process.stdin}).on('line',line=>{const m=JSON.parse(line)
     await event(value => value.event === 'ready');
     return { child, event, get eventCount() { return events.length; }, command: body => new Promise((resolve, reject) => { const id = ++seq; pending.set(id, { resolve, reject }); child.send({ ...body, id }); }), async kill() { const exited = once(child, 'exit'); child.kill('SIGKILL'); await exited; } };
   };
-  return { dir, skill, pid, blocked, hanging, file, start };
+  return { dir, skill, pid, blocked, hanging, slow, file, start };
 }

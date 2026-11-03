@@ -44,11 +44,12 @@ session.agent.streamFunction = (model, _context, options) => {
   const message = { role: 'assistant', api: model.api, provider: model.provider, model: model.id, timestamp: Date.now(), content, usage, stopReason: options.signal?.aborted ? 'aborted' : stopReason };
   return { async *[Symbol.asyncIterator]() { yield { type: 'done', reason: message.stopReason, message }; }, result: async () => message };
 };
-const snapshot = () => ({ requests, statuses: Object.fromEntries(statuses), errors, notices, toolResults, servers: api.getMcpServers().map(server => server.name), activeTools: session.getActiveToolNames(), leaf: session.sessionManager.getLeafId() });
+const snapshot = () => ({ requests, statuses: Object.fromEntries(statuses), errors, notices, toolResults, servers: api.getMcpServers().map(server => server.name), activeTools: session.getActiveToolNames(), streaming: session.isStreaming, followUps: session.getFollowUpMessages(), leaf: session.sessionManager.getLeafId() });
 process.on('message', async command => {
   try {
     let result;
     if (command.op === 'prompt') { mode = command.mode ?? 'text'; stage = 0; toolResults = []; await session.prompt(command.text ?? 'test'); result = snapshot(); }
+    else if (command.op === 'queue') { await session.prompt(command.text, { streamingBehavior: 'followUp' }); result = snapshot(); }
     else if (command.op === 'action') { const request = { command: 'skill_mcp', payload: { name: command.name, action: command.action }, ctx: session.extensionRunner.createCommandContext() }; api.events.emit('piop:rpc', request); if (!request.ready) throw new Error('Action handler missing'); await request.ready; result = snapshot(); }
     else if (command.op === 'snapshot') result = snapshot();
     else if (command.op === 'reload') { await session.reload(); result = snapshot(); }

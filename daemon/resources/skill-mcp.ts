@@ -186,6 +186,7 @@ export function skillMcp(pi: ExtensionAPI, ready: (ctx: ExtensionContext) => Pro
     }
   });
   pi.on("input", async (event, ctx) => {
+    if (event.streamingBehavior) return;
     try { await settle(ctx); }
     catch (error) {
       const message = error instanceof Error ? error.message : String(error);
