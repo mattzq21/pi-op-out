@@ -6,7 +6,7 @@ export const OPEN_AUXILIARY_CHAT = "__pi_desktop_auxiliary__";
 
 const openingSchema = z.object({
   kind: z.string().min(1), name: z.string().min(1), sessionId: z.string().min(1), sessionPath: z.string().min(1), cwd: z.string(), hostId: z.string().min(1), parentSessionId: z.string().min(1),
-  task: z.string().optional(), images: z.array(z.object({ type: z.literal("image"), data: z.string(), mimeType: z.string(), name: z.string().optional() })).optional(),
+  task: z.string().optional(), images: z.array(z.object({ type: z.literal("image"), data: z.string(), mimeType: z.string(), name: z.string().optional() })).optional(), background: z.literal(true).optional(),
 });
 
 export interface AuxiliaryChats { listed: (hostId: string, sessionId: string) => boolean; open: (hostId: string, sessionId: string) => void }
@@ -35,7 +35,7 @@ export function withWorkingSideChats(sessions: SessionSummary[], running: Readon
   return result;
 }
 
-export function parseAuxiliaryOpening(placeholder?: string): { session: SessionSummary; task?: string; images?: ImageAttachment[] } {
+export function parseAuxiliaryOpening(placeholder?: string): { session: SessionSummary; task?: string; images?: ImageAttachment[]; background: boolean } {
   const parsed = openingSchema.safeParse((() => { try { return JSON.parse(placeholder || "{}"); } catch { return undefined; } })());
 
   if (!parsed.success) throw new Error("Invalid side chat request");
@@ -45,5 +45,5 @@ export function parseAuxiliaryOpening(placeholder?: string): { session: SessionS
     preview: value.task ?? "", messageCount: 0, lastMessageAt: Date.now(), apiCost: 0, auxiliaryKind: value.kind, auxiliaryParentId: value.parentSessionId,
   };
 
-  return { session, task: value.task, images: value.images };
+  return { session, task: value.task, images: value.images, background: value.background === true };
 }

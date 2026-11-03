@@ -466,3 +466,17 @@ test('Ctrl+Z and Ctrl+Y undo and redo typing separated by a pause', async t => {
   await page.keyboard.press('Control+y');
   assert.equal(await editor.inputValue(), 'helloworld\n!');
 });
+
+test('Enter sends a fully typed command instead of completing it, Tab still completes', async t => {
+  const page = await controlsPage(t);
+  const editor = page.getByRole('textbox', { name: 'Message piop' });
+  await editor.fill('/review');
+  await page.getByRole('listbox', { name: 'piop commands' }).waitFor();
+  await page.keyboard.press('Tab');
+  assert.equal(await editor.inputValue(), '/review ');
+  assert.deepEqual(await sent(page), []);
+  await editor.fill('/review');
+  await page.getByRole('listbox', { name: 'piop commands' }).waitFor();
+  await page.keyboard.press('Enter');
+  assert.deepEqual(await sent(page), [['/review', null, []]]);
+});

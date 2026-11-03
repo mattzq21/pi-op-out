@@ -26,7 +26,7 @@ function mainChat(pi: ExtensionAPI, ctx: ExtensionContext) {
 
 export interface AuxiliaryChatOpening {
   kind: string; name: string; sessionId: string; sessionPath: string; cwd: string; hostId: string; parentSessionId: string;
-  task?: string; images?: Array<{ type: "image"; data: string; mimeType: string; name?: string }>;
+  task?: string; images?: Array<{ type: "image"; data: string; mimeType: string; name?: string }>; background?: true;
 }
 
 export const OPEN_AUXILIARY_CHAT = "__pi_desktop_auxiliary__";

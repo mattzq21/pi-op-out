@@ -2,6 +2,7 @@ import { onCleanup, type Accessor, type Setter } from "solid-js";
 import type { SplitPaneState } from "./appSupport";
 import { keybindDefinitions, matchesShortcut } from "./lib/keybindings";
 import { isMobile } from "./lib/platform";
+import { pluginKeybinds, type PluginKeybindBinding } from "./plugins/keybinds";
 import { createDependencyEffect } from "./lib/solid";
 import type { AppSettings } from "./types";
 
@@ -24,6 +25,8 @@ type KeyboardContext = {
   view: Accessor<"chat" | "settings">;
   terminalOpen: Accessor<boolean>;
   setTerminalOpen: (open: boolean) => void;
+  pluginEnabled: (id: string) => boolean;
+  runPluginKeybind: (keybind: PluginKeybindBinding) => void;
 };
 
 function isTerminalKey(event: KeyboardEvent) {
@@ -34,7 +37,7 @@ function isTerminalKey(event: KeyboardEvent) {
 }
 
 export function useAppKeyboard(context: KeyboardContext) {
-  const { settings, activePane, splitPane, canLeaveSettings, setView, panelOpen, setPanelOpen, newSession, toggleTerminal, toggleDebugMode, setSplitComposerFocusRequest, setMainComposerFocusRequest, setSplitQueueHoldRequest, setMainQueueHoldRequest, settingsDirty, view, terminalOpen, setTerminalOpen } = context;
+  const { settings, activePane, splitPane, canLeaveSettings, setView, panelOpen, setPanelOpen, newSession, toggleTerminal, toggleDebugMode, setSplitComposerFocusRequest, setMainComposerFocusRequest, setSplitQueueHoldRequest, setMainQueueHoldRequest, settingsDirty, view, terminalOpen, setTerminalOpen, pluginEnabled, runPluginKeybind } = context;
   const blockTabFocus = (event: KeyboardEvent) => { if (event.key === "Tab" && !event.ctrlKey && !event.metaKey && !event.altKey) event.preventDefault(); };
   window.addEventListener("keydown", blockTabFocus);
   onCleanup(() => window.removeEventListener("keydown", blockTabFocus));
@@ -64,6 +67,18 @@ export function useAppKeyboard(context: KeyboardContext) {
         if (!canLeaveSettings()) return;
         setView("chat"); setPanelOpen(true);
         window.setTimeout(() => document.querySelector<HTMLInputElement>('[aria-label="Search conversations"]')?.focus(), 0);
+
+        return;
+      }
+
+      const pluginKeybind = pluginKeybinds.find((item) => pluginEnabled(item.plugin.id) && matchesShortcut(event, capturedSettings.keybindings[item.action] ?? ""));
+
+      if (pluginKeybind) {
+        event.preventDefault();
+        event.stopPropagation();
+
+        if (!canLeaveSettings()) return;
+        setView("chat"); runPluginKeybind(pluginKeybind);
 
         return;
       }

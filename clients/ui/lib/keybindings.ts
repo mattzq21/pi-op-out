@@ -10,7 +10,7 @@ export const defaultKeybindings = {
 
 export type KeybindAction = keyof typeof defaultKeybindings;
 
-export type Keybindings = Record<KeybindAction, string>;
+export type Keybindings = Record<KeybindAction, string> & Record<string, string>;
 
 const definitions: Array<{ action: KeybindAction; label: string; description: string }> = [
   { action: "newConversation", label: "New conversation", description: "Start a fresh conversation" },

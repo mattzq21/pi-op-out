@@ -97,6 +97,8 @@ async function publishReview(pi: ExtensionAPI, ctx: ExtensionContext, record: Re
 
     if (!saved.some(entry => entry.type === "custom_message" && entry.customType === "piop-review-link" && Check(reviewSchema, entry.details) && matchesPublication(entry.details, record))) pi.sendMessage({ customType: "piop-review-link", content: "Code review", display: true, details: record }, { triggerTurn: false });
 
+    if (!ctx.isIdle()) return;
+
     if (!await acknowledge(publication)) ctx.ui.notify(`Review parent publication is pending; the transcript is retained at ${record.sessionPath}`, "warning");
   } finally { release(publication); }
 }
@@ -121,11 +123,11 @@ async function reconcileReviews(pi: ExtensionAPI, ctx: ExtensionContext) {
   } catch (error) { if (current()) ctx.ui.notify(`Review publication recovery is pending: ${(error instanceof Error ? error.message : String(error))}`, "warning"); }
 }
 
-async function openReview(ctx: ExtensionContext, record: ReviewRecord, name: string, task: string, images?: ReviewImage[]) {
+async function openReview(ctx: ExtensionContext, record: ReviewRecord, name: string, task: string, images: ReviewImage[] | undefined, background: boolean) {
   const hostId = record.hostId ?? currentHost();
   const location = await locateConversation(record.sessionId, hostId);
 
-  openAuxiliaryChat(ctx, { kind: "review", name, sessionId: record.sessionId, sessionPath: location.sessionPath, cwd: location.cwd, hostId, parentSessionId: record.parentSessionId, task, ...images?.length ? { images } : {} });
+  openAuxiliaryChat(ctx, { kind: "review", name, sessionId: record.sessionId, sessionPath: location.sessionPath, cwd: location.cwd, hostId, parentSessionId: record.parentSessionId, task, ...images?.length ? { images } : {}, ...background ? { background: true } : {} });
 }
 
 async function reviewSettings() {
@@ -167,7 +169,7 @@ export function registerReviews(pi: ExtensionAPI): ReviewSession {
       const { record, publication, name } = await createReview(pi, ctx, profile, request.scope?.trim() || undefined, signal);
       await publishReview(pi, ctx, record, publication);
       signal?.throwIfAborted();
-      await openReview(ctx, record, name, prompt, request.images);
+      await openReview(ctx, record, name, prompt, request.images, Boolean(request.scope?.trim()));
     },
   };
 }
