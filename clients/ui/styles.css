@@ -744,7 +744,7 @@ textarea::placeholder { color: var(--faint); }
   .deferred-turn { margin-inline: -22px; padding-inline: 22px; }
   .message-pin { left: -21px; width: 22px; height: 26px; }
   .user-message .message-pin { left: auto; right: -21px; }
-  .pinned-messages { width: calc(100% - 16px); }
+  .pinned-messages { width: auto; margin: 0 60px; }
 }
 
 button.message-link { border: 0; padding: 0; background: transparent; font: inherit; text-align: inherit; cursor: pointer; }
