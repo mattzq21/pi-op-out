@@ -18,18 +18,18 @@ test('ended archive leases and completed deletes cannot authorize terminal reass
     expect(archived).toBeDefined();
     await daemon.stop();
     host = await startHost({ home: daemon.home });
-    const owner = { type: 'conversation_owner', sessionId: archived.id, clientId: 'archive-owner', allowReleased: true };
-    const mutation = { type: 'conversation_mutation', sessionId: archived.id, sessionPath: archived.path,
-      clientId: 'archive-owner', archived: true, operation: 'delete' };
-    const lease = await host.request(mutation);
-    expect(await host.request(owner)).toBe(true);
-    await host.request({ type: 'conversation_mutation_end', token: lease.token, success: false });
-    expect(await host.request(owner)).toBe(false);
-    expect(await host.request({ ...owner, allowReleased: false })).toBe(false);
-    const next = await host.request({ ...mutation, clientId: 'next-owner' });
-    expect(await host.request({ ...owner, clientId: 'next-owner' })).toBe(true);
-    await host.request({ type: 'conversation_mutation_end', token: next.token, success: true });
-    expect(await host.request({ ...owner, clientId: 'next-owner' })).toBe(false);
-    expect(await host.request(owner)).toBe(false);
+    const fixture = host;
+    const owner = (clientId = 'archive-owner', allowReleased = true) => fixture.call('conversationOwner', archived.id, clientId, allowReleased);
+    const mutation = { sessionId: archived.id, sessionPath: archived.path, clientId: 'archive-owner', archived: true, operation: 'delete' };
+    const lease = await host.call('beginMutation', mutation);
+    expect(await owner()).toBe(true);
+    await host.call('endMutation', { token: lease.token, success: false });
+    expect(await owner()).toBe(false);
+    expect(await owner('archive-owner', false)).toBe(false);
+    const next = await host.call('beginMutation', { ...mutation, clientId: 'next-owner' });
+    expect(await owner('next-owner')).toBe(true);
+    await host.call('endMutation', { token: next.token, success: true });
+    expect(await owner('next-owner')).toBe(false);
+    expect(await owner()).toBe(false);
   } finally { await host?.stop(); await daemon.stop(); }
 });

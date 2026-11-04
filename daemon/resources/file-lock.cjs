@@ -1,14 +1,15 @@
 const { spawn, spawnSync } = require('node:child_process');
 
-let libc;
+// Runs in this process under Bun, and as the source of the Bun helper process under Node. It uses nothing outside itself.
 function nativeLock(fd, shared = false, nonblocking = false) {
+  const key = Symbol.for('piop.flock');
+  let libc = globalThis[key];
   if (!libc) {
-    const module = 'bun:ffi';
-    const { dlopen, read } = require(module);
+    const { dlopen, read } = process.getBuiltinModule('bun:ffi');
     const library = dlopen('libc.so.6', { flock: { args: ['i32', 'i32'], returns: 'i32' }, __errno_location: { args: [], returns: 'ptr' } });
     const errno = library.symbols.__errno_location();
     if (!errno) throw new Error('Could not get flock errno address');
-    libc = { library, read, errno };
+    libc = globalThis[key] = { library, read, errno };
   }
   let error;
   do { error = libc.library.symbols.flock(fd, (shared ? 1 : 2) | (nonblocking ? 4 : 0)) === 0 ? 0 : libc.read.i32(libc.errno); } while (error === 4);
@@ -17,7 +18,7 @@ function nativeLock(fd, shared = false, nonblocking = false) {
   return true;
 }
 
-const nativeSource = "let libc;\nfunction nativeLock(fd, shared = false, nonblocking = false) {\n  if (!libc) {\n    const module = 'bun:ffi';\n    const { dlopen, read } = require(module);\n    const library = dlopen('libc.so.6', { flock: { args: ['i32', 'i32'], returns: 'i32' }, __errno_location: { args: [], returns: 'ptr' } });\n    const errno = library.symbols.__errno_location();\n    if (!errno) throw new Error('Could not get flock errno address');\n    libc = { library, read, errno };\n  }\n  let error;\n  do { error = libc.library.symbols.flock(fd, (shared ? 1 : 2) | (nonblocking ? 4 : 0)) === 0 ? 0 : libc.read.i32(libc.errno); } while (error === 4);\n  if (error === 11) return false;\n  if (error) throw new Error(`flock failed (errno ${error})`);\n  return true;\n}";
+const nativeSource = `const nativeLock = ${nativeLock};`;
 const helperSource = `${nativeSource}
 const [fd, shared, nonblocking, wait] = process.argv.slice(1).map(Number);
 try {

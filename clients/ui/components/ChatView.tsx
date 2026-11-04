@@ -1,6 +1,7 @@
 import { NewChatWorktreePicker } from "./NewChatWorktreePicker";
 import { z } from "zod";
 import { TranscriptPlugins } from "../plugins/transcript";
+import { pluginStatus } from "../plugins";
 import type { PluginConversation } from "../plugins/types";
 import { stringsSchema, validItems } from "../lib/messageSchemas";
 import { required } from "../lib/required";
@@ -191,16 +192,12 @@ export function ChatView(props: Props & { transcriptActions?: JSXElement; follow
   const turns = () => transcript().turns();
   const pendingMessages = createMemo<import("../types").PendingMessage[]>(() => [...(props.state.pendingMessages ?? []).filter(item => !split().delivered.has(item.id)), ...split().sending.map(message => ({ id: message.id, goalSubmissionId: message.id, message: textOf(message.content), behavior: message.deliveryBehavior ?? "followUp", sending: true, images: Array.isArray(message.content) ? message.content.flatMap(part => part.type === "image" && part.data && part.mimeType ? [{ type: "image" as const, data: part.data, mimeType: part.mimeType }] : []) : [] }))]);
 
-  const destinations = new WeakMap<ChatMessage, ResponseDestination>();
   const loadedResponses = createMemo(() => turns().flatMap(turn => {
     const message = turn.messages[finalResponseIndex(turn.messages)];
 
     if (!message) return [];
-    let destination = destinations.get(message);
 
-    if (destination?.turnId !== turn.messages[0].id) destinations.set(message, destination = { turnId: turn.messages[0].id, messageId: message.id, preview: textOf(message.content).replace(/\s+/g, " ").trim().slice(0, 160) || (message.stopReason === "stop" ? "Empty response" : "Response interrupted") });
-
-    return [destination];
+    return [{ turnId: turn.messages[0].id, messageId: message.id, preview: textOf(message.content).replace(/\s+/g, " ").trim().slice(0, 160) || (message.stopReason === "stop" ? "Empty response" : "Response interrupted") }];
   }));
 
   const olderBefore = createMemo(() => older()?.before);
@@ -217,22 +214,14 @@ export function ChatView(props: Props & { transcriptActions?: JSXElement; follow
 
     return unloaded.length ? [...unloaded.map(item => ({ messageId: item.id, preview: item.preview })), ...loaded] : loaded; });
 
-  let forkedTurns = new WeakMap<object, string | null>();
-  const forkPoints = createMemo(() => { forkedTurns = new WeakMap(); return props.forkPoints; });
-  const forkedResponses = createMemo(() => { const points = forkPoints(); const result = new Set<string>();
+  const forkedResponses = createMemo(() => { const points = props.forkPoints; const result = new Set<string>();
 
     if (!points?.size) return result;
 
     for (const turn of turns()) {
-      let forked = forkedTurns.get(turn);
+      const final = turn.messages[finalResponseIndex(turn.messages)];
 
-      if (forked === undefined) {
-        const final = turn.messages[finalResponseIndex(turn.messages)];
-        forked = final && turn.messages.some(message => points.has(message.entryId ?? message.id)) ? final.id : null;
-        forkedTurns.set(turn, forked);
-      }
-
-      if (forked) result.add(forked);
+      if (final && turn.messages.some(message => points.has(message.entryId ?? message.id))) result.add(final.id);
     }
 
     for (const item of unloadedResponses()) if (points.has(item.id) || item.compactions?.some(id => points.has(id))) result.add(item.id);
@@ -370,7 +359,7 @@ export function ChatView(props: Props & { transcriptActions?: JSXElement; follow
 
   onCleanup(() => { if (scrollFrame !== undefined) cancelAnimationFrame(scrollFrame); });
 
-  createDependencyEffect(scrollToLatest, () => [scrollToLatest, messages(), props.state.isStreaming, mcpLoading(), pendingSubmission()]);
+  createDependencyEffect(scrollToLatest, () => [scrollToLatest, messages().length, messages().at(-1), props.state.isStreaming, mcpLoading(), pendingSubmission()]);
   createDependencyEffect(() => { const frame = requestAnimationFrame(fillView);
 
     return () => cancelAnimationFrame(frame); }, () => [older()]);
@@ -502,7 +491,7 @@ export function ChatView(props: Props & { transcriptActions?: JSXElement; follow
       const selectionDisabled = () => props.controlsDisabled || !ownsConversation() || Boolean(pendingSubmission());
       const renderNewChatProject = () => (<Show when={!messages().length && props.state.messageCount === 0}><div class="new-chat-project">{props.hosts && props.onChooseHost && <div class="host-picker"><ContainedPicker label="Host" value={props.transport?.currentHostId() ?? "local"} disabled={Boolean(pendingSubmission())} menuMinWidth={140} anchorLeft icon={<Monitor size={14} />} options={props.hosts.map(host => ({ value: host.id, label: host.name, disabled: host.disabled }))} onChange={hostId => props.onChooseHost?.(hostId)} /></div>}<div class="project-picker"><button type="button" class={projectName() ? "selected" : undefined} aria-label={projectName() ? `Selected project: ${required((projectName()))}` : "Choose project"} data-tooltip={displayedProjectCwd()} disabled={selectionDisabled()} onClick={props.onOpenProject}><Folder size={14} />{projectName() ?? "Choose project"}</button>{projectName() && props.onClearProject && <button type="button" class="clear-project" aria-label="Clear project" data-tooltip="Clear project" disabled={selectionDisabled()} onClick={props.onClearProject}><X size={14} /></button>}</div><Show when={props.transport?.newChatWorktreeOptions()}>{options => <NewChatWorktreePicker options={options()} value={props.transport?.newChatBaseBranch()} disabled={selectionDisabled()} onChange={branch => props.transport?.setNewChatBranch(branch)} />}</Show></div></Show>);
       const renderConversationOwnershipBanner = () => ((takingOwnership() || ownershipError()) && <div class="conversation-ownership-banner"><div>{takingOwnership() && <p role="status">Taking ownership…</p>}{ownershipError() && <p role="alert">{ownershipError()}</p>}</div></div>);
-      const ComposerInteraction = () => (<div class="composer-interaction"><Composer goal={goalControls} recentPrompts={() => props.messages.filter(message => message.role === "user").map(message => textOf(message.content))} submissionDisabled={!ownsConversation()} ownershipRequired={!ownsConversation()} onTakeOwnership={takeOwnership} toolbar={renderNewChatProject()} streaming={props.state.isStreaming} compacting={props.state.isCompacting} queued={props.state.pendingMessageCount} pendingMessages={pendingMessages()} queueHeld={props.state.queueHeld === true} onHoldQueue={props.transport && props.state.sessionId ? held => required(props.transport).command({ type: "hold_queue", held }).then(() => undefined) : undefined} loadPendingImage={props.transport ? (id, index) => required(props.transport).command({ type: "get_queued_image", id, index }, z.object({ data: z.string(), mimeType: z.string() })) : undefined} onChangePending={props.onChangePending} refreshError={props.refreshError} capabilityErrors={props.capabilityErrors} capabilitiesLoading={props.capabilitiesLoading} onRetryCapabilities={props.onRetryCapabilities} commands={props.commands} agents={props.agents ?? []} activeAgent={props.activeAgent} agentLocked={props.agentLocked} agentSaved={props.agentSaved} agentUnavailable={props.agentUnavailable} modelAliases={props.modelAliases} models={props.models} model={props.state.model} fastModeStatus={fastModeStatus()} thinkingLevel={props.state.thinkingLevel} thinkingLevels={props.thinkingLevels} sessionCache={props.debug?.cacheHitRate ? sessionCache() : undefined} contextUsage={props.state.contextUsage} controlsDisabled={props.controlsDisabled || !ownsConversation() || Boolean(pendingSubmission())} queueControlsDisabled={props.controlsDisabled || !ownsConversation()} draft={props.draft} onDraftChange={props.onDraftChange} draftSelection={props.draftSelection} onDraftSelectionChange={props.onDraftSelectionChange} focusRequest={props.focusRequest} queueHoldRequest={props.queueHoldRequest} uploads={props.uploads} onUploadsChange={props.onUploadsChange} onStageSubmission={stageSubmission} onSend={send} onAbort={props.onAbort} terminalDisabled={!terminalAvailable()} onOpenTerminal={props.onOpenTerminal} onJumpToLatest={jumpToLatest} agentHostLabel={agentDefinitionHost()} agentReloadScope={agentReloadScope()} onReloadAgents={props.transport ? reloadAgentDefinitions : undefined} onAgent={props.onAgent ?? (() => undefined)} onModel={props.onModel} onToggleFastMode={props.onToggleFastMode} onThinking={props.onThinking} /></div>);
+      const ComposerInteraction = () => (<div class="composer-interaction"><Composer goal={goalControls} recentPrompts={() => props.messages.filter(message => message.role === "user").map(message => textOf(message.content))} submissionDisabled={!ownsConversation()} ownershipRequired={!ownsConversation()} onTakeOwnership={takeOwnership} toolbar={renderNewChatProject()} streaming={props.state.isStreaming} compacting={props.state.isCompacting} queued={props.state.pendingMessageCount} pendingMessages={pendingMessages()} queueHeld={props.state.queueHeld === true} onHoldQueue={props.transport && props.state.sessionId ? held => required(props.transport).command({ type: "hold_queue", held }).then(() => undefined) : undefined} loadPendingImage={props.transport ? (id, index) => required(props.transport).command({ type: "get_queued_image", id, index }, z.object({ data: z.string(), mimeType: z.string() })) : undefined} onChangePending={props.onChangePending} refreshError={props.refreshError} capabilityErrors={props.capabilityErrors} capabilitiesLoading={props.capabilitiesLoading} onRetryCapabilities={props.onRetryCapabilities} commands={props.commands} queuedCommands={pluginStatus(props.transport?.currentHostId() ?? "local")?.queuedCommands ?? []} agents={props.agents ?? []} activeAgent={props.activeAgent} agentLocked={props.agentLocked} agentSaved={props.agentSaved} agentUnavailable={props.agentUnavailable} modelAliases={props.modelAliases} models={props.models} model={props.state.model} fastModeStatus={fastModeStatus()} thinkingLevel={props.state.thinkingLevel} thinkingLevels={props.thinkingLevels} sessionCache={props.debug?.cacheHitRate ? sessionCache() : undefined} contextUsage={props.state.contextUsage} controlsDisabled={props.controlsDisabled || !ownsConversation() || Boolean(pendingSubmission())} queueControlsDisabled={props.controlsDisabled || !ownsConversation()} draft={props.draft} onDraftChange={props.onDraftChange} draftSelection={props.draftSelection} onDraftSelectionChange={props.onDraftSelectionChange} focusRequest={props.focusRequest} queueHoldRequest={props.queueHoldRequest} uploads={props.uploads} onUploadsChange={props.onUploadsChange} onStageSubmission={stageSubmission} onSend={send} onAbort={props.onAbort} terminalDisabled={!terminalAvailable()} onOpenTerminal={props.onOpenTerminal} onJumpToLatest={jumpToLatest} agentHostLabel={agentDefinitionHost()} agentReloadScope={agentReloadScope()} onReloadAgents={props.transport ? reloadAgentDefinitions : undefined} onAgent={props.onAgent ?? (() => undefined)} onModel={props.onModel} onToggleFastMode={props.onToggleFastMode} onThinking={props.onThinking} /></div>);
 
       return (<Show when={!props.readOnly}><div ref={element => { composerStack.current = element; }} class="composer-stack" classList={{ "composer-settling": settling(), "composer-loading": Boolean(props.controlsDisabled) }}><Show when={awayFromLatest() && !props.state.isStreaming}><button type="button" class="jump-to-latest" aria-label="Scroll to latest" onClick={jumpToLatest}><ArrowDown size={16} /></button></Show>{props.widgets.length > 0 && <div class="extension-widget">{<Index each={stringsSchema.parse(props.widgets)}>{(line, _index) => <div >{line()}</div>}</Index>}</div>} {activity() && <div class="runtime-activity" role="status">{(activity())}</div>}{renderConversationOwnershipBanner()}<ComposerInteraction /></div></Show>);
     };

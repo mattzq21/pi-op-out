@@ -5,15 +5,18 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { compileAgentFixture } from '../compile-defined-agent-fixture.mjs';
-import { agentDefinitions, agentFixture, profile, configured, readStoredConfig, writeStoredConfig } from '../defined-agent-fixture.mjs';
+import { agentDefinitions, agentFixture, profile, configured, readStoredConfig, writeStoredConfig, piRoot } from '../defined-agent-fixture.mjs';
 
 export async function fixture(t) {
   const root = await mkdtemp(join(tmpdir(), 'piop-extensions-'));
   const dir = join(root, 'piop-define-agents'); await mkdir(dir);
   const home = process.env.HOME; process.env.HOME = dir;
-  const resources = process.env.PIOP_AGENT_RESOURCES, storageRoot = process.env.PIOP_STORAGE_ROOT;
-  process.env.PIOP_STORAGE_ROOT = root;
-  t.after(() => { if (storageRoot === undefined) delete process.env.PIOP_STORAGE_ROOT; else process.env.PIOP_STORAGE_ROOT = storageRoot; });
+  const resources = process.env.PIOP_AGENT_RESOURCES, storageRoot = process.env.PIOP_STORAGE_ROOT, piFolder = process.env.PIOP_PI_ROOT;
+  process.env.PIOP_STORAGE_ROOT = root; process.env.PIOP_PI_ROOT = piRoot;
+  t.after(() => {
+    if (storageRoot === undefined) delete process.env.PIOP_STORAGE_ROOT; else process.env.PIOP_STORAGE_ROOT = storageRoot;
+    if (piFolder === undefined) delete process.env.PIOP_PI_ROOT; else process.env.PIOP_PI_ROOT = piFolder;
+  });
   process.env.PIOP_AGENT_RESOURCES = JSON.stringify({ tools: { enabledTools: [], registeredTools: [] }, skills: { userInvokedSkills: [], agentInvokedSkills: [] }, pluginAgentTools: [] });
   t.after(() => { if (resources === undefined) delete process.env.PIOP_AGENT_RESOURCES; else process.env.PIOP_AGENT_RESOURCES = resources; });
   t.after(() => { process.env.HOME = home; return rm(root, { recursive: true, force: true }); });

@@ -18,7 +18,7 @@ const settingsSchema = Schema.Object({ webSearchModel: Schema.Optional(Schema.St
 type Source = { title: string; url: string };
 
 function searchModelRef() {
-  const settings = readAppSettings(join(homedir(), process.env.PIOP_STORAGE_DIRECTORY || ".piop")) ?? {};
+  const settings = readAppSettings(join(homedir(), process.env.PIOP_STORAGE_DIRECTORY || ".piop"))?.plugins?.["web-search"] ?? {};
 
   if (!Check(settingsSchema, settings)) throw new Error(`The saved web search model is not text. ${PICK_MODEL}`);
   const ref = settings.webSearchModel?.trim() || DEFAULT_MODEL;

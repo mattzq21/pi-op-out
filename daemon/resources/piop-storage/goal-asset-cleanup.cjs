@@ -1,5 +1,4 @@
 const path = require('node:path');
-const { DatabaseSync } = require('node:sqlite');
 const { Type } = require('typebox');
 const { Check } = require('typebox/value');
 const assets = require('./goal-assets.cjs');
@@ -47,12 +46,9 @@ function observeReferences(root, entries, observation) {
 }
 
 function registered(root, observation, deleted) {
-  const database = require('../session-database.cjs').open(root);
+  const database = require('../session-database.cjs').connection(root);
 
-  try {
-    for (const record of database.prepare('SELECT session_id, session_path FROM sessions').all()) observeRegistered(root, record, observation, deleted);
-
-  } finally { database.close(); }
+  for (const record of database.prepare('SELECT session_id, session_path FROM sessions').all()) observeRegistered(root, record, observation, deleted);
 }
 
 function observeRegistered(root, record, observation, deleted) {
@@ -168,20 +164,16 @@ function plan(root, targets) {
 
 function confirmedDeletions(root) {
   const deleted = new Set();
-  const database = new DatabaseSync(path.join(root, 'sessions.sqlite'), { readOnly: true });
+  const current = require('../session-database.cjs').connection(root).prepare('SELECT 1 FROM sessions WHERE session_id=?');
 
-  try {
-    const current = database.prepare('SELECT 1 FROM sessions WHERE session_id=?');
+  for (const directory of require('./goal-ownership.cjs').directories(root)) {
+    try {
+      const record = assets.readOwners(root, directory);
+      const ids = [...record.owners.map(owner => owner.sessionId), ...record.retiredOwners ?? [], preparedOwner(root, directory)];
 
-    for (const directory of require('./goal-ownership.cjs').directories(root)) {
-      try {
-        const record = assets.readOwners(root, directory);
-        const ids = [...record.owners.map(owner => owner.sessionId), ...record.retiredOwners ?? [], preparedOwner(root, directory)];
-
-        for (const id of ids) if (id && !current.get(id)) deleted.add(id);
-      } catch (error) { console.error(`${directory}: goal ownership could not be established; retained: ${error.message}`); }
-    }
-  } finally { database.close(); }
+      for (const id of ids) if (id && !current.get(id)) deleted.add(id);
+    } catch (error) { console.error(`${directory}: goal ownership could not be established; retained: ${error.message}`); }
+  }
 
   return deleted;
 }

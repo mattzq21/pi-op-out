@@ -106,20 +106,25 @@ export function persistedAgentIdentity(state: SessionAgentState) {
   return JSON.stringify([state.active, state.modelOverride || agent?.model, state.effortOverride || agent?.effort, state.locked === true]);
 }
 
-function draftAgentState(session: string, identity: string | undefined) {
-  try {
-    const draft = JSON.parse(process.env[DRAFT_STATE_ENV] || "null");
+// This extension keeps these values in its own process environment. Text that is not JSON is reported and not used.
+function environmentJson(name: string): unknown {
+  const text = process.env[name];
 
-    return Check(draftSchema, draft) && draft.session === session && draft.identity === identity ? draft.state : undefined;
-  } catch { return undefined; }
+  if (!text) return null;
+  try { return JSON.parse(text); }
+  catch (error) { console.error(`Ignored ${name}, which is not valid JSON: ${error instanceof Error ? error.message : String(error)}`); return null; }
+}
+
+function draftAgentState(session: string, identity: string | undefined) {
+  const draft = environmentJson(DRAFT_STATE_ENV);
+
+  return Check(draftSchema, draft) && draft.session === session && draft.identity === identity ? draft.state : undefined;
 }
 
 export function storedRuntimeDefaults(session: string): RuntimeDefaults | undefined {
-  try {
-    const stored = JSON.parse(process.env[DEFAULTS_ENV] || "null");
+  const stored = environmentJson(DEFAULTS_ENV);
 
-    if (Check(defaultsSchema, stored) && stored.session === session) return { model: stored.model, effort: stored.effort };
-  } catch {}
+  if (Check(defaultsSchema, stored) && stored.session === session) return { model: stored.model, effort: stored.effort };
 }
 
 export function sessionIsLocked(states: SessionAgentState[], branch: Branch) {

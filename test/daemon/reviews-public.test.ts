@@ -94,7 +94,7 @@ test.concurrent('a dialog waits until a window shows the chat, then goes to that
 test.concurrent('a review uses the built-in review prompt and the agent from Settings → Agents, and says what is wrong when the agent is missing', async () => {
   const isolated = await agentDaemon();
   const original = await isolated.daemon.invoke('load_app_settings');
-  const save = async (patch: any) => isolated.daemon.invoke('save_app_settings', { settings: { ...await isolated.daemon.invoke('load_app_settings'), reviewAgent: original.reviewAgent, ...patch } });
+  const save = async (review: any) => isolated.daemon.invoke('save_app_settings', { settings: { ...await isolated.daemon.invoke('load_app_settings'), plugins: { ...original.plugins, review: { ...original.plugins.review, ...review } } } });
   try {
     const chat = await isolated.rootChat({ visible: true });
     const review = await openReview(chat, '/review README.md', isolated);

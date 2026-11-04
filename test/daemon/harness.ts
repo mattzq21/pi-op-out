@@ -1,4 +1,5 @@
 import { build } from 'esbuild';
+import { daemonImports } from '../../scripts/daemon-imports.mjs';
 import { createHash, randomBytes } from 'node:crypto';
 import { execFile } from 'node:child_process';
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
@@ -44,16 +45,10 @@ export function daemonExecutable(options: BuildOptions = {}): Promise<string> {
       banner: { js: "#!/usr/bin/env bun\nimport { createRequire as __piopCreateRequire } from 'node:module';\nconst require = __piopCreateRequire(import.meta.url);\nif (process.argv[2] === '--build-id') { process.stdout.write(" + JSON.stringify(placeholder) + " + '\\n'); process.exit(0); }" },
       define: { __PIOP_BUILD_ID__: JSON.stringify(placeholder), __PIOP_DEVELOPMENT__: JSON.stringify(development), __PIOP_PROJECT_DIR__: JSON.stringify(project), __PIOP_UNUSED_STOP_MS__: JSON.stringify(unusedStopMs) },
       keepNames: true, legalComments: 'none', logLevel: 'error', sourcemap: development ? 'inline' : false,
-      plugins: [{
-        name: 'raw-text',
-        setup(context) {
-          if (options.fakeTailscale) context.onResolve({ filter: /^\.\/tailscale_system$/ }, () => ({ path: join(root, 'test/daemon/tailscale-system-fake.ts') }));
-          context.onResolve({ filter: /^piop-agent-loader$/ }, () => ({ path: join(root, 'extensions/piop-define-agents/daemon-loader.ts') }));
-          context.onResolve({ filter: /^\.\.\/app-settings\.cjs$/ }, args => args.importer.includes('/extensions/piop-define-agents/') ? { path: join(root, 'daemon/resources/session-broker/app-settings.cjs') } : undefined);
-          context.onResolve({ filter: /\?raw$/ }, args => ({ path: resolve(args.resolveDir, args.path.slice(0, -4)), namespace: 'raw-text' }));
-          context.onLoad({ filter: /.*/, namespace: 'raw-text' }, args => ({ contents: readFileSync(args.path, 'utf8'), loader: 'text' }));
-        },
-      }],
+      plugins: [...options.fakeTailscale ? [{
+        name: 'fake-tailscale',
+        setup(context) { context.onResolve({ filter: /^\.\/tailscale_system$/ }, () => ({ path: join(root, 'test/daemon/tailscale-system-fake.ts') })); },
+      }] : [], daemonImports()],
     });
     const bundle = readFileSync(outfile, 'utf8');
     const buildId = 'piop-build-' + createHash('sha256').update(bundle.replaceAll(placeholder, '')).digest('hex');

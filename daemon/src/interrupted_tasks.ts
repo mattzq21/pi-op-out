@@ -3,25 +3,26 @@ import { STORAGE_DIRECTORY } from './config';
 import { homeDir } from './environment';
 import { buildPiCommand, launchSpec } from './pi_launch';
 import { loadAppSettings } from './settings';
-import * as daemon from './daemon';
+import { localHost } from './local_host';
+import type { OrchestrationRequest } from './host/index';
 import * as Registry from './session_registry';
-import { errorText } from './util/sync';
+import { errorText, logFailure } from './util/sync';
 import type { App } from './app';
 
 export async function resumeInterruptedTasks(app: App): Promise<void> {
   const ids = Registry.runningTasks(join(homeDir(), STORAGE_DIRECTORY));
   if (!ids.length) return;
   const settings = await loadAppSettings(app);
-  const connection = await daemon.connect(app, app.pi, app.broker, settings, 'local');
+  const host = localHost(app).host;
   await Promise.all(ids.map(async id => {
     try {
-      const location = await connection.request({ type: 'orchestration', action: 'locate', sessionKey: id }).catch(() => null);
-      const packet: any = { type: 'orchestration', action: 'resume', sessionKey: id };
+      const location = await host.orchestrate({ action: 'locate', sessionKey: id }).catch(error => { logFailure('Could not find the chat of interrupted task ' + id)(error); return null; });
+      const request: OrchestrationRequest = { action: 'resume', sessionKey: id };
       if (typeof location?.sessionPath === 'string' && typeof location?.cwd === 'string' && location.archived !== true) {
-        packet.spec = launchSpec(buildPiCommand(settings, 'local', { kind: 'rpc', cwd: location.cwd, sessionPath: location.sessionPath }, connection.remotePort));
-        packet.cwd = location.cwd;
+        request.spec = launchSpec(buildPiCommand(settings, { kind: 'rpc', cwd: location.cwd, sessionPath: location.sessionPath }));
+        request.cwd = location.cwd;
       }
-      await connection.request(packet);
+      await host.orchestrate(request);
     } catch (error) {
       const line = 'Could not start again the interrupted task of chat ' + id + ': ' + errorText(error);
       console.error(line);

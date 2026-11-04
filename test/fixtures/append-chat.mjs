@@ -20,13 +20,13 @@ const directory = mkdtempSync(join(home, 'append-chat-test-'));
 try {
   const outfile = join(directory, 'storage.mjs');
   await build({
-    entryPoints: ['daemon/resources/piop-storage/session-storage.mjs'], outfile, bundle: true, platform: 'node', format: 'esm', target: 'node22',
+    entryPoints: ['test/session-storage-entry.mjs'], outfile, bundle: true, platform: 'node', format: 'esm', target: 'node22',
     logLevel: 'silent', plugins: [storageSchemaImports()],
     banner: { js: "import { createRequire } from 'node:module'; const require = createRequire(import.meta.url);" },
   });
-  const { installSessionStorage } = await import(pathToFileURL(outfile));
+  const { installSessionStorage, localTranscriptWrites } = await import(pathToFileURL(outfile));
   const { SessionManager } = await import(pathToFileURL(join(root, 'dist/core/session-manager.js')));
-  installSessionStorage(SessionManager);
+  installSessionStorage(SessionManager, localTranscriptWrites());
   const manager = SessionManager.open(path);
   const entryId = manager.appendMessage(message);
   process.stdout.write(JSON.stringify({ entryId }));

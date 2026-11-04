@@ -12,7 +12,6 @@ import { validateRemoteHost, type AppSettings } from './settings_types';
 import { transaction } from './util/db';
 import { sessionWorkerCommand } from './session_worker';
 import type { BrokerRuntime } from './broker';
-import { requireLocal } from './host_connection';
 import { QUEUE_TOOLS } from './host/goals/commands';
 
 export { validateRemoteHost };
@@ -41,8 +40,7 @@ export function remoteDirectoryPath(path: string | undefined | null): string {
   return shellQuote(trimmed);
 }
 
-export async function sessionIdentity(_settings: AppSettings, hostId: string, path: string): Promise<string> {
-  requireLocal(hostId);
+export async function sessionIdentity(path: string): Promise<string> {
   const registered = localRegisteredIdentity(path);
   if (registered) return registered;
   return transcriptSessionIdentity(path);
@@ -75,20 +73,18 @@ function startsWithPath(path: string, root: string): boolean { return path === r
 
 export function localRegisteredIdentity(path: string): string | undefined {
   const root = join(homeDir(), STORAGE_DIRECTORY);
-  const database = Registry.open(root);
-  try {
-    const row = database.prepare('SELECT session_id FROM sessions WHERE session_path=?').get(path) as { session_id: string | null } | undefined;
-    const id = row?.session_id ?? undefined;
-    const canonicalRoot = realpathSync(root);
-    if (!id && [root, canonicalRoot].some(directory => ['sessions', 'archived'].some(area => startsWithPath(path, join(directory, area))))) {
-      throw new Error('Session path is not registered');
-    }
-    if (id) return id;
-    return localExternalIdentity(database, path);
-  } finally { database.close(); }
+  const database = Registry.connection(root);
+  const row = database.prepare('SELECT session_id FROM sessions WHERE session_path=?').get(path) as { session_id: string | null } | undefined;
+  const id = row?.session_id ?? undefined;
+  const canonicalRoot = realpathSync(root);
+  if (!id && [root, canonicalRoot].some(directory => ['sessions', 'archived'].some(area => startsWithPath(path, join(directory, area))))) {
+    throw new Error('Session path is not registered');
+  }
+  if (id) return id;
+  return localExternalIdentity(database, path);
 }
 
-function localExternalIdentity(database: ReturnType<typeof Registry.open>, path: string): string | undefined {
+function localExternalIdentity(database: ReturnType<typeof Registry.connection>, path: string): string | undefined {
   return transaction(database, 'IMMEDIATE', () => {
     const key = createHash('sha256').update(path).digest('hex');
     const row = database.prepare("SELECT json_extract(record_json, '$.sessionId') AS id FROM external_transcripts WHERE record_id=? AND json_extract(record_json, '$.path')=?").get(key, path) as { id: string | null } | undefined;
@@ -111,9 +107,8 @@ function importExternalIdentity(path: string): string {
 
 export type PiLaunch = { kind: 'rpc'; cwd?: string | null; sessionPath?: string | null; sessionId?: string | null; forkPath?: string | null } | { kind: 'prompt-preview'; cwd: string };
 
-export function buildPiCommand(settings: AppSettings, hostId: string, launch: PiLaunch, _daemonPort?: number): LaunchCommand {
-  if (hostId !== 'local') throw new Error('Remote Pi must be launched by its owning daemon');
-  return localPiCommand(settings, hostId, launch, homeDir());
+export function buildPiCommand(settings: AppSettings, launch: PiLaunch): LaunchCommand {
+  return localPiCommand(settings, launch, homeDir());
 }
 
 function localWorkerCommand(piPath: string, launch: PiLaunch, bridge: string): LaunchCommand {
@@ -126,13 +121,13 @@ function localWorkerCommand(piPath: string, launch: PiLaunch, bridge: string): L
   return command;
 }
 
-function localPiCommand(settings: AppSettings, hostId: string, launch: PiLaunch, desktopHome: string): LaunchCommand {
+function localPiCommand(settings: AppSettings, launch: PiLaunch, desktopHome: string): LaunchCommand {
   const piPath = piExecutable();
   supportedPi(piPath);
   const generated = Ext.generatedExtensions();
   const sessionDir = ensureDesktopSessionsDir(desktopHome);
   const command = localWorkerCommand(piPath, launch, generated.bridge);
-  configureLocalExtensions(command, settings, hostId, sessionDir, generated);
+  configureLocalExtensions(command, settings, sessionDir, generated);
   command.env.PIOP_RPC_ENTRY = generated.bridge;
   command.env.JITI_NATIVE_MODULES = '["typebox"]';
   command.env.NODE_COMPILE_CACHE = join(homeDir(), STORAGE_DIRECTORY, 'node-compile-cache');
@@ -157,7 +152,7 @@ function configureLocalLaunch(command: LaunchCommand, launch: PiLaunch, piPath: 
   else if (launch.sessionId) command.args.push('--session-id', launch.sessionId);
 }
 
-function configureLocalExtensions(command: LaunchCommand, settings: AppSettings, hostId: string, sessionDir: string, generated: Ext.GeneratedExtensions): void {
+function configureLocalExtensions(command: LaunchCommand, settings: AppSettings, sessionDir: string, generated: Ext.GeneratedExtensions): void {
   const core = generated.core;
   command.env.PIOP_AGENT_RESOURCES = JSON.stringify({ ...Ext.agentResources(settings), pluginAgentTools: Contributions.agentTools() });
   command.env.PIOP_STORAGE_ROOT = join(homeDir(), STORAGE_DIRECTORY);
@@ -175,7 +170,6 @@ function configureLocalExtensions(command: LaunchCommand, settings: AppSettings,
     PI_DESKTOP_CONTEXT_WINDOW_CAP_EXTENSION: core.contextWindowCap,
     PIOP_COMMAND_POLICY: JSON.stringify(Contributions.commandPolicy()),
     PIOP_QUEUE_TOOLS: JSON.stringify(QUEUE_TOOLS),
-    PI_DESKTOP_HOST_ID: hostId,
   });
 }
 

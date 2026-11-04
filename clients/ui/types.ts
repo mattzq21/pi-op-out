@@ -96,7 +96,7 @@ export interface ImageAttachment { type: "image"; data: string; mimeType: string
 
 export interface ComposerUpload { id: string; name: string; kind: "image" | "text"; byteSize: number; image?: ImageAttachment; text?: string; }
 
- export interface AppSettings extends PluginSettings { settingsRevision?: string; clientSettingsRevision?: string; settingsDurabilityError?: string; clientSettingsDurabilityError?: string; localEnabled?: boolean; modelAliases?: Record<string, string>; hiddenModels: string[]; knownModels?: string[]; defaultThinking: string; defaultFastMode: boolean; contextWindowCap: number; contextWindowCapEnabled: boolean; modelContextWindowCaps: Record<string, number | null>; autoRetry: boolean; hiddenUsageIndicators: UsageIndicator[]; debugMode: boolean; debugFeaturesOff?: string[]; keybindings: import("./lib/keybindings").Keybindings; tools: ToolConfig[]; skills: SkillConfig[]; hosts: RemoteHost[]; }
+ export interface AppSettings { plugins?: PluginSettings; settingsRevision?: string; clientSettingsRevision?: string; settingsDurabilityError?: string; clientSettingsDurabilityError?: string; localEnabled?: boolean; modelAliases?: Record<string, string>; hiddenModels: string[]; knownModels?: string[]; defaultThinking: string; defaultFastMode: boolean; contextWindowCap: number; contextWindowCapEnabled: boolean; modelContextWindowCaps: Record<string, number | null>; autoRetry: boolean; hiddenUsageIndicators: UsageIndicator[]; debugMode: boolean; debugFeaturesOff?: string[]; keybindings: import("./lib/keybindings").Keybindings; tools: ToolConfig[]; skills: SkillConfig[]; hosts: RemoteHost[]; }
 
 export const USAGE_INDICATORS = ["codex", "anthropic", "opencodeGo", "opencodex"] as const;
 

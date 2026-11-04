@@ -1,5 +1,7 @@
 "use strict";
 
+const { patchGetter, patchMethod } = require("./pi-patch.cjs");
+
 const pullState = Symbol("piop.queue-pull");
 
 const userText = message => message?.role === "user" && Array.isArray(message.content) ? message.content.filter(part => part.type === "text").map(part => part.text).join("") : "";
@@ -118,18 +120,16 @@ function queuePull(session, { ask, prompt, insert, tools, steer } = {}) {
   };
 
   bindAgent(session, pull);
-  const settled = session._emitAgentSettled;
-  session._emitAgentSettled = async function (...args) {
+  patchMethod(session, "_emitAgentSettled", settled => async function (...args) {
     const aborted = this._agentRunAbortRequested;
     try { await releaseUnused(); } catch (error) { console.error(`Could not return unused queued messages: ${error instanceof Error ? error.message : String(error)}`); }
     if (aborted) await report("aborted");
     const result = await settled.apply(this, args);
     void start().catch(error => console.error(error));
     return result;
-  };
+  });
 
-  const beforeSettle = session._runBeforeSettleBoundary;
-  session._runBeforeSettleBoundary = async function (...args) {
+  patchMethod(session, "_runBeforeSettleBoundary", beforeSettle => async function (...args) {
     const outcome = this._lastActivityOutcome;
 
     if (outcome !== "completed") await report(outcome);
@@ -139,10 +139,9 @@ function queuePull(session, { ask, prompt, insert, tools, steer } = {}) {
     if (outcome !== "completed" || this._agentRunAbortRequested) return false;
 
     return take("goal");
-  };
+  });
 
-  const count = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(session), "pendingMessageCount") ?? Object.getOwnPropertyDescriptor(session.constructor.prototype, "pendingMessageCount");
-  Object.defineProperty(session, "pendingMessageCount", { configurable: true, get() { return (count?.get?.call(this) ?? 0) + offer.steer + offer.followUp; } });
+  patchGetter(session, "pendingMessageCount", count => function () { return count.call(this) + offer.steer + offer.followUp; });
 
   session[pullState] = pull;
 
@@ -151,31 +150,25 @@ function queuePull(session, { ask, prompt, insert, tools, steer } = {}) {
 
 function bindAgent(session, pull) {
   const agent = session.agent;
-  const createLoopConfig = agent.createLoopConfig;
-  const hasQueuedMessages = agent.hasQueuedMessages;
-  const continueRun = agent.continue;
+  const hasQueuedMessages = patchMethod(agent, "hasQueuedMessages", original => function () { return original.call(this) || pull.offered(); });
 
-  agent.hasQueuedMessages = function () { return hasQueuedMessages.call(this) || pull.offered(); };
-
-  agent.createLoopConfig = function (...args) {
+  patchMethod(agent, "createLoopConfig", createLoopConfig => function (...args) {
     const config = createLoopConfig.apply(this, args);
-    const steer = config.getSteeringMessages;
-    const followUp = config.getFollowUpMessages;
-    config.getSteeringMessages = async () => {
+    patchMethod(config, "getSteeringMessages", steer => async () => {
       if (!agent.steeringQueue.hasItems()) await pull.take("steer");
 
       return steer();
-    };
-    config.getFollowUpMessages = async () => {
+    }, "Agent loop config");
+    patchMethod(config, "getFollowUpMessages", followUp => async () => {
       if (!agent.followUpQueue.hasItems()) await pull.take("followUp");
 
       return followUp();
-    };
+    }, "Agent loop config");
 
     return config;
-  };
+  });
 
-  agent.continue = async function (...args) {
+  patchMethod(agent, "continue", continueRun => async function (...args) {
     const last = this.state?.messages?.at(-1) ?? this._state?.messages?.at(-1);
 
     if (last?.role === "assistant" && !hasQueuedMessages.call(this)) {
@@ -185,7 +178,7 @@ function bindAgent(session, pull) {
     }
 
     return continueRun.apply(this, args);
-  };
+  });
 }
 
 module.exports = { queuePull };

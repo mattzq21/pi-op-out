@@ -28,7 +28,7 @@ pub(crate) fn restart_active() -> bool {
 fn restart_status(directory: &Path) -> Result<Value, String> {
     use rusqlite::OptionalExtension;
     let directory = directory.canonicalize().map_err(|error| error.to_string())?;
-    let file = home_dir()?.join(STORAGE_DIRECTORY).join("sessions.sqlite");
+    let file = directory.join("sessions.sqlite");
     let db = rusqlite::Connection::open_with_flags(file, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY).map_err(|error| error.to_string())?;
     db.busy_timeout(Duration::from_secs(2)).map_err(|error| error.to_string())?;
     let body: Option<String> = db.query_row("SELECT record_json FROM daemon_restart_records WHERE directory=? AND name='restart-status.json'",

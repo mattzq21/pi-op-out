@@ -90,7 +90,6 @@ export class SubmissionLedger {
   }
 
   private use<T>(work: (db: Database) => T): T {
-    const db = Registry.open(this.root);
-    try { return work(db); } finally { db.close(); }
+    return work(Registry.connection(this.root));
   }
 }

@@ -1,7 +1,5 @@
-import type { z } from "zod";
-import { reviewSettingsSchema } from "./review/settingsSchema";
-import { webSearchSettingsSchema } from "./web-search/settingsSchema";
+import { z } from "zod";
 
-export const pluginSettingsSchema = reviewSettingsSchema.extend(webSearchSettingsSchema.shape);
+// Each plugin's own settings, under its plugin ID. Each plugin checks its own values.
+export const pluginSettingsSchema = z.record(z.string(), z.record(z.string(), z.unknown()));
 export type PluginSettings = z.infer<typeof pluginSettingsSchema>;
-export const pluginSettingKeys = pluginSettingsSchema.keyof().options;

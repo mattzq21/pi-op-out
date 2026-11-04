@@ -1,6 +1,5 @@
 import * as SessionRecords from "../../resources/piop-storage/session-records.cjs";
 import { sessionName } from "../../resources/session-broker/session-names.cjs";
-import { createServer, type Server } from 'node:http';
 import { randomUUID } from 'node:crypto';
 import { closeSync, constants, openSync, readFileSync, realpathSync, statSync } from 'node:fs';
 import { extname, join, dirname, sep } from 'node:path';
@@ -10,8 +9,9 @@ import * as Registry from '../session_registry';
 import { getProjectRepository } from '../project_repositories';
 import { ensurePrivateDir } from '../private_fs';
 import { FileLock, flockDescriptor } from '../util/flock';
-import { flag, text } from './json';
+import { flag } from './json';
 import { readHeaderLine } from './protocol';
+import { errorText } from '../util/sync';
 
 export function ownershipError(): string { return 'Take ownership of this conversation before changing it'; }
 
@@ -75,18 +75,15 @@ function optionalPath(path: string): string | null {
 }
 
 export function registeredPath(root: string, id: string): string | null {
-  const database = Registry.open(root);
-  try {
-    const row: any = database.prepare('SELECT session_path FROM sessions WHERE session_id=?').get(id);
-    return typeof row?.session_path === 'string' ? row.session_path : null;
-  } finally { database.close(); }
+  const database = Registry.connection(root);
+  const row: any = database.prepare('SELECT session_path FROM sessions WHERE session_id=?').get(id);
+  return typeof row?.session_path === 'string' ? row.session_path : null;
 }
 
 export class ConversationOwnership {
   readonly directory: string;
+  // Identifies this daemon run. Ownership records with another token come from an earlier run, whose clients are gone.
   readonly token = randomUUID();
-  endpoint = '';
-  private server: Server | undefined;
   private shutdownListeners = new Set<() => void>();
   stopped = false;
 
@@ -96,20 +93,7 @@ export class ConversationOwnership {
 
   static async create(home: string, storage: string, revocation: Revocation): Promise<ConversationOwnership> {
     await RestoreRecovery.recover(join(home, storage));
-    const ownership = new ConversationOwnership(join(home, storage), revocation);
-    const server = createServer({ maxHeaderSize: 16384 }, (request, response) => ownership.serve(request, response));
-    server.headersTimeout = 30_000;
-    server.requestTimeout = 30_000;
-    await new Promise<void>((resolve, reject) => {
-      server.once('error', reject);
-      server.listen(0, '127.0.0.1', () => { server.off('error', reject); resolve(); });
-    });
-    const address = server.address();
-    if (!address || typeof address === 'string') throw new Error('Could not start conversation ownership endpoint');
-    ownership.endpoint = 'http://127.0.0.1:' + address.port;
-    ownership.server = server;
-    server.unref();
-    return ownership;
+    return new ConversationOwnership(join(home, storage), revocation);
   }
 
   static key(id: string): string {
@@ -135,7 +119,7 @@ export class ConversationOwnership {
     const record = this.read(id);
     if (!record) return false;
     const released = allowReleased && (typeof record.client !== 'string' || record.client === '')
-      && record.previousClient === client && record.endpoint === this.endpoint && record.token === this.token;
+      && record.previousClient === client && record.token === this.token;
     return client !== '' && !flag(record, 'deleted') && (record.client === client || released);
   }
 
@@ -162,22 +146,7 @@ export class ConversationOwnership {
   }
 
   private async releasePrevious(id: string, record: any, intent: string): Promise<void> {
-    const endpoint = record?.endpoint;
-    if (typeof endpoint !== 'string') return;
-    if (endpoint === this.endpoint && record.token === this.token) return this.revocation.revoke(id, intent);
-    let response: Response;
-    try {
-      response = await fetch(endpoint, {
-        method: 'POST',
-        headers: { Authorization: 'Bearer ' + text(record, 'token'), 'Content-Type': 'application/json' },
-        body: JSON.stringify({ id, intent }),
-        signal: AbortSignal.timeout(30_000),
-      });
-    } catch (error: any) {
-      if (connectionRefused(error)) return;
-      throw new Error('Could not reach the current owner; try taking ownership again');
-    }
-    if (!response.ok) throw new Error('The previous client could not release the conversation');
+    if (record?.token === this.token) await this.revocation.revoke(id, intent);
   }
 
   async begin(id: string, client: string, options: any): Promise<Guard> {
@@ -212,7 +181,7 @@ export class ConversationOwnership {
   private async claimWorkerLock(id: string, previous: any | null, client: string, options: any): Promise<FileLock | null> {
     if (previous) {
       if (!this.needsHandoff(previous, client, options)) return null;
-      if (flag(options, 'take') && !flag(options, 'mutation') && previous.endpoint === this.endpoint && previous.token === this.token) {
+      if (flag(options, 'take') && !flag(options, 'mutation') && previous.token === this.token) {
         await this.revocation.revoke(id, 'transfer-local');
         return null;
       }
@@ -222,7 +191,7 @@ export class ConversationOwnership {
   }
 
   private writeClaim(id: string, client: string, saved: SavedConversation | null): any {
-    const next: any = { client, endpoint: this.endpoint, token: this.token, deleted: false };
+    const next: any = { client, token: this.token, deleted: false };
     if (saved) next.path = saved.path;
     this.write(id, next);
     return next;
@@ -237,8 +206,8 @@ export class ConversationOwnership {
 
   private needsHandoff(previous: any, client: string, options: any): boolean {
     const returning = (typeof previous.client !== 'string' || previous.client === '')
-      && previous.previousClient === client && previous.endpoint === this.endpoint && previous.token === this.token;
-    return (!returning && previous.client !== client) || previous.endpoint !== this.endpoint || flag(options, 'mutation');
+      && previous.previousClient === client && previous.token === this.token;
+    return (!returning && previous.client !== client) || previous.token !== this.token || flag(options, 'mutation');
   }
 
   async releaseClient(id: string, client: string, unused: () => boolean): Promise<void> {
@@ -246,7 +215,7 @@ export class ConversationOwnership {
     try {
       const record = this.read(id);
       if (!record) return;
-      if (!unused() || record.client !== client || record.endpoint !== this.endpoint || record.token !== this.token || flag(record, 'deleted')) return;
+      if (!unused() || record.client !== client || record.token !== this.token || flag(record, 'deleted')) return;
       record.client = null;
       record.previousClient = client;
       this.write(id, record);
@@ -296,7 +265,6 @@ export class ConversationOwnership {
   shutdown(): void {
     if (this.stopped) return;
     this.stopped = true;
-    this.server?.close();
     for (const listener of [...this.shutdownListeners]) listener();
   }
 
@@ -307,9 +275,7 @@ export class ConversationOwnership {
   }
 
   removed(id: string): boolean {
-    const db = Registry.open(this.root);
-    let exists: boolean;
-    try { exists = Boolean((db.prepare('SELECT EXISTS(SELECT 1 FROM sessions WHERE session_id=?) AS found').get(id) as any).found); } finally { db.close(); }
+    const exists = Boolean((Registry.connection(this.root).prepare('SELECT EXISTS(SELECT 1 FROM sessions WHERE session_id=?) AS found').get(id) as any).found);
     return !exists || flag(this.read(id), 'deleted');
   }
 
@@ -342,38 +308,6 @@ export class ConversationOwnership {
     }
     return null;
   }
-
-  private serve(request: import('node:http').IncomingMessage, response: import('node:http').ServerResponse): void {
-    const finish = (status: number) => {
-      if (response.headersSent) return;
-      response.writeHead(status, { 'Content-Length': '0', Connection: 'close' });
-      response.end();
-    };
-    const timer = setTimeout(() => { finish(409); request.destroy(); }, 30_000);
-    const done = (status: number) => { clearTimeout(timer); finish(status); };
-    if (request.method !== 'POST' || request.headers.authorization !== 'Bearer ' + this.token) { request.resume(); return done(403); }
-    const length = Number(request.headers['content-length']);
-    if (request.headers['content-length'] === undefined || !Number.isInteger(length) || length < 0 || length > 8192) { request.resume(); return done(409); }
-    const chunks: Buffer[] = [];
-    let size = 0;
-    request.on('data', (chunk: Buffer) => { size += chunk.length; if (size <= length) chunks.push(chunk); });
-    request.on('error', () => done(409));
-    request.on('end', () => {
-      let packet: any;
-      try { packet = JSON.parse(Buffer.concat(chunks).subarray(0, length).toString()); } catch { return done(409); }
-      const id = text(packet, 'id');
-      try { ConversationOwnership.key(id); } catch { return done(409); }
-      this.revocation.revoke(id, text(packet, 'intent')).then(() => done(200), () => done(409));
-    });
-  }
-}
-
-function connectionRefused(error: any): boolean {
-  for (let current = error; current; current = current.cause) {
-    if (current.code === 'ECONNREFUSED') return true;
-    if (Array.isArray(current.errors) && current.errors.some((item: any) => item?.code === 'ECONNREFUSED')) return true;
-  }
-  return false;
 }
 
 function claimBlocked(previous: any, client: string, options: any): boolean {
@@ -433,7 +367,7 @@ function readSavedLines(id: string, path: string): string[] | null {
   const tail = lines.pop()!;
   if (tail) console.warn(`${path}: last write was interrupted; ignored ${Buffer.byteLength(tail)} bytes`);
   let header: any = null;
-  try { header = JSON.parse(lines[0]); } catch {}
+  try { header = JSON.parse(lines[0]); } catch (error) { console.warn(`${path}: invalid session header: ${errorText(error)}`); }
   if (header?.type !== 'session' || header?.id !== id) return null;
   return lines;
 }

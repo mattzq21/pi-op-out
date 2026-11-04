@@ -5,6 +5,7 @@ import type { SubagentTarget } from "../lib/subagentNavigation";
 import { useChatSession } from "../lib/useChatSession";
 import { ChatView } from "./ChatView";
 import type { DebugView } from "../lib/debugFeatures";
+import { reportBackgroundError } from "../lib/backgroundErrors";
 
 const noop = () => undefined;
 
@@ -49,7 +50,7 @@ export function SubagentPane(props: { target: SubagentTarget; debug: DebugView; 
 
     return () => { closed = true; clearTimeout(timer); unsubscribe(); transport.setVisible(false); };
   }, () => [retry()]);
-  createDependencyEffect(() => () => { void transport.dispose().catch(() => undefined); }, () => []);
+  createDependencyEffect(() => () => { void transport.dispose().catch(reason => reportBackgroundError("Could not close the subagent connection", reason)); }, () => []);
 
   return <section class="split-chat subagent-pane" aria-label={`Subagent conversation: ${props.target.name}`} oncapture:focus={props.onActivate} oncapture:pointerdown={props.onActivate}>
     {archived() && <div class="split-pane-status" role="status">This conversation is archived and read-only. <button type="button" onClick={props.onShowArchive}>Open archived sessions to restore it</button></div>}

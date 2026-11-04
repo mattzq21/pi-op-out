@@ -282,13 +282,10 @@ function ForkSourceLink(props: { source: ForkSource; name?: string; onOpen?: (so
   return <div class="fork-source" role="note">{props.onOpen ? <button type="button" class="fork-source-link" onClick={() => props.onOpen?.(props.source)}>{label()}</button> : <span>{label()}</span>}</div>;
 }
 
-const reasoningFree = new WeakMap<ChatMessage, ChatMessage>();
-
 function withoutReasoning(message: ChatMessage) {
   if (message.role !== "assistant" || !Array.isArray(message.content) || !message.content.some(part => part.type === "thinking")) return message;
-  let result = reasoningFree.get(message);
-  if (!result) reasoningFree.set(message, result = { ...message, content: message.content.filter(part => part.type !== "thinking") } as ChatMessage);
-  return result;
+
+  return { ...message, content: message.content.filter(part => part.type !== "thinking") } as ChatMessage;
 }
 
 function invisibleAssistant(message: ChatMessage) {

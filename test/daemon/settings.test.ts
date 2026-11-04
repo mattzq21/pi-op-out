@@ -84,11 +84,11 @@ test('each save tells clients the new settings with a rising revision', async ()
   for (let index = 0; index < 4; index++) {
     const settings = await load();
     const model = 'model-' + changes.length;
-    settings.reviewAgent = model;
+    settings.plugins.review.reviewAgent = model;
     const change = await save(settings);
-    expect(change.settings.reviewAgent).toBe(model);
-    expect((await load()).reviewAgent).toBe(model);
-    await daemon.waitEvent('pi://settings-changed', payload => payload.settings.reviewAgent === model);
+    expect(change.settings.plugins.review.reviewAgent).toBe(model);
+    expect((await load()).plugins.review.reviewAgent).toBe(model);
+    await daemon.waitEvent('pi://settings-changed', payload => payload.settings.plugins.review.reviewAgent === model);
     changes.push(change);
   }
   const [first, none, local, second] = changes;
@@ -105,11 +105,11 @@ test('each save tells clients the new settings with a rising revision', async ()
 test('a save based on outdated settings is rejected and keeps the newer settings', async () => {
   const stale = await load();
   const fresh = structuredClone(stale);
-  fresh.reviewAgent = 'fresh-model';
+  fresh.plugins.review.reviewAgent = 'fresh-model';
   await save(fresh);
-  stale.reviewAgent = 'stale-model';
+  stale.plugins.review.reviewAgent = 'stale-model';
   expect(await daemon.failure('save_app_settings', { settings: stale })).toContain('Settings changed in another window or client');
-  expect((await load()).reviewAgent).toBe('fresh-model');
+  expect((await load()).plugins.review.reviewAgent).toBe('fresh-model');
 });
 
 test('a save that cannot lock the settings fails, keeps the settings and tells no client', async () => {
@@ -118,7 +118,7 @@ test('a save that cannot lock the settings fails, keeps the settings and tells n
   rmSync(lock, { force: true });
   mkdirSync(lock);
   try {
-    const changed = { ...before, reviewAgent: 'unsaved-model' };
+    const changed = { ...before, plugins: { ...before.plugins, review: { reviewAgent: 'unsaved-model' } } };
     const seen = daemon.events.length;
     expect(await daemon.failure('save_app_settings', { settings: changed })).toStartWith('Could not lock settings');
     expect(daemon.events.slice(seen).filter(event => event.event === 'pi://settings-changed')).toEqual([]);
@@ -132,19 +132,19 @@ test('a save fails and keeps the settings while another process holds the settin
   const other = new Database(join(daemon.home, '.piop/sessions.sqlite'));
   other.exec('BEGIN IMMEDIATE');
   let error: string;
-  try { error = await daemon.failure('save_app_settings', { settings: { ...before, reviewAgent: 'unsaved-model' } }); }
+  try { error = await daemon.failure('save_app_settings', { settings: { ...before, plugins: { ...before.plugins, review: { reviewAgent: 'unsaved-model' } } } }); }
   finally { other.exec('ROLLBACK'); other.close(); }
   expect(error).toBe('database is locked');
   expect(await load()).toEqual(before);
   const failed = await daemon.invoke('load_settings_change');
   expect(failed.revision).toBe(baseline.revision);
   expect(failed.settings).toEqual(baseline.settings);
-  const retried = await save({ ...before, reviewAgent: 'retried-model' });
+  const retried = await save({ ...before, plugins: { ...before.plugins, review: { reviewAgent: 'retried-model' } } });
   expect(retried.committedRevision).toBe(baseline.revision + 1);
   const after = await daemon.invoke('load_settings_change');
   expect(after.revision).toBe(baseline.revision + 1);
-  expect(after.settings.reviewAgent).toBe('retried-model');
-  expect((await load()).reviewAgent).toBe('retried-model');
+  expect(after.settings.plugins.review.reviewAgent).toBe('retried-model');
+  expect((await load()).plugins.review.reviewAgent).toBe('retried-model');
 }, 30_000);
 
 test('skill front matter is read only inside its header and keeps quoted values', async () => {

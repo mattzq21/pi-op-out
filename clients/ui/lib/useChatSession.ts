@@ -107,7 +107,7 @@ function createChatSession(transport: Accessor<Pick<NativeTransport, "command" |
 
     const promise = load({ type: "get_session_stats" }, z.object({ contextUsage: agentStateSchema.shape["contextUsage"].optional() })).then(stats => {
       if (owner.current === transport() && session.state.sessionId === sessionId && liveRevision.current === revision && stats.contextUsage) session.setState(current => ({ ...current, contextUsage: stats.contextUsage }));
-    }).catch(() => undefined).finally(() => {
+    }).catch(reason => console.error("Could not load the session statistics", reason)).finally(() => {
       if (statsOperation.current?.promise === promise) statsOperation.current = undefined;
     });
 
@@ -235,7 +235,7 @@ function createChatSession(transport: Accessor<Pick<NativeTransport, "command" |
   createDependencyEffect(() => discardPendingUpdates, () => [discardPendingUpdates]);
 
   const restoreHistory = (snapshot: SessionSnapshot) => {
-    const cachedSession = session.memory.getSnapshot();
+    const cachedSession = session.memory.data;
     const cachedMessages = !cachedSession.state.sessionId || cachedSession.state.sessionId === snapshot.state.sessionId ? cachedSession.messages : [];
     const previous = new Map(cachedMessages.filter((message) => message.toolPayloadLoaded && message.toolStatus !== "running").map((message) => [message.deferredToolPayload, message]));
 
@@ -307,15 +307,15 @@ function createChatSession(transport: Accessor<Pick<NativeTransport, "command" |
         if (owner.current !== capturedTransport) throw new ConversationChangedError();
 
         if (session.memory.revision === revision) {
-          for (const message of session.memory.getSnapshot().messages.filter((message) => message.streaming)) trackLiveId(message.role, message.id);
-          activeAssistantId.current = [...session.memory.getSnapshot().messages].reverse().find((message) => message.role === "assistant" && message.streaming)?.id;
+          for (const message of session.memory.data.messages.filter((message) => message.streaming)) trackLiveId(message.role, message.id);
+          activeAssistantId.current = [...session.memory.data.messages].reverse().find((message) => message.role === "assistant" && message.streaming)?.id;
 
           refreshCapabilities();
 
-          return session.memory.getSnapshot().state;
+          return { ...session.memory.data.state };
         }
 
-        const listed = session.memory.getSnapshot().outline;
+        const listed = session.memory.data.outline;
         const snapshotRequest = load({ type: "get_snapshot", recent: true, ...(listed ? { listedBefore: listed.before } : {}) }, sessionSnapshotSchema);
 
         const snapshot = await snapshotRequest;
@@ -442,7 +442,7 @@ function createChatSession(transport: Accessor<Pick<NativeTransport, "command" |
             liveRevision.current += 1;
             session.setMessages((current) => current.map((message) => promptContextAnchors(message, context) && (!message.promptContext || (message.promptContext.inputTokens === undefined && context.inputTokens !== undefined)) ? { ...message, promptContext: context } : message));
           }
-        } catch {}
+        } catch (reason) { console.error("Ignored an invalid prompt context status", reason); }
       }
     };
 

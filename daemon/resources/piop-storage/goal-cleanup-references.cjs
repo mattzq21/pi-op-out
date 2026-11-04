@@ -35,21 +35,13 @@ function saved(root, directory) {
   const expected = require('./goal-ownership.cjs').savedIdentity(root, directory);
 
   if (expected === undefined) return;
-  const db = database.open(root);
+  const rows = database.connection(root).prepare(`SELECT d.record_json, t.contents_json FROM goal_asset_dependencies d
+    JOIN goal_text_contents t USING(directory, identity) JOIN goal_ownership o USING(directory, identity)
+    WHERE d.directory=? AND d.identity=? AND o.record_json IS NOT NULL`).all(directory, expected);
 
-  try {
-    for (const table of ['goal_ownership', 'goal_text_contents']) {
-      if (!db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?").get(table)) return;
-    }
+  if (rows.length > 1) throw new Error('More than one saved goal folder identity; cleanup retained');
 
-    const rows = db.prepare(`SELECT d.record_json, t.contents_json FROM goal_asset_dependencies d
-      JOIN goal_text_contents t USING(directory, identity) JOIN goal_ownership o USING(directory, identity)
-      WHERE d.directory=? AND d.identity=? AND o.record_json IS NOT NULL`).all(directory, expected);
-
-    if (rows.length > 1) throw new Error('More than one saved goal folder identity; cleanup retained');
-
-    if (rows.length) return { contract: JSON.parse(rows[0].record_json ?? 'null'), texts: JSON.parse(rows[0].contents_json) };
-  } finally { db.close(); }
+  if (rows.length) return { contract: JSON.parse(rows[0].record_json ?? 'null'), texts: JSON.parse(rows[0].contents_json) };
 }
 
 function collect(root, entries) {

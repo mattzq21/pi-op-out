@@ -3,13 +3,12 @@ import * as storageTransactions from '../storage_transactions';
 import { errorText, sleep } from '../util/sync';
 import type { ConversationOwnership } from './ownership';
 import { recoverMissingTranscripts, type Recovery } from './queue_recovery';
+import type { HostEvents } from './events';
 
-type Output = (packet: any) => void;
-
-export function recoverQueuedInput(root: string, ownership: ConversationOwnership, output: Output): void {
+export function recoverQueuedInput(root: string, ownership: ConversationOwnership, events: HostEvents): void {
   let recovery = recoverMissingTranscripts(root, ownership);
   const reported = new Set<string>();
-  report(recovery, reported, output);
+  report(recovery, reported, events);
   if (!recovery.retry) return;
   void (async () => {
     let delay = 1000;
@@ -25,21 +24,21 @@ export function recoverQueuedInput(root: string, ownership: ConversationOwnershi
         recovery = { errors: [errorText(error)], recovered: false, retry: true, transactionsPending: pending };
       }
       if (ownership.stopped) break;
-      report(recovery, reported, output);
+      report(recovery, reported, events);
     }
   })();
 }
 
-function report(recovery: Recovery, reported: Set<string>, output: Output): void {
+function report(recovery: Recovery, reported: Set<string>, events: HostEvents): void {
   for (const error of recovery.errors) {
     if (reported.has(error)) continue;
     reported.add(error);
-    output({ type: 'diagnostic', line: 'Queued input retained for recovery: ' + error });
+    events.diagnostic('Queued input retained for recovery: ' + error);
   }
-  if (recovery.recovered) output({ type: 'sessions_changed' });
+  if (recovery.recovered) events.sessionsChanged();
 }
 
-export function watchRetention(root: string, ownership: ConversationOwnership, output: Output): NodeJS.Timeout {
+export function watchRetention(root: string, ownership: ConversationOwnership, events: HostEvents): NodeJS.Timeout {
   let reported: string | null = null;
   let initialized = false;
   let running = false;
@@ -52,7 +51,7 @@ export function watchRetention(root: string, ownership: ConversationOwnership, o
       reported = null;
     } catch (error) {
       const message = errorText(error);
-      if (reported !== message) output({ type: 'diagnostic', line: 'Deferred retention cleanup is pending: ' + message });
+      if (reported !== message) events.diagnostic('Deferred retention cleanup is pending: ' + message);
       reported = message;
     } finally { running = false; }
   };

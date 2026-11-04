@@ -1,6 +1,7 @@
 import { join } from 'node:path';
 import { hostOperation, runHostOperation } from '../host_operations';
 import { piExecutable } from '../environment';
+import { supportedPi } from '../../resources/pi-runtime.cjs';
 import * as Contributions from '../plugin_contributions';
 import type { FastModelSnapshot } from './fast_models';
 
@@ -32,7 +33,7 @@ function environment(home: string, storage: string): Record<string, string> {
   const profile = join(home, storage);
   return {
     HOME: home, PIOP_BUN: process.execPath, PIOP_STORAGE_DIRECTORY: storage, PI_CODING_AGENT_DIR: profile,
-    PIOP_STORAGE_ROOT: profile, PIOP_PI_EXECUTABLE: piExecutable(),
+    PIOP_STORAGE_ROOT: profile, PIOP_PI_ROOT: supportedPi(piExecutable()).root,
   };
 }
 

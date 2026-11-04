@@ -90,6 +90,8 @@ export class NativeTransport {
   isArchived() { return this.archived; }
   ownsConversation() { return this.owns; }
   isConnected() { return this.running; }
+  // Changes each time this conversation connects or loses its connection.
+  currentConnection() { return this.connectionVersion; }
   canLoadModels() { return this.running || this.draftOnly(); }
   preview() { return this.sessionId && !this.running && !this.readOnly && !this.draftOnly() ? previewConversation(this.sessionId, this.hostId) : undefined; }
   hasConfirmedOwnership() { return this.running && this.owns; }
@@ -136,7 +138,8 @@ export class NativeTransport {
 
     return this.readOnly ? { ...presence, readOnly: true, archived: this.archived } : presence;
   }
-  private publishPresence = () => { if (this.running) void call("pi_presence", { runtimeId: this.runtimeId, presence: this.presence() }).catch(() => undefined); };
+  // A lost update is corrected when the chat attaches again, since the attach carries the presence.
+  private publishPresence = () => { if (this.running) void call("pi_presence", { runtimeId: this.runtimeId, presence: this.presence() }).catch(reason => console.error("Could not tell the host that this chat is open", reason)); };
   private listeners = new Set<(event: RpcEvent) => void>();
   private retainedStatuses = new Map<string, RpcEvent>();
   private retainedWidgets = new Map<string, RpcEvent>();

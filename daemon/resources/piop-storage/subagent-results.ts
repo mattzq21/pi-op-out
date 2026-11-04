@@ -2,7 +2,7 @@ import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { DatabaseSync } from "node:sqlite";
 import { Type as Schema, type Static } from "typebox";
 import { Parse } from "typebox/value";
-import { open as openDatabase, register, storageRoot } from "../session-database.cjs";
+import { connection, register, storageRoot, transaction } from "../session-database.cjs";
 import { resultNotificationId, runSchema, type SubagentRun } from "../session-broker/subagent-identity.ts";
 
 export { resultNotificationId } from "../session-broker/subagent-identity.ts";
@@ -18,21 +18,15 @@ function sessionFile(ctx: ExtensionContext) {
 }
 
 function runDatabase(file: string, sessionId: string) {
-  const db = openDatabase(storageRoot(file));
+  const db = connection(storageRoot(file));
 
-  try {
-    db.exec("BEGIN IMMEDIATE");
+  transaction(db, "IMMEDIATE", () => {
+    if (db.prepare("SELECT 1 FROM session_subagent_state WHERE session_id=?").get(sessionId)) return;
+    register(db, sessionId, file);
+    db.prepare("INSERT INTO session_subagent_state VALUES (?)").run(sessionId);
+  });
 
-    if (!db.prepare("SELECT 1 FROM session_subagent_state WHERE session_id=?").get(sessionId)) {
-      register(db, sessionId, file);
-
-      db.prepare("INSERT INTO session_subagent_state VALUES (?)").run(sessionId);
-    }
-
-    db.exec("COMMIT");
-
-    return db;
-  } catch (error) { db.close(); throw error; }
+  return db;
 }
 
 const savedRunSchema = Schema.Object({ run_id: Schema.String(), run_json: Schema.String(), child_path: Schema.Union([Schema.String(), Schema.Null()]) });
@@ -75,24 +69,15 @@ function mergePendingRun(db: DatabaseSync, run: SubagentRun) {
 export function persistSubagentRun(ctx: ExtensionContext, run: SubagentRun) {
   if (run.parentSessionId !== ctx.sessionManager.getSessionId()) throw new Error("Subagent run belongs to another parent conversation");
   const db = runDatabase(sessionFile(ctx), run.parentSessionId);
-  let accepted = false;
 
-  try {
-    db.exec("BEGIN IMMEDIATE");
-    accepted = mergePendingRun(db, run);
-
-    if (accepted) storeRun(db, Parse(runSchema, run));
-    db.exec("COMMIT");
-  } finally { db.close(); }
+  transaction(db, "IMMEDIATE", () => {
+    if (mergePendingRun(db, run)) storeRun(db, Parse(runSchema, run));
+  });
 }
 
 function readRuns(file: string, sessionId: string) {
-  const db = runDatabase(file, sessionId);
-
-  try {
-    return db.prepare(`${selectRuns} WHERE r.session_id=? ORDER BY r.started_at, r.run_id`)
-      .all(sessionId).map(row => decodeRun(Parse(savedRunSchema, row), sessionId));
-  } finally { db.close(); }
+  return runDatabase(file, sessionId).prepare(`${selectRuns} WHERE r.session_id=? ORDER BY r.started_at, r.run_id`)
+    .all(sessionId).map(row => decodeRun(Parse(savedRunSchema, row), sessionId));
 }
 
 export function savedSubagentRuns(ctx: ExtensionContext) {

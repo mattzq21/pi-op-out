@@ -8,14 +8,13 @@ import * as artifacts from './restart_artifacts';
 import * as restartStorage from './restart_storage';
 import * as records from './settings_records';
 import * as daemonLog from './daemon_log';
-import * as plugins from './plugins';
+import { localHost } from './local_host';
 import * as peers from './peers';
 import { restartConfiguration, validateConfiguration } from './host/index';
 import { piExecutable } from './environment';
 import { hostOperationsBusy } from './host_operations';
 import { daemonScript } from './session_worker';
-import { RwLock, sleep } from './util/sync';
-import type { Daemon } from './daemon';
+import { RwLock, errorText, logFailure, sleep } from './util/sync';
 import type { App } from './app';
 
 let PREPARING = false;
@@ -99,7 +98,7 @@ async function debugRestartBind(): Promise<string | null> {
     const bytes = records.read(path('debug-mobile.json'));
     const url = bytes ? JSON.parse(bytes.toString('utf8'))?.url : undefined;
     if (typeof url === 'string') bind = url.replace(/^(ws:\/\/)+/, '');
-  } catch {}
+  } catch (error) { logFailure('Ignored the saved debug address of the mobile server')(error); }
   if (bind !== null) await validateRestartBind(bind);
   return bind;
 }
@@ -154,18 +153,17 @@ async function prepareOnce(app: App, args: any): Promise<any> {
   if (await artifacts.activePlan()) throw new Error('A daemon restart is already in progress');
   const terminals = app.terminals.runningCount();
   if (terminals > 0 && args.closeTerminals !== true) return { confirmationRequired: 'terminals', terminalCount: terminals };
-  const daemon = await plugins.connection(app);
   if (PREPARING) throw new Error('A daemon restart is already being prepared');
   PREPARING = true;
   try {
     app.broker.ensureIdle();
     await peers.ensureRestartSafe(app);
-    return await preparePluginHandoff(app, daemon, { ...args, type: 'prepare_daemon_restart' });
+    return await preparePluginHandoff(app, args);
   } finally { PREPARING = false; }
 }
 
-async function preparePluginHandoff(app: App, daemon: Daemon, args: any): Promise<any> {
-  const prepared = await daemon.request(args);
+async function preparePluginHandoff(app: App, args: any): Promise<any> {
+  const prepared = await localHost(app).host.prepareRestart(args);
   let backup: artifacts.Backup | undefined;
   try {
     const [plan, created] = await makePlan(app, prepared);
@@ -180,14 +178,14 @@ async function preparePluginHandoff(app: App, daemon: Daemon, args: any): Promis
 }
 
 export async function ensureLocalIdle(app: App): Promise<void> {
-  if (app.terminals.workingDirectories('local').length) throw new Error('Close running terminals before restarting the daemon');
+  if (app.terminals.workingDirectories().length) throw new Error('Close running terminals before restarting the daemon');
   await ensureUnattendedIdle(app);
 }
 
 export async function ensureUnattendedIdle(app: App): Promise<void> {
   app.broker.ensureIdle();
   if (hostOperationsBusy()) throw new Error('Wait for storage operations to finish before restarting the daemon');
-  if ((await (await plugins.connection(app)).request({ type: 'check_daemon_idle' })) !== true) throw new Error('Wait for active plugins to finish before restarting the daemon');
+  await localHost(app).host.checkIdle();
 }
 
 async function prepareHandoff(plan: Plan): Promise<any> {
@@ -338,14 +336,15 @@ async function killAndWait(child: ChildProcess): Promise<void> {
 
 async function waitReady(plan: Plan, child: ChildProcess): Promise<number> {
   const deadline = Date.now() + 45_000;
+  let failure: unknown;
   while (Date.now() < deadline) {
     if (exited(child)) throw new Error('The replacement daemon stopped during startup');
     let ready: any = null;
-    try { ready = restartStorage.read(path('restart-ready.json')); } catch {}
+    try { ready = restartStorage.read(path('restart-ready.json')); } catch (error) { failure = error; }
     if (ready && ready.restartId === plan.id && ready.processId === child.pid) { child.unref(); return child.pid!; }
     await sleep(100);
   }
-  throw new Error('The replacement daemon did not become ready');
+  throw new Error('The replacement daemon did not become ready' + (failure === undefined ? '' : '. Last readiness check failed: ' + errorText(failure)));
 }
 
 async function coordinate(plan: Plan): Promise<void> {
@@ -389,7 +388,7 @@ export async function initializeCandidate(app: App): Promise<void> {
   if (process.argv[2] !== '--restart-candidate') return;
   const plan = readPlan();
   if (process.argv[3] !== plan.id) throw new Error('Invalid daemon restart identifier');
-  const result = await plugins.dispatch(app, 'plugin_status', {});
+  const result = await localHost(app).host.pluginStatus();
   if (typeof result?.error === 'string') throw new Error(result.error);
 }
 

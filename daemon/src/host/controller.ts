@@ -13,15 +13,18 @@ import * as Agents from './agents';
 import { attach } from './attachment';
 import { previewPrompt, stopPromptPreviews } from './prompt_preview';
 import { forkFromView } from './branching';
-import { lockGate } from './lock_gate';
+import { KeyedLocks } from './lock_gate';
+import { ClientViews } from './client_views';
 import { MutationGuards } from './mutation_guards';
 import { MessagePins } from './message_pins';
 import { Orchestration } from './orchestration';
 import { ConversationOwnership, ownershipError } from './ownership';
 import { clientPayload } from './payload';
+import { clientEvents, type HostEvents } from './events';
+import type { AttachRequest, HostConfiguration, MutationEnd, MutationRequest, OrchestrationRequest } from './requests';
 import { argument, sessionSpec, serializeSpec, type SessionLaunch } from './protocol';
 import { drainSaves } from './queue_storage';
-import { readonlyCommand, type ReadonlyView } from './readonly_views';
+import { detachReadonly, readonlyCommand, readonlyPresence } from './readonly_views';
 import type { RuntimeEvent, RuntimeEventSource } from './runtime_events';
 import { Session, type SessionHost } from './session';
 import { sessionCommand } from './session_commands';
@@ -32,21 +35,20 @@ import type { HostServices } from './services';
 import type { BrokerCall } from '../broker';
 
 export class Host implements SessionHost {
-  sessions = new Map<string, Session>();
-  subscriptions = new Map<string, Session>();
-  attachments = new Map<string, any>();
-  private attachmentEpochs = new WeakMap<object, string>();
-  readonlyMap = new Map<string, ReadonlyView>();
-  pending = new Map<string, any[]>();
-  configurationValue: any | null = null;
-  agentDefinitions: any = null;
-  agentRevision = 0;
-  maintenanceSet = new Set<string>();
-  releaseGates = new Map<string, Mutex>();
-  dialogGates = new Map<string, Mutex>();
-  sessionGates = new Map<string, Mutex>();
-  private spawnGates = new Map<string, Mutex>();
+  private sessions = new Map<string, Session>();
+  readonly views = new ClientViews();
+  // Queued input of conversations that are not running, kept until they start again.
+  private pending = new Map<string, any[]>();
+  private configurationValue: any | null = null;
+  private agentDefinitions: any = null;
+  private agentRevision = 0;
+  private maintenanceSet = new Set<string>();
+  private releaseLocks = new KeyedLocks();
+  private dialogLocks = new KeyedLocks();
+  private sessionLocks = new KeyedLocks();
+  private spawnLocks = new KeyedLocks();
   private shuttingDown = false;
+  private stopped: Promise<void> | undefined;
   private starts = new Set<Promise<Session>>();
   private finishes = new Map<Session, Promise<void>>();
   private configurationGate = new Mutex();
@@ -58,33 +60,40 @@ export class Host implements SessionHost {
   private timers: NodeJS.Timeout[] = [];
   readonly submissions: SubmissionLedger;
 
-  private constructor(readonly home: string, readonly storage: string, readonly services: HostServices, private sink: (packet: any) => void, readonly broker: BrokerCall) {
-    this.submissions = new SubmissionLedger(join(home, storage), line => this.output({ type: 'diagnostic', line }));
+  readonly events: HostEvents;
+
+  private constructor(readonly home: string, readonly storage: string, readonly services: HostServices, listener: HostEvents, readonly broker: BrokerCall) {
+    this.events = clientEvents(listener);
+    this.submissions = new SubmissionLedger(join(home, storage), line => this.events.diagnostic(line));
   }
 
-  static async create(home: string, storage: string, services: HostServices, sink: (packet: any) => void, broker: BrokerCall): Promise<Host> {
+  static async create(home: string, storage: string, services: HostServices, listener: HostEvents, broker: BrokerCall): Promise<Host> {
     await services.initialize();
     const settings = Settings.readSettingsAt(join(home, storage, 'settings.json'));
     const definitions = await Agents.load(home, storage, Extensions.agentResources(settings), true, null);
-    const host = new Host(home, storage, services, sink, broker);
+    const host = new Host(home, storage, services, listener, broker);
     host.agentDefinitions = definitions;
     host.ownershipValue = await ConversationOwnership.create(home, storage, { revoke: (id, intent) => host.releaseConversation(id, intent) });
-    const output = (packet: any) => host.output(packet);
-    try { host.submissions.recover(); } catch (error) { output({ type: 'diagnostic', line: 'Could not decide the messages left from the last run: ' + errorText(error) }); }
-    recoverQueuedInput(host.storageRoot(), host.ownership(), output);
+    try { host.submissions.recover(); } catch (error) { host.events.diagnostic('Could not decide the messages left from the last run: ' + errorText(error)); }
+    recoverQueuedInput(host.storageRoot(), host.ownership(), host.events);
     services.bind(host);
-    host.timers.push(watchRetention(host.storageRoot(), host.ownership(), output));
+    host.timers.push(watchRetention(host.storageRoot(), host.ownership(), host.events));
     return host;
   }
 
   storageRoot(): string { return join(this.home, this.storage); }
   ownership(): ConversationOwnership { return this.ownershipValue!; }
-  output(packet: any): void { this.sink(clientPayload(packet)); }
 
   queueRoot(): string | null { return join(this.home, this.storage, 'queued-input'); }
   configuration(): any | null { return this.configurationValue === null ? null : structuredClone(this.configurationValue); }
-  readonlyViews(identity: string): string[] { return [...this.readonlyMap].filter(([, view]) => view.id === identity).map(([id]) => id); }
-  readonly(runtime: string): boolean { return this.readonlyMap.has(runtime); }
+  readonlyViews(identity: string): string[] { return this.views.readonlyRuntimes(identity); }
+  readonly(runtime: string): boolean { return this.views.readonly(runtime) !== undefined; }
+  hasSession(key: string): boolean { return this.sessions.has(key); }
+  allSessions(): Session[] { return [...this.sessions.values()]; }
+  // Serializes opening a conversation, and answering one dialog of a session.
+  lockSession(identity: string): Promise<() => void> { return this.sessionLocks.lock(identity); }
+  lockDialog(key: string): Promise<() => void> { return this.dialogLocks.lock(key); }
+  dropQueuedInput(key: string): void { this.pending.delete(key); }
   rekey(old: string, next: string, epoch: string): void {
     const session = this.sessions.get(old);
     if (session && session.epoch === epoch) { this.sessions.delete(old); this.sessions.set(next, session); }
@@ -98,14 +107,9 @@ export class Host implements SessionHost {
       const retained = session.queue.saved() ? [] : session.queue.pending();
       if (retained.length) this.pending.set(session.key, retained);
       else this.pending.delete(session.key);
-      for (const [runtime, current] of this.subscriptions) {
-        if (current !== session) continue;
-        this.subscriptions.delete(runtime);
-        const record = this.attachments.get(runtime);
-        if (!this.readonlyMap.has(runtime) && record && this.attachmentEpochs.get(record) === session.epoch) this.attachments.delete(runtime);
-      }
+      this.views.sessionClosed(session);
       if (!transient) {
-        this.output({ type: 'session_closed', sessionKey: session.key, epoch, state: session.savedState(), submitted: session.submitted() });
+        this.events.sessionClosed({ sessionKey: session.key, epoch, state: session.savedState(), submitted: session.submitted() });
       }
       this.sessions.delete(session.key);
     })();
@@ -113,7 +117,7 @@ export class Host implements SessionHost {
     void finished.then(() => { this.finishes.delete(session); }, error => {
       this.finishes.delete(session);
       console.error('Queue shutdown failed for ' + key + ': ' + errorText(error));
-      this.output({ type: 'diagnostic', line: 'Queue shutdown failed for ' + key + ': ' + errorText(error) });
+      this.events.diagnostic('Queue shutdown failed for ' + key + ': ' + errorText(error));
     });
   }
   maintenance(key: string): void { this.maintain(key); }
@@ -129,7 +133,7 @@ export class Host implements SessionHost {
   taskRunning(id: string, running: boolean, stopped: boolean): void {
     if (stopped && this.shuttingDown) return;
     try { Registry.setTaskRunning(this.storageRoot(), id, running); }
-    catch (error) { this.output({ type: 'diagnostic', line: id + ': could not record whether its task runs: ' + errorText(error) }); }
+    catch (error) { this.events.diagnostic(id + ': could not record whether its task runs: ' + errorText(error)); }
   }
 
   findSession(identity: string): Session | undefined {
@@ -137,7 +141,7 @@ export class Host implements SessionHost {
     return undefined;
   }
 
-  current(runtime: string, session: Session): boolean { return this.subscriptions.get(runtime)?.epoch === session.epoch; }
+  current(runtime: string, session: Session): boolean { return this.views.isCurrent(runtime, session); }
 
   assertRunning(): void {
     if (this.shuttingDown) throw new Error('Cannot start a session: the host is shutting down');
@@ -156,7 +160,7 @@ export class Host implements SessionHost {
   private async startSession(launch: SessionLaunch): Promise<Session> {
     this.assertRunning();
     const key = launch.key;
-    const release = await lockGate(this.spawnGates, key);
+    const release = await this.spawnLocks.lock(key);
     try {
       this.assertRunning();
       let existing = this.sessions.get(key) ?? this.findSession(key);
@@ -172,10 +176,7 @@ export class Host implements SessionHost {
         return existing;
       }
       if (!argument(launch.spec, '--session') && launch.cwd) {
-        const db = Registry.open(this.storageRoot());
-        let saved: unknown;
-        try { saved = db.prepare('SELECT session_path FROM sessions WHERE session_id=?').get(key); }
-        finally { db.close(); }
+        const saved = Registry.connection(this.storageRoot()).prepare('SELECT session_path FROM sessions WHERE session_id=?').get(key);
         if (!(saved as any)?.session_path) await refreshProjectRepository(this.storageRoot(), launch.cwd);
       }
       const pending = this.pending.get(key) ?? [];
@@ -192,16 +193,15 @@ export class Host implements SessionHost {
   remember(runtime: string, session: Session): void {
     const saved = session.savedState();
     const spec = sessionSpec(session.spec, '--session-id', typeof saved?.sessionId === 'string' ? saved.sessionId : session.identity);
-    const packet = structuredClone(this.attachments.get(runtime) ?? {});
+    const packet = structuredClone(this.views.request(runtime) ?? {});
     packet.spec = serializeSpec(spec);
     packet.sessionKey = session.identity;
     packet.cwd = session.cwd;
-    this.attachments.set(runtime, packet);
-    this.attachmentEpochs.set(packet, session.epoch);
+    this.views.setRequest(runtime, packet, session.epoch);
   }
 
   attachView(runtime: string, session: Session, presence: any): void {
-    this.subscriptions.set(runtime, session);
+    this.views.subscribe(runtime, session);
     session.attach(runtime, presence);
     this.pins.attached(runtime, session.identity);
   }
@@ -219,7 +219,7 @@ export class Host implements SessionHost {
     void (async () => {
       await session.settings.reconcile(false);
       try { await this.releaseUnused(session); } catch (error) {
-        this.output({ type: 'diagnostic', line: 'Could not release unused ownership for ' + session.key + ': ' + errorText(error) });
+        this.events.diagnostic('Could not release unused ownership for ' + session.key + ': ' + errorText(error));
       }
       this.maintenanceSet.delete(session.epoch);
     })();
@@ -237,29 +237,27 @@ export class Host implements SessionHost {
   canStopIdle(session: Session): boolean {
     if (this.shuttingDown || this.sessions.get(session.key) !== session || this.orchestration.delivering(session.identity)
       || this.readonlyViews(session.identity).length
-      || [...this.attachments.values()].some(packet => packet.sessionKey === session.identity)) return false;
-    const database = Registry.open(this.storageRoot());
-    try {
-      const id = session.identity;
-      if (session.queue.liveGoal()) return false;
-      if (database.prepare('SELECT 1 FROM session_mailbox WHERE session_id=? LIMIT 1').get(id)) return false;
-      const runs = database.prepare('SELECT run_json FROM session_subagent_runs WHERE session_id=?').all(id);
-      return !runs.some(row => {
-        const run = JSON.parse(String(row.run_json));
-        return run.status === 'running' || run.resultDelivery === 'pending';
-      });
-    } finally { database.close(); }
+      || this.views.requestedFor(session.identity)) return false;
+    const database = Registry.connection(this.storageRoot());
+    const id = session.identity;
+    if (session.queue.liveGoal()) return false;
+    if (database.prepare('SELECT 1 FROM session_mailbox WHERE session_id=? LIMIT 1').get(id)) return false;
+    const runs = database.prepare('SELECT run_json FROM session_subagent_runs WHERE session_id=?').all(id);
+    return !runs.some(row => {
+      const run = JSON.parse(String(row.run_json));
+      return run.status === 'running' || run.resultDelivery === 'pending';
+    });
   }
 
   reconcile(session: Session): void {
     void (async () => {
       await session.settings.reconcile(true);
-      try { await this.releaseUnused(session); } catch {}
+      try { await this.releaseUnused(session); } catch (error) { this.events.diagnostic(session.identity + ': could not release an unused conversation: ' + errorText(error)); }
     })();
   }
 
   async releaseConversation(id: string, intent: string): Promise<void> {
-    const release = await lockGate(this.releaseGates, id);
+    const release = await this.releaseLocks.lock(id);
     try {
       const sessions = [...this.sessions.values()].filter(session => session.identity === id);
       for (const session of sessions) await this.releaseOwnedSession(id, intent, session);
@@ -268,18 +266,18 @@ export class Host implements SessionHost {
 
   async releaseOwnedSession(id: string, intent: string, session: Session): Promise<void> {
     if (intent === 'transfer' && (session.working() || session.compacting())) {
-      throw new Error('The agent is running on another daemon. Wait for it to finish before transferring ownership.');
+      throw new Error('The agent is working. Wait for it to finish before changing this conversation.');
     }
     const saved = session.savedState();
-    for (const [runtime] of session.views()) this.readonlyMap.set(runtime, { id, path: typeof saved?.sessionFile === 'string' ? saved.sessionFile : null });
+    for (const [runtime] of session.views()) this.views.showReadonly(runtime, { id, path: typeof saved?.sessionFile === 'string' ? saved.sessionFile : null });
     session.publish({ type: 'ownership_lost' }, null);
     if (intent === 'transfer-local') return;
-    if (!['archive', 'delete', 'relocate'].includes(intent) && (session.working() || session.compacting())) { try { await session.raw({ type: 'abort' }); } catch {} }
+    if (!['archive', 'delete', 'relocate'].includes(intent) && (session.working() || session.compacting())) { try { await session.raw({ type: 'abort' }); } catch (error) { this.events.diagnostic(id + ': could not abort the response before stopping: ' + errorText(error)); } }
     await session.stop();
     if (intent === 'archive') this.pending.delete(session.key);
   }
 
-  private async configure(configuration: any): Promise<void> {
+  private async configure(configuration: HostConfiguration): Promise<void> {
     if (!configuration?.settings || typeof configuration.settings !== 'object' || Array.isArray(configuration.settings)
       || typeof configuration.autoCompaction !== 'boolean' || typeof configuration.autoRetry !== 'boolean') {
       throw new Error('Invalid daemon configuration');
@@ -287,8 +285,7 @@ export class Host implements SessionHost {
     const release = await this.configurationGate.lock();
     let sessions: Session[];
     try {
-      const next = structuredClone(configuration);
-      next.agentRevision = this.agentRevision;
+      const next = { ...structuredClone(configuration), agentRevision: this.agentRevision };
       this.configurationValue = next;
       sessions = [...this.sessions.values()];
     } finally { release(); }
@@ -334,7 +331,7 @@ export class Host implements SessionHost {
   private async sendAgentDefinitions(session: Session): Promise<void> {
     if (session.transient() || session.closed() || session.stopping()) return;
     try { await session.executeWorker({ type: 'agent_definitions_changed' }); }
-    catch (error) { if (!session.closed() && !session.stopping()) this.output({ type: 'diagnostic', line: 'Could not give ' + session.key + ' the changed agent definitions: ' + errorText(error) }); }
+    catch (error) { if (!session.closed() && !session.stopping()) this.events.diagnostic('Could not give ' + session.key + ' the changed agent definitions: ' + errorText(error)); }
   }
 
   private availability: Promise<void> | null = null;
@@ -346,8 +343,8 @@ export class Host implements SessionHost {
     this.availability = (async () => {
       do {
         this.availabilityPending = false;
-        try { await this.reloadAgentDefinitions(); this.output({ type: 'agent_definitions_changed' }); }
-        catch (error) { this.output({ type: 'diagnostic', line: 'Could not update which agents can run: ' + errorText(error) }); }
+        try { await this.reloadAgentDefinitions(); this.events.agentDefinitionsChanged(); }
+        catch (error) { this.events.diagnostic('Could not update which agents can run: ' + errorText(error)); }
       } while (this.availabilityPending);
     })().finally(() => { this.availability = null; });
   }
@@ -364,7 +361,7 @@ export class Host implements SessionHost {
       saved = await Agents.save(this.home, this.storage, settings, configuration, this.services.fastModels(), cwd ? { cwd, global: this.agentDefinitions } : undefined);
       return saved.definitions;
     });
-    this.output({ type: 'agent_definitions_changed' });
+    this.events.agentDefinitionsChanged();
     return { revision: saved!.revision, warnings: saved!.warnings };
   }
 
@@ -374,18 +371,21 @@ export class Host implements SessionHost {
       saved = await Agents.move(this.home, this.storage, settings, this.services.fastModels(), { global: this.agentDefinitions, agent, revision, from, to });
       return saved.definitions;
     });
-    this.output({ type: 'agent_definitions_changed' });
+    this.events.agentDefinitionsChanged();
     return { revision: saved!.revision, warnings: saved!.warnings };
   }
 
   private agentReloadTarget(runtime: string, sessionId: string): Session {
-    if (this.readonlyMap.has(runtime)) throw new Error(ownershipError());
-    const session = this.subscriptions.get(runtime);
+    if (this.readonly(runtime)) throw new Error(ownershipError());
+    const session = this.views.session(runtime);
     if (!session || session.identity !== sessionId || session.closed()) throw new Error('The session changed. Reload agent definitions from its current host.');
     return session;
   }
 
-  async shutdown(): Promise<void> {
+  // Stops every session once; later calls wait for the same stop.
+  shutdown(): Promise<void> { return this.stopped ??= this.stop(); }
+
+  private async stop(): Promise<void> {
     this.shuttingDown = true;
     for (const timer of this.timers) clearInterval(timer);
     await this.services.shutdown();
@@ -400,97 +400,135 @@ export class Host implements SessionHost {
     this.mutations.dropAll();
   }
 
-  async handle(packet: any): Promise<any> {
-    const runtime = text(packet, 'runtimeId');
-    const name = kind(packet);
-    if ((await DaemonRestart.blocking()) && !['prepare_daemon_restart', 'plugin_status', 'detach', 'shutdown'].includes(name)) {
+  // A daemon restart lets only these run: the rest would change what the restart hands over.
+  private async open<T>(name: string, work: () => Promise<T> | T): Promise<T> {
+    if (this.shuttingDown) throw new Error('The host is shutting down');
+    if (!['prepare_daemon_restart', 'plugin_status', 'detach'].includes(name) && await DaemonRestart.blocking()) {
       throw new Error('The daemon is restarting. Reconnect before retrying.');
     }
-    if (name === 'detach') this.attachments.delete(runtime);
-    switch (name) {
-      case 'check_daemon_idle': case 'prepare_daemon_restart': return this.restartRequest(packet);
-      case 'agent_definitions': {
-        if (flag(packet, 'reload')) await this.reloadAgentDefinitions();
-        const cwd = text(packet, 'cwd');
-        return cwd ? this.projectAgentDefinitions(cwd) : structuredClone(this.agentDefinitions);
-      }
-      case 'save_agent_definitions': return this.saveAgentDefinitions(packet.configuration, text(packet, 'cwd') || undefined);
-      case 'agent_prompt_preview': return previewPrompt(packet.spec, text(packet, 'agent'), this.home);
-      case 'move_agent': return this.moveAgent(text(packet, 'agent'), text(packet, 'revision'), text(packet, 'from') || null, text(packet, 'to') || null);
-      case 'conversation_owner': return this.ownership().owns(text(packet, 'sessionId'), text(packet, 'clientId'), flag(packet, 'allowReleased'));
-      case 'submission_outcome': return this.submissions.outcome(text(packet, 'submissionId'));
-      case 'conversation_mutation': return this.mutations.begin(packet);
-      case 'conversation_mutation_end': return this.mutations.end(packet);
-      case 'provider_auth': case 'provider_auth_cancel_owner': case 'plugin_status': return this.services.handle(packet);
-      case 'configure': await this.configure(packet.configuration); return null;
-      case 'attach': return attach(this, packet);
-      case 'shutdown': await this.shutdown(); return null;
-      case 'retire': return this.retire(packet);
-      case 'session_command': return this.directSessionCommand(packet);
-      case 'orchestration': return this.orchestration.handle(packet);
-    }
-    return this.runtimeCommand(packet, runtime);
+    return clientPayload(await work());
   }
 
-  private async restartRequest(packet: any): Promise<any> {
+  checkIdle(): Promise<true> { return this.open('check_daemon_idle', () => { this.assertIdle(); return true as const; }); }
+
+  prepareRestart(request: Record<string, unknown>): Promise<any> {
+    return this.open('prepare_daemon_restart', () => { this.assertIdle(); return this.services.prepareRestart(request); });
+  }
+
+  agentDefinitionsFor(reload: boolean, cwd?: string): Promise<any> {
+    return this.open('agent_definitions', async () => {
+      if (reload) await this.reloadAgentDefinitions();
+      return cwd ? this.projectAgentDefinitions(cwd) : structuredClone(this.agentDefinitions);
+    });
+  }
+
+  saveAgents(configuration: unknown, cwd?: string): Promise<{ revision: string; warnings: string[] }> {
+    return this.open('save_agent_definitions', () => this.saveAgentDefinitions(configuration, cwd));
+  }
+
+  previewAgentPrompt(spec: unknown, agent: string): Promise<unknown> {
+    return this.open('agent_prompt_preview', () => previewPrompt(spec, agent, this.home));
+  }
+
+  moveAgentDefinition(agent: string, revision: string, from: string | null, to: string | null): Promise<{ revision: string; warnings: string[] }> {
+    return this.open('move_agent', () => this.moveAgent(agent, revision, from, to));
+  }
+
+  conversationOwner(sessionId: string, clientId: string, allowReleased: boolean): Promise<boolean> {
+    return this.open('conversation_owner', () => this.ownership().owns(sessionId, clientId, allowReleased));
+  }
+
+  submissionOutcome(submissionId: string): Promise<any> {
+    return this.open('submission_outcome', () => this.submissions.outcome(submissionId));
+  }
+
+  beginMutation(request: MutationRequest): Promise<any> { return this.open('conversation_mutation', () => this.mutations.begin(request)); }
+
+  endMutation(request: MutationEnd): Promise<any> { return this.open('conversation_mutation_end', () => this.mutations.end(request)); }
+
+  providerAuth(owner: string, request: unknown): Promise<any> { return this.open('provider_auth', () => this.services.providerAuth(owner, request)); }
+
+  cancelProviderAuth(owner: string): Promise<void> { return this.open('provider_auth_cancel_owner', () => this.services.cancelProviderAuth(owner)); }
+
+  pluginStatus(): Promise<any> { return this.open('plugin_status', () => this.services.pluginStatus()); }
+
+  applyConfiguration(configuration: HostConfiguration): Promise<void> { return this.open('configure', () => this.configure(configuration)); }
+
+  attach(request: AttachRequest): Promise<any> { return this.open('attach', () => attach(this, request)); }
+
+  retire(sessionKey: string, sessionPath: string | null, archive: boolean): Promise<null> { return this.open('retire', () => this.retireSession(sessionKey, sessionPath, archive)); }
+
+  orchestrate(request: OrchestrationRequest): Promise<any> { return this.open('orchestration', () => this.orchestration.handle(request)); }
+
+  detachRuntime(runtimeId: string, discardBlank: boolean, preserveRunning: boolean): Promise<any> {
+    return this.open('detach', () => {
+      this.views.dropRequest(runtimeId);
+      const readonly = this.views.readonly(runtimeId);
+      if (readonly) return detachReadonly(this, runtimeId, readonly);
+      const session = this.views.session(runtimeId);
+      return session ? this.detach(runtimeId, session, discardBlank, preserveRunning) : { stopped: false };
+    });
+  }
+
+  presence(runtimeId: string, presence: unknown): Promise<null> {
+    return this.open('presence', () => {
+      const readonly = this.views.readonly(runtimeId);
+      if (readonly) return readonlyPresence(this, runtimeId, presence, readonly);
+      this.running(runtimeId).presence(runtimeId, structuredClone(presence ?? null));
+      return null;
+    });
+  }
+
+  command(runtimeId: string, command: any): Promise<any> { return this.open('command', () => this.runtimeCommand(runtimeId, command)); }
+
+  private assertIdle(): void {
     const sessions = [...this.sessions.values()];
     if (sessions.some(session => session.busy(null) || session.transient()) || this.orchestration.busy() || this.mutations.active()) {
       throw new Error('Wait for active agents to finish before restarting the daemon');
     }
-    return kind(packet) === 'check_daemon_idle' ? true : this.services.handle(packet);
   }
 
-  private async retire(packet: any): Promise<any> {
-    let session = this.sessions.get(text(packet, 'sessionKey'));
+  private async retireSession(sessionKey: string, sessionPath: string | null, archive: boolean): Promise<null> {
+    let session = this.sessions.get(sessionKey);
     if (!session) {
       for (const candidate of this.sessions.values()) {
-        if (jsonEqual(candidate.savedState()?.sessionFile, packet.sessionPath) || (typeof packet.sessionPath === 'string' && candidate.reservedPath() === packet.sessionPath)) { session = candidate; break; }
+        if (jsonEqual(candidate.savedState()?.sessionFile, sessionPath) || (typeof sessionPath === 'string' && candidate.reservedPath() === sessionPath)) { session = candidate; break; }
       }
     }
     if (session) {
-      if (flag(packet, 'archive')) await this.releaseOwnedSession(session.identity, 'archive', session);
+      if (archive) await this.releaseOwnedSession(session.identity, 'archive', session);
       else await session.retire();
     }
     return null;
   }
 
-  private async directSessionCommand(packet: any): Promise<any> {
-    const session = this.sessions.get(text(packet, 'sessionKey'));
-    if (!session) throw new Error('Conversation is no longer running');
-    return session.execute(structuredClone(packet.command ?? null));
+  private running(runtime: string): Session {
+    const session = this.views.session(runtime);
+    if (!session) throw new CommandRefusedError('Pi is not running', 'daemon');
+    return session;
   }
 
-  private async runtimeCommand(packet: any, runtime: string): Promise<any> {
-    const name = kind(packet);
-    if (name === 'command' && packet.command?.type === 'take_ownership') return this.takeOwnership(runtime);
-    if (name === 'command' && ['pin_message', 'unpin_message'].includes(packet.command?.type)) return this.pinCommand(runtime, packet.command);
-    const readonly = this.readonlyMap.get(runtime);
+  private async runtimeCommand(runtime: string, command: any): Promise<any> {
+    if (command?.type === 'take_ownership') return this.takeOwnership(runtime);
+    if (['pin_message', 'unpin_message'].includes(command?.type)) return this.pinCommand(runtime, command);
+    const readonly = this.views.readonly(runtime);
     if (readonly) {
-      if (name === 'command' && ['fork_after', 'copy_after'].includes(packet.command?.type)) return forkFromView(this, runtime, { ...readonly }, structuredClone(packet.command));
-      return readonlyCommand(this, packet, { ...readonly });
+      if (['fork_after', 'copy_after'].includes(command?.type)) return forkFromView(this, runtime, readonly, structuredClone(command));
+      return readonlyCommand(this, command, readonly);
     }
-    const session = this.subscriptions.get(runtime);
-    if (!session) {
-      if (name === 'detach') return { stopped: false };
-      throw new CommandRefusedError('Pi is not running', 'daemon');
-    }
-    if (name === 'detach') return this.detach(packet, runtime, session);
-    if (name === 'presence') {
-      session.presence(runtime, structuredClone(packet.presence ?? null));
-      return null;
-    }
-    if (name === 'command' && packet.command?.type === 'reload_agents') return this.reloadAgents(runtime, text(packet.command, 'sessionId'));
-    return sessionCommand(this, session, runtime, structuredClone(packet.command ?? null));
+    const session = this.running(runtime);
+    if (command?.type === 'reload_agents') return this.reloadAgents(runtime, text(command, 'sessionId'));
+    return sessionCommand(this, session, runtime, structuredClone(command ?? null));
   }
 
   private pinCommand(runtime: string, command: any): null {
-    const identity = this.readonlyMap.get(runtime)?.id ?? this.subscriptions.get(runtime)?.identity;
+    const identity = this.views.readonly(runtime)?.id ?? this.views.session(runtime)?.identity;
     if (identity === undefined) throw new CommandRefusedError('Pi is not running', 'daemon');
     return this.pins.command(identity, command);
   }
 
   private async takeOwnership(runtime: string): Promise<any> {
-    const current = this.attachments.get(runtime);
+    const current = this.views.request(runtime);
     if (current === undefined) throw new Error('This conversation has been deleted or closed');
     const target = structuredClone(current);
     if (flag(target.presence, 'readOnly')) throw new Error('This view is read-only');
@@ -498,10 +536,10 @@ export class Host implements SessionHost {
     return attach(this, target);
   }
 
-  async detach(packet: any, runtime: string, session: Session): Promise<any> {
-    this.subscriptions.delete(runtime);
+  async detach(runtime: string, session: Session, discardBlank: boolean, preserveRunning: boolean): Promise<any> {
+    this.views.unsubscribe(runtime);
     session.detachView(runtime);
-    const result = await session.finishDetach(flag(packet, 'discardBlank'), flag(packet, 'preserveRunning'));
+    const result = await session.finishDetach(discardBlank, preserveRunning);
     await this.releaseUnused(session);
     return result;
   }

@@ -158,6 +158,17 @@ export function errorText(error: unknown): string {
   return String(error);
 }
 
+// Writes a failure that nothing else reports to the daemon log.
+export function logFailure(what: string): (error: unknown) => void {
+  return error => console.error(what + ': ' + errorText(error));
+}
+
+// For a promise whose failure reaches its own callers: stops Node from also reporting it as unhandled.
+export function observedElsewhere(promise: Promise<unknown>): void { promise.catch(() => undefined); }
+
+// True when a file system call failed only because the path does not exist.
+export function isMissing(error: unknown): boolean { return (error as NodeJS.ErrnoException | undefined)?.code === 'ENOENT'; }
+
 export class Channel<T> {
   private items: T[] = [];
   private waiters: Array<(value: T | undefined) => void> = [];

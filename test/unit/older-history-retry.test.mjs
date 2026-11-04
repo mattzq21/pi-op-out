@@ -86,7 +86,7 @@ test('the list of older responses loads once Pi starts, and stays with the chat 
   await act(() => [...listeners].forEach(listener => listener({ type: 'pi_started' })));
   await dom.flushFrames();
   assert.equal(requests.filter(type => type === 'get_history_outline').length, 2, 'the list loads again once Pi runs');
-  assert.deepEqual(memory.memory.getSnapshot().outline?.items.map(item => item.id), ['early-answer']);
+  assert.deepEqual(memory.memory.data.outline?.items.map(item => item.id), ['early-answer']);
   await view.unmount();
   view = await renderComponent(ChatView, props);
   await dom.flushFrames(); await dom.flushFrames();

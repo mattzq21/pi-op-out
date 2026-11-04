@@ -1,5 +1,5 @@
-export interface SettingsContribution<T extends object> {
-  fields: readonly (keyof T & string)[];
+// A plugin's own settings, saved under its plugin ID.
+export interface SettingsContribution<T extends Record<string, unknown>> {
   defaults(): T;
   parse(value: Record<string, unknown>): T;
 }

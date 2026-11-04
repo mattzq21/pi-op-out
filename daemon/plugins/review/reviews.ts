@@ -2,7 +2,7 @@ import { sessionStorage } from "../../resources/piop-storage/interface.ts";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { randomUUID } from "node:crypto";
 import { join } from "node:path";
-import { open, readFile } from "node:fs/promises";
+import { open } from "node:fs/promises";
 import { constants } from "node:fs";
 import { homedir } from "node:os";
 import { reserveSessionId, writeSessionFile } from "../../resources/piop-storage/session-file.ts";
@@ -12,13 +12,14 @@ import { Check, Parse } from "typebox/value";
 import { currentHost } from "../../resources/session-broker/client.ts";
 import { childFastModeEntry } from "../../resources/session-broker/fast-mode.ts";
 import { locateConversation } from "../../resources/session-broker/conversation-location.ts";
-import { acknowledge, pendingReviews, release, type SessionPublication } from "../../resources/piop-storage/session-publication.cjs";
+import { acknowledge, pendingLinks, release, type SessionPublication } from "../../resources/piop-storage/session-publication.cjs";
 import { read as readAppSettings } from "../../resources/session-broker/app-settings.cjs";
 import type { ReviewImage, ReviewSession } from "./interface.ts";
 import { openAuxiliaryChat } from "../../resources/session-broker/auxiliary.ts";
-import { AUXILIARY_PARENT } from "../../resources/piop-storage/session-records.cjs";
+import { AUXILIARY_LINK, AUXILIARY_PARENT } from "../../resources/piop-storage/session-records.cjs";
+import reviewPrompt from "./review-prompt.txt";
 
-const reviewSchema = Schema.Object({ sessionId: Schema.String(), sessionPath: Schema.String(), cwd: Schema.String(), parentSessionId: Schema.String(), hostId: Schema.Optional(Schema.String()), publicationId: Schema.Optional(Schema.String()), scope: Schema.Optional(Schema.String()) });
+const reviewSchema = Schema.Object({ kind: Schema.Literal("review"), sessionId: Schema.String(), sessionPath: Schema.String(), cwd: Schema.String(), parentSessionId: Schema.String(), hostId: Schema.Optional(Schema.String()), publicationId: Schema.Optional(Schema.String()), scope: Schema.Optional(Schema.String()) });
 
 const settingsSchema = Schema.Object({ reviewAgent: Schema.Optional(Schema.String()) });
 
@@ -27,6 +28,9 @@ const fileErrorSchema = Schema.Object({ code: Schema.String() });
 const sessionHeaderSchema = Schema.Object({ type: Schema.Literal("session"), id: Schema.String() });
 
 type ReviewRecord = Static<typeof reviewSchema>;
+
+// The message in the main conversation that opens the review.
+const LINK_MESSAGE = { customType: "piop-review-link", content: "Code review" };
 
 async function requireSavedReviewParent(ctx: ExtensionContext) {
   const path = ctx.sessionManager.getSessionFile();
@@ -52,7 +56,7 @@ async function requireSavedReviewParent(ctx: ExtensionContext) {
 
 function reviewName(ctx: ExtensionContext, scope: string | undefined) {
   if (scope) return `Review ${scope}`;
-  const unscoped = ctx.sessionManager.getEntries().filter(entry => entry.type === "custom" && entry.customType === "piop-review" && Check(reviewSchema, entry.data) && entry.data.parentSessionId === ctx.sessionManager.getSessionId() && !entry.data.scope).length;
+  const unscoped = ctx.sessionManager.getEntries().filter(entry => entry.type === "custom" && entry.customType === AUXILIARY_LINK && Check(reviewSchema, entry.data) && entry.data.parentSessionId === ctx.sessionManager.getSessionId() && !entry.data.scope).length;
 
   return `Review ${unscoped + 1}`;
 }
@@ -70,7 +74,7 @@ async function createReview(pi: ExtensionAPI, ctx: ExtensionContext, agentState:
   signal?.throwIfAborted();
   const timestamp = new Date().toISOString();
   const sessionId = await reserveSessionId();
-  const record = { sessionId, sessionPath: join(ctx.sessionManager.getSessionDir(), `${timestamp.replace(/[:.]/g, "-")}_${sessionId}.jsonl`), cwd: ctx.cwd, parentSessionId: ctx.sessionManager.getSessionId(), hostId: currentHost(), publicationId: randomUUID(), ...scope ? { scope } : {} };
+  const record: ReviewRecord & { hostId: string; publicationId: string } = { kind: "review", sessionId, sessionPath: join(ctx.sessionManager.getSessionDir(), `${timestamp.replace(/[:.]/g, "-")}_${sessionId}.jsonl`), cwd: ctx.cwd, parentSessionId: ctx.sessionManager.getSessionId(), hostId: currentHost(), publicationId: randomUUID(), ...scope ? { scope } : {} };
   const name = reviewName(ctx, scope);
   const metadataId = randomUUID();
 
@@ -79,7 +83,7 @@ async function createReview(pi: ExtensionAPI, ctx: ExtensionContext, agentState:
     { type: "custom", id: metadataId, parentId: null, timestamp, customType: AUXILIARY_PARENT, data: { kind: "review", parentSessionId: record.parentSessionId, sessionId, hostId: record.hostId, parentHostId: record.hostId, publicationId: record.publicationId } },
     { type: "custom", id: `${metadataId}-agent`, parentId: metadataId, timestamp, customType: "pi-define-agents-state", data: agentState },
     ...fastMode ? [{ ...fastMode, id: `${metadataId}-fast-mode`, parentId: `${metadataId}-agent`, timestamp }] : [],
-  ], { name, review: { record, parentSessionPath }, beforeWrite: () => signal?.throwIfAborted() });
+  ], { name, link: { record, parentSessionPath, message: LINK_MESSAGE }, beforeWrite: () => signal?.throwIfAborted() });
 
   return { record, publication, name };
 }
@@ -93,9 +97,9 @@ async function publishReview(pi: ExtensionAPI, ctx: ExtensionContext, record: Re
     if (ctx.sessionManager.getSessionId() !== record.parentSessionId) throw new Error("Review publication requires its actual original parent");
     const saved = ctx.sessionManager.getEntries();
 
-    if (!saved.some(entry => entry.type === "custom" && entry.customType === "piop-review" && Check(reviewSchema, entry.data) && matchesPublication(entry.data, record))) sessionStorage(pi).append("piop-review", record);
+    if (!saved.some(entry => entry.type === "custom" && entry.customType === AUXILIARY_LINK && Check(reviewSchema, entry.data) && matchesPublication(entry.data, record))) sessionStorage(pi).append(AUXILIARY_LINK, record);
 
-    if (!saved.some(entry => entry.type === "custom_message" && entry.customType === "piop-review-link" && Check(reviewSchema, entry.details) && matchesPublication(entry.details, record))) pi.sendMessage({ customType: "piop-review-link", content: "Code review", display: true, details: record }, { triggerTurn: false });
+    if (!saved.some(entry => entry.type === "custom_message" && entry.customType === LINK_MESSAGE.customType && Check(reviewSchema, entry.details) && matchesPublication(entry.details, record))) pi.sendMessage({ ...LINK_MESSAGE, display: true, details: record }, { triggerTurn: false });
 
     if (!await acknowledge(publication)) ctx.ui.notify(`Review parent publication is pending; the transcript is retained at ${record.sessionPath}`, "warning");
   } finally { release(publication); }
@@ -109,12 +113,12 @@ async function reconcileReviews(pi: ExtensionAPI, ctx: ExtensionContext) {
   const current = () => ctx.sessionManager.getSessionFile() === parent && ctx.sessionManager.getSessionId() === parentId;
 
   try {
-    const pending = await pendingReviews(parent, parentId);
+    const pending = await pendingLinks(parent, parentId, "review");
 
     try {
       for (const item of pending) {
         if (!current()) return;
-        await publishReview(pi, ctx, item.record, item.publication);
+        await publishReview(pi, ctx, Parse(reviewSchema, item.record), item.publication);
       }
     }
     finally { for (const item of pending) release(item.publication); }
@@ -129,12 +133,10 @@ async function openReview(ctx: ExtensionContext, record: ReviewRecord, name: str
 }
 
 async function reviewSettings() {
-  const settings = Parse(settingsSchema, readAppSettings(join(homedir(), process.env.PIOP_STORAGE_DIRECTORY || ".piop")) ?? {});
+  const settings = Parse(settingsSchema, readAppSettings(join(homedir(), process.env.PIOP_STORAGE_DIRECTORY || ".piop"))?.plugins?.review ?? {});
 
   const agent = settings.reviewAgent?.trim() || "reviewer";
-  const prompt = await readFile(new URL("./review-prompt.txt", import.meta.url), "utf8");
-
-  return { agent, prompt };
+  return { agent, prompt: reviewPrompt };
 }
 
 async function reviewProfile(pi: ExtensionAPI, agent: string) {

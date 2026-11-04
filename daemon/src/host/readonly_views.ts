@@ -9,20 +9,14 @@ export interface ReadonlyView { id: string; path: string | null }
 
 const READ_COMMANDS = ['get_snapshot', 'get_entries', 'get_state', 'get_session_revision', 'get_tool_payload', 'get_session_stats', 'get_older_history', 'get_history_outline', 'get_turn_work'];
 
-export async function readonlyCommand(host: Host, packet: any, target: ReadonlyView): Promise<any> {
-  const runtime = text(packet, 'runtimeId');
-  if (kind(packet) === 'detach') return detachReadonly(host, runtime, target);
-  if (kind(packet) === 'presence') {
-    host.findSession(target.id)?.presence(runtime, structuredClone(packet.presence ?? null));
-    return null;
-  }
-  const command = packet.command ?? null;
+// A command from a view that does not own its conversation: only reads are allowed.
+export async function readonlyCommand(host: Host, command: any, target: ReadonlyView): Promise<any> {
   if (!READ_COMMANDS.includes(kind(command))) throw new Error(ownershipError());
   const session = host.findSession(target.id);
   if (session && !session.transient()) return session.execute(structuredClone(command));
   if (host.ownership().lookupSaved(target.id, true) === null) {
     if (host.ownership().removed(target.id)) {
-      host.output({ type: 'session_removed', sessionId: target.id, sessionPath: target.path });
+      host.events.sessionRemoved(target.id, target.path);
       throw new Error('This conversation has been deleted or archived');
     }
     throw new Error('Conversation storage is temporarily unavailable; try again');
@@ -30,18 +24,19 @@ export async function readonlyCommand(host: Host, packet: any, target: ReadonlyV
   return readSavedConversation(host, target, command);
 }
 
-export function announceRemoved(host: Host, id: string): void {
-  let path: string | null | undefined;
-  for (const view of host.readonlyMap.values()) if (view.id === id) { path = view.path; break; }
-  if (path === undefined) return;
-  host.output({ type: 'session_removed', sessionId: id, sessionPath: path });
+export function readonlyPresence(host: Host, runtime: string, presence: unknown, target: ReadonlyView): null {
+  host.findSession(target.id)?.presence(runtime, structuredClone(presence ?? null));
+  return null;
 }
 
-async function detachReadonly(host: Host, runtime: string, target: ReadonlyView): Promise<any> {
-  host.readonlyMap.delete(runtime);
-  host.attachments.delete(runtime);
-  const session = host.subscriptions.get(runtime) ?? host.findSession(target.id);
-  host.subscriptions.delete(runtime);
+export function announceRemoved(host: Host, id: string): void {
+  const path = host.views.readonlyPath(id);
+  if (path === undefined) return;
+  host.events.sessionRemoved(id, path);
+}
+
+export async function detachReadonly(host: Host, runtime: string, target: ReadonlyView): Promise<any> {
+  const session = host.views.forget(runtime) ?? host.findSession(target.id);
   if (session) {
     session.detachView(runtime);
     await session.finishDetach(false, true);

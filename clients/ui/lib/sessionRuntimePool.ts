@@ -1,3 +1,4 @@
+import { batch, createSignal, untrack } from "solid-js";
 import { capSessionName, promptName, promptTitle } from "./sessionName";
 import { agentStateSchema } from "./responseSchemas";
 import { extensionUiSchema } from "./extensionUiSchema";
@@ -50,10 +51,12 @@ export class SessionRuntimePool {
   private readonly retainedTransports = new Set<NativeTransport>();
   private readonly idleTransports = new Map<NativeTransport, () => boolean>();
   private readonly listeners = new Set<() => void>();
-  private runningSessionKeys: ReadonlySet<string> = new Set();
-  private unseenSessionKeys: ReadonlySet<string> = new Set();
-  private liveRevision = 0;
-  liveSessionRevision() { return this.liveRevision; }
+  // Solid signals, so the views that read them update without a separate subscription.
+  private readonly runningSessionKeys = createSignal<ReadonlySet<string>>(new Set());
+  private readonly unseenSessionKeys = createSignal<ReadonlySet<string>>(new Set());
+  private readonly liveRevision = createSignal(0);
+  liveSessionRevision() { return this.liveRevision[0](); }
+  private liveChanged() { this.liveRevision[1](revision => revision + 1); this.notify(); }
   private liveSessions = new Map<NativeTransport, SessionSummary>();
   private readonly releasedSessions = new Map<string, SessionSummary>();
   private removedPaths = new Set<string>();
@@ -69,7 +72,7 @@ export class SessionRuntimePool {
 
     for (const [key, session] of this.releasedSessions) if ((session.hostId ?? "local") === hostId && session.path === path) this.releasedSessions.delete(key);
 
-    this.liveRevision += 1; this.notify();
+    this.liveChanged();
   }
   private pluginPaneTransports = new WeakSet<NativeTransport>();
   liveSessionSummaries() { return [...this.releasedSessions.values(), ...[...this.liveSessions].flatMap(([transport, session]) => !this.pluginPaneTransports.has(transport) ? [session] : [])]; }
@@ -77,7 +80,7 @@ export class SessionRuntimePool {
     if (this.isRemoved(session)) return;
     this.releasedSessions.delete(sessionKey(session.hostId ?? "local", session.id));
     this.liveSessions.set(transport, session);
-    this.liveRevision += 1; this.notify();
+    this.liveChanged();
   }
   private readonly startHandlers = new Map<NativeTransport, (key: string) => Promise<void>>();
   private readonly starting = new Map<NativeTransport, Promise<void>>();
@@ -97,11 +100,13 @@ export class SessionRuntimePool {
       if (this.unseenTransports.has(transport)) unseen.add(key);
     }
 
-    const runningChanged = running.size !== this.runningSessionKeys.size || [...running].some((key) => !this.runningSessionKeys.has(key));
-    const unseenChanged = unseen.size !== this.unseenSessionKeys.size || [...unseen].some((key) => !this.unseenSessionKeys.has(key));
+    const same = (next: Set<string>, previous: ReadonlySet<string>) => next.size === previous.size && [...next].every((key) => previous.has(key));
+    const runningChanged = !same(running, untrack(this.runningSessionKeys[0]));
+    const unseenChanged = !same(unseen, untrack(this.unseenSessionKeys[0]));
 
     if (!runningChanged && !unseenChanged) return;
-    this.runningSessionKeys = running; this.unseenSessionKeys = unseen; this.notify();
+    batch(() => { if (runningChanged) this.runningSessionKeys[1](running); if (unseenChanged) this.unseenSessionKeys[1](unseen); });
+    this.notify();
   }
 
   private retainSession(transport: NativeTransport, prompt?: string, lastMessageAt?: number) {
@@ -123,7 +128,7 @@ export class SessionRuntimePool {
       this.releasedSessions.delete(sessionKey(transport.currentHostId(), state.sessionId));
       const forkSource = state.forkSource;
       this.liveSessions.set(transport, { ...projectDetails, id: state.sessionId, ...(forkSource ? { forkSourceId: forkSource.sessionId, forkEntryId: forkSource.entryId } : {}), path: state.sessionFile || "", name: retainedName(state, prompt, previous), project: cwd.split(/[\\/]/).filter(Boolean).at(-1) || "Workspace", cwd, ...retainedActivity(state, previous, prompt, lastMessageAt), daemonId: transport.currentDaemonId(), hostId: transport.currentHostId() });
-      this.liveRevision += 1; this.notify();
+      this.liveChanged();
     }).catch((reason) => this.errorHandler?.(`Could not list the retained session: ${reason instanceof Error ? reason.message : String(reason)}`));
   }
 
@@ -140,7 +145,7 @@ export class SessionRuntimePool {
           const statuses: unknown = JSON.parse(request.statusText.slice(5));
 
           if (Array.isArray(statuses) && statuses.some((value) => value?.status === "starting")) this.retainSession(transport);
-        } catch {}
+        } catch (reason) { console.error("Ignored an invalid MCP status", reason); }
       }
     }
   }
@@ -299,7 +304,7 @@ export class SessionRuntimePool {
   async remove(session: SessionSummary) {
     const key = sessionKey(session.daemonId ?? session.hostId ?? "local", session.id); const transport = this.sessions.get(key);
 
-    if (this.releasedSessions.delete(sessionKey(session.hostId ?? "local", session.id))) { this.liveRevision += 1; this.notify(); }
+    if (this.releasedSessions.delete(sessionKey(session.hostId ?? "local", session.id))) { this.liveChanged(); }
 
     if (transport) await this.release(transport);
 
@@ -373,7 +378,7 @@ export class SessionRuntimePool {
 
       if (summary && keepSummary && !this.pluginPaneTransports.has(transport) && !this.isRemoved(summary)) this.releasedSessions.set(sessionKey(summary.hostId ?? "local", summary.id), summary);
 
-      if (this.liveSessions.delete(transport)) { this.liveRevision += 1; this.notify(); }
+      if (this.liveSessions.delete(transport)) { this.liveChanged(); }
 
       this.publishSessionStates();
     }).finally(() => this.releasing.delete(transport));
@@ -386,8 +391,8 @@ export class SessionRuntimePool {
   subscribe(listener: () => void) { this.listeners.add(listener);
 
   return () => this.listeners.delete(listener); }
-  runningSessions() { return this.runningSessionKeys; }
-  unseenSessions() { return this.unseenSessionKeys; }
+  runningSessions() { return this.runningSessionKeys[0](); }
+  unseenSessions() { return this.unseenSessionKeys[0](); }
 
   async disconnectAll(strict = false) {
     const results = await Promise.allSettled([...this.transports].map((transport) => transport.dispose()));

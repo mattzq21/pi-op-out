@@ -317,14 +317,10 @@ function discardPreparation(root, directory, sessionId) {
 function reclamationKey(directory) { return createHash('sha256').update(directory).digest('hex'); }
 
 function reclamationPending(root, directory) {
-  const database = require('../session-database.cjs').open(root);
-
-  try { return Boolean(database.prepare('SELECT 1 FROM goal_asset_reclamations WHERE record_id=?').get(reclamationKey(directory))); }
-  finally { database.close(); }
+  return Boolean(require('../session-database.cjs').connection(root).prepare('SELECT 1 FROM goal_asset_reclamations WHERE record_id=?').get(reclamationKey(directory)));
 }
 
 function removeRecoveryRecords(database, directory, expected) {
-  if (!database.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='goal_directory_recoveries'").get()) return;
   const rows = database.prepare("SELECT directory, record_json FROM goal_directory_recoveries WHERE json_extract(record_json, '$.staging')=? AND json_extract(record_json, '$.current')=?").all(directory, expected);
 
   for (const row of rows) {
@@ -337,20 +333,19 @@ function removeDirectoryRecords(database, directory, expected) {
   if (exists(directory)) return;
 
   for (const table of ['goal_asset_dependencies', 'goal_text_files', 'goal_text_contents', 'goal_preparations', 'goal_ownership']) {
-    if (!database.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?").get(table)) continue;
     database.prepare(`DELETE FROM ${table} WHERE directory=? AND identity=?`).run(directory, expected);
   }
 
-  if (database.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='goal_directory_history'").get()) database.prepare('DELETE FROM goal_directory_history WHERE directory=? AND current_identity=?').run(directory, expected);
+  database.prepare('DELETE FROM goal_directory_history WHERE directory=? AND current_identity=?').run(directory, expected);
   removeRecoveryRecords(database, directory, expected);
 }
 
 function updateReclamation(root, directory, expected, removing) {
-  const database = require('../session-database.cjs').open(root);
+  const tables = require('../session-database.cjs');
+  const database = tables.connection(root);
   const key = reclamationKey(directory);
-  database.exec('BEGIN IMMEDIATE');
 
-  try {
+  tables.transaction(database, 'IMMEDIATE', () => {
     const row = database.prepare('SELECT record_json FROM goal_asset_reclamations WHERE record_id=?').get(key);
 
     if (row) {
@@ -364,9 +359,7 @@ function updateReclamation(root, directory, expected, removing) {
       database.prepare('DELETE FROM goal_asset_reclamations WHERE record_id=?').run(key);
     }
     else if (!row) database.prepare('INSERT INTO goal_asset_reclamations VALUES (?, ?)').run(key, JSON.stringify({ path: directory, identity: expected }));
-    database.exec('COMMIT');
-  } catch (error) { throw require('../session-database.cjs').rollback(database, error); }
-  finally { database.close(); }
+  });
 }
 
 function beginReclamation(root, directory, expected) { updateReclamation(root, directory, expected, false); }

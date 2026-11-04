@@ -316,13 +316,8 @@ function unregistered(root, id, target) {
   const file = path.join(root, 'sessions.sqlite');
 
   if (!exists(file)) return false;
-  const { DatabaseSync } = require('node:sqlite');
 
-  const database = new DatabaseSync(file, { readOnly: true });
-
-  try {
-    return !database.prepare('SELECT 1 FROM sessions WHERE session_id=? AND session_path=?').get(id, target);
-  } finally { database.close(); }
+  return !require('../session-database.cjs').connection(root).prepare('SELECT 1 FROM sessions WHERE session_id=? AND session_path=?').get(id, target);
 }
 
 module.exports = { uuid, headerSchema, writerSchema, exists, identity, fingerprint, hash, inside, canonical, sync, mkdir, read, proof, header, canonicalRoot, rootForTarget, claim, locked, lockedAsync, holdTransactionLock, heldTransactionLock, writer, writerDead, lockPath, journalPath, matches, verified, locate, unregistered };

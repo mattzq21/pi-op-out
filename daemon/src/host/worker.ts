@@ -1,6 +1,7 @@
 import { shellLock } from '../../resources/file-lock.cjs';
 import { readLines } from '../../resources/lf-lines.cjs';
 import { spawn, type ChildProcess } from 'node:child_process';
+import type { Duplex } from 'node:stream';
 import { createHash, randomUUID } from 'node:crypto';
 import { createInterface } from 'node:readline';
 import { join } from 'node:path';
@@ -9,6 +10,8 @@ import { CommandRefusedError } from '../pi_rejection';
 import { descendantProcesses, killVerified, newProcessTag, PROCESS_TAG, signalProcessGroup, taggedProcesses } from '../process_cleanup';
 import { kind, type LaunchSpec, wireCommand } from './protocol';
 import { isRuntimeEvent, parseRuntimeEvent, runtimeEventResult, type RuntimeEvent } from './runtime_events';
+import { answerStorageRequest } from './pi_storage';
+import { observedElsewhere } from '../util/sync';
 
 export interface Request { command: any; requestType: string; snapshotState: any }
 
@@ -62,13 +65,14 @@ export class RuntimeWorker {
 
   private constructor(private child: ChildProcess, private tag: string, private observer: WorkerObserver, private timeout: number) {}
 
-  static spawn(spec: LaunchSpec, identity: string, timeout: number, observer: WorkerObserver, home: string): RuntimeWorker {
+  // storageRoot: the storage that this Pi saves its chats in, through its storage channel; null for a Pi that saves nothing.
+  static spawn(spec: LaunchSpec, identity: string, timeout: number, observer: WorkerObserver, home: string, storageRoot: string | null): RuntimeWorker {
     const command = launchCommand(spec, identity, home);
     const tag = newProcessTag();
     const child = spawn(command.program, command.args, {
       cwd: spec.cwd ? spec.cwd : undefined,
-      env: { ...process.env, ...spec.env, PIOP_BUN: process.execPath, [PROCESS_TAG]: tag },
-      stdio: ['pipe', 'pipe', 'pipe'],
+      env: { ...process.env, ...spec.env, PIOP_BUN: process.execPath, PIOP_STORAGE_CHANNEL: '3', [PROCESS_TAG]: tag },
+      stdio: ['pipe', 'pipe', 'pipe', 'pipe'],
       detached: true,
     });
     if (child.pid === undefined) {
@@ -89,12 +93,25 @@ export class RuntimeWorker {
     const errors = createInterface({ input: child.stderr!, crlfDelay: Infinity });
     errors.on('line', line => observer.stderr(line));
     errors.on('close', done);
+    worker.answerStorage(child.stdio[3] as Duplex, storageRoot);
     child.on('exit', (code, signal) => {
       worker.exitStatus = signal !== null ? 'signal ' + signal : 'exit code ' + code;
       worker.signal(false);
     });
     child.on('close', () => { worker.signal(true); running.delete(child); if (worker.deadline) clearTimeout(worker.deadline); done(); });
     return worker;
+  }
+
+  private answerStorage(channel: Duplex, root: string | null): void {
+    let answered = Promise.resolve();
+    channel.on('error', error => this.observer.diagnostic('Pi storage channel failed: ' + error.message));
+    readLines(channel, line => {
+      answered = answered.then(async () => {
+        const answer = root === null ? JSON.stringify({ error: 'This Pi runtime cannot save chats' }) : await answerStorageRequest(root, line);
+        if (!channel.writable) return;
+        await new Promise<void>((resolve, reject) => channel.write(answer + '\n', error => error ? reject(error) : resolve()));
+      }).catch(error => this.observer.diagnostic('Could not answer a Pi storage request: ' + error.message));
+    }, () => {});
   }
 
   private close(): void {
@@ -200,7 +217,7 @@ export class RuntimeWorker {
     const stopOnTimeout = abort || ['queue_prompt', 'prompt', 'compact'].includes(requestType);
     let entry!: Pending;
     const reply = new Promise<any>((resolve, reject) => { entry = { command, requestType, snapshotState, resolve, reject }; });
-    reply.catch(() => {});
+    observedElsewhere(reply);
     this.pending.set(id, entry);
     try { return await this.withDeadline(written => this.write(wire).then(() => { written(); return reply; }), timeout, stopOnTimeout); }
     finally { this.pending.delete(id); }

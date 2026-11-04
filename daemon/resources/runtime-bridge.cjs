@@ -22,6 +22,8 @@ const { queuePull } = require("./queue-pull.cjs");
 
 const { supportedPi } = require("./pi-runtime.cjs");
 
+const { patchMethod, requireMethods } = require("./pi-patch.cjs");
+
 const configurationCommands = new Set(["context_cap_settings", "agent_definitions_changed", "provider_auth_refresh", "select_agent", "fork_after", "rewind_message", "prepare_fork"]);
 
 let queueValidation;
@@ -63,12 +65,11 @@ async function queueContracts(root) {
 function installQueueProtocol(session, output) {
   if (!wrappedSessions.has(session)) {
     for (const name of ["prompt", "steer", "followUp"]) {
-      const submit = session[name];
-      session[name] = function (...args) {
+      patchMethod(session, name, submit => function (...args) {
         const scope = name === "prompt" ? args[1]?.[queuePromptScope] : undefined;
 
         return queuePromptContext.run(scope?.session === this ? scope : undefined, () => submit.apply(this, args));
-      };
+      });
     }
 
     wrappedSessions.add(session);
@@ -78,8 +79,7 @@ function installQueueProtocol(session, output) {
 
   if (!wrappedAgents.has(agent)) {
     for (const name of ["prompt", "steer", "followUp"]) {
-      const submit = agent[name];
-      agent[name] = function (...args) {
+      patchMethod(agent, name, submit => function (...args) {
         const scope = queuePromptContext.getStore();
 
         if (scope && !scope.tagged && scope.session.agent === this) {
@@ -94,7 +94,7 @@ function installQueueProtocol(session, output) {
         }
 
         return submit.apply(this, args);
-      };
+      });
     }
 
     wrappedAgents.add(agent);
@@ -103,9 +103,8 @@ function installQueueProtocol(session, output) {
   const manager = session.sessionManager;
 
   if (!wrappedManagers.has(manager)) {
-    const appendMessage = manager.appendMessage;
     const newSessionFiles = new Set();
-    manager.appendMessage = function (message, ...args) {
+    patchMethod(manager, "appendMessage", appendMessage => function (message, ...args) {
       const file = this.isPersisted() ? this.getSessionFile() : undefined;
 
       if (file && !existsSync(file)) newSessionFiles.add(file);
@@ -130,7 +129,7 @@ function installQueueProtocol(session, output) {
       output({ type: "queue_consumed", queueId: message.piopQueueId, sessionId: this.getSessionId(), entryId });
 
       return entryId;
-    };
+    });
 
     wrappedManagers.add(manager);
   }
@@ -183,7 +182,7 @@ function appInput(dispatch, events) {
       pending = pending.slice(end + 1);
       let command;
 
-      try { command = JSON.parse(line); } catch {}
+      try { command = JSON.parse(line); } catch (error) { console.error("Piop runtime bridge ignored an invalid command line: " + error.message); }
 
       if (command?.type === "piop_request") void dispatch(command);
       else if (command?.type === "piop_runtime_event_result") events.answer(command);
@@ -492,16 +491,15 @@ async function previewPrompt(session) {
   if (process.env.PIOP_PROMPT_PREVIEW !== "1") throw new Error("Only a prompt preview runtime can build a prompt preview");
   const marker = `Prompt preview ${randomUUID()}`;
   const agent = session.agent;
-  const stream = agent.streamFunction;
   const transform = agent.onPayload;
   let transcript;
   let built;
   const request = new Promise(resolve => { built = resolve; });
-  agent.streamFunction = (model, context, options) => {
+  patchMethod(agent, "streamFunction", stream => (model, context, options) => {
     transcript ??= { model: `${model.provider}/${model.id}`, messages: context.messages };
 
     return stream(model, context, options);
-  };
+  });
   agent.onPayload = async (payload, model) => {
     const sent = transform ? (await transform(payload, model)) ?? payload : payload;
     built({ ...transcript, payload: sent });
@@ -571,9 +569,8 @@ const userText = message => message.role === "user" ? message.content.filter(par
 function bindFollowUpDrain(session) {
   const agent = session.agent;
   const queue = agent.followUpQueue;
-  const drain = queue.drain;
 
-  queue.drain = function () {
+  patchMethod(queue, "drain", drain => function () {
     const messages = drain.call(this);
     const queued = messages.findIndex(message => queuedCommand(userText(message)));
 
@@ -582,7 +579,7 @@ function bindFollowUpDrain(session) {
     this.messages.unshift(...messages.slice(count));
 
     return messages.slice(0, count);
-  };
+  }, "Agent follow-up queue");
 }
 
 function executeQueuedCommand(session, text, images) {
@@ -657,7 +654,7 @@ async function runQueuedCompaction(session, reached, output) {
   const instructions = reached.text.slice("/compact".length).trim() || undefined;
   let finish;
   session[runningCompaction] = new Promise(resolve => { finish = resolve; });
-  session.abort = async function () { delete session.abort; };
+  patchMethod(session, "abort", () => async function () { delete session.abort; });
 
   try { await session.compact(instructions); } catch (error) {
     console.error(`Queued compaction failed: ${error instanceof Error ? error.message : String(error)}`);
@@ -671,9 +668,7 @@ async function runQueuedCompaction(session, reached, output) {
 }
 
 function bindQueuedCompaction(session, output) {
-  const post = session._handlePostAgentRun;
-
-  session._handlePostAgentRun = async function () {
+  patchMethod(session, "_handlePostAgentRun", post => async function () {
     const reached = this[reachedCompaction];
 
     if (!reached) return post.call(this);
@@ -690,25 +685,22 @@ function bindQueuedCompaction(session, output) {
     await runQueuedCompaction(this, reached, output);
 
     return !this._agentRunAbortRequested && this.agent.hasQueuedMessages();
-  };
+  });
 }
 
 function bindQueuedCommands(session, output) {
   const agent = session.agent;
   bindFollowUpDrain(session);
   bindQueuedCompaction(session, output);
-  const createLoopConfig = agent.createLoopConfig;
-  const runPromptMessages = agent.runPromptMessages;
 
-  agent.createLoopConfig = function (...args) {
+  patchMethod(agent, "createLoopConfig", createLoopConfig => function (...args) {
     const config = createLoopConfig.apply(this, args);
-    const followUp = config.getFollowUpMessages;
-    config.getFollowUpMessages = () => drainQueuedCommands(session, followUp);
+    patchMethod(config, "getFollowUpMessages", followUp => () => drainQueuedCommands(session, followUp), "Agent loop config");
 
     return config;
-  };
+  });
 
-  agent.runPromptMessages = async function (messages, options) {
+  patchMethod(agent, "runPromptMessages", runPromptMessages => async function (messages, options) {
     if (options?.skipInitialSteeringPoll || !messages.some(message => queuedCommand(userText(message)))) {
       return runPromptMessages.call(this, messages, options);
     }
@@ -720,7 +712,7 @@ function bindQueuedCommands(session, output) {
     });
 
     if (!cancelled && !session[reachedCompaction] && this.hasQueuedMessages()) return this.continue();
-  };
+  });
 }
 
 async function main() {
@@ -733,6 +725,11 @@ async function main() {
   process.argv = [process.execPath, join(root, "dist/cli.js"), ...args];
 
   const { AgentSession } = await import(pathToFileURL(join(root, "dist/index.js")).href);
+  requireMethods(AgentSession.prototype, [
+    "_queueFollowUp", "_emitQueueUpdate", "_findLastAssistantMessage", "_findPersistedMessageEntryId", "_omitRecoveryAttempt", "_recordSelection",
+    "_resolveIdleWaitIfIdle", "_preparePromptAndToolLoadout", "_refreshFinalizedContext", "_handlePostAgentRun", "_runBeforeSettleBoundary",
+    "_finishCancelledRetry", "_flushPendingBashMessages", "_flushPendingCustomMessages", "_emitAgentSettled",
+  ]);
   const { McpServerConnection } = await import(pathToFileURL(join(root, "dist/extensions/mcp/runtime.js")).href);
   require("./mcp-connections.cjs").installConnectionEvents(McpServerConnection);
   require("./runtime-availability.cjs").installAvailability(AgentSession);
@@ -741,8 +738,7 @@ async function main() {
   installReloadLifecycle(AgentSession);
   const { writeRawStdout } = await import(pathToFileURL(join(root, "dist/core/output-guard.js")).href);
   const output = value => writeRawStdout(`${JSON.stringify(value)}\n`);
-  const prompt = AgentSession.prototype.prompt;
-  AgentSession.prototype.prompt = async function (text, options) {
+  patchMethod(AgentSession.prototype, "prompt", prompt => async function (text, options) {
     const disabled = disabledCommands.get(commandName(text));
 
     if (disabled !== undefined) throw new Error(disabled);
@@ -754,13 +750,12 @@ async function main() {
     }
 
     return prompt.call(this, text, options);
-  };
+  });
 
   let session;
   let markSessionReady;
   const sessionReady = new Promise(resolve => { markSessionReady = resolve; });
-  const bind = AgentSession.prototype.bindExtensions;
-  AgentSession.prototype.bindExtensions = async function (...bindings) {
+  patchMethod(AgentSession.prototype, "bindExtensions", bind => async function (...bindings) {
     installQueueProtocol(this, output);
     bindQueuePull(this, output);
 
@@ -774,7 +769,7 @@ async function main() {
     if (!bridge) throw new Error("Piop runtime bridge is unavailable");
     bridge.value({ command: "session_ready", payload: null, ctx: this.extensionRunner.createCommandContext() });
     void reportCommands(this);
-  };
+  });
 
   appInput(command => dispatch(command, () => session, sessionReady, output), runtimeEvents(output));
   process.argv = [process.execPath, join(root, "dist/cli.js"), ...args];

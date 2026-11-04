@@ -3,7 +3,8 @@ import { homedir } from "node:os";
 import { basename, join, resolve, sep } from "node:path";
 import * as database from "./session-database.cjs";
 import { sessionName } from "./session-broker/session-names.cjs";
-import { sessionHeaderMatches } from "./piop-storage/session-storage.mjs";
+import { sessionHeaderMatches } from "./piop-storage/transcript-file.mjs";
+import { patchMethod, requireMethods } from "./pi-patch.cjs";
 
 const cached = new Map();
 
@@ -203,14 +204,7 @@ function reportProgress(progress, loaded, total, values) {
 }
 
 function openListDatabase() {
-  const db = database.open(rootDirectory());
-
-  try {
-    db.exec(`CREATE TABLE IF NOT EXISTS sdk_session_summaries (session_id TEXT PRIMARY KEY REFERENCES sessions(session_id) ON DELETE CASCADE,
-      session_path TEXT NOT NULL, fingerprint TEXT NOT NULL, body TEXT NOT NULL)`);
-
-    return db;
-  } catch (error) { db.close(); throw error; }
+  return database.connection(rootDirectory());
 }
 
 function recentTime(row) {
@@ -224,63 +218,52 @@ function recentTime(row) {
 
 function recentSession(directory, cwd) {
   const db = openListDatabase();
+  const rows = candidates(db, directory, false).map(row => ({ row, time: recentTime(row) })).filter(value => value.time !== undefined);
+  rows.sort((a, b) => a.time === b.time ? 0 : a.time > b.time ? -1 : 1);
 
-  try {
-    const rows = candidates(db, directory, false).map(row => ({ row, time: recentTime(row) })).filter(value => value.time !== undefined);
-    rows.sort((a, b) => a.time === b.time ? 0 : a.time > b.time ? -1 : 1);
-
-    return rows.find(({ row }) => sessionHeaderMatches(row.session_path, row.session_id, cwd))?.row.session_path;
-  } finally { db.close(); }
+  return rows.find(({ row }) => sessionHeaderMatches(row.session_path, row.session_id, cwd))?.row.session_path;
 }
 
 function installRecentSession(SessionManager) {
-  const original = SessionManager.continueRecent;
-
-  if (!(original instanceof Function)) throw new Error("This Pi SDK does not support database session continuation");
-  SessionManager.continueRecent = function (cwd, sessionDir) {
+  patchMethod(SessionManager, "continueRecent", original => function (cwd, sessionDir) {
     const directory = managedDirectory(sessionDir, rootDirectory());
 
     if (!directory) return original.call(this, cwd, sessionDir);
     const file = recentSession(directory, cwd);
 
     return file ? this.open(file, directory, cwd) : this.create(cwd, directory);
-  };
+  });
 }
 
 async function list(directory, cwd, recursive, progress, signal) {
   signal?.throwIfAborted();
   const db = openListDatabase();
+  const rows = candidates(db, directory, recursive);
+  const values = [];
+  let loaded = 0;
 
-  try {
-    const rows = candidates(db, directory, recursive);
-    const values = [];
-    let loaded = 0;
+  for (const row of rows) {
+    signal?.throwIfAborted();
+    const value = await availableSummary(db, row, signal);
 
-    for (const row of rows) {
-      signal?.throwIfAborted();
-      const value = await availableSummary(db, row, signal);
+    if (value && matchesCwd(value, cwd)) values.push(value);
+    reportProgress(progress, ++loaded, rows.length, values);
+  }
 
-      if (value && matchesCwd(value, cwd)) values.push(value);
-      reportProgress(progress, ++loaded, rows.length, values);
-    }
-
-    return sorted(values);
-  } finally { db.close(); }
+  return sorted(values);
 }
 
 export function installSessionLists(SessionManager) {
+  requireMethods(SessionManager, ["continueRecent", "list", "listAll", "open", "create"]);
   installRecentSession(SessionManager);
-  const originalList = SessionManager.list;
-  const originalAll = SessionManager.listAll;
 
-  if (!(originalList instanceof Function) || !(originalAll instanceof Function)) throw new Error("This Pi SDK does not support database session lists");
-  SessionManager.list = function (cwd, sessionDir, progress, signal) {
+  patchMethod(SessionManager, "list", originalList => function (cwd, sessionDir, progress, signal) {
     const directory = managedDirectory(sessionDir, rootDirectory());
 
     return directory ? list(directory, cwd, false, progress, signal) : originalList.call(this, cwd, sessionDir, progress, signal);
-  };
+  });
 
-  SessionManager.listAll = function (sessionDirOrProgress, progressOrSignal, signal) {
+  patchMethod(SessionManager, "listAll", originalAll => function (sessionDirOrProgress, progressOrSignal, signal) {
     const explicit = sessionDirOrProgress?.constructor === String;
     const directory = managedDirectory(explicit ? sessionDirOrProgress : undefined, rootDirectory());
 
@@ -289,5 +272,5 @@ export function installSessionLists(SessionManager) {
     const abort = explicit || progressOrSignal instanceof Function ? signal : progressOrSignal ?? signal;
 
     return list(directory, undefined, !explicit, progress, abort);
-  };
+  });
 }

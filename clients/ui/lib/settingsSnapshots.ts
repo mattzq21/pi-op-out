@@ -1,4 +1,3 @@
-import { pluginSettingKeys } from "../plugins/settingsSchema";
 import type { AgentConfig, AgentProfile, AppSettings } from "../types";
 
 type SettingsSnapshotValue = AppSettings[keyof AppSettings] | AgentProfile[] | { settings: Omit<AppSettings, "tools">; agentConfig?: AgentConfig };
@@ -29,5 +28,5 @@ export function agentEditsSnapshot(config?: AgentConfig) {
 }
 
 export const settingKeys: Array<keyof AppSettings> = [
-  "localEnabled", ...pluginSettingKeys, "modelAliases", "hiddenModels", "knownModels", "defaultThinking", "defaultFastMode", "contextWindowCap", "contextWindowCapEnabled", "modelContextWindowCaps", "autoRetry", "hiddenUsageIndicators", "debugMode", "debugFeaturesOff", "keybindings", "skills", "hosts",
+  "localEnabled", "plugins", "modelAliases", "hiddenModels", "knownModels", "defaultThinking", "defaultFastMode", "contextWindowCap", "contextWindowCapEnabled", "modelContextWindowCaps", "autoRetry", "hiddenUsageIndicators", "debugMode", "debugFeaturesOff", "keybindings", "skills", "hosts",
 ];

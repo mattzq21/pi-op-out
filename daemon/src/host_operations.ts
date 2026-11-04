@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { BUILD_ID, STORAGE_DIRECTORY } from './config';
 import { homeDir } from './environment';
 import { CANCELLED, QUEUED, type HostOperationName, type StorageLocks, type WorkerJob, type WorkerReply } from './host_operation_protocol';
+import { logFailure } from './util/sync';
 
 export type HostOperationFailure = 'not-started' | 'failed' | 'unknown';
 
@@ -158,7 +159,7 @@ class WorkerLane {
     if (!this.slots.delete(slot)) return;
     const job = slot.job;
     slot.job = undefined;
-    void slot.worker.terminate().catch(() => {});
+    void slot.worker.terminate().catch(logFailure('Could not stop a host operation thread'));
     if (job) {
       const failure = error instanceof HostOperationError ? error
         : Atomics.compareExchange(job.progress, 0, QUEUED, CANCELLED) === QUEUED
@@ -174,7 +175,7 @@ class WorkerLane {
   private retire(slot: Slot): void {
     this.slots.delete(slot);
     slot.worker.removeAllListeners();
-    void slot.worker.terminate().catch(() => {});
+    void slot.worker.terminate().catch(logFailure('Could not stop a host operation thread'));
   }
 
   abandonFresh(job: Job): void {

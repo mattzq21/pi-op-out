@@ -1,11 +1,13 @@
 import { createEffect, createMemo, createRoot, createSignal, getOwner, onCleanup, untrack, type Accessor } from "solid-js";
 import { z } from "zod";
 import { listen } from "../lib/platform";
-import { pluginError, pluginStatus, plugins, refreshPlugins, setPluginError } from ".";
+import { pluginError, pluginName, pluginStatus, plugins, refreshPlugins, setPluginError } from ".";
 import type { PluginConversation, PluginInstance } from "./types";
 import { flushPlugins, registerPluginReadiness } from "./lifecycle";
 
-interface RunningPlugin { id: string; name: string; host: string; revision: string | undefined; instance: PluginInstance; dispose: () => void }
+interface RunningPlugin { id: string; host: string; revision: string | undefined; instance: PluginInstance; dispose: () => void }
+
+export type PluginWorkspace = ReturnType<typeof createPluginWorkspace>;
 
 export function createPluginWorkspace(source: Accessor<PluginConversation>) {
   const [running, setRunning] = createSignal<RunningPlugin[]>([]);
@@ -93,14 +95,14 @@ export function createPluginWorkspace(source: Accessor<PluginConversation>) {
           if (stale()) return;
           next.push(createRoot(dispose => {
             try {
-              return { id: definition.id, name: definition.name, host, revision, dispose,
+              return { id: definition.id, host, revision, dispose,
                 instance: module.createPlugin({ source }) };
             } catch (reason) { dispose(); throw reason; }
           }, owner));
           setRunning([...next]);
         } catch (reason) {
           const affected = new Set([configurationHost, host]);
-          failures.push(...[...affected].map(target => ({ host: target, message: `${definition.name}: ${(reason instanceof Error ? reason.message : String(reason))}` })));
+          failures.push(...[...affected].map(target => ({ host: target, message: `${pluginName(host, definition.id)}: ${(reason instanceof Error ? reason.message : String(reason))}` })));
         }
       }
 

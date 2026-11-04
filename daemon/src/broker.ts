@@ -7,10 +7,12 @@ import { loadAppSettings } from './settings';
 import * as peers from './peers';
 import * as providerAuth from './provider_auth';
 import * as daemonRestart from './daemon_restart';
-import * as daemon from './daemon';
+import { localHost } from './local_host';
+import type { OrchestrationRequest } from './host/index';
 import * as sessionGroups from './session_groups';
 import type { App } from './app';
 import type { AgentAddress, SessionSummary } from './types';
+import { logFailure } from './util/sync';
 
 const UUID = /^[0-9a-f]{8}-?[0-9a-f]{4}-?[0-9a-f]{4}-?[0-9a-f]{4}-?[0-9a-f]{12}$/i;
 
@@ -40,11 +42,10 @@ export class BrokerRuntime {
   shutdown(): void { this.closing = true; }
 }
 
-export function claimAgent(broker: BrokerRuntime, hostId: string, sessionId: string): BusyAgent {
-  const key = `${hostId}\0${sessionId}`;
-  if (broker.busy.has(key)) throw new Error(`Agent ${hostId}/${sessionId} is already responding`);
-  broker.busy.add(key);
-  return new BusyAgent(key, broker.busy);
+export function claimAgent(broker: BrokerRuntime, sessionId: string): BusyAgent {
+  if (broker.busy.has(sessionId)) throw new Error(`Agent ${sessionId} is already responding`);
+  broker.busy.add(sessionId);
+  return new BusyAgent(sessionId, broker.busy);
 }
 
 export class BrokerBusyError extends Error {}
@@ -139,10 +140,7 @@ async function respondBrokerRequest(app: App, broker: BrokerRuntime, path: strin
     if (typeof value?.name !== 'string' || !isUuid(value.sessionId) || typeof value.cwd !== 'string') throw new Error('Invalid peer project request');
     return { cwd: await sessionGroups.peerProjectFolder(value.name, 'local:' + value.sessionId, value.cwd) };
   }
-  if (path === '/fast-models') {
-    if (typeof value?.hostId !== 'string') throw new Error('hostId is required');
-    return providerAuth.forOwner(app, 'fast-models', value.hostId, { action: 'fast_models' });
-  }
+  if (path === '/fast-models') return providerAuth.forOwner(app, 'fast-models', { action: 'fast_models' });
   if (path === '/agents') return brokerAgents(app, broker);
   throw new Error('Unknown session broker endpoint');
 }
@@ -153,7 +151,7 @@ async function brokerAgents(app: App, broker: BrokerRuntime): Promise<any> {
   const sessions = await peers.localSummaries(app, app.sessionIndex);
   return sessions.filter(session => session.auxiliaryParentId === undefined).map(session => ({
     hostId: session.hostId, sessionId: session.id, name: session.name, project: session.project, cwd: session.cwd,
-    active: busy.has(`${session.hostId}\0${session.id}`) || active.some(agent => agentIsActive(session, agent)),
+    active: (session.hostId === 'local' && busy.has(session.id)) || active.some(agent => agentIsActive(session, agent)),
   }));
 }
 
@@ -165,66 +163,61 @@ async function brokerOrchestration(app: App, broker: BrokerRuntime, value: any):
     return brokerInterruptionStatus(broker, value, result);
   }
   const [id, action] = orchestrationTarget(value);
-  if (action === 'branch_off') return brokerBranchOff(app, broker, value, host, id);
-  if (action === 'settle_first_message') return brokerSettleFirstMessage(app, broker, value, host, id);
+  if (action === 'branch_off') return brokerBranchOff(app, value, id);
+  if (action === 'settle_first_message') return brokerSettleFirstMessage(app, value, id);
   if (action === 'interrupt' || action === 'locate' || action === 'read' || action === 'watch' || action === 'preview' || action === 'rename') {
-    const settings = await loadAppSettings(app);
-    const connection = await daemon.connect(app, app.pi, broker, settings, host);
-    const result = await connection.request({ type: 'orchestration', action, sessionKey: id, deliveryId: value.deliveryId ?? null, stateKey: value.stateKey ?? null, waitMs: value.waitMs ?? null, name: value.name ?? null });
+    const result = await localHost(app).host.orchestrate({ action, sessionKey: id, deliveryId: value.deliveryId ?? null, stateKey: value.stateKey ?? null, waitMs: value.waitMs ?? null, name: value.name ?? null } as OrchestrationRequest);
     return brokerInterruptionStatus(broker, value, result);
   }
-  return brokerConversationOperation(app, broker, value, host, id, action);
+  return brokerConversationOperation(app, value, id, action);
 }
 
-async function brokerBranchOff(app: App, broker: BrokerRuntime, value: any, host: string, id: string): Promise<{ peerId: string }> {
-  const settings = await loadAppSettings(app);
-  const connection = await daemon.connect(app, app.pi, broker, settings, host);
-  const created = await connection.request({ type: 'orchestration', action: 'branch_off', sessionKey: id });
+async function brokerBranchOff(app: App, value: any, id: string): Promise<{ peerId: string }> {
+  const created = await localHost(app).host.orchestrate({ action: 'branch_off', sessionKey: id });
   const peerId = created?.sessionId;
   if (!isUuid(peerId) || typeof created?.sessionPath !== 'string') throw new Error('Branch-off returned no peer');
-  try { await brokerConversationOperation(app, broker, { ...value, discardOnFailure: true }, host, peerId, 'send'); }
+  try { await brokerConversationOperation(app, { ...value, discardOnFailure: true }, peerId, 'send'); }
   catch (error: any) {
     const reason = error?.message ?? String(error);
     let arrived: boolean;
-    try { arrived = (await brokerSettleFirstMessage(app, broker, { ...value, sessionPath: created.sessionPath }, host, peerId)).arrived; }
+    try { arrived = (await brokerSettleFirstMessage(app, { ...value, sessionPath: created.sessionPath }, peerId)).arrived; }
     catch (settle: any) { throw new Error(`The first message of peer ${peerId} failed, and Piop could not settle it: ${reason}; ${settle?.message ?? settle}`); }
     if (!arrived) throw new Error(`The peer was not created: ${reason}`);
   }
   return { peerId };
 }
 
-async function brokerSettleFirstMessage(app: App, broker: BrokerRuntime, value: any, host: string, id: string): Promise<{ arrived: boolean }> {
+async function brokerSettleFirstMessage(app: App, value: any, id: string): Promise<{ arrived: boolean }> {
   if (typeof value.sessionPath !== 'string') throw new Error('sessionPath is required');
   const settings = await loadAppSettings(app);
-  const connection = await daemon.connect(app, app.pi, broker, settings, host);
-  const location = await connection.request({ type: 'orchestration', action: 'locate', sessionKey: id }).catch(() => null);
-  const packet: any = { type: 'orchestration', action: 'settle_first_message', sessionKey: id, sessionPath: value.sessionPath, deliveryId: value.deliveryId ?? null, clientId: value.clientId ?? null };
+  const host = localHost(app).host;
+  const location = await host.orchestrate({ action: 'locate', sessionKey: id }).catch(error => { logFailure('Could not find chat ' + id + ' to settle its first message')(error); return null; });
+  const request: OrchestrationRequest = { action: 'settle_first_message', sessionKey: id, sessionPath: value.sessionPath, deliveryId: value.deliveryId ?? null, clientId: value.clientId ?? null };
   if (typeof location?.cwd === 'string' && typeof location?.sessionPath === 'string') {
-    packet.spec = launchSpec(buildPiCommand(settings, host, { kind: 'rpc', cwd: location.cwd, sessionPath: location.sessionPath }, connection.remotePort));
-    packet.cwd = location.cwd;
+    request.spec = launchSpec(buildPiCommand(settings, { kind: 'rpc', cwd: location.cwd, sessionPath: location.sessionPath }));
+    request.cwd = location.cwd;
   }
-  return { arrived: (await connection.request(packet))?.arrived === true };
+  return { arrived: (await host.orchestrate(request))?.arrived === true };
 }
 
-async function brokerConversationOperation(app: App, broker: BrokerRuntime, value: any, host: string, id: string, action: string): Promise<any> {
+async function brokerConversationOperation(app: App, value: any, id: string, action: string): Promise<any> {
   const settings = await loadAppSettings(app);
-  const connection = await daemon.connect(app, app.pi, broker, settings, host);
-  const location = await connection.request({ type: 'orchestration', action: 'locate', sessionKey: id });
+  const local = localHost(app).host;
+  const location = await local.orchestrate({ action: 'locate', sessionKey: id });
   if (location?.archived === true) throw new Error('This conversation is archived. Restore it before sending another task');
   const path = location?.sessionPath;
   if (typeof path !== 'string') throw new Error('Conversation lookup returned no saved path');
   const cwd = location?.cwd;
   if (typeof cwd !== 'string') throw new Error('Conversation lookup returned no working directory');
   const field = (key: string) => value[key] ?? null;
-  const packet: any = { type: 'orchestration', action, sessionKey: id, sessionPath: path,
+  const request: OrchestrationRequest = { action: action as 'send', sessionKey: id, sessionPath: path,
     sourceSessionId: field('sourceSessionId'), sourceHostId: field('sourceHostId'), sourceName: field('sourceName'), message: field('message'), wake: field('wake'), clientId: field('clientId'),
     deliveryId: field('deliveryId'), discardOnFailure: field('discardOnFailure'), deliverAs: field('deliverAs') };
   if (action === 'send') {
-    const command = buildPiCommand(settings, host, { kind: 'rpc', cwd, sessionPath: path }, connection.remotePort);
-    packet.spec = launchSpec(command);
-    packet.cwd = cwd;
+    request.spec = launchSpec(buildPiCommand(settings, { kind: 'rpc', cwd, sessionPath: path }));
+    request.cwd = cwd;
   }
-  return connection.request(packet);
+  return local.orchestrate(request);
 }
 
 function brokerInterruptionStatus(broker: BrokerRuntime, request: any, result: any): any {

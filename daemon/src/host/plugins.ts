@@ -9,8 +9,6 @@ const BUNDLED = Contributions.CATALOG.map(plugin => plugin.id);
 
 const ENABLED_BY_DEFAULT = Contributions.CATALOG.filter(plugin => plugin.enabledByDefault !== false).map(plugin => plugin.id);
 
-const KNOWN_WITHOUT_LIST = ['cost', 'review'];
-
 interface Configuration { enabled: string[]; previous: string[]; known: string[] }
 
 export function restartConfiguration(enabled: string[], previous: string[]): Configuration {
@@ -35,12 +33,11 @@ function configuration(): Configuration | null {
   const fail = (reason: string) => new Error('Could not read plugin configuration: ' + reason);
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw fail('invalid type: expected struct Configuration');
   for (const key of Object.keys(value)) if (!['enabled', 'previous', 'known'].includes(key)) throw fail('unknown field ' + key + ', expected enabled, previous or known');
-  for (const key of ['enabled', 'previous']) {
+  for (const key of ['enabled', 'previous', 'known']) {
     if (!(key in value)) throw fail('missing field ' + key);
     if (!Array.isArray(value[key]) || value[key].some((item: any) => typeof item !== 'string')) throw fail('invalid type for ' + key);
   }
-  if ('known' in value && (!Array.isArray(value.known) || value.known.some((item: any) => typeof item !== 'string'))) throw fail('invalid type for known');
-  return { enabled: value.enabled, previous: value.previous, known: 'known' in value ? value.known : KNOWN_WITHOUT_LIST };
+  return { enabled: value.enabled, previous: value.previous, known: value.known };
 }
 
 function withNewPlugins(config: Configuration): Configuration {
@@ -54,6 +51,16 @@ function withNewPlugins(config: Configuration): Configuration {
 export async function validateConfiguration(_executable: string, enabled: string[]): Promise<void> { validate(enabled); }
 
 interface State { enabled: string[]; revision: string; error: string | null }
+
+// What clients show about the plugins of this host. The daemon's catalog is the only place that names and describes them.
+export interface PluginStatus {
+  enabled: string[];
+  configured: string[];
+  revision: string;
+  error: string | null;
+  plugins: Array<{ id: string; name: string }>;
+  queuedCommands: string[];
+}
 
 export class PluginService {
   private state: State | null = null;
@@ -79,26 +86,29 @@ export class PluginService {
     } finally { release(); }
   }
 
-  async handle(packet: any): Promise<any> {
-    if (packet?.type === 'prepare_daemon_restart') return this.prepareRestart(packet);
+  async status(): Promise<PluginStatus> {
     const release = await this.lock.read();
     try {
       const state = this.state;
       if (!state) throw new Error('Plugins are unavailable');
-      if (packet?.type === 'plugin_status') return { enabled: [...state.enabled], configured: [...state.enabled], revision: state.revision, error: state.error };
-      throw new Error('Unknown plugin operation');
+      return {
+        enabled: [...state.enabled], configured: [...state.enabled], revision: state.revision, error: state.error,
+        plugins: Contributions.CATALOG.map(({ id, name }) => ({ id, name })),
+        queuedCommands: Contributions.commandPolicy().queued,
+      };
     } finally { release(); }
   }
 
-  private async prepareRestart(packet: any): Promise<any> {
-    const enabled = packet?.enabled;
+  // Checks the plugin setup that a restart is to use, against the setup that the client saw.
+  async prepareRestart(request: { enabled?: unknown; revision?: unknown }): Promise<{ enabled: string[]; previous: string[] }> {
+    const enabled = request?.enabled;
     validate(enabled);
     const release = await this.lock.write();
     try {
       const current = this.state;
       if (!current) throw new Error('Plugins are unavailable');
-      if (packet.revision !== current.revision) throw new Error('Plugin setup changed in another client. Reload the plugin setup before restarting.');
-      return { enabled, previous: [...current.enabled] };
+      if (request.revision !== current.revision) throw new Error('Plugin setup changed in another client. Reload the plugin setup before restarting.');
+      return { enabled: enabled as string[], previous: [...current.enabled] };
     } finally { release(); }
   }
 

@@ -1,7 +1,6 @@
-import { flag, jsonEqual, text } from './json';
+import { flag, text } from './json';
 import type { Guard } from './ownership';
 import { argument, expandHome, isUuid, parseLaunchSpec, specIdentity, type LaunchSpec, type SessionLaunch } from './protocol';
-import { lockGate } from './lock_gate';
 import type { Host } from './controller';
 import type { Session } from './session';
 
@@ -41,12 +40,12 @@ class Attachment {
     if (isUuid(key) && this.identity !== key) throw new Error('The saved path belongs to another conversation; resolve its identity again');
     this.path = argument(this.spec, '--session') ?? null;
     this.stored = packet;
-    host.attachments.set(this.runtime, packet);
+    host.views.setRequest(this.runtime, packet);
     this.assertCurrent();
   }
 
   private assertCurrent(): void {
-    if (this.host.attachments.get(this.runtime) !== this.stored) throw new Error('The conversation was closed while attaching');
+    if (!this.host.views.isRequest(this.runtime, this.stored)) throw new Error('The conversation was closed while attaching');
   }
 
   readonly(): any {
@@ -56,7 +55,7 @@ class Attachment {
   }
 
   private attachReadonly(): any {
-    this.host.readonlyMap.set(this.runtime, { id: this.identity, path: this.path });
+    this.host.views.showReadonly(this.runtime, { id: this.identity, path: this.path });
     this.host.pins.attached(this.runtime, this.identity);
     return { attached: true, owned: false };
   }
@@ -68,17 +67,16 @@ class Attachment {
   async open(guard: Guard, opened: { session?: Session }): Promise<any> {
     this.assertCurrent();
     if (!guard.owned) return this.attachReadonly();
-    const release = await lockGate(this.host.sessionGates, this.identity);
+    const release = await this.host.lockSession(this.identity);
     try {
       const session = await this.session(guard);
       opened.session = session;
       await session.setClientId(text(this.packet, 'clientId'));
       await session.execute({ type: 'get_state' });
       this.assertCurrent();
-      this.host.readonlyMap.delete(this.runtime);
       this.host.attachView(this.runtime, session, structuredClone(this.packet.presence ?? null));
       this.host.remember(this.runtime, session);
-      this.stored = this.host.attachments.get(this.runtime);
+      this.stored = this.host.views.request(this.runtime);
       this.host.reconcile(session);
       return { attached: session.views().length > 1 || session.submitted(), owned: true };
     } finally { release(); }
@@ -110,16 +108,16 @@ class Attachment {
   }
 
   private stillAttached(opened: Session | undefined): boolean {
-    const current = this.host.subscriptions.get(this.runtime);
-    return (current !== undefined && opened !== undefined && current === opened) || this.host.attachments.get(this.runtime) === this.stored;
+    const current = this.host.views.session(this.runtime);
+    return (current !== undefined && opened !== undefined && current === opened) || this.host.views.isRequest(this.runtime, this.stored);
   }
 
   async cleanup(opened: Session | undefined, owned: boolean, failed = false): Promise<void> {
-    if (failed && this.host.attachments.get(this.runtime) === this.stored) {
-      this.host.attachments.delete(this.runtime);
-      this.host.readonlyMap.delete(this.runtime);
-      if (opened && this.host.subscriptions.get(this.runtime) === opened) {
-        this.host.subscriptions.delete(this.runtime);
+    if (failed && this.host.views.isRequest(this.runtime, this.stored)) {
+      this.host.views.dropRequest(this.runtime);
+      this.host.views.clearReadonly(this.runtime);
+      if (opened && this.host.views.session(this.runtime) === opened) {
+        this.host.views.unsubscribe(this.runtime);
         opened.detachView(this.runtime);
       }
     }
@@ -131,7 +129,7 @@ class Attachment {
       }
     } else if (owned) {
       await this.host.ownership().releaseClient(this.identity, text(this.packet, 'clientId'), () =>
-        ![...this.host.attachments.values()].some(value => jsonEqual(value?.clientId, this.packet.clientId) && jsonEqual(value?.sessionKey, this.packet.sessionKey)));
+        !this.host.views.requestedBy(this.packet.clientId, this.packet.sessionKey));
     }
   }
 }

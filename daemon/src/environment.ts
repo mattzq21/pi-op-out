@@ -1,5 +1,6 @@
 import { realpathSync, statSync } from 'node:fs';
 import { delimiter, dirname, isAbsolute, join } from 'node:path';
+import { isMissing } from './util/sync';
 
 export function homeDir(): string {
   const home = process.env.HOME;
@@ -20,9 +21,7 @@ export function exists(path: string): boolean {
 }
 
 export function piExecutable(): string {
-  let home: string | undefined;
-  try { home = homeDir(); } catch {}
-  return piExecutableIn(home);
+  return piExecutableIn(process.env.HOME || undefined);
 }
 
 export function piExecutableIn(home: string | undefined): string {
@@ -46,7 +45,7 @@ export function nodeExecutable(): string {
       for (let directory = dirname(realpathSync(pi)); directory !== dirname(directory); directory = dirname(directory)) {
         candidates.push(join(directory, 'bin', 'node'));
       }
-    } catch {}
+    } catch (error) { if (!isMissing(error)) throw error; }
     const found = candidates.find(isFile);
     if (found) return found;
   }
@@ -65,9 +64,7 @@ export function pathWithNode(node: string): string | undefined {
 }
 
 export function codexExecutable(): string {
-  try {
-    const home = homeDir();
-    for (const candidate of [join(home, '.local/bin/codex'), join(home, '.npm-global/bin/codex'), join(home, '.bun/bin/codex')]) if (isFile(candidate)) return candidate;
-  } catch {}
+  const home = process.env.HOME;
+  if (home) for (const candidate of [join(home, '.local/bin/codex'), join(home, '.npm-global/bin/codex'), join(home, '.bun/bin/codex')]) if (isFile(candidate)) return candidate;
   return 'codex';
 }

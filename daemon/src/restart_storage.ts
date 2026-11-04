@@ -1,31 +1,10 @@
-import { mkdirSync, realpathSync } from 'node:fs';
-import { basename, dirname, join } from 'node:path';
-import { openDatabase, type Database } from './util/db';
-import { setPrivateFilePermissions } from './private_fs';
-
-function profile(directory: string): string {
-  const parent = dirname(directory);
-  if (parent !== directory && basename(parent) === 'daemons') return dirname(parent);
-  return directory;
-}
-
-function open(directory: string): Database {
-  const root = profile(directory);
-  mkdirSync(root, { recursive: true });
-  const file = join(root, 'sessions.sqlite');
-  const db = openDatabase(file, { nofollow: true, timeout: 10_000 });
-  try {
-    setPrivateFilePermissions(file);
-    db.exec('PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL;' +
-      ' CREATE TABLE IF NOT EXISTS daemon_restart_records (directory TEXT NOT NULL, name TEXT NOT NULL, record_json TEXT NOT NULL, PRIMARY KEY(directory, name));' +
-      ' CREATE TABLE IF NOT EXISTS daemon_restart_backups (directory TEXT NOT NULL, id TEXT NOT NULL, record_json TEXT, PRIMARY KEY(directory, id));');
-  } catch (error) { db.close(); throw error; }
-  return db;
-}
+import { realpathSync } from 'node:fs';
+import { basename, dirname } from 'node:path';
+import { connection, type Database } from './util/db';
+import { isMissing } from './util/sync';
 
 function use<T>(directory: string, operation: (db: Database) => T): T {
-  const db = open(directory);
-  try { return operation(db); } finally { db.close(); }
+  return operation(connection(directory));
 }
 
 export function saveBackup(directory: string, id: string, record: any): void {
@@ -49,7 +28,7 @@ export function backups(directory: string): string[] {
 function location(path: string): [string, string] {
   const parent = dirname(path);
   let directory = parent;
-  try { directory = realpathSync(parent); } catch {}
+  try { directory = realpathSync(parent); } catch (error) { if (!isMissing(error)) throw error; }
   const name = basename(path);
   if (!name) throw new Error('Invalid restart record name');
   return [directory, name];

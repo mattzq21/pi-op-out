@@ -21,7 +21,7 @@ function installFakePi(home: string): void {
 const fs = require('node:fs');
 const args = process.argv.slice(2);
 const at = flag => { const index = args.lastIndexOf(flag); return index < 0 ? undefined : args[index + 1]; };
-fs.appendFileSync(require('node:path').join(process.env.HOME, 'launches.jsonl'), JSON.stringify({ args, cwd: process.cwd(), pid: process.pid, env: Object.fromEntries(['HOME', 'PI_DESKTOP_HOST_ID', 'PIOP_STORAGE_DIRECTORY', 'PI_CODING_AGENT_DIR'].map(key => [key, process.env[key]])) }) + '\\n');
+fs.appendFileSync(require('node:path').join(process.env.HOME, 'launches.jsonl'), JSON.stringify({ args, cwd: process.cwd(), pid: process.pid, env: Object.fromEntries(['HOME', 'PIOP_STORAGE_DIRECTORY', 'PI_CODING_AGENT_DIR'].map(key => [key, process.env[key]])) }) + '\\n');
 const sessionFile = at('--session');
 const sessionId = sessionFile ? JSON.parse(fs.readFileSync(sessionFile, 'utf8').split('\\n')[0]).id : at('--session-id');
 setInterval(() => {}, 1 << 30);
@@ -52,7 +52,7 @@ test('Pi starts in the requested directory with each argument kept whole and the
   expect(launch.cwd).toBe(cwd);
   expect(launch.args.slice(1, 4)).toEqual([join(daemon.home, '.local/bin/pi'), '--mode', 'rpc']);
   expect(launch.args[launch.args.lastIndexOf('--session') + 1]).toBe(session.path);
-  expect(launch.env).toEqual({ HOME: daemon.home, PI_DESKTOP_HOST_ID: 'local', PIOP_STORAGE_DIRECTORY: '.piop', PI_CODING_AGENT_DIR: join(daemon.home, '.piop') });
+  expect(launch.env).toEqual({ HOME: daemon.home, PIOP_STORAGE_DIRECTORY: '.piop', PI_CODING_AGENT_DIR: join(daemon.home, '.piop') });
   await daemon.invoke('stop_pi', { runtimeId: 'launch-runtime' });
 });
 
@@ -148,15 +148,15 @@ test('bounded process output rejects too much output, keeps only the first 64 Ki
 
 const configuration = { settings: {}, autoCompaction: true, autoRetry: false };
 
-test('a shutdown packet gets no reply, later packets are ignored, and the host finishes once', async () => {
+test('once the host shuts down it refuses new calls, and a second shutdown waits for the first', async () => {
   const host = await startHost();
   try {
-    expect(await host.request({ type: 'configure', configuration })).toBeNull();
-    const unanswered = [{ type: 'shutdown' }, { type: 'configure', configuration }, { type: 'shutdown' }].map(packet => host.request(packet, 30_000).then(() => 'answered', (error: Error) => error.message));
-    await host.finished;
-    expect(await Promise.all(unanswered)).toEqual(['Host stopped', 'Host stopped', 'Host stopped']);
-    expect(host.events.filter(packet => packet.type === 'response')).toEqual([]);
+    expect(await host.call('applyConfiguration', configuration)).toBeNull();
+    const outcome = (call: Promise<unknown>) => call.then(() => 'done', (error: Error) => error.message);
+    const calls = [host.call('shutdown'), host.call('applyConfiguration', configuration), host.call('shutdown')].map(outcome);
+    expect(await Promise.all(calls)).toEqual(['done', 'The host is shutting down', 'done']);
   } finally { await host.stop(); }
+  await host.finished;
 }, 60_000);
 
 test('stopping the daemon warns connected clients before the connection closes', async () => {

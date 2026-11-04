@@ -4,13 +4,7 @@ const database = require('../session-database.cjs');
 const { randomBytes } = require('node:crypto');
 
 function withDatabase(root, operation) {
-  const db = database.open(root);
-
-  try {
-    db.exec('CREATE TABLE IF NOT EXISTS goal_ownership (directory TEXT NOT NULL, identity TEXT NOT NULL, record_json TEXT, PRIMARY KEY(directory, identity))');
-
-    return operation(db);
-  } finally { db.close(); }
+  return operation(database.connection(root));
 }
 
 function identity(directory) {
@@ -104,35 +98,25 @@ function allocate(root, parent) {
 
 function publishAllocation(root, directory) {
   const expected = identity(directory);
-  withDatabase(root, db => {
-    db.exec(`CREATE TABLE IF NOT EXISTS goal_text_files (directory TEXT NOT NULL, identity TEXT NOT NULL, names_json TEXT NOT NULL, PRIMARY KEY(directory, identity));
-      CREATE TABLE IF NOT EXISTS goal_text_contents (directory TEXT NOT NULL, identity TEXT NOT NULL, contents_json TEXT NOT NULL, PRIMARY KEY(directory, identity)); BEGIN IMMEDIATE;`);
+  withDatabase(root, db => database.transaction(db, 'IMMEDIATE', () => {
     db.prepare('INSERT INTO goal_ownership VALUES (?, ?, NULL)').run(directory, expected);
     db.prepare("INSERT INTO goal_text_files VALUES (?, ?, '[]')").run(directory, expected);
     db.prepare("INSERT INTO goal_text_contents VALUES (?, ?, '[]')").run(directory, expected);
     db.prepare("DELETE FROM goal_ownership WHERE directory=? AND identity=''").run(directory);
-    db.exec('COMMIT');
-  });
+  }));
 
   return expected;
 }
 
 function directories(root, sessionId) {
   return withDatabase(root, db => {
-    db.exec('BEGIN IMMEDIATE');
+    const rows = sessionId === undefined
+      ? db.prepare('SELECT DISTINCT directory FROM goal_ownership').all()
+      : db.prepare(`SELECT DISTINCT directory FROM goal_ownership
+        WHERE EXISTS (SELECT 1 FROM json_each(record_json, '$.owners') AS owner
+          WHERE json_extract(owner.value, '$.sessionId')=?)`).all(sessionId);
 
-    try {
-      const rows = sessionId === undefined
-        ? db.prepare('SELECT DISTINCT directory FROM goal_ownership').all()
-        : db.prepare(`SELECT DISTINCT directory FROM goal_ownership
-          WHERE EXISTS (SELECT 1 FROM json_each(record_json, '$.owners') AS owner
-            WHERE json_extract(owner.value, '$.sessionId')=?)`).all(sessionId);
-
-      const result = rows.map(row => row.directory);
-      db.exec('COMMIT');
-
-      return result;
-    } catch (error) { throw database.rollback(db, error); }
+    return rows.map(row => row.directory);
   });
 }
 

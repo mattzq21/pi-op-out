@@ -3,6 +3,16 @@ declare module '*?raw' {
   export default content;
 }
 
+declare module '*?pi-extension' {
+  const content: string;
+  export default content;
+}
+
+declare module '*?node-program' {
+  const content: string;
+  export default content;
+}
+
 declare module 'piop-agent-loader' {
   export function loadAgentDefinitions(request: { settings: any; initial: boolean; project?: { cwd: string; global: any } }): Promise<{ config: any; prompts: Record<string, string> }>;
   export function moveAgent(request: { settings: any; global: any; agent: string; revision: string; from: string | null; to: string | null }): Promise<{ revision: string; warnings: string[]; definitions: { config: any; prompts: Record<string, string> } }>;

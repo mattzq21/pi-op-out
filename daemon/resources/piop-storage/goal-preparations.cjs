@@ -2,13 +2,7 @@ const fs = require('node:fs');
 const database = require('../session-database.cjs');
 
 function withDatabase(root, operation) {
-  const db = database.open(root);
-
-  try {
-    db.exec('CREATE TABLE IF NOT EXISTS goal_preparations (directory TEXT NOT NULL, identity TEXT NOT NULL, record_json TEXT, PRIMARY KEY(directory, identity))');
-
-    return operation(db);
-  } finally { db.close(); }
+  return operation(database.connection(root));
 }
 
 function identity(directory) {

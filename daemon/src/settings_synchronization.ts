@@ -1,13 +1,10 @@
 import { createHash } from 'node:crypto';
-import { watch } from 'node:fs';
-import { dirname, join } from 'node:path';
-import { atomicWritePrivate, ensurePrivateDir } from './private_fs';
 import { serializeAppSettings, type AppSettings } from './settings_types';
 import { publish as publishSettings, read as readSettingsRecord, type Publication as SettingsPublication } from './settings_records';
 import { readRecord, writeRecord as writeStoredRecord } from './settings_sync_storage';
 import { settingsPath, storageLock, withExtension } from './settings_storage';
 import * as settings from './settings';
-import * as daemon from './daemon';
+import { updateSettings } from './local_host';
 import * as daemonEndpoint from './daemon_endpoint';
 import * as daemonRestart from './daemon_restart';
 import * as peers from './peers';
@@ -39,26 +36,6 @@ function owner(): string { return digest(daemonEndpoint.directory()); }
 
 function progressPath(path: string): string {
   return withExtension(path, `synchronization-${owner()}.json`);
-}
-
-function changesDirectory(path: string): string { return join(dirname(path), 'settings-changes'); }
-
-function markChanged(path: string, revision: number): void {
-  const directory = changesDirectory(path);
-  ensurePrivateDir(directory);
-  atomicWritePrivate(join(directory, owner()), String(revision));
-}
-
-function watchOtherDaemons(path: string, changed: () => void): void {
-  const directory = changesDirectory(path);
-  ensurePrivateDir(directory);
-  const own = owner();
-  const watcher = watch(directory, (_event, file) => {
-    if (typeof file !== 'string' || file === own || file.startsWith('.')) return;
-    changed();
-  });
-  watcher.on('error', error => console.error('Settings changes from other daemons are no longer watched:', error));
-  watcher.unref();
 }
 
 function nextRevision(revision: number): number {
@@ -132,8 +109,6 @@ export class Save {
     this.journal.publish({ ...this.publication });
     try { writeRecord(journalPath(this.path), this.journal); }
     catch (error: any) { warnings.push(`Settings were saved; durable revision publication will retry automatically: ${error.message ?? error}`); }
-    try { markChanged(this.path, this.publication.revision); }
-    catch (error: any) { warnings.push(`Settings were saved, but other daemons were not told about the change: ${error.message ?? error}`); }
     return result;
   }
 
@@ -223,14 +198,10 @@ interface Applied {
 
 function newApplied(): Applied { return { warnings: [] }; }
 
-async function applyCurrent(app: App, runtime: PiRuntime, journal: Journal, current: AppSettings, change: any): Promise<string[]> {
+async function applyCurrent(app: App, journal: Journal, current: AppSettings, change: any): Promise<string[]> {
   const warnings: string[] = [];
-  try { await daemon.invalidateChanged(app, runtime, current); }
-  catch (error: any) { warnings.push(`Saved settings invalidation is pending and will retry automatically: ${error.message ?? error}`); }
-  if (warnings.length === 0) {
-    try { await daemon.updateSettings(app, runtime, current); }
-    catch (error: any) { warnings.push(`Saved settings synchronization is pending and will retry automatically: ${error.message ?? error}`); }
-  }
+  try { await updateSettings(app, current); }
+  catch (error: any) { warnings.push(`Saved settings synchronization is pending and will retry automatically: ${error.message ?? error}`); }
   return warnings;
 }
 
@@ -243,7 +214,7 @@ async function retryLocked(app: App, runtime: PiRuntime, path: string, applied: 
   if (!needsRetry(journal, progress, applied, discoveredDigest)) return false;
   writeRecord(ownerPath, { ...progress, revision: journal.revision, synchronized: false, phase_revision: progress.revision === journal.revision ? progress.phase_revision : 0 });
   const change = currentChange(path, journal);
-  const warnings = await applyCurrent(app, runtime, journal, current, change);
+  const warnings = await applyCurrent(app, journal, current, change);
   change.warnings = warnings;
   change.synchronizationPending = warnings.length > 0;
   finishRetry(app, journal, ownerPath, change, warnings, applied, discoveredDigest);
@@ -339,9 +310,6 @@ export function start(app: App): void {
   onSkillsChanged(requestPass);
   watchSkills((error: any) => reportPhaseWarnings(app, [`Skill changes are not watched: ${error?.message ?? error}`]));
   onToolsChanged(requestPass);
-  void settingsPath().then(path => watchOtherDaemons(path, requestPass)).catch((error: any) => {
-    reportPhaseWarnings(app, [`Settings changes from other daemons are not watched: ${error?.message ?? error}`]);
-  });
   requestPass();
 }
 

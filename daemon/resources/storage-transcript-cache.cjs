@@ -10,23 +10,6 @@ function fingerprint(file) {
   return [info.dev, info.ino, info.size, info.mtimeNs, info.ctimeNs].join(':');
 }
 
-function open(root) {
-  const db = database.open(root);
-
-  try {
-    db.exec(`CREATE TABLE IF NOT EXISTS storage_transcript_summaries (session_path TEXT PRIMARY KEY, fingerprint TEXT NOT NULL, body BLOB NOT NULL);
-      CREATE TRIGGER IF NOT EXISTS storage_transcript_summaries_moved AFTER UPDATE OF session_path ON sessions
-      WHEN OLD.session_path IS NOT NEW.session_path BEGIN
-        DELETE FROM storage_transcript_summaries WHERE session_path=OLD.session_path;
-      END;
-      CREATE TRIGGER IF NOT EXISTS storage_transcript_summaries_deleted AFTER DELETE ON sessions BEGIN
-        DELETE FROM storage_transcript_summaries WHERE session_path=OLD.session_path;
-      END;`);
-
-    return db;
-  } catch (error) { db.close(); throw error; }
-}
-
 function saved(db, file, stamp) {
   const row = db.prepare('SELECT body FROM storage_transcript_summaries WHERE session_path=? AND fingerprint=?').get(file, stamp);
 
@@ -40,13 +23,10 @@ function saved(db, file, stamp) {
 }
 
 function save(db, file, stamp, value) {
-  db.exec('BEGIN IMMEDIATE');
-
-  try {
+  database.transaction(db, 'IMMEDIATE', () => {
     if (fingerprint(file) === stamp) db.prepare('INSERT INTO storage_transcript_summaries VALUES (?, ?, ?) ON CONFLICT(session_path) DO UPDATE SET fingerprint=excluded.fingerprint, body=excluded.body')
       .run(file, stamp, serialize({ version: 2, value }));
-    db.exec('COMMIT');
-  } catch (error) { throw database.rollback(db, error); }
+  });
 }
 
 async function read(db, file, inspect) {
@@ -63,10 +43,9 @@ async function read(db, file, inspect) {
 }
 
 async function withCache(root, operation) {
-  const db = open(root);
+  const db = database.connection(root);
 
-  try { return await operation((file, inspect) => read(db, file, inspect), db); }
-  finally { db.close(); }
+  return operation((file, inspect) => read(db, file, inspect), db);
 }
 
 module.exports = { withCache };

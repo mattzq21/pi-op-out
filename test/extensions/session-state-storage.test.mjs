@@ -17,7 +17,7 @@ while (!existsSync(join(sdk, 'package.json')) || JSON.parse(readFileSync(join(sd
   sdk = parent;
 }
 
-let installSessionStorage;
+let installSessionStorage, localTranscriptWrites;
 
 async function fixture(t) {
   const home = mkdtempSync(join(tmpdir(), 'piop-session-state-'));
@@ -32,15 +32,14 @@ async function fixture(t) {
     rmSync(home, { recursive: true, force: true });
   });
   const bundle = join(home, 'storage.mjs');
-  if (!installSessionStorage) await build({ entryPoints: ['daemon/resources/piop-storage/session-storage.mjs'], outfile: bundle, bundle: true, platform: 'node', format: 'esm', target: 'node22', logLevel: 'silent', plugins: [storageSchemaImports()], banner: { js: "import { createRequire } from 'node:module'; const require = createRequire(import.meta.url);" } });
-  installSessionStorage ??= (await import(pathToFileURL(bundle))).installSessionStorage;
+  if (!installSessionStorage) await build({ entryPoints: ['test/session-storage-entry.mjs'], outfile: bundle, bundle: true, platform: 'node', format: 'esm', target: 'node22', logLevel: 'silent', plugins: [storageSchemaImports()], banner: { js: "import { createRequire } from 'node:module'; const require = createRequire(import.meta.url);" } });
+  if (!installSessionStorage) ({ installSessionStorage, localTranscriptWrites } = await import(pathToFileURL(bundle)));
   const { SessionManager } = await import(pathToFileURL(join(sdk, 'dist/core/session-manager.js')));
-  installSessionStorage(SessionManager);
+  installSessionStorage(SessionManager, localTranscriptWrites());
   const id = database.reserve(root);
   const file = join(root, 'sessions', `2026-10-19T00-00-00-000Z_${id}.jsonl`);
-  const db = database.open(root);
+  const db = database.connection(root);
   database.bind(db, id, file);
-  db.close();
   writeFileSync(file, JSON.stringify({ type: 'session', version: 3, id, timestamp: '2026-10-19T00:00:00.000Z', cwd: home }) + '\n');
   return { home, root, id, file, SessionManager, manager: SessionManager.open(file), physical: () => readFileSync(file, 'utf8').trim().split('\n').map(JSON.parse) };
 }
@@ -65,19 +64,6 @@ test('a name line in a saved transcript stays out of Pi', async t => {
   const opened = f.SessionManager.open(f.file);
   assert.equal(opened.getSessionName(), undefined);
   assert.deepEqual(opened.getEntries().map(entry => [entry.type, entry.parentId]), [['message', null]]);
-});
-
-test('names that Pi saved before move to the session broker once', async t => {
-  const f = await fixture(t);
-  const db = database.open(f.root);
-  try {
-    db.prepare('INSERT INTO session_extension_state (session_id, state_key, entry_json) VALUES (?, ?, ?)').run(f.id, 'piop-session-name', JSON.stringify({ type: 'session_info', name: ' Saved name ' }));
-    db.exec('PRAGMA user_version=0');
-  } finally { db.close(); }
-  assert.equal(sessionNames.sessionName(f.file, f.id), 'Saved name');
-  const reopened = database.open(f.root);
-  try { assert.equal(reopened.prepare("SELECT count(*) AS n FROM session_extension_state WHERE state_key='piop-session-name'").get().n, 0); }
-  finally { reopened.close(); }
 });
 
 test('skill MCP requirements keep their current removal across navigation and restart', async t => {
@@ -112,10 +98,9 @@ test('settings keep only their current value across navigation and restart', asy
     assert.equal(states[0].data.enabled, false);
   }
   assert.deepEqual(reopened.getEntries(), f.manager.getEntries());
-  const db = database.open(f.root);
+  const db = database.connection(f.root);
   assert.equal(db.prepare('SELECT count(*) AS n FROM session_extension_state').get().n, 1);
   assert.equal(db.prepare('SELECT count(*) AS n FROM session_extension_records').get().n, 0);
-  db.close();
 });
 
 test('failed SQL state writes do not advance the branch or change the transcript', async t => {
@@ -123,9 +108,8 @@ test('failed SQL state writes do not advance the branch or change the transcript
   f.manager.appendCustomEntry('piop-fast-mode-state', { enabled: false });
   const before = readFileSync(f.file, 'utf8');
   const leaf = f.manager.getLeafId();
-  const db = database.open(f.root);
+  const db = database.connection(f.root);
   db.exec("CREATE TRIGGER reject_state BEFORE INSERT ON session_extension_state BEGIN SELECT RAISE(ABORT, 'Write failed'); END");
-  db.close();
   assert.throws(() => f.manager.appendCustomEntry('piop-fast-mode-state', { enabled: true }), /Write failed/);
   assert.equal(f.manager.getLeafId(), leaf);
   assert.equal(readFileSync(f.file, 'utf8'), before);
@@ -151,12 +135,11 @@ test('SQL state follows archive and restore and is removed with the session', as
   database.movePaths(f.root, [{ source: archived, destination: f.file }]);
   assert.deepEqual(f.SessionManager.open(f.file).getEntries(), saved);
   assert.equal(f.SessionManager.open(f.file).getLeafId(), selected);
-  const db = database.open(f.root);
+  const db = database.connection(f.root);
   db.prepare('DELETE FROM sessions WHERE session_id=?').run(f.id);
   assert.equal(db.prepare('SELECT count(*) AS n FROM session_extension_state').get().n, 0);
   assert.equal(db.prepare('SELECT count(*) AS n FROM session_branch_selection').get().n, 0);
   assert.equal(db.prepare('SELECT count(*) AS n FROM session_names').get().n, 0);
-  db.close();
 });
 
 test('fork publication copies current settings once, independent of the selected message', async t => {
@@ -179,9 +162,8 @@ test('fork publication copies current settings once, independent of the selected
   assert.deepEqual(fork.getBranch().filter(entry => entry.customType === 'piop-fast-mode-state').map(entry => entry.data), [{ enabled: false }]);
   f.manager.appendCustomEntry('piop-fast-mode-state', { enabled: true });
   assert.equal(f.SessionManager.open(target).getBranch().find(entry => entry.customType === 'piop-fast-mode-state').data.enabled, false);
-  const db = database.open(f.root);
+  const db = database.connection(f.root);
   assert.equal(db.prepare('SELECT count(*) AS n FROM session_extension_state WHERE session_id=?').get(id).n, 1);
-  db.close();
 });
 
 
@@ -198,13 +180,11 @@ test('a rename shows in the chat list, keeps the transcript, and a failed write 
   assert.equal((await f.SessionManager.listAll())[0].name, 'Current name');
   assert.equal(f.manager.getLeafId(), first);
   assert.equal(readFileSync(f.file, 'utf8'), body);
-  const db = database.open(f.root);
-  try {
-    db.exec("CREATE TRIGGER reject_name BEFORE UPDATE ON session_names BEGIN SELECT RAISE(ABORT, 'name write failed'); END;");
-    assert.throws(() => sessionNames.renameSession(f.root, f.id, 'Lost name'), /name write failed/);
-    assert.equal(sessionNames.sessionName(f.file, f.id), 'Current name');
-    db.exec('DROP TRIGGER reject_name');
-  } finally { db.close(); }
+  const db = database.connection(f.root);
+  db.exec("CREATE TRIGGER reject_name BEFORE UPDATE ON session_names BEGIN SELECT RAISE(ABORT, 'name write failed'); END;");
+  assert.throws(() => sessionNames.renameSession(f.root, f.id, 'Lost name'), /name write failed/);
+  assert.equal(sessionNames.sessionName(f.file, f.id), 'Current name');
+  db.exec('DROP TRIGGER reject_name');
 });
 
 test('model and thinking selections stay current across messages, navigation and restart', async t => {
@@ -228,16 +208,14 @@ test('model and thinking selections stay current across messages, navigation and
       assert.deepEqual(getBranchSelection(manager.getBranch(), () => undefined), { provider: 'provider', modelId: 'new-model' });
     }
   }
-  const db = database.open(f.root);
-  try {
-    assert.equal(db.prepare('SELECT count(*) AS n FROM session_extension_state WHERE session_id=?').get(f.id).n, 2);
-    assert.equal(db.prepare('SELECT count(*) AS n FROM session_extension_records WHERE session_id=?').get(f.id).n, 0);
-    db.exec("CREATE TRIGGER reject_selection BEFORE UPDATE ON session_extension_state BEGIN SELECT RAISE(ABORT, 'selection write failed'); END;");
-    assert.throws(() => f.manager.appendModelChange('provider', 'lost-model'), /selection write failed/);
-    assert.throws(() => f.manager.appendThinkingLevelChange('low'), /selection write failed/);
-    assert.deepEqual(f.manager.buildSessionContext().model, { provider: 'provider', modelId: 'new-model' });
-    assert.equal(f.manager.buildSessionContext().thinkingLevel, 'high');
-  } finally { db.close(); }
+  const db = database.connection(f.root);
+  assert.equal(db.prepare('SELECT count(*) AS n FROM session_extension_state WHERE session_id=?').get(f.id).n, 2);
+  assert.equal(db.prepare('SELECT count(*) AS n FROM session_extension_records WHERE session_id=?').get(f.id).n, 0);
+  db.exec("CREATE TRIGGER reject_selection BEFORE UPDATE ON session_extension_state BEGIN SELECT RAISE(ABORT, 'selection write failed'); END;");
+  assert.throws(() => f.manager.appendModelChange('provider', 'lost-model'), /selection write failed/);
+  assert.throws(() => f.manager.appendThinkingLevelChange('low'), /selection write failed/);
+  assert.deepEqual(f.manager.buildSessionContext().model, { provider: 'provider', modelId: 'new-model' });
+  assert.equal(f.manager.buildSessionContext().thinkingLevel, 'high');
 });
 
 test('current model settings preserve the history used for compaction', async t => {
@@ -277,14 +255,12 @@ test('the chat preview and reopened session follow a branch choice without a tra
   assert.equal((await summary()).preview, 'First answer');
   assert.equal((await summary()).messageCount, 2);
   assert.equal(f.SessionManager.open(f.file).getLeafId(), answer);
-  const db = database.open(f.root);
-  try {
-    db.exec("CREATE TRIGGER reject_branch BEFORE UPDATE ON session_branch_selection BEGIN SELECT RAISE(ABORT, 'branch write failed'); END;");
-    assert.throws(() => f.manager.branch(detour), /branch write failed/);
-    assert.equal(f.manager.getLeafId(), answer);
-    db.exec('DROP TRIGGER reject_branch');
-    assert.equal(db.prepare('SELECT count(*) AS n FROM session_branch_selection WHERE session_id=?').get(f.id).n, 1);
-  } finally { db.close(); }
+  const db = database.connection(f.root);
+  db.exec("CREATE TRIGGER reject_branch BEFORE UPDATE ON session_branch_selection BEGIN SELECT RAISE(ABORT, 'branch write failed'); END;");
+  assert.throws(() => f.manager.branch(detour), /branch write failed/);
+  assert.equal(f.manager.getLeafId(), answer);
+  db.exec('DROP TRIGGER reject_branch');
+  assert.equal(db.prepare('SELECT count(*) AS n FROM session_branch_selection WHERE session_id=?').get(f.id).n, 1);
   f.manager.branch(detour);
   assert.equal((await summary()).preview, 'Detour answer');
   f.manager.resetLeaf();
@@ -301,21 +277,19 @@ test('recovered queued-input chats keep their names in SQL when reopened', async
   const { createTranscript } = await import('../../daemon/resources/piop-storage/recovery.cjs');
   const id = database.reserve(f.root);
   const file = join(f.root, 'sessions', `recovered_${id}.jsonl`);
-  const db = database.open(f.root);
-  try {
-    database.bind(db, id, file);
-    db.exec("CREATE TRIGGER reject_recovered_name BEFORE INSERT ON session_names BEGIN SELECT RAISE(ABORT, 'recovery name write failed'); END;");
-    assert.throws(() => createTranscript(file, id, f.home, 'Important queued request'), /recovery name write failed/);
-    assert.equal(existsSync(file), false);
-    assert.equal(existsSync(join(f.root, 'sessions', '.queued-input-recovery-' + id)), false);
-    db.exec('DROP TRIGGER reject_recovered_name');
-    assert.equal(createTranscript(file, id, f.home, 'Important queued request'), true);
-    assert.equal(sessionNames.sessionName(file, id), 'Recovered queued input: Important queued request');
-    assert.equal(readFileSync(file, 'utf8').trim().split('\n').map(JSON.parse).some(entry => entry.type === 'session_info'), false);
-    sessionNames.renameSession(f.root, id, 'Renamed recovered chat');
-    assert.equal(createTranscript(file, id, f.home, 'Another request'), false);
-    assert.equal(sessionNames.sessionName(file, id), 'Renamed recovered chat');
-  } finally { db.close(); }
+  const db = database.connection(f.root);
+  database.bind(db, id, file);
+  db.exec("CREATE TRIGGER reject_recovered_name BEFORE INSERT ON session_names BEGIN SELECT RAISE(ABORT, 'recovery name write failed'); END;");
+  assert.throws(() => createTranscript(file, id, f.home, 'Important queued request'), /recovery name write failed/);
+  assert.equal(existsSync(file), false);
+  assert.equal(existsSync(join(f.root, 'sessions', '.queued-input-recovery-' + id)), false);
+  db.exec('DROP TRIGGER reject_recovered_name');
+  assert.equal(createTranscript(file, id, f.home, 'Important queued request'), true);
+  assert.equal(sessionNames.sessionName(file, id), 'Recovered queued input: Important queued request');
+  assert.equal(readFileSync(file, 'utf8').trim().split('\n').map(JSON.parse).some(entry => entry.type === 'session_info'), false);
+  sessionNames.renameSession(f.root, id, 'Renamed recovered chat');
+  assert.equal(createTranscript(file, id, f.home, 'Another request'), false);
+  assert.equal(sessionNames.sessionName(file, id), 'Renamed recovered chat');
 });
 
 test('a skill prompt that names its skill gives the session name one skill reference', async t => {

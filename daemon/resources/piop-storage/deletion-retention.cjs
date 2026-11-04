@@ -234,17 +234,8 @@ function cleanupRegistry(root, sessionIds) {
   if (!info) return [...sessionIds];
 
   if (!info.isFile()) throw new Error('Invalid session directory registry');
-  const { DatabaseSync } = require('node:sqlite');
-  const db = new DatabaseSync(database);
 
-  try {
-    require('../session-database.cjs').initialize(db);
-    db.exec('BEGIN IMMEDIATE');
-    const completed = removeRegistryRows(db, sessionIds);
-    db.exec('COMMIT');
-
-    return completed;
-  } finally { db.close(); }
+  return removeRegistryRows(require('../session-database.cjs').connection(root), sessionIds);
 }
 
 function removeRegistryRows(db, sessionIds) {

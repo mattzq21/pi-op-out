@@ -3,7 +3,7 @@ import type { Agent, AgentSnapshot, SessionAgentState } from "./contracts.ts";
 import { DEFAULT_PROMPT_PATH, DEFAULT_AGENT_PROMPT_PATH, resolvePromptPath } from "./prompts.ts";
 import type { Config } from "./index.ts";
 
-const development = process.env.PIOP_STORAGE_DIRECTORY === ".piop-dev";
+const development = process.env.PIOP_STORAGE_DIRECTORY?.startsWith(".piop-dev/") === true;
 
 export const fallbackConfig: Config = { agents: [{ name: "general", model: "", effort: "high", fastMode: development ? false : undefined, path_systemprompt: DEFAULT_PROMPT_PATH, path_agent_prompt: DEFAULT_AGENT_PROMPT_PATH, tools: ["read", "bash", "edit", "write", "grep", "find", "ls"], skills: [], mcpServers: {} }] };
 

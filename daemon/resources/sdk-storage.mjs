@@ -1,4 +1,4 @@
-import { DatabaseSync as StorageDatabase } from "node:sqlite";
+import * as storageDatabase from "./session-database.cjs";
 import * as storageFs from "node:fs";
 import * as storagePath from "node:path";
 import { homedir as storageHome } from "node:os";
@@ -6,7 +6,8 @@ import { randomUUID as storageRandomId } from "node:crypto";
 import { isDeepStrictEqual as sameStorageValue } from "node:util";
 import { pathToFileURL as storageFileUrl } from "node:url";
 
-import { storagePublish, storageTarget, requireStorageMethods } from "./storage-file.mjs";
+import { storagePublish, storageTarget } from "./storage-file.mjs";
+import { patchMethod, requireMethods } from "./pi-patch.cjs";
 
 const installedStorageClasses = new WeakSet();
 let modelFileStorage;
@@ -80,11 +81,9 @@ function publishAuthFile(path, body) {
 function installAuthStorage(FileAuthStorageBackend) {
   if (installedStorageClasses.has(FileAuthStorageBackend)) return;
   const prototype = FileAuthStorageBackend.prototype;
-  requireStorageMethods(prototype, ["withLock", "withLockAsync"]);
-  const withLock = prototype.withLock;
-  const withLockAsync = prototype.withLockAsync;
+  requireMethods(prototype, ["withLock", "withLockAsync"]);
 
-  prototype.withLock = function (operation) {
+  patchMethod(prototype, "withLock", withLock => function (operation) {
     return withLock.call(this, current => {
       const { result, next } = operation(current);
 
@@ -92,9 +91,9 @@ function installAuthStorage(FileAuthStorageBackend) {
 
       return { result };
     });
-  };
+  });
 
-  prototype.withLockAsync = function (operation, options) {
+  patchMethod(prototype, "withLockAsync", withLockAsync => function (operation, options) {
     return withLockAsync.call(this, async current => {
       const { result, next } = await operation(current);
 
@@ -104,21 +103,19 @@ function installAuthStorage(FileAuthStorageBackend) {
 
       return { result };
     }, options);
-  };
+  });
 
   installedStorageClasses.add(FileAuthStorageBackend);
 }
 
 export function installSettingsStorage(FileSettingsStorage) {
   if (installedStorageClasses.has(FileSettingsStorage)) return;
-  requireStorageMethods(FileSettingsStorage.prototype, ["withLock"]);
-
-  FileSettingsStorage.prototype.withLock = function (scope, operation) {
+  patchMethod(FileSettingsStorage.prototype, "withLock", () => function (scope, operation) {
     if (!["global", "project"].includes(scope)) throw new Error("Invalid settings scope");
     const path = scope === "global" ? this.globalSettingsPath : this.projectSettingsPath;
 
     return withStoredSettings(path, operation);
-  };
+  });
 
   installedStorageClasses.add(FileSettingsStorage);
 }
@@ -143,18 +140,18 @@ function nearestTrustDecision(data, path) {
 
 function installTrustStorage(ProjectTrustStore, normalize) {
   if (installedStorageClasses.has(ProjectTrustStore)) return;
-  requireStorageMethods(ProjectTrustStore.prototype, ["getEntry", "setMany"]);
+  requireMethods(ProjectTrustStore.prototype, ["getEntry", "setMany"]);
 
-  ProjectTrustStore.prototype.getEntry = function (cwd) {
+  patchMethod(ProjectTrustStore.prototype, "getEntry", () => function (cwd) {
     let entry;
     withStoredSettings(this.trustPath, body => {
       entry = nearestTrustDecision(trustDecisions(body), normalize(cwd));
     });
 
     return entry;
-  };
+  });
 
-  ProjectTrustStore.prototype.setMany = function (decisions) {
+  patchMethod(ProjectTrustStore.prototype, "setMany", () => function (decisions) {
     withStoredSettings(this.trustPath, body => {
       const data = trustDecisions(body);
 
@@ -168,33 +165,19 @@ function installTrustStorage(ProjectTrustStore, normalize) {
 
       return JSON.stringify(data);
     });
-  };
+  });
 
   installedStorageClasses.add(ProjectTrustStore);
 }
 
 function withStoredSettings(path, operation) {
-  const root = sessionReferenceRoot();
-  storageFs.mkdirSync(root, { recursive: true, mode: 0o700 });
-  const file = storagePath.join(root, "sessions.sqlite");
-  if (storageFs.lstatSync(file, { throwIfNoEntry: false })?.isSymbolicLink()) throw new Error("Database path must not be a symbolic link");
-  const database = new StorageDatabase(file);
+  const database = storageDatabase.connection(sessionReferenceRoot());
   const key = storagePath.resolve(path);
 
-  try {
-    storageFs.chmodSync(file, 0o600);
-    database.exec(`PRAGMA busy_timeout=10000; PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL;
-      CREATE TABLE IF NOT EXISTS sdk_settings (path TEXT PRIMARY KEY, body TEXT);
-      BEGIN IMMEDIATE;`);
-
-    if (!database.prepare("SELECT 1 FROM sdk_settings WHERE path=?").get(key)) {
-      database.prepare("INSERT INTO sdk_settings VALUES (?, ?)").run(key, null);
-    }
-
-    const current = database.prepare("SELECT body FROM sdk_settings WHERE path=?").get(key).body;
+  storageDatabase.transaction(database, "IMMEDIATE", () => {
+    const current = database.prepare("SELECT body FROM sdk_settings WHERE path=?").get(key)?.body;
     const next = operation(current ?? undefined);
 
-    if (next !== undefined) database.prepare("UPDATE sdk_settings SET body=? WHERE path=?").run(next, key);
-    database.exec("COMMIT");
-  } finally { database.close(); }
+    if (next !== undefined) database.prepare("INSERT INTO sdk_settings VALUES (?, ?) ON CONFLICT(path) DO UPDATE SET body=excluded.body").run(key, next);
+  });
 }

@@ -1,5 +1,6 @@
-import { type Accessor, createMemo } from "solid-js";
-import { createMemoFields, createSubscription, type StateUpdate } from "./solid";
+import { type Accessor, batch, createComputed, createMemo, onCleanup } from "solid-js";
+import { $RAW, createStore, reconcile, unwrap, type SetStoreFunction } from "solid-js/store";
+import type { StateUpdate } from "./solid";
 
 import type { AgentState, ChatMessage, Model, RpcEvent, SlashCommand } from "../types";
 import type { NativeTransport } from "./nativeTransport";
@@ -52,8 +53,6 @@ const stores = new WeakMap<Transport, SessionMemory>();
 
 const fifo = new Map<SessionMemory, number>();
 
-const measured = new WeakMap<object, number>();
-
 let activeToolPayloadTransfers = 0;
 
 const waitingToolPayloadTransfers: (() => void)[] = [];
@@ -71,22 +70,33 @@ async function transferToolPayload(transfer: () => Promise<void> | undefined) {
   }
 }
 
+// About how much memory a value takes. Store values change in place, so no size is kept between calls.
 function bytes<T>(value: T): number {
   const text = stringSchema.safeParse(value);
 
   if (text.success) return 24 + text.data.length * 2;
 
   if (!value || Object(value) !== value || value instanceof Function) return 16;
-  const object = Object(value);
-  const previous = measured.get(object);
-
-  if (previous !== undefined) return previous;
   let size = 64;
 
-  for (const [key, item] of Object.entries(object)) size += 32 + key.length * 2 + bytes(item);
-  measured.set(object, size);
+  for (const [key, item] of Object.entries(Object(value))) size += 32 + key.length * 2 + bytes(item);
 
   return size;
+}
+
+// True for a value that is already in a session store, so it is unchanged since it was measured and decorated.
+const stored = (value: object) => (value as { [$RAW]?: object })[$RAW] !== undefined;
+
+// Copies the parts of a value that come from outside the store. The store changes its objects in place,
+// so it must not share them with event payloads or other owners. Parts already in the store stay as they are.
+function adopt<T>(value: T): T {
+  if (!value || typeof value !== "object" || stored(value)) return value;
+
+  if (Array.isArray(value)) return value.map(adopt) as T;
+
+  if (Object.getPrototypeOf(value) !== Object.prototype) return value;
+
+  return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, adopt(item)])) as T;
 }
 
 function enforceCacheLimit() {
@@ -102,8 +112,9 @@ function enforceCacheLimit() {
   }
 }
 
+// A fresh copy: the store changes its objects in place, so they must not be shared.
 function initialSnapshot(state: AgentState): CachedSession {
-  return { state, messages: [], models: [], commands: [], thinkingLevels: ["off"], resources: {} };
+  return { state: structuredClone(unwrap(state)), messages: [], models: [], commands: [], thinkingLevels: ["off"], resources: {} };
 }
 
 function stripToolArguments(message: ChatMessage): ChatMessage {
@@ -115,9 +126,14 @@ function stripToolArguments(message: ChatMessage): ChatMessage {
     ? { type: "toolCall", id: part.id, name: part.name, arguments: {} } : part) };
 }
 
+// The client copy of one conversation. It is a Solid store: a change notifies only what reads the changed field or message.
 export class SessionMemory {
-  private value: CachedSession;
-  private listeners = new Set<() => void>();
+  readonly data: CachedSession;
+  private setData: SetStoreFunction<CachedSession>;
+  private observers = 0;
+  // The size of each stored message object, which stays the same object while the store changes it in place.
+  private messageSizes = new WeakMap<object, number>();
+  private messagesSize = 0;
   private loaded = new Set<string>();
   private loading = new Map<string, Promise<void>>();
   private workLoading = new Map<string, Promise<void>>();
@@ -129,17 +145,45 @@ export class SessionMemory {
   private reserved = 0;
   private batching = 0;
   private resourceReleases = new Map<string, () => void>();
-  private decorated = new WeakMap<ChatMessage, ChatMessage>();
   revision?: string;
   constructor(private transport: Transport, private initialState: AgentState) {
-    this.value = initialSnapshot(initialState);
+    [this.data, this.setData] = createStore(initialSnapshot(initialState));
   }
-  getSnapshot = () => this.value;
-  subscribe = (listener: () => void) => { this.listeners.add(listener);
+  // Marks the conversation as shown, so the cache limit does not evict it.
+  observe() { this.observers++;
 
-  return () => { this.listeners.delete(listener); enforceCacheLimit(); }; };
-  observed() { return this.listeners.size > 0; }
-  private notify() { for (const listener of this.listeners) listener(); }
+  return () => { this.observers--; enforceCacheLimit(); }; }
+  observed() { return this.observers > 0; }
+
+  private reset() {
+    this.messageSizes = new WeakMap();
+    this.messagesSize = 0;
+    this.setData(reconcile(initialSnapshot(this.initialState)));
+  }
+
+  // Changes the messages to match the next list. Messages with the same ID keep their store object, and only their changed fields notify.
+  private applyMessages(next: ChatMessage[]) {
+    const adopted = next.map(adopt);
+    const sizes = adopted.map(message => stored(message) ? undefined : bytes(message));
+    this.setData("messages", reconcile(adopted, { key: "id" }));
+    const saved = unwrap(this.data.messages);
+    let total = 0;
+
+    saved.forEach((message, index) => {
+      const measured = sizes[index];
+      const size = measured ?? this.messageSizes.get(message) ?? bytes(message);
+
+      if (measured !== undefined || !this.messageSizes.has(message)) this.messageSizes.set(message, size);
+      total += size;
+    });
+    this.messagesSize = total;
+  }
+
+  private size() {
+    const { messages: _messages, ...rest } = unwrap(this.data);
+
+    return bytes(rest) + this.messagesSize + this.reserved;
+  }
 
   evict() {
     this.generation++;
@@ -149,15 +193,14 @@ export class SessionMemory {
     this.loading.clear();
     this.omitted = 0;
     this.reserved = 0;
-    this.value = initialSnapshot(this.initialState);
+    this.reset();
 
     for (const release of this.resourceReleases.values()) release();
     this.resourceReleases.clear();
-    this.notify();
   }
 
   retainResource(key: string, value: SessionResource, release: () => void) {
-    this.value = { ...this.value, resources: { ...this.value.resources, [key]: value } };
+    this.setData("resources", key, adopt(value));
     this.resourceReleases.set(key, release);
     this.commit();
   }
@@ -165,12 +208,12 @@ export class SessionMemory {
   private dropResources() {
     for (const release of this.resourceReleases.values()) release();
     this.resourceReleases.clear();
-    this.value = { ...this.value, resources: {} };
+    this.setData("resources", reconcile({}));
   }
 
   private trimToolPayloads(size: number) {
     if (size <= SESSION_LIMIT || !this.loaded.size) return size;
-    const messages = [...this.value.messages];
+    const messages = [...this.data.messages];
     const positions = new Map<string, number[]>();
     messages.forEach((message, index) => {
       const id = message.deferredToolPayload;
@@ -192,20 +235,20 @@ export class SessionMemory {
       }
     }
 
-    this.value = { ...this.value, messages };
+    this.applyMessages(messages);
 
-    return bytes(this.value) + this.reserved;
+    return this.size();
   }
 
   private trim() {
-    let size = this.trimToolPayloads(bytes(this.value) + this.reserved);
+    let size = this.trimToolPayloads(this.size());
 
     if (size <= SESSION_LIMIT) return size;
     this.dropResources();
-    size = bytes(this.value) + this.reserved;
+    size = this.size();
 
     if (size <= SESSION_LIMIT) return size;
-    const messages = this.value.messages.filter((message) => message.id !== "client-memory-limit");
+    const messages = this.data.messages.filter((message) => message.id !== "client-memory-limit");
     let removed = 0;
 
     while (removed < messages.length && size > SESSION_LIMIT - 1024) {
@@ -215,34 +258,28 @@ export class SessionMemory {
 
     this.omitted += removed;
     const notice: ChatMessage = { id: "client-memory-limit", role: "system", content: `${this.omitted} older messages were removed from this client's memory. The full conversation remains on the host.` };
-    this.value = { ...this.value, messages: [notice, ...messages.slice(removed)] };
-    const remaining = new Set(this.value.messages.map((message) => message.deferredToolPayload));
+    this.applyMessages([notice, ...messages.slice(removed)]);
+    const remaining = new Set(this.data.messages.map((message) => message.deferredToolPayload));
 
     for (const id of this.loaded) if (!remaining.has(id)) this.loaded.delete(id);
-    size = bytes(this.value) + this.reserved;
+    size = this.size();
 
-    if (size > SESSION_LIMIT) { this.value = initialSnapshot(this.initialState); this.revision = undefined; }
+    if (size > SESSION_LIMIT) { this.reset(); this.revision = undefined; }
 
-    return bytes(this.value) + this.reserved;
+    return this.size();
   }
 
   private commit() {
     if (this.batching) return;
     fifo.set(this, this.trim());
     enforceCacheLimit();
-    this.notify();
   }
 
+  // Stored messages were decorated when they entered the store.
   private decorate(message: ChatMessage): ChatMessage {
-    if (message.role !== "tool" && !Array.isArray(message.content)) return message;
-    const cached = this.decorated.get(message);
+    if (stored(message) || (message.role !== "tool" && !Array.isArray(message.content))) return message;
 
-    if (cached) return cached;
-    const result = this.decorateMessage(message);
-    this.decorated.set(message, result);
-    this.decorated.set(result, result);
-
-    return result;
+    return this.decorateMessage(message);
   }
 
   private decorateMessage(message: ChatMessage): ChatMessage {
@@ -266,16 +303,18 @@ export class SessionMemory {
   batch(update: () => void) {
     this.batching++;
 
-    try { update(); } finally { this.batching--; this.commit(); }
+    try { batch(update); } finally { this.batching--; this.commit(); }
   }
 
   set<K extends keyof CachedSession>(key: K, update: StateUpdate<CachedSession[K]>) {
-    const next = update instanceof Function ? update(this.value[key]) : update;
+    const current = this.data[key];
+    const next = update instanceof Function ? update(current) : update;
 
-    if (Object.is(next, this.value[key])) return;
-    this.value = { ...this.value, [key]: next };
+    if (Object.is(next, current)) return;
 
-    if (key === "messages") this.value = { ...this.value, messages: this.value.messages.map(message => this.decorate(message)) };
+    if (key === "messages") this.applyMessages((next as ChatMessage[]).map(message => this.decorate(message)));
+    else if (key === "state") this.setData("state", reconcile(adopt(next as AgentState), { key: "id" }));
+    else this.setData(key, adopt(next) as never);
     this.commit();
   }
 
@@ -305,7 +344,7 @@ export class SessionMemory {
   }
 
   loadOlder(through?: string) {
-    const older = olderHistory(this.value.messages);
+    const older = olderHistory(this.data.messages);
 
     if (!older) return Promise.resolve();
 
@@ -322,7 +361,7 @@ export class SessionMemory {
   }
 
   loadOutline(before: string, onError: (reason: unknown) => void) {
-    if (outlineBefore(this.value.outline, before) || this.outlineLoading?.before === before) return;
+    if (outlineBefore(this.data.outline, before) || this.outlineLoading?.before === before) return;
     this.outlineLoading?.stop();
     const generation = this.generation; let stopped = false; let stopRetry: (() => void) | undefined;
     const loading = { before, stop: () => { stopped = true; stopRetry?.(); } };
@@ -340,7 +379,7 @@ export class SessionMemory {
     void load();
   }
 
-  private toolPayloadVersion(id: string) { return this.value.messages.find((message) => message.deferredToolPayload === id)?.toolPayloadVersion; }
+  private toolPayloadVersion(id: string) { return this.data.messages.find((message) => message.deferredToolPayload === id)?.toolPayloadVersion; }
 
   private async fetchToolPayload(id: string, generation: number) {
     const version = this.toolPayloadVersion(id);
@@ -372,11 +411,11 @@ export class SessionMemory {
     this.loaded.delete(id); this.loaded.add(id);
     this.set("messages", (messages) => messages.map((message) => message.deferredToolPayload === id ? { ...message, ...output, toolPayloadLoaded: true, toolPayloadEvicted: false, loadedToolPayloadVersion: version } : message));
 
-    if (!this.value.messages.some((message) => message.deferredToolPayload === id && message.toolPayloadLoaded)) throw new Error("This tool payload could not fit in the client memory limit.");
+    if (!this.data.messages.some((message) => message.deferredToolPayload === id && message.toolPayloadLoaded)) throw new Error("This tool payload could not fit in the client memory limit.");
   }
 
   private loadToolPayload(id: string) {
-    if (this.value.messages.some((message) => message.deferredToolPayload === id && message.toolPayloadLoaded && message.loadedToolPayloadVersion === message.toolPayloadVersion)) return Promise.resolve();
+    if (this.data.messages.some((message) => message.deferredToolPayload === id && message.toolPayloadLoaded && message.loadedToolPayloadVersion === message.toolPayloadVersion)) return Promise.resolve();
     const previous = this.loading.get(id);
 
     if (previous) return previous;
@@ -406,9 +445,9 @@ export function loadHistoryOutline(transport: Transport, before: string, onError
 }
 
 export function useHistoryOutline(transport: Accessor<Transport | undefined>, before: Accessor<string | undefined>): Accessor<HistoryOutline> {
-  const outline = createSubscription(() => { const current = transport(); return current ? memoryFor(current).subscribe : () => () => undefined; }, () => { const current = transport(); return () => current ? memoryFor(current).getSnapshot().outline : undefined; });
+  return createMemo(() => { const last = before(); const current = transport();
 
-  return createMemo(() => { const last = before(); return last ? outlineBefore(outline(), last) ?? [] : []; });
+  return last && current ? outlineBefore(memoryFor(current).data.outline, last) ?? [] : []; });
 }
 
 export function forgetSession(transport: Transport) {
@@ -436,10 +475,10 @@ export function discardSubmittedMessage(transport: Transport, id: string) {
 }
 
 export function moveSubmittedMessage(source: Transport, destination: Transport, id: string) {
-  const message = memoryFor(source).getSnapshot().messages.find(item => item.submissionId === id);
+  const message = memoryFor(source).data.messages.find(item => item.submissionId === id);
 
   if (!message) return;
-  retainSubmittedMessage(destination, message);
+  retainSubmittedMessage(destination, { ...unwrap(message) });
   discardSubmittedMessage(source, id);
 }
 
@@ -449,9 +488,8 @@ export function retainSessionResource(transport: Transport, key: string, value: 
 
 export function useSessionMemory(transport: Accessor<Transport>, initialState: Accessor<AgentState>) {
   const memory = createMemo(() => (memoryFor(transport(), initialState())));
-  const subscription = createSubscription(() => memory().subscribe, () => memory().getSnapshot);
-  const fields = createMemoFields(subscription);
-  const snapshot = () => fields;
+  createComputed(() => onCleanup(memory().observe()));
+  const snapshot = () => memory().data;
   const setState = (update: StateUpdate<AgentState>) => memory().set("state", update);
   const setMessages = (update: StateUpdate<ChatMessage[]>) => memory().set("messages", update);
   const setModels = (update: StateUpdate<Model[]>) => memory().set("models", update);

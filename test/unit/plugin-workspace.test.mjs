@@ -7,11 +7,13 @@ import { plugins, refreshPlugins } from '../../clients/ui/plugins/index.ts';
 import { createPluginWorkspace } from '../../clients/ui/plugins/workspace.tsx';
 import { waitForClientPlugins } from '../../clients/ui/plugins/lifecycle.ts';
 
+const CATALOG = [{ id: 'cost', name: 'Cost limit' }, { id: 'review', name: 'Review' }, { id: 'web-search', name: 'Web search' }];
+
 test('command plugins start, and unload when disabled', async () => {
   const dom = installDom();
   const loaders = plugins.map(plugin => plugin.load);
   const created = [], disposed = [];
-  let status = { enabled: ['cost', 'review'], configured: ['cost', 'review'], revision: 'commands-1', error: null };
+  let status = { enabled: ['cost', 'review'], configured: ['cost', 'review'], revision: 'commands-1', error: null, plugins: CATALOG, queuedCommands: ['compact'] };
   let view;
   mockIPC(command => {
     if (command === 'plugin_status') return status;
@@ -30,7 +32,7 @@ test('command plugins start, and unload when disabled', async () => {
     });
     await retryUntil(() => assert.deepEqual(created, ['cost', 'review']));
     await waitForClientPlugins('local');
-    status = { enabled: [], configured: [], revision: 'commands-2', error: null };
+    status = { enabled: [], configured: [], revision: 'commands-2', error: null, plugins: CATALOG, queuedCommands: ['compact'] };
     await act(() => refreshPlugins('local'));
     await waitForClientPlugins('local');
     assert.deepEqual(disposed, ['cost', 'review']);

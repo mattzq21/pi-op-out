@@ -16,7 +16,7 @@ import { refusalText } from './pi_rejection';
 import { detachOwner } from './lifecycle';
 import { ensurePrivateDir, setPrivateFilePermissions } from './private_fs';
 import { acceptUpgrade, reject, type WebSocketConnection } from './ws_server';
-import { errorText, withTimeout } from './util/sync';
+import { errorText, withTimeout, logFailure } from './util/sync';
 import type { App } from './app';
 
 const MAX_MESSAGE = MAX_REQUEST_BYTES;
@@ -217,7 +217,7 @@ async function connection(shared: Shared, ws: WebSocketConnection, token: string
 }
 
 async function sendError(ws: WebSocketConnection, error: string): Promise<void> {
-  try { await withTimeout(ws.sendText(JSON.stringify({ type: 'error', error })), 2000, 'Send timeout'); } catch {}
+  await withTimeout(ws.sendText(JSON.stringify({ type: 'error', error })), 2000, 'Send timeout').catch(logFailure('Could not send an error to a client'));
 }
 
 async function controlConnection(app: App, ws: WebSocketConnection): Promise<void> {
@@ -344,8 +344,8 @@ async function serveClient(shared: Shared, ws: WebSocketConnection, peer: boolea
   } finally {
     clearInterval(heartbeat);
     shared.subscribers.delete(subscriber);
-    await withTimeout(chain, 2000, 'Send timeout').catch(() => undefined);
-    await withTimeout(ws.close(), 2000, 'Close timeout').catch(() => undefined);
+    await withTimeout(chain, 2000, 'Send timeout').catch(logFailure('Could not send the last events to a client'));
+    await withTimeout(ws.close(), 2000, 'Close timeout').catch(logFailure('Could not close a client connection'));
     ws.terminate();
     await detachOwner(app, owner, false);
     const remaining = [...pending];

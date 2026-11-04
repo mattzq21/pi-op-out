@@ -16,10 +16,9 @@ function chat(status: 'active' | null, pending: any[] = [], extra: { held?: bool
   const sessionId = 'chat-' + ++chats;
   const file = join(root, 'sessions', sessionId + '.jsonl');
   writeFileSync(file, '');
-  const db = database.open(root);
+  const db = database.connection(root);
   db.prepare('INSERT INTO sessions VALUES (?, ?)').run(sessionId, file);
   if (extra.waiting) db.prepare("INSERT INTO session_extension_state VALUES (?, 'piop-input-hold', ?)").run(sessionId, JSON.stringify({ type: 'custom', customType: 'piop-input-hold', data: { held: true } }));
-  db.close();
   if (status) goals.write(file, sessionId, { id: 'goal-' + sessionId, sessionId, objective: 'Build', status });
   const commands: any[] = [];
   const statuses: any[] = [];

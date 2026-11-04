@@ -6,27 +6,27 @@ import { join } from 'node:path';
 import { STORAGE_DIRECTORY } from './config';
 import { homeDir, isDirectory } from './environment';
 import { claimAgent, type BrokerRuntime, type BusyAgent } from './broker';
-import * as daemon from './daemon';
-import { archivedSessionFile, desktopSessionFile } from './archives';
-import { buildPiCommand, remoteHost, sessionIdentity } from './pi_launch';
+import { localHost, spec, type LocalHost } from './local_host';
+import { locateSessionFile } from './archives';
+import { buildPiCommand, sessionIdentity } from './pi_launch';
 import { validateSessionWorkingDirectory } from './session_index';
 import { loadAppSettings } from './settings';
 import * as storageTransactions from './storage_transactions';
 import * as Registry from './session_registry';
-import { requireLocal } from './host_connection';
-import { Mutex } from './util/sync';
+import { Mutex, observedElsewhere } from './util/sync';
 import type { AgentAddress, BlankSessionCleanup } from './types';
 import type { AppSettings } from './settings_types';
+import type { AttachRequest } from './host/index';
 import type { App } from './app';
 
-export interface StartPiOptions { runtimeId: string; baseBranch?: string; cwd?: string | null; sessionPath?: string | null; sessionId?: string | null; forkPath?: string | null; hostId?: string | null; presence?: any; clientId: string }
+export interface StartPiOptions { runtimeId: string; baseBranch?: string; cwd?: string | null; sessionPath?: string | null; sessionId?: string | null; forkPath?: string | null; presence?: any; clientId: string }
 
-interface PiProcess { daemon: daemon.Daemon; windowLabel: string; blankCleanup: BlankSessionCleanup; attached: Promise<void> }
+interface PiProcess { connection: LocalHost; windowLabel: string; blankCleanup: BlankSessionCleanup; attached: Promise<void> }
 
 interface PendingStart { owner: string; cancelled: boolean }
 
 export class PiRuntime {
-  connections = new daemon.DaemonRegistry();
+  host: LocalHost | undefined;
   processes = new Map<string, PiProcess>();
   pendingStarts = new Map<string, Set<PendingStart>>();
   lifecycle = new Mutex();
@@ -35,8 +35,8 @@ export class PiRuntime {
 
   containsProcess(id: string): boolean { return this.processes.has(id); }
 
-  disconnectDaemon(connection: daemon.Daemon): string[] {
-    const ids = [...this.processes].filter(([, process]) => process.daemon === connection).map(([id]) => id);
+  disconnectHost(host: LocalHost): string[] {
+    const ids = [...this.processes].filter(([, process]) => process.connection === host).map(([id]) => id);
     for (const id of ids) this.processes.delete(id);
     return ids;
   }
@@ -48,15 +48,14 @@ export class PiRuntime {
     }
   }
 
-  disconnectProcess(id: string, connection: daemon.Daemon): boolean {
-    if (this.processes.get(id)?.daemon !== connection) return false;
+  disconnectProcess(id: string, host: LocalHost): boolean {
+    if (this.processes.get(id)?.connection !== host) return false;
     this.processes.delete(id);
     return true;
   }
 }
 
-export async function reserveSessionId(settings: AppSettings, hostId: string): Promise<string> {
-  requireLocal(hostId);
+export function reserveSessionId(): string {
   return Registry.reserve(join(homeDir(), STORAGE_DIRECTORY));
 }
 
@@ -80,28 +79,26 @@ export function ensureRuntimeOwner(runtime: PiRuntime, runtimeId: string, owner:
   if (process && process.windowLabel !== owner) throw new Error('Runtime belongs to another connection');
 }
 
-async function sessionLaunchSettings(app: App, hostId: string, cwd: string | null | undefined, readOnly: boolean): Promise<AppSettings> {
+async function sessionLaunchSettings(app: App, cwd: string | null | undefined, readOnly: boolean): Promise<AppSettings> {
   const settings = await loadAppSettings(app);
-  if (hostId === 'local' && !settings.localEnabled) throw new Error('Local host is disabled. Enable it in Settings → Hosts.');
-  if (!readOnly) await validateSessionWorkingDirectory(settings, hostId, cwd);
+  if (!settings.localEnabled) throw new Error('Local host is disabled. Enable it in Settings → Hosts.');
+  if (!readOnly) validateSessionWorkingDirectory(cwd);
   return settings;
 }
 
-interface PreparedStart { connection: daemon.Daemon; process: PiProcess; settle: { resolve(): void; reject(error: unknown): void }; packet: any; claim: BusyAgent | undefined; hostId: string; sessionId: string | undefined; sessionPath: string | undefined; reserved: boolean }
+interface PreparedStart { connection: LocalHost; process: PiProcess; settle: { resolve(): void; reject(error: unknown): void }; request: AttachRequest; claim: BusyAgent | undefined; sessionId: string | undefined; sessionPath: string | undefined; reserved: boolean }
 
 async function preparePiStart(app: App, owner: string, runtime: PiRuntime, broker: BrokerRuntime, options: StartPiOptions, pending: PendingStart): Promise<PreparedStart | { existing: Promise<void> }> {
   const assertNotCancelled = () => { if (pending.cancelled) throw new Error('Pi start was cancelled'); };
   assertNotCancelled();
   ensureRuntimeOwner(runtime, options.runtimeId, owner);
-  const hostId = options.hostId ?? 'local';
-  if (hostId !== 'local') throw new Error('Remote workers must be managed through their Piop daemon');
   const readOnly = options.presence?.readOnly === true;
-  const settings = await sessionLaunchSettings(app, hostId, options.cwd, readOnly);
+  const settings = await sessionLaunchSettings(app, options.cwd, readOnly);
   assertNotCancelled();
   const existing = runtime.processes.get(options.runtimeId);
-  if (existing && existing.daemon.alive && existing.daemon.matchesConnection(settings, hostId)) return { existing: existing.attached };
+  if (existing && existing.connection.alive) return { existing: existing.attached };
   const reserved = options.sessionId == null && options.sessionPath == null;
-  const sessionId = reserved ? await reserveSessionId(settings, hostId) : options.sessionId ?? undefined;
+  const sessionId = reserved ? reserveSessionId() : options.sessionId ?? undefined;
   const blankCleanup: BlankSessionCleanup = { id: sessionId, submitted: false };
   let claim: BusyAgent | undefined;
   try {
@@ -117,23 +114,22 @@ async function preparePiStart(app: App, owner: string, runtime: PiRuntime, broke
     }
     const archived = readOnly && options.presence?.archived === true;
     const sessionPath = options.sessionPath == null ? undefined
-      : archived ? await archivedSessionFile(settings, hostId, options.sessionPath) : await desktopSessionFile(settings, hostId, options.sessionPath);
-    const forkPath = options.forkPath == null ? undefined : await desktopSessionFile(settings, hostId, options.forkPath);
-    const claimId = sessionId ?? (sessionPath !== undefined ? await sessionIdentity(settings, hostId, sessionPath) : undefined);
+      : await locateSessionFile(options.sessionPath, archived);
+    const forkPath = options.forkPath == null ? undefined : await locateSessionFile(options.forkPath, false);
+    const claimId = sessionId ?? (sessionPath !== undefined ? await sessionIdentity(sessionPath) : undefined);
     if (readOnly) {
       if (sessionPath === undefined || forkPath !== undefined) throw new Error('A read-only view requires a saved conversation');
-    } else if (claimId !== undefined) claim = claimAgent(broker, hostId, claimId);
-    const connection = await daemon.connect(app, runtime, broker, settings, hostId);
-    assertNotCancelled();
-    const command = buildPiCommand(settings, hostId, { kind: 'rpc', cwd: options.cwd, sessionPath, sessionId, forkPath }, connection.remotePort);
+    } else if (claimId !== undefined) claim = claimAgent(broker, claimId);
+    const connection = localHost(app);
+    const command = buildPiCommand(settings, { kind: 'rpc', cwd: options.cwd, sessionPath, sessionId, forkPath });
     blankCleanup.path = sessionPath;
     let settle!: PreparedStart['settle'];
     const attached = new Promise<void>((resolve, reject) => { settle = { resolve, reject }; });
-    attached.catch(() => {});
-    const process: PiProcess = { daemon: connection, windowLabel: owner, blankCleanup, attached };
+    observedElsewhere(attached);
+    const process: PiProcess = { connection, windowLabel: owner, blankCleanup, attached };
     runtime.processes.set(options.runtimeId, process);
-    const packet = { type: 'attach', clientId: options.clientId, runtimeId: options.runtimeId, sessionKey: claimId ?? options.runtimeId, spec: daemon.spec(command), timeout: 630_000, cwd: options.cwd ?? null, presence: options.presence ?? {} };
-    return { connection, process, settle, packet, claim, hostId, sessionId, sessionPath, reserved };
+    const request: AttachRequest = { clientId: options.clientId, runtimeId: options.runtimeId, sessionKey: claimId ?? options.runtimeId, spec: spec(command), timeout: 630_000, cwd: options.cwd ?? null, presence: options.presence ?? {} };
+    return { connection, process, settle, request, claim, sessionId, sessionPath, reserved };
   } catch (error) {
     claim?.release();
     if (reserved) {
@@ -162,14 +158,14 @@ export async function startPiForOwner(app: App, owner: string, runtime: PiRuntim
     if (!agent) throw new Error('Pi runtime was detached while it started');
     return { attached: true, owned: !agent.messageable };
   }
-  const { connection, process, settle, packet, claim, hostId, sessionId, sessionPath, reserved } = prepared;
+  const { connection, process, settle, request, claim, sessionId, sessionPath, reserved } = prepared;
   try {
-    const result = await connection.request(packet);
+    const result = await connection.host.attach(request);
     if (runtime.processes.get(options.runtimeId) !== process) throw new Error('Pi runtime was detached while it started');
-    runtime.activeAgents.set(options.runtimeId, { hostId, sessionId, sessionPath, working: false, messageable: result?.owned === false });
+    runtime.activeAgents.set(options.runtimeId, { hostId: 'local', sessionId, sessionPath, working: false, messageable: result?.owned === false });
     if (options.baseBranch !== undefined && sessionId) ChatWorktrees.activate(sessionId, join(homeDir(), STORAGE_DIRECTORY));
     settle.resolve();
-    return { ...result, cwd: packet.cwd };
+    return { ...result, cwd: request.cwd };
   } catch (error) {
     settle.reject(error);
     if (runtime.processes.get(options.runtimeId) === process) {
@@ -193,9 +189,9 @@ export async function detachPiWith(runtime: PiRuntime, runtimeId: string, discar
   const process = runtime.processes.get(runtimeId);
   if (!process) { runtime.cancelPendingStarts({ runtimeId }); runtime.activeAgents.delete(runtimeId); return false; }
   let result: any;
-  try { result = await process.daemon.request({ type: 'detach', runtimeId, discardBlank, preserveRunning }); }
+  try { result = await process.connection.host.detachRuntime(runtimeId, discardBlank, preserveRunning); }
   catch (error) {
-    if (!process.daemon.alive && runtime.processes.get(runtimeId) === process) { runtime.processes.delete(runtimeId); runtime.activeAgents.delete(runtimeId); }
+    if (!process.connection.alive && runtime.processes.get(runtimeId) === process) { runtime.processes.delete(runtimeId); runtime.activeAgents.delete(runtimeId); }
     throw error;
   }
   if (runtime.processes.get(runtimeId) === process) runtime.processes.delete(runtimeId);
@@ -213,24 +209,22 @@ export function stopPi(runtime: PiRuntime, runtimeId: string, discardBlank: bool
 }
 
 export async function piPresence(runtime: PiRuntime, runtimeId: string, presence: any): Promise<void> {
-  const connection = runtime.processes.get(runtimeId)?.daemon;
-  if (connection) await connection.request({ type: 'presence', runtimeId, presence });
+  const process = runtime.processes.get(runtimeId);
+  if (process) await process.connection.host.presence(runtimeId, presence);
 }
 
 function executePiCommand(runtime: PiRuntime, runtimeId: string, command: any): Promise<any> {
-  const connection = runtime.processes.get(runtimeId)?.daemon;
-  if (!connection) return Promise.reject(new Error('Pi is not running'));
-  return connection.request({ type: 'command', runtimeId, command });
+  const process = runtime.processes.get(runtimeId);
+  if (!process) return Promise.reject(new Error('Pi is not running'));
+  return process.connection.host.command(runtimeId, command);
 }
 
 async function prepareSessionSwitch(app: App, runtime: PiRuntime, broker: BrokerRuntime, runtimeId: string, command: any): Promise<BusyAgent> {
   const path = command.sessionPath;
   if (typeof path !== 'string') throw new Error('Session path is required');
-  const hostId = runtime.activeAgents.get(runtimeId)?.hostId;
-  if (hostId === undefined) throw new Error('Unknown Pi runtime');
-  const settings = await loadAppSettings(app);
-  const resolved = await desktopSessionFile(settings, hostId, path);
-  const claim = claimAgent(broker, hostId, await sessionIdentity(settings, hostId, resolved));
+  if (!runtime.activeAgents.has(runtimeId)) throw new Error('Unknown Pi runtime');
+  const resolved = await locateSessionFile(path, false);
+  const claim = claimAgent(broker, await sessionIdentity(resolved));
   command.sessionPath = resolved;
   return claim;
 }
@@ -290,12 +284,7 @@ async function openSystemResource(target: string): Promise<void> {
   } catch (error: any) { throw new Error('Could not open ' + target + ': ' + error.message); }
 }
 
-export async function openProjectDirectory(app: App, cwd: string, hostId: string | undefined | null): Promise<void> {
-  if ((hostId ?? 'local') !== 'local') {
-    const settings = await loadAppSettings(app);
-    const host = remoteHost(settings, hostId ?? '');
-    throw new Error('Opening project directories on ' + host.name + ' is not supported by the local file manager');
-  }
+export async function openProjectDirectory(cwd: string): Promise<void> {
   if (!isDirectory(cwd)) throw new Error('Project directory does not exist: ' + cwd);
   await openSystemResource(cwd);
 }
@@ -313,8 +302,3 @@ export async function detachOwner(runtime: PiRuntime, owner: string, discardBlan
   });
 }
 
-export async function shutdown(runtime: PiRuntime): Promise<void> {
-  const daemons = runtime.connections.snapshot();
-  for (const connection of daemons) connection.shutdown();
-  await Promise.all(daemons.map(connection => connection.waitShutdown()));
-}

@@ -10,6 +10,7 @@ import { goalCommand } from '../goal-command-fixture.mjs';
 import { daemonClient } from '../daemon-client.mjs';
 import { chatPublisher } from '../chat-publisher-fixture.mjs';
 import { build } from 'esbuild';
+import { daemonImports } from '../../scripts/daemon-imports.mjs';
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, readdirSync, lstatSync, rmSync, existsSync, renameSync, symlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
@@ -46,11 +47,7 @@ else {
   bundle: true, platform: 'node', format: 'esm', target: 'esnext', external: ['bun', 'bun:*'], logLevel: 'silent',
   banner: { js: "import { createRequire } from 'node:module'; const require = createRequire(import.meta.url);" },
   define: { __PIOP_BUILD_ID__: '"storage-test"', __PIOP_DEVELOPMENT__: 'false', __PIOP_PROJECT_DIR__: '""' },
-  plugins: [storageSchemaImports(), { name: 'host-imports', setup(builder) {
-    builder.onResolve({ filter: /^piop-agent-loader$/ }, () => ({ path: join(process.cwd(), 'extensions/piop-define-agents/daemon-loader.ts') }));
-    builder.onResolve({ filter: /\?raw$/ }, args => ({ path: join(args.resolveDir, args.path.slice(0, -4)), namespace: 'raw' }));
-    builder.onLoad({ filter: /.*/, namespace: 'raw' }, args => ({ contents: readFileSync(args.path, 'utf8'), loader: 'text' }));
-  } }],
+  plugins: [storageSchemaImports(), daemonImports()],
 });
 
 const sessionId = '6f2c1d4e-8a9b-4c3d-9e1f-0a1b2c3d4e5f';

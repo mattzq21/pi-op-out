@@ -117,7 +117,7 @@ export function releaseForkAssets(ctx: ExtensionContext, goalAssets: ReturnType<
 }
 
 async function cleanupForkDirectory(cwd: string, options: ForkOptions) {
-  if (options.cwd !== undefined) await rmdir(cwd).catch(() => undefined);
+  if (options.cwd !== undefined) await rmdir(cwd).catch(error => console.error(`Could not remove the folder of a failed fork, ${cwd}: ${error instanceof Error ? error.message : String(error)}`));
 }
 
 async function forkDirectory(cwd: string, options: ForkOptions) {

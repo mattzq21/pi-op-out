@@ -139,7 +139,7 @@ test('configuration edits normalize prompt paths and reject a repeated agent nam
 
 test('first run creates private defaults and preserves existing prompts (production)', async t => {
   const development = false;
-  const env = development ? { PIOP_STORAGE_DIRECTORY: '.piop-dev' } : {};
+  const env = development ? { PIOP_STORAGE_DIRECTORY: '.piop-dev/daemons/0123456789abcdef' } : {};
   const allTools = ['read', 'bash', 'edit', 'write', 'grep', 'find', 'ls', 'web_search', 'spawn_subagents'];
   const f = await agentFixture(t, { config: null, env, runtime: { enabledTools: allTools }, tools: allTools, files: { 'home/.agents/AGENTS.md': 'Personal instructions' } });
   await f.load(); const config = await f.configuration();
@@ -156,7 +156,7 @@ test('first run creates private defaults and preserves existing prompts (product
 
 test('first run creates private defaults and preserves existing prompts (development)', async t => {
   const development = true;
-  const env = development ? { PIOP_STORAGE_DIRECTORY: '.piop-dev' } : {};
+  const env = development ? { PIOP_STORAGE_DIRECTORY: '.piop-dev/daemons/0123456789abcdef' } : {};
   const allTools = ['read', 'bash', 'edit', 'write', 'grep', 'find', 'ls', 'web_search', 'spawn_subagents'];
   const f = await agentFixture(t, { config: null, env, runtime: { enabledTools: allTools }, tools: allTools, files: { 'home/.agents/AGENTS.md': 'Personal instructions' } });
   await f.load(); const config = await f.configuration();

@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
-import { DEVELOPMENT, PROJECT_DIR, PROTOCOL_VERSION, STORAGE_DIRECTORY, developmentEndpointKey } from './config';
+import { DEVELOPMENT, PROJECT_DIR, PROTOCOL_VERSION, STORAGE_DIRECTORY } from './config';
 import { homeDir } from './environment';
 import { ensurePrivateDir, setPrivateFilePermissions } from './private_fs';
 import * as records from './settings_records';
@@ -18,10 +18,7 @@ export class DaemonAlreadyRunningError extends Error {}
 export interface Endpoint { url: string; token: string; protocol: number }
 
 export function directory(): string {
-  const root = join(homeDir(), STORAGE_DIRECTORY);
-  if (!DEVELOPMENT) return root;
-  if (!PROJECT_DIR) throw new Error('Cannot locate project directory');
-  return join(root, 'daemons', developmentEndpointKey(PROJECT_DIR));
+  return join(homeDir(), STORAGE_DIRECTORY);
 }
 
 export function path(): string { return join(directory(), 'daemon.json'); }

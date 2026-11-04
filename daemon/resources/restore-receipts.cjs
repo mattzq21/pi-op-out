@@ -25,10 +25,7 @@ const headerSchema = Type.Object({ type: Type.Literal('session'), id: Type.Strin
 function key(source) { return createHash('sha256').update(source).digest('hex'); }
 
 function withDatabase(root, operation) {
-  const db = database.open(root);
-
-  try { return operation(db); }
-  finally { db.close(); }
+  return operation(database.connection(root));
 }
 
 function readReceipt(root, id) {

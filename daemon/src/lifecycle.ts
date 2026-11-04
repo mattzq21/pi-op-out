@@ -10,7 +10,7 @@ import * as peers from './peers';
 import * as providerAuth from './provider_auth';
 import * as piRuntime from './pi_runtime';
 import * as terminals from './terminals';
-import * as daemon from './daemon';
+import { startLocalHost, stopLocalHost } from './local_host';
 import { resumeInterruptedTasks } from './interrupted_tasks';
 import { stopOrphanedProcesses } from './process_cleanup';
 import { loadAppSettings } from './settings';
@@ -59,7 +59,7 @@ async function runBackend(): Promise<void> {
     await step(async () => { orphansStopped = await stopOrphanedProcesses(); });
     await step(() => recoverChatWorktrees(app));
     await step(async () => { settings = await loadAppSettings(app); });
-    await step(() => daemon.connect(app, app.pi, app.broker, settings!, 'local'));
+    await step(() => startLocalHost(app, settings!));
     await step(() => prepareExtensions(orphansStopped));
     await step(() => daemonRestart.initializeCandidate(app));
     await step(() => mobile.start(app));
@@ -129,7 +129,7 @@ async function shutdownBackend(app: App): Promise<void> {
   await ignore(() => peers.shutdown(app));
   await ignore(() => app.broker.shutdown());
   await ignore(() => terminals.shutdown(app.terminals));
-  await ignore(() => piRuntime.shutdown(app.pi));
+  await ignore(() => stopLocalHost(app));
   await ignore(() => shutdownHostOperations());
   await usage;
 }

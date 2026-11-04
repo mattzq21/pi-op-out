@@ -4,7 +4,7 @@ import type { PluginSettingsProps } from "../types";
 const providers = [{ id: "openai", label: "OpenAI (ChatGPT sign-in)" }, { id: "anthropic", label: "Anthropic (Claude Pro/Max sign-in)" }];
 
 export function WebSearchSettings(props: PluginSettingsProps) {
-  const selected = () => props.settings.webSearchModel ?? "openai/gpt-6.1-sol";
+  const selected = () => typeof props.settings.webSearchModel === "string" ? props.settings.webSearchModel : "openai/gpt-6.1-sol";
   const models = (provider: string) => props.models.filter(model => model.provider === provider);
   const available = () => props.models.some(model => `${model.provider}/${model.id}` === selected());
 

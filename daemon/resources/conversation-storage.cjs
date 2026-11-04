@@ -17,26 +17,13 @@ function location(file) {
 }
 
 function withDatabase(root, operation) {
-  const db = database.open(root);
-
-  try { return operation(db); }
-  finally { db.close(); }
+  return operation(database.connection(root));
 }
 
 function readRecord(root, recordKey) {
   validKey(recordKey);
 
-  return withDatabase(root, db => {
-    db.exec('BEGIN IMMEDIATE');
-
-    try {
-      const body = db.prepare('SELECT record_json FROM conversation_ownership WHERE record_id=?').get(recordKey)?.record_json ?? null;
-
-      db.exec('COMMIT');
-
-      return body;
-    } catch (error) { throw database.rollback(db, error); }
-  });
+  return withDatabase(root, db => db.prepare('SELECT record_json FROM conversation_ownership WHERE record_id=?').get(recordKey)?.record_json ?? null);
 }
 
 function writeRecord(root, recordKey, body) {

@@ -131,9 +131,7 @@ function journals(root, sessionId) {
 }
 
 function registeredPath(root, sessionId) {
-  const db = database.open(root);
-  try { return db.prepare('SELECT session_path FROM sessions WHERE session_id=?').get(sessionId); }
-  finally { db.close(); }
+  return database.connection(root).prepare('SELECT session_path FROM sessions WHERE session_id=?').get(sessionId);
 }
 
 function removeFile(file) {
@@ -179,9 +177,7 @@ function forget(root, sessionId, target) {
   const row = registeredPath(root, sessionId);
   if (!row) return;
   if (row.session_path === null) {
-    const db = database.open(root);
-    try { db.prepare('DELETE FROM sessions WHERE session_id=? AND session_path IS NULL').run(sessionId); }
-    finally { db.close(); }
+    database.connection(root).prepare('DELETE FROM sessions WHERE session_id=? AND session_path IS NULL').run(sessionId);
     return;
   }
   if (row.session_path !== target) throw new Error('This branch identity belongs to another conversation: ' + row.session_path);

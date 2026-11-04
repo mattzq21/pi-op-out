@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import fs from "node:fs";
 import { DatabaseSync } from "node:sqlite";
+import * as storageDatabase from "../../daemon/resources/session-database.cjs";
 import { execFile } from "node:child_process";
 import { link, mkdir, open, readFile, realpath, rm } from "node:fs/promises";
 import { homedir } from "node:os";
@@ -45,24 +46,9 @@ export const agentDirectory = join(storageRoot, "piop-define-agents");
 
 const DEFINITIONS = "agent-definitions.json";
 
-function openDatabase(root: string) {
-  const path = join(root, "sessions.sqlite");
-  fs.mkdirSync(root, { recursive: true, mode: 0o700 });
-  if (fs.lstatSync(path, { throwIfNoEntry: false })?.isSymbolicLink()) throw new Error("Database path must not be a symbolic link");
-  const db = new DatabaseSync(path);
+type Database = ReturnType<typeof storageDatabase.connection>;
 
-  try {
-    fs.chmodSync(path, 0o600);
-    db.exec(`PRAGMA busy_timeout=10000; PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL;
-      CREATE TABLE IF NOT EXISTS application_settings (name TEXT PRIMARY KEY, body BLOB);
-      CREATE TABLE IF NOT EXISTS agent_prompt_snapshots (digest TEXT PRIMARY KEY, contents TEXT);
-      CREATE TABLE IF NOT EXISTS project_agent_definitions (directory TEXT PRIMARY KEY, body BLOB NOT NULL);`);
-
-    return db;
-  } catch (error) { db.close(); throw error; }
-}
-
-function readRow(root: string, table: "application_settings" | "agent_prompt_snapshots" | "project_agent_definitions", sql: string, key: string): Record<string, unknown> | undefined {
+function readRow(root: string, sql: string, key: string): Record<string, unknown> | undefined {
   const path = join(root, "sessions.sqlite");
   let metadata;
 
@@ -70,44 +56,21 @@ function readRow(root: string, table: "application_settings" | "agent_prompt_sna
   catch (error) { if (hasErrorCode(error, "ENOENT")) return undefined; throw error; }
 
   if (!metadata.isFile()) throw new Error("Settings database is not a regular file");
-  const db = new DatabaseSync(path, { readOnly: true });
 
-  try {
-    db.exec("PRAGMA busy_timeout=10000");
-
-    if (!db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?").get(table)) return undefined;
-
-    return db.prepare(sql).get(key) as Record<string, unknown> | undefined;
-  } finally { db.close(); }
+  return storageDatabase.connection(root).prepare(sql).get(key) as Record<string, unknown> | undefined;
 }
 
-function transaction<T>(change: (db: DatabaseSync) => T, root = storageRoot): T {
-  const db = openDatabase(root);
+function transaction<T>(change: (db: Database) => T, root = storageRoot): T {
+  const db = storageDatabase.connection(root);
 
-  try {
-    db.exec("BEGIN IMMEDIATE");
-
-    try { const result = change(db); db.exec("COMMIT"); return result; }
-    catch (error) {
-      if (!db.isTransaction) throw error;
-
-      try { db.exec("ROLLBACK"); }
-      catch (failure) {
-        if (!(error instanceof Error)) throw new AggregateError([error, failure], "Agent definitions change failed; rollback also failed");
-        error.message += `; rollback also failed: ${failure instanceof Error ? failure.message : String(failure)}`;
-        Object.assign(error, { rollbackError: failure });
-      }
-
-      throw error;
-    }
-  } finally { db.close(); }
+  return storageDatabase.transaction(db, "IMMEDIATE", () => change(db));
 }
 
 function bodyText(row: Record<string, unknown> | undefined): string | undefined {
   return row?.body == null ? undefined : Buffer.from(row.body as Uint8Array).toString("utf8");
 }
 
-function storedBody(db: DatabaseSync, name: string): string | undefined {
+function storedBody(db: Database, name: string): string | undefined {
   return bodyText(db.prepare("SELECT body FROM application_settings WHERE name=?").get(name));
 }
 
@@ -116,14 +79,14 @@ function revisionOf(body: string) { return createHash("sha256").update(body).dig
 export const isNamedAgent = (agent: unknown): agent is { name: string } => Check(Type.Object({ name: Type.String({ pattern: "\\S" }) }), agent);
 
 export async function readConfigDocument() {
-  const body = bodyText(readRow(storageRoot, "application_settings", "SELECT body FROM application_settings WHERE name=?", DEFINITIONS));
+  const body = bodyText(readRow(storageRoot, "SELECT body FROM application_settings WHERE name=?", DEFINITIONS));
 
   if (body === undefined) throw Object.assign(new Error("Agent definitions are unavailable"), { code: "ENOENT" });
 
   return { ...JSON.parse(body), revision: revisionOf(body) };
 }
 
-function putConfig(db: DatabaseSync, value: Config, createOnly: boolean): { revision?: string; warnings: string[] } | void {
+function putConfig(db: Database, value: Config, createOnly: boolean): { revision?: string; warnings: string[] } | void {
   const current = storedBody(db, DEFINITIONS);
   const revision = current === undefined ? "missing" : revisionOf(current);
 
@@ -155,13 +118,13 @@ function namedAgents(document: { agents?: unknown } | undefined): string[] {
   return Array.isArray(document?.agents) ? document.agents.filter(isNamedAgent).map(agent => agent.name) : [];
 }
 
-function storedGlobalNames(db: DatabaseSync): Set<string> {
+function storedGlobalNames(db: Database): Set<string> {
   const body = storedBody(db, DEFINITIONS);
 
   return new Set(["general", ...namedAgents(body === undefined ? undefined : JSON.parse(body))]);
 }
 
-function requireConsistentDefinitions(db: DatabaseSync) {
+function requireConsistentDefinitions(db: Database) {
   const global = storedGlobalNames(db);
 
   for (const row of db.prepare("SELECT directory, body FROM project_agent_definitions").all()) {
@@ -181,7 +144,7 @@ export type ProjectDocument = { agents: unknown[]; defaultAgent?: string };
 export type ProjectChange = { revision: string; agents?: unknown[]; defaultAgent?: string | null };
 
 export function readProjectDocument(directory: string): ProjectDocument & { revision: string } {
-  const body = bodyText(readRow(storageRoot, "project_agent_definitions", "SELECT body FROM project_agent_definitions WHERE directory=?", directory));
+  const body = bodyText(readRow(storageRoot, "SELECT body FROM project_agent_definitions WHERE directory=?", directory));
 
   if (body === undefined) return { agents: [], revision: "missing" };
   const { agents, defaultAgent } = JSON.parse(body);
@@ -189,7 +152,7 @@ export function readProjectDocument(directory: string): ProjectDocument & { revi
   return { agents, ...(defaultAgent ? { defaultAgent } : {}), revision: revisionOf(body) };
 }
 
-function putProject(db: DatabaseSync, directory: string, change: ProjectChange): string {
+function putProject(db: Database, directory: string, change: ProjectChange): string {
   const current = bodyText(db.prepare("SELECT body FROM project_agent_definitions WHERE directory=?").get(directory));
 
   if (change.revision !== (current === undefined ? "missing" : revisionOf(current))) throw new Error("Project agent definitions changed in another window or client. Reload them before saving.");
@@ -378,7 +341,7 @@ export async function readPrompt(path: string): Promise<string> {
   const digest = basename(path, ".md");
 
   if (basename(dirname(path)) !== "prompt-snapshots" || !/^[a-f0-9]{64}\.md$/.test(basename(path))) return readFile(path, "utf8");
-  const row = readRow(snapshotRoot(path), "agent_prompt_snapshots", "SELECT contents FROM agent_prompt_snapshots WHERE digest=?", digest);
+  const row = readRow(snapshotRoot(path), "SELECT contents FROM agent_prompt_snapshots WHERE digest=?", digest);
   const contents = row && row.contents !== null ? verifiedPrompt(String(row.contents), digest) : null;
 
   if (contents === null) throw Object.assign(new Error(`Saved agent prompt is unavailable: ${path}`), { code: "ENOENT" });

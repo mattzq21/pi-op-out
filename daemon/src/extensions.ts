@@ -1,8 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { closeSync, constants, existsSync, fsyncSync, mkdirSync, openSync, readdirSync, renameSync, rmSync, writeSync } from 'node:fs';
 import { dirname, join } from 'node:path';
-import { DEVELOPMENT, STORAGE_DIRECTORY } from './config';
-import { directory as daemonDirectory } from './daemon_endpoint';
+import { STORAGE_DIRECTORY } from './config';
 import { homeDir } from './environment';
 import { ensurePrivateDir } from './private_fs';
 import * as R from './resources';
@@ -12,7 +11,7 @@ import type { AppSettings } from './settings_types';
 import { errorText } from './util/sync';
 
 export function extensionBase(): string {
-  return DEVELOPMENT ? join(daemonDirectory(), 'extensions') : join(homeDir(), STORAGE_DIRECTORY);
+  return join(homeDir(), STORAGE_DIRECTORY);
 }
 
 export function contextCapSettingsPath(): string { return join(extensionBase(), 'context-cap-settings.json'); }
@@ -47,27 +46,30 @@ export function agentResources(settings: AppSettings): any {
 }
 
 const BRIDGE = 'runtime-bridge.cjs';
+const PROVIDER_SDK = 'provider-sdk.mjs';
 
-const CORE = {
-  ocx: 'piop-ocx-provider/index.ts',
-  providersRefresh: 'piop-providers-refresh.ts',
-  mcp: 'piop-mcp-bridge.ts',
-  storage: 'piop-storage/index.ts',
-  hooks: 'hooks-extended/index.ts',
-  controls: 'piop-controls/index.ts',
-  broker: 'session-broker.ts',
-  compactionTiming: 'piop-compaction-timing.ts',
-  contextWindowCap: 'piop-context-window-cap/index.ts',
-  contextBar: 'piop-context-bar.ts',
-  fastMode: 'piop-openai-fast-mode/index.ts',
-  openaiCacheFork: 'piop-openai-cache-fork.ts',
-  definedAgents: 'piop-define-agents/index.ts',
-  skills: 'piop-controls/skills.ts',
-} as const;
+// Each core extension is one built file. Settings groups an extension's tools under its file name.
+const CORE: Record<keyof typeof R.CORE_EXTENSIONS, string> = {
+  ocx: 'piop-ocx-provider.mjs',
+  providersRefresh: 'piop-providers-refresh.mjs',
+  mcp: 'piop-mcp-bridge.mjs',
+  storage: 'piop-storage.mjs',
+  hooks: 'hooks-extended.mjs',
+  controls: 'piop-controls.mjs',
+  broker: 'session-broker.mjs',
+  compactionTiming: 'piop-compaction-timing.mjs',
+  contextWindowCap: 'piop-context-window-cap.mjs',
+  contextBar: 'piop-context-bar.mjs',
+  fastMode: 'piop-openai-fast-mode.mjs',
+  openaiCacheFork: 'piop-openai-cache-fork.mjs',
+  definedAgents: 'piop-define-agents.mjs',
+  skills: 'skills.mjs',
+};
 
 export interface GeneratedExtensions {
   root: string;
   bridge: string;
+  providerSdk: string;
   core: Record<keyof typeof CORE, string>;
   plugins: Array<{ after: Contributions.CoreExtension; path: string }>;
 }
@@ -77,55 +79,19 @@ interface Sources { files: Map<string, string>; plugins: Array<{ after: Contribu
 function sources(): Sources {
   const files = new Map<string, string>();
   const add = (path: string, content: string) => {
-    if (path.startsWith('/') || path.split('/').some(part => part === '' || part === '.' || part === '..')) throw new Error('Invalid generated extension path: ' + path);
-    const previous = files.get(path);
-    if (previous !== undefined && previous !== content) throw new Error('Two generated extension files use the path ' + path);
+    if (files.has(path)) throw new Error('Two generated Pi files use the path ' + path);
     files.set(path, content);
   };
   add(BRIDGE, R.runtimeBridge);
-  add('pi-runtime.cjs', R.piRuntime);
-  add('queue-pull.cjs', R.queuePull);
-  add('runtime-availability.cjs', R.runtimeAvailability);
-  add('mcp-connections.cjs', R.mcpConnections);
-  add('runtime-configuration.cjs', R.runtimeConfiguration);
-  add('app-settings.cjs', R.appSettingsCjs);
-  add('transcript-references.cjs', R.transcriptReferences);
-  add('sdk-storage.mjs', R.sdkStorage);
-  add('storage-file.mjs', R.storageFile);
-  add('sdk-session-list.mjs', R.sdkSessionList);
-  add('session-database.cjs', R.sessionDatabase);
-  add('session-registry.cjs', R.sessionRegistry);
-  add(CORE.broker, R.sessionBroker);
-  for (const [name, content] of R.SESSION_BROKER_MODULES) add('session-broker/' + name, content);
-  for (const [extension, entries] of R.SESSION_EXTENSIONS) for (const [name, content] of entries) add(extension + '/' + name, content);
-  add(CORE.mcp, R.mcpBridgeBundle);
-  add(CORE.providersRefresh, R.providersRefreshExtension);
-  add('piop-ocx-provider/ocx-provider.mjs', R.ocxProviderModule);
-  add(CORE.ocx, R.ocxProviderExtension);
-  add(CORE.openaiCacheFork, R.openaiCacheForkExtension);
-  add(CORE.fastMode, R.fastModeBundle);
-  add(CORE.contextBar, R.contextBarExtension);
-  add(CORE.compactionTiming, R.compactionTimingExtension);
-  add('piop-context-window-cap/interface.ts', R.contextWindowCapInterface);
-  add('piop-context-window-cap/app-settings.cjs', R.appSettingsCjs);
-  add('piop-context-window-cap/defaults.ts', R.contextWindowCapDefaults.replace('../../daemon/resources/session-broker/app-settings.cjs', './app-settings.cjs'));
-  add(CORE.contextWindowCap, R.contextWindowCapExtension.replace('../../daemon/resources/hooks-extended/interface.ts', '../hooks-extended/interface.ts'));
-  for (const [name, content] of [
-    ['mcp-schema.ts', R.mcpSchemaBundle],
-    ['mcp-config.ts', R.agentMcpConfig],
-    ['extension-loader.ts', R.agentExtensionLoader],
-    ['state.ts', R.agentState],
-    ['resources.ts', R.agentResources],
-    ['prompts.ts', R.agentPrompts],
-    ['profiles.ts', R.agentProfiles],
-    ['fast-models.ts', R.agentFastModels],
-    ['index.ts', R.definedAgentsExtension],
-  ] as const) add('piop-define-agents/' + name, content);
+  add(PROVIDER_SDK, R.providerSdk);
+  for (const [name, path] of Object.entries(CORE) as Array<[keyof typeof CORE, string]>) add(path, R.CORE_EXTENSIONS[name]);
   const plugins: Sources['plugins'] = [];
   for (const plugin of Contributions.enabled()) {
     if (!plugin.extension) continue;
-    for (const [name, content] of plugin.extension.files) add('plugins/' + plugin.id + '/' + name, content.replaceAll('"../../resources/', '"../../'));
-    plugins.push({ after: plugin.extension.after, path: 'plugins/' + plugin.id + '/index.ts' });
+    if (!/^[a-z0-9-]+$/.test(plugin.id)) throw new Error('Invalid plugin ID: ' + plugin.id);
+    const path = 'plugins/' + plugin.id + '.mjs';
+    add(path, plugin.extension.source);
+    plugins.push({ after: plugin.extension.after, path });
   }
   return { files, plugins };
 }
@@ -188,6 +154,7 @@ export function generatedExtensions(): GeneratedExtensions {
   published = {
     root,
     bridge: path(BRIDGE),
+    providerSdk: path(PROVIDER_SDK),
     core: Object.fromEntries(Object.entries(CORE).map(([name, relative]) => [name, path(relative)])) as GeneratedExtensions['core'],
     plugins: plugins.map(plugin => ({ after: plugin.after, path: path(plugin.path) })),
   };

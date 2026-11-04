@@ -1,5 +1,4 @@
 import { kind, text } from './json';
-import { lockGate } from './lock_gate';
 import * as Branching from './branching';
 import * as Contributions from '../plugin_contributions';
 import { goalSubmission } from './goals/commands';
@@ -16,9 +15,9 @@ export async function sessionCommand(host: Host, session: Session, runtime: stri
 
 async function runSessionCommand(host: Host, session: Session, runtime: string, command: any): Promise<any> {
   Contributions.pluginRequest(kind(command));
-  const client = text(host.attachments.get(runtime), 'clientId');
+  const client = text(host.views.request(runtime), 'clientId');
   const assertOwner = () => {
-    if (host.readonlyMap.has(runtime) || host.subscriptions.get(runtime) !== session || !host.ownership().owns(session.identity, client, false)) {
+    if (host.readonly(runtime) || host.views.session(runtime) !== session || !host.ownership().owns(session.identity, client, false)) {
       throw new Error('Session ownership changed; take ownership before changing it');
     }
   };
@@ -54,7 +53,7 @@ export async function queueCommand(session: Session, original: any, assertOwner?
 
 async function answerDialog(host: Host, session: Session, runtime: string, command: any, assertOwner: () => void): Promise<any> {
   const id = text(command, 'id');
-  const release = await lockGate(host.dialogGates, session.epoch + ':' + id);
+  const release = await host.lockDialog(session.epoch + ':' + id);
   try {
     assertOwner();
     const dialog = session.dialogs.get(id);

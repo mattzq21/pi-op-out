@@ -5,17 +5,6 @@ const database = require('../session-database.cjs');
 const assets = require('./goal-assets.cjs');
 const ownership = require('./goal-ownership.cjs');
 
-function open(root) {
-  const db = database.open(root);
-
-  try {
-    db.exec(`CREATE TABLE IF NOT EXISTS goal_directory_recoveries (directory TEXT PRIMARY KEY, record_json TEXT NOT NULL);
-      CREATE TABLE IF NOT EXISTS goal_directory_history (directory TEXT NOT NULL, previous_identity TEXT NOT NULL, current_identity TEXT NOT NULL, PRIMARY KEY(directory, previous_identity));`);
-
-    return db;
-  } catch (error) { db.close(); throw error; }
-}
-
 function saved(db, directory) {
   const row = db.prepare('SELECT record_json FROM goal_directory_recoveries WHERE directory=?').get(directory);
 
@@ -39,7 +28,6 @@ function moveRecords(db, directory, record) {
   checkPreparation(db, directory, record);
 
   for (const table of ['goal_preparations', 'goal_ownership', 'goal_asset_dependencies', 'goal_text_files', 'goal_text_contents']) {
-    if (!db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?").get(table)) continue;
     db.prepare(`UPDATE ${table} SET identity=? WHERE directory=? AND identity=?`).run(record.current, directory, record.previous);
   }
 
@@ -60,31 +48,22 @@ function sync(directory) {
 }
 
 function finish(root, directory) {
-  const db = open(root);
+  const db = database.connection(root);
 
-  try {
-    db.exec('BEGIN IMMEDIATE');
+  database.transaction(db, 'IMMEDIATE', () => {
     const record = saved(db, directory);
 
-    if (!record) { db.exec('COMMIT');
-
-    return; }
-
+    if (!record) return;
     validate(root, directory, record);
 
     if (assets.identity(directory) !== record.current) throw new Error('Recovered goal folder was replaced');
     sync(directory); sync(path.dirname(directory));
     moveRecords(db, directory, record);
-    db.exec('COMMIT');
-  } finally { db.close(); }
+  });
 }
 
 function recoverPublished(root, directory) {
-  const db = open(root);
-  let record;
-
-  try { record = saved(db, directory); }
-  finally { db.close(); }
+  const record = saved(database.connection(root), directory);
 
   if (!record || !assets.exists(directory)) return;
   const release = assets.acquire(root);
@@ -95,22 +74,19 @@ function recoverPublished(root, directory) {
 
 function begin(root, directory) {
   if (!assets.validPath(root, directory)) throw new Error('Invalid goal recovery destination');
-  const db = open(root);
+  const db = database.connection(root);
+  const pending = saved(db, directory);
 
-  try {
-    const pending = saved(db, directory);
+  if (pending) {
+    validate(root, directory, pending);
+    checkPreparation(db, directory, pending);
 
-    if (pending) {
-      validate(root, directory, pending);
-      checkPreparation(db, directory, pending);
+    if (assets.identity(pending.staging) !== pending.current) throw new Error('Goal recovery staging folder was replaced');
 
-      if (assets.identity(pending.staging) !== pending.current) throw new Error('Goal recovery staging folder was replaced');
+    return pending;
+  }
 
-      return pending;
-    }
-
-    return prepare(root, db, directory);
-  } finally { db.close(); }
+  return prepare(root, db, directory);
 }
 
 function prepare(root, db, directory) {

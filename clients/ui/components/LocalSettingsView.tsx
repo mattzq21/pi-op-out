@@ -18,6 +18,7 @@ import { SettingsSaveError } from "../lib/clientPreferenceMerge";
 import { isMobile, listen } from "../lib/platform";
 import type { AgentConfig, AppSettings, SessionSummary, SettingsChange, SettingsPublication as Publication } from "../types";
 import { visibleClientSections, daemonSections, SettingsView, type Section } from "./SettingsView";
+import { reportBackgroundError } from "../lib/backgroundErrors";
 
 interface Props {
   settings: AppSettings;
@@ -190,7 +191,7 @@ function DaemonSettingsEditor(componentProps: Props & { target: string; label: s
       }
 
       throw reason;
-    } finally { await writer.dispose().catch(() => undefined); }
+    } finally { await writer.dispose().catch(reason => reportBackgroundError("Could not close the settings connection", reason)); }
   };
 
   const save = async (next: AppSettings, config?: AgentConfig, baseline?: AppSettings) => {

@@ -32,7 +32,7 @@ export async function hostFastModels(): Promise<FastModelSnapshot | null> {
   const send = Object.getOwnPropertyDescriptor(globalThis, Symbol.for("piop.runtime-events"))?.value as ((name: string, data: unknown) => Promise<unknown>) | undefined;
 
   if (!send) return null;
-  const answer = Parse(Type.Union([Type.Object({ data: Type.Unknown() }), Type.Object({ error: Type.String() })]), await send("broker", { path: "/fast-models", body: { hostId: process.env.PI_DESKTOP_HOST_ID || "local" } }));
+  const answer = Parse(Type.Union([Type.Object({ data: Type.Unknown() }), Type.Object({ error: Type.String() })]), await send("broker", { path: "/fast-models", body: {} }));
 
   if ("error" in answer) throw new Error("Could not read fast models from the host: " + answer.error);
 

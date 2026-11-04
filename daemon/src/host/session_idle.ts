@@ -25,7 +25,7 @@ export class IdleStop {
     this.timer = setTimeout(() => {
       this.timer = undefined;
       void this.stop().catch(error => {
-        this.host.output({ type: 'diagnostic', line: 'Could not stop idle session ' + this.session.key + ': ' + errorText(error) });
+        this.host.events.diagnostic('Could not stop idle session ' + this.session.key + ': ' + errorText(error));
       });
     }, IDLE_STOP_DELAY_MS);
   }

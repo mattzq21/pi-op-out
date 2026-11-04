@@ -21,7 +21,7 @@ test('a bundled plugin that a host has not offered yet turns on once unless it i
   const remote = await remoteMachine(daemon, 'plugin-upgrade', 'Upgraded host');
   try {
     const file = join(remote.home, '.piop', 'plugins.json');
-    write(file, { enabled: ['cost'], previous: [] });
+    write(file, { enabled: ['cost'], previous: [], known: ['cost', 'review'] });
     await useRemotes(daemon, [remote]);
     expect(await daemon.invoke('plugin_status', { hostId: remote.id })).toMatchObject({ enabled: ['cost', 'web-search', 'btw'], error: null });
     expect(read(file)).toEqual({ enabled: ['cost', 'web-search', 'btw'], previous: [], known: ['cost', 'review', 'web-search', 'btw', 'background-compaction'] });

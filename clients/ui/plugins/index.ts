@@ -5,27 +5,25 @@ import { invoke } from "../lib/platform";
 import type { PluginDefinition } from "./types";
 import { flushPlugins, waitForClientPlugins } from "./lifecycle";
 
+// The client parts of the host's plugins. The host names and describes its plugins in its plugin status.
 export const plugins: PluginDefinition[] = [
-  { id: "cost", scope: "host", name: "Cost limit", description: "Per-conversation API cost limit, set with /cost.", load: () => import("./cost/plugin") },
-  { id: "review", scope: "host", name: "Review", description: "Code reviews in a split pane, started with /review.", load: () => import("./review/plugin"),
+  { id: "cost", scope: "host", load: () => import("./cost/plugin") },
+  { id: "review", scope: "host", load: () => import("./review/plugin"),
     settings: { section: "review", label: "Review", description: "Choose the agent that runs /review.", icon: ClipboardCheck, load: () => import("./review/ReviewSettings").then(module => ({ default: module.ReviewSettings })) },
-    queuedCommands: ["review"],
     messages: { "piop-review-link": () => import("./review/ReviewLink").then(module => ({ default: module.ReviewLink })) } },
-  { id: "web-search", scope: "host", name: "Web search", description: "The web_search tool for agents, through the host's OpenAI ChatGPT or Claude Pro/Max sign-in.",
+  { id: "web-search", scope: "host",
     settings: { section: "web-search", label: "Web search", description: "Choose the OpenAI or Anthropic model that runs web searches.", icon: Globe, load: () => import("./web-search/WebSearchSettings").then(module => ({ default: module.WebSearchSettings })) } },
-  { id: "btw", scope: "host", name: "Side chats", description: "Side chats started with /btw." },
-  { id: "background-compaction", scope: "host", name: "Background compaction", description: "Writes the compaction summary in the background before the context is full." },
 ];
 
-const coreQueuedCommands = ["compact"];
-
-export function queuedCommand(text: string) {
+// True when the host runs this slash command only after the current response, never as a steering message.
+export function queuedCommand(text: string, queuedCommands: readonly string[]) {
   const [word] = text.trim().split(/\s/, 1);
 
-  return word.startsWith("/") && (coreQueuedCommands.includes(word.slice(1)) || plugins.some(plugin => plugin.queuedCommands?.includes(word.slice(1))));
+  return word.startsWith("/") && queuedCommands.includes(word.slice(1));
 }
 
-export const pluginStatusSchema = z.object({ enabled: z.array(z.string()), configured: z.array(z.string()), revision: z.string(), error: z.string().nullable() });
+export const pluginStatusSchema = z.object({ enabled: z.array(z.string()), configured: z.array(z.string()), revision: z.string(), error: z.string().nullable(),
+  plugins: z.array(z.object({ id: z.string(), name: z.string() })), queuedCommands: z.array(z.string()) });
 
 export type PluginStatus = z.infer<typeof pluginStatusSchema>;
 
@@ -36,6 +34,8 @@ const [errors, setErrors] = createSignal<Record<string, string | undefined>>({})
 const requests = new Map<string, number>();
 
 export const pluginStatus = (host: string) => statuses()[host];
+
+export const pluginName = (host: string, id: string) => pluginStatus(host)?.plugins.find(plugin => plugin.id === id)?.name ?? id;
 
 export const pluginError = (host: string) => errors()[host] ?? statuses()[host]?.error;
 

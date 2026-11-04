@@ -4,9 +4,8 @@ import { basename, dirname, join, sep } from 'node:path';
 import { STORAGE_DIRECTORY } from './config';
 import { homeDir } from './environment';
 import { DEFAULT_TIMEOUT, hostOperation, runHostOperation, STORAGE_TIMEOUT } from './host_operations';
-import { requireLocal } from './host_connection';
 import { localLaunchDirectory, remoteDirectoryPath, remoteHost, ssh } from './pi_launch';
-import { output, runLimited, shellQuote } from './process_io';
+import { output, shellQuote } from './process_io';
 import { inspectSessionProjectsWith } from './folder_inspection';
 import { ProjectMetadataCache } from './project_metadata';
 import { refreshProjectRepository } from './project_repositories';
@@ -15,9 +14,9 @@ import * as Registry from './session_registry';
 import * as WorktreeRecords from '../resources/chat-worktree-records.cjs';
 import * as restoreRecovery from './restore_recovery';
 import { loadAppSettings } from './settings';
-import { type AppSettings, type RemoteHost } from './settings_types';
+import type { RemoteHost } from './settings_types';
 import { transaction } from './util/db';
-import { Mutex } from './util/sync';
+import { Mutex, isMissing } from './util/sync';
 import * as peers from './peers';
 import { reserveSessionId } from './pi_runtime';
 import type { SessionSummary } from './types';
@@ -146,22 +145,20 @@ async function refreshLocalCache(root: string, cache: Map<string, CachedSession>
 
 function localSessionCandidates(root: string, cache: Map<string, CachedSession>): [Set<string>, SessionCandidate[]] {
   const seen = new Set<string>(); const changed: SessionCandidate[] = [];
-  const database = Registry.open(dirname(root));
-  try {
-    const prefix = root.replace(/\/+$/, '') + sep;
-    let resolved = prefix;
-    try { resolved = realpathSync(root) + sep; } catch (error: any) { if (error?.code !== 'ENOENT') throw error; }
-    const rows = database.prepare(`SELECT s.session_path AS path, m.modified_ns AS modified, m.size AS size, n.name AS name, b.session_id AS branch_session, b.tip_id AS branch_tip, b.leaf_id AS branch_leaf FROM sessions s LEFT JOIN session_branch_selection b ON b.session_id=s.session_id LEFT JOIN session_names n ON n.session_id=s.session_id LEFT JOIN session_file_metadata m ON m.session_id=s.session_id AND m.session_path=s.session_path WHERE substr(s.session_path, 1, length(?1))=?1 OR substr(s.session_path, 1, length(?2))=?2`).all(prefix, resolved) as any[];
-    for (const row of rows) {
-      const path: string = row.path;
-      const saved = row.modified !== null && row.modified !== undefined && row.size !== null && row.size !== undefined ? [String(row.modified), Number(row.size)] as const : undefined;
-      const candidate = saved ? registeredCandidate(path, saved) : captureLocalCandidate(database, path);
-      if (!candidate) continue;
-      candidate[1] += ':' + (row.name ?? '') + ':' + JSON.stringify([row.branch_session, row.branch_tip, row.branch_leaf]);
-      seen.add(path);
-      if (cache.get(path)?.fingerprint !== candidate[1]) changed.push(candidate);
-    }
-  } finally { database.close(); }
+  const database = Registry.connection(dirname(root));
+  const prefix = root.replace(/\/+$/, '') + sep;
+  let resolved = prefix;
+  try { resolved = realpathSync(root) + sep; } catch (error: any) { if (error?.code !== 'ENOENT') throw error; }
+  const rows = database.prepare(`SELECT s.session_path AS path, m.modified_ns AS modified, m.size AS size, n.name AS name, b.session_id AS branch_session, b.tip_id AS branch_tip, b.leaf_id AS branch_leaf FROM sessions s LEFT JOIN session_branch_selection b ON b.session_id=s.session_id LEFT JOIN session_names n ON n.session_id=s.session_id LEFT JOIN session_file_metadata m ON m.session_id=s.session_id AND m.session_path=s.session_path WHERE substr(s.session_path, 1, length(?1))=?1 OR substr(s.session_path, 1, length(?2))=?2`).all(prefix, resolved) as any[];
+  for (const row of rows) {
+    const path: string = row.path;
+    const saved = row.modified !== null && row.modified !== undefined && row.size !== null && row.size !== undefined ? [String(row.modified), Number(row.size)] as const : undefined;
+    const candidate = saved ? registeredCandidate(path, saved) : captureLocalCandidate(database, path);
+    if (!candidate) continue;
+    candidate[1] += ':' + (row.name ?? '') + ':' + JSON.stringify([row.branch_session, row.branch_tip, row.branch_leaf]);
+    seen.add(path);
+    if (cache.get(path)?.fingerprint !== candidate[1]) changed.push(candidate);
+  }
   return [seen, changed];
 }
 
@@ -194,15 +191,9 @@ function localCandidate(path: string): SessionCandidate | undefined {
   return [path, `${modifiedNs}:${size}`, Number(modifiedNs / 1_000_000_000n), size];
 }
 
-export async function homeDirectory(app: App, hostId: string): Promise<string> {
-  if (hostId === 'local') { const home = homeDir(); try { return realpathSync(home); } catch { return home; } }
-  const settings = await loadAppSettings(app); const host = remoteHost(settings, hostId);
-  let result;
-  try { result = await output(ssh(host, 'cd "$HOME" && pwd -P')); } catch (error: any) { throw new Error(`Could not resolve home on ${host.name}: ${error.message}`); }
-  if (!result.status.success) throw new Error(result.stderr.toString().trim());
-  const path = result.stdout.toString().trim();
-  if (!path) throw new Error('Remote home directory was unavailable');
-  return path;
+export function homeDirectory(): string {
+  const home = homeDir();
+  try { return realpathSync(home); } catch { return home; }
 }
 
 type TemporaryChatRequest = { action: 'create'; id: string; root: string } | { action: 'remove'; path: string; root: string };
@@ -226,8 +217,7 @@ export function isTemporaryChatPath(path: string): boolean {
   return /^[0-9a-f]{4,32}$/.test(basename(path)) && basename(parent) === 'tmp' && basename(dirname(parent)) === STORAGE_DIRECTORY;
 }
 
-export async function removeTemporaryChat(app: App, path: string, hostId: string): Promise<void> {
-  requireLocal(hostId);
+export async function removeTemporaryChat(path: string): Promise<void> {
   return removeLocalTemporaryChat(homeDir(), path);
 }
 
@@ -237,37 +227,23 @@ export async function removeLocalTemporaryChat(home: string, path: string): Prom
   catch (error: any) { throw new Error(`Could not remove temporary chat directory: ${error?.message ?? error}`); }
 }
 
-export async function validateProjectDirectory(app: App, path: string, hostId: string, allowStorage: boolean | undefined, newChat = false): Promise<string> {
+export async function validateProjectDirectory(path: string, allowStorage: boolean | undefined, newChat = false): Promise<string> {
   if (!path.trim()) throw new Error("Path can't be empty");
   if (allowStorage === true) {
-    await validateSessionWorkingDirectory(await loadAppSettings(app), hostId, path);
-    if (newChat && hostId === 'local') await refreshProjectRepository(join(homeDir(), STORAGE_DIRECTORY), path);
+    validateSessionWorkingDirectory(path);
+    if (newChat) await refreshProjectRepository(join(homeDir(), STORAGE_DIRECTORY), path);
     return path;
   }
-  if (hostId === 'local') {
-    const cwd = validateLocalProjectDirectory(path);
-    await refreshProjectRepository(join(homeDir(), STORAGE_DIRECTORY), cwd);
-    return cwd;
-  }
-  const settings = await loadAppSettings(app); const host = remoteHost(settings, hostId);
-  const script = `test -d ${shellQuote(path)} && cd ${shellQuote(path)} || exit 1; candidate=$(pwd -P); for storage in "$HOME/.piop" "$HOME/.piop-dev"; do [ ! -d "$storage" ] || storage=$(cd "$storage" && pwd -P); case "$candidate" in "$storage"|"$storage"/*) echo 'Piop storage directories cannot be selected as projects' >&2; exit 1;; esac; done; printf '%s\\n' "$candidate"`;
-  let result;
-  try { result = await output(ssh(host, script)); } catch (error: any) { throw new Error(`Could not validate project directory on ${host.name}: ${error.message}`); }
-  if (!result.status.success) throw new Error(`Could not open project directory on ${host.name}: ${result.stderr.toString().trim()}`);
-  return path;
+  const cwd = validateLocalProjectDirectory(path);
+  await refreshProjectRepository(join(homeDir(), STORAGE_DIRECTORY), cwd);
+  return cwd;
 }
 
-export async function validateSessionWorkingDirectory(settings: AppSettings, hostId: string, cwd: string | undefined | null): Promise<void> {
-  if (hostId === 'local') {
-    const path = localLaunchDirectory(cwd ?? undefined);
-    let stats;
-    try { stats = statSync(path); } catch (error: any) { throw new Error(`Cannot start conversation: project directory ${path} is unavailable: ${error.message}`); }
-    if (!stats.isDirectory()) throw new Error(`Cannot start conversation: ${path} is not a directory`);
-    return;
-  }
-  const host = remoteHost(settings, hostId);
-  const result = await runLimited(ssh(host, `cd ${remoteDirectoryPath(cwd)} && test -d .`), 64 * 1024, 'Could not check conversation directory');
-  if (!result.status.success) throw new Error(`Cannot start conversation: project directory ${cwd ?? '~'} is unavailable on ${host.name}`);
+export function validateSessionWorkingDirectory(cwd: string | undefined | null): void {
+  const path = localLaunchDirectory(cwd ?? undefined);
+  let stats;
+  try { stats = statSync(path); } catch (error: any) { throw new Error(`Cannot start conversation: project directory ${path} is unavailable: ${error.message}`); }
+  if (!stats.isDirectory()) throw new Error(`Cannot start conversation: ${path} is not a directory`);
 }
 
 function startsWithPath(path: string, root: string): boolean {
@@ -286,16 +262,14 @@ export function validateLocalProjectDirectory(path: string): string {
   for (const name of ['.piop', '.piop-dev']) {
     const storage = join(home, name);
     let resolved = storage;
-    try { resolved = realpathSync(storage); } catch {}
+    try { resolved = realpathSync(storage); } catch (error) { if (!isMissing(error)) throw error; }
     if (startsWithPath(path, storage) || startsWithPath(canonical, resolved)) throw new Error('Piop storage directories cannot be selected as projects');
   }
   return path;
 }
 
-export async function createTemporaryChat(app: App, hostId: string): Promise<TemporaryChat> {
-  requireLocal(hostId);
-  const settings = await loadAppSettings(app);
-  const sessionId = await reserveSessionId(settings, hostId);
+export async function createTemporaryChat(): Promise<TemporaryChat> {
+  const sessionId = reserveSessionId();
   const cwd = await createLocalTemporaryChat(homeDir(), sessionId);
   return { cwd, sessionId };
 }

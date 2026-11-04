@@ -1,11 +1,10 @@
 import { newChatBranches } from './chat_worktrees';
 import { DEVELOPMENT } from './config';
 import * as endpoint from './daemon_endpoint';
-import * as daemon from './daemon';
+import { localHost } from './local_host';
 import * as daemonRestart from './daemon_restart';
 import * as peers from './peers';
 import { clientBrokerRequest } from './broker';
-import * as plugins from './plugins';
 import * as providerAuth from './provider_auth';
 import * as terminalSessions from './terminal_sessions';
 import * as projectFiles from './project_files';
@@ -51,8 +50,6 @@ function argument(args: any, key: string, kind: Kind): any {
     default: return value === undefined ? null : value;
   }
 }
-
-function hostId(args: any): string { return argument(args, 'hostId', 'string?') ?? 'local'; }
 
 export async function dispatch(app: App, owner: string, command: string, args: any): Promise<any> {
   const finish = app.clients.beginRequest();
@@ -110,6 +107,8 @@ async function dispatchLocal(app: App, owner: string, command: string, args: any
 
 async function dispatchCommand(app: App, owner: string, command: string, args: any): Promise<any> {
   app.clients.ensureOpen();
+  const host = argument(args, 'hostId', 'string?');
+  if (host !== undefined && host !== 'local') throw new Error('Requests for another host must go through the Piop daemon of that host');
   if (typeof args?.runtimeId === 'string') ensureRuntimeOwner(app.pi, args.runtimeId, owner);
   if (typeof args?.terminalId === 'string') app.terminals.ensureOwner(args.terminalId, owner);
   const handler = Object.prototype.hasOwnProperty.call(COMMANDS, command) ? COMMANDS[command] : undefined;
@@ -143,19 +142,16 @@ function startPiOptions(args: any): any {
 
 const COMMANDS: Record<string, Handler> = {
   check_daemon_idle: async app => { await daemonRestart.ensureLocalIdle(app); return null; },
-  plugin_status: (app, _owner, args) => plugins.dispatch(app, 'plugin_status', args),
+  plugin_status: app => localHost(app).host.pluginStatus(),
   shared_terminal: (app, owner, args) => terminalSessions.shared(app, owner, args),
   broker_request: (app, _owner, args) => clientBrokerRequest(app, argument(args, 'path', 'string'), argument(args, 'body', 'any')),
   load_host_settings: (app, _owner, args) => loadSettings(app, args),
   load_host_settings_change: app => loadSettingsChange(app),
   save_host_settings: (app, _owner, args) => saveHostSettings(app, args),
   host_storage_report: async (_app, _owner, args) => ({ hosts: [await archives.inspectStorage(argument(args, 'archivesOnly', 'boolean?') === true, argument(args, 'archivesLimit', 'number?'))] }),
-  submission_outcome: async (app, _owner, args) => {
-    const connection = await daemon.connect(app, app.pi, app.broker, await loadAppSettings(app), 'local');
-    return connection.request({ type: 'submission_outcome', submissionId: argument(args, 'submissionId', 'string') });
-  },
-  provider_auth: (app, owner, args) => providerAuth.forOwner(app, owner, argument(args, 'hostId', 'string?'), argument(args, 'request', 'any')),
-  open_project_directory: async (app, _owner, args) => { await openProjectDirectory(app, argument(args, 'cwd', 'string'), argument(args, 'hostId', 'string?')); return null; },
+  submission_outcome: (app, _owner, args) => localHost(app).host.submissionOutcome(argument(args, 'submissionId', 'string')),
+  provider_auth: (app, owner, args) => providerAuth.forOwner(app, owner, argument(args, 'request', 'any')),
+  open_project_directory: async (_app, _owner, args) => { await openProjectDirectory(argument(args, 'cwd', 'string')); return null; },
   start_pi: async (app, owner, args) => {
     const result = await startPiForOwner(app, owner, app.pi, app.broker, startPiOptions(args));
     result.daemonId = endpoint.identity();
@@ -175,7 +171,6 @@ const COMMANDS: Record<string, Handler> = {
       cwd: argument(args, 'cwd', 'string'),
       cols: argument(args, 'cols', 'number'),
       rows: argument(args, 'rows', 'number'),
-      hostId: argument(args, 'hostId', 'string?'),
     });
     if (app.clients.closing()) {
       await closeTerminal(app.terminals, args.terminalId);
@@ -194,42 +189,34 @@ const COMMANDS: Record<string, Handler> = {
     return sessionGroups.serializeGroups(await sessionGroups.loadSessionGroups(app, seeds.map(sessionGroups.parseSeed)));
   },
   change_session_groups: async (app, _owner, args) => sessionGroups.serializeGroups(await sessionGroups.changeSessionGroups(app, sessionGroups.parseChange(argument(args, 'change', 'any')))),
-  home_directory: (app, _owner, args) => sessionIndex.homeDirectory(app, hostId(args)),
-  create_temporary_chat: (app, _owner, args) => sessionIndex.createTemporaryChat(app, hostId(args)),
-  remove_temporary_chat: async (app, _owner, args) => { await sessionIndex.removeTemporaryChat(app, argument(args, 'path', 'string'), hostId(args)); return null; },
+  home_directory: () => sessionIndex.homeDirectory(),
+  create_temporary_chat: () => sessionIndex.createTemporaryChat(),
+  remove_temporary_chat: async (_app, _owner, args) => { await sessionIndex.removeTemporaryChat(argument(args, 'path', 'string')); return null; },
   new_chat_branches: (_app, _owner, args) => newChatBranches(argument(args, 'path', 'string')),
-  validate_project_directory: (app, _owner, args) => sessionIndex.validateProjectDirectory(app, argument(args, 'path', 'string'), hostId(args), argument(args, 'allowStorage', 'boolean?'), argument(args, 'newChat', 'boolean?')),
-  list_directories: (app, _owner, args) => sessionIndex.listDirectories(app, hostId(args), argument(args, 'path', 'string?')),
-  read_image_file: (app, _owner, args) => projectFiles.readImage(app, argument(args, 'cwd', 'string'), argument(args, 'path', 'string'), argument(args, 'hostId', 'string')),
+  validate_project_directory: (_app, _owner, args) => sessionIndex.validateProjectDirectory(argument(args, 'path', 'string'), argument(args, 'allowStorage', 'boolean?'), argument(args, 'newChat', 'boolean?')),
+  list_directories: (app, _owner, args) => sessionIndex.listDirectories(app, 'local', argument(args, 'path', 'string?')),
+  read_image_file: (_app, _owner, args) => projectFiles.readImage(argument(args, 'cwd', 'string'), argument(args, 'path', 'string')),
   archive_session: async (app, owner, args) => {
     const terminalIds = (argument(args, 'terminalIds', 'strings') as string[]).filter(id => app.terminals.ownedByConnection(id, owner));
-    await archives.archiveSession(app, app.terminals, argument(args, 'sessionPath', 'string'), argument(args, 'hostId', 'string?'), terminalIds, argument(args, 'clientId', 'string'));
+    await archives.archiveSession(app, app.terminals, argument(args, 'sessionPath', 'string'), terminalIds, argument(args, 'clientId', 'string'));
     return null;
   },
-  delete_session: (app, _owner, args) => archives.deleteSession(app, app.pi, argument(args, 'sessionPath', 'string'), argument(args, 'hostId', 'string?'), argument(args, 'clientId', 'string')),
-  delete_archived_session: (app, _owner, args) => archives.deleteArchivedSession(app, app.pi, argument(args, 'sessionPath', 'string'), argument(args, 'sessionPaths', 'strings?'), argument(args, 'hostId', 'string?'), argument(args, 'clientId', 'string')),
-  restore_archived_session: async (app, _owner, args) => { await archives.restoreArchivedSession(app, argument(args, 'sessionPath', 'string'), argument(args, 'hostId', 'string?'), argument(args, 'clientId', 'string')); return null; },
-  relocate_session: async (app, _owner, args) => { await archives.relocateSession(app, argument(args, 'sessionPath', 'string'), argument(args, 'cwd', 'string'), argument(args, 'hostId', 'string?'), argument(args, 'clientId', 'string')); return null; },
-  recover_missing_session: (app, _owner, args) => archives.recoverMissingSession(app, argument(args, 'sessionPath', 'string'), argument(args, 'hostId', 'string?'), argument(args, 'action', 'string'), argument(args, 'clientId', 'string')),
+  delete_session: (app, _owner, args) => archives.deleteSession(app, app.pi, argument(args, 'sessionPath', 'string'), argument(args, 'clientId', 'string')),
+  delete_archived_session: (app, _owner, args) => archives.deleteArchivedSession(app, app.pi, argument(args, 'sessionPath', 'string'), argument(args, 'sessionPaths', 'strings?'), argument(args, 'clientId', 'string')),
+  restore_archived_session: async (app, _owner, args) => { await archives.restoreArchivedSession(app, argument(args, 'sessionPath', 'string'), argument(args, 'clientId', 'string')); return null; },
+  relocate_session: async (app, _owner, args) => { await archives.relocateSession(app, argument(args, 'sessionPath', 'string'), argument(args, 'cwd', 'string'), argument(args, 'clientId', 'string')); return null; },
+  recover_missing_session: (app, _owner, args) => archives.recoverMissingSession(app, argument(args, 'sessionPath', 'string'), argument(args, 'action', 'string'), argument(args, 'clientId', 'string')),
   load_app_settings: (app, _owner, args) => loadSettings(app, args),
   load_settings_change: app => loadSettingsChange(app),
   settings_pending_count: app => app.pi.settingsPendingSessions.size,
   save_app_settings: (app, _owner, args) => saveAppSettings(app, parseAppSettings(argument(args, 'settings', 'any'))),
-  save_agent_definitions: async (app, _owner, args) => {
-    const connection = await daemon.connect(app, app.pi, app.broker, await loadAppSettings(app), 'local');
-    const cwd = argument(args, 'cwd', 'string?');
-    return connection.request({ type: 'save_agent_definitions', configuration: argument(args, 'configuration', 'any'), ...(cwd ? { cwd } : {}) });
-  },
+  save_agent_definitions: (app, _owner, args) => localHost(app).host.saveAgents(argument(args, 'configuration', 'any'), argument(args, 'cwd', 'string?') || undefined),
   agent_prompt_preview: async (app, _owner, args) => {
     const settings = await loadAppSettings(app);
-    const connection = await daemon.connect(app, app.pi, app.broker, settings, 'local');
-    const spec = launchSpec(buildPiCommand(settings, 'local', { kind: 'prompt-preview', cwd: argument(args, 'cwd', 'string?') ?? '~' }));
-    return connection.request({ type: 'agent_prompt_preview', agent: argument(args, 'agent', 'string'), spec });
+    const spec = launchSpec(buildPiCommand(settings, { kind: 'prompt-preview', cwd: argument(args, 'cwd', 'string?') ?? '~' }));
+    return localHost(app).host.previewAgentPrompt(spec, argument(args, 'agent', 'string'));
   },
-  move_agent: async (app, _owner, args) => {
-    const connection = await daemon.connect(app, app.pi, app.broker, await loadAppSettings(app), 'local');
-    return connection.request({ type: 'move_agent', agent: argument(args, 'agent', 'string'), revision: argument(args, 'revision', 'string'), from: argument(args, 'from', 'string?') ?? null, to: argument(args, 'to', 'string?') ?? null });
-  },
+  move_agent: (app, _owner, args) => localHost(app).host.moveAgentDefinition(argument(args, 'agent', 'string'), argument(args, 'revision', 'string'), argument(args, 'from', 'string?') ?? null, argument(args, 'to', 'string?') ?? null),
   provider_usage: (app, _owner, args) => {
     const provider = argument(args, 'provider', 'string?');
     if (provider !== undefined && !isUsageProvider(provider)) throw new Error('Invalid provider: unknown usage provider ' + JSON.stringify(provider));

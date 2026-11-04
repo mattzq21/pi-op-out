@@ -38,7 +38,7 @@ function readUserMessages(content: Buffer, sessionId: string): any[] {
   let expected: string;
   try { expected = parseIdentity(sessionId); } catch { throw new Error('Invalid queued-input session identity'); }
   let identity: string | undefined;
-  try { identity = typeof header?.id === 'string' ? parseIdentity(header.id) : undefined; } catch {}
+  try { identity = typeof header?.id === 'string' ? parseIdentity(header.id) : undefined; } catch { throw new Error('Queued-input transcript has an invalid session identity'); }
   if (header?.type !== 'session' || identity !== expected) throw new Error('Queued-input transcript belongs to a different conversation');
   const messages: any[] = [];
   for (let entry = next(); entry !== undefined; entry = next()) {

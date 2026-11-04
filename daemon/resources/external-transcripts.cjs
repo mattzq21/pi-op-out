@@ -5,10 +5,7 @@ const { createHash } = require('node:crypto');
 const database = require('./session-database.cjs');
 
 function list(root) {
-  const db = database.open(root);
-
-  try { return db.prepare('SELECT record_id, record_json FROM external_transcripts ORDER BY record_id').all(); }
-  finally { db.close(); }
+  return database.connection(root).prepare('SELECT record_id, record_json FROM external_transcripts ORDER BY record_id').all();
 }
 
 function transcript(row) {
@@ -20,10 +17,7 @@ function transcript(row) {
 }
 
 function remove(root, row) {
-  const db = database.open(root);
-
-  try { db.prepare('DELETE FROM external_transcripts WHERE record_id=? AND record_json=?').run(row.record_id, row.record_json); }
-  finally { db.close(); }
+  database.connection(root).prepare('DELETE FROM external_transcripts WHERE record_id=? AND record_json=?').run(row.record_id, row.record_json);
 }
 
 module.exports = { list, transcript, remove };

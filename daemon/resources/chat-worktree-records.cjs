@@ -65,10 +65,7 @@ function check(record) {
 }
 
 function withDatabase(root, operation) {
-  const db = database.open(root);
-
-  try { return operation(db); }
-  finally { db.close(); }
+  return operation(database.connection(root));
 }
 
 function selectBody(db, chatId) { return db.prepare('SELECT record_json FROM chat_worktrees WHERE chat_id=?').get(chatIdOf(chatId))?.record_json ?? null; }
@@ -89,18 +86,13 @@ function replace(root, chatId, before, after) {
   const next = after === null ? null : JSON.stringify(check(after));
 
   if (after !== null && after.chatId !== chatId) throw new Error('Chat worktree record belongs to another chat');
-  withDatabase(root, db => {
-    db.exec('BEGIN IMMEDIATE');
+  withDatabase(root, db => database.transaction(db, 'IMMEDIATE', () => {
+    if (selectBody(db, chatId) !== expected) throw new Error('Chat worktree record changed: ' + chatId);
 
-    try {
-      if (selectBody(db, chatId) !== expected) throw new Error('Chat worktree record changed: ' + chatId);
-
-      if (next === null) db.prepare('DELETE FROM chat_worktrees WHERE chat_id=?').run(chatId);
-      else if (expected === null) db.prepare('INSERT INTO chat_worktrees VALUES (?, ?)').run(chatId, next);
-      else db.prepare('UPDATE chat_worktrees SET record_json=? WHERE chat_id=?').run(next, chatId);
-      db.exec('COMMIT');
-    } catch (error) { throw database.rollback(db, error); }
-  });
+    if (next === null) db.prepare('DELETE FROM chat_worktrees WHERE chat_id=?').run(chatId);
+    else if (expected === null) db.prepare('INSERT INTO chat_worktrees VALUES (?, ?)').run(chatId, next);
+    else db.prepare('UPDATE chat_worktrees SET record_json=? WHERE chat_id=?').run(next, chatId);
+  }));
 
   return after;
 }

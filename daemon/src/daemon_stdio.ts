@@ -5,7 +5,7 @@ import { PEER_PROTOCOL_VERSION, PROTOCOL_VERSION } from './config';
 import * as endpoint from './daemon_endpoint';
 import * as daemonLog from './daemon_log';
 import { daemonScript } from './session_worker';
-import { sleep } from './util/sync';
+import { sleep, errorText } from './util/sync';
 
 function validateEndpoint(protocol: number, token: string, address: string): void {
   let url: URL;
@@ -52,7 +52,7 @@ class Socket {
 
   send(text: string): void { this.socket.send(text); }
   bufferedAmount(): number { return this.socket.bufferedAmount; }
-  close(): void { try { this.socket.close(); } catch {} }
+  close(): void { this.socket.close(); }
 }
 
 async function openSocket(scope: string): Promise<[Socket, any]> {
@@ -161,15 +161,16 @@ async function sendControl(socket: Socket, action: string): Promise<void> {
 
 async function waitUntilStopped(previous: endpoint.Endpoint): Promise<void> {
   const deadline = Date.now() + 60_000;
+  let failure: unknown;
   while (Date.now() < deadline) {
     if (claimed()) return;
     try {
       const current = endpoint.read();
       if (current.url !== previous.url || current.token !== previous.token) return;
-    } catch {}
+    } catch (error) { failure = error; }
     await sleep(100);
   }
-  throw new Error('Daemon is still shutting down; check daemon.log');
+  throw new Error('Daemon is still shutting down; check daemon.log' + (failure === undefined ? '' : '. Last endpoint read failed: ' + errorText(failure)));
 }
 
 export async function control(action: string): Promise<void> {
@@ -200,7 +201,7 @@ export async function run(): Promise<void> {
     let inputDrainTimer: NodeJS.Timeout | undefined;
     let inputStallTimer: NodeJS.Timeout | undefined;
     let stallTimer: NodeJS.Timeout | undefined;
-    const heartbeat = setInterval(() => { try { socket.send(JSON.stringify({ type: 'ping' })); } catch {} }, 20_000);
+    const heartbeat = setInterval(() => { try { socket.send(JSON.stringify({ type: 'ping' })); } catch (error) { fail(error); } }, 20_000);
     let inputClosed = false;
     let stopInput = () => {};
     const fail = (error: unknown) => {

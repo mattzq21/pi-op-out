@@ -1,7 +1,7 @@
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { installRuntimeStorage } from "../../daemon/resources/sdk-storage.mjs";
-import { supportedPi } from "../../daemon/resources/pi-runtime.cjs";
+import { patchMethod } from "../../daemon/resources/pi-patch.cjs";
 import { agentExtensions } from "./extension-loader.ts";
 import type { ExtensionAPI, ExtensionRuntime, ModelRegistry, ToolInfo } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
@@ -10,7 +10,11 @@ import { bindValidationSession } from "./validation-session.ts";
 import type { Agent } from "./contracts.ts";
 
 export function piDirectory() {
-  return supportedPi(process.env.PIOP_PI_EXECUTABLE || "pi").root;
+  const root = process.env.PIOP_PI_ROOT;
+
+  if (!root) throw new Error("The daemon did not give the Pi installation folder");
+
+  return root;
 }
 
 export async function extensionValidator(registeredToolNames: string[]) {
@@ -29,8 +33,8 @@ export async function extensionValidator(registeredToolNames: string[]) {
   return async (paths: string[], base: string, registry: ModelRegistry, agent: Agent, validate: () => Promise<void>) => {
     const runtime: ExtensionRuntime = createExtensionRuntime();
     const events = createEventBus();
-    runtime.getAllTools = () => registeredToolNames.map((name): ToolInfo => ({ name, description: "", parameters: Type.Object({}), exposure: "direct", sourceInfo: { path: `builtin:${name}`, source: "builtin", scope: "temporary", origin: "top-level" } }));
-    runtime.getCommands = () => commandNames.map(name => ({ name, source: "extension", sourceInfo: { path: `builtin:${name}`, source: "builtin", scope: "temporary", origin: "top-level" } }));
+    patchMethod(runtime, "getAllTools", () => () => registeredToolNames.map((name): ToolInfo => ({ name, description: "", parameters: Type.Object({}), exposure: "direct", sourceInfo: { path: `builtin:${name}`, source: "builtin", scope: "temporary", origin: "top-level" } })), "ExtensionRuntime");
+    patchMethod(runtime, "getCommands", () => () => commandNames.map(name => ({ name, source: "extension", sourceInfo: { path: `builtin:${name}`, source: "builtin", scope: "temporary", origin: "top-level" } })), "ExtensionRuntime");
     const session = SessionManager.inMemory(base);
     const runner = new ExtensionRunner([], runtime, base, session, registry);
     bindValidationSession(runtime, runner, session, registry, agent, SettingsManager.create(base).getSettings());

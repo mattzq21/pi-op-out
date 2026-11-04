@@ -7,7 +7,6 @@ import { flag, kind, text } from './json';
 import { Guard, ownershipError } from './ownership';
 import { argument, expandHome, parseLaunchSpec, readHeaderLine, sessionSpec, specIdentity, type LaunchSpec } from './protocol';
 import type { Host } from './controller';
-import { lockGate } from './lock_gate';
 import { readonlyCommand, type ReadonlyView } from './readonly_views';
 import type { Session } from './session';
 import { forkPoint } from '../../resources/piop-storage/session-records.cjs';
@@ -47,7 +46,7 @@ export async function switchSession(host: Host, session: Session, runtime: strin
 }
 
 export function forkFromView(host: Host, runtime: string, view: ReadonlyView, command: any): Promise<any> {
-  const packet = host.attachments.get(runtime);
+  const packet = host.views.request(runtime);
   if (packet === undefined) throw new Error('This conversation has been deleted or closed');
   if (flag(packet.presence, 'readOnly')) throw new Error('This view is read-only');
   return fork(host, runtime, viewSource(host, runtime, view, packet), command);
@@ -75,15 +74,14 @@ function viewSource(host: Host, runtime: string, view: ReadonlyView, packet: any
     read: async () => {
       const running = host.findSession(view.id);
       if (running && !running.transient()) return readSession(running);
-      const snapshot = await readonlyCommand(host, { command: { type: 'get_snapshot' } }, view);
+      const snapshot = await readonlyCommand(host, { type: 'get_snapshot' }, view);
       const cwd = snapshot.state?.cwd;
       return { state: snapshot.state, snapshot, cwd: typeof cwd === 'string' && cwd.trim() ? expandHome(cwd, host.home) : null };
     },
-    current: () => host.attachments.get(runtime) === packet && host.readonlyMap.get(runtime)?.id === view.id,
+    current: () => host.views.isRequest(runtime, packet) && host.views.readonly(runtime)?.id === view.id,
     detach: () => {
-      host.readonlyMap.delete(runtime);
-      const session = host.subscriptions.get(runtime);
-      host.subscriptions.delete(runtime);
+      host.views.clearReadonly(runtime);
+      const session = host.views.unsubscribe(runtime);
       session?.detachView(runtime);
       return { presence: structuredClone(packet.presence ?? null), session };
     },
@@ -122,14 +120,14 @@ function resolveCwd(target: Destination, host: Host, guard: Guard): void {
 }
 
 async function attachReadonly(host: Host, session: Session, runtime: string, target: Destination): Promise<any> {
-  const packet = structuredClone(host.attachments.get(runtime) ?? {});
+  const packet = structuredClone(host.views.request(runtime) ?? {});
   packet.spec = { program: target.spec.program, args: target.spec.args, env: target.spec.env, cwd: target.spec.cwd };
   packet.sessionKey = target.key;
   packet.cwd = target.cwd;
-  host.attachments.set(runtime, packet);
-  host.readonlyMap.set(runtime, { id: target.key, path: target.path });
+  host.views.setRequest(runtime, packet);
+  host.views.showReadonly(runtime, { id: target.key, path: target.path });
   session.publish({ type: 'ownership_lost' }, runtime);
-  host.subscriptions.delete(runtime);
+  host.views.unsubscribe(runtime);
   session.detachView(runtime);
   await session.finishDetach(false, false);
   await host.releaseUnused(session);
@@ -137,7 +135,7 @@ async function attachReadonly(host: Host, session: Session, runtime: string, tar
 }
 
 async function openDestination(host: Host, session: Session, runtime: string, target: Destination): Promise<any> {
-  const release = await lockGate(host.sessionGates, target.key);
+  const release = await host.lockSession(target.key);
   try {
     const found = host.findSession(target.key);
     if (found?.transient()) throw new Error('This conversation branch is still being prepared');
@@ -280,7 +278,7 @@ class Branch {
       await previous.finishDetach(false, true);
       await this.host.releaseUnused(previous);
     } catch (error) {
-      this.host.output({ type: 'diagnostic', line: 'Branch created, but source chat release failed: ' + String(error) });
+      this.host.events.diagnostic('Branch created, but source chat release failed: ' + String(error));
     }
     this.host.reconcile(opened);
     if (this.host.current(this.runtime, opened)) opened.publish({ type: 'session_switched' }, this.runtime);
@@ -311,7 +309,7 @@ function validatePrepared(host: Host, branch: any, state: any, parent: string): 
   const id = text(branch, 'sessionId');
   const path = text(branch, 'sessionPath');
   if (!UUID.test(id)) throw new Error('The prepared branch has no stable session identity');
-  if (state?.sessionId === id || host.sessions.has(id)) throw new Error('The prepared branch identity is already in use');
+  if (state?.sessionId === id || host.hasSession(id)) throw new Error('The prepared branch identity is already in use');
   if (!isAbsolute(path) || !basename(path).endsWith('_' + id + '.jsonl')) throw new Error('The prepared branch path does not bind its session identity');
   const header = JSON.parse(readHeaderLine(path));
   if (header?.type !== 'session' || header?.id !== id || header?.parentSession !== parent) throw new Error('The prepared branch does not belong to its original conversation');

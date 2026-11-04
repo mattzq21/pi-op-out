@@ -34,15 +34,11 @@ function history(entries, current = isSetting) {
 function stored(entries) { return history(entries).filter(entry => entry.type !== 'custom'); }
 
 function transaction(file, sessionId, operation) {
-  const db = database.open(database.storageRoot(file));
-  try {
-    db.exec('BEGIN IMMEDIATE');
+  const db = database.connection(database.storageRoot(file));
+  return database.transaction(db, 'IMMEDIATE', () => {
     database.register(db, sessionId, file);
-    const result = operation(db);
-    db.exec('COMMIT');
-    return result;
-  } catch (error) { throw database.rollback(db, error); }
-  finally { db.close(); }
+    return operation(db);
+  });
 }
 
 function capture(entries) {
@@ -86,14 +82,12 @@ function append(file, sessionId, after, entry) {
 }
 
 function records(file, sessionId, connection) {
-  const db = connection ?? database.open(database.storageRoot(file));
-  try {
-    const history = db.prepare('SELECT after_id, entry_json FROM session_extension_records WHERE session_id=? ORDER BY sequence').all(sessionId)
-      .map(row => ({ after: row.after_id, entry: JSON.parse(row.entry_json) }));
-    const current = db.prepare('SELECT entry_json FROM session_extension_state WHERE session_id=? ORDER BY state_key').all(sessionId)
-      .map(row => ({ after: null, entry: JSON.parse(row.entry_json) }));
-    return [...current, ...history];
-  } finally { if (!connection) db.close(); }
+  const db = connection ?? database.connection(database.storageRoot(file));
+  const history = db.prepare('SELECT after_id, entry_json FROM session_extension_records WHERE session_id=? ORDER BY sequence').all(sessionId)
+    .map(row => ({ after: row.after_id, entry: JSON.parse(row.entry_json) }));
+  const current = db.prepare('SELECT entry_json FROM session_extension_state WHERE session_id=? ORDER BY state_key').all(sessionId)
+    .map(row => ({ after: null, entry: JSON.parse(row.entry_json) }));
+  return [...current, ...history];
 }
 
 function setCurrent(db, sessionId, entry) {
@@ -126,23 +120,17 @@ function selectBranch(file, sessionId, tipId, leafId) {
 }
 
 function selectedLeaf(file, sessionId, tipId) {
-  const db = database.open(database.storageRoot(file));
-  try {
-    const row = db.prepare('SELECT tip_id, leaf_id FROM session_branch_selection WHERE session_id=?').get(sessionId);
-    return row && row.tip_id === tipId ? row.leaf_id : tipId;
-  } finally { db.close(); }
+  const row = database.connection(database.storageRoot(file)).prepare('SELECT tip_id, leaf_id FROM session_branch_selection WHERE session_id=?').get(sessionId);
+  return row && row.tip_id === tipId ? row.leaf_id : tipId;
 }
 
 function revision(file, sessionId) {
-  const db = database.open(database.storageRoot(file));
-  try {
-    const sequence = db.prepare('SELECT coalesce(max(sequence), 0) AS revision FROM session_extension_records WHERE session_id=?').get(sessionId).revision;
-    const current = db.prepare('SELECT state_key, entry_json FROM session_extension_state WHERE session_id=? ORDER BY state_key').all(sessionId);
-    const branch = db.prepare('SELECT tip_id, leaf_id FROM session_branch_selection WHERE session_id=?').get(sessionId);
-    const name = names.nameOf(db, sessionId);
-    return sequence + ':' + createHash('sha256').update(JSON.stringify({ current, branch, name })).digest('hex');
-  }
-  finally { db.close(); }
+  const db = database.connection(database.storageRoot(file));
+  const sequence = db.prepare('SELECT coalesce(max(sequence), 0) AS revision FROM session_extension_records WHERE session_id=?').get(sessionId).revision;
+  const current = db.prepare('SELECT state_key, entry_json FROM session_extension_state WHERE session_id=? ORDER BY state_key').all(sessionId);
+  const branch = db.prepare('SELECT tip_id, leaf_id FROM session_branch_selection WHERE session_id=?').get(sessionId);
+  const name = names.nameOf(db, sessionId);
+  return sequence + ':' + createHash('sha256').update(JSON.stringify({ current, branch, name })).digest('hex');
 }
 
 function create(type, data, parentId) {
@@ -150,6 +138,9 @@ function create(type, data, parentId) {
 }
 
 const AUXILIARY_PARENT = 'piop-auxiliary-parent';
+
+// In a parent transcript: where one of its auxiliary chats is saved.
+const AUXILIARY_LINK = 'piop-auxiliary-link';
 
 const isAuxiliaryParent = entry => entry?.type === 'custom' && entry.customType === AUXILIARY_PARENT && typeof entry.data?.kind === 'string' && typeof entry.data?.parentSessionId === 'string';
 
@@ -169,4 +160,4 @@ function forkPoint(entry) {
     && Array.isArray(entry.message.content) && !entry.message.content.some(part => part?.type === 'toolCall');
 }
 
-module.exports = { AUXILIARY_PARENT, isAuxiliaryParent, auxiliaryParent, isAuxiliary, canFork, forkPoint, selectBranch, selectedLeaf, stateKey, isCurrent, isName, history, stored, save, seed, capture, append, records, merge, revision, create };
+module.exports = { AUXILIARY_PARENT, AUXILIARY_LINK, isAuxiliaryParent, auxiliaryParent, isAuxiliary, canFork, forkPoint, selectBranch, selectedLeaf, stateKey, isCurrent, isName, history, stored, save, seed, capture, append, records, merge, revision, create };

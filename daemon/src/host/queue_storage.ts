@@ -59,24 +59,20 @@ export class QueueStorage {
   id(): string { return basename(this.path, '.json'); }
 
   reserveId(): string {
-    const db = Registry.open(this.root());
-    try {
-      const row: any = db.prepare('UPDATE queue_item_sequence SET last_id=last_id+1 WHERE id=1 AND last_id<9007199254740991 RETURNING last_id').get();
-      if (!row) throw new Error('Query returned no rows');
-      return String(row.last_id);
-    } finally { db.close(); }
+    const db = Registry.connection(this.root());
+    const row: any = db.prepare('UPDATE queue_item_sequence SET last_id=last_id+1 WHERE id=1 AND last_id<9007199254740991 RETURNING last_id').get();
+    if (!row) throw new Error('Query returned no rows');
+    return String(row.last_id);
   }
 
   record(): any | null {
-    const db = Registry.open(this.root());
-    try {
-      return transaction(db, 'DEFERRED', () => {
-        const row: any = db.prepare('SELECT cwd, session_path FROM queue_origins WHERE session_id=?').get(this.id());
-        if (!row) return null;
-        const origin = { cwd: row.cwd, sessionPath: row.session_path ?? null };
-        return { version: 1, origin, items: loadRows(db, this.id()) };
-      });
-    } finally { db.close(); }
+    const db = Registry.connection(this.root());
+    return transaction(db, 'DEFERRED', () => {
+      const row: any = db.prepare('SELECT cwd, session_path FROM queue_origins WHERE session_id=?').get(this.id());
+      if (!row) return null;
+      const origin = { cwd: row.cwd, sessionPath: row.session_path ?? null };
+      return { version: 1, origin, items: loadRows(db, this.id()) };
+    });
   }
 
   load(): any[] {
@@ -85,8 +81,8 @@ export class QueueStorage {
   }
 
   held(): boolean {
-    const db = Registry.open(this.root());
-    try { return db.prepare('SELECT 1 FROM session_queue_holds WHERE session_id=?').get(this.id()) !== undefined; } finally { db.close(); }
+    const db = Registry.connection(this.root());
+    return db.prepare('SELECT 1 FROM session_queue_holds WHERE session_id=?').get(this.id()) !== undefined;
   }
 
   async saveHeld(held: boolean): Promise<void> {
@@ -94,11 +90,9 @@ export class QueueStorage {
     return inOrder(resolve(root), async () => {
       const lock = await temporaryLock(root);
       try {
-        const db = Registry.open(root);
-        try {
-          if (held) db.prepare('INSERT OR IGNORE INTO session_queue_holds VALUES (?)').run(this.id());
-          else db.prepare('DELETE FROM session_queue_holds WHERE session_id=?').run(this.id());
-        } finally { db.close(); }
+        const db = Registry.connection(root);
+        if (held) db.prepare('INSERT OR IGNORE INTO session_queue_holds VALUES (?)').run(this.id());
+        else db.prepare('DELETE FROM session_queue_holds WHERE session_id=?').run(this.id());
       } finally { lock.release(); }
     });
   }
@@ -132,8 +126,8 @@ export class QueueStorage {
       const storage = await temporaryLock(root);
       try {
         await Publication.validateNewReferences(root, items, this.load());
-        const db = Registry.open(root);
-        try { transaction(db, 'IMMEDIATE', () => this.writeItems(db, items, origin)); } finally { db.close(); }
+        const db = Registry.connection(root);
+        transaction(db, 'IMMEDIATE', () => this.writeItems(db, items, origin));
       } finally { storage.release(); }
     } finally { publication.release(); }
   }

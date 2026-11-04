@@ -157,7 +157,7 @@ export async function watchBackend(command, args, options, root, { port, watch =
     if (!filename || closing) return;
     const name = String(filename);
 
-    if (name.endsWith(".bundle.mjs") || name.split(/[\\/]/).some(part => ["node_modules", "target", ".git", "binaries", "gen", "agent-commands.json"].includes(part))) return;
+    if (name.split(/[\\/]/).some(part => ["node_modules", "target", ".git", "binaries", "gen", "agent-commands.json"].includes(part))) return;
     pending.add(resolve(directory, name));
     clearTimeout(timer);
     timer = setTimeout(() => void restart(), 400);

@@ -7,7 +7,7 @@ import * as records from './settings_records';
 import * as synchronization from './settings_synchronization';
 import type { App } from './app';
 import type { PiRuntime } from './pi_runtime';
-import * as daemon from './daemon';
+import { updateSettings } from './local_host';
 import * as peers from './peers';
 
 export { mergeDiscoveredSkills };
@@ -38,8 +38,7 @@ export async function saveAppSettings(app: App, settings: AppSettings): Promise<
   const runtime = app.pi;
   const change = await saveSettingsWith(runtime, settings,
     () => settingsPath(),
-    settings => daemon.invalidateChanged(app, runtime, settings),
-    settings => daemon.updateSettings(app, runtime, settings));
+    settings => updateSettings(app, settings));
   synchronization.changed(app);
   peers.invalidate(app);
   try { await synchronization.publishCurrent(app, change); }
@@ -87,7 +86,6 @@ export function settingsBody(settings: AppSettings): Buffer {
 export async function saveSettingsWith(
   runtime: PiRuntime, settings: AppSettings,
   path: () => Promise<string>,
-  invalidate: (settings: AppSettings) => Promise<void>,
   synchronize: (settings: AppSettings) => Promise<void>,
 ): Promise<any> {
   migrateKeybindings(settings);
@@ -111,17 +109,12 @@ export async function saveSettingsWith(
       const change = save.change(settings);
       change.publication = publication;
       if (publication.error !== undefined) change.settings.settingsDurabilityError = publication.error;
-      await applySavedSettings(settings, invalidate, synchronize, warnings);
+      try { await synchronize(settings); } catch (error: any) { warnings.push(`Settings were saved, but runtime synchronization failed: ${error.message ?? error}`); }
       save.finish(change, warnings);
       change.warnings = warnings;
       return change;
     } finally { storage.release(); }
   });
-}
-
-async function applySavedSettings(settings: AppSettings, invalidate: (settings: AppSettings) => Promise<void>, synchronize: (settings: AppSettings) => Promise<void>, warnings: string[]): Promise<void> {
-  try { await invalidate(settings); } catch (error: any) { warnings.push(`Settings were saved, but runtime invalidation failed: ${error.message ?? error}`); }
-  try { await synchronize(settings); } catch (error: any) { warnings.push(`Settings were saved, but runtime synchronization failed: ${error.message ?? error}`); }
 }
 
 function appendSynchronizationWarning(change: any, warning: string): void {

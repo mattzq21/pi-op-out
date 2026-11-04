@@ -1,5 +1,6 @@
 const fs = require('node:fs');
 const path = require('node:path');
+const { DatabaseSync } = require('node:sqlite');
 
 function rollback(db, error) {
   if (!db.isTransaction) return error;
@@ -14,23 +15,19 @@ function rollback(db, error) {
   return error;
 }
 
-function initialize(db) {
-  db.exec(`PRAGMA busy_timeout=10000; PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; PRAGMA foreign_keys=ON; BEGIN IMMEDIATE;`);
+const SCHEMA_VERSION = 3;
 
-  try {
-    db.exec(`CREATE TABLE IF NOT EXISTS sessions (session_id TEXT PRIMARY KEY, session_path TEXT); CREATE INDEX IF NOT EXISTS sessions_path ON sessions(session_path);
+// The whole storage schema. Only this module creates or changes tables.
+const SCHEMA = `CREATE TABLE IF NOT EXISTS sessions (session_id TEXT PRIMARY KEY, session_path TEXT); CREATE INDEX IF NOT EXISTS sessions_path ON sessions(session_path);
       CREATE TABLE IF NOT EXISTS session_branch_selection (session_id TEXT PRIMARY KEY REFERENCES sessions(session_id) ON DELETE CASCADE, tip_id TEXT, leaf_id TEXT);
       CREATE TABLE IF NOT EXISTS session_extension_state (session_id TEXT NOT NULL REFERENCES sessions(session_id) ON DELETE CASCADE, state_key TEXT NOT NULL, entry_json TEXT NOT NULL, PRIMARY KEY(session_id, state_key));
       CREATE TABLE IF NOT EXISTS session_extension_records (sequence INTEGER PRIMARY KEY AUTOINCREMENT, session_id TEXT NOT NULL REFERENCES sessions(session_id) ON DELETE CASCADE, entry_id TEXT NOT NULL, after_id TEXT, entry_json TEXT NOT NULL, UNIQUE(session_id, entry_id)); CREATE INDEX IF NOT EXISTS session_extension_records_order ON session_extension_records(session_id, sequence);
       CREATE TABLE IF NOT EXISTS session_goals (session_id TEXT PRIMARY KEY REFERENCES sessions(session_id) ON DELETE CASCADE, goal_id TEXT NOT NULL UNIQUE, objective TEXT NOT NULL, status TEXT NOT NULL CHECK(status IN ('active', 'complete')));
       CREATE TABLE IF NOT EXISTS session_goal_ids (goal_id TEXT PRIMARY KEY, session_id TEXT NOT NULL REFERENCES sessions(session_id) ON DELETE CASCADE);
-      CREATE TABLE IF NOT EXISTS session_file_metadata (session_id TEXT PRIMARY KEY REFERENCES sessions(session_id) ON DELETE CASCADE, session_path TEXT NOT NULL, modified_ns TEXT NOT NULL, size INTEGER NOT NULL); CREATE TABLE IF NOT EXISTS session_file_writes (session_id TEXT PRIMARY KEY REFERENCES sessions(session_id) ON DELETE CASCADE); CREATE TRIGGER IF NOT EXISTS session_file_metadata_moved AFTER UPDATE ON sessions WHEN OLD.session_path IS NOT NEW.session_path BEGIN DELETE FROM session_file_metadata WHERE session_id=OLD.session_id; END;`);
-
-    db.exec(`      CREATE TABLE IF NOT EXISTS session_sidebar (
+      CREATE TABLE IF NOT EXISTS session_file_metadata (session_id TEXT PRIMARY KEY REFERENCES sessions(session_id) ON DELETE CASCADE, session_path TEXT NOT NULL, modified_ns TEXT NOT NULL, size INTEGER NOT NULL); CREATE TABLE IF NOT EXISTS session_file_writes (session_id TEXT PRIMARY KEY REFERENCES sessions(session_id) ON DELETE CASCADE); CREATE TRIGGER IF NOT EXISTS session_file_metadata_moved AFTER UPDATE ON sessions WHEN OLD.session_path IS NOT NEW.session_path BEGIN DELETE FROM session_file_metadata WHERE session_id=OLD.session_id; END;
+      CREATE TABLE IF NOT EXISTS session_sidebar (
         session_id TEXT PRIMARY KEY REFERENCES sessions(session_id) ON DELETE CASCADE,
         fingerprint TEXT NOT NULL, modified_at INTEGER NOT NULL, summary_json TEXT NOT NULL);
-      DROP TABLE IF EXISTS session_children;
-      DROP TABLE IF EXISTS session_child_state;
       CREATE TABLE IF NOT EXISTS auxiliary_child_state (
         session_id TEXT PRIMARY KEY REFERENCES sessions(session_id) ON DELETE CASCADE,
         complete INTEGER NOT NULL CHECK(complete IN (0, 1)));
@@ -101,25 +98,124 @@ function initialize(db) {
       CREATE TABLE IF NOT EXISTS submission_outcomes (submission_id TEXT PRIMARY KEY, session_id TEXT NOT NULL, outcome TEXT NOT NULL CHECK(outcome IN ('received', 'accepted', 'rejected')), error TEXT, updated_at INTEGER NOT NULL);
       CREATE TABLE IF NOT EXISTS session_names (session_id TEXT PRIMARY KEY REFERENCES sessions(session_id) ON DELETE CASCADE, name TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS running_tasks (session_id TEXT PRIMARY KEY REFERENCES sessions(session_id) ON DELETE CASCADE);
-`);
+      CREATE TABLE IF NOT EXISTS temporary_chat_allocations (session_id TEXT PRIMARY KEY, original_path TEXT NOT NULL UNIQUE);
+      CREATE TABLE IF NOT EXISTS storage_transcript_summaries (session_path TEXT PRIMARY KEY, fingerprint TEXT NOT NULL, body BLOB NOT NULL);
+      CREATE TRIGGER IF NOT EXISTS storage_transcript_summaries_moved AFTER UPDATE OF session_path ON sessions
+        WHEN OLD.session_path IS NOT NEW.session_path BEGIN
+          DELETE FROM storage_transcript_summaries WHERE session_path=OLD.session_path;
+        END;
+      CREATE TRIGGER IF NOT EXISTS storage_transcript_summaries_deleted AFTER DELETE ON sessions BEGIN
+        DELETE FROM storage_transcript_summaries WHERE session_path=OLD.session_path;
+      END;
+      CREATE TABLE IF NOT EXISTS transcript_references (session_path TEXT PRIMARY KEY, session_id TEXT, fingerprint TEXT NOT NULL, entries_json TEXT NOT NULL, format_version INTEGER NOT NULL);
+      CREATE TRIGGER IF NOT EXISTS transcript_references_moved AFTER UPDATE OF session_path ON sessions
+        WHEN OLD.session_path IS NOT NEW.session_path BEGIN
+          DELETE FROM transcript_references WHERE session_path=OLD.session_path AND session_id=lower(OLD.session_id);
+        END;
+      CREATE TRIGGER IF NOT EXISTS transcript_references_deleted AFTER DELETE ON sessions BEGIN
+        DELETE FROM transcript_references WHERE session_path=OLD.session_path AND session_id=lower(OLD.session_id);
+      END;
+      CREATE TABLE IF NOT EXISTS session_mailbox_receipt_cache (
+        session_id TEXT PRIMARY KEY REFERENCES sessions(session_id) ON DELETE CASCADE,
+        session_path TEXT NOT NULL, fingerprint TEXT NOT NULL, deliveries_json TEXT NOT NULL);
+      CREATE TABLE IF NOT EXISTS sdk_settings (path TEXT PRIMARY KEY, body TEXT);
+      CREATE TABLE IF NOT EXISTS sdk_session_summaries (session_id TEXT PRIMARY KEY REFERENCES sessions(session_id) ON DELETE CASCADE,
+        session_path TEXT NOT NULL, fingerprint TEXT NOT NULL, body TEXT NOT NULL);
+      CREATE TABLE IF NOT EXISTS goal_preparations (directory TEXT NOT NULL, identity TEXT NOT NULL, record_json TEXT, PRIMARY KEY(directory, identity));
+      CREATE TABLE IF NOT EXISTS goal_ownership (directory TEXT NOT NULL, identity TEXT NOT NULL, record_json TEXT, PRIMARY KEY(directory, identity));
+      CREATE TABLE IF NOT EXISTS goal_text_files (directory TEXT NOT NULL, identity TEXT NOT NULL, names_json TEXT NOT NULL, PRIMARY KEY(directory, identity));
+      CREATE TABLE IF NOT EXISTS goal_text_contents (directory TEXT NOT NULL, identity TEXT NOT NULL, contents_json TEXT NOT NULL, PRIMARY KEY(directory, identity));
+      CREATE TABLE IF NOT EXISTS goal_directory_recoveries (directory TEXT PRIMARY KEY, record_json TEXT NOT NULL);
+      CREATE TABLE IF NOT EXISTS goal_directory_history (directory TEXT NOT NULL, previous_identity TEXT NOT NULL, current_identity TEXT NOT NULL, PRIMARY KEY(directory, previous_identity));
+      CREATE TABLE IF NOT EXISTS session_group_parents (group_id TEXT PRIMARY KEY, parent_id TEXT NOT NULL);
+      INSERT OR IGNORE INTO session_group_state VALUES (1, 0);
+      CREATE TABLE IF NOT EXISTS project_repositories (cwd TEXT PRIMARY KEY, repository TEXT);
+      CREATE TABLE IF NOT EXISTS application_settings (name TEXT PRIMARY KEY, body BLOB);
+      CREATE TABLE IF NOT EXISTS agent_prompt_snapshots (digest TEXT PRIMARY KEY, contents TEXT);
+      CREATE TABLE IF NOT EXISTS project_agent_definitions (directory TEXT PRIMARY KEY, body BLOB NOT NULL);
+      CREATE TABLE IF NOT EXISTS settings_sync_records (name TEXT PRIMARY KEY, record_json TEXT);
+      CREATE TABLE IF NOT EXISTS tool_inventory (id INTEGER PRIMARY KEY CHECK (id = 1), entries_json TEXT NOT NULL);
+      CREATE TABLE IF NOT EXISTS command_inventory (id INTEGER PRIMARY KEY CHECK (id = 1), entries_json TEXT NOT NULL);
+      CREATE TABLE IF NOT EXISTS skill_inventory (root TEXT PRIMARY KEY, entries_json TEXT NOT NULL);
+      CREATE TABLE IF NOT EXISTS daemon_restart_records (directory TEXT NOT NULL, name TEXT NOT NULL, record_json TEXT NOT NULL, PRIMARY KEY(directory, name));
+      CREATE TABLE IF NOT EXISTS daemon_restart_backups (directory TEXT NOT NULL, id TEXT NOT NULL, record_json TEXT, PRIMARY KEY(directory, id));
+`;
 
-    if (db.prepare('PRAGMA user_version').get().user_version < 1) {
-      db.exec(`INSERT INTO session_names (session_id, name) SELECT session_id, trim(json_extract(entry_json, '$.name')) FROM session_extension_state
-          WHERE state_key='piop-session-name' AND trim(coalesce(json_extract(entry_json, '$.name'), '')) <> '' ON CONFLICT(session_id) DO NOTHING;
-        DELETE FROM session_extension_state WHERE state_key='piop-session-name';
-        PRAGMA user_version=1;`);
-    }
+function initialize(db) {
+  if (db.prepare('PRAGMA user_version').get().user_version >= SCHEMA_VERSION) return;
+  db.exec('BEGIN IMMEDIATE');
 
-    if (db.prepare('PRAGMA user_version').get().user_version < 2) {
-      db.exec(`INSERT OR IGNORE INTO session_queue_holds (session_id) SELECT session_id FROM session_goals WHERE status='paused';
-        INSERT OR IGNORE INTO session_queue_holds (session_id) SELECT DISTINCT session_id FROM queue_items WHERE json_extract(details_json, '$.paused') = 1;
-        UPDATE queue_items SET details_json=json_remove(details_json, '$.paused') WHERE json_extract(details_json, '$.paused') IS NOT NULL;
-        UPDATE session_goals SET status='active' WHERE status='paused';
-        PRAGMA user_version=2;`);
-    }
-
+  try {
+    if (db.prepare('PRAGMA user_version').get().user_version < SCHEMA_VERSION) db.exec(SCHEMA + `PRAGMA user_version=${SCHEMA_VERSION};`);
     db.exec('COMMIT');
   } catch (error) { throw rollback(db, error); }
+}
+
+const connections = new Map();
+
+// The one connection of this process to the storage database of root. Do not close it.
+// A database file that was replaced or removed gets a new connection, so no write goes to a deleted file.
+function connection(root) {
+  const directory = path.resolve(root);
+  const file = path.join(directory, 'sessions.sqlite');
+  const cached = connections.get(file);
+  const current = fs.lstatSync(file, { bigint: true, throwIfNoEntry: false });
+
+  if (cached && current && current.dev === cached.dev && current.ino === cached.ino) return cached.db;
+
+  if (cached) { connections.delete(file); cached.db.close(); }
+  fs.mkdirSync(directory, { recursive: true, mode: 0o700 });
+
+  if (current?.isSymbolicLink()) throw new Error('Database path must not be a symbolic link');
+  const db = new DatabaseSync(file);
+
+  try {
+    fs.chmodSync(file, 0o600);
+    db.exec('PRAGMA busy_timeout=10000; PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; PRAGMA foreign_keys=ON;');
+    initialize(db);
+    const opened = fs.lstatSync(file, { bigint: true });
+    connections.set(file, { db, dev: opened.dev, ino: opened.ino });
+  } catch (error) { db.close(); throw error; }
+
+  return db;
+}
+
+let savepoints = 0;
+
+// Runs operation as one atomic change. Inside another transaction of the same connection it becomes a savepoint.
+function transaction(db, behavior, operation) {
+  if (db.isTransaction) return savepoint(db, operation);
+  db.exec(`BEGIN ${behavior}`);
+
+  try {
+    const result = operation();
+
+    if (typeof result?.then === 'function') throw new Error('A database transaction must not wait for other work');
+    db.exec('COMMIT');
+
+    return result;
+  } catch (error) { throw rollback(db, error); }
+}
+
+function savepoint(db, operation) {
+  const name = `nested_${++savepoints}`;
+  db.exec(`SAVEPOINT ${name}`);
+
+  try {
+    const result = operation();
+
+    if (typeof result?.then === 'function') throw new Error('A database transaction must not wait for other work');
+    db.exec(`RELEASE ${name}`);
+
+    return result;
+  } catch (error) {
+    if (db.isTransaction) {
+      try { db.exec(`ROLLBACK TO ${name}; RELEASE ${name}`); }
+      catch (failure) { throw rollback(db, error); }
+    }
+
+    throw error;
+  }
 }
 
 function directoryQuery(_db, columns, suffix = '') {
@@ -129,15 +225,10 @@ function directoryQuery(_db, columns, suffix = '') {
 }
 
 function movePaths(root, moves) {
-  const file = path.join(root, 'sessions.sqlite');
+  if (!fs.existsSync(path.join(root, 'sessions.sqlite'))) return;
+  const db = connection(root);
 
-  if (!fs.existsSync(file)) return;
-  const { DatabaseSync } = require('node:sqlite');
-  const db = new DatabaseSync(file);
-
-  try {
-    initialize(db);
-    db.exec('BEGIN IMMEDIATE');
+  transaction(db, 'IMMEDIATE', () => {
     const move = db.prepare('UPDATE sessions SET session_path = ? WHERE session_path = ?');
     const clear = db.prepare('DELETE FROM session_sidebar WHERE session_id IN (SELECT session_id FROM sessions WHERE session_path = ?)');
 
@@ -145,17 +236,11 @@ function movePaths(root, moves) {
       clear.run(item.source);
       move.run(item.destination, item.source);
     }
-
-    db.exec('COMMIT');
-  } finally { db.close(); }
+  });
 }
 
 function reserve(root) {
-  fs.mkdirSync(root, { recursive: true, mode: 0o700 });
-  const db = open(root);
-
-  try { return reserveId(db); }
-  finally { db.close(); }
+  return reserveId(connection(root));
 }
 
 function reserveId(db) {
@@ -193,23 +278,11 @@ function register(db, sessionId, sessionPath) {
 }
 
 function registerPath(root, sessionId, sessionPath) {
-  const file = require('node:path').join(root, 'sessions.sqlite');
-  const db = new (require('node:sqlite').DatabaseSync)(file);
-
-  try {
-    require('node:fs').chmodSync(file, 0o600);
-    initialize(db);
-    db.exec('BEGIN IMMEDIATE');
-    register(db, sessionId, sessionPath);
-    db.exec('COMMIT');
-  } finally { db.close(); }
+  register(connection(root), sessionId, sessionPath);
 }
 
 function rows(root, sql, ...parameters) {
-  const db = open(root);
-
-  try { return db.prepare(sql).all(...parameters); }
-  finally { db.close(); }
+  return connection(root).prepare(sql).all(...parameters);
 }
 
 function queueRecord(db, id) {
@@ -232,58 +305,38 @@ function queueRecord(db, id) {
 }
 
 function queuedInputs(root) {
-  const db = open(root);
+  const db = connection(root);
 
-  try {
-    db.exec('BEGIN');
+  return transaction(db, 'DEFERRED', () => db.prepare('SELECT session_id FROM queue_origins').all().flatMap(row => {
+    const record = queueRecord(db, row.session_id);
 
-    return db.prepare('SELECT session_id FROM queue_origins').all().flatMap(row => {
-      const record = queueRecord(db, row.session_id);
-
-      return record ? [{ session_id: row.session_id, record_json: JSON.stringify(record) }] : [];
-    });
-  } finally { db.close(); }
+    return record ? [{ session_id: row.session_id, record_json: JSON.stringify(record) }] : [];
+  }));
 }
 
 function queuedInput(root, id) {
-  const db = open(root);
+  const db = connection(root);
 
-  try { db.exec('BEGIN');
-
-    return queueRecord(db, id.toLowerCase()); }
-  finally { db.close(); }
+  return transaction(db, 'DEFERRED', () => queueRecord(db, id.toLowerCase()));
 }
 
 function recoveryRecords(root) { return rows(root, 'SELECT record_id, record_json FROM recovery_directories ORDER BY record_id'); }
 
 function saveRecoveryRecord(root, record, reserve = false) {
-  const db = open(root);
-
-  try {
-    db.prepare('INSERT INTO recovery_directories VALUES (?, ?)' + (reserve ? '' : ' ON CONFLICT(record_id) DO UPDATE SET record_json=excluded.record_json'))
-      .run(record.id, JSON.stringify(record));
-  } finally { db.close(); }
+  connection(root).prepare('INSERT INTO recovery_directories VALUES (?, ?)' + (reserve ? '' : ' ON CONFLICT(record_id) DO UPDATE SET record_json=excluded.record_json'))
+    .run(record.id, JSON.stringify(record));
 }
 
 function markCleanup(root, kind) {
-  const db = open(root);
-
-  try { db.prepare('INSERT INTO cleanup_requests VALUES (?, 1) ON CONFLICT(kind) DO UPDATE SET revision=revision+1').run(kind); }
-  finally { db.close(); }
+  connection(root).prepare('INSERT INTO cleanup_requests VALUES (?, 1) ON CONFLICT(kind) DO UPDATE SET revision=revision+1').run(kind);
 }
 
 function cleanupRequest(root, kind) {
-  const db = open(root);
-
-  try { return db.prepare('SELECT revision FROM cleanup_requests WHERE kind=?').get(kind)?.revision; }
-  finally { db.close(); }
+  return connection(root).prepare('SELECT revision FROM cleanup_requests WHERE kind=?').get(kind)?.revision;
 }
 
 function finishCleanup(root, kind, revision) {
-  const db = open(root);
-
-  try { db.prepare('DELETE FROM cleanup_requests WHERE kind=? AND revision=?').run(kind, revision); }
-  finally { db.close(); }
+  connection(root).prepare('DELETE FROM cleanup_requests WHERE kind=? AND revision=?').run(kind, revision);
 }
 
 function publication(root, id) {
@@ -293,41 +346,18 @@ function publication(root, id) {
 }
 
 function savePublication(root, id, record) {
-  const db = open(root);
-
-  try {
-    db.prepare(`INSERT INTO session_publications VALUES (?, ?) ON CONFLICT(publication_id) DO UPDATE SET record_json=excluded.record_json`)
-      .run(id, JSON.stringify(record));
-  } finally { db.close(); }
+  connection(root).prepare(`INSERT INTO session_publications VALUES (?, ?) ON CONFLICT(publication_id) DO UPDATE SET record_json=excluded.record_json`)
+    .run(id, JSON.stringify(record));
 }
 
 function removePublication(root, id) {
-  const db = open(root);
-
-  try { db.prepare('DELETE FROM session_publications WHERE publication_id=?').run(id); }
-  finally { db.close(); }
+  connection(root).prepare('DELETE FROM session_publications WHERE publication_id=?').run(id);
 }
 
 function publications(root) { return rows(root, 'SELECT publication_id FROM session_publications ORDER BY publication_id').map(row => row.publication_id); }
 
-function open(root) {
-  const file = require('node:path').join(root, 'sessions.sqlite');
-  const db = new (require('node:sqlite').DatabaseSync)(file);
-
-  try {
-    require('node:fs').chmodSync(file, 0o600);
-    initialize(db);
-
-    return db;
-  } catch (error) { db.close(); throw error; }
-}
-
 function lookup(root, sessionId) {
-  const db = open(root);
-
-  try {
-    return db.prepare('SELECT session_path FROM sessions WHERE session_id=?').get(sessionId)?.session_path;
-  } finally { db.close(); }
+  return connection(root).prepare('SELECT session_path FROM sessions WHERE session_id=?').get(sessionId)?.session_path;
 }
 
 function paths(root, directory) {
@@ -347,5 +377,5 @@ function storageRoot(file) {
   throw new Error('Conversation is outside session storage');
 }
 
-module.exports = { rollback, initialize, reserve, reserveId, pending, bind, directoryQuery, movePaths, register, registerPath, open, lookup, paths, storageRoot, publication, savePublication, removePublication, publications, markCleanup, cleanupRequest, finishCleanup,
+module.exports = { rollback, transaction, connection, reserve, reserveId, pending, bind, directoryQuery, movePaths, register, registerPath, lookup, paths, storageRoot, publication, savePublication, removePublication, publications, markCleanup, cleanupRequest, finishCleanup,
   recoveryRecords, saveRecoveryRecord, queuedInputs, queuedInput };

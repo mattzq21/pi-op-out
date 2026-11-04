@@ -30,7 +30,7 @@ export async function previewPrompt(spec: unknown, agent: string, home: string):
     diagnostic: remember,
     finished: () => {},
     disconnectError: status => 'Pi stopped before the prompt preview was ready' + (status ? ' (' + status + ')' : '') + (output.length ? ':\n' + output.join('\n') : ''),
-  }, home);
+  }, home, null);
   running.add(worker);
   try {
     await worker.request({ type: 'select_agent', agent }, 'select_agent', null);

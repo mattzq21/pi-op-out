@@ -5,6 +5,7 @@ import { type Accessor, createSignal } from "solid-js";
 import { createDependencyEffect, createRef } from "./solid";
 
 import { invoke, listen, type UnlistenFn } from "./platform";
+import { reportBackgroundError } from "./backgroundErrors";
 
 export interface ProviderAccount {
   id: string;
@@ -54,6 +55,8 @@ const message = (cause: unknown) => cause instanceof Error ? cause.message : Str
 
 const cancelFlow = (hostId: string, flowId: string) => call(hostId, { action: "cancel", flowId }, authFlowSchema);
 
+const cancelFailed = (reason: unknown) => reportBackgroundError("Could not cancel the sign-in", reason);
+
 const INTERRUPTED = "Provider login was interrupted on the host. Start again.";
 
 const TRANSIENT_HINT = "Host is busy";
@@ -81,7 +84,7 @@ export function useProviderAuth(hostId: Accessor<string>) {
       const previous = active.current;
       active.current = undefined;
 
-      if (previous) void cancelFlow(previous.hostId, previous.flowId).catch(() => undefined);
+      if (previous) void cancelFlow(previous.hostId, previous.flowId).catch(cancelFailed);
     };
   }, () => [hostId()]);
 
@@ -111,7 +114,7 @@ export function useProviderAuth(hostId: Accessor<string>) {
       setRevision((value) => value + 1);
     }, z.object({ hostId: z.string(), flow: authFlowSchema.nullish() })).then((stop) => {
       if (cancelled) void stop(); else unlisten = stop;
-    }).catch(() => undefined);
+    }).catch(reason => reportBackgroundError("Could not follow sign-in changes", reason));
 
     return () => { cancelled = true; unlisten?.(); };
   }, () => [hostId()]);
@@ -150,7 +153,7 @@ export function useProviderAuth(hostId: Accessor<string>) {
         const lost = failures >= 2 && !reasonText.includes(TRANSIENT_HINT);
 
         if (lost) {
-          void cancelFlow(capturedHostId, (capturedFlow).flowId).catch(() => undefined);
+          void cancelFlow(capturedHostId, (capturedFlow).flowId).catch(cancelFailed);
           active.current = undefined;
           setFlow(undefined);
           setRevision((value) => value + 1);
@@ -182,7 +185,7 @@ export function useProviderAuth(hostId: Accessor<string>) {
       const result = await call(capturedHostId, request, authFlowSchema);
 
       if (current === generation.current) receive(result);
-      else if (begin) void cancelFlow(capturedHostId, result.flowId).catch(() => undefined);
+      else if (begin) void cancelFlow(capturedHostId, result.flowId).catch(cancelFailed);
     } catch (reason) { if (current === generation.current) setError(message(reason)); }
     finally { if (current === generation.current) { setWorking(false); requestPending.current = false; } }
   };

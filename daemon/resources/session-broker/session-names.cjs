@@ -22,23 +22,13 @@ function write(db, sessionId, name, replace) {
 }
 
 function transaction(root, work) {
-  const db = database.open(root);
+  const db = database.connection(root);
 
-  try {
-    db.exec('BEGIN IMMEDIATE');
-    const result = work(db);
-    db.exec('COMMIT');
-
-    return result;
-  } catch (error) { throw database.rollback(db, error); }
-  finally { db.close(); }
+  return database.transaction(db, 'IMMEDIATE', () => work(db));
 }
 
 function sessionName(file, sessionId, connection) {
-  const db = connection ?? database.open(database.storageRoot(file));
-
-  try { return nameOf(db, sessionId); }
-  finally { if (!connection) db.close(); }
+  return nameOf(connection ?? database.connection(database.storageRoot(file)), sessionId);
 }
 
 function nameSession(file, sessionId, name, replace = true) {

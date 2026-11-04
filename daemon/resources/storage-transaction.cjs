@@ -33,10 +33,7 @@ function point() {
 }
 
 function withDatabase(root, operation) {
-  const db = database.open(root);
-
-  try { return operation(db); }
-  finally { db.close(); }
+  return operation(database.connection(root));
 }
 
 function insert(journal) {
@@ -62,15 +59,10 @@ function retire(journal) {
   }
 
   point();
-  withDatabase(journal.root, db => {
-    db.exec('BEGIN IMMEDIATE');
-
-    try {
-      require('./transcript-references.cjs').removeDirectory(db, journal.staging);
-      db.prepare('DELETE FROM storage_transactions WHERE id=?').run(journal.id);
-      db.exec('COMMIT');
-    } catch (error) { throw database.rollback(db, error); }
-  });
+  withDatabase(journal.root, db => database.transaction(db, 'IMMEDIATE', () => {
+    require('./transcript-references.cjs').removeDirectory(db, journal.staging);
+    db.prepare('DELETE FROM storage_transactions WHERE id=?').run(journal.id);
+  }));
   point();
 }
 

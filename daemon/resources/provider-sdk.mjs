@@ -3,6 +3,11 @@ import { homedir } from 'node:os';
 import { pathToFileURL } from 'node:url';
 import { randomUUID } from 'node:crypto';
 import { createServer } from 'node:http';
+import { installRuntimeStorage, removeStoredModelProvider, saveStoredModelProvider, storedModelText } from './sdk-storage.mjs';
+import { createFastModelDiscovery } from './fast-model-discovery.mjs';
+import { OCX_PROVIDER_ID, ocxProviderConfig } from '../../extensions/piop-ocx-provider/ocx-provider.mjs';
+
+const reason = (error) => error instanceof Error ? error.message : String(error);
 
 const emit = (packet) => process.stdout.write(JSON.stringify(packet) + '\n');
 
@@ -17,7 +22,7 @@ let initializing;
 let fastModelDiscovery;
 
 async function loadRuntime() {
-  const directory = process.argv[1];
+  const directory = process.argv[2];
 
   if (!directory) throw new Error('The daemon did not give the Pi installation folder');
   const sdk = await import(pathToFileURL(join(directory, 'dist/core/model-runtime.js')).href);
@@ -29,7 +34,7 @@ async function loadRuntime() {
   const { loadSkills } = await import(pathToFileURL(join(directory, 'dist/core/skills.js')).href);
   const settings = SettingsManager.create(process.cwd(), config.getAgentDir());
   const builtin = await sdk.ModelRuntime.create({ modelsPath: null, allowModelNetwork: false, refreshOnCreate: false });
-  const runtime = await sdk.ModelRuntime.create({ allowModelNetwork: false }).catch(() => { throw new Error('Could not load provider configuration on this host. Check Pi configuration and file permissions.'); });
+  const runtime = await sdk.ModelRuntime.create({ allowModelNetwork: false }).catch((error) => { throw new Error(`Could not load provider configuration on this host: ${reason(error)}. Check Pi configuration and file permissions.`); });
   await refreshOcx(runtime);
 
   return { runtime, settings, resolver, loadSkills, agentDir: config.getAgentDir(), authPath: config.getAuthPath(), modelsPath: join(config.getAgentDir(), 'models.json'), parseModels: body => JSON.parse(stripJsonComments(body.replace(/^\uFEFF/, ''))), builtinIds: builtin.getProviders().map((provider) => provider.id) };
@@ -148,12 +153,14 @@ function providerModels(loaded, providers) {
   const { previous, ids } = providerModelPrevious(loaded.runtime, providers);
   let entries;
 
-  try { entries = loaded.runtime.getModels(); } catch {}
+  let failure;
+
+  try { entries = loaded.runtime.getModels(); } catch (error) { failure = error instanceof Error ? error.message : String(error); }
 
   if (!Array.isArray(entries)) {
     const models = [...previous.values()].flat();
 
-    return { models, modelDiagnostics: [{ message: 'The SDK model catalog is unavailable or is not an array.', usingLastUsableCatalog: models.length > 0 }] };
+    return { models, modelDiagnostics: [{ message: failure === undefined ? 'The SDK model catalog is not an array.' : `The SDK model catalog is unavailable: ${failure}`, usingLastUsableCatalog: models.length > 0 }] };
   }
 
   return providerModelMerge(previous, ids, entries);
@@ -338,7 +345,7 @@ async function handleProviderRequest(loaded, packet) {
 
   if (packet.method === 'draft_catalog') {
     await refreshOcx(loaded.runtime);
-    await loaded.runtime.refresh({ allowNetwork: false }).catch(() => { throw new Error('Could not refresh providers on this host. Check Pi configuration.'); });
+    await loaded.runtime.refresh({ allowNetwork: false }).catch((error) => { throw new Error(`Could not refresh providers on this host: ${reason(error)}. Check Pi configuration.`); });
 
     const initial = await initialSelection(loaded);
 
@@ -347,7 +354,7 @@ async function handleProviderRequest(loaded, packet) {
 
   if (packet.method === 'inspect') {
     const refreshDiagnostics = await refreshProviders(loaded.runtime);
-    const credentials = await loaded.runtime.listCredentials().catch(() => { throw new Error('Could not read saved provider status on this host.'); });
+    const credentials = await loaded.runtime.listCredentials().catch((error) => { throw new Error(`Could not read saved provider status on this host: ${reason(error)}`); });
 
     const providers = loaded.runtime.getProviders();
     const { models, modelDiagnostics } = providerModels(loaded, providers);
@@ -398,7 +405,7 @@ async function initialSelection(loaded) {
 
 async function refreshProviders(runtime) {
   const ocx = await refreshOcx(runtime);
-  const result = await runtime.refresh({ allowNetwork: false }).catch(() => { throw new Error('Could not refresh providers on this host. Check Pi configuration.'); });
+  const result = await runtime.refresh({ allowNetwork: false }).catch((error) => { throw new Error(`Could not refresh providers on this host: ${reason(error)}. Check Pi configuration.`); });
   const diagnostics = [];
   const seen = new Set();
   const add = (providerId, error) => {

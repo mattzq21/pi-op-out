@@ -75,23 +75,21 @@ async function deleteChat(path: string) {
 function owners(directory: string) { return modules.assets.readOwners(root, directory).owners.map((owner: any) => owner.sessionId).sort(); }
 
 function registered(id: string) {
-  const db = modules.database.open(root);
-  try { return db.prepare('SELECT session_path FROM sessions WHERE session_id=?').get(id)?.session_path; } finally { db.close(); }
+  const db = modules.database.connection(root);
+  return db.prepare('SELECT session_path FROM sessions WHERE session_id=?').get(id)?.session_path;
 }
 
 function leftovers(id: string, path: string) {
-  const db = modules.database.open(root);
-  try {
-    return {
-      transcript: existsSync(path),
-      registry: Boolean(db.prepare('SELECT 1 FROM sessions WHERE session_id=?').get(id)),
-      goal: Boolean(db.prepare('SELECT 1 FROM session_goals WHERE session_id=?').get(id)),
-      state: db.prepare('SELECT count(*) AS n FROM session_extension_state WHERE session_id=?').get(id).n,
-      journals: modules.database.publications(root).length,
-      quarantine: existsSync(join(root, 'session-publication-quarantine')) ? readdirSync(join(root, 'session-publication-quarantine')).length : 0,
-      locks: existsSync(join(root, 'session-publication-locks')) ? readdirSync(join(root, 'session-publication-locks')).length : 0,
-    };
-  } finally { db.close(); }
+  const db = modules.database.connection(root);
+  return {
+    transcript: existsSync(path),
+    registry: Boolean(db.prepare('SELECT 1 FROM sessions WHERE session_id=?').get(id)),
+    goal: Boolean(db.prepare('SELECT 1 FROM session_goals WHERE session_id=?').get(id)),
+    state: db.prepare('SELECT count(*) AS n FROM session_extension_state WHERE session_id=?').get(id).n,
+    journals: modules.database.publications(root).length,
+    quarantine: existsSync(join(root, 'session-publication-quarantine')) ? readdirSync(join(root, 'session-publication-quarantine')).length : 0,
+    locks: existsSync(join(root, 'session-publication-locks')) ? readdirSync(join(root, 'session-publication-locks')).length : 0,
+  };
 }
 
 test('a branch copies history through the selected final response, current settings and shared attachments, and discarding it leaves the source intact', async () => {
@@ -129,16 +127,14 @@ test('a publication that fails after claiming resources removes everything it cr
   const source = await sourceChat();
   const sessionId = modules.database.reserve(root);
   const locksBefore = leftovers(source.id, source.path).locks;
-  const db = modules.database.open(root);
+  const db = modules.database.connection(root);
   db.exec("CREATE TRIGGER reject_branch_state BEFORE INSERT ON auxiliary_child_state WHEN NEW.session_id='" + sessionId + "' BEGIN SELECT RAISE(ABORT, 'Index write failed'); END");
-  db.close();
   try {
     await expect(modules.history.publishBranchHistory({ root, sourcePath: source.path, sessionId, cwd: source.cwd, entries: source.entries, leafId: 'a3', entryId: 'a3' }))
       .rejects.toThrow(/Could not create the branch: Index write failed/);
   } finally {
-    const cleanup = modules.database.open(root);
+    const cleanup = modules.database.connection(root);
     cleanup.exec('DROP TRIGGER reject_branch_state');
-    cleanup.close();
   }
   const files = readdirSync(join(root, 'sessions', 'project')).filter(name => name.includes(sessionId));
   expect(files).toEqual([]);
@@ -183,16 +179,14 @@ test('a publication that saves the transcript but cannot finish is removed', asy
   const source = await sourceChat();
   const sessionId = modules.database.reserve(root);
   const locksBefore = leftovers(source.id, source.path).locks;
-  const db = modules.database.open(root);
+  const db = modules.database.connection(root);
   db.exec("CREATE TRIGGER keep_branch_publication BEFORE DELETE ON session_publications WHEN json_extract(OLD.record_json, '$.sessionId')='" + sessionId + "' AND json_extract(OLD.record_json, '$.phase')='linked' BEGIN SELECT RAISE(ABORT, 'Retirement failed'); END");
-  db.close();
   try {
     await expect(modules.history.publishBranchHistory({ root, sourcePath: source.path, sessionId, cwd: source.cwd, entries: source.entries, leafId: 'a3', entryId: 'a1' }))
       .rejects.toThrow(/Session was published; durability or cleanup will retry[\s\S]*Cleanup failed: Branch cleanup is incomplete/);
   } finally {
-    const cleanup = modules.database.open(root);
+    const cleanup = modules.database.connection(root);
     cleanup.exec('DROP TRIGGER keep_branch_publication');
-    cleanup.close();
   }
   await modules.history.discardBranchHistory(root, sessionId, null);
   expect(readdirSync(join(root, 'sessions', 'project')).filter(name => name.includes(sessionId))).toEqual([]);

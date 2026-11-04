@@ -1,5 +1,4 @@
-import { loadAppSettings } from './settings';
-import * as daemon from './daemon';
+import { localHost } from './local_host';
 import { launchTerminalForOwner, queueInput, resizeProcess, stopTerminalProcess, type TerminalProcess, type TerminalRuntime } from './terminals';
 import type { App } from './app';
 
@@ -25,7 +24,7 @@ export class Transcript {
   private blockView: Buffer | undefined;
   private blockUsed = 0;
 
-  constructor(public sessionId: string, public hostId: string, public owner: string, public cwd: string, public generation: string, public creationOrder: number) {}
+  constructor(public sessionId: string, public owner: string, public cwd: string, public generation: string, public creationOrder: number) {}
 
   append(data: string): void {
     const bytes = Buffer.from(data, 'utf8');
@@ -67,17 +66,17 @@ export class Transcript {
 
 export function ownedBy(item: Transcript, owner: string): boolean { return item.owner === owner; }
 
-export function start(runtime: TerminalRuntime, id: string, sessionKey: string, cwd: string, hostId: string, owner: string, generation: string): void {
+export function start(runtime: TerminalRuntime, id: string, sessionKey: string, cwd: string, owner: string, generation: string): void {
   const existing = runtime.history.get(id);
   const order = existing ? existing.creationOrder : Math.max(0, ...[...runtime.history.values()].map(item => item.creationOrder)) + 1;
-  runtime.history.set(id, new Transcript(sessionPart(sessionKey), hostId, owner, cwd, generation, order));
+  runtime.history.set(id, new Transcript(sessionPart(sessionKey), owner, cwd, generation, order));
 }
 
 export function record(history: Map<string, Transcript>, id: string, data: string): void { history.get(id)?.append(data); }
 
 export function event(history: Map<string, Transcript>, id: string, packet: any): any {
   const item = history.get(id);
-  if (item) Object.assign(packet, { sessionId: item.sessionId, hostId: item.hostId, generation: item.generation, outputEnd: item.textEnd });
+  if (item) Object.assign(packet, { sessionId: item.sessionId, hostId: 'local', generation: item.generation, outputEnd: item.textEnd });
   return packet;
 }
 
@@ -96,10 +95,10 @@ export function detach(runtime: TerminalRuntime, owner: string): void {
   for (const [id, item] of [...runtime.history]) if (item.owner === owner) runtime.history.delete(id);
 }
 
-export function sessionTerminals(runtime: TerminalRuntime, hostId: string, sessionIds: string[]): string[] {
+export function sessionTerminals(runtime: TerminalRuntime, sessionIds: string[]): string[] {
   const ids = new Set<string>();
-  for (const [id, item] of runtime.history) if (item.hostId === hostId && sessionIds.includes(item.sessionId)) ids.add(id);
-  for (const [id, process] of runtime.processes) if (process.hostId === hostId && sessionIds.includes(sessionPart(process.sessionKey))) ids.add(id);
+  for (const [id, item] of runtime.history) if (sessionIds.includes(item.sessionId)) ids.add(id);
+  for (const [id, process] of runtime.processes) if (sessionIds.includes(sessionPart(process.sessionKey))) ids.add(id);
   return [...ids].sort();
 }
 
@@ -121,9 +120,7 @@ export async function discardDrafts(runtime: TerminalRuntime, ownerPrefix: strin
 
 async function sessionOwned(app: App, sessionId: string, client: string, draftOwned: boolean, allowReleased: boolean): Promise<boolean> {
   if (sessionId.startsWith('draft-')) return draftOwned;
-  const settings = await loadAppSettings(app);
-  const connection = await daemon.connect(app, app.pi, app.broker, settings, 'local');
-  return (await connection.request({ type: 'conversation_owner', sessionId, clientId: client, allowReleased })) === true;
+  return (await localHost(app).host.conversationOwner(sessionId, client, allowReleased)) === true;
 }
 
 interface SharedRequest { app: App; runtime: TerminalRuntime; request: any; owner: string; client: string; sessionId: string }
@@ -152,13 +149,13 @@ async function sharedList(context: SharedRequest): Promise<any> {
   const { runtime, sessionId, owner, request } = context;
   if (owned && !sessionId.startsWith('draft-')) {
     for (const [id, item] of runtime.history) {
-      if (item.sessionId !== sessionId || item.hostId !== 'local') continue;
+      if (item.sessionId !== sessionId) continue;
       item.owner = owner;
       const process = runtime.processes.get(id);
       if (process) process.windowLabel = owner;
     }
   }
-  const entries = [...runtime.history].filter(([, item]) => item.sessionId === sessionId && item.hostId === 'local').sort((a, b) => a[1].creationOrder - b[1].creationOrder);
+  const entries = [...runtime.history].filter(([, item]) => item.sessionId === sessionId).sort((a, b) => a[1].creationOrder - b[1].creationOrder);
   return entries.map(([id, item]) => {
     const known = request?.known?.[id];
     const unchanged = known?.generation === item.generation && known?.outputEnd === item.textEnd;
@@ -184,7 +181,7 @@ function sharedStart(context: SharedRequest, id: string): Promise<any> {
     const cwd = context.request.cwd;
     if (typeof cwd !== 'string') throw new Error('Missing working directory');
     await launchTerminalForOwner(context.app, context.owner, context.runtime, {
-      terminalId: id, sessionKey: 'local:' + context.sessionId, cwd, cols: dimension(context.request, 'cols'), rows: dimension(context.request, 'rows'), hostId: 'local',
+      terminalId: id, sessionKey: 'local:' + context.sessionId, cwd, cols: dimension(context.request, 'cols'), rows: dimension(context.request, 'rows'),
     });
     changed(context.app, context.sessionId);
     return null;
@@ -200,7 +197,7 @@ async function sharedAccess(context: SharedRequest, item: Transcript, action: st
 }
 
 function emitDraft(app: App, item: Transcript, id: string, data: string): void {
-  app.emit('pi://event', { type: 'terminal_draft', terminalId: id, sessionId: item.sessionId, hostId: item.hostId, generation: item.generation, data });
+  app.emit('pi://event', { type: 'terminal_draft', terminalId: id, sessionId: item.sessionId, hostId: 'local', generation: item.generation, data });
 }
 
 async function updateShared(context: SharedRequest, id: string, action: string): Promise<any> {
@@ -258,7 +255,7 @@ async function updateShared(context: SharedRequest, id: string, action: string):
       resizeProcess(process, cols, rows);
       const data = '\u001b[8;' + rows + ';' + cols + 't';
       item.append(data);
-      app.emit('pi://event', { type: 'terminal_output', terminalId: id, sessionId: item.sessionId, hostId: item.hostId, generation: item.generation, outputEnd: item.textEnd, data });
+      app.emit('pi://event', { type: 'terminal_output', terminalId: id, sessionId: item.sessionId, hostId: 'local', generation: item.generation, outputEnd: item.textEnd, data });
       break;
     }
     default: throw new Error('Unknown terminal action');

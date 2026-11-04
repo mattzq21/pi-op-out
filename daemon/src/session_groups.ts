@@ -110,29 +110,21 @@ function storagePath(): string { return join(ensureDesktopSessionsDir(homeDir())
 function database(path: string): Database {
   const parent = join(path, '..');
   const root = parent.endsWith('/sessions') ? join(parent, '..') : parent;
-  const connection = Registry.open(root);
-  try {
-    connection.exec('CREATE TABLE IF NOT EXISTS session_group_parents (group_id TEXT PRIMARY KEY, parent_id TEXT NOT NULL)');
-    connection.exec('INSERT INTO session_group_state VALUES (1, 0) ON CONFLICT DO NOTHING');
-  } catch (error) { connection.close(); throw error; }
-  return connection;
+  return Registry.connection(root);
 }
 
 function read(path: string): SessionGroups | undefined {
   const connection = database(path);
-  try { return transaction(connection, 'DEFERRED', () => readWith(connection)); }
-  finally { connection.close(); }
+  return transaction(connection, 'DEFERRED', () => readWith(connection));
 }
 
 function update<T>(path: string, change: (stored: SessionGroups | undefined) => { save?: SessionGroups; value: T }): T {
   const connection = database(path);
-  try {
-    return transaction(connection, 'IMMEDIATE', () => {
-      const { save, value } = change(readWith(connection));
-      if (save) writeWith(connection, save);
-      return value;
-    });
-  } finally { connection.close(); }
+  return transaction(connection, 'IMMEDIATE', () => {
+    const { save, value } = change(readWith(connection));
+    if (save) writeWith(connection, save);
+    return value;
+  });
 }
 
 function readWith(connection: Database): SessionGroups | undefined {
@@ -349,9 +341,9 @@ export async function changeSessionGroups(app: App, requested: GroupChange): Pro
   });
 }
 
-export async function refreshDeletions(app: App, hostId: string): Promise<void> {
+export async function refreshDeletions(app: App): Promise<void> {
   const path = storagePath();
-  await refreshDeletionsAt(path, app, [], [`${hostId}:`]);
+  await refreshDeletionsAt(path, app, [], ['local:']);
   await STORAGE_LOCK.run(async () => {
     const state = read(path);
     if (state) app.emit('pi://groups-changed', serializeGroups(state));

@@ -13,7 +13,7 @@ const home = join(dir, 'home');
 const previousHome = process.env.HOME;
 process.env.HOME = home;
 const appSettings = createRequire(import.meta.url)('../../daemon/resources/session-broker/app-settings.cjs');
-const chooseModel = webSearchModel => appSettings.write(join(home, '.piop', 'settings.json'), JSON.stringify(webSearchModel === undefined ? {} : { webSearchModel }));
+const chooseModel = webSearchModel => appSettings.write(join(home, '.piop', 'settings.json'), JSON.stringify(webSearchModel === undefined ? {} : { plugins: { 'web-search': { webSearchModel } } }));
 chooseModel(undefined);
 const outfile = join(dir, 'extension.mjs');
 await build({ entryPoints: ['daemon/plugins/web-search/index.ts'], outfile, bundle: true, format: 'esm', platform: 'node', logLevel: 'silent', banner: { js: 'import { createRequire as piopRequire } from "node:module"; const require = piopRequire(import.meta.url);' },

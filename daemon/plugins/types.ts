@@ -6,7 +6,8 @@ export type CommandDelivery = 'immediate' | 'queued';
 
 export interface PluginExtension {
   after: CoreExtension;
-  files: Array<[string, string]>;
+  // The plugin's Pi extension, built into one file.
+  source: string;
 }
 
 export interface BundledPlugin {

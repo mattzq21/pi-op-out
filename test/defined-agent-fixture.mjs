@@ -7,6 +7,7 @@ import { pathToFileURL } from 'node:url';
 import { compileAgentFixture } from './compile-defined-agent-fixture.mjs';
 
 const appSettings = createRequire(import.meta.url)('../daemon/resources/session-broker/app-settings.cjs');
+export const piRoot = createRequire(import.meta.url)('../daemon/resources/pi-runtime.cjs').supportedPi('pi').root;
 
 export const encoded = value => Buffer.from(JSON.stringify(value)).toString('base64url');
 
@@ -58,7 +59,7 @@ export async function agentFixture(t, options = {}) {
   const previous = { ...process.env };
 
   for (const name of ['PI_DEFINE_AGENTS_RUNTIME_DEFAULTS', 'PI_DEFINE_AGENTS_ACTIVE', 'PIOP_AGENT_DRAFT_STATE', 'PI_DESKTOP_MCP_CONFIG', 'PIOP_STORAGE_DIRECTORY']) delete process.env[name];
-  Object.assign(process.env, { HOME: home, PIOP_STORAGE_ROOT: root }, options.env);
+  Object.assign(process.env, { HOME: home, PIOP_STORAGE_ROOT: root, PIOP_PI_ROOT: piRoot }, options.env);
   t.after(async () => {
     for (const key of Object.keys(process.env)) if (!(key in previous)) delete process.env[key];
     Object.assign(process.env, previous);

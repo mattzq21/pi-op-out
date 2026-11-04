@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { readdirSync, readFileSync } from 'node:fs';
-import { sleep } from './util/sync';
+import { sleep, isMissing } from './util/sync';
 
 export const PROCESS_TAG = 'PIOP_PROCESS_TAG';
 
@@ -39,7 +39,7 @@ export function descendantProcesses(parent: number, group?: number, session?: nu
       const ppid = Number(fields[1]);
       const started = fields[19];
       if (Number.isFinite(ppid) && started && fields[0] !== 'Z') processes.set(Number(entry), { ppid, group: Number(fields[2]), session: Number(fields[3]), started });
-    } catch {}
+    } catch (error) { if (!isMissing(error) && (error as NodeJS.ErrnoException).code !== 'ESRCH') throw error; }
   }
   const descendants = new Set([parent]);
   if (group !== undefined) for (const [pid, entry] of processes) if (entry.group === group) descendants.add(pid);

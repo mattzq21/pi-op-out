@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import type { IncomingMessage } from 'node:http';
 import type { Duplex } from 'node:stream';
-import { Channel } from './util/sync';
+import { Channel, logFailure } from './util/sync';
 import { MAX_RESPONSE_BYTES } from './config';
 
 const GUID = '258EAFA5-E914-47DA-95CA-C5AB0DC85B11';
@@ -28,7 +28,7 @@ export function acceptUpgrade(request: IncomingMessage, socket: Duplex, head: Bu
 export function reject(socket: Duplex, status: number, text: string, body = ''): void {
   try {
     socket.end('HTTP/1.1 ' + status + ' ' + text + '\r\nConnection: close\r\nContent-Type: text/plain\r\nContent-Length: ' + Buffer.byteLength(body) + '\r\n\r\n' + body);
-  } catch {}
+  } catch (error) { logFailure('Could not refuse a connection with HTTP ' + status)(error); }
   setTimeout(() => socket.destroy(), 1000).unref();
 }
 
@@ -98,11 +98,11 @@ export class WebSocketConnection {
     const body = Buffer.alloc(2);
     body.writeUInt16BE(code);
     try { await this.frame(0x8, body, true); } catch { this.terminate(); return; }
-    try { this.socket.end(); } catch {}
+    try { this.socket.end(); } catch (error) { logFailure('Could not end a WebSocket connection')(error); this.terminate(); }
   }
 
   terminate(): void {
-    try { this.socket.destroy(); } catch {}
+    this.socket.destroy();
     this.finish();
   }
 
@@ -111,7 +111,7 @@ export class WebSocketConnection {
     this.closed = true;
     clearTimeout(this.closeTimer);
     this.stopReceiving(false);
-    try { this.socket.destroy(); } catch {}
+    this.socket.destroy();
   }
 
   private stopReceiving(discardReceived = true): void {
@@ -162,7 +162,7 @@ export class WebSocketConnection {
   }
 
   private fail(code: number): void {
-    this.close(code).catch(() => undefined);
+    this.close(code).catch(logFailure('Could not close a WebSocket connection'));
   }
 
   private receive(data: Buffer): void {

@@ -1,4 +1,4 @@
-import { defaultPluginSettings, parsePluginSettings, serializePluginSettings, type PluginSettings } from '../plugins/catalog';
+import { defaultPluginSettings, parsePluginSettings, type PluginSettings } from '../plugins/catalog';
 import { defaultKeybindings } from './keybindings';
 import { capRangeError } from '../../extensions/piop-context-window-cap/interface';
 
@@ -10,8 +10,10 @@ export interface RemoteHost {
   piPath: string;
 }
 
-export interface AppSettings extends PluginSettings {
+export interface AppSettings {
   settingsRevision?: string;
+  // Each plugin's own settings, under its plugin ID.
+  plugins: PluginSettings;
   localEnabled: boolean;
   modelAliases?: Record<string, string>;
   hiddenModels: string[];
@@ -144,7 +146,7 @@ export function parseAppSettings(value: any): AppSettings {
   }
   const settings: AppSettings = {
     settingsRevision: optionalString(value.settingsRevision, 'settingsRevision'),
-    ...parsePluginSettings(value),
+    plugins: parsePluginSettings(value.plugins),
     localEnabled: boolField(value.localEnabled, 'localEnabled', true),
     modelAliases: modelAliases(value.modelAliases),
     hiddenModels: value.hiddenModels === undefined ? [] : stringArray(value.hiddenModels, 'hiddenModels'),
@@ -168,7 +170,7 @@ export function parseAppSettings(value: any): AppSettings {
 export function serializeAppSettings(settings: AppSettings): Record<string, unknown> {
   const result: Record<string, unknown> = {};
   if (settings.settingsRevision !== undefined) result.settingsRevision = settings.settingsRevision;
-  serializePluginSettings(settings, result);
+  result.plugins = settings.plugins;
   result.localEnabled = settings.localEnabled;
   result.modelAliases = settings.modelAliases ?? {};
   result.hiddenModels = settings.hiddenModels;
@@ -196,7 +198,7 @@ export function cloneSettings(settings: AppSettings): AppSettings {
 
 export function defaultSettings(): AppSettings {
   return {
-    ...defaultPluginSettings(),
+    plugins: defaultPluginSettings(),
     localEnabled: true,
     defaultFastMode: false,
     modelAliases: {},

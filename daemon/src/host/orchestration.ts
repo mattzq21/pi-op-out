@@ -17,6 +17,7 @@ import { QueueState } from './queue_state';
 import { renameSession } from '../../resources/session-broker/session-names.cjs';
 import type { Host } from './controller';
 import type { Session } from './session';
+import { observedElsewhere } from '../util/sync';
 
 const CANCELLED_DELIVERY_TTL_MS = 10 * 60_000;
 const MAX_WATCH_MS = 5 * 60_000;
@@ -53,7 +54,7 @@ export class Orchestration {
   private rename(id: string, name: unknown): { name: string } {
     const renamed = renameSession(this.host.storageRoot(), id, name as string);
     this.host.findSession(id)?.renamed(renamed);
-    this.host.output({ type: 'sessions_changed' });
+    this.host.events.sessionsChanged();
     return { name: renamed };
   }
 
@@ -160,7 +161,7 @@ export class Orchestration {
       if (!task) {
         const entry = { finished: false, promise: Promise.resolve() as Promise<any> };
         entry.promise = session.queue.interruptDelegation().finally(() => { entry.finished = true; this.host.maintenance(session.key); });
-        entry.promise.catch(() => {});
+        observedElsewhere(entry.promise);
         session.orchestrationTask = entry;
       }
       return { sessionId: id, completed: false };
@@ -190,8 +191,7 @@ export class Orchestration {
     const host = this.host;
     const result = await attach(host, { type: 'attach', runtimeId: runtime, clientId: packet.clientId ?? null, sessionKey: id, spec: packet.spec ?? null, cwd: packet.cwd ?? null, presence: { visible: false } });
     if (!flag(result, 'owned')) {
-      host.attachments.delete(runtime);
-      host.readonlyMap.delete(runtime);
+      host.views.forget(runtime);
       throw new Error(ownershipError());
     }
   }
@@ -234,9 +234,8 @@ export class Orchestration {
   }
 
   private stored(id: string, path: string, delivery: string): boolean {
-    const database = Registry.open(this.host.storageRoot());
-    try { if (database.prepare('SELECT 1 FROM session_mailbox WHERE session_id=? AND delivery_id=?').get(id, delivery)) return true; }
-    finally { database.close(); }
+    const database = Registry.connection(this.host.storageRoot());
+    if (database.prepare('SELECT 1 FROM session_mailbox WHERE session_id=? AND delivery_id=?').get(id, delivery)) return true;
     if (!path || !existsSync(path)) return false;
     return readFileSync(path, 'utf8').split('\n').some(line => {
       if (!line.includes(delivery)) return false;
@@ -336,9 +335,9 @@ export class Orchestration {
   }
 
   private async detach(runtime: string): Promise<any> {
-    this.host.attachments.delete(runtime);
-    const session = this.host.subscriptions.get(runtime);
-    return session ? this.host.detach({ preserveRunning: true }, runtime, session) : null;
+    this.host.views.dropRequest(runtime);
+    const session = this.host.views.session(runtime);
+    return session ? this.host.detach(runtime, session, false, true) : null;
   }
 }
 

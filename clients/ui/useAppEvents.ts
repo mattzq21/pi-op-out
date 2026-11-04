@@ -52,11 +52,19 @@ export function useAppEvents(options: Accessor<AppEventsContext>) {
   createDependencyEffect(() => { const capturedOptions = options();
     let cancelled = false; let reconnecting = false; let initializing = false;
     const current = () => !cancelled && capturedOptions.activeTransportRef.current === capturedOptions.transport;
+    // A refresh that a reconnection overtook is not reported: the reconnection loads the conversation again and reports its own failure.
+    const refreshReported = (refresh: () => Promise<unknown>) => {
+      const connection = capturedOptions.transport.currentConnection();
+      void refresh().catch(reason => {
+        if (!current() || isConversationChanged(reason) || capturedOptions.transport.currentConnection() !== connection) return;
+        capturedOptions.addNotice({ title: "Could not refresh the conversation", message: reason instanceof Error ? reason.message : String(reason) });
+      });
+    };
     const agentStatus = agentStatusReader(() => capturedOptions.transport.currentHostId(), () => capturedOptions.transport.currentCwd(), capability => {
       if (cancelled) return;
       capturedOptions.setDefinedAgents(capability);
 
-      if (capability && !initializing) void capturedOptions.refreshSession().catch(() => undefined);
+      if (capability && !initializing) refreshReported(() => capturedOptions.refreshSession());
     }, reason => { if (!cancelled) capturedOptions.addNotice({ title: "Could not read agent list", message: reason instanceof Error ? reason.message : String(reason) }); });
     capturedOptions.setError(undefined);
     document.title = "piop"; capturedOptions.setStatuses({}); capturedOptions.setWidgets({});
@@ -164,7 +172,7 @@ export function useAppEvents(options: Accessor<AppEventsContext>) {
       };
 
       const handleSessionSwitched = () => {
-        if (!initializing) void capturedOptions.refresh().catch(() => undefined);
+        if (!initializing) refreshReported(() => capturedOptions.refresh());
       };
 
       const handleSettingsApplied = () => {
@@ -184,7 +192,7 @@ export function useAppEvents(options: Accessor<AppEventsContext>) {
 
       const handleSessionInfoChanged = () => {
         if (capturedOptions.activeTransportRef.current === capturedOptions.transport) capturedOptions.setActiveCwd(capturedOptions.transport.currentCwd());
-        if (!initializing && !capturedOptions.transport.promptControls.isApplying()) void capturedOptions.refreshSession().catch(() => undefined);
+        if (!initializing && !capturedOptions.transport.promptControls.isApplying()) refreshReported(() => capturedOptions.refreshSession());
       };
 
       const handleOwnershipLost = () => {

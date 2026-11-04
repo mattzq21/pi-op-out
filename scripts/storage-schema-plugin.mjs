@@ -21,7 +21,7 @@ export function storageSchemaImports() {
       if (basename(path) === 'app-settings.cjs') return { contents: source
         .replace("const fs = require('node:fs');", "import fs from 'node:fs';")
         .replace("const path = require('node:path');", "import path from 'node:path';")
-        .replace("const { DatabaseSync } = require('node:sqlite');", "import { DatabaseSync } from 'node:sqlite';")
+        .replace("const database = require('../session-database.cjs');", "import * as database from '../session-database.cjs';")
         .replace('module.exports = { read, readFile, readText, write };', 'export { read, readFile, readText, write };'), loader: 'js' };
 
       const values = /const \{ ([A-Z]\w*(?:, [A-Z]\w*)*) \} = require\(["']typebox\/value["']\);/g;

@@ -1,7 +1,8 @@
 export const DEVELOPMENT: boolean = typeof __PIOP_DEVELOPMENT__ === 'boolean' ? __PIOP_DEVELOPMENT__ : false;
-export const STORAGE_DIRECTORY = DEVELOPMENT ? '.piop-dev' : '.piop';
 export const UNUSED_STOP_MS: number | undefined = typeof __PIOP_UNUSED_STOP_MS__ === 'number' ? __PIOP_UNUSED_STOP_MS__ : DEVELOPMENT ? 5_000 : undefined;
 export const PROJECT_DIR: string = typeof __PIOP_PROJECT_DIR__ === 'string' ? __PIOP_PROJECT_DIR__ : '';
+// The storage folder, relative to HOME. Only one daemon uses it at a time: each development checkout has its own.
+export const STORAGE_DIRECTORY = DEVELOPMENT ? developmentStorageDirectory() : '.piop';
 
 export const MAX_TERMINALS = 8;
 export const BROKER_WORKERS = 8;
@@ -13,6 +14,11 @@ export const PEER_PROTOCOL_VERSION = 1;
 export const BUILD_ID: string = typeof __PIOP_BUILD_ID__ === 'string' ? __PIOP_BUILD_ID__ : '';
 export const MAX_REQUEST_BYTES = 32 * 1024 * 1024;
 export const MAX_RESPONSE_BYTES = 128 * 1024 * 1024;
+
+function developmentStorageDirectory(): string {
+  if (!PROJECT_DIR) throw new Error('Cannot locate project directory');
+  return '.piop-dev/daemons/' + developmentEndpointKey(PROJECT_DIR);
+}
 
 export function developmentEndpointKey(project: string): string {
   const identity = project.replace(/\/+$/, '') + '/src-tauri';

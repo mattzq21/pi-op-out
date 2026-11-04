@@ -12,7 +12,7 @@ test('subagent status updates use one SQL row with the current task', t => {
   mkdirSync(join(root, 'sessions'));
   const parent = database.reserve(root), child = database.reserve(root);
   const file = join(root, 'sessions', 'parent.jsonl'), childFile = join(root, 'sessions', 'child.jsonl');
-  const db = database.open(root);
+  const db = database.connection(root);
   database.bind(db, parent, file);
   database.bind(db, child, childFile);
   const ctx = { sessionManager: { getSessionFile: () => file, getSessionId: () => parent } };
@@ -25,5 +25,4 @@ test('subagent status updates use one SQL row with the current task', t => {
   assert.equal(saved[0].status, 'completed');
   assert.equal(saved[0].task, 'Resolved task text');
   assert.equal(db.prepare('SELECT count(*) AS n FROM session_extension_records').get().n, 0);
-  db.close();
 });

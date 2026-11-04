@@ -6,7 +6,7 @@ import { dirname, join } from "node:path";
 import { Type, type Static } from "typebox";
 import { Check, Parse } from "typebox/value";
 import type { DatabaseSync } from "node:sqlite";
-import { open as openDatabase, register, rollback, storageRoot } from "../session-database.cjs";
+import { connection, register, storageRoot, transaction } from "../session-database.cjs";
 
 const detailsSchema = Type.Object({ notificationId: Type.String(), mailboxSessionId: Type.String(), mailboxFingerprint: Type.String() });
 
@@ -107,18 +107,6 @@ function savedMessageDetails(line: string) {
 
 const receiptCacheSchema = Type.Array(Type.Tuple([Type.String(), Type.String()]));
 
-function receiptDatabase(path: string) {
-  const db = openDatabase(storageRoot(path));
-
-  try {
-    db.exec(`CREATE TABLE IF NOT EXISTS session_mailbox_receipt_cache (
-      session_id TEXT PRIMARY KEY REFERENCES sessions(session_id) ON DELETE CASCADE,
-      session_path TEXT NOT NULL, fingerprint TEXT NOT NULL, deliveries_json TEXT NOT NULL)`);
-
-    return db;
-  } catch (error) { db.close(); throw error; }
-}
-
 function cachedReceipts(db: DatabaseSync, id: string, path: string, fingerprint: string | undefined) {
   if (fingerprint === undefined) return undefined;
   const row = db.prepare("SELECT deliveries_json FROM session_mailbox_receipt_cache WHERE session_id=? AND session_path=? AND fingerprint=?").get(id, path, fingerprint);
@@ -144,13 +132,10 @@ async function savedDeliveries(ctx: ExtensionContext, required = false) {
 
   if (!path) throw new Error("Durable agent mail requires a saved conversation");
   const id = ctx.sessionManager.getSessionId();
-  const db = receiptDatabase(path);
+  const db = connection(storageRoot(path));
+  const cached = cachedReceipts(db, id, path, registeredFingerprint(db, id, path));
 
-  try {
-    const cached = cachedReceipts(db, id, path, registeredFingerprint(db, id, path));
-
-    return cached ?? await readSavedDeliveries(db, id, path, required);
-  } finally { db.close(); }
+  return cached ?? await readSavedDeliveries(db, id, path, required);
 }
 
 async function readSavedDeliveries(db: DatabaseSync, id: string, path: string, required: boolean) {
@@ -189,31 +174,22 @@ async function mailboxDatabase(ctx: ExtensionContext, _root: string) {
   const file = ctx.sessionManager.getSessionFile();
 
   if (!file) throw new Error("Durable agent mail requires a saved conversation");
-  const db = openDatabase(storageRoot(file));
+  const db = connection(storageRoot(file));
 
-  try {
-    if (!db.prepare("SELECT 1 FROM session_mailbox_state WHERE session_id=?").get(sessionId)) {
+  if (!db.prepare("SELECT 1 FROM session_mailbox_state WHERE session_id=?").get(sessionId)) {
+    if (ctx.sessionManager.getSessionId() !== sessionId) throw new Error("Conversation changed while recovering agent mail");
+    initializeMailbox(db, sessionId, file);
+  }
 
-      if (ctx.sessionManager.getSessionId() !== sessionId) throw new Error("Conversation changed while recovering agent mail");
-      initializeMailbox(db, sessionId, file);
-    }
-
-    return db;
-  } catch (error) { db.close(); throw error; }
+  return db;
 }
 
 function initializeMailbox(db: DatabaseSync, sessionId: string, file: string) {
-  db.exec("BEGIN IMMEDIATE");
-
-  try {
-    if (!db.prepare("SELECT 1 FROM session_mailbox_state WHERE session_id=?").get(sessionId)) {
-      register(db, sessionId, file);
-
-      db.prepare("INSERT INTO session_mailbox_state VALUES (?)").run(sessionId);
-    }
-
-    db.exec("COMMIT");
-  } catch (error) { throw rollback(db, error); }
+  transaction(db, "IMMEDIATE", () => {
+    if (db.prepare("SELECT 1 FROM session_mailbox_state WHERE session_id=?").get(sessionId)) return;
+    register(db, sessionId, file);
+    db.prepare("INSERT INTO session_mailbox_state VALUES (?)").run(sessionId);
+  });
 }
 
 function insertPending(db: DatabaseSync, record: MailboxRecord) {
@@ -237,29 +213,25 @@ async function pendingRecords(ctx: ExtensionContext, root: string) {
   const sessionId = ctx.sessionManager.getSessionId();
   const db = await mailboxDatabase(ctx, root);
 
-  try {
-    if (sessionId !== ctx.sessionManager.getSessionId()) throw new Error("Conversation changed while reading agent mail");
+  if (sessionId !== ctx.sessionManager.getSessionId()) throw new Error("Conversation changed while reading agent mail");
 
-    return db.prepare("SELECT * FROM session_mailbox WHERE session_id=? ORDER BY sequence, delivery_id")
-      .all(sessionId).map(row => mailboxRecord(Parse(savedRecordSchema, row)));
-  } finally { db.close(); }
+  return db.prepare("SELECT * FROM session_mailbox WHERE session_id=? ORDER BY sequence, delivery_id")
+    .all(sessionId).map(row => mailboxRecord(Parse(savedRecordSchema, row)));
 }
 
 async function storePending(ctx: ExtensionContext, root: string, deliveryId: string, message: MailboxMessage) {
   const db = await mailboxDatabase(ctx, root);
 
-  try {
-    db.exec("BEGIN IMMEDIATE");
+  return transaction(db, "IMMEDIATE", () => {
     const sessionId = message.details.mailboxSessionId;
 
     if (sessionId !== ctx.sessionManager.getSessionId()) throw new Error("Conversation changed before agent mail was accepted");
     const existing = db.prepare("SELECT * FROM session_mailbox WHERE session_id=? AND delivery_id=?").get(sessionId, deliveryId);
     const record = existing ? mailboxRecord(Parse(savedRecordSchema, existing)) : nextRecord(db, sessionId, deliveryId, message);
     assertSameDelivery(record.message.details.mailboxFingerprint, message);
-    db.exec("COMMIT");
 
     return record;
-  } finally { db.close(); }
+  });
 }
 
 function nextRecord(db: DatabaseSync, sessionId: string, deliveryId: string, message: MailboxMessage): MailboxRecord {
@@ -275,10 +247,8 @@ function nextRecord(db: DatabaseSync, sessionId: string, deliveryId: string, mes
 async function removePending(ctx: ExtensionContext, root: string, record: MailboxRecord) {
   const db = await mailboxDatabase(ctx, root);
 
-  try {
-    db.prepare("DELETE FROM session_mailbox WHERE session_id=? AND delivery_id=? AND fingerprint=?")
-      .run(record.sessionId, record.deliveryId, record.message.details.mailboxFingerprint);
-  } finally { db.close(); }
+  db.prepare("DELETE FROM session_mailbox WHERE session_id=? AND delivery_id=? AND fingerprint=?")
+    .run(record.sessionId, record.deliveryId, record.message.details.mailboxFingerprint);
 }
 
 export class DurableMailbox {

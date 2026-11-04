@@ -19,7 +19,8 @@ export interface PluginInstance {
 
 export interface PluginModule { createPlugin: (context: PluginContext) => PluginInstance }
 
-export interface PluginSettingsProps { settings: AppSettings; agents: AgentProfile[]; models: Model[]; onChange: (patch: Partial<AppSettings>) => void }
+// A plugin's settings page sees and changes only its own settings.
+export interface PluginSettingsProps { settings: Record<string, unknown>; agents: AgentProfile[]; models: Model[]; onChange: (patch: Record<string, unknown>) => void }
 
 export interface PluginSettingsSection { section: string; label: string; description: string; icon: (props: LucideProps) => JSX.Element; load: () => Promise<{ default: Component<PluginSettingsProps> }> }
 
@@ -31,10 +32,7 @@ export interface PluginDefinition {
   id: string;
   scope: PluginScope;
   retainOnHostRestart?: boolean;
-  name: string;
-  description: string;
   load?: () => Promise<PluginModule>;
   settings?: PluginSettingsSection;
-  queuedCommands?: string[];
   messages?: Record<string, () => Promise<{ default: Component<{ details: unknown }> }>>;
 }

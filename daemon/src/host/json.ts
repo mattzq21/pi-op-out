@@ -1,4 +1,5 @@
 import { isDeepStrictEqual } from 'node:util';
+import { logFailure } from '../util/sync';
 
 export type Json = any;
 
@@ -60,7 +61,7 @@ export class CancelScope {
   cancel(): void {
     if (this.cancelled) return;
     this.cancelled = true;
-    for (const action of [...this.actions]) { try { action(); } catch {} }
+    for (const action of [...this.actions]) { try { action(); } catch (error) { logFailure('A cancel action failed')(error); } }
     this.actions.clear();
   }
 }

@@ -1,4 +1,4 @@
-import { createComputed, createEffect, createMemo, createSignal, on, onCleanup, type Accessor, type JSX } from "solid-js";
+import { createEffect, createMemo, on, onCleanup, type Accessor, type JSX } from "solid-js";
 import { z } from "zod";
 
 export type StateUpdate<T> = T | ((previous: T) => T);
@@ -65,17 +65,4 @@ export function createDependencyEffect(effect: () => void | (() => void), depend
   });
 
   createEffect(on(values, run));
-}
-
-export function createSubscription<T>(subscribe: Accessor<(listener: () => void) => () => void>, snapshot: Accessor<() => T>): Accessor<T> {
-  const [value, setValue] = createSignal<T>(snapshot()());
-  createComputed(() => {
-    const read = snapshot();
-    const update = () => setValue(() => read());
-    const stop = subscribe()(update);
-    update();
-    onCleanup(() => { stop(); });
-  });
-
-  return value;
 }
