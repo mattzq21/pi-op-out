@@ -3,12 +3,12 @@ import { Database } from 'bun:sqlite';
 import { join } from 'node:path';
 import { daemonDirectory, startDaemon, temporaryDirectory } from './harness';
 
-test('debug Android keeps its address and token through a daemon restart', async () => {
+test('the debug endpoint keeps its address and token through a daemon restart', async () => {
   const home = temporaryDirectory();
   const options = { home, development: true, projectRoot: process.cwd() };
   const read = () => {
     const db = new Database(join(daemonDirectory(home, options), 'sessions.sqlite'), { readonly: true });
-    try { return JSON.parse(Buffer.from((db.query("SELECT body FROM application_settings WHERE name='debug-mobile'").get() as any).body).toString()); }
+    try { return JSON.parse(Buffer.from((db.query("SELECT body FROM application_settings WHERE name='debug-endpoint'").get() as any).body).toString()); }
     finally { db.close(); }
   };
   const first = await startDaemon(options);

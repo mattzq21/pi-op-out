@@ -4,7 +4,7 @@ import { linkTestPi } from '../pi-install.mjs';
 
 test('concurrent daemon starters attach to the winner without waiting for it to stop', async () => {
   const executable = await daemonExecutable();
-  const env = { ...process.env, HOME: temporaryDirectory(), PIOP_MOBILE_BIND: '127.0.0.1:0' };
+  const env = { ...process.env, HOME: temporaryDirectory(), PIOP_CLIENT_BIND: '127.0.0.1:0' };
   await linkTestPi(env.HOME);
   const starters = Array.from({ length: 8 }, () => Bun.spawn([process.execPath, executable, 'start'], { env, stdout: 'pipe', stderr: 'pipe' }));
   let timer: ReturnType<typeof setTimeout> | undefined;

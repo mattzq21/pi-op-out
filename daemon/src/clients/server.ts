@@ -122,17 +122,17 @@ function upgradeServer(shared: Shared, onUpgrade: (request: IncomingMessage, soc
 
 export async function start(app: App): Promise<void> {
   daemonLog.listenStatus(failure => app.setLogStatus('local', failure));
-  let token = process.env.PIOP_MOBILE_TOKEN;
+  let token = process.env.PIOP_CLIENT_TOKEN;
   if (token === undefined && DEVELOPMENT) {
     try {
-      const saved = records.read(endpoint.directory(), 'debug-mobile-identity');
+      const saved = records.read(endpoint.directory(), 'debug-endpoint-identity');
       if (saved) token = JSON.parse(saved.toString('utf8')).token;
     }
     catch (error) { if (errorText(error) !== 'Daemon connection is not available') console.error('Could not read the saved daemon endpoint; using a new token: ' + errorText(error)); }
   }
   if (typeof token !== 'string') token = randomUUID() + randomUUID();
-  if (token.length < 32) throw new Error('PIOP_MOBILE_TOKEN must contain at least 32 characters');
-  const bind = process.env.PIOP_MOBILE_BIND ?? (DEVELOPMENT ? '127.0.0.1:0' : '127.0.0.1:9847');
+  if (token.length < 32) throw new Error('PIOP_CLIENT_TOKEN must contain at least 32 characters');
+  const bind = process.env.PIOP_CLIENT_BIND ?? (DEVELOPMENT ? '127.0.0.1:0' : '127.0.0.1:9847');
   const shared: Shared = { app, subscribers: new Set(), handshakes: new Slots(16), connections: new Slots(MAX_CONNECTIONS), jobs: new Slots(16) };
   const secret = token;
   const server = upgradeServer(shared, (request, socket, head) => {
@@ -172,14 +172,14 @@ async function startDebug(shared: Shared, token: string): Promise<() => void> {
     connection(shared, ws, token, isLoopback(request.socket.remoteAddress), socket).catch(error => console.error('Debug connection from ' + request.socket.remoteAddress + ' ended: ' + errorText(error))).finally(() => ws.terminate());
   });
   const root = endpoint.directory();
-  const saved = records.read(root, 'debug-mobile-identity');
+  const saved = records.read(root, 'debug-endpoint-identity');
   const previous = saved ? JSON.parse(saved.toString('utf8')) : undefined;
-  const address = await listen(server, process.env.PIOP_DEBUG_MOBILE_BIND ?? previous?.bind ?? '127.0.0.1:0');
+  const address = await listen(server, process.env.PIOP_DEBUG_BIND ?? previous?.bind ?? '127.0.0.1:0');
   const host = address.address.includes(':') ? '[' + address.address + ']' : address.address;
-  records.save(root, 'debug-mobile-identity', JSON.stringify({ bind: host + ':' + address.port, token }));
+  records.save(root, 'debug-endpoint-identity', JSON.stringify({ bind: host + ':' + address.port, token }));
   const record = JSON.stringify({ url: 'ws://' + host + ':' + address.port, token, protocol: PROTOCOL_VERSION });
-  records.save(root, 'debug-mobile', record);
-  return () => records.removeIfEqual(root, 'debug-mobile', record);
+  records.save(root, 'debug-endpoint', record);
+  return () => records.removeIfEqual(root, 'debug-endpoint', record);
 }
 
 function authenticated(value: any, expected: string): boolean {

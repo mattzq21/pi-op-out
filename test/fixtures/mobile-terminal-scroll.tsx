@@ -3,6 +3,7 @@ import { createSignal } from 'solid-js';
 import { MobileTerminalView } from '../../clients/ui/components/MobileTerminalView';
 import '../../clients/ui/styles.css';
 import '../../clients/ui/mobile.css';
+import '../../clients/ui/narrow-window.css';
 
 document.head.insertAdjacentHTML('beforeend', '<meta name="viewport" content="width=device-width, initial-scale=1">');
 

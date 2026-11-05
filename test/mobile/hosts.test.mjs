@@ -5,7 +5,7 @@ import { IDBFactory, IDBObjectStore } from 'fake-indexeddb';
 
 const compiled = await build({ entryPoints: ['clients/ui/lib/mobileHosts.ts'], bundle: true, write: false, format: 'esm', platform: 'node', define: { 'import.meta.env.MODE': '"mobile"' } });
 
-const { readMobileHosts, saveMobileAnchor, saveMobileHost, forgetMobileHost, validateMobileAnchor, cachedMobileHost, localHostLabel, useDevelopmentAnchor } = await import(`data:text/javascript;base64,${Buffer.from(compiled.outputFiles[0].text).toString('base64')}`);
+const { readMobileHosts, saveMobileAnchor, saveMobileHost, forgetMobileHost, validateMobileAnchor, cachedMobileHost, cachedMobileHostName, useDevelopmentAnchor } = await import(`data:text/javascript;base64,${Buffer.from(compiled.outputFiles[0].text).toString('base64')}`);
 
 const readMobileAnchor = async () => (await readMobileHosts()).anchor;
 
@@ -50,10 +50,10 @@ test('forgetting the anchor clears saved and cached connection details', async (
 
 test('a development connection is used for this run without replacing the saved anchor', async () => {
   await saveMobileAnchor('wss://home.test', 'Home');
-  assert.equal(localHostLabel(), 'Home');
+  assert.equal(cachedMobileHostName(), 'Home');
   useDevelopmentAnchor('ws://10.0.2.2:4100');
   assert.equal(cachedMobileHost(), 'ws://10.0.2.2:4100');
-  assert.equal(localHostLabel(), 'Development');
+  assert.equal(cachedMobileHostName(), 'Development');
   assert.deepEqual(await readMobileAnchor(), { name: 'Home', url: 'wss://home.test/' });
 });
 
@@ -64,14 +64,14 @@ test('a failed host save keeps the saved address and label, and a later save can
 
   await assert.rejects(saveMobileAnchor('wss://office.test', 'Office'), /Host storage is unavailable/);
   assert.equal(cachedMobileHost(), 'wss://home.test/');
-  assert.equal(localHostLabel(), 'Home');
+  assert.equal(cachedMobileHostName(), 'Home');
 
   failure.mock.restore();
   assert.deepEqual(await readMobileAnchor(), { name: 'Home', url: 'wss://home.test/' });
   await saveMobileAnchor('wss://office.test', 'Office');
   assert.deepEqual(await readMobileAnchor(), { name: 'Office', url: 'wss://office.test/' });
   assert.equal(cachedMobileHost(), 'wss://office.test/');
-  assert.equal(localHostLabel(), 'Office');
+  assert.equal(cachedMobileHostName(), 'Office');
 });
 
 test('an aborted forget keeps the saved host, and a later forget can recover', async t => {
@@ -85,7 +85,7 @@ test('an aborted forget keeps the saved host, and a later forget can recover', a
 
   await assert.rejects(forgetMobileHost());
   assert.equal(cachedMobileHost(), 'wss://home.test/');
-  assert.equal(localHostLabel(), 'Home');
+  assert.equal(cachedMobileHostName(), 'Home');
   assert.deepEqual(await readMobileAnchor(), { name: 'Home', url: 'wss://home.test/' });
 
   failure.mock.restore();
@@ -123,6 +123,6 @@ test('saving a host without connecting adds it and keeps the current anchor', as
   assert.deepEqual(await readMobileHosts(), { anchor: { name: 'Home', url: 'wss://home.test/' }, saved: [{ name: 'Home', url: 'wss://home.test/' }, { name: 'Office', url: 'wss://office.test/' }] });
   await saveMobileHost('wss://home.test', 'House');
   assert.deepEqual(await readMobileHosts(), { anchor: { name: 'House', url: 'wss://home.test/' }, saved: [{ name: 'House', url: 'wss://home.test/' }, { name: 'Office', url: 'wss://office.test/' }] });
-  assert.equal(localHostLabel(), 'House');
+  assert.equal(cachedMobileHostName(), 'House');
   assert.throws(() => saveMobileHost('wss://office.test', ' '), /host name/);
 });

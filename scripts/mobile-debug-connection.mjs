@@ -6,8 +6,8 @@ import { join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 import { developmentEndpointKey } from "../protocol/connection.ts";
-import { readJson } from "../daemon/resources/application-records.ts";
-import { readOnlyStorage } from "../daemon/resources/session-database.ts";
+import { readApplicationJson } from "../daemon/resources/piop-storage/index.ts";
+import { readOnlyStorage } from "../daemon/resources/session-database/index.ts";
 
 readOnlyStorage();
 
@@ -26,7 +26,7 @@ if (result.error || result.status !== 0) {
 }
 
 function readDaemonEndpoint() {
-  try { return readJson(endpointDirectory, "debug-mobile"); } catch { return undefined; }
+  try { return readApplicationJson(endpointDirectory, "debug-endpoint"); } catch { return undefined; }
 }
 
 async function ready(url, token) {
@@ -91,7 +91,7 @@ while (Date.now() < deadline) {
 
 if (outdatedBuild) throw new Error("The running worktree daemon does not match the rebuilt binary; restart it before connecting.");
 
-if (!connection) throw new Error("The worktree daemon has no live debug mobile endpoint. Rebuild it, stop the old daemon, and start it again.");
+if (!connection) throw new Error("The worktree daemon has no live debug endpoint. Rebuild it, stop the old daemon, and start it again.");
 
 process.stdout.write(JSON.stringify({
   project,

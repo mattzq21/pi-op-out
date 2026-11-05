@@ -2,7 +2,7 @@ import { databaseExists, transaction } from './core.ts';
 import { applicationSetting, createApplicationSetting, removeApplicationSetting, saveApplicationSetting } from './settings.ts';
 import { onMainThread } from './main-thread.ts';
 
-export type RecordName = 'settings' | 'agent-definitions' | 'daemon' | 'daemon-id' | 'debug-mobile' | 'debug-mobile-identity' | 'plugins';
+export type RecordName = 'settings' | 'agent-definitions' | 'daemon' | 'daemon-id' | 'debug-endpoint' | 'debug-endpoint-identity' | 'plugins';
 
 
 // The daemon's named records in the storage database of a storage root. Only the daemon changes them; Pi and the
@@ -11,9 +11,9 @@ export type RecordName = 'settings' | 'agent-definitions' | 'daemon' | 'daemon-i
 //   agent-definitions: the global agent definitions.
 //   daemon: how clients connect to the running daemon.
 //   daemon-id: the identity of the daemons of this storage root.
-//   debug-mobile, debug-mobile-identity: the debug connection for the mobile app.
+//   debug-endpoint, debug-endpoint-identity: the address and token of the debug endpoint, which local debug clients use.
 //   plugins: the plugins that are on, and those the daemon has offered.
-const NAMES = new Set(['settings', 'agent-definitions', 'daemon', 'daemon-id', 'debug-mobile', 'debug-mobile-identity', 'plugins']);
+const NAMES = new Set(['settings', 'agent-definitions', 'daemon', 'daemon-id', 'debug-endpoint', 'debug-endpoint-identity', 'plugins']);
 
 function checked(name: string): string {
   if (!NAMES.has(name)) throw new Error('Unknown application record: ' + name);

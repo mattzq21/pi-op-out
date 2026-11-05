@@ -85,17 +85,17 @@ async function validateRestartBind(bind: string): Promise<void> {
 async function debugRestartBind(): Promise<string | null> {
   let bind: string | null = null;
   try {
-    const bytes = records.read(endpoint.directory(), 'debug-mobile');
+    const bytes = records.read(endpoint.directory(), 'debug-endpoint');
     const url = bytes ? JSON.parse(bytes.toString('utf8'))?.url : undefined;
     if (typeof url === 'string') bind = url.replace(/^(ws:\/\/)+/, '');
-  } catch (error) { logFailure('Ignored the saved debug address of the mobile server')(error); }
+  } catch (error) { logFailure('Ignored the saved address of the debug endpoint')(error); }
   if (bind !== null) await validateRestartBind(bind);
   return bind;
 }
 
 function restartBind(url: string): string {
   const address = url.replace(/^(ws:\/\/)+/, '');
-  const bind = process.env.PIOP_MOBILE_BIND;
+  const bind = process.env.PIOP_CLIENT_BIND;
   if (bind === undefined) return address;
   const index = address.lastIndexOf(':');
   if (bind.endsWith(':0') && index >= 0) return bind.slice(0, -2) + ':' + address.slice(index + 1);
@@ -251,8 +251,8 @@ export async function commit(app: App, id: string): Promise<void> {
 
 async function launch(plan: Plan, executable: string, mode: string, link = false, env: Record<string, string> = {}): Promise<ChildProcess> {
   const command: daemonLog.DaemonCommand = { program: executable, args: [mode, plan.id], link, env: {
-    PIOP_DAEMON_EXECUTABLE: plan.executable, PIOP_MOBILE_BIND: plan.bind,
-    PIOP_DEBUG_MOBILE_BIND: plan.debug_bind ?? process.env.PIOP_DEBUG_MOBILE_BIND, ...env,
+    PIOP_DAEMON_EXECUTABLE: plan.executable, PIOP_CLIENT_BIND: plan.bind,
+    PIOP_DEBUG_BIND: plan.debug_bind ?? process.env.PIOP_DEBUG_BIND, ...env,
   } };
   const logger = mode === '--restart-candidate' ? executable : plan.fallback;
   await daemonLog.configure(command, logger);

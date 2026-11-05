@@ -32,7 +32,7 @@ const fixtureEnvironment: Record<string, string> = {
   HOME: fixtureHome,
   PIOP_TEST_HOME: fixtureHome,
   PI_CODING_AGENT_DIR: fixtureAgent,
-  PIOP_MOBILE_BIND: "127.0.0.1:0",
+  PIOP_CLIENT_BIND: "127.0.0.1:0",
   XDG_CONFIG_HOME: path.join(fixtureHome, "config"), XDG_DATA_HOME: path.join(fixtureHome, "data"), XDG_CACHE_HOME: path.join(fixtureHome, "cache"),
   GDK_BACKEND: "x11",
 };

@@ -565,7 +565,7 @@ export function createAppConversations(preloadChat: () => void, prepareTranscrip
     return true;
   };
 
-  const closeMobileSidebar = () => { if (sidebarFloats()) setPanelOpen(false); };
+  const closeFloatingSidebar = () => { if (sidebarFloats()) setPanelOpen(false); };
 
   const reusableDraftSource = () => {
     const draft = existingSessionDraft();
@@ -578,7 +578,7 @@ export function createAppConversations(preloadChat: () => void, prepareTranscrip
   const newDraftKey = (hostId: string, previous?: string) => `${hostId}:${previous ? previous.slice(previous.indexOf(":") + 1) : `draft-${crypto.randomUUID()}`}`;
 
   const createNewSessionDraft = async (clearProject: boolean, group?: SessionGroup, project?: { cwd: string; hostId: string }, host?: string, fresh = false) => {
-    closeMobileSidebar();
+    closeFloatingSidebar();
     setArchivesOpen(false);
     const ownerTransport = activeTransportRef.current; const ownerKey = activeConversationKeyRef.current;
     const request = projectOpenRequest.current;
@@ -647,7 +647,7 @@ export function createAppConversations(preloadChat: () => void, prepareTranscrip
     newSessionPending.current = true;
 
     try {
-      closeMobileSidebar(); setArchivesOpen(false);
+      closeFloatingSidebar(); setArchivesOpen(false);
 
       return await createNewSessionDraft(clearProject, group, project, host, fresh);
     } catch (reason) { addNotice({ title: "Could not open the draft", message: reason instanceof Error ? reason.message : String(reason) }); }
@@ -672,7 +672,7 @@ export function createAppConversations(preloadChat: () => void, prepareTranscrip
     const fresh = currentSessionIsDraft(); setNewChatRequest(value => value + 1);
     const unsent = existingSessionDraft();
     if (fresh && unsent && !isSelectedSession(unsent) && openDraftUntouched()) { await startNewSession(); return; }
-    if (fresh && await resetDraftInPlace()) { closeMobileSidebar(); setArchivesOpen(false); setView("chat"); setMainComposerFocusRequest(request => request + 1); return; }
+    if (fresh && await resetDraftInPlace()) { closeFloatingSidebar(); setArchivesOpen(false); setView("chat"); setMainComposerFocusRequest(request => request + 1); return; }
     await startNewSession(fresh, undefined, undefined, undefined, fresh);
   };
 
@@ -827,7 +827,7 @@ export function createAppConversations(preloadChat: () => void, prepareTranscrip
   const extensionStateIsCurrent = createMemo(() => (extensionOwner() === transport()));
   const activeDialog = createMemo(() => dialogs()[0]);
   const projectCwd = createMemo(() => (selectedProjectCwd(activeCwd(), transport().isTemporaryChat())));
-  const mobileSidebarOpen = () => panelOpen() && view() === "chat";
+  const floatingSidebarOpen = () => panelOpen() && view() === "chat";
 
   const sidebar = createSidebarState(() => {
     const summaries = new Map([...draftSessions(), ...liveSessions(), ...sessions()].map(session => [`${session.hostId ?? "local"}:${session.id}`, session]));
@@ -892,7 +892,7 @@ export function createAppConversations(preloadChat: () => void, prepareTranscrip
   return {
     conversation: { transport, runtimePool, registerCommandRunner, chatAgentProps, chatSession, chatViewKey, activeConversationKey, activeHostId, connected, composerView, composerState, composerControls, chatCommands, chatWidgets, statuses, projectCwd, send, abortInteraction, setModel, setThinking, setAgent, branch, forkSourceName, forkSourceNameOf, forkEntryId, openForkSource, revealEntryId, entryRevealed, draftChangeFor, uploadsChangeFor, drafts, uploadsByTransport, setComposerUploads, mainComposerFocusRequest, mainQueueHoldRequest, chooseChatHost, chooseChatProject, clearChatProject, openProject, resolveHomeDirectory, modelVisibility },
     sessions: { sessions, sidebar, listedRunningSessions, runningSessions, unseenSessions, selectSession, sessionAction, startNewSession, newSession, newChatRequest, createGroupRequest, setCreateGroupRequest, handleCreateGroup, archiveSession: (session: SessionSummary) => archives.archiveSession(session), isArchiving: archives.isPending, syncSessionIndex, query, setQuery, archivesOpen, setArchivesOpen },
-    layout: { view, setView, panelOpen, setPanelOpen, mobileSidebarOpen, canLeaveSettings, activePane, setActivePane, hasSidePane },
+    layout: { view, setView, panelOpen, setPanelOpen, floatingSidebarOpen, canLeaveSettings, activePane, setActivePane, hasSidePane },
     settings: { settings, settingsSaving, debugModeSaving, setSettingsDirty, saveSettings, toggleDebugMode, toggleDebugFeature, pendingSettingsCount },
     usage: { codexUsage, anthropicUsage, usageClock, opencodeGoBadge, opencodexUsage, usageError, refreshUsage, refreshingUsage },
     notices: { notices, setNotices, addNotice, error, setError, reconnectMain, reconnectPending },

@@ -11,6 +11,7 @@ import { installScrollbarRelease } from "./lib/scrollbarRelease";
 import "./styles.css";
 import "./index.css";
 import "./mobile.css";
+import "./narrow-window.css";
 
 if (isMobile) document.documentElement.dataset.mobile = "true";
 

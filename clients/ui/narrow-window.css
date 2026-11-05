@@ -1,0 +1,84 @@
+.floating-sidebar-toggle { display: none; align-items: center; justify-content: center; flex-shrink: 0; min-width: 44px; min-height: 44px; border: 1px solid var(--line); border-radius: 8px; background: color-mix(in srgb, var(--paper) 50%, transparent); color: var(--ink); font-size: 18px; }
+.app > .floating-sidebar-toggle { position: fixed; z-index: 20; top: calc(4px + env(safe-area-inset-top)); left: max(8px, env(safe-area-inset-left)); }
+.floating-sidebar-backdrop { display: none; }
+.composer-settings, .composer-settings-panel, .composer-settings-row { display: contents; }
+.composer-bar .composer-settings-trigger, .composer-settings-row > span { display: none; }
+@media (max-width: 700px) {
+  .composer-bar .composer-picker-trigger[aria-label="Model"] { max-width: 132px; }
+  .composer-settings { display: block; position: relative; }
+  .composer-bar .composer-settings-trigger { display: inline-flex; max-width: 140px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .composer-settings-panel { display: none; position: absolute; bottom: calc(100% + 8px); right: 0; z-index: 25; width: max-content; max-width: calc(100vw - 64px); padding: 8px; border: 1px solid var(--line); border-radius: 9px; background: var(--paper); box-shadow: 0 8px 24px #0004; }
+  .composer-settings-panel[data-open="true"] { display: grid; gap: 4px; }
+  .composer-settings-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 32px; }
+  .composer-settings-row > span { display: block; color: var(--muted); font-size: 12px; }
+  .composer-settings-row .composer-picker { min-width: 0; }
+  .composer-bar .composer-settings-row .composer-picker-trigger { max-width: 100%; height: 32px; }
+  .composer-bar .composer-settings-row .fast-mode-indicator { width: 32px; height: 32px; flex-basis: 32px; }
+}
+@media (max-width: 700px) {
+  body { min-width: 0; min-height: 100dvh; }
+  .app { height: var(--mobile-height, 100dvh); padding-top: env(safe-area-inset-top); padding-bottom: env(safe-area-inset-bottom); }
+  .floating-sidebar-toggle { display: flex; }
+  .app > .icon-rail { position: absolute; top: env(safe-area-inset-top); bottom: env(safe-area-inset-bottom); left: 0; width: min(85vw, 340px); z-index: 19; }
+  .app > .icon-rail.compact { display: none; }
+  .floating-sidebar-backdrop { display: block; position: absolute; inset: 0; z-index: 18; border: 0; background: #0008; }
+  .toast-stack { z-index: 21; }
+  .sidebar-resizer { display: none; }
+  .chat-panes.split { flex-direction: column; overflow-y: auto; }
+  .chat-panes > .chat-shell, .chat-panes > .split-chat { width: 100%; }
+  .chat-panes.split > * { flex: 0 0 80%; min-height: 380px; }
+  .settings-shell { min-width: 0; width: 100%; }
+  .settings-header { margin-top: 0; padding: 56px 16px 20px; min-height: 100px; }
+  .settings-layout { display: flex; flex-direction: column; gap: 20px; padding: 20px 16px 50px; }
+  .settings-nav { flex-direction: row; flex-wrap: wrap; }
+  .settings-nav.settings-host-nav { padding-top: 56px; }
+  .settings-nav button { width: auto; min-height: 44px; }
+  .settings-nav .settings-search { width: 100%; }
+  .section-title { flex-wrap: wrap; }
+  .section-actions { grid-template-columns: minmax(0, 1fr) max-content; width: 100%; }
+  .section-filter { width: 100%; }
+  .settings-section, .settings-section > * { min-width: 0; max-width: 100%; }
+  .extension-dialog { width: calc(100vw - 24px); min-width: 0; max-width: calc(100vw - 24px); max-height: calc(var(--mobile-height, 100dvh) - 32px); overflow: auto; }
+  .directory-palette { margin: 12px auto; }
+  .directory-palette-caption > span:last-child, .directory-palette-hints { display: none; }
+  .directory-palette-result { min-height: 44px; }
+  input, textarea, select { font-size: calc(16px + var(--settings-font-offset, 0px)); }
+  .icon-button { min-width: 40px; min-height: 40px; }
+  .code-copy.icon-button, .table-copy.icon-button { min-width: 0; min-height: 0; }
+  .project-actions, .session-actions, .message-actions { opacity: 1; }
+  .message { padding-inline: 12px; }
+  .message-content { min-width: 0; overflow-wrap: anywhere; }
+  .message-content pre, .message-content table { max-width: 100%; overflow-x: auto; }
+  .conversation, .composer-wrap, .extension-widget, .runtime-activity { width: calc(100% - 16px); }
+  .composer { margin-inline: 0; }
+  .conversation-unowned .composer-interaction { opacity: 1; }
+  .composer-bar { flex-wrap: wrap; gap: 4px; }
+  .composer-bar .icon-button { width: 30px; height: 30px; min-width: 30px; min-height: 30px; }
+  .composer-bar .icon-button svg { width: 20px; height: 20px; }
+  .composer-bar .select-control { height: 30px; padding-inline: 3px; font-size: 11px; }
+  .composer-bar .fast-mode-indicator { height: 30px; }
+  .composer-bar .context-wheel { width: 26px; height: 30px; margin-left: 2px; }
+  .composer-bar .context-wheel svg { width: 20px; height: 20px; }
+  .composer-bar .fast-mode-indicator svg { width: 20px; height: 20px; }
+  .composer-tools { flex-wrap: wrap; }
+  .composer-actions { margin-left: auto; }
+  .composer piop-composer-field { font-size: 16px; }
+  .composer-picker-menu.compact button { min-height: 44px; }
+  .prompt-context-bar { gap: 0; }
+  .model-row, .setting-row, .host-row { flex-wrap: wrap; }
+  .composer-controls { flex-wrap: wrap; gap: 6px; }
+  .terminal-panel { max-height: 60%; min-height: 160px; }
+}
+@media (pointer: coarse) {
+  .project-actions { opacity: 1; }
+  .message-actions { opacity: 1; }
+  button { touch-action: manipulation; }
+}
+@media (max-width: 700px) {
+  .directory-palette-search { min-width: 0; }
+}
+@media (max-width: 700px) {
+  .agent-editor, .agent-defaults { grid-template-columns: minmax(0, 1fr); }
+  .agent-list { flex-direction: row; overflow-x: auto; }
+  .agent-list button { flex: 0 0 auto; }
+}

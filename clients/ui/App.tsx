@@ -28,7 +28,7 @@ export default function App(props: { suppressConnectionNotices?: boolean } = {})
   const app = createAppConversations(() => { void ChatView.preload().catch(() => undefined); }, owner => transcriptCache.prepare(owner));
   const { forkSourceNameOf, chatSession, activeConversationKey, activeHostId, connected, branch, openForkSource } = app.conversation;
   const { sessions, selectSession, syncSessionIndex } = app.sessions;
-  const { view, setView, panelOpen, setPanelOpen, mobileSidebarOpen, canLeaveSettings, activePane, setActivePane, hasSidePane } = app.layout;
+  const { view, setView, panelOpen, setPanelOpen, floatingSidebarOpen, canLeaveSettings, activePane, setActivePane, hasSidePane } = app.layout;
   const { settings, setSettingsDirty, saveSettings, pendingSettingsCount } = app.settings;
   const { error, addNotice } = app.notices;
   const { sidepane, splitPane, subagentPane, splitSessionId, openSubagent } = app.side;
@@ -42,9 +42,9 @@ export default function App(props: { suppressConnectionNotices?: boolean } = {})
 
   const pluginPane = createPluginWorkspace(conversationSource(activeHostId, chatSession));
 
-  const renderMobileSidebarBackdrop = () => (panelOpen() && view() === "chat" && <button class="mobile-sidebar-backdrop" aria-label="Close conversations" onClick={() => setPanelOpen(false)} />);
+  const renderFloatingSidebarBackdrop = () => (panelOpen() && view() === "chat" && <button class="floating-sidebar-backdrop" aria-label="Close conversations" onClick={() => setPanelOpen(false)} />);
 
-  const renderMobileSidebarToggle = () => <button type="button" class="mobile-sidebar-toggle" aria-label="Toggle conversations" aria-expanded={mobileSidebarOpen()} onClick={() => { if (canLeaveSettings()) { const open = !mobileSidebarOpen(); setView("chat"); setPanelOpen(open); } }}>☰</button>;
+  const renderFloatingSidebarToggle = () => <button type="button" class="floating-sidebar-toggle" aria-label="Toggle conversations" aria-expanded={floatingSidebarOpen()} onClick={() => { if (canLeaveSettings()) { const open = !floatingSidebarOpen(); setView("chat"); setPanelOpen(open); } }}>☰</button>;
 
   const renderSettingsView = () => (view() === "settings" && <LocalSettingsView pendingSettingsCount={pendingSettingsCount()} settings={required((settings()))} sessions={sessions()} onSave={saveSettings} onDirtyChange={setSettingsDirty} onBack={() => { if (canLeaveSettings()) setView("chat"); }} />);
 
@@ -94,8 +94,8 @@ export default function App(props: { suppressConnectionNotices?: boolean } = {})
   const renderArchivedLinkPopup = () => <Show when={archivedLink()} keyed>{link => <ArchivedLinkPopup link={link} onClose={() => setArchivedLink(undefined)} onRestored={() => { setArchivedLink(undefined); setOpenWhenListed({ hostId: link.hostId, sessionId: link.sessionId }); void syncSessionIndex(); }} />}</Show>;
 
   return <SessionLinkContext.Provider value={sessionLinks}><AuxiliaryChatsContext.Provider value={auxiliaryChats}><SubagentNavigationContext.Provider value={openSubagent}>{!settings() ? (<AppLoading error={error()} />) : (<div role="region" aria-label={workspaceLabel()} class={`app ${panelOpen() && view() === "chat" ? "mobile-panel-open" : ""}`}>
-    {!mobileSidebarOpen() && renderMobileSidebarToggle()}
-    {renderMobileSidebarBackdrop()}
+    {!floatingSidebarOpen() && renderFloatingSidebarToggle()}
+    {renderFloatingSidebarBackdrop()}
     <Show when={view() !== "settings"}><AppSidebar layout={app.layout} sessions={app.sessions} settings={app.settings} usage={app.usage} conversation={app.conversation} /></Show>
     <ComposerPluginsContext.Provider value={pluginPane.composers}><TranscriptPluginsContext.Provider value={pluginPane.transcripts}><transcriptCache.Host /><ChatWorkspace app={app} transcriptCache={transcriptCache} pluginPane={pluginPane} /></TranscriptPluginsContext.Provider></ComposerPluginsContext.Provider>
     {renderSettingsView()}

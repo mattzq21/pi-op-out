@@ -100,6 +100,7 @@ export function signal(): void {
 function lockFreed(): { freed: Promise<void>; cancel: () => void } {
   const source = `
 import { dlopen, read } from 'bun:ffi';
+import { constants, openSync } from 'node:fs';
 const library = dlopen(${JSON.stringify(libcName())}, {
   flock: { args: ['i32', 'i32'], returns: 'i32' },
   __errno_location: { args: [], returns: 'ptr' },

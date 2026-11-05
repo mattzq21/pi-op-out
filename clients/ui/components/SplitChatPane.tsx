@@ -1,7 +1,7 @@
 import type { HostModelVisibility } from "../lib/hostModelVisibility";
 import { required } from "../lib/required";
 import { fastModelNames, hostFastModels } from "../lib/fastModels";
-import { localHostLabel } from "../lib/mobileHosts";
+import { localHostLabel } from "../lib/hostChoices";
 import { createToastMessageTracker, createToastNoticeTracker } from "../lib/toastHistory";
 import { extensionUiSchema } from "../lib/extensionUiSchema";
 import { Key } from "@solid-primitives/keyed";

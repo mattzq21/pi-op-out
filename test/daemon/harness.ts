@@ -93,7 +93,7 @@ remote="$(cd "$(dirname "$0")/.." && pwd)/.test-remotes/$target"
 [ -d "$remote" ] || { echo "ssh: Could not resolve hostname $target: Name or service not known" >&2; exit 255; }
 [ ! -e "$remote/.ssh-fail" ] || { cat "$remote/.ssh-fail" >&2; exit 255; }
 [ ! -x "$remote/.ssh-hold" ] || exec "$remote/.ssh-hold"
-cd "$remote" && HOME="$remote" PIOP_MOBILE_BIND=127.0.0.1:0 exec sh -c "$*"
+cd "$remote" && HOME="$remote" PIOP_CLIENT_BIND=127.0.0.1:0 exec sh -c "$*"
 `;
 
 export interface RemoteMachine { id: string; name: string; target: string; home: string; stop(): Promise<void> }
@@ -104,7 +104,7 @@ export async function remoteMachine(daemon: TestDaemon, id: string, name = id, t
   mkdirSync(join(home, '.bun/bin'), { recursive: true });
   await linkTestPi(home);
   symlinkSync(executable, join(home, '.bun/bin/piopd'));
-  const env = { ...process.env, HOME: home, PIOP_MOBILE_BIND: '127.0.0.1:0' };
+  const env = { ...process.env, HOME: home, PIOP_CLIENT_BIND: '127.0.0.1:0' };
   const stop = () => control(executable, 'stop', env).then(() => {});
   runningRemotes.add(stop);
   return { id, name, target, home, stop };
@@ -247,7 +247,7 @@ export async function startDaemon(options: BuildOptions & { home?: string; env?:
   const bin = join(home, '.test-bin');
   mkdirSync(bin, { recursive: true });
   fakeProgram(bin, 'ssh', FAKE_SSH);
-  const env = { ...process.env, HOME: home, PATH: bin + ':' + process.env.PATH, PIOP_MOBILE_BIND: '127.0.0.1:0', PIOP_DAEMON_ORIGIN: 'test', PIOP_USAGE_REFRESH_MS: '0', ...options.env };
+  const env = { ...process.env, HOME: home, PATH: bin + ':' + process.env.PATH, PIOP_CLIENT_BIND: '127.0.0.1:0', PIOP_DAEMON_ORIGIN: 'test', PIOP_USAGE_REFRESH_MS: '0', ...options.env };
   const directory = daemonDirectory(home, options);
   const daemonLog = join(directory, 'daemon.log');
   const clients: Client[] = [];

@@ -1,4 +1,4 @@
-import { localHostLabel } from "../lib/mobileHosts";
+import { localHostLabel } from "../lib/hostChoices";
 import { z } from "zod";
 import { required } from "../lib/required";
 import { Key, Rerun } from "@solid-primitives/keyed";

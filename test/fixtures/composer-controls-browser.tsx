@@ -3,6 +3,7 @@ import { render } from 'solid-js/web';
 import { mockIPC, mockWindows } from '@tauri-apps/api/mocks';
 import '../../clients/ui/styles.css';
 import '../../clients/ui/mobile.css';
+import '../../clients/ui/narrow-window.css';
 
 mockWindows('main');
 mockIPC((command, args) => window.nativeCommand(command, args), { shouldMockEvents: true });

@@ -1,7 +1,6 @@
 import { createSignal, lazy, Show } from "solid-js";
 import { Folder } from "lucide-solid";
-import { localHostLabel } from "../lib/mobileHosts";
-import { hostChoices } from "../lib/hostChoices";
+import { hostChoices, localHostLabel } from "../lib/hostChoices";
 import type { NativeTransport } from "../lib/nativeTransport";
 import type { SessionGroup } from "../lib/sessionGroups";
 import type { AppSettings } from "../types";

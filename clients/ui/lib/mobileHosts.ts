@@ -1,5 +1,4 @@
 import { validateHost } from "./remoteClient";
-import { isMobile } from "./platform";
 import { z } from "zod";
 
 export interface MobileAnchor { name: string; url: string }
@@ -14,7 +13,7 @@ let anchorCache: MobileAnchor | undefined;
 
 export function cachedMobileHost() { return anchorCache?.url ?? ""; }
 
-export function localHostLabel() { return isMobile ? anchorCache?.name ?? "Anchor host" : "Local"; }
+export function cachedMobileHostName() { return anchorCache?.name; }
 
 function openDatabase(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
